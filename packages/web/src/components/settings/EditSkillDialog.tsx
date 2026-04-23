@@ -278,7 +278,7 @@ export function EditSkillDialog({ skill, isOpen, onClose }: EditSkillDialogProps
 						{mcpServers.length === 0 ? (
 							<p class="text-xs text-gray-500 py-2">
 								No application MCP servers configured. Add one in the{' '}
-								<span class="text-gray-400">Application MCP Servers</span> settings panel first.
+								<span class="text-gray-400">MCP Servers</span> settings panel first.
 							</p>
 						) : (
 							<select

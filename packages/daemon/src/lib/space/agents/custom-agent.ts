@@ -339,7 +339,7 @@ function isGateWritableFromNode(
  * The NeoKai system contract (preset) is always applied first; user content follows.
  */
 export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionInit {
-	const { customAgent, space, sessionId, workspacePath, slotOverrides } = config;
+	const { customAgent, task, space, sessionId, workspacePath, slotOverrides } = config;
 
 	const customTools =
 		customAgent.tools && customAgent.tools.length > 0 ? customAgent.tools : undefined;
@@ -373,7 +373,11 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 				preset: 'claude_code',
 			},
 			features: SUB_SESSION_FEATURES,
-			context: { spaceId: space.id },
+			// Include taskId on the context so long-lived node-agent sub-sessions
+			// (type: 'worker') are recognised as orchestration-state carriers and
+			// their sdkSessionId is preserved across runtime-fingerprint changes.
+			// See `AgentSession.fromInit` for the preservation guard.
+			context: { spaceId: space.id, taskId: task.id },
 			type: 'worker',
 			model,
 			provider,

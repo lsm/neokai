@@ -14,6 +14,16 @@
 export type AppMcpServerSourceType = 'stdio' | 'sse' | 'http';
 
 /**
+ * Provenance of a registry entry. Written once at create time; never mutates.
+ *
+ *   - `builtin`  — seeded by `seedDefaultMcpEntries` on daemon startup.
+ *   - `user`     — created via the MCP Servers UI / `mcp.registry.create` RPC.
+ *   - `imported` — discovered by `McpImportService` scanning `.mcp.json` files.
+ *                  `sourcePath` records the absolute path of the originating file.
+ */
+export type AppMcpServerSource = 'builtin' | 'user' | 'imported';
+
+/**
  * An MCP server registered at the application level.
  */
 export interface AppMcpServer {
@@ -40,6 +50,17 @@ export interface AppMcpServer {
 	headers?: Record<string, string>;
 	/** Whether this server is enabled globally */
 	enabled: boolean;
+	/**
+	 * Where this entry came from. See `AppMcpServerSource`. Always set; defaults
+	 * to `'user'` when omitted from create requests so the existing
+	 * `mcp.registry.create` RPC works without a schema change.
+	 */
+	source: AppMcpServerSource;
+	/**
+	 * Absolute path of the originating `.mcp.json` file for `source='imported'`
+	 * entries. Always undefined for `builtin` and `user` entries.
+	 */
+	sourcePath?: string;
 	/** Unix timestamp (ms) when the record was created */
 	createdAt?: number;
 	/** Unix timestamp (ms) when the record was last updated */
@@ -48,14 +69,21 @@ export interface AppMcpServer {
 
 /**
  * Request payload to create a new application-level MCP server entry.
- * `id` is generated server-side. `enabled` defaults to `true` if omitted.
+ * `id` is generated server-side. `enabled` defaults to `true` if omitted,
+ * `source` defaults to `'user'` if omitted.
  */
-export type CreateAppMcpServerRequest = Omit<AppMcpServer, 'id' | 'enabled'> & {
+export type CreateAppMcpServerRequest = Omit<AppMcpServer, 'id' | 'enabled' | 'source'> & {
 	enabled?: boolean;
+	source?: AppMcpServerSource;
 };
 
 /**
  * Request payload to update an existing application-level MCP server entry.
  * All fields except `id` are optional.
+ *
+ * Note: `source` and `sourcePath` are write-once-at-create in normal flows.
+ * They are exposed here as optional only so the import service can adjust
+ * provenance when a row transitions between `imported` and `user` (e.g. a
+ * user takes over an imported entry by editing it).
  */
 export type UpdateAppMcpServerRequest = { id: string } & Partial<Omit<AppMcpServer, 'id'>>;

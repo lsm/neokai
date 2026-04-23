@@ -442,6 +442,21 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   columns on `space_tasks`, and the `space_task_report_results` append-only
 	//   audit table used by the new `report_result` tool.
 	runMigration99(db);
+
+	// Migration 100: MCP registry provenance — adds `source` and `source_path`
+	//   columns to `app_mcp_servers`. Backfills existing rows as 'builtin' (for
+	//   seeded names) or 'user' (everything else). Adds a partial unique index
+	//   on `(source_path, name)` WHERE source='imported' so the M2 import service
+	//   can upsert idempotently from `.mcp.json` scans.
+	runMigration100(db);
+
+	// Migration 101: MCP M3 — create the unified `mcp_enablement` table used as
+	//   the single source of truth for per-scope (space/room/session) MCP server
+	//   overrides, and seed it from the legacy `room_mcp_enablement` table plus
+	//   existing `GlobalSettings.disabledMcpServers` and per-session
+	//   `config.tools.disabledMcpServers`. Legacy columns/table are left intact
+	//   for this milestone — M5 removes them.
+	runMigration101(db);
 }
 
 /**
@@ -6576,6 +6591,224 @@ export function runMigration99(db: BunDatabase): void {
 				throw err;
 			} finally {
 				db.exec('PRAGMA foreign_keys = ON');
+			}
+		}
+	}
+}
+
+/**
+ * Migration 100: Add `source` and `source_path` columns to `app_mcp_servers`.
+ *
+ * Part of the MCP config unification work (docs/plans/unify-mcp-config-model).
+ * Introduces provenance tracking so the registry can distinguish:
+ *   - `builtin`  — seeded by `seedDefaultMcpEntries` on daemon startup.
+ *   - `user`     — created via the MCP Servers UI / `mcp.registry.create` RPC.
+ *   - `imported` — discovered by `McpImportService` scanning workspace and
+ *                  user-level `.mcp.json` files. `source_path` records the
+ *                  absolute path of the originating file so the import service
+ *                  can upsert/prune rows keyed by `(source_path, name)`.
+ *
+ * Backfill policy:
+ *   - Rows matching a known seed name are tagged `source='builtin'`. The seed
+ *     list is inlined to avoid rewriting history as new builtins are added —
+ *     subsequent seed runs upsert them with `source='builtin'`.
+ *   - All remaining rows are tagged `source='user'`, matching the M2 scope
+ *     note: before this migration every row was either seeded or user-authored.
+ *
+ * Imported rows get a partial unique index on `(source_path, name)` so the
+ * import service can upsert idempotently and reject the same server being
+ * imported twice from the same file. Imported rows still share the existing
+ * global `name UNIQUE` constraint — two `.mcp.json` files can't both import a
+ * server with the same name; the second is rejected at service level.
+ *
+ * Idempotent via `tableHasColumn` guards and `CREATE INDEX IF NOT EXISTS`.
+ */
+export function runMigration100(db: BunDatabase): void {
+	if (!tableExists(db, 'app_mcp_servers')) {
+		// Very fresh DB — `createTables` will create the table with the new
+		// columns already present, so this migration has nothing to do.
+		return;
+	}
+
+	// 1. Add `source` column. SQLite can't enforce NOT NULL on ALTER with no
+	//    default, so we add it nullable, backfill, then rely on application-
+	//    level validation (the repo requires `source` on writes).
+	if (!tableHasColumn(db, 'app_mcp_servers', 'source')) {
+		db.exec(`ALTER TABLE app_mcp_servers ADD COLUMN source TEXT`);
+
+		// Backfill: rows with a seeded name → 'builtin'; everything else → 'user'.
+		// Kept in sync with `seed-defaults.ts` at time of writing.
+		const builtinSeedNames = ['fetch-mcp', 'chrome-devtools'];
+		const placeholders = builtinSeedNames.map(() => '?').join(', ');
+		db.prepare(
+			`UPDATE app_mcp_servers SET source = 'builtin' WHERE name IN (${placeholders}) AND source IS NULL`
+		).run(...builtinSeedNames);
+
+		db.exec(`UPDATE app_mcp_servers SET source = 'user' WHERE source IS NULL`);
+	}
+
+	// 2. Add `source_path` column. NULL for `builtin`/`user`; absolute path for `imported`.
+	if (!tableHasColumn(db, 'app_mcp_servers', 'source_path')) {
+		db.exec(`ALTER TABLE app_mcp_servers ADD COLUMN source_path TEXT`);
+	}
+
+	// 3. Partial unique index on `(source_path, name)` WHERE source = 'imported'.
+	//    Enables idempotent upserts from the import service: re-scanning the same
+	//    `.mcp.json` finds the existing row instead of creating a duplicate.
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_app_mcp_servers_import
+		 ON app_mcp_servers(source_path, name)
+		 WHERE source = 'imported' AND source_path IS NOT NULL`
+	);
+}
+
+/**
+ * Migration 101 — MCP M3: Generalize per-scope MCP enablement.
+ *
+ * Goal: replace the room-only `room_mcp_enablement` table and the ad-hoc
+ * `GlobalSettings.disabledMcpServers` / `SessionConfig.disabledMcpServers`
+ * lists with a single table whose rows each encode one explicit override at a
+ * specific scope (space / room / session). Missing rows mean "inherit" — the
+ * most specific scope with an override wins, otherwise the registry default
+ * is used.
+ *
+ * Steps:
+ *   1. Create `mcp_enablement` with UNIQUE (scope_type, scope_id, server_id).
+ *   2. Copy existing `room_mcp_enablement` rows as scope_type='room'.
+ *   3. Seed scope_type='space', enabled=0 rows from
+ *      `global_settings.disabledMcpServers` (string[] of server names) for
+ *      every active space, resolving server name → server id via
+ *      `app_mcp_servers`.
+ *   4. Seed scope_type='session', enabled=0 rows from each session's
+ *      `config.tools.disabledMcpServers` list. The legacy session config field
+ *      is left untouched (M5 will drop it).
+ *
+ * The migration is fully idempotent:
+ *   - Table creation uses IF NOT EXISTS.
+ *   - All INSERTs use INSERT OR IGNORE so re-running after a partial run, or
+ *     running on a DB where overrides were already applied, is a no-op.
+ *   - Legacy `room_mcp_enablement` / `GlobalSettings.disabledMcpServers` /
+ *     `SessionConfig.disabledMcpServers` are preserved for this milestone so
+ *     rollback remains trivial. M5 will purge them.
+ */
+export function runMigration101(db: BunDatabase): void {
+	// 1. Create the unified table -------------------------------------------
+	// Schema matches docs/plans/unify-mcp-config-model/00-overview.md exactly:
+	// composite PRIMARY KEY on (server_id, scope_type, scope_id). No surrogate
+	// id / timestamps — callers identify rows by their natural key.
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS mcp_enablement (
+			server_id  TEXT NOT NULL REFERENCES app_mcp_servers(id) ON DELETE CASCADE,
+			scope_type TEXT NOT NULL CHECK (scope_type IN ('space', 'room', 'session')),
+			scope_id   TEXT NOT NULL,
+			enabled    INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+			PRIMARY KEY (server_id, scope_type, scope_id)
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_enablement_scope ON mcp_enablement(scope_type, scope_id)`
+	);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_enablement_server ON mcp_enablement(server_id)`);
+
+	// 2. Copy `room_mcp_enablement` rows as scope='room' --------------------
+	if (tableExists(db, 'room_mcp_enablement')) {
+		const rows = db
+			.prepare(`SELECT room_id, server_id, enabled FROM room_mcp_enablement`)
+			.all() as Array<{ room_id: string; server_id: string; enabled: number }>;
+		const insert = db.prepare(
+			`INSERT OR IGNORE INTO mcp_enablement
+				(server_id, scope_type, scope_id, enabled)
+			 VALUES (?, 'room', ?, ?)`
+		);
+		for (const row of rows) {
+			insert.run(row.server_id, row.room_id, row.enabled ? 1 : 0);
+		}
+	}
+
+	// 3. Seed scope='space' rows from GlobalSettings.disabledMcpServers ------
+	// The legacy global list stores server *names*; resolve each to a server id
+	// via the app_mcp_servers registry. Names with no matching registry entry
+	// are silently skipped — the legacy list predates the registry so orphaned
+	// names are expected.
+	if (
+		tableExists(db, 'global_settings') &&
+		tableExists(db, 'spaces') &&
+		tableExists(db, 'app_mcp_servers')
+	) {
+		try {
+			const settingsRow = db.prepare(`SELECT settings FROM global_settings WHERE id = 1`).get() as
+				| { settings?: string }
+				| undefined;
+			const raw = settingsRow?.settings ?? '{}';
+			const parsed = JSON.parse(raw) as { disabledMcpServers?: unknown };
+			const disabledNames = Array.isArray(parsed.disabledMcpServers)
+				? (parsed.disabledMcpServers.filter(
+						(n) => typeof n === 'string' && n.length > 0
+					) as string[])
+				: [];
+
+			if (disabledNames.length > 0) {
+				const spaceRows = db
+					.prepare(`SELECT id FROM spaces WHERE status = 'active'`)
+					.all() as Array<{ id: string }>;
+
+				const serverByName = db.prepare(`SELECT id FROM app_mcp_servers WHERE name = ?`);
+				const insert = db.prepare(
+					`INSERT OR IGNORE INTO mcp_enablement
+						(server_id, scope_type, scope_id, enabled)
+					 VALUES (?, 'space', ?, 0)`
+				);
+
+				for (const { id: spaceId } of spaceRows) {
+					for (const name of disabledNames) {
+						const srv = serverByName.get(name) as { id?: string } | undefined;
+						if (!srv?.id) continue;
+						insert.run(srv.id, spaceId);
+					}
+				}
+			}
+		} catch {
+			// Defensive: a malformed global_settings row should not break all
+			// later migrations. Leaving the table empty is safe — sessions will
+			// keep using the legacy list until the caller migrates overrides.
+		}
+	}
+
+	// 4. Seed scope='session' rows from each session's disabledMcpServers ----
+	if (tableExists(db, 'sessions') && tableExists(db, 'app_mcp_servers')) {
+		const sessionRows = db.prepare(`SELECT id, config FROM sessions`).all() as Array<{
+			id: string;
+			config: string;
+		}>;
+
+		const serverByName = db.prepare(`SELECT id FROM app_mcp_servers WHERE name = ?`);
+		const insert = db.prepare(
+			`INSERT OR IGNORE INTO mcp_enablement
+				(server_id, scope_type, scope_id, enabled)
+			 VALUES (?, 'session', ?, 0)`
+		);
+
+		for (const row of sessionRows) {
+			let disabledNames: string[] = [];
+			try {
+				const cfg = JSON.parse(row.config ?? '{}') as {
+					tools?: { disabledMcpServers?: unknown };
+					disabledMcpServers?: unknown;
+				};
+				const candidate = cfg.tools?.disabledMcpServers ?? cfg.disabledMcpServers;
+				if (Array.isArray(candidate)) {
+					disabledNames = candidate.filter(
+						(n): n is string => typeof n === 'string' && n.length > 0
+					);
+				}
+			} catch {
+				continue;
+			}
+
+			for (const name of disabledNames) {
+				const srv = serverByName.get(name) as { id?: string } | undefined;
+				if (!srv?.id) continue;
+				insert.run(srv.id, row.id);
 			}
 		}
 	}

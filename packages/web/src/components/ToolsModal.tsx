@@ -22,10 +22,42 @@ import type {
 } from '@neokai/shared';
 import {
 	listMcpServersFromSources,
+	listRuntimeMcpServers,
 	type McpServerFromSource,
 	type McpServersFromSourcesResponse,
 } from '../lib/api-helpers.ts';
 import { skillsStore } from '../lib/skills-store.ts';
+
+/**
+ * Human-friendly labels for runtime-attached (SDK-type) MCP servers.
+ * Keys must match the names used in `SessionConfig.mcpServers` — i.e., the
+ * names passed to `mergeRuntimeMcpServers` on the daemon side.
+ *
+ * Unknown names fall through to the raw server name so new runtime MCPs are
+ * still surfaced even before a label is added.
+ */
+const RUNTIME_MCP_LABELS: Record<string, { title: string; description: string }> = {
+	'space-agent-tools': {
+		title: 'Space coordination',
+		description: 'send_message_to_agent, list_peers, gate I/O, task management',
+	},
+	'db-query': {
+		title: 'Database queries',
+		description: 'Read-only SQLite access scoped to this space',
+	},
+	'task-agent': {
+		title: 'Task agent',
+		description: 'Workflow execution, node activation, sub-agent spawning',
+	},
+	'node-agent': {
+		title: 'Node agent',
+		description: 'Workflow node tools: peers, channels, gates',
+	},
+	'room-tools': {
+		title: 'Room tools',
+		description: 'Room-scoped coordination between co-located agents',
+	},
+};
 import {
 	isServerEnabled,
 	toggleServer as toggleServerUtil,
@@ -134,9 +166,14 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	const globalConfig = useSignal<GlobalToolsConfig | null>(null);
 
 	// Collapsible group state (open by default)
+	const runtimeMcpGroupOpen = useSignal(true);
 	const appMcpGroupOpen = useSignal(true);
 	const fileMcpGroupOpen = useSignal(true);
 	const advancedOpen = useSignal(false);
+
+	// Runtime-attached (SDK-type) MCP servers for this session —
+	// space-agent-tools, db-query, task-agent, node-agent, etc.
+	const runtimeMcpServers = useSignal<string[]>([]);
 
 	// Search filter for App Skills section
 	const appSkillSearch = useSignal('');
@@ -156,6 +193,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		if (isOpen && session) {
 			loadConfig();
 			loadGlobalConfig();
+			loadRuntimeMcpServers();
 			void skillsStore.subscribe().catch(() => {
 				toast.error('Failed to load App MCP Servers');
 			});
@@ -201,6 +239,16 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 			globalConfig.value = response.config;
 		} catch {
 			// Error loading global config
+		}
+	};
+
+	const loadRuntimeMcpServers = async () => {
+		if (!session) return;
+		try {
+			const response = await listRuntimeMcpServers(session.id);
+			runtimeMcpServers.value = response.servers.map((s) => s.name);
+		} catch {
+			runtimeMcpServers.value = [];
 		}
 	};
 
@@ -366,6 +414,76 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	return (
 		<Modal isOpen={isOpen} onClose={handleCancel} title="Tools" size="md">
 			<div class="space-y-4">
+				{/* Agent Runtime Tools Section — shown only when the session has
+				    runtime-attached SDK-type MCP servers (e.g. space sessions). */}
+				{runtimeMcpServers.value.length > 0 && (
+					<>
+						<div>
+							<div class="flex items-center justify-between py-2 select-none group">
+								<button
+									type="button"
+									class="flex items-center gap-2 flex-1 text-left hover:text-gray-200 transition-colors"
+									onClick={() => {
+										runtimeMcpGroupOpen.value = !runtimeMcpGroupOpen.value;
+									}}
+									aria-expanded={runtimeMcpGroupOpen.value}
+								>
+									<svg
+										class={`w-3.5 h-3.5 text-gray-500 transition-transform ${runtimeMcpGroupOpen.value ? 'rotate-90' : ''}`}
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke="currentColor"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M9 5l7 7-7 7"
+										/>
+									</svg>
+									<span class="text-sm font-medium text-gray-300">Agent Runtime Tools</span>
+									<span class="text-xs text-gray-600">({runtimeMcpServers.value.length})</span>
+								</button>
+								<span class="text-xs text-emerald-500/70 font-medium">Built-in</span>
+							</div>
+							{runtimeMcpGroupOpen.value && (
+								<div class="mt-1 ml-5 space-y-1">
+									{runtimeMcpServers.value.map((name) => {
+										const label = RUNTIME_MCP_LABELS[name];
+										return (
+											<div
+												key={`runtime-${name}`}
+												class="flex items-center gap-2 p-2 rounded-lg bg-dark-800/50 min-w-0"
+											>
+												<svg
+													class="w-3.5 h-3.5 text-emerald-400 flex-shrink-0"
+													fill="none"
+													viewBox="0 0 24 24"
+													stroke="currentColor"
+												>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width={2}
+														d="M13 10V3L4 14h7v7l9-11h-7z"
+													/>
+												</svg>
+												<div class="flex-1 min-w-0">
+													<div class="text-sm text-gray-200 truncate">{label?.title ?? name}</div>
+													<div class="text-xs text-gray-500 truncate">
+														{label?.description ?? name}
+													</div>
+												</div>
+											</div>
+										);
+									})}
+								</div>
+							)}
+						</div>
+						<div class={`border-t ${borderColors.ui.secondary}`} />
+					</>
+				)}
+
 				{/* App Skills & MCP Servers Section */}
 				<div>
 					{appSkills.length > 0 ? (

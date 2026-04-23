@@ -279,7 +279,9 @@ function makeAgentSessionManager(
 			}
 			return sessions.get(NEO_SESSION_ID) ?? null;
 		}),
-		deleteSession: mock(async () => {
+		// Task #85: daemon-internal recovery may only drop the in-memory
+		// SDK subprocess. The DB row is preserved.
+		interruptInMemorySession: mock(async () => {
 			sessions.delete(NEO_SESSION_ID);
 		}),
 		unregisterSession: mock(() => {}),

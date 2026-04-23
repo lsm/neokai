@@ -148,7 +148,11 @@ export interface SpaceRuntimeConfig {
 	 * Optional callback emitted when runtime mutates a SpaceTask internally.
 	 * Used to fan out `space.task.updated` events for UI synchronization.
 	 */
-	onTaskUpdated?: (payload: { spaceId: string; task: SpaceTask }) => Promise<void> | void;
+	onTaskUpdated?: (payload: {
+		spaceId: string;
+		task: SpaceTask;
+		archiveSource?: 'user' | 'system_reconcile';
+	}) => Promise<void> | void;
 	/**
 	 * Optional callback emitted when runtime creates a workflow run internally.
 	 * Used to fan out `space.workflowRun.created` events for UI synchronization.
@@ -413,11 +417,15 @@ export class SpaceRuntime {
 		}
 	}
 
-	private async safeOnTaskUpdated(spaceId: string, task: SpaceTask): Promise<void> {
+	private async safeOnTaskUpdated(
+		spaceId: string,
+		task: SpaceTask,
+		opts?: { archiveSource?: 'user' | 'system_reconcile' }
+	): Promise<void> {
 		const handler = this.config.onTaskUpdated;
 		if (!handler) return;
 		try {
-			await handler({ spaceId, task });
+			await handler({ spaceId, task, archiveSource: opts?.archiveSource });
 		} catch (err) {
 			log.warn(
 				`[SpaceRuntime] onTaskUpdated threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
@@ -461,11 +469,12 @@ export class SpaceRuntime {
 	private async updateTaskAndEmit(
 		spaceId: string,
 		taskId: string,
-		params: UpdateSpaceTaskParams
+		params: UpdateSpaceTaskParams,
+		opts?: { archiveSource?: 'user' | 'system_reconcile' }
 	): Promise<SpaceTask | null> {
 		const updated = this.config.taskRepo.updateTask(taskId, params);
 		if (updated) {
-			await this.safeOnTaskUpdated(spaceId, updated);
+			await this.safeOnTaskUpdated(spaceId, updated, opts);
 
 			// Cascade dependency_failed to open tasks that depend on this one
 			if (params.status === 'blocked' || params.status === 'cancelled') {
@@ -540,13 +549,24 @@ export class SpaceRuntime {
 				this.config.taskAgentManager.cancelBySessionId(duplicate.taskAgentSessionId);
 			}
 
-			await this.updateTaskAndEmit(spaceId, duplicate.id, {
-				status: 'archived',
-				archivedAt: duplicate.archivedAt ?? now,
-				completedAt: duplicate.completedAt ?? now,
-				workflowRunId: null,
-				taskAgentSessionId: null,
-			});
+			// Task #85: duplicate-run reconciliation marks tasks `archived` in DB
+			// so the UI stops showing them as active, but this path is NOT a user
+			// archive. Tag the event with `archiveSource: 'system_reconcile'` so
+			// `TaskAgentManager.subscribeToTaskArchiveEvents` skips the cleanup
+			// cascade (worktree removal + SDK .jsonl archival). The UI still
+			// receives the `space.task.updated` event for the status change.
+			await this.updateTaskAndEmit(
+				spaceId,
+				duplicate.id,
+				{
+					status: 'archived',
+					archivedAt: duplicate.archivedAt ?? now,
+					completedAt: duplicate.completedAt ?? now,
+					workflowRunId: null,
+					taskAgentSessionId: null,
+				},
+				{ archiveSource: 'system_reconcile' }
+			);
 
 			this.notifiedTaskSet.delete(`${duplicate.id}:blocked`);
 			this.notifiedTaskSet.delete(`${duplicate.id}:timeout`);

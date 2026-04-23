@@ -96,6 +96,7 @@ interface MockAgentSession {
 	setRuntimeSystemPrompt: (systemPrompt: unknown) => void;
 	startStreamingQuery: () => Promise<void>;
 	ensureQueryStarted: () => Promise<void>;
+	awaitSdkSessionCaptured: (timeoutMs?: number) => Promise<string>;
 	handleInterrupt: () => Promise<void>;
 	cleanup: () => Promise<void>;
 	messageQueue: { enqueueWithId: (id: string, msg: string) => Promise<void> };
@@ -155,6 +156,9 @@ function makeMockSession(
 		},
 		async ensureQueryStarted() {
 			this._startCalled = true;
+		},
+		async awaitSdkSessionCaptured() {
+			return `sdk-${sessionId}`;
 		},
 		async handleInterrupt() {},
 		async cleanup() {
@@ -240,7 +244,18 @@ interface TestCtx {
 	spaceManager: SpaceManager;
 	runtime: SpaceRuntime;
 	daemonHub: TestDaemonHub;
+	/**
+	 * Tracks calls to the (removed) legacy `SessionManager.deleteSession` helper.
+	 * Task #85 forbids deletion from non-UI code paths, so in the current test
+	 * harness this array is effectively append-only via a spy stub and every
+	 * existing assertion has been updated to assert that it stays empty for
+	 * non-archive lifecycle events.
+	 */
 	sessionManagerDeleteCalls: string[];
+	/** Tracks calls to `SessionManager.archiveSessionResources` — the task-archive path. */
+	sessionManagerArchiveCalls: Array<{ sessionId: string; trigger: string }>;
+	/** Tracks calls to `SessionManager.interruptInMemorySession` — the preserve-DB path. */
+	sessionManagerInterruptCalls: string[];
 	mockDb: {
 		getSession: (id: string) => null;
 		createSession: () => void;
@@ -288,6 +303,8 @@ function makeCtx(): TestCtx {
 	// Track session creation and deleted sessions
 	const createdSessions = new Map<string, MockAgentSession>();
 	const sessionManagerDeleteCalls: string[] = [];
+	const sessionManagerArchiveCalls: Array<{ sessionId: string; trigger: string }> = [];
+	const sessionManagerInterruptCalls: string[] = [];
 
 	// Track DB sessions created (to simulate fromInit check)
 	const dbSessions = new Map<string, unknown>();
@@ -312,8 +329,22 @@ function makeCtx(): TestCtx {
 	};
 
 	const mockSessionManager = {
+		// Task #85: legacy `deleteSession` must never be invoked by runtime
+		// code. Retained as a stub so that if it IS ever invoked, the spy
+		// surfaces the violation in tests.
 		deleteSession: async (sessionId: string) => {
 			sessionManagerDeleteCalls.push(sessionId);
+		},
+		archiveSessionResources: async (sessionId: string, trigger: string) => {
+			sessionManagerArchiveCalls.push({ sessionId, trigger });
+		},
+		deleteSessionResources: async (sessionId: string, _trigger: string) => {
+			// Task #85: forbidden from non-UI code paths; track anyway so tests
+			// can assert no runtime caller invokes this.
+			sessionManagerDeleteCalls.push(sessionId);
+		},
+		interruptInMemorySession: async (sessionId: string) => {
+			sessionManagerInterruptCalls.push(sessionId);
 		},
 		registerSession: (_agentSession: unknown) => {
 			// no-op: unit tests don't exercise cache registration
@@ -376,6 +407,8 @@ function makeCtx(): TestCtx {
 		runtime,
 		daemonHub,
 		sessionManagerDeleteCalls,
+		sessionManagerArchiveCalls,
+		sessionManagerInterruptCalls,
 		mockDb,
 		manager,
 		createdSessions,
@@ -903,21 +936,24 @@ describe('TaskAgentManager', () => {
 			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
+			const registryConfigs = {
+				'registry-mcp': {
+					type: 'stdio' as const,
+					command: 'echo',
+					args: ['ok'],
+				},
+			};
 			const configRef = ctx.manager as unknown as {
 				config: {
 					appMcpManager?: {
 						getEnabledMcpConfigs: () => Record<string, unknown>;
+						getEnabledMcpConfigsForSession: () => Record<string, unknown>;
 					};
 				};
 			};
 			configRef.config.appMcpManager = {
-				getEnabledMcpConfigs: () => ({
-					'registry-mcp': {
-						type: 'stdio',
-						command: 'echo',
-						args: ['ok'],
-					},
-				}),
+				getEnabledMcpConfigs: () => registryConfigs,
+				getEnabledMcpConfigsForSession: () => registryConfigs,
 			};
 
 			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:step-merge-mcp`;
@@ -1485,15 +1521,15 @@ describe('TaskAgentManager', () => {
 			expect(session._cleanupCalled).toBe(true);
 		});
 
-		test('calls SessionManager.deleteSession for task agent session', async () => {
+		test('Task #85: cleanup does NOT call SessionManager.deleteSession for task agent session (DB row preserved)', async () => {
 			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			await ctx.manager.cleanup(task.id);
-			expect(ctx.sessionManagerDeleteCalls).toContain(sessionId);
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(sessionId);
 		});
 
-		test('also cleans up sub-sessions', async () => {
+		test('also cleans up sub-sessions in-memory but preserves their DB rows', async () => {
 			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
@@ -1505,8 +1541,29 @@ describe('TaskAgentManager', () => {
 
 			await ctx.manager.cleanup(task.id);
 
+			// In-memory map is cleared so completions/interrupts stop, but the
+			// sessions DB row + `sdk_messages` must survive (Task #85).
 			expect(ctx.manager.getSubSession(subSessionId)).toBeUndefined();
-			expect(ctx.sessionManagerDeleteCalls).toContain(subSessionId);
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
+		});
+
+		test('Task #85: cancelled-task cleanup preserves DB rows for every attached session', async () => {
+			const task = await makeTask(ctx.taskManager);
+			const taskAgentSessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:cancelled-step`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			await ctx.manager.cleanup(task.id, 'cancelled');
+
+			// Neither task agent nor sub-session may be deleted on cancellation.
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(taskAgentSessionId);
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
+			// Archive must not fire either — cancellation is not archival.
+			expect(ctx.sessionManagerArchiveCalls).toHaveLength(0);
 		});
 
 		test('no-op cleanup for task with no sessions', async () => {
@@ -1554,6 +1611,54 @@ describe('TaskAgentManager', () => {
 
 			expect(ctx.manager.isTaskAgentAlive(task1.id)).toBe(false);
 			expect(ctx.manager.isTaskAgentAlive(task2.id)).toBe(false);
+		});
+
+		test('cleanupAll preserves DB state for rehydration after daemon restart', async () => {
+			const task1 = await makeTask(ctx.taskManager);
+			const task2 = await makeTask(ctx.taskManager);
+			const session1Id = await ctx.manager.spawnTaskAgent(task1, ctx.space, null, null);
+			const session2Id = await ctx.manager.spawnTaskAgent(task2, ctx.space, null, null);
+
+			await ctx.manager.cleanupAll();
+
+			// Must NOT delete session DB rows — rehydrate depends on them
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(session1Id);
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(session2Id);
+
+			// The task_agent_session_id in space_tasks must still point at the live session
+			const reloaded1 = ctx.taskRepo.getTask(task1.id);
+			const reloaded2 = ctx.taskRepo.getTask(task2.id);
+			expect(reloaded1?.taskAgentSessionId).toBe(session1Id);
+			expect(reloaded2?.taskAgentSessionId).toBe(session2Id);
+		});
+
+		test('cleanupAll preserves sub-session DB rows and stops their in-memory queries', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:shutdown-sub`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			const subSession = ctx.createdSessions.get(subSessionId);
+			expect(subSession).toBeDefined();
+			// Sub-session is registered in memory and backed by a DB row
+			expect(ctx.manager.getSubSession(subSessionId)).toBeDefined();
+			expect(ctx.mockDb.getSession(subSessionId)).not.toBeNull();
+
+			await ctx.manager.cleanupAll();
+
+			// The in-memory sub-session is cleared so rehydrate can restore cleanly
+			expect(ctx.manager.getSubSession(subSessionId)).toBeUndefined();
+
+			// But the DB row is preserved (rehydrateSubSession looks it up by ID on next run)
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
+			expect(ctx.mockDb.getSession(subSessionId)).not.toBeNull();
+
+			// The sub-session's streaming query was stopped via AgentSession.cleanup()
+			expect(subSession?._cleanupCalled).toBe(true);
 		});
 
 		test('cleanupAll is a no-op when no sessions are active', async () => {
@@ -1919,6 +2024,50 @@ describe('TaskAgentManager', () => {
 			}
 
 			restoreSpy.mockRestore();
+		});
+
+		test('self-heals dangling task_agent_session_id when session row is missing', async () => {
+			// Simulate post-bad-shutdown state: task still marks itself in_progress
+			// with a taskAgentSessionId, but the session row was deleted.
+			const task = await ctx.taskManager.createTask({
+				title: 'Dangling FK task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+			const danglingSessionId = `space:${ctx.spaceId}:task:${task.id}`;
+			ctx.taskRepo.updateTask(task.id, { taskAgentSessionId: danglingSessionId });
+			// NOTE: no mockDb.createSession — session row is intentionally absent
+
+			await ctx.manager.rehydrate();
+
+			// No task agent added to the map
+			expect(ctx.manager.getTaskAgent(task.id)).toBeUndefined();
+
+			// The dangling FK on space_tasks was cleared so the UI LiveQuery
+			// (spaceTaskActivity.byTask) stops inner-joining on a ghost session.
+			const reloaded = ctx.taskRepo.getTask(task.id);
+			expect(reloaded?.taskAgentSessionId).toBeUndefined();
+		});
+
+		test('self-heals when session exists but is the wrong type', async () => {
+			// The session row exists but is a worker (sub-session), not a
+			// space_task_agent. The FK is still logically dangling — clear it.
+			const task = await ctx.taskManager.createTask({
+				title: 'Wrong-type FK task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+			const wrongTypeSessionId = `space:${ctx.spaceId}:task:${task.id}:wrong`;
+			ctx.taskRepo.updateTask(task.id, { taskAgentSessionId: wrongTypeSessionId });
+			ctx.mockDb.createSession({ id: wrongTypeSessionId, type: 'worker' });
+
+			await ctx.manager.rehydrate();
+
+			expect(ctx.manager.getTaskAgent(task.id)).toBeUndefined();
+			const reloaded = ctx.taskRepo.getTask(task.id);
+			expect(reloaded?.taskAgentSessionId).toBeUndefined();
 		});
 	});
 

@@ -59,6 +59,10 @@ export { runMigration97 } from './migrations';
 export { runMigration98 } from './migrations';
 // knip-ignore-next-line
 export { runMigration99 } from './migrations';
+// knip-ignore-next-line
+export { runMigration100 } from './migrations';
+// knip-ignore-next-line
+export { runMigration101 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -383,12 +387,23 @@ export function createTables(db: BunDatabase): void {
         url TEXT,
         headers TEXT,
         enabled INTEGER NOT NULL DEFAULT 1,
+        source TEXT NOT NULL DEFAULT 'user' CHECK(source IN ('builtin', 'user', 'imported')),
+        source_path TEXT,
         created_at INTEGER,
         updated_at INTEGER
       )
     `);
 
-	// Per-room MCP enablement overrides
+	// Partial unique index on (source_path, name) for imported rows — enables
+	// idempotent upserts from McpImportService without a pre-check round trip.
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_app_mcp_servers_import
+		 ON app_mcp_servers(source_path, name)
+		 WHERE source = 'imported' AND source_path IS NOT NULL`
+	);
+
+	// Per-room MCP enablement overrides (legacy — superseded by `mcp_enablement`
+	// with scope_type='room'. Kept here until M5 purges it.)
 	db.exec(`
       CREATE TABLE IF NOT EXISTS room_mcp_enablement (
         room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -397,6 +412,24 @@ export function createTables(db: BunDatabase): void {
         PRIMARY KEY (room_id, server_id)
       )
     `);
+
+	// Generalized MCP enablement overrides — one row per explicit override at a
+	// specific scope (space / room / session). Missing rows inherit from the
+	// next most-specific scope, falling back to the registry default. Added in
+	// M3 (Migration 100); supersedes `room_mcp_enablement`, which is dropped in M5.
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS mcp_enablement (
+        server_id  TEXT NOT NULL REFERENCES app_mcp_servers(id) ON DELETE CASCADE,
+        scope_type TEXT NOT NULL CHECK (scope_type IN ('space', 'room', 'session')),
+        scope_id   TEXT NOT NULL,
+        enabled    INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+        PRIMARY KEY (server_id, scope_type, scope_id)
+      )
+    `);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_enablement_scope ON mcp_enablement(scope_type, scope_id)`
+	);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_enablement_server ON mcp_enablement(server_id)`);
 
 	// Application-level Skills registry
 	db.exec(`

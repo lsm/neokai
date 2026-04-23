@@ -116,8 +116,16 @@ function makeSessionManager(
 			return sessions.get(NEO_SESSION_ID) ?? null;
 		}),
 
-		deleteSession: mock(async () => {
-			sessions.delete(NEO_SESSION_ID);
+		// Task #85: daemon-internal recovery may only drop the in-memory
+		// SDK subprocess. Pops the next queued AgentSession to simulate
+		// rehydration from the preserved DB row.
+		interruptInMemorySession: mock(async () => {
+			const next = sessionQueue.shift();
+			if (next !== undefined) {
+				sessions.set(NEO_SESSION_ID, next);
+			} else {
+				sessions.delete(NEO_SESSION_ID);
+			}
 		}),
 
 		unregisterSession: mock(() => {}),
@@ -263,6 +271,7 @@ function makeMinimalActionConfig(
 function makeAppMcpManager(configs: Record<string, McpServerConfig> = {}): NeoAppMcpManager {
 	return {
 		getEnabledMcpConfigs: mock(() => configs),
+		getEnabledMcpConfigsForSession: mock(() => configs),
 	};
 }
 

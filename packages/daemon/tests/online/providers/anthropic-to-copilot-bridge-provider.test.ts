@@ -22,10 +22,13 @@
  *                            the Agent SDK sends tool definitions → Copilot model calls a
  *                            tool → bridge emits a tool_use SSE block → SDK executes the
  *                            tool locally → sends tool_result → suspended session resumes.
- *   3. custom-mcp          — tools registered via .mcp.json in the workspace are loaded by
- *                            the Agent SDK and included in the tools array sent to the Copilot
+ *   3. custom-mcp          — tools registered via `config.mcpServers` on the session are loaded
+ *                            by the Agent SDK and included in the tools array sent to the Copilot
  *                            HTTP server.  Assertion: the MCP server subprocess receives a
  *                            tools/list call, proving get_answer was registered in the bridge.
+ *                            (Pre-M1 this exercised `.mcp.json` auto-load; post-M1 sessions
+ *                            default to `strictMcpConfig: true` + `settingSources: []`, so MCP
+ *                            servers flow through programmatic registration instead.)
  *   4. models-list         — the anthropic-copilot provider exposes its models when authenticated.
  *   5. provider-session    — session.create with explicit config.provider:'anthropic-copilot'
  *                            routes to the copilot backend.
@@ -393,7 +396,7 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 	// -------------------------------------------------------------------------
 
 	test(
-		'custom MCP: tool from .mcp.json is discovered and exposed to the model',
+		'custom MCP: programmatically registered server is discovered and exposed to the model',
 		async () => {
 			const workspacePath = join(TMP_DIR, `copilot-anthropic-mcp-${Date.now()}`);
 			mkdirSync(workspacePath, { recursive: true });
@@ -401,35 +404,35 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 			const uniqueToken = `tok-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 			// Flag file written by the MCP server when the Agent SDK calls tools/list.
-			// Its existence is the primary assertion: it proves the SDK discovered
-			// .mcp.json, spawned the MCP server subprocess, and fetched the tool list —
+			// Its existence is the primary assertion: it proves the SDK registered
+			// the MCP server, spawned the subprocess, and fetched the tool list —
 			// meaning get_answer was included in the tools array sent to the Copilot
 			// HTTP server (i.e. the MCP bridge is wired up correctly).
 			const toolsListedFlag = join(workspacePath, '.mcp-tools-listed');
 
-			// Write the minimal MCP server and register it via .mcp.json.
+			// Write the minimal MCP server to disk. Pre-M1 this would be registered
+			// by dropping a `.mcp.json` alongside it, but M1
+			// (docs/plans/unify-mcp-config-model/00-overview.md) forces
+			// `settingSources: []` and `strictMcpConfig: true` on every session so
+			// the SDK no longer auto-loads project `.mcp.json`. Instead we pass
+			// the server programmatically via `config.mcpServers`, which is what
+			// the registry/resolver will do once M3 lands.
 			const mcpServerPath = join(workspacePath, 'test-mcp-server.js');
 			writeFileSync(mcpServerPath, makeMcpServerScript(uniqueToken, toolsListedFlag));
-			writeFileSync(
-				join(workspacePath, '.mcp.json'),
-				JSON.stringify(
-					{
-						mcpServers: {
-							'test-answer-server': {
-								command: 'node',
-								args: [mcpServerPath],
-							},
-						},
-					},
-					null,
-					2
-				)
-			);
 
 			const { sessionId } = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Copilot Anthropic MCP Test',
-				config: { model: testModelId, permissionMode: 'acceptEdits' },
+				config: {
+					model: testModelId,
+					permissionMode: 'acceptEdits',
+					mcpServers: {
+						'test-answer-server': {
+							command: 'node',
+							args: [mcpServerPath],
+						},
+					},
+				},
 			})) as { sessionId: string };
 			daemon.trackSession(sessionId);
 

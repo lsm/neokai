@@ -92,7 +92,7 @@ import { setupLiveQueryHandlers } from './live-query-handlers';
 import { setupReferenceHandlers } from './reference-handlers';
 import { FileIndex } from '../file-index';
 import { LiveQueryEngine } from '../../storage/live-query';
-import type { AppMcpLifecycleManager } from '../mcp';
+import type { AppMcpLifecycleManager, McpImportService } from '../mcp';
 import { registerAppMcpHandlers, setupAppMcpHandlers } from './app-mcp-handlers';
 import { registerSkillHandlers } from './skill-handlers';
 import type { SkillsManager } from '../skills-manager';
@@ -138,6 +138,13 @@ export interface RPCHandlerDependencies {
 	skillsManager: SkillsManager;
 	/** Neo agent manager — singleton global AI assistant */
 	neoAgentManager: NeoAgentManager;
+	/**
+	 * MCP `.mcp.json` import service — scans project + user-level files and
+	 * upserts `source='imported'` rows. Injected here so workspace and
+	 * settings RPC handlers can trigger scans on workspace.add and
+	 * settings.mcp.refreshImports.
+	 */
+	mcpImportService: McpImportService;
 }
 
 const log = new Logger('rpc-handlers');
@@ -191,13 +198,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		return { taskManager, taskRepo };
 	};
 
-	setupSessionHandlers(
-		deps.messageHub,
-		deps.sessionManager,
-		deps.daemonHub,
-		roomManager,
-		deps.spaceManager
-	);
+	// setupSessionHandlers is registered below, after spaceRuntimeService is
+	// constructed, so session.create can synchronously attach space-agent-tools
+	// to ad-hoc Space sessions (avoids a race with query startup).
 	setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
 	setupCommandHandlers(deps.messageHub, deps.sessionManager);
 	setupFileHandlers(deps.messageHub, deps.sessionManager);
@@ -208,7 +211,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// sessions live in RoomRuntimeService.agentSessions (separate from SessionManager),
 	// so the handler needs to check the runtime pool first.
 	registerMcpHandlers(deps.messageHub, deps.sessionManager, deps.appMcpManager);
-	registerSettingsHandlers(deps.messageHub, deps.settingsManager, deps.daemonHub, deps.db);
+	registerSettingsHandlers(
+		deps.messageHub,
+		deps.settingsManager,
+		deps.daemonHub,
+		deps.db,
+		deps.mcpImportService
+	);
 	setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 	// Use reactiveDb.db so test-injected sdk_messages rows also invalidate LiveQuery.
 	setupTestHandlers(deps.messageHub, deps.reactiveDb.db);
@@ -354,9 +363,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Skills registry RPC handlers
 	registerSkillHandlers(deps.messageHub, deps.skillsManager, deps.daemonHub, undefined);
 
-	// Workspace history RPC handlers
+	// Workspace history RPC handlers.
+	// The import service is passed in so `workspace.add` can trigger a
+	// per-workspace `.mcp.json` scan right after the path is persisted.
 	const workspaceHistoryRepo = new WorkspaceHistoryRepository(deps.db.getDatabase());
-	setupWorkspaceHandlers(deps.messageHub, workspaceHistoryRepo);
+	setupWorkspaceHandlers(deps.messageHub, workspaceHistoryRepo, deps.mcpImportService);
 
 	// Neo global agent RPC handlers
 	// The PendingActionStore is created here (application lifecycle) so it is
@@ -468,6 +479,20 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		daemonHub: deps.daemonHub,
 		artifactRepo,
 	});
+
+	// Session handlers — registered here (after spaceRuntimeService is built) so
+	// session.create can synchronously call attachSpaceToolsToMemberSession for
+	// ad-hoc Space sessions. Doing this via the daemonHub 'session.created' event
+	// is racy: TypedHub.dispatchLocally does not await async subscribers, so the
+	// query can start (and freeze its MCP config) before the attachment lands.
+	setupSessionHandlers(
+		deps.messageHub,
+		deps.sessionManager,
+		deps.daemonHub,
+		roomManager,
+		deps.spaceManager,
+		spaceRuntimeService
+	);
 
 	// Space task handlers — registered after spaceRuntimeService so the resume
 	// path for pending completion actions can delegate to the runtime.
@@ -650,6 +675,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 				const task = spaceTaskRepo.getTask(taskId);
 				return task?.taskAgentSessionId ?? null;
 			},
+			// Task #85: Neo `delete_room` must clean up each session's worktree
+			// and SDK `.jsonl` files before the room DB row is removed. It routes
+			// each session through the UI-only delete primitive; the narrowed
+			// `ui_neo_room_delete` trigger keeps the CI regression guard in play.
+			deleteSessionResources: (sessionId: string, trigger: 'ui_neo_room_delete') =>
+				deps.sessionManager.deleteSessionResources(sessionId, trigger),
 		},
 	};
 	// Wire Neo activity logger — records every tool invocation for the Activity Feed.

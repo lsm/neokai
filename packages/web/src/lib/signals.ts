@@ -89,7 +89,6 @@ export const currentRoomAgentActiveSignal = signal<boolean>(false);
 export type SettingsSection =
 	| 'general'
 	| 'providers'
-	| 'mcp-servers'
 	| 'app-mcp-servers'
 	| 'skills'
 	| 'fallback-models'

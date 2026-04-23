@@ -45,6 +45,7 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		endNodeId: 'n2',
 		createdAt: 1000,
 		updatedAt: 2000,
+		completionAutonomyLevel: 3,
 		...overrides,
 	};
 }
@@ -114,6 +115,77 @@ describe('buildWorkflowFingerprint', () => {
 		const fp = buildWorkflowFingerprint(wf);
 		expect(fp.channels).toEqual([]);
 		expect(fp.gates).toEqual([]);
+	});
+
+	it('includes sorted nodePrompts for each node-agent pair', () => {
+		const wf = makeWorkflow({
+			nodes: [
+				{
+					id: 'n1',
+					name: 'Coder',
+					agents: [
+						{
+							agentId: 'a1',
+							name: 'coder',
+							customPrompt: { value: 'Write clean code' },
+						},
+					],
+				},
+				{
+					id: 'n2',
+					name: 'Reviewer',
+					agents: [{ agentId: 'a2', name: 'reviewer' }],
+				},
+			],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		expect(fp.nodePrompts).toHaveLength(2);
+		expect(fp.nodePrompts[0]).toBe('Coder|coder|Write clean code');
+		expect(fp.nodePrompts[1]).toBe('Reviewer|reviewer|');
+	});
+
+	it('uses empty string for missing customPrompt in nodePrompts', () => {
+		const wf = makeWorkflow({
+			nodes: [{ id: 'n1', name: 'Coder', agents: [{ agentId: 'a1', name: 'coder' }] }],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		expect(fp.nodePrompts[0]).toBe('Coder|coder|');
+	});
+
+	it('returns sorted completionActions for each node action', () => {
+		const wf = makeWorkflow({
+			nodes: [
+				{
+					id: 'n1',
+					name: 'Coder',
+					agents: [{ agentId: 'a1', name: 'coder' }],
+					completionActions: [
+						{
+							id: 'merge-pr',
+							name: 'Merge PR',
+							type: 'script',
+							requiredLevel: 4,
+							script: 'gh pr merge',
+						},
+					],
+				},
+			],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		expect(fp.completionActions).toHaveLength(1);
+		expect(fp.completionActions[0]).toBe('Coder|merge-pr|script|4|gh pr merge');
+	});
+
+	it('returns empty completionActions when no node has completion actions', () => {
+		const wf = makeWorkflow();
+		const fp = buildWorkflowFingerprint(wf);
+		expect(fp.completionActions).toEqual([]);
+	});
+
+	it('includes completionAutonomyLevel in fingerprint', () => {
+		const wf = makeWorkflow({ completionAutonomyLevel: 5 });
+		const fp = buildWorkflowFingerprint(wf);
+		expect(fp.completionAutonomyLevel).toBe(5);
 	});
 
 	it('serializes gate fields with name, type, and check op', () => {
@@ -323,6 +395,122 @@ describe('computeWorkflowHash', () => {
 			],
 		});
 		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when a node agent customPrompt changes', () => {
+		const wf1 = makeWorkflow({
+			nodes: [
+				{
+					id: 'n1',
+					name: 'Coder',
+					agents: [{ agentId: 'a1', name: 'coder', customPrompt: { value: 'Old prompt' } }],
+				},
+			],
+		});
+		const wf2 = makeWorkflow({
+			nodes: [
+				{
+					id: 'n1',
+					name: 'Coder',
+					agents: [{ agentId: 'a1', name: 'coder', customPrompt: { value: 'New prompt' } }],
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when a node agent customPrompt is added', () => {
+		const wf1 = makeWorkflow({
+			nodes: [{ id: 'n1', name: 'Coder', agents: [{ agentId: 'a1', name: 'coder' }] }],
+		});
+		const wf2 = makeWorkflow({
+			nodes: [
+				{
+					id: 'n1',
+					name: 'Coder',
+					agents: [{ agentId: 'a1', name: 'coder', customPrompt: { value: 'New prompt' } }],
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when a node completionAction is added', () => {
+		const wf1 = makeWorkflow({
+			nodes: [{ id: 'n1', name: 'Coder', agents: [{ agentId: 'a1', name: 'coder' }] }],
+		});
+		const wf2 = makeWorkflow({
+			nodes: [
+				{
+					id: 'n1',
+					name: 'Coder',
+					agents: [{ agentId: 'a1', name: 'coder' }],
+					completionActions: [
+						{
+							id: 'merge-pr',
+							name: 'Merge PR',
+							type: 'script',
+							requiredLevel: 4,
+							script: 'gh pr merge',
+						},
+					],
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when a node completionAction script changes', () => {
+		const base = {
+			id: 'n1',
+			name: 'Coder',
+			agents: [{ agentId: 'a1', name: 'coder' }],
+		};
+		const wf1 = makeWorkflow({
+			nodes: [
+				{
+					...base,
+					completionActions: [
+						{
+							id: 'merge-pr',
+							name: 'Merge PR',
+							type: 'script' as const,
+							requiredLevel: 4 as const,
+							script: 'gh pr merge --squash',
+						},
+					],
+				},
+			],
+		});
+		const wf2 = makeWorkflow({
+			nodes: [
+				{
+					...base,
+					completionActions: [
+						{
+							id: 'merge-pr',
+							name: 'Merge PR',
+							type: 'script' as const,
+							requiredLevel: 4 as const,
+							script: 'gh pr merge --merge',
+						},
+					],
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when completionAutonomyLevel changes', () => {
+		const wf1 = makeWorkflow({ completionAutonomyLevel: 3 });
+		const wf2 = makeWorkflow({ completionAutonomyLevel: 4 });
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('does NOT change when tags differ', () => {
+		const wf1 = makeWorkflow({ tags: ['coding'] });
+		const wf2 = makeWorkflow({ tags: ['coding', 'default'] });
+		expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
 	});
 });
 

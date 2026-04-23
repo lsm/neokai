@@ -9,12 +9,14 @@ import type { DaemonHub } from '../daemon-hub';
 import type { GlobalSettings, SessionSettings } from '@neokai/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { Database } from '../../storage/database';
+import type { McpImportService } from '../mcp';
 
 export function registerSettingsHandlers(
 	messageHub: MessageHub,
 	settingsManager: SettingsManager,
 	daemonHub: DaemonHub,
-	db: Database
+	db: Database,
+	mcpImportService?: McpImportService
 ) {
 	/**
 	 * Get global settings
@@ -143,6 +145,36 @@ export function registerSettingsHandlers(
 			return { success: true };
 		}
 	);
+
+	/**
+	 * Refresh `.mcp.json` imports.
+	 *
+	 * Rescans every known workspace's `.mcp.json` plus `~/.claude/.mcp.json`
+	 * and reconciles `source='imported'` rows in `app_mcp_servers`. Triggered
+	 * manually from the MCP Servers settings UI ("Refresh imports" button).
+	 *
+	 * Returns a per-file summary so the UI can surface which files were scanned,
+	 * which added/updated/removed rows, and which were malformed.
+	 *
+	 * Never throws — per-file parse errors are captured in the result.
+	 */
+	messageHub.onRequest('settings.mcp.refreshImports', async () => {
+		if (!mcpImportService) {
+			// Should never happen in production wiring; guard for test-only callers
+			// that construct handlers without the service (e.g. isolated unit tests).
+			return { results: [] };
+		}
+		const workspacePaths = db.workspaceHistory.list(100).map((row) => row.path);
+		const results = mcpImportService.refreshAll(workspacePaths);
+		// Emit so LiveQuery subscribers (MCP Servers page) invalidate. The repo
+		// already calls `reactiveDb.notifyChange('app_mcp_servers')` on every
+		// insert/update/delete; this event is for UI-level toast/status messaging.
+		daemonHub.emit('settings.updated', {
+			sessionId: 'global',
+			settings: settingsManager.getGlobalSettings(),
+		});
+		return { results };
+	});
 
 	/**
 	 * Get session settings (placeholder for future session-specific settings)
