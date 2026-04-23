@@ -221,11 +221,30 @@ export class SessionRepository {
 	}
 
 	/**
-	 * Delete a session by ID
+	 * Delete a session by ID.
+	 *
+	 * Also drops any `mcp_enablement` rows targeting this session (scope_type =
+	 * 'session', scope_id = id) in the same transaction. Per-session MCP
+	 * overrides from MCP M6 would otherwise become orphan rows on hard-delete:
+	 * harmless (no code reads overrides for a non-existent session), but they
+	 * accumulate forever on workloads with many short-lived sessions. Doing
+	 * this here — rather than in session-lifecycle.ts — keeps the invariant
+	 * "no session row ⇒ no session-scope override rows" true regardless of
+	 * which delete path (UI, tests, explicit RPC, …) is used.
+	 *
+	 * Note: `mcp_enablement` has no FK on `sessions.id` (the column is generic
+	 * `scope_id TEXT`), so cascade must be done explicitly.
 	 */
 	deleteSession(id: string): void {
-		const stmt = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
-		stmt.run(id);
+		const deleteOverrides = this.db.prepare(
+			`DELETE FROM mcp_enablement WHERE scope_type = 'session' AND scope_id = ?`
+		);
+		const deleteSession = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
+		const tx = this.db.transaction((sessionId: string) => {
+			deleteOverrides.run(sessionId);
+			deleteSession.run(sessionId);
+		});
+		tx(id);
 	}
 
 	/**

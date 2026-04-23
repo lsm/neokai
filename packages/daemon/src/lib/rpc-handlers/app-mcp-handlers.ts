@@ -29,6 +29,11 @@ import type { MessageHub } from '@neokai/shared';
 import type {
 	AppMcpServer,
 	CreateAppMcpServerRequest,
+	McpEffectiveEnablementSource,
+	McpEnablementOverride,
+	SessionMcpListRequest,
+	SessionMcpListResponse,
+	SessionMcpServerEntry,
 	UpdateAppMcpServerRequest,
 } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
@@ -50,6 +55,7 @@ import type {
 	McpRoomResetToGlobalRequest,
 	McpRoomResetToGlobalResponse,
 } from '@neokai/shared';
+import { scopeChainForSession } from '../mcp/resolve-mcp-servers';
 import { Logger } from '../logger';
 
 const log = new Logger('app-mcp-handlers');
@@ -311,5 +317,89 @@ export function setupAppMcpHandlers(
 				.catch((err) => log.warn('Failed to emit mcp.registry.changed:', err));
 		}
 		return { deleted } satisfies McpEnablementClearScopeResponse;
+	});
+
+	// -------------------------------------------------------------------------
+	// Session-scope convenience RPC (MCP M6)
+	//
+	// The Tools modal needs to render every registry entry with its effective
+	// enablement for the currently-open session, annotated with the scope that
+	// owns that decision. Doing the resolution here means the UI never has to
+	// re-implement session > room > space > registry precedence.
+	// -------------------------------------------------------------------------
+
+	messageHub.onRequest('session.mcp.list', (data) => {
+		const { sessionId } = data as SessionMcpListRequest;
+		if (!sessionId) throw new Error('sessionId is required');
+
+		const session = db.getSession(sessionId);
+		if (!session) {
+			throw new Error(`Session not found: ${sessionId}`);
+		}
+
+		const registry = db.appMcpServers.list();
+		const chain = scopeChainForSession(session);
+		// Only overrides along this session's chain can influence the decision,
+		// so filter in SQL instead of walking every row.
+		const overrides = db.mcpEnablement.listForScopes(chain);
+
+		// Bucket overrides by scope for O(1) precedence lookup.
+		const sessionOverrides = new Map<string, McpEnablementOverride>();
+		const roomOverrides = new Map<string, McpEnablementOverride>();
+		const spaceOverrides = new Map<string, McpEnablementOverride>();
+		for (const ov of overrides) {
+			if (ov.scopeType === 'session' && ov.scopeId === sessionId) {
+				sessionOverrides.set(ov.serverId, ov);
+			} else if (
+				ov.scopeType === 'room' &&
+				session.context?.roomId &&
+				ov.scopeId === session.context.roomId
+			) {
+				roomOverrides.set(ov.serverId, ov);
+			} else if (
+				ov.scopeType === 'space' &&
+				session.context?.spaceId &&
+				ov.scopeId === session.context.spaceId
+			) {
+				spaceOverrides.set(ov.serverId, ov);
+			}
+		}
+
+		const entries: SessionMcpServerEntry[] = registry.map((server) => {
+			const sessionOv = sessionOverrides.get(server.id);
+			if (sessionOv) {
+				return {
+					server,
+					enabled: sessionOv.enabled,
+					source: 'session' as McpEffectiveEnablementSource,
+					override: sessionOv,
+				};
+			}
+			const roomOv = roomOverrides.get(server.id);
+			if (roomOv) {
+				return {
+					server,
+					enabled: roomOv.enabled,
+					source: 'room' as McpEffectiveEnablementSource,
+					override: roomOv,
+				};
+			}
+			const spaceOv = spaceOverrides.get(server.id);
+			if (spaceOv) {
+				return {
+					server,
+					enabled: spaceOv.enabled,
+					source: 'space' as McpEffectiveEnablementSource,
+					override: spaceOv,
+				};
+			}
+			return {
+				server,
+				enabled: server.enabled,
+				source: 'registry' as McpEffectiveEnablementSource,
+			};
+		});
+
+		return { entries } satisfies SessionMcpListResponse;
 	});
 }
