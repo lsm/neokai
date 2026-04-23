@@ -57,6 +57,16 @@ export interface NeoSettingsManager {
  */
 export interface NeoAppMcpManager {
 	getEnabledMcpConfigs(): Record<string, McpServerConfig>;
+	/**
+	 * Session-aware variant. Neo passes its own `neo:global` session id with no
+	 * space/room context so the resolver falls back to registry defaults — but
+	 * routing through this method keeps all session spawn paths uniform, and
+	 * lets users create scope='session' overrides for Neo itself.
+	 */
+	getEnabledMcpConfigsForSession(session: {
+		id: string;
+		context?: { spaceId?: string; roomId?: string };
+	}): Record<string, McpServerConfig>;
 }
 
 export class NeoAgentManager {
@@ -433,7 +443,12 @@ export class NeoAgentManager {
 			this.toolsConfig,
 			this.actionToolsConfig ?? undefined
 		);
-		const registryMcpServers = this.appMcpManager?.getEnabledMcpConfigs() ?? {};
+		// Session-aware resolver — Neo has no space/room context so the resolver
+		// returns registry defaults, but this keeps all session spawn paths on a
+		// single, scope-aware API (MCP M3) and lets users add per-session
+		// overrides for the `neo:global` session if desired.
+		const registryMcpServers =
+			this.appMcpManager?.getEnabledMcpConfigsForSession({ id: NEO_SESSION_ID }) ?? {};
 
 		for (const name of Object.keys(registryMcpServers)) {
 			if (name in inProcessServers) {

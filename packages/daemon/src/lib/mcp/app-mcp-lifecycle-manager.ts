@@ -24,6 +24,11 @@ import type {
 	McpHttpServerConfig,
 	ValidationResult,
 } from '@neokai/shared';
+import {
+	resolveMcpServers,
+	scopeChainForSession,
+	type ResolveMcpServersSession,
+} from './resolve-mcp-servers';
 
 // Re-export so callers can import from this module without reaching into shared.
 export type { ValidationResult } from '@neokai/shared';
@@ -67,7 +72,40 @@ export class AppMcpLifecycleManager {
 	}
 
 	/**
+	 * Returns SDK MCP configs effective for a given session, resolving the
+	 * session's space / room / session scope chain against the registry via the
+	 * pure {@link resolveMcpServers} function.
+	 *
+	 * This is the canonical entry point for all session-spawn paths (space ad-hoc,
+	 * `space_task_agent`, node-agent, room sessions). Legacy variants
+	 * ({@link getEnabledMcpConfigs}, {@link getEnabledMcpConfigsForRoom}) remain
+	 * for backward compatibility with callers that don't yet have a Session
+	 * object; M5 will remove them.
+	 */
+	getEnabledMcpConfigsForSession(
+		session: ResolveMcpServersSession
+	): Record<string, McpServerConfig> {
+		const registry = this.db.appMcpServers.list();
+		const chain = scopeChainForSession(session);
+		const overrides = this.db.mcpEnablement.listForScopes(chain);
+		const effective = resolveMcpServers(session, registry, overrides);
+
+		const result: Record<string, McpServerConfig> = {};
+		for (const entry of effective) {
+			const validation = this.validateEntry(entry);
+			if (!validation.valid) continue;
+			result[entry.name] = this.convertEntry(entry);
+		}
+		return result;
+	}
+
+	/**
 	 * Returns SDK MCP configs for a specific room.
+	 *
+	 * @deprecated Prefer {@link getEnabledMcpConfigsForSession}, which resolves
+	 * the full session > room > space > registry precedence chain via the pure
+	 * {@link resolveMcpServers} function. This method still supports legacy
+	 * callers that only know a roomId. M5 removes it.
 	 *
 	 * Per-room overrides take precedence:
 	 * - If the room has explicitly enabled servers (via room_mcp_enablement), return those.

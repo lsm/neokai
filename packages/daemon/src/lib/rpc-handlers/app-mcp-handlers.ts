@@ -35,6 +35,14 @@ import type { DaemonHub } from '../daemon-hub';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { Database } from '../../storage/database';
 import type {
+	McpEnablementClearOverrideRequest,
+	McpEnablementClearOverrideResponse,
+	McpEnablementClearScopeRequest,
+	McpEnablementClearScopeResponse,
+	McpEnablementListRequest,
+	McpEnablementListResponse,
+	McpEnablementSetOverrideRequest,
+	McpEnablementSetOverrideResponse,
 	McpRoomGetEnabledRequest,
 	McpRoomGetEnabledResponse,
 	McpRoomSetEnabledRequest,
@@ -230,5 +238,78 @@ export function setupAppMcpHandlers(
 			.catch((err) => log.warn('Failed to emit mcp.registry.changed:', err));
 
 		return { ok: true } satisfies McpRoomResetToGlobalResponse;
+	});
+
+	// -------------------------------------------------------------------------
+	// Scope-aware enablement handlers (M3+)
+	//
+	// These operate on the unified `mcp_enablement` table and support all three
+	// scope types (space / room / session). The older `mcp.room.*` handlers
+	// above still target the legacy `room_mcp_enablement` table and will be
+	// removed in M5.
+	// -------------------------------------------------------------------------
+
+	/** `mcp.enablement.list` — every override at a given scope. */
+	messageHub.onRequest('mcp.enablement.list', (data) => {
+		const { scopeType, scopeId } = data as McpEnablementListRequest;
+		if (!scopeType) throw new Error('scopeType is required');
+		if (!scopeId) throw new Error('scopeId is required');
+		const overrides = db.mcpEnablement.listForScope(scopeType, scopeId);
+		return { overrides } satisfies McpEnablementListResponse;
+	});
+
+	/** `mcp.enablement.setOverride` — upsert a single override. */
+	messageHub.onRequest('mcp.enablement.setOverride', (data) => {
+		const { scopeType, scopeId, serverId, enabled } = data as McpEnablementSetOverrideRequest;
+		if (!scopeType) throw new Error('scopeType is required');
+		if (!scopeId) throw new Error('scopeId is required');
+		if (!serverId) throw new Error('serverId is required');
+		if (typeof enabled !== 'boolean') throw new Error('enabled must be a boolean');
+
+		// Validate that the server exists — otherwise the FK CASCADE is the only
+		// guard and callers get a useless SQL error.
+		const server = db.appMcpServers.get(serverId);
+		if (!server) {
+			throw new Error(`MCP server not found: ${serverId}`);
+		}
+
+		const override = db.mcpEnablement.setOverride(scopeType, scopeId, serverId, enabled);
+
+		daemonHub
+			.emit('mcp.registry.changed', { sessionId: 'global' })
+			.catch((err) => log.warn('Failed to emit mcp.registry.changed:', err));
+
+		return { override } satisfies McpEnablementSetOverrideResponse;
+	});
+
+	/** `mcp.enablement.clearOverride` — delete one override row. */
+	messageHub.onRequest('mcp.enablement.clearOverride', (data) => {
+		const { scopeType, scopeId, serverId } = data as McpEnablementClearOverrideRequest;
+		if (!scopeType) throw new Error('scopeType is required');
+		if (!scopeId) throw new Error('scopeId is required');
+		if (!serverId) throw new Error('serverId is required');
+
+		const deleted = db.mcpEnablement.clearOverride(scopeType, scopeId, serverId);
+		if (deleted) {
+			daemonHub
+				.emit('mcp.registry.changed', { sessionId: 'global' })
+				.catch((err) => log.warn('Failed to emit mcp.registry.changed:', err));
+		}
+		return { deleted } satisfies McpEnablementClearOverrideResponse;
+	});
+
+	/** `mcp.enablement.clearScope` — delete every override at a given scope. */
+	messageHub.onRequest('mcp.enablement.clearScope', (data) => {
+		const { scopeType, scopeId } = data as McpEnablementClearScopeRequest;
+		if (!scopeType) throw new Error('scopeType is required');
+		if (!scopeId) throw new Error('scopeId is required');
+
+		const deleted = db.mcpEnablement.clearScope(scopeType, scopeId);
+		if (deleted > 0) {
+			daemonHub
+				.emit('mcp.registry.changed', { sessionId: 'global' })
+				.catch((err) => log.warn('Failed to emit mcp.registry.changed:', err));
+		}
+		return { deleted } satisfies McpEnablementClearScopeResponse;
 	});
 }

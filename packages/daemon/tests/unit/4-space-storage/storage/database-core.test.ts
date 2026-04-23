@@ -291,8 +291,13 @@ describe('DatabaseCore', () => {
 			// This should work - the directory will be created
 			// Use process.env.TMPDIR to support custom temp directory setups
 			const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
-			dbCore = new DatabaseCore(`${tmpBase}/test-db-core-invalid/test.db`);
-			await expect(dbCore.initialize()).resolves.toBeUndefined();
+			const invalidPath = `${tmpBase}/test-db-core-invalid`;
+			// The test doesn't use the `testDir` helper so ensure leftover state
+			// from a previous run can't poison a fresh initialize (the migration
+			// pipeline assumes tables match current schema).
+			rmSync(invalidPath, { recursive: true, force: true });
+			dbCore = new DatabaseCore(`${invalidPath}/test.db`);
+			await dbCore.initialize();
 		});
 	});
 
