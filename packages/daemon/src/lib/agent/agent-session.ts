@@ -238,6 +238,19 @@ export class AgentSession
 	settingsManager: SettingsManager;
 	readonly logger: Logger;
 
+	/**
+	 * Unified per-scope MCP enablement repo — exposed on the context so the
+	 * QueryOptionsBuilder can resolve the session > room > space > registry
+	 * precedence for skill-wrapped MCP servers (MCP M6).
+	 *
+	 * Exposed as a getter because every AgentSession already owns a Database
+	 * reference; this avoids threading a new constructor arg through every
+	 * spawn call site just to re-wrap something that's already reachable.
+	 */
+	get mcpEnablementRepo(): import('../../storage/repositories/mcp-enablement-repository').McpEnablementRepository {
+		return this.db.mcpEnablement;
+	}
+
 	constructor(
 		readonly session: Session,
 		readonly db: Database,

@@ -1324,6 +1324,180 @@ describe('QueryOptionsBuilder', () => {
 				url: 'http://localhost:3002/mcp',
 			});
 		});
+
+		// ------------------------------------------------------------------
+		// MCP M6: per-session `mcp_enablement` overrides must filter the
+		// skill bridge too, not just the spawn path's direct `config.mcpServers`
+		// injection. Without this wiring a user disabling a skill-wrapped MCP
+		// server via the Tools modal would see the toggle persist but the
+		// server would still be injected (because the skill bridge bypasses
+		// config.mcpServers).
+		// ------------------------------------------------------------------
+		describe('mcp_enablement override filtering (MCP M6)', () => {
+			const targetAppServer = {
+				id: 'mcp-server-uuid',
+				name: 'brave-search-server',
+				description: 'Brave Search MCP',
+				sourceType: 'stdio' as const,
+				command: 'npx',
+				args: ['-y', 'brave-mcp'],
+				env: { BRAVE_API_KEY: 'test-key' },
+				enabled: true,
+			};
+			const mcpSkill = {
+				id: 'skill-mcp-1',
+				name: 'brave-search',
+				displayName: 'Brave Search',
+				description: 'Web search via Brave',
+				sourceType: 'mcp_server' as const,
+				config: { type: 'mcp_server' as const, appMcpServerId: 'mcp-server-uuid' },
+				enabled: true,
+				builtIn: false,
+				validationStatus: 'valid' as const,
+				createdAt: Date.now(),
+			};
+
+			function buildContext(
+				overrides: {
+					scopeType: 'session' | 'room' | 'space';
+					scopeId: string;
+					serverId: string;
+					enabled: boolean;
+				}[]
+			): QueryOptionsBuilderContext {
+				const mockAppMcpServerRepo = {
+					get: mock(() => targetAppServer),
+					list: mock(() => [targetAppServer]),
+				};
+				const mockEnablementRepo = {
+					listForScopes: mock(() =>
+						overrides.map((ov) => ({
+							scopeType: ov.scopeType,
+							scopeId: ov.scopeId,
+							serverId: ov.serverId,
+							enabled: ov.enabled,
+						}))
+					),
+				};
+				const mockSkillsManager = {
+					getEnabledSkills: mock(() => [mcpSkill]),
+				};
+				return {
+					session: mockSession,
+					settingsManager: mockSettingsManager,
+					skillsManager:
+						mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
+					appMcpServerRepo:
+						mockAppMcpServerRepo as unknown as import('../../../../src/storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+					mcpEnablementRepo:
+						mockEnablementRepo as unknown as import('../../../../src/storage/repositories/mcp-enablement-repository').McpEnablementRepository,
+				};
+			}
+
+			it('excludes a skill-wrapped MCP server disabled by a session override', async () => {
+				const ctx = buildContext([
+					{
+						scopeType: 'session',
+						scopeId: mockSession.id,
+						serverId: 'mcp-server-uuid',
+						enabled: false,
+					},
+				]);
+				const builder = new QueryOptionsBuilder(ctx);
+				const options = await builder.build();
+
+				// Skill-wrapped server must not be injected despite the skill itself
+				// and the registry row both being enabled.
+				expect(options.mcpServers?.['brave-search']).toBeUndefined();
+			});
+
+			it('includes the server when the session override explicitly enables a globally-disabled registry row', async () => {
+				// Start from a disabled registry row so we can verify the session
+				// override can override-in (not just override-out).
+				const disabledAppServer = { ...targetAppServer, enabled: false };
+				const mockAppMcpServerRepo = {
+					get: mock(() => disabledAppServer),
+					list: mock(() => [disabledAppServer]),
+				};
+				const mockEnablementRepo = {
+					listForScopes: mock(() => [
+						{
+							scopeType: 'session' as const,
+							scopeId: mockSession.id,
+							serverId: 'mcp-server-uuid',
+							enabled: true,
+						},
+					]),
+				};
+				const mockSkillsManager = { getEnabledSkills: mock(() => [mcpSkill]) };
+				const ctx: QueryOptionsBuilderContext = {
+					session: mockSession,
+					settingsManager: mockSettingsManager,
+					skillsManager:
+						mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
+					appMcpServerRepo:
+						mockAppMcpServerRepo as unknown as import('../../../../src/storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+					mcpEnablementRepo:
+						mockEnablementRepo as unknown as import('../../../../src/storage/repositories/mcp-enablement-repository').McpEnablementRepository,
+				};
+				const builder = new QueryOptionsBuilder(ctx);
+				const options = await builder.build();
+
+				expect(options.mcpServers?.['brave-search']).toEqual({
+					command: 'npx',
+					args: ['-y', 'brave-mcp'],
+					env: { BRAVE_API_KEY: 'test-key' },
+				});
+			});
+
+			it('honours the session > room > space > registry precedence chain', async () => {
+				// room disables; session does NOT override — server must be hidden.
+				mockSession.context = { roomId: 'room-1', spaceId: 'space-1' };
+				const ctxRoomDisables = buildContext([
+					{ scopeType: 'room', scopeId: 'room-1', serverId: 'mcp-server-uuid', enabled: false },
+				]);
+				const builder1 = new QueryOptionsBuilder(ctxRoomDisables);
+				const options1 = await builder1.build();
+				expect(options1.mcpServers?.['brave-search']).toBeUndefined();
+
+				// Same room-level disable, but now a session-scope override re-enables —
+				// more specific scope wins.
+				const ctxSessionReenables = buildContext([
+					{ scopeType: 'room', scopeId: 'room-1', serverId: 'mcp-server-uuid', enabled: false },
+					{
+						scopeType: 'session',
+						scopeId: mockSession.id,
+						serverId: 'mcp-server-uuid',
+						enabled: true,
+					},
+				]);
+				const builder2 = new QueryOptionsBuilder(ctxSessionReenables);
+				const options2 = await builder2.build();
+				expect(options2.mcpServers?.['brave-search']).toBeDefined();
+			});
+
+			it('falls back to the registry default when no enablement repo is provided', async () => {
+				// No mcpEnablementRepo — pre-M6 behaviour preserved: registry row's
+				// enabled flag is the only signal.
+				const disabledAppServer = { ...targetAppServer, enabled: false };
+				const mockAppMcpServerRepo = {
+					get: mock(() => disabledAppServer),
+					list: mock(() => [disabledAppServer]),
+				};
+				const mockSkillsManager = { getEnabledSkills: mock(() => [mcpSkill]) };
+				const ctx: QueryOptionsBuilderContext = {
+					session: mockSession,
+					settingsManager: mockSettingsManager,
+					skillsManager:
+						mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
+					appMcpServerRepo:
+						mockAppMcpServerRepo as unknown as import('../../../../src/storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+				};
+				const builder = new QueryOptionsBuilder(ctx);
+				const options = await builder.build();
+				expect(options.mcpServers?.['brave-search']).toBeUndefined();
+			});
+		});
 	});
 
 	describe('room skill overrides', () => {

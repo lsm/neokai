@@ -4,14 +4,13 @@
  * Unified view of MCP servers and tools for a session:
  * - Agent Runtime Tools: in-process MCPs attached at session-spawn time
  *   (space-agent-tools, db-query, task-agent, node-agent, etc.) — read-only.
+ * - Session MCP Servers: per-session overrides of registry servers. Toggles
+ *   write an `mcp_enablement` row at scope='session' so the override is
+ *   applied on top of any room/space/registry defaults. Takes effect on the
+ *   next session respawn (M6 of `unify-mcp-config-model`).
  * - App Skills & MCP Servers: from the unified skills registry, toggled
  *   globally (changes affect all sessions).
  * - Advanced: Claude Code preset toggle.
- *
- * Per-session "disable this MCP" overrides moved out of session config and
- * into the `mcp_enablement` table (M5 of `unify-mcp-config-model`). The Tools
- * Modal therefore no longer renders a session-scope MCP enable/disable list;
- * any per-session override UI will land in M6 against the new registry.
  */
 
 import { useSignal, useComputed } from '@preact/signals';
@@ -20,7 +19,16 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { Modal } from './ui/Modal.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
-import type { Session, ToolsConfig, GlobalToolsConfig, AppSkill } from '@neokai/shared';
+import type {
+	Session,
+	ToolsConfig,
+	GlobalToolsConfig,
+	AppSkill,
+	SessionMcpListResponse,
+	SessionMcpServerEntry,
+	McpEnablementSetOverrideResponse,
+	McpEnablementClearOverrideResponse,
+} from '@neokai/shared';
 import { listRuntimeMcpServers } from '../lib/api-helpers.ts';
 import { skillsStore } from '../lib/skills-store.ts';
 
@@ -154,6 +162,18 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	// space-agent-tools, db-query, task-agent, node-agent, etc.
 	const runtimeMcpServers = useSignal<string[]>([]);
 
+	// Per-session MCP registry state (MCP M6).
+	//
+	// The daemon resolves session > room > space > registry precedence and
+	// returns, for each registry entry, its effective enabled flag and which
+	// scope owns that decision. Toggles write an `mcp_enablement` row at
+	// scope='session' so it always wins over less-specific scopes; clearing
+	// reverts to inheritance.
+	const sessionMcpGroupOpen = useSignal(true);
+	const sessionMcpEntries = useSignal<SessionMcpServerEntry[]>([]);
+	const sessionMcpToggling = useSignal<Set<string>>(new Set());
+	const sessionMcpSearch = useSignal('');
+
 	// Search filter for App Skills section
 	const appSkillSearch = useSignal('');
 
@@ -169,6 +189,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 			loadConfig();
 			loadGlobalConfig();
 			loadRuntimeMcpServers();
+			void loadSessionMcpEntries();
 			void skillsStore.subscribe().catch(() => {
 				toast.error('Failed to load App MCP Servers');
 			});
@@ -205,6 +226,89 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		}
 	};
 
+	const loadSessionMcpEntries = async () => {
+		if (!session) {
+			sessionMcpEntries.value = [];
+			return;
+		}
+		try {
+			const hub = await connectionManager.getHub();
+			const response = await hub.request<SessionMcpListResponse>('session.mcp.list', {
+				sessionId: session.id,
+			});
+			sessionMcpEntries.value = response.entries ?? [];
+		} catch {
+			// Typically means the daemon rejected the session id; show nothing
+			// rather than an error banner — the empty state is self-explanatory.
+			sessionMcpEntries.value = [];
+		}
+	};
+
+	/**
+	 * Toggle the effective enablement of a single MCP server for this session.
+	 *
+	 * Precedence matters here: we always write an `mcp_enablement` row at
+	 * scope='session' on toggle, because the alternative ("clear the override
+	 * if new state matches the inherited state") leaks inheritance details
+	 * into the UI — users who want a stable on/off for this session shouldn't
+	 * have to care whether the room or space flipped underneath them later.
+	 * The "Clear override" affordance (handleClearSessionMcpOverride) is the
+	 * escape hatch for users who explicitly want to revert to inheritance.
+	 */
+	const toggleSessionMcp = async (entry: SessionMcpServerEntry) => {
+		if (!session) return;
+		const serverId = entry.server.id;
+		const next = !entry.enabled;
+		const toggling = new Set(sessionMcpToggling.value);
+		toggling.add(serverId);
+		sessionMcpToggling.value = toggling;
+		try {
+			const hub = await connectionManager.getHub();
+			await hub.request<McpEnablementSetOverrideResponse>('mcp.enablement.setOverride', {
+				scopeType: 'session',
+				scopeId: session.id,
+				serverId,
+				enabled: next,
+			});
+			await loadSessionMcpEntries();
+		} catch {
+			toast.error(`Failed to toggle ${entry.server.name}`);
+		} finally {
+			const done = new Set(sessionMcpToggling.value);
+			done.delete(serverId);
+			sessionMcpToggling.value = done;
+		}
+	};
+
+	/**
+	 * Delete the session-scope override row for a server, reverting to the
+	 * next most-specific scope (room → space → registry default). No-op when
+	 * the effective decision isn't already a session override.
+	 */
+	const handleClearSessionMcpOverride = async (entry: SessionMcpServerEntry) => {
+		if (!session) return;
+		if (entry.source !== 'session') return;
+		const serverId = entry.server.id;
+		const toggling = new Set(sessionMcpToggling.value);
+		toggling.add(serverId);
+		sessionMcpToggling.value = toggling;
+		try {
+			const hub = await connectionManager.getHub();
+			await hub.request<McpEnablementClearOverrideResponse>('mcp.enablement.clearOverride', {
+				scopeType: 'session',
+				scopeId: session.id,
+				serverId,
+			});
+			await loadSessionMcpEntries();
+		} catch {
+			toast.error(`Failed to clear override for ${entry.server.name}`);
+		} finally {
+			const done = new Set(sessionMcpToggling.value);
+			done.delete(serverId);
+			sessionMcpToggling.value = done;
+		}
+	};
+
 	const isClaudeCodePresetAllowed = useComputed(
 		() => globalConfig.value?.systemPrompt?.claudeCodePreset?.allowed ?? true
 	);
@@ -224,6 +328,17 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 			(s) =>
 				s.displayName.toLowerCase().includes(q) ||
 				(s.description?.toLowerCase().includes(q) ?? false)
+		);
+	});
+
+	// Filtered session MCP entries (MCP M6).
+	const filteredSessionMcpEntries = useComputed(() => {
+		const q = sessionMcpSearch.value.trim().toLowerCase();
+		if (!q) return sessionMcpEntries.value;
+		return sessionMcpEntries.value.filter(
+			(e) =>
+				e.server.name.toLowerCase().includes(q) ||
+				(e.server.description?.toLowerCase().includes(q) ?? false)
 		);
 	});
 
@@ -373,6 +488,131 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 											</div>
 										);
 									})}
+								</div>
+							)}
+						</div>
+						<div class={`border-t ${borderColors.ui.secondary}`} />
+					</>
+				)}
+
+				{/* Session MCP Servers (MCP M6) —
+				    Per-session overrides of the app-level registry. Hidden when the
+				    registry is empty so users aren't presented with a blank section
+				    during initial setup. */}
+				{sessionMcpEntries.value.length > 0 && (
+					<>
+						<div>
+							<div class="flex items-center justify-between py-2 cursor-pointer select-none group">
+								<button
+									type="button"
+									class="flex items-center gap-2 flex-1 text-left hover:text-gray-200 transition-colors"
+									onClick={() => {
+										sessionMcpGroupOpen.value = !sessionMcpGroupOpen.value;
+									}}
+									aria-expanded={sessionMcpGroupOpen.value}
+								>
+									<svg
+										class={`w-3.5 h-3.5 text-gray-500 transition-transform ${sessionMcpGroupOpen.value ? 'rotate-90' : ''}`}
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke="currentColor"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M9 5l7 7-7 7"
+										/>
+									</svg>
+									<span class="text-sm font-medium text-gray-300">Session MCP Servers</span>
+									<span class="text-xs text-gray-600">({sessionMcpEntries.value.length})</span>
+								</button>
+								<ScopeBadge scope="session" />
+							</div>
+							{sessionMcpGroupOpen.value && (
+								<div class="mt-2 ml-5 space-y-2">
+									<div class="text-xs text-gray-500">
+										Overrides apply to this session only. Changes take effect on the next respawn.
+									</div>
+									{sessionMcpEntries.value.length > 4 && (
+										<input
+											type="search"
+											placeholder="Filter MCP servers…"
+											value={sessionMcpSearch.value}
+											onInput={(e) => {
+												sessionMcpSearch.value = (e.target as HTMLInputElement).value;
+											}}
+											class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2.5 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
+										/>
+									)}
+									{filteredSessionMcpEntries.value.length === 0 ? (
+										<div class="text-xs text-gray-600 py-1">
+											No servers match &ldquo;{sessionMcpSearch.value}&rdquo;.
+										</div>
+									) : (
+										<div class="space-y-1">
+											{filteredSessionMcpEntries.value.map((entry) => {
+												const isToggling = sessionMcpToggling.value.has(entry.server.id);
+												const sourceLabel =
+													entry.source === 'session'
+														? 'Session override'
+														: entry.source === 'room'
+															? 'Inherited from room'
+															: entry.source === 'space'
+																? 'Inherited from space'
+																: 'Registry default';
+												return (
+													<div
+														key={`session-mcp-${entry.server.id}`}
+														class={`flex items-center gap-2 p-2 rounded-lg bg-dark-800/50 min-w-0 ${
+															isToggling ? 'opacity-60' : ''
+														}`}
+													>
+														<svg
+															class="w-3.5 h-3.5 text-amber-400 flex-shrink-0"
+															fill="none"
+															viewBox="0 0 24 24"
+															stroke="currentColor"
+														>
+															<path
+																stroke-linecap="round"
+																stroke-linejoin="round"
+																stroke-width={2}
+																d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"
+															/>
+														</svg>
+														<div class="flex-1 min-w-0">
+															<div class="text-xs text-gray-200 truncate">{entry.server.name}</div>
+															<div class="text-[10px] text-gray-500 truncate">{sourceLabel}</div>
+														</div>
+														<div class="flex items-center gap-2 flex-shrink-0">
+															{entry.source === 'session' && (
+																<button
+																	type="button"
+																	class="text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+																	title="Revert this session back to the inherited value"
+																	onClick={() => void handleClearSessionMcpOverride(entry)}
+																	disabled={isToggling}
+																>
+																	Clear
+																</button>
+															)}
+															{isToggling && (
+																<div class="w-2.5 h-2.5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
+															)}
+															<input
+																type="checkbox"
+																checked={entry.enabled}
+																onChange={() => void toggleSessionMcp(entry)}
+																disabled={isToggling}
+																class="w-3.5 h-3.5 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+															/>
+														</div>
+													</div>
+												);
+											})}
+										</div>
+									)}
 								</div>
 							)}
 						</div>
