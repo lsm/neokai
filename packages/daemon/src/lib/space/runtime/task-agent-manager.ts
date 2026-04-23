@@ -677,7 +677,12 @@ export class TaskAgentManager {
 			// Note: task agent sessions are short-lived (one per task), so there is no
 			// mcp.registry.changed subscription here. Registry changes during a running task
 			// are not hot-reloaded; they take effect when the next task agent is spawned.
-			const registryMcpServers = this.config.appMcpManager?.getEnabledMcpConfigs() ?? {};
+			// Resolve overrides for the task agent session (scope='space' applies).
+			const registryMcpServers =
+				this.config.appMcpManager?.getEnabledMcpConfigsForSession({
+					id: sessionId,
+					context: { spaceId },
+				}) ?? {};
 			for (const name of Object.keys(registryMcpServers)) {
 				if (name === 'task-agent') {
 					log.warn(
@@ -1253,7 +1258,13 @@ export class TaskAgentManager {
 				);
 
 				// Merge registry-sourced MCP servers alongside the per-session ones.
-				const registryMcpServers = this.config.appMcpManager?.getEnabledMcpConfigs() ?? {};
+				// Resolve via the session-aware resolver so scope='space' / scope='session'
+				// overrides in `mcp_enablement` are honoured.
+				const registryMcpServers =
+					this.config.appMcpManager?.getEnabledMcpConfigsForSession({
+						id: sessionId,
+						context: { spaceId },
+					}) ?? {};
 				const mergedMcpServers = {
 					...registryMcpServers,
 					...init.mcpServers,
@@ -1476,7 +1487,13 @@ export class TaskAgentManager {
 		//
 		// Note: skills-based MCP servers (from skillsManager) are injected separately at query
 		// start time via QueryOptionsBuilder.getMcpServersFromSkills(), NOT via setRuntimeMcpServers.
-		const subSessionRegistryMcpServers = this.config.appMcpManager?.getEnabledMcpConfigs() ?? {};
+		// Session-aware resolver — scope='space' / scope='session' overrides apply.
+		const subSessionSpaceId = this.config.taskRepo.getTask(taskId)?.spaceId;
+		const subSessionRegistryMcpServers =
+			this.config.appMcpManager?.getEnabledMcpConfigsForSession({
+				id: sessionId,
+				context: subSessionSpaceId ? { spaceId: subSessionSpaceId } : {},
+			}) ?? {};
 		const mergedSubSessionMcpServers = {
 			...subSessionRegistryMcpServers,
 			...init.mcpServers,
@@ -2745,7 +2762,12 @@ export class TaskAgentManager {
 		// Merge registry-sourced MCP servers alongside the in-process task-agent server,
 		// mirroring the same logic in spawnTaskAgent() so rehydrated sessions have the
 		// same MCP configuration as freshly spawned ones.
-		const rehydrateRegistryMcpServers = this.config.appMcpManager?.getEnabledMcpConfigs() ?? {};
+		// Session-aware resolver — scope='space' / scope='session' overrides apply.
+		const rehydrateRegistryMcpServers =
+			this.config.appMcpManager?.getEnabledMcpConfigsForSession({
+				id: sessionId,
+				context: { spaceId },
+			}) ?? {};
 		for (const name of Object.keys(rehydrateRegistryMcpServers)) {
 			if (name === 'task-agent') {
 				log.warn(
@@ -2942,7 +2964,12 @@ export class TaskAgentManager {
 		);
 
 		// Merge registry-sourced MCP servers, letting node-agent server take precedence.
-		const registryMcpServers = this.config.appMcpManager?.getEnabledMcpConfigs() ?? {};
+		// Session-aware resolver — scope='space' / scope='session' overrides apply.
+		const registryMcpServers =
+			this.config.appMcpManager?.getEnabledMcpConfigsForSession({
+				id: subSessionId,
+				context: { spaceId },
+			}) ?? {};
 		const mergedMcpServers: Record<string, McpServerConfig> = {
 			...registryMcpServers,
 			'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,

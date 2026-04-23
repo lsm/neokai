@@ -936,21 +936,24 @@ describe('TaskAgentManager', () => {
 			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
+			const registryConfigs = {
+				'registry-mcp': {
+					type: 'stdio' as const,
+					command: 'echo',
+					args: ['ok'],
+				},
+			};
 			const configRef = ctx.manager as unknown as {
 				config: {
 					appMcpManager?: {
 						getEnabledMcpConfigs: () => Record<string, unknown>;
+						getEnabledMcpConfigsForSession: () => Record<string, unknown>;
 					};
 				};
 			};
 			configRef.config.appMcpManager = {
-				getEnabledMcpConfigs: () => ({
-					'registry-mcp': {
-						type: 'stdio',
-						command: 'echo',
-						args: ['ok'],
-					},
-				}),
+				getEnabledMcpConfigs: () => registryConfigs,
+				getEnabledMcpConfigsForSession: () => registryConfigs,
 			};
 
 			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:step-merge-mcp`;

@@ -383,6 +383,10 @@ const EXCLUDED_TABLE_NAMES: string[] = [
 	'github_filter_configs',
 	// Workspace history — user-level path bookmarks, not useful for agent queries
 	'workspace_history',
+	// MCP enablement overrides — infrastructure config spanning multiple scopes
+	// (space/room/session), not useful for ad-hoc agent queries. Agents should
+	// read MCP state through the resolver rather than hitting the table directly.
+	'mcp_enablement',
 	// Dropped tables (no longer exist in schema)
 	'space_session_groups',
 	'space_session_group_members',

@@ -367,7 +367,16 @@ export class RoomRuntimeService {
 		sessionId: string
 	): void {
 		const fileMcpServers = ctx.settingsManager.getEnabledMcpServersConfig();
-		const registryMcpServers = ctx.appMcpManager?.getEnabledMcpConfigs() ?? {};
+		// Resolve registry servers via the session-aware resolver so that any
+		// per-room / per-session overrides in `mcp_enablement` are honoured.
+		// Worker sessions don't carry a spaceId; the roomId is embedded in their
+		// session ID (`{role}:{roomId}:{taskId}:{uuid8}`).
+		const roomId = RoomRuntimeService.extractRoomId(sessionId) ?? undefined;
+		const registryMcpServers =
+			ctx.appMcpManager?.getEnabledMcpConfigsForSession({
+				id: sessionId,
+				...(roomId ? { context: { roomId } } : {}),
+			}) ?? {};
 
 		// Detect and warn on name collisions (file-based wins)
 		for (const name of Object.keys(fileMcpServers)) {
@@ -843,8 +852,14 @@ export class RoomRuntimeService {
 				// TODO(Milestone 5): When workspaceRoot becomes optional, revisit this to create a
 				// room-scoped SettingsManager using room.defaultPath if needed.
 				const fileMcpServers = this.ctx.settingsManager.getEnabledMcpServersConfig();
+				// Session-aware resolver — the room chat session carries a roomId in
+				// its context. Space overrides are N/A here (room chat is not owned
+				// by a Space), but the resolver handles the missing scope gracefully.
 				const registryMcpServers =
-					this.ctx.appMcpManager?.getEnabledMcpConfigsForRoom(room.id) ?? {};
+					this.ctx.appMcpManager?.getEnabledMcpConfigsForSession({
+						id: roomChatSessionId,
+						context: { roomId: room.id },
+					}) ?? {};
 
 				// Create a room-scoped db-query server (auto-injects WHERE room_id = ?).
 				// Only created when dbPath is configured; close any existing instance first to
@@ -988,9 +1003,12 @@ export class RoomRuntimeService {
 					// Read both sources inside the handler per-room so that per-room enablement
 					// is respected when re-applying configs after registry changes.
 					const fileMcpServers = this.ctx.settingsManager.getEnabledMcpServersConfig();
-					const registryMcpServers =
-						this.ctx.appMcpManager?.getEnabledMcpConfigsForRoom(roomId) ?? {};
 					const roomChatSessionId = `room:chat:${roomId}`;
+					const registryMcpServers =
+						this.ctx.appMcpManager?.getEnabledMcpConfigsForSession({
+							id: roomChatSessionId,
+							context: { roomId },
+						}) ?? {};
 					void this.ctx.sessionManager
 						.getSessionAsync(roomChatSessionId)
 						.then((session) => {

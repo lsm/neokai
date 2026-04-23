@@ -260,7 +260,10 @@ function buildManager(opts: {
 	);
 
 	const appMcpManager = hasAppMcpManager
-		? { getEnabledMcpConfigs: () => registryMcpServers }
+		? {
+				getEnabledMcpConfigs: () => registryMcpServers,
+				getEnabledMcpConfigsForSession: () => registryMcpServers,
+			}
 		: undefined;
 
 	const mockSkillsManager = {
