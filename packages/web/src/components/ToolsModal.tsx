@@ -1,10 +1,17 @@
 /**
- * Tools Modal Component (Redesigned)
+ * Tools Modal Component
  *
- * Unified view of all available MCP servers and tools:
- * - App Skills & MCP Servers: from skills registry (global scope – affects all sessions)
- * - Project MCP Servers: from settings files (session scope – affects this session)
- * - Advanced: Claude Code Preset & Settings Sources (hidden by default)
+ * Unified view of MCP servers and tools for a session:
+ * - Agent Runtime Tools: in-process MCPs attached at session-spawn time
+ *   (space-agent-tools, db-query, task-agent, node-agent, etc.) — read-only.
+ * - App Skills & MCP Servers: from the unified skills registry, toggled
+ *   globally (changes affect all sessions).
+ * - Advanced: Claude Code preset toggle.
+ *
+ * Per-session "disable this MCP" overrides moved out of session config and
+ * into the `mcp_enablement` table (M5 of `unify-mcp-config-model`). The Tools
+ * Modal therefore no longer renders a session-scope MCP enable/disable list;
+ * any per-session override UI will land in M6 against the new registry.
  */
 
 import { useSignal, useComputed } from '@preact/signals';
@@ -13,19 +20,8 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { Modal } from './ui/Modal.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
-import type {
-	Session,
-	ToolsConfig,
-	GlobalToolsConfig,
-	SettingSource,
-	AppSkill,
-} from '@neokai/shared';
-import {
-	listMcpServersFromSources,
-	listRuntimeMcpServers,
-	type McpServerFromSource,
-	type McpServersFromSourcesResponse,
-} from '../lib/api-helpers.ts';
+import type { Session, ToolsConfig, GlobalToolsConfig, AppSkill } from '@neokai/shared';
+import { listRuntimeMcpServers } from '../lib/api-helpers.ts';
 import { skillsStore } from '../lib/skills-store.ts';
 
 /**
@@ -58,27 +54,13 @@ const RUNTIME_MCP_LABELS: Record<string, { title: string; description: string }>
 		description: 'Room-scoped coordination between co-located agents',
 	},
 };
-import {
-	isServerEnabled,
-	toggleServer as toggleServerUtil,
-	toggleGroupServers,
-	computeGroupState,
-	computeSkillGroupState,
-	resolveSettingSources,
-} from './ToolsModal.utils.ts';
+import { computeSkillGroupState } from './ToolsModal.utils.ts';
 
 interface ToolsModalProps {
 	isOpen: boolean;
 	onClose: () => void;
 	session: Session | null;
 }
-
-// Source label mapping
-const SOURCE_LABELS: Record<SettingSource, string> = {
-	user: 'User (~/.claude/)',
-	project: 'Project (.claude/)',
-	local: 'Local (.claude/settings.local.json)',
-};
 
 // Scope badge component
 function ScopeBadge({ scope }: { scope: 'global' | 'session' }) {
@@ -161,14 +143,11 @@ function GroupHeader({
 export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	const saving = useSignal(false);
 	const hasChanges = useSignal(false);
-	const mcpLoading = useSignal(true);
-	const mcpServersData = useSignal<McpServersFromSourcesResponse | null>(null);
 	const globalConfig = useSignal<GlobalToolsConfig | null>(null);
 
 	// Collapsible group state (open by default)
 	const runtimeMcpGroupOpen = useSignal(true);
 	const appMcpGroupOpen = useSignal(true);
-	const fileMcpGroupOpen = useSignal(true);
 	const advancedOpen = useSignal(false);
 
 	// Runtime-attached (SDK-type) MCP servers for this session —
@@ -181,12 +160,8 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	// Per-skill loading state for immediate toggles
 	const skillToggling = useSignal<Set<string>>(new Set());
 
-	// Session-local config state
-	const disabledMcpServers = useSignal<string[]>([]);
-
 	// Advanced settings (hidden by default)
 	const useClaudeCodePreset = useSignal(true);
-	const settingSources = useSignal<SettingSource[]>(['user', 'project', 'local']);
 
 	// Load current config and MCP servers when modal opens
 	useEffect(() => {
@@ -203,33 +178,11 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		};
 	}, [isOpen, session?.id]);
 
-	// Reload MCP servers when setting sources change
-	useEffect(() => {
-		if (isOpen) {
-			loadMcpServers();
-		}
-	}, [isOpen, settingSources.value]);
-
 	const loadConfig = () => {
 		if (!session) return;
 		const tools = session.config.tools;
 		useClaudeCodePreset.value = tools?.useClaudeCodePreset ?? true;
-		settingSources.value = resolveSettingSources(tools) as SettingSource[];
-		disabledMcpServers.value = tools?.disabledMcpServers ?? [];
 		hasChanges.value = false;
-	};
-
-	const loadMcpServers = async () => {
-		if (!session) return;
-		try {
-			mcpLoading.value = true;
-			const response = await listMcpServersFromSources(session.id);
-			mcpServersData.value = response;
-		} catch {
-			mcpServersData.value = null;
-		} finally {
-			mcpLoading.value = false;
-		}
 	};
 
 	const loadGlobalConfig = async () => {
@@ -252,7 +205,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		}
 	};
 
-	const isMcpAllowed = useComputed(() => globalConfig.value?.mcp?.allowProjectMcp ?? true);
 	const isClaudeCodePresetAllowed = useComputed(
 		() => globalConfig.value?.systemPrompt?.claudeCodePreset?.allowed ?? true
 	);
@@ -274,12 +226,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 				(s.description?.toLowerCase().includes(q) ?? false)
 		);
 	});
-
-	// File-based MCP server helpers
-	const handleToggleServer = (serverName: string) => {
-		disabledMcpServers.value = toggleServerUtil(disabledMcpServers.value, serverName);
-		hasChanges.value = true;
-	};
 
 	// App-level skill toggle (immediate, global)
 	const toggleSkill = async (skill: AppSkill) => {
@@ -322,49 +268,12 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		skillToggling.value = done;
 	};
 
-	// Group toggle for file-based servers by source
-	const toggleFileMcpGroup = (source: SettingSource) => {
-		const servers = mcpServersData.value?.servers[source] ?? [];
-		disabledMcpServers.value = toggleGroupServers(
-			disabledMcpServers.value,
-			servers.map((s) => s.name)
-		);
-		hasChanges.value = true;
-	};
-
-	// Group toggle for all file-based servers across all sources
-	const toggleAllFileMcp = () => {
-		const allServerNames = (['user', 'project', 'local'] as SettingSource[])
-			.filter((src) => settingSources.value.includes(src))
-			.flatMap((src) => (mcpServersData.value?.servers[src] ?? []).map((s) => s.name));
-		disabledMcpServers.value = toggleGroupServers(disabledMcpServers.value, allServerNames);
-		hasChanges.value = true;
-	};
-
-	const toggleSettingSource = (source: SettingSource, enabled: boolean) => {
-		if (enabled) {
-			if (!settingSources.value.includes(source)) {
-				settingSources.value = [...settingSources.value, source];
-			}
-		} else {
-			const newSources = settingSources.value.filter((s) => s !== source);
-			if (newSources.length === 0) {
-				toast.error('At least one setting source must be enabled');
-				return;
-			}
-			settingSources.value = newSources;
-		}
-		hasChanges.value = true;
-	};
-
 	const handleSave = async () => {
 		if (!session || !hasChanges.value) return;
 		try {
 			saving.value = true;
 			const toolsConfig: ToolsConfig = {
 				useClaudeCodePreset: useClaudeCodePreset.value,
-				settingSources: settingSources.value,
-				disabledMcpServers: disabledMcpServers.value,
 			};
 			const hub = await connectionManager.getHub();
 			const result = await hub.request<{ success: boolean; error?: string }>('tools.save', {
@@ -391,19 +300,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	};
 
 	if (!session) return null;
-
-	// Compute file-based server counts
-	const enabledSources = (['user', 'project', 'local'] as SettingSource[]).filter((src) =>
-		settingSources.value.includes(src)
-	);
-	const allFileMcpServers = enabledSources.flatMap(
-		(src) => mcpServersData.value?.servers[src] ?? []
-	);
-	const allFileMcpServerNames = allFileMcpServers.map((s) => s.name);
-	const { allEnabled: fileMcpAllOn, someEnabled: fileMcpSomeOn } = computeGroupState(
-		disabledMcpServers.value,
-		allFileMcpServerNames
-	);
 
 	// App MCP counts (based on all, not filtered)
 	const appSkills = appMcpSkills.value;
@@ -606,117 +502,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
 				<div class={`border-t ${borderColors.ui.secondary}`} />
 
-				{/* File-based MCP Servers Section */}
-				<div>
-					{!isMcpAllowed.value ? (
-						<div class="text-sm text-gray-500 py-2 italic">
-							MCP servers are disabled in global settings.
-						</div>
-					) : mcpLoading.value ? (
-						<div class="flex items-center gap-2 text-sm text-gray-400 py-2">
-							<div class="w-4 h-4 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
-							Loading servers...
-						</div>
-					) : (
-						<>
-							<GroupHeader
-								title="Project MCP Servers"
-								isOpen={fileMcpGroupOpen.value}
-								onToggleOpen={() => {
-									fileMcpGroupOpen.value = !fileMcpGroupOpen.value;
-								}}
-								allEnabled={fileMcpAllOn}
-								someEnabled={fileMcpSomeOn}
-								onToggleAll={toggleAllFileMcp}
-								scope="session"
-								itemCount={allFileMcpServers.length}
-							/>
-							{fileMcpGroupOpen.value && (
-								<div class="mt-1 ml-5">
-									{allFileMcpServers.length === 0 ? (
-										<div class="text-xs text-gray-600 py-2">
-											No MCP servers found in enabled setting sources.
-										</div>
-									) : (
-										<div class="space-y-3">
-											{enabledSources.map((source) => {
-												const servers = mcpServersData.value?.servers[source] ?? [];
-												if (servers.length === 0) return null;
-												const { allEnabled: srcAllOn, someEnabled: srcSomeOn } = computeGroupState(
-													disabledMcpServers.value,
-													servers.map((s) => s.name)
-												);
-												return (
-													<div key={source}>
-														<div class="flex items-center justify-between mb-1">
-															<span class="text-xs font-medium text-gray-500 uppercase tracking-wider">
-																{SOURCE_LABELS[source]}
-															</span>
-															<label class="flex items-center gap-1.5 cursor-pointer text-xs text-gray-500">
-																<input
-																	type="checkbox"
-																	checked={srcAllOn}
-																	ref={(el) => {
-																		if (el) el.indeterminate = srcSomeOn && !srcAllOn;
-																	}}
-																	onChange={() => toggleFileMcpGroup(source)}
-																	class="w-3.5 h-3.5 rounded border-gray-600 text-blue-500"
-																/>
-															</label>
-														</div>
-														<div class="space-y-1">
-															{servers.map((server: McpServerFromSource) => (
-																<label
-																	key={`${source}-${server.name}`}
-																	class="flex items-center justify-between p-2 rounded-lg bg-dark-800/50 hover:bg-dark-800 transition-colors cursor-pointer"
-																>
-																	<div class="flex items-center gap-2 flex-1 min-w-0">
-																		<svg
-																			class="w-4 h-4 text-purple-400 flex-shrink-0"
-																			fill="none"
-																			viewBox="0 0 24 24"
-																			stroke="currentColor"
-																		>
-																			<path
-																				stroke-linecap="round"
-																				stroke-linejoin="round"
-																				stroke-width={2}
-																				d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"
-																			/>
-																		</svg>
-																		<div class="flex-1 min-w-0">
-																			<div class="text-sm text-gray-200 truncate">
-																				{server.name}
-																			</div>
-																			{server.command && (
-																				<div class="text-xs text-gray-500 truncate">
-																					{server.command}
-																				</div>
-																			)}
-																		</div>
-																	</div>
-																	<input
-																		type="checkbox"
-																		checked={isServerEnabled(disabledMcpServers.value, server.name)}
-																		onChange={() => handleToggleServer(server.name)}
-																		class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-																	/>
-																</label>
-															))}
-														</div>
-													</div>
-												);
-											})}
-										</div>
-									)}
-								</div>
-							)}
-						</>
-					)}
-				</div>
-
-				<div class={`border-t ${borderColors.ui.secondary}`} />
-
 				{/* Advanced Section (collapsed by default) */}
 				<div>
 					<button
@@ -768,39 +553,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 										class="w-4 h-4 rounded border-gray-600 text-blue-500"
 									/>
 								</label>
-							</div>
-
-							{/* Setting Sources */}
-							<div>
-								<h4 class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
-									Setting Sources
-								</h4>
-								<div class="space-y-1.5">
-									{(['user', 'project', 'local'] as SettingSource[]).map((source) => {
-										const isEnabled = settingSources.value.includes(source);
-										return (
-											<label
-												key={source}
-												class="flex items-center gap-3 p-2 rounded-lg bg-dark-800/50 hover:bg-dark-800 cursor-pointer"
-											>
-												<input
-													type="checkbox"
-													checked={isEnabled}
-													onChange={(e) =>
-														toggleSettingSource(source, (e.target as HTMLInputElement).checked)
-													}
-													class="w-4 h-4 rounded border-gray-600 bg-dark-900 text-blue-500"
-												/>
-												<div>
-													<div class="text-sm text-gray-200">
-														{source.charAt(0).toUpperCase() + source.slice(1)}
-													</div>
-													<div class="text-xs text-gray-500">{SOURCE_LABELS[source]}</div>
-												</div>
-											</label>
-										);
-									})}
-								</div>
 							</div>
 						</div>
 					)}

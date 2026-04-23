@@ -82,38 +82,18 @@ export class QueryOptionsBuilder {
 	}
 
 	/**
-	 * M1: Kill the `.mcp.json` auto-load leak.
-	 *
-	 * Default (flag unset): every session type spawns with `strictMcpConfig: true`
-	 * and `settingSources: []`. This stops the Claude Agent SDK from auto-loading
-	 * project `.mcp.json` and `.claude/settings.local.json`, which previously
-	 * bypassed NeoKai's UI toggles for non-coordinator sessions (Space ad-hoc,
-	 * `space_task_agent`, and node-agent workers).
-	 *
-	 * Kill switch (`NEOKAI_LEGACY_MCP_AUTOLOAD=1`): preserves the pre-M1
-	 * asymmetry for exactly one release, then removed in M5. Coordinators
-	 * (`room_chat`, `space_chat`) still force strict config in their per-type
-	 * blocks below. Workers / task agents / ad-hoc sessions retain
-	 * `settingSources: ['project', 'local']` and whatever `strictMcpConfig`
-	 * came from their session config (i.e. the pre-M1 SDK auto-load path).
-	 *
-	 * See `docs/plans/unify-mcp-config-model/00-overview.md` milestone M1.
-	 */
-	private static isLegacyMcpAutoloadEnabled(): boolean {
-		return process.env.NEOKAI_LEGACY_MCP_AUTOLOAD === '1';
-	}
-
-	/**
 	 * Build complete SDK query options
 	 *
 	 * Maps all SessionConfig (which extends SDKConfig) options to SDK Options
 	 */
 	async build(): Promise<Options> {
 		const config = this.ctx.session.config;
-		const legacyMcpAutoload = QueryOptionsBuilder.isLegacyMcpAutoloadEnabled();
 
-		// Get settings-derived options (from global settings)
-		const sdkSettingsOptions = await this.getSettingsOptions();
+		// Write file-only settings to .claude/settings.local.json before SDK starts
+		// (permission ask lists, sandbox excludedCommands, outputStyle, attribution).
+		// We no longer derive any SDK options from settings here — strictMcpConfig is
+		// always true and settingSources is always [] (M5: unified MCP registry).
+		await this.ctx.settingsManager.prepareSDKOptions();
 
 		// Translate model ID for SDK compatibility using provider context
 		// FIX: Recreate context each time to pick up model changes from model switching
@@ -139,7 +119,6 @@ export class QueryOptionsBuilder {
 		const systemPromptConfig = this.buildSystemPrompt();
 		const disallowedTools = this.getDisallowedTools();
 		const allowedTools = this.getAllowedTools();
-		const settingSources = this.getSettingSources();
 		const additionalDirectories = this.getAdditionalDirectories();
 		const hooks = this.buildHooks();
 		const permissionMode = this.getPermissionMode();
@@ -152,23 +131,14 @@ export class QueryOptionsBuilder {
 		const mergedEnv = this.getMergedEnvironmentVars();
 		const sdkCliPath = this.getSDKCliPath();
 
-		// Disabled MCP server names from tools config.
-		// These are filtered from the mcpServers map directly so the exclusion
-		// applies to ALL session types — including room_chat which sets settingSources: []
-		// and therefore never reads disabledMcpjsonServers from settings.local.json.
-		const toolsConfig = config.tools;
-		const disabledMcpServers = toolsConfig?.disabledMcpServers ?? [];
-		const mergedMcpServers = this.filterDisabledMcpServers(
-			this.mergeMcpServers(mcpServers, mcpServersFromSkills),
-			disabledMcpServers
-		);
+		// Merged MCP servers: skill-injected + session-config-injected.
+		// No more legacy disabled-server filtering — enablement is fully resolved
+		// upstream via the registry + `mcp_enablement` overrides; whatever enters
+		// here is the effective set for this session.
+		const mergedMcpServers = this.mergeMcpServers(mcpServers, mcpServersFromSkills);
 
 		// Build final query options
-		// Settings-derived options first, then session-specific overrides
 		const queryOptions: Options = {
-			// Start with settings-derived options (from global settings)
-			...sdkSettingsOptions,
-
 			// ============ Model & Execution ============
 			model: sdkModelId,
 			fallbackModel: sdkFallbackModel,
@@ -203,19 +173,19 @@ export class QueryOptionsBuilder {
 			sandbox: config.sandbox as Options['sandbox'],
 
 			// ============ MCP Servers ============
-			// Skill-injected MCP servers: must appear in mcpServers map for
-			// strictMcpConfig sessions to accept them. When strictMcpConfig is true
-			// (e.g. room_chat sessions), the SDK only allows servers present in this
-			// map — user settings are ignored. By merging skill servers here, they
-			// are always available regardless of strictMcpConfig setting.
-			// Disabled servers are already filtered out by filterDisabledMcpServers above.
+			// Skill-injected MCP servers must appear in this map: strictMcpConfig
+			// is now true for ALL sessions, so the SDK only sees servers placed
+			// here by the resolver + skill bridge + runtime attachment. The unified
+			// `app_mcp_servers` registry + `mcp_enablement` overrides table is the
+			// single source of truth for which servers a session sees; nothing is
+			// ever auto-loaded from `.mcp.json` or `settings.local.json` anymore.
 			mcpServers: mergedMcpServers as Options['mcpServers'],
-			// M1: force strictMcpConfig: true on every session type by default.
-			// With NEOKAI_LEGACY_MCP_AUTOLOAD=1, fall back to the session config's
-			// value (undefined/false for workers) to preserve pre-M1 behavior.
-			// Coordinators (room_chat / space_chat) override back to `true` in
-			// their own blocks below so the legacy flag cannot regress them.
-			strictMcpConfig: legacyMcpAutoload ? config.strictMcpConfig : true,
+			// Always true — the SDK must only see MCP servers we explicitly place
+			// in `mcpServers`. The unified registry + `mcp_enablement` overrides
+			// table is the single source of truth. Auto-loading from `.mcp.json`
+			// or `settings.local.json` is permanently off. See M5 of
+			// `unify-mcp-config-model`.
+			strictMcpConfig: true,
 
 			// ============ Output Format ============
 			outputFormat: config.outputFormat,
@@ -239,13 +209,10 @@ export class QueryOptionsBuilder {
 			pathToClaudeCodeExecutable: sdkCliPath,
 
 			// ============ Settings ============
-			// M1: default to `settingSources: []` on every session type so the SDK
-			// does NOT auto-load project `.mcp.json` or `.claude/settings.local.json`.
-			// With NEOKAI_LEGACY_MCP_AUTOLOAD=1, fall back to the previously-derived
-			// value (['project', 'local'] by default) to preserve pre-M1 behavior.
-			// Coordinators (room_chat / space_chat) override back to [] in their own
-			// blocks below so the legacy flag cannot regress them.
-			settingSources: legacyMcpAutoload ? settingSources : [],
+			// Always [] — the SDK must never auto-load MCP servers, slash commands,
+			// or other settings from on-disk files. NeoKai is the sole arbiter of
+			// what reaches the SDK. See M5 of `unify-mcp-config-model`.
+			settingSources: [],
 
 			// ============ Streaming ============
 			includePartialMessages: config.includePartialMessages,
@@ -315,10 +282,7 @@ export class QueryOptionsBuilder {
 			queryOptions.disallowedTools = [
 				...new Set([...(queryOptions.disallowedTools ?? []), ...restrictedBuiltinTools]),
 			];
-			// Prevent user-configured MCP servers from being merged in (only runtime-injected servers allowed).
-			queryOptions.strictMcpConfig = true;
-			// Skip settings file loading so user's settings.json doesn't inject extra tools.
-			queryOptions.settingSources = [];
+			// strictMcpConfig + settingSources are already set unconditionally above.
 		}
 
 		// ============ Space Chat Session Restrictions ============
@@ -375,10 +339,7 @@ export class QueryOptionsBuilder {
 			queryOptions.disallowedTools = [
 				...new Set([...(queryOptions.disallowedTools ?? []), ...spaceRestrictedBuiltinTools]),
 			];
-			// Prevent user-configured MCP servers from being merged in (only runtime-injected servers allowed).
-			queryOptions.strictMcpConfig = true;
-			// Skip settings file loading so user's settings.json doesn't inject extra tools.
-			queryOptions.settingSources = [];
+			// strictMcpConfig + settingSources are already set unconditionally above.
 		}
 
 		// ============ Coordinator Mode ============
@@ -710,17 +671,6 @@ CRITICAL RULES:
 	}
 
 	/**
-	 * Get setting sources configuration
-	 *
-	 * Controls CLAUDE.md and .claude/settings.json loading
-	 */
-	private getSettingSources(): Options['settingSources'] {
-		const toolsConfig = this.ctx.session.config.tools;
-		const loadSettingSources = toolsConfig?.loadSettingSources ?? true;
-		return loadSettingSources ? ['project', 'local'] : ['local'];
-	}
-
-	/**
 	 * Get additional directories configuration
 	 *
 	 * Always includes:
@@ -858,38 +808,6 @@ CRITICAL RULES:
 
 		// Layer 3: Default
 		return 'bypassPermissions';
-	}
-
-	/**
-	 * Get SDK options from global settings
-	 *
-	 * This writes file-only settings to .claude/settings.local.json and returns
-	 * SDK-supported options to merge with query options
-	 */
-	private async getSettingsOptions(): Promise<Partial<Options>> {
-		const toolsConfig = this.ctx.session.config.tools;
-		return await this.ctx.settingsManager.prepareSDKOptions({
-			disabledMcpServers: toolsConfig?.disabledMcpServers ?? [],
-		});
-	}
-
-	/**
-	 * Filter disabled MCP servers from the merged servers map.
-	 *
-	 * This ensures disabledMcpServers takes effect for ALL session types,
-	 * including room_chat sessions that set settingSources: [] and therefore
-	 * never read disabledMcpjsonServers from .claude/settings.local.json.
-	 */
-	private filterDisabledMcpServers(
-		servers: Record<string, unknown> | undefined,
-		disabledList: string[]
-	): Record<string, unknown> | undefined {
-		if (!servers || disabledList.length === 0) return servers;
-		const filtered = { ...servers };
-		for (const name of disabledList) {
-			delete filtered[name];
-		}
-		return Object.keys(filtered).length > 0 ? filtered : undefined;
 	}
 
 	/**

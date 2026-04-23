@@ -5,18 +5,26 @@
  * - settings.global.get - Get global settings
  * - settings.global.update - Update global settings (partial update)
  * - settings.global.save - Save global settings (full replace)
- * - settings.mcp.toggle - Toggle MCP server enabled/disabled
- * - settings.mcp.getDisabled - Get list of disabled MCP servers
- * - settings.mcp.setDisabled - Set list of disabled MCP servers
  * - settings.fileOnly.read - Read file-only settings
  * - settings.mcp.listFromSources - List MCP servers from enabled sources
- * - settings.mcp.updateServerSettings - Update per-server MCP settings
  * - settings.session.get - Get session settings
  * - settings.session.update - Update session settings
+ *
+ * NOTE: The legacy `settings.mcp.toggle`, `settings.mcp.getDisabled`,
+ * `settings.mcp.setDisabled`, and `settings.mcp.updateServerSettings` RPCs
+ * were removed in M5 of `unify-mcp-config-model`. MCP enablement now flows
+ * through the unified `app_mcp_servers` registry + `mcp_enablement` overrides.
+ * `mcpServerSettings` and `disabledMcpServers` were also removed from
+ * `GlobalSettings`; tests no longer set them.
  */
 
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
-import { MessageHub, type GlobalSettings, type SessionSettings } from '@neokai/shared';
+import {
+	MessageHub,
+	type GlobalSettings,
+	type SessionSettings,
+	DEFAULT_GLOBAL_SETTINGS,
+} from '@neokai/shared';
 import { registerSettingsHandlers } from '../../../../src/lib/rpc-handlers/settings-handlers';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
@@ -72,12 +80,11 @@ function createMockDaemonHub(): {
 	return { daemonHub, emitMock };
 }
 
-// Default global settings
+// Default global settings (mirrors the unified shape in @neokai/shared)
 const defaultGlobalSettings: GlobalSettings = {
-	theme: 'dark',
+	...DEFAULT_GLOBAL_SETTINGS,
 	showArchived: false,
-	defaultModel: 'claude-sonnet-4-20250514',
-	mcpServerSettings: {},
+	model: 'claude-sonnet-4-20250514',
 };
 
 // Helper to create mock SettingsManager
@@ -87,13 +94,8 @@ function createMockSettingsManager(): {
 		getGlobalSettings: ReturnType<typeof mock>;
 		updateGlobalSettings: ReturnType<typeof mock>;
 		saveGlobalSettings: ReturnType<typeof mock>;
-		toggleMcpServer: ReturnType<typeof mock>;
-		getDisabledMcpServers: ReturnType<typeof mock>;
-		setDisabledMcpServers: ReturnType<typeof mock>;
 		readFileOnlySettings: ReturnType<typeof mock>;
 		listMcpServersFromSources: ReturnType<typeof mock>;
-		getMcpServerSettings: ReturnType<typeof mock>;
-		updateMcpServerSettings: ReturnType<typeof mock>;
 	};
 } {
 	const mocks = {
@@ -103,19 +105,11 @@ function createMockSettingsManager(): {
 			...updates,
 		})),
 		saveGlobalSettings: mock(() => {}),
-		toggleMcpServer: mock(async () => {}),
-		getDisabledMcpServers: mock(() => ['disabled-server-1', 'disabled-server-2']),
-		setDisabledMcpServers: mock(async () => {}),
 		readFileOnlySettings: mock(() => ({ someSetting: 'value' })),
 		listMcpServersFromSources: mock(() => [
 			{ name: 'server-1', command: 'npx', args: ['-y', 'mcp-server-1'] },
 			{ name: 'server-2', command: 'npx', args: ['-y', 'mcp-server-2'] },
 		]),
-		getMcpServerSettings: mock(() => ({
-			'server-1': { allowed: true, defaultOn: true },
-			'server-2': { allowed: false, defaultOn: false },
-		})),
-		updateMcpServerSettings: mock(() => {}),
 	};
 
 	return {
@@ -131,18 +125,30 @@ function createMockDatabase(): {
 	db: Database;
 	mocks: {
 		getSession: ReturnType<typeof mock>;
+		getDatabase: ReturnType<typeof mock>;
 	};
 } {
+	// Stub the prepared statement chain that `usage.calculate` walks; we
+	// exercise that handler indirectly via registration tests, so the chain
+	// just needs to be callable without throwing.
+	const stmt = {
+		get: mock(() => ({ totalCost: 0, totalTokens: 0, totalMessages: 0, sessionCount: 0 })),
+		all: mock(() => []),
+	};
 	const mocks = {
 		getSession: mock(() => ({
 			id: 'session-123',
 			workspacePath: '/workspace/test',
+		})),
+		getDatabase: mock(() => ({
+			prepare: mock(() => stmt),
 		})),
 	};
 
 	return {
 		db: {
 			getSession: mocks.getSession,
+			getDatabase: mocks.getDatabase,
 		} as unknown as Database,
 		mocks,
 	};
@@ -181,7 +187,6 @@ describe('Settings RPC Handlers', () => {
 			const result = (await handler!({}, {})) as GlobalSettings;
 
 			expect(result).toBeDefined();
-			expect(result.theme).toBe('dark');
 			expect(result.showArchived).toBe(false);
 		});
 
@@ -200,20 +205,20 @@ describe('Settings RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('settings.global.update');
 			expect(handler).toBeDefined();
 
-			const result = (await handler!({ updates: { theme: 'light' } }, {})) as {
+			const result = (await handler!({ updates: { model: 'claude-opus' } }, {})) as {
 				success: boolean;
 				settings: GlobalSettings;
 			};
 
 			expect(result.success).toBe(true);
-			expect(result.settings.theme).toBe('light');
+			expect(result.settings.model).toBe('claude-opus');
 		});
 
 		it('emits settings.updated event', async () => {
 			const handler = messageHubData.handlers.get('settings.global.update');
 			expect(handler).toBeDefined();
 
-			await handler!({ updates: { theme: 'light' } }, {});
+			await handler!({ updates: { model: 'claude-opus' } }, {});
 
 			expect(daemonHubData.emitMock).toHaveBeenCalledWith(
 				'settings.updated',
@@ -243,12 +248,12 @@ describe('Settings RPC Handlers', () => {
 			expect(handler).toBeDefined();
 
 			const result = (await handler!(
-				{ updates: { theme: 'light', showArchived: true, defaultModel: 'claude-opus' } },
+				{ updates: { model: 'claude-opus', showArchived: true } },
 				{}
 			)) as { success: boolean; settings: GlobalSettings };
 
 			expect(result.success).toBe(true);
-			expect(result.settings.theme).toBe('light');
+			expect(result.settings.model).toBe('claude-opus');
 			expect(result.settings.showArchived).toBe(true);
 		});
 	});
@@ -259,10 +264,9 @@ describe('Settings RPC Handlers', () => {
 			expect(handler).toBeDefined();
 
 			const newSettings: GlobalSettings = {
-				theme: 'light',
+				...defaultGlobalSettings,
 				showArchived: true,
-				defaultModel: 'claude-opus',
-				mcpServerSettings: {},
+				model: 'claude-opus',
 			};
 
 			const result = (await handler!({ settings: newSettings }, {})) as { success: boolean };
@@ -276,87 +280,6 @@ describe('Settings RPC Handlers', () => {
 			expect(handler).toBeDefined();
 
 			await handler!({ settings: defaultGlobalSettings }, {});
-
-			expect(daemonHubData.emitMock).toHaveBeenCalledWith(
-				'settings.updated',
-				expect.objectContaining({
-					sessionId: 'global',
-				})
-			);
-		});
-	});
-
-	describe('settings.mcp.toggle', () => {
-		it('toggles MCP server on', async () => {
-			const handler = messageHubData.handlers.get('settings.mcp.toggle');
-			expect(handler).toBeDefined();
-
-			const result = (await handler!({ serverName: 'test-server', enabled: true }, {})) as {
-				success: boolean;
-			};
-
-			expect(result.success).toBe(true);
-			expect(settingsManagerData.mocks.toggleMcpServer).toHaveBeenCalledWith('test-server', true);
-		});
-
-		it('toggles MCP server off', async () => {
-			const handler = messageHubData.handlers.get('settings.mcp.toggle');
-			expect(handler).toBeDefined();
-
-			const result = (await handler!({ serverName: 'test-server', enabled: false }, {})) as {
-				success: boolean;
-			};
-
-			expect(result.success).toBe(true);
-			expect(settingsManagerData.mocks.toggleMcpServer).toHaveBeenCalledWith('test-server', false);
-		});
-
-		it('emits settings.updated event', async () => {
-			const handler = messageHubData.handlers.get('settings.mcp.toggle');
-			expect(handler).toBeDefined();
-
-			await handler!({ serverName: 'test-server', enabled: true }, {});
-
-			expect(daemonHubData.emitMock).toHaveBeenCalledWith(
-				'settings.updated',
-				expect.objectContaining({
-					sessionId: 'global',
-				})
-			);
-		});
-	});
-
-	describe('settings.mcp.getDisabled', () => {
-		it('returns list of disabled MCP servers', async () => {
-			const handler = messageHubData.handlers.get('settings.mcp.getDisabled');
-			expect(handler).toBeDefined();
-
-			const result = (await handler!({}, {})) as { disabledServers: string[] };
-
-			expect(result.disabledServers).toBeDefined();
-			expect(result.disabledServers).toContain('disabled-server-1');
-			expect(result.disabledServers).toContain('disabled-server-2');
-		});
-	});
-
-	describe('settings.mcp.setDisabled', () => {
-		it('sets list of disabled MCP servers', async () => {
-			const handler = messageHubData.handlers.get('settings.mcp.setDisabled');
-			expect(handler).toBeDefined();
-
-			const disabledServers = ['server-a', 'server-b'];
-
-			const result = (await handler!({ disabledServers }, {})) as { success: boolean };
-
-			expect(result.success).toBe(true);
-			expect(settingsManagerData.mocks.setDisabledMcpServers).toHaveBeenCalledWith(disabledServers);
-		});
-
-		it('emits settings.updated event', async () => {
-			const handler = messageHubData.handlers.get('settings.mcp.setDisabled');
-			expect(handler).toBeDefined();
-
-			await handler!({ disabledServers: [] }, {});
 
 			expect(daemonHubData.emitMock).toHaveBeenCalledWith(
 				'settings.updated',
@@ -386,12 +309,10 @@ describe('Settings RPC Handlers', () => {
 
 			const result = (await handler!({}, {})) as {
 				servers: Array<{ name: string }>;
-				serverSettings: Record<string, unknown>;
 			};
 
 			expect(result.servers).toBeDefined();
 			expect(result.servers).toHaveLength(2);
-			expect(result.serverSettings).toBeDefined();
 		});
 
 		it('throws error when session not found', async () => {
@@ -415,53 +336,6 @@ describe('Settings RPC Handlers', () => {
 			// Verify the handler is defined and accepts the sessionId parameter
 			// The actual session-specific SettingsManager creation is tested in integration tests
 			expect(typeof handler).toBe('function');
-		});
-	});
-
-	describe('settings.mcp.updateServerSettings', () => {
-		it('updates per-server MCP settings', async () => {
-			const handler = messageHubData.handlers.get('settings.mcp.updateServerSettings');
-			expect(handler).toBeDefined();
-
-			const result = (await handler!(
-				{
-					serverName: 'test-server',
-					settings: { allowed: true, defaultOn: false },
-				},
-				{}
-			)) as { success: boolean };
-
-			expect(result.success).toBe(true);
-			expect(settingsManagerData.mocks.updateMcpServerSettings).toHaveBeenCalledWith(
-				'test-server',
-				{ allowed: true, defaultOn: false }
-			);
-		});
-
-		it('emits settings.updated event', async () => {
-			const handler = messageHubData.handlers.get('settings.mcp.updateServerSettings');
-			expect(handler).toBeDefined();
-
-			await handler!({ serverName: 'test-server', settings: { allowed: true } }, {});
-
-			expect(daemonHubData.emitMock).toHaveBeenCalledWith(
-				'settings.updated',
-				expect.objectContaining({
-					sessionId: 'global',
-				})
-			);
-		});
-
-		it('handles partial settings update', async () => {
-			const handler = messageHubData.handlers.get('settings.mcp.updateServerSettings');
-			expect(handler).toBeDefined();
-
-			await handler!({ serverName: 'test-server', settings: { defaultOn: true } }, {});
-
-			expect(settingsManagerData.mocks.updateMcpServerSettings).toHaveBeenCalledWith(
-				'test-server',
-				{ defaultOn: true }
-			);
 		});
 	});
 
@@ -508,18 +382,6 @@ describe('Settings RPC Handlers', () => {
 			expect(messageHubData.handlers.has('settings.global.save')).toBe(true);
 		});
 
-		it('registers settings.mcp.toggle handler', () => {
-			expect(messageHubData.handlers.has('settings.mcp.toggle')).toBe(true);
-		});
-
-		it('registers settings.mcp.getDisabled handler', () => {
-			expect(messageHubData.handlers.has('settings.mcp.getDisabled')).toBe(true);
-		});
-
-		it('registers settings.mcp.setDisabled handler', () => {
-			expect(messageHubData.handlers.has('settings.mcp.setDisabled')).toBe(true);
-		});
-
 		it('registers settings.fileOnly.read handler', () => {
 			expect(messageHubData.handlers.has('settings.fileOnly.read')).toBe(true);
 		});
@@ -528,16 +390,19 @@ describe('Settings RPC Handlers', () => {
 			expect(messageHubData.handlers.has('settings.mcp.listFromSources')).toBe(true);
 		});
 
-		it('registers settings.mcp.updateServerSettings handler', () => {
-			expect(messageHubData.handlers.has('settings.mcp.updateServerSettings')).toBe(true);
-		});
-
 		it('registers settings.session.get handler', () => {
 			expect(messageHubData.handlers.has('settings.session.get')).toBe(true);
 		});
 
 		it('registers settings.session.update handler', () => {
 			expect(messageHubData.handlers.has('settings.session.update')).toBe(true);
+		});
+
+		it('does NOT register removed legacy MCP handlers', () => {
+			expect(messageHubData.handlers.has('settings.mcp.toggle')).toBe(false);
+			expect(messageHubData.handlers.has('settings.mcp.setDisabled')).toBe(false);
+			expect(messageHubData.handlers.has('settings.mcp.getDisabled')).toBe(false);
+			expect(messageHubData.handlers.has('settings.mcp.updateServerSettings')).toBe(false);
 		});
 	});
 });

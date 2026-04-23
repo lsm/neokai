@@ -419,34 +419,28 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 
 /**
  * Tools configuration for a session
- * Controls system prompt, setting sources, and MCP tools
+ * Controls system prompt and (legacy) setting source selection.
  *
  * SDK Terms Reference:
  * - systemPrompt: { type: 'preset', preset: 'claude_code' } - The Claude Code system prompt
  * - settingSources: ['project', 'local', 'user'] - Which config files to load
+ *
+ * NOTE: Per-session MCP server enablement now flows through `app_mcp_servers`
+ * + `mcp_enablement` (the unified registry). The legacy
+ * `disabledMcpServers` field was removed in M5.
  */
 export interface ToolsConfig {
 	// System Prompt: Use Claude Code preset (default: true)
 	// SDK option: systemPrompt: { type: 'preset', preset: 'claude_code' }
 	// When false, uses empty/minimal system prompt
 	useClaudeCodePreset?: boolean;
-	// Setting Sources: Which sources to load settings from
-	// SDK option: settingSources: ['user', 'project', 'local']
-	// Controls loading of CLAUDE.md, .claude/settings.json, .claude/settings.local.json
+	// Setting Sources: retained for forward compatibility only.
+	// `QueryOptionsBuilder` always emits `settingSources: []` so the SDK never
+	// auto-loads `.mcp.json` / `settings.json` MCPs — the registry is the only
+	// source of truth.
 	settingSources?: SettingSource[];
 	// Legacy field - deprecated, use settingSources instead
 	loadSettingSources?: boolean;
-
-	// ============================================================================
-	// MCP Server Control (Direct 1:1 UI→SDK Mapping)
-	// ============================================================================
-	// disabledMcpServers is written to .claude/settings.local.json as disabledMcpjsonServers
-	// SDK reads this file and applies filtering automatically
-	// Empty array = all servers enabled; server name in array = that server disabled
-
-	// List of MCP server names to disable (unchecked in UI)
-	// Written to settings.local.json as "disabledMcpjsonServers"
-	disabledMcpServers?: string[];
 }
 
 /**

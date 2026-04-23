@@ -40,7 +40,6 @@ describe('SessionManager', () => {
 			getGlobalSettings: mock(() => ({
 				...DEFAULT_GLOBAL_SETTINGS,
 				settingSources: ['user', 'project', 'local'],
-				disabledMcpServers: [],
 			})),
 			listSessions: mock(() => []),
 			getGlobalToolsConfig: mock(() => ({
@@ -93,7 +92,6 @@ describe('SessionManager', () => {
 			getGlobalSettings: mock(() => ({
 				...DEFAULT_GLOBAL_SETTINGS,
 				settingSources: ['user', 'project', 'local'],
-				disabledMcpServers: [],
 			})),
 			listMcpServersFromSources: mock(() => []),
 		} as unknown as SettingsManager;

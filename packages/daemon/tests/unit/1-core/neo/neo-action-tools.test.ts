@@ -476,7 +476,6 @@ function makeSettingsManager(initial: Partial<GlobalSettings> = {}): NeoSettings
 		settingSources: ['user', 'project', 'local'],
 		permissionMode: 'default',
 		model: 'sonnet',
-		disabledMcpServers: [],
 		...initial,
 	} as GlobalSettings;
 	return {

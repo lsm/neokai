@@ -345,7 +345,9 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 		async get_app_settings(): Promise<ToolResult> {
 			const settings = settingsManager.getGlobalSettings();
 
-			// Return a safe subset — exclude raw mcpServerSettings (potentially large/noisy)
+			// MCP enablement is no longer surfaced here — it lives in the unified
+			// `app_mcp_servers` registry + `mcp_enablement` overrides table; use
+			// `list_mcp_servers` to enumerate the effective server set.
 			return jsonResult({
 				model: settings.model ?? null,
 				permissionMode: settings.permissionMode ?? null,
@@ -358,7 +360,6 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 				settingSources: settings.settingSources,
 				showArchived: settings.showArchived ?? false,
 				fallbackModels: settings.fallbackModels ?? [],
-				disabledMcpServers: settings.disabledMcpServers ?? [],
 			});
 		},
 

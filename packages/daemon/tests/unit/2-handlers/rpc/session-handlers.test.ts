@@ -220,9 +220,7 @@ function createMockSessionManager(): {
 				status: 'active',
 			})),
 		})),
-		getGlobalToolsConfig: mock(() => ({
-			disabledMcpServers: [],
-		})),
+		getGlobalToolsConfig: mock(() => ({})),
 		saveGlobalToolsConfig: mock(() => {}),
 	};
 

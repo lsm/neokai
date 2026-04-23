@@ -236,10 +236,11 @@ export class SessionLifecycle {
 				// Critical when providers share canonical IDs (e.g., Anthropic and
 				// anthropic-copilot both owning claude-sonnet-4.6).
 				provider: (params.config?.provider ?? resolvedProvider) as Provider,
-				// Tools config: Use global defaults for new sessions
-				// SDK built-in tools are always enabled (not configurable)
-				// MCP and NeoKai tools are configurable based on global settings
-				tools: params.config?.tools ?? this.toolsConfigManager.getDefaultForNewSession(),
+				// Tools config: explicit value when provided, otherwise undefined.
+				// MCP enablement is resolved at query-build time from the
+				// `app_mcp_servers` registry + `mcp_enablement` overrides — there
+				// is no per-session disabled list to seed here.
+				tools: params.config?.tools,
 				// Sandbox: Use global settings default (enabled with network access)
 				// Global settings provide balanced security: filesystem isolation + dev domains allowed
 				// If user provides partial sandbox config (e.g., just enabled: false), respect that

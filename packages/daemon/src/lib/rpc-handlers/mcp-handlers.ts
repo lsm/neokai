@@ -46,54 +46,6 @@ export function registerMcpHandlers(
 	});
 
 	/**
-	 * Update disabled MCP servers for a session (new approach)
-	 * Uses disabledMcpServers which is written to settings.local.json
-	 */
-	messageHub.onRequest(
-		'mcp.updateDisabledServers',
-		async (data: { sessionId: string; disabledServers: string[] }) => {
-			const { sessionId, disabledServers } = data;
-
-			const agentSession = sessionManager.getSession(sessionId);
-			if (!agentSession) {
-				throw new Error(`Session not found: ${sessionId}`);
-			}
-
-			const session = agentSession.getSessionData();
-
-			// Update session with new disabledMcpServers list
-			const currentTools = session.config.tools ?? {};
-			const newTools: ToolsConfig = {
-				...currentTools,
-				disabledMcpServers: disabledServers,
-			};
-
-			// Use updateToolsConfig to properly restart query with new settings
-			await agentSession.updateToolsConfig(newTools);
-
-			return { success: true };
-		}
-	);
-
-	/**
-	 * Get disabled MCP servers for a session
-	 */
-	messageHub.onRequest('mcp.getDisabledServers', async (data: { sessionId: string }) => {
-		const { sessionId } = data;
-
-		const agentSession = sessionManager.getSession(sessionId);
-		if (!agentSession) {
-			throw new Error(`Session not found: ${sessionId}`);
-		}
-
-		const session = agentSession.getSessionData();
-
-		return {
-			disabledServers: session.config.tools?.disabledMcpServers || [],
-		};
-	});
-
-	/**
 	 * List available MCP servers from .mcp.json
 	 */
 	messageHub.onRequest('mcp.listServers', async (data: { sessionId: string }) => {

@@ -9,7 +9,7 @@
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import type { GlobalSettings, SessionSettings, SettingSource } from '@neokai/shared';
+import type { GlobalSettings, SettingSource } from '@neokai/shared';
 import type { McpServerConfig } from '@neokai/shared/types/sdk-config';
 
 /**
@@ -54,103 +54,18 @@ export class SettingsManager {
 	}
 
 	/**
-	 * Prepare SDK options for a session
+	 * Prepare file-only settings for a session.
 	 *
-	 * This is the critical method that:
-	 * 1. Merges global settings with session overrides
-	 * 2. Writes file-only settings to .claude/settings.local.json BEFORE SDK starts
-	 * 3. Returns SDK-supported options for query()
+	 * Writes settings to `.claude/settings.local.json` BEFORE the SDK starts.
+	 * The SDK never reads them anymore (`settingSources: []` is unconditional)
+	 * — they're written for tooling that inspects the file directly (e.g. the
+	 * Claude Code CLI when run by hand against the same workspace).
 	 *
-	 * @param sessionOverrides - Session-specific setting overrides
-	 * @returns SDK options object for query()
+	 * No SDK options are derived here. `QueryOptionsBuilder` constructs the
+	 * full Options object on its own.
 	 */
-	async prepareSDKOptions(
-		sessionOverrides?: Partial<SessionSettings>
-	): Promise<Record<string, unknown>> {
-		const globalSettings = this.getGlobalSettings();
-		const mergedSettings = { ...globalSettings, ...sessionOverrides };
-
-		// 1. Write file-only settings BEFORE SDK starts
-		// This ensures .claude/settings.local.json is ready when SDK initializes
-		await this.writeFileOnlySettings(mergedSettings);
-
-		// 2. Extract and return SDK-supported options
-		return this.extractSDKOptions(mergedSettings);
-	}
-
-	/**
-	 * Extract SDK-supported options from settings
-	 *
-	 * These settings can be passed directly to the SDK query() function.
-	 */
-	private extractSDKOptions(settings: GlobalSettings): Record<string, unknown> {
-		const sdkOptions: Record<string, unknown> = {
-			settingSources: settings.settingSources,
-		};
-
-		// Model
-		if (settings.model) {
-			sdkOptions.model = settings.model;
-		}
-
-		// Permissions
-		if (settings.permissionMode) {
-			sdkOptions.permissionMode = settings.permissionMode;
-		}
-		if (settings.allowedTools) {
-			sdkOptions.allowedTools = settings.allowedTools;
-		}
-		if (settings.disallowedTools) {
-			sdkOptions.disallowedTools = settings.disallowedTools;
-		}
-		if (settings.additionalDirectories) {
-			sdkOptions.additionalDirectories = settings.additionalDirectories;
-		}
-
-		// Thinking (new SDK API)
-		if (settings.maxThinkingTokens !== undefined && settings.maxThinkingTokens !== null) {
-			sdkOptions.thinking = {
-				type: 'enabled',
-				budgetTokens: settings.maxThinkingTokens,
-			};
-		} else if (settings.maxThinkingTokens === null) {
-			sdkOptions.thinking = { type: 'disabled' };
-		}
-		// Otherwise, session-level thinkingLevel will be used in query-options-builder
-
-		// Environment
-		if (settings.env) {
-			sdkOptions.env = settings.env;
-		}
-
-		// Limits
-		if (settings.maxTurns) {
-			sdkOptions.maxTurns = settings.maxTurns;
-		}
-		if (settings.maxBudgetUsd) {
-			sdkOptions.maxBudgetUsd = settings.maxBudgetUsd;
-		}
-
-		// Sandbox
-		if (settings.sandbox) {
-			sdkOptions.sandbox = {
-				enabled: settings.sandbox.enabled,
-				autoAllowBashIfSandboxed: settings.sandbox.autoAllowBashIfSandboxed,
-				network: settings.sandbox.network,
-			};
-		}
-
-		// Betas
-		if (settings.betas) {
-			sdkOptions.betas = settings.betas;
-		}
-
-		// System prompt
-		if (settings.systemPrompt) {
-			sdkOptions.systemPrompt = settings.systemPrompt;
-		}
-
-		return sdkOptions;
+	async prepareSDKOptions(): Promise<void> {
+		await this.writeFileOnlySettings(this.getGlobalSettings());
 	}
 
 	/**
@@ -198,18 +113,14 @@ export class SettingsManager {
 			// Continue with empty object
 		}
 
-		// Update NeoKai-managed settings
-
-		// MCP Server Control (CRITICAL)
-		if (settings.disabledMcpServers !== undefined) {
-			localSettings.disabledMcpjsonServers = settings.disabledMcpServers;
-		}
-		if (settings.enabledMcpServers !== undefined) {
-			localSettings.enabledMcpjsonServers = settings.enabledMcpServers;
-		}
-		if (settings.enableAllProjectMcpServers !== undefined) {
-			localSettings.enableAllProjectMcpServers = settings.enableAllProjectMcpServers;
-		}
+		// Update NeoKai-managed settings.
+		//
+		// NOTE: Legacy MCP toggles (disabledMcpjsonServers, enabledMcpjsonServers,
+		// enableAllProjectMcpServers) are intentionally not written here anymore.
+		// MCP enablement now flows through the `app_mcp_servers` registry +
+		// `mcp_enablement` overrides table; QueryOptionsBuilder always emits
+		// `settingSources: []`, so the SDK never reads these keys back from
+		// settings.local.json.
 
 		// Permissions (file-only features)
 		if (settings.askPermissions !== undefined) {
@@ -288,10 +199,6 @@ export class SettingsManager {
 			const localSettings = JSON.parse(content) as Record<string, unknown>;
 
 			return {
-				disabledMcpServers: (localSettings.disabledMcpjsonServers as string[]) || [],
-				enabledMcpServers: (localSettings.enabledMcpjsonServers as string[]) || undefined,
-				enableAllProjectMcpServers:
-					(localSettings.enableAllProjectMcpServers as boolean) || undefined,
 				askPermissions:
 					((localSettings.permissions as Record<string, unknown>)?.ask as string[]) || undefined,
 				excludedCommands:
@@ -303,57 +210,6 @@ export class SettingsManager {
 		} catch {
 			return {};
 		}
-	}
-
-	/**
-	 * Toggle MCP server enabled/disabled state
-	 *
-	 * This updates both the database and the .claude/settings.local.json file.
-	 */
-	async toggleMcpServer(serverName: string, enabled: boolean): Promise<void> {
-		const currentSettings = this.getGlobalSettings();
-		const currentDisabled = currentSettings.disabledMcpServers || [];
-
-		let updatedDisabled: string[];
-		if (enabled) {
-			// Remove from disabled list
-			updatedDisabled = currentDisabled.filter((s) => s !== serverName);
-		} else {
-			// Add to disabled list (if not already there)
-			if (!currentDisabled.includes(serverName)) {
-				updatedDisabled = [...currentDisabled, serverName];
-			} else {
-				updatedDisabled = currentDisabled;
-			}
-		}
-
-		// Update database
-		const updatedSettings = this.updateGlobalSettings({
-			disabledMcpServers: updatedDisabled,
-		});
-
-		// Write to file immediately for next SDK query
-		await this.writeFileOnlySettings(updatedSettings);
-	}
-
-	/**
-	 * Get list of disabled MCP servers
-	 */
-	getDisabledMcpServers(): string[] {
-		const settings = this.getGlobalSettings();
-		return settings.disabledMcpServers || [];
-	}
-
-	/**
-	 * Set list of disabled MCP servers
-	 */
-	async setDisabledMcpServers(disabledServers: string[]): Promise<void> {
-		const updatedSettings = this.updateGlobalSettings({
-			disabledMcpServers: disabledServers,
-		});
-
-		// Write to file immediately
-		await this.writeFileOnlySettings(updatedSettings);
 	}
 
 	/**
@@ -434,26 +290,6 @@ export class SettingsManager {
 	}
 
 	/**
-	 * Update MCP server settings (allowed/defaultOn)
-	 *
-	 * Stores per-server settings in GlobalSettings.mcpServerSettings
-	 */
-	updateMcpServerSettings(
-		serverName: string,
-		settings: { allowed?: boolean; defaultOn?: boolean }
-	): void {
-		const globalSettings = this.getGlobalSettings();
-		const mcpServerSettings = globalSettings.mcpServerSettings || {};
-
-		mcpServerSettings[serverName] = {
-			...mcpServerSettings[serverName],
-			...settings,
-		};
-
-		this.updateGlobalSettings({ mcpServerSettings });
-	}
-
-	/**
 	 * Get full MCP server configs from user and project settings files.
 	 *
 	 * Reads raw MCP server config objects (command, args, env, type, url, etc.) from:
@@ -466,7 +302,6 @@ export class SettingsManager {
 	 *
 	 * Only includes servers from enabled sources. Returns a merged map where
 	 * project servers override user servers with the same name.
-	 * Excludes servers the user has explicitly set to `allowed: false`.
 	 */
 	getEnabledMcpServersConfig(): Record<string, McpServerConfig> {
 		const globalSettings = this.getGlobalSettings();
@@ -504,22 +339,6 @@ export class SettingsManager {
 
 		// NOTE: 'local' source (.claude/settings.local.json) is excluded — see doc comment above.
 
-		// Respect per-server allow/deny settings — exclude servers the user has explicitly disallowed.
-		const mcpServerSettings = globalSettings.mcpServerSettings || {};
-		for (const name of Object.keys(result)) {
-			if (mcpServerSettings[name]?.allowed === false) {
-				delete result[name];
-			}
-		}
-
 		return result;
-	}
-
-	/**
-	 * Get MCP server settings (allowed/defaultOn)
-	 */
-	getMcpServerSettings(): Record<string, { allowed?: boolean; defaultOn?: boolean }> {
-		const globalSettings = this.getGlobalSettings();
-		return globalSettings.mcpServerSettings || {};
 	}
 }
