@@ -111,6 +111,25 @@ export class SpaceRuntimeService {
 	 * stops, mirroring `spaceDbQueryServers` for the space-chat session.
 	 */
 	private readonly memberSessionDbQueryServers = new Map<string, DbQueryMcpServer>();
+	/**
+	 * Resolves when startup-time session provisioning has completed:
+	 *   - every existing space's space:chat session has had MCP tools +
+	 *     system prompt re-attached (via `setupSpaceAgentSession`), and
+	 *   - every existing member session (non-space-chat session with
+	 *     `context.spaceId`) has had `space-agent-tools` (and, when configured,
+	 *     `db-query`) re-attached (via `attachSpaceToolsToMemberSession`).
+	 *
+	 * Set by `start()` to the provisioning promise returned by
+	 * `provisionExistingSpaces()`. `null` before `start()` is called.
+	 *
+	 * Callers that must not accept queries before provisioning finishes should
+	 * `await spaceRuntimeService.ready()` — specifically the daemon bootstrap,
+	 * which calls it before `Bun.serve()` starts listening. Without this gate,
+	 * a query arriving during the brief re-attach window would run with
+	 * `mcpServers: undefined` (strictMcpConfig is on) and fail to reach any
+	 * space-agent-tool — the root cause of task #83.
+	 */
+	private provisioningPromise: Promise<void> | null = null;
 
 	constructor(private readonly config: SpaceRuntimeServiceConfig) {
 		// Ensure nodeExecutionRepo is available — create from db if not provided.
@@ -212,20 +231,59 @@ export class SpaceRuntimeService {
 		);
 	}
 
-	/** Start the underlying SpaceRuntime tick loop. */
+	/**
+	 * Start the underlying SpaceRuntime tick loop.
+	 *
+	 * Synchronously starts the runtime + subscribes to space/session events, then
+	 * kicks off startup session provisioning as a tracked async task. The returned
+	 * `provisioningPromise` is exposed via `ready()` so the daemon bootstrap can
+	 * await it before accepting queries — without that gate, queries arriving
+	 * before re-attachment finishes run with `mcpServers: undefined` and fail to
+	 * reach `space-agent-tools` (root cause of task #83).
+	 */
 	start(): void {
 		if (this.started) return;
 		this.started = true;
 		this.runtime.start();
 		this.subscribeToSpaceEvents();
-		this.provisionExistingSpaces();
+		// Kick off provisioning and retain the promise so callers (notably the
+		// daemon bootstrap) can `await ready()` before accepting queries.
+		this.provisioningPromise = this.provisionExistingSpaces().catch((err) => {
+			log.error('Failed to provision existing spaces during startup:', err);
+		});
 		log.info('SpaceRuntimeService started');
+	}
+
+	/**
+	 * Resolves when startup-time session provisioning has fully completed, i.e.
+	 * when both the space-chat sessions have had MCP tools + system prompts
+	 * re-attached AND every existing member session has had `space-agent-tools`
+	 * (and optional `db-query`) re-attached.
+	 *
+	 * Call before the daemon begins serving queries to avoid the re-attach race
+	 * in which a session-bound RPC runs with `mcpServers: undefined` because the
+	 * fire-and-forget startup loop has not yet reached it.
+	 *
+	 * Safe to call multiple times; resolves immediately once provisioning is done.
+	 * Never rejects — errors are logged by the provisioning path itself.
+	 */
+	async ready(): Promise<void> {
+		if (this.provisioningPromise) {
+			await this.provisioningPromise;
+		}
 	}
 
 	/** Stop the underlying SpaceRuntime tick loop and await in-flight ticks. */
 	async stop(): Promise<void> {
 		if (!this.started) return;
 		this.started = false;
+		// Wait for any in-flight startup provisioning to settle before we tear
+		// down db-query servers etc., so a concurrent re-attach doesn't leak
+		// references into the cleared maps.
+		if (this.provisioningPromise) {
+			await this.provisioningPromise;
+			this.provisioningPromise = null;
+		}
 		await this.runtime.stop();
 		for (const unsub of this.unsubscribers) {
 			unsub();
@@ -338,55 +396,80 @@ export class SpaceRuntimeService {
 	 * space chat sessions after a daemon restart. The sessions already exist in DB;
 	 * only the runtime configuration (MCP server, system prompt) needs re-attaching.
 	 *
+	 * Returns a promise that resolves only after **both** sweeps complete so the
+	 * daemon bootstrap can `await spaceRuntimeService.ready()` before accepting
+	 * queries. Previously this was fire-and-forget, which left a race window in
+	 * which a session's RPC query could run before `space-agent-tools` had been
+	 * re-attached and execute with `mcpServers: undefined` (strictMcpConfig is on
+	 * globally), producing "No such tool available" errors — the root cause of
+	 * task #83.
+	 *
 	 * No-op when sessionManager is absent.
 	 */
-	private provisionExistingSpaces(): void {
+	private async provisionExistingSpaces(): Promise<void> {
 		const { sessionManager } = this.config;
 		if (!sessionManager) return;
 
-		void this.config.spaceManager
+		// Space chat sessions: run in parallel (one session per space) and wait
+		// for all of them so `ready()` only resolves once every space's chat
+		// session has MCP tools + system prompt attached.
+		const chatSweep = this.config.spaceManager
 			.listSpaces()
-			.then((spaces) => {
-				return Promise.all(
+			.then((spaces) =>
+				Promise.all(
 					spaces.map((space) =>
 						this.setupSpaceAgentSession(space).catch((err) => {
 							log.error(`Failed to provision space chat session for space ${space.id}:`, err);
 						})
 					)
-				);
-			})
+				)
+			)
+			.then(() => {})
 			.catch((err) => {
 				log.error('Failed to list spaces for session provisioning:', err);
 			});
 
-		// Attach `space-agent-tools` (and, if configured, `db-query`) to every
-		// other session that already lives inside a Space. We do this on startup
-		// so a daemon restart doesn't leave pre-existing member sessions without
-		// coordination tools.
-		//
-		// Run sequentially rather than in parallel: each attach performs a space
-		// lookup and a session lookup (both hit SQLite), and a daemon restarting
-		// with many Space member sessions would otherwise issue a thundering
-		// herd of reads. Sequential is fast enough — the work is small per
-		// session and happens once at startup — and avoids the burst.
-		void (async () => {
-			try {
-				const all = sessionManager.listSessions({ includeArchived: false });
-				for (const session of all) {
-					if (!session.context?.spaceId) continue;
-					try {
-						await this.attachSpaceToolsToMemberSession(session);
-					} catch (err) {
-						log.error(
-							`Failed to attach space tools to existing session ${session.id} (space ${session.context?.spaceId}):`,
-							err
-						);
-					}
+		// Member sessions: `space-agent-tools` (and, if configured, `db-query`)
+		// attached to every non-space-chat session whose `context.spaceId` is set.
+		// Awaited together with the chat sweep so neither can race past startup.
+		const memberSweep = this.reattachSpaceToolsToExistingSessions();
+
+		await Promise.all([chatSweep, memberSweep]);
+	}
+
+	/**
+	 * Re-attach `space-agent-tools` (and, if configured, `db-query`) to every
+	 * non-space-chat session whose `context.spaceId` is set. Runs sequentially
+	 * rather than in parallel because each attach performs a space lookup and a
+	 * session lookup (both SQLite reads); a daemon restarting with many member
+	 * sessions would otherwise issue a thundering herd of reads. Sequential is
+	 * fast enough — the work is small per session and happens once at startup —
+	 * and avoids the burst.
+	 *
+	 * Must be `await`ed by the startup path so that no incoming query can reach a
+	 * member session before its tools are attached; the previous fire-and-forget
+	 * variant was the root cause of task #83.
+	 */
+	private async reattachSpaceToolsToExistingSessions(): Promise<void> {
+		const { sessionManager } = this.config;
+		if (!sessionManager) return;
+
+		try {
+			const all = sessionManager.listSessions({ includeArchived: false });
+			for (const session of all) {
+				if (!session.context?.spaceId) continue;
+				try {
+					await this.attachSpaceToolsToMemberSession(session);
+				} catch (err) {
+					log.error(
+						`Failed to attach space tools to existing session ${session.id} (space ${session.context?.spaceId}):`,
+						err
+					);
 				}
-			} catch (err) {
-				log.error('Failed to iterate existing sessions for space-tool attachment:', err);
 			}
-		})();
+		} catch (err) {
+			log.error('Failed to iterate existing sessions for space-tool attachment:', err);
+		}
 	}
 
 	/**
@@ -569,7 +652,11 @@ export class SpaceRuntimeService {
 			mcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
 		}
 
-		session.setRuntimeMcpServers(mcpServers);
+		// Merge rather than replace — the deprecated `setRuntimeMcpServers` is a
+		// replace-all that silently wipes any other subsystem's previously-attached
+		// MCP servers on this space_chat session. `mergeRuntimeMcpServers` is the
+		// additive variant already used by `attachSpaceToolsToMemberSession`.
+		session.mergeRuntimeMcpServers(mcpServers);
 
 		session.setRuntimeSystemPrompt(
 			buildSpaceChatSystemPrompt({

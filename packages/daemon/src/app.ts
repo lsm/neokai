@@ -345,6 +345,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		mcpImportService,
 	});
 
+	// Wait for SpaceRuntimeService startup provisioning to complete before we
+	// bind the WebSocket/HTTP server. `start()` inside `setupRPCHandlers` kicks
+	// off MCP re-attachment for every existing space_chat / space member session
+	// as an async task; if we begin accepting queries before it settles, any
+	// session-bound RPC can run with `mcpServers: undefined` (strictMcpConfig is
+	// on globally) and fail to reach `space-agent-tools`. That was the root
+	// cause of task #83. `ready()` never rejects — errors are already logged by
+	// the provisioning path.
+	await spaceRuntimeService.ready();
+
 	// Create WebSocket handlers
 	const wsHandlers = createWebSocketHandlers(transport, sessionManager);
 
