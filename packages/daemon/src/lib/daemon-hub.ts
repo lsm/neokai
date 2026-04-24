@@ -504,6 +504,21 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		data: Record<string, unknown>;
 	};
 	/**
+	 * Emitted when channel cycle counters for a workflow run are reset to 0.
+	 *
+	 * Currently fired when a human sends a message to a task in the run via
+	 * `space.task.sendMessage` ("human touch"). `rowsReset` is the number of
+	 * `channel_cycles` rows actually zeroed — it may be 0 if no cyclic channels
+	 * had traversed yet at the time of the reset.
+	 */
+	'space.workflowRun.cyclesReset': {
+		sessionId: string;
+		runId: string;
+		reason: 'human_touch';
+		taskId?: string;
+		rowsReset: number;
+	};
+	/**
 	 * Emitted when a workflow_run_artifact_cache row has been written by a
 	 * background sync job (spaceWorkflowRun.syncGateArtifacts, syncCommits,
 	 * syncFileDiff). The frontend TaskArtifactsPanel subscribes and refetches
