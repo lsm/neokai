@@ -21,6 +21,7 @@ import type { SkillRepository } from '../storage/repositories/skill-repository';
 import type { AppMcpServerRepository } from '../storage/repositories/app-mcp-server-repository';
 import type { JobQueueRepository } from '../storage/repositories/job-queue-repository';
 import { SKILL_VALIDATE } from './job-queue-constants';
+import { BUILTIN_MCP_SERVERS, BUILTIN_SKILLS, type BuiltinSkill } from './builtins';
 
 /**
  * Convert a GitHub tree/blob URL to a raw content URL.
@@ -449,150 +450,106 @@ export class SkillsManager {
 	}
 
 	/**
-	 * Upsert default built-in skills on startup.
-	 * For mcp_server type built-ins, ensures backing app_mcp_servers entries exist.
+	 * Upsert default built-in skills on startup from the central registry
+	 * (`src/lib/builtins.ts → BUILTIN_SKILLS`).
+	 *
+	 * For `mcp_server` skills, the backing `app_mcp_servers` row is expected
+	 * to have been seeded by {@link seedDefaultMcpEntries} (which runs
+	 * earlier in the startup sequence in `app.ts`). As a safety net against
+	 * init-order regressions we fall back to creating the MCP row ourselves
+	 * using the same registry (`BUILTIN_MCP_SERVERS`) so both seeders always
+	 * agree on field values.
+	 *
+	 * All steps are idempotent — re-running on an already-initialised DB is
+	 * a no-op.
+	 *
+	 * To add or remove a built-in, edit `BUILTIN_SKILLS` (and
+	 * `BUILTIN_MCP_SERVERS` for MCP-backed skills) in `src/lib/builtins.ts`.
+	 * Do not hand-write new `initFoo()` methods here.
 	 */
 	initializeBuiltins(): void {
-		this.initFetchMcp();
-		this.initChromeDevToolsMcp();
-		this.initPlaywrightSkill();
-		this.initPlaywrightInteractiveSkill();
+		for (const def of BUILTIN_SKILLS) {
+			this.upsertBuiltinSkill(def);
+		}
 	}
 
-	/**
-	 * Ensure the Fetch MCP built-in skill is registered.
-	 *
-	 * Reuses the existing `fetch-mcp` app_mcp_servers entry seeded by
-	 * seedDefaultMcpEntries() (which always runs before initializeBuiltins()).
-	 * If that entry is somehow absent, creates it as a fallback.
-	 *
-	 * Prior to MCP unification (M1), `fetch-mcp` reached sessions via SDK
-	 * auto-loading from `.mcp.json` / settings files. With strictMcpConfig now
-	 * enforced, auto-loading is gone — sessions only see MCP servers that are
-	 * referenced by a skill. Without this skill entry, `fetch-mcp` would be
-	 * orphaned and never reach any session.
-	 */
-	private initFetchMcp(): void {
-		// Step 1: resolve the backing app_mcp_servers entry (seeded by seed-defaults.ts)
+	private upsertBuiltinSkill(def: BuiltinSkill): void {
+		if (def.kind === 'mcp_server') {
+			this.upsertMcpServerSkill(def);
+			return;
+		}
+		this.upsertBuiltinCommandSkill(def);
+	}
+
+	private upsertMcpServerSkill(def: Extract<BuiltinSkill, { kind: 'mcp_server' }>): void {
+		// Resolve (or, as a safety net, create) the backing app_mcp_servers row.
+		// `seedDefaultMcpEntries` should have created this already; the fallback
+		// guards against changes to startup ordering.
 		const appMcpEntry =
-			this.appMcpServerRepo.getByName('fetch-mcp') ??
-			this.appMcpServerRepo.create({
-				name: 'fetch-mcp',
-				description:
-					'Fetch web pages and convert to Markdown for reading documentation and articles',
-				sourceType: 'stdio',
-				command: 'npx',
-				args: ['-y', '@tokenizin/mcp-npx-fetch'],
-				env: {},
-				enabled: true,
-				source: 'builtin',
-			});
+			this.appMcpServerRepo.getByName(def.appMcpServerName) ??
+			this.createMissingMcpServer(def.appMcpServerName);
 
-		// Step 2: upsert the skill referencing the app MCP entry
-		const existing = this.repo.getByName('fetch-mcp');
-		if (!existing) {
-			const skill: AppSkill = {
-				id: generateUUID(),
-				name: 'fetch-mcp',
-				displayName: 'Fetch MCP',
-				description:
-					'Fetch web pages and convert to Markdown for reading documentation and articles',
-				sourceType: 'mcp_server',
-				config: { type: 'mcp_server', appMcpServerId: appMcpEntry.id },
-				enabled: true, // was always on by default — preserve that
-				builtIn: true,
-				validationStatus: 'valid',
-				createdAt: Date.now(),
-			};
-			this.repo.insert(skill);
-		}
+		const existing = this.repo.getByName(def.name);
+		if (existing) return;
+
+		const skill: AppSkill = {
+			id: generateUUID(),
+			name: def.name,
+			displayName: def.displayName,
+			description: def.description,
+			sourceType: 'mcp_server',
+			config: { type: 'mcp_server', appMcpServerId: appMcpEntry.id },
+			enabled: def.enabled,
+			builtIn: true,
+			validationStatus: 'valid',
+			createdAt: Date.now(),
+		};
+		this.repo.insert(skill);
+	}
+
+	private upsertBuiltinCommandSkill(def: Extract<BuiltinSkill, { kind: 'builtin-command' }>): void {
+		const existing = this.repo.getByName(def.name);
+		if (existing) return;
+
+		const skill: AppSkill = {
+			id: generateUUID(),
+			name: def.name,
+			displayName: def.displayName,
+			description: def.description,
+			sourceType: 'builtin',
+			config: { type: 'builtin', commandName: def.commandName },
+			enabled: def.enabled,
+			builtIn: true,
+			validationStatus: 'valid',
+			createdAt: Date.now(),
+		};
+		this.repo.insert(skill);
 	}
 
 	/**
-	 * Ensure the Chrome DevTools MCP built-in skill is registered.
-	 *
-	 * Reuses the existing `chrome-devtools` app_mcp_servers entry seeded by
-	 * seedDefaultMcpEntries() (which always runs before initializeBuiltins()).
-	 * If that entry is somehow absent, creates it as a fallback.
+	 * Fallback path: create an `app_mcp_servers` row from the central
+	 * `BUILTIN_MCP_SERVERS` table when it is unexpectedly absent at skill
+	 * init time. Throws if the name is not known to the registry — a
+	 * mc_server skill can only reference a registered built-in server.
 	 */
-	private initChromeDevToolsMcp(): void {
-		// Step 1: resolve the backing app_mcp_servers entry (seeded by seed-defaults.ts)
-		const appMcpEntry =
-			this.appMcpServerRepo.getByName('chrome-devtools') ??
-			this.appMcpServerRepo.create({
-				name: 'chrome-devtools',
-				description:
-					'Browser automation and DevTools integration via Chrome DevTools MCP (isolated mode)',
-				sourceType: 'stdio',
-				command: 'bunx',
-				args: ['chrome-devtools-mcp@latest', '--isolated'],
-				env: {},
-				enabled: false,
-				source: 'builtin',
-			});
-
-		// Step 2: upsert the skill referencing the app MCP entry
-		const existing = this.repo.getByName('chrome-devtools-mcp');
-		if (!existing) {
-			const skill: AppSkill = {
-				id: generateUUID(),
-				name: 'chrome-devtools-mcp',
-				displayName: 'Chrome DevTools (MCP)',
-				description:
-					'Browser automation and DevTools integration via Chrome DevTools MCP. Runs in isolated mode.',
-				sourceType: 'mcp_server',
-				config: { type: 'mcp_server', appMcpServerId: appMcpEntry.id },
-				enabled: false, // opt-in, not default
-				builtIn: true,
-				validationStatus: 'valid',
-				createdAt: Date.now(),
-			};
-			this.repo.insert(skill);
+	private createMissingMcpServer(name: string) {
+		const serverDef = BUILTIN_MCP_SERVERS.find((s) => s.name === name);
+		if (!serverDef) {
+			throw new Error(
+				`Built-in mcp_server skill references unknown app_mcp_server "${name}". ` +
+					`Add the server to BUILTIN_MCP_SERVERS in src/lib/builtins.ts.`
+			);
 		}
-	}
-
-	/**
-	 * Ensure the Playwright built-in skill is registered.
-	 */
-	private initPlaywrightSkill(): void {
-		const existing = this.repo.getByName('playwright');
-		if (!existing) {
-			const skill: AppSkill = {
-				id: generateUUID(),
-				name: 'playwright',
-				displayName: 'Playwright',
-				description: 'Browser automation and testing via Playwright.',
-				sourceType: 'builtin',
-				config: { type: 'builtin', commandName: 'playwright' },
-				enabled: true,
-				builtIn: true,
-				validationStatus: 'valid',
-				createdAt: Date.now(),
-			};
-			this.repo.insert(skill);
-		}
-	}
-
-	/**
-	 * Ensure the Playwright Interactive built-in skill is registered.
-	 */
-	private initPlaywrightInteractiveSkill(): void {
-		const existing = this.repo.getByName('playwright-interactive');
-		if (!existing) {
-			const skill: AppSkill = {
-				id: generateUUID(),
-				name: 'playwright-interactive',
-				displayName: 'Playwright Interactive',
-				description: 'Interactive browser automation via Playwright with step-by-step control.',
-				sourceType: 'builtin',
-				config: { type: 'builtin', commandName: 'playwright-interactive' },
-				enabled: true,
-				builtIn: true,
-				validationStatus: 'valid',
-				createdAt: Date.now(),
-			};
-			this.repo.insert(skill);
-		}
+		return this.appMcpServerRepo.create({
+			name: serverDef.name,
+			description: serverDef.description,
+			sourceType: serverDef.sourceType,
+			command: serverDef.command,
+			args: serverDef.args,
+			env: serverDef.env,
+			enabled: serverDef.enabled,
+			source: 'builtin',
+		});
 	}
 
 	// ---------------------------------------------------------------------------
