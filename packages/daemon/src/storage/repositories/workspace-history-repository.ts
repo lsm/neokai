@@ -46,11 +46,17 @@ export class WorkspaceHistoryRepository {
 
 	/**
 	 * List all workspace history entries sorted by last_used_at DESC.
+	 *
+	 * Secondary sort by `id DESC` ensures deterministic ordering when two rows
+	 * share the same `last_used_at` (e.g., two inserts in the same millisecond
+	 * on fast hardware). The autoincrement `id` guarantees that the most
+	 * recently inserted row wins the tiebreak, matching the user-visible
+	 * "most recently used first" contract.
 	 */
 	list(limit = 20): WorkspaceHistoryRow[] {
 		return this.db
 			.prepare(
-				'SELECT path, last_used_at, use_count FROM workspace_history ORDER BY last_used_at DESC LIMIT ?'
+				'SELECT path, last_used_at, use_count FROM workspace_history ORDER BY last_used_at DESC, id DESC LIMIT ?'
 			)
 			.all(limit) as WorkspaceHistoryRow[];
 	}
