@@ -212,12 +212,12 @@ describe('Migration 100: mcp_enablement seeding', () => {
 	// --- scope='space' seed from GlobalSettings.disabledMcpServers ---------
 
 	test('seeds scope=space disable rows for every active space from global settings', () => {
-		insertServer(db, 'srv-1', 'brave-search');
+		insertServer(db, 'srv-1', 'test-search');
 		insertServer(db, 'srv-2', 'playwright');
 		insertSpace(db, 'space-active-1');
 		insertSpace(db, 'space-active-2');
 		insertSpace(db, 'space-archived', 'archived');
-		setGlobalSettings(db, { disabledMcpServers: ['brave-search', 'playwright'] });
+		setGlobalSettings(db, { disabledMcpServers: ['test-search', 'playwright'] });
 
 		runMigration101(db);
 
@@ -286,11 +286,11 @@ describe('Migration 100: mcp_enablement seeding', () => {
 	// --- scope='session' seed from session.config.tools.disabledMcpServers --
 
 	test('seeds scope=session disable rows for each session', () => {
-		insertServer(db, 'srv-1', 'brave-search');
+		insertServer(db, 'srv-1', 'test-search');
 		insertServer(db, 'srv-2', 'playwright');
-		insertSession(db, 'sess-a', { tools: { disabledMcpServers: ['brave-search'] } });
+		insertSession(db, 'sess-a', { tools: { disabledMcpServers: ['test-search'] } });
 		insertSession(db, 'sess-b', {
-			tools: { disabledMcpServers: ['brave-search', 'playwright'] },
+			tools: { disabledMcpServers: ['test-search', 'playwright'] },
 		});
 		insertSession(db, 'sess-c', {});
 
@@ -331,14 +331,14 @@ describe('Migration 100: mcp_enablement seeding', () => {
 	// --- Top-level integration: all three seed paths together --------------
 
 	test('seeds rows for room, space, and session sources in a single run', () => {
-		insertServer(db, 'srv-1', 'brave-search');
+		insertServer(db, 'srv-1', 'test-search');
 		insertRoom(db, 'room-1');
 		db.prepare(
 			`INSERT INTO room_mcp_enablement (room_id, server_id, enabled) VALUES ('room-1', 'srv-1', 1)`
 		).run();
 		insertSpace(db, 'space-1');
-		setGlobalSettings(db, { disabledMcpServers: ['brave-search'] });
-		insertSession(db, 'sess-1', { tools: { disabledMcpServers: ['brave-search'] } });
+		setGlobalSettings(db, { disabledMcpServers: ['test-search'] });
+		insertSession(db, 'sess-1', { tools: { disabledMcpServers: ['test-search'] } });
 
 		runMigration101(db);
 

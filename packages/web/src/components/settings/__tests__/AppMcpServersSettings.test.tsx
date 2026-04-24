@@ -267,14 +267,14 @@ describe('AppMcpServersSettings', () => {
 
 		it('should display server name and source type', () => {
 			const servers = [
-				makeServer('1', { name: 'brave-search', sourceType: 'stdio' }),
+				makeServer('1', { name: 'my-stdio-server', sourceType: 'stdio' }),
 				makeServer('2', { name: 'fetch-mcp', sourceType: 'http', url: 'http://localhost:8080' }),
 			];
 			appMcpStore.appMcpServers.value = servers;
 
 			render(<AppMcpServersSettings />);
 
-			expect(screen.getByText('brave-search')).toBeTruthy();
+			expect(screen.getByText('my-stdio-server')).toBeTruthy();
 			expect(screen.getByText('fetch-mcp')).toBeTruthy();
 			expect(screen.getByText('stdio')).toBeTruthy();
 			expect(screen.getByText('http')).toBeTruthy();
@@ -360,7 +360,7 @@ describe('AppMcpServersSettings', () => {
 			fireEvent.click(screen.getByText('Add MCP Server'));
 
 			// Fill in name
-			const nameInput = screen.getByPlaceholderText('e.g., brave-search');
+			const nameInput = screen.getByPlaceholderText('e.g., my-mcp-server');
 			fireEvent.change(nameInput, { target: { value: 'test-server' } });
 
 			// Fill in command (stdio type is default)
@@ -405,7 +405,7 @@ describe('AppMcpServersSettings', () => {
 			fireEvent.click(screen.getByText('Add MCP Server'));
 
 			// Fill name but not command
-			const nameInput = screen.getByPlaceholderText('e.g., brave-search');
+			const nameInput = screen.getByPlaceholderText('e.g., my-mcp-server');
 			fireEvent.change(nameInput, { target: { value: 'test-server' } });
 
 			// Submit form - click Add Server inside modal
@@ -423,7 +423,7 @@ describe('AppMcpServersSettings', () => {
 
 			// Open form and fill required fields
 			fireEvent.click(screen.getByText('Add MCP Server'));
-			const nameInput = screen.getByPlaceholderText('e.g., brave-search');
+			const nameInput = screen.getByPlaceholderText('e.g., my-mcp-server');
 			fireEvent.change(nameInput, { target: { value: 'test-server' } });
 			const commandInput = screen.getByPlaceholderText('e.g., npx');
 			fireEvent.change(commandInput, { target: { value: 'npx' } });
@@ -442,7 +442,7 @@ describe('AppMcpServersSettings', () => {
 
 			// Open form and fill required fields
 			fireEvent.click(screen.getByText('Add MCP Server'));
-			const nameInput = screen.getByPlaceholderText('e.g., brave-search');
+			const nameInput = screen.getByPlaceholderText('e.g., my-mcp-server');
 			fireEvent.change(nameInput, { target: { value: 'test-server' } });
 			const commandInput = screen.getByPlaceholderText('e.g., npx');
 			fireEvent.change(commandInput, { target: { value: 'npx' } });
@@ -462,7 +462,7 @@ describe('AppMcpServersSettings', () => {
 
 			// Open form and fill required fields
 			fireEvent.click(screen.getByText('Add MCP Server'));
-			const nameInput = screen.getByPlaceholderText('e.g., brave-search');
+			const nameInput = screen.getByPlaceholderText('e.g., my-mcp-server');
 			fireEvent.change(nameInput, { target: { value: 'test-server' } });
 			const commandInput = screen.getByPlaceholderText('e.g., npx');
 			fireEvent.change(commandInput, { target: { value: 'npx' } });
@@ -674,7 +674,7 @@ describe('AppMcpServersSettings', () => {
 			fireEvent.change(selectEl, { target: { value: 'sse' } });
 
 			// Fill name but not URL
-			const nameInput = screen.getByPlaceholderText('e.g., brave-search');
+			const nameInput = screen.getByPlaceholderText('e.g., my-mcp-server');
 			fireEvent.change(nameInput, { target: { value: 'sse-server' } });
 
 			// Submit form - click Add Server inside modal
@@ -698,7 +698,7 @@ describe('AppMcpServersSettings', () => {
 			fireEvent.change(selectEl, { target: { value: 'http' } });
 
 			// Fill name but not URL
-			const nameInput = screen.getByPlaceholderText('e.g., brave-search');
+			const nameInput = screen.getByPlaceholderText('e.g., my-mcp-server');
 			fireEvent.change(nameInput, { target: { value: 'http-server' } });
 
 			// Submit form - click Add Server inside modal
@@ -722,7 +722,7 @@ describe('AppMcpServersSettings', () => {
 			fireEvent.change(selectEl, { target: { value: 'http' } });
 
 			// Fill name and invalid URL
-			const nameInput = screen.getByPlaceholderText('e.g., brave-search');
+			const nameInput = screen.getByPlaceholderText('e.g., my-mcp-server');
 			fireEvent.change(nameInput, { target: { value: 'http-server' } });
 
 			const urlInput = screen.getByPlaceholderText('e.g., http://localhost:8080/sse');

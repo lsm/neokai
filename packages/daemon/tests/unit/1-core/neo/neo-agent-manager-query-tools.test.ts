@@ -263,7 +263,7 @@ describe('NeoAgentManager — query tools attachment', () => {
 			const sm = makeSessionManager({ existingSession: null, createdSession: session });
 			const mgr = new NeoAgentManager(sm, makeSettingsManager());
 			const registryServers: Record<string, McpServerConfig> = {
-				'brave-search': { command: 'npx', args: ['-y', 'brave-search-mcp'] } as McpServerConfig,
+				'test-search': { command: 'npx', args: ['-y', 'test-search-mcp'] } as McpServerConfig,
 				'fetch-mcp': { command: 'npx', args: ['-y', 'fetch-mcp'] } as McpServerConfig,
 			};
 			mgr.setToolsConfig(makeMinimalToolsConfig(), makeAppMcpManager(registryServers));
@@ -274,7 +274,7 @@ describe('NeoAgentManager — query tools attachment', () => {
 			expect(calls.length).toBe(1);
 			const servers = calls[0][0] as Record<string, McpServerConfig>;
 			expect('neo-query' in servers).toBe(true);
-			expect('brave-search' in servers).toBe(true);
+			expect('test-search' in servers).toBe(true);
 			expect('fetch-mcp' in servers).toBe(true);
 		});
 

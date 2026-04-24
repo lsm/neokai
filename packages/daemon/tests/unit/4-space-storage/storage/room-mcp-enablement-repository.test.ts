@@ -70,7 +70,7 @@ describe('RoomMcpEnablementRepository', () => {
 
 	describe('setEnabled', () => {
 		test('inserts an enabled override', () => {
-			const srv = createServer('brave-search');
+			const srv = createServer('test-search');
 			repo.setEnabled(ROOM_A, srv.id, true);
 
 			const ids = repo.getEnabledServerIds(ROOM_A);

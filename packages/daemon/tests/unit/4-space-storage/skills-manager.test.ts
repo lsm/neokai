@@ -593,7 +593,7 @@ describe('SkillsManager', () => {
 	// --- Validation: mcp_server ---
 
 	test('addSkill with mcp_server: valid appMcpServerId passes', () => {
-		const server = mcpRepo.create({ name: 'brave', sourceType: 'stdio', command: 'npx' });
+		const server = mcpRepo.create({ name: 'test-server', sourceType: 'stdio', command: 'npx' });
 		const skill = mgr.addSkill({
 			name: 'mcp-ok',
 			displayName: 'MCP',
