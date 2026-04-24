@@ -1,0 +1,101 @@
+/**
+ * Task-pane banner precedence helper.
+ *
+ * Before PR 4/5 the task pane stacked four independent banners
+ * (`PendingCompletionActionBanner`, `PendingTaskCompletionBanner`,
+ * `PendingGateBanner`, `TaskBlockedBanner`) and let CSS stacking decide which
+ * the user saw first. That produced ambiguous states — e.g. a blocked task
+ * with a pending gate still rendered both bands, and the completion-action
+ * banner (now deleted) could sit on top of the gate banner.
+ *
+ * `resolveActiveTaskBanner` collapses that into a single, deterministic
+ * decision. Consumers render exactly one banner — the one this function
+ * returns — so the UI matches the documented precedence rules in
+ * `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`
+ * §4.7.2.
+ *
+ * Precedence (first match wins):
+ *   1. `task.status === 'blocked'`                                       → `blocked`
+ *   2. `task.status === 'approved' && task.postApprovalBlockedReason`    → `post_approval_blocked`
+ *   3. `task.pendingCheckpointType === 'task_completion'`                → `task_completion_pending`
+ *   4. `task.workflowRunId` AND any gate is `waiting_human`              → `gate_pending`
+ *   5. Otherwise                                                         → `null`
+ *
+ * Completion-action checkpoints (`pendingCheckpointType === 'completion_action'`)
+ * are intentionally not in the precedence chain — the completion-action
+ * pipeline was removed in this same PR, so any residual row with that value is
+ * treated as noise and falls through to `null`.
+ *
+ * This file is purely derived from its inputs. No hub calls, no signals, no
+ * side effects — safe to call inside render loops and unit tests.
+ */
+
+import type { SpaceTask } from '@neokai/shared';
+
+/**
+ * Minimum shape the helper needs from a task — a structural subset of
+ * `SpaceTask`. Using `Pick` keeps tests lightweight (fixtures don't have to
+ * satisfy the full task shape) while preventing accidental drift when new
+ * banner-relevant fields are added.
+ */
+export type TaskBannerInput = Pick<
+	SpaceTask,
+	'status' | 'postApprovalBlockedReason' | 'pendingCheckpointType' | 'workflowRunId'
+>;
+
+/** Gate status as evaluated by `gate-status.ts::evaluateGateStatus`. */
+export type GateBannerStatus = 'open' | 'blocked' | 'waiting_human';
+
+export interface GateBannerSummary {
+	/** Evaluated gate status. Only `'waiting_human'` triggers `gate_pending`. */
+	status: GateBannerStatus;
+}
+
+/**
+ * Discriminated result — the caller renders exactly one banner component
+ * based on `kind`. `null` means no banner slot is active; the caller may
+ * render nothing, or a neutral background element.
+ */
+export type ActiveTaskBanner =
+	| { kind: 'blocked' }
+	| { kind: 'post_approval_blocked'; reason: string }
+	| { kind: 'task_completion_pending' }
+	| { kind: 'gate_pending'; runId: string }
+	| null;
+
+/**
+ * Compute the active task-pane banner from a task plus the current gate
+ * summaries for the task's workflow run.
+ *
+ * @param task      The task being viewed. Only the banner-relevant fields
+ *                  are read.
+ * @param gates     Optional list of gate summaries. Pass `undefined` when
+ *                  gate data is still loading — `gate_pending` will never
+ *                  fire in that case. Pass an empty array when loading has
+ *                  completed but no gate is waiting for a human.
+ */
+export function resolveActiveTaskBanner(
+	task: TaskBannerInput,
+	gates?: readonly GateBannerSummary[]
+): ActiveTaskBanner {
+	if (task.status === 'blocked') {
+		return { kind: 'blocked' };
+	}
+
+	if (task.status === 'approved') {
+		const reason = task.postApprovalBlockedReason?.trim();
+		if (reason) {
+			return { kind: 'post_approval_blocked', reason };
+		}
+	}
+
+	if (task.pendingCheckpointType === 'task_completion') {
+		return { kind: 'task_completion_pending' };
+	}
+
+	if (task.workflowRunId && gates && gates.some((g) => g.status === 'waiting_human')) {
+		return { kind: 'gate_pending', runId: task.workflowRunId };
+	}
+
+	return null;
+}

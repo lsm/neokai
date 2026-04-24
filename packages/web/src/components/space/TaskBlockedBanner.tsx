@@ -13,12 +13,22 @@
  *   - dependency_failed: gray — informational
  *   - workflow_invalid: red — informational
  *   - (null / unknown): amber fallback — matches previous behavior
+ *
+ * Composes `InlineStatusBanner` for the one-line status row so blocked tasks
+ * share the thin-banner shape with all other task-pane banners (gate,
+ * task-completion, post-approval). The blocked-task reason text from
+ * `task.result` is surfaced as banner `meta` when present.
  */
 
 import { useState, useEffect } from 'preact/hooks';
 import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { GateArtifactsView } from './GateArtifactsView';
+import {
+	InlineStatusBanner,
+	type InlineStatusBannerAction,
+	type InlineStatusBannerTone,
+} from './InlineStatusBanner';
 
 interface TaskBlockedBannerProps {
 	task: SpaceTask;
@@ -32,77 +42,24 @@ interface PendingGate {
 	data: Record<string, unknown>;
 }
 
-const REASON_CONFIG: Partial<
-	Record<
-		SpaceBlockReason,
-		{ label: string; border: string; bg: string; title: string; icon: string }
-	>
-> = {
-	gate_rejected: {
-		label: 'Gate Pending Approval',
-		border: 'border-purple-500/30',
-		bg: 'bg-purple-500/10',
-		title: 'text-purple-300',
-		icon: '🔒',
-	},
-	execution_failed: {
-		label: 'Execution Failed',
-		border: 'border-red-500/30',
-		bg: 'bg-red-500/10',
-		title: 'text-red-300',
-		icon: '⚠️',
-	},
-	agent_crashed: {
-		label: 'Agent Crashed',
-		border: 'border-red-500/30',
-		bg: 'bg-red-500/10',
-		title: 'text-red-300',
-		icon: '⚠️',
-	},
-	dependency_failed: {
-		label: 'Blocked by Dependency',
-		border: 'border-gray-500/30',
-		bg: 'bg-gray-500/10',
-		title: 'text-gray-300',
-		icon: '⛓️',
-	},
-	workflow_invalid: {
-		label: 'Invalid Workflow',
-		border: 'border-red-500/30',
-		bg: 'bg-red-500/10',
-		title: 'text-red-300',
-		icon: '⚠️',
-	},
+interface ReasonConfig {
+	label: string;
+	tone: InlineStatusBannerTone;
+	icon: string;
+}
+
+const REASON_CONFIG: Partial<Record<SpaceBlockReason, ReasonConfig>> = {
+	gate_rejected: { label: 'Gate Pending Approval', tone: 'purple', icon: '🔒' },
+	execution_failed: { label: 'Execution Failed', tone: 'red', icon: '⚠️' },
+	agent_crashed: { label: 'Agent Crashed', tone: 'red', icon: '⚠️' },
+	dependency_failed: { label: 'Blocked by Dependency', tone: 'gray', icon: '⛓️' },
+	workflow_invalid: { label: 'Invalid Workflow', tone: 'red', icon: '⚠️' },
 };
 
-const FALLBACK_CONFIG = {
-	label: 'Blocked',
-	border: 'border-amber-500/30',
-	bg: 'bg-amber-500/10',
-	title: 'text-amber-300',
-	icon: '⚠️',
-};
+const FALLBACK_CONFIG: ReasonConfig = { label: 'Blocked', tone: 'amber', icon: '⚠️' };
 
 export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlockedBannerProps) {
 	const reason = task.blockReason;
-
-	// Human-input requests render the question body as a "Question" message in
-	// the thread (space-task-thread-events.ts). Here we show only a thin hint
-	// pointing users to the composer — enough to be a safety net if the thread
-	// transformation is ever absent, without duplicating the full question.
-	if (reason === 'human_input_requested') {
-		return (
-			<div
-				class="mx-4 mt-2 mb-2 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-1.5"
-				data-testid="task-blocked-banner"
-				data-reason="human_input_requested"
-			>
-				<p class="text-xs text-sky-300">💬 Awaiting your input — reply via the composer below.</p>
-			</div>
-		);
-	}
-
-	const config = (reason && REASON_CONFIG[reason]) || FALLBACK_CONFIG;
 
 	const [showGateReview, setShowGateReview] = useState(false);
 	const [pendingGate, setPendingGate] = useState<PendingGate | null>(null);
@@ -142,6 +99,22 @@ export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlo
 		};
 	}, [reason, task.workflowRunId]);
 
+	// Human-input requests render the question body as a "Question" message in
+	// the thread (space-task-thread-events.ts). Here we show only a thin hint
+	// pointing users to the composer — enough to be a safety net if the thread
+	// transformation is ever absent, without duplicating the full question.
+	if (reason === 'human_input_requested') {
+		return (
+			<InlineStatusBanner
+				tone="blue"
+				icon={<span aria-hidden="true">💬</span>}
+				label="Awaiting your input — reply via the composer below."
+				testId="task-blocked-banner"
+				dataAttrs={{ 'data-reason': 'human_input_requested' }}
+			/>
+		);
+	}
+
 	// If showing full gate review, render GateArtifactsView
 	if (showGateReview && pendingGate && task.workflowRunId) {
 		return (
@@ -156,56 +129,56 @@ export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlo
 		);
 	}
 
-	return (
-		<div
-			class={`mx-4 mt-2 mb-2 rounded-lg border ${config.border} ${config.bg} px-3 py-2`}
-			data-testid="task-blocked-banner"
-		>
-			<div class="flex items-start justify-between gap-2">
-				<div class="flex-1 min-w-0">
-					<p class={`text-xs font-medium ${config.title}`}>
-						{config.icon} {config.label}
-					</p>
-					{task.result && (
-						<p class="mt-0.5 text-sm text-gray-200/90" data-testid="task-blocked-message">
-							{task.result}
-						</p>
-					)}
-				</div>
+	const config = (reason && REASON_CONFIG[reason]) || FALLBACK_CONFIG;
 
-				<div class="flex items-center gap-1.5 flex-shrink-0">
-					{reason === 'gate_rejected' && pendingGate && (
-						<button
-							type="button"
-							onClick={() => setShowGateReview(true)}
-							class="px-2 py-1 text-xs font-medium text-purple-300 hover:text-purple-200 bg-purple-900/30 hover:bg-purple-900/50 rounded transition-colors"
-							data-testid="gate-review-btn"
-						>
-							Review & Approve
-						</button>
-					)}
-					{reason === 'gate_rejected' && !pendingGate && !gateLoading && (
-						<button
-							type="button"
-							onClick={() => onStatusTransition?.('in_progress')}
-							class="px-2 py-1 text-xs font-medium text-blue-300 hover:text-blue-200 bg-dark-700 hover:bg-dark-600 rounded transition-colors"
-							data-testid="gate-resume-btn"
-						>
-							Resume
-						</button>
-					)}
-					{(reason === 'execution_failed' || reason === 'agent_crashed') && (
-						<button
-							type="button"
-							onClick={() => onStatusTransition?.('in_progress')}
-							class="px-2 py-1 text-xs font-medium text-blue-300 hover:text-blue-200 bg-dark-700 hover:bg-dark-600 rounded transition-colors"
-							data-testid="task-resume-btn"
-						>
-							Resume
-						</button>
-					)}
-				</div>
-			</div>
-		</div>
+	const actions: InlineStatusBannerAction[] = [];
+	if (reason === 'gate_rejected' && pendingGate) {
+		actions.push({
+			label: 'Review & Approve',
+			onClick: () => setShowGateReview(true),
+			variant: 'secondary',
+			testId: 'gate-review-btn',
+		});
+	}
+	if (reason === 'gate_rejected' && !pendingGate && !gateLoading) {
+		actions.push({
+			label: 'Resume',
+			onClick: () => onStatusTransition?.('in_progress'),
+			variant: 'secondary',
+			testId: 'gate-resume-btn',
+		});
+	}
+	if (reason === 'execution_failed' || reason === 'agent_crashed') {
+		actions.push({
+			label: 'Resume',
+			onClick: () => onStatusTransition?.('in_progress'),
+			variant: 'secondary',
+			testId: 'task-resume-btn',
+		});
+	}
+
+	const result = task.result?.trim();
+
+	return (
+		<>
+			<InlineStatusBanner
+				tone={config.tone}
+				icon={<span aria-hidden="true">{config.icon}</span>}
+				label={config.label}
+				meta={result ? `— ${result}` : undefined}
+				actions={actions}
+				testId="task-blocked-banner"
+				dataAttrs={reason ? { 'data-reason': reason } : undefined}
+			/>
+			{result && (
+				// Surface the reason text in a separate test hook so existing tests
+				// that assert on `task-blocked-message` keep working. The visible
+				// copy lives in the banner's `meta` slot; this element is the
+				// a11y-linked, test-locatable duplicate.
+				<span class="sr-only" data-testid="task-blocked-message">
+					{result}
+				</span>
+			)}
+		</>
 	);
 }

@@ -89,13 +89,11 @@ interface TaskStatusActionsProps {
 	disabled?: boolean;
 	/**
 	 * Type of checkpoint the task is paused at, if any. When set to
-	 * `completion_action` or `task_completion`, the generic Approve/Reject
-	 * transitions are hidden and routed through the matching banner
-	 * (`PendingCompletionActionBanner` / `PendingTaskCompletionBanner`) instead —
-	 * those banners show what the approval actually does, which the generic
-	 * buttons can't.
+	 * `task_completion`, the generic Approve/Reject transitions are hidden and
+	 * routed through `PendingTaskCompletionBanner` instead — that banner shows
+	 * what the approval actually does, which the generic buttons can't.
 	 */
-	pendingCheckpointType?: 'completion_action' | 'gate' | 'task_completion' | null;
+	pendingCheckpointType?: 'gate' | 'task_completion' | null;
 }
 
 export function TaskStatusActions({
@@ -105,17 +103,15 @@ export function TaskStatusActions({
 	pendingCheckpointType,
 }: TaskStatusActionsProps) {
 	const allActions = getTransitionActions(status);
-	// When a task is paused at a completion action, a submit_for_approval
-	// checkpoint, or a channel gate awaiting human approval, hide the generic
-	// Approve (review → done) and Cancel (review → cancelled) buttons. The
-	// dedicated banner owns those transitions. For gate-pending tasks the
-	// PendingGateBanner provides the Approve/Reject UX; bypassing it via the
-	// generic button would mark the task done without opening the gate.
-	// Non-checkpoint transitions (e.g. Reopen → in_progress, Archive) stay visible.
+	// When a task is paused at a submit_for_approval checkpoint or a channel
+	// gate awaiting human approval, hide the generic Approve (review → done)
+	// and Cancel (review → cancelled) buttons. The dedicated banner owns those
+	// transitions. For gate-pending tasks the PendingGateBanner provides the
+	// Approve/Reject UX; bypassing it via the generic button would mark the task
+	// done without opening the gate. Non-checkpoint transitions (e.g. Reopen →
+	// in_progress, Archive) stay visible.
 	const actions =
-		pendingCheckpointType === 'completion_action' ||
-		pendingCheckpointType === 'task_completion' ||
-		pendingCheckpointType === 'gate'
+		pendingCheckpointType === 'task_completion' || pendingCheckpointType === 'gate'
 			? allActions.filter(({ target }) => target !== 'done' && target !== 'cancelled')
 			: allActions;
 

@@ -1,5 +1,5 @@
 /**
- * AutonomyWorkflowSummary — "X of Y workflows run without approval" hint.
+ * AutonomyWorkflowSummary — "X of Y workflows auto-close without review" hint.
  *
  * Rendered below the autonomy selector in Space settings and next to the
  * slim autonomy bar on the Space Overview. Updates live as the user changes
@@ -12,7 +12,7 @@
 
 import { useMemo, useState } from 'preact/hooks';
 import type { SpaceAutonomyLevel, SpaceWorkflow } from '@neokai/shared';
-import { EMPTY_ACTIONS_AUTONOMY_THRESHOLD, countAutonomousWorkflows } from '@neokai/shared';
+import { isWorkflowAutoClosingAtLevel } from '@neokai/shared';
 import { cn } from '../../lib/utils.ts';
 
 interface AutonomyWorkflowSummaryProps {
@@ -27,6 +27,12 @@ interface AutonomyWorkflowSummaryProps {
 	compact?: boolean;
 }
 
+interface BlockingEntry {
+	workflowId: string;
+	workflowName: string;
+	requiredLevel: number;
+}
+
 export function AutonomyWorkflowSummary({
 	level,
 	workflows,
@@ -35,14 +41,29 @@ export function AutonomyWorkflowSummary({
 }: AutonomyWorkflowSummaryProps) {
 	const [expanded, setExpanded] = useState(false);
 
-	const count = useMemo(() => countAutonomousWorkflows(workflows, level), [workflows, level]);
+	const { autonomous, total, blocking } = useMemo(() => {
+		let auto = 0;
+		const blockingList: BlockingEntry[] = [];
+		for (const wf of workflows) {
+			if (isWorkflowAutoClosingAtLevel(wf, level)) {
+				auto += 1;
+			} else {
+				blockingList.push({
+					workflowId: wf.id,
+					workflowName: wf.name,
+					requiredLevel: wf.completionAutonomyLevel ?? 5,
+				});
+			}
+		}
+		return { autonomous: auto, total: workflows.length, blocking: blockingList };
+	}, [workflows, level]);
 
 	// Nothing to say before workflows have loaded (or when the space has none).
-	if (count.total === 0) {
+	if (total === 0) {
 		return null;
 	}
 
-	const hasDetails = count.blocking.length > 0;
+	const hasDetails = blocking.length > 0;
 	const textSize = compact ? 'text-[11px]' : 'text-xs';
 
 	return (
@@ -51,9 +72,9 @@ export function AutonomyWorkflowSummary({
 				<span data-testid="autonomy-workflow-summary-count">
 					Level {level}:{' '}
 					<span class="text-gray-200 font-medium tabular-nums">
-						{count.autonomous} of {count.total}
+						{autonomous} of {total}
 					</span>{' '}
-					{count.total === 1 ? 'workflow runs' : 'workflows run'} without approval
+					{total === 1 ? 'workflow auto-closes' : 'workflows auto-close'} without review
 				</span>
 				{hasDetails && (
 					<button
@@ -73,24 +94,10 @@ export function AutonomyWorkflowSummary({
 					class={cn('space-y-1 pl-2 border-l border-dark-700', textSize, 'text-gray-500')}
 					data-testid="autonomy-workflow-summary-details"
 				>
-					{count.blocking.map((wf) => (
+					{blocking.map((wf) => (
 						<li key={wf.workflowId} class="leading-snug">
 							<span class="text-gray-300">{wf.workflowName}</span>
-							{wf.blockedBy.length === 0 ? (
-								<> — requires level {EMPTY_ACTIONS_AUTONOMY_THRESHOLD} or higher</>
-							) : (
-								<>
-									{' '}
-									— blocked by:{' '}
-									{wf.blockedBy.map((b, idx) => (
-										<span key={b.actionId}>
-											{idx > 0 && ', '}
-											<span class="text-gray-400">{b.actionName}</span> (requires level{' '}
-											{b.requiredLevel})
-										</span>
-									))}
-								</>
-							)}
+							<> — requires level {wf.requiredLevel} or higher</>
 						</li>
 					))}
 				</ul>
