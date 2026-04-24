@@ -24,7 +24,11 @@ import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflow, CompletionAction } from '@neokai/shared';
 import type { GateScript } from '@neokai/shared';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+import { Logger } from '../../logger';
 import { computeWorkflowHash } from './template-hash.ts';
+import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './post-approval-merge-template.ts';
+
+const builtInSeederLog = new Logger('seed-built-in-workflows');
 
 // ---------------------------------------------------------------------------
 // Template node ID constants (used as stable IDs for workflow nodes and startNodeId)
@@ -392,13 +396,16 @@ const FULLSTACK_QA_PROMPT =
 	'TOOL CONTRACT (Design v2):\n' +
 	'- `save_artifact({ type: "result", append: true, summary, ...data? })` — append-only audit. Records what you observed ' +
 	'during this cycle. Does NOT close the task.\n' +
-	'- `approve_task()` — closes this task as done. Only call after the PR is actually merged ' +
-	'and the workspace is synced.\n' +
+	'- `approve_task()` — closes this task as done. Only call after QA passes and the ' +
+	'post-approval handoff to the Task Agent has been sent.\n' +
 	'- `submit_for_approval({ reason? })` — request human sign-off instead of self-closing. ' +
 	'Use when autonomy blocks self-close.\n\n' +
-	'If everything passes, merge the PR, sync the worktree, then call `save_artifact({ type: "result", append: true, summary: "QA passed." })` followed by ' +
-	'`approve_task`. If issues are found, send a detailed fix list to Coding and record a ' +
-	'`save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` audit entry; do NOT call `approve_task`.';
+	'If everything passes, signal the Task Agent that a merge is the post-approval action, ' +
+	'then `save_artifact({ type: "result", append: true, summary: "QA passed." })` and ' +
+	'`approve_task`. Do NOT merge the PR yourself — a post-approval reviewer session runs ' +
+	'the merge after the task transitions to `approved`. If issues are found, send a detailed ' +
+	'fix list to Coding and record a `save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` ' +
+	'audit entry; do NOT call `approve_task`.';
 
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
 const RESEARCH_REVIEW_NODE = 'tpl-research-review';
@@ -512,11 +519,23 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'thread.\n' +
 							'   d. Call `save_artifact({ type: "result", append: true, summary: "Requested changes: ...", prUrl, reviewUrl })` so the cycle is recorded. Do NOT call `approve_task` — ' +
 							'the workflow must stay open for the next cycle.\n' +
-							'5. If satisfied: post an approval review with `gh pr review <pr-url> --approve ' +
-							'--body-file <file>`, verify the PR is open and mergeable, then call ' +
-							'`save_artifact({ type: "result", append: true, summary, prUrl })` to record the audit entry, ' +
-							'and finally call `approve_task()` to close the task. If autonomy blocks ' +
-							'self-close, call `submit_for_approval({ reason: "..." })` instead.',
+							'5. If satisfied:\n' +
+							'   a. Post an approval review: `gh pr review <pr-url> --approve ' +
+							'--body-file <file>`.\n' +
+							'   b. Verify the PR is still open and mergeable.\n' +
+							'   c. Signal the Task Agent that a merge is the post-approval action:\n' +
+							'      send_message(\n' +
+							'         target: "task-agent",\n' +
+							'         message: "Reviewer approved. PR ready for post-approval.",\n' +
+							'         data: { pr_url: "<url>", post_approval_action: "merge_pr" }\n' +
+							'      )\n' +
+							'   d. Call `save_artifact({ type: "result", append: true, summary, prUrl })` ' +
+							'to record the audit entry.\n' +
+							'   e. Call `approve_task()` to close the task. If autonomy blocks ' +
+							'self-close, call `submit_for_approval({ reason: "..." })` instead — ' +
+							'the Task Agent will still route post-approval once the human approves. ' +
+							'Do NOT attempt to merge the PR yourself; a post-approval reviewer session ' +
+							'runs the merge after the task transitions to `approved`.',
 					},
 				},
 			],
@@ -531,6 +550,15 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	// Default coding loop — reviewer may auto-close when space runs at the
 	// standard "trusted but supervised" tier (3).
 	completionAutonomyLevel: 3,
+	// Post-approval routing (PR 3/5): after `approve_task()` fires, spawn a
+	// fresh `reviewer` session that runs the PR merge using the shared
+	// merge-template instructions. The workflow's legacy `MERGE_PR_COMPLETION_ACTION`
+	// is retained on the Review node (deletion happens in PR 4/5) but is bypassed
+	// at runtime when `NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING` is ON.
+	postApproval: {
+		targetAgent: 'reviewer',
+		instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+	},
 	gates: [
 		{
 			id: 'code-ready-gate',
@@ -659,10 +687,21 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'5. If more research is needed: send_message back to Research with specific areas ' +
 							'to investigate, then `save_artifact({ type: "result", append: true, summary: "Requested more research: ..." })` ' +
 							'to record the cycle. Do NOT call `approve_task` — leave the workflow open.\n' +
-							'6. If satisfied: verify the PR is still open and mergeable, call ' +
-							'`save_artifact({ type: "result", append: true, summary, prUrl })` to record the final audit ' +
-							'entry, then `approve_task()` to close. If autonomy blocks self-close, call ' +
-							'`submit_for_approval({ reason: "..." })` instead.',
+							'6. If satisfied:\n' +
+							'   a. Verify the PR is still open and mergeable.\n' +
+							'   b. Signal the Task Agent that a merge is the post-approval action:\n' +
+							'      send_message(\n' +
+							'         target: "task-agent",\n' +
+							'         message: "Reviewer approved. PR ready for post-approval.",\n' +
+							'         data: { pr_url: "<url>", post_approval_action: "merge_pr" }\n' +
+							'      )\n' +
+							'   c. Call `save_artifact({ type: "result", append: true, summary, prUrl })` ' +
+							'to record the final audit entry.\n' +
+							'   d. Call `approve_task()` to close the task. If autonomy blocks self-close, ' +
+							'call `submit_for_approval({ reason: "..." })` instead — the Task Agent will ' +
+							'still route post-approval once the human approves. Do NOT attempt to merge ' +
+							'the PR yourself; a post-approval reviewer session runs the merge after the ' +
+							'task transitions to `approved`.',
 					},
 				},
 			],
@@ -677,6 +716,12 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	// Research is low-risk (read-only investigation + PR of findings) — permit
 	// auto-close at a more conservative autonomy tier than coding loops.
 	completionAutonomyLevel: 2,
+	// Post-approval routing (PR 3/5): analogous to Coding — the `reviewer` role
+	// runs the PR merge in a fresh session using the shared merge template.
+	postApproval: {
+		targetAgent: 'reviewer',
+		instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+	},
 	gates: [
 		{
 			id: 'research-ready-gate',
@@ -760,8 +805,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'2. Check for correctness, security, performance, and style issues\n' +
 							'3. Verify test coverage is adequate\n' +
 							'4. Post your review to the PR via `gh pr review` (+ inline comments via `gh api` ' +
-							'where relevant) — this is required, not optional; the runtime verifies at least one ' +
-							'review/comment exists before accepting completion\n' +
+							'where relevant) — this is required, not optional\n' +
 							'5. Call `save_artifact({ type: "result", append: true, summary, prUrl })` to record the audit entry\n' +
 							'6. Call `approve_task()` as your final action. If autonomy blocks self-close, call ' +
 							'`submit_for_approval({ reason: "..." })` instead.',
@@ -1120,7 +1164,8 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							FULLSTACK_QA_PROMPT +
 							'\n\n' +
 							'Expected inputs: Reviewer-approved PR.\n' +
-							'Expected outputs: PR merged and worktree synced, or QA feedback to Coding.\n\n' +
+							'Expected outputs: QA pass signalled and post-approval handoff sent, or QA ' +
+							'feedback to Coding.\n\n' +
 							'Steps:\n' +
 							'1. Run backend and frontend test suites\n' +
 							'2. Run browser-based critical-path validation\n' +
@@ -1128,12 +1173,20 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'4. If fail: send detailed failures and repro steps to Coding, then call ' +
 							'`save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` to record the audit entry. Do ' +
 							'NOT call `approve_task` — leave the workflow open for the next Coding cycle.\n' +
-							'5. If all green: merge the PR with `gh pr merge <URL> --squash`\n' +
-							'6. Sync worktree: `git checkout <base-branch> && git pull --ff-only`\n' +
-							'7. Call `save_artifact({ type: "result", append: true, summary, prUrl, testOutput })` to record ' +
-							'the audit entry, then `approve_task()` as your final action. If autonomy blocks ' +
-							'self-close, call `submit_for_approval({ reason: "..." })` instead. The runtime ' +
-							'also verifies the PR is actually merged before accepting completion.',
+							'5. If all green:\n' +
+							'   a. Signal the Task Agent that a merge is the post-approval action:\n' +
+							'      send_message(\n' +
+							'         target: "task-agent",\n' +
+							'         message: "QA passed. PR ready for post-approval.",\n' +
+							'         data: { pr_url: "<url>", post_approval_action: "merge_pr" }\n' +
+							'      )\n' +
+							'   b. Call `save_artifact({ type: "result", append: true, summary, prUrl, testOutput })` ' +
+							'to record the audit entry.\n' +
+							'   c. Call `approve_task()` as your final action. If autonomy blocks self-close, ' +
+							'call `submit_for_approval({ reason: "..." })` instead — the Task Agent will ' +
+							'still route post-approval once the human approves. Do NOT run `gh pr merge` ' +
+							'yourself; a post-approval reviewer session handles the merge and worktree ' +
+							'sync after the task transitions to `approved`.',
 					},
 				},
 			],
@@ -1145,9 +1198,18 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 	tags: ['fullstack', 'qa', 'browser-testing'],
 	createdAt: 0,
 	updatedAt: 0,
-	// QA loop ends with the QA node actually merging the PR — permit auto-close
-	// only at the highest "autonomous with safety nets" tier.
-	completionAutonomyLevel: 4,
+	// QA no longer merges the PR — the post-approval reviewer session does that.
+	// Aligned with Coding's autonomy tier (3) since QA-approve is now a plain
+	// "work is good" signal, orthogonal to auto-merge. Auto-merge remains an
+	// autonomy-gated decision enforced by the merge-template's `autonomy_level`
+	// conditional at the post-approval session layer.
+	completionAutonomyLevel: 3,
+	// Post-approval routing (PR 3/5): after QA approves, spawn a fresh
+	// `reviewer` session that runs the PR merge + worktree sync.
+	postApproval: {
+		targetAgent: 'reviewer',
+		instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+	},
 	gates: [
 		{
 			id: 'code-pr-gate',
@@ -1261,11 +1323,33 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
 export interface SeedBuiltInWorkflowsResult {
 	/** Workflows that were successfully created */
 	seeded: string[];
-	/** Errors for workflows that failed to seed */
+	/**
+	 * Workflows whose existing DB row was re-stamped on template drift.
+	 * PR 3/5 uses this path to land new `postApproval` routes, updated
+	 * `completionAutonomyLevel`, and refreshed `templateHash` values onto
+	 * existing spaces without rewriting user-customisable fields (node
+	 * UUIDs, prompt text, channels, gates).
+	 */
+	restamped: string[];
+	/** Errors for workflows that failed to seed or re-stamp */
 	errors: Array<{ name: string; error: string }>;
-	/** True if seeding was skipped because workflows already exist */
+	/**
+	 * True when no new workflows were created AND no drift was detected —
+	 * i.e. this call was a true no-op.
+	 */
 	skipped: boolean;
 }
+
+/**
+ * Fields that the built-in seeder re-stamps when it detects template drift
+ * on an already-seeded row. Intentionally narrow: we do NOT re-stamp node
+ * content (prompts, channels, gates) because those carry real UUIDs that
+ * may be referenced by in-flight workflow runs. Regenerating them would
+ * break live sessions. The `postApproval` route is safe to update because
+ * it uses role names (e.g. `'reviewer'`), not UUIDs, and the instructions
+ * template is interpolated per-approval at routing time.
+ */
+const RESTAMP_FIELDS = ['postApproval', 'completionAutonomyLevel', 'templateHash'] as const;
 
 /**
  * Seeds all built-in workflow templates into the given space.
@@ -1275,11 +1359,20 @@ export interface SeedBuiltInWorkflowsResult {
  * If any name cannot be resolved, this function throws — persisting a
  * placeholder string as an `agentId` would create broken workflow data.
  *
- * Idempotent: if the space already has at least one workflow, this is a no-op
- * (returns `{ seeded: [], errors: [], skipped: true }`).
+ * Idempotency & drift re-stamping:
+ *   - If NO built-in workflow rows exist yet in this space, all five templates
+ *     are created from scratch.
+ *   - If rows already exist that were seeded from a built-in template
+ *     (matched via `templateName`), their stored `templateHash` is compared
+ *     to the current template hash. On mismatch, the row is re-stamped
+ *     with the narrow field set listed in {@link RESTAMP_FIELDS} — see the
+ *     constant's doc-comment for why node content is intentionally NOT
+ *     re-stamped. This is how PR 3/5's new `postApproval` routes land on
+ *     pre-existing spaces.
+ *   - Rows without a `templateName` (user-created workflows) are ignored.
  *
- * Individual workflow creation errors are captured per-workflow and do not
- * abort the remaining seeds.
+ * Individual workflow creation / re-stamp errors are captured per-workflow
+ * and do not abort the remaining operations.
  *
  * NOTE: This function must be called after preset SpaceAgent records have been
  * seeded (inside the `space.create` RPC handler).
@@ -1297,15 +1390,59 @@ export function seedBuiltInWorkflows(
 	workflowManager: SpaceWorkflowManager,
 	resolveAgentId: (name: string) => string | undefined
 ): SeedBuiltInWorkflowsResult {
+	const templates = getBuiltInWorkflows();
+	const templatesByName = new Map(templates.map((t) => [t.name, t]));
 	const existing = workflowManager.listWorkflows(spaceId);
+
+	// Branch 1 (re-stamp path): rows already exist. Walk them and update any
+	// template-seeded rows whose stored `templateHash` no longer matches the
+	// current template. This is the PR 3/5 migration path — new `postApproval`
+	// routes land here on spaces that were seeded before PR 3/5.
 	if (existing.length > 0) {
-		// Already seeded — nothing to do.
-		return { seeded: [], errors: [], skipped: true };
+		const restamped: string[] = [];
+		const errors: Array<{ name: string; error: string }> = [];
+
+		for (const row of existing) {
+			if (!row.templateName) continue;
+			const template = templatesByName.get(row.templateName);
+			if (!template) continue;
+			const expectedHash = computeWorkflowHash(template);
+			if (row.templateHash === expectedHash) continue;
+
+			try {
+				workflowManager.updateWorkflow(row.id, {
+					completionAutonomyLevel: template.completionAutonomyLevel,
+					// Pass `null` (not `undefined`) when the template clears the route,
+					// so the repository writes the new value rather than leaving the
+					// old one in place.
+					postApproval: template.postApproval ?? null,
+					templateHash: expectedHash,
+				});
+				restamped.push(template.name);
+				builtInSeederLog.info(
+					`re-stamped built-in workflow '${template.name}' (id=${row.id}) ` +
+						`in space ${spaceId}: fields=${RESTAMP_FIELDS.join(',')}`
+				);
+			} catch (err) {
+				errors.push({
+					name: template.name,
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
+		}
+
+		return {
+			seeded: [],
+			restamped,
+			errors,
+			skipped: restamped.length === 0 && errors.length === 0,
+		};
 	}
 
+	// Branch 2 (fresh seed path): no rows yet. Create all five templates.
+	//
 	// Pre-validate: resolve every agent name needed across ALL templates before
 	// persisting anything. This guarantees all-or-nothing behaviour.
-	const templates = getBuiltInWorkflows();
 	const neededNames = new Set<string>();
 	for (const template of templates) {
 		for (const node of template.nodes) {
@@ -1385,6 +1522,10 @@ export function seedBuiltInWorkflows(
 					: undefined,
 				gates: template.gates ? [...template.gates] : undefined,
 				completionAutonomyLevel: template.completionAutonomyLevel,
+				// Thread postApproval through so the route actually lands in the DB.
+				// Without this, PR 3/5 would silently strip the field and no post-
+				// approval routing would fire for freshly seeded spaces.
+				...(template.postApproval ? { postApproval: template.postApproval } : {}),
 				templateName: template.name,
 				templateHash: computeWorkflowHash(template),
 			});
@@ -1398,5 +1539,5 @@ export function seedBuiltInWorkflows(
 		}
 	}
 
-	return { seeded, errors, skipped: false };
+	return { seeded, restamped: [], errors, skipped: false };
 }
