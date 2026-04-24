@@ -6920,8 +6920,12 @@ export function runMigration102(db: BunDatabase): void {
  */
 export function runMigration103(db: BunDatabase): void {
 	if (!tableExists(db, 'space_tasks')) {
-		// Very fresh DB — `createTables` will create the table with the new
-		// schema already in place, so this migration has nothing to do.
+		// No `space_tasks` yet — nothing to rebuild. In the full
+		// `runMigrations` pipeline M29 creates this table long before M103
+		// runs, so this branch only fires when `runMigration103` is invoked
+		// standalone on a DB that has not had M29 applied (tests / dev
+		// tooling). Skipping here is safe: once M29 creates the table any
+		// later M103 invocation will enter the rebuild path below.
 		return;
 	}
 

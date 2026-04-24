@@ -374,6 +374,13 @@ export class SpaceTaskRepository {
 	 * Returns tasks with status `in_progress` or `blocked` that have a
 	 * non-null `task_agent_session_id`. Used by `TaskAgentManager.rehydrate()` on
 	 * daemon restart to find Task Agent sessions that need to be restarted.
+	 *
+	 * NOTE (PR 2 of post-approval refactor): when the `approved` status starts
+	 * carrying `post_approval_session_id` for in-flight post-approval work, the
+	 * status filter here must widen to include `'approved'` so those sessions
+	 * rehydrate too. This PR (1/5) is schema-only and no task can reach
+	 * `'approved'` yet, so keeping the current filter preserves the
+	 * no-behaviour-change invariant.
 	 */
 	listActiveWithTaskAgentSession(): SpaceTask[] {
 		const stmt = this.db.prepare(
