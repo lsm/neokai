@@ -243,6 +243,21 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const skillsManager = new SkillsManager(db.skills, db.appMcpServers, jobQueue);
 	skillsManager.initializeBuiltins();
 
+	// Materialise SDK-plugin wrappers for every builtin skill so the SDK
+	// recognises them as plugins and exposes `/<commandName>` slash commands.
+	// Without this, `plugins: [{ type: 'local', path: '~/.neokai/skills/playwright' }]`
+	// is silently dropped because the directory has no `.claude-plugin/plugin.json`
+	// (it follows the agent-skills layout, not the plugin layout). See
+	// `lib/agent/builtin-skill-plugin-wrapper.ts` for the full rationale.
+	//
+	// Errors are non-fatal: if a wrapper can't be created the slash command
+	// just won't appear, but the daemon must still come up.
+	try {
+		await skillsManager.ensureBuiltinPluginWrappers();
+	} catch (err) {
+		logError('[Daemon] Failed to ensure builtin skill plugin wrappers (non-fatal):', err);
+	}
+
 	// Initialize session manager (with EventBus, SettingsManager, no StateManager dependency!)
 	// Use reactiveDb.db so sdk_messages writes emitted by AgentSession pipelines
 	// trigger LiveQuery invalidation immediately.

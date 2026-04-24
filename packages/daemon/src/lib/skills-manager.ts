@@ -22,6 +22,10 @@ import type { AppMcpServerRepository } from '../storage/repositories/app-mcp-ser
 import type { JobQueueRepository } from '../storage/repositories/job-queue-repository';
 import { SKILL_VALIDATE } from './job-queue-constants';
 import { BUILTIN_MCP_SERVERS, BUILTIN_SKILLS, type BuiltinSkill } from './builtins';
+import {
+	defaultBuiltinSkillPluginRoot,
+	ensureBuiltinSkillPluginWrappers,
+} from './agent/builtin-skill-plugin-wrapper';
 
 /**
  * Convert a GitHub tree/blob URL to a raw content URL.
@@ -343,6 +347,15 @@ export class SkillsManager {
 			createdAt: Date.now(),
 		};
 		this.repo.insert(skill);
+
+		// Materialise the SDK plugin wrapper for the new skill so the next
+		// session that resolves it as a plugin sees a valid plugin directory.
+		// Without this the slash command would not register until the daemon
+		// restarted and re-ran ensureBuiltinPluginWrappers().
+		await this.ensureBuiltinPluginWrappers().catch(() => {
+			// Already logged inside the helper; non-fatal.
+		});
+
 		return this.repo.get(skill.id)!;
 	}
 
@@ -550,6 +563,41 @@ export class SkillsManager {
 			enabled: serverDef.enabled,
 			source: 'builtin',
 		});
+	}
+
+	/**
+	 * Materialise SDK-plugin wrappers for every registered `sourceType: 'builtin'`
+	 * skill so the SDK exposes each skill as a `/<commandName>` slash command.
+	 *
+	 * The Claude Agent SDK silently drops plugin paths that are not valid plugin
+	 * directories (i.e. have no `.claude-plugin/plugin.json`). Our skill
+	 * directories at `~/.neokai/skills/<commandName>/` follow the agent-skills
+	 * layout (SKILL.md at root) rather than the plugin layout, so the SDK needs
+	 * a wrapper that bridges the two. See `builtin-skill-plugin-wrapper.ts` for
+	 * the full rationale.
+	 *
+	 * Called once during daemon startup after `initializeBuiltins()`. Errors on
+	 * individual skills are logged and swallowed — a broken wrapper must never
+	 * block daemon startup.
+	 */
+	async ensureBuiltinPluginWrappers(
+		wrappersRoot: string = defaultBuiltinSkillPluginRoot(),
+		skillsRoot: string = join(homedir(), '.neokai', 'skills')
+	): Promise<Map<string, string>> {
+		const builtinSkills = this.repo.findAll().filter((s) => {
+			return s.sourceType === 'builtin' && s.config.type === 'builtin';
+		});
+		return ensureBuiltinSkillPluginWrappers(
+			wrappersRoot,
+			skillsRoot,
+			builtinSkills.map((s) => {
+				const config = s.config as { type: 'builtin'; commandName: string };
+				return {
+					commandName: config.commandName,
+					description: s.description,
+				};
+			})
+		);
 	}
 
 	// ---------------------------------------------------------------------------
