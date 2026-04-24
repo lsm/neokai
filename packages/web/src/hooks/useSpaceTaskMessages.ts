@@ -78,7 +78,16 @@ export function useSpaceTaskMessages(
 ): UseSpaceTaskMessagesResult {
 	const { request, onEvent, isConnected } = useMessageHub();
 	const [rows, setRows] = useState<SpaceTaskThreadMessageRow[]>([]);
-	const [isLoading, setIsLoading] = useState(false);
+	/**
+	 * The task id whose LiveQuery snapshot has been applied to `rows`.
+	 * `null` means either no subscription is active or we are still waiting
+	 * for the first snapshot of the current `taskId`. `isLoading` is derived
+	 * from the mismatch between this and the incoming `taskId`, which keeps
+	 * the loading state correct from the very first render — no useEffect
+	 * transition is needed to flip it to `true`, so the empty-state branch
+	 * can never flash on mount or on task switch.
+	 */
+	const [loadedForTaskId, setLoadedForTaskId] = useState<string | null>(null);
 	const activeSubIdRef = useRef<string | null>(null);
 
 	const queryName =
@@ -87,20 +96,23 @@ export function useSpaceTaskMessages(
 	useEffect(() => {
 		if (!taskId || !isConnected) {
 			setRows([]);
-			setIsLoading(false);
+			setLoadedForTaskId(null);
 			activeSubIdRef.current = null;
 			return;
 		}
 
 		const subscriptionId = nextTaskMessageSubId(taskId);
 		activeSubIdRef.current = subscriptionId;
+		// Clear stale rows from a previous subscription synchronously. The
+		// empty-state UI is still suppressed because `loadedForTaskId` is now
+		// out of sync with `taskId`, so consumers see the loading state.
 		setRows([]);
-		setIsLoading(true);
+		setLoadedForTaskId(null);
 
 		const unsubSnapshot = onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
 			if (event.subscriptionId !== activeSubIdRef.current) return;
 			setRows(sortRows((event.rows as SpaceTaskThreadMessageRow[]) ?? []));
-			setIsLoading(false);
+			setLoadedForTaskId(taskId);
 		});
 
 		const unsubDelta = onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
@@ -113,8 +125,11 @@ export function useSpaceTaskMessages(
 			params: [taskId],
 			subscriptionId,
 		}).catch(() => {
+			// Release the loading gate on subscribe failure so consumers can
+			// surface the empty state (or, more likely, the reconnecting state
+			// once the websocket drops) rather than stalling forever.
 			if (activeSubIdRef.current === subscriptionId) {
-				setIsLoading(false);
+				setLoadedForTaskId(taskId);
 			}
 		});
 
@@ -127,6 +142,13 @@ export function useSpaceTaskMessages(
 	}, [taskId, isConnected, onEvent, request, queryName]);
 
 	const sortedRows = useMemo(() => sortRows(rows), [rows]);
+
+	// Derived: we are loading whenever we have an active taskId but have not
+	// yet applied a snapshot for it. Computing this (instead of tracking it
+	// as separate state) means the very first render — before the effect
+	// runs — already returns `isLoading=true`, which is what suppresses the
+	// empty-state flash on slow networks and on task switch.
+	const isLoading = taskId !== null && isConnected && loadedForTaskId !== taskId;
 
 	return {
 		rows: sortedRows,
