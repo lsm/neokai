@@ -57,6 +57,7 @@ import { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
 import {
 	setupSpaceWorkflowHandlers,
 	checkBuiltInWorkflowDriftOnStartup,
+	restampBuiltInWorkflowsOnStartup,
 } from './space-workflow-handlers';
 import type { SpaceManager } from '../space/managers/space-manager';
 import { SpaceTaskManager } from '../space/managers/space-task-manager';
@@ -456,9 +457,37 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceWorkflowRunRepo
 	);
 
-	// Proactive drift detection — fire-and-forget; logs warnings for any workflows
-	// that have drifted from their built-in templates since the last sync.
-	void checkBuiltInWorkflowDriftOnStartup(spaceWorkflowManager, deps.spaceManager);
+	// PR 3/5: narrow auto re-stamp pass — applies the template fields that are
+	// safe to update in-place on built-in-seeded rows: `postApproval`,
+	// `completionAutonomyLevel`, `templateHash`, and per-node
+	// `agents[i].customPrompt` content. Node `id` and agent `agentId` are
+	// preserved so in-flight workflow runs continue to resolve correctly.
+	//
+	// What is NOT covered by this auto-pass: channel / gate structural
+	// changes or the addition / removal of whole nodes. Those still surface
+	// as drift warnings via `checkBuiltInWorkflowDriftOnStartup` (below) and
+	// require a UI-driven re-sync, because re-generating channel or node IDs
+	// would break live run references. If a future PR introduces that kind
+	// of template delta, `checkBuiltInWorkflowDriftOnStartup` still logs the
+	// warning after this pass — the re-stamp only zeroes out hash drift for
+	// rows it was actually able to fully update.
+	void restampBuiltInWorkflowsOnStartup(
+		spaceWorkflowManager,
+		deps.spaceManager,
+		deps.spaceAgentManager
+	)
+		.then(() => {
+			// Proactive drift detection — fire-and-forget; logs warnings for any
+			// workflows that have drifted from their built-in templates since the
+			// last sync (e.g. when the re-stamp pass couldn't fully update a row).
+			void checkBuiltInWorkflowDriftOnStartup(spaceWorkflowManager, deps.spaceManager);
+		})
+		.catch((err: unknown) => {
+			// Defensive — the re-stamp helper already `try/catch`es internally,
+			// but surface any unhandled failure here rather than letting it sink
+			// into an unhandled-rejection.
+			log.warn('built-in workflow restamp failed:', err);
+		});
 
 	// Space Runtime Service — wraps SpaceRuntime with per-space lifecycle API.
 	// Not started yet: TaskAgentManager is created next and injected before start().
