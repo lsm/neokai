@@ -14,7 +14,6 @@ import type { DaemonHub } from '../daemon-hub';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
-import { isPostApprovalRoutingEnabled } from '../space/runtime/post-approval-router';
 import { Logger } from '../logger';
 
 const log = new Logger('space-task-handlers');
@@ -152,58 +151,6 @@ export function setupSpaceTaskHandlers(
 			}
 
 			if (updateParams.status !== currentTask.status) {
-				// Intercept review → done when the task is paused at a completion action.
-				// Instead of directly transitioning to done, resume the completion action
-				// loop from pendingActionIndex — the loop determines the final status.
-				if (
-					spaceRuntimeService &&
-					currentTask.status === 'review' &&
-					updateParams.status === 'done' &&
-					currentTask.pendingCheckpointType === 'completion_action'
-				) {
-					const resumed = await spaceRuntimeService.resumeCompletionActions(spaceId, taskId, {
-						approvalReason: updateParams.approvalReason ?? null,
-					});
-					if (resumed) {
-						task = resumed;
-						// Status is excluded — the resume path already set the final status
-						// (done / blocked / review). approvalReason has already been
-						// persisted by the runtime on the terminal `done` transition, so
-						// drop it here to avoid a redundant write. Forward any OTHER
-						// caller-supplied fields (e.g. `result`, a corrected title) so
-						// they land alongside the resumed task. The resume path emits
-						// internally, so we only emit again when extra fields merged.
-						const {
-							status: _s,
-							approvalReason: _ar,
-							cancelReason: _cr,
-							...otherFields
-						} = updateParams;
-						if (Object.keys(otherFields).length > 0) {
-							task = await taskManager.updateTask(taskId, otherFields);
-							daemonHub
-								.emit('space.task.updated', {
-									sessionId: 'global',
-									spaceId,
-									taskId,
-									task,
-								})
-								.catch((err) => {
-									log.warn('Failed to emit space.task.updated:', err);
-								});
-						}
-
-						return task;
-					}
-					// null = state inconsistency (task deleted, workflow edited, race).
-					// Throw rather than silently falling through to a raw setTaskStatus
-					// that would bypass completion actions.
-					throw new Error(
-						`Cannot resume completion actions for task ${taskId} — ` +
-							'task state is inconsistent (see daemon logs for details)'
-					);
-				}
-
 				// Status is changing — validate via setTaskStatus (enforces transitions).
 				// `approvalReason` is stamped on review→done; `cancelReason` is
 				// persisted into the same underlying column for review→cancelled
@@ -327,43 +274,31 @@ export function setupSpaceTaskHandlers(
 
 		let task;
 		if (params.approved) {
-			if (isPostApprovalRoutingEnabled() && spaceRuntimeService) {
-				// Post-approval routing ON: delegate to the router. It transitions
-				// review → approved (via SpaceTaskManager.setTaskStatus), emits
-				// [TASK_APPROVED], and dispatches the configured post-approval step
-				// (no-route → done, inline Task Agent, or spawn fresh node-agent).
-				//
-				// Clear the pending-completion fields up front so the UI banner
-				// stops rendering immediately on approval. The router handles the
-				// status transition itself.
-				task = await taskManager.updateTask(params.taskId, {
-					pendingCheckpointType: null,
-					pendingCompletionSubmittedByNodeId: null,
-					pendingCompletionSubmittedAt: null,
-					pendingCompletionReason: null,
-					approvalReason: params.reason ?? null,
-				});
-				await spaceRuntimeService.dispatchPostApproval(params.spaceId, params.taskId, 'human', {
-					approvalReason: params.reason ?? null,
-				});
-				// Re-read the task so the caller sees the post-router state.
-				task = (await taskManager.getTask(params.taskId)) ?? task;
-			} else {
-				// Legacy path (flag OFF or runtime service unavailable): direct
-				// review → done, stamp human approval metadata and clear pending flags.
-				task = await taskManager.setTaskStatus(params.taskId, 'done', {
-					approvalSource: 'human',
-					approvalReason: params.reason ?? undefined,
-				});
-				// Clear the pending-completion fields. setTaskStatus does not touch them,
-				// so apply them in a follow-up update so the banner/UI stops rendering.
-				task = await taskManager.updateTask(params.taskId, {
-					pendingCheckpointType: null,
-					pendingCompletionSubmittedByNodeId: null,
-					pendingCompletionSubmittedAt: null,
-					pendingCompletionReason: null,
-				});
+			if (!spaceRuntimeService) {
+				throw new Error(
+					'spaceRuntimeService is required to approve pending completion — post-approval routing is the sole approval path.'
+				);
 			}
+			// Delegate to the PostApprovalRouter. It transitions review → approved
+			// (via SpaceTaskManager.setTaskStatus), emits [TASK_APPROVED], and
+			// dispatches the configured post-approval step (no-route → done,
+			// inline Task Agent, or spawn fresh node-agent).
+			//
+			// Clear the pending-completion fields up front so the UI banner stops
+			// rendering immediately on approval. The router handles the status
+			// transition itself.
+			task = await taskManager.updateTask(params.taskId, {
+				pendingCheckpointType: null,
+				pendingCompletionSubmittedByNodeId: null,
+				pendingCompletionSubmittedAt: null,
+				pendingCompletionReason: null,
+				approvalReason: params.reason ?? null,
+			});
+			await spaceRuntimeService.dispatchPostApproval(params.spaceId, params.taskId, 'human', {
+				approvalReason: params.reason ?? null,
+			});
+			// Re-read the task so the caller sees the post-router state.
+			task = (await taskManager.getTask(params.taskId)) ?? task;
 		} else {
 			// review → in_progress (reject). Reason captured as approvalReason for audit.
 			task = await taskManager.setTaskStatus(params.taskId, 'in_progress');
