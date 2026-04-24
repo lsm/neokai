@@ -688,16 +688,19 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'to investigate, then `save_artifact({ type: "result", append: true, summary: "Requested more research: ..." })` ' +
 							'to record the cycle. Do NOT call `approve_task` — leave the workflow open.\n' +
 							'6. If satisfied:\n' +
-							'   a. Verify the PR is still open and mergeable.\n' +
-							'   b. Signal the Task Agent that a merge is the post-approval action:\n' +
+							'   a. Post an approval review: `gh pr review <pr-url> --approve ' +
+							'--body-file <file>`. A visible GitHub review is required — an internal ' +
+							'summary is not enough.\n' +
+							'   b. Verify the PR is still open and mergeable.\n' +
+							'   c. Signal the Task Agent that a merge is the post-approval action:\n' +
 							'      send_message(\n' +
 							'         target: "task-agent",\n' +
 							'         message: "Reviewer approved. PR ready for post-approval.",\n' +
 							'         data: { pr_url: "<url>", post_approval_action: "merge_pr" }\n' +
 							'      )\n' +
-							'   c. Call `save_artifact({ type: "result", append: true, summary, prUrl })` ' +
+							'   d. Call `save_artifact({ type: "result", append: true, summary, prUrl })` ' +
 							'to record the final audit entry.\n' +
-							'   d. Call `approve_task()` to close the task. If autonomy blocks self-close, ' +
+							'   e. Call `approve_task()` to close the task. If autonomy blocks self-close, ' +
 							'call `submit_for_approval({ reason: "..." })` instead — the Task Agent will ' +
 							'still route post-approval once the human approves. Do NOT attempt to merge ' +
 							'the PR yourself; a post-approval reviewer session runs the merge after the ' +
