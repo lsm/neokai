@@ -6,6 +6,7 @@
  * Tools (defined in this file):
  *   approve_task          — self-close the task (gated by autonomy level)
  *   submit_for_approval   — request human sign-off
+ *   mark_complete         — finish post-approval work (`approved → done`)
  *   request_human_input   — pause execution and surface a question to the human user
  *   list_group_members    — list all members of the current task's session group
  *
@@ -74,6 +75,30 @@ export const SubmitForApprovalSchema = z
 export type SubmitForApprovalInput = z.infer<typeof SubmitForApprovalSchema>;
 
 // ---------------------------------------------------------------------------
+// mark_complete
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `mark_complete` input.
+ *
+ * Post-approval completion tool. Added in PR 2/5 of the
+ * task-agent-as-post-approval-executor refactor. Transitions the task from
+ * `approved → done` once the post-approval agent (the Task Agent itself when
+ * the workflow's `postApproval.targetAgent === 'task-agent'`, or a spawned
+ * space-task-node-agent sub-session otherwise) has finished its work.
+ *
+ * Distinct from `approve_task`:
+ *   - `approve_task`  covers `in_progress → approved` (work is good).
+ *   - `mark_complete` covers `approved → done`       (post-approval finished).
+ *
+ * Takes no arguments — the task is implicit from the calling session's
+ * context. Strict schema so future fields fail fast until explicitly added.
+ */
+export const MarkCompleteSchema = z.object({}).strict();
+
+export type MarkCompleteInput = z.infer<typeof MarkCompleteSchema>;
+
+// ---------------------------------------------------------------------------
 // request_human_input
 // ---------------------------------------------------------------------------
 
@@ -117,6 +142,7 @@ export type ListGroupMembersInput = z.infer<typeof ListGroupMembersSchema>;
 export const TASK_AGENT_TOOL_SCHEMAS = {
 	approve_task: ApproveTaskSchema,
 	submit_for_approval: SubmitForApprovalSchema,
+	mark_complete: MarkCompleteSchema,
 	request_human_input: RequestHumanInputSchema,
 	list_group_members: ListGroupMembersSchema,
 } as const;

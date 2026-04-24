@@ -6,6 +6,7 @@
  *   list_artifacts        — List artifacts for the current workflow run
  *   approve_task          — Self-close the task (gated by autonomy level)
  *   submit_for_approval   — Request human sign-off (always available)
+ *   mark_complete         — Transition `approved → done` after post-approval work finishes
  *   request_human_input   — Pause execution and surface a question to the human user
  *   list_group_members    — List all members of the current task's session group
  *   send_message          — Send a message to peer node agents via channel topology
@@ -41,6 +42,7 @@ import type { ToolResult } from './tool-result';
 import {
 	ApproveTaskSchema,
 	SubmitForApprovalSchema,
+	MarkCompleteSchema,
 	RequestHumanInputSchema,
 	ListGroupMembersSchema,
 } from './task-agent-tool-schemas';
@@ -52,6 +54,7 @@ import {
 import type {
 	ApproveTaskInput,
 	SubmitForApprovalInput,
+	MarkCompleteInput,
 	RequestHumanInputInput,
 	ListGroupMembersInput,
 } from './task-agent-tool-schemas';
@@ -343,11 +346,19 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		},
 
 		/**
-		 * Self-close this task as done.
+		 * Self-close this task as done (PR 2/5 behaviour unchanged).
 		 *
 		 * Gated by space.autonomyLevel >= workflow.completionAutonomyLevel.
 		 * For standalone tasks (no workflow), always requires human review (blocked at level 1-4).
-		 * Sets reportedStatus='done' which triggers the completion-action pipeline.
+		 * Sets reportedStatus='done' which triggers the completion-action pipeline
+		 * (or, when NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING is enabled, the new
+		 * runtime path that transitions `in_progress → approved` and hands off to
+		 * PostApprovalRouter).
+		 *
+		 * This tool only handles the `in_progress → approved` hop. For the
+		 * subsequent `approved → done` transition after post-approval work is
+		 * finished, use `mark_complete`. Calling `approve_task` on a task that
+		 * is already `approved` is rejected as a guardrail.
 		 */
 		async approve_task(_args: ApproveTaskInput): Promise<ToolResult> {
 			const currentLevel = space.autonomyLevel ?? 1;
@@ -374,6 +385,19 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			const task = taskRepo.getTask(taskId);
 			if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
 
+			// Guardrail (§3.2): approve_task only handles `in_progress → approved`.
+			// Calling it on a task already in `approved` is a protocol error —
+			// the caller probably meant `mark_complete`.
+			if (task.status === 'approved') {
+				return jsonResult({
+					success: false,
+					error:
+						`approve_task cannot re-approve a task already in 'approved' status. ` +
+						`Did you mean mark_complete? approve_task handles 'in_progress → approved'; ` +
+						`mark_complete handles 'approved → done' once post-approval work finishes.`,
+				});
+			}
+
 			try {
 				const updated = taskRepo.updateTask(taskId, {
 					reportedStatus: 'done',
@@ -388,6 +412,61 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					taskId,
 					message:
 						'Task approved for completion. The completion-action pipeline will now resolve terminal status.',
+				});
+			} catch (err) {
+				return jsonResult({
+					success: false,
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
+		},
+
+		/**
+		 * Finish post-approval work — transition `approved → done`.
+		 *
+		 * Added in PR 2/5 of the task-agent-as-post-approval-executor refactor.
+		 * Called by whichever agent performs the post-approval step: the Task
+		 * Agent itself when `workflow.postApproval.targetAgent === 'task-agent'`,
+		 * or the spawned space-task-node-agent sub-session otherwise.
+		 *
+		 * Transitions the task `approved → done`, clears
+		 * `post_approval_session_id` and `post_approval_started_at`, and emits a
+		 * `space.task.updated` event. Rejects on any non-`approved` status with a
+		 * message that points the caller at the correct tool.
+		 */
+		async mark_complete(_args: MarkCompleteInput): Promise<ToolResult> {
+			const task = taskRepo.getTask(taskId);
+			if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
+
+			if (task.status !== 'approved') {
+				return jsonResult({
+					success: false,
+					error:
+						`task is not in \`approved\` status (current: \`${task.status}\`); did you mean \`approve_task\`? ` +
+						`mark_complete only transitions an already-approved task from 'approved' to 'done'.`,
+				});
+			}
+
+			try {
+				// Use taskManager.setTaskStatus so the approved → done edge runs
+				// through the centralised transition validator.
+				let updated = await taskManager.setTaskStatus(taskId, 'done', {
+					approvalSource: task.approvalSource ?? 'agent',
+				});
+				// Clear post-approval tracking fields.
+				updated = await taskManager.updateTask(taskId, {
+					postApprovalSessionId: null,
+					postApprovalStartedAt: null,
+					postApprovalBlockedReason: null,
+				});
+				emitTaskUpdated(updated);
+				log.info(
+					`post-approval.complete: spaceId=${space.id} taskId=${taskId} outcome=done mode=${task.postApprovalSessionId ? 'spawn' : 'inline'}`
+				);
+				return jsonResult({
+					success: true,
+					taskId,
+					message: 'Post-approval work finished. Task transitioned to done.',
 				});
 			} catch (err) {
 				return jsonResult({
@@ -1054,6 +1133,18 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 				'optional `reason` explaining why you are escalating; it is shown in the approval UI.',
 			SubmitForApprovalSchema.shape,
 			(args) => handlers.submit_for_approval(args)
+		),
+		tool(
+			'mark_complete',
+			'Finish post-approval work and transition the task from `approved` to `done`. ' +
+				'Call this after you (or the spawned post-approval sub-session) have completed ' +
+				"the workflow's post-approval instructions (e.g. merging a PR, publishing a release). " +
+				'Takes no arguments — the task is inferred from your session context. ' +
+				'Distinct from `approve_task`: `approve_task` handles `in_progress → approved` ' +
+				'(the work is good), whereas `mark_complete` handles `approved → done` ' +
+				'(post-approval work finished). Rejected if the task is not currently in `approved`.',
+			MarkCompleteSchema.shape,
+			(args) => handlers.mark_complete(args)
 		),
 	];
 

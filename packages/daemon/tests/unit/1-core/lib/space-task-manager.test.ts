@@ -592,10 +592,14 @@ describe('SpaceTaskManager', () => {
 			]);
 		});
 
-		it('in_progress allows open, review, done, blocked, and cancelled', () => {
+		it('in_progress allows open, review, approved, done, blocked, and cancelled', () => {
+			// `approved` was added in PR 2/5 of the task-agent-as-post-approval
+			// executor refactor; end-node `approve_task` transitions `in_progress →
+			// approved` so the post-approval router can dispatch.
 			expect(VALID_SPACE_TASK_TRANSITIONS.in_progress).toEqual([
 				'open',
 				'review',
+				'approved',
 				'done',
 				'blocked',
 				'cancelled',
