@@ -806,8 +806,11 @@ is removed the same way regardless of what replaces it.)*
 | `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts` | The `pendingCheckpointType === 'completion_action'` intercept in `spaceTask.update` (lines 154-203). `approvePendingCompletion` now transitions `review → approved` (not `review → done`) and invokes `PostApprovalRouter.route`. No new RPC. |
 | `packages/daemon/src/lib/space/workflows/built-in-workflows.ts` | `MERGE_PR_COMPLETION_ACTION` (lines 187-194). `VERIFY_PR_MERGED_BASH_SCRIPT` + `VERIFY_PR_MERGED_COMPLETION_ACTION` (lines 204-239). `VERIFY_REVIEW_POSTED_BASH_SCRIPT` + `VERIFY_REVIEW_POSTED_COMPLETION_ACTION` (lines 246-282). `PLAN_AND_DECOMPOSE_VERIFY_SCRIPT` + `PLAN_AND_DECOMPOSE_VERIFY_COMPLETION_ACTION` (lines 792-830). Every `completionActions: [...]` entry on a node (lines 518, 664, 766, 972, 1135). **Add** `postApproval` on the 2 workflows that need it (Coding, Research, QA). `PR_MERGE_BASH_SCRIPT` stays but moves to `pr-merge-script.ts` (see §3.4). |
 | `packages/web/src/components/space/PendingCompletionActionBanner.tsx` | Entire file (385 lines). |
-| `packages/web/src/components/space/TaskStatusActions.tsx` | Remove import + render of `PendingCompletionActionBanner`. Add a new, simpler `PendingPostApprovalBanner` that surfaces the post-approval session status when a task is stuck in `approved` (see §3.5). |
-| `packages/web/src/components/space/SpaceTaskPane.tsx` | Remove routing of `'completion_action'` checkpoint to the removed banner. |
+| `packages/web/src/components/space/TaskStatusActions.tsx` | Remove import + render of `PendingCompletionActionBanner`. Replaced by the precedence-driven single-slot renderer introduced in §4.7. |
+| `packages/web/src/components/space/SpaceTaskPane.tsx` | Remove the 3-conditional banner stack (lines 421-446). Render exactly one banner selected by `resolveActiveTaskBanner(task, run, gates)` (§4.7). |
+| `packages/web/src/components/space/InlineStatusBanner.tsx` | **NEW** — shared single-line banner primitive (§4.7.4). |
+| `packages/web/src/components/space/PendingPostApprovalBanner.tsx` | **NEW** — surfaces a task stuck in `approved` after post-approval failed/escalated (§3.5). Ships in PR 2 as a one-liner from day one. |
+| `packages/web/src/lib/task-banner.ts` | **NEW** — `resolveActiveTaskBanner` precedence helper (§4.7.2). |
 | `packages/shared/src/space/workflow-autonomy.ts` | `EMPTY_ACTIONS_AUTONOMY_THRESHOLD`, `isAutonomousWithoutActions`, `BlockingAction`, `BlockingWorkflow`, `AutonomousWorkflowCount`, `isWorkflowAutonomousAtLevel`, `countAutonomousWorkflows`, `collectCompletionActions` — replace with a single `isWorkflowAutoClosingAtLevel(wf, level)` that checks only `level >= (wf.completionAutonomyLevel ?? 5)`. |
 
 ### 4.2 Code to keep / repurpose
@@ -958,6 +961,171 @@ These E2E tests need a mock `gh` CLI. Reuse existing E2E PR-fixture
 infrastructure if present; otherwise add `tests/e2e/helpers/mock-gh.sh`
 injected on the PATH.
 
+### 4.7 UI consolidation — one banner slot, one-line rule
+
+The current `SpaceTaskPane` renders approval/warning banners as three
+independent conditionals (see `SpaceTaskPane.tsx:421-446`):
+
+```tsx
+{task.status === 'blocked' ? <TaskBlockedBanner /> : (
+  <>
+    {task.pendingCheckpointType === 'completion_action' && <PendingCompletionActionBanner />}
+    {task.pendingCheckpointType === 'task_completion'  && <PendingTaskCompletionBanner />}
+    {task.workflowRunId                                && <PendingGateBanner />}
+  </>
+)}
+```
+
+This allows two banners to stack (e.g. `PendingGateBanner` next to
+`PendingTaskCompletionBanner`) — **but those states cannot actually coexist
+on the same task**. A gate blocks the workflow run; the end node only runs
+once all gates have cleared; only then can `submit_for_approval` fire. So
+the two banners are mutually exclusive in time, and the independent-render
+code is defensive noise.
+
+This section collapses the approval surface to a single slot and enforces a
+one-line rule across all banners. Anything longer opens a modal.
+
+#### 4.7.1 Principles
+
+1. **One active banner per task.** At most one of the
+   {gate-approval, task-approval, post-approval-blocked, task-blocked}
+   banners renders at any time.
+2. **One line of text, max.** Each banner surfaces: an icon, a short label
+   (≤ ~60 chars), optionally an elapsed-time badge, and one or two action
+   buttons. Nothing else inline.
+3. **More info → modal.** Agent rationale, gate artifact data, diff
+   preview, feedback text area, script source, stack traces — all of these
+   open via a "Details" (or "Review") button into a modal.
+4. **Shared primitive.** A single `<InlineStatusBanner>` component
+   enforces consistent geometry (icon slot, label slot, CTA slot). All
+   specific banners compose it.
+
+#### 4.7.2 Banner precedence
+
+New helper in `packages/web/src/lib/task-banner.ts`:
+
+```ts
+type ActiveBanner =
+  | { kind: 'blocked'; reason: TaskBlockReason }
+  | { kind: 'post_approval_blocked'; reason: string }
+  | { kind: 'gate_pending'; runId: string }
+  | { kind: 'task_completion_pending' }
+  | null;
+
+function resolveActiveTaskBanner(
+    task: SpaceTask,
+    run: SpaceWorkflowRun | undefined,
+    gates: ReadonlyArray<GateState> | undefined
+): ActiveBanner;
+```
+
+Precedence order (first match wins):
+
+1. `task.status === 'blocked'` → `blocked` (includes `gate_rejected`,
+   `execution_failed`, etc. — unchanged variant set; `TaskBlockedBanner`
+   already handles these)
+2. `task.status === 'approved' && task.postApprovalBlockedReason` →
+   `post_approval_blocked` *(new)*
+3. `task.pendingCheckpointType === 'task_completion'` →
+   `task_completion_pending`
+4. `task.workflowRunId` AND any gate in that run is `waiting_human` →
+   `gate_pending`
+5. Otherwise → `null` (no banner)
+
+`SpaceTaskPane.tsx` renders exactly **one** banner selected by this helper.
+The per-checkpoint conditionals are deleted.
+
+`PendingCompletionActionBanner` is removed entirely in PR 4 (§4.1) and is
+absent from the precedence list.
+
+#### 4.7.3 Per-banner redesign
+
+Each banner is trimmed to the one-line rule. Details move into an
+existing-or-new modal.
+
+| Banner | Before | After (inline) | Modal content |
+|--------|--------|----------------|---------------|
+| `PendingGateBanner` | Medium panel; one row per gate; description line + 3 buttons; optional error line | *One* row per gate: icon + gate label + "Awaiting approval" + `[Approve]` `[Reject]` `[Review]` buttons. No description line, no error line inline (truncate + tooltip). If run has multiple waiting gates, render a single consolidated line: "3 gates awaiting approval" + `[Review]` which opens the existing `GateArtifactsView` listing them. | `GateArtifactsView` (existing) — gate data, artifacts, decision controls. Also absorbs the error message that currently renders inline. |
+| `PendingTaskCompletionBanner` | Short banner (already ~1 line) + 2 modals | Inline: icon + "Awaiting approval" + elapsed-time badge + `[Approve]` `[Send back]` `[Details]`. Keep the existing Approve/Reject modals; add a `[Details]` that opens a modal showing agent outcome + rationale (currently inline in the Approve modal — hoist to its own Details modal). | Unchanged Approve / Reject modals; new Details modal. |
+| `PendingCompletionActionBanner` | Inline + modals | **Deleted** in PR 4. | — |
+| `PendingPostApprovalBanner` *(new, PR 2)* | n/a | Icon + "Post-approval blocked: `<short-reason>`" + `[Retry]` `[Mark done]` `[View session]`. No inline transcript or stack. | `[View session]` navigates to the session UI (not a modal). `[Mark done]` confirms in a small modal. `[Retry]` re-spawns the target agent; shows a toast on success. |
+| `TaskBlockedBanner` | Multi-variant: 2–3 lines per variant, different inline content per `blockReason` | One line per variant: icon + short label (e.g. "Blocked: agent crashed", "Blocked: dependency failed") + primary CTA (`[Resume]` / `[Review]` / `[Details]`). Long error messages move into a Details modal. `human_input_requested` stays as the current one-line hint ("Reply via composer") with no CTA — already minimal. | Details modal shows full reason, error message, and any linked run context. |
+
+For the `gate_rejected` variant of `TaskBlockedBanner`, the Details modal
+is `GateArtifactsView` (same as `PendingGateBanner`'s Review) so the user
+has one mental model for "inspect a gate".
+
+#### 4.7.4 Shared primitive
+
+New component `packages/web/src/components/space/InlineStatusBanner.tsx`:
+
+```tsx
+interface InlineStatusBannerProps {
+    icon: ComponentChildren;          // status icon (Pause, Lock, Alert, Clock…)
+    tone: 'info' | 'warn' | 'danger'; // color family
+    label: string;                    // ≤ 60 chars, single line, truncated with ellipsis
+    meta?: string;                    // optional right-aligned badge (e.g. elapsed time)
+    actions?: BannerAction[];         // ordered left-to-right; at most 3
+}
+interface BannerAction {
+    label: string;      // ≤ 14 chars
+    onClick: () => void;
+    variant?: 'primary' | 'secondary';
+}
+```
+
+Fixed height, single-line truncation, consistent tone classes. All specific
+banners (`PendingGateBanner`, `PendingTaskCompletionBanner`,
+`PendingPostApprovalBanner`, `TaskBlockedBanner`) compose this primitive
+and own only their own modals.
+
+#### 4.7.5 Modal conventions
+
+- Modals are rendered outside the banner tree (portal) so the banner row
+  stays compact and predictable.
+- Modals share the existing `Modal` primitive; no new modal shell.
+- Modals may be long-form (full-screen overlay for gate artifacts, medium
+  dialog for approve/reject confirmations) — that's fine, the rule is
+  about *inline* noise, not modal content.
+- Every banner's `[Details]` / `[Review]` button is keyboard-accessible
+  and has a consistent aria-label pattern: `"Show details for <label>"`.
+
+#### 4.7.6 Tests to update / add
+
+- `packages/web/src/lib/__tests__/task-banner.test.ts` (new) — precedence
+  resolver: blocked > post_approval_blocked > task_completion_pending >
+  gate_pending > null. Exhaustive status+checkpoint+gate combinations.
+- `packages/web/src/components/space/__tests__/InlineStatusBanner.test.tsx`
+  (new) — snapshot: 1 line height regardless of label length; truncation
+  at ~60 chars; 3 actions max.
+- Update existing banner tests to assert:
+  - No inline text longer than one line.
+  - Details/Review actions open modals; rationale/feedback text lives only
+    in modals, not inline.
+- Delete `PendingCompletionActionBanner.test.tsx` (component removed).
+- Add E2E: `post-approval-banner-minimal.e2e.ts` — for each approval
+  state, assert the banner container has a computed height equal to a
+  single-line banner (regression guard against future bloat).
+
+#### 4.7.7 Scope and staging
+
+This consolidation lands in **PR 4** (the completion-action pipeline
+removal PR) because:
+
+- PR 4 already deletes `PendingCompletionActionBanner` and touches
+  `SpaceTaskPane.tsx` / `TaskStatusActions.tsx`.
+- Collapsing the three independent conditionals into a single precedence
+  slot is a natural simplification once the `completion_action` branch is
+  gone.
+- Adds ~400 LOC (new primitive + precedence helper + modal extractions)
+  and removes ~200 LOC (inline rationale/error sections), net additional
+  change is modest.
+
+The new `PendingPostApprovalBanner` ships in **PR 2** as a one-liner from
+day one (no pre-refactor stage), so it sets the precedent for the PR 4
+consolidation.
+
 ---
 
 ## 5. Workflow definition changes — summary table
@@ -1058,12 +1226,17 @@ post-approval session layer rather than at the `merge_pr` tool layer.
 - **PR 3** — **End-node handoff + built-in workflow `postApproval`
   entries.** Update all 5 built-in workflow prompts. Populate `postApproval`
   on Coding, Research, QA. Flip the feature flag. ~500 LOC; depends on PR 2.
-- **PR 4** — **Delete completion-action runtime pipeline.** Remove
-  `resolveCompletionWithActions`, `resumeCompletionActions`,
-  `executeCompletionAction`, the RPC intercept, `approve_completion_action`
-  MCP tool, `PendingCompletionActionBanner`. Task/run completion flows
-  through the new `approved → done` path. ~1500 LOC net-negative. Depends
-  on PR 3 being deployed long enough to confirm the new path works.
+- **PR 4** — **Delete completion-action runtime pipeline + UI
+  consolidation.** Remove `resolveCompletionWithActions`,
+  `resumeCompletionActions`, `executeCompletionAction`, the RPC intercept,
+  `approve_completion_action` MCP tool, `PendingCompletionActionBanner`.
+  Task/run completion flows through the new `approved → done` path. Also
+  collapses the approval banner stack into a single-slot precedence
+  (`resolveActiveTaskBanner`) and trims every remaining banner to a
+  one-line inline + modal-for-details pattern (see §4.7). ~1500 LOC
+  net-negative after the UI refactor nets out (~400 added / ~200 removed
+  for the banner work). Depends on PR 3 being deployed long enough to
+  confirm the new path works.
 - **PR 5** — **Schema / shared-types / DB migration + docs.** Drop
   `pending_action_index`, `pending_checkpoint_type='completion_action'`,
   `completion_actions_fired_at`, `MERGE_PR_COMPLETION_ACTION` etc. Docs
@@ -1164,7 +1337,33 @@ post-approval session layer rather than at the `merge_pr` tool layer.
 
 ## 8. Revision history
 
-**2026-04-23 revision 3 (this revision):** Two follow-up refinements after
+**2026-04-23 revision 4 (this revision):** UI consolidation pass triggered
+by direct user feedback on the current banner surface:
+
+1. **Single-slot approval banner.** The current `SpaceTaskPane` renders
+   `PendingGateBanner`, `PendingTaskCompletionBanner`, and
+   `PendingCompletionActionBanner` as three independent conditionals that
+   are allowed to stack. But per-task those states cannot coexist in time
+   (a gate blocks the run, so the end node never reaches
+   `submit_for_approval` until gates clear). Collapse to a single
+   precedence-driven slot (`resolveActiveTaskBanner`) that renders at most
+   one banner at a time.
+2. **One-line rule for all banners.** Each banner surfaces only a short
+   label + one or two action buttons inline. Agent rationale, gate
+   artifacts, error traces, and feedback fields move behind
+   `[Details]` / `[Review]` buttons into modals. A new shared primitive
+   `<InlineStatusBanner>` enforces consistent geometry.
+3. Covers all existing + planned banners: `PendingGateBanner`,
+   `PendingTaskCompletionBanner`, `PendingPostApprovalBanner` (new, ships
+   as a one-liner from PR 2), `TaskBlockedBanner` (all variants).
+   `PendingCompletionActionBanner` is still deleted in PR 4 as planned.
+
+New section: **§4.7 UI consolidation**. Also touches §4.1 (delete-table
+adds three NEW-file rows for the primitive, the new banner, and the
+precedence helper), §6.2 PR 4 scope (adds UI refactor), Appendix B (two
+new decision rows).
+
+**2026-04-23 revision 3:** Two follow-up refinements after
 more direct user feedback:
 
 1. **Drop the `approve_task` overload; introduce `mark_complete`.**
@@ -1274,9 +1473,14 @@ Key files referenced in this plan, grouped by area:
 
 **Web UI**
 - `packages/web/src/components/space/PendingCompletionActionBanner.tsx` — delete
-- `packages/web/src/components/space/PendingPostApprovalBanner.tsx` — NEW: "post-approval in progress" / "post-approval failed" banner
-- `packages/web/src/components/space/TaskStatusActions.tsx` — swap banners
-- `packages/web/src/components/space/SpaceTaskPane.tsx` — remove `'completion_action'` routing
+- `packages/web/src/components/space/PendingPostApprovalBanner.tsx` — NEW: one-line "post-approval in progress" / "post-approval failed" banner (§4.7)
+- `packages/web/src/components/space/InlineStatusBanner.tsx` — NEW: shared single-line banner primitive (§4.7.4)
+- `packages/web/src/lib/task-banner.ts` — NEW: `resolveActiveTaskBanner` precedence helper (§4.7.2)
+- `packages/web/src/components/space/TaskStatusActions.tsx` — swap banners; use precedence helper
+- `packages/web/src/components/space/SpaceTaskPane.tsx` — replace 3-conditional banner stack with single precedence-driven slot (§4.7)
+- `packages/web/src/components/space/PendingGateBanner.tsx` — trim to single-line compose of `InlineStatusBanner`; inline description / error move into the Review modal
+- `packages/web/src/components/space/PendingTaskCompletionBanner.tsx` — trim to single-line compose of `InlineStatusBanner`; agent rationale moves behind new Details modal
+- `packages/web/src/components/space/TaskBlockedBanner.tsx` — trim every variant to a single-line compose; long error messages move into a Details modal (`gate_rejected` variant points at `GateArtifactsView`)
 - `packages/web/src/lib/space-store.ts` — drop completion-action helpers; add `approved` status helpers
 
 ---
@@ -1293,6 +1497,8 @@ Key files referenced in this plan, grouped by area:
 | Routing trigger: Task Agent LLM tool-call vs. runtime dispatch | (A) New `spawn_post_approval_session` + `completePostApproval` MCP tools on the Task Agent server; LLM decides when to spawn/complete. (B) New `PostApprovalRouter` in the runtime layer; triggered deterministically on the `approved` transition. | **B** | Routing is a pure function of `workflow.postApproval` — there is no decision for an LLM to make. Putting dispatch behind an LLM tool call risks skip/mis-route. LLM judgement still fully present in the post-approval *work itself*. See §1.4 for full rationale. Decided by direct user feedback 2026-04-23. |
 | Post-approval completion signal tool | (A) Overload `approve_task` — make it idempotent for `approved → done` when the task is already `approved`. (B) New dedicated `mark_complete` tool, status-restricted to `approved`. | **B** | Same tool with two meanings (work-approval vs. post-approval-done) is a confusing footgun for both prompt authors and LLMs. A separately-named tool makes intent explicit at the call site. `approve_task` stays scoped to `in_progress → approved`. Decided by direct user feedback 2026-04-23. |
 | Terminology for per-node workflow agents | (A) "workflow role" / "workflow-agent role". (B) "space task node agent". | **B** | User preference. The codebase currently uses `'node_agent'` kind in `SpaceMemberSession`; the new `post-approval-router.ts` doc comment introduces the long-form name for prose and cross-references the existing kind enum. |
+| Approval banner composition | (A) Keep the current three independent conditionals in `SpaceTaskPane` (gate, completion-action, task-completion), each allowed to stack. (B) Single precedence-driven slot — at most one banner renders at a time, chosen by `resolveActiveTaskBanner`. | **B** | Per-task, gate-approval and task-approval cannot coexist in time — the gate blocks the run, so `submit_for_approval` only fires once gates have cleared. The independent-render code is defensive noise and produces visual clutter. Single-slot precedence matches the actual state machine. Decided by direct user feedback 2026-04-23. |
+| Banner content density | (A) Multi-line banners with inline rationale / error / artifact summaries. (B) One-line banner + modal for any additional info. | **B** | Banners are status indicators, not control panels. Long-form content (agent rationale, gate artifacts, error traces) belongs behind a `[Details]` / `[Review]` modal, not stacked inline. Enforced by the shared `<InlineStatusBanner>` primitive (§4.7.4). Decided by direct user feedback 2026-04-23. |
 | Handoff signal: new gate vs. structured send_message | Unchanged from original revision. | **send_message(task-agent, data)** | Already idiomatic; gates don't fit the task-agent's implicit channels. |
 | `completionAutonomyLevel`: keep, repurpose, or remove | Unchanged. | **Keep** | Independently controls `approve_task` vs `submit_for_approval` — a distinct "is the work any good" decision from post-approval. |
 | Verification completion actions (verify-pr-merged, verify-review-posted, verify-tasks-created): keep, convert, delete | Unchanged. | **Delete** (accept regression) | Lost verifications are soft guardrails; audit artifacts + human review are the primary safety nets. |
