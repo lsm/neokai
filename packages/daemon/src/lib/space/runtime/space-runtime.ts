@@ -498,11 +498,25 @@ export class SpaceRuntime {
 		// 1. Ensure the task is in `approved` before routing. Uses the space's
 		//    task manager so the transition validator runs (rejects illegal
 		//    transitions with a structured error).
+		//
+		//    `approvalReason` must be forwarded from `contextExtras` (the RPC
+		//    handler passes the operator's rejection/approval note) — otherwise
+		//    `SpaceTaskManager.setTaskStatus` would stamp `null` and overwrite
+		//    the value the caller may have already written via `updateTask`.
+		//    We distinguish missing (undefined) from explicit null so an
+		//    explicit clear still wins.
+		const resolvedApprovalReason =
+			typeof contextExtras.approvalReason === 'string'
+				? contextExtras.approvalReason
+				: contextExtras.approvalReason === null
+					? null
+					: undefined;
 		let approvedTask: SpaceTask = current;
 		if (current.status !== 'approved') {
 			const taskManager = this.getOrCreateTaskManager(spaceId);
 			approvedTask = await taskManager.setTaskStatus(taskId, 'approved', {
 				approvalSource,
+				approvalReason: resolvedApprovalReason,
 			});
 			await this.safeOnTaskUpdated(spaceId, approvedTask);
 			log.info(
@@ -542,7 +556,20 @@ export class SpaceRuntime {
 			autonomyLevel: space?.autonomyLevel,
 			workspacePath: space?.workspacePath,
 		};
-		return router.route(approvedTask, workflow, routeContext);
+		const routeResult = await router.route(approvedTask, workflow, routeContext);
+
+		// 4. Re-read and emit so UI listeners see the post-dispatch task state
+		//    (no-route → `done`, inline → `approvalReason` stamped, spawn →
+		//    `postApprovalSessionId` stamped). The router performs its own
+		//    `taskRepo.updateTask` writes without emitting; without this the
+		//    end-node tick path would leave the UI waiting until the next poll.
+		//    The RPC path also emits via `daemonHub` after this returns — the
+		//    double emit is benign (idempotent UI refresh).
+		if (routeResult.mode !== 'skipped') {
+			const final = this.config.taskRepo.getTask(taskId);
+			if (final) await this.safeOnTaskUpdated(spaceId, final);
+		}
+		return routeResult;
 	}
 
 	/**

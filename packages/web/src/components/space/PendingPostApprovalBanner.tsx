@@ -63,10 +63,12 @@ export function PendingPostApprovalBanner({
 	}, [task.id]);
 
 	const onRetry = useCallback(async () => {
-		// Retry is surfaced as a placeholder for now — wiring a dedicated
-		// `spaceTask.retryPostApproval` RPC is tracked separately. For the
-		// moment, nudging the task back to `in_progress` lets the runtime tick
-		// re-dispatch on the next reconciliation pass.
+		// Returns the task to `in_progress` so the operator can restart the
+		// work and re-approve when ready. The reconciliation pass does NOT
+		// automatically re-trigger post-approval routing on this transition —
+		// the operator has to redo the work and call `approve_task` again. A
+		// dedicated `retryPostApproval` RPC that re-runs the router directly
+		// is tracked separately.
 		setBusy(true);
 		setError(null);
 		try {

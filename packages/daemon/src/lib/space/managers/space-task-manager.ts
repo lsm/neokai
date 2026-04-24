@@ -125,7 +125,10 @@ export class SpaceTaskManager {
 			result?: string;
 			blockReason?: SpaceBlockReason;
 			approvalSource?: SpaceApprovalSource;
-			approvalReason?: string;
+			// `null` explicitly clears a prior value; `undefined` leaves any
+			// existing approvalReason untouched on transitions that carry the
+			// stamp forward (see the approved → done mirror below).
+			approvalReason?: string | null;
 		}
 	): Promise<SpaceTask> {
 		const task = await this.getTask(taskId);
