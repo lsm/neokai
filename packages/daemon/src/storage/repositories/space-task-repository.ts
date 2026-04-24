@@ -292,6 +292,20 @@ export class SpaceTaskRepository {
 			fields.push('reported_summary = ?');
 			values.push(params.reportedSummary ?? null);
 		}
+		// Post-approval columns (PR 1/5 of the post-approval refactor — no
+		// runtime consumer yet; PR 2 wires them up).
+		if (params.postApprovalSessionId !== undefined) {
+			fields.push('post_approval_session_id = ?');
+			values.push(params.postApprovalSessionId ?? null);
+		}
+		if (params.postApprovalStartedAt !== undefined) {
+			fields.push('post_approval_started_at = ?');
+			values.push(params.postApprovalStartedAt ?? null);
+		}
+		if (params.postApprovalBlockedReason !== undefined) {
+			fields.push('post_approval_blocked_reason = ?');
+			values.push(params.postApprovalBlockedReason ?? null);
+		}
 
 		if (fields.length > 0) {
 			fields.push('updated_at = ?');
@@ -438,6 +452,10 @@ export class SpaceTaskRepository {
 			pendingCompletionReason: (row.pending_completion_reason as string | null) ?? null,
 			reportedStatus: (row.reported_status as SpaceTask['reportedStatus']) ?? null,
 			reportedSummary: (row.reported_summary as string | null) ?? null,
+			// Post-approval columns (PR 1/5 — schema only).
+			postApprovalSessionId: (row.post_approval_session_id as string | null) ?? null,
+			postApprovalStartedAt: (row.post_approval_started_at as number | null) ?? null,
+			postApprovalBlockedReason: (row.post_approval_blocked_reason as string | null) ?? null,
 			createdAt: row.created_at as number,
 			startedAt: (row.started_at as number | null) ?? null,
 			completedAt: (row.completed_at as number | null) ?? null,

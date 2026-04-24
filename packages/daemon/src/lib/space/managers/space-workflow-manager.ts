@@ -21,6 +21,10 @@ import type {
 } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
+import { Logger } from '../../logger';
+import { validatePostApproval } from '../workflows/post-approval-validator';
+
+const logger = new Logger('SpaceWorkflowManager');
 
 // ---------------------------------------------------------------------------
 // Dependency interfaces
@@ -81,6 +85,17 @@ export class SpaceWorkflowManager {
 		if (params.channels && params.channels.length > 0) {
 			this.validateChannels(params.channels);
 		}
+
+		// Hard-reject invalid `postApproval` routes at create time. Stale routes
+		// (target no longer exists) must be caught before the row lands in the
+		// DB, where they would otherwise trip the load-time warning path below.
+		if (params.postApproval !== undefined) {
+			const result = validatePostApproval({ postApproval: params.postApproval, nodes });
+			if (!result.ok) {
+				throw new WorkflowValidationError(result.error);
+			}
+		}
+
 		return this.repo.createWorkflow({
 			...params,
 			name: trimmedName,
@@ -95,11 +110,38 @@ export class SpaceWorkflowManager {
 	// -------------------------------------------------------------------------
 
 	getWorkflow(id: string): SpaceWorkflow | null {
-		return this.repo.getWorkflow(id);
+		const wf = this.repo.getWorkflow(id);
+		if (!wf) return null;
+		return this.sanitizePostApprovalForLoad(wf);
 	}
 
 	listWorkflows(spaceId: string): SpaceWorkflow[] {
-		return this.repo.listWorkflows(spaceId);
+		return this.repo.listWorkflows(spaceId).map((wf) => this.sanitizePostApprovalForLoad(wf));
+	}
+
+	/**
+	 * Load-time sanitiser for the optional `postApproval` route.
+	 *
+	 * If a persisted `postApproval` no longer resolves to a valid target (e.g.
+	 * the targeted node/agent was removed since the workflow was saved), we do
+	 * NOT fail the load — instead we strip the route from the returned object
+	 * and log a warning. Workflow loading is in the hot path (every run start,
+	 * every RPC list), so a stale route cannot be allowed to break the space.
+	 *
+	 * The DB row is untouched — re-saving the workflow via `updateWorkflow`
+	 * with `postApproval: null` is the documented way to clear a stale route.
+	 */
+	private sanitizePostApprovalForLoad(wf: SpaceWorkflow): SpaceWorkflow {
+		if (!wf.postApproval) return wf;
+		const result = validatePostApproval({ postApproval: wf.postApproval, nodes: wf.nodes });
+		if (result.ok) return wf;
+		logger.warn(
+			`disabling stale postApproval route on workflow ${wf.id} ` +
+				`(space ${wf.spaceId}): ${result.error}`
+		);
+		const sanitized: SpaceWorkflow = { ...wf };
+		delete sanitized.postApproval;
+		return sanitized;
 	}
 
 	// -------------------------------------------------------------------------
@@ -166,6 +208,33 @@ export class SpaceWorkflowManager {
 
 		if (params.channels && params.channels.length > 0) {
 			this.validateChannels(params.channels);
+		}
+
+		// Validate `postApproval` against the effective node set so a node rename
+		// that is submitted in the same update call doesn't invalidate the route
+		// spuriously. `null` clears the route (always valid); `undefined` leaves
+		// the existing route untouched — re-validate it against the new nodes so
+		// a node rename that strands an existing route is caught at update time.
+		if (params.postApproval !== undefined) {
+			if (params.postApproval !== null) {
+				const result = validatePostApproval({
+					postApproval: params.postApproval,
+					nodes: effectiveNodes,
+				});
+				if (!result.ok) {
+					throw new WorkflowValidationError(result.error);
+				}
+			}
+		} else if (existing.postApproval) {
+			const result = validatePostApproval({
+				postApproval: existing.postApproval,
+				nodes: effectiveNodes,
+			});
+			if (!result.ok) {
+				throw new WorkflowValidationError(
+					`existing postApproval route is no longer valid after update: ${result.error}`
+				);
+			}
 		}
 
 		return this.repo.updateWorkflow(id, params);

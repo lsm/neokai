@@ -25,6 +25,7 @@ import type {
 	WorkflowChannel,
 	Gate,
 	CreateSpaceWorkflowParams,
+	PostApprovalRoute,
 	UpdateSpaceWorkflowParams,
 } from '@neokai/shared';
 
@@ -47,6 +48,12 @@ interface WorkflowRow {
 	template_hash: string | null;
 	instructions: string | null;
 	completion_autonomy_level: number;
+	/**
+	 * JSON-encoded `PostApprovalRoute` — null when the workflow has no
+	 * post-approval route configured. Added in PR 1/5 of the post-approval
+	 * refactor; no runtime consumer reads this yet.
+	 */
+	post_approval?: string | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -130,6 +137,10 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
 	if (row.template_name) wf.templateName = row.template_name;
 	if (row.template_hash) wf.templateHash = row.template_hash;
 	if (row.instructions) wf.instructions = row.instructions;
+	const postApproval = parseJson<PostApprovalRoute | null>(row.post_approval ?? null, null);
+	if (postApproval && typeof postApproval === 'object') {
+		wf.postApproval = postApproval;
+	}
 	return wf;
 }
 
@@ -170,11 +181,12 @@ export class SpaceWorkflowRepository {
 			params.channels && params.channels.length > 0 ? JSON.stringify(params.channels) : null;
 		const gatesJson = params.gates && params.gates.length > 0 ? JSON.stringify(params.gates) : null;
 		const layoutJson = params.layout ? JSON.stringify(params.layout) : null;
+		const postApprovalJson = params.postApproval ? JSON.stringify(params.postApproval) : null;
 
 		this.db
 			.prepare(
-				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, gates, layout, template_name, template_hash, instructions, completion_autonomy_level, created_at, updated_at)
-	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, gates, layout, template_name, template_hash, instructions, completion_autonomy_level, post_approval, created_at, updated_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				workflowId,
@@ -191,6 +203,7 @@ export class SpaceWorkflowRepository {
 				params.templateHash ?? null,
 				params.instructions ?? null,
 				completionAutonomyLevel,
+				postApprovalJson,
 				now,
 				now
 			);
@@ -293,6 +306,11 @@ export class SpaceWorkflowRepository {
 		if (params.completionAutonomyLevel !== undefined) {
 			fields.push('completion_autonomy_level = ?');
 			values.push(params.completionAutonomyLevel);
+		}
+
+		if (params.postApproval !== undefined) {
+			fields.push('post_approval = ?');
+			values.push(params.postApproval ? JSON.stringify(params.postApproval) : null);
 		}
 
 		const hasNodeReplacement = params.nodes !== undefined;

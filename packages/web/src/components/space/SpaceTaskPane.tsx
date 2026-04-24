@@ -31,6 +31,10 @@ const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
 	open: 'Open',
 	in_progress: 'In Progress',
 	review: 'Awaiting Review',
+	// `approved` is a transient post-approval status added in PR 1/5 of the
+	// task-agent-as-post-approval-executor refactor. Not yet written by any
+	// runtime path — PR 2 wires it in.
+	approved: 'Approved',
 	done: 'Done',
 	blocked: 'Blocked',
 	cancelled: 'Cancelled',
