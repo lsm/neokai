@@ -352,7 +352,11 @@ describe('SpaceRuntimeService', () => {
 	describe('setupSpaceAgentSession()', () => {
 		function makeSession() {
 			return {
+				// Exposed so a regression test can assert the replace-all variant is
+				// never used from `setupSpaceAgentSession` — that path must merge so
+				// it doesn't wipe other subsystems' attachments.
 				setRuntimeMcpServers: mock(() => {}),
+				mergeRuntimeMcpServers: mock(() => {}),
 				setRuntimeSystemPrompt: mock(() => {}),
 			} as unknown as AgentSession;
 		}
@@ -396,7 +400,7 @@ describe('SpaceRuntimeService', () => {
 			};
 		}
 
-		test('attaches MCP server and system prompt to the space:chat session', async () => {
+		test('attaches MCP server and system prompt to the space:chat session (merge, not replace)', async () => {
 			const session = makeSession();
 			const sessionManager = makeSessionManager(session);
 			const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
@@ -404,9 +408,14 @@ describe('SpaceRuntimeService', () => {
 			await svc.setupSpaceAgentSession(mockSpace);
 
 			expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(`space:chat:${mockSpace.id}`);
-			expect(session.setRuntimeMcpServers).toHaveBeenCalledTimes(1);
-			const [mcpArg] = (session.setRuntimeMcpServers as Mock<typeof session.setRuntimeMcpServers>)
-				.mock.calls[0];
+			// Must merge (additive) — never the deprecated replace-all. The
+			// replace-all variant silently wipes other subsystems' MCP servers
+			// already attached to the space_chat session.
+			expect(session.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
+			expect(session.setRuntimeMcpServers).not.toHaveBeenCalled();
+			const [mcpArg] = (
+				session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
+			).mock.calls[0];
 			expect(mcpArg).toHaveProperty('space-agent-tools');
 
 			expect(session.setRuntimeSystemPrompt).toHaveBeenCalledTimes(1);
@@ -702,6 +711,173 @@ describe('SpaceRuntimeService', () => {
 			// Exactly 2 attaches (one per member-N session). The no-space session
 			// is filtered out before getSessionAsync is consulted.
 			expect(mergeMock).toHaveBeenCalledTimes(2);
+
+			await svc.stop();
+		});
+	});
+
+	// ─── ready() — startup provisioning race fix ─────────────────────────────
+	//
+	// Regression guard for task #83 / this task: before this change,
+	// `provisionExistingSpaces()` ran as a fire-and-forget `void (async () => …)`
+	// promise, so a session-bound RPC arriving right after `start()` could run
+	// before its MCP servers were attached. `ready()` now resolves only after
+	// *both* the space_chat provisioning AND the member-session sweep have
+	// completed, and the daemon bootstrap awaits it before binding Bun.serve.
+
+	describe('ready() — startup provisioning gate', () => {
+		function makeSession() {
+			return {
+				setRuntimeMcpServers: mock(() => {}),
+				mergeRuntimeMcpServers: mock(() => {}),
+				setRuntimeSystemPrompt: mock(() => {}),
+			} as unknown as AgentSession;
+		}
+
+		function makeMemberAgentSession() {
+			return {
+				mergeRuntimeMcpServers: mock(() => {}),
+				setRuntimeMcpServers: mock(() => {}),
+				setRuntimeSystemPrompt: mock(() => {}),
+			} as unknown as AgentSession;
+		}
+
+		function makeMemberSession(id: string): Session {
+			return {
+				id,
+				title: 'Worker',
+				workspacePath: '/tmp/ws',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: { tools: {} },
+				metadata: {},
+				type: 'worker',
+				context: { spaceId: mockSpace.id },
+			} as unknown as Session;
+		}
+
+		test('ready() resolves only after BOTH the chat-session sweep and the member-session sweep have completed', async () => {
+			// Arrange: block both sweeps until we manually resolve their gating
+			// promises. This proves `ready()` waits on each — if either were
+			// fire-and-forget, `ready()` would resolve before the gate opens.
+			const chatAgent = makeSession();
+			const memberAgent = makeMemberAgentSession();
+
+			let resolveChat!: () => void;
+			const chatGate = new Promise<void>((r) => {
+				resolveChat = r;
+			});
+			let resolveMember!: () => void;
+			const memberGate = new Promise<void>((r) => {
+				resolveMember = r;
+			});
+
+			const sessionManager = {
+				// The space-chat session lookup is awaited inside
+				// setupSpaceAgentSession; gate the chat sweep on `chatGate`.
+				getSessionAsync: mock(async (id: string) => {
+					if (id === `space:chat:${mockSpace.id}`) {
+						await chatGate;
+						return chatAgent;
+					}
+					await memberGate;
+					return memberAgent;
+				}),
+				listSessions: mock(() => [makeMemberSession('member-gated')]),
+			} as unknown as SessionManager;
+
+			const spaceMgr: SpaceManager = {
+				getSpace: mock(async () => mockSpace),
+				listSpaces: mock(async () => [mockSpace]),
+			} as unknown as SpaceManager;
+
+			const svc = new SpaceRuntimeService({
+				db: {} as BunDatabase,
+				spaceManager: spaceMgr,
+				spaceAgentManager: {
+					listBySpaceId: mock(() => []),
+				} as unknown as SpaceAgentManager,
+				spaceWorkflowManager: {
+					listWorkflows: mock(() => []),
+				} as unknown as SpaceWorkflowManager,
+				workflowRunRepo: {
+					getActiveRuns: mock(() => []),
+				} as unknown as SpaceWorkflowRunRepository,
+				taskRepo: {} as SpaceTaskRepository,
+				tickIntervalMs: 60_000,
+				sessionManager,
+			});
+
+			// Act: start() returns sync; ready() must not resolve yet.
+			svc.start();
+
+			let readyResolved = false;
+			const readyPromise = svc.ready().then(() => {
+				readyResolved = true;
+			});
+
+			// Yield so any microtasks that *could* have resolved do — they should not.
+			await new Promise<void>((r) => setTimeout(r, 5));
+			expect(readyResolved).toBe(false);
+
+			// Open just the chat gate; member sweep still blocks ready().
+			resolveChat();
+			await new Promise<void>((r) => setTimeout(r, 5));
+			expect(readyResolved).toBe(false);
+
+			// Open the member gate; ready() must now resolve.
+			resolveMember();
+			await readyPromise;
+			expect(readyResolved).toBe(true);
+
+			// And both sweeps actually attached MCP servers — proving the
+			// returned promise tracks real work, not an empty resolution.
+			expect(chatAgent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
+			expect(memberAgent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
+
+			await svc.stop();
+		});
+
+		test('ready() is safe to call before start() and resolves immediately', async () => {
+			const svc = new SpaceRuntimeService(buildConfig(createMockSpaceManager()));
+			await expect(svc.ready()).resolves.toBeUndefined();
+		});
+
+		test('ready() does not reject when a sweep throws — errors are logged, not propagated', async () => {
+			// If the member-session sweep throws, ready() must still resolve so
+			// the daemon boot path isn't blocked by a transient read failure.
+			const spaceMgr: SpaceManager = {
+				getSpace: mock(async () => mockSpace),
+				listSpaces: mock(async () => {
+					throw new Error('boom');
+				}),
+			} as unknown as SpaceManager;
+
+			const sessionManager = {
+				getSessionAsync: mock(async () => null),
+				listSessions: mock(() => {
+					throw new Error('boom-list');
+				}),
+			} as unknown as SessionManager;
+
+			const svc = new SpaceRuntimeService({
+				db: {} as BunDatabase,
+				spaceManager: spaceMgr,
+				spaceAgentManager: {
+					listBySpaceId: mock(() => []),
+				} as unknown as SpaceAgentManager,
+				spaceWorkflowManager: {
+					listWorkflows: mock(() => []),
+				} as unknown as SpaceWorkflowManager,
+				workflowRunRepo: {} as SpaceWorkflowRunRepository,
+				taskRepo: {} as SpaceTaskRepository,
+				tickIntervalMs: 60_000,
+				sessionManager,
+			});
+
+			svc.start();
+			await expect(svc.ready()).resolves.toBeUndefined();
 
 			await svc.stop();
 		});
