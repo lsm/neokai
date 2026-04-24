@@ -282,6 +282,147 @@ describe('SpaceTasks', () => {
 		expect(queryByText(/Open \(/)).toBeNull();
 	});
 
+	describe('Dependency badges', () => {
+		it('renders no badge row when a task has no dependencies', () => {
+			mockTasks.value = [makeTask('t1', 'open')];
+			const { queryByTestId } = render(<SpaceTasks spaceId="space-1" />);
+			expect(queryByTestId('task-dependency-badges')).toBeNull();
+		});
+
+		it('renders a gray badge when the dependency is not done', () => {
+			mockTasks.value = [
+				makeTask('t1', 'open', { taskNumber: 1 }),
+				makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['t1'] }),
+			];
+			const { getAllByTestId } = render(<SpaceTasks spaceId="space-1" />);
+			const badges = getAllByTestId('task-dependency-badge');
+			expect(badges).toHaveLength(1);
+			expect(badges[0].textContent).toContain('#1');
+			expect(badges[0].getAttribute('data-dep-status')).toBe('open');
+			// Gray color classes applied (bg-dark-700 / text-gray-300)
+			expect(badges[0].className).toContain('text-gray-300');
+			expect(badges[0].className).not.toContain('text-green-300');
+		});
+
+		it('renders a green badge when the dependency is done', () => {
+			mockTasks.value = [
+				makeTask('t1', 'done', { taskNumber: 1 }),
+				makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['t1'] }),
+			];
+			const { getAllByTestId } = render(<SpaceTasks spaceId="space-1" />);
+			const badges = getAllByTestId('task-dependency-badge');
+			expect(badges).toHaveLength(1);
+			expect(badges[0].getAttribute('data-dep-status')).toBe('done');
+			expect(badges[0].className).toContain('text-green-300');
+		});
+
+		it('renders a missing-dep badge with ⚠ when the dep id is not found', () => {
+			mockTasks.value = [makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['missing-id'] })];
+			const { getAllByTestId } = render(<SpaceTasks spaceId="space-1" />);
+			const badges = getAllByTestId('task-dependency-badge');
+			expect(badges).toHaveLength(1);
+			expect(badges[0].getAttribute('data-dep-status')).toBe('missing');
+			expect(badges[0].getAttribute('title')).toBe('task not found');
+			expect(badges[0].textContent).toContain('⚠');
+			expect(badges[0].textContent).toContain('#?');
+			expect((badges[0] as HTMLButtonElement).disabled).toBe(true);
+		});
+
+		it('shows the dep task title as the tooltip', () => {
+			mockTasks.value = [
+				makeTask('t1', 'open', { taskNumber: 1, title: 'Set up auth' }),
+				makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['t1'] }),
+			];
+			const { getAllByTestId } = render(<SpaceTasks spaceId="space-1" />);
+			const badges = getAllByTestId('task-dependency-badge');
+			expect(badges[0].getAttribute('title')).toBe('Set up auth');
+		});
+
+		it('navigates to the dependency task when a badge is clicked', () => {
+			mockTasks.value = [
+				makeTask('t1', 'open', { taskNumber: 1 }),
+				makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['t1'] }),
+			];
+			const onSelectTask = vi.fn();
+			const { getAllByTestId } = render(
+				<SpaceTasks spaceId="space-1" onSelectTask={onSelectTask} />
+			);
+			const badges = getAllByTestId('task-dependency-badge');
+			fireEvent.click(badges[0]);
+			expect(onSelectTask).toHaveBeenCalledWith('t1');
+			// Must not also select the parent row (stopPropagation)
+			expect(onSelectTask).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not invoke onSelectTask for a missing dependency', () => {
+			mockTasks.value = [makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['ghost'] })];
+			const onSelectTask = vi.fn();
+			const { getAllByTestId } = render(
+				<SpaceTasks spaceId="space-1" onSelectTask={onSelectTask} />
+			);
+			const badges = getAllByTestId('task-dependency-badge');
+			fireEvent.click(badges[0]);
+			expect(onSelectTask).not.toHaveBeenCalled();
+		});
+
+		it('shows overflow chip when there are more than 3 deps (first 3 + "+N")', () => {
+			mockTasks.value = [
+				makeTask('t1', 'done', { taskNumber: 1 }),
+				makeTask('t2', 'open', { taskNumber: 2 }),
+				makeTask('t3', 'blocked', { taskNumber: 3 }),
+				makeTask('t4', 'done', { taskNumber: 4 }),
+				makeTask('t5', 'open', { taskNumber: 5 }),
+				makeTask('target', 'open', {
+					taskNumber: 99,
+					dependsOn: ['t1', 't2', 't3', 't4', 't5'],
+				}),
+			];
+			const { getAllByTestId, getByTestId } = render(<SpaceTasks spaceId="space-1" />);
+			const badges = getAllByTestId('task-dependency-badge');
+			// Only the first 3 deps render as badges
+			expect(badges).toHaveLength(3);
+			expect(badges.map((b) => b.textContent)).toEqual(['#1', '#2', '#3']);
+			const overflow = getByTestId('task-dependency-overflow');
+			expect(overflow.textContent).toBe('+2');
+		});
+
+		it('does not show an overflow chip when there are exactly 3 deps', () => {
+			mockTasks.value = [
+				makeTask('t1', 'done', { taskNumber: 1 }),
+				makeTask('t2', 'done', { taskNumber: 2 }),
+				makeTask('t3', 'done', { taskNumber: 3 }),
+				makeTask('target', 'open', {
+					taskNumber: 99,
+					dependsOn: ['t1', 't2', 't3'],
+				}),
+			];
+			const { getAllByTestId, queryByTestId } = render(<SpaceTasks spaceId="space-1" />);
+			expect(getAllByTestId('task-dependency-badge')).toHaveLength(3);
+			expect(queryByTestId('task-dependency-overflow')).toBeNull();
+		});
+
+		it('reacts when a dependency transitions to done', () => {
+			mockTasks.value = [
+				makeTask('t1', 'in_progress', { taskNumber: 1 }),
+				makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['t1'] }),
+			];
+			const { getAllByTestId, rerender } = render(<SpaceTasks spaceId="space-1" />);
+			let badges = getAllByTestId('task-dependency-badge');
+			expect(badges[0].getAttribute('data-dep-status')).toBe('in_progress');
+			expect(badges[0].className).toContain('text-gray-300');
+
+			// Dependency completes → the badge should flip to green
+			mockTasks.value = [
+				makeTask('t1', 'done', { taskNumber: 1 }),
+				makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['t1'] }),
+			];
+			rerender(<SpaceTasks spaceId="space-1" />);
+			badges = getAllByTestId('task-dependency-badge');
+			expect(badges[0].getAttribute('data-dep-status')).toBe('done');
+			expect(badges[0].className).toContain('text-green-300');
+		});
+	});
+
 	describe('Awaiting-approval filter chip', () => {
 		it('is hidden when no tasks are paused at a completion action', () => {
 			mockTasks.value = [makeTask('t1', 'review')];
