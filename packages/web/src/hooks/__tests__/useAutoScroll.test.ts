@@ -111,7 +111,7 @@ describe('useAutoScroll', () => {
 	});
 
 	describe('scrollToBottom', () => {
-		it('should call scrollIntoView with instant behavior by default', () => {
+		it('should call scrollIntoView with instant behavior and block: end by default', () => {
 			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
 
 			const { result } = renderHook(() =>
@@ -127,10 +127,12 @@ describe('useAutoScroll', () => {
 				result.current.scrollToBottom();
 			});
 
-			expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: 'instant' });
+			// block: 'end' combined with the container's scroll-padding-bottom keeps
+			// the last message above the floating composer rather than behind it.
+			expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: 'instant', block: 'end' });
 		});
 
-		it('should call scrollIntoView with smooth behavior when specified', () => {
+		it('should call scrollIntoView with smooth behavior and block: end when specified', () => {
 			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
 
 			const { result } = renderHook(() =>
@@ -146,7 +148,7 @@ describe('useAutoScroll', () => {
 				result.current.scrollToBottom(true);
 			});
 
-			expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: 'smooth' });
+			expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: 'smooth', block: 'end' });
 		});
 
 		it('should handle null endRef gracefully', () => {
