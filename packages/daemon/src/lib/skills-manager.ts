@@ -530,7 +530,7 @@ export class SkillsManager {
 	 * Fallback path: create an `app_mcp_servers` row from the central
 	 * `BUILTIN_MCP_SERVERS` table when it is unexpectedly absent at skill
 	 * init time. Throws if the name is not known to the registry — a
-	 * mc_server skill can only reference a registered built-in server.
+	 * mcp_server skill can only reference a registered built-in server.
 	 */
 	private createMissingMcpServer(name: string) {
 		const serverDef = BUILTIN_MCP_SERVERS.find((s) => s.name === name);
