@@ -64,6 +64,11 @@ export function AppMcpServersSettings() {
 	// is exposed via skill X" (or warn when a server has no wrapper and is
 	// therefore never injected into any session).
 	const skills = skillsStore.skills.value;
+	// Explicit "first snapshot arrived" flag from the skills store. We need this
+	// (not `skills.length > 0`) to correctly distinguish "subscription still
+	// loading" from "there genuinely are zero skills" — otherwise a space with
+	// MCP servers but zero wrapper skills would never show orphan warnings.
+	const skillsLoaded = skillsStore.loaded.value;
 
 	const [showForm, setShowForm] = useState(false);
 	const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -352,12 +357,11 @@ export function AppMcpServersSettings() {
 				) : (
 					<div class="space-y-2">
 						{servers.map((server) => {
-							// Show linkage info only after the skills subscription has loaded
-							// at least one row. Before that, we genuinely don't know whether a
-							// wrapper exists, so suppressing the annotation prevents a
-							// misleading "⚠️ Not exposed" flash during initial mount.
+							// Show linkage info only after the skills subscription has delivered
+							// its first snapshot (`skillsLoaded`). Before that, we genuinely
+							// don't know whether a wrapper exists, so suppressing the annotation
+							// prevents a misleading "⚠️ Not exposed" flash during initial mount.
 							const linkedSkill = skillLinkage.get(server.id);
-							const skillsLoaded = skills.length > 0;
 							return (
 								<div
 									key={server.id}

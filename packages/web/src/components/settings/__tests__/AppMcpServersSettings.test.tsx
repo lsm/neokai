@@ -54,10 +54,14 @@ vi.mock('../../../lib/app-mcp-store.ts', () => ({
 
 // Mock the skillsStore — AppMcpServersSettings subscribes to it so it can
 // annotate each server row with its wrapping skill (or warn about orphans).
+// `loaded` is the explicit "first snapshot delivered" signal the component
+// reads (distinct from `skills.length > 0`, which would mis-report the
+// "subscription delivered but zero rows" state as still-loading).
 vi.mock('../../../lib/skills-store.ts', () => ({
 	skillsStore: {
 		skills: { value: [] },
 		isLoading: { value: false },
+		loaded: { value: false },
 		error: { value: null },
 		subscribe: mockSkillsSubscribe,
 		unsubscribe: mockSkillsUnsubscribe,
@@ -258,6 +262,9 @@ describe('AppMcpServersSettings', () => {
 		appMcpStore.loading.value = false;
 		appMcpStore.error.value = null;
 		skillsStore.skills.value = [];
+		// Default to loaded=true so the linkage annotations render in the
+		// steady-state tests below. Loading-specific tests flip it to false.
+		skillsStore.loaded.value = true;
 
 		// Default mock implementations
 		mockCreateAppMcpServer.mockResolvedValue({
@@ -424,17 +431,35 @@ describe('AppMcpServersSettings', () => {
 			expect(warn.textContent).toMatch(/no skill wrapper/i);
 		});
 
-		it('suppresses annotations while skills are still loading', () => {
-			// Skills subscription hasn't populated any rows yet — we should not
-			// flash "no skill wrapper" warnings before we know the truth.
+		it('suppresses annotations while the skills subscription has not yet delivered a snapshot', () => {
+			// The skills LiveQuery hasn't fired its first snapshot yet — we should
+			// not flash "no skill wrapper" warnings before we know the truth. This
+			// is the `loaded === false` branch and is distinct from the
+			// "subscription delivered, zero skills exist" case below.
 			const server = makeServer('s1', { name: 'chrome-devtools' });
 			appMcpStore.appMcpServers.value = [server];
 			skillsStore.skills.value = [];
+			skillsStore.loaded.value = false;
 
 			render(<AppMcpServersSettings />);
 
 			expect(screen.queryByTestId('skill-link-chrome-devtools')).toBeNull();
 			expect(screen.queryByTestId('skill-orphan-chrome-devtools')).toBeNull();
+		});
+
+		it('shows orphan warning once the subscription has loaded even if there are zero skills', () => {
+			// Regression guard: previously the component used `skills.length > 0`
+			// as a proxy for "loaded", which mis-classified this perfectly valid
+			// steady state (MCP servers configured, no skill wrappers yet) as
+			// "still loading" and silently hid the actionable warning.
+			const server = makeServer('s1', { name: 'fetch-mcp' });
+			appMcpStore.appMcpServers.value = [server];
+			skillsStore.skills.value = [];
+			skillsStore.loaded.value = true;
+
+			render(<AppMcpServersSettings />);
+
+			expect(screen.getByTestId('skill-orphan-fetch-mcp')).toBeTruthy();
 		});
 	});
 

@@ -161,6 +161,39 @@ export function computeMcpSkillRuntimeState(
 }
 
 /**
+ * Tailwind class pair for the runtime-state indicator (dot + label text).
+ *
+ * Colour semantics:
+ *   - active          → emerald (all good)
+ *   - server-off      → amber   (a scope override the user may not have set)
+ *   - server-missing  → red     (data-integrity problem)
+ *   - skill-disabled  → gray    (the user's own choice)
+ *   - unknown         → gray    (no indicator — caller should suppress render)
+ *
+ * Amber for `server-off` is deliberately aligned with the amber orphan-warning
+ * in `AppMcpServersSettings`: both signal "this doesn't do what you think it
+ * does", and sharing the colour makes that signal consistent across views.
+ */
+export interface McpSkillRuntimeClasses {
+	dot: string;
+	text: string;
+}
+
+export function getMcpSkillRuntimeClasses(status: McpSkillRuntimeStatus): McpSkillRuntimeClasses {
+	switch (status) {
+		case 'active':
+			return { dot: 'bg-emerald-400', text: 'text-emerald-500/70' };
+		case 'server-off':
+			return { dot: 'bg-amber-400', text: 'text-amber-500/70' };
+		case 'server-missing':
+			return { dot: 'bg-red-400', text: 'text-red-400' };
+		case 'skill-disabled':
+		case 'unknown':
+			return { dot: 'bg-gray-500', text: 'text-gray-500' };
+	}
+}
+
+/**
  * For each `app_mcp_servers` entry, look up the (single) skill that wraps it.
  * Skills are stored with `sourceType === 'mcp_server'` and
  * `config.appMcpServerId` pointing at an `app_mcp_servers.id`. Returns a map

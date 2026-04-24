@@ -62,7 +62,11 @@ const RUNTIME_MCP_LABELS: Record<string, { title: string; description: string }>
 		description: 'Room-scoped coordination between co-located agents',
 	},
 };
-import { computeMcpSkillRuntimeState, computeSkillGroupState } from './ToolsModal.utils.ts';
+import {
+	computeMcpSkillRuntimeState,
+	computeSkillGroupState,
+	getMcpSkillRuntimeClasses,
+} from './ToolsModal.utils.ts';
 
 interface ToolsModalProps {
 	isOpen: boolean;
@@ -682,18 +686,11 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 													sessionMcpEntries.value,
 													sessionMcpLoaded.value
 												);
-												const runtimeDotClass =
-													runtime.status === 'active'
-														? 'bg-emerald-400'
-														: runtime.status === 'server-missing'
-															? 'bg-red-400'
-															: 'bg-gray-500';
-												const runtimeTextClass =
-													runtime.status === 'active'
-														? 'text-emerald-500/70'
-														: runtime.status === 'server-missing'
-															? 'text-red-400'
-															: 'text-gray-500';
+												// Colour pair is derived from a pure util so the mapping is
+												// unit-tested and stays consistent with the amber orphan-
+												// warning in AppMcpServersSettings (see getMcpSkillRuntimeClasses).
+												const { dot: runtimeDotClass, text: runtimeTextClass } =
+													getMcpSkillRuntimeClasses(runtime.status);
 												return (
 													<label
 														key={skill.id}

@@ -13,6 +13,7 @@ import {
 	computeMcpServerSkillLinkage,
 	computeMcpSkillRuntimeState,
 	computeSkillGroupState,
+	getMcpSkillRuntimeClasses,
 } from '../ToolsModal.utils.ts';
 
 describe('computeSkillGroupState', () => {
@@ -243,5 +244,52 @@ describe('computeMcpServerSkillLinkage', () => {
 			config: { type: 'mcp_server', appMcpServerId: '' },
 		});
 		expect(computeMcpServerSkillLinkage([skill]).size).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// getMcpSkillRuntimeClasses
+// ---------------------------------------------------------------------------
+
+describe('getMcpSkillRuntimeClasses', () => {
+	it('maps active → emerald', () => {
+		expect(getMcpSkillRuntimeClasses('active')).toEqual({
+			dot: 'bg-emerald-400',
+			text: 'text-emerald-500/70',
+		});
+	});
+
+	it('maps server-off → amber (distinct from skill-disabled gray)', () => {
+		// Regression guard: `server-off` used to share gray with `skill-disabled`,
+		// which hid a meaningful distinction — "a scope override the user may
+		// not have set" vs "the user turned it off themselves." Amber also
+		// matches the orphan-warning colour in AppMcpServersSettings so the
+		// "this doesn't do what you think it does" signal reads the same in
+		// both places.
+		expect(getMcpSkillRuntimeClasses('server-off')).toEqual({
+			dot: 'bg-amber-400',
+			text: 'text-amber-500/70',
+		});
+	});
+
+	it('maps server-missing → red', () => {
+		expect(getMcpSkillRuntimeClasses('server-missing')).toEqual({
+			dot: 'bg-red-400',
+			text: 'text-red-400',
+		});
+	});
+
+	it('maps skill-disabled → gray (user-owned state)', () => {
+		expect(getMcpSkillRuntimeClasses('skill-disabled')).toEqual({
+			dot: 'bg-gray-500',
+			text: 'text-gray-500',
+		});
+	});
+
+	it('maps unknown → gray (caller should suppress render)', () => {
+		expect(getMcpSkillRuntimeClasses('unknown')).toEqual({
+			dot: 'bg-gray-500',
+			text: 'text-gray-500',
+		});
 	});
 });

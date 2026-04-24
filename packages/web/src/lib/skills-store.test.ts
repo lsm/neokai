@@ -112,6 +112,7 @@ describe('SkillsStore', () => {
 		// Reset store signals
 		skillsStore.skills.value = [];
 		skillsStore.isLoading.value = false;
+		skillsStore.loaded.value = false;
 		skillsStore.error.value = null;
 
 		vi.mocked(connectionManager.getHub).mockResolvedValue(mockHub as never);
@@ -173,6 +174,49 @@ describe('SkillsStore', () => {
 			expect(skillsStore.isLoading.value).toBe(false);
 
 			unsub();
+		});
+
+		it('should start with loaded=false and flip to true on first snapshot', async () => {
+			// Consumers (e.g. AppMcpServersSettings) rely on `loaded` to tell
+			// "subscription still in flight" from "subscription delivered zero
+			// rows." Using skills.length > 0 would conflate them.
+			expect(skillsStore.loaded.value).toBe(false);
+
+			await skillsStore.subscribe();
+			expect(skillsStore.loaded.value).toBe(false); // request sent, snapshot not yet
+
+			mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
+				subscriptionId: SUBSCRIPTION_ID,
+				rows: [],
+				version: 1,
+			});
+			expect(skillsStore.loaded.value).toBe(true);
+		});
+
+		it('should flip loaded=true even when the snapshot delivers zero rows', async () => {
+			// Regression guard for the AppMcpServersSettings orphan-warning bug:
+			// "zero skills" is a valid steady state, not a stuck-loading state.
+			await skillsStore.subscribe();
+			mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
+				subscriptionId: SUBSCRIPTION_ID,
+				rows: [],
+				version: 1,
+			});
+			expect(skillsStore.loaded.value).toBe(true);
+			expect(skillsStore.skills.value).toHaveLength(0);
+		});
+
+		it('should reset loaded=false on unsubscribe so the next mount re-arms the gate', async () => {
+			await skillsStore.subscribe();
+			mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
+				subscriptionId: SUBSCRIPTION_ID,
+				rows: [makeSkill('1')],
+				version: 1,
+			});
+			expect(skillsStore.loaded.value).toBe(true);
+
+			skillsStore.unsubscribe();
+			expect(skillsStore.loaded.value).toBe(false);
 		});
 
 		it('should populate skills from snapshot rows', async () => {
