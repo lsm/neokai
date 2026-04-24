@@ -693,13 +693,16 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	deps.neoAgentManager.setActionToolsConfig(neoActionToolsConfig);
 	deps.neoAgentManager.setActivityLogger(neoActivityLogger);
 
-	// Human ↔ Task Agent message routing handlers (require taskAgentManager)
+	// Human ↔ Task Agent message routing handlers (require taskAgentManager).
+	// `channelCycleRepo` is passed so `space.task.sendMessage` can reset the
+	// per-channel cycle counters on human touch.
 	setupSpaceTaskMessageHandlers(
 		deps.messageHub,
 		taskAgentManager,
 		deps.db,
 		deps.daemonHub,
-		nodeExecutionRepo
+		nodeExecutionRepo,
+		channelCycleRepo
 	);
 
 	// Space export/import handlers

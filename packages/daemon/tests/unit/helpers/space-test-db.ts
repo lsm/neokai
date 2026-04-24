@@ -148,6 +148,20 @@ export function createSpaceTables(db: BunDatabase): void {
 	`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_gate_data_run ON gate_data(run_id)`);
 
+	// Per-channel cycle counters (migration 69). Tracks how many times each
+	// backward (cyclic) channel has been traversed in a workflow run.
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS channel_cycles (
+			run_id TEXT NOT NULL,
+			channel_index INTEGER NOT NULL,
+			count INTEGER NOT NULL DEFAULT 0,
+			max_cycles INTEGER NOT NULL DEFAULT 5,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (run_id, channel_index),
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS node_executions (
 			id TEXT PRIMARY KEY,
