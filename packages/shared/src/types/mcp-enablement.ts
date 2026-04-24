@@ -86,3 +86,55 @@ export interface McpEnablementClearScopeRequest {
 export interface McpEnablementClearScopeResponse {
 	deleted: number;
 }
+
+// ---------------------------------------------------------------------------
+// Session-scope convenience RPCs (MCP M6)
+//
+// The generic `mcp.enablement.*` handlers already support session scope, but
+// the session Tools modal needs a single call that returns, for every registry
+// entry, the effective enablement plus which scope owns that decision. Doing
+// this resolution on the daemon side means the UI never has to re-implement
+// session > room > space > registry precedence.
+// ---------------------------------------------------------------------------
+
+/**
+ * Source of the effective enablement decision for a single (session, server)
+ * pair.
+ *
+ *   - `session` — an explicit `mcp_enablement` row at scope=`session` decides.
+ *   - `room`    — an explicit `mcp_enablement` row at scope=`room` decides
+ *                 (only reached when no session-scope override exists).
+ *   - `space`   — same as `room`, but at scope=`space`.
+ *   - `registry` — no override along the chain; the registry row's `enabled`
+ *                  flag is used.
+ */
+export type McpEffectiveEnablementSource = 'session' | 'room' | 'space' | 'registry';
+
+/**
+ * One entry in the `session.mcp.list` response: the registry row, the
+ * effective enablement for this session, and where that decision came from.
+ */
+export interface SessionMcpServerEntry {
+	/** The underlying registry entry — everything the UI needs to render. */
+	server: import('./app-mcp-server.ts').AppMcpServer;
+	/** Whether this server is effectively enabled for the given session. */
+	enabled: boolean;
+	/** Which level of the scope chain decided `enabled`. */
+	source: McpEffectiveEnablementSource;
+	/**
+	 * When `source` is `session`/`room`/`space`, this holds the explicit override
+	 * row that made the decision (so the UI can tell the user "disabled at the
+	 * room level" vs. "this session explicitly enabled it"). Missing when the
+	 * decision is `registry`.
+	 */
+	override?: McpEnablementOverride;
+}
+
+/** `session.mcp.list` — per-server effective state for a single session. */
+export interface SessionMcpListRequest {
+	sessionId: string;
+}
+
+export interface SessionMcpListResponse {
+	entries: SessionMcpServerEntry[];
+}

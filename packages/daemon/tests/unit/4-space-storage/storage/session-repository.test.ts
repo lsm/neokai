@@ -69,6 +69,16 @@ describe('SessionRepository', () => {
 			);
 
 			CREATE INDEX idx_sessions_last_active ON sessions(last_active_at);
+
+			-- deleteSession() drops session-scope overrides in the same transaction
+			-- so the table must exist even in tests that don't otherwise touch it.
+			CREATE TABLE mcp_enablement (
+				server_id TEXT NOT NULL,
+				scope_type TEXT NOT NULL CHECK(scope_type IN ('space', 'room', 'session')),
+				scope_id TEXT NOT NULL,
+				enabled INTEGER NOT NULL,
+				PRIMARY KEY (server_id, scope_type, scope_id)
+			);
 		`);
 		repository = new SessionRepository(db as any);
 	});
@@ -532,6 +542,45 @@ describe('SessionRepository', () => {
 
 		it('should not throw when deleting non-existent session', () => {
 			expect(() => repository.deleteSession('non-existent')).not.toThrow();
+		});
+
+		it('should cascade-delete session-scope mcp_enablement overrides (MCP M6)', () => {
+			repository.createSession(createDefaultSession({ id: 'session-1' }));
+			repository.createSession(createDefaultSession({ id: 'session-2' }));
+
+			// Seed overrides at every scope targeting the deleted session's id across
+			// tables. Only rows with (scope_type='session', scope_id='session-1')
+			// should be removed — room/space rows sharing the same scope_id string
+			// must survive (they belong to a different scope namespace).
+			const insert = db.prepare(
+				`INSERT INTO mcp_enablement (server_id, scope_type, scope_id, enabled) VALUES (?, ?, ?, ?)`
+			);
+			insert.run('srv-a', 'session', 'session-1', 1);
+			insert.run('srv-b', 'session', 'session-1', 0);
+			insert.run('srv-a', 'session', 'session-2', 1);
+			insert.run('srv-a', 'room', 'session-1', 1); // same id, different scope
+			insert.run('srv-a', 'space', 'session-1', 1); // same id, different scope
+
+			repository.deleteSession('session-1');
+
+			const rows = db.prepare('SELECT * FROM mcp_enablement ORDER BY scope_type, server_id').all();
+			expect(rows).toEqual([
+				{ server_id: 'srv-a', scope_type: 'room', scope_id: 'session-1', enabled: 1 },
+				{ server_id: 'srv-a', scope_type: 'session', scope_id: 'session-2', enabled: 1 },
+				{ server_id: 'srv-a', scope_type: 'space', scope_id: 'session-1', enabled: 1 },
+			]);
+		});
+
+		it('should leave mcp_enablement untouched when deleting a session with no overrides', () => {
+			repository.createSession(createDefaultSession());
+			db.prepare(
+				`INSERT INTO mcp_enablement (server_id, scope_type, scope_id, enabled) VALUES (?, ?, ?, ?)`
+			).run('srv-x', 'session', 'other-session', 1);
+
+			repository.deleteSession('session-1');
+
+			const rows = db.prepare('SELECT COUNT(*) as c FROM mcp_enablement').get() as { c: number };
+			expect(rows.c).toBe(1);
 		});
 	});
 

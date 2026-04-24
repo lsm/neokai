@@ -35,7 +35,9 @@ import type { AppMcpServerSourceType } from '@neokai/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { SkillsManager } from '../skills-manager';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
+import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository';
 import type { RoomSkillOverride } from '@neokai/shared';
+import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
 import { getProviderContextManager } from '../providers/factory.js';
 import { resolveSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.js';
 import { homedir } from 'os';
@@ -52,6 +54,14 @@ export interface QueryOptionsBuilderContext {
 	readonly skillsManager?: SkillsManager;
 	/** App MCP server repo for resolving mcp_server skill configs. Optional for backwards compatibility. */
 	readonly appMcpServerRepo?: AppMcpServerRepository;
+	/**
+	 * Unified per-scope MCP enablement repo. When provided, the builder resolves
+	 * skill-wrapped MCP servers against the session > room > space > registry
+	 * precedence chain so explicit per-scope overrides (including MCP M6
+	 * per-session toggles) filter the skill bridge too — not just the spawn
+	 * path's direct `config.mcpServers` injection.
+	 */
+	readonly mcpEnablementRepo?: McpEnablementRepository;
 	/**
 	 * Room-level skill overrides. When provided, a skill with `enabled: false` in this list
 	 * is excluded from injection even if it is globally enabled in the skills registry.
@@ -911,12 +921,20 @@ CRITICAL RULES:
 	 *
 	 * Skill-injected MCP servers: must appear in mcpServers map for
 	 * strictMcpConfig sessions to accept them.
+	 *
+	 * MCP M6: when `mcpEnablementRepo` is available, the skill bridge also respects
+	 * explicit overrides in the `mcp_enablement` table along the session's scope
+	 * chain (session > room > space > registry). Without this, a user disabling a
+	 * skill-wrapped MCP server via the session Tools modal would not actually take
+	 * effect, because the skill bridge bypasses `config.mcpServers` (which the
+	 * spawn path resolves upstream).
 	 */
 	private getMcpServersFromSkills(): Record<string, McpServerConfig> {
 		if (!this.ctx.skillsManager || !this.ctx.appMcpServerRepo) return {};
 
 		const skills = this.ctx.skillsManager.getEnabledSkills();
 		const roomDisabled = this.getRoomDisabledSkillIds();
+		const effectivelyEnabled = this.getEffectivelyEnabledAppServerIds();
 		const servers: Record<string, McpServerConfig> = {};
 
 		for (const skill of skills) {
@@ -926,13 +944,39 @@ CRITICAL RULES:
 			const appServer = this.ctx.appMcpServerRepo.get(skill.config.appMcpServerId);
 			// Skip silently if the referenced app_mcp_servers entry was deleted or no longer exists
 			if (!appServer) continue;
-			// Skip if the AppMcpServer itself is disabled, even if the wrapping skill is enabled
-			if (!appServer.enabled) continue;
+
+			if (effectivelyEnabled !== null) {
+				// Resolver result covers the full session > room > space > registry chain,
+				// so an explicit session override to enable a globally-disabled server wins
+				// here just as the spec calls for. Missing from the set ⇒ skip.
+				if (!effectivelyEnabled.has(appServer.id)) continue;
+			} else if (!appServer.enabled) {
+				// Fallback for contexts that do not plumb mcpEnablementRepo (legacy unit
+				// tests, ad-hoc builder usage): preserve the pre-M6 behaviour of only
+				// honouring the registry default.
+				continue;
+			}
 
 			servers[skill.name] = this.appMcpServerToSdkConfig(appServer);
 		}
 
 		return servers;
+	}
+
+	/**
+	 * Compute the set of AppMcpServer IDs that are effectively enabled for this
+	 * session given the session > room > space > registry precedence. Returns
+	 * `null` when the enablement repo isn't wired (legacy contexts), so callers
+	 * can fall back to the registry default.
+	 */
+	private getEffectivelyEnabledAppServerIds(): Set<string> | null {
+		if (!this.ctx.appMcpServerRepo || !this.ctx.mcpEnablementRepo) return null;
+
+		const registry = this.ctx.appMcpServerRepo.list();
+		const chain = scopeChainForSession(this.ctx.session);
+		const overrides = this.ctx.mcpEnablementRepo.listForScopes(chain);
+		const effective = resolveMcpServers(this.ctx.session, registry, overrides);
+		return new Set(effective.map((s) => s.id));
 	}
 
 	/**
