@@ -21,7 +21,7 @@
  */
 
 import { generateUUID } from '@neokai/shared';
-import type { SpaceWorkflow, CompletionAction } from '@neokai/shared';
+import type { SpaceWorkflow, CompletionAction, WorkflowNode } from '@neokai/shared';
 import type { GateScript } from '@neokai/shared';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { Logger } from '../../logger';
@@ -1342,14 +1342,24 @@ export interface SeedBuiltInWorkflowsResult {
 
 /**
  * Fields that the built-in seeder re-stamps when it detects template drift
- * on an already-seeded row. Intentionally narrow: we do NOT re-stamp node
- * content (prompts, channels, gates) because those carry real UUIDs that
- * may be referenced by in-flight workflow runs. Regenerating them would
- * break live sessions. The `postApproval` route is safe to update because
- * it uses role names (e.g. `'reviewer'`), not UUIDs, and the instructions
- * template is interpolated per-approval at routing time.
+ * on an already-seeded row.
+ *
+ * - `postApproval`, `completionAutonomyLevel`, `templateHash`, `nodes` are
+ *   updated; `nodes` carries the refreshed `customPrompt.value` for every
+ *   agent slot (matched by node name + agent name) while preserving the
+ *   existing node `id` and agent `agentId`. Preserving the node UUID keeps
+ *   in-flight workflow runs valid — their references continue to resolve.
+ * - Channels / gates are NOT re-stamped here: this PR did not change
+ *   channel or gate structure on any built-in template, and re-stamping
+ *   them would regenerate IDs. If a future template change adjusts those,
+ *   extend this list and the re-stamp payload below accordingly.
  */
-const RESTAMP_FIELDS = ['postApproval', 'completionAutonomyLevel', 'templateHash'] as const;
+const RESTAMP_FIELDS = [
+	'postApproval',
+	'completionAutonomyLevel',
+	'templateHash',
+	'nodes',
+] as const;
 
 /**
  * Seeds all built-in workflow templates into the given space.
@@ -1410,12 +1420,77 @@ export function seedBuiltInWorkflows(
 			if (row.templateHash === expectedHash) continue;
 
 			try {
+				// Build the re-stamped `nodes` array: walk the template node-by-node,
+				// look up the corresponding persisted row by node name, and rebuild
+				// the agent list keeping the persisted `agentId` UUID but adopting
+				// the template's `customPrompt` (and `model` / skills / MCP overrides).
+				// Matching is done by name because template nodes are defined with
+				// placeholder template-local IDs that don't match the real UUIDs
+				// stored on the row.
+				const existingNodesByName = new Map(row.nodes.map((n) => [n.name, n]));
+				const mergedNodes: WorkflowNode[] = [];
+				let abortReStamp: string | null = null;
+
+				for (const tNode of template.nodes) {
+					const eNode = existingNodesByName.get(tNode.name);
+					if (!eNode) {
+						// Template added a new node since this row was seeded. Node
+						// structure changes are out of scope for in-place re-stamp
+						// (would require channel/gate coordination + new UUIDs). Log
+						// and skip this row — `checkBuiltInWorkflowDriftOnStartup`
+						// will continue to surface it as drifted.
+						abortReStamp = `template node '${tNode.name}' missing from persisted row`;
+						break;
+					}
+
+					const existingAgentsByName = new Map(eNode.agents.map((a) => [a.name, a]));
+					const mergedAgents = tNode.agents.map((tAgent) => {
+						const eAgent = existingAgentsByName.get(tAgent.name);
+						// Keep the persisted agent UUID so the row passes validation.
+						// If the template added a new agent slot, we fall back to
+						// resolving the template's placeholder via `resolveAgentId` —
+						// same path Branch 2 uses for fresh seeds.
+						const persistedAgentId = eAgent?.agentId ?? resolveAgentId(tAgent.agentId);
+						if (!persistedAgentId) {
+							throw new Error(
+								`re-stamp: node '${tNode.name}' agent slot '${tAgent.name}' ` +
+									`has no persisted agentId and template placeholder ` +
+									`'${tAgent.agentId}' could not be resolved in space '${spaceId}'`
+							);
+						}
+						return {
+							...tAgent,
+							agentId: persistedAgentId,
+						};
+					});
+
+					mergedNodes.push({
+						id: eNode.id,
+						name: tNode.name,
+						agents: mergedAgents,
+						...(tNode.completionActions ? { completionActions: tNode.completionActions } : {}),
+					});
+				}
+
+				if (abortReStamp !== null) {
+					builtInSeederLog.warn(
+						`skipping re-stamp of built-in workflow '${template.name}' ` +
+							`(id=${row.id}) in space ${spaceId}: ${abortReStamp}. ` +
+							`Row will continue to surface as drifted until fixed manually.`
+					);
+					continue;
+				}
+
 				workflowManager.updateWorkflow(row.id, {
 					completionAutonomyLevel: template.completionAutonomyLevel,
 					// Pass `null` (not `undefined`) when the template clears the route,
 					// so the repository writes the new value rather than leaving the
 					// old one in place.
 					postApproval: template.postApproval ?? null,
+					// Re-stamp node prompt content in-place. UUIDs for each node
+					// are preserved above (see `eNode.id`), so node-execution rows
+					// and workflow-run state on live sessions remain valid.
+					nodes: mergedNodes,
 					templateHash: expectedHash,
 				});
 				restamped.push(template.name);
