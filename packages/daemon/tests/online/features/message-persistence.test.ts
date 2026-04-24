@@ -34,9 +34,12 @@ const TMP_DIR = process.env.TMPDIR || '/tmp';
 // Detect mock mode for faster timeouts (Dev Proxy)
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
 const MODEL = IS_MOCK ? 'haiku' : 'haiku-4.5';
-const IDLE_TIMEOUT = IS_MOCK ? 5000 : 30000;
+// Mock-mode idle timeout accommodates MCP subprocess spawn (e.g. the
+// `fetch-mcp` built-in runs `npx -y @tokenizin/mcp-npx-fetch` which can
+// take ~5s even with the package cached).
+const IDLE_TIMEOUT = IS_MOCK ? 15000 : 30000;
 const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
-const TEST_TIMEOUT = IS_MOCK ? 15000 : 90000;
+const TEST_TIMEOUT = IS_MOCK ? 30000 : 90000;
 
 describe('Message Persistence', () => {
 	let daemon: DaemonServerContext;
