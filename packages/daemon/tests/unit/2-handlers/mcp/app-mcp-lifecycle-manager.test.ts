@@ -72,27 +72,27 @@ describe('AppMcpLifecycleManager', () => {
 	describe('getEnabledMcpConfigs — stdio', () => {
 		test('converts a stdio entry to McpStdioServerConfig', () => {
 			repo.create({
-				name: 'brave-search',
+				name: 'test-search',
 				sourceType: 'stdio',
 				command: 'npx',
-				args: ['-y', '@modelcontextprotocol/server-brave-search'],
-				env: { BRAVE_API_KEY: 'BRAVE_API_KEY' },
+				args: ['-y', '@modelcontextprotocol/server-test-search'],
+				env: { TEST_API_KEY: 'TEST_API_KEY' },
 			});
 
 			const configs = manager.getEnabledMcpConfigs();
 
-			expect(configs['brave-search']).toBeDefined();
-			expect(configs['brave-search'].type).toBe('stdio');
+			expect(configs['test-search']).toBeDefined();
+			expect(configs['test-search'].type).toBe('stdio');
 
-			const stdioConfig = configs['brave-search'] as {
+			const stdioConfig = configs['test-search'] as {
 				type: string;
 				command: string;
 				args: string[];
 				env: Record<string, string>;
 			};
 			expect(stdioConfig.command).toBe('npx');
-			expect(stdioConfig.args).toEqual(['-y', '@modelcontextprotocol/server-brave-search']);
-			expect(stdioConfig.env).toEqual({ BRAVE_API_KEY: 'BRAVE_API_KEY' });
+			expect(stdioConfig.args).toEqual(['-y', '@modelcontextprotocol/server-test-search']);
+			expect(stdioConfig.env).toEqual({ TEST_API_KEY: 'TEST_API_KEY' });
 		});
 
 		test('stdio entry without optional args/env omits those fields', () => {

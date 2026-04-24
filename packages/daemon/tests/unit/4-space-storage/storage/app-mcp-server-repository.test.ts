@@ -46,19 +46,19 @@ describe('AppMcpServerRepository', () => {
 	describe('create', () => {
 		test('creates a stdio server entry and returns it', () => {
 			const server = repo.create({
-				name: 'brave-search',
+				name: 'test-search',
 				sourceType: 'stdio',
 				command: 'npx',
-				args: ['-y', '@modelcontextprotocol/server-brave-search'],
-				env: { BRAVE_API_KEY: 'BRAVE_API_KEY' },
+				args: ['-y', '@modelcontextprotocol/server-test-search'],
+				env: { TEST_API_KEY: 'TEST_API_KEY' },
 			});
 
 			expect(server.id).toBeTruthy();
-			expect(server.name).toBe('brave-search');
+			expect(server.name).toBe('test-search');
 			expect(server.sourceType).toBe('stdio');
 			expect(server.command).toBe('npx');
-			expect(server.args).toEqual(['-y', '@modelcontextprotocol/server-brave-search']);
-			expect(server.env).toEqual({ BRAVE_API_KEY: 'BRAVE_API_KEY' });
+			expect(server.args).toEqual(['-y', '@modelcontextprotocol/server-test-search']);
+			expect(server.env).toEqual({ TEST_API_KEY: 'TEST_API_KEY' });
 			expect(server.enabled).toBe(true);
 			expect(server.createdAt).toBeTruthy();
 			expect(server.updatedAt).toBeTruthy();

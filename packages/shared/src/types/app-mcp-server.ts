@@ -6,7 +6,7 @@
  *
  * Env var handling note:
  * The `env` field stores plain JSON key-value pairs intended for non-secret configuration.
- * For secrets such as BRAVE_API_KEY, the field stores a reference key and the actual value
+ * For secrets such as API keys, the field stores a reference key and the actual value
  * is read from the system environment at spawn time (process.env[key]). Do NOT store raw
  * secret values in SQLite.
  */
@@ -41,7 +41,7 @@ export interface AppMcpServer {
 	args?: string[];
 	/**
 	 * Environment variable overrides for the server process (stdio servers).
-	 * Values are non-secret config or reference keys (e.g. "BRAVE_API_KEY" → read from process.env).
+	 * Values are non-secret config or reference keys (e.g. "MY_API_KEY" → read from process.env).
 	 */
 	env?: Record<string, string>;
 	/** Server URL (SSE or HTTP servers) */

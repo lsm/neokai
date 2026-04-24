@@ -934,9 +934,9 @@ describe('QueryOptionsBuilder', () => {
 			},
 			{
 				id: 'skill-mcp-1',
-				name: 'brave-search',
-				displayName: 'Brave Search',
-				description: 'Web search via Brave',
+				name: 'test-search',
+				displayName: 'Test Search',
+				description: 'Web search via test MCP',
 				sourceType: 'mcp_server' as const,
 				config: { type: 'mcp_server' as const, appMcpServerId: 'mcp-server-uuid' },
 				enabled: true,
@@ -960,12 +960,12 @@ describe('QueryOptionsBuilder', () => {
 
 		const mockAppMcpServer = {
 			id: 'mcp-server-uuid',
-			name: 'brave-search-server',
-			description: 'Brave Search MCP',
+			name: 'test-search-server',
+			description: 'Test Search MCP',
 			sourceType: 'stdio' as const,
 			command: 'npx',
-			args: ['-y', 'brave-mcp'],
-			env: { BRAVE_API_KEY: 'test-key' },
+			args: ['-y', 'test-mcp'],
+			env: { TEST_API_KEY: 'test-key' },
 			enabled: true,
 		};
 
@@ -1004,10 +1004,10 @@ describe('QueryOptionsBuilder', () => {
 			const options = await builder.build();
 
 			expect(options.mcpServers).toBeDefined();
-			expect(options.mcpServers!['brave-search']).toEqual({
+			expect(options.mcpServers!['test-search']).toEqual({
 				command: 'npx',
-				args: ['-y', 'brave-mcp'],
-				env: { BRAVE_API_KEY: 'test-key' },
+				args: ['-y', 'test-mcp'],
+				env: { TEST_API_KEY: 'test-key' },
 			});
 		});
 
@@ -1078,10 +1078,10 @@ describe('QueryOptionsBuilder', () => {
 			const options = await builder.build();
 
 			expect(options.mcpServers!['existing-server']).toEqual({ command: 'existing-cmd' });
-			expect(options.mcpServers!['brave-search']).toEqual({
+			expect(options.mcpServers!['test-search']).toEqual({
 				command: 'npx',
-				args: ['-y', 'brave-mcp'],
-				env: { BRAVE_API_KEY: 'test-key' },
+				args: ['-y', 'test-mcp'],
+				env: { TEST_API_KEY: 'test-key' },
 			});
 		});
 
@@ -1159,15 +1159,15 @@ describe('QueryOptionsBuilder', () => {
 			// strictMcpConfig should be true for room_chat
 			expect(options.strictMcpConfig).toBe(true);
 			// Skill-injected server must be present in mcpServers so strictMcpConfig doesn't block it
-			expect(options.mcpServers!['brave-search']).toEqual({
+			expect(options.mcpServers!['test-search']).toEqual({
 				command: 'npx',
-				args: ['-y', 'brave-mcp'],
-				env: { BRAVE_API_KEY: 'test-key' },
+				args: ['-y', 'test-mcp'],
+				env: { TEST_API_KEY: 'test-key' },
 			});
 			// Original room server must still be present
 			expect(options.mcpServers!['room-agent-tools']).toEqual({ command: 'room-cmd' });
 			// Skill MCP server wildcard should be auto-allowed
-			expect(options.allowedTools).toContain('brave-search__*');
+			expect(options.allowedTools).toContain('test-search__*');
 		});
 
 		it('should inject builtin skills as local plugins pointing to ~/.neokai/skills/{commandName}', async () => {
@@ -1336,19 +1336,19 @@ describe('QueryOptionsBuilder', () => {
 		describe('mcp_enablement override filtering (MCP M6)', () => {
 			const targetAppServer = {
 				id: 'mcp-server-uuid',
-				name: 'brave-search-server',
-				description: 'Brave Search MCP',
+				name: 'test-search-server',
+				description: 'Test Search MCP',
 				sourceType: 'stdio' as const,
 				command: 'npx',
-				args: ['-y', 'brave-mcp'],
-				env: { BRAVE_API_KEY: 'test-key' },
+				args: ['-y', 'test-mcp'],
+				env: { TEST_API_KEY: 'test-key' },
 				enabled: true,
 			};
 			const mcpSkill = {
 				id: 'skill-mcp-1',
-				name: 'brave-search',
-				displayName: 'Brave Search',
-				description: 'Web search via Brave',
+				name: 'test-search',
+				displayName: 'Test Search',
+				description: 'Web search via test MCP',
 				sourceType: 'mcp_server' as const,
 				config: { type: 'mcp_server' as const, appMcpServerId: 'mcp-server-uuid' },
 				enabled: true,
@@ -1408,7 +1408,7 @@ describe('QueryOptionsBuilder', () => {
 
 				// Skill-wrapped server must not be injected despite the skill itself
 				// and the registry row both being enabled.
-				expect(options.mcpServers?.['brave-search']).toBeUndefined();
+				expect(options.mcpServers?.['test-search']).toBeUndefined();
 			});
 
 			it('includes the server when the session override explicitly enables a globally-disabled registry row', async () => {
@@ -1443,10 +1443,10 @@ describe('QueryOptionsBuilder', () => {
 				const builder = new QueryOptionsBuilder(ctx);
 				const options = await builder.build();
 
-				expect(options.mcpServers?.['brave-search']).toEqual({
+				expect(options.mcpServers?.['test-search']).toEqual({
 					command: 'npx',
-					args: ['-y', 'brave-mcp'],
-					env: { BRAVE_API_KEY: 'test-key' },
+					args: ['-y', 'test-mcp'],
+					env: { TEST_API_KEY: 'test-key' },
 				});
 			});
 
@@ -1458,7 +1458,7 @@ describe('QueryOptionsBuilder', () => {
 				]);
 				const builder1 = new QueryOptionsBuilder(ctxRoomDisables);
 				const options1 = await builder1.build();
-				expect(options1.mcpServers?.['brave-search']).toBeUndefined();
+				expect(options1.mcpServers?.['test-search']).toBeUndefined();
 
 				// Same room-level disable, but now a session-scope override re-enables —
 				// more specific scope wins.
@@ -1473,7 +1473,7 @@ describe('QueryOptionsBuilder', () => {
 				]);
 				const builder2 = new QueryOptionsBuilder(ctxSessionReenables);
 				const options2 = await builder2.build();
-				expect(options2.mcpServers?.['brave-search']).toBeDefined();
+				expect(options2.mcpServers?.['test-search']).toBeDefined();
 			});
 
 			it('falls back to the registry default when no enablement repo is provided', async () => {
@@ -1495,7 +1495,7 @@ describe('QueryOptionsBuilder', () => {
 				};
 				const builder = new QueryOptionsBuilder(ctx);
 				const options = await builder.build();
-				expect(options.mcpServers?.['brave-search']).toBeUndefined();
+				expect(options.mcpServers?.['test-search']).toBeUndefined();
 			});
 		});
 	});
