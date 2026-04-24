@@ -549,12 +549,65 @@ export class SpaceRuntime {
 		}
 
 		// 3. Dispatch the actual post-approval step.
+		//
+		// `{{pr_url}}` in the merge template is sourced from the most recent
+		// `workflow_run_artifacts` row whose `data` carries `prUrl` / `pr_url`.
+		// The end-node reviewer persists the URL via
+		// `save_artifact({ type: 'result', data: { prUrl } })` immediately
+		// before calling `approve_task()`, so by the time we reach this branch
+		// the artifact row exists. We deliberately do NOT read from
+		// `SpaceTask`: migration 84 dropped `pr_url`/`pr_number` columns from
+		// `space_tasks` and moved PR metadata to the artifact store.
+		//
+		// Callers may still override by passing `pr_url` in `contextExtras`
+		// (RPC paths forward operator-supplied values) — their value wins
+		// because the spread order below places `contextExtras` after the
+		// artifact-resolved default.
+		let resolvedPrUrl: string | undefined;
+		if (this.config.artifactRepo && approvedTask.workflowRunId) {
+			try {
+				const artifacts = this.config.artifactRepo.listByRun(approvedTask.workflowRunId);
+				// `listByRun` orders ASC by created_at; walk in reverse so the
+				// most recent `prUrl`/`pr_url` wins (later reviewer cycles
+				// supersede earlier ones).
+				for (let i = artifacts.length - 1; i >= 0; i--) {
+					const data = artifacts[i]?.data;
+					if (!data) continue;
+					const candidate =
+						(typeof data.prUrl === 'string' && data.prUrl) ||
+						(typeof data.pr_url === 'string' && data.pr_url);
+					if (candidate) {
+						resolvedPrUrl = candidate;
+						break;
+					}
+				}
+			} catch (err) {
+				log.warn(
+					`dispatchPostApproval: artifact lookup failed for run ${approvedTask.workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
+		}
+		// The template interpolator (see `post-approval-template.ts`) resolves
+		// tokens by raw identifier match — `{{autonomy_level}}` looks up the
+		// key `autonomy_level`, not `autonomyLevel`. `PostApprovalRouteContext`
+		// declares camelCase for the runtime-facing fields, so we MUST also
+		// supply snake_case aliases so every merge-template token documented in
+		// `POST_APPROVAL_TEMPLATE_KEYS` actually interpolates. Without these
+		// aliases the autonomy-gate step in the merge template ("If
+		// autonomy_level < 4 …") reads as a literal placeholder, which the
+		// reviewer sub-session cannot compare to a number — effectively
+		// disabling the gate or triggering spurious human-input requests.
 		const routeContext: PostApprovalRouteContext = {
+			...(resolvedPrUrl ? { pr_url: resolvedPrUrl } : {}),
 			...contextExtras,
 			approvalSource,
+			approval_source: approvalSource,
 			spaceId,
+			space_id: spaceId,
 			autonomyLevel: space?.autonomyLevel,
+			autonomy_level: space?.autonomyLevel,
 			workspacePath: space?.workspacePath,
+			workspace_path: space?.workspacePath,
 		};
 		const routeResult = await router.route(approvedTask, workflow, routeContext);
 
