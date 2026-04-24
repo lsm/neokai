@@ -210,23 +210,20 @@ const MAX_VISIBLE_DEPENDENCY_BADGES = 3;
  * badge with a "task not found" tooltip. Shows at most
  * `MAX_VISIBLE_DEPENDENCY_BADGES` badges inline; any remainder is folded into
  * a non-interactive `+N` overflow chip.
+ *
+ * The dep lookup (`taskById`) is built once by the parent and passed in, so
+ * the map construction is O(N) per render of the list — not per row.
  */
 function TaskDependencyBadges({
 	dependsOnIds,
-	allTasks,
+	taskById,
 	onSelectDependency,
 }: {
 	dependsOnIds: string[];
-	allTasks: SpaceTask[];
+	taskById: ReadonlyMap<string, SpaceTask>;
 	onSelectDependency?: (taskId: string) => void;
 }) {
 	if (dependsOnIds.length === 0) return null;
-
-	const taskById = useMemo(() => {
-		const map = new Map<string, SpaceTask>();
-		for (const t of allTasks) map.set(t.id, t);
-		return map;
-	}, [allTasks]);
 
 	const visible = dependsOnIds.slice(0, MAX_VISIBLE_DEPENDENCY_BADGES);
 	const overflow = dependsOnIds.length - visible.length;
@@ -242,11 +239,14 @@ function TaskDependencyBadges({
 				const label = dep ? `#${dep.taskNumber}` : '#?';
 				const tooltip = dep ? dep.title : 'task not found';
 
-				const colorClasses = isDone
-					? 'text-green-300 bg-green-900/40 border-green-700/60 hover:bg-green-900/60'
-					: 'text-gray-300 bg-dark-700 border-dark-600 hover:bg-dark-600';
-
 				const interactive = !isMissing && !!onSelectDependency;
+
+				// Hover classes only applied when the badge is interactive —
+				// disabled buttons shouldn't carry hover state, even though
+				// browsers would ignore it.
+				const colorClasses = isDone
+					? `text-green-300 bg-green-900/40 border-green-700/60${interactive ? ' hover:bg-green-900/60' : ''}`
+					: `text-gray-300 bg-dark-700 border-dark-600${interactive ? ' hover:bg-dark-600' : ''}`;
 
 				return (
 					<button
@@ -290,14 +290,14 @@ function TaskGroup({
 	count,
 	variant,
 	tasks,
-	allTasks,
+	taskById,
 	onTaskClick,
 }: {
 	title: string;
 	count: number;
 	variant: 'default' | 'yellow' | 'purple' | 'green' | 'red' | 'gray';
 	tasks: SpaceTask[];
-	allTasks: SpaceTask[];
+	taskById: ReadonlyMap<string, SpaceTask>;
 	onTaskClick?: (taskId: string) => void;
 }) {
 	const headerStyles: Record<string, string> = {
@@ -338,7 +338,7 @@ function TaskGroup({
 			</div>
 			<div class="divide-y divide-dark-700">
 				{tasks.map((task) => (
-					<TaskItem key={task.id} task={task} allTasks={allTasks} onClick={onTaskClick} />
+					<TaskItem key={task.id} task={task} taskById={taskById} onClick={onTaskClick} />
 				))}
 			</div>
 		</div>
@@ -348,11 +348,11 @@ function TaskGroup({
 /** Individual task item with left border, matching RoomTasks.TaskItem style */
 function TaskItem({
 	task,
-	allTasks,
+	taskById,
 	onClick,
 }: {
 	task: SpaceTask;
-	allTasks: SpaceTask[];
+	taskById: ReadonlyMap<string, SpaceTask>;
 	onClick?: (taskId: string) => void;
 }) {
 	const isClickable = !!onClick;
@@ -379,7 +379,7 @@ function TaskItem({
 					</div>
 					<TaskDependencyBadges
 						dependsOnIds={task.dependsOn}
-						allTasks={allTasks}
+						taskById={taskById}
 						onSelectDependency={onClick}
 					/>
 					{task.status === 'blocked' && task.result && (
@@ -458,6 +458,14 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 		}
 		return list.sort((a, b) => b.updatedAt - a.updatedAt);
 	}, [tasks, activeTab, activeFilter]);
+
+	// Build the dep lookup once per render of the list — O(N) total rather
+	// than O(N) per row inside the badge component.
+	const taskById = useMemo(() => {
+		const map = new Map<string, SpaceTask>();
+		for (const t of tasks) map.set(t.id, t);
+		return map;
+	}, [tasks]);
 
 	if (tasks.length === 0) {
 		return (
@@ -555,7 +563,7 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 				) : (
 					<TaskGroupList
 						tasks={filteredTasks}
-						allTasks={tasks}
+						taskById={taskById}
 						tab={activeTab}
 						onTaskClick={onSelectTask}
 					/>
@@ -568,12 +576,12 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 /** Groups tasks by status within the selected tab, rendering TaskGroup cards */
 function TaskGroupList({
 	tasks,
-	allTasks,
+	taskById,
 	tab,
 	onTaskClick,
 }: {
 	tasks: SpaceTask[];
-	allTasks: SpaceTask[];
+	taskById: ReadonlyMap<string, SpaceTask>;
 	tab: TaskFilterTab;
 	onTaskClick?: (taskId: string) => void;
 }) {
@@ -592,7 +600,7 @@ function TaskGroupList({
 						count={groupTasks.length}
 						variant={group.variant}
 						tasks={groupTasks}
-						allTasks={allTasks}
+						taskById={taskById}
 						onTaskClick={onTaskClick}
 					/>
 				);

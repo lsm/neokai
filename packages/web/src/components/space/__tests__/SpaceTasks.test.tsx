@@ -326,6 +326,8 @@ describe('SpaceTasks', () => {
 			expect(badges[0].textContent).toContain('⚠');
 			expect(badges[0].textContent).toContain('#?');
 			expect((badges[0] as HTMLButtonElement).disabled).toBe(true);
+			// Disabled badges should not carry hover: classes.
+			expect(badges[0].className).not.toMatch(/\bhover:/);
 		});
 
 		it('shows the dep task title as the tooltip', () => {
@@ -352,6 +354,8 @@ describe('SpaceTasks', () => {
 			expect(onSelectTask).toHaveBeenCalledWith('t1');
 			// Must not also select the parent row (stopPropagation)
 			expect(onSelectTask).toHaveBeenCalledTimes(1);
+			// Interactive badges carry hover: classes for feedback.
+			expect(badges[0].className).toMatch(/\bhover:/);
 		});
 
 		it('does not invoke onSelectTask for a missing dependency', () => {
