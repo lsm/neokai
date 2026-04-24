@@ -220,14 +220,20 @@ describe('seedPresetAgents', () => {
 		expect(reviewer?.customPrompt?.toLowerCase()).toContain('actionable');
 	});
 
-	it('Reviewer custom prompt delegates to reviewer sub-agents', async () => {
+	it('Reviewer custom prompt instructs direct exploration (no sub-agents on Space)', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-		// Sub-agents are injected at runtime; the prompt must reference them by name.
-		expect(reviewer?.customPrompt).toContain('reviewer-explorer');
-		expect(reviewer?.customPrompt).toContain('reviewer-fact-checker');
-		expect(reviewer?.customPrompt).toContain('Task tool');
+		// Space reviewer agents do NOT have Task/Agent-spawning tools wired up
+		// (see custom-agent.ts createCustomAgentInit). The prompt must therefore
+		// direct exploration through the actually-available read tools and
+		// NOT reference reviewer-explorer / reviewer-fact-checker sub-agents.
+		expect(reviewer?.customPrompt).not.toContain('reviewer-explorer');
+		expect(reviewer?.customPrompt).not.toContain('reviewer-fact-checker');
+		expect(reviewer?.customPrompt).not.toMatch(/Task tool/i);
+		// Direct exploration is called out with the tools actually on REVIEWER_TOOLS.
+		expect(reviewer?.customPrompt).toMatch(/Read, Grep, and Glob|Read.*Grep.*Glob/);
+		expect(reviewer?.customPrompt).toMatch(/WebSearch|WebFetch/);
 	});
 
 	it('Reviewer custom prompt includes an identity block', async () => {
