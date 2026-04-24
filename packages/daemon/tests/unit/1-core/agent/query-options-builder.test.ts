@@ -1170,7 +1170,7 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.allowedTools).toContain('test-search__*');
 		});
 
-		it('should inject builtin skills as local plugins pointing to ~/.neokai/skills/{commandName}', async () => {
+		it('should inject builtin skills as local plugins pointing at the wrapper plugin directory', async () => {
 			const builtinSkill = {
 				id: 'skill-builtin-1',
 				name: 'playwright',
@@ -1195,13 +1195,19 @@ describe('QueryOptionsBuilder', () => {
 			const builder = new QueryOptionsBuilder(context);
 			const options = await builder.build();
 
-			// Builtin skills are injected as local plugins so the SDK discovers their SKILL.md
+			// Builtin skills are injected as local plugins so the SDK discovers their SKILL.md.
+			// The path must point at the *wrapper* plugin directory
+			// (~/.neokai/skill-plugins/<commandName>), not the raw skill directory
+			// (~/.neokai/skills/<commandName>), because only the wrapper has the
+			// .claude-plugin/plugin.json manifest the SDK requires — otherwise the
+			// SDK silently drops the plugin entry and `/<commandName>` never registers.
 			expect(options.plugins).toBeDefined();
 			expect(options.plugins).toHaveLength(1);
 			expect(options.plugins![0]).toMatchObject({ type: 'local' });
-			expect((options.plugins![0] as { type: string; path: string }).path).toContain(
-				'.neokai/skills/playwright'
-			);
+			const pluginPath = (options.plugins![0] as { type: string; path: string }).path;
+			expect(pluginPath).toContain('.neokai/skill-plugins/playwright');
+			// Must NOT point at the raw skill directory — that path lacks the plugin manifest.
+			expect(pluginPath).not.toMatch(/\.neokai\/skills\/playwright(?:$|\/)/);
 			// Builtin skills do not contribute to mcpServers
 			expect(options.mcpServers).toBeUndefined();
 		});
