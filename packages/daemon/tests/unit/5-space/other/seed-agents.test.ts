@@ -216,8 +216,74 @@ describe('seedPresetAgents', () => {
 		const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
 		expect(reviewer?.customPrompt).toContain('code reviewer');
-		// The hardened prompt says "specific, actionable feedback".
-		expect(reviewer?.customPrompt).toContain('specific, actionable feedback');
+		// The prompt must keep emphasising actionable, specific feedback.
+		expect(reviewer?.customPrompt?.toLowerCase()).toContain('actionable');
+	});
+
+	it('Reviewer custom prompt delegates to reviewer sub-agents', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const reviewer = seeded.find((a) => a.name === 'Reviewer');
+
+		// Sub-agents are injected at runtime; the prompt must reference them by name.
+		expect(reviewer?.customPrompt).toContain('reviewer-explorer');
+		expect(reviewer?.customPrompt).toContain('reviewer-fact-checker');
+		expect(reviewer?.customPrompt).toContain('Task tool');
+	});
+
+	it('Reviewer custom prompt includes an identity block', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const reviewer = seeded.find((a) => a.name === 'Reviewer');
+
+		// Identity must appear at the top of every posted PR comment.
+		expect(reviewer?.customPrompt).toContain('Reviewer Identity');
+		expect(reviewer?.customPrompt).toContain('Client:** NeoKai');
+		expect(reviewer?.customPrompt).toMatch(/Model:/);
+		expect(reviewer?.customPrompt).toMatch(/Provider:/);
+	});
+
+	it('Reviewer custom prompt defines P0–P3 severity levels with decision rules', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const reviewer = seeded.find((a) => a.name === 'Reviewer');
+
+		expect(reviewer?.customPrompt).toContain('P0');
+		expect(reviewer?.customPrompt).toContain('P1');
+		expect(reviewer?.customPrompt).toContain('P2');
+		expect(reviewer?.customPrompt).toContain('P3');
+		expect(reviewer?.customPrompt).toContain('REQUEST_CHANGES');
+		expect(reviewer?.customPrompt).toContain('APPROVE');
+		// Decision rule: request changes when any P0–P3 finding exists (P3 included).
+		expect(reviewer?.customPrompt).toContain('P0–P3');
+		expect(reviewer?.customPrompt).toMatch(/P3 included/i);
+	});
+
+	it('Reviewer custom prompt includes own-PR detection', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const reviewer = seeded.find((a) => a.name === 'Reviewer');
+
+		// Deterministic check: compare gh api user login against PR author login.
+		expect(reviewer?.customPrompt).toContain('gh api user');
+		expect(reviewer?.customPrompt).toMatch(/author\.login|PR_AUTHOR/);
+		// Falls back to COMMENT when reviewer is the author.
+		expect(reviewer?.customPrompt).toContain('COMMENT');
+	});
+
+	it('Reviewer custom prompt emphasises goal alignment, completeness, and omissions', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const reviewer = seeded.find((a) => a.name === 'Reviewer');
+
+		expect(reviewer?.customPrompt?.toLowerCase()).toContain('goal');
+		expect(reviewer?.customPrompt?.toLowerCase()).toContain('completeness');
+		expect(reviewer?.customPrompt?.toLowerCase()).toContain('omissions');
+		expect(reviewer?.customPrompt?.toLowerCase()).toContain('over-engineering');
+	});
+
+	it('Reviewer custom prompt captures the returned review URL via gh api --jq', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const reviewer = seeded.find((a) => a.name === 'Reviewer');
+
+		expect(reviewer?.customPrompt).toContain('gh api repos/');
+		expect(reviewer?.customPrompt).toContain('/reviews');
+		expect(reviewer?.customPrompt).toContain('.html_url');
 	});
 
 	it('Planner custom prompt mentions planning', async () => {
@@ -362,45 +428,29 @@ describe('preset agent exact definitions', () => {
 		);
 	});
 
-	it('Reviewer has exact custom prompt', async () => {
+	it('Reviewer custom prompt matches the template exported from seed-agents', async () => {
+		// The source-of-truth for the reviewer prompt lives in seed-agents.ts.
+		// This test pins "what seeds into a Space" to "what the template says"
+		// without hard-coding the full body (which would churn on prose edits).
+		const templates = getPresetAgentTemplates();
+		const reviewerTemplate = templates.find((t) => t.name === 'Reviewer')!;
+
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
-		expect(reviewer.customPrompt).toBe(
-			'You are an expert code reviewer. You review pull requests for correctness, security, performance, ' +
-				'style, and test coverage. You give specific, actionable feedback.\n\n' +
-				'Your review MUST be posted to GitHub so the author can see it — an internal summary is not ' +
-				'enough. Use `gh` for every write:\n' +
-				'- Summary-level review: `gh pr review <pr-url> --body-file <file>` with one of ' +
-				'`--approve`, `--request-changes`, or `--comment` (pick the one that matches your verdict).\n' +
-				'- Line-level comments: `gh api repos/{owner}/{repo}/pulls/{number}/comments` with ' +
-				'`body`, `commit_id`, `path`, and `line` (or `start_line`+`line` for a range) so each ' +
-				'comment is anchored to the exact diff line.\n\n' +
-				'Worked example (request changes + one inline comment):\n' +
-				'```\n' +
-				'# 1. Post the summary review\n' +
-				'echo "Tests are missing for the new retry path." > /tmp/review.md\n' +
-				'gh pr review https://github.com/acme/app/pull/42 --request-changes --body-file /tmp/review.md\n\n' +
-				'# 2. Post a line-level comment on src/retry.ts line 88\n' +
-				'gh api repos/acme/app/pulls/42/comments \\\n' +
-				'  -f body="This branch swallows the error — re-throw after logging." \\\n' +
-				'  -f commit_id="$(gh pr view 42 --json headRefOid -q .headRefOid)" \\\n' +
-				'  -f path="src/retry.ts" -F line=88\n' +
-				'```\n\n' +
-				'Review the code thoroughly, then post your findings to GitHub using the commands above ' +
-				'BEFORE summarizing or handing off. If satisfied, `--approve` is sufficient; if changes are ' +
-				'needed, use `--request-changes` and add line-level comments for each issue.'
-		);
+		expect(reviewer.customPrompt).toBe(reviewerTemplate.customPrompt);
 	});
 
-	it('Reviewer custom prompt requires posting to GitHub via gh pr review', async () => {
+	it('Reviewer custom prompt posts reviews via gh api and captures the returned URL', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
-		// The whole point of the hardened reviewer loop: reviews must land on the PR.
-		expect(reviewer.customPrompt).toContain('gh pr review');
+		// Reviews must land on the PR — and the URL must be captured for the
+		// caller. The hardened prompt posts via the REST API and extracts
+		// .html_url so the review URL is always available to the structured
+		// output block.
 		expect(reviewer.customPrompt).toContain('gh api repos/');
-		expect(reviewer.customPrompt).toContain('--body-file');
-		// An internal summary alone is not enough — this must be explicit.
-		expect(reviewer.customPrompt).toContain('posted to GitHub');
+		expect(reviewer.customPrompt).toContain('/reviews');
+		expect(reviewer.customPrompt).toContain('.html_url');
+		expect(reviewer.customPrompt).toContain('REVIEW_POSTED');
 	});
 
 	it('QA has exact custom prompt', async () => {
