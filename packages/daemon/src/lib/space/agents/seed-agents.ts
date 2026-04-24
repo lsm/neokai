@@ -55,8 +55,24 @@ const PLANNER_TOOLS = CODER_TOOLS;
 /** Research uses the same toolset as coder (needs write access to commit findings and open PRs) */
 const RESEARCH_TOOLS = CODER_TOOLS;
 
-/** Reviewers read-only — no Write or Edit */
-const REVIEWER_TOOLS: string[] = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
+/**
+ * Reviewers: read-only file access (no Write/Edit) plus the Task/TaskOutput/
+ * TaskStop tools so the Reviewer can dispatch exploration to the built-in
+ * `general-purpose` sub-agent that ships with the `claude_code` preset.
+ * Custom reviewer-specific sub-agents (e.g. reviewer-explorer) are planned
+ * but will live in workflow templates / SpaceAgent data, not code.
+ */
+const REVIEWER_TOOLS: string[] = [
+	'Read',
+	'Bash',
+	'Grep',
+	'Glob',
+	'WebFetch',
+	'WebSearch',
+	'Task',
+	'TaskOutput',
+	'TaskStop',
+];
 
 /** QA: read-only + bash for running tests — no Write or Edit */
 const QA_TOOLS: string[] = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
@@ -90,17 +106,16 @@ interface PresetDefinition {
  *
  * Mirrors the structure of the Room SDK reviewer (`buildSdkReviewerPrompt` in
  * `packages/daemon/src/lib/room/agents/leader-agent.ts`): identity block,
- * numbered review process, severity classification (P0–P3), own-PR detection,
- * and a required structured output block.
+ * exploration via a sub-agent, numbered review process, severity
+ * classification (P0–P3), own-PR detection, and a required structured
+ * output block.
  *
- * NOTE: The Room SDK reviewer delegates to `reviewer-explorer` and
- * `reviewer-fact-checker` sub-agents via the Task tool. Space reviewer agents
- * do NOT have sub-agent support yet — `REVIEWER_TOOLS` intentionally omits
- * `Task`/`TaskOutput`/`TaskStop`, and `createCustomAgentInit` passes only the
- * single custom agent into the session (see `packages/daemon/src/lib/space/
- * agents/custom-agent.ts`). Until a seeding/injection path is added for
- * Space, the prompt asks the Reviewer to explore directly with Read, Grep,
- * Glob, and WebSearch.
+ * Sub-agent delegation: the Reviewer has `Task`/`TaskOutput`/`TaskStop` on
+ * its tool list and dispatches exploration to the built-in `general-purpose`
+ * sub-agent shipped with the `claude_code` preset. Custom reviewer-specific
+ * sub-agents (e.g. `reviewer-explorer`, `reviewer-fact-checker` in the Room
+ * SDK) are a planned follow-up and will live in workflow templates /
+ * SpaceAgent data, not in code.
  */
 const REVIEWER_CUSTOM_PROMPT = `You are a thorough, critical code reviewer. Your job is to verify that the requested work was implemented correctly, completely, and safely — then post your verdict to the PR on GitHub.
 
@@ -114,12 +129,28 @@ Include this block at the top of every PR review/comment you post (substitute yo
 > **Model:** <your model> | **Client:** NeoKai | **Provider:** <your provider>
 \`\`\`
 
+## Sub-Agent Delegation
+
+Delegate code exploration to the built-in **\`general-purpose\`** sub-agent via the Task tool. It is included with the \`claude_code\` preset and is the default \`subagent_type\` — you do NOT need to define it yourself.
+
+Use it for any non-trivial review: ask it to map callers, callees, related tests, and integration points around the changed files, and to flag anything that looks off. Fold its findings into your verdict.
+
+\`\`\`
+Task({
+  subagent_type: "general-purpose",  // or omit to use the default
+  description: "Explore <area>",
+  prompt: "Given these changed files <list>, map the callers, callees, related tests, and integration points. Report anything that looks off, any missing test coverage, or any integration risk."
+})
+\`\`\`
+
+Only skip delegation for trivially small, self-contained changes (a single obvious function). For anything larger, dispatch at least one \`general-purpose\` sub-agent before forming your verdict. You may still use Read/Grep/Glob directly to follow up on specific claims the sub-agent makes.
+
 ## Review Process
 
 1. Read the task/PR description carefully — understand the original goal and what the final result should look like.
-2. Explore the codebase yourself with Read, Grep, and Glob to build full context before judging the change — map callers, callees, related tests, and integration points around the changed files. Do not rely on the diff alone.
+2. For non-trivial changes, dispatch a \`general-purpose\` sub-agent via the Task tool to map callers, callees, related tests, and integration points around the changed files. Wait for it to complete, then incorporate its findings.
 3. Read the changed files **completely** (not just the diff) plus surrounding code — imports, exports, cross-file dependencies, tests. Review the code as it integrates with the codebase, not in isolation.
-4. If API/library correctness is uncertain, use WebSearch/WebFetch to validate against current documentation and known pitfalls for the specific version in use.
+4. If API/library correctness is uncertain, use WebSearch/WebFetch (or a \`general-purpose\` sub-agent with a fact-checking prompt) to validate against current documentation and known pitfalls for the specific version in use.
 5. Evaluate holistically:
    - **Goal & task alignment** — does the implementation actually achieve the original ask?
    - **Completeness** — are all aspects addressed? Anything missing or partially done?

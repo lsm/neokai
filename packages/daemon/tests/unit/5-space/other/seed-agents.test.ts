@@ -220,19 +220,23 @@ describe('seedPresetAgents', () => {
 		expect(reviewer?.customPrompt?.toLowerCase()).toContain('actionable');
 	});
 
-	it('Reviewer custom prompt instructs direct exploration (no sub-agents on Space)', async () => {
+	it('Reviewer custom prompt delegates exploration to the built-in general-purpose sub-agent via the Task tool', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-		// Space reviewer agents do NOT have Task/Agent-spawning tools wired up
-		// (see custom-agent.ts createCustomAgentInit). The prompt must therefore
-		// direct exploration through the actually-available read tools and
-		// NOT reference reviewer-explorer / reviewer-fact-checker sub-agents.
+		// Space reviewer agents now carry Task/TaskOutput/TaskStop and are
+		// expected to delegate exploration to the built-in `general-purpose`
+		// sub-agent that ships with the `claude_code` preset. Custom reviewer
+		// sub-agents (e.g. reviewer-explorer / reviewer-fact-checker) are a
+		// planned follow-up and must NOT be referenced yet.
+		expect(reviewer?.customPrompt).toContain('general-purpose');
+		expect(reviewer?.customPrompt).toMatch(/Task tool/i);
+		expect(reviewer?.customPrompt).toContain('subagent_type');
+		// We deliberately do not reference custom reviewer sub-agents that are
+		// not yet defined as workflow-template/data.
 		expect(reviewer?.customPrompt).not.toContain('reviewer-explorer');
 		expect(reviewer?.customPrompt).not.toContain('reviewer-fact-checker');
-		expect(reviewer?.customPrompt).not.toMatch(/Task tool/i);
-		// Direct exploration is called out with the tools actually on REVIEWER_TOOLS.
-		expect(reviewer?.customPrompt).toMatch(/Read, Grep, and Glob|Read.*Grep.*Glob/);
+		// Fact-checking still mentions WebSearch/WebFetch as a fallback path.
 		expect(reviewer?.customPrompt).toMatch(/WebSearch|WebFetch/);
 	});
 
@@ -346,6 +350,9 @@ describe('preset agent exact definitions', () => {
 	) as unknown as string[];
 
 	const EXPECTED_READONLY_TOOLS = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
+	// Reviewer has the read-only toolset PLUS Task/TaskOutput/TaskStop so it
+	// can dispatch the built-in `general-purpose` sub-agent for exploration.
+	const EXPECTED_REVIEWER_TOOLS = [...EXPECTED_READONLY_TOOLS, 'Task', 'TaskOutput', 'TaskStop'];
 
 	it('Coder has exact CODER_TOOLS (KNOWN_TOOLS minus Task/TaskOutput/TaskStop)', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
@@ -379,10 +386,10 @@ describe('preset agent exact definitions', () => {
 		expect(research.tools).toEqual(EXPECTED_CODER_TOOLS);
 	});
 
-	it('Reviewer has exact REVIEWER_TOOLS', async () => {
+	it('Reviewer has exact REVIEWER_TOOLS (read-only + Task/TaskOutput/TaskStop)', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
-		expect(reviewer.tools).toEqual(EXPECTED_READONLY_TOOLS);
+		expect(reviewer.tools).toEqual(EXPECTED_REVIEWER_TOOLS);
 	});
 
 	it('QA has exact QA_TOOLS', async () => {
@@ -505,6 +512,9 @@ describe('PRESET_AGENT_TOOLS export', () => {
 	) as unknown as string[];
 
 	const EXPECTED_READONLY_TOOLS = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
+	// Reviewer additionally carries Task/TaskOutput/TaskStop for built-in
+	// `general-purpose` sub-agent delegation.
+	const EXPECTED_REVIEWER_TOOLS = [...EXPECTED_READONLY_TOOLS, 'Task', 'TaskOutput', 'TaskStop'];
 
 	it('has entries for all 6 preset roles', () => {
 		expect(Object.keys(PRESET_AGENT_TOOLS).sort()).toEqual([
@@ -533,8 +543,8 @@ describe('PRESET_AGENT_TOOLS export', () => {
 		expect(PRESET_AGENT_TOOLS.research).toEqual(EXPECTED_CODER_TOOLS);
 	});
 
-	it('reviewer role maps to REVIEWER_TOOLS', () => {
-		expect(PRESET_AGENT_TOOLS.reviewer).toEqual(EXPECTED_READONLY_TOOLS);
+	it('reviewer role maps to REVIEWER_TOOLS (read-only + Task/TaskOutput/TaskStop)', () => {
+		expect(PRESET_AGENT_TOOLS.reviewer).toEqual(EXPECTED_REVIEWER_TOOLS);
 	});
 
 	it('qa role maps to QA_TOOLS', () => {
