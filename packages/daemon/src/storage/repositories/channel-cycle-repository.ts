@@ -76,6 +76,25 @@ export class ChannelCycleRepository {
 			)
 			.run(Date.now(), runId, channelIndex);
 	}
+
+	/**
+	 * Resets ALL channel cycle counters for a given workflow run back to 0.
+	 *
+	 * Used on "human touch" events (e.g. a human sends a message into a task via
+	 * `space.task.sendMessage`) so that the autonomous-cycle safety cap tracks
+	 * "consecutive autonomous cycles without human oversight" rather than
+	 * "total cycles ever". All channels in the run reset together — if a human is
+	 * engaged, the whole loop gets a fresh budget.
+	 *
+	 * @returns The number of channel cycle rows that were reset. Zero is a valid
+	 *          outcome (e.g. no cyclic channels have run yet).
+	 */
+	resetAllForRun(runId: string): number {
+		const result = this.db
+			.prepare('UPDATE channel_cycles SET count = 0, updated_at = ? WHERE run_id = ?')
+			.run(Date.now(), runId);
+		return result.changes;
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -16,6 +16,21 @@ import { Logger } from '../logger';
 const log = new Logger('space-task-message-handlers');
 
 /**
+ * Minimal interface for resetting per-channel cycle counters on a workflow run.
+ * Implemented by `ChannelCycleRepository.resetAllForRun`.
+ *
+ * Extracted so the RPC handler stays decoupled from the concrete repository
+ * class and can be unit-tested with a lightweight mock.
+ */
+export interface ChannelCycleResetter {
+	/**
+	 * Zero out `count` for every `channel_cycles` row belonging to `runId`.
+	 * Returns the number of rows updated.
+	 */
+	resetAllForRun(runId: string): number;
+}
+
+/**
  * Extract @AgentName mentions from message text.
  * Matches patterns like @Coder, @code-reviewer, @planner_1
  * Returns a deduplicated list of mentioned agent names (preserving first occurrence order).
@@ -79,9 +94,45 @@ export function setupSpaceTaskMessageHandlers(
 	taskAgentManager: TaskAgentManagerInterface,
 	db: Database,
 	daemonHub: DaemonHub,
-	nodeExecutionRepo?: NodeExecutionLookup
+	nodeExecutionRepo?: NodeExecutionLookup,
+	channelCycleResetter?: ChannelCycleResetter
 ): void {
 	const taskRepo = new SpaceTaskRepository(db.getDatabase());
+
+	/**
+	 * Reset all channel cycle counters for a workflow run and announce it via
+	 * both a structured log entry and a `space.workflowRun.cyclesReset` daemonHub
+	 * event — the dual signal makes human-touch events observable in post-mortems
+	 * (log) and real-time (hub subscribers) without DB inspection.
+	 *
+	 * Best-effort: any failure is logged and swallowed so the RPC's success
+	 * is not held hostage by an observability side-effect.
+	 */
+	async function resetChannelCyclesOnHumanTouch(
+		workflowRunId: string | null | undefined,
+		taskId: string
+	): Promise<void> {
+		if (!channelCycleResetter || !workflowRunId) return;
+		try {
+			const rowsReset = channelCycleResetter.resetAllForRun(workflowRunId);
+			log.info(
+				`workflow.cycles.reset: runId=${workflowRunId} reason=human_touch taskId=${taskId} rowsReset=${rowsReset}`
+			);
+			await daemonHub.emit('space.workflowRun.cyclesReset', {
+				sessionId: 'global',
+				runId: workflowRunId,
+				reason: 'human_touch',
+				taskId,
+				rowsReset,
+			});
+		} catch (err) {
+			log.warn(
+				`workflow.cycles.reset: failed to reset cycles for task ${taskId}: ${
+					err instanceof Error ? err.message : String(err)
+				}`
+			);
+		}
+	}
 
 	// ─── space.task.ensureAgentSession ──────────────────────────────────────────
 	messageHub.onRequest('space.task.ensureAgentSession', async (data) => {
@@ -198,6 +249,8 @@ export function setupSpaceTaskMessageHandlers(
 				`space.task.sendMessage: @mention routing to [${routedTo.join(', ')}] for task ${params.taskId}`
 			);
 
+			await resetChannelCyclesOnHumanTouch(task.workflowRunId, params.taskId);
+
 			return {
 				ok: true,
 				routedTo,
@@ -225,6 +278,13 @@ export function setupSpaceTaskMessageHandlers(
 
 		await taskAgentManager.injectTaskAgentMessage(params.taskId, params.message);
 		log.info(`space.task.sendMessage: injected message into task ${params.taskId}`);
+
+		// Human touch: `space.task.sendMessage` is the sole RPC boundary for
+		// human→task messages, so every successful call here resets the
+		// autonomous-cycle safety cap. Agent-to-agent paths (send_message tool
+		// → flushPendingMessagesForTarget → injectSubSessionMessage) bypass this
+		// RPC and are therefore correctly excluded from the reset.
+		await resetChannelCyclesOnHumanTouch(task.workflowRunId, params.taskId);
 
 		return { ok: true };
 	});

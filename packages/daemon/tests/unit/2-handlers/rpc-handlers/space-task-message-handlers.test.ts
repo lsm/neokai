@@ -11,6 +11,7 @@
  */
 
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
+import { Database as BunDatabase } from 'bun:sqlite';
 import { MessageHub } from '@neokai/shared';
 import type { SpaceTask } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
@@ -19,10 +20,13 @@ import {
 	parseMentions,
 	type TaskAgentManagerInterface,
 	type NodeExecutionLookup,
+	type ChannelCycleResetter,
 } from '../../../../src/lib/rpc-handlers/space-task-message-handlers';
 import type { Database } from '../../../../src/storage/database';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 
@@ -887,6 +891,309 @@ describe('setupSpaceTaskMessageHandlers', () => {
 					message: '@Coder please help',
 				})
 			).rejects.toThrow('Sub-session not found: session-coder-1');
+		});
+	});
+
+	// ─── channel-cycle reset on human touch ───────────────────────────────────────
+
+	describe('channel-cycle reset on human touch in space.task.sendMessage', () => {
+		const mockTaskWithRun: SpaceTask = {
+			...mockTaskWithSession,
+			workflowRunId: 'run-cyc-1',
+		};
+
+		const mockTaskNoRun: SpaceTask = {
+			...mockTaskWithSession,
+			workflowRunId: undefined,
+		};
+
+		function setupForReset(
+			task: SpaceTask,
+			opts: { withNodeExec?: boolean; resetRows?: number } = {}
+		) {
+			const mh = createMockMessageHub();
+			const localHub = mh.hub;
+			const localHandlers = mh.handlers;
+			const injectSubSession = mock(async (_sid: string, _msg: string) => {});
+			const localTaskAgentManager: TaskAgentManagerInterface = {
+				...createMockTaskAgentManager(null, task),
+				injectSubSessionMessage: injectSubSession,
+			};
+			const localDb = createMockDatabase(task);
+			const localDaemonHub = { emit: mock(async () => {}) } as unknown as DaemonHub;
+			const resetter: ChannelCycleResetter = {
+				resetAllForRun: mock((_runId: string) => opts.resetRows ?? 2),
+			};
+			const nodeExec: NodeExecutionLookup | undefined = opts.withNodeExec
+				? {
+						listByWorkflowRun: mock(() => [
+							{ agentName: 'Coder', agentSessionId: 'sess-coder', status: 'in_progress' },
+						]),
+					}
+				: undefined;
+
+			setupSpaceTaskMessageHandlers(
+				localHub,
+				localTaskAgentManager,
+				localDb,
+				localDaemonHub,
+				nodeExec,
+				resetter
+			);
+
+			return {
+				handlers: localHandlers,
+				taskAgentManager: localTaskAgentManager,
+				injectSubSession,
+				daemonHub: localDaemonHub,
+				resetter,
+			};
+		}
+
+		it('resets cycle counters after a successful direct task-agent injection (no @mention)', async () => {
+			const { handlers: h, resetter, daemonHub: dh } = setupForReset(mockTaskWithRun);
+
+			const result = await (h.get('space.task.sendMessage') as RequestHandler)({
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: 'Please continue the work',
+			});
+
+			expect(result).toEqual({ ok: true });
+			expect(resetter.resetAllForRun).toHaveBeenCalledTimes(1);
+			expect(resetter.resetAllForRun).toHaveBeenCalledWith('run-cyc-1');
+
+			// daemonHub.emit should have been called with 'space.workflowRun.cyclesReset'
+			const emitCalls = (dh.emit as ReturnType<typeof mock>).mock.calls;
+			const cyclesResetCall = emitCalls.find((c) => c[0] === 'space.workflowRun.cyclesReset') as
+				| [string, Record<string, unknown>]
+				| undefined;
+			expect(cyclesResetCall).toBeDefined();
+			expect(cyclesResetCall![1]).toMatchObject({
+				runId: 'run-cyc-1',
+				reason: 'human_touch',
+				taskId: 'task-1',
+				rowsReset: 2,
+			});
+		});
+
+		it('resets cycle counters after a successful @mention injection', async () => {
+			const {
+				handlers: h,
+				injectSubSession,
+				resetter,
+				daemonHub: dh,
+			} = setupForReset(mockTaskWithRun, { withNodeExec: true });
+
+			const result = await (h.get('space.task.sendMessage') as RequestHandler)({
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: '@Coder please fix',
+			});
+
+			expect(result).toMatchObject({ ok: true, routedTo: ['Coder'] });
+			expect(injectSubSession).toHaveBeenCalledTimes(1);
+			expect(resetter.resetAllForRun).toHaveBeenCalledTimes(1);
+			expect(resetter.resetAllForRun).toHaveBeenCalledWith('run-cyc-1');
+
+			const emitCalls = (dh.emit as ReturnType<typeof mock>).mock.calls;
+			expect(emitCalls.some((c) => c[0] === 'space.workflowRun.cyclesReset')).toBe(true);
+		});
+
+		it('does NOT reset when the task has no workflowRunId', async () => {
+			const { handlers: h, resetter, daemonHub: dh } = setupForReset(mockTaskNoRun);
+
+			await (h.get('space.task.sendMessage') as RequestHandler)({
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: 'Please continue',
+			});
+
+			expect(resetter.resetAllForRun).not.toHaveBeenCalled();
+			const emitCalls = (dh.emit as ReturnType<typeof mock>).mock.calls;
+			expect(emitCalls.some((c) => c[0] === 'space.workflowRun.cyclesReset')).toBe(false);
+		});
+
+		it('does NOT reset when injectTaskAgentMessage fails (error path, no reset)', async () => {
+			const { handlers: h, taskAgentManager: tm, resetter } = setupForReset(mockTaskWithRun);
+			(tm.injectTaskAgentMessage as ReturnType<typeof mock>).mockRejectedValue(
+				new Error('inject failed')
+			);
+
+			await expect(
+				(h.get('space.task.sendMessage') as RequestHandler)({
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					message: 'Please continue',
+				})
+			).rejects.toThrow('inject failed');
+
+			// Reset must not fire when injection fails.
+			expect(resetter.resetAllForRun).not.toHaveBeenCalled();
+		});
+
+		it('does NOT reset when @mention routing fails (all mentions unresolved)', async () => {
+			const { handlers: h, resetter } = setupForReset(mockTaskWithRun, { withNodeExec: true });
+
+			await expect(
+				(h.get('space.task.sendMessage') as RequestHandler)({
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					message: '@Ghost please fix',
+				})
+			).rejects.toThrow('@mention not found: Ghost');
+
+			expect(resetter.resetAllForRun).not.toHaveBeenCalled();
+		});
+
+		it('swallows resetter errors and still returns success (best-effort side-effect)', async () => {
+			const { handlers: h, resetter } = setupForReset(mockTaskWithRun);
+			(resetter.resetAllForRun as ReturnType<typeof mock>).mockImplementation(() => {
+				throw new Error('DB connection lost');
+			});
+
+			const result = await (h.get('space.task.sendMessage') as RequestHandler)({
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: 'Please continue',
+			});
+
+			// RPC success is not impacted by a failed side-effect.
+			expect(result).toEqual({ ok: true });
+			expect(resetter.resetAllForRun).toHaveBeenCalledTimes(1);
+		});
+
+		it('acceptance: 4 autonomous cycles + human message -> cycles reset -> 5th cycle allowed', async () => {
+			// Integration test per Task #101 acceptance criteria:
+			//   "simulate 4 autonomous Review→Coding cycles, inject a human message,
+			//    verify cycle count is 0, verify a 5th autonomous cycle is allowed."
+			//
+			// Uses the real ChannelCycleRepository (not a mock) to exercise the full
+			// SQL path that production hits.
+			const sqlite = new BunDatabase(':memory:');
+			createSpaceTables(sqlite);
+			const now = Date.now();
+			sqlite.exec(
+				`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES ('sp1', 'sp1', '/tmp/ws-acc', 'Space', ${now}, ${now})`
+			);
+			sqlite.exec(
+				`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES ('wf1', 'sp1', 'WF', ${now}, ${now})`
+			);
+			sqlite.exec(
+				`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at) VALUES ('run-cyc-1', 'sp1', 'wf1', 'Run', 'in_progress', ${now}, ${now})`
+			);
+			const cycleRepo = new ChannelCycleRepository(sqlite);
+
+			// Simulate 4 autonomous Review→Coding cycles against the backward channel
+			// (channel index 1, maxCycles = 5). At this point the cap is 4/5 — one
+			// more cycle would hit the cap on the next call.
+			const MAX_CYCLES = 5;
+			const CHANNEL_INDEX = 1;
+			for (let i = 0; i < 4; i++) {
+				const ok = cycleRepo.incrementCycleCount('run-cyc-1', CHANNEL_INDEX, MAX_CYCLES);
+				expect(ok).toBe(true);
+			}
+			expect(cycleRepo.get('run-cyc-1', CHANNEL_INDEX)!.count).toBe(4);
+
+			// Wire handlers with the real repo as the ChannelCycleResetter.
+			const mh = createMockMessageHub();
+			const taskAgent = createMockTaskAgentManager(null, {
+				...mockTaskWithSession,
+				workflowRunId: 'run-cyc-1',
+			});
+			const localDb = createMockDatabase({ ...mockTaskWithSession, workflowRunId: 'run-cyc-1' });
+			const localDaemonHub = { emit: mock(async () => {}) } as unknown as DaemonHub;
+			setupSpaceTaskMessageHandlers(
+				mh.hub,
+				taskAgent,
+				localDb,
+				localDaemonHub,
+				undefined,
+				cycleRepo
+			);
+
+			// Human sends a message via the RPC — this must reset cycle counters.
+			const result = await (mh.handlers.get('space.task.sendMessage') as RequestHandler)({
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: 'Hold on, I have feedback',
+			});
+			expect(result).toEqual({ ok: true });
+
+			// Cycle count must now be 0.
+			expect(cycleRepo.get('run-cyc-1', CHANNEL_INDEX)!.count).toBe(0);
+
+			// A 5th autonomous cycle is now allowed — the cap guard succeeds again.
+			const fifth = cycleRepo.incrementCycleCount('run-cyc-1', CHANNEL_INDEX, MAX_CYCLES);
+			expect(fifth).toBe(true);
+			expect(cycleRepo.get('run-cyc-1', CHANNEL_INDEX)!.count).toBe(1);
+
+			sqlite.close();
+		});
+
+		it('NOT human touch: agent-to-agent delivery via injectSubSessionMessage does NOT reset', async () => {
+			// Agent `send_message` tool → pending_agent_messages →
+			// flushPendingMessagesForTarget → TaskAgentManager.injectSubSessionMessage
+			// calls `injectSubSessionMessage` directly on the manager, NOT through the
+			// RPC. This test verifies that such a direct call path has no way to
+			// trigger the reset: only the RPC handler holds the resetter.
+			const sqlite = new BunDatabase(':memory:');
+			createSpaceTables(sqlite);
+			const now = Date.now();
+			sqlite.exec(
+				`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES ('sp1', 'sp1', '/tmp/ws-a2a', 'Space', ${now}, ${now})`
+			);
+			sqlite.exec(
+				`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES ('wf1', 'sp1', 'WF', ${now}, ${now})`
+			);
+			sqlite.exec(
+				`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at) VALUES ('run-a2a', 'sp1', 'wf1', 'Run', 'in_progress', ${now}, ${now})`
+			);
+			const cycleRepo = new ChannelCycleRepository(sqlite);
+			cycleRepo.incrementCycleCount('run-a2a', 0, 5);
+			cycleRepo.incrementCycleCount('run-a2a', 0, 5);
+			const before = cycleRepo.get('run-a2a', 0)!.count;
+			expect(before).toBe(2);
+
+			// Simulate the agent-to-agent path: the TaskAgentManager's
+			// injectSubSessionMessage is called directly, not via the RPC.
+			const injectSubSession = mock(async (_sid: string, _msg: string) => {});
+			const taskAgent: TaskAgentManagerInterface = {
+				ensureTaskAgentSession: mock(async () => mockTaskWithSession),
+				injectTaskAgentMessage: mock(async () => {}),
+				getTaskAgent: mock(() => undefined),
+				injectSubSessionMessage: injectSubSession,
+			};
+
+			// Call injectSubSessionMessage directly — this is what
+			// flushPendingMessagesForTarget / the send_message tool dispatcher do.
+			await taskAgent.injectSubSessionMessage!('sess-some-agent', 'hello from an agent');
+
+			// The counter must be UNCHANGED — the RPC reset path was never invoked.
+			expect(cycleRepo.get('run-a2a', 0)!.count).toBe(before);
+
+			sqlite.close();
+		});
+
+		it('is a no-op (no error) when channelCycleResetter is not provided', async () => {
+			// Setup a handler WITHOUT the resetter argument — simulates older wiring
+			// or callers that opt out of reset-on-human-touch.
+			const mh = createMockMessageHub();
+			const taskAgent = createMockTaskAgentManager(null, mockTaskWithRun);
+			const localDb = createMockDatabase(mockTaskWithRun);
+			const localDaemonHub = { emit: mock(async () => {}) } as unknown as DaemonHub;
+			setupSpaceTaskMessageHandlers(mh.hub, taskAgent, localDb, localDaemonHub);
+
+			const result = await (mh.handlers.get('space.task.sendMessage') as RequestHandler)({
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: 'Please continue',
+			});
+
+			expect(result).toEqual({ ok: true });
+			// Without a resetter, no cyclesReset event should be emitted.
+			const emitCalls = (localDaemonHub.emit as ReturnType<typeof mock>).mock.calls;
+			expect(emitCalls.some((c) => c[0] === 'space.workflowRun.cyclesReset')).toBe(false);
 		});
 	});
 });
