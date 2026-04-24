@@ -200,18 +200,104 @@ function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
 	);
 }
 
+/** Max dependency badges to render inline before collapsing into a "+N" overflow chip. */
+const MAX_VISIBLE_DEPENDENCY_BADGES = 3;
+
+/**
+ * Inline dependency badges for a task. Each badge is a clickable pill showing
+ * the prerequisite task number, coloured green when the dep is `done` and
+ * gray otherwise. Deps not found in the loaded task list render as a gray
+ * badge with a "task not found" tooltip. Shows at most
+ * `MAX_VISIBLE_DEPENDENCY_BADGES` badges inline; any remainder is folded into
+ * a non-interactive `+N` overflow chip.
+ *
+ * The dep lookup (`taskById`) is built once by the parent and passed in, so
+ * the map construction is O(N) per render of the list — not per row.
+ */
+function TaskDependencyBadges({
+	dependsOnIds,
+	taskById,
+	onSelectDependency,
+}: {
+	dependsOnIds: string[];
+	taskById: ReadonlyMap<string, SpaceTask>;
+	onSelectDependency?: (taskId: string) => void;
+}) {
+	if (dependsOnIds.length === 0) return null;
+
+	const visible = dependsOnIds.slice(0, MAX_VISIBLE_DEPENDENCY_BADGES);
+	const overflow = dependsOnIds.length - visible.length;
+
+	return (
+		<div class="flex items-center gap-1 flex-wrap mt-1" data-testid="task-dependency-badges">
+			<span class="text-xs text-gray-500 mr-0.5">deps:</span>
+			{visible.map((depId) => {
+				const dep = taskById.get(depId);
+				const isDone = dep?.status === 'done';
+				const isMissing = !dep;
+
+				const label = dep ? `#${dep.taskNumber}` : '#?';
+				const tooltip = dep ? dep.title : 'task not found';
+
+				const interactive = !isMissing && !!onSelectDependency;
+
+				// Hover classes only applied when the badge is interactive —
+				// disabled buttons shouldn't carry hover state, even though
+				// browsers would ignore it.
+				const colorClasses = isDone
+					? `text-green-300 bg-green-900/40 border-green-700/60${interactive ? ' hover:bg-green-900/60' : ''}`
+					: `text-gray-300 bg-dark-700 border-dark-600${interactive ? ' hover:bg-dark-600' : ''}`;
+
+				return (
+					<button
+						type="button"
+						key={depId}
+						data-testid="task-dependency-badge"
+						data-dep-id={depId}
+						data-dep-status={dep?.status ?? 'missing'}
+						title={tooltip}
+						disabled={!interactive}
+						onClick={(e) => {
+							e.stopPropagation();
+							if (interactive) onSelectDependency(depId);
+						}}
+						class={`inline-flex items-center gap-0.5 text-xs font-mono font-medium px-1.5 py-0.5 rounded border flex-shrink-0 transition-colors ${colorClasses} ${interactive ? 'cursor-pointer' : 'cursor-default'}`}
+					>
+						{isMissing && (
+							<span aria-hidden="true" class="text-amber-400">
+								⚠
+							</span>
+						)}
+						{label}
+					</button>
+				);
+			})}
+			{overflow > 0 && (
+				<span
+					data-testid="task-dependency-overflow"
+					class="inline-flex items-center text-xs font-mono font-medium text-gray-400 bg-dark-700 border border-dark-600 px-1.5 py-0.5 rounded flex-shrink-0"
+				>
+					+{overflow}
+				</span>
+			)}
+		</div>
+	);
+}
+
 /** Task group card with colored header, matching RoomTasks.TaskGroup style */
 function TaskGroup({
 	title,
 	count,
 	variant,
 	tasks,
+	taskById,
 	onTaskClick,
 }: {
 	title: string;
 	count: number;
 	variant: 'default' | 'yellow' | 'purple' | 'green' | 'red' | 'gray';
 	tasks: SpaceTask[];
+	taskById: ReadonlyMap<string, SpaceTask>;
 	onTaskClick?: (taskId: string) => void;
 }) {
 	const headerStyles: Record<string, string> = {
@@ -252,7 +338,7 @@ function TaskGroup({
 			</div>
 			<div class="divide-y divide-dark-700">
 				{tasks.map((task) => (
-					<TaskItem key={task.id} task={task} onClick={onTaskClick} />
+					<TaskItem key={task.id} task={task} taskById={taskById} onClick={onTaskClick} />
 				))}
 			</div>
 		</div>
@@ -260,7 +346,15 @@ function TaskGroup({
 }
 
 /** Individual task item with left border, matching RoomTasks.TaskItem style */
-function TaskItem({ task, onClick }: { task: SpaceTask; onClick?: (taskId: string) => void }) {
+function TaskItem({
+	task,
+	taskById,
+	onClick,
+}: {
+	task: SpaceTask;
+	taskById: ReadonlyMap<string, SpaceTask>;
+	onClick?: (taskId: string) => void;
+}) {
 	const isClickable = !!onClick;
 	const borderColor = STATUS_BORDER[task.status] ?? 'border-l-transparent';
 
@@ -283,6 +377,11 @@ function TaskItem({ task, onClick }: { task: SpaceTask; onClick?: (taskId: strin
 							<span class="text-xs text-gray-600">{getRelativeTime(task.updatedAt)}</span>
 						)}
 					</div>
+					<TaskDependencyBadges
+						dependsOnIds={task.dependsOn}
+						taskById={taskById}
+						onSelectDependency={onClick}
+					/>
 					{task.status === 'blocked' && task.result && (
 						<p class="mt-1 text-xs text-amber-400/80 truncate" data-testid="task-blocked-reason">
 							{task.result}
@@ -359,6 +458,14 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 		}
 		return list.sort((a, b) => b.updatedAt - a.updatedAt);
 	}, [tasks, activeTab, activeFilter]);
+
+	// Build the dep lookup once per render of the list — O(N) total rather
+	// than O(N) per row inside the badge component.
+	const taskById = useMemo(() => {
+		const map = new Map<string, SpaceTask>();
+		for (const t of tasks) map.set(t.id, t);
+		return map;
+	}, [tasks]);
 
 	if (tasks.length === 0) {
 		return (
@@ -454,7 +561,12 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 				{filteredTasks.length === 0 ? (
 					<EmptyTabState tab={activeTab} />
 				) : (
-					<TaskGroupList tasks={filteredTasks} tab={activeTab} onTaskClick={onSelectTask} />
+					<TaskGroupList
+						tasks={filteredTasks}
+						taskById={taskById}
+						tab={activeTab}
+						onTaskClick={onSelectTask}
+					/>
 				)}
 			</div>
 		</div>
@@ -464,10 +576,12 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 /** Groups tasks by status within the selected tab, rendering TaskGroup cards */
 function TaskGroupList({
 	tasks,
+	taskById,
 	tab,
 	onTaskClick,
 }: {
 	tasks: SpaceTask[];
+	taskById: ReadonlyMap<string, SpaceTask>;
 	tab: TaskFilterTab;
 	onTaskClick?: (taskId: string) => void;
 }) {
@@ -486,6 +600,7 @@ function TaskGroupList({
 						count={groupTasks.length}
 						variant={group.variant}
 						tasks={groupTasks}
+						taskById={taskById}
 						onTaskClick={onTaskClick}
 					/>
 				);
