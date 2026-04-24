@@ -807,4 +807,30 @@ export class SpaceRuntimeService {
 	): Promise<SpaceTask | null> {
 		return this.runtime.resumeCompletionActions(spaceId, taskId, options);
 	}
+
+	/**
+	 * Dispatch post-approval routing for a task. Delegates to
+	 * `SpaceRuntime.dispatchPostApproval`, which:
+	 *   1. Transitions the task into `approved` (via `SpaceTaskManager.setTaskStatus`).
+	 *   2. Emits `[TASK_APPROVED]` into the Task Agent session (best-effort).
+	 *   3. Calls `PostApprovalRouter.route()` to dispatch the configured
+	 *      post-approval step (no-route, inline Task Agent, or spawn fresh
+	 *      node-agent sub-session).
+	 *
+	 * Called from the `spaceTask.approvePendingCompletion` RPC handler when a
+	 * human approves a task paused at a `task_completion` checkpoint AND the
+	 * `NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING` feature flag is ON.
+	 *
+	 * The `spaceId` argument is only used for logging at this layer — the
+	 * underlying runtime looks up the task's actual spaceId from the repository.
+	 */
+	async dispatchPostApproval(
+		spaceId: string,
+		taskId: string,
+		approvalSource: 'human' | 'agent',
+		contextExtras?: { reviewerName?: string; approvalReason?: string | null }
+	): Promise<void> {
+		log.info(`dispatchPostApproval: spaceId=${spaceId} taskId=${taskId} source=${approvalSource}`);
+		await this.runtime.dispatchPostApproval(taskId, approvalSource, contextExtras ?? {});
+	}
 }

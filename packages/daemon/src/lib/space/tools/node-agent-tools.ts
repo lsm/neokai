@@ -29,8 +29,16 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { DaemonHub } from '../../daemon-hub';
-import { ApproveTaskSchema, SubmitForApprovalSchema } from './task-agent-tool-schemas';
-import type { ApproveTaskInput, SubmitForApprovalInput } from './task-agent-tool-schemas';
+import {
+	ApproveTaskSchema,
+	SubmitForApprovalSchema,
+	MarkCompleteSchema,
+} from './task-agent-tool-schemas';
+import type {
+	ApproveTaskInput,
+	SubmitForApprovalInput,
+	MarkCompleteInput,
+} from './task-agent-tool-schemas';
 import { Logger } from '../../logger';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { ChannelResolver } from '../runtime/channel-resolver';
@@ -171,6 +179,15 @@ export interface NodeAgentToolsConfig {
 	 * human review even when they could self-close.
 	 */
 	onSubmitForApproval?: (args: SubmitForApprovalInput) => Promise<ToolResult>;
+	/**
+	 * Optional callback for the `mark_complete` tool (PR 2/5 of the
+	 * task-agent-as-post-approval-executor refactor). When provided, the tool
+	 * is mirrored onto this node-agent's MCP surface so a spawned post-approval
+	 * sub-session can close its task directly via `approved → done`. Routed
+	 * through the same `mark_complete` handler the Task Agent uses — the
+	 * autonomy / status validation is centralised on the task side.
+	 */
+	onMarkComplete?: (args: MarkCompleteInput) => Promise<ToolResult>;
 	/**
 	 * Resolves the space's current autonomy level.
 	 * When provided, agent gate writes via send_message are blocked when
@@ -1161,6 +1178,21 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 							'optional `reason` explaining why you are escalating; it is shown in the approval UI.',
 						SubmitForApprovalSchema.shape,
 						(args) => config.onSubmitForApproval!(args)
+					),
+				]
+			: []),
+		...(config.onMarkComplete
+			? [
+					tool(
+						'mark_complete',
+						'Finish post-approval work and transition the task from `approved` to `done`. ' +
+							'Call this after the post-approval instructions (e.g. merging a PR, ' +
+							'publishing a release) have been carried out. Takes no arguments — the ' +
+							'task is inferred from your session context. Distinct from `approve_task`: ' +
+							'`approve_task` handles `in_progress → approved`; `mark_complete` handles ' +
+							'`approved → done`. Rejected if the task is not currently in `approved`.',
+						MarkCompleteSchema.shape,
+						(args) => config.onMarkComplete!(args)
 					),
 				]
 			: []),

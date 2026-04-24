@@ -272,6 +272,36 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`you must wait for explicit human approval before continuing.`
 	);
 
+	// ---- Post-approval -------------------------------------------------------
+	sections.push(`\n## Post-Approval\n`);
+	sections.push(
+		`When a task reaches the \`approved\` status (either via end-node \`approve_task\` or ` +
+			`human approval of a \`submit_for_approval\` request), the runtime emits a ` +
+			`\`[TASK_APPROVED]\` awareness event into your session. This event is informational — ` +
+			`it tells you that the task has cleared approval but is **not yet done**.\n` +
+			`\n` +
+			`Depending on the workflow's \`postApproval\` configuration, one of three things happens next:\n` +
+			`1. **No post-approval declared** — the runtime auto-transitions the task \`approved → done\`. ` +
+			`You do nothing.\n` +
+			`2. **\`targetAgent: 'task-agent'\`** — the runtime injects a \`[POST_APPROVAL_INSTRUCTIONS]\` ` +
+			`message into your session containing the workflow's post-approval instructions. ` +
+			`Execute them to completion using your tools, then call \`mark_complete\` to transition the ` +
+			`task \`approved → done\`. You must call \`mark_complete\` exactly once when the work is finished.\n` +
+			`3. **\`targetAgent\` pointing at a node agent** — the runtime spawns a fresh node-agent ` +
+			`sub-session to handle the post-approval work. You do nothing; that sub-session will call ` +
+			`\`mark_complete\` itself when finished.\n` +
+			`\n` +
+			`**Key rules:**\n` +
+			`- \`mark_complete\` is the ONLY way to transition \`approved → done\`. It fails with a clear ` +
+			`error if the task is not in \`approved\` status.\n` +
+			`- Do not call \`approve_task\` on a task that is already \`approved\` — that would be a no-op ` +
+			`error. If you want to move an approved task to done, call \`mark_complete\`.\n` +
+			`- \`[POST_APPROVAL_INSTRUCTIONS]\` arrive as a user-turn message. Treat them as authoritative ` +
+			`work to execute; do not ask for human approval before starting.\n` +
+			`- If the post-approval work fails, call \`submit_for_approval\` (or surface the error via ` +
+			`\`request_human_input\`) rather than swallowing it.`
+	);
+
 	// ---- Behavioral rules ---------------------------------------------------
 	sections.push(`\n## Behavioral Rules\n`);
 	sections.push(

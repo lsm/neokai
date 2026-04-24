@@ -17,6 +17,7 @@ import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { PendingGateBanner } from './PendingGateBanner';
 import { PendingCompletionActionBanner } from './PendingCompletionActionBanner';
 import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
+import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
 import { TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
@@ -439,6 +440,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								)}
 								{task.pendingCheckpointType === 'task_completion' && (
 									<PendingTaskCompletionBanner task={task} spaceId={runtimeSpaceId} />
+								)}
+								{task.status === 'approved' && task.postApprovalBlockedReason && (
+									<PendingPostApprovalBanner task={task} spaceId={runtimeSpaceId} />
 								)}
 								{task.workflowRunId && (
 									<PendingGateBanner
