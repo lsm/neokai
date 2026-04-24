@@ -52,9 +52,10 @@
  *
  * This router is only invoked when the caller has confirmed the
  * `NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING` feature flag is ON. The router
- * itself performs no flag check — it trusts the caller. The flag is flipped
- * ON in PR 3; for PR 2 the default is OFF so production runs continue to flow
- * through `resolveCompletionWithActions` unchanged.
+ * itself performs no flag check — it trusts the caller. The flag default
+ * flipped from OFF to ON in PR 3/5; set `NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING=0`
+ * to force-disable and fall back to the legacy `resolveCompletionWithActions`
+ * path if a post-approval regression is discovered.
  */
 
 import type {
@@ -81,15 +82,24 @@ const log = new Logger('post-approval-router');
 export const POST_APPROVAL_ROUTING_FLAG_ENV = 'NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING';
 
 /**
- * Returns true when the feature flag is enabled via environment.
+ * Returns true when the feature flag enables post-approval routing.
+ *
+ * Default-ON as of PR 3/5 — the flag is an opt-OUT kill switch. Set the
+ * env var to any of `0` / `false` / `no` / `off` to force-disable and fall
+ * back to the legacy `resolveCompletionWithActions` path. An absent value
+ * (`undefined`) or any unrecognised string keeps routing enabled, so ops
+ * scripts that only know how to set `'1'` / `'true'` continue to work
+ * exactly as before.
  */
 export function isPostApprovalRoutingEnabled(
 	env: Readonly<Record<string, string | undefined>> = process.env
 ): boolean {
 	const raw = env[POST_APPROVAL_ROUTING_FLAG_ENV];
-	if (!raw) return false;
+	if (raw === undefined) return true;
 	const v = raw.trim().toLowerCase();
-	return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+	if (v === '') return true;
+	if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
+	return true;
 }
 
 // ---------------------------------------------------------------------------

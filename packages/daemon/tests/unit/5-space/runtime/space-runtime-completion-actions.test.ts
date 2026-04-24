@@ -187,6 +187,21 @@ function buildWorkflowWithActions(
 // ---------------------------------------------------------------------------
 
 describe('SpaceRuntime — completion actions', () => {
+	// This suite exercises the legacy `resolveCompletionWithActions` pipeline.
+	// PR 3/5 flipped the `NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING` flag default
+	// to ON — which diverts completions through the PostApprovalRouter instead.
+	// Force the kill-switch here so these legacy tests continue to test the
+	// legacy path they were written for. Deletion of this path happens in
+	// PR 4/5; this guard keeps the intermediate state testable.
+	const SAVED_FLAG = process.env.NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING;
+	beforeEach(() => {
+		process.env.NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING = '0';
+	});
+	afterEach(() => {
+		if (SAVED_FLAG === undefined) delete process.env.NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING;
+		else process.env.NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING = SAVED_FLAG;
+	});
+
 	let db: BunDatabase;
 
 	let workflowRunRepo: SpaceWorkflowRunRepository;
