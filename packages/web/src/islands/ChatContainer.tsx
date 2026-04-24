@@ -372,11 +372,16 @@ export default function ChatContainer({
 		setHasMoreMessages(sessionStore.hasMoreMessages.value);
 	});
 
-	// Track initial load state - set to false once session state RPC has returned
+	// Track initial load state — we are done loading only when BOTH the session
+	// state RPC has returned AND the initial messages LiveQuery snapshot has
+	// arrived. The two responses are independent, and on slow networks the
+	// session RPC can land many seconds before the messages snapshot. Flipping
+	// `isInitialLoad` too early is what lets the empty-state placeholder flash
+	// for 20+ seconds while messages are still in flight.
 	useSignalEffect(() => {
-		const hasMessages = sessionStore.sdkMessages.value.length > 0;
 		const sessionStateLoaded = sessionStore.sessionState.value !== null;
-		if (hasMessages || sessionStateLoaded) {
+		const messagesLoaded = sessionStore.messagesLoaded.value;
+		if (sessionStateLoaded && messagesLoaded) {
 			setIsInitialLoad(false);
 			setLoadTimedOut(false);
 		}
@@ -763,10 +768,25 @@ export default function ChatContainer({
 		return [];
 	}, [errorDetails, errorCategory, errorProviderId, availableModels, switchModel]);
 
-	// Derive loading state from sessionStore
-	// sessionState being null means the RPC hasn't returned yet (truly loading)
-	// session (sessionInfo) can be null even after RPC returns for room sessions
-	const loading = sessionStore.sessionState.value === null && !error;
+	// Derive loading state from sessionStore.
+	//
+	// We must wait for BOTH pieces of the session init to land before the chat
+	// area is allowed to render:
+	//   1. `sessionState` (metadata + agent state, via `state.session` RPC)
+	//   2. `messagesLoaded` (first LiveQuery snapshot for `messages.bySession`)
+	//
+	// These are independent responses. On slow networks / large conversations
+	// the LiveQuery snapshot can take 20+ seconds, long after the metadata RPC
+	// has resolved. If we only gated on `sessionState`, the empty-state
+	// placeholder ("No messages yet") would flash during that window for any
+	// session that actually has messages. Gating on `messagesLoaded` as well
+	// keeps the loading skeleton up until the server has confirmed whether the
+	// conversation is genuinely empty.
+	//
+	// Errors short-circuit the loading state so the error UI can render.
+	const sessionStateLoaded = sessionStore.sessionState.value !== null;
+	const messagesLoaded = sessionStore.messagesLoaded.value;
+	const loading = !error && (!sessionStateLoaded || !messagesLoaded);
 
 	// Render loading state
 	if (loading) {
@@ -931,6 +951,10 @@ export default function ChatContainer({
 					style={{
 						WebkitOverflowScrolling: 'touch',
 						paddingBottom: `var(--messages-bottom-padding, ${MIN_MESSAGES_BOTTOM_PADDING_PX}px)`,
+						// Mirror paddingBottom so browser-driven scrolls (scrollIntoView,
+						// focus/anchor scroll) stop short of the floating composer instead
+						// of parking the last message behind it.
+						scrollPaddingBottom: `var(--messages-bottom-padding, ${MIN_MESSAGES_BOTTOM_PADDING_PX}px)`,
 					}}
 				>
 					{/* Worktree Choice Inline */}

@@ -76,6 +76,21 @@ export class ChannelCycleRepository {
 			)
 			.run(Date.now(), runId, channelIndex);
 	}
+
+	/**
+	 * Zeros every channel cycle counter for a run in a single statement.
+	 *
+	 * The cap measures "consecutive autonomous cycles without human oversight", so
+	 * all channels reset together whenever the run regains human attention.
+	 *
+	 * @returns Number of rows updated (0 is valid — no cyclic channels yet).
+	 */
+	resetAllForRun(runId: string): number {
+		const result = this.db
+			.prepare('UPDATE channel_cycles SET count = 0, updated_at = ? WHERE run_id = ?')
+			.run(Date.now(), runId);
+		return result.changes;
+	}
 }
 
 // ---------------------------------------------------------------------------

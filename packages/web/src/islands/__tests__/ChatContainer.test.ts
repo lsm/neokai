@@ -5,13 +5,11 @@
  * These tests verify the fixes for UI freeze during state transitions.
  */
 
-import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import { describe, it, expect, beforeEach, vi, afterEach, beforeAll } from 'vitest';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+// Vite-native raw import — works in both Node and browser-like test environments
+// (happy-dom) without reaching for Node built-ins like `fs`/`path`/`url`, which
+// are externalized by Vite and unavailable at runtime in the test environment.
+import chatContainerSource from '../ChatContainer.tsx?raw';
 
 // Mock requestAnimationFrame for testing
 const rafCallbacks: Array<() => void> = [];
@@ -357,12 +355,7 @@ describe('ResizeObserver Integration', () => {
  *   consumes height that later disappears, causing the messages area to shift.
  */
 describe('ChatContainer Loading Skeleton CLS Prevention', () => {
-	let source: string;
-
-	beforeAll(() => {
-		const componentPath = resolve(__dirname, '../ChatContainer.tsx');
-		source = readFileSync(componentPath, 'utf-8');
-	});
+	const source = chatContainerSource;
 
 	it('skeleton header uses h-[65px] to match ChatHeader fixed height', () => {
 		// ChatHeader sets `h-[65px]`.  The skeleton must use the same value so

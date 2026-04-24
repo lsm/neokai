@@ -402,6 +402,39 @@ describe('useGroupMessages', () => {
 			expect(result.current.messages).toHaveLength(1);
 			expect(result.current.messages[0].id).toBe(5);
 		});
+
+		// Regression coverage for the empty-state flash: when groupId switches
+		// from an already-loaded group to a new one, the render immediately
+		// following the switch must report isLoading=true. Before the fix,
+		// `isLoading` was flipped back to true from inside useEffect, leaving
+		// one render where rows were empty and isLoading was false — which the
+		// consumer (TaskConversationRenderer) rendered as "No conversation
+		// history found" before the new snapshot arrived.
+		it('reports isLoading=true on the render following a groupId switch', () => {
+			const { result, rerender } = renderHook(
+				({ groupId }: { groupId: string | null }) => useGroupMessages(groupId),
+				{ initialProps: { groupId: 'group-1' as string | null } }
+			);
+
+			// Finish loading group-1.
+			const firstSubId = lastSubscribeSubId();
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: firstSubId,
+					rows: [makeMessage(1)],
+					version: 1,
+				});
+			});
+			expect(result.current.isLoading).toBe(false);
+
+			// Switch to group-2 — isLoading must be true again immediately,
+			// not one render later when the effect fires.
+			rerender({ groupId: 'group-2' });
+			expect(result.current.isLoading).toBe(true);
+			// Existing rows must be cleared so the consumer does not briefly
+			// show group-1's messages under the new group-2 header.
+			expect(result.current.messages).toEqual([]);
+		});
 	});
 
 	describe('reconnect handling', () => {
