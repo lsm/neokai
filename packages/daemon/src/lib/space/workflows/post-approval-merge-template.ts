@@ -15,9 +15,17 @@
  *   - `{{pr_url}}`          — signalled by the end node via
  *                             `send_message(task-agent, …, data:{ pr_url })`.
  *   - `{{autonomy_level}}`  — space autonomy level at routing time.
- *   - `{{reviewer_name}}`   — slot name of the end-node agent that approved.
  *   - `{{approval_source}}` — `'end_node' | 'human_review'` (distinguishes
  *                             reviewer self-close from human-approved review).
+ *
+ * NOTE: The `{{reviewer_name}}` token was intentionally replaced with the
+ * static string `[end-node reviewer]` in PR 3/5 because nothing in
+ * `dispatchPostApproval` currently resolves the approving agent's slot name
+ * into `routeContext.reviewer_name`. Threading the name through from
+ * `onApproveTask` is tracked as a follow-up (PR 4/5 / PR 5/5). Leaving the
+ * token as a literal `{{reviewer_name}}` would degrade the reviewer
+ * sub-session's kickoff, so it is rendered as a stable human-readable label
+ * for now.
  *
  * Workflow authors referencing this template MUST ensure their end node signals
  * `{ pr_url, post_approval_action: 'merge_pr' }` before `approve_task()` /
@@ -34,7 +42,9 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
 	'The task has been approved. Your job is to merge PR {{pr_url}}.',
 	'',
 	'Space autonomy level: {{autonomy_level}} (threshold for auto-merge: 4).',
-	'Reviewer: {{reviewer_name}}.',
+	// TODO(PR 4/5 or 5/5): resolve the approving agent's slot name and replace
+	// this static label with `{{reviewer_name}}`. See file-level NOTE.
+	'Reviewer: [end-node reviewer].',
 	'Approval source: {{approval_source}}.',
 	'',
 	'Steps:',
@@ -44,7 +54,7 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
 	'2. If autonomy_level < 4:',
 	'     Call request_human_input with',
 	'       question: "Approve merging PR {{pr_url}}?"',
-	'       context: "Reviewer: {{reviewer_name}}. CI: <from step 1>."',
+	'       context: "Reviewer: [end-node reviewer]. CI: <from step 1>."',
 	'     Wait for the response before proceeding.',
 	'3. Merge:',
 	'     gh pr merge {{pr_url}} --squash --delete-branch',

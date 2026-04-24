@@ -244,12 +244,22 @@ describe('Shared merge template canonical content', () => {
 	test('template references the documented §1.6 runtime tokens', () => {
 		// The merge template is interpolated by
 		// post-approval-template.ts::interpolatePostApprovalTemplate at routing
-		// time. These four tokens are the runtime-populated contract the plan
-		// guarantees (see post-approval-merge-template.ts header).
+		// time. These are the runtime-populated tokens the plan guarantees (see
+		// post-approval-merge-template.ts header).
+		//
+		// `{{reviewer_name}}` is intentionally NOT in the set: see the file-level
+		// NOTE in post-approval-merge-template.ts. It was collapsed to the
+		// static label `[end-node reviewer]` in PR 3/5 because nothing in
+		// `dispatchPostApproval` populates `routeContext.reviewer_name`, and
+		// leaving a literal placeholder in the kickoff degrades the reviewer
+		// sub-session. A follow-up PR will thread the approving agent's slot
+		// name through and restore the token.
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('{{pr_url}}');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('{{autonomy_level}}');
-		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('{{reviewer_name}}');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('{{approval_source}}');
+		// Locked: `{{reviewer_name}}` must NOT appear — swap to static label.
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('{{reviewer_name}}');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('[end-node reviewer]');
 	});
 
 	test('template instructs mark_complete (NOT approve_task) for the final step', () => {

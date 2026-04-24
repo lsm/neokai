@@ -93,10 +93,16 @@ function makeDb(): BunDatabase {
 	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
+	// autonomy_level is INTEGER NOT NULL DEFAULT 1 (m84). Set it explicitly to
+	// 4 so the `{{autonomy_level}}` token in the merge template interpolates
+	// to a real number and the assertions can check the auto-merge-gate text
+	// reads correctly. Without this the column defaults to 1 (still valid;
+	// tests would still pass on the `not.toContain('{{autonomy_level}}')` check,
+	// but asserting the rendered value adds a stronger guarantee).
 	db.prepare(
 		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-     allowed_models, session_ids, slug, status, created_at, updated_at)
-     VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+     allowed_models, session_ids, slug, status, autonomy_level, created_at, updated_at)
+     VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', 4, ?, ?)`
 	).run(SPACE_ID, '/tmp/par-int', `Space ${SPACE_ID}`, SPACE_ID, Date.now(), Date.now());
 	return db;
 }
@@ -334,6 +340,25 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
 		expect(h.spawned[0].targetAgent).toBe('reviewer');
 		expect(h.spawned[0].kickoffMessage).toContain(PR_URL);
 		expect(h.spawned[0].kickoffMessage).not.toContain('{{pr_url}}');
+		// All other merge-template tokens MUST also interpolate — historically
+		// the routeContext carried camelCase keys that didn't match the
+		// snake_case template tokens, so `{{autonomy_level}}` /
+		// `{{approval_source}}` survived as literals and the autonomy-gate
+		// step ("If autonomy_level < 4 …") was unenforceable. The fix adds
+		// explicit snake_case aliases to `routeContext`; these assertions
+		// turn the previous "kickoff referenced unknown keys" warning into a
+		// hard test failure on regression.
+		expect(h.spawned[0].kickoffMessage).not.toContain('{{autonomy_level}}');
+		expect(h.spawned[0].kickoffMessage).not.toContain('{{approval_source}}');
+		// `{{reviewer_name}}` was collapsed to the static label
+		// `[end-node reviewer]` in PR 3/5; nothing in dispatchPostApproval
+		// populates routeContext.reviewer_name yet.
+		expect(h.spawned[0].kickoffMessage).not.toContain('{{reviewer_name}}');
+		expect(h.spawned[0].kickoffMessage).toContain('[end-node reviewer]');
+		// Value spot-checks — 4 is seeded by makeDb() so the auto-merge-gate
+		// header reads as a real comparison the LLM can evaluate.
+		expect(h.spawned[0].kickoffMessage).toContain('Space autonomy level: 4');
+		expect(h.spawned[0].kickoffMessage).toContain('Approval source: agent');
 
 		// dispatchPostApproval stamped the session on the task.
 		const mid = h.taskRepo.getTask(taskId)!;

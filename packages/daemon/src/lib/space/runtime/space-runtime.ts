@@ -587,13 +587,27 @@ export class SpaceRuntime {
 				);
 			}
 		}
+		// The template interpolator (see `post-approval-template.ts`) resolves
+		// tokens by raw identifier match — `{{autonomy_level}}` looks up the
+		// key `autonomy_level`, not `autonomyLevel`. `PostApprovalRouteContext`
+		// declares camelCase for the runtime-facing fields, so we MUST also
+		// supply snake_case aliases so every merge-template token documented in
+		// `POST_APPROVAL_TEMPLATE_KEYS` actually interpolates. Without these
+		// aliases the autonomy-gate step in the merge template ("If
+		// autonomy_level < 4 …") reads as a literal placeholder, which the
+		// reviewer sub-session cannot compare to a number — effectively
+		// disabling the gate or triggering spurious human-input requests.
 		const routeContext: PostApprovalRouteContext = {
 			...(resolvedPrUrl ? { pr_url: resolvedPrUrl } : {}),
 			...contextExtras,
 			approvalSource,
+			approval_source: approvalSource,
 			spaceId,
+			space_id: spaceId,
 			autonomyLevel: space?.autonomyLevel,
+			autonomy_level: space?.autonomyLevel,
 			workspacePath: space?.workspacePath,
+			workspace_path: space?.workspacePath,
 		};
 		const routeResult = await router.route(approvedTask, workflow, routeContext);
 
