@@ -453,9 +453,59 @@ export class SkillsManager {
 	 * For mcp_server type built-ins, ensures backing app_mcp_servers entries exist.
 	 */
 	initializeBuiltins(): void {
+		this.initFetchMcp();
 		this.initChromeDevToolsMcp();
 		this.initPlaywrightSkill();
 		this.initPlaywrightInteractiveSkill();
+	}
+
+	/**
+	 * Ensure the Fetch MCP built-in skill is registered.
+	 *
+	 * Reuses the existing `fetch-mcp` app_mcp_servers entry seeded by
+	 * seedDefaultMcpEntries() (which always runs before initializeBuiltins()).
+	 * If that entry is somehow absent, creates it as a fallback.
+	 *
+	 * Prior to MCP unification (M1), `fetch-mcp` reached sessions via SDK
+	 * auto-loading from `.mcp.json` / settings files. With strictMcpConfig now
+	 * enforced, auto-loading is gone — sessions only see MCP servers that are
+	 * referenced by a skill. Without this skill entry, `fetch-mcp` would be
+	 * orphaned and never reach any session.
+	 */
+	private initFetchMcp(): void {
+		// Step 1: resolve the backing app_mcp_servers entry (seeded by seed-defaults.ts)
+		const appMcpEntry =
+			this.appMcpServerRepo.getByName('fetch-mcp') ??
+			this.appMcpServerRepo.create({
+				name: 'fetch-mcp',
+				description:
+					'Fetch web pages and convert to Markdown for reading documentation and articles',
+				sourceType: 'stdio',
+				command: 'npx',
+				args: ['-y', '@tokenizin/mcp-npx-fetch'],
+				env: {},
+				enabled: true,
+				source: 'builtin',
+			});
+
+		// Step 2: upsert the skill referencing the app MCP entry
+		const existing = this.repo.getByName('fetch-mcp');
+		if (!existing) {
+			const skill: AppSkill = {
+				id: generateUUID(),
+				name: 'fetch-mcp',
+				displayName: 'Fetch MCP',
+				description:
+					'Fetch web pages and convert to Markdown for reading documentation and articles',
+				sourceType: 'mcp_server',
+				config: { type: 'mcp_server', appMcpServerId: appMcpEntry.id },
+				enabled: true, // was always on by default — preserve that
+				builtIn: true,
+				validationStatus: 'valid',
+				createdAt: Date.now(),
+			};
+			this.repo.insert(skill);
+		}
 	}
 
 	/**
