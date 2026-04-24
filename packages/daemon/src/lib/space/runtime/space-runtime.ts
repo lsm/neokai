@@ -549,7 +549,46 @@ export class SpaceRuntime {
 		}
 
 		// 3. Dispatch the actual post-approval step.
+		//
+		// `{{pr_url}}` in the merge template is sourced from the most recent
+		// `workflow_run_artifacts` row whose `data` carries `prUrl` / `pr_url`.
+		// The end-node reviewer persists the URL via
+		// `save_artifact({ type: 'result', data: { prUrl } })` immediately
+		// before calling `approve_task()`, so by the time we reach this branch
+		// the artifact row exists. We deliberately do NOT read from
+		// `SpaceTask`: migration 84 dropped `pr_url`/`pr_number` columns from
+		// `space_tasks` and moved PR metadata to the artifact store.
+		//
+		// Callers may still override by passing `pr_url` in `contextExtras`
+		// (RPC paths forward operator-supplied values) — their value wins
+		// because the spread order below places `contextExtras` after the
+		// artifact-resolved default.
+		let resolvedPrUrl: string | undefined;
+		if (this.config.artifactRepo && approvedTask.workflowRunId) {
+			try {
+				const artifacts = this.config.artifactRepo.listByRun(approvedTask.workflowRunId);
+				// `listByRun` orders ASC by created_at; walk in reverse so the
+				// most recent `prUrl`/`pr_url` wins (later reviewer cycles
+				// supersede earlier ones).
+				for (let i = artifacts.length - 1; i >= 0; i--) {
+					const data = artifacts[i]?.data;
+					if (!data) continue;
+					const candidate =
+						(typeof data.prUrl === 'string' && data.prUrl) ||
+						(typeof data.pr_url === 'string' && data.pr_url);
+					if (candidate) {
+						resolvedPrUrl = candidate;
+						break;
+					}
+				}
+			} catch (err) {
+				log.warn(
+					`dispatchPostApproval: artifact lookup failed for run ${approvedTask.workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
+		}
 		const routeContext: PostApprovalRouteContext = {
+			...(resolvedPrUrl ? { pr_url: resolvedPrUrl } : {}),
 			...contextExtras,
 			approvalSource,
 			spaceId,

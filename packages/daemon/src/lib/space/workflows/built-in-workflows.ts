@@ -517,7 +517,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'comment_urls: ["<comment #1 url>", "<comment #2 url>"] }). The `data` payload ' +
 							'satisfies the review-posted-gate and gives the coder direct links to each ' +
 							'thread.\n' +
-							'   d. Call `save_artifact({ type: "result", append: true, summary: "Requested changes: ...", prUrl, reviewUrl })` so the cycle is recorded. Do NOT call `approve_task` — ' +
+							'   d. Call `save_artifact({ type: "result", append: true, summary: "Requested changes: ...", data: { prUrl: "<url>", reviewUrl: "<gh pr review url>" } })` so the cycle is recorded. Do NOT call `approve_task` — ' +
 							'the workflow must stay open for the next cycle.\n' +
 							'5. If satisfied:\n' +
 							'   a. Post an approval review: `gh pr review <pr-url> --approve ' +
@@ -529,8 +529,11 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'         message: "Reviewer approved. PR ready for post-approval.",\n' +
 							'         data: { pr_url: "<url>", post_approval_action: "merge_pr" }\n' +
 							'      )\n' +
-							'   d. Call `save_artifact({ type: "result", append: true, summary, prUrl })` ' +
-							'to record the audit entry.\n' +
+							'   d. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>" } })` ' +
+							'to record the audit entry. The `prUrl` inside `data` is what ' +
+							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
+							'merge template — top-level keys outside `data` are silently stripped by ' +
+							'the tool schema, so nest it correctly.\n' +
 							'   e. Call `approve_task()` to close the task. If autonomy blocks ' +
 							'self-close, call `submit_for_approval({ reason: "..." })` instead — ' +
 							'the Task Agent will still route post-approval once the human approves. ' +
@@ -698,8 +701,11 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'         message: "Reviewer approved. PR ready for post-approval.",\n' +
 							'         data: { pr_url: "<url>", post_approval_action: "merge_pr" }\n' +
 							'      )\n' +
-							'   d. Call `save_artifact({ type: "result", append: true, summary, prUrl })` ' +
-							'to record the final audit entry.\n' +
+							'   d. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>" } })` ' +
+							'to record the final audit entry. The `prUrl` inside `data` is what ' +
+							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
+							'merge template — top-level keys outside `data` are silently stripped by ' +
+							'the tool schema, so nest it correctly.\n' +
 							'   e. Call `approve_task()` to close the task. If autonomy blocks self-close, ' +
 							'call `submit_for_approval({ reason: "..." })` instead — the Task Agent will ' +
 							'still route post-approval once the human approves. Do NOT attempt to merge ' +
@@ -809,7 +815,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'3. Verify test coverage is adequate\n' +
 							'4. Post your review to the PR via `gh pr review` (+ inline comments via `gh api` ' +
 							'where relevant) — this is required, not optional\n' +
-							'5. Call `save_artifact({ type: "result", append: true, summary, prUrl })` to record the audit entry\n' +
+							'5. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>" } })` to record the audit entry. Nest `prUrl` inside `data`; top-level keys outside `data` are stripped by the tool schema\n' +
 							'6. Call `approve_task()` as your final action. If autonomy blocks self-close, call ' +
 							'`submit_for_approval({ reason: "..." })` instead.',
 					},
@@ -1183,8 +1189,11 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'         message: "QA passed. PR ready for post-approval.",\n' +
 							'         data: { pr_url: "<url>", post_approval_action: "merge_pr" }\n' +
 							'      )\n' +
-							'   b. Call `save_artifact({ type: "result", append: true, summary, prUrl, testOutput })` ' +
-							'to record the audit entry.\n' +
+							'   b. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>", testOutput: "<output>" } })` ' +
+							'to record the audit entry. The `prUrl` inside `data` is what ' +
+							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
+							'merge template — top-level keys outside `data` are silently stripped by ' +
+							'the tool schema, so nest it correctly.\n' +
 							'   c. Call `approve_task()` as your final action. If autonomy blocks self-close, ' +
 							'call `submit_for_approval({ reason: "..." })` instead — the Task Agent will ' +
 							'still route post-approval once the human approves. Do NOT run `gh pr merge` ' +

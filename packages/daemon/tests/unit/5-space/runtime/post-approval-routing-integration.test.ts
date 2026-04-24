@@ -1,6 +1,7 @@
 /**
  * Integration test for PR 3/5 — built-in workflow + PostApprovalRouter +
- * mark_complete end-to-end.
+ * mark_complete end-to-end, driven through the real
+ * `SpaceRuntime.dispatchPostApproval` entry point.
  *
  * This is the §4.6 "full approve → post-approval → mark_complete" coverage
  * the reviewer asked for (`post-approval-routing.test.ts (or equivalent)`).
@@ -12,10 +13,11 @@
  *     contracts but adds process overhead and non-determinism that isn't
  *     needed here — the work under test is 100% daemon-side plumbing.
  *   - Running against the real SpaceTaskRepository + SpaceWorkflowManager
- *     + seedBuiltInWorkflows + PostApprovalRouter + createMarkCompleteHandler
- *     exercises every production code path PR 3/5 touches, with zero stubs
- *     outside the two delegates (`TaskAgentInjector`, `SubSessionSpawner`)
- *     that the router already expects to be injected at runtime.
+ *     + seedBuiltInWorkflows + SpaceRuntime.dispatchPostApproval +
+ *     PostApprovalRouter + createMarkCompleteHandler exercises every
+ *     production code path PR 3/5 touches, with a thin TaskAgentManager
+ *     stub for the two delegate methods the router already expects to be
+ *     injected at runtime.
  *   - Same determinism + speed profile as the rest of `tests/unit/5-space/`;
  *     runs inside the 5-space shard in CI with no extra harness.
  *
@@ -25,20 +27,32 @@
  *         └── Coding workflow row with
  *             postApproval.targetAgent = 'reviewer'
  *     ▼
- *     create task referencing the Coding workflow
- *     transition in_progress → approved (simulating approve_task)
+ *     create workflow run referencing the Coding workflow
+ *     create task referencing that run via `workflowRunId`
+ *     artifactRepo.upsert(result artifact with data.prUrl) — mirrors what
+ *     the end-node reviewer does via save_artifact({ type: 'result',
+ *     data: { prUrl } }) immediately before approve_task(). Migration 84
+ *     dropped the `pr_url` column from `space_tasks`, so the workflow-run
+ *     artifact store is the canonical source for `{{pr_url}}`
+ *     interpolation.
  *     ▼
- *     PostApprovalRouter.route(task, workflow, { …context })
- *         └── mode='spawn', postApprovalSessionId stamped on task
+ *     SpaceRuntime.dispatchPostApproval(taskId, 'agent')
+ *         ├── transitions → approved (via SpaceTaskManager.setTaskStatus)
+ *         ├── scans workflow_run_artifacts for `prUrl`/`pr_url` and
+ *         │   threads it into routeContext as `pr_url`
+ *         └── PostApprovalRouter.route()
+ *             └── mode='spawn', postApprovalSessionId stamped, kickoff
+ *                 message contains the real PR URL (no {{pr_url}} literal)
  *     ▼
- *     mark_complete handler (ran on the post-approval sub-session)
+ *     mark_complete handler (simulates the post-approval sub-session)
  *         └── status approved → done, postApprovalSessionId cleared
  *
- * PLUS a companion test that flips the kill-switch
- * (`NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING=0`) and confirms the caller-
- * side gate disables routing — i.e. `isPostApprovalRoutingEnabled` returns
- * false, which is what the space-runtime / task-approve handler consults
- * before invoking `router.route()`.
+ * PLUS:
+ *   - no-artifact companion: without a `prUrl`-bearing artifact, the
+ *     kickoff leaves `{{pr_url}}` as a literal placeholder (the
+ *     conditional spread guards against crashing on missing context).
+ *   - no-route companion on Plan & Decompose (no postApproval declared)
+ *   - kill-switch contract on `isPostApprovalRoutingEnabled`
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -46,8 +60,16 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
+import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
+import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import {
 	seedBuiltInWorkflows,
 	CODING_WORKFLOW,
@@ -55,7 +77,6 @@ import {
 	getBuiltInWorkflows,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import {
-	PostApprovalRouter,
 	isPostApprovalRoutingEnabled,
 	POST_APPROVAL_ROUTING_FLAG_ENV,
 } from '../../../../src/lib/space/runtime/post-approval-router.ts';
@@ -106,163 +127,230 @@ function seedAgents(db: BunDatabase): Map<string, string> {
 }
 
 // ---------------------------------------------------------------------------
-// Delegate stubs — same pattern as post-approval-router.test.ts
+// SpaceRuntime test harness — wires the same dependencies the daemon does,
+// with stubbed TaskAgentManager delegates so we can observe spawn kickoffs
+// without needing a real Claude SDK session.
 // ---------------------------------------------------------------------------
 
 interface RecordedSpawn {
 	taskId: string;
 	targetAgent: string;
 	kickoffMessage: string;
+	workflowId: string;
 }
 
-function makeStubs() {
+interface Harness {
+	db: BunDatabase;
+	runtime: SpaceRuntime;
+	workflowManager: SpaceWorkflowManager;
+	workflowRunRepo: SpaceWorkflowRunRepository;
+	taskRepo: SpaceTaskRepository;
+	taskManager: SpaceTaskManager;
+	artifactRepo: WorkflowRunArtifactRepository;
+	spawned: RecordedSpawn[];
+	injected: Array<{ taskId: string; message: string }>;
+	aliveSessions: Set<string>;
+	emitted: Array<{ taskId: string; status: SpaceTask['status'] }>;
+}
+
+function buildHarness(): Harness {
+	const db = makeDb();
+	const agentRoles = seedAgents(db);
+
+	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
+	const taskRepo = new SpaceTaskRepository(db);
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
+	const agentRepo = new SpaceAgentRepository(db);
+	const agentManager = new SpaceAgentManager(agentRepo);
+	const workflowRepo = new SpaceWorkflowRepository(db);
+	const workflowManager = new SpaceWorkflowManager(workflowRepo);
+	const spaceManager = new SpaceManager(db);
+	const taskManager = new SpaceTaskManager(db, SPACE_ID);
+	const artifactRepo = new WorkflowRunArtifactRepository(db);
+
+	const result = seedBuiltInWorkflows(SPACE_ID, workflowManager, (name) =>
+		agentRoles.get(name.toLowerCase())
+	);
+	if (result.errors.length > 0) {
+		throw new Error(`seedBuiltInWorkflows failed: ${JSON.stringify(result.errors)}`);
+	}
+
 	const spawned: RecordedSpawn[] = [];
 	const injected: Array<{ taskId: string; message: string }> = [];
 	const aliveSessions = new Set<string>();
+	const emitted: Array<{ taskId: string; status: SpaceTask['status'] }> = [];
 
-	return {
-		spawned,
-		injected,
-		aliveSessions,
-		taskAgent: {
-			async injectIntoTaskAgent(taskId: string, message: string) {
+	const config: SpaceRuntimeConfig = {
+		db,
+		spaceManager,
+		spaceAgentManager: agentManager,
+		spaceWorkflowManager: workflowManager,
+		workflowRunRepo,
+		taskRepo,
+		nodeExecutionRepo,
+		artifactRepo,
+		onTaskUpdated: async ({ task }) => {
+			emitted.push({ taskId: task.id, status: task.status });
+		},
+		// Stub the three TaskAgentManager delegates PostApprovalRouter consumes:
+		taskAgentManager: {
+			injectIntoTaskAgent: async (taskId: string, message: string) => {
 				injected.push({ taskId, message });
 				return { injected: true, sessionId: `ta-${taskId}` };
 			},
-		},
-		spawner: {
-			async spawnPostApprovalSubSession(args: {
+			spawnPostApprovalSubSession: async (args: {
 				task: SpaceTask;
 				workflow: SpaceWorkflow;
 				targetAgent: string;
 				kickoffMessage: string;
-			}) {
+			}) => {
 				const sessionId = `sub-${spawned.length + 1}`;
 				spawned.push({
 					taskId: args.task.id,
 					targetAgent: args.targetAgent,
 					kickoffMessage: args.kickoffMessage,
+					workflowId: args.workflow.id,
 				});
 				aliveSessions.add(sessionId);
 				return { sessionId };
 			},
-		},
-		liveness: {
-			isSessionAlive(id: string) {
-				return aliveSessions.has(id);
-			},
-		},
+			isSessionAlive: (sid: string) => aliveSessions.has(sid),
+		} as unknown as NonNullable<SpaceRuntimeConfig['taskAgentManager']>,
 	};
+
+	const runtime = new SpaceRuntime(config);
+	return {
+		db,
+		runtime,
+		workflowManager,
+		workflowRunRepo,
+		taskRepo,
+		taskManager,
+		artifactRepo,
+		spawned,
+		injected,
+		aliveSessions,
+		emitted,
+	};
+}
+
+/**
+ * Seed a workflow run for a given workflow and attach a task to it. Returns
+ * the run ID so tests can drop artifacts into it.
+ */
+function seedRunAndTask(
+	h: Harness,
+	workflowId: string,
+	title = 'Test task',
+	description = ''
+): { runId: string; taskId: string } {
+	const run = h.workflowRunRepo.createRun({
+		spaceId: SPACE_ID,
+		workflowId,
+		title,
+		description,
+	});
+	const task = h.taskRepo.createTask({
+		spaceId: SPACE_ID,
+		title,
+		description,
+		status: 'in_progress',
+		workflowRunId: run.id,
+	});
+	return { runId: run.id, taskId: task.id };
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('PR 3/5 integration — approve → post-approval → mark_complete', () => {
-	let db: BunDatabase;
-	let workflowManager: SpaceWorkflowManager;
-	let taskRepo: SpaceTaskRepository;
-	let taskManager: SpaceTaskManager;
+describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complete', () => {
+	let h: Harness;
 
 	beforeEach(() => {
-		db = makeDb();
-		const agentRoles = seedAgents(db);
-		workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
-		taskRepo = new SpaceTaskRepository(db);
-		taskManager = new SpaceTaskManager(db, SPACE_ID);
-
-		// Seed the five built-in workflows — mirrors the space.create RPC handler.
-		const result = seedBuiltInWorkflows(SPACE_ID, workflowManager, (name) =>
-			agentRoles.get(name.toLowerCase())
-		);
-		expect(result.errors).toEqual([]);
-		expect(result.seeded.length).toBeGreaterThan(0);
+		h = buildHarness();
 	});
 
 	afterEach(() => {
-		db.close();
+		try {
+			h.db.close();
+		} catch {
+			/* ignore */
+		}
 	});
 
-	test('approved Coding task routes to `reviewer` sub-session; mark_complete closes it', async () => {
-		// Pull the seeded Coding workflow — it must carry postApproval.targetAgent='reviewer'.
-		const coding = workflowManager
+	test('approved Coding task: dispatchPostApproval threads artifact.data.prUrl into kickoff; mark_complete closes it', async () => {
+		// Pull the seeded Coding workflow — it must carry
+		// postApproval.targetAgent='reviewer' and an interpolated template.
+		const coding = h.workflowManager
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === CODING_WORKFLOW.name);
 		expect(coding).toBeDefined();
 		expect(coding!.postApproval?.targetAgent).toBe('reviewer');
 		expect(coding!.postApproval?.instructions).toContain('{{pr_url}}');
 
-		// ---------------------------------------------------------------
-		// Seed a task that is in `approved` (mimicking end-node approve_task
-		// having already fired, or a human approving via the RPC handler).
-		// ---------------------------------------------------------------
-		const createdTask = taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Ship feature X',
-			description: 'Implementation complete, PR opened',
-			status: 'in_progress',
-		});
-		// Route() is called AFTER the caller has flipped the task into approved.
-		const approved = taskRepo.updateTask(createdTask.id, {
-			status: 'approved',
-			approvalSource: 'agent',
-			approvedAt: Date.now(),
-		})!;
-
-		// ---------------------------------------------------------------
-		// Drive the router end-to-end.
-		// ---------------------------------------------------------------
-		const stubs = makeStubs();
-		const router = new PostApprovalRouter({
-			taskRepo,
-			taskAgent: stubs.taskAgent,
-			spawner: stubs.spawner,
-			livenessProbe: stubs.liveness,
+		// -----------------------------------------------------------------
+		// Seed a workflow run + task, then persist a `result` artifact with
+		// `data.prUrl` — this mirrors exactly what the end-node reviewer does
+		// via `save_artifact({ type: 'result', data: { prUrl } })` right
+		// before calling `approve_task()`. Migration 84 dropped the
+		// `pr_url` column from `space_tasks`, so the artifact store is the
+		// canonical source `dispatchPostApproval` reads from.
+		// -----------------------------------------------------------------
+		const PR_URL = 'https://github.com/example/repo/pull/42';
+		const { runId, taskId } = seedRunAndTask(
+			h,
+			coding!.id,
+			'Ship feature X',
+			'Implementation complete, PR opened'
+		);
+		h.artifactRepo.upsert({
+			id: 'art-result-1',
+			runId,
+			nodeId: 'tpl-coding-review',
+			artifactType: 'result',
+			artifactKey: 'cycle-1',
+			data: { summary: 'Reviewer approved.', prUrl: PR_URL },
 		});
 
-		const result = await router.route(approved, coding!, {
-			approvalSource: 'agent',
-			spaceId: SPACE_ID,
-			pr_url: 'https://github.com/example/repo/pull/42',
-			reviewer_name: 'reviewer',
-			approval_source: 'agent',
-			autonomy_level: 4,
-			workspacePath: '/tmp/par-int',
-		});
+		// -----------------------------------------------------------------
+		// Drive the full production path: dispatchPostApproval scans the
+		// artifact store for a `prUrl`/`pr_url`, transitions to approved,
+		// then routes via PostApprovalRouter.
+		// -----------------------------------------------------------------
+		const result = await h.runtime.dispatchPostApproval(taskId, 'agent');
 
 		// Reviewer is a node-agent target → spawn mode fires.
 		expect(result.mode).toBe('spawn');
 		if (result.mode !== 'spawn') throw new Error('unreachable'); // narrow
 
 		// Stub received the spawn request with the interpolated template —
-		// critically {{pr_url}} must be replaced with the real URL. This is
-		// the regression the "re-stamp must update prompts" fix protects:
-		// without a current template on the row, spawning fires against
-		// either a stale template with outdated signalling or — worse —
-		// uninterpolated `{{pr_url}}` if the task-agent prompt was stale.
-		expect(stubs.spawned).toHaveLength(1);
-		expect(stubs.spawned[0].taskId).toBe(approved.id);
-		expect(stubs.spawned[0].targetAgent).toBe('reviewer');
-		expect(stubs.spawned[0].kickoffMessage).toContain('https://github.com/example/repo/pull/42');
-		expect(stubs.spawned[0].kickoffMessage).not.toContain('{{pr_url}}');
+		// critically `{{pr_url}}` must be replaced with the real URL. Before
+		// the fix, neither `task.prUrl` (the column was dropped in m84) nor
+		// the artifact-store path was wired, so the literal `{{pr_url}}`
+		// survived all the way to the sub-session kickoff.
+		expect(h.spawned).toHaveLength(1);
+		expect(h.spawned[0].taskId).toBe(taskId);
+		expect(h.spawned[0].targetAgent).toBe('reviewer');
+		expect(h.spawned[0].kickoffMessage).toContain(PR_URL);
+		expect(h.spawned[0].kickoffMessage).not.toContain('{{pr_url}}');
 
-		// Router stamped the session on the task.
-		const mid = taskRepo.getTask(approved.id)!;
+		// dispatchPostApproval stamped the session on the task.
+		const mid = h.taskRepo.getTask(taskId)!;
 		expect(mid.status).toBe('approved'); // NOT done yet — sub-session owns the close.
 		expect(mid.postApprovalSessionId).toBe(result.postApprovalSessionId);
 		expect(mid.postApprovalStartedAt).toBe(result.postApprovalStartedAt);
 
-		// ---------------------------------------------------------------
+		// -----------------------------------------------------------------
 		// mark_complete is the tool the reviewer sub-session calls when
 		// it's done merging. Invoke the handler directly to prove the
 		// approved → done transition.
-		// ---------------------------------------------------------------
+		// -----------------------------------------------------------------
 		const markComplete = createMarkCompleteHandler({
-			taskId: approved.id,
+			taskId,
 			spaceId: SPACE_ID,
-			taskRepo,
-			taskManager,
+			taskRepo: h.taskRepo,
+			taskManager: h.taskManager,
 		});
 		const toolResult = await markComplete({});
 		const parsed = JSON.parse(
@@ -270,51 +358,116 @@ describe('PR 3/5 integration — approve → post-approval → mark_complete', (
 		) as { success: boolean; error?: string };
 		expect(parsed.success).toBe(true);
 
-		const finalTask = taskRepo.getTask(approved.id)!;
+		const finalTask = h.taskRepo.getTask(taskId)!;
 		expect(finalTask.status).toBe('done');
 		expect(finalTask.postApprovalSessionId).toBeNull();
 		expect(finalTask.postApprovalStartedAt).toBeNull();
 	});
 
-	test('approved task with NO postApproval → router closes directly (Plan-and-Decompose path)', async () => {
+	test('dispatchPostApproval prefers the most recent prUrl-bearing artifact', async () => {
+		// Locks in the reverse-chronological scan in `dispatchPostApproval`.
+		// A typical review cycle writes multiple `result` artifacts — e.g. one
+		// per changes-requested round, plus the final approval round. The
+		// router must surface the last one so callers re-opening a task after
+		// a rebase / force-push don't spawn against a stale URL.
+		const coding = h.workflowManager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === CODING_WORKFLOW.name)!;
+
+		const EARLIER_URL = 'https://github.com/example/repo/pull/100';
+		const LATER_URL = 'https://github.com/example/repo/pull/101';
+		const { runId, taskId } = seedRunAndTask(h, coding.id, 'Rebased PR');
+		h.artifactRepo.upsert({
+			id: 'art-earlier',
+			runId,
+			nodeId: 'tpl-coding-review',
+			artifactType: 'result',
+			artifactKey: 'cycle-1',
+			data: { summary: 'Requested changes.', prUrl: EARLIER_URL },
+		});
+		// Bump clock forward so listByRun's ASC order places this one last.
+		await new Promise((r) => setTimeout(r, 5));
+		h.artifactRepo.upsert({
+			id: 'art-later',
+			runId,
+			nodeId: 'tpl-coding-review',
+			artifactType: 'result',
+			artifactKey: 'cycle-2',
+			data: { summary: 'Approved.', prUrl: LATER_URL },
+		});
+
+		const result = await h.runtime.dispatchPostApproval(taskId, 'agent');
+		expect(result.mode).toBe('spawn');
+		expect(h.spawned).toHaveLength(1);
+		expect(h.spawned[0].kickoffMessage).toContain(LATER_URL);
+		expect(h.spawned[0].kickoffMessage).not.toContain(EARLIER_URL);
+	});
+
+	test('dispatchPostApproval accepts snake_case `pr_url` in artifact data', async () => {
+		// The router tolerates both camelCase (`prUrl`) — what the reviewer
+		// prompt writes via save_artifact — and snake_case (`pr_url`) — what
+		// the send_message data payload uses — so audit artifacts authored
+		// under either convention resolve correctly. This guards against a
+		// future prompt edit accidentally writing `pr_url` and silently
+		// falling through to the literal-placeholder branch.
+		const coding = h.workflowManager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === CODING_WORKFLOW.name)!;
+
+		const PR_URL = 'https://github.com/example/repo/pull/7';
+		const { runId, taskId } = seedRunAndTask(h, coding.id, 'Snake-case PR');
+		h.artifactRepo.upsert({
+			id: 'art-snake',
+			runId,
+			nodeId: 'tpl-coding-review',
+			artifactType: 'result',
+			artifactKey: 'cycle-1',
+			data: { summary: 'Approved.', pr_url: PR_URL },
+		});
+
+		const result = await h.runtime.dispatchPostApproval(taskId, 'agent');
+		expect(result.mode).toBe('spawn');
+		expect(h.spawned[0].kickoffMessage).toContain(PR_URL);
+		expect(h.spawned[0].kickoffMessage).not.toContain('{{pr_url}}');
+	});
+
+	test('approved Coding task WITHOUT pr_url artifact still spawns; kickoff preserves literal {{pr_url}} placeholder', async () => {
+		// Negative companion: when no artifact carries a prUrl (buggy workflow,
+		// or non-PR-producing task), the router should still spawn — just
+		// without interpolation. This locks in that the routeContext spread
+		// is conditional (`resolvedPrUrl ? …`) so we don't poison the context
+		// with an `undefined` key that causes a crash downstream.
+		const coding = h.workflowManager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === CODING_WORKFLOW.name)!;
+		const { taskId } = seedRunAndTask(h, coding.id, 'No PR yet');
+
+		const result = await h.runtime.dispatchPostApproval(taskId, 'agent');
+		expect(result.mode).toBe('spawn');
+
+		expect(h.spawned).toHaveLength(1);
+		// No pr_url was persisted → template placeholder remains literal.
+		expect(h.spawned[0].kickoffMessage).toContain('{{pr_url}}');
+	});
+
+	test('approved task with NO postApproval → dispatchPostApproval closes directly (Plan & Decompose path)', async () => {
 		// Plan-and-Decompose is deliberately left without a postApproval route in
 		// PR 3/5 — its end-node is the Task Agent itself, so there is no PR to
-		// merge and no reviewer to dispatch to. This test locks that in.
-		const planDecompose = workflowManager
+		// merge and no reviewer to dispatch to. This test locks that in against
+		// the real dispatchPostApproval entry point.
+		const planDecompose = h.workflowManager
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name);
 		expect(planDecompose).toBeDefined();
 		expect(planDecompose!.postApproval).toBeUndefined();
 
-		const created = taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Plan the work',
-			description: 'Break down the epic',
-			status: 'in_progress',
-		});
-		const approved = taskRepo.updateTask(created.id, {
-			status: 'approved',
-			approvalSource: 'human',
-			approvedAt: Date.now(),
-		})!;
+		const { taskId } = seedRunAndTask(h, planDecompose!.id, 'Plan the work');
 
-		const stubs = makeStubs();
-		const router = new PostApprovalRouter({
-			taskRepo,
-			taskAgent: stubs.taskAgent,
-			spawner: stubs.spawner,
-			livenessProbe: stubs.liveness,
-		});
-
-		const result = await router.route(approved, planDecompose!, {
-			approvalSource: 'human',
-			spaceId: SPACE_ID,
-		});
+		const result = await h.runtime.dispatchPostApproval(taskId, 'human');
 
 		expect(result.mode).toBe('no-route');
-		expect(stubs.spawned).toHaveLength(0);
-		expect(stubs.injected).toHaveLength(0);
-		expect(taskRepo.getTask(approved.id)!.status).toBe('done');
+		expect(h.spawned).toHaveLength(0);
+		expect(h.taskRepo.getTask(taskId)!.status).toBe('done');
 	});
 
 	test('kill-switch: NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING=0 disables routing at the call site', () => {
