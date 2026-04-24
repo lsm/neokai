@@ -5,7 +5,7 @@
  * Allows users to add, edit, delete, and enable/disable MCP servers.
  */
 
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { AppMcpServer, AppMcpServerSourceType } from '@neokai/shared';
 import {
 	createAppMcpServer,
@@ -14,12 +14,14 @@ import {
 	setAppMcpServerEnabled,
 } from '../../lib/api-helpers.ts';
 import { appMcpStore } from '../../lib/app-mcp-store.ts';
+import { skillsStore } from '../../lib/skills-store.ts';
 import { toast } from '../../lib/toast.ts';
 import { SettingsSection, SettingsToggle } from './SettingsSection.tsx';
 import { Modal } from '../ui/Modal.tsx';
 import { ConfirmModal } from '../ui/ConfirmModal.tsx';
 import { Button } from '../ui/Button.tsx';
 import { cn } from '../../lib/utils.ts';
+import { computeMcpServerSkillLinkage } from '../ToolsModal.utils.ts';
 
 interface FormData {
 	name: string;
@@ -57,6 +59,11 @@ export function AppMcpServersSettings() {
 	const servers = appMcpStore.appMcpServers.value;
 	const loading = appMcpStore.loading.value;
 	const error = appMcpStore.error.value;
+	// Read the skills signal so the component re-renders when wrappers are added
+	// or removed. We cross-reference skills against servers to show "this server
+	// is exposed via skill X" (or warn when a server has no wrapper and is
+	// therefore never injected into any session).
+	const skills = skillsStore.skills.value;
 
 	const [showForm, setShowForm] = useState(false);
 	const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -67,18 +74,38 @@ export function AppMcpServersSettings() {
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [togglingId, setTogglingId] = useState<string | null>(null);
 
-	// Subscribe to the store on mount
+	// Subscribe to both stores on mount.
+	// - appMcpStore drives the server list shown in this panel.
+	// - skillsStore drives the cross-linkage: each server row needs to know
+	//   whether a skill wraps it so we can render "Exposed via skill X" vs the
+	//   "⚠️ Not exposed to sessions" warning. Missing either subscription hides
+	//   a real and actionable state from the user.
 	useEffect(() => {
 		appMcpStore.subscribe().catch((err) => {
 			toast.error(
 				'Failed to load MCP servers: ' + (err instanceof Error ? err.message : 'Unknown error')
 			);
 		});
+		skillsStore.subscribe().catch((err) => {
+			// Non-fatal: the panel still works without linkage info; we just lose
+			// the "Exposed via skill …" / "No skill wrapper" annotations. Use a
+			// softer warning rather than a blocking error toast.
+			// eslint-disable-next-line no-console
+			console.warn(
+				'Failed to load skills for MCP linkage:',
+				err instanceof Error ? err.message : err
+			);
+		});
 
 		return () => {
 			appMcpStore.unsubscribe();
+			skillsStore.unsubscribe();
 		};
 	}, []);
+
+	// Memoise the (serverId → wrapping skill) map so the O(n) scan runs once per
+	// skills-array change rather than once per server row.
+	const skillLinkage = useMemo(() => computeMcpServerSkillLinkage(skills), [skills]);
 
 	const validateForm = (): boolean => {
 		const errors: FormErrors = {};
@@ -324,79 +351,106 @@ export function AppMcpServersSettings() {
 					</div>
 				) : (
 					<div class="space-y-2">
-						{servers.map((server) => (
-							<div
-								key={server.id}
-								class={cn(
-									'flex items-center justify-between gap-3 py-3 px-3',
-									'bg-dark-800/50 rounded-lg border border-dark-700'
-								)}
-							>
-								<div class="flex-1 min-w-0">
-									<div class="text-sm text-gray-200 truncate font-medium">{server.name}</div>
-									<div class="text-xs text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
-										<span
-											class={cn(
-												'px-1.5 py-0.5 rounded text-[10px] uppercase font-medium',
-												server.sourceType === 'stdio' && 'bg-green-500/20 text-green-400',
-												server.sourceType === 'sse' && 'bg-blue-500/20 text-blue-400',
-												server.sourceType === 'http' && 'bg-purple-500/20 text-purple-400'
+						{servers.map((server) => {
+							// Show linkage info only after the skills subscription has loaded
+							// at least one row. Before that, we genuinely don't know whether a
+							// wrapper exists, so suppressing the annotation prevents a
+							// misleading "⚠️ Not exposed" flash during initial mount.
+							const linkedSkill = skillLinkage.get(server.id);
+							const skillsLoaded = skills.length > 0;
+							return (
+								<div
+									key={server.id}
+									class={cn(
+										'flex items-center justify-between gap-3 py-3 px-3',
+										'bg-dark-800/50 rounded-lg border border-dark-700'
+									)}
+								>
+									<div class="flex-1 min-w-0">
+										<div class="text-sm text-gray-200 truncate font-medium">{server.name}</div>
+										<div class="text-xs text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
+											<span
+												class={cn(
+													'px-1.5 py-0.5 rounded text-[10px] uppercase font-medium',
+													server.sourceType === 'stdio' && 'bg-green-500/20 text-green-400',
+													server.sourceType === 'sse' && 'bg-blue-500/20 text-blue-400',
+													server.sourceType === 'http' && 'bg-purple-500/20 text-purple-400'
+												)}
+											>
+												{server.sourceType}
+											</span>
+											{server.sourceType === 'stdio' && server.command && (
+												<span class="font-mono truncate max-w-[200px]">{server.command}</span>
 											)}
-										>
-											{server.sourceType}
-										</span>
-										{server.sourceType === 'stdio' && server.command && (
-											<span class="font-mono truncate max-w-[200px]">{server.command}</span>
+											{server.sourceType !== 'stdio' && server.url && (
+												<span class="truncate max-w-[200px]">{server.url}</span>
+											)}
+										</div>
+										{server.description && (
+											<div class="text-xs text-gray-500 mt-1 truncate">{server.description}</div>
 										)}
-										{server.sourceType !== 'stdio' && server.url && (
-											<span class="truncate max-w-[200px]">{server.url}</span>
+										{skillsLoaded && linkedSkill && (
+											<div
+												class="text-[11px] text-sky-400/80 mt-1 truncate"
+												data-testid={`skill-link-${server.name}`}
+											>
+												Exposed to sessions via the{' '}
+												<span class="font-medium">{linkedSkill.displayName}</span> skill
+												{!linkedSkill.enabled && ' (skill is off)'}
+											</div>
+										)}
+										{skillsLoaded && !linkedSkill && (
+											<div
+												class="text-[11px] text-amber-400/90 mt-1"
+												data-testid={`skill-orphan-${server.name}`}
+											>
+												⚠️ No skill wrapper — this server is not injected into any session. Toggling
+												it here has no runtime effect.
+											</div>
 										)}
 									</div>
-									{server.description && (
-										<div class="text-xs text-gray-500 mt-1 truncate">{server.description}</div>
-									)}
-								</div>
 
-								<div class="flex items-center gap-2 flex-shrink-0">
-									<button
-										onClick={() => openEditForm(server)}
-										class="p-1.5 text-gray-400 hover:text-gray-200 hover:bg-dark-700 rounded transition-colors"
-										title="Edit"
-									>
-										<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2}
-												d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-											/>
-										</svg>
-									</button>
-									<button
-										onClick={() => {
-											setDeletingServer(server);
-											setShowDeleteConfirm(true);
-										}}
-										class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-dark-700 rounded transition-colors"
-										title="Delete"
-									>
-										<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2}
-												d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-											/>
-										</svg>
-									</button>
-									<SettingsToggle
-										checked={server.enabled}
-										onChange={(enabled) => handleToggle(server, enabled)}
-										disabled={togglingId === server.id}
-									/>
+									<div class="flex items-center gap-2 flex-shrink-0">
+										<button
+											onClick={() => openEditForm(server)}
+											class="p-1.5 text-gray-400 hover:text-gray-200 hover:bg-dark-700 rounded transition-colors"
+											title="Edit"
+										>
+											<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+												<path
+													stroke-linecap="round"
+													stroke-linejoin="round"
+													stroke-width={2}
+													d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+												/>
+											</svg>
+										</button>
+										<button
+											onClick={() => {
+												setDeletingServer(server);
+												setShowDeleteConfirm(true);
+											}}
+											class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-dark-700 rounded transition-colors"
+											title="Delete"
+										>
+											<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+												<path
+													stroke-linecap="round"
+													stroke-linejoin="round"
+													stroke-width={2}
+													d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+												/>
+											</svg>
+										</button>
+										<SettingsToggle
+											checked={server.enabled}
+											onChange={(enabled) => handleToggle(server, enabled)}
+											disabled={togglingId === server.id}
+										/>
+									</div>
 								</div>
-							</div>
-						))}
+							);
+						})}
 					</div>
 				)}
 			</SettingsSection>

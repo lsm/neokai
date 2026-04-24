@@ -11,7 +11,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
-import type { AppMcpServer } from '@neokai/shared';
+import type { AppMcpServer, AppSkill } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Mocks - must use vi.hoisted for proper hoisting with vi.mock
@@ -26,6 +26,8 @@ const {
 	mockToastSuccess,
 	mockSubscribe,
 	mockUnsubscribe,
+	mockSkillsSubscribe,
+	mockSkillsUnsubscribe,
 } = vi.hoisted(() => ({
 	mockCreateAppMcpServer: vi.fn(),
 	mockUpdateAppMcpServer: vi.fn(),
@@ -35,6 +37,8 @@ const {
 	mockToastSuccess: vi.fn(),
 	mockSubscribe: vi.fn().mockResolvedValue(undefined),
 	mockUnsubscribe: vi.fn(),
+	mockSkillsSubscribe: vi.fn().mockResolvedValue(undefined),
+	mockSkillsUnsubscribe: vi.fn(),
 }));
 
 // Mock the appMcpStore
@@ -45,6 +49,18 @@ vi.mock('../../../lib/app-mcp-store.ts', () => ({
 		error: { value: null },
 		subscribe: mockSubscribe,
 		unsubscribe: mockUnsubscribe,
+	},
+}));
+
+// Mock the skillsStore — AppMcpServersSettings subscribes to it so it can
+// annotate each server row with its wrapping skill (or warn about orphans).
+vi.mock('../../../lib/skills-store.ts', () => ({
+	skillsStore: {
+		skills: { value: [] },
+		isLoading: { value: false },
+		error: { value: null },
+		subscribe: mockSkillsSubscribe,
+		unsubscribe: mockSkillsUnsubscribe,
 	},
 }));
 
@@ -192,6 +208,7 @@ vi.mock('../../ui/Button.tsx', () => ({
 // Import the component after mocks are set up
 import { AppMcpServersSettings } from '../AppMcpServersSettings.tsx';
 import { appMcpStore } from '../../../lib/app-mcp-store.ts';
+import { skillsStore } from '../../../lib/skills-store.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -211,6 +228,22 @@ function makeServer(id: string, overrides: Partial<AppMcpServer> = {}): AppMcpSe
 	};
 }
 
+function makeMcpSkill(id: string, serverId: string, overrides: Partial<AppSkill> = {}): AppSkill {
+	return {
+		id,
+		name: `skill-${id}`,
+		displayName: `Skill ${id}`,
+		description: '',
+		sourceType: 'mcp_server',
+		config: { type: 'mcp_server', appMcpServerId: serverId },
+		enabled: true,
+		builtIn: false,
+		validationStatus: 'valid',
+		createdAt: 0,
+		...overrides,
+	};
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -224,6 +257,7 @@ describe('AppMcpServersSettings', () => {
 		appMcpStore.appMcpServers.value = [];
 		appMcpStore.loading.value = false;
 		appMcpStore.error.value = null;
+		skillsStore.skills.value = [];
 
 		// Default mock implementations
 		mockCreateAppMcpServer.mockResolvedValue({
@@ -326,6 +360,81 @@ describe('AppMcpServersSettings', () => {
 			render(<AppMcpServersSettings />);
 
 			expect(mockSubscribe).toHaveBeenCalled();
+		});
+
+		it('should subscribe to the skills store too (for wrapper linkage)', () => {
+			// The linkage annotations depend on the skills list — if we don't
+			// subscribe here, users see orphan warnings on every server while the
+			// skills subscription sits idle elsewhere.
+			render(<AppMcpServersSettings />);
+
+			expect(mockSkillsSubscribe).toHaveBeenCalled();
+		});
+
+		it('should unsubscribe from both stores on unmount', () => {
+			const { unmount } = render(<AppMcpServersSettings />);
+			unmount();
+
+			expect(mockUnsubscribe).toHaveBeenCalled();
+			expect(mockSkillsUnsubscribe).toHaveBeenCalled();
+		});
+	});
+
+	describe('Skill wrapper linkage', () => {
+		it('shows "Exposed via skill X" when a wrapper skill exists', () => {
+			const server = makeServer('s1', { name: 'chrome-devtools' });
+			const skill = makeMcpSkill('w1', server.id, {
+				displayName: 'Chrome DevTools (MCP)',
+			});
+			appMcpStore.appMcpServers.value = [server];
+			skillsStore.skills.value = [skill];
+
+			render(<AppMcpServersSettings />);
+
+			const link = screen.getByTestId('skill-link-chrome-devtools');
+			expect(link).toBeTruthy();
+			expect(link.textContent).toContain('Chrome DevTools (MCP)');
+		});
+
+		it('notes "(skill is off)" when the wrapper skill is disabled', () => {
+			const server = makeServer('s1', { name: 'chrome-devtools' });
+			const skill = makeMcpSkill('w1', server.id, {
+				displayName: 'Chrome DevTools (MCP)',
+				enabled: false,
+			});
+			appMcpStore.appMcpServers.value = [server];
+			skillsStore.skills.value = [skill];
+
+			render(<AppMcpServersSettings />);
+
+			const link = screen.getByTestId('skill-link-chrome-devtools');
+			expect(link.textContent).toMatch(/skill is off/i);
+		});
+
+		it('shows the orphan warning when no skill wrapper exists', () => {
+			const server = makeServer('s1', { name: 'fetch-mcp' });
+			appMcpStore.appMcpServers.value = [server];
+			// A different skill wraps a different server — fetch-mcp is still orphan.
+			skillsStore.skills.value = [makeMcpSkill('w1', 'some-other-server')];
+
+			render(<AppMcpServersSettings />);
+
+			const warn = screen.getByTestId('skill-orphan-fetch-mcp');
+			expect(warn).toBeTruthy();
+			expect(warn.textContent).toMatch(/no skill wrapper/i);
+		});
+
+		it('suppresses annotations while skills are still loading', () => {
+			// Skills subscription hasn't populated any rows yet — we should not
+			// flash "no skill wrapper" warnings before we know the truth.
+			const server = makeServer('s1', { name: 'chrome-devtools' });
+			appMcpStore.appMcpServers.value = [server];
+			skillsStore.skills.value = [];
+
+			render(<AppMcpServersSettings />);
+
+			expect(screen.queryByTestId('skill-link-chrome-devtools')).toBeNull();
+			expect(screen.queryByTestId('skill-orphan-chrome-devtools')).toBeNull();
 		});
 	});
 

@@ -62,7 +62,7 @@ const RUNTIME_MCP_LABELS: Record<string, { title: string; description: string }>
 		description: 'Room-scoped coordination between co-located agents',
 	},
 };
-import { computeSkillGroupState } from './ToolsModal.utils.ts';
+import { computeMcpSkillRuntimeState, computeSkillGroupState } from './ToolsModal.utils.ts';
 
 interface ToolsModalProps {
 	isOpen: boolean;
@@ -173,6 +173,12 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	const sessionMcpEntries = useSignal<SessionMcpServerEntry[]>([]);
 	const sessionMcpToggling = useSignal<Set<string>>(new Set());
 	const sessionMcpSearch = useSignal('');
+	// Tracks whether the per-session MCP list has been fetched at least once.
+	// We can't use `sessionMcpEntries.length > 0` as a proxy because an empty
+	// registry is a legitimate stable state — without this flag, runtime
+	// indicators on `mcp_server` skills would flicker as "unknown" → "missing"
+	// during the initial load.
+	const sessionMcpLoaded = useSignal(false);
 
 	// Search filter for App Skills section
 	const appSkillSearch = useSignal('');
@@ -229,6 +235,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	const loadSessionMcpEntries = async () => {
 		if (!session) {
 			sessionMcpEntries.value = [];
+			sessionMcpLoaded.value = false;
 			return;
 		}
 		try {
@@ -237,10 +244,16 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 				sessionId: session.id,
 			});
 			sessionMcpEntries.value = response.entries ?? [];
+			sessionMcpLoaded.value = true;
 		} catch {
 			// Typically means the daemon rejected the session id; show nothing
 			// rather than an error banner — the empty state is self-explanatory.
 			sessionMcpEntries.value = [];
+			// Keep sessionMcpLoaded=false: we genuinely don't know the effective
+			// MCP state, so per-skill runtime indicators stay hidden ("unknown")
+			// rather than risk showing a misleading "server missing" when the
+			// backing data just wasn't retrieved.
+			sessionMcpLoaded.value = false;
 		}
 	};
 
@@ -651,7 +664,11 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 											class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2.5 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
 										/>
 									)}
-									{/* 2-column grid */}
+									{/* 2-column grid.
+									    Note: the checkbox reflects the registry toggle (global, all
+									    sessions). For MCP-backed skills we also surface the runtime
+									    effective state below each name so users can tell when an
+									    "enabled" skill actually reaches this session. */}
 									{visibleAppSkills.length === 0 ? (
 										<div class="text-xs text-gray-600 py-1">
 											No skills match &ldquo;{appSkillSearch.value}&rdquo;.
@@ -660,6 +677,23 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 										<div class="grid grid-cols-2 gap-1">
 											{visibleAppSkills.map((skill) => {
 												const isToggling = skillToggling.value.has(skill.id);
+												const runtime = computeMcpSkillRuntimeState(
+													skill,
+													sessionMcpEntries.value,
+													sessionMcpLoaded.value
+												);
+												const runtimeDotClass =
+													runtime.status === 'active'
+														? 'bg-emerald-400'
+														: runtime.status === 'server-missing'
+															? 'bg-red-400'
+															: 'bg-gray-500';
+												const runtimeTextClass =
+													runtime.status === 'active'
+														? 'text-emerald-500/70'
+														: runtime.status === 'server-missing'
+															? 'text-red-400'
+															: 'text-gray-500';
 												return (
 													<label
 														key={skill.id}
@@ -698,6 +732,19 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 														)}
 														<div class="flex-1 min-w-0">
 															<div class="text-xs text-gray-200 truncate">{skill.displayName}</div>
+															{runtime.status !== 'unknown' && runtime.label && (
+																<div
+																	class={`text-[10px] truncate flex items-center gap-1 ${runtimeTextClass}`}
+																	title={runtime.label}
+																	data-testid={`skill-runtime-${skill.name}`}
+																	data-status={runtime.status}
+																>
+																	<span
+																		class={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${runtimeDotClass}`}
+																	/>
+																	<span class="truncate">{runtime.label}</span>
+																</div>
+															)}
 														</div>
 														<div class="flex items-center gap-1 flex-shrink-0">
 															{isToggling && (
