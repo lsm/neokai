@@ -309,8 +309,8 @@ export function AppMcpServersSettings() {
 					<p class="text-xs text-gray-500 mb-3">
 						MCP servers are available to any room or session. Configure external MCP servers here.
 						For API keys and secrets, set them in your system environment (e.g.,{' '}
-						<code class="text-xs bg-dark-800 px-1 py-0.5 rounded">export BRAVE_API_KEY=...</code>)
-						and reference them by name in the env vars field below. Values stored here are saved in
+						<code class="text-xs bg-dark-800 px-1 py-0.5 rounded">export MY_API_KEY=...</code>) and
+						reference them by name in the env vars field below. Values stored here are saved in
 						plain text.
 					</p>
 					<Button variant="primary" size="sm" onClick={openAddForm}>
@@ -425,7 +425,7 @@ export function AppMcpServersSettings() {
 								'focus:outline-none focus:ring-1 focus:ring-blue-500',
 								formErrors.name ? 'border-red-500' : 'border-dark-700'
 							)}
-							placeholder="e.g., brave-search"
+							placeholder="e.g., my-mcp-server"
 						/>
 						{formErrors.name && <p class="text-xs text-red-400 mt-1">{formErrors.name}</p>}
 					</div>
@@ -503,7 +503,7 @@ export function AppMcpServersSettings() {
 										'focus:outline-none focus:ring-1 focus:ring-blue-500',
 										formErrors.args ? 'border-red-500' : 'border-dark-700'
 									)}
-									placeholder="e.g., -y @modelcontextprotocol/server-brave-search"
+									placeholder="e.g., -y @tokenizin/mcp-npx-fetch"
 								/>
 								{formErrors.args && <p class="text-xs text-red-400 mt-1">{formErrors.args}</p>}
 								<p class="text-xs text-gray-500 mt-1">Space-separated arguments</p>
@@ -573,7 +573,7 @@ export function AppMcpServersSettings() {
 								formErrors.envVars ? 'border-red-500' : 'border-dark-700'
 							)}
 							rows={3}
-							placeholder="e.g., BRAVE_API_KEY=BRAVE_API_KEY"
+							placeholder="e.g., MY_API_KEY=MY_API_KEY"
 						/>
 						{formErrors.envVars && <p class="text-xs text-red-400 mt-1">{formErrors.envVars}</p>}
 						<p class="text-xs text-gray-500 mt-1">

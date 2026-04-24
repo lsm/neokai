@@ -53,12 +53,12 @@ type RequestHandler = (data: unknown, context?: unknown) => unknown;
 
 const MCP_ENTRY: AppMcpServer = {
 	id: 'aaaaaaaa-0000-4000-8000-000000000001',
-	name: 'brave-search',
-	description: 'Brave Search MCP',
+	name: 'test-search',
+	description: 'Test Search MCP',
 	sourceType: 'stdio',
 	command: 'npx',
-	args: ['@modelcontextprotocol/server-brave-search'],
-	env: { BRAVE_API_KEY: 'test-key' },
+	args: ['@modelcontextprotocol/server-test-search'],
+	env: { TEST_API_KEY: 'test-key' },
 	enabled: true,
 	createdAt: 1000,
 	updatedAt: 1000,
@@ -176,7 +176,7 @@ describe('mcp.registry.list', () => {
 		const handler = handlers.get('mcp.registry.list')!;
 		const result = (await handler({}, {})) as { servers: AppMcpServer[] };
 		expect(result.servers).toHaveLength(1);
-		expect(result.servers[0].name).toBe('brave-search');
+		expect(result.servers[0].name).toBe('test-search');
 		expect(repo.list).toHaveBeenCalledTimes(1);
 	});
 });
@@ -201,7 +201,7 @@ describe('mcp.registry.get', () => {
 		const handler = handlers.get('mcp.registry.get')!;
 		const result = (await handler({ id: MCP_ENTRY.id }, {})) as { server: AppMcpServer };
 		expect(repo.get).toHaveBeenCalledWith(MCP_ENTRY.id);
-		expect(result.server.name).toBe('brave-search');
+		expect(result.server.name).toBe('test-search');
 	});
 
 	it('throws if id is missing', async () => {
@@ -237,14 +237,14 @@ describe('mcp.registry.create', () => {
 	it('creates entry and returns it', async () => {
 		const handler = handlers.get('mcp.registry.create')!;
 		const payload = {
-			name: 'brave-search',
+			name: 'test-search',
 			sourceType: 'stdio' as const,
 			command: 'npx',
-			args: ['@modelcontextprotocol/server-brave-search'],
+			args: ['@modelcontextprotocol/server-test-search'],
 		};
 		const result = (await handler(payload, {})) as { server: AppMcpServer };
 		expect(repo.create).toHaveBeenCalledWith(payload);
-		expect(result.server.name).toBe('brave-search');
+		expect(result.server.name).toBe('test-search');
 	});
 
 	it('emits mcp.registry.changed on create', async () => {

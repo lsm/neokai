@@ -593,7 +593,7 @@ describe('SkillsManager', () => {
 	// --- Validation: mcp_server ---
 
 	test('addSkill with mcp_server: valid appMcpServerId passes', () => {
-		const server = mcpRepo.create({ name: 'brave', sourceType: 'stdio', command: 'npx' });
+		const server = mcpRepo.create({ name: 'test-server', sourceType: 'stdio', command: 'npx' });
 		const skill = mgr.addSkill({
 			name: 'mcp-ok',
 			displayName: 'MCP',
@@ -866,14 +866,104 @@ describe('SkillsManager', () => {
 		}
 	});
 
+	// --- fetch-mcp built-in ---
+
+	test('initializeBuiltins registers fetch-mcp skill', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'fetch-mcp');
+		expect(skill).toBeDefined();
+		expect(skill!.displayName).toBe('Fetch MCP');
+		expect(skill!.sourceType).toBe('mcp_server');
+		expect(skill!.builtIn).toBe(true);
+		expect(skill!.enabled).toBe(true);
+		expect(skill!.validationStatus).toBe('valid');
+	});
+
+	test('initializeBuiltins creates backing app_mcp_servers entry fetch-mcp if absent', () => {
+		mgr.initializeBuiltins();
+
+		const server = mcpRepo.getByName('fetch-mcp');
+		expect(server).not.toBeNull();
+		expect(server!.command).toBe('npx');
+		expect(server!.sourceType).toBe('stdio');
+		expect(server!.args).toEqual(['-y', '@tokenizin/mcp-npx-fetch']);
+	});
+
+	test('initializeBuiltins fetch-mcp skill config references the app_mcp_servers entry', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'fetch-mcp')!;
+		const server = mcpRepo.getByName('fetch-mcp');
+		expect(skill).toBeDefined();
+		expect(server).not.toBeNull();
+
+		expect(skill.config.type).toBe('mcp_server');
+		if (skill.config.type === 'mcp_server') {
+			expect(skill.config.appMcpServerId).toBe(server!.id);
+		}
+	});
+
+	test('initializeBuiltins fetch-mcp is enabled by default and included in getEnabledSkills', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'fetch-mcp')!;
+		expect(skill.enabled).toBe(true);
+
+		const enabled = mgr.getEnabledSkills();
+		expect(enabled.some((s) => s.name === 'fetch-mcp')).toBe(true);
+	});
+
+	test('initializeBuiltins fetch-mcp cannot be deleted (builtIn guard)', () => {
+		mgr.initializeBuiltins();
+
+		const skill = mgr.listSkills().find((s) => s.name === 'fetch-mcp')!;
+		expect(mgr.removeSkill(skill.id)).toBe(false);
+		expect(mgr.getSkill(skill.id)).not.toBeNull();
+	});
+
+	test('initializeBuiltins fetch-mcp is idempotent', () => {
+		mgr.initializeBuiltins();
+		mgr.initializeBuiltins();
+
+		const skills = mgr.listSkills().filter((s) => s.name === 'fetch-mcp');
+		expect(skills).toHaveLength(1);
+		const servers = mcpRepo.list().filter((s) => s.name === 'fetch-mcp');
+		expect(servers).toHaveLength(1);
+	});
+
+	test('initializeBuiltins reuses pre-existing fetch-mcp app_mcp_servers entry', () => {
+		const seeded = mcpRepo.create({
+			name: 'fetch-mcp',
+			description: 'Seeded by seed-defaults',
+			sourceType: 'stdio',
+			command: 'npx',
+			args: ['-y', '@tokenizin/mcp-npx-fetch'],
+			env: {},
+			enabled: true,
+		});
+
+		mgr.initializeBuiltins();
+
+		const servers = mcpRepo.list().filter((s) => s.name === 'fetch-mcp');
+		expect(servers).toHaveLength(1);
+
+		const skill = mgr.listSkills().find((s) => s.name === 'fetch-mcp')!;
+		expect(skill.config.type).toBe('mcp_server');
+		if (skill.config.type === 'mcp_server') {
+			expect(skill.config.appMcpServerId).toBe(seeded.id);
+		}
+	});
+
 	// --- total built-in count ---
 
-	test('initializeBuiltins registers all three built-in skills total', () => {
+	test('initializeBuiltins registers all four built-in skills total', () => {
 		mgr.initializeBuiltins();
 
 		const builtIns = mgr.listSkills().filter((s) => s.builtIn);
-		expect(builtIns).toHaveLength(3);
+		expect(builtIns).toHaveLength(4);
 		const names = builtIns.map((s) => s.name);
+		expect(names).toContain('fetch-mcp');
 		expect(names).toContain('chrome-devtools-mcp');
 		expect(names).toContain('playwright');
 		expect(names).toContain('playwright-interactive');

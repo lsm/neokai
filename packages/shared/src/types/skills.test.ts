@@ -27,7 +27,7 @@ const baseSkill: AppSkill = {
 	id: 'skill-uuid-1',
 	name: 'web-search',
 	displayName: 'Web Search',
-	description: 'Searches the web using Brave API',
+	description: 'Searches the web via an MCP server',
 	sourceType: 'mcp_server',
 	config: mcpConfig,
 	enabled: true,

@@ -672,7 +672,7 @@ describe('AddSkillDialog', () => {
 	it('should populate MCP server dropdown when hub returns servers', async () => {
 		const mockHub = {
 			request: vi.fn().mockResolvedValue({
-				servers: [{ id: 'srv-1', name: 'Brave Search', sourceType: 'stdio', enabled: true }],
+				servers: [{ id: 'srv-1', name: 'Fetch MCP', sourceType: 'stdio', enabled: true }],
 			}),
 		};
 		mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -683,14 +683,14 @@ describe('AddSkillDialog', () => {
 		fireEvent.click(mcpRadio);
 
 		await waitFor(() => {
-			expect(screen.getByText('Brave Search')).toBeTruthy();
+			expect(screen.getByText('Fetch MCP')).toBeTruthy();
 		});
 	});
 
 	it('should require MCP server selection for mcp_server type', async () => {
 		const mockHub = {
 			request: vi.fn().mockResolvedValue({
-				servers: [{ id: 'srv-1', name: 'Brave Search', sourceType: 'stdio', enabled: true }],
+				servers: [{ id: 'srv-1', name: 'Fetch MCP', sourceType: 'stdio', enabled: true }],
 			}),
 		};
 		mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -701,7 +701,7 @@ describe('AddSkillDialog', () => {
 		fireEvent.click(mcpRadio);
 
 		await waitFor(() => {
-			expect(screen.getByText('Brave Search')).toBeTruthy();
+			expect(screen.getByText('Fetch MCP')).toBeTruthy();
 		});
 
 		fireEvent.change(screen.getByPlaceholderText('e.g., Web Search'), {

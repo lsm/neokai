@@ -1,52 +1,42 @@
 /**
  * seedDefaultMcpEntries
  *
- * Seeds useful default MCP entries into the application-level registry on
- * daemon startup. The operation is idempotent — entries that already exist
- * (by name) are left untouched.
+ * Seeds the built-in MCP server definitions from the central registry
+ * (`src/lib/builtins.ts → BUILTIN_MCP_SERVERS`) into the application-level
+ * `app_mcp_servers` table on daemon startup.
  *
- * Defaults:
- *   • fetch-mcp      — Fetch web pages and convert to Markdown (enabled).
- *   • chrome-devtools — Browser automation via Chrome DevTools MCP (disabled,
- *                      opt-in).
+ * The operation is idempotent — entries that already exist (matched by
+ * `name`) are left untouched, except that legacy rows created before the
+ * `source` column existed have their provenance upgraded to `'builtin'`
+ * so the UI can correctly flag them.
+ *
+ * To add or remove a default, edit {@link BUILTIN_MCP_SERVERS} in
+ * `src/lib/builtins.ts`. Do not hand-write new seeders here.
  */
 
 import type { Database } from '../../storage/database';
+import { BUILTIN_MCP_SERVERS } from '../builtins';
 
 export function seedDefaultMcpEntries(db: Database): void {
 	const repo = db.appMcpServers;
 
-	const existingFetch = repo.getByName('fetch-mcp');
-	if (!existingFetch) {
-		repo.create({
-			name: 'fetch-mcp',
-			description: 'Fetch web pages and convert to Markdown for reading documentation and articles',
-			sourceType: 'stdio',
-			command: 'npx',
-			args: ['-y', '@tokenizin/mcp-npx-fetch'],
-			env: {},
-			enabled: true,
-			source: 'builtin',
-		});
-	} else if (existingFetch.source !== 'builtin') {
-		// Upgrade provenance for legacy rows seeded before the `source` column existed.
-		repo.update(existingFetch.id, { source: 'builtin' });
-	}
-
-	const existingChrome = repo.getByName('chrome-devtools');
-	if (!existingChrome) {
-		repo.create({
-			name: 'chrome-devtools',
-			description:
-				'Browser automation and DevTools integration via Chrome DevTools MCP (isolated mode)',
-			sourceType: 'stdio',
-			command: 'bunx',
-			args: ['chrome-devtools-mcp@latest', '--isolated'],
-			env: {},
-			enabled: false,
-			source: 'builtin',
-		});
-	} else if (existingChrome.source !== 'builtin') {
-		repo.update(existingChrome.id, { source: 'builtin' });
+	for (const def of BUILTIN_MCP_SERVERS) {
+		const existing = repo.getByName(def.name);
+		if (!existing) {
+			repo.create({
+				name: def.name,
+				description: def.description,
+				sourceType: def.sourceType,
+				command: def.command,
+				args: def.args,
+				env: def.env,
+				enabled: def.enabled,
+				source: 'builtin',
+			});
+		} else if (existing.source !== 'builtin') {
+			// Upgrade provenance for legacy rows seeded before the `source` column
+			// existed. Never overwrites user-customised fields (command/args/env).
+			repo.update(existing.id, { source: 'builtin' });
+		}
 	}
 }
