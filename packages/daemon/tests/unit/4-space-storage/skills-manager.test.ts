@@ -968,6 +968,67 @@ describe('SkillsManager', () => {
 		expect(names).toContain('playwright');
 		expect(names).toContain('playwright-interactive');
 	});
+
+	// --- ensureBuiltinPluginWrappers ---
+	//
+	// These tests cover the thin wiring layer that feeds the registered builtin
+	// skills into the plugin-wrapper generator. The generator itself has its own
+	// unit tests in agent/builtin-skill-plugin-wrapper.test.ts — here we only
+	// verify that the manager passes the right set of skills (sourceType ===
+	// 'builtin' only) and does not crash on edge cases.
+
+	test('ensureBuiltinPluginWrappers materialises a wrapper for each builtin-typed skill', async () => {
+		const { mkdtemp, rm, readFile, stat } = await import('node:fs/promises');
+		const { tmpdir } = await import('node:os');
+		const tmpRoot = await mkdtemp(join(tmpdir(), 'kai-skills-mgr-wrap-'));
+		try {
+			const wrappersRoot = join(tmpRoot, 'skill-plugins');
+			const skillsRoot = join(tmpRoot, 'skills');
+
+			mgr.initializeBuiltins();
+			const result = await mgr.ensureBuiltinPluginWrappers(wrappersRoot, skillsRoot);
+
+			// Only the two `sourceType: 'builtin'` skills (playwright,
+			// playwright-interactive) should get wrappers — fetch-mcp and
+			// chrome-devtools-mcp are mcp_server-typed and must be skipped
+			// (they're loaded via mcpServers, not the SDK plugin loader).
+			expect(result.size).toBe(2);
+			expect(result.has('playwright')).toBe(true);
+			expect(result.has('playwright-interactive')).toBe(true);
+			expect(result.has('fetch-mcp')).toBe(false);
+			expect(result.has('chrome-devtools-mcp')).toBe(false);
+			expect(result.has('chrome-devtools')).toBe(false);
+
+			// plugin.json must exist at the wrapper root — this is the marker
+			// the SDK actually scans for.
+			const manifest = JSON.parse(
+				await readFile(join(wrappersRoot, 'playwright', '.claude-plugin', 'plugin.json'), 'utf8')
+			);
+			expect(manifest.name).toBe('playwright');
+
+			// The wrappers directory must be a real directory, not a symlink into
+			// the skills root, so regenerating never touches user content.
+			const wst = await stat(wrappersRoot);
+			expect(wst.isDirectory()).toBe(true);
+		} finally {
+			await rm(tmpRoot, { recursive: true, force: true });
+		}
+	});
+
+	test('ensureBuiltinPluginWrappers is safe when no builtin skills are registered', async () => {
+		const { mkdtemp, rm } = await import('node:fs/promises');
+		const { tmpdir } = await import('node:os');
+		const tmpRoot = await mkdtemp(join(tmpdir(), 'kai-skills-mgr-empty-'));
+		try {
+			// Don't call initializeBuiltins — manager has zero skills.
+			const wrappersRoot = join(tmpRoot, 'skill-plugins');
+			const skillsRoot = join(tmpRoot, 'skills');
+			const result = await mgr.ensureBuiltinPluginWrappers(wrappersRoot, skillsRoot);
+			expect(result.size).toBe(0);
+		} finally {
+			await rm(tmpRoot, { recursive: true, force: true });
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------
