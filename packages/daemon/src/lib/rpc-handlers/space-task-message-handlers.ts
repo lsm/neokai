@@ -100,13 +100,10 @@ export function setupSpaceTaskMessageHandlers(
 	const taskRepo = new SpaceTaskRepository(db.getDatabase());
 
 	/**
-	 * Reset all channel cycle counters for a workflow run and announce it via
-	 * both a structured log entry and a `space.workflowRun.cyclesReset` daemonHub
-	 * event — the dual signal makes human-touch events observable in post-mortems
-	 * (log) and real-time (hub subscribers) without DB inspection.
-	 *
-	 * Best-effort: any failure is logged and swallowed so the RPC's success
-	 * is not held hostage by an observability side-effect.
+	 * Best-effort: failure to reset must not fail the RPC, since the reset is an
+	 * observability/safety-cap side-effect rather than part of the message delivery
+	 * contract. The emit is suppressed when no rows changed to avoid waking
+	 * subscribers for a no-op.
 	 */
 	async function resetChannelCyclesOnHumanTouch(
 		workflowRunId: string | null | undefined,
@@ -118,13 +115,15 @@ export function setupSpaceTaskMessageHandlers(
 			log.info(
 				`workflow.cycles.reset: runId=${workflowRunId} reason=human_touch taskId=${taskId} rowsReset=${rowsReset}`
 			);
-			await daemonHub.emit('space.workflowRun.cyclesReset', {
-				sessionId: 'global',
-				runId: workflowRunId,
-				reason: 'human_touch',
-				taskId,
-				rowsReset,
-			});
+			if (rowsReset > 0) {
+				await daemonHub.emit('space.workflowRun.cyclesReset', {
+					sessionId: 'global',
+					runId: workflowRunId,
+					reason: 'human_touch',
+					taskId,
+					rowsReset,
+				});
+			}
 		} catch (err) {
 			log.warn(
 				`workflow.cycles.reset: failed to reset cycles for task ${taskId}: ${

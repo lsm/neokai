@@ -695,7 +695,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Human ↔ Task Agent message routing handlers (require taskAgentManager).
 	// `channelCycleRepo` is passed so `space.task.sendMessage` can reset the
-	// per-channel cycle counters on human touch — see Task #101.
+	// per-channel cycle counters on human touch.
 	setupSpaceTaskMessageHandlers(
 		deps.messageHub,
 		taskAgentManager,

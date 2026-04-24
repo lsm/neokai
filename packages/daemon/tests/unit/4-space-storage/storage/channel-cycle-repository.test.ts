@@ -129,15 +129,12 @@ describe('ChannelCycleRepository — resetAllForRun (human touch)', () => {
 		expect(rowsReset).toBe(0);
 	});
 
-	test('updates updated_at when a row is reset', () => {
+	test('updates updated_at when a row is reset', async () => {
 		repo.incrementCycleCount(RUN_ID_A, 0, 5);
 		const before = repo.get(RUN_ID_A, 0)!.updatedAt;
 
-		// Wait at least 1ms so Date.now() is guaranteed to advance.
-		const start = Date.now();
-		while (Date.now() === start) {
-			// spin
-		}
+		// Yield so Date.now() has a chance to advance (1ms resolution on most platforms).
+		await new Promise((resolve) => setTimeout(resolve, 2));
 
 		repo.resetAllForRun(RUN_ID_A);
 

@@ -1000,6 +1000,29 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(emitCalls.some((c) => c[0] === 'space.workflowRun.cyclesReset')).toBe(true);
 		});
 
+		it('does NOT emit cyclesReset when rowsReset is 0 (no subscriber wakeups for no-op)', async () => {
+			const {
+				handlers: h,
+				resetter,
+				daemonHub: dh,
+			} = setupForReset(mockTaskWithRun, {
+				resetRows: 0,
+			});
+
+			const result = await (h.get('space.task.sendMessage') as RequestHandler)({
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: 'Please continue',
+			});
+
+			expect(result).toEqual({ ok: true });
+			// The reset statement still runs (it's cheap and idempotent)...
+			expect(resetter.resetAllForRun).toHaveBeenCalledTimes(1);
+			// ...but no event is emitted because nothing actually changed.
+			const emitCalls = (dh.emit as ReturnType<typeof mock>).mock.calls;
+			expect(emitCalls.some((c) => c[0] === 'space.workflowRun.cyclesReset')).toBe(false);
+		});
+
 		it('does NOT reset when the task has no workflowRunId', async () => {
 			const { handlers: h, resetter, daemonHub: dh } = setupForReset(mockTaskNoRun);
 
