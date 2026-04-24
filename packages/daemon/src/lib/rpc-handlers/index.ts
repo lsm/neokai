@@ -57,6 +57,7 @@ import { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
 import {
 	setupSpaceWorkflowHandlers,
 	checkBuiltInWorkflowDriftOnStartup,
+	restampBuiltInWorkflowsOnStartup,
 } from './space-workflow-handlers';
 import type { SpaceManager } from '../space/managers/space-manager';
 import { SpaceTaskManager } from '../space/managers/space-task-manager';
@@ -456,9 +457,23 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceWorkflowRunRepo
 	);
 
-	// Proactive drift detection — fire-and-forget; logs warnings for any workflows
-	// that have drifted from their built-in templates since the last sync.
-	void checkBuiltInWorkflowDriftOnStartup(spaceWorkflowManager, deps.spaceManager);
+	// PR 3/5: narrow auto re-stamp pass — applies the small set of template
+	// fields that are safe to update in-place (`postApproval`,
+	// `completionAutonomyLevel`, `templateHash`). Runs before the drift
+	// warning so rows that would otherwise be flagged as drifted for the
+	// `postApproval` delta alone get silently fixed. User-facing structural
+	// drift (nodes/channels/gates/prompts) still surfaces as warnings below
+	// because those require UI-driven re-sync to preserve live run IDs.
+	void restampBuiltInWorkflowsOnStartup(
+		spaceWorkflowManager,
+		deps.spaceManager,
+		deps.spaceAgentManager
+	).then(() => {
+		// Proactive drift detection — fire-and-forget; logs warnings for any
+		// workflows that have drifted from their built-in templates since the
+		// last sync.
+		void checkBuiltInWorkflowDriftOnStartup(spaceWorkflowManager, deps.spaceManager);
+	});
 
 	// Space Runtime Service — wraps SpaceRuntime with per-space lifecycle API.
 	// Not started yet: TaskAgentManager is created next and injected before start().

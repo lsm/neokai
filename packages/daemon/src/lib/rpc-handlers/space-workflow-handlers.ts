@@ -29,7 +29,7 @@ import type { DaemonHub } from '../daemon-hub';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
-import { getBuiltInWorkflows } from '../space/workflows/built-in-workflows';
+import { getBuiltInWorkflows, seedBuiltInWorkflows } from '../space/workflows/built-in-workflows';
 import { computeWorkflowHash } from '../space/workflows/template-hash';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { Logger } from '../logger';
@@ -174,6 +174,76 @@ export async function checkBuiltInWorkflowDriftOnStartup(
 	} catch (err) {
 		// Non-fatal: drift detection errors must never break daemon startup.
 		log.warn('[startup] Workflow drift check failed (non-fatal):', err);
+	}
+}
+
+/**
+ * Startup re-stamp pass for the narrow set of template fields that are safe
+ * to auto-apply without regenerating node UUIDs.
+ *
+ * Introduced in PR 3/5 so existing spaces auto-acquire the new `postApproval`
+ * route declared on built-in workflow templates. Delegates to
+ * `seedBuiltInWorkflows`, which takes the re-stamp branch when rows already
+ * exist in a space. That path only updates `postApproval`,
+ * `completionAutonomyLevel`, and `templateHash` — see the seeder's
+ * `RESTAMP_FIELDS` constant for the full list and rationale.
+ *
+ * Full structural re-sync (nodes/channels/gates/prompts) still requires the
+ * user to click "Sync" in the Workflow List UI, because that path regenerates
+ * node UUIDs and would invalidate any live workflow-run references.
+ *
+ * Non-blocking: any per-space failure is logged and the loop continues so
+ * one broken space cannot block the daemon from starting.
+ */
+export async function restampBuiltInWorkflowsOnStartup(
+	workflowManager: SpaceWorkflowManager,
+	spaceManager: SpaceManager,
+	spaceAgentManager: SpaceAgentManager
+): Promise<void> {
+	try {
+		const spaces = await spaceManager.listSpaces();
+		if (spaces.length === 0) return;
+
+		let totalRestamped = 0;
+		for (const space of spaces) {
+			try {
+				const agents = spaceAgentManager.listBySpaceId(space.id);
+				const result = seedBuiltInWorkflows(
+					space.id,
+					workflowManager,
+					(name) => agents.find((a) => a.name.toLowerCase() === name.toLowerCase())?.id
+				);
+				if (result.restamped.length > 0) {
+					totalRestamped += result.restamped.length;
+					log.info(
+						`[startup] Re-stamped ${result.restamped.length} built-in workflow(s) ` +
+							`in space "${space.name}" (${space.id}): ${result.restamped.join(', ')}`
+					);
+				}
+				if (result.errors.length > 0) {
+					for (const err of result.errors) {
+						log.warn(
+							`[startup] Failed to re-stamp built-in workflow "${err.name}" ` +
+								`in space "${space.name}" (${space.id}): ${err.error}`
+						);
+					}
+				}
+			} catch (err) {
+				log.warn(
+					`[startup] Re-stamp pass failed for space "${space.name}" (${space.id}) (non-fatal):`,
+					err
+				);
+			}
+		}
+
+		if (totalRestamped > 0) {
+			log.info(
+				`[startup] Re-stamped ${totalRestamped} built-in workflow row(s) across ${spaces.length} space(s)`
+			);
+		}
+	} catch (err) {
+		// Non-fatal: re-stamp errors must never block daemon startup.
+		log.warn('[startup] Built-in workflow re-stamp pass failed (non-fatal):', err);
 	}
 }
 
