@@ -46,6 +46,13 @@ interface WorkflowFingerprint {
 	 * Affects autonomy gating behavior.
 	 */
 	completionAutonomyLevel: number;
+	/**
+	 * Workflow-level post-approval route (PR 3/5). Empty string when no route
+	 * is declared. Format: `<targetAgent>|<instructions>`. Detects changes to
+	 * the post-approval handoff — so seeder re-stamping triggers when the
+	 * built-in templates gain or modify their `postApproval` entry.
+	 */
+	postApproval: string;
 }
 
 /**
@@ -119,6 +126,12 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
 		)
 		.sort();
 
+	// Serialize workflow-level post-approval route.
+	// Format: `<targetAgent>|<instructions>` (empty string when absent).
+	const postApproval = workflow.postApproval
+		? `${workflow.postApproval.targetAgent}|${workflow.postApproval.instructions ?? ''}`
+		: '';
+
 	return {
 		description: workflow.description ?? '',
 		instructions: workflow.instructions ?? '',
@@ -128,6 +141,7 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
 		nodePrompts,
 		completionActions,
 		completionAutonomyLevel: workflow.completionAutonomyLevel,
+		postApproval,
 	};
 }
 
