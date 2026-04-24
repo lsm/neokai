@@ -8,8 +8,14 @@
  * - content priority for session/task routes
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
+
+// Default waitFor timeout of 1000ms is too tight for lazy-loaded routes under
+// full-suite load (CI parallel workers, Vite transform pipeline). Bumping to
+// 5s for all lazy-module assertions eliminates flakiness without slowing the
+// happy path, since waitFor returns as soon as the assertion passes.
+const LAZY_LOAD_TIMEOUT = 5000;
 import { signal } from '@preact/signals';
 import type { SpaceWorkflow, SpaceAgent, Space } from '@neokai/shared';
 
@@ -147,6 +153,20 @@ vi.mock('../../lib/router', () => ({
 
 import SpaceIsland from '../SpaceIsland';
 
+// Eagerly resolve the lazily-imported modules used by SpaceIsland so that
+// <Suspense> boundaries inside the component tree can resolve on the first
+// microtask in tests. Without this, test assertions race against Vite's
+// module transform pipeline under full-suite load.
+beforeAll(async () => {
+	await Promise.all([
+		import('../../components/space/SpaceConfigurePage'),
+		import('../../components/space/SpaceOverview'),
+		import('../../components/space/SpaceTaskPane'),
+		import('../../components/space/SpaceTasks'),
+		import('../../components/space/SpaceSessionsPage'),
+	]);
+});
+
 function makeSpace(overrides: Partial<Space> = {}): Space {
 	return {
 		id: 'space-1',
@@ -198,9 +218,12 @@ describe('SpaceIsland — route-driven views', () => {
 			<SpaceIsland spaceId="space-1" viewMode="overview" />
 		);
 		// Wait for lazy SpaceOverview to load through Suspense
-		await waitFor(() => {
-			expect(getByTestId('space-dashboard')).toBeTruthy();
-		});
+		await waitFor(
+			() => {
+				expect(getByTestId('space-dashboard')).toBeTruthy();
+			},
+			{ timeout: LAZY_LOAD_TIMEOUT }
+		);
 		// Outer wrapper
 		expect(getByTestId('space-overview-view')).toBeTruthy();
 		// Legacy tab bar is removed from overview
@@ -210,9 +233,12 @@ describe('SpaceIsland — route-driven views', () => {
 	it('renders the configure view when requested', async () => {
 		const { getByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="configure" />);
 		// Wait for lazy SpaceConfigurePage to load through Suspense
-		await waitFor(() => {
-			expect(getByTestId('space-agent-list')).toBeTruthy();
-		});
+		await waitFor(
+			() => {
+				expect(getByTestId('space-agent-list')).toBeTruthy();
+			},
+			{ timeout: LAZY_LOAD_TIMEOUT }
+		);
 		expect(getByTestId('space-configure-view')).toBeTruthy();
 	});
 });
@@ -233,9 +259,12 @@ describe('SpaceIsland — configure workflow editor', () => {
 	async function renderConfigure() {
 		const result = render(<SpaceIsland spaceId="space-1" viewMode="configure" />);
 		// Wait for lazy SpaceConfigurePage to load through Suspense
-		await waitFor(() => {
-			expect(result.getByTestId('space-configure-tab-bar')).toBeTruthy();
-		});
+		await waitFor(
+			() => {
+				expect(result.getByTestId('space-configure-tab-bar')).toBeTruthy();
+			},
+			{ timeout: LAZY_LOAD_TIMEOUT }
+		);
 		return result;
 	}
 

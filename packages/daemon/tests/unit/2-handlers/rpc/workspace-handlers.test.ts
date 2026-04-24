@@ -87,11 +87,14 @@ describe('workspace handlers', () => {
 		});
 
 		it('returns entries sorted by last_used_at descending', async () => {
-			// Insert two entries with explicit timestamps by using the repo directly
-			repo.upsert('/workspace/older');
-			// Small delay to ensure different timestamps
-			await Bun.sleep(2);
-			repo.upsert('/workspace/newer');
+			// Insert two entries with explicit timestamps so the ordering is
+			// deterministic regardless of clock resolution or CPU load.
+			db.prepare(
+				'INSERT INTO workspace_history (path, last_used_at, use_count) VALUES (?, ?, 1)'
+			).run('/workspace/older', 1000);
+			db.prepare(
+				'INSERT INTO workspace_history (path, last_used_at, use_count) VALUES (?, ?, 1)'
+			).run('/workspace/newer', 2000);
 
 			const handler = handlers.get('workspace.history')!;
 			const result = (await handler({})) as {
@@ -101,6 +104,29 @@ describe('workspace handlers', () => {
 			expect(result.entries).toHaveLength(2);
 			expect(result.entries[0].path).toBe('/workspace/newer');
 			expect(result.entries[1].path).toBe('/workspace/older');
+		});
+
+		it('breaks ties on identical last_used_at by insertion order (newest first)', async () => {
+			// When two rows share the same last_used_at (possible on fast
+			// machines where Date.now() returns identical values for two
+			// back-to-back inserts), the autoincrement `id` is used as a
+			// deterministic tiebreaker so the most-recently-inserted row wins.
+			const sameTs = 1234;
+			db.prepare(
+				'INSERT INTO workspace_history (path, last_used_at, use_count) VALUES (?, ?, 1)'
+			).run('/workspace/first', sameTs);
+			db.prepare(
+				'INSERT INTO workspace_history (path, last_used_at, use_count) VALUES (?, ?, 1)'
+			).run('/workspace/second', sameTs);
+
+			const handler = handlers.get('workspace.history')!;
+			const result = (await handler({})) as {
+				entries: Array<{ path: string }>;
+			};
+
+			expect(result.entries).toHaveLength(2);
+			expect(result.entries[0].path).toBe('/workspace/second');
+			expect(result.entries[1].path).toBe('/workspace/first');
 		});
 
 		it('maps repository rows to WorkspaceHistoryEntry shape', async () => {
