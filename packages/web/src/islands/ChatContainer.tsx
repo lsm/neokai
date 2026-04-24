@@ -951,6 +951,10 @@ export default function ChatContainer({
 					style={{
 						WebkitOverflowScrolling: 'touch',
 						paddingBottom: `var(--messages-bottom-padding, ${MIN_MESSAGES_BOTTOM_PADDING_PX}px)`,
+						// Mirror paddingBottom so browser-driven scrolls (scrollIntoView,
+						// focus/anchor scroll) stop short of the floating composer instead
+						// of parking the last message behind it.
+						scrollPaddingBottom: `var(--messages-bottom-padding, ${MIN_MESSAGES_BOTTOM_PADDING_PX}px)`,
 					}}
 				>
 					{/* Worktree Choice Inline */}
