@@ -8,7 +8,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { access, mkdir, writeFile } from 'node:fs/promises';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID, isBuiltinSkillConfig } from '@neokai/shared';
 import type {
 	AppSkill,
 	AppSkillConfig,
@@ -584,20 +584,20 @@ export class SkillsManager {
 		wrappersRoot: string = defaultBuiltinSkillPluginRoot(),
 		skillsRoot: string = join(homedir(), '.neokai', 'skills')
 	): Promise<Map<string, string>> {
-		const builtinSkills = this.repo.findAll().filter((s) => {
-			return s.sourceType === 'builtin' && s.config.type === 'builtin';
-		});
-		return ensureBuiltinSkillPluginWrappers(
-			wrappersRoot,
-			skillsRoot,
-			builtinSkills.map((s) => {
-				const config = s.config as { type: 'builtin'; commandName: string };
-				return {
-					commandName: config.commandName,
-					description: s.description,
-				};
-			})
-		);
+		// Narrow via the shared type guard so `skill.config.commandName` is a
+		// proper typed access rather than a manual cast. The guard also pairs
+		// with `sourceType === 'builtin'` to defend against any hypothetical
+		// data-shape drift between `sourceType` and `config.type`.
+		const entries: Array<{ commandName: string; description: string }> = [];
+		for (const skill of this.repo.findAll()) {
+			if (skill.sourceType !== 'builtin') continue;
+			if (!isBuiltinSkillConfig(skill.config)) continue;
+			entries.push({
+				commandName: skill.config.commandName,
+				description: skill.description,
+			});
+		}
+		return ensureBuiltinSkillPluginWrappers(wrappersRoot, skillsRoot, entries);
 	}
 
 	// ---------------------------------------------------------------------------
