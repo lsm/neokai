@@ -30,6 +30,7 @@ import {
 	getBuiltInGateScript,
 	seedBuiltInWorkflows,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
+import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash.ts';
 import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 import {
 	exportWorkflow,
@@ -1208,6 +1209,72 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(after.updatedAt).toBe(before.updatedAt);
 		expect(after.completionAutonomyLevel).toBe(before.completionAutonomyLevel);
 		expect(after.postApproval).toBeUndefined();
+	});
+
+	test('re-stamp updates each node agent `customPrompt.value` in-place', () => {
+		// Regression guard for PR 3/5: without this, existing spaces get the
+		// new `postApproval` wired but keep stale end-node prompts — so the
+		// reviewer sub-session fires the merge template against a task-agent
+		// that never sent `{ pr_url }` in its handoff, leaving `{{pr_url}}`
+		// uninterpolated. Proof: force-drift the stored hash AND manually
+		// stomp the end-node's customPrompt to an old value; after re-stamp
+		// the prompt must match the current template verbatim.
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+
+		// Find the end node and its first (task-agent) slot on the persisted row.
+		const endNode = coding.nodes.find((n) => n.id === coding.endNodeId)!;
+		const endAgent = endNode.agents[0];
+		const originalPrompt = endAgent.customPrompt?.value ?? '';
+		const staleMarker = '### STALE PROMPT FROM A PRIOR PR ###';
+		expect(originalPrompt).not.toContain(staleMarker);
+
+		// Simulate an old-template row: rewrite this node's agent prompt and
+		// mark the row's hash stale so the seeder takes the re-stamp branch.
+		manager.updateWorkflow(coding.id, {
+			nodes: coding.nodes.map((n) =>
+				n.id !== endNode.id
+					? n
+					: {
+							id: n.id,
+							name: n.name,
+							agents: n.agents.map((a, i) =>
+								i === 0 ? { ...a, customPrompt: { value: staleMarker } } : a
+							),
+						}
+			),
+		});
+		db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+			'stale-hash',
+			coding.id
+		);
+
+		// Sanity: the stale write landed.
+		const stalled = manager.getWorkflow(coding.id)!;
+		const stalledAgent = stalled.nodes.find((n) => n.id === endNode.id)!.agents[0];
+		expect(stalledAgent.customPrompt?.value).toBe(staleMarker);
+
+		// Re-run the seeder — should take the re-stamp branch.
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+		// Prompt restored to the current template verbatim (not the stale marker).
+		const after = manager.getWorkflow(coding.id)!;
+		const afterEndNode = after.nodes.find((n) => n.id === endNode.id)!;
+		const afterAgent = afterEndNode.agents[0];
+		expect(afterAgent.customPrompt?.value).not.toContain(staleMarker);
+		expect(afterAgent.customPrompt?.value).toBe(originalPrompt);
+
+		// Critical invariant: the node UUID and agent UUID were preserved, so
+		// any in-flight run referencing them continues to resolve.
+		expect(afterEndNode.id).toBe(endNode.id);
+		expect(afterAgent.agentId).toBe(endAgent.agentId);
+
+		// And after the re-stamp, the drift detector's hash check matches: the
+		// full-template hash (which includes nodePrompts) now aligns with the
+		// re-stamped row, so operators are not spammed with false drift warnings.
+		const expectedHash = computeWorkflowHash(CODING_WORKFLOW);
+		expect(after.templateHash).toBe(expectedHash);
 	});
 
 	test('re-stamp preserves node UUIDs (safe for in-flight runs)', () => {
