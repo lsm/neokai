@@ -711,7 +711,6 @@ export class AgentSession
 	 * Remaining callers to migrate (do not add new call sites):
 	 *   - room-runtime-service.ts × 4  (room-tools, room-chat, workflow-chat injection)
 	 *   - neo-agent-manager.ts × 1     (neo session bootstrap)
-	 *   - space-runtime-service.ts × 1 (space_chat session attachment)
 	 */
 	setRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): void {
 		this.session.config = {
