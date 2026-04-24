@@ -57,6 +57,24 @@ class SessionStore {
 	/** SDK messages from state.sdkMessages channel */
 	readonly sdkMessages = signal<ChatMessage[]>([]);
 
+	/**
+	 * Whether the initial messages snapshot has arrived for the current session.
+	 *
+	 * The session metadata RPC (`state.session`) and the messages LiveQuery run
+	 * on independent request paths. On slow networks or for long conversations
+	 * the metadata RPC can land many seconds before the messages snapshot. The
+	 * UI uses this flag together with `sessionState` to decide when the chat is
+	 * truly ready — rendering the empty-state placeholder before this is `true`
+	 * would lie to the user about a conversation that still has messages in
+	 * flight.
+	 *
+	 * Reset to `false` on every session switch; set to `true` when the first
+	 * LiveQuery snapshot applies or when the subscribe fails (so the UI can
+	 * surface a genuinely-empty conversation or a failure rather than stalling
+	 * on a loading skeleton forever).
+	 */
+	readonly messagesLoaded = signal<boolean>(false);
+
 	/** API retry attempts (populated from session.retryAttempt events) */
 	readonly retryAttempts = signal<
 		Array<{
@@ -206,6 +224,10 @@ class SessionStore {
 		this._initialMessageCount.value = 0;
 		this._hasMoreMessages.value = false;
 		this._contextInfo.value = null; // Clear context info on session switch
+		// Reset the messages-loaded gate so ChatContainer shows the loading
+		// skeleton (not the empty-state placeholder) until the new session's
+		// LiveQuery snapshot arrives.
+		this.messagesLoaded.value = false;
 		// Invalidate any in-flight LiveQuery events for the previous session.
 		// Events already queued in the event loop will see this guard and be
 		// dropped before touching the fresh sdkMessages signal.
@@ -400,9 +422,16 @@ class SessionStore {
 			});
 		} catch (err) {
 			logger.error('Failed to subscribe to messages LiveQuery:', err);
+			// Release the messages-loaded gate so the UI doesn't stall on the
+			// loading skeleton forever when the subscribe fails (e.g. session
+			// was deleted between select and subscribe). We fall through to
+			// whatever sdkMessages currently holds — either the optimistic
+			// empty state or stale rows from a prior subscription.
+			if (this.activeMessagesSubscriptionId === subscriptionId) {
+				this.messagesLoaded.value = true;
+			}
 			// Don't rethrow — we still want session state to be usable even if
-			// the LiveQuery failed (e.g. session was deleted between select and
-			// subscribe). The UI will render whatever sdkMessages currently holds.
+			// the LiveQuery failed.
 		}
 	}
 
@@ -427,6 +456,9 @@ class SessionStore {
 		this.sdkMessages.value = sorted;
 		this._hasMoreMessages.value = rows.length >= LIVE_QUERY_MESSAGE_LIMIT;
 		this._initialMessageCount.value = rows.length;
+		// Mark the messages as loaded so the UI can transition from the loading
+		// skeleton to either the message list or the empty-state placeholder.
+		this.messagesLoaded.value = true;
 		this._syncCommandsFromSDKMessages(sorted);
 	}
 

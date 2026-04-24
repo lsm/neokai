@@ -511,6 +511,108 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
 			expect(sessionStore.sdkMessages.value.some((m) => m.uuid === 'ghost')).toBe(false);
 		});
+
+		describe('messagesLoaded gate', () => {
+			// Regression coverage for the empty-state flash: the ChatContainer
+			// uses `messagesLoaded` together with `sessionState` to decide when
+			// to render the empty-state placeholder. If `messagesLoaded` goes
+			// true before the first LiveQuery snapshot applies, the UI will
+			// flash "No messages yet" for sessions that actually have messages
+			// but are still loading on slow networks.
+
+			it('starts false on construction', () => {
+				// Fresh store state: no session has been selected yet.
+				expect(sessionStore.messagesLoaded.value).toBe(false);
+			});
+
+			it('is reset to false on session switch and stays false before the snapshot arrives', async () => {
+				const hub = installLiveQueryHub();
+				await sessionStore.select('session-1');
+
+				// The `state.session` RPC has already resolved here (the mock
+				// resolves it synchronously), but the LiveQuery snapshot has
+				// not been fired yet — this is the exact window where the
+				// empty-state flash would appear.
+				expect(sessionStore.sessionState.value).not.toBeNull();
+				expect(sessionStore.messagesLoaded.value).toBe(false);
+
+				// Only after the snapshot does the gate open.
+				hub.fire('liveQuery.snapshot', { subscriptionId: hub.subscriptionId!, rows: [] });
+				expect(sessionStore.messagesLoaded.value).toBe(true);
+			});
+
+			it('flips to true when the LiveQuery snapshot applies', async () => {
+				const hub = installLiveQueryHub();
+				await sessionStore.select('session-1');
+
+				expect(sessionStore.messagesLoaded.value).toBe(false);
+
+				hub.fire('liveQuery.snapshot', {
+					subscriptionId: hub.subscriptionId!,
+					rows: [
+						{
+							uuid: 'msg-1',
+							type: 'text',
+							role: 'user',
+							content: [{ type: 'text', text: 'Hi' }],
+						},
+					],
+				});
+
+				expect(sessionStore.messagesLoaded.value).toBe(true);
+			});
+
+			it('resets to false when switching to a different session', async () => {
+				const hub = installLiveQueryHub();
+				await sessionStore.select('session-1');
+				hub.fire('liveQuery.snapshot', { subscriptionId: hub.subscriptionId!, rows: [] });
+				expect(sessionStore.messagesLoaded.value).toBe(true);
+
+				// Switching sessions clears the gate — the UI must stay on the
+				// loading skeleton until the new session's snapshot arrives,
+				// even if the prior session's messages had fully loaded.
+				await sessionStore.select('session-2');
+				expect(sessionStore.messagesLoaded.value).toBe(false);
+			});
+
+			it('opens the gate on subscribe failure so the UI can recover', async () => {
+				// First install the successful handler map for onEvent, then
+				// configure the subscribe RPC to reject. The `state.session`
+				// RPC still resolves so the sessionState path doesn't go into
+				// its own error branch; we're isolating the subscribe failure.
+				const handlers = new Map<string, Array<(data: unknown) => void>>();
+				mockHub.request.mockImplementation((channel: string, _params?: Record<string, unknown>) => {
+					if (channel === 'state.session') {
+						return Promise.resolve({ sessionInfo: { id: 'session-1' } });
+					}
+					if (channel === 'liveQuery.subscribe') {
+						return Promise.reject(new Error('subscribe failed'));
+					}
+					if (channel === 'liveQuery.unsubscribe') {
+						return Promise.resolve({ ok: true });
+					}
+					return Promise.resolve(undefined);
+				});
+				mockHub.onEvent.mockImplementation((channel: string, callback: (data: unknown) => void) => {
+					const list = handlers.get(channel) ?? [];
+					list.push(callback);
+					handlers.set(channel, list);
+					return () => {
+						const l = handlers.get(channel);
+						if (!l) return;
+						const i = l.indexOf(callback);
+						if (i >= 0) l.splice(i, 1);
+					};
+				});
+
+				await sessionStore.select('session-1');
+
+				// Subscribe failed — we never got (and never will get) a
+				// snapshot. The gate must open anyway, otherwise the UI would
+				// sit on the loading skeleton forever.
+				expect(sessionStore.messagesLoaded.value).toBe(true);
+			});
+		});
 	});
 
 	describe('slash commands sync', () => {
