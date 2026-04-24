@@ -331,7 +331,7 @@ describe('NeoAgentManager — combined query + action tools', () => {
 			const sm = makeSessionManager({ existingSession: null, createdSession: session });
 			const mgr = new NeoAgentManager(sm, makeSettingsManager());
 			const registryServers: Record<string, McpServerConfig> = {
-				'brave-search': { command: 'npx', args: ['-y', 'brave-search-mcp'] } as McpServerConfig,
+				'test-search': { command: 'npx', args: ['-y', 'test-search-mcp'] } as McpServerConfig,
 			};
 			mgr.setToolsConfig(makeMinimalQueryConfig(), makeAppMcpManager(registryServers));
 			mgr.setActionToolsConfig(makeMinimalActionConfig());
@@ -342,7 +342,7 @@ describe('NeoAgentManager — combined query + action tools', () => {
 			const servers = calls[0][0] as Record<string, McpServerConfig>;
 			expect('neo-query' in servers).toBe(true);
 			expect('neo-action' in servers).toBe(true);
-			expect('brave-search' in servers).toBe(true);
+			expect('test-search' in servers).toBe(true);
 		});
 
 		test('in-process neo-action takes precedence over registry entry with same name', async () => {
