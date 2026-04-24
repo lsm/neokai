@@ -292,4 +292,120 @@ describe('SpaceWorkflowManager', () => {
 			);
 		});
 	});
+
+	describe('postApproval validation', () => {
+		it('accepts a postApproval route targeting "task-agent" on create', () => {
+			const wf = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'WF',
+				nodes: [{ id: 'node-1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+				postApproval: { targetAgent: 'task-agent', instructions: 'merge {{pr_url}}' },
+			});
+			expect(wf.postApproval).toEqual({
+				targetAgent: 'task-agent',
+				instructions: 'merge {{pr_url}}',
+			});
+		});
+
+		it('accepts a postApproval route targeting a node agent name', () => {
+			const wf = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'WF',
+				nodes: [{ id: 'node-1', name: 'Coding', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+				postApproval: { targetAgent: 'coder', instructions: '' },
+			});
+			expect(wf.postApproval?.targetAgent).toBe('coder');
+		});
+
+		it('rejects a postApproval route whose target does not resolve', () => {
+			expect(() =>
+				manager.createWorkflow({
+					spaceId: 'space-1',
+					name: 'WF',
+					nodes: [
+						{ id: 'node-1', name: 'Coding', agents: [{ agentId: 'agent-1', name: 'coder' }] },
+					],
+					completionAutonomyLevel: 3,
+					postApproval: { targetAgent: 'ghost', instructions: '' },
+				})
+			).toThrow('"ghost"');
+		});
+
+		it('re-validates an existing postApproval route when nodes are replaced', () => {
+			const created = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'WF',
+				nodes: [
+					{
+						id: 'node-1',
+						name: 'Coding',
+						agents: [{ agentId: 'agent-1', name: 'reviewer' }],
+					},
+				],
+				completionAutonomyLevel: 3,
+				postApproval: { targetAgent: 'reviewer', instructions: '' },
+			});
+
+			// Replace nodes so `reviewer` is no longer a declared agent.
+			expect(() =>
+				manager.updateWorkflow(created.id, {
+					nodes: [
+						{
+							id: 'node-2',
+							name: 'Coding',
+							agents: [{ agentId: 'agent-2', name: 'coder' }],
+						},
+					],
+				})
+			).toThrow('existing postApproval route is no longer valid');
+		});
+
+		it('allows clearing the postApproval route with null', () => {
+			const created = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'WF',
+				nodes: [{ id: 'node-1', name: 'Coding', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+				postApproval: { targetAgent: 'task-agent', instructions: 'hi' },
+			});
+			expect(created.postApproval).toBeDefined();
+
+			const cleared = manager.updateWorkflow(created.id, { postApproval: null });
+			expect(cleared?.postApproval).toBeUndefined();
+		});
+
+		it('strips a stale postApproval route on read instead of failing', () => {
+			// Persist a route that is valid at create time, then corrupt the DB
+			// to simulate a post-hoc node rename that was never re-validated.
+			const wf = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'WF',
+				nodes: [
+					{
+						id: 'node-1',
+						name: 'Coding',
+						agents: [{ agentId: 'agent-1', name: 'reviewer' }],
+					},
+				],
+				completionAutonomyLevel: 3,
+				postApproval: { targetAgent: 'reviewer', instructions: '' },
+			});
+
+			// Rename the node agent directly in the config JSON to make the
+			// saved route stale. Manager.getWorkflow should sanitise on read.
+			const staleCfg = JSON.stringify({
+				agents: [{ agentId: 'agent-1', name: 'coder' }],
+			});
+			db.prepare(`UPDATE space_workflow_nodes SET config = ? WHERE workflow_id = ?`).run(
+				staleCfg,
+				wf.id
+			);
+
+			const fetched = manager.getWorkflow(wf.id);
+			expect(fetched).not.toBeNull();
+			expect(fetched?.postApproval).toBeUndefined();
+		});
+	});
 });

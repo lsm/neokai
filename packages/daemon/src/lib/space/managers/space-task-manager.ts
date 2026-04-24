@@ -27,6 +27,14 @@ export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStat
 	open: ['in_progress', 'blocked', 'done', 'cancelled'],
 	in_progress: ['open', 'review', 'done', 'blocked', 'cancelled'],
 	review: ['done', 'in_progress', 'cancelled', 'archived'], // Approve, reopen, cancel, or archive
+	// `approved` is the post-approval staging status added in PR 1/5 of the
+	// task-agent-as-post-approval-executor refactor. No runtime consumer
+	// transitions tasks INTO `approved` in PR 1 (intentionally: the enter
+	// edges belong to PR 2 which wires the post-approval router). The set
+	// below is conservative — enough for a manually-set `approved` row to be
+	// moved on, and enough for the `Record<SpaceTaskStatus, …>` type to
+	// accept every union member.
+	approved: ['done', 'in_progress', 'archived'],
 	done: ['in_progress', 'archived'], // Reactivate or archive
 	blocked: ['open', 'in_progress', 'archived'], // Restart allowed + archive
 	cancelled: ['open', 'in_progress', 'done', 'archived'], // Restart, complete, or archive
