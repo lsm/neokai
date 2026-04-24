@@ -194,13 +194,13 @@ describe('TaskStatusActions component', () => {
 	});
 
 	describe('pendingCheckpointType gating', () => {
-		it('hides Approve (done) and Cancel (cancelled) when paused at completion action', () => {
+		it('hides Approve (done) and Cancel (cancelled) when paused at a submit_for_approval checkpoint', () => {
 			const onTransition = vi.fn();
 			const { queryByTestId, getByTestId } = render(
 				<TaskStatusActions
 					status="review"
 					onTransition={onTransition}
-					pendingCheckpointType="completion_action"
+					pendingCheckpointType="task_completion"
 				/>
 			);
 			// "review -> done" / "review -> cancelled" are owned by the banner now

@@ -1471,10 +1471,15 @@ describe('createSpaceAgentToolHandlers — list_tasks search/pagination/compact'
 });
 
 // ---------------------------------------------------------------------------
-// approve_completion_action
+// approve_task — plain review→done / review→approved path
 // ---------------------------------------------------------------------------
+//
+// The `approve_completion_action` MCP tool was deleted in PR 4/5 together with
+// the completion-action runtime pipeline. Residual DB rows that still carry
+// `pendingCheckpointType='completion_action'` are swept into `task_completion`
+// by migration (see PR 5) and do not round-trip through the MCP surface.
 
-describe('createSpaceAgentToolHandlers — approve_completion_action', () => {
+describe('createSpaceAgentToolHandlers — approve_task plain path', () => {
 	let ctx: TestCtx;
 	beforeEach(() => {
 		ctx = makeCtx();
@@ -1483,136 +1488,13 @@ describe('createSpaceAgentToolHandlers — approve_completion_action', () => {
 		ctx.db.close();
 	});
 
-	test('rejects tasks that are not at a completion-action checkpoint', async () => {
-		const createResult = await makeHandlers(ctx).create_standalone_task({
-			title: 'no pause',
-			description: 'open task',
-		});
-		const taskId = JSON.parse(createResult.content[0].text).task.id;
-
-		// Flip status to review but leave pendingCheckpointType null — this is the
-		// case where approve_task would apply, but approve_completion_action must
-		// decline so callers don't accidentally bypass the runtime resume path.
-		ctx.taskRepo.updateTask(taskId, { status: 'review' });
-
-		const result = await makeHandlers(ctx).approve_completion_action({
-			task_id: taskId,
-			reason: 'whatever',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('not paused at a completion-action checkpoint');
-	});
-
-	test('rejects tasks not in review status', async () => {
-		const createResult = await makeHandlers(ctx).create_standalone_task({
-			title: 'open task',
-			description: 'not in review',
-		});
-		const taskId = JSON.parse(createResult.content[0].text).task.id;
-
-		const result = await makeHandlers(ctx).approve_completion_action({
-			task_id: taskId,
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain("not 'review'");
-	});
-
-	test('rejects tasks that do not belong to this space', async () => {
-		// Seed a task in a different space so we can query by that ID.
-		const otherSpaceId = 'space-other';
-		seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-workspace');
-		const taskId = `task-other-${Math.random().toString(36).slice(2)}`;
-		ctx.db
-			.prepare(
-				`INSERT INTO space_tasks (id, space_id, task_number, title, description,
-					status, priority, depends_on, created_at, updated_at,
-					pending_checkpoint_type, pending_action_index)
-				 VALUES (?, ?, 1, 'Foreign task', '', 'review', 'normal', '[]', ?, ?, 'completion_action', 0)`
-			)
-			.run(taskId, otherSpaceId, Date.now(), Date.now());
-
-		const result = await makeHandlers(ctx).approve_completion_action({ task_id: taskId });
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('does not belong to this space');
-	});
-
-	test('returns error when task not found', async () => {
-		const result = await makeHandlers(ctx).approve_completion_action({
-			task_id: 'task-missing',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('task-missing');
-	});
-
-	test('registers the tool in the MCP server', () => {
-		const server = createSpaceAgentMcpServer({
-			spaceId: ctx.spaceId,
-			runtime: ctx.runtime,
-			workflowManager: ctx.workflowManager,
-			taskRepo: ctx.taskRepo,
-			nodeExecutionRepo: ctx.nodeExecutionRepo,
-			workflowRunRepo: ctx.workflowRunRepo,
-			taskManager: ctx.taskManager,
-			spaceAgentManager: ctx.agentManager,
-		});
-		const registered = (server.instance as unknown as { _registeredTools: Record<string, unknown> })
-			._registeredTools;
-		expect(registered).toHaveProperty('approve_completion_action');
-		// approve_task remains for plain review→done approvals that are not
-		// paused at a completion-action checkpoint.
-		expect(registered).toHaveProperty('approve_task');
-	});
-});
-
-// ---------------------------------------------------------------------------
-// approve_task — completion-action checkpoint guard
-// ---------------------------------------------------------------------------
-
-describe('createSpaceAgentToolHandlers — approve_task guard', () => {
-	let ctx: TestCtx;
-	beforeEach(() => {
-		ctx = makeCtx();
-	});
-	afterEach(() => {
-		ctx.db.close();
-	});
-
-	test('rejects tasks paused at a completion-action checkpoint', async () => {
-		// Bypass guard: a plain `setTaskStatus('done')` on a completion-action
-		// checkpoint would skip the pending action(s) entirely. approve_task
-		// must decline and route callers to approve_completion_action.
-		const createResult = await makeHandlers(ctx).create_standalone_task({
-			title: 'paused at completion action',
-			description: 'needs resume path',
-		});
-		const taskId = JSON.parse(createResult.content[0].text).task.id;
-		ctx.taskRepo.updateTask(taskId, {
-			status: 'review',
-			pendingCheckpointType: 'completion_action',
-			pendingActionIndex: 0,
-		});
-
-		const result = await makeHandlers(ctx).approve_task({
-			task_id: taskId,
-			reason: 'lgtm',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('completion-action checkpoint');
-		expect(parsed.error).toContain('approve_completion_action');
-	});
-
-	test('allows plain review→done approvals (no completion-action checkpoint)', async () => {
+	test('allows plain review→done approvals (no pending checkpoint)', async () => {
 		const createResult = await makeHandlers(ctx).create_standalone_task({
 			title: 'plain review task',
 			description: 'no pending action',
 		});
 		const taskId = JSON.parse(createResult.content[0].text).task.id;
-		// Plain review (pendingCheckpointType is null) — approve_task should proceed.
+		// Plain review (pendingCheckpointType is null) — approve_task proceeds.
 		ctx.taskRepo.updateTask(taskId, { status: 'review' });
 
 		const result = await makeHandlers(ctx).approve_task({

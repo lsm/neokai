@@ -207,6 +207,16 @@ class MockTaskAgentManager {
 	async interruptBySessionId(agentSessionId: string): Promise<void> {
 		this.interruptedSessions.push(agentSessionId);
 	}
+
+	// PR 3/5 introduced post-approval awareness injection via
+	// `injectIntoTaskAgent`. These tests do not assert on delivery; return a
+	// trivial "no session" result so the runtime's best-effort branch is taken.
+	async injectIntoTaskAgent(
+		_taskId: string,
+		_awarenessBody: string
+	): Promise<{ injected: boolean; reason?: string }> {
+		return { injected: false, reason: 'no-session' };
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1223,9 +1233,11 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 		});
 
 		test('reportedStatus alone is enough to mark a run for completion resolution', async () => {
-			// Even when task.status is non-terminal, a non-null reportedStatus
-			// signals the runtime to resolve completion via completion-actions on
-			// the next tick.
+			// Even when task.status has not yet flipped to a terminal state, a
+			// non-null `reportedStatus` signals the runtime to resolve completion
+			// on the next tick. After PR 2/5 the resolution path is
+			// `in_progress → approved → done` via `dispatchPostApproval`
+			// (completion-actions removed in PR 4/5).
 			const rt = makeRuntimeWithTam();
 
 			const workflow = workflowManager.createWorkflow({
@@ -1244,8 +1256,11 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			// Agent reported result via report_result; task.status not yet flipped.
+			// Tasks in real runs move to `in_progress` when their agent spawns;
+			// the mock TAM here skips that so we do it explicitly before setting
+			// `reportedStatus`. The transition validator rejects `open → approved`.
 			taskRepo.updateTask(tasks[0].id, {
+				status: 'in_progress',
 				reportedStatus: 'done',
 				reportedSummary: 'work complete',
 			});

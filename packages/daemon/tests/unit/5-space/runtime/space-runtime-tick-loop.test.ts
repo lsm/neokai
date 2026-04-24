@@ -161,6 +161,11 @@ function makeMockTaskAgentManager(
 		rehydrate: overrides.rehydrate ?? (async () => {}),
 		cancelBySessionId: overrides.cancelBySessionId ?? (() => {}),
 		interruptBySessionId: overrides.interruptBySessionId ?? (async () => {}),
+		// PR 3/5 added a post-approval awareness injection via
+		// `injectIntoTaskAgent`. The tick-loop mock is not exercising delivery,
+		// so return a trivial "not injected" result — production treats this as
+		// best-effort anyway.
+		injectIntoTaskAgent: async () => ({ injected: false, reason: 'no-session' }),
 		_spawned: spawned,
 	};
 }

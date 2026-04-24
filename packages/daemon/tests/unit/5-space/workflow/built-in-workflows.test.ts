@@ -628,25 +628,15 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
 		expect(prompt).toContain('downstream coder');
 	});
 
-	test('Task Dispatcher node carries a verify-tasks-created completion action', () => {
+	test('Task Dispatcher node carries no completionActions (pipeline deleted in PR 4/5)', () => {
 		const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
 			(n) => n.name === 'Task Dispatcher'
 		)!;
-		expect(dispatcherNode.completionActions).toBeDefined();
-		expect(dispatcherNode.completionActions).toHaveLength(1);
-		const action = dispatcherNode.completionActions![0];
-		expect(action.id).toBe('verify-tasks-created');
-		expect(action.type).toBe('script');
-		// Safe verification — should run without elevated autonomy.
-		expect(action.requiredLevel).toBe(1);
-		// Script must use the injected env vars.
-		expect(action.type === 'script' && action.script).toBeDefined();
-		if (action.type === 'script') {
-			expect(action.script).toContain('NEOKAI_DB_PATH');
-			expect(action.script).toContain('NEOKAI_SPACE_ID');
-			expect(action.script).toContain('NEOKAI_WORKFLOW_START_ISO');
-			expect(action.script).toContain('space_tasks');
-		}
+		// The completion-action runtime pipeline (including
+		// `verify-tasks-created`) was removed in PR 4/5 — post-approval work is
+		// now handled by `PostApprovalRouter` via the `postApproval` field.
+		// `completionActions` is either undefined or empty.
+		expect(dispatcherNode.completionActions ?? []).toEqual([]);
 	});
 
 	test('workflow description describes stacked PR chain output', () => {
@@ -1060,15 +1050,16 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(names).toContain(PLAN_AND_DECOMPOSE_WORKFLOW.name);
 	});
 
-	test('PLAN_AND_DECOMPOSE_WORKFLOW seeded Task Dispatcher preserves completionActions', async () => {
+	test('PLAN_AND_DECOMPOSE_WORKFLOW seeded Task Dispatcher carries no completionActions', async () => {
+		// Completion actions were deleted in PR 4/5 — the seeded workflow's
+		// nodes must not carry any. Post-approval work runs through
+		// `PostApprovalRouter` on the `approved → done` boundary instead.
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
 		const dispatcherNode = wf.nodes.find((n) => n.name === 'Task Dispatcher')!;
-		expect(dispatcherNode.completionActions).toBeDefined();
-		expect(dispatcherNode.completionActions).toHaveLength(1);
-		expect(dispatcherNode.completionActions![0].id).toBe('verify-tasks-created');
+		expect(dispatcherNode.completionActions ?? []).toEqual([]);
 	});
 
 	test('all seeded workflows have the real spaceId assigned', async () => {
