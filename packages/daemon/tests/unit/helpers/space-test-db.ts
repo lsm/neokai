@@ -74,6 +74,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			template_hash TEXT DEFAULT NULL,
 			instructions TEXT DEFAULT NULL,
 			completion_autonomy_level INTEGER NOT NULL DEFAULT 3,
+			post_approval TEXT DEFAULT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -195,7 +196,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'open'
-				CHECK(status IN ('open', 'in_progress', 'review', 'done', 'blocked', 'cancelled', 'archived')),
+				CHECK(status IN ('open', 'in_progress', 'review', 'approved', 'done', 'blocked', 'cancelled', 'archived')),
 			priority TEXT NOT NULL DEFAULT 'normal'
 				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
 			labels TEXT NOT NULL DEFAULT '[]',
@@ -217,6 +218,9 @@ export function createSpaceTables(db: BunDatabase): void {
 			pending_completion_submitted_by_node_id TEXT DEFAULT NULL,
 			pending_completion_submitted_at INTEGER DEFAULT NULL,
 			pending_completion_reason TEXT DEFAULT NULL,
+			post_approval_session_id TEXT DEFAULT NULL,
+			post_approval_started_at INTEGER DEFAULT NULL,
+			post_approval_blocked_reason TEXT DEFAULT NULL,
 			archived_at INTEGER,
 			created_at INTEGER NOT NULL,
 			started_at INTEGER,

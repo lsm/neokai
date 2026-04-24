@@ -8,6 +8,14 @@ export const VALID_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> 
 	open: ['in_progress', 'blocked', 'done', 'cancelled'],
 	in_progress: ['open', 'review', 'done', 'blocked', 'cancelled'],
 	review: ['done', 'in_progress', 'cancelled', 'archived'],
+	// `approved` is the post-approval staging status added in PR 1/5 of the
+	// task-agent-as-post-approval-executor refactor. No runtime consumer
+	// produces this status yet — PR 2 wires it in. Listed here with a
+	// conservative transition set (escape hatches to `done`/`in_progress`/
+	// `archived`) so that manually-set `approved` rows can still be moved
+	// along, and so `Record<SpaceTaskStatus, SpaceTaskStatus[]>` typechecks.
+	// Deliberately NOT reachable from `review` yet — PR 2 adds that edge.
+	approved: ['done', 'in_progress', 'archived'],
 	done: ['in_progress', 'archived'],
 	blocked: ['open', 'in_progress', 'archived'],
 	cancelled: ['open', 'in_progress', 'done', 'archived'],
@@ -31,6 +39,12 @@ export const TRANSITION_LABELS: Record<string, string> = {
 	'review->in_progress': 'Reopen',
 	'review->cancelled': 'Cancel',
 	'review->archived': 'Archive',
+	// PR 1/5 schema-only: `approved` has no user-facing enter edge yet. Labels
+	// for `approved -> X` are defined here so that if the status is manually
+	// set (e.g. tests) the Task pane still renders readable action buttons.
+	'approved->done': 'Mark Done',
+	'approved->in_progress': 'Reopen',
+	'approved->archived': 'Archive',
 	'done->in_progress': 'Reopen',
 	'done->archived': 'Archive',
 	'blocked->open': 'Reopen',
@@ -48,6 +62,7 @@ export const TRANSITION_LABELS: Record<string, string> = {
 const TRANSITION_STYLES: Record<string, string> = {
 	in_progress: 'text-blue-300 hover:text-blue-200',
 	review: 'text-purple-300 hover:text-purple-200',
+	approved: 'text-emerald-300 hover:text-emerald-200',
 	done: 'text-green-300 hover:text-green-200',
 	blocked: 'text-amber-300 hover:text-amber-200',
 	cancelled: 'text-red-300 hover:text-red-200',

@@ -292,6 +292,20 @@ export class SpaceTaskRepository {
 			fields.push('reported_summary = ?');
 			values.push(params.reportedSummary ?? null);
 		}
+		// Post-approval columns (PR 1/5 of the post-approval refactor — no
+		// runtime consumer yet; PR 2 wires them up).
+		if (params.postApprovalSessionId !== undefined) {
+			fields.push('post_approval_session_id = ?');
+			values.push(params.postApprovalSessionId ?? null);
+		}
+		if (params.postApprovalStartedAt !== undefined) {
+			fields.push('post_approval_started_at = ?');
+			values.push(params.postApprovalStartedAt ?? null);
+		}
+		if (params.postApprovalBlockedReason !== undefined) {
+			fields.push('post_approval_blocked_reason = ?');
+			values.push(params.postApprovalBlockedReason ?? null);
+		}
 
 		if (fields.length > 0) {
 			fields.push('updated_at = ?');
@@ -360,6 +374,13 @@ export class SpaceTaskRepository {
 	 * Returns tasks with status `in_progress` or `blocked` that have a
 	 * non-null `task_agent_session_id`. Used by `TaskAgentManager.rehydrate()` on
 	 * daemon restart to find Task Agent sessions that need to be restarted.
+	 *
+	 * NOTE (PR 2 of post-approval refactor): when the `approved` status starts
+	 * carrying `post_approval_session_id` for in-flight post-approval work, the
+	 * status filter here must widen to include `'approved'` so those sessions
+	 * rehydrate too. This PR (1/5) is schema-only and no task can reach
+	 * `'approved'` yet, so keeping the current filter preserves the
+	 * no-behaviour-change invariant.
 	 */
 	listActiveWithTaskAgentSession(): SpaceTask[] {
 		const stmt = this.db.prepare(
@@ -438,6 +459,10 @@ export class SpaceTaskRepository {
 			pendingCompletionReason: (row.pending_completion_reason as string | null) ?? null,
 			reportedStatus: (row.reported_status as SpaceTask['reportedStatus']) ?? null,
 			reportedSummary: (row.reported_summary as string | null) ?? null,
+			// Post-approval columns (PR 1/5 — schema only).
+			postApprovalSessionId: (row.post_approval_session_id as string | null) ?? null,
+			postApprovalStartedAt: (row.post_approval_started_at as number | null) ?? null,
+			postApprovalBlockedReason: (row.post_approval_blocked_reason as string | null) ?? null,
 			createdAt: row.created_at as number,
 			startedAt: (row.started_at as number | null) ?? null,
 			completedAt: (row.completed_at as number | null) ?? null,

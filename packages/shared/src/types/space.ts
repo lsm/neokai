@@ -151,18 +151,26 @@ export interface UpdateSpaceParams {
 /**
  * Space task status
  *
- * - `open`       — task is queued and waiting to be picked up
+ * - `open`        — task is queued and waiting to be picked up
  * - `in_progress` — a Task Agent session is actively working on this task
- * - `review`     — workflow agents completed; awaiting human review/approval (supervised mode)
- * - `done`       — task completed successfully
- * - `blocked`    — task requires human attention or intervention
- * - `cancelled`  — task was cancelled and will not be completed
- * - `archived`   — task is archived (soft-delete, `archivedAt` is stamped)
+ * - `review`      — workflow agents completed; awaiting human review/approval (supervised mode)
+ * - `approved`    — work has been approved (human or auto_policy); a post-approval
+ *                   executor (e.g. Task Agent running a `postApproval` route such
+ *                   as a PR merge) may still be executing before the task reaches
+ *                   its terminal `done` state. No runtime consumer exists yet —
+ *                   PR 2 of the task-agent-as-post-approval-executor refactor
+ *                   wires this status in. See
+ *                   `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`.
+ * - `done`        — task completed successfully
+ * - `blocked`     — task requires human attention or intervention
+ * - `cancelled`   — task was cancelled and will not be completed
+ * - `archived`    — task is archived (soft-delete, `archivedAt` is stamped)
  */
 export type SpaceTaskStatus =
 	| 'open'
 	| 'in_progress'
 	| 'review'
+	| 'approved'
 	| 'done'
 	| 'blocked'
 	| 'cancelled'
@@ -336,6 +344,30 @@ export interface SpaceTask {
 	 * Summary the end-node agent provided alongside `reportedStatus`. Null until reported.
 	 */
 	reportedSummary: string | null;
+	/**
+	 * Session ID of the post-approval executor (e.g. the Task Agent session running
+	 * the workflow's `postApproval` route) while it is executing. Null when no
+	 * post-approval action is in progress.
+	 *
+	 * Schema only in PR 1 of the task-agent-as-post-approval-executor refactor; no
+	 * runtime consumer yet.
+	 */
+	postApprovalSessionId?: string | null;
+	/**
+	 * Timestamp (ms since epoch) when the post-approval executor started. Null when
+	 * no post-approval action has run for this task.
+	 *
+	 * Schema only in PR 1; no runtime consumer yet.
+	 */
+	postApprovalStartedAt?: number | null;
+	/**
+	 * Free-form reason captured when a post-approval executor cannot proceed (e.g.
+	 * human rejected, target agent unavailable, script failure). Null when not
+	 * blocked.
+	 *
+	 * Schema only in PR 1; no runtime consumer yet.
+	 */
+	postApprovalBlockedReason?: string | null;
 	/** Last update timestamp (milliseconds since epoch) */
 	updatedAt: number;
 }
@@ -479,6 +511,21 @@ export interface UpdateSpaceTaskParams {
 	reportedStatus?: SpaceReportedStatus | null;
 	/** Agent-reported summary from `report_result`; null to clear */
 	reportedSummary?: string | null;
+	/**
+	 * Session ID of the post-approval executor; null to clear.
+	 * Schema only in PR 1 of the post-approval refactor; no runtime consumer yet.
+	 */
+	postApprovalSessionId?: string | null;
+	/**
+	 * Timestamp (ms) when the post-approval executor started; null to clear.
+	 * Schema only in PR 1; no runtime consumer yet.
+	 */
+	postApprovalStartedAt?: number | null;
+	/**
+	 * Reason a post-approval action is blocked; null to clear.
+	 * Schema only in PR 1; no runtime consumer yet.
+	 */
+	postApprovalBlockedReason?: string | null;
 }
 
 /**
@@ -1051,6 +1098,41 @@ export interface WorkflowNodeInput {
 }
 
 /**
+ * Describes a post-approval route — a handoff from an end-node's approval
+ * signal to a downstream executor that continues work **after** the task is
+ * approved (e.g. merging a PR, publishing a release, running a verification
+ * script). The route is declarative and lives on the workflow definition; the
+ * runtime routes the structured signal to `targetAgent` with an `instructions`
+ * string that supports `{{identifier}}` template interpolation.
+ *
+ * Added in PR 1 of the task-agent-as-post-approval-executor refactor. No
+ * runtime consumer reads this field yet — PR 2 wires the
+ * `PostApprovalRouter` and `mark_complete` tool. See
+ * `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`
+ * §1.1 / §1.6.
+ */
+export interface PostApprovalRoute {
+	/**
+	 * Name of the agent that should execute the post-approval action.
+	 *
+	 *   - `'task-agent'`                    — deliver to the orchestration Task Agent.
+	 *   - any `WorkflowNodeAgent.name` in  — deliver to the declared workflow
+	 *     this workflow's `nodes[*].agents`.
+	 *
+	 * The validator (`post-approval-validator.ts`) rejects unknown targets at
+	 * workflow create/update time and disables stale routes at load time.
+	 */
+	targetAgent: string;
+	/**
+	 * Instruction template delivered to `targetAgent` when the end node signals
+	 * approval. Supports `{{identifier}}` single-pass substitution against the
+	 * runtime context assembled by the PostApprovalRouter. See
+	 * `post-approval-template.ts` for the template grammar.
+	 */
+	instructions: string;
+}
+
+/**
  * A named, reusable workflow definition within a Space.
  * Workflows are collaboration graphs: nodes are agent groups, channels are communication paths.
  * The SpaceRuntime executes workflows by creating SpaceWorkflowRun instances.
@@ -1135,6 +1217,13 @@ export interface SpaceWorkflow {
 	 * `undefined` when no template tracking is active.
 	 */
 	templateHash?: string;
+	/**
+	 * Optional post-approval route — describes which agent should act on the
+	 * end-node's approval signal, with an instruction template. See
+	 * {@link PostApprovalRoute}. Added in PR 1 of the post-approval refactor;
+	 * no runtime consumer yet (PR 2 wires it up).
+	 */
+	postApproval?: PostApprovalRoute;
 }
 
 /**
@@ -1185,6 +1274,11 @@ export interface CreateSpaceWorkflowParams {
 	 * Stored for future drift detection.
 	 */
 	templateHash?: string;
+	/**
+	 * Optional post-approval route. See {@link PostApprovalRoute}.
+	 * Schema only in PR 1 of the post-approval refactor; no runtime consumer yet.
+	 */
+	postApproval?: PostApprovalRoute;
 }
 
 /**
@@ -1236,6 +1330,11 @@ export interface UpdateSpaceWorkflowParams {
 	/** Update template tracking (used when syncing from a template). */
 	templateName?: string | null;
 	templateHash?: string | null;
+	/**
+	 * Update the workflow's post-approval route. Pass `null` to clear.
+	 * Schema only in PR 1 of the post-approval refactor; no runtime consumer yet.
+	 */
+	postApproval?: PostApprovalRoute | null;
 }
 
 /**

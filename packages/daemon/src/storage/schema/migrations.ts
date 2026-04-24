@@ -467,6 +467,16 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   cleanup. Runs strictly *after* M101 so the seed step still has the
 	//   legacy data to copy.
 	runMigration102(db);
+
+	// Migration 103: PR 1/5 of the task-agent-as-post-approval-executor refactor
+	//   (docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md).
+	//   Schema-only — no runtime consumer yet.
+	//   Step 1: widen the `space_tasks.status` CHECK constraint to include the
+	//     new `'approved'` value.
+	//   Steps 2–4: add three nullable columns on `space_tasks`:
+	//     `post_approval_session_id`, `post_approval_started_at`,
+	//     `post_approval_blocked_reason`.
+	runMigration103(db);
 }
 
 /**
@@ -6878,5 +6888,212 @@ export function runMigration102(db: BunDatabase): void {
 		).run(JSON.stringify(settings));
 	} catch {
 		// Swallow — same policy as runMigration12.
+	}
+}
+
+/**
+ * Migration 103 — PR 1/5 of the task-agent-as-post-approval-executor refactor.
+ *
+ * See `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`
+ * (§1.3 status, §4.4 migration). Schema-only — no runtime consumer reads the
+ * `'approved'` value or the three new columns in this PR. PR 2 wires them up.
+ *
+ * Changes:
+ *   1. Widen the `space_tasks.status` CHECK constraint so `'approved'` is a
+ *      legal status value alongside the existing
+ *      `open | in_progress | review | done | blocked | cancelled | archived`.
+ *      SQLite cannot ALTER a CHECK constraint in place, so the full
+ *      table-rebuild pattern used by M99 is reused here.
+ *   2. Add `space_tasks.post_approval_session_id TEXT NULL`.
+ *   3. Add `space_tasks.post_approval_started_at INTEGER NULL`.
+ *   4. Add `space_tasks.post_approval_blocked_reason TEXT NULL`.
+ *   5. Add `space_workflows.post_approval TEXT NULL` — stores the optional
+ *      `PostApprovalRoute` as a JSON blob so workflow CRUD round-trips preserve
+ *      the new field. Shape: `{"targetAgent": "...", "instructions": "..."}`.
+ *
+ * No backfill: at migration time all existing rows have statuses that do not
+ * include `'approved'`, and the three new columns are nullable.
+ *
+ * Idempotent: re-running is a no-op — the rebuild is skipped when the current
+ * CREATE TABLE SQL already advertises `'approved'`, and each ADD COLUMN is
+ * guarded by `tableHasColumn`.
+ */
+export function runMigration103(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) {
+		// No `space_tasks` yet — nothing to rebuild. In the full
+		// `runMigrations` pipeline M29 creates this table long before M103
+		// runs, so this branch only fires when `runMigration103` is invoked
+		// standalone on a DB that has not had M29 applied (tests / dev
+		// tooling). Skipping here is safe: once M29 creates the table any
+		// later M103 invocation will enter the rebuild path below.
+		return;
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Step 1: rebuild `space_tasks` to widen the `status` CHECK constraint.
+	// ─────────────────────────────────────────────────────────────────────────
+	const master = db
+		.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='space_tasks'`)
+		.get() as { sql?: string } | undefined;
+	const currentSql = master?.sql ?? '';
+
+	// Detection: rebuild needed if the CHECK clause does not already include
+	// `'approved'`. We match on the substring so the migration is robust to
+	// whitespace / ordering differences between older and newer table rebuilds.
+	const hasApprovedInCheck =
+		currentSql.includes('status IN (') && /status\s+IN\s*\([^)]*'approved'/.test(currentSql);
+
+	if (currentSql && !hasApprovedInCheck) {
+		// Copy every column that exists on the current schema — the intersection
+		// of the post-M99 baseline and any extra columns added by later
+		// migrations. This keeps the rebuild safe when the running DB has a
+		// slightly different shape than the one used in tests.
+		const baseColumns = [
+			'id',
+			'space_id',
+			'task_number',
+			'title',
+			'description',
+			'status',
+			'priority',
+			'labels',
+			'workflow_run_id',
+			'preferred_workflow_id',
+			'created_by_task_id',
+			'result',
+			'depends_on',
+			'active_session',
+			'task_agent_session_id',
+			'approval_source',
+			'approval_reason',
+			'approved_at',
+			'block_reason',
+			'archived_at',
+			'created_at',
+			'started_at',
+			'completed_at',
+			'updated_at',
+			'pending_action_index',
+			'pending_checkpoint_type',
+			'reported_status',
+			'reported_summary',
+			'pending_completion_submitted_by_node_id',
+			'pending_completion_submitted_at',
+			'pending_completion_reason',
+		];
+		const existingColumns = new Set(
+			(db.prepare(`PRAGMA table_info('space_tasks')`).all() as Array<{ name: string }>).map(
+				(r) => r.name
+			)
+		);
+		const copyColumns = baseColumns.filter((c) => existingColumns.has(c));
+		const copyColsSql = copyColumns.join(', ');
+
+		// Preserve the indexes that exist on the current table so the rebuild
+		// doesn't silently drop them. Mirrors the M99 rebuild.
+		const existingIndexDdl = (
+			db
+				.prepare(
+					`SELECT sql FROM sqlite_master
+					 WHERE type='index' AND tbl_name='space_tasks' AND sql IS NOT NULL`
+				)
+				.all() as Array<{ sql: string }>
+		)
+			.map((r) => r.sql)
+			.filter((sql) => !!sql);
+
+		db.exec('PRAGMA foreign_keys = OFF');
+		db.exec('BEGIN');
+		try {
+			db.exec(`
+				CREATE TABLE space_tasks_m103_new (
+					id TEXT PRIMARY KEY,
+					space_id TEXT NOT NULL,
+					task_number INTEGER NOT NULL,
+					title TEXT NOT NULL,
+					description TEXT NOT NULL DEFAULT '',
+					status TEXT NOT NULL DEFAULT 'open'
+						CHECK(status IN ('open', 'in_progress', 'review', 'approved', 'done', 'blocked', 'cancelled', 'archived')),
+					priority TEXT NOT NULL DEFAULT 'normal'
+						CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+					labels TEXT NOT NULL DEFAULT '[]',
+					workflow_run_id TEXT,
+					preferred_workflow_id TEXT,
+					created_by_task_id TEXT,
+					result TEXT,
+					depends_on TEXT NOT NULL DEFAULT '[]',
+					active_session TEXT
+						CHECK(active_session IN ('worker', 'leader')),
+					task_agent_session_id TEXT,
+					approval_source TEXT,
+					approval_reason TEXT,
+					approved_at INTEGER,
+					block_reason TEXT,
+					archived_at INTEGER,
+					created_at INTEGER NOT NULL,
+					started_at INTEGER,
+					completed_at INTEGER,
+					updated_at INTEGER NOT NULL,
+					pending_action_index INTEGER DEFAULT NULL,
+					pending_checkpoint_type TEXT DEFAULT NULL
+						CHECK(pending_checkpoint_type IN ('completion_action', 'gate', 'task_completion')),
+					reported_status TEXT DEFAULT NULL
+						CHECK(reported_status IS NULL OR reported_status IN ('done', 'blocked', 'cancelled')),
+					reported_summary TEXT DEFAULT NULL,
+					pending_completion_submitted_by_node_id TEXT DEFAULT NULL,
+					pending_completion_submitted_at INTEGER DEFAULT NULL,
+					pending_completion_reason TEXT DEFAULT NULL,
+					FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+					FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL
+				)
+			`);
+			db.exec(
+				`INSERT INTO space_tasks_m103_new (${copyColsSql}) SELECT ${copyColsSql} FROM space_tasks`
+			);
+			db.exec(`DROP TABLE space_tasks`);
+			db.exec(`ALTER TABLE space_tasks_m103_new RENAME TO space_tasks`);
+			for (const ddl of existingIndexDdl) {
+				const normalized = ddl.replace(
+					/^CREATE (UNIQUE )?INDEX /i,
+					(_m, unique) => `CREATE ${unique ?? ''}INDEX IF NOT EXISTS `
+				);
+				db.exec(normalized);
+			}
+			db.exec('COMMIT');
+		} catch (err) {
+			db.exec('ROLLBACK');
+			throw err;
+		} finally {
+			db.exec('PRAGMA foreign_keys = ON');
+		}
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Steps 2–4: add the three post-approval columns. Nullable, no backfill.
+	// ─────────────────────────────────────────────────────────────────────────
+	if (!tableHasColumn(db, 'space_tasks', 'post_approval_session_id')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN post_approval_session_id TEXT DEFAULT NULL`);
+	}
+	if (!tableHasColumn(db, 'space_tasks', 'post_approval_started_at')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN post_approval_started_at INTEGER DEFAULT NULL`);
+	}
+	if (!tableHasColumn(db, 'space_tasks', 'post_approval_blocked_reason')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN post_approval_blocked_reason TEXT DEFAULT NULL`);
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Step 5: add `space_workflows.post_approval` JSON column.
+	//
+	// Stores the optional `PostApprovalRoute` object as a JSON string. NULL
+	// (the default) means the workflow has no post-approval route configured.
+	// Guarded so re-runs are no-ops, and skipped when the parent table does
+	// not yet exist (very fresh DB — the later seeders will pick up the new
+	// column once migration 29 has created the table).
+	// ─────────────────────────────────────────────────────────────────────────
+	if (
+		tableExists(db, 'space_workflows') &&
+		!tableHasColumn(db, 'space_workflows', 'post_approval')
+	) {
+		db.exec(`ALTER TABLE space_workflows ADD COLUMN post_approval TEXT DEFAULT NULL`);
 	}
 }
