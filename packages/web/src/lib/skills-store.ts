@@ -34,6 +34,15 @@ class SkillsStore {
 	/** Loading state */
 	readonly isLoading = signal<boolean>(false);
 
+	/**
+	 * Flips to `true` the first time the LiveQuery snapshot handler fires and
+	 * stays true until unsubscribe. Use this (not `skills.length > 0`) when you
+	 * need to distinguish "the subscription has returned" from "there happen to
+	 * be zero skills" — e.g. to suppress UI annotations during the initial
+	 * mount while showing them correctly in the zero-skills steady state.
+	 */
+	readonly loaded = signal<boolean>(false);
+
 	/** Error state — set when subscribe() fails */
 	readonly error = signal<string | null>(null);
 
@@ -82,6 +91,10 @@ class SkillsStore {
 				if (!this.activeSubscriptionIds.has(SUBSCRIPTION_ID)) return; // stale-event guard
 				this.skills.value = event.rows as AppSkill[];
 				this.isLoading.value = false;
+				// Flip loaded=true on the first snapshot so consumers can tell
+				// "we've heard back from the server, there genuinely are zero
+				// skills" apart from "we haven't heard back yet."
+				this.loaded.value = true;
 			});
 			this.cleanups.push(unsubSnapshot);
 			this.cleanups.push(() => this.activeSubscriptionIds.delete(SUBSCRIPTION_ID));
@@ -164,6 +177,7 @@ class SkillsStore {
 		}
 		this.cleanups = [];
 		this.isLoading.value = false;
+		this.loaded.value = false;
 		this.error.value = null;
 	}
 
