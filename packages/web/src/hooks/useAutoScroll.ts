@@ -66,11 +66,15 @@ export function useAutoScroll({
 	const prevMessageCountRef = useRef<number>(0);
 	const hasScrolledOnInitialLoad = useRef(false);
 
-	// Scroll to bottom function - instant by default during streaming, smooth when user clicks
+	// Scroll to bottom function - instant by default during streaming, smooth when user clicks.
+	// Uses `block: 'end'` so the end sentinel is aligned to the container's bottom edge,
+	// which — combined with `scroll-padding-bottom` on the scroll container — parks the last
+	// message just above the floating composer instead of underneath it.
 	const scrollToBottom = useCallback(
 		(smooth = false) => {
 			endRef.current?.scrollIntoView({
 				behavior: smooth ? 'smooth' : 'instant',
+				block: 'end',
 			});
 		},
 		[endRef]

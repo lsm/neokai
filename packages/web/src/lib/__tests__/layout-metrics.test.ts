@@ -6,22 +6,26 @@ import {
 } from '../layout-metrics';
 
 describe('layout-metrics', () => {
-	it('allows the last message to reach the floating composer for normal footer heights', () => {
+	it('clamps to the floor when the footer is shorter than the baseline clearance', () => {
+		// Padding must always be at least MIN so the last message clears a
+		// normally-sized composer even before the live measurement has landed.
 		expect(getMessagesBottomPaddingPx(48)).toBe(MIN_MESSAGES_BOTTOM_PADDING_PX);
 		expect(getMessagesBottomPaddingPx(110)).toBe(MIN_MESSAGES_BOTTOM_PADDING_PX);
 	});
 
-	it('grows padding when the composer expands to multiple lines', () => {
-		expect(getMessagesBottomPaddingPx(134)).toBe(118);
-		expect(getMessagesBottomPaddingPx(158)).toBe(142);
+	it('keeps the last message fully above the composer when it grows', () => {
+		// Padding tracks the live footer height plus a small clearance buffer so
+		// no part of the newest message can sit behind the composer.
+		expect(getMessagesBottomPaddingPx(134)).toBe(150);
+		expect(getMessagesBottomPaddingPx(158)).toBe(174);
 	});
 
 	it('adds queue-overlay headroom rows', () => {
-		expect(getMessagesBottomPaddingPx(158, 3)).toBe(154);
+		expect(getMessagesBottomPaddingPx(158, 3)).toBe(186);
 	});
 
 	it('caps queue-overlay headroom rows', () => {
-		expect(getMessagesBottomPaddingPx(158, 99)).toBe(174);
+		expect(getMessagesBottomPaddingPx(158, 99)).toBe(206);
 	});
 
 	it('caps very tall footer padding at the hard maximum', () => {
