@@ -30,6 +30,7 @@ import {
 	getBuiltInGateScript,
 	seedBuiltInWorkflows,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
+import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash.ts';
 import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 import {
 	exportWorkflow,
@@ -1104,6 +1105,195 @@ describe('seedBuiltInWorkflows()', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const workflows = manager.listWorkflows(SPACE_ID);
 		expect(workflows).toHaveLength(5);
+	});
+
+	// ─── PR 3/5: postApproval threading ─────────────────────────────────────
+
+	test('threads postApproval through to Coding, Research, QA seeded rows', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const workflows = manager.listWorkflows(SPACE_ID);
+		const assertPostApproval = (name: string) => {
+			const wf = workflows.find((w) => w.name === name);
+			expect(wf, `workflow "${name}" must be seeded`).toBeDefined();
+			expect(wf!.postApproval, `"${name}" must have postApproval persisted`).toBeDefined();
+			expect(wf!.postApproval!.targetAgent).toBe('reviewer');
+			// Non-empty instructions — we don't snapshot the full template here
+			// because end-node-handoff.test.ts already asserts the exact content.
+			expect(wf!.postApproval!.instructions.length).toBeGreaterThan(0);
+		};
+		assertPostApproval('Coding Workflow');
+		assertPostApproval('Research Workflow');
+		assertPostApproval('Coding with QA Workflow');
+	});
+
+	test('leaves postApproval undefined on Review-Only and Plan & Decompose', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const workflows = manager.listWorkflows(SPACE_ID);
+		for (const name of ['Review-Only Workflow', 'Plan & Decompose Workflow']) {
+			const wf = workflows.find((w) => w.name === name);
+			expect(wf, `workflow "${name}" must be seeded`).toBeDefined();
+			expect(wf!.postApproval).toBeUndefined();
+		}
+	});
+
+	// ─── PR 3/5: drift re-stamp path ────────────────────────────────────────
+
+	test('result exposes restamped=[] on a fresh seed', () => {
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		expect(result.skipped).toBe(false);
+		expect(result.seeded).toHaveLength(5);
+		expect(result.restamped).toEqual([]);
+	});
+
+	test('result exposes restamped=[] when all rows already match current template hashes', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const second = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		// Second call finds no drift — no re-stamps needed.
+		expect(second.skipped).toBe(true);
+		expect(second.seeded).toEqual([]);
+		expect(second.restamped).toEqual([]);
+	});
+
+	test('re-stamps existing rows when stored templateHash differs from current template', () => {
+		// Seed fresh — rows now carry the current template hash.
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+		// Simulate a prior seed that predated PR 3/5 by clearing `postApproval`
+		// and rewriting `template_hash` to a stale value. The re-stamp path
+		// should detect the hash drift and push the current `postApproval`
+		// (+ current hash) onto the row.
+		const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		db.prepare(
+			`UPDATE space_workflows
+			    SET template_hash = ?, post_approval = NULL
+			  WHERE id = ?`
+		).run('stale-hash-from-a-prior-pr', coding.id);
+
+		// Verify the simulated drift landed.
+		const before = manager.getWorkflow(coding.id)!;
+		expect(before.postApproval).toBeUndefined();
+		expect(before.templateHash).toBe('stale-hash-from-a-prior-pr');
+
+		// Re-run the seeder — re-stamp branch fires.
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		expect(result.seeded).toEqual([]);
+		expect(result.restamped).toContain(CODING_WORKFLOW.name);
+		expect(result.skipped).toBe(false);
+
+		// Row now carries the current template's postApproval + hash.
+		const after = manager.getWorkflow(coding.id)!;
+		expect(after.postApproval).toBeDefined();
+		expect(after.postApproval!.targetAgent).toBe('reviewer');
+		expect(after.templateHash).not.toBe('stale-hash-from-a-prior-pr');
+	});
+
+	test('re-stamp does NOT touch rows without a templateName (user-created)', () => {
+		// Seed the 5 built-ins.
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+		// Create a user-owned workflow with no templateName/templateHash.
+		const userWf = manager.createWorkflow({
+			spaceId: SPACE_ID,
+			name: 'My Custom Review',
+			nodes: [{ name: 'Review', agentId: REVIEWER_ID }],
+			completionAutonomyLevel: 2,
+			// Intentionally no templateName — a bespoke workflow
+		});
+
+		// Run seeder again — should be a no-op for the user row.
+		const before = manager.getWorkflow(userWf.id)!;
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const after = manager.getWorkflow(userWf.id)!;
+
+		expect(after.name).toBe(before.name);
+		expect(after.updatedAt).toBe(before.updatedAt);
+		expect(after.completionAutonomyLevel).toBe(before.completionAutonomyLevel);
+		expect(after.postApproval).toBeUndefined();
+	});
+
+	test('re-stamp updates each node agent `customPrompt.value` in-place', () => {
+		// Regression guard for PR 3/5: without this, existing spaces get the
+		// new `postApproval` wired but keep stale end-node prompts — so the
+		// reviewer sub-session fires the merge template against a task-agent
+		// that never sent `{ pr_url }` in its handoff, leaving `{{pr_url}}`
+		// uninterpolated. Proof: force-drift the stored hash AND manually
+		// stomp the end-node's customPrompt to an old value; after re-stamp
+		// the prompt must match the current template verbatim.
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+
+		// Find the end node and its first (task-agent) slot on the persisted row.
+		const endNode = coding.nodes.find((n) => n.id === coding.endNodeId)!;
+		const endAgent = endNode.agents[0];
+		const originalPrompt = endAgent.customPrompt?.value ?? '';
+		const staleMarker = '### STALE PROMPT FROM A PRIOR PR ###';
+		expect(originalPrompt).not.toContain(staleMarker);
+
+		// Simulate an old-template row: rewrite this node's agent prompt and
+		// mark the row's hash stale so the seeder takes the re-stamp branch.
+		manager.updateWorkflow(coding.id, {
+			nodes: coding.nodes.map((n) =>
+				n.id !== endNode.id
+					? n
+					: {
+							id: n.id,
+							name: n.name,
+							agents: n.agents.map((a, i) =>
+								i === 0 ? { ...a, customPrompt: { value: staleMarker } } : a
+							),
+						}
+			),
+		});
+		db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+			'stale-hash',
+			coding.id
+		);
+
+		// Sanity: the stale write landed.
+		const stalled = manager.getWorkflow(coding.id)!;
+		const stalledAgent = stalled.nodes.find((n) => n.id === endNode.id)!.agents[0];
+		expect(stalledAgent.customPrompt?.value).toBe(staleMarker);
+
+		// Re-run the seeder — should take the re-stamp branch.
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+		// Prompt restored to the current template verbatim (not the stale marker).
+		const after = manager.getWorkflow(coding.id)!;
+		const afterEndNode = after.nodes.find((n) => n.id === endNode.id)!;
+		const afterAgent = afterEndNode.agents[0];
+		expect(afterAgent.customPrompt?.value).not.toContain(staleMarker);
+		expect(afterAgent.customPrompt?.value).toBe(originalPrompt);
+
+		// Critical invariant: the node UUID and agent UUID were preserved, so
+		// any in-flight run referencing them continues to resolve.
+		expect(afterEndNode.id).toBe(endNode.id);
+		expect(afterAgent.agentId).toBe(endAgent.agentId);
+
+		// And after the re-stamp, the drift detector's hash check matches: the
+		// full-template hash (which includes nodePrompts) now aligns with the
+		// re-stamped row, so operators are not spammed with false drift warnings.
+		const expectedHash = computeWorkflowHash(CODING_WORKFLOW);
+		expect(after.templateHash).toBe(expectedHash);
+	});
+
+	test('re-stamp preserves node UUIDs (safe for in-flight runs)', () => {
+		// The narrow re-stamp explicitly does NOT regenerate node UUIDs because
+		// live workflow_run rows reference them. This test locks that behaviour
+		// in: forcing a re-stamp must not shift any node ID.
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		const originalNodeIds = coding.nodes.map((n) => n.id).sort();
+
+		db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+			'force-drift',
+			coding.id
+		);
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+		const after = manager.getWorkflow(coding.id)!;
+		const afterNodeIds = after.nodes.map((n) => n.id).sort();
+		expect(afterNodeIds).toEqual(originalNodeIds);
 	});
 
 	test('is idempotent — leaves user-created workflows untouched', async () => {

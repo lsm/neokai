@@ -132,17 +132,26 @@ function makeDelegates(): Delegates {
 }
 
 describe('isPostApprovalRoutingEnabled', () => {
-	test('returns false when env var unset', () => {
-		expect(isPostApprovalRoutingEnabled({})).toBe(false);
+	// Flipped default in PR 3/5: routing is now opt-OUT. Absent / empty / any
+	// unrecognised value keeps routing enabled so ops defaults keep working.
+	test('returns true when env var unset (default ON in PR 3/5)', () => {
+		expect(isPostApprovalRoutingEnabled({})).toBe(true);
 	});
-	test('returns true for "1", "true", "yes", "on" (case-insensitive)', () => {
+	test('returns true when env var empty string', () => {
+		expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: '' })).toBe(true);
+	});
+	test('returns true for explicit truthy values ("1", "true", "yes", "on")', () => {
 		for (const v of ['1', 'true', 'TRUE', 'yes', 'ON']) {
 			expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: v })).toBe(true);
 		}
 	});
-	test('returns false for arbitrary strings', () => {
-		expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: 'maybe' })).toBe(false);
-		expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: '0' })).toBe(false);
+	test('returns false only for explicit falsy kill-switch values', () => {
+		for (const v of ['0', 'false', 'FALSE', 'no', 'NO', 'off', 'OFF']) {
+			expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: v })).toBe(false);
+		}
+	});
+	test('returns true for arbitrary strings (non-kill-switch values keep routing on)', () => {
+		expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: 'maybe' })).toBe(true);
 	});
 });
 
