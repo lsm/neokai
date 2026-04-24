@@ -49,6 +49,14 @@ import { buildRestrictedEnv, collectWithMaxBuffer, MAX_BUFFER_BYTES } from './ga
 import { CompletionDetector } from './completion-detector';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
 import {
+	PostApprovalRouter,
+	buildTaskApprovedEvent,
+	isPostApprovalRoutingEnabled,
+	type PostApprovalRouteContext,
+	type PostApprovalRouteResult,
+} from './post-approval-router';
+import type { SpaceApprovalSource } from '@neokai/shared';
+import {
 	type CompletionActionExecutionResult,
 	type InstructionActionExecutor,
 	type McpToolExecutor,
@@ -398,6 +406,146 @@ export class SpaceRuntime {
 	}
 
 	/**
+	 * Cached `PostApprovalRouter` instance (PR 2/5 of the
+	 * task-agent-as-post-approval-executor refactor). Built lazily on first use
+	 * because it depends on `taskAgentManager`, which is injected after
+	 * `SpaceRuntime` is constructed.
+	 */
+	private postApprovalRouter: PostApprovalRouter | null = null;
+
+	/**
+	 * Lazy-construct the `PostApprovalRouter` once `taskAgentManager` is
+	 * available. Returns `null` when the manager has not yet been injected —
+	 * the only expected scenario is very early startup before the daemon has
+	 * finished wiring, in which case we fall through to the legacy path.
+	 */
+	private getPostApprovalRouter(): PostApprovalRouter | null {
+		if (this.postApprovalRouter) return this.postApprovalRouter;
+		const manager = this.config.taskAgentManager;
+		if (!manager) return null;
+		this.postApprovalRouter = new PostApprovalRouter({
+			taskRepo: this.config.taskRepo,
+			taskAgent: {
+				injectIntoTaskAgent: (taskId, message) => manager.injectIntoTaskAgent(taskId, message),
+			},
+			spawner: {
+				spawnPostApprovalSubSession: (args) => manager.spawnPostApprovalSubSession(args),
+			},
+			livenessProbe: {
+				isSessionAlive: (sessionId) => manager.isSessionAlive(sessionId),
+			},
+		});
+		return this.postApprovalRouter;
+	}
+
+	/**
+	 * Public entry point — transition a task into `approved` and dispatch the
+	 * post-approval step via `PostApprovalRouter`.
+	 *
+	 * Called by:
+	 *   - The `space-runtime.ts` tick loop once an end-node `approve_task` has
+	 *     flagged the task ready to approve (via `reportedStatus='done'`), when
+	 *     `NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING` is ON. In PR 2/5 the flag
+	 *     defaults OFF so production runs continue through
+	 *     `resolveCompletionWithActions`.
+	 *   - `SpaceRuntimeService.dispatchPostApproval`, invoked from the
+	 *     `spaceTask.approvePendingCompletion` RPC handler when a human approves
+	 *     a task paused at a `task_completion` checkpoint.
+	 *
+	 * Contract:
+	 *   1. If the task is not already `approved`, transition it there via
+	 *      `SpaceTaskManager.setTaskStatus` (so the centralised transition
+	 *      validator runs).
+	 *   2. Emit a `[TASK_APPROVED]` awareness event into the Task Agent session
+	 *      on a best-effort basis (missing session → log + continue).
+	 *   3. Call `PostApprovalRouter.route()` — which handles the no-route,
+	 *      inline (Task Agent), spawn, already-routed, and skip branches.
+	 *
+	 * Returns the `PostApprovalRouteResult` from the router (or a `skipped`
+	 * result when the router is not yet wired / the task is missing).
+	 */
+	async dispatchPostApproval(
+		taskId: string,
+		approvalSource: SpaceApprovalSource,
+		contextExtras: Omit<PostApprovalRouteContext, 'approvalSource'> = {}
+	): Promise<PostApprovalRouteResult> {
+		const router = this.getPostApprovalRouter();
+		if (!router) {
+			const reason = `PostApprovalRouter not wired yet (taskAgentManager missing); task=${taskId}`;
+			log.warn(`dispatchPostApproval: ${reason}`);
+			return { mode: 'skipped', reason };
+		}
+
+		const current = this.config.taskRepo.getTask(taskId);
+		if (!current) {
+			const reason = `task ${taskId} not found`;
+			log.warn(`dispatchPostApproval: ${reason}`);
+			return { mode: 'skipped', reason };
+		}
+
+		const spaceId = current.spaceId;
+		const space = await this.config.spaceManager.getSpace(spaceId);
+		// Workflow lookup goes via the run (tasks reference workflowRunId, runs
+		// reference workflowId). Standalone tasks have no run → no workflow → the
+		// router takes the no-route branch.
+		const run = current.workflowRunId
+			? this.config.workflowRunRepo.getRun(current.workflowRunId)
+			: null;
+		const workflow = run
+			? (this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ?? null)
+			: null;
+
+		// 1. Ensure the task is in `approved` before routing. Uses the space's
+		//    task manager so the transition validator runs (rejects illegal
+		//    transitions with a structured error).
+		let approvedTask: SpaceTask = current;
+		if (current.status !== 'approved') {
+			const taskManager = this.getOrCreateTaskManager(spaceId);
+			approvedTask = await taskManager.setTaskStatus(taskId, 'approved', {
+				approvalSource,
+			});
+			await this.safeOnTaskUpdated(spaceId, approvedTask);
+			log.info(
+				`task.status-transition: taskId=${taskId} from=${current.status} to=approved source=${approvalSource}`
+			);
+		}
+
+		// 2. Emit [TASK_APPROVED] awareness event (informational; best-effort).
+		const routeTarget = workflow?.postApproval?.targetAgent ?? null;
+		const mode: 'spawning' | 'self' | 'none' =
+			routeTarget === null || routeTarget === undefined
+				? 'none'
+				: routeTarget === 'task-agent'
+					? 'self'
+					: 'spawning';
+		const awarenessBody = buildTaskApprovedEvent({
+			task: approvedTask,
+			workflow,
+			approvalSource,
+			mode,
+		});
+		const manager = this.config.taskAgentManager;
+		if (manager) {
+			const injected = await manager.injectIntoTaskAgent(taskId, awarenessBody);
+			if (!injected.injected) {
+				log.warn(
+					`dispatchPostApproval: no Task Agent session for task ${taskId} — [TASK_APPROVED] not delivered`
+				);
+			}
+		}
+
+		// 3. Dispatch the actual post-approval step.
+		const routeContext: PostApprovalRouteContext = {
+			...contextExtras,
+			approvalSource,
+			spaceId,
+			autonomyLevel: space?.autonomyLevel,
+			workspacePath: space?.workspacePath,
+		};
+		return router.route(approvedTask, workflow, routeContext);
+	}
+
+	/**
 	 * Safely calls notificationSink.notify(), catching and logging any errors.
 	 *
 	 * By interface contract, NotificationSink implementations should handle their
@@ -626,19 +774,34 @@ export class SpaceRuntime {
 			if (
 				canonicalTask.status !== 'done' &&
 				canonicalTask.status !== 'review' &&
-				canonicalTask.status !== 'cancelled'
+				canonicalTask.status !== 'cancelled' &&
+				canonicalTask.status !== 'approved'
 			) {
-				// The completion-action pipeline is the sole arbiter of terminal
-				// status — we no longer read `reportedStatus` from the agent.
-				const params = await this.resolveCompletionWithActions(
-					run.spaceId,
-					run.id,
-					workflow,
-					nextResult,
-					spaceLevel,
-					canonicalTask.id
-				);
-				await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, params);
+				// PR 2/5 (flag-gated): when NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING
+				// is ON, skip the legacy completion-action pipeline and dispatch
+				// through PostApprovalRouter (transition → approved → route). When
+				// the flag is OFF (default), keep the legacy completion-action path
+				// intact so production behaviour is unchanged.
+				if (isPostApprovalRoutingEnabled()) {
+					// Preserve the computed result on the task before routing —
+					// dispatchPostApproval handles the status transition itself.
+					if (nextResult && canonicalTask.result !== nextResult) {
+						await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, { result: nextResult });
+					}
+					await this.dispatchPostApproval(canonicalTask.id, 'agent');
+				} else {
+					// The completion-action pipeline is the sole arbiter of terminal
+					// status — we no longer read `reportedStatus` from the agent.
+					const params = await this.resolveCompletionWithActions(
+						run.spaceId,
+						run.id,
+						workflow,
+						nextResult,
+						spaceLevel,
+						canonicalTask.id
+					);
+					await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, params);
+				}
 			} else if (
 				nextResult &&
 				canonicalTask.result !== nextResult &&
@@ -1561,11 +1724,13 @@ export class SpaceRuntime {
 
 				// Skip re-resolution when the task is already at a non-`open`/non-`in_progress`
 				// status — `done`/`cancelled` are terminal; `review` means we've already paused
-				// at a completion-action gate and are awaiting human approval.
+				// at a completion-action gate and are awaiting human approval; `approved`
+				// means PostApprovalRouter already ran once (PR 2/5).
 				const taskAlreadyResolved =
 					canonicalTask.status === 'done' ||
 					canonicalTask.status === 'review' ||
-					canonicalTask.status === 'cancelled';
+					canonicalTask.status === 'cancelled' ||
+					canonicalTask.status === 'approved';
 
 				// Final status drives sibling cancellation. We only kill siblings when
 				// the task reached a true terminal state (`done`/`cancelled`); `review`
@@ -1574,20 +1739,41 @@ export class SpaceRuntime {
 				let finalTaskStatus: SpaceTask['status'] = canonicalTask.status;
 
 				if (!taskAlreadyResolved) {
-					// The completion-action pipeline is the sole arbiter of terminal
-					// status. The agent's `report_result` only records a summary +
-					// optional evidence on `reportedSummary`; terminal status is
-					// decided entirely by the outcome of the actions below.
-					const params = await this.resolveCompletionWithActions(
-						meta.spaceId,
-						runId,
-						meta.workflow,
-						nextTaskResult,
-						spaceLevel,
-						canonicalTask.id
-					);
-					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, params);
-					finalTaskStatus = params.status ?? canonicalTask.status;
+					// PR 2/5 (flag-gated): when NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING
+					// is ON, dispatch through PostApprovalRouter; otherwise fall back
+					// to the legacy completion-action pipeline (unchanged).
+					if (isPostApprovalRoutingEnabled()) {
+						if (nextTaskResult && canonicalTask.result !== nextTaskResult) {
+							await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
+								result: nextTaskResult,
+							});
+						}
+						const result = await this.dispatchPostApproval(canonicalTask.id, 'agent');
+						// Resolve the final status from the router result. 'no-route'
+						// moved directly to done; 'inline' / 'spawn' / 'already-routed'
+						// parked at approved awaiting mark_complete.
+						finalTaskStatus =
+							result.mode === 'no-route'
+								? 'done'
+								: result.mode === 'skipped'
+									? canonicalTask.status
+									: 'approved';
+					} else {
+						// The completion-action pipeline is the sole arbiter of terminal
+						// status. The agent's `report_result` only records a summary +
+						// optional evidence on `reportedSummary`; terminal status is
+						// decided entirely by the outcome of the actions below.
+						const params = await this.resolveCompletionWithActions(
+							meta.spaceId,
+							runId,
+							meta.workflow,
+							nextTaskResult,
+							spaceLevel,
+							canonicalTask.id
+						);
+						await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, params);
+						finalTaskStatus = params.status ?? canonicalTask.status;
+					}
 				} else if (summary && canonicalTask.result !== summary) {
 					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, { result: summary });
 				}

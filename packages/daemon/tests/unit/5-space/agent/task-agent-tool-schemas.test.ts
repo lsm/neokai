@@ -13,6 +13,7 @@ import {
 	RequestHumanInputSchema,
 	TASK_AGENT_TOOL_SCHEMAS,
 	ListGroupMembersSchema,
+	MarkCompleteSchema,
 } from '../../../../src/lib/space/tools/task-agent-tool-schemas.ts';
 
 // ---------------------------------------------------------------------------
@@ -116,13 +117,14 @@ describe('RequestHumanInputSchema', () => {
 // ---------------------------------------------------------------------------
 
 describe('TASK_AGENT_TOOL_SCHEMAS', () => {
-	test('contains all 4 tool schemas', () => {
+	test('contains all 5 tool schemas', () => {
 		const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
 		expect(keys).toContain('approve_task');
 		expect(keys).toContain('submit_for_approval');
 		expect(keys).toContain('request_human_input');
 		expect(keys).toContain('list_group_members');
-		expect(keys).toHaveLength(4);
+		expect(keys).toContain('mark_complete');
+		expect(keys).toHaveLength(5);
 	});
 
 	test('each schema value is a valid Zod schema with safeParse', () => {
@@ -137,6 +139,27 @@ describe('TASK_AGENT_TOOL_SCHEMAS', () => {
 		expect(keys).not.toContain('spawn_node_agent');
 		expect(keys).not.toContain('check_node_status');
 		expect(keys).not.toContain('advance_workflow');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// MarkCompleteSchema (PR 2/5)
+// ---------------------------------------------------------------------------
+
+describe('MarkCompleteSchema', () => {
+	test('accepts empty object', () => {
+		const result = MarkCompleteSchema.safeParse({});
+		expect(result.success).toBe(true);
+	});
+
+	test('rejects extra fields (strict schema)', () => {
+		const result = MarkCompleteSchema.safeParse({ reason: 'done' });
+		expect(result.success).toBe(false);
+	});
+
+	test('rejects non-object input', () => {
+		const result = MarkCompleteSchema.safeParse('done');
+		expect(result.success).toBe(false);
 	});
 });
 

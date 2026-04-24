@@ -74,7 +74,7 @@ import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import type { SubSessionMemberInfo } from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
 import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
-import { createEndNodeHandlers } from '../tools/end-node-handlers';
+import { createEndNodeHandlers, createMarkCompleteHandler } from '../tools/end-node-handlers';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { ChannelResolver } from './channel-resolver';
@@ -3589,6 +3589,25 @@ export class TaskAgentManager {
 		const onApproveTask = endNodeHandlers?.onApproveTask;
 		const onSubmitForApproval = endNodeHandlers?.onSubmitForApproval;
 
+		// `mark_complete` (PR 2/5) is mirrored onto every spawned node-agent so
+		// post-approval sub-sessions can close the task via `approved → done`.
+		// The handler self-validates status (rejects non-approved) — a spawned
+		// agent that happens not to be running a post-approval step simply sees
+		// the tool reject with a clear error. Each session gets its own bound
+		// SpaceTaskManager so the centralised transition validator runs.
+		const markCompleteTaskManager = new SpaceTaskManager(
+			this.config.db.getDatabase(),
+			spaceId,
+			this.config.reactiveDb
+		);
+		const onMarkComplete = createMarkCompleteHandler({
+			taskId,
+			spaceId,
+			taskRepo: this.config.taskRepo,
+			taskManager: markCompleteTaskManager,
+			daemonHub: this.config.daemonHub,
+		});
+
 		// Self-heal callback for the agent-callable `restore_node_agent` tool.
 		// Looks up the live AgentSession by the enclosing-scope subSessionId, then
 		// calls reinjectNodeAgentMcpServer to (re)attach node-agent and restart the query
@@ -3654,6 +3673,7 @@ export class TaskAgentManager {
 			},
 			onApproveTask,
 			onSubmitForApproval,
+			onMarkComplete,
 			artifactRepo: this.config.artifactRepo,
 			getSpaceAutonomyLevel: async (sid) => {
 				const s = await spaceManager.getSpace(sid);
@@ -3661,5 +3681,197 @@ export class TaskAgentManager {
 			},
 			onRestoreNodeAgent,
 		});
+	}
+
+	// -------------------------------------------------------------------------
+	// Public — post-approval routing delegates (PR 2/5)
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Inject a user-turn message into the Task Agent session for a task.
+	 *
+	 * Thin wrapper around `injectTaskAgentMessage` that matches the
+	 * `TaskAgentInjector` shape consumed by `PostApprovalRouter`: returns
+	 * `{ injected, sessionId }` instead of throwing when no Task Agent session
+	 * exists for the task. Callers treat `injected: false` as a best-effort miss
+	 * (log + continue) rather than a hard error.
+	 */
+	async injectIntoTaskAgent(
+		taskId: string,
+		message: string
+	): Promise<{ injected: boolean; sessionId?: string }> {
+		const existing = this.taskAgentSessions.get(taskId);
+		const persisted = existing ? null : this.config.taskRepo.getTask(taskId);
+		if (!existing && !persisted?.taskAgentSessionId) {
+			return { injected: false };
+		}
+		try {
+			await this.injectTaskAgentMessage(taskId, message);
+		} catch (err) {
+			log.warn(
+				`TaskAgentManager.injectIntoTaskAgent: failed for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
+			);
+			return { injected: false };
+		}
+		const session = this.taskAgentSessions.get(taskId);
+		return { injected: true, sessionId: session?.session.id };
+	}
+
+	/**
+	 * Spawn a fresh sub-session for a post-approval node-agent handoff (PR 2/5).
+	 *
+	 * Called by `PostApprovalRouter` when the workflow declares a
+	 * `postApproval.targetAgent` that is NOT `'task-agent'`. The flow:
+	 *
+	 *   1. Look up the agent slot in the workflow by name (matches against both
+	 *      slot.name and agent display name).
+	 *   2. Build an `AgentSessionInit` using the same resolver the regular node
+	 *      activation path uses (so tool registry + system prompt line up).
+	 *   3. Attach the same MCP server surface as a normal node-agent spawn —
+	 *      `node-agent` (with `mark_complete` mirrored) and `space-agent-tools`.
+	 *   4. Kick off the session with the interpolated post-approval instructions
+	 *      as the first user turn.
+	 *
+	 * Returns `{ sessionId }`. The caller (router) stamps this onto
+	 * `space_tasks.post_approval_session_id` so the UI banner can render a
+	 * link + human operators have a jump-off point for manual abort.
+	 *
+	 * Failures throw; the router logs and surfaces `mode: 'skipped'` upstream.
+	 */
+	async spawnPostApprovalSubSession(args: {
+		task: SpaceTask;
+		workflow: SpaceWorkflow;
+		targetAgent: string;
+		kickoffMessage: string;
+	}): Promise<{ sessionId: string }> {
+		const { task, workflow, targetAgent, kickoffMessage } = args;
+		const taskId = task.id;
+		const spaceId = task.spaceId;
+
+		const space = await this.config.spaceManager.getSpace(spaceId);
+		if (!space) {
+			throw new Error(`spawnPostApprovalSubSession: space ${spaceId} not found for task ${taskId}`);
+		}
+
+		// Locate the declared agent slot across all nodes. `targetAgent` is validated
+		// at workflow-save time to match a WorkflowNodeAgent.name; we also accept the
+		// underlying agent's display name / id as a fallback for extra robustness.
+		let matchedSlot: ReturnType<typeof resolveNodeAgents>[number] | null = null;
+		let matchedNodeId: string | null = null;
+		for (const node of workflow.nodes) {
+			for (const slot of resolveNodeAgents(node)) {
+				if (slot.name === targetAgent || slot.agentId === targetAgent) {
+					matchedSlot = slot;
+					matchedNodeId = node.id;
+					break;
+				}
+			}
+			if (matchedSlot) break;
+		}
+		if (!matchedSlot?.agentId || !matchedNodeId) {
+			throw new Error(
+				`spawnPostApprovalSubSession: no agent slot "${targetAgent}" declared in workflow ${workflow.id}`
+			);
+		}
+
+		const workflowRunId = task.workflowRunId;
+		const workflowRun = workflowRunId ? this.config.workflowRunRepo.getRun(workflowRunId) : null;
+
+		const workspacePath = this.taskWorktreePaths.get(taskId) ?? space.workspacePath;
+
+		// Build slot overrides + init in the same shape as spawnWorkflowNodeAgentForExecution.
+		let slotCustomPrompt: string | undefined = matchedSlot.customPrompt?.value;
+		if (!slotCustomPrompt) {
+			const legacySlot = matchedSlot as {
+				systemPrompt?: { value: string };
+				instructions?: { value: string };
+			};
+			const legacySp = legacySlot.systemPrompt?.value?.trim() ?? '';
+			const legacyInstr = legacySlot.instructions?.value?.trim() ?? '';
+			if (legacySp && legacyInstr) {
+				slotCustomPrompt = `${legacySp}\n\n${legacyInstr}`;
+			} else {
+				slotCustomPrompt = legacySp || legacyInstr || undefined;
+			}
+		}
+		const slotOverrides: SlotOverrides = {
+			model: matchedSlot.model,
+			customPrompt: slotCustomPrompt,
+			disabledSkillIds: matchedSlot.disabledSkillIds,
+			extraMcpServers: matchedSlot.extraMcpServers,
+		};
+
+		const baseSessionId = `space:${spaceId}:task:${taskId}:post-approval:${this.sanitizeAgentNameForId(matchedSlot.name)}`;
+		const sessionId = this.resolveSessionId(baseSessionId);
+
+		let init = resolveAgentInit({
+			task,
+			space,
+			agentManager: this.config.spaceAgentManager,
+			sessionId,
+			workspacePath,
+			workflowRun: workflowRun ?? undefined,
+			workflow,
+			slotOverrides,
+			agentId: matchedSlot.agentId,
+		});
+
+		const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+			taskId,
+			sessionId,
+			matchedSlot.name,
+			spaceId,
+			workflowRunId ?? '',
+			workspacePath,
+			matchedNodeId
+		);
+		const subSessionSpaceAgentMcpServer = this.buildSpaceAgentToolsMcpServerForSubSession({
+			taskId,
+			subSessionId: sessionId,
+			agentName: matchedSlot.name,
+			spaceId,
+			workflowRunId: workflowRunId ?? '',
+			workspacePath,
+			workflowNodeId: matchedNodeId,
+		});
+		init = {
+			...init,
+			mcpServers: {
+				...init.mcpServers,
+				'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+				'space-agent-tools': subSessionSpaceAgentMcpServer as unknown as McpServerConfig,
+			},
+		};
+
+		const actualSessionId = await this.createSubSession(taskId, sessionId, init, {
+			agentId: matchedSlot.agentId,
+			agentName: matchedSlot.name,
+			nodeId: matchedNodeId,
+		});
+
+		const spawned = this.getSubSession(actualSessionId);
+		if (!spawned) {
+			throw new Error(
+				`spawnPostApprovalSubSession: spawned session ${actualSessionId} not registered in memory`
+			);
+		}
+
+		await this.ensureNodeAgentAttached(spawned, {
+			taskId,
+			subSessionId: actualSessionId,
+			agentName: matchedSlot.name,
+			spaceId,
+			workflowRunId: workflowRunId ?? '',
+			workspacePath,
+			workflowNodeId: matchedNodeId,
+			phase: 'spawn',
+		});
+
+		await this.injectMessageIntoSession(spawned, kickoffMessage);
+
+		log.info(
+			`TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
+		);
+		return { sessionId: actualSessionId };
 	}
 }

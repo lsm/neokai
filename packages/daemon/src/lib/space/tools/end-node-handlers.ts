@@ -26,11 +26,16 @@
 
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceManager } from '../managers/space-manager';
+import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { DaemonHub } from '../../daemon-hub';
 import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
-import type { ApproveTaskInput, SubmitForApprovalInput } from './task-agent-tool-schemas';
+import type {
+	ApproveTaskInput,
+	SubmitForApprovalInput,
+	MarkCompleteInput,
+} from './task-agent-tool-schemas';
 import { Logger } from '../../logger';
 
 const log = new Logger('end-node-handlers');
@@ -62,6 +67,88 @@ export interface EndNodeHandlerDeps {
 export interface EndNodeHandlers {
 	onApproveTask: (args: ApproveTaskInput) => Promise<ToolResult>;
 	onSubmitForApproval: (args: SubmitForApprovalInput) => Promise<ToolResult>;
+}
+
+/**
+ * Standalone factory for the `mark_complete` handler (PR 2/5). Separate from
+ * `createEndNodeHandlers` because `mark_complete` is mirrored onto
+ * post-approval sub-sessions — which are NOT necessarily end-node sessions —
+ * and also onto the orchestration Task Agent's MCP surface directly.
+ *
+ * Transitions the task `approved → done` via `SpaceTaskManager.setTaskStatus`
+ * (so the centralised transition validator runs), clears the post-approval
+ * tracking fields, and emits a `space.task.updated` DaemonHub event.
+ */
+export interface MarkCompleteHandlerDeps {
+	taskId: string;
+	spaceId: string;
+	/** Task repository — used to read the current status before transitioning. */
+	taskRepo: Pick<SpaceTaskRepository, 'getTask'>;
+	/** Task manager — used to transition and update the task atomically. */
+	taskManager: Pick<SpaceTaskManager, 'setTaskStatus' | 'updateTask'>;
+	/** Optional hub for emitting `space.task.updated` events. */
+	daemonHub?: Pick<DaemonHub, 'emit'>;
+}
+
+/**
+ * Create a bound `mark_complete` handler. See the type-level doc on the
+ * `mark_complete` tool registration in `task-agent-tools.ts` /
+ * `node-agent-tools.ts` for the wider contract.
+ */
+export function createMarkCompleteHandler(
+	deps: MarkCompleteHandlerDeps
+): (args: MarkCompleteInput) => Promise<ToolResult> {
+	const { taskId, spaceId, taskRepo, taskManager, daemonHub } = deps;
+
+	const emitTaskUpdated = (task: SpaceTask): void => {
+		if (!daemonHub) return;
+		void daemonHub
+			.emit('space.task.updated', { sessionId: 'global', spaceId, taskId, task })
+			.catch((err: unknown) => {
+				log.warn(
+					`Failed to emit space.task.updated for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			});
+	};
+
+	return async (_args: MarkCompleteInput): Promise<ToolResult> => {
+		const task = taskRepo.getTask(taskId);
+		if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
+
+		if (task.status !== 'approved') {
+			return jsonResult({
+				success: false,
+				error:
+					`task is not in \`approved\` status (current: \`${task.status}\`); did you mean \`approve_task\`? ` +
+					`mark_complete only transitions an already-approved task from 'approved' to 'done'.`,
+			});
+		}
+
+		try {
+			await taskManager.setTaskStatus(taskId, 'done', {
+				approvalSource: task.approvalSource ?? 'agent',
+			});
+			const updated = await taskManager.updateTask(taskId, {
+				postApprovalSessionId: null,
+				postApprovalStartedAt: null,
+				postApprovalBlockedReason: null,
+			});
+			emitTaskUpdated(updated);
+			log.info(
+				`post-approval.complete: spaceId=${spaceId} taskId=${taskId} outcome=done mode=${task.postApprovalSessionId ? 'spawn' : 'inline'}`
+			);
+			return jsonResult({
+				success: true,
+				taskId,
+				message: 'Post-approval work finished. Task transitioned to done.',
+			});
+		} catch (err) {
+			return jsonResult({
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+			});
+		}
+	};
 }
 
 /**

@@ -25,15 +25,20 @@ import type {
  */
 export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> = {
 	open: ['in_progress', 'blocked', 'done', 'cancelled'],
-	in_progress: ['open', 'review', 'done', 'blocked', 'cancelled'],
-	review: ['done', 'in_progress', 'cancelled', 'archived'], // Approve, reopen, cancel, or archive
-	// `approved` is the post-approval staging status added in PR 1/5 of the
-	// task-agent-as-post-approval-executor refactor. No runtime consumer
-	// transitions tasks INTO `approved` in PR 1 (intentionally: the enter
-	// edges belong to PR 2 which wires the post-approval router). The set
-	// below is conservative — enough for a manually-set `approved` row to be
-	// moved on, and enough for the `Record<SpaceTaskStatus, …>` type to
-	// accept every union member.
+	// `in_progress → approved` is the end-node `approve_task` path (PR 2/5 of
+	// the task-agent-as-post-approval-executor refactor). It replaces the
+	// `in_progress → done` shortcut that the completion-action pipeline used
+	// to take.
+	in_progress: ['open', 'review', 'approved', 'done', 'blocked', 'cancelled'],
+	// `review → approved` is the human-approves-the-work path — the
+	// `approvePendingCompletion` RPC handler takes a task out of `review`
+	// into `approved` so the post-approval router can dispatch.
+	review: ['done', 'approved', 'in_progress', 'cancelled', 'archived'],
+	// `approved → done` is driven by `mark_complete` (post-approval agent)
+	// or the runtime fallback on session termination. `approved → blocked`
+	// is intentionally absent in Stage 2: a failing post-approval session
+	// leaves the task in `approved` with `postApprovalBlockedReason` set
+	// and surfaces via `PendingPostApprovalBanner`.
 	approved: ['done', 'in_progress', 'archived'],
 	done: ['in_progress', 'archived'], // Reactivate or archive
 	blocked: ['open', 'in_progress', 'archived'], // Restart allowed + archive
@@ -151,6 +156,28 @@ export class SpaceTaskManager {
 			updates.approvalSource = options?.approvalSource ?? null;
 			updates.approvalReason = options?.approvalReason ?? null;
 			updates.approvedAt = Date.now();
+		}
+
+		// Stamp approval metadata when transitioning into the `approved` status
+		// (in_progress → approved, review → approved). Post-approval routing uses
+		// this as the canonical mid-lifecycle stamp before the Task Agent / spawned
+		// sub-session transitions the task forward to `done` via `mark_complete`.
+		if (newStatus === 'approved') {
+			updates.approvalSource = options?.approvalSource ?? null;
+			updates.approvalReason = options?.approvalReason ?? null;
+			updates.approvedAt = Date.now();
+		}
+
+		// Mirror the approval stamp on approved → done (via `mark_complete`),
+		// carrying through the original approvalSource so the audit trail is
+		// preserved once the task reaches its terminal state.
+		if (task.status === 'approved' && newStatus === 'done') {
+			if (options?.approvalSource !== undefined) {
+				updates.approvalSource = options.approvalSource;
+			}
+			if (options?.approvalReason !== undefined) {
+				updates.approvalReason = options.approvalReason;
+			}
 		}
 
 		// Clear result when restarting or deprioritizing.

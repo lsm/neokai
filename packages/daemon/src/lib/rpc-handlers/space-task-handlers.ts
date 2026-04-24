@@ -14,6 +14,7 @@ import type { DaemonHub } from '../daemon-hub';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
+import { isPostApprovalRoutingEnabled } from '../space/runtime/post-approval-router';
 import { Logger } from '../logger';
 
 const log = new Logger('space-task-handlers');
@@ -326,19 +327,43 @@ export function setupSpaceTaskHandlers(
 
 		let task;
 		if (params.approved) {
-			// review → done. Stamp human approval metadata and clear pending flags.
-			task = await taskManager.setTaskStatus(params.taskId, 'done', {
-				approvalSource: 'human',
-				approvalReason: params.reason ?? undefined,
-			});
-			// Clear the pending-completion fields. setTaskStatus does not touch them,
-			// so apply them in a follow-up update so the banner/UI stops rendering.
-			task = await taskManager.updateTask(params.taskId, {
-				pendingCheckpointType: null,
-				pendingCompletionSubmittedByNodeId: null,
-				pendingCompletionSubmittedAt: null,
-				pendingCompletionReason: null,
-			});
+			if (isPostApprovalRoutingEnabled() && spaceRuntimeService) {
+				// Post-approval routing ON: delegate to the router. It transitions
+				// review → approved (via SpaceTaskManager.setTaskStatus), emits
+				// [TASK_APPROVED], and dispatches the configured post-approval step
+				// (no-route → done, inline Task Agent, or spawn fresh node-agent).
+				//
+				// Clear the pending-completion fields up front so the UI banner
+				// stops rendering immediately on approval. The router handles the
+				// status transition itself.
+				task = await taskManager.updateTask(params.taskId, {
+					pendingCheckpointType: null,
+					pendingCompletionSubmittedByNodeId: null,
+					pendingCompletionSubmittedAt: null,
+					pendingCompletionReason: null,
+					approvalReason: params.reason ?? null,
+				});
+				await spaceRuntimeService.dispatchPostApproval(params.spaceId, params.taskId, 'human', {
+					approvalReason: params.reason ?? null,
+				});
+				// Re-read the task so the caller sees the post-router state.
+				task = (await taskManager.getTask(params.taskId)) ?? task;
+			} else {
+				// Legacy path (flag OFF or runtime service unavailable): direct
+				// review → done, stamp human approval metadata and clear pending flags.
+				task = await taskManager.setTaskStatus(params.taskId, 'done', {
+					approvalSource: 'human',
+					approvalReason: params.reason ?? undefined,
+				});
+				// Clear the pending-completion fields. setTaskStatus does not touch them,
+				// so apply them in a follow-up update so the banner/UI stops rendering.
+				task = await taskManager.updateTask(params.taskId, {
+					pendingCheckpointType: null,
+					pendingCompletionSubmittedByNodeId: null,
+					pendingCompletionSubmittedAt: null,
+					pendingCompletionReason: null,
+				});
+			}
 		} else {
 			// review → in_progress (reject). Reason captured as approvalReason for audit.
 			task = await taskManager.setTaskStatus(params.taskId, 'in_progress');
