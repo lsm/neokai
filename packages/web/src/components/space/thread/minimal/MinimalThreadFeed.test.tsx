@@ -67,6 +67,48 @@ function resultMessage(uuid: string) {
 	};
 }
 
+function humanUserMessage(uuid: string, text: string) {
+	return {
+		type: 'user',
+		uuid,
+		message: { content: text },
+	};
+}
+
+function syntheticPeerMessage(
+	uuid: string,
+	text: string,
+	from: { name?: string; sessionId?: string }
+) {
+	return {
+		type: 'user',
+		uuid,
+		isSynthetic: true,
+		origin: { kind: 'peer', from: from.sessionId ?? 'session-x', name: from.name },
+		message: { content: [{ type: 'text', text }] },
+	};
+}
+
+function neoOriginMessage(uuid: string, text: string) {
+	return {
+		type: 'user',
+		uuid,
+		origin: 'neo',
+		message: { content: text },
+	};
+}
+
+function replayUserMessage(uuid: string, text: string) {
+	// Replay messages have isReplay: true and may carry no origin metadata —
+	// the agent→agent handoff case the daemon currently emits.
+	return {
+		type: 'user',
+		uuid,
+		isReplay: true,
+		message: { content: text },
+	};
+}
+
 describe('MinimalThreadFeed', () => {
 	beforeEach(() => cleanup());
 	afterEach(() => cleanup());
@@ -264,6 +306,185 @@ describe('MinimalThreadFeed', () => {
 		const turn = screen.getByTestId('minimal-thread-turn');
 		expect(turn.dataset.turnState).toBe('completed');
 		expect(screen.queryByTestId('minimal-thread-active-rail')).toBeNull();
+	});
+
+	it('renders a human user message as a message turn with User → recipient header', async () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'u1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: humanUserMessage('u1', 'help me add dark mode'),
+			}),
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t + 1000,
+				message: assistantText('a1', 'on it'),
+			}),
+		];
+
+		render(<MinimalThreadFeed parsedRows={rows} />);
+		const turns = screen.getAllByTestId('minimal-thread-turn');
+		// One message turn + one agent turn.
+		expect(turns.length).toBe(2);
+
+		const messageTurn = turns[0];
+		expect(messageTurn.dataset.turnState).toBe('message');
+		expect(messageTurn.dataset.fromLabel).toBe('User');
+		expect(messageTurn.dataset.toLabel).toBe('Coder Agent');
+		expect(messageTurn.textContent).toContain('USER');
+		expect(messageTurn.textContent).toContain('CODER');
+		await waitFor(() => {
+			expect(screen.getByText('help me add dark mode')).toBeTruthy();
+		});
+
+		// Agent turn follows.
+		expect(turns[1].dataset.turnState).toBe('completed');
+		expect(turns[1].dataset.agentLabel).toBe('Coder Agent');
+	});
+
+	it('renders a synthetic peer-origin message as Sender → recipient with handoff badge', async () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'u1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: syntheticPeerMessage('u1', 'please address the failing test', {
+					name: 'Reviewer Agent',
+					sessionId: 'session-rev',
+				}),
+			}),
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t + 1000,
+				message: assistantText('a1', 'fixed'),
+			}),
+		];
+
+		render(<MinimalThreadFeed parsedRows={rows} />);
+		const messageTurn = screen.getAllByTestId('minimal-thread-turn')[0];
+		expect(messageTurn.dataset.turnState).toBe('message');
+		expect(messageTurn.dataset.fromLabel).toBe('Reviewer Agent');
+		expect(messageTurn.dataset.toLabel).toBe('Coder Agent');
+		expect(messageTurn.textContent).toContain('REVIEWER');
+		expect(messageTurn.textContent).toContain('CODER');
+		expect(messageTurn.textContent?.toLowerCase()).toContain('handoff');
+		await waitFor(() => {
+			expect(screen.getByText('please address the failing test')).toBeTruthy();
+		});
+	});
+
+	it('labels neo-origin user messages as Neo and marks them as synthetic', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'u1',
+				label: 'Task Agent',
+				createdAt: t,
+				message: neoOriginMessage('u1', 'starting up'),
+			}),
+		];
+
+		render(<MinimalThreadFeed parsedRows={rows} />);
+		const messageTurn = screen.getByTestId('minimal-thread-turn');
+		expect(messageTurn.dataset.turnState).toBe('message');
+		expect(messageTurn.dataset.fromLabel).toBe('Neo');
+		expect(messageTurn.dataset.toLabel).toBe('Task Agent');
+		expect(messageTurn.textContent?.toLowerCase()).toContain('handoff');
+	});
+
+	it('infers sender from previous block when a replay message has no origin', async () => {
+		const t = Date.now();
+		const rows = [
+			// Reviewer ran first.
+			makeRow({
+				id: 'a-rev',
+				label: 'Reviewer Agent',
+				createdAt: t,
+				message: assistantText('a-rev', 'looks good but please fix x'),
+			}),
+			makeRow({
+				id: 'r-rev',
+				label: 'Reviewer Agent',
+				createdAt: t + 100,
+				message: resultMessage('r-rev'),
+			}),
+			// Synthetic handoff lands in Coder's session with no origin info.
+			makeRow({
+				id: 'u1',
+				label: 'Coder Agent',
+				createdAt: t + 200,
+				message: replayUserMessage('u1', 'address the review feedback'),
+			}),
+			makeRow({
+				id: 'a-coder',
+				label: 'Coder Agent',
+				createdAt: t + 300,
+				message: assistantText('a-coder', 'on it'),
+			}),
+		];
+
+		render(<MinimalThreadFeed parsedRows={rows} />);
+		const turns = screen.getAllByTestId('minimal-thread-turn');
+		// Reviewer agent turn → message turn (handoff) → Coder agent turn.
+		expect(turns.length).toBe(3);
+		expect(turns[1].dataset.turnState).toBe('message');
+		expect(turns[1].dataset.fromLabel).toBe('Reviewer Agent');
+		expect(turns[1].dataset.toLabel).toBe('Coder Agent');
+		await waitFor(() => {
+			expect(screen.getByText('address the review feedback')).toBeTruthy();
+		});
+	});
+
+	it('orders the message turn before the recipient agent turn within a block', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'u1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: humanUserMessage('u1', 'hello'),
+			}),
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t + 1000,
+				message: assistantText('a1', 'hi back'),
+			}),
+		];
+
+		render(<MinimalThreadFeed parsedRows={rows} />);
+		const turns = screen.getAllByTestId('minimal-thread-turn');
+		expect(turns[0].dataset.turnState).toBe('message');
+		expect(turns[1].dataset.turnState).toBe('completed');
+	});
+
+	it('still treats the trailing block as active when a user message precedes the assistant rows', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'u1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: humanUserMessage('u1', 'go'),
+			}),
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t + 1000,
+				message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'ls' } }]),
+			}),
+		];
+
+		render(<MinimalThreadFeed parsedRows={rows} isAgentActive={true} />);
+		const turns = screen.getAllByTestId('minimal-thread-turn');
+		expect(turns[0].dataset.turnState).toBe('message');
+		expect(turns[1].dataset.turnState).toBe('active');
+		expect(screen.getByTestId('minimal-thread-active-rail')).toBeTruthy();
 	});
 
 	it('shows the completed stats line with tool-call and message counts', async () => {

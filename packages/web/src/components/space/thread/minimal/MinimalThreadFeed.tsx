@@ -21,12 +21,14 @@
  * consistent between modes.
  */
 
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { isSDKAssistantMessage, isToolUseBlock } from '@neokai/shared/sdk/type-guards';
 import { useEffect, useState } from 'preact/hooks';
 import MarkdownRenderer from '../../../chat/MarkdownRenderer.tsx';
 import {
 	buildLogicalBlocks,
 	type CompactLogicalBlock,
+	isUserRow,
 } from '../compact/space-task-compact-reducer';
 import { getAgentColor } from '../space-task-thread-agent-colors';
 import type { ParsedThreadRow } from '../space-task-thread-events';
@@ -75,7 +77,22 @@ interface ActiveFeedTurn {
 	roster: ToolCallEntry[];
 }
 
-type FeedTurn = CompletedFeedTurn | ActiveFeedTurn;
+interface MessageFeedTurn {
+	state: 'message';
+	id: string;
+	/** Human-readable sender label (e.g. "User", "Reviewer Agent", "Neo"). */
+	fromLabel: string;
+	/** Recipient agent label — the session this row belongs to. */
+	toLabel: string;
+	/** Rendered message text (markdown when not fallback). */
+	body: string;
+	bodyIsFallback: boolean;
+	createdAt: number;
+	/** True for synthetic agent→agent / system handoffs; false for human input. */
+	isSynthetic: boolean;
+}
+
+type FeedTurn = CompletedFeedTurn | ActiveFeedTurn | MessageFeedTurn;
 
 const PREVIEW_MAX_LEN = 80;
 const ROSTER_MAX_ENTRIES = 4;
@@ -160,41 +177,198 @@ function extractLastAssistantText(rows: ParsedThreadRow[]): { text: string; fall
 	return { text: tailFallback, fallback: true };
 }
 
-function buildTurnFromBlock(
+function buildCompletedTurn(
 	block: CompactLogicalBlock,
-	isLastBlock: boolean,
-	isAgentActive: boolean
-): FeedTurn {
-	const startedAt = block.rows[0].createdAt;
-	const lastRow = block.rows[block.rows.length - 1];
-	const isActive = isLastBlock && isAgentActive && !block.isTerminal;
-
-	if (isActive) {
-		return {
-			state: 'active',
-			id: block.id,
-			agent: block.agentLabel,
-			startedAt,
-			status: 'Running…',
-			toolCalls: countToolCalls(block.rows),
-			roster: extractToolCallEntries(block.rows, ROSTER_MAX_ENTRIES),
-		};
-	}
-
+	rows: ParsedThreadRow[],
+	turnId: string
+): CompletedFeedTurn {
+	const startedAt = rows[0].createdAt;
+	const lastRow = rows[rows.length - 1];
 	const durationMs = Math.max(0, lastRow.createdAt - startedAt);
 	const durationSec = Math.max(1, Math.round(durationMs / 1000));
-	const { text, fallback } = extractLastAssistantText(block.rows);
+	const { text, fallback } = extractLastAssistantText(rows);
 	return {
 		state: 'completed',
-		id: block.id,
+		id: turnId,
 		agent: block.agentLabel,
 		startedAt,
 		durationSec,
-		toolCalls: countToolCalls(block.rows),
-		messages: block.rows.length,
+		toolCalls: countToolCalls(rows),
+		messages: rows.length,
 		lastMessage: text,
 		fallback,
 	};
+}
+
+function buildActiveTurn(
+	block: CompactLogicalBlock,
+	rows: ParsedThreadRow[],
+	turnId: string
+): ActiveFeedTurn {
+	return {
+		state: 'active',
+		id: turnId,
+		agent: block.agentLabel,
+		startedAt: rows[0].createdAt,
+		status: 'Running…',
+		toolCalls: countToolCalls(rows),
+		roster: extractToolCallEntries(rows, ROSTER_MAX_ENTRIES),
+	};
+}
+
+/**
+ * Resolve the sender of a user-type SDK message.
+ *
+ * The origin field comes in two shapes in the wild:
+ * - Legacy string form ("neo" / "system") — what the daemon currently writes
+ *   to the DB for non-human-typed messages.
+ * - Typed `SDKMessageOrigin` object form (`{ kind: 'peer'/'channel'/... }`) —
+ *   what the SDK itself emits for richer provenance.
+ *
+ * For synthetic / replay messages without origin info, we fall back to the
+ * previous agent block's label — agent→agent handoffs almost always come from
+ * whichever agent ran immediately before the recipient. It's a heuristic, but
+ * it produces meaningful labels in the common case where origin metadata is
+ * missing.
+ */
+function extractSenderLabel(
+	message: SDKMessage,
+	previousAgentLabel: string | null
+): { label: string; isSynthetic: boolean } {
+	const m = message as SDKMessage & {
+		origin?: unknown;
+		isSynthetic?: boolean;
+		isReplay?: boolean;
+	};
+	const isSynthetic = !!m.isSynthetic || !!m.isReplay;
+	const origin = m.origin;
+
+	if (typeof origin === 'string') {
+		if (origin === 'neo') return { label: 'Neo', isSynthetic: true };
+		if (origin === 'system') return { label: 'System', isSynthetic: true };
+		if (origin === 'human') return { label: 'User', isSynthetic: false };
+	}
+
+	if (typeof origin === 'object' && origin !== null) {
+		const o = origin as { kind?: string; from?: string; name?: string; server?: string };
+		if (o.kind === 'human') return { label: 'User', isSynthetic: false };
+		if (o.kind === 'peer') {
+			return { label: o.name ?? o.from ?? previousAgentLabel ?? 'Peer Agent', isSynthetic: true };
+		}
+		if (o.kind === 'channel') return { label: o.server ?? 'Channel', isSynthetic: true };
+		if (o.kind === 'task-notification') return { label: 'Task', isSynthetic: true };
+		if (o.kind === 'coordinator') return { label: 'Coordinator', isSynthetic: true };
+	}
+
+	if (isSynthetic && previousAgentLabel) {
+		return { label: previousAgentLabel, isSynthetic: true };
+	}
+	if (isSynthetic) return { label: 'Agent', isSynthetic: true };
+	return { label: 'User', isSynthetic: false };
+}
+
+/**
+ * Extract a user-type message's text body. Concatenates all text blocks; falls
+ * back to the row's fallbackText when the message can't be parsed.
+ */
+function extractUserMessageText(row: ParsedThreadRow): { body: string; fallback: boolean } {
+	if (!row.message) {
+		return { body: row.fallbackText ?? '', fallback: true };
+	}
+	const apiMessage = (row.message as { message?: { content?: unknown } }).message;
+	const content = apiMessage?.content;
+	if (typeof content === 'string') return { body: content.trim(), fallback: false };
+	if (Array.isArray(content)) {
+		const parts: string[] = [];
+		for (const block of content) {
+			const b = block as { type?: unknown; text?: unknown };
+			if (b.type === 'text' && typeof b.text === 'string') {
+				parts.push(b.text);
+			}
+		}
+		const joined = parts.join('\n\n').trim();
+		return { body: joined, fallback: false };
+	}
+	return { body: '', fallback: false };
+}
+
+function buildMessageTurn(
+	row: ParsedThreadRow,
+	previousAgentLabel: string | null
+): MessageFeedTurn {
+	const { label: fromLabel, isSynthetic } = extractSenderLabel(
+		row.message ?? ({} as SDKMessage),
+		previousAgentLabel
+	);
+	const { body, fallback } = extractUserMessageText(row);
+	return {
+		state: 'message',
+		id: `msg-${String(row.id)}`,
+		fromLabel,
+		toLabel: row.label,
+		body,
+		bodyIsFallback: fallback,
+		createdAt: row.createdAt,
+		isSynthetic,
+	};
+}
+
+/**
+ * Build the ordered turn list for the minimal feed.
+ *
+ * Walks `buildLogicalBlocks` output but splits each block on user-type rows:
+ * - Each user/synthetic row becomes its own `MessageFeedTurn`, surfaced as a
+ *   distinct row showing FROM → TO and the message body.
+ * - Consecutive non-user rows (assistant + result) form `CompletedFeedTurn`s.
+ * - The very last agent turn upgrades to `ActiveFeedTurn` when the underlying
+ *   block is non-terminal AND `isAgentActive` is true.
+ */
+function buildFeedTurns(parsedRows: ParsedThreadRow[], isAgentActive: boolean): FeedTurn[] {
+	const blocks = buildLogicalBlocks(parsedRows);
+	if (blocks.length === 0) return [];
+
+	const turns: FeedTurn[] = [];
+	// Store mutable cross-iteration state in an object so TS doesn't
+	// over-narrow the closure-captured fields to `never` after the loop.
+	const trailing: {
+		idx: number;
+		rows: ParsedThreadRow[];
+		block: CompactLogicalBlock | null;
+	} = { idx: -1, rows: [], block: null };
+	let previousAgentLabel: string | null = null;
+
+	for (const block of blocks) {
+		let pendingAgentRows: ParsedThreadRow[] = [];
+		const flushAgent = () => {
+			if (pendingAgentRows.length === 0) return;
+			const turnId = `${block.id}:${String(pendingAgentRows[0].id)}`;
+			turns.push(buildCompletedTurn(block, pendingAgentRows, turnId));
+			trailing.idx = turns.length - 1;
+			trailing.rows = pendingAgentRows;
+			trailing.block = block;
+			pendingAgentRows = [];
+		};
+
+		for (const row of block.rows) {
+			if (isUserRow(row)) {
+				flushAgent();
+				turns.push(buildMessageTurn(row, previousAgentLabel));
+				continue;
+			}
+			pendingAgentRows.push(row);
+		}
+		flushAgent();
+		previousAgentLabel = block.agentLabel;
+	}
+
+	// Upgrade the last agent turn to active when the trailing block is
+	// non-terminal and the session is reportedly running.
+	if (isAgentActive && trailing.idx >= 0 && trailing.block && !trailing.block.isTerminal) {
+		const completed = turns[trailing.idx] as CompletedFeedTurn;
+		turns[trailing.idx] = buildActiveTurn(trailing.block, trailing.rows, completed.id);
+	}
+
+	return turns;
 }
 
 /**
@@ -297,7 +471,7 @@ function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
 	);
 }
 
-function MinimalTurnRow({ turn }: { turn: FeedTurn }) {
+function AgentTurnRow({ turn }: { turn: CompletedFeedTurn | ActiveFeedTurn }) {
 	const color = getAgentColor(turn.agent);
 	const initial = agentInitial(turn.agent);
 	return (
@@ -332,15 +506,74 @@ function MinimalTurnRow({ turn }: { turn: FeedTurn }) {
 	);
 }
 
+function MessageTurnRow({ turn }: { turn: MessageFeedTurn }) {
+	const fromColor = getAgentColor(turn.fromLabel);
+	const toColor = getAgentColor(turn.toLabel);
+	const fromInitial = agentInitial(turn.fromLabel);
+	return (
+		<div
+			class="flex gap-3"
+			data-testid="minimal-thread-turn"
+			data-agent-label={turn.toLabel}
+			data-agent-color={toColor}
+			data-turn-state="message"
+			data-from-label={turn.fromLabel}
+			data-to-label={turn.toLabel}
+		>
+			<div
+				class="h-9 w-9 shrink-0 rounded-md flex items-center justify-center text-sm font-bold text-dark-950"
+				style={{ backgroundColor: fromColor }}
+				aria-hidden="true"
+			>
+				{fromInitial}
+			</div>
+			<div class="min-w-0 flex-1" data-testid="minimal-thread-message-turn">
+				<div class="flex items-center gap-2 flex-wrap">
+					<span class="font-semibold" style={{ color: fromColor }}>
+						{shortAgentName(turn.fromLabel)}
+					</span>
+					<span class="text-gray-600 text-xs" aria-hidden="true">
+						→
+					</span>
+					<span class="text-xs uppercase tracking-wider font-medium" style={{ color: toColor }}>
+						{shortAgentName(turn.toLabel)}
+					</span>
+					{turn.isSynthetic ? (
+						<span
+							class="text-[10px] px-1.5 py-px rounded bg-dark-800 text-gray-500 uppercase tracking-wider"
+							title="System-generated handoff (not human input)"
+						>
+							handoff
+						</span>
+					) : null}
+					<span class="text-xs text-gray-500">{formatClock(turn.createdAt)}</span>
+				</div>
+				{turn.body ? (
+					<div class="mt-1.5 text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400">
+						{turn.bodyIsFallback ? (
+							<p class="whitespace-pre-wrap break-words">{turn.body}</p>
+						) : (
+							<MarkdownRenderer content={turn.body} />
+						)}
+					</div>
+				) : (
+					<div class="mt-1.5 text-xs text-gray-500 italic">(empty message)</div>
+				)}
+			</div>
+		</div>
+	);
+}
+
+function MinimalTurnRow({ turn }: { turn: FeedTurn }) {
+	if (turn.state === 'message') return <MessageTurnRow turn={turn} />;
+	return <AgentTurnRow turn={turn} />;
+}
+
 /* ── public component ────────────────────────────────────────────────────── */
 
 export function MinimalThreadFeed({ parsedRows, isAgentActive = false }: MinimalThreadFeedProps) {
-	const blocks = buildLogicalBlocks(parsedRows);
-	if (blocks.length === 0) return null;
-
-	const turns: FeedTurn[] = blocks.map((block, i) =>
-		buildTurnFromBlock(block, i === blocks.length - 1, isAgentActive)
-	);
+	const turns = buildFeedTurns(parsedRows, isAgentActive);
+	if (turns.length === 0) return null;
 
 	return (
 		<>
