@@ -56,6 +56,13 @@ interface SpaceTaskUnifiedThreadProps {
 	taskId: string;
 	bottomInsetClass?: string;
 	/**
+	 * Top padding applied to the scroll container so the first message clears
+	 * any floating overlay (e.g. SpaceTaskPane's tab pill) at scroll-top. Older
+	 * messages still scroll under the overlay's frosted-glass background; only
+	 * the resting position is adjusted.
+	 */
+	topInsetClass?: string;
+	/**
 	 * Whether the agent session is currently active (not idle / completed /
 	 * failed / interrupted). Forwarded to the compact feed to gate the running
 	 * border animation.
@@ -66,6 +73,7 @@ interface SpaceTaskUnifiedThreadProps {
 export function SpaceTaskUnifiedThread({
 	taskId,
 	bottomInsetClass = 'pb-3',
+	topInsetClass = '',
 	isAgentActive = false,
 }: SpaceTaskUnifiedThreadProps) {
 	// Read render style on every render so that the value stays fresh after a
@@ -172,7 +180,7 @@ export function SpaceTaskUnifiedThread({
 					</span>
 				</div>
 			)}
-			<div ref={containerRef} class={`flex-1 overflow-y-auto ${bottomInsetClass}`}>
+			<div ref={containerRef} class={`flex-1 overflow-y-auto ${topInsetClass} ${bottomInsetClass}`}>
 				<div class="min-h-[calc(100%+1px)]">
 					{renderStyle === 'compact' ? (
 						<SpaceTaskCardFeed
