@@ -22,11 +22,15 @@
  */
 
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import { isSDKAssistantMessage, isToolUseBlock } from '@neokai/shared/sdk/type-guards';
+import {
+	isSDKAssistantMessage,
+	isSDKResultMessage,
+	isToolUseBlock,
+} from '@neokai/shared/sdk/type-guards';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import MarkdownRenderer from '../../../chat/MarkdownRenderer.tsx';
 import {
-	buildLogicalBlocks,
+	buildAgentTurns,
 	type CompactLogicalBlock,
 	isUserRow,
 } from '../compact/space-task-compact-reducer';
@@ -66,8 +70,6 @@ interface CompletedFeedTurn {
 	messages: number;
 	lastMessage: string;
 	fallback: boolean;
-	/** Tool names used in this turn — shown when lastMessage is empty. */
-	toolNames: string[];
 }
 
 interface ActiveFeedTurn {
@@ -159,10 +161,35 @@ function countToolCalls(rows: ParsedThreadRow[]): number {
 	return n;
 }
 
+/**
+ * Extract the closing text for a turn, walking rows last-to-first.
+ *
+ * Two viable text sources:
+ *   1. `assistant` rows — the model's `text` content blocks. Standard path.
+ *   2. `result|success` rows — the SDK's end-of-exec envelope, whose top-level
+ *      `result` string carries the agent's final reply. Crucial for turns where
+ *      the agent emitted only `tool_use` / `thinking` blocks (e.g. Reviewer
+ *      runs that verify with Bash and never write a textual reply mid-stream).
+ *
+ * We check both per row in walk order. Walking last-to-first naturally prefers
+ * the result message when one exists, which is what we want — it's the
+ * canonical "what the agent said" string for that exec session.
+ */
 function extractLastAssistantText(rows: ParsedThreadRow[]): { text: string; fallback: boolean } {
 	for (let i = rows.length - 1; i >= 0; i--) {
 		const row = rows[i];
-		if (!row.message || !isSDKAssistantMessage(row.message)) continue;
+		if (!row.message) continue;
+
+		// Result-success rows carry the agent's final reply on `.result`.
+		if (isSDKResultMessage(row.message) && row.message.subtype === 'success') {
+			const result = (row.message as { result?: unknown }).result;
+			if (typeof result === 'string' && result.trim().length > 0) {
+				return { text: result.trim(), fallback: false };
+			}
+			continue;
+		}
+
+		if (!isSDKAssistantMessage(row.message)) continue;
 		const content = (row.message as { message?: { content?: unknown } }).message?.content;
 		if (!Array.isArray(content)) continue;
 		const texts = content
@@ -190,7 +217,6 @@ function buildCompletedTurn(
 	const durationMs = Math.max(0, lastRow.createdAt - startedAt);
 	const durationSec = Math.max(1, Math.round(durationMs / 1000));
 	const { text, fallback } = extractLastAssistantText(rows);
-	const toolNames = extractToolCallEntries(rows, 99).map((e) => e.tool);
 	return {
 		state: 'completed',
 		id: turnId,
@@ -201,7 +227,6 @@ function buildCompletedTurn(
 		messages: rows.length,
 		lastMessage: text,
 		fallback,
-		toolNames: [...new Set(toolNames)],
 	};
 }
 
@@ -329,7 +354,7 @@ function buildMessageTurn(
  *   block is non-terminal AND `isAgentActive` is true.
  */
 function buildFeedTurns(parsedRows: ParsedThreadRow[], isAgentActive: boolean): FeedTurn[] {
-	const blocks = buildLogicalBlocks(parsedRows);
+	const blocks = buildAgentTurns(parsedRows);
 	if (blocks.length === 0) return [];
 
 	const turns: FeedTurn[] = [];
@@ -372,6 +397,18 @@ function buildFeedTurns(parsedRows: ParsedThreadRow[], isAgentActive: boolean): 
 		const completed = turns[trailing.idx] as CompletedFeedTurn;
 		turns[trailing.idx] = buildActiveTurn(trailing.block, trailing.rows, completed.id);
 	}
+
+	// Drop empty completed turns. With result-message-aware text extraction in
+	// place, the only way a completed turn ends up with no body is if it's an
+	// agent-phase fragment that got cut off by another agent's rows before its
+	// own exec's result message arrived — its actual reply lives in a sibling
+	// turn from the same agent. Showing the fragment as its own header-only row
+	// (e.g. "REVIEWER 12:29 PM · 3 messages · 9s" with nothing under it) is
+	// noise; the reply is rendered in the sibling that holds the result text.
+	return turns.filter((t) => {
+		if (t.state !== 'completed') return true;
+		return t.lastMessage.length > 0;
+	});
 
 	return turns;
 }
@@ -440,22 +477,6 @@ function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
 					) : (
 						<MarkdownRenderer content={turn.lastMessage} />
 					)}
-				</div>
-			) : turn.toolNames.length > 0 ? (
-				<div class="mt-1.5 flex flex-wrap gap-1">
-					{turn.toolNames.map((name) => (
-						<span
-							key={name}
-							class="inline-flex items-center gap-1 text-[11px] text-gray-400 bg-dark-800 px-1.5 py-0.5 rounded"
-						>
-							<span
-								class="w-1.5 h-1.5 rounded-full shrink-0"
-								style={{ backgroundColor: getToolDarkColor(name) }}
-								aria-hidden="true"
-							/>
-							{name}
-						</span>
-					))}
 				</div>
 			) : null}
 		</>

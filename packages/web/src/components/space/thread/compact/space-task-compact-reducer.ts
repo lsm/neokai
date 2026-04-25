@@ -53,6 +53,13 @@ function rowIsTerminal(row: ParsedThreadRow): boolean {
  *
  * Sub-agent sequences — all rows emitted by a spawned sub-agent session — form
  * a single block because they share the same agent label.
+ *
+ * NOTE: Multiple exec cycles for the same agent (e.g. a Reviewer that runs
+ * three review iterations in one session) collapse into a single block here —
+ * compact mode treats this as one visual "agent group" and uses block-level
+ * windowing for compactness. Renderers that need exec-turn semantics — i.e.
+ * one block per init→result cycle — should use {@link buildAgentTurns}
+ * instead.
  */
 export function buildLogicalBlocks(rows: ParsedThreadRow[]): CompactLogicalBlock[] {
 	const blocks: CompactLogicalBlock[] = [];
@@ -74,6 +81,51 @@ export function buildLogicalBlocks(rows: ParsedThreadRow[]): CompactLogicalBlock
 				isTerminal: terminal,
 			});
 		}
+	}
+
+	return blocks;
+}
+
+/**
+ * Group rows into exec-turn blocks: split on agent change AND on result
+ * messages. Each block represents exactly one query/response cycle bounded by
+ * (start) → (next result|success / result|error).
+ *
+ * Why this exists separately from {@link buildLogicalBlocks}:
+ *
+ * A single agent session can complete many exec turns (each ending with a
+ * `result` SDK message). The Reviewer in PR review tasks is a common example —
+ * one session runs three review cycles, each ending with a `result.success`
+ * envelope whose `.result` field carries the agent's final reply. Compact mode
+ * groups all those cycles into one visual block (windowing optimization);
+ * Slack-style feeds want one row per cycle so each reply renders distinctly.
+ *
+ * Splitting on the result row (rather than starting a new block when the NEXT
+ * row arrives) keeps the result row at the tail of its own turn — convenient
+ * for renderers that read closing text from `result.result`.
+ */
+export function buildAgentTurns(rows: ParsedThreadRow[]): CompactLogicalBlock[] {
+	const blocks: CompactLogicalBlock[] = [];
+	let previousWasTerminal = false;
+
+	for (const row of rows) {
+		const last = blocks[blocks.length - 1];
+		const isSameAgent =
+			last !== undefined && normalizeAgentKey(last.agentLabel) === normalizeAgentKey(row.label);
+		const terminal = rowIsTerminal(row);
+
+		if (isSameAgent && !previousWasTerminal) {
+			last.rows.push(row);
+			if (terminal) last.isTerminal = true;
+		} else {
+			blocks.push({
+				id: String(row.id),
+				agentLabel: row.label,
+				rows: [row],
+				isTerminal: terminal,
+			});
+		}
+		previousWasTerminal = terminal;
 	}
 
 	return blocks;
