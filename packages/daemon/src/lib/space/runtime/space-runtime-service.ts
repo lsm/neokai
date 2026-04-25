@@ -242,15 +242,23 @@ export class SpaceRuntimeService {
 	 * with `mcpServers: undefined` and fail to reach `space-agent-tools` (root
 	 * cause of task #83).
 	 *
-	 * The recovery pass (`recoverStalledWorkflowRuns`) runs after provisioning
-	 * to repair workflow runs whose in-flight state was orphaned by the
-	 * previous daemon shutdown: runs whose node executions are all terminal
-	 * but never finalized are flagged `blocked` with `block_reason =
-	 * execution_failed`. Orphan in_progress node executions (dead session) are
-	 * left for the tick loop's existing crash-retry path, which handles them
-	 * correctly with proper crash counting. Without this scan, a crash that
-	 * lands the run with all-terminal-no-completion-signal would leave the
-	 * parent task `in_progress` forever (root cause of task #120).
+	 * The recovery pass (`recoverStalledWorkflowRuns`) is chained after
+	 * provisioning inside `provisioningPromise` to repair workflow runs whose
+	 * in-flight state was orphaned by the previous daemon shutdown: runs whose
+	 * node executions are all terminal but never finalized are flagged
+	 * `blocked` with `block_reason = execution_failed`. Orphan in_progress node
+	 * executions (dead session) are left for the tick loop's existing
+	 * crash-retry path, which handles them correctly with proper crash
+	 * counting. Without this scan, a crash that lands the run with
+	 * all-terminal-no-completion-signal would leave the parent task
+	 * `in_progress` forever (root cause of task #120).
+	 *
+	 * Ordering caveat: `runtime.start()` synchronously schedules an immediate
+	 * `executeTick()`, whose first invocation also calls `recoverStalledRuns()`
+	 * after rehydrate. The "after provisioning" sequencing is therefore
+	 * best-effort — whichever path wins the race fires first. Correctness is
+	 * enforced by `SpaceRuntime.recoveryDone`, which guarantees recovery runs
+	 * exactly once regardless of caller order.
 	 */
 	start(): void {
 		if (this.started) return;
@@ -259,9 +267,10 @@ export class SpaceRuntimeService {
 		this.subscribeToSpaceEvents();
 		// Kick off provisioning + recovery and retain the promise so callers
 		// (notably the daemon bootstrap) can `await ready()` before accepting
-		// queries. Recovery runs *after* provisioning so member sessions have
-		// their MCP tools attached before any restart-driven `task_blocked`
-		// notifications fire.
+		// queries. Recovery is chained after provisioning here as a best-effort
+		// ordering — but the runtime's first `executeTick()` also calls
+		// `recoverStalledRuns()`, so the actual single-execution guarantee
+		// comes from `SpaceRuntime.recoveryDone`, not this sequencing.
 		this.provisioningPromise = (async () => {
 			await this.provisionExistingSpaces();
 			await this.recoverStalledWorkflowRuns();

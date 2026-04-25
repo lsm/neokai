@@ -1188,9 +1188,14 @@ export class SpaceRuntime {
 	 *   2. **Stalled-with-no-signal** — every node execution is terminal but no
 	 *      completion signal was recorded. No agent is going to drive further
 	 *      progress, so the run is marked `blocked` with `block_reason =
-	 *      execution_failed` and a clear, restart-aware result message. The
-	 *      existing `attemptBlockedRunRecovery` path will then either retry
-	 *      (resetting executions to `pending`) or escalate.
+	 *      execution_failed` and a clear, restart-aware result message. Note:
+	 *      `attemptBlockedRunRecovery` early-returns when no executions are in
+	 *      `blocked` status — and a recovery-blocked run has all-idle/cancelled
+	 *      executions — so neither the Tier-1 retry nor Tier-2 escalation path
+	 *      will fire. The run sits `blocked` until human attention (or a future
+	 *      cleanup teaches `attemptBlockedRunRecovery` to also recover from
+	 *      idle/cancelled executions). This matches the spec requirement to
+	 *      flag ambiguous-recovery runs with a clear reason.
 	 *
 	 * Note: orphan in-progress executions whose agent sessions died across the
 	 * restart are NOT handled here — `processRunTick` already detects dead
