@@ -614,12 +614,8 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 			PendingGateBanner: () => null,
 		}));
 		vi.doMock('../TaskArtifactsPanel', () => ({
-			TaskArtifactsPanel: ({ runId, onClose }: { runId: string; onClose: () => void }) => (
-				<div data-testid="artifacts-panel" data-run-id={runId}>
-					<button data-testid="artifacts-panel-close" onClick={onClose}>
-						Close
-					</button>
-				</div>
+			TaskArtifactsPanel: ({ runId }: { runId: string; onClose?: () => void }) => (
+				<div data-testid="artifacts-panel" data-run-id={runId} />
 			),
 		}));
 		vi.doMock('../../../lib/router', () => ({
@@ -658,8 +654,8 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 		expect(getByTestId('artifacts-panel')).toBeTruthy();
 		expect(getByTestId('artifacts-panel').getAttribute('data-run-id')).toBe('run-toggle');
 
-		// Click close → panel disappears
-		fireEvent.click(getByTestId('artifacts-panel-close'));
+		// Click toggle again → panel disappears (the pill is the only way to close)
+		fireEvent.click(getByTestId('artifacts-toggle'));
 		expect(queryByTestId('artifacts-panel')).toBeNull();
 	});
 });
