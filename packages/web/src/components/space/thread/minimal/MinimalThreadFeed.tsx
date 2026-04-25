@@ -506,66 +506,119 @@ function AgentTurnRow({ turn }: { turn: CompletedFeedTurn | ActiveFeedTurn }) {
 	);
 }
 
-function MessageTurnRow({ turn }: { turn: MessageFeedTurn }) {
-	const fromColor = getAgentColor(turn.fromLabel);
-	const toColor = getAgentColor(turn.toLabel);
-	const fromInitial = agentInitial(turn.fromLabel);
+/**
+ * Human user input — iMessage-style blue bubble, right-aligned. No header
+ * decoration: the user IS the human, the recipient is implicit (this is the
+ * recipient agent's session view).
+ */
+function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
+	const recipientColor = getAgentColor(turn.toLabel);
 	return (
 		<div
-			class="flex gap-3"
+			class="flex justify-end"
 			data-testid="minimal-thread-turn"
-			data-agent-label={turn.toLabel}
-			data-agent-color={toColor}
 			data-turn-state="message"
+			data-message-kind="human"
+			data-agent-label={turn.toLabel}
+			data-agent-color={recipientColor}
 			data-from-label={turn.fromLabel}
 			data-to-label={turn.toLabel}
 		>
-			<div
-				class="h-9 w-9 shrink-0 rounded-md flex items-center justify-center text-sm font-bold text-dark-950"
-				style={{ backgroundColor: fromColor }}
-				aria-hidden="true"
-			>
-				{fromInitial}
-			</div>
-			<div class="min-w-0 flex-1" data-testid="minimal-thread-message-turn">
-				<div class="flex items-center gap-2 flex-wrap">
-					<span class="font-semibold" style={{ color: fromColor }}>
-						{shortAgentName(turn.fromLabel)}
-					</span>
-					<span class="text-gray-600 text-xs" aria-hidden="true">
-						→
-					</span>
-					<span class="text-xs uppercase tracking-wider font-medium" style={{ color: toColor }}>
-						{shortAgentName(turn.toLabel)}
-					</span>
-					{turn.isSynthetic ? (
-						<span
-							class="text-[10px] px-1.5 py-px rounded bg-dark-800 text-gray-500 uppercase tracking-wider"
-							title="System-generated handoff (not human input)"
-						>
-							handoff
-						</span>
-					) : null}
-					<span class="text-xs text-gray-500">{formatClock(turn.createdAt)}</span>
+			<div class="max-w-[85%] md:max-w-[70%] w-auto">
+				<div
+					class="bg-blue-500 text-white rounded-[20px] px-4 py-2 leading-relaxed break-words"
+					data-testid="minimal-thread-human-bubble"
+				>
+					{turn.body ? (
+						<p class="whitespace-pre-wrap break-words">{turn.body}</p>
+					) : (
+						<p class="opacity-70 italic">(empty message)</p>
+					)}
 				</div>
-				{turn.body ? (
-					<div class="mt-1.5 text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400">
-						{turn.bodyIsFallback ? (
-							<p class="whitespace-pre-wrap break-words">{turn.body}</p>
+				<div class="text-xs text-gray-500 text-right mt-1">{formatClock(turn.createdAt)}</div>
+			</div>
+		</div>
+	);
+}
+
+/**
+ * Synthetic / agent→agent handoff — muted dark bubble with purple accent,
+ * right-aligned. Header carries a `synthetic` badge plus a colored
+ * `[FROM AGENT] → [TO AGENT]` badge so the conversational handoff is
+ * obvious at a glance.
+ */
+function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
+	const fromColor = getAgentColor(turn.fromLabel);
+	const toColor = getAgentColor(turn.toLabel);
+	const fromShort = shortAgentName(turn.fromLabel);
+	const toShort = shortAgentName(turn.toLabel);
+	return (
+		<div
+			class="flex justify-end"
+			data-testid="minimal-thread-turn"
+			data-turn-state="message"
+			data-message-kind="synthetic"
+			data-agent-label={turn.toLabel}
+			data-agent-color={toColor}
+			data-from-label={turn.fromLabel}
+			data-to-label={turn.toLabel}
+		>
+			<div class="max-w-[85%] md:max-w-[70%] w-auto">
+				<div
+					class="bg-dark-900 border border-dark-700 rounded-[20px] overflow-hidden"
+					data-testid="minimal-thread-synthetic-bubble"
+				>
+					{/* Header — purple accent + synthetic badge + agent→agent route. */}
+					<div class="flex items-center gap-2 px-3 py-2 border-b border-dark-700 flex-wrap">
+						<span class="w-2 h-2 rounded-full bg-purple-500 shrink-0" aria-hidden="true" />
+						<span
+							class="text-xs font-semibold text-purple-400"
+							data-testid="minimal-thread-synthetic-badge"
+						>
+							Synthetic
+						</span>
+						<span class="text-gray-600 text-xs" aria-hidden="true">
+							·
+						</span>
+						<span
+							class="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-medium px-1.5 py-px rounded bg-dark-800"
+							data-testid="minimal-thread-agent-route-badge"
+							aria-label={`From ${turn.fromLabel} agent to ${turn.toLabel} agent`}
+						>
+							<span style={{ color: fromColor }}>{fromShort}</span>
+							<span class="text-gray-600" aria-hidden="true">
+								→
+							</span>
+							<span style={{ color: toColor }}>{toShort}</span>
+						</span>
+					</div>
+					{/* Purple-tinted markdown body. */}
+					<div class="px-3 py-2 text-sm text-gray-200 leading-relaxed [&_a]:text-purple-300 [&_code]:text-purple-200 [&_code]:bg-purple-500/10 [&_code]:rounded [&_code]:px-1 [&_strong]:text-purple-100 [&_h1]:text-purple-100 [&_h2]:text-purple-100 [&_h3]:text-purple-100">
+						{turn.body ? (
+							turn.bodyIsFallback ? (
+								<p class="whitespace-pre-wrap break-words">{turn.body}</p>
+							) : (
+								<MarkdownRenderer content={turn.body} />
+							)
 						) : (
-							<MarkdownRenderer content={turn.body} />
+							<p class="text-xs text-gray-500 italic">(empty message)</p>
 						)}
 					</div>
-				) : (
-					<div class="mt-1.5 text-xs text-gray-500 italic">(empty message)</div>
-				)}
+				</div>
+				<div class="text-xs text-gray-500 text-right mt-1">{formatClock(turn.createdAt)}</div>
 			</div>
 		</div>
 	);
 }
 
 function MinimalTurnRow({ turn }: { turn: FeedTurn }) {
-	if (turn.state === 'message') return <MessageTurnRow turn={turn} />;
+	if (turn.state === 'message') {
+		return turn.isSynthetic ? (
+			<SyntheticMessageTurn turn={turn} />
+		) : (
+			<HumanMessageTurn turn={turn} />
+		);
+	}
 	return <AgentTurnRow turn={turn} />;
 }
 
