@@ -345,6 +345,58 @@ describe('SpaceRuntimeService', () => {
 			const runtime = await service.createOrGetRuntime('space-1');
 			expect(runtime).toBeDefined();
 		});
+
+		test('start() runs recoverStalledWorkflowRuns after provisioning, before ready() resolves (Task #120)', async () => {
+			// Daemon-restart safety net: the stalled-run scan must run as part of
+			// the provisioning chain so the daemon never accepts queries while a
+			// run sits in_progress with no driveable executions.
+			const order: string[] = [];
+
+			// Build a service whose provisionExistingSpaces and recovery both log
+			// when they execute, then assert ordering.
+			const svc = new SpaceRuntimeService(buildConfig(spaceManager));
+
+			const originalProvision = (
+				svc as unknown as { provisionExistingSpaces: () => Promise<void> }
+			).provisionExistingSpaces.bind(svc);
+			(svc as unknown as { provisionExistingSpaces: () => Promise<void> }).provisionExistingSpaces =
+				async () => {
+					await new Promise((r) => setTimeout(r, 0));
+					order.push('provision');
+					await originalProvision();
+				};
+
+			const originalRecover = svc.recoverStalledWorkflowRuns.bind(svc);
+			svc.recoverStalledWorkflowRuns = async () => {
+				order.push('recover');
+				await originalRecover();
+			};
+
+			svc.start();
+			await svc.ready();
+
+			expect(order).toEqual(['provision', 'recover']);
+
+			await svc.stop();
+		});
+
+		test('recoverStalledWorkflowRuns swallows errors from underlying runtime (start() never rejects)', async () => {
+			const svc = new SpaceRuntimeService(buildConfig(spaceManager));
+			const runtime = (svc as unknown as { runtime: { recoverStalledRuns: () => Promise<void> } })
+				.runtime;
+			runtime.recoverStalledRuns = async () => {
+				throw new Error('explode');
+			};
+
+			// Should not throw
+			await expect(svc.recoverStalledWorkflowRuns()).resolves.toBeUndefined();
+
+			// And start() should still ready successfully even if recovery throws.
+			svc.start();
+			await expect(svc.ready()).resolves.toBeUndefined();
+
+			await svc.stop();
+		});
 	});
 
 	// ─── setupSpaceAgentSession ──────────────────────────────────────────────
