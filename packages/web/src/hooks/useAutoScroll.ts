@@ -64,7 +64,6 @@ export function useAutoScroll({
 	const [showScrollButton, setShowScrollButton] = useState(false);
 	const [isNearBottom, setIsNearBottom] = useState(true);
 	const prevMessageCountRef = useRef<number>(0);
-	const hasScrolledOnInitialLoad = useRef(false);
 	// Tracks whether we've performed the first scroll-to-bottom on this mount.
 	// Independent of the `isInitialLoad` prop because preact batches the
 	// signal-driven `setIsInitialLoad(false)` and `setMessages(M)` updates into
@@ -231,7 +230,6 @@ export function useAutoScroll({
 		if (!hasScrolledOnMountRef.current && messageCount > 0) {
 			scrollToBottom();
 			hasScrolledOnMountRef.current = true;
-			hasScrolledOnInitialLoad.current = true;
 			prevMessageCountRef.current = messageCount;
 			isNearBottomRef.current = true;
 			return;
@@ -245,13 +243,12 @@ export function useAutoScroll({
 		prevMessageCountRef.current = messageCount;
 	}, [messageCount, isInitialLoad, loadingOlder, enabled, scrollToBottom]);
 
-	// Reset the mount-scroll latches when `isInitialLoad` flips back to true.
+	// Reset the mount-scroll latch when `isInitialLoad` flips back to true.
 	// This preserves the existing reset semantic — a parent can signal "treat
 	// the next non-empty messageCount as a fresh load" by toggling the prop —
 	// without coupling the scroll trigger itself to the prop's timing.
 	useEffect(() => {
 		if (isInitialLoad) {
-			hasScrolledOnInitialLoad.current = false;
 			hasScrolledOnMountRef.current = false;
 		}
 	}, [isInitialLoad]);

@@ -544,7 +544,7 @@ describe('useAutoScroll', () => {
 	});
 
 	describe('initial load reset', () => {
-		it('should reset hasScrolledOnInitialLoad when isInitialLoad changes to true', () => {
+		it('should reset mount-scroll latch when isInitialLoad changes to true', () => {
 			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
 
 			const { rerender } = renderHook(
