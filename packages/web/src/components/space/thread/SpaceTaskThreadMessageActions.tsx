@@ -8,6 +8,13 @@ interface SpaceTaskThreadMessageActionsProps {
 	timestamp: number;
 	copyText: string;
 	align?: 'left' | 'right';
+	/**
+	 * When provided, an additional icon button is rendered next to the copy
+	 * action that opens the agent's full session in the slide-over chat
+	 * overlay (scrolling to the corresponding message). Touch-friendly:
+	 * always visible, no hover required.
+	 */
+	onOpenSession?: () => void;
 }
 
 function formatTime(timestamp: number): string {
@@ -25,6 +32,7 @@ export function SpaceTaskThreadMessageActions({
 	timestamp,
 	copyText,
 	align = 'left',
+	onOpenSession,
 }: SpaceTaskThreadMessageActionsProps) {
 	const [copied, setCopied] = useState(false);
 
@@ -70,6 +78,20 @@ export function SpaceTaskThreadMessageActions({
 					</svg>
 				)}
 			</IconButton>
+
+			{onOpenSession && (
+				<IconButton size="md" onClick={onOpenSession} title="Open in session">
+					{/* External-link / open-pane icon — signals "jump into the full session". */}
+					<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							strokeWidth={2}
+							d="M14 5l7 7m0 0l-7 7m7-7H3"
+						/>
+					</svg>
+				</IconButton>
+			)}
 		</div>
 	);
 }

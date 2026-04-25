@@ -37,6 +37,7 @@ import {
 import { SpaceTaskThreadMessageActions } from '../SpaceTaskThreadMessageActions';
 import { getAgentColor } from '../space-task-thread-agent-colors';
 import type { ParsedThreadRow } from '../space-task-thread-events';
+import { pushOverlayHistory } from '../../../../lib/router';
 import {
 	agentInitial,
 	formatClock,
@@ -70,6 +71,20 @@ interface CompletedFeedTurn {
 	messages: number;
 	lastMessage: string;
 	fallback: boolean;
+	/**
+	 * Session id that produced this turn's reply text. Used by the
+	 * "open in session" affordance so clicking the button lands the user
+	 * on the right session even when multiple sessions are interleaved
+	 * in the feed. Null when the underlying row had no resolvable session.
+	 */
+	sessionId: string | null;
+	/**
+	 * SDK message UUID of the row whose text was surfaced as `lastMessage`.
+	 * Forwarded as `highlightMessageId` to the slide-over so that message
+	 * is scrolled to + briefly highlighted on open. May be undefined when
+	 * we fell back to `fallbackText` and no SDK message was available.
+	 */
+	highlightMessageUuid?: string;
 }
 
 interface ActiveFeedTurn {
@@ -95,6 +110,10 @@ interface MessageFeedTurn {
 	createdAt: number;
 	/** True for synthetic agent→agent / system handoffs; false for human input. */
 	isSynthetic: boolean;
+	/** Recipient session id — same role as `CompletedFeedTurn.sessionId`. */
+	sessionId: string | null;
+	/** SDK message UUID, used to deep-link the slide-over. */
+	highlightMessageUuid?: string;
 }
 
 type FeedTurn = CompletedFeedTurn | ActiveFeedTurn | MessageFeedTurn;
@@ -174,8 +193,15 @@ function countToolCalls(rows: ParsedThreadRow[]): number {
  * We check both per row in walk order. Walking last-to-first naturally prefers
  * the result message when one exists, which is what we want — it's the
  * canonical "what the agent said" string for that exec session.
+ *
+ * Returns the surfaced row alongside the text so callers can build deep links
+ * back to the original SDK message (sessionId + uuid) for the slide-over.
  */
-function extractLastAssistantText(rows: ParsedThreadRow[]): { text: string; fallback: boolean } {
+function extractLastAssistantText(rows: ParsedThreadRow[]): {
+	text: string;
+	fallback: boolean;
+	sourceRow: ParsedThreadRow | null;
+} {
 	for (let i = rows.length - 1; i >= 0; i--) {
 		const row = rows[i];
 		if (!row.message) continue;
@@ -184,7 +210,7 @@ function extractLastAssistantText(rows: ParsedThreadRow[]): { text: string; fall
 		if (isSDKResultMessage(row.message) && row.message.subtype === 'success') {
 			const result = (row.message as { result?: unknown }).result;
 			if (typeof result === 'string' && result.trim().length > 0) {
-				return { text: result.trim(), fallback: false };
+				return { text: result.trim(), fallback: false, sourceRow: row };
 			}
 			continue;
 		}
@@ -201,10 +227,11 @@ function extractLastAssistantText(rows: ParsedThreadRow[]): { text: string; fall
 			)
 			.map((block) => block.text.trim())
 			.filter((s) => s.length > 0);
-		if (texts.length > 0) return { text: texts.join('\n\n'), fallback: false };
+		if (texts.length > 0) return { text: texts.join('\n\n'), fallback: false, sourceRow: row };
 	}
-	const tailFallback = rows[rows.length - 1]?.fallbackText ?? '';
-	return { text: tailFallback, fallback: true };
+	const tail = rows[rows.length - 1] ?? null;
+	const tailFallback = tail?.fallbackText ?? '';
+	return { text: tailFallback, fallback: true, sourceRow: tail };
 }
 
 function buildCompletedTurn(
@@ -216,7 +243,13 @@ function buildCompletedTurn(
 	const lastRow = rows[rows.length - 1];
 	const durationMs = Math.max(0, lastRow.createdAt - startedAt);
 	const durationSec = Math.max(1, Math.round(durationMs / 1000));
-	const { text, fallback } = extractLastAssistantText(rows);
+	const { text, fallback, sourceRow } = extractLastAssistantText(rows);
+	const highlightSource = sourceRow ?? lastRow;
+	const highlightUuid =
+		highlightSource?.message &&
+		typeof (highlightSource.message as { uuid?: unknown }).uuid === 'string'
+			? ((highlightSource.message as { uuid: string }).uuid as string)
+			: undefined;
 	return {
 		state: 'completed',
 		id: turnId,
@@ -227,6 +260,8 @@ function buildCompletedTurn(
 		messages: rows.length,
 		lastMessage: text,
 		fallback,
+		sessionId: highlightSource?.sessionId ?? lastRow.sessionId,
+		highlightMessageUuid: highlightUuid,
 	};
 }
 
@@ -331,6 +366,10 @@ function buildMessageTurn(
 		previousAgentLabel
 	);
 	const { body, fallback } = extractUserMessageText(row);
+	const highlightUuid =
+		row.message && typeof (row.message as { uuid?: unknown }).uuid === 'string'
+			? ((row.message as { uuid: string }).uuid as string)
+			: undefined;
 	return {
 		state: 'message',
 		id: `msg-${String(row.id)}`,
@@ -340,6 +379,8 @@ function buildMessageTurn(
 		bodyIsFallback: fallback,
 		createdAt: row.createdAt,
 		isSynthetic,
+		sessionId: row.sessionId,
+		highlightMessageUuid: highlightUuid,
 	};
 }
 
@@ -479,6 +520,13 @@ function RosterEntry({ entry, isLatest }: { entry: ToolCallEntry; isLatest: bool
  * caps the width on long replies so they don't fill the column.
  */
 function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
+	const openSession = turn.sessionId
+		? () => {
+				// `pushOverlayHistory` reads the highlight signal; passing the message
+				// uuid scrolls the slide-over straight to this turn's surfaced reply.
+				pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid);
+			}
+		: undefined;
 	return (
 		<div class="mt-1.5 w-fit max-w-[85%] md:max-w-[70%]">
 			<div
@@ -503,6 +551,7 @@ function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
 				timestamp={turn.startedAt}
 				copyText={turn.lastMessage}
 				align="left"
+				onOpenSession={openSession}
 			/>
 		</div>
 	);
@@ -813,6 +862,16 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 					timestamp={turn.createdAt}
 					copyText={turn.body ?? ''}
 					align="right"
+					onOpenSession={
+						turn.sessionId
+							? () =>
+									pushOverlayHistory(
+										turn.sessionId as string,
+										turn.toLabel,
+										turn.highlightMessageUuid
+									)
+							: undefined
+					}
 				/>
 			</div>
 		</div>

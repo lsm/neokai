@@ -292,13 +292,21 @@ describe('MinimalThreadFeed', () => {
 
 	it('treats the last block as completed when isAgentActive is false', () => {
 		const t = Date.now();
-		// No result message — block is non-terminal.
+		// No result message — block is non-terminal. Need an assistant text row
+		// alongside the tool-use so the completed turn has surfaceable text and
+		// is not dropped by the empty-completed-turn filter.
 		const rows = [
 			makeRow({
 				id: 'a1',
 				label: 'Coder Agent',
 				createdAt: t,
 				message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'ls' } }]),
+			}),
+			makeRow({
+				id: 'a2',
+				label: 'Coder Agent',
+				createdAt: t + 1000,
+				message: assistantText('a2', 'inspecting'),
 			}),
 		];
 
@@ -334,8 +342,9 @@ describe('MinimalThreadFeed', () => {
 		expect(messageTurn.dataset.turnState).toBe('message');
 		expect(messageTurn.dataset.fromLabel).toBe('User');
 		expect(messageTurn.dataset.toLabel).toBe('Coder Agent');
-		expect(messageTurn.textContent).toContain('USER');
-		expect(messageTurn.textContent).toContain('CODER');
+		// Human bubbles are iMessage-style — sender labels are encoded on the
+		// dataset (asserted above) but not surfaced as visible text.
+		expect(messageTurn.dataset.messageKind).toBe('human');
 		await waitFor(() => {
 			expect(screen.getByText('help me add dark mode')).toBeTruthy();
 		});
@@ -372,7 +381,9 @@ describe('MinimalThreadFeed', () => {
 		expect(messageTurn.dataset.toLabel).toBe('Coder Agent');
 		expect(messageTurn.textContent).toContain('REVIEWER');
 		expect(messageTurn.textContent).toContain('CODER');
-		expect(messageTurn.textContent?.toLowerCase()).toContain('handoff');
+		// Synthetic handoffs render with a "Synthetic" badge (was "handoff" earlier;
+		// renamed when the bubble was redesigned to mirror the Thinking block).
+		expect(messageTurn.textContent?.toLowerCase()).toContain('synthetic');
 		await waitFor(() => {
 			expect(screen.getByText('please address the failing test')).toBeTruthy();
 		});
@@ -394,7 +405,8 @@ describe('MinimalThreadFeed', () => {
 		expect(messageTurn.dataset.turnState).toBe('message');
 		expect(messageTurn.dataset.fromLabel).toBe('Neo');
 		expect(messageTurn.dataset.toLabel).toBe('Task Agent');
-		expect(messageTurn.textContent?.toLowerCase()).toContain('handoff');
+		// Synthetic badge replaces the older "handoff" wording.
+		expect(messageTurn.textContent?.toLowerCase()).toContain('synthetic');
 	});
 
 	it('infers sender from previous block when a replay message has no origin', async () => {
