@@ -497,10 +497,11 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
 
 	test('kill-switch: NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING=0 disables routing at the call site', () => {
 		// The router itself does not consult the flag (its callers do — see the
-		// doc comment at the top of post-approval-router.ts). So the kill-switch
-		// integration contract is: `isPostApprovalRoutingEnabled` returns false,
-		// which makes the runtime fall back to the legacy completion-actions
-		// pipeline (deleted in PR 4/5 — kept alive for this intermediate PR).
+		// doc comment at the top of post-approval-router.ts). PR 4/5 deleted the
+		// legacy completion-actions pipeline, so the flag's only remaining
+		// consumer is the SpaceRuntime feature-gating (any future fallback path
+		// would also branch on this helper). The parsing contract is what's
+		// asserted here.
 		expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: '0' })).toBe(false);
 		expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: 'false' })).toBe(false);
 		expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: 'off' })).toBe(false);

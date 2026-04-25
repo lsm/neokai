@@ -317,9 +317,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		/**
 		 * List SpaceTasks for this space, optionally filtered by status and/or workflowRunId.
 		 *
-		 * Tasks in the non-compact output are enriched with `pendingAction` when they are
-		 * paused at a completion action, so consumers can render an approval banner
-		 * without a second fetch.
+		 * Use `compact: true` to return a trimmed projection (id, title, status,
+		 * priority, createdAt) suitable for dense lists. Otherwise the full
+		 * SpaceTask rows are returned.
 		 */
 		async list_tasks(args: {
 			status?: SpaceTaskStatus;

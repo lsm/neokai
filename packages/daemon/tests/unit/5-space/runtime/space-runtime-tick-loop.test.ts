@@ -175,18 +175,9 @@ function makeMockTaskAgentManager(
 // ---------------------------------------------------------------------------
 
 describe('SpaceRuntime — tick loop correctness', () => {
-	// PR 3/5 flipped `NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING` default to ON.
-	// These tests exercise the legacy approval→done dispatch path that PR 4/5
-	// will remove; force the kill-switch OFF here so the intermediate state is
-	// still fully exercised.
-	const SAVED_FLAG = process.env.NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING;
-	beforeEach(() => {
-		process.env.NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING = '0';
-	});
-	afterEach(() => {
-		if (SAVED_FLAG === undefined) delete process.env.NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING;
-		else process.env.NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING = SAVED_FLAG;
-	});
+	// Covers the per-tick scheduling/dispatch loop and approval → router
+	// hand-off. The legacy approval→done dispatch path was removed in PR 4/5;
+	// `dispatchPostApproval` is the only route now.
 
 	let db: BunDatabase;
 
