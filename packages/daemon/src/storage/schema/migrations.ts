@@ -477,6 +477,23 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//     `post_approval_session_id`, `post_approval_started_at`,
 	//     `post_approval_blocked_reason`.
 	runMigration103(db);
+
+	// Migration 104: PR 5/5 of the task-agent-as-post-approval-executor refactor.
+	//   Final cleanup — drops the completion-action schema fields. By this stage
+	//   PR 4/5 has already removed every runtime path that produced these
+	//   values, so the migration is mostly defensive.
+	//   Step 5: rewrite any live tasks paused at `pending_checkpoint_type =
+	//     'completion_action'` to `'task_completion'` and clear
+	//     `pending_action_index`.
+	//   Step 6: drop `space_tasks.pending_action_index` column.
+	//   Step 7: tighten the `pending_checkpoint_type` CHECK constraint from
+	//     `('completion_action', 'gate', 'task_completion')` to
+	//     `('gate', 'task_completion')`.
+	//   Step 8: drop `space_workflow_runs.completion_actions_fired_at`.
+	//   Step 9 (deferred per plan §4.4): `space_task_report_results` stays —
+	//     dropping it is gated on a writer audit and shipped in a later
+	//     cleanup migration.
+	runMigration104(db);
 }
 
 /**
@@ -7095,5 +7112,206 @@ export function runMigration103(db: BunDatabase): void {
 		!tableHasColumn(db, 'space_workflows', 'post_approval')
 	) {
 		db.exec(`ALTER TABLE space_workflows ADD COLUMN post_approval TEXT DEFAULT NULL`);
+	}
+}
+
+/**
+ * Migration 104 — PR 5/5 of the task-agent-as-post-approval-executor refactor.
+ *
+ * Drops the completion-action schema fields. PR 4/5 already removed every
+ * runtime path that wrote `pending_checkpoint_type='completion_action'`, but
+ * we defensively rewrite any leftover rows to `'task_completion'` before
+ * tightening the CHECK constraint. We then drop two now-unused columns:
+ *   - `space_tasks.pending_action_index`
+ *   - `space_workflow_runs.completion_actions_fired_at`
+ *
+ * The optional drop of the legacy `space_task_report_results` table (plan
+ * §4.4 step 9) is intentionally deferred to a later migration — that step is
+ * gated on auditing whether any writer paths still reach the table. Splitting
+ * the audit out of this migration keeps M104 small and easy to roll forward.
+ *
+ * SQLite cannot drop columns or alter CHECK constraints in place, so the
+ * migration uses the table-rebuild pattern (mirrors M99/M103). It is
+ * idempotent: re-running it on a DB that has already been migrated is a no-op
+ * because the rebuild detection checks the live CHECK clause.
+ */
+export function runMigration104(db: BunDatabase): void {
+	// ─────────────────────────────────────────────────────────────────────────
+	// Step 5: rewrite any live tasks paused at 'completion_action' to
+	// 'task_completion'. Clear `pending_action_index` because the field is
+	// about to be dropped and would otherwise survive in the rebuilt table.
+	// ─────────────────────────────────────────────────────────────────────────
+	if (tableExists(db, 'space_tasks')) {
+		const hasCheckpointType = tableHasColumn(db, 'space_tasks', 'pending_checkpoint_type');
+		const hasActionIndex = tableHasColumn(db, 'space_tasks', 'pending_action_index');
+		if (hasCheckpointType && hasActionIndex) {
+			db.prepare(
+				`UPDATE space_tasks
+				    SET pending_checkpoint_type = 'task_completion',
+				        pending_action_index = NULL
+				  WHERE pending_checkpoint_type = 'completion_action'`
+			).run();
+		} else if (hasCheckpointType) {
+			db.prepare(
+				`UPDATE space_tasks
+				    SET pending_checkpoint_type = 'task_completion'
+				  WHERE pending_checkpoint_type = 'completion_action'`
+			).run();
+		}
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Steps 6 + 7: rebuild `space_tasks` to drop `pending_action_index` and
+	// tighten the `pending_checkpoint_type` CHECK constraint.
+	// ─────────────────────────────────────────────────────────────────────────
+	if (tableExists(db, 'space_tasks')) {
+		const master = db
+			.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='space_tasks'`)
+			.get() as { sql?: string } | undefined;
+		const currentSql = master?.sql ?? '';
+
+		const hasLegacyCheckpointCheck =
+			currentSql.includes("pending_checkpoint_type IN ('completion_action'") ||
+			/pending_checkpoint_type\s+IN\s*\([^)]*'completion_action'/.test(currentSql);
+		const hasActionIndexCol = tableHasColumn(db, 'space_tasks', 'pending_action_index');
+		const needsRebuild = !!currentSql && (hasLegacyCheckpointCheck || hasActionIndexCol);
+
+		if (needsRebuild) {
+			// Copy every column the new schema expects, intersected with what the
+			// current row actually has — same defensive approach as M103.
+			const baseColumns = [
+				'id',
+				'space_id',
+				'task_number',
+				'title',
+				'description',
+				'status',
+				'priority',
+				'labels',
+				'workflow_run_id',
+				'preferred_workflow_id',
+				'created_by_task_id',
+				'result',
+				'depends_on',
+				'active_session',
+				'task_agent_session_id',
+				'approval_source',
+				'approval_reason',
+				'approved_at',
+				'block_reason',
+				'archived_at',
+				'created_at',
+				'started_at',
+				'completed_at',
+				'updated_at',
+				'pending_checkpoint_type',
+				'reported_status',
+				'reported_summary',
+				'pending_completion_submitted_by_node_id',
+				'pending_completion_submitted_at',
+				'pending_completion_reason',
+				'post_approval_session_id',
+				'post_approval_started_at',
+				'post_approval_blocked_reason',
+			];
+			const existingColumns = new Set(
+				(db.prepare(`PRAGMA table_info('space_tasks')`).all() as Array<{ name: string }>).map(
+					(r) => r.name
+				)
+			);
+			const copyColumns = baseColumns.filter((c) => existingColumns.has(c));
+			const copyColsSql = copyColumns.join(', ');
+
+			// Preserve indexes — same approach as M103.
+			const existingIndexDdl = (
+				db
+					.prepare(
+						`SELECT sql FROM sqlite_master
+						 WHERE type='index' AND tbl_name='space_tasks' AND sql IS NOT NULL`
+					)
+					.all() as Array<{ sql: string }>
+			)
+				.map((r) => r.sql)
+				.filter((sql) => !!sql);
+
+			db.exec('PRAGMA foreign_keys = OFF');
+			db.exec('BEGIN');
+			try {
+				db.exec(`
+					CREATE TABLE space_tasks_m104_new (
+						id TEXT PRIMARY KEY,
+						space_id TEXT NOT NULL,
+						task_number INTEGER NOT NULL,
+						title TEXT NOT NULL,
+						description TEXT NOT NULL DEFAULT '',
+						status TEXT NOT NULL DEFAULT 'open'
+							CHECK(status IN ('open', 'in_progress', 'review', 'approved', 'done', 'blocked', 'cancelled', 'archived')),
+						priority TEXT NOT NULL DEFAULT 'normal'
+							CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+						labels TEXT NOT NULL DEFAULT '[]',
+						workflow_run_id TEXT,
+						preferred_workflow_id TEXT,
+						created_by_task_id TEXT,
+						result TEXT,
+						depends_on TEXT NOT NULL DEFAULT '[]',
+						active_session TEXT
+							CHECK(active_session IN ('worker', 'leader')),
+						task_agent_session_id TEXT,
+						approval_source TEXT,
+						approval_reason TEXT,
+						approved_at INTEGER,
+						block_reason TEXT,
+						archived_at INTEGER,
+						created_at INTEGER NOT NULL,
+						started_at INTEGER,
+						completed_at INTEGER,
+						updated_at INTEGER NOT NULL,
+						pending_checkpoint_type TEXT DEFAULT NULL
+							CHECK(pending_checkpoint_type IN ('gate', 'task_completion')),
+						reported_status TEXT DEFAULT NULL
+							CHECK(reported_status IS NULL OR reported_status IN ('done', 'blocked', 'cancelled')),
+						reported_summary TEXT DEFAULT NULL,
+						pending_completion_submitted_by_node_id TEXT DEFAULT NULL,
+						pending_completion_submitted_at INTEGER DEFAULT NULL,
+						pending_completion_reason TEXT DEFAULT NULL,
+						post_approval_session_id TEXT DEFAULT NULL,
+						post_approval_started_at INTEGER DEFAULT NULL,
+						post_approval_blocked_reason TEXT DEFAULT NULL,
+						FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+						FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL
+					)
+				`);
+				db.exec(
+					`INSERT INTO space_tasks_m104_new (${copyColsSql}) SELECT ${copyColsSql} FROM space_tasks`
+				);
+				db.exec(`DROP TABLE space_tasks`);
+				db.exec(`ALTER TABLE space_tasks_m104_new RENAME TO space_tasks`);
+				for (const ddl of existingIndexDdl) {
+					const normalized = ddl.replace(
+						/^CREATE (UNIQUE )?INDEX /i,
+						(_m, unique) => `CREATE ${unique ?? ''}INDEX IF NOT EXISTS `
+					);
+					db.exec(normalized);
+				}
+				db.exec('COMMIT');
+			} catch (err) {
+				db.exec('ROLLBACK');
+				throw err;
+			} finally {
+				db.exec('PRAGMA foreign_keys = ON');
+			}
+		}
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Step 8: drop `completion_actions_fired_at` from `space_workflow_runs`.
+	// SQLite has supported `ALTER TABLE … DROP COLUMN` since 3.35; Bun ships a
+	// new-enough SQLite. Guarded so re-runs are no-ops.
+	// ─────────────────────────────────────────────────────────────────────────
+	if (
+		tableExists(db, 'space_workflow_runs') &&
+		tableHasColumn(db, 'space_workflow_runs', 'completion_actions_fired_at')
+	) {
+		db.exec(`ALTER TABLE space_workflow_runs DROP COLUMN completion_actions_fired_at`);
 	}
 }

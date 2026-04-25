@@ -1,7 +1,7 @@
 # Design: Autonomy Levels & Completion Actions
 
 Date: 2026-04-14
-Status: Draft
+Status: **Superseded** (2026-04-24) — the autonomy-levels half of this doc shipped, but the `completionActions` half was replaced by workflow-declared `postApproval` routing. See [`docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`](../plans/remove-completion-actions-task-agent-as-post-approval-executor.md) for the replacement design and the five PRs that delivered it (#1620, #1621, #1623, #1628, plus the schema/docs cleanup PR 5/5). The `CompletionAction` interface, `pendingActionIndex` field, and `pending_checkpoint_type='completion_action'` value referenced below no longer exist in the codebase as of PR 5/5; treat §"Completion actions" of this document as historical context only.
 
 ## Problem
 

@@ -1,14 +1,17 @@
 /**
- * End-node handoff prompt tests (PR 3/5)
+ * End-node handoff prompt tests (PR 3/5, updated in PR 5/5)
  *
  * Verifies that every built-in workflow's end-node `customPrompt` agrees with
- * the post-approval routing contract introduced in PR 3/5:
+ * the post-approval routing contract:
  *
  *   - Coding / Research / QA end nodes each signal the Task Agent with
- *     `send_message(task-agent, data:{ pr_url, post_approval_action:"merge_pr" })`
- *     BEFORE calling `approve_task`. These three workflows MUST also declare a
+ *     `send_message(task-agent, data:{ pr_url })` BEFORE calling
+ *     `approve_task`. These three workflows MUST also declare a
  *     `postApproval: { targetAgent: 'reviewer', instructions: <merge template> }`
- *     route so the runtime dispatches the merge.
+ *     route so the runtime dispatches the merge. PR 5/5 removed the legacy
+ *     `post_approval_action: "merge_pr"` discriminator from the data payload —
+ *     post-approval routing is now fully declarative on the workflow's
+ *     `postApproval` field and nothing consumed the runtime discriminator.
  *
  *   - QA no longer embeds `gh pr merge` / worktree-sync instructions — the
  *     reviewer post-approval session runs the merge instead. The QA workflow's
@@ -18,7 +21,7 @@
  *   - Review-Only intentionally does NOT declare `postApproval` (no PR to
  *     merge) and its prompt no longer carries the "runtime verifies" boilerplate.
  *
- *   - Plan & Decompose is unchanged: it closes on its own `completionActions`
+ *   - Plan & Decompose is unchanged: it closes on its own end-node directive
  *     (verify-tasks-created) and has no `postApproval` route.
  *
  * These tests protect against silent regressions where someone edits an end-
@@ -113,21 +116,29 @@ describe('End-node post-approval declarations', () => {
 
 describe('End-node prompts signal the Task Agent before approve_task', () => {
 	for (const [label, wf] of MERGE_ROUTED_WORKFLOWS) {
-		test(`${label} end-node prompt includes send_message(task-agent, data:{...post_approval_action:"merge_pr"})`, () => {
+		test(`${label} end-node prompt includes send_message(task-agent, data:{ pr_url })`, () => {
 			const prompt = endNodePrompt(wf);
 			// Every merge-routed workflow must instruct its end-node agent to
-			// signal the Task Agent with a structured handoff payload. The
-			// `post_approval_action` key is the convention consumed by the
-			// reviewer post-approval session (see PR_MERGE_POST_APPROVAL_INSTRUCTIONS).
+			// signal the Task Agent with a structured handoff carrying the
+			// PR URL. `dispatchPostApproval` reads `pr_url` from the task's
+			// result artifact when interpolating `{{pr_url}}` into the merge
+			// template.
 			expect(prompt).toContain('send_message');
 			expect(prompt).toContain('target: "task-agent"');
-			expect(prompt).toContain('post_approval_action: "merge_pr"');
 			expect(prompt).toContain('pr_url');
+			// PR 5/5: the legacy `post_approval_action: "merge_pr"`
+			// discriminator was removed — post-approval routing is fully
+			// declarative on `postApproval`. Guard against accidental
+			// reintroduction.
+			expect(prompt).not.toContain('post_approval_action');
 		});
 
 		test(`${label} end-node prompt places the task-agent signal BEFORE the final approve_task call`, () => {
 			const prompt = endNodePrompt(wf);
-			const signalIdx = prompt.indexOf('post_approval_action: "merge_pr"');
+			// Anchor on the `send_message(` call itself — the unique shape of
+			// the handoff. The earlier anchor `post_approval_action: "merge_pr"`
+			// was removed in PR 5/5.
+			const signalIdx = prompt.indexOf('send_message(');
 			// Use lastIndexOf: the first `approve_task()` occurrence in every
 			// prompt lives in the "TOOL CONTRACT" block at the top, which is a
 			// description of the tool — not the operational instruction. The
@@ -199,8 +210,9 @@ describe('Review-Only end-node prompt loses verification boilerplate', () => {
 		const prompt = endNodePrompt(REVIEW_ONLY_WORKFLOW);
 		// The old trailing "; the runtime verifies at least one review/comment
 		// exists before accepting completion" sentence was removed — the
-		// completionAction (VERIFY_REVIEW_POSTED_COMPLETION_ACTION) still does
-		// that check, but the prompt no longer duplicates the claim.
+		// agent prompt no longer duplicates the claim. PR 4/5 removed the
+		// runtime verification action and PR 5/5 deleted the schema, so the
+		// review check now lives entirely in agent guidance.
 		expect(prompt).not.toContain('runtime verifies');
 		expect(prompt).not.toContain('before accepting completion');
 	});
@@ -216,13 +228,17 @@ describe('Review-Only end-node prompt loses verification boilerplate', () => {
 	});
 });
 
-describe('Plan & Decompose end-node is unchanged by PR 3/5', () => {
-	test('PLAN_AND_DECOMPOSE_WORKFLOW Task Dispatcher prompt does NOT mention post_approval_action', () => {
+describe('Plan & Decompose end-node is unchanged', () => {
+	test('PLAN_AND_DECOMPOSE_WORKFLOW Task Dispatcher prompt does NOT signal the task-agent', () => {
 		const prompt = endNodePrompt(PLAN_AND_DECOMPOSE_WORKFLOW);
 		// Plan & Decompose has no PR to merge; its completion is signalled by
-		// the verify-tasks-created completion action, not by a Task Agent
-		// handoff. The end-node prompt MUST NOT adopt the merge-signalling
-		// convention that is specific to the three PR-producing workflows.
+		// the verify-tasks-created directive, not by a Task Agent handoff. The
+		// end-node prompt MUST NOT adopt the handoff-signalling convention
+		// specific to the three PR-producing workflows.
+		expect(prompt).not.toContain('send_message');
+		// Legacy discriminator is also still absent (PR 5/5 removed it from
+		// the PR-producing workflows; this negative assertion guards against
+		// drift in either direction).
 		expect(prompt).not.toContain('post_approval_action');
 	});
 

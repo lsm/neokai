@@ -540,4 +540,59 @@ describe('SpaceTaskRepository', () => {
 			expect(Math.max(...numbers)).toBe(20);
 		});
 	});
+
+	describe('listActiveWithTaskAgentSession', () => {
+		/**
+		 * Seed a task at the given status, with an optional task-agent session id.
+		 * Statuses outside the default state-machine are applied directly via UPDATE
+		 * to avoid running the transition validator (the helper here is purely a
+		 * storage-layer fixture).
+		 */
+		function seed(status: string, sessionId: string | null): string {
+			const task = repo.createTask({
+				spaceId,
+				title: `Task ${status}`,
+				description: '',
+				workflowRunId,
+			});
+			(db as any)
+				.prepare(`UPDATE space_tasks SET status = ?, task_agent_session_id = ? WHERE id = ?`)
+				.run(status, sessionId, task.id);
+			return task.id;
+		}
+
+		it("includes 'in_progress', 'blocked', and 'approved' tasks with a non-null session id", () => {
+			const inProgress = seed('in_progress', 'sess-in-progress');
+			const blocked = seed('blocked', 'sess-blocked');
+			const approved = seed('approved', 'sess-approved');
+
+			const active = repo.listActiveWithTaskAgentSession();
+			const ids = new Set(active.map((t) => t.id));
+
+			expect(ids.has(inProgress)).toBe(true);
+			expect(ids.has(blocked)).toBe(true);
+			expect(ids.has(approved)).toBe(true);
+			expect(active.length).toBe(3);
+		});
+
+		it('excludes tasks without a task_agent_session_id', () => {
+			seed('in_progress', null);
+			seed('approved', null);
+			const inProgressWithSession = seed('in_progress', 'sess-1');
+
+			const active = repo.listActiveWithTaskAgentSession();
+			expect(active.map((t) => t.id)).toEqual([inProgressWithSession]);
+		});
+
+		it('excludes terminal and open statuses even when a session id is present', () => {
+			seed('open', 'sess-open');
+			seed('review', 'sess-review');
+			seed('done', 'sess-done');
+			seed('cancelled', 'sess-cancelled');
+			seed('archived', 'sess-archived');
+
+			const active = repo.listActiveWithTaskAgentSession();
+			expect(active).toEqual([]);
+		});
+	});
 });

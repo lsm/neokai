@@ -2,9 +2,23 @@
 
 **Task:** Space Task #75
 **Source research:** [`docs/research/pr-merging-completion-actions.md`](../research/pr-merging-completion-actions.md)
-**Status:** Planning — no code changes yet
+**Status:** ✅ **Shipped** — all five PRs merged.
 **Author:** Research node
 **Revision:** 2026-04-23 — approach changed from "Task Agent MCP `merge_pr` tool" to "workflow-declared post-approval agent". See §8 "Revision history" for the full context.
+
+> **Implementation status (2026-04-24):** the plan landed in five sequenced PRs:
+>
+> | Stage | PR | Scope |
+> | --- | --- | --- |
+> | 1 | [#1620](https://github.com/focusdotcc/neokai/pull/1620) | New `approved` task status + `postApproval` workflow schema (no behaviour change) |
+> | 2 | [#1621](https://github.com/focusdotcc/neokai/pull/1621) | Runtime post-approval routing + `mark_complete` MCP tool |
+> | 3 | [#1623](https://github.com/focusdotcc/neokai/pull/1623) | Built-in workflows declare `postApproval`; feature flag enabled |
+> | 4 | [#1628](https://github.com/focusdotcc/neokai/pull/1628) | Delete `CompletionActionExecutor`, MCP tools, and the legacy banner |
+> | 5 | _this PR_ | Drop `CompletionAction` types + DB columns + tighten the `pending_checkpoint_type` CHECK; refresh docs |
+>
+> The plan document below is preserved as the design record. Wherever the plan
+> says "will" or "we propose", read it as "did" / "we did". Anything still
+> labelled future work in §11 has been deferred to a follow-up.
 
 ---
 

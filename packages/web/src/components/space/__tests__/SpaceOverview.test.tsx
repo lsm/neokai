@@ -471,11 +471,9 @@ describe('SpaceOverview', () => {
 			mockSpace.value = makeSpace();
 			mockTasks.value = [
 				makeTask('t1', 'review', {
-					pendingActionIndex: 0,
 					pendingCheckpointType: 'task_completion',
 				}),
 				makeTask('t2', 'review', {
-					pendingActionIndex: 1,
 					pendingCheckpointType: 'task_completion',
 				}),
 				// Gate-paused task should not contribute to the count
@@ -493,7 +491,6 @@ describe('SpaceOverview', () => {
 			mockSpace.value = makeSpace();
 			mockTasks.value = [
 				makeTask('t1', 'review', {
-					pendingActionIndex: 0,
 					pendingCheckpointType: 'task_completion',
 				}),
 			];
@@ -505,7 +502,6 @@ describe('SpaceOverview', () => {
 			mockSpace.value = makeSpace();
 			mockTasks.value = [
 				makeTask('t1', 'review', {
-					pendingActionIndex: 0,
 					pendingCheckpointType: 'task_completion',
 				}),
 			];

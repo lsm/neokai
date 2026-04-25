@@ -1,30 +1,31 @@
 /**
- * Migration 94 Tests — Backfill workflow template tracking & end-node
- * completion actions.
+ * Migration 94 Tests — Backfill workflow template tracking & deduplicate seeds.
  *
  * Migration 94 realigns legacy `space_workflows` rows with the current built-in
  * templates by:
  *   - Setting `template_name` + `template_hash` on rows whose node names
  *     structurally match a known template.
- *   - Re-injecting `MERGE_PR_COMPLETION_ACTION` on end nodes that lost it (seed
- *     bug A).
  *   - Deleting orphan duplicate rows that have no active `space_workflow_runs`
  *     references.
  *
+ * Note: an earlier revision of M94 also re-injected end-node `completionActions`
+ * JSON on rows where it was missing. That pipeline was deleted in PR 4/5 of the
+ * task-agent-as-post-approval-executor refactor and the underlying columns are
+ * dropped in M104 (PR 5/5), so the backfill is no longer performed. These tests
+ * therefore only assert template tracking + dedup behaviour.
+ *
  * Covers:
- *   - Legacy Coding Workflow backfill (template_name + canonical template_hash
- *     + merge-pr injected on Review end node)
+ *   - Legacy Coding Workflow backfill (template_name + canonical template_hash)
  *   - Legacy Research Workflow backfill (similar)
- *   - Review-Only workflow backfills template_name but does NOT inject
- *     completionActions (that template has no end-node actions)
+ *   - Review-Only workflow backfills template_name + hash
  *   - Hash self-verification: the hashes my inlined fingerprints produce for
- *     each of the 5 built-in templates must match the canonical
- *     `computeWorkflowHash()` output. This guards against fingerprint drift.
+ *     each of the 5 built-in templates must structurally line up with the
+ *     canonical `computeWorkflowHash()` output. This guards against fingerprint
+ *     drift.
  *   - Idempotency: running twice yields the same result
  *   - Custom workflows (non-template name) are untouched
  *   - Orphan duplicate deletion: older row deleted when no active runs
  *   - Orphan duplicate retention: older row kept when active runs reference it
- *   - Existing completionActions on end node preserved (no duplicate injection)
  *   - Rows with non-matching node structure are not treated as templates
  */
 
@@ -144,8 +145,6 @@ function seedLegacyCodingWorkflow(
 		createdAt?: number;
 		/** Default false — null template_name simulates pre-M90 legacy rows. */
 		withTemplateFields?: boolean;
-		/** Default false — when true, end node has completionActions already. */
-		withCompletionActions?: boolean;
 	}
 ): { workflowId: string; codingNodeId: string; reviewNodeId: string } {
 	const template = getBuiltInWorkflows().find((t) => t.name === 'Coding Workflow');
@@ -175,27 +174,17 @@ function seedLegacyCodingWorkflow(
 		config: { agents: [{ agentId: 'a-coder', name: 'coder' }] },
 	});
 
-	const reviewConfig: Record<string, unknown> = {
-		agents: [{ agentId: 'a-reviewer', name: 'reviewer' }],
-	};
-	if (opts.withCompletionActions) {
-		reviewConfig.completionActions = [
-			{
-				id: 'merge-pr',
-				name: 'Merge PR',
-				type: 'script',
-				requiredLevel: 4,
-				artifactType: 'pr',
-				script: '# existing script',
-			},
-		];
-	}
-	insertNode(db, { id: reviewNodeId, workflowId: opts.id, name: 'Review', config: reviewConfig });
+	insertNode(db, {
+		id: reviewNodeId,
+		workflowId: opts.id,
+		name: 'Review',
+		config: { agents: [{ agentId: 'a-reviewer', name: 'reviewer' }] },
+	});
 
 	return { workflowId: opts.id, codingNodeId, reviewNodeId };
 }
 
-describe('Migration 94: backfill workflow template tracking & completion actions', () => {
+describe('Migration 94: backfill workflow template tracking & dedup orphan duplicates', () => {
 	let testDir: string;
 	let db: BunDatabase;
 
@@ -229,7 +218,7 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 	test('hash self-verification: migration stores narrow hash that diverges from expanded computeWorkflowHash', () => {
 		// Migration 94 uses a frozen narrow fingerprint (description + instructions +
 		// nodeNames + channels + gates only). The live computeWorkflowHash was later
-		// expanded to also include customPrompt per agent, completionActions, and
+		// expanded to also include customPrompt per agent and
 		// completionAutonomyLevel. As a result, the migration's stored hash
 		// intentionally diverges from the current computeWorkflowHash — this is
 		// what causes drift detection to fire for existing spaces on next daemon
@@ -306,11 +295,11 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 		expect(row.template_hash).toBeTruthy();
 	});
 
-	test('legacy Coding Workflow: sets template_name + narrow hash + injects merge-pr', () => {
+	test('legacy Coding Workflow: sets template_name + narrow hash', () => {
 		// Migration 94 stores a narrow hash (pre-expansion). After the fingerprint
-		// was expanded to include customPrompt/completionActions/completionAutonomyLevel,
+		// was expanded to include customPrompt/completionAutonomyLevel,
 		// the stored hash diverges from computeWorkflowHash — enabling drift detection.
-		const { workflowId, reviewNodeId } = seedLegacyCodingWorkflow(db, {
+		const { workflowId } = seedLegacyCodingWorkflow(db, {
 			id: 'wf-1',
 			spaceId: 'sp-1',
 		});
@@ -325,18 +314,9 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 		expect(row.template_hash).not.toBe(
 			computeWorkflowHash(getBuiltInWorkflows().find((t) => t.name === 'Coding Workflow')!)
 		);
-
-		const cfg = readNodeConfig(db, reviewNodeId) as {
-			completionActions?: Array<{ id: string; type: string; artifactType?: string }>;
-		};
-		expect(cfg.completionActions).toBeDefined();
-		expect(cfg.completionActions).toHaveLength(1);
-		expect(cfg.completionActions?.[0]?.id).toBe('merge-pr');
-		expect(cfg.completionActions?.[0]?.type).toBe('script');
-		expect(cfg.completionActions?.[0]?.artifactType).toBe('pr');
 	});
 
-	test('legacy Research Workflow: sets template_name + narrow hash + injects merge-pr', () => {
+	test('legacy Research Workflow: sets template_name + narrow hash', () => {
 		// Migration 94 stores a narrow hash (pre-expansion). After the fingerprint
 		// was expanded, the stored hash diverges from computeWorkflowHash — enabling drift detection.
 		const template = getBuiltInWorkflows().find((t) => t.name === 'Research Workflow')!;
@@ -365,14 +345,9 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 		expect(row.template_hash).toMatch(/^[0-9a-f]{64}$/);
 		// The narrow hash differs from the current expanded hash — drift will be detected
 		expect(row.template_hash).not.toBe(computeWorkflowHash(template));
-
-		const cfg = readNodeConfig(db, reviewNodeId) as {
-			completionActions?: Array<{ id: string }>;
-		};
-		expect(cfg.completionActions?.some((a) => a.id === 'merge-pr')).toBe(true);
 	});
 
-	test('Review-Only Workflow: sets template_name + narrow hash, does not inject completionActions', () => {
+	test('Review-Only Workflow: sets template_name + narrow hash', () => {
 		// Migration 94 stores a narrow hash (pre-expansion). After the fingerprint
 		// was expanded, the stored hash diverges from computeWorkflowHash — enabling drift detection.
 		const template = getBuiltInWorkflows().find((t) => t.name === 'Review-Only Workflow')!;
@@ -399,10 +374,6 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 		expect(row.template_hash).toMatch(/^[0-9a-f]{64}$/);
 		// The narrow hash differs from the current expanded hash — drift will be detected
 		expect(row.template_hash).not.toBe(computeWorkflowHash(template));
-
-		const cfg = readNodeConfig(db, reviewNodeId) as { completionActions?: unknown[] };
-		// Review-Only has no endNodeCompletionActions; migration must not inject.
-		expect(cfg.completionActions).toBeUndefined();
 	});
 
 	test('idempotent — running twice yields the same result', () => {
@@ -421,10 +392,6 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 
 		expect(rowAfter2).toEqual(rowAfter1);
 		expect(cfgAfter2).toEqual(cfgAfter1);
-
-		// And the end-node still has exactly one merge-pr action — no duplication.
-		const actions = (cfgAfter2 as { completionActions?: Array<{ id: string }> }).completionActions!;
-		expect(actions.filter((a) => a.id === 'merge-pr')).toHaveLength(1);
 	});
 
 	test('custom workflow with non-matching name is untouched', () => {
@@ -463,28 +430,6 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 		const row = readWorkflow(db, wfId)!;
 		expect(row.template_name).toBeNull();
 		expect(row.template_hash).toBeNull();
-	});
-
-	test('existing completionActions on end node preserved (no duplicate injection)', () => {
-		const { workflowId, reviewNodeId } = seedLegacyCodingWorkflow(db, {
-			id: 'wf-has-action',
-			spaceId: 'sp-1',
-			withCompletionActions: true, // already has merge-pr
-		});
-
-		runMigration94(db);
-
-		const cfg = readNodeConfig(db, reviewNodeId) as {
-			completionActions?: Array<{ id: string; script?: string }>;
-		};
-		// Must not duplicate — already had a merge-pr with "# existing script".
-		expect(cfg.completionActions).toHaveLength(1);
-		expect(cfg.completionActions?.[0]?.id).toBe('merge-pr');
-		expect(cfg.completionActions?.[0]?.script).toBe('# existing script');
-
-		// template_name + hash still set.
-		const row = readWorkflow(db, workflowId)!;
-		expect(row.template_name).toBe('Coding Workflow');
 	});
 
 	test('orphan duplicate deleted when it has no active runs', () => {
@@ -616,26 +561,21 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 		expect(readWorkflow(db, 'wf-c2')).toBeDefined();
 	});
 
-	test('row already backfilled is left alone (no redundant writes)', () => {
-		const template = getBuiltInWorkflows().find((t) => t.name === 'Coding Workflow')!;
-		const { workflowId, reviewNodeId } = seedLegacyCodingWorkflow(db, {
-			id: 'wf-already-backfilled',
+	test('node config JSON is never rewritten by the migration (template-only backfill)', () => {
+		// PR 5/5 simplified M94: the legacy completionActions injection pass was
+		// removed. The migration must therefore leave node config JSON untouched
+		// — only `template_name` / `template_hash` on `space_workflows` may be
+		// written.
+		const { reviewNodeId } = seedLegacyCodingWorkflow(db, {
+			id: 'wf-config-untouched',
 			spaceId: 'sp-1',
-			withTemplateFields: true,
-			withCompletionActions: true,
 		});
 
-		const beforeRow = readWorkflow(db, workflowId)!;
 		const beforeCfg = readNodeConfig(db, reviewNodeId);
 
 		runMigration94(db);
 
-		const afterRow = readWorkflow(db, workflowId)!;
 		const afterCfg = readNodeConfig(db, reviewNodeId);
-
-		expect(afterRow.template_name).toBe(template.name);
-		expect(afterRow.template_hash).toBe(computeWorkflowHash(template));
 		expect(afterCfg).toEqual(beforeCfg);
-		expect(afterRow).toEqual(beforeRow);
 	});
 });

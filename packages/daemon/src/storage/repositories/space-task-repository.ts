@@ -264,10 +264,6 @@ export class SpaceTaskRepository {
 			fields.push('approved_at = ?');
 			values.push(params.approvedAt ?? null);
 		}
-		if (params.pendingActionIndex !== undefined) {
-			fields.push('pending_action_index = ?');
-			values.push(params.pendingActionIndex ?? null);
-		}
 		if (params.pendingCheckpointType !== undefined) {
 			fields.push('pending_checkpoint_type = ?');
 			values.push(params.pendingCheckpointType ?? null);
@@ -371,20 +367,21 @@ export class SpaceTaskRepository {
 	/**
 	 * List all tasks that have an active Task Agent session.
 	 *
-	 * Returns tasks with status `in_progress` or `blocked` that have a
-	 * non-null `task_agent_session_id`. Used by `TaskAgentManager.rehydrate()` on
-	 * daemon restart to find Task Agent sessions that need to be restarted.
+	 * Returns tasks with status `in_progress`, `blocked`, or `approved` that
+	 * have a non-null `task_agent_session_id`. Used by
+	 * `TaskAgentManager.rehydrate()` on daemon restart to find Task Agent
+	 * sessions that need to be restarted.
 	 *
-	 * NOTE (PR 2 of post-approval refactor): when the `approved` status starts
-	 * carrying `post_approval_session_id` for in-flight post-approval work, the
-	 * status filter here must widen to include `'approved'` so those sessions
-	 * rehydrate too. This PR (1/5) is schema-only and no task can reach
-	 * `'approved'` yet, so keeping the current filter preserves the
-	 * no-behaviour-change invariant.
+	 * `'approved'` is included because the Task Agent session can still be live
+	 * while the post-approval sub-session runs — mark_complete may transition
+	 * the task back to `in_progress` or to `done`, and the UI's
+	 * `spaceTaskActivity.byTask` LiveQuery depends on the session being
+	 * rehydrated in-memory. Tasks in `'done'`/`'cancelled'`/`'archived'` are
+	 * terminal and their sessions are torn down.
 	 */
 	listActiveWithTaskAgentSession(): SpaceTask[] {
 		const stmt = this.db.prepare(
-			`SELECT * FROM space_tasks WHERE status IN ('in_progress', 'blocked') AND task_agent_session_id IS NOT NULL`
+			`SELECT * FROM space_tasks WHERE status IN ('in_progress', 'blocked', 'approved') AND task_agent_session_id IS NOT NULL`
 		);
 		const rows = stmt.all() as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
@@ -450,7 +447,6 @@ export class SpaceTaskRepository {
 			approvalSource: (row.approval_source as SpaceTask['approvalSource']) ?? null,
 			approvalReason: (row.approval_reason as string | null) ?? null,
 			approvedAt: (row.approved_at as number | null) ?? null,
-			pendingActionIndex: (row.pending_action_index as number | null) ?? null,
 			pendingCheckpointType:
 				(row.pending_checkpoint_type as SpaceTask['pendingCheckpointType']) ?? null,
 			pendingCompletionSubmittedByNodeId:
