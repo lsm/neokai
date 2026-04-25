@@ -600,7 +600,7 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 		>
 			<div class="max-w-[85%] md:max-w-[70%] w-auto">
 				<div
-					class="bg-dark-900 border border-dark-700 rounded-[20px] overflow-hidden"
+					class="border border-dark-700 rounded-lg overflow-hidden bg-dark-900"
 					data-testid="minimal-thread-synthetic-bubble"
 				>
 					{/* Header — same proportions as ThinkingBlock's header
