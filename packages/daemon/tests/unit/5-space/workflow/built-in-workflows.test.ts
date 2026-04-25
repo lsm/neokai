@@ -628,17 +628,6 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
 		expect(prompt).toContain('downstream coder');
 	});
 
-	test('Task Dispatcher node carries no completionActions (pipeline deleted in PR 4/5)', () => {
-		const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
-			(n) => n.name === 'Task Dispatcher'
-		)!;
-		// The completion-action runtime pipeline (including
-		// `verify-tasks-created`) was removed in PR 4/5 — post-approval work is
-		// now handled by `PostApprovalRouter` via the `postApproval` field.
-		// `completionActions` is either undefined or empty.
-		expect(dispatcherNode.completionActions ?? []).toEqual([]);
-	});
-
 	test('workflow description describes stacked PR chain output', () => {
 		// The workflow description must convey that the output is a stacked PR chain
 		expect(PLAN_AND_DECOMPOSE_WORKFLOW.description).toMatch(/stacked PR/i);
@@ -1048,18 +1037,6 @@ describe('seedBuiltInWorkflows()', () => {
 		const names = manager.listWorkflows(SPACE_ID).map((w) => w.name);
 		expect(names).toContain(CODING_WORKFLOW.name);
 		expect(names).toContain(PLAN_AND_DECOMPOSE_WORKFLOW.name);
-	});
-
-	test('PLAN_AND_DECOMPOSE_WORKFLOW seeded Task Dispatcher carries no completionActions', async () => {
-		// Completion actions were deleted in PR 4/5 — the seeded workflow's
-		// nodes must not carry any. Post-approval work runs through
-		// `PostApprovalRouter` on the `approved → done` boundary instead.
-		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-		const wf = manager
-			.listWorkflows(SPACE_ID)
-			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
-		const dispatcherNode = wf.nodes.find((n) => n.name === 'Task Dispatcher')!;
-		expect(dispatcherNode.completionActions ?? []).toEqual([]);
 	});
 
 	test('all seeded workflows have the real spaceId assigned', async () => {

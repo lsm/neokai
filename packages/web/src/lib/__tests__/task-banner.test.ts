@@ -131,11 +131,12 @@ describe('task_completion_pending branch', () => {
 		}
 	});
 
-	test('completion_action checkpoints (legacy) are ignored — they fall through to gate/null', () => {
-		// `completion_action` was removed from the pipeline in PR 4/5. Residual
-		// rows must NOT render a banner via this helper.
+	test('unknown checkpoint type values are ignored — they fall through to gate/null', () => {
+		// PR 5/5 narrowed `pendingCheckpointType` to `'gate' | 'task_completion' |
+		// null`. If a stale daemon ever ships a different literal, this helper
+		// must NOT render a banner — the unknown value falls through.
 		const task = makeTask({
-			pendingCheckpointType: 'completion_action' as unknown as SpaceTask['pendingCheckpointType'],
+			pendingCheckpointType: 'legacy_unknown' as unknown as SpaceTask['pendingCheckpointType'],
 		});
 		expect(resolveActiveTaskBanner(task, [])).toBeNull();
 	});

@@ -8,9 +8,10 @@
  * - Expands to reveal blocking workflows when the toggle is clicked
  * - Uses the runtime fallback (level 5) for workflows with no `completionAutonomyLevel`
  *
- * Note: `completionActions` on workflow nodes was removed in PR 4/5 — gating is
- * now expressed by a single `completionAutonomyLevel` field on the workflow
- * itself (defaulting to 5 when absent).
+ * Note: per-node action arrays on workflow nodes were removed in PR 4/5 (and
+ * the shared types deleted in PR 5/5) — gating is now expressed by a single
+ * `completionAutonomyLevel` field on the workflow itself (defaulting to 5
+ * when absent).
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';

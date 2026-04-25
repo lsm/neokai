@@ -6,13 +6,13 @@
  *
  * The fingerprint covers node names, channel topology, gate internals (fields,
  * script, requiredLevel, resetOnCycle), description, instructions, per-agent
- * custom prompts, node completion actions, and the workflow-level
- * completionAutonomyLevel.
+ * custom prompts, the workflow-level `completionAutonomyLevel`, and the
+ * workflow-level `postApproval` route.
  * It does NOT include agent UUIDs (which differ per-space), layout coordinates,
  * or tags (which are cosmetic).
  */
 
-import type { CompletionAction, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkflow } from '@neokai/shared';
 
 /**
  * Canonical shape used for hashing — uses only template-portable fields.
@@ -36,42 +36,17 @@ interface WorkflowFingerprint {
 	 */
 	nodePrompts: string[];
 	/**
-	 * Per-node completion action entries, sorted. Format:
-	 * `<nodeName>|<actionId>|<type>|<requiredLevel>|<contentKey>`.
-	 * Detects changes to what happens when the workflow finishes.
-	 */
-	completionActions: string[];
-	/**
 	 * Minimum space autonomy level required to auto-close the workflow.
 	 * Affects autonomy gating behavior.
 	 */
 	completionAutonomyLevel: number;
 	/**
-	 * Workflow-level post-approval route (PR 3/5). Empty string when no route
-	 * is declared. Format: `<targetAgent>|<instructions>`. Detects changes to
-	 * the post-approval handoff — so seeder re-stamping triggers when the
-	 * built-in templates gain or modify their `postApproval` entry.
+	 * Workflow-level post-approval route. Empty string when no route is
+	 * declared. Format: `<targetAgent>|<instructions>`. Detects changes to the
+	 * post-approval handoff — so seeder re-stamping triggers when the built-in
+	 * templates gain or modify their `postApproval` entry.
 	 */
 	postApproval: string;
-}
-
-/**
- * Serialize a single completion action into a stable canonical string.
- * Format: `<id>|<type>|<requiredLevel>|<contentKey>`
- * - script:      contentKey = full script source
- * - instruction: contentKey = `<agentName>:<instruction>`
- * - mcp_call:    contentKey = `<server>:<tool>`
- */
-function serializeCompletionAction(action: CompletionAction): string {
-	let contentKey: string;
-	if (action.type === 'script') {
-		contentKey = action.script;
-	} else if (action.type === 'instruction') {
-		contentKey = `${action.agentName}:${action.instruction}`;
-	} else {
-		contentKey = `${action.server}:${action.tool}`;
-	}
-	return `${action.id}|${action.type}|${action.requiredLevel}|${contentKey}`;
 }
 
 /**
@@ -118,14 +93,6 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
 		.flatMap((n) => n.agents.map((a) => `${n.name}|${a.name}|${a.customPrompt?.value ?? ''}`))
 		.sort();
 
-	// Serialize per-node completion actions.
-	// Format: `<nodeName>|<actionId>|<type>|<requiredLevel>|<contentKey>`
-	const completionActions = workflow.nodes
-		.flatMap((n) =>
-			(n.completionActions ?? []).map((action) => `${n.name}|${serializeCompletionAction(action)}`)
-		)
-		.sort();
-
 	// Serialize workflow-level post-approval route.
 	// Format: `<targetAgent>|<instructions>` (empty string when absent).
 	const postApproval = workflow.postApproval
@@ -139,7 +106,6 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
 		channels,
 		gates,
 		nodePrompts,
-		completionActions,
 		completionAutonomyLevel: workflow.completionAutonomyLevel,
 		postApproval,
 	};

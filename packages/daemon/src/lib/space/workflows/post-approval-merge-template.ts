@@ -28,9 +28,11 @@
  * for now.
  *
  * Workflow authors referencing this template MUST ensure their end node signals
- * `{ pr_url, post_approval_action: 'merge_pr' }` before `approve_task()` /
- * `submit_for_approval()` — the signalling convention documented in §2.1 of
- * the plan.
+ * `{ pr_url }` (inside the `data` payload of `send_message(target:
+ * 'task-agent', …)` and/or `save_artifact({ type: 'result', data: { prUrl } })`)
+ * before `approve_task()` / `submit_for_approval()`. The earlier §2.1
+ * `post_approval_action` discriminator was removed — post-approval routing is
+ * declarative on the workflow's `postApproval` field, not signalled at runtime.
  *
  * Step 6 MUST instruct the post-approval session to call `mark_complete` (not
  * `approve_task`); this is the hard distinction between the

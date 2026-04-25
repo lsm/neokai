@@ -2,6 +2,53 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [Unreleased]
+
+A five-PR refactor that replaces the `completionActions` pipeline with
+workflow-declared post-approval agent routing (#1620, #1621, #1623, #1628, and
+the schema/docs cleanup PR 5/5). See
+[`docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`](docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md)
+for the full design.
+
+### Added
+
+- **`approved` task status** — new lifecycle stage between `review` and `done`
+  for tasks whose end-node verdict has been accepted but whose post-approval
+  side effect (e.g. PR merge) is still in flight.
+- **`postApproval: { targetAgent, instructions }` workflow schema** — workflows
+  declare an optional post-approval route; the runtime spawns the named
+  in-workflow agent (or injects an instruction turn into the Task Agent) on the
+  `review/done → approved` boundary.
+- **`mark_complete` MCP tool** — the post-approval executor calls this to
+  transition `approved → done` (or back to `blocked` with a reason).
+- **Single-slot post-approval banner** — replaces the previous multi-slot
+  completion-action banner; surfaces `task.postApprovalBlockedReason` when the
+  executor reports it cannot proceed.
+
+### Removed
+
+- **`completionActions` workflow field** — both the type and the schema column.
+  Workflows persisted with the field are silently sanitised at load time and
+  emit a `workflow.migrated` daemon log line so operators can audit drift.
+- **`approve_completion_action` MCP tool**, the `MERGE_PR_COMPLETION_ACTION` /
+  `VERIFY_PR_MERGED_COMPLETION_ACTION` /
+  `VERIFY_REVIEW_POSTED_COMPLETION_ACTION` /
+  `PLAN_AND_DECOMPOSE_VERIFY_COMPLETION_ACTION` constants, and the
+  `CompletionActionExecutor` runtime. PR-merge logic now lives inside the
+  post-approval agent's instructions.
+- **`space_tasks.pending_action_index` column** and
+  **`space_workflow_runs.completion_actions_fired_at` column** — dropped by
+  M104. The `pending_checkpoint_type` CHECK constraint is tightened to
+  `('gate', 'task_completion')`.
+
+### Migrations
+
+- **M104** — defensive rewrite of any in-flight
+  `pending_checkpoint_type='completion_action'` rows to `'task_completion'`,
+  table-rebuild of `space_tasks` to drop `pending_action_index`, and
+  `ALTER TABLE … DROP COLUMN` on `space_workflow_runs.completion_actions_fired_at`.
+  Idempotent and guarded for missing-table cases.
+
 ## [0.12.0] - 2026-04-22
 
 A release improving tool surface area and session resilience. 5 commits since v0.11.1.

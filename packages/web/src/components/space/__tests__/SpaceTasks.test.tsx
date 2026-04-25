@@ -162,6 +162,18 @@ describe('SpaceTasks', () => {
 		expect(queryByText('No active tasks')).toBeNull();
 	});
 
+	it("surfaces 'approved' tasks inside the active tab (post-approval running)", () => {
+		// `approved` is a transient state between `approve_task` and
+		// `mark_complete`. When stuck (post-approval dispatch fails and
+		// `postApprovalBlockedReason` is populated), the task must remain
+		// visible — routing it to Active keeps it in sight and the
+		// PendingPostApprovalBanner on the detail pane surfaces the error.
+		mockTasks.value = [makeTask('t1', 'approved')];
+		const { getByText } = render(<SpaceTasks spaceId="space-1" />);
+		expect(getByText('Task t1')).toBeTruthy();
+		expect(getByText(/Post-Approval Running/)).toBeTruthy();
+	});
+
 	it('displays tasks in action tab (blocked + review)', () => {
 		mockTasks.value = [makeTask('t1', 'blocked'), makeTask('t2', 'review')];
 		const { getByText } = render(<SpaceTasks spaceId="space-1" />);
@@ -438,7 +450,6 @@ describe('SpaceTasks', () => {
 		it('shows chip with count when at least one task is paused at a submit_for_approval checkpoint', () => {
 			mockTasks.value = [
 				makeTask('t1', 'review', {
-					pendingActionIndex: 0,
 					pendingCheckpointType: 'task_completion',
 				}),
 				makeTask('t2', 'review'),
@@ -453,7 +464,6 @@ describe('SpaceTasks', () => {
 		it('filters the list to awaiting-approval tasks only when toggled on', () => {
 			mockTasks.value = [
 				makeTask('t1', 'review', {
-					pendingActionIndex: 0,
 					pendingCheckpointType: 'task_completion',
 				}),
 				makeTask('t2', 'review'),

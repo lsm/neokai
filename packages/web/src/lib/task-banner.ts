@@ -1,12 +1,9 @@
 /**
  * Task-pane banner precedence helper.
  *
- * Before PR 4/5 the task pane stacked four independent banners
- * (`PendingCompletionActionBanner`, `PendingTaskCompletionBanner`,
- * `PendingGateBanner`, `TaskBlockedBanner`) and let CSS stacking decide which
- * the user saw first. That produced ambiguous states — e.g. a blocked task
- * with a pending gate still rendered both bands, and the completion-action
- * banner (now deleted) could sit on top of the gate banner.
+ * Before PR 4/5 the task pane stacked four independent banners and let CSS
+ * stacking decide which the user saw first. That produced ambiguous states —
+ * e.g. a blocked task with a pending gate still rendered both bands.
  *
  * `resolveActiveTaskBanner` collapses that into a single, deterministic
  * decision. Consumers render exactly one banner — the one this function
@@ -21,10 +18,9 @@
  *   4. `task.workflowRunId` AND any gate is `waiting_human`              → `gate_pending`
  *   5. Otherwise                                                         → `null`
  *
- * Completion-action checkpoints (`pendingCheckpointType === 'completion_action'`)
- * are intentionally not in the precedence chain — the completion-action
- * pipeline was removed in this same PR, so any residual row with that value is
- * treated as noise and falls through to `null`.
+ * The legacy `'completion_action'` checkpoint variant was removed in PR 5/5
+ * (schema migration M104 narrowed the column CHECK to `('gate',
+ * 'task_completion')`), so it is no longer reachable here.
  *
  * This file is purely derived from its inputs. No hub calls, no signals, no
  * side effects — safe to call inside render loops and unit tests.

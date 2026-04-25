@@ -1474,10 +1474,11 @@ describe('createSpaceAgentToolHandlers — list_tasks search/pagination/compact'
 // approve_task — plain review→done / review→approved path
 // ---------------------------------------------------------------------------
 //
-// The `approve_completion_action` MCP tool was deleted in PR 4/5 together with
-// the completion-action runtime pipeline. Residual DB rows that still carry
-// `pendingCheckpointType='completion_action'` are swept into `task_completion`
-// by migration (see PR 5) and do not round-trip through the MCP surface.
+// The completion-action approval MCP tool was deleted in PR 4/5 together with
+// the completion-action runtime pipeline. PR 5/5 (migration M104) further
+// rewrote any residual stuck rows into `task_completion` and tightened the
+// `pendingCheckpointType` CHECK constraint, so the legacy variant no longer
+// round-trips through the MCP surface.
 
 describe('createSpaceAgentToolHandlers — approve_task plain path', () => {
 	let ctx: TestCtx;

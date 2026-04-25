@@ -74,7 +74,6 @@ function makeTask(id: string, status = 'open', workflowRunId?: string): SpaceTas
 		approvalSource: null,
 		approvalReason: null,
 		approvedAt: null,
-		pendingActionIndex: null,
 		pendingCheckpointType: null,
 		reportedStatus: null,
 		reportedSummary: null,
@@ -93,7 +92,6 @@ function makeRun(id: string, status = 'pending'): SpaceWorkflowRun {
 		status: status as SpaceWorkflowRun['status'],
 		startedAt: null,
 		completedAt: null,
-		completionActionsFiredAt: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};

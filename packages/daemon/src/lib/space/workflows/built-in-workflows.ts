@@ -380,11 +380,11 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'   a. Post an approval review: `gh pr review <pr-url> --approve ' +
 							'--body-file <file>`.\n' +
 							'   b. Verify the PR is still open and mergeable.\n' +
-							'   c. Signal the Task Agent that a merge is the post-approval action:\n' +
+							'   c. Signal the Task Agent that the PR is ready for post-approval:\n' +
 							'      send_message(\n' +
 							'         target: "task-agent",\n' +
 							'         message: "Reviewer approved. PR ready for post-approval.",\n' +
-							'         data: { pr_url: "<url>", post_approval_action: "merge_pr" }\n' +
+							'         data: { pr_url: "<url>" }\n' +
 							'      )\n' +
 							'   d. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>" } })` ' +
 							'to record the audit entry. The `prUrl` inside `data` is what ' +
@@ -550,11 +550,11 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'--body-file <file>`. A visible GitHub review is required — an internal ' +
 							'summary is not enough.\n' +
 							'   b. Verify the PR is still open and mergeable.\n' +
-							'   c. Signal the Task Agent that a merge is the post-approval action:\n' +
+							'   c. Signal the Task Agent that the PR is ready for post-approval:\n' +
 							'      send_message(\n' +
 							'         target: "task-agent",\n' +
 							'         message: "Reviewer approved. PR ready for post-approval.",\n' +
-							'         data: { pr_url: "<url>", post_approval_action: "merge_pr" }\n' +
+							'         data: { pr_url: "<url>" }\n' +
 							'      )\n' +
 							'   d. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>" } })` ' +
 							'to record the final audit entry. The `prUrl` inside `data` is what ' +
@@ -982,11 +982,11 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'`save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` to record the audit entry. Do ' +
 							'NOT call `approve_task` — leave the workflow open for the next Coding cycle.\n' +
 							'5. If all green:\n' +
-							'   a. Signal the Task Agent that a merge is the post-approval action:\n' +
+							'   a. Signal the Task Agent that the PR is ready for post-approval:\n' +
 							'      send_message(\n' +
 							'         target: "task-agent",\n' +
 							'         message: "QA passed. PR ready for post-approval.",\n' +
-							'         data: { pr_url: "<url>", post_approval_action: "merge_pr" }\n' +
+							'         data: { pr_url: "<url>" }\n' +
 							'      )\n' +
 							'   b. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>", testOutput: "<output>" } })` ' +
 							'to record the audit entry. The `prUrl` inside `data` is what ' +

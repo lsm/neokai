@@ -80,7 +80,6 @@ function buildTemplateUpdateParams(
 			id: nodeIdMap.get(node.id)!,
 			name: node.name,
 			agents: resolvedAgents,
-			...(node.completionActions ? { completionActions: node.completionActions } : {}),
 		};
 	});
 

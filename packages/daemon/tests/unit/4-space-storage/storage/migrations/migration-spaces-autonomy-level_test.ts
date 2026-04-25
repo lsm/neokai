@@ -337,9 +337,12 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
 		]);
 	});
 
-	test('migration 86: pending_action_index and pending_checkpoint_type columns exist', () => {
+	test('migration 86: pending_checkpoint_type column exists after full migrate', () => {
 		runMigrations(db, () => {});
-		expect(columnExists(db, 'space_tasks', 'pending_action_index')).toBe(true);
+		// `pending_action_index` was added by M86 but later dropped by M104 (PR
+		// 5/5 of the task-agent-as-post-approval-executor refactor). Only
+		// `pending_checkpoint_type` survives the full pipeline.
+		expect(columnExists(db, 'space_tasks', 'pending_action_index')).toBe(false);
 		expect(columnExists(db, 'space_tasks', 'pending_checkpoint_type')).toBe(true);
 	});
 
