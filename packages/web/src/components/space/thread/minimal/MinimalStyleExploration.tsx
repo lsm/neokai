@@ -11,7 +11,7 @@
  */
 
 import { getAgentColor } from '../space-task-thread-agent-colors';
-import type { ActiveTurn, CompletedTurn, MinimalTurn, ToolCallEntry } from './minimal-mock-data';
+import type { CompletedTurn, MinimalTurn, ToolCallEntry } from './minimal-mock-data';
 import {
 	agentInitial,
 	formatClock,
@@ -39,7 +39,7 @@ function RosterEntry({ entry, isLatest }: { entry: ToolCallEntry; isLatest: bool
 	return (
 		<div
 			class={`flex items-baseline gap-2 font-mono text-xs leading-5 ${
-				isLatest ? 'text-gray-100 minimal-roster-pulse' : 'text-gray-400'
+				isLatest ? 'text-gray-100 minimal-roster-fade-in' : 'text-gray-400'
 			}`}
 		>
 			<span class="text-blue-300 font-semibold shrink-0">{entry.tool}:</span>
@@ -362,7 +362,7 @@ function TerminalStyle({ turns }: { turns: MinimalTurn[] }) {
 										key={`${entry.tool}-${i}`}
 										class={`${
 											i === turn.roster.length - 1
-												? 'text-gray-100 minimal-roster-pulse'
+												? 'text-gray-100 minimal-roster-fade-in'
 												: 'text-gray-500'
 										}`}
 									>
@@ -476,12 +476,12 @@ export function MinimalStyleExploration() {
 /* ── animations (scoped via local <style> tag) ───────────────────────────── */
 
 const ANIMATIONS_CSS = `
-@keyframes minimal-roster-fade-in {
+@keyframes minimal-roster-fade-in-kf {
 	from { opacity: 0; transform: translateY(2px); }
 	to   { opacity: 1; transform: translateY(0); }
 }
-.minimal-roster-pulse {
-	animation: minimal-roster-fade-in 250ms ease-out;
+.minimal-roster-fade-in {
+	animation: minimal-roster-fade-in-kf 250ms ease-out;
 }
 @keyframes minimal-live-pulse {
 	0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.0); transform: scale(1); }
@@ -491,6 +491,3 @@ const ANIMATIONS_CSS = `
 	animation: minimal-live-pulse 1.6s ease-in-out infinite;
 }
 `;
-
-/* Prevent accidental tree-shaking when imported as side-effect entry */
-export type { ActiveTurn, CompletedTurn, MinimalTurn };
