@@ -607,7 +607,7 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 							) : (
 								<MarkdownRenderer
 									content={turn.body}
-									class="text-sm leading-relaxed [&_h1]:!text-purple-300 [&_h2]:!text-purple-300 [&_h3]:!text-purple-300 [&_h4]:!text-purple-300 [&_h5]:!text-purple-300 [&_h6]:!text-purple-300"
+									class="text-sm leading-relaxed [&_h1]:!text-purple-400 [&_h2]:!text-purple-400 [&_h3]:!text-purple-400 [&_h4]:!text-purple-400 [&_h5]:!text-purple-400 [&_h6]:!text-purple-400"
 								/>
 							)
 						) : (
