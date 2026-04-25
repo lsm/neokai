@@ -21,7 +21,7 @@
  */
 
 import type { RefObject } from 'preact';
-import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'preact/hooks';
 
 export interface UseAutoScrollOptions {
 	/** Ref to the scrollable container element */
@@ -65,6 +65,33 @@ export function useAutoScroll({
 	const [isNearBottom, setIsNearBottom] = useState(true);
 	const prevMessageCountRef = useRef<number>(0);
 	const hasScrolledOnInitialLoad = useRef(false);
+	// Tracks whether we've performed the first scroll-to-bottom on this mount.
+	// Independent of the `isInitialLoad` prop because preact batches the
+	// signal-driven `setIsInitialLoad(false)` and `setMessages(M)` updates into
+	// a single render on cached-session navigation, so the prop-based check
+	// would miss the transition entirely (the prop is already `false` by the
+	// time `messageCount` first becomes non-zero).
+	const hasScrolledOnMountRef = useRef(false);
+	// Snapshot of `scrollHeight` from the previous handleScroll invocation —
+	// used to detect content-size growth in the ResizeObserver path so we can
+	// snap back to the bottom when async-rendered content (markdown, syntax
+	// highlighting, image loads) grows the scroll height after our initial
+	// scroll has already fired.
+	const lastScrollHeightRef = useRef<number>(0);
+	// Latched "near bottom" flag, kept in a ref so the ResizeObserver callback
+	// can read the current value without re-binding on every state update.
+	const isNearBottomRef = useRef<boolean>(true);
+	// Mirror of `enabled` and `loadingOlder` for the same reason. The
+	// ResizeObserver callback closes over these refs so it always sees the
+	// current value rather than a stale closure capture.
+	const enabledRef = useRef<boolean>(enabled);
+	const loadingOlderRef = useRef<boolean>(loadingOlder);
+	useEffect(() => {
+		enabledRef.current = enabled;
+	}, [enabled]);
+	useEffect(() => {
+		loadingOlderRef.current = loadingOlder;
+	}, [loadingOlder]);
 
 	// Scroll to bottom function - instant by default during streaming, smooth when user clicks.
 	// Uses `block: 'end'` so the end sentinel is aligned to the container's bottom edge,
@@ -100,6 +127,8 @@ export function useAutoScroll({
 			const handleScroll = () => {
 				const { scrollTop, scrollHeight, clientHeight } = container;
 				const nearBottom = scrollHeight - scrollTop - clientHeight < nearBottomThreshold;
+				isNearBottomRef.current = nearBottom;
+				lastScrollHeightRef.current = scrollHeight;
 				setIsNearBottom(nearBottom);
 				setShowScrollButton(!nearBottom);
 			};
@@ -115,7 +144,26 @@ export function useAutoScroll({
 			let rafId: number;
 			const resizeObserver = new ResizeObserver(() => {
 				cancelAnimationFrame(rafId);
-				rafId = requestAnimationFrame(() => handleScroll());
+				rafId = requestAnimationFrame(() => {
+					const prevScrollHeight = lastScrollHeightRef.current;
+					const grew = container.scrollHeight > prevScrollHeight;
+					// If we were anchored at the bottom and content just grew —
+					// e.g. markdown finished rendering, a code block expanded, an
+					// image finished loading — re-pin the container to the
+					// bottom so the last messages stay visible. We deliberately
+					// skip this while older messages are being loaded, since
+					// ChatContainer's own useLayoutEffect is responsible for
+					// preserving the user's anchored read position there.
+					if (
+						grew &&
+						isNearBottomRef.current &&
+						!loadingOlderRef.current &&
+						(enabledRef.current || !hasScrolledOnMountRef.current)
+					) {
+						container.scrollTop = container.scrollHeight;
+					}
+					handleScroll();
+				});
 			});
 			resizeObserver.observe(container);
 
@@ -132,38 +180,79 @@ export function useAutoScroll({
 
 	// When loadingOlder transitions from true to false, skip the message-count delta
 	// that was introduced by revealing older messages so that auto-scroll doesn't fire.
+	//
+	// Must run as a useLayoutEffect, declared BEFORE the auto-scroll layout
+	// effect below, so that `prevMessageCountRef` is updated to the new count
+	// before the auto-scroll effect reads it. With the auto-scroll path moved
+	// to useLayoutEffect (see below), an ordinary useEffect would fire too
+	// late and the auto-scroll would race ahead with a stale `prev`, scrolling
+	// the user to the bottom and clobbering ChatContainer's scroll-position
+	// restore.
 	const prevLoadingOlderRef = useRef(loadingOlder);
-	useEffect(() => {
+	useLayoutEffect(() => {
 		if (prevLoadingOlderRef.current && !loadingOlder) {
 			prevMessageCountRef.current = messageCount;
 		}
 		prevLoadingOlderRef.current = loadingOlder;
 	}, [loadingOlder, messageCount]);
 
-	// Auto-scroll on new messages
-	useEffect(() => {
+	// Auto-scroll on new messages.
+	//
+	// Uses `useLayoutEffect` so the scroll happens synchronously after DOM
+	// mutation but before paint. This eliminates the visible mid-conversation
+	// flicker that occurs when navigating back to a session whose messages are
+	// already cached in the store: with `useEffect` the browser would paint
+	// the messages at the top of the container first, then scroll on the next
+	// frame. With `useLayoutEffect` the scroll lands before the first paint.
+	useLayoutEffect(() => {
 		const hasNewContent = messageCount > prevMessageCountRef.current;
 
-		// Always scroll on initial load when first messages arrive
-		if (isInitialLoad && messageCount > 0 && !hasScrolledOnInitialLoad.current) {
-			scrollToBottom();
-			hasScrolledOnInitialLoad.current = true;
+		// Skip while older messages are being prepended — ChatContainer has a
+		// dedicated useLayoutEffect that anchors the user to the message they
+		// were viewing before pagination. Auto-scrolling here would yank them
+		// to the bottom and clobber that restore.
+		if (loadingOlder) {
 			prevMessageCountRef.current = messageCount;
 			return;
 		}
 
-		// Only auto-scroll for new messages if enabled and not loading older
-		if (enabled && !loadingOlder && hasNewContent) {
+		// First scroll on mount: when messages first become non-empty on this
+		// mount, scroll to the bottom — even if `enabled` is false. This is a
+		// "navigation/visit" scroll, not an auto-scroll on new content; the
+		// user's `enabled` (autoScroll) preference only governs SUBSEQUENT
+		// scrolling for new messages.
+		//
+		// Tracked via a ref instead of the `isInitialLoad` prop because preact
+		// batches the signal-driven `setIsInitialLoad(false)` and
+		// `setMessages(M)` updates into a single render on cached-session
+		// re-mounts, so the prop-based check would miss the transition
+		// entirely (the prop is already `false` by the time `messageCount`
+		// first becomes non-zero).
+		if (!hasScrolledOnMountRef.current && messageCount > 0) {
+			scrollToBottom();
+			hasScrolledOnMountRef.current = true;
+			hasScrolledOnInitialLoad.current = true;
+			prevMessageCountRef.current = messageCount;
+			isNearBottomRef.current = true;
+			return;
+		}
+
+		// Only auto-scroll for new messages if enabled
+		if (enabled && hasNewContent) {
 			scrollToBottom();
 		}
 
 		prevMessageCountRef.current = messageCount;
 	}, [messageCount, isInitialLoad, loadingOlder, enabled, scrollToBottom]);
 
-	// Reset initial load flag when it changes
+	// Reset the mount-scroll latches when `isInitialLoad` flips back to true.
+	// This preserves the existing reset semantic — a parent can signal "treat
+	// the next non-empty messageCount as a fresh load" by toggling the prop —
+	// without coupling the scroll trigger itself to the prop's timing.
 	useEffect(() => {
 		if (isInitialLoad) {
 			hasScrolledOnInitialLoad.current = false;
+			hasScrolledOnMountRef.current = false;
 		}
 	}, [isInitialLoad]);
 
