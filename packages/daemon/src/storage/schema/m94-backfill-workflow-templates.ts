@@ -201,8 +201,18 @@ const KNOWN_TEMPLATES: TemplateShape[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Canonical fingerprint / hash — MUST mirror
-// `packages/daemon/src/lib/space/workflows/template-hash.ts`.
+// Canonical fingerprint / hash — frozen historical copy.
+//
+// This mirrors the shape of `template-hash.ts` AS OF the M94 authoring date
+// (commit 6c13c7a7a). The production fingerprint in
+// `packages/daemon/src/lib/space/workflows/template-hash.ts` has since grown
+// additional fields (nodePrompts, completionAutonomyLevel, postApproval).
+//
+// We intentionally do NOT update this migration to track the evolving
+// fingerprint: M94 is a one-shot backfill that runs against pre-M94 DBs, and
+// the seeder re-stamps `template_content_hash` on every daemon start using
+// the live fingerprint. So the only role of this hash is to mark the row as
+// "templated" with a deterministic value — drift is corrected at startup.
 // ---------------------------------------------------------------------------
 
 interface WorkflowFingerprint {
