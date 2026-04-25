@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import { useSpaceTaskMessages } from '../../hooks/useSpaceTaskMessages';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
+import { useSpaceTaskMessages } from '../../hooks/useSpaceTaskMessages';
+import { getSpaceTaskThreadRenderStyle } from '../../lib/space-task-thread-config';
 import { SpaceTaskCardFeed } from './thread/compact/SpaceTaskCardFeed';
+import { MinimalThreadFeed } from './thread/minimal/MinimalThreadFeed';
 import { parseThreadRow } from './thread/space-task-thread-events';
 
 interface AgentTag {
@@ -74,9 +76,12 @@ export function SpaceTaskUnifiedThread({
 	topInsetClass = '',
 	isAgentActive = false,
 }: SpaceTaskUnifiedThreadProps) {
+	// Read render style on every render so the value stays fresh after a
+	// localStorage write (e.g. via setSpaceTaskThreadRenderStyle in devtools).
+	const renderStyle = getSpaceTaskThreadRenderStyle();
 	const { rows, isLoading, isReconnecting } = useSpaceTaskMessages(taskId, 'compact');
 	const containerRef = useRef<HTMLDivElement>(null);
-	const didInitialCompactScrollRef = useRef<string | null>(null);
+	const didInitialScrollRef = useRef<string | null>(null);
 
 	const parsedRows = useMemo(() => rows.map(parseThreadRow), [rows]);
 	const parsedMessages = useMemo(
@@ -88,9 +93,12 @@ export function SpaceTaskUnifiedThread({
 
 	useEffect(() => {
 		if (!containerRef.current) return;
-		if (didInitialCompactScrollRef.current !== taskId) {
+		// Both compact and minimal feeds scroll to the top on first mount —
+		// they're both summary views where the entry point is the start of
+		// the conversation, not the latest event.
+		if (didInitialScrollRef.current !== taskId) {
 			containerRef.current.scrollTop = 0;
-			didInitialCompactScrollRef.current = taskId;
+			didInitialScrollRef.current = taskId;
 		}
 	}, [taskId, parsedRows.length]);
 
@@ -98,7 +106,10 @@ export function SpaceTaskUnifiedThread({
 	const [currentAgent, setCurrentAgent] = useState<AgentTag | null>(null);
 
 	useEffect(() => {
-		if (!hasRows) {
+		// The floating agent-name tag is anchored to compact feed blocks
+		// (via [data-agent-label]). The minimal feed has its own per-row
+		// agent header, so the floating tag would be redundant there.
+		if (!hasRows || renderStyle !== 'compact') {
 			setCurrentAgent(null);
 			return;
 		}
@@ -110,15 +121,15 @@ export function SpaceTaskUnifiedThread({
 		update();
 		container.addEventListener('scroll', update, { passive: true });
 		return () => container.removeEventListener('scroll', update);
-	}, [hasRows]);
+	}, [hasRows, renderStyle]);
 
 	useEffect(() => {
-		if (!hasRows || !containerRef.current) {
+		if (!hasRows || renderStyle !== 'compact' || !containerRef.current) {
 			setCurrentAgent(null);
 			return;
 		}
 		setCurrentAgent(findCurrentAgent(containerRef.current));
-	}, [parsedRows.length, hasRows]);
+	}, [parsedRows.length, hasRows, renderStyle]);
 
 	if (isReconnecting) {
 		return (
@@ -172,12 +183,16 @@ export function SpaceTaskUnifiedThread({
 			)}
 			<div ref={containerRef} class={`flex-1 overflow-y-auto ${topInsetClass} ${bottomInsetClass}`}>
 				<div class="min-h-[calc(100%+1px)]">
-					<SpaceTaskCardFeed
-						parsedRows={parsedRows}
-						taskId={taskId}
-						maps={maps}
-						isAgentActive={isAgentActive}
-					/>
+					{renderStyle === 'minimal' ? (
+						<MinimalThreadFeed parsedRows={parsedRows} isAgentActive={isAgentActive} />
+					) : (
+						<SpaceTaskCardFeed
+							parsedRows={parsedRows}
+							taskId={taskId}
+							maps={maps}
+							isAgentActive={isAgentActive}
+						/>
+					)}
 				</div>
 			</div>
 		</div>

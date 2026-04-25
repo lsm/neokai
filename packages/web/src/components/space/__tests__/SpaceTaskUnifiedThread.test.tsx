@@ -1,11 +1,19 @@
 // @ts-nocheck
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { cleanup, render, screen } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SpaceTaskUnifiedThread } from '../SpaceTaskUnifiedThread';
 
 let mockRows = [];
 let mockIsLoading = false;
 let mockIsReconnecting = false;
+let mockRenderStyle: 'compact' | 'minimal' = 'compact';
+
+vi.mock('../../../lib/space-task-thread-config', () => ({
+	getSpaceTaskThreadRenderStyle: () => mockRenderStyle,
+	setSpaceTaskThreadRenderStyle: vi.fn(),
+	DEFAULT_SPACE_TASK_THREAD_RENDER_STYLE: 'compact',
+}));
 
 vi.mock('../../../hooks/useSpaceTaskMessages', () => ({
 	useSpaceTaskMessages: () => ({
@@ -13,6 +21,12 @@ vi.mock('../../../hooks/useSpaceTaskMessages', () => ({
 		isLoading: mockIsLoading,
 		isReconnecting: mockIsReconnecting,
 	}),
+}));
+
+// MinimalThreadFeed pulls in MarkdownRenderer (lazy-loads marked). Stub it
+// so tests don't need to wait on async markdown parsing.
+vi.mock('../../chat/MarkdownRenderer.tsx', () => ({
+	default: ({ content }: { content: string }) => <div data-testid="md">{content}</div>,
 }));
 
 vi.mock('../../../hooks/useMessageMaps', () => ({
@@ -128,6 +142,7 @@ function makeCompactRows() {
 describe('SpaceTaskUnifiedThread', () => {
 	beforeEach(() => {
 		cleanup();
+		mockRenderStyle = 'compact';
 		mockRows = makeCompactRows();
 		mockIsLoading = false;
 		mockIsReconnecting = false;
@@ -174,5 +189,21 @@ describe('SpaceTaskUnifiedThread', () => {
 		mockRows = [];
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
 		expect(screen.getByText('No task-agent activity yet.')).toBeTruthy();
+	});
+
+	it('renders the minimal feed when render style is "minimal"', () => {
+		mockRenderStyle = 'minimal';
+		render(<SpaceTaskUnifiedThread taskId="task-1" />);
+
+		expect(screen.getByTestId('space-task-event-feed-minimal')).toBeTruthy();
+		expect(screen.queryByTestId('space-task-event-feed-compact')).toBeNull();
+		// Each agent block becomes one minimal turn row.
+		expect(screen.getAllByTestId('minimal-thread-turn').length).toBeGreaterThan(0);
+	});
+
+	it('omits the floating agent tag in minimal mode (each row has its own header)', () => {
+		mockRenderStyle = 'minimal';
+		render(<SpaceTaskUnifiedThread taskId="task-1" />);
+		expect(screen.queryByTestId('agent-name-tag')).toBeNull();
 	});
 });

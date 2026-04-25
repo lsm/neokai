@@ -1,0 +1,374 @@
+/**
+ * MinimalThreadFeed
+ *
+ * Production renderer for the "minimal" task thread mode. Maps the same
+ * `parsedRows` the compact feed receives into Slack-style turn rows:
+ *
+ *   ▢ AGENT  9:42 PM
+ *   ▢   3 tool calls · 8 messages · 47m
+ *   ▢   <last assistant message>           ← completed turn (no rail)
+ *
+ *   ▢ AGENT  9:43 PM
+ *   ▢ │ 12 tools · 2m 22s
+ *   ▢ │ Bash: bun run typecheck
+ *   ▢ │ Read: packages/.../space-task-runtime.ts
+ *   ▢ │ Grep: provisionExistingSpaces
+ *   ▢ │ Bash: git status
+ *   ▢ │ • Running…                         ← active turn (coloured rail)
+ *
+ * No tool cards, no thinking blocks, no bracket rails. Reuses turn grouping
+ * (`buildLogicalBlocks`) from the compact reducer so behaviour stays
+ * consistent between modes.
+ */
+
+import { isSDKAssistantMessage, isToolUseBlock } from '@neokai/shared/sdk/type-guards';
+import { useEffect, useState } from 'preact/hooks';
+import MarkdownRenderer from '../../../chat/MarkdownRenderer.tsx';
+import {
+	buildLogicalBlocks,
+	type CompactLogicalBlock,
+} from '../compact/space-task-compact-reducer';
+import { getAgentColor } from '../space-task-thread-agent-colors';
+import type { ParsedThreadRow } from '../space-task-thread-events';
+import {
+	agentInitial,
+	formatClock,
+	formatDuration,
+	getToolDarkColor,
+	shortAgentName,
+} from './minimal-mock-data';
+
+interface MinimalThreadFeedProps {
+	parsedRows: ParsedThreadRow[];
+	/**
+	 * Whether the underlying agent session is currently executing. When true
+	 * AND the last logical block is non-terminal, that block renders as the
+	 * active turn (coloured rail, live tool roster, ticking elapsed clock).
+	 */
+	isAgentActive?: boolean;
+}
+
+interface ToolCallEntry {
+	tool: string;
+	preview: string;
+}
+
+interface CompletedFeedTurn {
+	state: 'completed';
+	id: string;
+	agent: string;
+	startedAt: number;
+	durationSec: number;
+	toolCalls: number;
+	messages: number;
+	lastMessage: string;
+	fallback: boolean;
+}
+
+interface ActiveFeedTurn {
+	state: 'active';
+	id: string;
+	agent: string;
+	startedAt: number;
+	status: string;
+	toolCalls: number;
+	roster: ToolCallEntry[];
+}
+
+type FeedTurn = CompletedFeedTurn | ActiveFeedTurn;
+
+const PREVIEW_MAX_LEN = 80;
+const ROSTER_MAX_ENTRIES = 4;
+
+function oneLine(value: string, max = PREVIEW_MAX_LEN): string {
+	const collapsed = value.replace(/\s+/g, ' ').trim();
+	if (!collapsed) return '';
+	return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
+}
+
+function getToolUseContentBlocks(row: ParsedThreadRow) {
+	if (!row.message || !isSDKAssistantMessage(row.message)) return [];
+	const content = (row.message as { message?: { content?: unknown } }).message?.content;
+	if (!Array.isArray(content)) return [];
+	return content.filter((block): block is { type: 'tool_use'; name: string; input?: unknown } =>
+		isToolUseBlock(block as never)
+	);
+}
+
+function previewFromInput(input: Record<string, unknown>): string {
+	const command = typeof input.command === 'string' ? input.command : '';
+	if (command) return oneLine(command);
+	const filePath = typeof input.file_path === 'string' ? input.file_path : '';
+	if (filePath) return oneLine(filePath);
+	const path = typeof input.path === 'string' ? input.path : '';
+	if (path) return oneLine(path);
+	const pattern = typeof input.pattern === 'string' ? input.pattern : '';
+	if (pattern) return oneLine(pattern);
+	const url = typeof input.url === 'string' ? input.url : '';
+	if (url) return oneLine(url);
+	const description = typeof input.description === 'string' ? input.description : '';
+	if (description) return oneLine(description);
+	const keys = Object.keys(input);
+	if (keys.length === 0) return '';
+	// Fallback: show first key=value summary so the entry isn't blank.
+	const firstKey = keys[0];
+	const firstVal = input[firstKey];
+	if (typeof firstVal === 'string') return oneLine(`${firstKey}: ${firstVal}`);
+	return `${firstKey}: …`;
+}
+
+function extractToolCallEntries(rows: ParsedThreadRow[], maxEntries: number): ToolCallEntry[] {
+	const entries: ToolCallEntry[] = [];
+	for (const row of rows) {
+		for (const block of getToolUseContentBlocks(row)) {
+			const input =
+				typeof block.input === 'object' && block.input !== null
+					? (block.input as Record<string, unknown>)
+					: {};
+			entries.push({ tool: block.name, preview: previewFromInput(input) });
+		}
+	}
+	return entries.slice(-maxEntries);
+}
+
+function countToolCalls(rows: ParsedThreadRow[]): number {
+	let n = 0;
+	for (const row of rows) {
+		n += getToolUseContentBlocks(row).length;
+	}
+	return n;
+}
+
+function extractLastAssistantText(rows: ParsedThreadRow[]): { text: string; fallback: boolean } {
+	for (let i = rows.length - 1; i >= 0; i--) {
+		const row = rows[i];
+		if (!row.message || !isSDKAssistantMessage(row.message)) continue;
+		const content = (row.message as { message?: { content?: unknown } }).message?.content;
+		if (!Array.isArray(content)) continue;
+		const texts = content
+			.filter(
+				(block): block is { type: 'text'; text: string } =>
+					typeof (block as { type?: unknown }).type === 'string' &&
+					(block as { type?: unknown }).type === 'text' &&
+					typeof (block as { text?: unknown }).text === 'string'
+			)
+			.map((block) => block.text.trim())
+			.filter((s) => s.length > 0);
+		if (texts.length > 0) return { text: texts.join('\n\n'), fallback: false };
+	}
+	const tailFallback = rows[rows.length - 1]?.fallbackText ?? '';
+	return { text: tailFallback, fallback: true };
+}
+
+function buildTurnFromBlock(
+	block: CompactLogicalBlock,
+	isLastBlock: boolean,
+	isAgentActive: boolean
+): FeedTurn {
+	const startedAt = block.rows[0].createdAt;
+	const lastRow = block.rows[block.rows.length - 1];
+	const isActive = isLastBlock && isAgentActive && !block.isTerminal;
+
+	if (isActive) {
+		return {
+			state: 'active',
+			id: block.id,
+			agent: block.agentLabel,
+			startedAt,
+			status: 'Running…',
+			toolCalls: countToolCalls(block.rows),
+			roster: extractToolCallEntries(block.rows, ROSTER_MAX_ENTRIES),
+		};
+	}
+
+	const durationMs = Math.max(0, lastRow.createdAt - startedAt);
+	const durationSec = Math.max(1, Math.round(durationMs / 1000));
+	const { text, fallback } = extractLastAssistantText(block.rows);
+	return {
+		state: 'completed',
+		id: block.id,
+		agent: block.agentLabel,
+		startedAt,
+		durationSec,
+		toolCalls: countToolCalls(block.rows),
+		messages: block.rows.length,
+		lastMessage: text,
+		fallback,
+	};
+}
+
+/**
+ * Force a re-render every second so live-elapsed values derived from
+ * `Date.now() - startedAt` stay current. Single timer per component
+ * instance — cheap, and only mounted while there is an active turn.
+ */
+function useSecondsTick(): void {
+	const [, setTick] = useState(0);
+	useEffect(() => {
+		const id = setInterval(() => setTick((n) => (n + 1) | 0), 1000);
+		return () => clearInterval(id);
+	}, []);
+}
+
+/* ── visual building blocks ──────────────────────────────────────────────── */
+
+function PulseDot({ color }: { color: string }) {
+	return (
+		<span
+			class="inline-block h-2 w-2 rounded-full minimal-thread-live-dot shrink-0"
+			style={{ backgroundColor: color }}
+		/>
+	);
+}
+
+function StatusPill({ color, status }: { color: string; status: string }) {
+	return (
+		<span class="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-medium">
+			<PulseDot color={color} />
+			<span style={{ color }}>{status}</span>
+		</span>
+	);
+}
+
+function RosterEntry({ entry, isLatest }: { entry: ToolCallEntry; isLatest: boolean }) {
+	const toolColor = getToolDarkColor(entry.tool);
+	return (
+		<div
+			class={`flex items-baseline gap-2 font-mono text-xs leading-5 ${
+				isLatest ? 'minimal-thread-roster-fade-in' : ''
+			}`}
+			data-testid="minimal-thread-roster-entry"
+		>
+			<span class={`${toolColor} font-semibold shrink-0`}>{entry.tool}:</span>
+			<span class={`truncate ${isLatest ? 'text-gray-100' : 'text-gray-400'}`}>
+				{entry.preview}
+			</span>
+		</div>
+	);
+}
+
+function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
+	return (
+		<>
+			<div class="text-[11px] text-gray-500 mt-0.5">
+				{turn.toolCalls} {turn.toolCalls === 1 ? 'tool call' : 'tool calls'} · {turn.messages}{' '}
+				{turn.messages === 1 ? 'message' : 'messages'} · {formatDuration(turn.durationSec)}
+			</div>
+			{turn.lastMessage ? (
+				<div class="mt-1.5 text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400">
+					{turn.fallback ? (
+						<p class="whitespace-pre-wrap break-words">{turn.lastMessage}</p>
+					) : (
+						<MarkdownRenderer content={turn.lastMessage} />
+					)}
+				</div>
+			) : null}
+		</>
+	);
+}
+
+function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
+	useSecondsTick();
+	const elapsedSec = Math.max(0, Math.round((Date.now() - turn.startedAt) / 1000));
+	return (
+		<div
+			class="mt-1.5 pl-3 border-l-2"
+			style={{ borderColor: color }}
+			data-testid="minimal-thread-active-rail"
+		>
+			<div class="text-[11px] text-gray-500 mt-0.5">
+				{turn.toolCalls} {turn.toolCalls === 1 ? 'tool' : 'tools'} · {formatDuration(elapsedSec)}
+			</div>
+			{turn.roster.length > 0 ? (
+				<div class="mt-2 space-y-0.5">
+					{turn.roster.map((entry, i) => (
+						<RosterEntry
+							key={`${entry.tool}-${i}`}
+							entry={entry}
+							isLatest={i === turn.roster.length - 1}
+						/>
+					))}
+				</div>
+			) : null}
+			<div class="mt-1.5">
+				<StatusPill color={color} status={turn.status} />
+			</div>
+		</div>
+	);
+}
+
+function MinimalTurnRow({ turn }: { turn: FeedTurn }) {
+	const color = getAgentColor(turn.agent);
+	const initial = agentInitial(turn.agent);
+	return (
+		<div
+			class="flex gap-3"
+			data-testid="minimal-thread-turn"
+			data-agent-label={turn.agent}
+			data-agent-color={color}
+			data-turn-state={turn.state}
+		>
+			<div
+				class="h-9 w-9 shrink-0 rounded-md flex items-center justify-center text-sm font-bold text-dark-950"
+				style={{ backgroundColor: color }}
+				aria-hidden="true"
+			>
+				{initial}
+			</div>
+			<div class="min-w-0 flex-1">
+				<div class="flex items-center gap-3">
+					<span class="font-semibold" style={{ color }}>
+						{shortAgentName(turn.agent)}
+					</span>
+					<span class="text-xs text-gray-500">{formatClock(turn.startedAt)}</span>
+				</div>
+				{turn.state === 'active' ? (
+					<ActiveBody turn={turn} color={color} />
+				) : (
+					<CompletedBody turn={turn} />
+				)}
+			</div>
+		</div>
+	);
+}
+
+/* ── public component ────────────────────────────────────────────────────── */
+
+export function MinimalThreadFeed({ parsedRows, isAgentActive = false }: MinimalThreadFeedProps) {
+	const blocks = buildLogicalBlocks(parsedRows);
+	if (blocks.length === 0) return null;
+
+	const turns: FeedTurn[] = blocks.map((block, i) =>
+		buildTurnFromBlock(block, i === blocks.length - 1, isAgentActive)
+	);
+
+	return (
+		<>
+			<style>{ANIMATIONS_CSS}</style>
+			<div class="px-4 py-4 space-y-6" data-testid="space-task-event-feed-minimal">
+				{turns.map((turn) => (
+					<MinimalTurnRow key={turn.id} turn={turn} />
+				))}
+			</div>
+		</>
+	);
+}
+
+/* ── animations (scoped via local <style> tag) ───────────────────────────── */
+
+const ANIMATIONS_CSS = `
+@keyframes minimal-thread-roster-fade-in-kf {
+	from { opacity: 0; transform: translateY(2px); }
+	to   { opacity: 1; transform: translateY(0); }
+}
+.minimal-thread-roster-fade-in {
+	animation: minimal-thread-roster-fade-in-kf 250ms ease-out;
+}
+@keyframes minimal-thread-live-pulse-kf {
+	0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.0); transform: scale(1); }
+	50%      { box-shadow: 0 0 0 4px rgba(255,255,255,0.08); transform: scale(1.08); }
+}
+.minimal-thread-live-dot {
+	animation: minimal-thread-live-pulse-kf 1.6s ease-in-out infinite;
+}
+`;
