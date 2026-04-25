@@ -297,9 +297,9 @@ test.describe('Artifacts Side Panel', () => {
 		await expect(page.getByTestId('artifacts-file-list')).toBeVisible({ timeout: 5000 });
 	});
 
-	// ─── Test 4: Close button dismisses the panel ────────────────────────────
+	// ─── Test 4: Toggling the pill dismisses the panel ──────────────────────
 
-	test('close button dismisses the artifacts panel and restores the thread view', async ({
+	test('clicking the artifacts toggle while open dismisses the panel and restores the thread view', async ({
 		page,
 	}) => {
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
@@ -310,8 +310,9 @@ test.describe('Artifacts Side Panel', () => {
 		await page.getByTestId('artifacts-toggle').click();
 		await expect(page.getByTestId('artifacts-panel')).toBeVisible({ timeout: 10000 });
 
-		// Close the panel via the X button.
-		await page.getByTestId('artifacts-panel-close').click();
+		// The header (with its X button) was removed — clicking the artifacts
+		// pill toggle a second time is now the canonical way to close the panel.
+		await page.getByTestId('artifacts-toggle').click();
 
 		// Panel must be gone and the task thread panel must be back.
 		await expect(page.getByTestId('artifacts-panel')).toBeHidden({ timeout: 5000 });
