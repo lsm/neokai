@@ -6,13 +6,6 @@ import { SpaceTaskUnifiedThread } from '../SpaceTaskUnifiedThread';
 let mockRows = [];
 let mockIsLoading = false;
 let mockIsReconnecting = false;
-let mockRenderStyle: 'compact' | 'legacy' = 'compact';
-
-vi.mock('../../../lib/space-task-thread-config', () => ({
-	getSpaceTaskThreadRenderStyle: vi.fn(() => mockRenderStyle),
-	setSpaceTaskThreadRenderStyle: vi.fn(),
-	DEFAULT_SPACE_TASK_THREAD_RENDER_STYLE: 'compact',
-}));
 
 vi.mock('../../../hooks/useSpaceTaskMessages', () => ({
 	useSpaceTaskMessages: () => ({
@@ -132,27 +125,9 @@ function makeCompactRows() {
 	];
 }
 
-function makeLegacyRows() {
-	return [
-		makeRow(
-			'a1',
-			'Task Agent',
-			{ type: 'assistant', uuid: 'a1', message: { content: [{ type: 'text', text: 'legacy-a' }] } },
-			1
-		),
-		makeRow(
-			'a2',
-			'Coder Agent',
-			{ type: 'assistant', uuid: 'a2', message: { content: [{ type: 'text', text: 'legacy-b' }] } },
-			2
-		),
-	];
-}
-
 describe('SpaceTaskUnifiedThread', () => {
 	beforeEach(() => {
 		cleanup();
-		mockRenderStyle = 'compact';
 		mockRows = makeCompactRows();
 		mockIsLoading = false;
 		mockIsReconnecting = false;
@@ -174,20 +149,11 @@ describe('SpaceTaskUnifiedThread', () => {
 		expect(screen.queryByTestId('compact-turn-divider')).toBeNull();
 	});
 
-	it('renders the floating agent tag in compact mode', () => {
+	it('renders the floating agent tag', () => {
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
 		const tag = screen.getByTestId('agent-name-tag');
 		expect(tag).toBeTruthy();
 		expect(tag.textContent).toContain('TASK');
-	});
-
-	it('renders legacy feed when style is legacy', () => {
-		mockRenderStyle = 'legacy';
-		mockRows = makeLegacyRows();
-		render(<SpaceTaskUnifiedThread taskId="task-1" />);
-
-		expect(screen.getByTestId('space-task-event-feed-legacy')).toBeTruthy();
-		expect(screen.queryByTestId('space-task-event-feed-compact')).toBeNull();
 	});
 
 	it('shows loading state when loading', () => {
