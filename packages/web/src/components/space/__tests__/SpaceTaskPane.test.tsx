@@ -923,3 +923,81 @@ describe('SpaceTaskPane — activity members actions', () => {
 		expect(mockUnsubscribeTaskActivity).toHaveBeenCalledWith('task-1');
 	});
 });
+
+describe('SpaceTaskPane — floating tab pill layout', () => {
+	beforeEach(() => {
+		cleanup();
+		mockTasks.value = [];
+		mockWorkflowRuns.value = [];
+		mockWorkflows.value = [];
+		mockEnsureTaskAgentSession.mockReset();
+		mockEnsureTaskAgentSession.mockImplementation(async () =>
+			makeTask({ status: 'in_progress', taskAgentSessionId: 'session-ensured' })
+		);
+		mockNavigateToSpaceTask.mockClear();
+		mockCurrentSpaceTaskViewTabSignal.value = 'thread';
+		mockCurrentSpaceIdSignal.value = null;
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('renders the tab pill as a floating overlay inside the content area', () => {
+		mockTasks.value = [makeTask({ workflowRunId: 'run-1', taskAgentSessionId: 'session-abc' })];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+
+		const pill = getByTestId('task-view-tab-pill');
+		// Floating overlay: absolute-positioned, full-width wrapper, high z-index,
+		// and pointer-events disabled on the wrapper so empty space around the
+		// pill never blocks underlying canvas / thread interactions. (CSS class
+		// strings are asserted directly because Tailwind utilities aren't
+		// loaded in jsdom — getComputedStyle would return defaults.)
+		expect(pill.className).toContain('absolute');
+		expect(pill.className).toContain('pointer-events-none');
+		expect(pill.className).toContain('z-10');
+
+		// The pill is a direct child of the content wrapper, not nested inside
+		// the rendered view, so it overlays rather than displaces content.
+		const contentWrapper = getByTestId('task-pane-content');
+		expect(pill.parentElement).toBe(contentWrapper);
+		expect(pill.contains(getByTestId('task-thread-panel'))).toBe(false);
+	});
+
+	it('floating pill remains visible across thread, canvas, and artifacts views', () => {
+		mockTasks.value = [makeTask({ workflowRunId: 'run-1', taskAgentSessionId: 'session-abc' })];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		const { getByTestId, queryByTestId } = render(
+			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
+		);
+
+		// Thread view (default)
+		expect(queryByTestId('task-view-tab-pill')).toBeTruthy();
+
+		// Canvas view
+		fireEvent.click(getByTestId('canvas-toggle'));
+		expect(queryByTestId('task-view-tab-pill')).toBeTruthy();
+		expect(getByTestId('canvas-view')).toBeTruthy();
+
+		// Artifacts view
+		fireEvent.click(getByTestId('artifacts-toggle'));
+		expect(queryByTestId('task-view-tab-pill')).toBeTruthy();
+	});
+
+	it('pill buttons remain clickable through the pointer-events-none wrapper', () => {
+		mockCurrentSpaceIdSignal.value = 'space-1';
+		mockTasks.value = [makeTask({ workflowRunId: 'run-1', taskAgentSessionId: 'session-abc' })];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+
+		// Direct child of the floating wrapper must restore pointer-events so
+		// the buttons inside it are still interactive.
+		const pill = getByTestId('task-view-tab-pill');
+		const innerPill = pill.firstElementChild as HTMLElement;
+		expect(innerPill.className).toContain('pointer-events-auto');
+
+		fireEvent.click(getByTestId('canvas-toggle'));
+		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 'task-1', 'canvas');
+	});
+});
