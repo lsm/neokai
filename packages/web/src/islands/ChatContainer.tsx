@@ -83,6 +83,16 @@ interface ChatContainerProps {
 	 * header into a single `ChatHeader` with a back affordance.
 	 */
 	onBack?: () => void;
+	/**
+	 * Optional message UUID to scroll into view + briefly highlight when the
+	 * container mounts (or when this prop changes). Used by the agent overlay
+	 * slide-over so opening "this message" from the minimal thread feed lands
+	 * the user on the exact turn they clicked instead of the session tail.
+	 *
+	 * The highlighted row is matched by `data-message-id` on the wrapper div
+	 * around each `SDKMessageRenderer`. When absent, behavior is unchanged.
+	 */
+	highlightMessageId?: string;
 }
 
 export default function ChatContainer({
@@ -90,6 +100,7 @@ export default function ChatContainer({
 	readonly = false,
 	hideRoomBreadcrumb = false,
 	onBack,
+	highlightMessageId,
 }: ChatContainerProps) {
 	// ========================================
 	// Refs
@@ -633,11 +644,56 @@ export default function ChatContainer({
 	const { showScrollButton, scrollToBottom } = useAutoScroll({
 		containerRef: messagesContainerRef,
 		endRef: messagesEndRef,
-		enabled: autoScroll,
+		// Disable tail-following auto-scroll while the caller is asking us to
+		// scroll a specific message into view — otherwise late-arriving rows
+		// would yank the viewport away from the highlighted target.
+		enabled: autoScroll && !highlightMessageId,
 		messageCount: messages.length,
 		isInitialLoad,
 		loadingOlder,
 	});
+
+	// ========================================
+	// Highlight a specific message (deep-link from minimal thread feed)
+	// ========================================
+	// When `highlightMessageId` is provided, scroll the matching row into view
+	// and apply a brief amber ring so the user can spot it. Re-runs when the
+	// id changes or messages finish loading (so the target may not be in the
+	// DOM on first render).
+	useEffect(() => {
+		if (!highlightMessageId) return;
+		if (isInitialLoad) return;
+
+		const container = messagesContainerRef.current;
+		if (!container) return;
+
+		const target = container.querySelector<HTMLElement>(
+			`[data-message-id="${CSS.escape(highlightMessageId)}"]`
+		);
+		if (!target) return;
+
+		// Scroll into view and apply a temporary highlight ring.
+		target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+		const HIGHLIGHT_CLASSES = [
+			'ring-2',
+			'ring-amber-400/70',
+			'ring-offset-2',
+			'ring-offset-dark-900',
+			'rounded-lg',
+			'transition-shadow',
+			'duration-700',
+		];
+		target.classList.add(...HIGHLIGHT_CLASSES);
+		const timer = window.setTimeout(() => {
+			target.classList.remove(...HIGHLIGHT_CLASSES);
+		}, 1800);
+
+		return () => {
+			window.clearTimeout(timer);
+			target.classList.remove(...HIGHLIGHT_CLASSES);
+		};
+	}, [highlightMessageId, isInitialLoad, messages.length]);
 
 	// ========================================
 	// Message Maps (for tool results/inputs)
@@ -1025,47 +1081,48 @@ export default function ChatContainer({
 
 							{/* Messages - QuestionPrompt rendered inline with AskUserQuestion tool blocks */}
 							{messages.map((msg, idx) => (
-								<SDKMessageRenderer
-									key={msg.uuid || `msg-${idx}`}
-									message={msg}
-									toolResultsMap={maps.toolResultsMap}
-									toolInputsMap={maps.toolInputsMap}
-									subagentMessagesMap={maps.subagentMessagesMap}
-									sessionInfo={
-										msg.uuid
-											? (maps.sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)
-											: undefined
-									}
-									sessionId={sessionId}
-									resolvedQuestions={allResolvedQuestions}
-									pendingQuestion={pendingQuestion}
-									onRewind={handleRewindClick}
-									rewindingMessageUuid={isRewinding ? rewindTargetUuid : null}
-									rewindMode={rewindMode}
-									selectedMessages={selectedMessages}
-									onMessageCheckboxChange={handleMessageCheckboxChange}
-									allMessages={messages}
-									onQuestionResolved={(state, responses) => {
-										// Move question to resolved state locally for immediate UI feedback
-										// (Server also persists this via question.respond/cancel RPC)
-										if (pendingQuestion) {
-											const resolved = {
-												question: pendingQuestion,
-												state,
-												responses,
-												resolvedAt: Date.now(),
-											};
-											// Update ref immediately (synchronous)
-											resolvingQuestionsRef.current.set(pendingQuestion.toolUseId, resolved);
-											// Also schedule update to resolvedQuestions (will be merged with server data)
-											setResolvedQuestions((prev) => {
-												const next = new Map(prev);
-												next.set(pendingQuestion.toolUseId, resolved);
-												return next;
-											});
+								<div key={msg.uuid || `msg-${idx}`} data-message-id={msg.uuid} class="scroll-mt-20">
+									<SDKMessageRenderer
+										message={msg}
+										toolResultsMap={maps.toolResultsMap}
+										toolInputsMap={maps.toolInputsMap}
+										subagentMessagesMap={maps.subagentMessagesMap}
+										sessionInfo={
+											msg.uuid
+												? (maps.sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)
+												: undefined
 										}
-									}}
-								/>
+										sessionId={sessionId}
+										resolvedQuestions={allResolvedQuestions}
+										pendingQuestion={pendingQuestion}
+										onRewind={handleRewindClick}
+										rewindingMessageUuid={isRewinding ? rewindTargetUuid : null}
+										rewindMode={rewindMode}
+										selectedMessages={selectedMessages}
+										onMessageCheckboxChange={handleMessageCheckboxChange}
+										allMessages={messages}
+										onQuestionResolved={(state, responses) => {
+											// Move question to resolved state locally for immediate UI feedback
+											// (Server also persists this via question.respond/cancel RPC)
+											if (pendingQuestion) {
+												const resolved = {
+													question: pendingQuestion,
+													state,
+													responses,
+													resolvedAt: Date.now(),
+												};
+												// Update ref immediately (synchronous)
+												resolvingQuestionsRef.current.set(pendingQuestion.toolUseId, resolved);
+												// Also schedule update to resolvedQuestions (will be merged with server data)
+												setResolvedQuestions((prev) => {
+													const next = new Map(prev);
+													next.set(pendingQuestion.toolUseId, resolved);
+													return next;
+												});
+											}
+										}}
+									/>
+								</div>
 							))}
 						</ContentContainer>
 					)}
