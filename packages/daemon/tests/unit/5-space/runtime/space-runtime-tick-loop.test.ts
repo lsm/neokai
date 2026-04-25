@@ -161,6 +161,11 @@ function makeMockTaskAgentManager(
 		rehydrate: overrides.rehydrate ?? (async () => {}),
 		cancelBySessionId: overrides.cancelBySessionId ?? (() => {}),
 		interruptBySessionId: overrides.interruptBySessionId ?? (async () => {}),
+		// PR 3/5 added a post-approval awareness injection via
+		// `injectIntoTaskAgent`. The tick-loop mock is not exercising delivery,
+		// so return a trivial "not injected" result — production treats this as
+		// best-effort anyway.
+		injectIntoTaskAgent: async () => ({ injected: false, reason: 'no-session' }),
 		_spawned: spawned,
 	};
 }
@@ -170,18 +175,9 @@ function makeMockTaskAgentManager(
 // ---------------------------------------------------------------------------
 
 describe('SpaceRuntime — tick loop correctness', () => {
-	// PR 3/5 flipped `NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING` default to ON.
-	// These tests exercise the legacy approval→done dispatch path that PR 4/5
-	// will remove; force the kill-switch OFF here so the intermediate state is
-	// still fully exercised.
-	const SAVED_FLAG = process.env.NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING;
-	beforeEach(() => {
-		process.env.NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING = '0';
-	});
-	afterEach(() => {
-		if (SAVED_FLAG === undefined) delete process.env.NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING;
-		else process.env.NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING = SAVED_FLAG;
-	});
+	// Covers the per-tick scheduling/dispatch loop and approval → router
+	// hand-off. The legacy approval→done dispatch path was removed in PR 4/5;
+	// `dispatchPostApproval` is the only route now.
 
 	let db: BunDatabase;
 

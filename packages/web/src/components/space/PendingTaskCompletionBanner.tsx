@@ -15,15 +15,17 @@
  * Compact design: shows a single status line inline; full details and
  * confirmation are shown in modals opened by the Approve / Send back buttons.
  *
- * Distinct from `PendingCompletionActionBanner` (completion-action checkpoints,
- * `pendingCheckpointType === 'completion_action'`) which runs a configured
- * script/instruction/mcp_call on approval.
+ * The legacy `completion_action` checkpoint pipeline (and its dedicated
+ * `PendingCompletionActionBanner`) was removed in PR 4/5 — post-approval work
+ * now runs through `PostApprovalRouter` instead. See
+ * `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`.
  */
 
 import { useCallback, useState } from 'preact/hooks';
 import type { SpaceTask } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { Modal } from '../ui/Modal.tsx';
+import { InlineStatusBanner, type InlineStatusBannerAction } from './InlineStatusBanner';
 
 interface PendingTaskCompletionBannerProps {
 	task: SpaceTask;
@@ -91,46 +93,39 @@ export function PendingTaskCompletionBanner({
 	const reportedSummary = task.reportedSummary?.trim();
 	const submittedAgo = formatPendingSince(task.pendingCompletionSubmittedAt ?? null);
 
+	const actions: InlineStatusBannerAction[] = [
+		{
+			label: 'Approve',
+			onClick: () => {
+				setError(null);
+				setShowApproveModal(true);
+			},
+			variant: 'primary',
+			disabled: busy,
+			testId: 'pending-task-completion-approve-btn',
+		},
+		{
+			label: 'Send back',
+			onClick: () => {
+				setError(null);
+				setShowRejectModal(true);
+			},
+			variant: 'danger',
+			disabled: busy,
+			testId: 'pending-task-completion-reject-btn',
+		},
+	];
+
 	return (
 		<>
-			{/* Compact one-line banner */}
-			<div
-				class="mx-4 mt-2 mb-2 flex items-center gap-2 px-2 py-1 rounded text-xs text-amber-400/90"
-				data-testid="pending-task-completion-banner"
-			>
-				<span class="shrink-0">⏸</span>
-				<span class="flex-1 min-w-0 truncate">
-					Awaiting approval
-					{submittedAgo ? <span class="text-amber-400/60 ml-1">· {submittedAgo}</span> : null}
-				</span>
-
-				<div class="flex items-center gap-1 flex-shrink-0">
-					<button
-						type="button"
-						onClick={() => {
-							setError(null);
-							setShowApproveModal(true);
-						}}
-						disabled={busy}
-						data-testid="pending-task-completion-approve-btn"
-						class="px-2 py-0.5 text-xs font-medium rounded bg-green-900/40 text-green-300 border border-green-700/50 hover:bg-green-800/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-					>
-						Approve
-					</button>
-					<button
-						type="button"
-						onClick={() => {
-							setError(null);
-							setShowRejectModal(true);
-						}}
-						disabled={busy}
-						data-testid="pending-task-completion-reject-btn"
-						class="px-2 py-0.5 text-xs font-medium rounded bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-					>
-						Send back
-					</button>
-				</div>
-			</div>
+			<InlineStatusBanner
+				tone="amber"
+				icon={<span aria-hidden="true">⏸</span>}
+				label="Awaiting approval"
+				meta={submittedAgo ? `· ${submittedAgo}` : undefined}
+				actions={actions}
+				testId="pending-task-completion-banner"
+			/>
 
 			{/* Approve modal */}
 			<Modal

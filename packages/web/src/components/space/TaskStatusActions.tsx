@@ -8,13 +8,9 @@ export const VALID_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> 
 	open: ['in_progress', 'blocked', 'done', 'cancelled'],
 	in_progress: ['open', 'review', 'done', 'blocked', 'cancelled'],
 	review: ['done', 'in_progress', 'cancelled', 'archived'],
-	// `approved` is the post-approval staging status added in PR 1/5 of the
-	// task-agent-as-post-approval-executor refactor. No runtime consumer
-	// produces this status yet — PR 2 wires it in. Listed here with a
-	// conservative transition set (escape hatches to `done`/`in_progress`/
-	// `archived`) so that manually-set `approved` rows can still be moved
-	// along, and so `Record<SpaceTaskStatus, SpaceTaskStatus[]>` typechecks.
-	// Deliberately NOT reachable from `review` yet — PR 2 adds that edge.
+	// `approved` is the post-approval staging status. Conservative transition
+	// set (`done` / `in_progress` / `archived`) gives manual escape hatches if
+	// the PostApprovalRouter is unable to advance a task automatically.
 	approved: ['done', 'in_progress', 'archived'],
 	done: ['in_progress', 'archived'],
 	blocked: ['open', 'in_progress', 'archived'],
@@ -39,9 +35,9 @@ export const TRANSITION_LABELS: Record<string, string> = {
 	'review->in_progress': 'Reopen',
 	'review->cancelled': 'Cancel',
 	'review->archived': 'Archive',
-	// PR 1/5 schema-only: `approved` has no user-facing enter edge yet. Labels
-	// for `approved -> X` are defined here so that if the status is manually
-	// set (e.g. tests) the Task pane still renders readable action buttons.
+	// `approved` exit edges. The PostApprovalRouter normally advances tasks
+	// past this status; these labels render only when a manual transition is
+	// needed (e.g. router failure, or admin intervention).
 	'approved->done': 'Mark Done',
 	'approved->in_progress': 'Reopen',
 	'approved->archived': 'Archive',
@@ -89,13 +85,11 @@ interface TaskStatusActionsProps {
 	disabled?: boolean;
 	/**
 	 * Type of checkpoint the task is paused at, if any. When set to
-	 * `completion_action` or `task_completion`, the generic Approve/Reject
-	 * transitions are hidden and routed through the matching banner
-	 * (`PendingCompletionActionBanner` / `PendingTaskCompletionBanner`) instead —
-	 * those banners show what the approval actually does, which the generic
-	 * buttons can't.
+	 * `task_completion`, the generic Approve/Reject transitions are hidden and
+	 * routed through `PendingTaskCompletionBanner` instead — that banner shows
+	 * what the approval actually does, which the generic buttons can't.
 	 */
-	pendingCheckpointType?: 'completion_action' | 'gate' | 'task_completion' | null;
+	pendingCheckpointType?: 'gate' | 'task_completion' | null;
 }
 
 export function TaskStatusActions({
@@ -105,17 +99,15 @@ export function TaskStatusActions({
 	pendingCheckpointType,
 }: TaskStatusActionsProps) {
 	const allActions = getTransitionActions(status);
-	// When a task is paused at a completion action, a submit_for_approval
-	// checkpoint, or a channel gate awaiting human approval, hide the generic
-	// Approve (review → done) and Cancel (review → cancelled) buttons. The
-	// dedicated banner owns those transitions. For gate-pending tasks the
-	// PendingGateBanner provides the Approve/Reject UX; bypassing it via the
-	// generic button would mark the task done without opening the gate.
-	// Non-checkpoint transitions (e.g. Reopen → in_progress, Archive) stay visible.
+	// When a task is paused at a submit_for_approval checkpoint or a channel
+	// gate awaiting human approval, hide the generic Approve (review → done)
+	// and Cancel (review → cancelled) buttons. The dedicated banner owns those
+	// transitions. For gate-pending tasks the PendingGateBanner provides the
+	// Approve/Reject UX; bypassing it via the generic button would mark the task
+	// done without opening the gate. Non-checkpoint transitions (e.g. Reopen →
+	// in_progress, Archive) stay visible.
 	const actions =
-		pendingCheckpointType === 'completion_action' ||
-		pendingCheckpointType === 'task_completion' ||
-		pendingCheckpointType === 'gate'
+		pendingCheckpointType === 'task_completion' || pendingCheckpointType === 'gate'
 			? allActions.filter(({ target }) => target !== 'done' && target !== 'cancelled')
 			: allActions;
 

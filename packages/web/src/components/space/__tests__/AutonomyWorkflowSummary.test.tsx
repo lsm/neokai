@@ -3,10 +3,14 @@
  * Unit tests for AutonomyWorkflowSummary.
  *
  * Verifies:
- * - Renders "X of Y" text with the current level
- * - Hides itself until workflows are loaded
- * - Expands to show blocking actions when the toggle is clicked
- * - Uses the runtime fallback for workflows with no completion actions
+ * - Renders "Level N: X of Y workflows auto-close without review" at the current level
+ * - Hides itself when there are no workflows loaded
+ * - Expands to reveal blocking workflows when the toggle is clicked
+ * - Uses the runtime fallback (level 5) for workflows with no `completionAutonomyLevel`
+ *
+ * Note: `completionActions` on workflow nodes was removed in PR 4/5 — gating is
+ * now expressed by a single `completionAutonomyLevel` field on the workflow
+ * itself (defaulting to 5 when absent).
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -37,34 +41,16 @@ describe('AutonomyWorkflowSummary', () => {
 		expect(queryByTestId('autonomy-workflow-summary')).toBeNull();
 	});
 
-	it('renders "X of Y workflows run without approval" at the current level', () => {
+	it('renders "X of Y workflows auto-close without review" at the current level', () => {
 		const easy = makeWorkflow({
 			id: 'easy',
 			name: 'Easy',
-			nodes: [
-				{
-					id: 'n-1',
-					name: 'Node',
-					agents: [{ agentId: 'a-1', name: 'a-1' }],
-					completionActions: [
-						{ type: 'script', id: 'a1', name: 'Lint', script: '', requiredLevel: 2 },
-					],
-				},
-			],
+			completionAutonomyLevel: 2,
 		});
 		const hard = makeWorkflow({
 			id: 'hard',
 			name: 'Hard',
-			nodes: [
-				{
-					id: 'n-2',
-					name: 'Deploy',
-					agents: [{ agentId: 'a-1', name: 'a-1' }],
-					completionActions: [
-						{ type: 'script', id: 'h1', name: 'Merge PR', script: '', requiredLevel: 4 },
-					],
-				},
-			],
+			completionAutonomyLevel: 4,
 		});
 
 		const { getByTestId } = render(<AutonomyWorkflowSummary level={3} workflows={[easy, hard]} />);
@@ -72,23 +58,14 @@ describe('AutonomyWorkflowSummary', () => {
 		const count = getByTestId('autonomy-workflow-summary-count');
 		expect(count.textContent).toContain('Level 3');
 		expect(count.textContent).toContain('1 of 2');
-		expect(count.textContent).toContain('without approval');
+		expect(count.textContent).toContain('without review');
 	});
 
 	it('expands to reveal blocking workflows when the toggle is clicked', () => {
 		const wf = makeWorkflow({
 			id: 'wf-hard',
 			name: 'Coding Workflow',
-			nodes: [
-				{
-					id: 'n-1',
-					name: 'Ship',
-					agents: [{ agentId: 'a-1', name: 'a-1' }],
-					completionActions: [
-						{ type: 'script', id: 'h1', name: 'Merge PR', script: '', requiredLevel: 4 },
-					],
-				},
-			],
+			completionAutonomyLevel: 4,
 		});
 
 		const { getByTestId, queryByTestId } = render(
@@ -101,21 +78,14 @@ describe('AutonomyWorkflowSummary', () => {
 
 		const details = getByTestId('autonomy-workflow-summary-details');
 		expect(details.textContent).toContain('Coding Workflow');
-		expect(details.textContent).toContain('Merge PR');
 		expect(details.textContent).toContain('requires level 4');
 	});
 
-	it('describes no-completion-action workflows as requiring the runtime fallback level', () => {
+	it('describes workflows with no completionAutonomyLevel as requiring the runtime fallback (level 5)', () => {
 		const wf = makeWorkflow({
 			id: 'wf-review',
 			name: 'Review Only',
-			nodes: [
-				{
-					id: 'n-1',
-					name: 'Only Node',
-					agents: [{ agentId: 'a-1', name: 'a-1' }],
-				},
-			],
+			// `completionAutonomyLevel` omitted → defaults to 5 at runtime
 		});
 
 		const { getByTestId } = render(<AutonomyWorkflowSummary level={1} workflows={[wf]} />);
@@ -124,23 +94,14 @@ describe('AutonomyWorkflowSummary', () => {
 
 		const details = getByTestId('autonomy-workflow-summary-details');
 		expect(details.textContent).toContain('Review Only');
-		expect(details.textContent).toContain('requires level 2');
+		expect(details.textContent).toContain('requires level 5');
 	});
 
-	it('hides the toggle when all workflows are already autonomous', () => {
+	it('hides the toggle when all workflows are already autonomous at the selected level', () => {
 		const wf = makeWorkflow({
 			id: 'wf-ok',
 			name: 'OK',
-			nodes: [
-				{
-					id: 'n-1',
-					name: 'Node',
-					agents: [{ agentId: 'a-1', name: 'a-1' }],
-					completionActions: [
-						{ type: 'script', id: 'a1', name: 'Lint', script: '', requiredLevel: 2 },
-					],
-				},
-			],
+			completionAutonomyLevel: 2,
 		});
 
 		const { queryByTestId, getByTestId } = render(

@@ -21,7 +21,7 @@
  */
 
 import { generateUUID } from '@neokai/shared';
-import type { SpaceWorkflow, CompletionAction, WorkflowNode } from '@neokai/shared';
+import type { SpaceWorkflow, WorkflowNode } from '@neokai/shared';
 import type { GateScript } from '@neokai/shared';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { Logger } from '../../logger';
@@ -141,149 +141,6 @@ const REVIEW_POSTED_BASH_SCRIPT = [
 	'fi',
 	'jq -n --arg url "$PR_URL" --argjson n "$COMMENT_COUNT" \'{"pr_url":$url,"review_count":$n}\'',
 ].join('\n');
-
-/**
- * Merge PR completion action script.
- *
- * Used as a `script` completion action on short workflows (Coding, Research).
- * Resolves the PR URL from the artifact env var or the current branch,
- * then squash-merges with branch deletion. Exits non-zero on failure.
- *
- * Environment variables injected by the completion action executor:
- *   NEOKAI_ARTIFACT_DATA_JSON — artifact data (contains pr_url for 'pr' artifacts)
- *   NEOKAI_WORKSPACE_PATH — workspace root (used as cwd)
- */
-const PR_MERGE_BASH_SCRIPT = [
-	'# Resolve PR URL from artifact data or current branch',
-	'PR_URL=$(jq -r \'.pr_url // .url // empty\' <<< "${NEOKAI_ARTIFACT_DATA_JSON:-{}}" 2>/dev/null || true)',
-	'if [ -z "$PR_URL" ]; then',
-	'  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
-	'fi',
-	'if [ -z "$PR_URL" ]; then',
-	'  echo "No PR URL found — cannot merge" >&2',
-	'  exit 1',
-	'fi',
-	'# Idempotency guard: skip merge if PR is already merged',
-	'PR_STATE=$(gh pr view "$PR_URL" --json state -q .state 2>/dev/null || true)',
-	'if [ "$PR_STATE" = "MERGED" ]; then',
-	'  echo "PR already merged: $PR_URL"',
-	'  BASE_BRANCH=$(gh pr view "$PR_URL" --json baseRefName -q .baseRefName 2>/dev/null || echo "main")',
-	'  git checkout "$BASE_BRANCH" 2>/dev/null && git pull --ff-only 2>/dev/null || true',
-	'  jq -n --arg url "$PR_URL" \'{"merged_pr_url":$url,"status":"already_merged"}\'',
-	'  exit 0',
-	'fi',
-	'echo "Merging PR: $PR_URL"',
-	'if ! gh pr merge "$PR_URL" --squash; then',
-	'  echo "Failed to merge PR: $PR_URL" >&2',
-	'  exit 1',
-	'fi',
-	'# Sync worktree with base branch after merge',
-	'BASE_BRANCH=$(gh pr view "$PR_URL" --json baseRefName -q .baseRefName 2>/dev/null || echo "main")',
-	'git checkout "$BASE_BRANCH" 2>/dev/null && git pull --ff-only 2>/dev/null || true',
-	'echo "PR merged and worktree synced"',
-	'jq -n --arg url "$PR_URL" \'{"merged_pr_url":$url,"status":"merged"}\'',
-].join('\n');
-
-/**
- * Standard "Merge PR" completion action for short workflows.
- * Attached to the end node's completionActions[].
- */
-const MERGE_PR_COMPLETION_ACTION: CompletionAction = {
-	id: 'merge-pr',
-	name: 'Merge PR',
-	type: 'script',
-	requiredLevel: 4,
-	artifactType: 'pr',
-	script: PR_MERGE_BASH_SCRIPT,
-};
-
-/**
- * Verifies the PR associated with the end-node is actually merged on GitHub.
- * Used by QA workflows where the agent is expected to run `gh pr merge` itself
- * — this action double-checks that the merge actually happened so the agent
- * cannot "lie" about completion.
- *
- * Exits 0 on merged, non-zero with a descriptive message otherwise.
- */
-const VERIFY_PR_MERGED_BASH_SCRIPT = [
-	'# Resolve PR URL from artifact data or current branch',
-	'PR_URL=$(jq -r \'.pr_url // .url // .merged_pr_url // empty\' <<< "${NEOKAI_ARTIFACT_DATA_JSON:-{}}" 2>/dev/null || true)',
-	'if [ -z "$PR_URL" ]; then',
-	'  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
-	'fi',
-	'if [ -z "$PR_URL" ]; then',
-	'  echo "verify-pr-merged: no PR URL found — cannot verify merge" >&2',
-	'  exit 1',
-	'fi',
-	'PR_STATE=$(gh pr view "$PR_URL" --json state -q .state 2>/dev/null || true)',
-	'if [ "$PR_STATE" != "MERGED" ]; then',
-	'  echo "verify-pr-merged: PR $PR_URL is in state \\"$PR_STATE\\", expected MERGED" >&2',
-	'  exit 1',
-	'fi',
-	'echo "verify-pr-merged: PR $PR_URL is merged"',
-	'jq -n --arg url "$PR_URL" \'{"verified_pr_url":$url,"status":"merged"}\'',
-].join('\n');
-
-/**
- * Completion action for QA-style workflows whose end-node agent is expected to
- * perform the merge itself (e.g. Coding-with-QA). The script exits non-zero if
- * the PR is not actually merged, causing the task to end in `blocked` instead
- * of silently completing.
- */
-const VERIFY_PR_MERGED_COMPLETION_ACTION: CompletionAction = {
-	id: 'verify-pr-merged',
-	name: 'Verify PR merged',
-	description:
-		'Verifies the PR associated with the task is in state MERGED on GitHub. ' +
-		'Fails the task if the agent claims completion without having actually merged.',
-	type: 'script',
-	requiredLevel: 2,
-	artifactType: 'pr',
-	script: VERIFY_PR_MERGED_BASH_SCRIPT,
-};
-
-/**
- * Script that verifies the PR associated with a Review-Only task has at least
- * one review comment or submitted review posted. Prevents the Reviewer from
- * "claiming reviewed" without actually posting feedback on GitHub.
- */
-const VERIFY_REVIEW_POSTED_BASH_SCRIPT = [
-	'PR_URL=$(jq -r \'.pr_url // .url // empty\' <<< "${NEOKAI_ARTIFACT_DATA_JSON:-{}}" 2>/dev/null || true)',
-	'if [ -z "$PR_URL" ]; then',
-	'  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
-	'fi',
-	'if [ -z "$PR_URL" ]; then',
-	'  echo "verify-review-posted: no PR URL found — cannot verify review was posted" >&2',
-	'  exit 1',
-	'fi',
-	'REVIEW_COUNT=$(gh pr view "$PR_URL" --json reviews -q \'.reviews | length\' 2>/dev/null || echo 0)',
-	'COMMENT_COUNT=$(gh pr view "$PR_URL" --json comments -q \'.comments | length\' 2>/dev/null || echo 0)',
-	'TOTAL=$((REVIEW_COUNT + COMMENT_COUNT))',
-	'if [ "$TOTAL" -lt 1 ]; then',
-	'  echo "verify-review-posted: PR $PR_URL has no reviews or review comments — reviewer did not post" >&2',
-	'  exit 1',
-	'fi',
-	'echo "verify-review-posted: PR $PR_URL has $REVIEW_COUNT reviews and $COMMENT_COUNT comments"',
-	'jq -n --arg url "$PR_URL" --arg reviews "$REVIEW_COUNT" --arg comments "$COMMENT_COUNT" \\',
-	'  \'{"pr_url":$url,"review_count":($reviews|tonumber),"comment_count":($comments|tonumber)}\'',
-].join('\n');
-
-/**
- * Completion action for Review-Only workflows. The reviewer is expected to
- * post their findings on the PR; this script verifies at least one
- * review/comment was posted before the task is allowed to close as done.
- */
-const VERIFY_REVIEW_POSTED_COMPLETION_ACTION: CompletionAction = {
-	id: 'verify-review-posted',
-	name: 'Verify review posted',
-	description:
-		'Verifies the Reviewer actually posted review feedback on the PR (review or review-comment). ' +
-		'Fails the task if the agent reports completion without having posted anything.',
-	type: 'script',
-	requiredLevel: 2,
-	artifactType: 'pr',
-	script: VERIFY_REVIEW_POSTED_BASH_SCRIPT,
-};
 
 const PD_PLANNING_PROMPT =
 	'You are the Planning node in a Plan & Decompose Workflow. Your role is to turn the user goal ' +
@@ -542,7 +399,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			completionActions: [MERGE_PR_COMPLETION_ACTION],
 		},
 	],
 	startNodeId: CODING_CODE_NODE,
@@ -553,11 +409,10 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	// Default coding loop — reviewer may auto-close when space runs at the
 	// standard "trusted but supervised" tier (3).
 	completionAutonomyLevel: 3,
-	// Post-approval routing (PR 3/5): after `approve_task()` fires, spawn a
-	// fresh `reviewer` session that runs the PR merge using the shared
-	// merge-template instructions. The workflow's legacy `MERGE_PR_COMPLETION_ACTION`
-	// is retained on the Review node (deletion happens in PR 4/5) but is bypassed
-	// at runtime when `NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING` is ON.
+	// Post-approval routing: after `approve_task()` fires, spawn a fresh
+	// `reviewer` session that runs the PR merge using the shared merge-template
+	// instructions. The completion-action pipeline that previously handled this
+	// was deleted in PR 4/5 — `postApproval` is now the sole post-approval path.
 	postApproval: {
 		targetAgent: 'reviewer',
 		instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
@@ -714,7 +569,6 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			completionActions: [MERGE_PR_COMPLETION_ACTION],
 		},
 	],
 	startNodeId: RESEARCH_RESEARCH_NODE,
@@ -821,7 +675,6 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			completionActions: [VERIFY_REVIEW_POSTED_COMPLETION_ACTION],
 		},
 	],
 	startNodeId: REVIEW_REVIEW_NODE,
@@ -832,59 +685,6 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 	// Review-only is low-risk (no code changes, only feedback posting) — permit
 	// auto-close at the same conservative tier as Research.
 	completionAutonomyLevel: 2,
-};
-
-/**
- * Bash script for the Plan & Decompose end-node completion action.
- *
- * Verifies that the Task Dispatcher actually fanned the plan out into at least
- * one standalone task during this workflow run. Without this guard, a Task
- * Dispatcher that ran save_artifact() without creating tasks would look
- * successful on the surface but leave the user with zero follow-up work.
- *
- * Environment variables required (injected by the completion-action executor):
- *   NEOKAI_DB_PATH            — absolute path to the SQLite database file
- *   NEOKAI_SPACE_ID           — the owning space ID
- *   NEOKAI_WORKFLOW_START_ISO — ISO-8601 timestamp marking the run's start
- */
-const PLAN_AND_DECOMPOSE_VERIFY_SCRIPT = [
-	'# Verify at least one follow-up task was created during this workflow run.',
-	'if [ -z "$NEOKAI_DB_PATH" ] || [ -z "$NEOKAI_SPACE_ID" ] || [ -z "$NEOKAI_WORKFLOW_START_ISO" ]; then',
-	'  echo "Missing NEOKAI_DB_PATH, NEOKAI_SPACE_ID, or NEOKAI_WORKFLOW_START_ISO" >&2',
-	'  exit 1',
-	'fi',
-	'# Portable ISO → epoch-seconds conversion (BSD date on macOS lacks -d).',
-	'if command -v gdate >/dev/null 2>&1; then',
-	'  CREATED_AT=$(gdate -d "$NEOKAI_WORKFLOW_START_ISO" +%s)',
-	'elif date -d "$NEOKAI_WORKFLOW_START_ISO" +%s >/dev/null 2>&1; then',
-	'  CREATED_AT=$(date -d "$NEOKAI_WORKFLOW_START_ISO" +%s)',
-	'else',
-	'  # BSD date (-j -f) fallback',
-	'  CREATED_AT=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${NEOKAI_WORKFLOW_START_ISO%%.*}" +%s 2>/dev/null || echo 0)',
-	'fi',
-	'if [ -z "$CREATED_AT" ] || [ "$CREATED_AT" = "0" ]; then',
-	'  echo "Could not parse NEOKAI_WORKFLOW_START_ISO=$NEOKAI_WORKFLOW_START_ISO" >&2',
-	'  exit 1',
-	'fi',
-	'CREATED_AT_MS=$((CREATED_AT * 1000))',
-	'COUNT=$(sqlite3 "$NEOKAI_DB_PATH" "SELECT COUNT(*) FROM space_tasks WHERE space_id=\'$NEOKAI_SPACE_ID\' AND created_at > $CREATED_AT_MS;")',
-	'if [ -z "$COUNT" ] || [ "$COUNT" -lt 1 ]; then',
-	'  echo "No tasks created in this run (count=$COUNT)" >&2',
-	'  exit 1',
-	'fi',
-	'jq -n --argjson n "$COUNT" \'{"status":"verified","created_count":$n}\'',
-].join('\n');
-
-const PLAN_AND_DECOMPOSE_VERIFY_COMPLETION_ACTION: CompletionAction = {
-	id: 'verify-tasks-created',
-	name: 'Verify tasks created',
-	description:
-		'Checks that the Task Dispatcher created at least one standalone task during this workflow run.',
-	type: 'script',
-	// Match the highest non-destructive autonomy tier — verification is safe to
-	// run automatically even at conservative autonomy levels.
-	requiredLevel: 1,
-	script: PLAN_AND_DECOMPOSE_VERIFY_SCRIPT,
 };
 
 /**
@@ -902,8 +702,8 @@ const PLAN_AND_DECOMPOSE_VERIFY_COMPLETION_ACTION: CompletionAction = {
  *   Plan Review → Planning (revision requests, maxCycles: 5)
  *
  * Task Dispatcher (end node) creates follow-up tasks via `create_standalone_task`
- * and calls `save_artifact({ type: 'result', append: true, created_task_ids })`. A script-based
- * completion action then verifies that at least one task was actually created.
+ * and calls `save_artifact({ type: 'result', append: true, created_task_ids })`
+ * before `approve_task()` closes the run.
  */
 export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 	id: '',
@@ -1027,7 +827,6 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			completionActions: [PLAN_AND_DECOMPOSE_VERIFY_COMPLETION_ACTION],
 		},
 	],
 	startNodeId: PD_PLANNING_NODE,
@@ -1202,7 +1001,6 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			completionActions: [VERIFY_PR_MERGED_COMPLETION_ACTION],
 		},
 	],
 	startNodeId: FULLSTACK_CODING_NODE,
@@ -1480,7 +1278,6 @@ export function seedBuiltInWorkflows(
 						id: eNode.id,
 						name: tNode.name,
 						agents: mergedAgents,
-						...(tNode.completionActions ? { completionActions: tNode.completionActions } : {}),
 					});
 				}
 
@@ -1569,10 +1366,6 @@ export function seedBuiltInWorkflows(
 					...a,
 					agentId: resolvedIds.get(a.agentId)!,
 				})),
-				// Thread completionActions through to persisted nodes. Without this,
-				// end-node actions like MERGE_PR_COMPLETION_ACTION are silently dropped
-				// so approve_task() completes the workflow but the PR never merges.
-				...(s.completionActions ? { completionActions: s.completionActions } : {}),
 			}));
 
 			const startNodeId = nodeIdMap.get(template.startNodeId);

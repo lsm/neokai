@@ -48,14 +48,15 @@
  * guarding; double-delivery of `[POST_APPROVAL_INSTRUCTIONS]` would be visible
  * to the operator as conversation noise, not a failure.
  *
- * ## Feature flag
+ *  * ## Feature flag (kill switch only)
  *
- * This router is only invoked when the caller has confirmed the
- * `NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING` feature flag is ON. The router
- * itself performs no flag check — it trusts the caller. The flag default
- * flipped from OFF to ON in PR 3/5; set `NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING=0`
- * to force-disable and fall back to the legacy `resolveCompletionWithActions`
- * path if a post-approval regression is discovered.
+ * As of PR 4/5 the completion-action pipeline has been deleted — the
+ * PostApprovalRouter is the only approval path. The
+ * `NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING` env var and
+ * `isPostApprovalRoutingEnabled()` helper are retained as an emergency kill
+ * switch: production call sites no longer consult it (PR 4/5 removed the
+ * branch), but operators can still inspect the flag state in diagnostics.
+ * There is no longer a fallback path to switch to.
  */
 
 import type {
@@ -82,14 +83,14 @@ const log = new Logger('post-approval-router');
 export const POST_APPROVAL_ROUTING_FLAG_ENV = 'NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING';
 
 /**
- * Returns true when the feature flag enables post-approval routing.
+ * Returns true when the feature flag indicates post-approval routing should
+ * remain enabled. Retained as an emergency kill switch only — as of PR 4/5
+ * the production call sites have been collapsed (no legacy path to fall back
+ * to), so the helper is consulted only in diagnostics and tests.
  *
- * Default-ON as of PR 3/5 — the flag is an opt-OUT kill switch. Set the
- * env var to any of `0` / `false` / `no` / `off` to force-disable and fall
- * back to the legacy `resolveCompletionWithActions` path. An absent value
- * (`undefined`) or any unrecognised string keeps routing enabled, so ops
- * scripts that only know how to set `'1'` / `'true'` continue to work
- * exactly as before.
+ * Default-ON as of PR 3/5. Set the env var to any of `0` / `false` / `no` /
+ * `off` to read as disabled. An absent value (`undefined`) or any unrecognised
+ * string keeps routing enabled.
  */
 export function isPostApprovalRoutingEnabled(
 	env: Readonly<Record<string, string | undefined>> = process.env

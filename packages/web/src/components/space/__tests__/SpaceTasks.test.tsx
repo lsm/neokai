@@ -428,18 +428,18 @@ describe('SpaceTasks', () => {
 	});
 
 	describe('Awaiting-approval filter chip', () => {
-		it('is hidden when no tasks are paused at a completion action', () => {
+		it('is hidden when no tasks are paused at a submit_for_approval checkpoint', () => {
 			mockTasks.value = [makeTask('t1', 'review')];
 			const { queryByTestId, getByText } = render(<SpaceTasks spaceId="space-1" />);
 			fireEvent.click(getByText('Action'));
 			expect(queryByTestId('tasks-filter-awaiting-approval')).toBeNull();
 		});
 
-		it('shows chip with count when at least one task is paused at a completion action', () => {
+		it('shows chip with count when at least one task is paused at a submit_for_approval checkpoint', () => {
 			mockTasks.value = [
 				makeTask('t1', 'review', {
 					pendingActionIndex: 0,
-					pendingCheckpointType: 'completion_action',
+					pendingCheckpointType: 'task_completion',
 				}),
 				makeTask('t2', 'review'),
 			];
@@ -454,7 +454,7 @@ describe('SpaceTasks', () => {
 			mockTasks.value = [
 				makeTask('t1', 'review', {
 					pendingActionIndex: 0,
-					pendingCheckpointType: 'completion_action',
+					pendingCheckpointType: 'task_completion',
 				}),
 				makeTask('t2', 'review'),
 			];
