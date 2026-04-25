@@ -350,68 +350,116 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				</div>
 			</div>
 
-			<div class="px-4 pb-2 flex-shrink-0 flex justify-center">
-				<div class="flex items-center gap-1 rounded-3xl border border-dark-700 bg-dark-800/60 p-1 backdrop-blur-sm">
-					<button
-						type="button"
-						onClick={() => navigateToSpaceTask(_spaceId, taskId, 'thread')}
-						class={cn(
-							'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
-							activeView === 'thread'
-								? 'text-gray-100 bg-dark-700/70 shadow-sm'
-								: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
+			{/* Banner block lives outside the tab content so blocked / pending
+			    banners stay visible regardless of which tab the user is on.
+			    `resolveActiveTaskBanner` returns null when no banner applies —
+			    the wrapping fragment then renders nothing and the block takes
+			    zero height. */}
+			{(() => {
+				// Single-slot precedence renderer — at most one banner is ever
+				// shown. Precedence (high → low):
+				//   blocked > post_approval_blocked > task_completion_pending > gate_pending
+				// The helper captures the rule so it can be unit-tested
+				// independently of the render tree.
+				const banner = resolveActiveTaskBanner(task, gateSummaries);
+				if (!banner) return null;
+				const child =
+					banner.kind === 'blocked' ? (
+						<TaskBlockedBanner
+							task={task}
+							spaceId={runtimeSpaceId}
+							onStatusTransition={handleStatusTransition}
+						/>
+					) : banner.kind === 'post_approval_blocked' ? (
+						<PendingPostApprovalBanner task={task} spaceId={runtimeSpaceId} />
+					) : banner.kind === 'task_completion_pending' ? (
+						<PendingTaskCompletionBanner task={task} spaceId={runtimeSpaceId} />
+					) : (
+						// gate_pending — PendingGateBanner renders rows for every
+						// waiting gate on the run.
+						<PendingGateBanner
+							runId={banner.runId}
+							spaceId={runtimeSpaceId}
+							workflowId={canvasWorkflowId}
+						/>
+					);
+				return (
+					<div class="flex-shrink-0" data-testid="task-pane-banner">
+						{child}
+					</div>
+				);
+			})()}
+
+			<div class="flex-1 min-h-0 overflow-hidden relative" data-testid="task-pane-content">
+				{/* Wrapper spans the full content width so the pill can center
+				    horizontally — but that span would otherwise eat clicks meant
+				    for the canvas / thread / artifacts beneath it. Disabling
+				    pointer-events on the wrapper and re-enabling them on the pill
+				    itself keeps only the pill interactive. */}
+				<div
+					class="pointer-events-none absolute top-3 left-0 right-0 z-10 flex justify-center px-4"
+					data-testid="task-view-tab-pill"
+				>
+					<div class="pointer-events-auto flex items-center gap-1 rounded-3xl border border-dark-700 bg-dark-800/80 p-1 shadow-lg backdrop-blur-sm">
+						<button
+							type="button"
+							onClick={() => navigateToSpaceTask(_spaceId, taskId, 'thread')}
+							class={cn(
+								'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
+								activeView === 'thread'
+									? 'text-gray-100 bg-dark-700/70 shadow-sm'
+									: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
+							)}
+							data-testid="thread-toggle"
+							aria-pressed={activeView === 'thread'}
+						>
+							Thread
+						</button>
+						{canShowCanvasTab && (
+							<button
+								type="button"
+								onClick={() => {
+									if (activeView === 'canvas') {
+										navigateToSpaceTask(_spaceId, taskId, 'thread');
+										return;
+									}
+									spaceStore.ensureNodeExecutions().catch(() => {});
+									navigateToSpaceTask(_spaceId, taskId, 'canvas');
+								}}
+								class={cn(
+									'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
+									activeView === 'canvas'
+										? 'text-gray-100 bg-dark-700/70 shadow-sm'
+										: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
+								)}
+								data-testid="canvas-toggle"
+								aria-pressed={activeView === 'canvas'}
+							>
+								Canvas
+							</button>
 						)}
-						data-testid="thread-toggle"
-						aria-pressed={activeView === 'thread'}
-					>
-						Thread
-					</button>
-					{canShowCanvasTab && (
-						<button
-							type="button"
-							onClick={() => {
-								if (activeView === 'canvas') {
-									navigateToSpaceTask(_spaceId, taskId, 'thread');
-									return;
+						{canShowArtifactsTab && (
+							<button
+								type="button"
+								onClick={() =>
+									currentSpaceTaskViewTabSignal.value === 'artifacts'
+										? navigateToSpaceTask(_spaceId, taskId, 'thread')
+										: navigateToSpaceTask(_spaceId, taskId, 'artifacts')
 								}
-								spaceStore.ensureNodeExecutions().catch(() => {});
-								navigateToSpaceTask(_spaceId, taskId, 'canvas');
-							}}
-							class={cn(
-								'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
-								activeView === 'canvas'
-									? 'text-gray-100 bg-dark-700/70 shadow-sm'
-									: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
-							)}
-							data-testid="canvas-toggle"
-							aria-pressed={activeView === 'canvas'}
-						>
-							Canvas
-						</button>
-					)}
-					{canShowArtifactsTab && (
-						<button
-							type="button"
-							onClick={() =>
-								currentSpaceTaskViewTabSignal.value === 'artifacts'
-									? navigateToSpaceTask(_spaceId, taskId, 'thread')
-									: navigateToSpaceTask(_spaceId, taskId, 'artifacts')
-							}
-							class={cn(
-								'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
-								activeView === 'artifacts'
-									? 'text-gray-100 bg-dark-700/70 shadow-sm'
-									: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
-							)}
-							data-testid="artifacts-toggle"
-							aria-pressed={activeView === 'artifacts'}
-						>
-							Artifacts
-						</button>
-					)}
+								class={cn(
+									'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
+									activeView === 'artifacts'
+										? 'text-gray-100 bg-dark-700/70 shadow-sm'
+										: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
+								)}
+								data-testid="artifacts-toggle"
+								aria-pressed={activeView === 'artifacts'}
+							>
+								Artifacts
+							</button>
+						)}
+					</div>
 				</div>
-			</div>
-			<div class="flex-1 min-h-0 overflow-hidden">
 				{activeView === 'canvas' && task.workflowRunId && canvasWorkflowId ? (
 					<div class="h-full" data-testid="canvas-view">
 						<ReadOnlyWorkflowCanvas
@@ -431,43 +479,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					/>
 				) : (
 					<div class="h-full flex flex-col relative">
-						{(() => {
-							// Single-slot precedence renderer — at most one banner is
-							// ever shown. Precedence (high → low):
-							//   blocked > post_approval_blocked > task_completion_pending > gate_pending
-							// The helper captures the rule so it can be unit-tested
-							// independently of the render tree.
-							const banner = resolveActiveTaskBanner(task, gateSummaries);
-							if (!banner) return null;
-							if (banner.kind === 'blocked') {
-								return (
-									<TaskBlockedBanner
-										task={task}
-										spaceId={runtimeSpaceId}
-										onStatusTransition={handleStatusTransition}
-									/>
-								);
-							}
-							if (banner.kind === 'post_approval_blocked') {
-								return <PendingPostApprovalBanner task={task} spaceId={runtimeSpaceId} />;
-							}
-							if (banner.kind === 'task_completion_pending') {
-								return <PendingTaskCompletionBanner task={task} spaceId={runtimeSpaceId} />;
-							}
-							// gate_pending — PendingGateBanner renders rows for every
-							// waiting gate on the run.
-							return (
-								<PendingGateBanner
-									runId={banner.runId}
-									spaceId={runtimeSpaceId}
-									workflowId={canvasWorkflowId}
-								/>
-							);
-						})()}
 						<div class="flex-1 min-h-0" data-testid="task-thread-panel">
 							{hasUnifiedWorkflowThread ? (
 								<SpaceTaskUnifiedThread
 									taskId={task.id}
+									topInsetClass="pt-12"
 									bottomInsetClass={
 										showInlineComposer ? (threadSendError ? 'pb-24' : 'pb-16') : 'pb-3'
 									}
