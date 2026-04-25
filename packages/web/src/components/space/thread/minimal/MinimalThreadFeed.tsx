@@ -679,14 +679,19 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 }
 
 /**
- * Synthetic / agent→agent handoff — muted dark bubble with purple accent,
- * right-aligned. Mirrors the Thinking block layout:
- *   • Tall header: small icon + `text-sm` "Synthetic" label + agent→agent
+ * Synthetic / agent→agent handoff — blockquote-style. A thick purple left
+ * bar replaces the card chrome the assistant bubble uses, giving synthetic
+ * messages clear visual contrast: the assistant's reply is "speech in a
+ * card", the synthetic message is "a quoted-in voice from elsewhere."
+ *
+ * Right-aligned within the parent (matches the iMessage-style human bubble
+ * placement so "incoming to this session" is consistent across both
+ * non-assistant message kinds), with:
+ *   • Caption row above the body: small icon + `Synthetic` label + FROM → TO
  *     route badge.
- *   • Body collapsed to ~20 lines with a gradient fade and a centered
- *     "Show more" / "Show less" toggle pinned to the bottom of the card.
- *   • Below the card, a chat-style action row (timestamp + copy button) so
- *     long handoff prompts can be copied just like assistant messages.
+ *   • Body collapsed to ~20 lines with a gradient fade against the page bg
+ *     and a `Show more` / `Show less` toggle.
+ *   • Action row below: timestamp + copy + open-in-session buttons.
  */
 
 // Default visible height for synthetic message bodies before the user expands.
@@ -735,15 +740,16 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 			data-to-label={turn.toLabel}
 		>
 			<div class="max-w-[85%] md:max-w-[70%] w-auto">
+				{/* Blockquote-style — thick purple left bar instead of a card.
+				    Differentiates synthetic blocks from the assistant's
+				    `bg-dark-800` reply bubbles by switching visual idiom from
+				    "speech bubble" to "quoted-in voice". */}
 				<div
-					class="border border-dark-700 rounded-lg overflow-hidden bg-dark-900"
+					class="border-l-4 border-purple-500 pl-3"
 					data-testid="minimal-thread-synthetic-bubble"
 				>
-					{/* Header — same proportions as ThinkingBlock's header
-					    (`flex items-center gap-2 px-3 py-2`, `text-sm font-semibold`
-					    label, `w-4 h-4` icon) so the two block types feel
-					    structurally identical. */}
-					<div class="flex items-center gap-2 px-3 py-2 border-b border-dark-700 flex-wrap">
+					{/* Caption — `Synthetic` label + FROM → TO route badge. */}
+					<div class="flex items-center gap-2 flex-wrap mb-1.5">
 						<svg
 							class="w-4 h-4 flex-shrink-0 text-purple-400"
 							fill="none"
@@ -780,12 +786,11 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 						</span>
 					</div>
 
-					{/* Content area. When the body exceeds 20 lines we cap the
-					    visible height and overlay a fade so the cut-off is
-					    obvious; expanding releases the cap. */}
+					{/* Body — same 20-line cap + gradient fade as before, just
+					    without the card wrapper. */}
 					<div class="relative">
 						<div
-							class={`px-3 py-2${!isExpanded && needsTruncation ? ' overflow-hidden' : ''}`}
+							class={!isExpanded && needsTruncation ? 'overflow-hidden' : ''}
 							style={
 								!isExpanded && needsTruncation ? { maxHeight: `${previewMaxHeight}px` } : undefined
 							}
@@ -808,7 +813,9 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 							</div>
 						</div>
 
-						{/* Gradient fade hint — only when collapsed. */}
+						{/* Gradient fade hint — masks the cut-off against the
+						    page's `bg-dark-900` (which the surrounding feed
+						    inherits from `SpaceIsland`). */}
 						{needsTruncation && !isExpanded && (
 							<div
 								class="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-dark-900 to-transparent pointer-events-none"
@@ -816,62 +823,60 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 							/>
 						)}
 
-						{/* Show more / Show less toggle — pinned to the bottom edge
-						    of the card with a top border separator, matching the
-						    Thinking block. */}
+						{/* Show more / Show less toggle — minimal pill, no card
+						    chrome / separator border now that the wrapper is
+						    open on all sides. */}
 						{needsTruncation && (
-							<div class="flex justify-center py-2 border-t border-dark-700 bg-dark-900">
-								<button
-									type="button"
-									onClick={() => setIsExpanded((v) => !v)}
-									class="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors hover:bg-dark-800 text-purple-300"
-									data-testid="minimal-thread-synthetic-toggle"
-								>
-									{isExpanded ? (
-										<>
-											<svg
-												class="w-3.5 h-3.5"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-												aria-hidden="true"
-											>
-												<path
-													strokeLinecap="round"
-													strokeLinejoin="round"
-													strokeWidth={2}
-													d="M5 15l7-7 7 7"
-												/>
-											</svg>
-											Show less
-										</>
-									) : (
-										<>
-											<svg
-												class="w-3.5 h-3.5"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-												aria-hidden="true"
-											>
-												<path
-													strokeLinecap="round"
-													strokeLinejoin="round"
-													strokeWidth={2}
-													d="M19 9l-7 7-7-7"
-												/>
-											</svg>
-											Show more
-										</>
-									)}
-								</button>
-							</div>
+							<button
+								type="button"
+								onClick={() => setIsExpanded((v) => !v)}
+								class="mt-2 inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md transition-colors hover:bg-dark-800 text-purple-300"
+								data-testid="minimal-thread-synthetic-toggle"
+							>
+								{isExpanded ? (
+									<>
+										<svg
+											class="w-3.5 h-3.5"
+											fill="none"
+											viewBox="0 0 24 24"
+											stroke="currentColor"
+											aria-hidden="true"
+										>
+											<path
+												strokeLinecap="round"
+												strokeLinejoin="round"
+												strokeWidth={2}
+												d="M5 15l7-7 7 7"
+											/>
+										</svg>
+										Show less
+									</>
+								) : (
+									<>
+										<svg
+											class="w-3.5 h-3.5"
+											fill="none"
+											viewBox="0 0 24 24"
+											stroke="currentColor"
+											aria-hidden="true"
+										>
+											<path
+												strokeLinecap="round"
+												strokeLinejoin="round"
+												strokeWidth={2}
+												d="M19 9l-7 7-7-7"
+											/>
+										</svg>
+										Show more
+									</>
+								)}
+							</button>
 						)}
 					</div>
 				</div>
 
 				{/* Chat-style action row — timestamp + copy button under the
-				    bubble, right-aligned to track the right-anchored bubble. */}
+				    block, right-aligned to track the right-anchored content. */}
 				<SpaceTaskThreadMessageActions
 					timestamp={turn.createdAt}
 					copyText={turn.body ?? ''}
