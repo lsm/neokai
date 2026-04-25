@@ -26,8 +26,6 @@ export type SpaceTaskThreadEventKind =
 	| 'progress'
 	| 'unknown';
 
-export type SpaceTaskThreadRenderMode = 'verbose' | 'compact';
-
 export interface ParsedThreadRow {
 	id: string | number;
 	sessionId: string | null;
