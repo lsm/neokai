@@ -463,23 +463,48 @@ function RosterEntry({ entry, isLatest }: { entry: ToolCallEntry; isLatest: bool
 	);
 }
 
+/**
+ * Body for a completed agent turn — wraps the meta-line + reply text in a
+ * left-aligned chat bubble that sizes to content up to a max-width cap.
+ *
+ * Why bubble-style instead of flush-left Slack rows: agent replies are often
+ * long markdown blobs (review summaries, hand-off briefs) that look like
+ * transcripts when stretched edge-to-edge. A capped bubble re-establishes the
+ * conversational rhythm and matches the human/synthetic bubble language used
+ * elsewhere in this feed. Using `bg-dark-800` (one shade lighter than the
+ * synthetic bubble's `bg-dark-900`) differentiates "agent's own reply" from
+ * "synthetic handoff" without competing with the human bubble's blue.
+ *
+ * `w-fit` lets short replies hug their content; `max-w-[85%] md:max-w-[70%]`
+ * caps the width on long replies so they don't fill the column.
+ */
 function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
 	return (
-		<>
-			<div class="text-[11px] text-gray-500 mt-0.5">
-				{turn.toolCalls} {turn.toolCalls === 1 ? 'tool call' : 'tool calls'} · {turn.messages}{' '}
-				{turn.messages === 1 ? 'message' : 'messages'} · {formatDuration(turn.durationSec)}
-			</div>
-			{turn.lastMessage ? (
-				<div class="mt-1.5 text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400">
-					{turn.fallback ? (
-						<p class="whitespace-pre-wrap break-words">{turn.lastMessage}</p>
-					) : (
-						<MarkdownRenderer content={turn.lastMessage} />
-					)}
+		<div class="mt-1.5 w-fit max-w-[85%] md:max-w-[70%]">
+			<div
+				class="bg-dark-800 border border-dark-700 rounded-lg px-3 py-2"
+				data-testid="minimal-thread-agent-bubble"
+			>
+				<div class="text-[11px] text-gray-500">
+					{turn.toolCalls} {turn.toolCalls === 1 ? 'tool call' : 'tool calls'} · {turn.messages}{' '}
+					{turn.messages === 1 ? 'message' : 'messages'} · {formatDuration(turn.durationSec)}
 				</div>
-			) : null}
-		</>
+				{turn.lastMessage ? (
+					<div class="mt-1.5 text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400">
+						{turn.fallback ? (
+							<p class="whitespace-pre-wrap break-words">{turn.lastMessage}</p>
+						) : (
+							<MarkdownRenderer content={turn.lastMessage} />
+						)}
+					</div>
+				) : null}
+			</div>
+			<SpaceTaskThreadMessageActions
+				timestamp={turn.startedAt}
+				copyText={turn.lastMessage}
+				align="left"
+			/>
+		</div>
 	);
 }
 
@@ -536,7 +561,14 @@ function AgentTurnRow({ turn }: { turn: CompletedFeedTurn | ActiveFeedTurn }) {
 					<span class="font-semibold" style={{ color }}>
 						{shortAgentName(turn.agent)}
 					</span>
-					<span class="text-xs text-gray-500">{formatClock(turn.startedAt)}</span>
+					{/* Active turns keep the header timestamp — they don't have an
+					    actions row below (no copy button while running). Completed
+					    turns surface time + copy under the bubble via
+					    SpaceTaskThreadMessageActions, so the header timestamp would
+					    duplicate that. */}
+					{turn.state === 'active' ? (
+						<span class="text-xs text-gray-500">{formatClock(turn.startedAt)}</span>
+					) : null}
 				</div>
 				{turn.state === 'active' ? (
 					<ActiveBody turn={turn} color={color} />
