@@ -127,8 +127,21 @@ function makeWorkflowRun(overrides: Partial<SpaceWorkflowRun> = {}): SpaceWorkfl
 }
 
 vi.mock('../SpaceTaskUnifiedThread', () => ({
-	SpaceTaskUnifiedThread: ({ taskId }: { taskId: string }) => (
-		<div data-testid="space-task-unified-thread" data-task-id={taskId} />
+	SpaceTaskUnifiedThread: ({
+		taskId,
+		topInsetClass,
+		bottomInsetClass,
+	}: {
+		taskId: string;
+		topInsetClass?: string;
+		bottomInsetClass?: string;
+	}) => (
+		<div
+			data-testid="space-task-unified-thread"
+			data-task-id={taskId}
+			data-top-inset={topInsetClass ?? ''}
+			data-bottom-inset={bottomInsetClass ?? ''}
+		/>
 	),
 }));
 
@@ -980,7 +993,9 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		expect(queryByTestId('task-view-tab-pill')).toBeTruthy();
 		expect(getByTestId('canvas-view')).toBeTruthy();
 
-		// Artifacts view
+		// Return to thread, then activate Artifacts — exercising a clean
+		// thread→artifacts transition rather than canvas→artifacts.
+		fireEvent.click(getByTestId('thread-toggle'));
 		fireEvent.click(getByTestId('artifacts-toggle'));
 		expect(queryByTestId('task-view-tab-pill')).toBeTruthy();
 	});
@@ -999,5 +1014,54 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 
 		fireEvent.click(getByTestId('canvas-toggle'));
 		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 'task-1', 'canvas');
+	});
+
+	it('passes topInsetClass to SpaceTaskUnifiedThread so messages clear the floating pill', () => {
+		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+
+		const thread = getByTestId('space-task-unified-thread');
+		expect(thread.getAttribute('data-top-inset')).toBe('pt-12');
+	});
+
+	it('renders the active banner outside task-pane-content so it is visible across tabs', () => {
+		mockTasks.value = [
+			makeTask({
+				status: 'blocked',
+				result: 'Waiting for API key',
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'session-abc',
+			}),
+		];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+
+		// The banner block sits between the header and the content wrapper —
+		// its parent is the top-level pane container, NOT the content wrapper —
+		// so it stays visible regardless of which tab is active.
+		const banner = getByTestId('task-pane-banner');
+		const contentWrapper = getByTestId('task-pane-content');
+		expect(contentWrapper.contains(banner)).toBe(false);
+		expect(banner.parentElement).toBe(contentWrapper.parentElement);
+
+		// Banner content (the underlying TaskBlockedBanner) renders inside.
+		expect(getByTestId('task-blocked-banner')).toBeTruthy();
+
+		// Switching to Canvas / Artifacts must not unmount the banner.
+		fireEvent.click(getByTestId('canvas-toggle'));
+		expect(getByTestId('task-pane-banner')).toBeTruthy();
+		expect(getByTestId('task-blocked-banner')).toBeTruthy();
+
+		fireEvent.click(getByTestId('thread-toggle'));
+		fireEvent.click(getByTestId('artifacts-toggle'));
+		expect(getByTestId('task-pane-banner')).toBeTruthy();
+		expect(getByTestId('task-blocked-banner')).toBeTruthy();
+	});
+
+	it('does not render the banner block when no banner applies', () => {
+		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
+		const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+
+		expect(queryByTestId('task-pane-banner')).toBeNull();
 	});
 });
