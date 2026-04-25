@@ -235,23 +235,60 @@ export class SpaceRuntimeService {
 	 * Start the underlying SpaceRuntime tick loop.
 	 *
 	 * Synchronously starts the runtime + subscribes to space/session events, then
-	 * kicks off startup session provisioning as a tracked async task. The returned
-	 * `provisioningPromise` is exposed via `ready()` so the daemon bootstrap can
-	 * await it before accepting queries — without that gate, queries arriving
-	 * before re-attachment finishes run with `mcpServers: undefined` and fail to
-	 * reach `space-agent-tools` (root cause of task #83).
+	 * kicks off startup session provisioning + a stalled-workflow-run recovery
+	 * pass as a tracked async task. The returned `provisioningPromise` is exposed
+	 * via `ready()` so the daemon bootstrap can await it before accepting queries
+	 * — without that gate, queries arriving before re-attachment finishes run
+	 * with `mcpServers: undefined` and fail to reach `space-agent-tools` (root
+	 * cause of task #83).
+	 *
+	 * The recovery pass (`recoverStalledWorkflowRuns`) runs after provisioning
+	 * to repair workflow runs whose in-flight state was orphaned by the
+	 * previous daemon shutdown: runs whose node executions are all terminal
+	 * but never finalized are flagged `blocked` with `block_reason =
+	 * execution_failed`. Orphan in_progress node executions (dead session) are
+	 * left for the tick loop's existing crash-retry path, which handles them
+	 * correctly with proper crash counting. Without this scan, a crash that
+	 * lands the run with all-terminal-no-completion-signal would leave the
+	 * parent task `in_progress` forever (root cause of task #120).
 	 */
 	start(): void {
 		if (this.started) return;
 		this.started = true;
 		this.runtime.start();
 		this.subscribeToSpaceEvents();
-		// Kick off provisioning and retain the promise so callers (notably the
-		// daemon bootstrap) can `await ready()` before accepting queries.
-		this.provisioningPromise = this.provisionExistingSpaces().catch((err) => {
+		// Kick off provisioning + recovery and retain the promise so callers
+		// (notably the daemon bootstrap) can `await ready()` before accepting
+		// queries. Recovery runs *after* provisioning so member sessions have
+		// their MCP tools attached before any restart-driven `task_blocked`
+		// notifications fire.
+		this.provisioningPromise = (async () => {
+			await this.provisionExistingSpaces();
+			await this.recoverStalledWorkflowRuns();
+		})().catch((err) => {
 			log.error('Failed to provision existing spaces during startup:', err);
 		});
 		log.info('SpaceRuntimeService started');
+	}
+
+	/**
+	 * Re-drive workflow runs that were left in an inconsistent in-flight state
+	 * by the previous daemon shutdown.
+	 *
+	 * Delegates to `SpaceRuntime.recoverStalledRuns()`, which is idempotent.
+	 * Called from `start()` after provisioning; also invoked once from the
+	 * runtime's first `executeTick()` as a backstop. Whichever fires first
+	 * wins; the other call is a no-op.
+	 *
+	 * Exposed publicly so tests (and operators, via direct injection) can
+	 * trigger recovery deterministically without driving a tick.
+	 */
+	async recoverStalledWorkflowRuns(): Promise<void> {
+		try {
+			await this.runtime.recoverStalledRuns();
+		} catch (err) {
+			log.error('SpaceRuntimeService: recoverStalledWorkflowRuns failed:', err);
+		}
 	}
 
 	/**

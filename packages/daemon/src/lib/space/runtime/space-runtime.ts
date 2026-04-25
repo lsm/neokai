@@ -935,6 +935,14 @@ export class SpaceRuntime {
 		try {
 			if (!this.rehydrated) {
 				await this.rehydrateExecutors();
+				// Run a stalled-run recovery pass right after rehydrate so the
+				// first tick that processes runs already sees a clean slate
+				// (orphan in_progress executions reset to pending, terminally
+				// stalled runs flagged blocked). Idempotent — `recoverStalledRuns`
+				// guards itself with `recoveryDone`. SpaceRuntimeService.start()
+				// also invokes it after `provisionExistingSpaces`; whichever
+				// fires first wins, the other becomes a no-op.
+				await this.recoverStalledRuns();
 				this.rehydrated = true;
 			}
 
@@ -1154,6 +1162,173 @@ export class SpaceRuntime {
 		if (this.config.taskAgentManager) {
 			await this.config.taskAgentManager.rehydrate();
 		}
+	}
+
+	// -------------------------------------------------------------------------
+	// Recovery — stalled in_progress runs after daemon restart
+	// -------------------------------------------------------------------------
+
+	/** Idempotency guard: ensures recovery runs at most once per process. */
+	private recoveryDone = false;
+
+	/**
+	 * Scan every active space for `in_progress` workflow runs whose in-flight
+	 * state was orphaned by a daemon restart, and re-drive them so the tick loop
+	 * can finalize the run on its next pass.
+	 *
+	 * Two outcomes (the third — `'skipped'` — covers runs that still have
+	 * driveable executions, which the tick loop owns):
+	 *
+	 *   1. **Stalled-with-completion-signal** — every node execution is terminal
+	 *      (`idle`/`cancelled`) and the canonical task is either already terminal
+	 *      or has a non-null `reportedStatus`. The next tick will see
+	 *      `CompletionDetector.isComplete()` return true and finalize via the
+	 *      existing pathway — this method only logs and skips.
+	 *
+	 *   2. **Stalled-with-no-signal** — every node execution is terminal but no
+	 *      completion signal was recorded. No agent is going to drive further
+	 *      progress, so the run is marked `blocked` with `block_reason =
+	 *      execution_failed` and a clear, restart-aware result message. The
+	 *      existing `attemptBlockedRunRecovery` path will then either retry
+	 *      (resetting executions to `pending`) or escalate.
+	 *
+	 * Note: orphan in-progress executions whose agent sessions died across the
+	 * restart are NOT handled here — `processRunTick` already detects dead
+	 * sessions and runs the proper crash-retry pathway (with counting) on the
+	 * next tick. Duplicating that logic here would silently consume retries.
+	 *
+	 * Idempotent — guarded by `recoveryDone`. The first caller wins; subsequent
+	 * callers (e.g. the first `executeTick()` after `rehydrateExecutors()`) are
+	 * no-ops. Both `SpaceRuntimeService.start()` and `executeTick()` invoke this,
+	 * so the order in which they fire does not matter.
+	 *
+	 * Must be called *after* `rehydrateExecutors()` so executor metadata is
+	 * available for any run we might transition.
+	 */
+	async recoverStalledRuns(): Promise<void> {
+		if (this.recoveryDone) return;
+		this.recoveryDone = true;
+
+		const spaces = await this.config.spaceManager.listSpaces(false);
+		let blockedCount = 0;
+		let completionPendingCount = 0;
+
+		for (const space of spaces) {
+			const inProgressRuns = this.config.workflowRunRepo.getActiveRuns(space.id);
+			for (const run of inProgressRuns) {
+				try {
+					const outcome = await this.recoverSingleRun(run);
+					if (outcome === 'blocked') blockedCount++;
+					else if (outcome === 'completion-pending') completionPendingCount++;
+				} catch (err) {
+					log.error(
+						`SpaceRuntime.recoverStalledRuns: failed to recover run ${run.id} (space ${space.id}):`,
+						err
+					);
+				}
+			}
+		}
+
+		if (blockedCount + completionPendingCount > 0) {
+			log.info(
+				`SpaceRuntime.recoverStalledRuns: blocked=${blockedCount} completion-pending=${completionPendingCount}`
+			);
+		}
+	}
+
+	/**
+	 * Recover a single in_progress run after daemon restart.
+	 *
+	 * Returns the recovery outcome so the caller can aggregate counts:
+	 *   - `'completion-pending'` — all executions terminal AND completion signal
+	 *                              recorded; tick will finalize via CompletionDetector.
+	 *   - `'blocked'`           — all executions terminal AND no completion signal;
+	 *                              run forced to `blocked` for human/auto-recovery.
+	 *   - `'skipped'`           — nothing to do (e.g. has pending/in_progress/blocked
+	 *                              executions that the tick loop already drives,
+	 *                              or no executions at all).
+	 *
+	 * Orphan in_progress executions (whose agent sessions died at restart) are
+	 * intentionally left for `processRunTick` to handle — it already detects
+	 * dead sessions and applies the proper crash-retry-with-counting flow.
+	 */
+	private async recoverSingleRun(
+		run: SpaceWorkflowRun
+	): Promise<'completion-pending' | 'blocked' | 'skipped'> {
+		const executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
+		if (executions.length === 0) return 'skipped';
+
+		// If the tick loop has any work it can drive — `pending` (about
+		// to spawn), `in_progress` (alive or crashed agent → existing
+		// liveness path resets/blocks), or `blocked` (existing
+		// `attemptBlockedRunRecovery` will retry/escalate) — leave the run
+		// alone. Recovery only intervenes when the runtime has nothing it
+		// can act on (every execution is `idle` or `cancelled`).
+		const hasDriveableExecution = executions.some(
+			(ex) => ex.status === 'pending' || ex.status === 'in_progress' || ex.status === 'blocked'
+		);
+		if (hasDriveableExecution) return 'skipped';
+
+		// Every execution is `idle` or `cancelled` (true terminal at the
+		// node level — no agent is going to drive further state). Branch on
+		// whether a completion signal was recorded on the canonical task.
+		const tasks = this.config.taskRepo.listByWorkflowRun(run.id);
+		const canonicalTask = this.pickCanonicalTaskForRun(run, tasks);
+
+		const completionSignalled =
+			canonicalTask !== null &&
+			(canonicalTask.status === 'done' ||
+				canonicalTask.status === 'cancelled' ||
+				canonicalTask.reportedStatus !== null);
+
+		if (completionSignalled) {
+			// Tick loop's CompletionDetector + processRunTick will fire on the
+			// next pass and transition the run to `done` (or pick up the
+			// cancelled task). Nothing to do here — the run will finalize.
+			return 'completion-pending';
+		}
+
+		// Genuinely stalled with no completion signal — flag the run
+		// as blocked so the user-facing task surfaces in the "Needs Attention"
+		// group rather than appearing in_progress forever.
+		//
+		// We use `execution_failed` as the block reason (the most accurate of
+		// the existing `SpaceBlockReason` values for "node terminated without
+		// reaching completion") and a dedicated, restart-aware `result`
+		// message so operators can distinguish this from the in-tick blocked
+		// path.
+		await this.transitionRunStatusAndEmit(run.id, 'blocked');
+		if (canonicalTask) {
+			const result =
+				'Workflow run stalled across daemon restart: all node executions ' +
+				'terminated (idle/cancelled) without a completion signal. The run ' +
+				'will auto-retry or escalate for human attention.';
+			await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, {
+				status: 'blocked',
+				blockReason: 'execution_failed',
+				result,
+				completedAt: null,
+			});
+			await this.safeNotify({
+				kind: 'task_blocked',
+				spaceId: run.spaceId,
+				taskId: canonicalTask.id,
+				reason: result,
+				timestamp: new Date().toISOString(),
+			});
+		}
+		await this.safeNotify({
+			kind: 'workflow_run_blocked',
+			spaceId: run.spaceId,
+			runId: run.id,
+			reason: 'Daemon restart left workflow run stalled with no completion signal',
+			timestamp: new Date().toISOString(),
+		});
+		log.warn(
+			`SpaceRuntime.recoverStalledRuns: run ${run.id} (space ${run.spaceId}) was in_progress ` +
+				`with all node executions idle/cancelled and no completion signal — flagged blocked`
+		);
+		return 'blocked';
 	}
 
 	// -------------------------------------------------------------------------
