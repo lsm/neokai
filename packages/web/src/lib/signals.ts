@@ -71,6 +71,11 @@ export const currentSpaceTasksFilterSignal = signal<SpaceTasksFilter>(null);
 export const spaceOverlaySessionIdSignal = signal<string | null>(null);
 // Human-readable label for the overlay header (e.g. "View Leader Session", "manual-se")
 export const spaceOverlayAgentNameSignal = signal<string | null>(null);
+// Optional message UUID to scroll into view + briefly highlight when the overlay
+// opens. Set when the user opens a session from a specific message in the
+// minimal thread feed so they land on the message they clicked instead of the
+// session's tail. Cleared along with the other overlay signals on close.
+export const spaceOverlayHighlightMessageIdSignal = signal<string | null>(null);
 
 // Mobile drawer signals
 export const contextPanelOpenSignal = signal<boolean>(false);
