@@ -2,6 +2,7 @@ export const TASK_STATUS_COLORS: Record<string, string> = {
 	// SpaceTaskStatus values
 	open: 'text-gray-400',
 	in_progress: 'text-yellow-400',
+	approved: 'text-emerald-400',
 	done: 'text-green-400',
 	blocked: 'text-red-400',
 	cancelled: 'text-gray-500',

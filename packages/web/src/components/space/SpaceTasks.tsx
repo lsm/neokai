@@ -35,8 +35,14 @@ function isAwaitingTaskCompletion(task: SpaceTask): boolean {
 const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested', 'gate_rejected'];
 
 const TAB_GROUPS: Record<TaskFilterTab, SpaceTaskStatus[]> = {
+	// `approved` is transient (post-approval sub-session runs, then
+	// `mark_complete` transitions `approved → done`). We route it to the
+	// `active` tab so a stuck `approved` task (e.g. with
+	// `postApprovalBlockedReason` set) remains visible to the user rather
+	// than disappearing between tabs. The task-detail pane's
+	// PendingPostApprovalBanner surfaces the actionable failure state.
 	action: ['review', 'blocked'],
-	active: ['open', 'in_progress'],
+	active: ['open', 'in_progress', 'approved'],
 	completed: ['done', 'cancelled'],
 	archived: ['archived'],
 };
@@ -46,6 +52,7 @@ const STATUS_BORDER: Record<string, string> = {
 	in_progress: 'border-l-blue-500',
 	blocked: 'border-l-amber-500',
 	review: 'border-l-purple-500',
+	approved: 'border-l-emerald-500',
 	done: 'border-l-green-500',
 	cancelled: 'border-l-gray-600',
 	archived: 'border-l-gray-700',
@@ -56,6 +63,7 @@ const STATUS_LABEL: Record<string, string> = {
 	in_progress: 'In Progress',
 	blocked: 'Blocked',
 	review: 'Review',
+	approved: 'Approved',
 	done: 'Done',
 	cancelled: 'Cancelled',
 	archived: 'Archived',
@@ -98,6 +106,11 @@ const ACTION_GROUPS: StatusGroupDef[] = [
 
 const ACTIVE_GROUPS: StatusGroupDef[] = [
 	{ status: 'in_progress', title: 'In Progress', variant: 'yellow' },
+	// `approved` is a transient state — the post-approval sub-session runs,
+	// then `mark_complete` transitions the task to `done`. Surface it in
+	// Active so a task stuck in `approved` (post-approval dispatch failed,
+	// `postApprovalBlockedReason` populated) stays visible.
+	{ status: 'approved', title: 'Post-Approval Running', variant: 'green' },
 	{ status: 'open', title: 'Open', variant: 'default' },
 ];
 
