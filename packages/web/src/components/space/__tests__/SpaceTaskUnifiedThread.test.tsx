@@ -12,7 +12,7 @@ let mockRenderStyle: 'compact' | 'minimal' = 'compact';
 vi.mock('../../../lib/space-task-thread-config', () => ({
 	getSpaceTaskThreadRenderStyle: () => mockRenderStyle,
 	setSpaceTaskThreadRenderStyle: vi.fn(),
-	DEFAULT_SPACE_TASK_THREAD_RENDER_STYLE: 'compact',
+	DEFAULT_SPACE_TASK_THREAD_RENDER_STYLE: 'minimal',
 }));
 
 vi.mock('../../../hooks/useSpaceTaskMessages', () => ({

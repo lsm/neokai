@@ -2,16 +2,16 @@
  * Space task thread render-style configuration.
  *
  * Two modes:
- * - 'compact': bracket-rail compact renderer (`SpaceTaskCardFeed`) — the
- *   default. Keeps tool cards, thinking blocks, and per-turn brackets.
- * - 'minimal': Slack-style group-chat renderer (`MinimalThreadFeed`). One
- *   row per agent turn: avatar + name + last message for completed turns,
- *   or a coloured-rail live tool roster for the active turn. No tool
- *   cards, no thinking, no brackets.
+ * - 'minimal': Slack-style group-chat renderer (`MinimalThreadFeed`) — the
+ *   default. One row per agent turn: avatar + name + last message for
+ *   completed turns, or a coloured-rail live tool roster for the active
+ *   turn. No tool cards, no thinking, no brackets.
+ * - 'compact': bracket-rail compact renderer (`SpaceTaskCardFeed`). Keeps
+ *   tool cards, thinking blocks, and per-turn brackets.
  *
  * The config key is `neokai:space.taskThreadRenderStyle` in localStorage.
  * Switch in devtools with:
- *   localStorage.setItem('neokai:space.taskThreadRenderStyle', 'minimal')
+ *   localStorage.setItem('neokai:space.taskThreadRenderStyle', 'compact')
  */
 
 export type SpaceTaskThreadRenderStyle = 'compact' | 'minimal';
@@ -21,10 +21,10 @@ const RENDER_STYLE_KEY = 'neokai:space.taskThreadRenderStyle';
 /**
  * Default render style for Space task threads.
  *
- * Flip to `'minimal'` here to make every task thread render as the
- * Slack-style minimal feed without any other code changes.
+ * Flip to `'compact'` here to make every task thread render as the
+ * bracket-rail compact feed without any other code changes.
  */
-export const DEFAULT_SPACE_TASK_THREAD_RENDER_STYLE: SpaceTaskThreadRenderStyle = 'compact';
+export const DEFAULT_SPACE_TASK_THREAD_RENDER_STYLE: SpaceTaskThreadRenderStyle = 'minimal';
 
 /**
  * Read the current task thread render style from localStorage.
