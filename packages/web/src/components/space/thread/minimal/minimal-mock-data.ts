@@ -3,7 +3,8 @@
  *
  * Defines two turn states:
  *   - "completed" turns: agent finished, has stats + last assistant text
- *   - "active" turns:    agent currently running, has rolling tool-call roster
+ *   - "active" turns:    agent currently running, has rolling tool-call roster,
+ *                         a status string, and live-updating partial stats
  *
  * Used by `MinimalStyleExploration.tsx` to demonstrate all 6 visual styles
  * with realistic-feeling content.
@@ -25,11 +26,27 @@ export interface CompletedTurn {
 	lastMessage: string;
 }
 
+export interface ActiveTurnStats {
+	/** Cumulative tool calls so far (ticks up during simulation) */
+	toolCalls: number;
+	/** Cumulative tokens consumed so far */
+	tokens: number;
+	/** Cumulative cost in USD */
+	costUsd: number;
+	/** Seconds elapsed since the turn started */
+	elapsedSec: number;
+}
+
 export interface ActiveTurn {
 	state: 'active';
 	id: string;
 	agent: string;
 	startedAt: number;
+	/** Session-status text — mirrors what ConnectionStatus shows in ChatContainer */
+	status: string;
+	/** Partial stats that update in real-time */
+	stats: ActiveTurnStats;
+	/** Rolling tool-call roster (most recent tool calls) */
 	roster: ToolCallEntry[];
 }
 
@@ -58,7 +75,7 @@ export const MOCK_TURNS: MinimalTurn[] = [
 			costUsd: 4.2,
 		},
 		lastMessage:
-			'PR #1631 is clean and mergeable. All CI checks pass (Lint, Type Check, Web, Daemon). Sending handoff to Reviewer.',
+			'PR #1631 is clean and mergeable. All CI checks pass (**Lint**, **Type Check**, **Web**, **Daemon**). Sending handoff to Reviewer.\n\nChanges:\n- `packages/web/src/components/space/thread/SpaceTaskThread.tsx` — refactored turn rendering\n- `packages/web/vite.config.ts` — added new dev entry point\n\nRun `bunx vite build` to verify.',
 	},
 	{
 		state: 'completed',
@@ -74,13 +91,20 @@ export const MOCK_TURNS: MinimalTurn[] = [
 			costUsd: 0.09,
 		},
 		lastMessage:
-			'PR #1631 merged ✅ and root repo synced. Squash commit `abc1234` is now on `dev`.',
+			'PR #1631 merged ✅ and root repo synced. Squash commit `abc1234` is now on `dev`.\n\nApproved via `gh pr review --approve`.',
 	},
 	{
 		state: 'active',
 		id: 'turn-coder-2',
 		agent: 'coder agent',
 		startedAt: T_BASE + 2841 * 1000 + 5_000 + 14_000 + 2_000,
+		status: 'Running command...',
+		stats: {
+			toolCalls: 12,
+			tokens: 34_200,
+			costUsd: 1.23,
+			elapsedSec: 142,
+		},
 		roster: [
 			{ tool: 'Bash', preview: 'bun run typecheck' },
 			{ tool: 'Read', preview: 'packages/daemon/src/lib/space/space-task-runtime.ts' },
@@ -129,4 +153,41 @@ export function shortAgentName(label: string): string {
 export function agentInitial(label: string): string {
 	const short = shortAgentName(label);
 	return short.charAt(0);
+}
+
+/* ── tool color lookup (mirrors tool-registry.ts getCategoryColors dark mode iconColor) ── */
+
+const TOOL_DARK_COLORS: Record<string, string> = {
+	// file category → blue
+	Read: 'text-blue-400',
+	Write: 'text-green-400',
+	Edit: 'text-green-400',
+	NotebookEdit: 'text-green-400',
+	// search category → purple
+	Glob: 'text-purple-400',
+	Grep: 'text-purple-400',
+	// terminal category → gray
+	Bash: 'text-gray-400',
+	BashOutput: 'text-gray-400',
+	KillShell: 'text-gray-400',
+	// agent category → indigo
+	Task: 'text-indigo-400',
+	Agent: 'text-indigo-400',
+	// web category → green
+	WebFetch: 'text-green-400',
+	WebSearch: 'text-green-400',
+	// todo category → amber
+	TodoWrite: 'text-amber-400',
+	// system category → cyan
+	Thinking: 'text-amber-400',
+};
+
+/**
+ * Returns the dark-mode icon color Tailwind class for a tool name.
+ * Lightweight alternative to importing the full tool-registry.ts chain.
+ */
+export function getToolDarkColor(toolName: string): string {
+	return (
+		TOOL_DARK_COLORS[toolName] ?? (toolName.startsWith('mcp__') ? 'text-pink-400' : 'text-gray-400')
+	);
 }

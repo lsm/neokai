@@ -10,17 +10,56 @@
  * dev route to view.
  */
 
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { getAgentColor } from '../space-task-thread-agent-colors';
-import type { CompletedTurn, MinimalTurn, ToolCallEntry } from './minimal-mock-data';
+import MarkdownRenderer from '../../../chat/MarkdownRenderer.tsx';
+import type {
+	ActiveTurn,
+	ActiveTurnStats,
+	CompletedTurn,
+	MinimalTurn,
+	ToolCallEntry,
+} from './minimal-mock-data';
 import {
 	agentInitial,
 	formatClock,
 	formatCost,
 	formatDuration,
 	formatTokens,
+	getToolDarkColor,
 	MOCK_TURNS,
 	shortAgentName,
 } from './minimal-mock-data';
+
+/* ── realtime simulation hook (Slack style only) ───────────────────────────── */
+
+function useActiveTick(initialStats: ActiveTurnStats) {
+	const [stats, setStats] = useState(initialStats);
+	const ref = useRef(initialStats);
+
+	// Update the ref so the interval closure always reads latest values
+	useEffect(() => {
+		ref.current = stats;
+	}, [stats]);
+
+	useEffect(() => {
+		const id = setInterval(() => {
+			const s = ref.current;
+			// Simulate gradual resource consumption
+			const tokenIncrement = Math.floor(Math.random() * 800) + 200;
+			const costIncrement = (tokenIncrement / 1000) * 0.012;
+			setStats({
+				toolCalls: s.toolCalls + (Math.random() > 0.7 ? 1 : 0),
+				tokens: s.tokens + tokenIncrement,
+				costUsd: s.costUsd + costIncrement,
+				elapsedSec: s.elapsedSec + 1,
+			});
+		}, 1000);
+		return () => clearInterval(id);
+	}, []);
+
+	return stats;
+}
 
 /* ── shared building blocks ──────────────────────────────────────────────── */
 
@@ -36,35 +75,124 @@ function StatsLine({ turn }: { turn: CompletedTurn }) {
 }
 
 function RosterEntry({ entry, isLatest }: { entry: ToolCallEntry; isLatest: boolean }) {
+	const toolColor = getToolDarkColor(entry.tool);
 	return (
 		<div
 			class={`flex items-baseline gap-2 font-mono text-xs leading-5 ${
-				isLatest ? 'text-gray-100 minimal-roster-fade-in' : 'text-gray-400'
+				isLatest ? 'minimal-roster-fade-in' : ''
 			}`}
 		>
-			<span class="text-blue-300 font-semibold shrink-0">{entry.tool}:</span>
-			<span class="truncate">{entry.preview}</span>
+			<span class={`${toolColor} font-semibold shrink-0`}>{entry.tool}:</span>
+			<span class={isLatest ? 'text-gray-100' : 'text-gray-400'}>{entry.preview}</span>
 		</div>
+	);
+}
+
+/** Pulsing dot — used by both LiveDot (legacy) and AgentStatus */
+function PulseDot({ color }: { color: string }) {
+	return (
+		<span
+			class="inline-block h-2 w-2 rounded-full minimal-live-dot shrink-0"
+			style={{ backgroundColor: color }}
+		/>
 	);
 }
 
 function LiveDot({ color }: { color: string }) {
 	return (
 		<span class="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-medium">
-			<span
-				class="inline-block h-2 w-2 rounded-full minimal-live-dot"
-				style={{ backgroundColor: color }}
-			/>
+			<PulseDot color={color} />
 			<span style={{ color }}>Live</span>
 		</span>
 	);
 }
 
+/** Status line — pulsing dot + status text (e.g. "Running command...") */
+function StatusPill({ color, status }: { color: string; status: string }) {
+	return (
+		<span class="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-medium">
+			<PulseDot color={color} />
+			<span style={{ color }}>{status}</span>
+		</span>
+	);
+}
+
+/** Compact live stats bar (tools · tokens · cost · elapsed) */
+function LiveStatsBar({ stats }: { stats: ActiveTurnStats }) {
+	return (
+		<span class="text-[11px] text-gray-500">
+			{stats.toolCalls} tools · {formatTokens(stats.tokens)} tokens · {formatCost(stats.costUsd)} ·{' '}
+			{formatDuration(stats.elapsedSec)}
+		</span>
+	);
+}
+
+/* ── Slack active-body variants ─────────────────────────────────────────── */
+
+function SlackActiveBody({
+	color,
+	turn,
+	liveStats,
+	variant,
+}: {
+	color: string;
+	turn: ActiveTurn;
+	liveStats: ActiveTurnStats;
+	variant: SlackVariant;
+}) {
+	const inner = (
+		<>
+			<div class="text-xs text-gray-500 mt-0.5">
+				<LiveStatsBar stats={liveStats} />
+			</div>
+			<div class="mt-2 space-y-0.5">
+				{turn.roster.map((entry, i) => (
+					<RosterEntry
+						key={`${entry.tool}-${i}`}
+						entry={entry}
+						isLatest={i === turn.roster.length - 1}
+					/>
+				))}
+			</div>
+			<div class="mt-1.5">
+				<StatusPill color={color} status={turn.status} />
+			</div>
+		</>
+	);
+
+	if (variant === 'none') {
+		return inner;
+	}
+	if (variant === 'rail-only') {
+		return (
+			<div class="mt-1.5 pl-3 border-l-2" style={{ borderColor: color }}>
+				{inner}
+			</div>
+		);
+	}
+	// rail-tint
+	return (
+		<div
+			class="mt-1.5 pl-3 border-l-2 rounded-r-md py-2 pr-2"
+			style={{ borderColor: color, backgroundColor: color + '18' }}
+		>
+			{inner}
+		</div>
+	);
+}
+
 /* ── Style 1: Slack ──────────────────────────────────────────────────────── */
 
-function SlackStyle({ turns }: { turns: MinimalTurn[] }) {
+type SlackVariant = 'none' | 'rail-only' | 'rail-tint';
+
+function SlackStyle({ turns, variant = 'none' }: { turns: MinimalTurn[]; variant?: SlackVariant }) {
+	const activeTurn = turns.find((t): t is ActiveTurn => t.state === 'active');
+	const liveStats = useActiveTick(
+		activeTurn?.stats ?? { toolCalls: 0, tokens: 0, costUsd: 0, elapsedSec: 0 }
+	);
+
 	return (
-		<div class="space-y-5">
+		<div class="space-y-8">
 			{turns.map((turn) => {
 				const color = getAgentColor(turn.agent);
 				const initial = agentInitial(turn.agent);
@@ -77,30 +205,28 @@ function SlackStyle({ turns }: { turns: MinimalTurn[] }) {
 							{initial}
 						</div>
 						<div class="min-w-0 flex-1">
-							<div class="flex items-baseline gap-2">
+							<div class="flex items-center gap-3">
 								<span class="font-semibold text-gray-100" style={{ color }}>
 									{shortAgentName(turn.agent)}
 								</span>
 								<span class="text-xs text-gray-500">{formatClock(turn.startedAt)}</span>
-								{turn.state === 'active' && <LiveDot color={color} />}
 							</div>
 							{turn.state === 'completed' ? (
 								<>
 									<div class="text-xs text-gray-500 mt-0.5">
 										<StatsLine turn={turn} />
 									</div>
-									<p class="mt-1.5 text-sm text-gray-100 leading-relaxed">{turn.lastMessage}</p>
+									<div class="mt-1.5 text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400">
+										<MarkdownRenderer content={turn.lastMessage} />
+									</div>
 								</>
 							) : (
-								<div class="mt-2 space-y-0.5">
-									{turn.roster.map((entry, i) => (
-										<RosterEntry
-											key={`${entry.tool}-${i}`}
-											entry={entry}
-											isLatest={i === turn.roster.length - 1}
-										/>
-									))}
-								</div>
+								<SlackActiveBody
+									color={color}
+									turn={turn}
+									liveStats={liveStats}
+									variant={variant}
+								/>
 							)}
 						</div>
 					</div>
@@ -393,7 +519,7 @@ const STYLES: StyleSpec[] = [
 		id: 'slack',
 		name: '1. Slack-style',
 		description:
-			'Avatar tile + name on top + stats subline + final message as plain prose. Familiar and information-dense without feeling busy.',
+			'Avatar tile + name on top + stats subline + final message as markdown prose. Active turn shows session status + live-updating stats + color-coded tool roster.',
 		render: (turns) => <SlackStyle turns={turns} />,
 	},
 	{
@@ -430,6 +556,20 @@ const STYLES: StyleSpec[] = [
 		description:
 			'Monospace log lines: [AGENT] timestamp stats, then indented prose. Calm and technical, fits long-running automation.',
 		render: (turns) => <TerminalStyle turns={turns} />,
+	},
+	{
+		id: 'slack-rail-only',
+		name: '1b. Slack — rail only',
+		description:
+			'Same Slack layout but the active turn is set off by a thin coloured left rail — no fill. One line of weight, zero clutter.',
+		render: (turns) => <SlackStyle turns={turns} variant="rail-only" />,
+	},
+	{
+		id: 'slack-rail-tint',
+		name: '1c. Slack — rail + tint',
+		description:
+			'Left rail + a very faint agent-colour background fill behind the active work area. Clear grouping without the weight of a full card.',
+		render: (turns) => <SlackStyle turns={turns} variant="rail-tint" />,
 	},
 ];
 
@@ -491,3 +631,6 @@ const ANIMATIONS_CSS = `
 	animation: minimal-live-pulse 1.6s ease-in-out infinite;
 }
 `;
+
+/* Prevent accidental tree-shaking when imported as side-effect entry */
+export type { ActiveTurn, ActiveTurnStats, CompletedTurn, MinimalTurn };
