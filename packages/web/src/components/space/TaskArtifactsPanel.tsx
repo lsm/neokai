@@ -52,7 +52,7 @@ export interface TaskArtifactsPanelProps {
 	runId: string;
 	taskId?: string;
 	/** Called when the panel should close (kept for API compatibility) */
-	onClose: () => void;
+	onClose?: () => void;
 	class?: string;
 }
 
@@ -308,12 +308,7 @@ function CommitFilesView({
 // Main component
 // ============================================================================
 
-export function TaskArtifactsPanel({
-	runId,
-	taskId,
-	onClose,
-	class: className,
-}: TaskArtifactsPanelProps) {
+export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArtifactsPanelProps) {
 	const [view, setView] = useState<PanelView>({ mode: 'list' });
 
 	// ── Uncommitted changes ──────────────────────────────────────────────────
@@ -539,24 +534,6 @@ export function TaskArtifactsPanel({
 			class={cn('flex flex-col h-full overflow-hidden', className)}
 			data-testid="artifacts-panel"
 		>
-			<div class="flex items-center justify-between px-4 py-2 border-b border-dark-800 flex-shrink-0">
-				<span class="text-xs font-medium text-gray-400 uppercase tracking-wider">Artifacts</span>
-				<button
-					onClick={onClose}
-					data-testid="artifacts-panel-close"
-					class="text-gray-500 hover:text-gray-200 transition-colors"
-					aria-label="Close artifacts panel"
-				>
-					<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width={2}
-							d="M6 18L18 6M6 6l12 12"
-						/>
-					</svg>
-				</button>
-			</div>
 			<div class="flex-1 overflow-y-auto min-h-0">
 				<div class="min-h-[calc(100%+1px)]">
 					{/* ── Todos ───────────────────────────────────────────── */}

@@ -391,74 +391,70 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			})()}
 
 			<div class="flex-1 min-h-0 overflow-hidden relative" data-testid="task-pane-content">
-				{/* Wrapper spans the full content width so the pill can center
-				    horizontally — but that span would otherwise eat clicks meant
-				    for the canvas / thread / artifacts beneath it. Disabling
-				    pointer-events on the wrapper and re-enabling them on the pill
-				    itself keeps only the pill interactive. */}
+				{/* Pill is right-aligned at top-2 to mirror the agent name tag at
+				    top-2 left-4 inside SpaceTaskUnifiedThread, so both pills sit
+				    on the same horizontal row. */}
 				<div
-					class="pointer-events-none absolute top-3 left-0 right-0 z-10 flex justify-center px-4"
+					class="absolute top-2 right-4 z-20 flex items-center gap-1 rounded-3xl border border-dark-700 bg-dark-800/60 p-1 backdrop-blur-sm"
 					data-testid="task-view-tab-pill"
 				>
-					<div class="pointer-events-auto flex items-center gap-1 rounded-3xl border border-dark-700 bg-dark-800/80 p-1 shadow-lg backdrop-blur-sm">
+					<button
+						type="button"
+						onClick={() => navigateToSpaceTask(_spaceId, taskId, 'thread')}
+						class={cn(
+							'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
+							activeView === 'thread'
+								? 'text-gray-100 bg-dark-700/70 shadow-sm'
+								: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
+						)}
+						data-testid="thread-toggle"
+						aria-pressed={activeView === 'thread'}
+					>
+						Thread
+					</button>
+					{canShowCanvasTab && (
 						<button
 							type="button"
-							onClick={() => navigateToSpaceTask(_spaceId, taskId, 'thread')}
+							onClick={() => {
+								if (activeView === 'canvas') {
+									navigateToSpaceTask(_spaceId, taskId, 'thread');
+									return;
+								}
+								spaceStore.ensureNodeExecutions().catch(() => {});
+								navigateToSpaceTask(_spaceId, taskId, 'canvas');
+							}}
 							class={cn(
 								'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
-								activeView === 'thread'
+								activeView === 'canvas'
 									? 'text-gray-100 bg-dark-700/70 shadow-sm'
 									: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
 							)}
-							data-testid="thread-toggle"
-							aria-pressed={activeView === 'thread'}
+							data-testid="canvas-toggle"
+							aria-pressed={activeView === 'canvas'}
 						>
-							Thread
+							Canvas
 						</button>
-						{canShowCanvasTab && (
-							<button
-								type="button"
-								onClick={() => {
-									if (activeView === 'canvas') {
-										navigateToSpaceTask(_spaceId, taskId, 'thread');
-										return;
-									}
-									spaceStore.ensureNodeExecutions().catch(() => {});
-									navigateToSpaceTask(_spaceId, taskId, 'canvas');
-								}}
-								class={cn(
-									'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
-									activeView === 'canvas'
-										? 'text-gray-100 bg-dark-700/70 shadow-sm'
-										: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
-								)}
-								data-testid="canvas-toggle"
-								aria-pressed={activeView === 'canvas'}
-							>
-								Canvas
-							</button>
-						)}
-						{canShowArtifactsTab && (
-							<button
-								type="button"
-								onClick={() =>
-									currentSpaceTaskViewTabSignal.value === 'artifacts'
-										? navigateToSpaceTask(_spaceId, taskId, 'thread')
-										: navigateToSpaceTask(_spaceId, taskId, 'artifacts')
-								}
-								class={cn(
-									'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
-									activeView === 'artifacts'
-										? 'text-gray-100 bg-dark-700/70 shadow-sm'
-										: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
-								)}
-								data-testid="artifacts-toggle"
-								aria-pressed={activeView === 'artifacts'}
-							>
-								Artifacts
-							</button>
-						)}
-					</div>
+					)}
+					{canShowArtifactsTab && (
+						<button
+							type="button"
+							onClick={() =>
+								currentSpaceTaskViewTabSignal.value === 'artifacts'
+									? navigateToSpaceTask(_spaceId, taskId, 'thread')
+									: navigateToSpaceTask(_spaceId, taskId, 'artifacts')
+							}
+							class={cn(
+								'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
+								activeView === 'artifacts'
+									? 'text-gray-100 bg-dark-700/70 shadow-sm'
+									: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
+							)}
+							data-testid="artifacts-toggle"
+							aria-pressed={activeView === 'artifacts'}
+						>
+							Artifacts
+						</button>
+					)}
 				</div>
 				{activeView === 'canvas' && task.workflowRunId && canvasWorkflowId ? (
 					<div class="h-full" data-testid="canvas-view">
@@ -483,7 +479,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							{hasUnifiedWorkflowThread ? (
 								<SpaceTaskUnifiedThread
 									taskId={task.id}
-									topInsetClass="pt-12"
+									topInsetClass="pt-10"
 									bottomInsetClass={
 										showInlineComposer ? (threadSendError ? 'pb-24' : 'pb-16') : 'pb-3'
 									}
