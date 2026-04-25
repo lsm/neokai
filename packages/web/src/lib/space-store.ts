@@ -141,26 +141,6 @@ class SpaceStore {
 	/** Stale-event guard for space sessions LiveQuery subscription */
 	private activeSpaceSessionsSubscriptionId: string | null = null;
 
-	/** Tasks needing human attention — reactive via LiveQuery */
-	readonly attentionTasks = signal<
-		Array<{
-			id: string;
-			title: string;
-			status: string;
-			blockReason: string | null;
-			result: string | null;
-			taskNumber: number;
-			spaceId: string;
-			updatedAt: number;
-		}>
-	>([]);
-
-	/** Cleanup functions for the attention tasks LiveQuery subscription */
-	private attentionTasksCleanupFns: Array<() => void> = [];
-
-	/** Stale-event guard for attention tasks LiveQuery subscription */
-	private activeAttentionTasksSubscriptionId: string | null = null;
-
 	// ========================================
 	// Private Helpers
 	// ========================================
@@ -181,9 +161,6 @@ class SpaceStore {
 	// ========================================
 	// Computed Signals
 	// ========================================
-
-	/** Number of tasks needing human attention (review + human-blocked) */
-	readonly attentionCount = computed(() => this.attentionTasks.value.length);
 
 	/** Tasks that are currently in progress */
 	readonly activeTasks = computed(() => this.tasks.value.filter((t) => t.status === 'in_progress'));
@@ -559,8 +536,6 @@ class SpaceStore {
 		this.nodeExecPromise = null;
 		this.sessions.value = [];
 		this.disposeSpaceSessionsSubscription();
-		this.attentionTasks.value = [];
-		this.disposeAttentionTasksSubscription();
 
 		// 3. Update active space (may be updated to real UUID after fetch)
 		this.spaceId.value = spaceIdOrSlug;
@@ -620,9 +595,6 @@ class SpaceStore {
 
 		// --- spaceSessions.bySpace LiveQuery ---
 		this.subscribeSpaceSessions(hub, spaceId);
-
-		// --- spaceTasks.needingAttention LiveQuery ---
-		this.subscribeAttentionTasks(hub, spaceId);
 
 		// --- space.archived ---
 		const unsubSpaceArchived = hub.onEvent<{
@@ -986,7 +958,6 @@ class SpaceStore {
 		this.cleanupFunctions = [];
 		this.unsubscribeTaskActivity();
 		this.unsubscribeNodeExecutions();
-		this.disposeAttentionTasksSubscription();
 	}
 
 	// ========================================
@@ -1383,98 +1354,6 @@ class SpaceStore {
 	}
 
 	// ========================================
-	// LiveQuery: Tasks Needing Attention
-	// ========================================
-
-	private subscribeAttentionTasks(
-		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
-		spaceId: string
-	): void {
-		const subscriptionId = `spaceTasks-needingAttention-${spaceId}`;
-		if (this.activeAttentionTasksSubscriptionId === subscriptionId) return;
-		this.disposeAttentionTasksSubscription();
-		this.activeAttentionTasksSubscriptionId = subscriptionId;
-
-		type AttentionRow = {
-			id: string;
-			title: string;
-			status: string;
-			blockReason: string | null;
-			result: string | null;
-			taskNumber: number;
-			spaceId: string;
-			updatedAt: number;
-		};
-
-		const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
-			if (event.subscriptionId !== subscriptionId) return;
-			if (this.activeAttentionTasksSubscriptionId !== subscriptionId) return;
-			this.attentionTasks.value = (event.rows as AttentionRow[]) ?? [];
-		});
-		this.attentionTasksCleanupFns.push(unsubSnapshot);
-
-		const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
-			if (event.subscriptionId !== subscriptionId) return;
-			if (this.activeAttentionTasksSubscriptionId !== subscriptionId) return;
-			const current = this.attentionTasks.value;
-			const next = new Map(current.map((t) => [t.id, t]));
-			for (const row of (event.removed ?? []) as AttentionRow[]) next.delete(row.id);
-			for (const row of (event.updated ?? []) as AttentionRow[]) next.set(row.id, row);
-			for (const row of (event.added ?? []) as AttentionRow[]) next.set(row.id, row);
-			this.attentionTasks.value = [...next.values()];
-		});
-		this.attentionTasksCleanupFns.push(unsubDelta);
-
-		const unsubReconnect = hub.onConnection((state) => {
-			if (state !== 'connected') return;
-			if (this.activeAttentionTasksSubscriptionId !== subscriptionId) return;
-			hub
-				.request('liveQuery.subscribe', {
-					queryName: 'spaceTasks.needingAttention',
-					params: [spaceId],
-					subscriptionId,
-				})
-				.catch((err) => {
-					logger.warn('Attention tasks LiveQuery re-subscribe failed:', err);
-				});
-		});
-		this.attentionTasksCleanupFns.push(unsubReconnect);
-
-		hub
-			.request('liveQuery.subscribe', {
-				queryName: 'spaceTasks.needingAttention',
-				params: [spaceId],
-				subscriptionId,
-			})
-			.catch((err) => {
-				logger.warn('Attention tasks LiveQuery subscribe failed:', err);
-			});
-	}
-
-	private disposeAttentionTasksSubscription(): void {
-		for (const cleanup of this.attentionTasksCleanupFns) {
-			try {
-				cleanup();
-			} catch {
-				// Ignore
-			}
-		}
-		this.attentionTasksCleanupFns = [];
-
-		if (this.activeAttentionTasksSubscriptionId) {
-			const hub = connectionManager.getHubIfConnected();
-			if (hub) {
-				hub
-					.request('liveQuery.unsubscribe', {
-						subscriptionId: this.activeAttentionTasksSubscriptionId,
-					})
-					.catch(() => {});
-			}
-			this.activeAttentionTasksSubscriptionId = null;
-		}
-	}
-
-	// ========================================
 	// Refresh
 	// ========================================
 
@@ -1512,8 +1391,6 @@ class SpaceStore {
 		this.nodeExecPromise = null;
 		this.sessions.value = [];
 		this.disposeSpaceSessionsSubscription();
-		this.attentionTasks.value = [];
-		this.disposeAttentionTasksSubscription();
 
 		try {
 			await this.fetchAndResolveSpace(spaceId);

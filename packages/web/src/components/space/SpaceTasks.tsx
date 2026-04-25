@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus } from '@neokai/shared';
+import { isActionRequired } from '../../lib/task-filters';
 import { getRelativeTime } from '../../lib/utils';
 import {
 	currentSpaceTasksFilterSignal,
@@ -34,17 +35,24 @@ function isAwaitingTaskCompletion(task: SpaceTask): boolean {
 /** Block reasons that indicate a task needs human attention */
 const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested', 'gate_rejected'];
 
-const TAB_GROUPS: Record<TaskFilterTab, SpaceTaskStatus[]> = {
-	// `approved` is transient (post-approval sub-session runs, then
-	// `mark_complete` transitions `approved → done`). We route it to the
-	// `active` tab so a stuck `approved` task (e.g. with
-	// `postApprovalBlockedReason` set) remains visible to the user rather
-	// than disappearing between tabs. The task-detail pane's
-	// PendingPostApprovalBanner surfaces the actionable failure state.
-	action: ['review', 'blocked'],
-	active: ['open', 'in_progress', 'approved'],
-	completed: ['done', 'cancelled'],
-	archived: ['archived'],
+/**
+ * Per-tab membership predicates. The `action` predicate is the shared
+ * `isActionRequired` from `task-filters.ts`, which is the single source of
+ * truth used by the Tasks-nav badge in `SpaceDetailPanel` — the badge and
+ * this tab list cannot drift.
+ *
+ * `approved` is transient (post-approval sub-session runs, then
+ * `mark_complete` transitions `approved → done`). We route it to the
+ * `active` tab so a stuck `approved` task (e.g. with
+ * `postApprovalBlockedReason` set) remains visible to the user rather
+ * than disappearing between tabs. The task-detail pane's
+ * PendingPostApprovalBanner surfaces the actionable failure state.
+ */
+const TAB_PREDICATES: Record<TaskFilterTab, (task: SpaceTask) => boolean> = {
+	action: isActionRequired,
+	active: (t) => t.status === 'open' || t.status === 'in_progress' || t.status === 'approved',
+	completed: (t) => t.status === 'done' || t.status === 'cancelled',
+	archived: (t) => t.status === 'archived',
 };
 
 const STATUS_BORDER: Record<string, string> = {
@@ -451,11 +459,11 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 			archived: 0,
 		};
 		for (const task of tasks) {
-			for (const [tab, statuses] of Object.entries(TAB_GROUPS) as [
+			for (const [tab, predicate] of Object.entries(TAB_PREDICATES) as [
 				TaskFilterTab,
-				SpaceTaskStatus[],
+				(t: SpaceTask) => boolean,
 			][]) {
-				if (statuses.includes(task.status as SpaceTaskStatus)) {
+				if (predicate(task)) {
 					c[tab]++;
 					break;
 				}
@@ -465,8 +473,8 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 	}, [tasks]);
 
 	const filteredTasks = useMemo(() => {
-		const statuses = TAB_GROUPS[activeTab];
-		let list = [...tasks].filter((t) => statuses.includes(t.status as SpaceTaskStatus));
+		const predicate = TAB_PREDICATES[activeTab];
+		let list = [...tasks].filter(predicate);
 		if (activeFilter === 'awaiting_task_completion') {
 			list = list.filter(isAwaitingTaskCompletion);
 		}
