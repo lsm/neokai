@@ -1,24 +1,27 @@
 /**
- * Migration 94 — Backfill workflow template tracking & end-node completion actions.
+ * Migration 94 — Backfill workflow template tracking & remove orphan duplicates.
  *
- * Context: two silent field-drop bugs in `seedBuiltInWorkflows()` and
- * `updateWorkflow()` caused existing workflow rows to be persisted without
- * their `completionActions`, and earlier versions of the seed predated the
- * `template_name` / `template_hash` columns. As a result, existing Spaces have
- * workflows that:
- *   - Match a built-in template by name but have `template_name = NULL`
- *     (breaking drift detection and the "Sync from template" UI).
- *   - Have an end node without `MERGE_PR_COMPLETION_ACTION`, so the Reviewer's
- *     `report_result()` completes the run but the PR never merges.
+ * Context: earlier versions of `seedBuiltInWorkflows()` predated the
+ * `template_name` / `template_hash` columns, so existing Spaces ended up with
+ * workflows that match a built-in template by name but have
+ * `template_name = NULL` (which broke drift detection and the "Sync from
+ * template" UI).
  *
  * This migration realigns legacy rows with the current built-in templates:
- *   1. For each `space_workflows` row whose (name, node names) structurally
- *      matches a known built-in, set `template_name` + `template_hash` if
- *      missing, and reattach the template's `completionActions` on the end
- *      node if missing.
+ *   1. For each `space_workflows` row whose (name, node names, fingerprint)
+ *      structurally matches a known built-in, set `template_name` +
+ *      `template_hash` if missing.
  *   2. Delete orphan duplicate workflows — same (space_id, name) as a newer
  *      row, older `created_at`, and no active `space_workflow_runs` references.
  *      Keeps the newer row; drops the earlier superseded seed.
+ *
+ * Historical note: an earlier revision of this migration also reattached an
+ * end-node `completionActions` JSON entry on rows where it was missing. That
+ * pipeline was deleted in PR 4/5 of the
+ * task-agent-as-post-approval-executor refactor and the underlying columns are
+ * dropped in M104, so the backfill is no longer needed. Any residual
+ * `completionActions` JSON on existing node rows is silently ignored at load
+ * time (see `space-workflow-repository.ts#rowToNode`).
  *
  * The migration is idempotent: re-running it on a DB that has already been
  * backfilled is a no-op (template hashes only get rewritten when they differ).
@@ -68,70 +71,11 @@ interface TemplateShape {
 	description: string;
 	instructions: string;
 	nodeNames: string[];
-	/** Name of the end node — used to locate which node-row to backfill. */
+	/** Name of the end node — preserved for symmetry with the historical shape. */
 	endNodeName: string;
 	channels: ChannelShape[];
 	gates: GateShape[];
-	/** Completion action JSON to attach to the end node, if any. */
-	endNodeCompletionActions?: CompletionActionShape[];
 }
-
-interface CompletionActionShape {
-	id: string;
-	name: string;
-	type: 'script' | 'instruction' | 'mcp_call';
-	requiredLevel: number;
-	artifactType?: string;
-	artifactKey?: string;
-	script?: string;
-	targetNodeId?: string;
-	instruction?: string;
-	server?: string;
-	tool?: string;
-	args?: Record<string, string>;
-}
-
-// Inline bash scripts from built-in-workflows.ts — the actual merge script.
-// Kept inline so the migration is self-contained and stable.
-const PR_MERGE_BASH_SCRIPT = [
-	'# Resolve PR URL from artifact data or current branch',
-	'PR_URL=$(jq -r \'.pr_url // .url // empty\' <<< "${NEOKAI_ARTIFACT_DATA_JSON:-{}}" 2>/dev/null || true)',
-	'if [ -z "$PR_URL" ]; then',
-	'  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
-	'fi',
-	'if [ -z "$PR_URL" ]; then',
-	'  echo "No PR URL found — cannot merge" >&2',
-	'  exit 1',
-	'fi',
-	'# Idempotency guard: skip merge if PR is already merged',
-	'PR_STATE=$(gh pr view "$PR_URL" --json state -q .state 2>/dev/null || true)',
-	'if [ "$PR_STATE" = "MERGED" ]; then',
-	'  echo "PR already merged: $PR_URL"',
-	'  BASE_BRANCH=$(gh pr view "$PR_URL" --json baseRefName -q .baseRefName 2>/dev/null || echo "main")',
-	'  git checkout "$BASE_BRANCH" 2>/dev/null && git pull --ff-only 2>/dev/null || true',
-	'  jq -n --arg url "$PR_URL" \'{"merged_pr_url":$url,"status":"already_merged"}\'',
-	'  exit 0',
-	'fi',
-	'echo "Merging PR: $PR_URL"',
-	'if ! gh pr merge "$PR_URL" --squash; then',
-	'  echo "Failed to merge PR: $PR_URL" >&2',
-	'  exit 1',
-	'fi',
-	'# Sync worktree with base branch after merge',
-	'BASE_BRANCH=$(gh pr view "$PR_URL" --json baseRefName -q .baseRefName 2>/dev/null || echo "main")',
-	'git checkout "$BASE_BRANCH" 2>/dev/null && git pull --ff-only 2>/dev/null || true',
-	'echo "PR merged and worktree synced"',
-	'jq -n --arg url "$PR_URL" \'{"merged_pr_url":$url,"status":"merged"}\'',
-].join('\n');
-
-const MERGE_PR_COMPLETION_ACTION: CompletionActionShape = {
-	id: 'merge-pr',
-	name: 'Merge PR',
-	type: 'script',
-	requiredLevel: 4,
-	artifactType: 'pr',
-	script: PR_MERGE_BASH_SCRIPT,
-};
 
 // First 64 chars of `PR_READY_BASH_SCRIPT` (joined with \n) — matches what
 // `computeWorkflowHash` captures via `g.script.source.slice(0, 64)`. Must be
@@ -164,7 +108,6 @@ const KNOWN_TEMPLATES: TemplateShape[] = [
 				scriptSource: PR_READY_SCRIPT_PREFIX,
 			},
 		],
-		endNodeCompletionActions: [MERGE_PR_COMPLETION_ACTION],
 	},
 	{
 		name: 'Research Workflow',
@@ -185,7 +128,6 @@ const KNOWN_TEMPLATES: TemplateShape[] = [
 				scriptSource: PR_READY_SCRIPT_PREFIX,
 			},
 		],
-		endNodeCompletionActions: [MERGE_PR_COMPLETION_ACTION],
 	},
 	{
 		name: 'Review-Only Workflow',
@@ -196,7 +138,6 @@ const KNOWN_TEMPLATES: TemplateShape[] = [
 		endNodeName: 'Review',
 		channels: [],
 		gates: [],
-		endNodeCompletionActions: undefined,
 	},
 	{
 		name: 'Plan & Decompose Workflow',
@@ -228,9 +169,6 @@ const KNOWN_TEMPLATES: TemplateShape[] = [
 				],
 			},
 		],
-		// Plan & Decompose's end-node completion action verifies ≥1 task was
-		// created — it's injected by the live template, not by the M94 backfill.
-		endNodeCompletionActions: undefined,
 	},
 	{
 		name: 'Coding with QA Workflow',
@@ -259,7 +197,6 @@ const KNOWN_TEMPLATES: TemplateShape[] = [
 				fields: [{ name: 'approved', type: 'boolean', check: { op: '==', value: true } }],
 			},
 		],
-		endNodeCompletionActions: undefined,
 	},
 ];
 
@@ -395,11 +332,6 @@ interface NodeRow {
 	config: string | null;
 }
 
-interface NodeConfigJson {
-	agents?: unknown[];
-	completionActions?: CompletionActionShape[];
-}
-
 function parseJson<T>(raw: string | null | undefined, fallback: T): T {
 	if (!raw) return fallback;
 	try {
@@ -453,7 +385,6 @@ export function runMigration94(db: BunDatabase): void {
 	const updateWorkflow = db.prepare(
 		`UPDATE space_workflows SET template_name = ?, template_hash = ? WHERE id = ?`
 	);
-	const updateNodeConfig = db.prepare(`UPDATE space_workflow_nodes SET config = ? WHERE id = ?`);
 	const deleteWorkflow = db.prepare(`DELETE FROM space_workflows WHERE id = ?`);
 
 	// Track which rows are considered "backfilled built-ins" — used below for
@@ -462,8 +393,7 @@ export function runMigration94(db: BunDatabase): void {
 	const matchedByKey = new Map<string, WorkflowRow[]>(); // key: `${spaceId}|${name}`
 
 	// -----------------------------------------------------------------------
-	// Pass 1 — structural match + backfill template_name/template_hash and
-	// end-node completionActions.
+	// Pass 1 — structural match + backfill template_name/template_hash.
 	// -----------------------------------------------------------------------
 	for (const row of workflowRows) {
 		const known = templatesByName.get(row.name);
@@ -512,27 +442,6 @@ export function runMigration94(db: BunDatabase): void {
 			updateWorkflow.run(nextTemplateName, nextTemplateHash, row.id);
 			row.template_name = nextTemplateName;
 			row.template_hash = nextTemplateHash;
-		}
-
-		// ----- Backfill end-node completionActions -----
-		if (known.tpl.endNodeCompletionActions && known.tpl.endNodeCompletionActions.length > 0) {
-			// Prefer end_node_id when set; otherwise fall back to node matched
-			// by endNodeName.
-			const endNode =
-				nodeRows.find((n) => n.id === row.end_node_id) ??
-				nodeRows.find((n) => n.name === known.tpl.endNodeName);
-			if (endNode) {
-				const cfg = parseJson<NodeConfigJson>(endNode.config, {});
-				const existing = cfg.completionActions ?? [];
-				// Only inject if missing — preserve any custom actions the user
-				// may have added.
-				const hasMergePr = existing.some((a) => a?.id === 'merge-pr');
-				if (!hasMergePr) {
-					const newActions = [...existing, ...known.tpl.endNodeCompletionActions];
-					const newCfg: NodeConfigJson = { ...cfg, completionActions: newActions };
-					updateNodeConfig.run(JSON.stringify(newCfg), endNode.id);
-				}
-			}
 		}
 	}
 

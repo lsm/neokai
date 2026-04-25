@@ -152,17 +152,4 @@ describe('Autonomy level vs review status (SpaceTask concept)', () => {
 		// The run status machine has no 'review' state
 		expect(Object.keys(VALID_TRANSITIONS)).not.toContain(reviewStatus);
 	});
-
-	test('completion action requiredLevel threshold controls review vs immediate execution', () => {
-		// A completion action with requiredLevel=4 requires spaceLevel >= 4 to auto-execute
-		// Otherwise the task pauses at 'review' with pendingCheckpointType='completion_action'
-		const requiredLevel = 4;
-		function wouldAutoExecute(spaceLevel: number): boolean {
-			return spaceLevel >= requiredLevel;
-		}
-		expect(wouldAutoExecute(4)).toBe(true); // at threshold — auto
-		expect(wouldAutoExecute(5)).toBe(true); // above threshold — auto
-		expect(wouldAutoExecute(3)).toBe(false); // below threshold → task goes to review
-		expect(wouldAutoExecute(1)).toBe(false); // supervised → always review
-	});
 });

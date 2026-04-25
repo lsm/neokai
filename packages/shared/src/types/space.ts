@@ -282,17 +282,11 @@ export interface SpaceTask {
 	/** Timestamp when approval occurred (milliseconds since epoch); null until approved */
 	approvedAt: number | null;
 	/**
-	 * Index into the workflow node's `completionActions[]` for the action currently awaiting
-	 * human approval. Null when not paused at a completion action.
-	 */
-	pendingActionIndex: number | null;
-	/**
 	 * Type of checkpoint the task is currently paused at. Null when not paused.
-	 * - `completion_action`: paused at a node completion action
 	 * - `gate`: paused at a gate requiring human approval
 	 * - `task_completion`: paused awaiting human approval of a submit_for_approval request
 	 */
-	pendingCheckpointType: 'completion_action' | 'gate' | 'task_completion' | null;
+	pendingCheckpointType: 'gate' | 'task_completion' | null;
 	/**
 	 * Node ID of the end-node agent that called `submit_for_approval`. Set when the
 	 * task enters `review` status via that tool; cleared on approve/reject.
@@ -308,36 +302,11 @@ export interface SpaceTask {
 	 */
 	pendingCompletionReason?: string | null;
 	/**
-	 * Metadata for the completion action the task is currently paused at, derived from
-	 * `workflow.endNode.completionActions[pendingActionIndex]` at read time.
-	 *
-	 * Populated by read-path enrichers (e.g. `get_task_detail`, `list_tasks`) so UIs can
-	 * render a review/approval banner without fetching workflow detail. Null when the
-	 * task is not paused at a completion action, or when the workflow can't be resolved.
-	 *
-	 * NOT persisted in the database. NOT included in every `SpaceTask` instance —
-	 * callers that load tasks straight from the repo will see `undefined` here.
-	 * Script bodies, instruction prompts, and MCP tool args are intentionally omitted;
-	 * consumers fetch the workflow definition directly if they need those.
-	 */
-	pendingAction?: {
-		/** Unique identifier within the node's completion actions */
-		id: string;
-		/** Human-readable name (shown in approval UI) */
-		name: string;
-		/** Human-readable description if defined on the action */
-		description?: string;
-		/** Discriminator for the action's execution type */
-		type: 'script' | 'instruction' | 'mcp_call';
-		/** Minimum space autonomy level required to auto-execute this action */
-		requiredLevel: SpaceAutonomyLevel;
-	} | null;
-	/**
 	 * Status the end-node agent reported via `report_result`. Null until the agent
 	 * reports. Recorded separately from `status` so the runtime can resolve the
-	 * final task status through completion-actions review (supervised modes) without
-	 * the agent bypassing the gate. Once recorded, this field is preserved for audit
-	 * even after `status` reaches a terminal value.
+	 * final task status through the `submit_for_approval` review path (supervised
+	 * modes) without the agent bypassing the gate. Once recorded, this field is
+	 * preserved for audit even after `status` reaches a terminal value.
 	 */
 	reportedStatus: SpaceReportedStatus | null;
 	/**
@@ -488,16 +457,14 @@ export interface UpdateSpaceTaskParams {
 	 * Optional cancellation/rejection reason. Stored into the same underlying
 	 * `approval_reason` column as `approvalReason`, but semantically paired with
 	 * transitions that abort work (e.g. review → cancelled, or rejecting a
-	 * paused completion action). When both are provided, the runtime picks the
-	 * one that matches the transition direction.
+	 * `submit_for_approval` request). When both are provided, the runtime picks
+	 * the one that matches the transition direction.
 	 */
 	cancelReason?: string | null;
 	/** Timestamp when approval occurred; null to clear */
 	approvedAt?: number | null;
-	/** Index of the completion action awaiting approval; null to clear */
-	pendingActionIndex?: number | null;
 	/** Type of checkpoint the task is paused at; null to clear */
-	pendingCheckpointType?: 'completion_action' | 'gate' | 'task_completion' | null;
+	pendingCheckpointType?: 'gate' | 'task_completion' | null;
 	/**
 	 * Node ID of the agent that called `submit_for_approval`; null to clear.
 	 * See `SpaceTask.pendingCompletionSubmittedByNodeId`.
@@ -677,15 +644,6 @@ export interface SpaceWorkflowRun {
 	updatedAt: number;
 	/** Completion timestamp (milliseconds since epoch); null until the run reaches a terminal state */
 	completedAt: number | null;
-	/**
-	 * Timestamp (milliseconds since epoch) at which the run's end-node
-	 * `completionActions` have been successfully fired. Used as an idempotency
-	 * marker so that a run which is reopened (done → in_progress) and later
-	 * completes again does not re-fire its completion actions.
-	 *
-	 * Null until the first successful completion. Never cleared on reopen.
-	 */
-	completionActionsFiredAt: number | null;
 }
 
 /**
@@ -1071,12 +1029,6 @@ export interface WorkflowNode {
 	 * Must be non-empty. Each agent runs concurrently; the node completes when all agents complete.
 	 */
 	agents: WorkflowNodeAgent[];
-	/**
-	 * Actions to execute after this node's task is approved (or auto-approved).
-	 * Executed in definition order. Each action has a `requiredLevel` that determines
-	 * whether it auto-executes or pauses for human approval.
-	 */
-	completionActions?: CompletionAction[];
 }
 
 /**
@@ -1093,8 +1045,6 @@ export interface WorkflowNodeInput {
 	 * Agents for parallel execution within this node. Must be non-empty.
 	 */
 	agents: WorkflowNodeAgent[];
-	/** Completion actions to execute after this node's task is approved. */
-	completionActions?: CompletionAction[];
 }
 
 /**
@@ -1567,91 +1517,6 @@ export interface WorkflowRunArtifact {
 	data: Record<string, unknown>;
 	createdAt: number;
 	updatedAt: number;
-}
-
-// ── Completion Actions ────────────────────────────────────────────────────
-
-/**
- * A completion action runs after a workflow node's task is approved.
- * Actions execute in definition order. Each has a `requiredLevel` —
- * if `space.autonomyLevel >= requiredLevel`, it auto-executes;
- * otherwise, the pipeline pauses for human sign-off.
- */
-export type CompletionAction =
-	| ScriptCompletionAction
-	| InstructionCompletionAction
-	| McpCallCompletionAction;
-
-interface CompletionActionBase {
-	/** Unique identifier within the node's completion actions */
-	id: string;
-	/** Human-readable name (shown in approval UI) */
-	name: string;
-	/** Human-readable description of what the action does (shown alongside the name in approval UI) */
-	description?: string;
-	/** Minimum space autonomy level required to auto-execute this action */
-	requiredLevel: SpaceAutonomyLevel;
-	/** Which artifact type to resolve as context for this action */
-	artifactType?: ArtifactType;
-	/** Specific artifact key, or undefined to use all artifacts of the type */
-	artifactKey?: string;
-}
-
-/** Deterministic bash script — artifact data injected as environment variables */
-export interface ScriptCompletionAction extends CompletionActionBase {
-	type: 'script';
-	/** Shell script to execute */
-	script: string;
-}
-
-/** Agent instruction — spawns a short-lived SpaceAgent session to verify an outcome */
-export interface InstructionCompletionAction extends CompletionActionBase {
-	type: 'instruction';
-	/**
-	 * Name of the SpaceAgent that should execute the instruction. The runtime
-	 * spawns an ephemeral session bound to this agent, injects a
-	 * `report_verification` tool, and awaits its response.
-	 */
-	agentName: string;
-	/** Prompt text — supports `{{artifact.field}}` template interpolation */
-	instruction: string;
-	/**
-	 * Maximum time to wait for the spawned agent to call
-	 * `report_verification`. Defaults to 120000ms (2 minutes).
-	 */
-	timeoutMs?: number;
-}
-
-/** Direct MCP tool invocation — no agent reasoning needed */
-export interface McpCallCompletionAction extends CompletionActionBase {
-	type: 'mcp_call';
-	/** MCP server id (must be enabled in the space's skills config) */
-	server: string;
-	/** Tool name on the MCP server */
-	tool: string;
-	/** Tool arguments — values support `{{artifact.field}}` template interpolation */
-	args: Record<string, string>;
-	/**
-	 * Optional assertion applied to the tool result. The runtime extracts the
-	 * value at `path` from the result object and compares it via `op` to
-	 * `value`. If the assertion fails, the action fails.
-	 */
-	expect?: McpCallExpectation;
-}
-
-/**
- * Assertion applied to the JSON result of an `mcp_call` completion action.
- *
- * `path` uses a dot/bracket accessor syntax (e.g. `data.items[0].status`).
- * Empty path matches the whole result.
- */
-export interface McpCallExpectation {
-	/** Dot/bracket accessor path into the tool result (e.g. `status`, `data.items[0].ok`). */
-	path: string;
-	/** Comparison operator. */
-	op: 'eq' | 'neq' | 'contains' | 'exists' | 'truthy';
-	/** Right-hand side. Required for `eq`/`neq`/`contains`, ignored for `exists`/`truthy`. */
-	value?: unknown;
 }
 
 // ── Approval Records ──────────────────────────────────────────────────────

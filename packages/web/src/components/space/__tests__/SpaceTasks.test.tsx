@@ -438,7 +438,6 @@ describe('SpaceTasks', () => {
 		it('shows chip with count when at least one task is paused at a submit_for_approval checkpoint', () => {
 			mockTasks.value = [
 				makeTask('t1', 'review', {
-					pendingActionIndex: 0,
 					pendingCheckpointType: 'task_completion',
 				}),
 				makeTask('t2', 'review'),
@@ -453,7 +452,6 @@ describe('SpaceTasks', () => {
 		it('filters the list to awaiting-approval tasks only when toggled on', () => {
 			mockTasks.value = [
 				makeTask('t1', 'review', {
-					pendingActionIndex: 0,
 					pendingCheckpointType: 'task_completion',
 				}),
 				makeTask('t2', 'review'),

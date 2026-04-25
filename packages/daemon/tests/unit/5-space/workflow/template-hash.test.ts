@@ -152,36 +152,6 @@ describe('buildWorkflowFingerprint', () => {
 		expect(fp.nodePrompts[0]).toBe('Coder|coder|');
 	});
 
-	it('returns sorted completionActions for each node action', () => {
-		const wf = makeWorkflow({
-			nodes: [
-				{
-					id: 'n1',
-					name: 'Coder',
-					agents: [{ agentId: 'a1', name: 'coder' }],
-					completionActions: [
-						{
-							id: 'merge-pr',
-							name: 'Merge PR',
-							type: 'script',
-							requiredLevel: 4,
-							script: 'gh pr merge',
-						},
-					],
-				},
-			],
-		});
-		const fp = buildWorkflowFingerprint(wf);
-		expect(fp.completionActions).toHaveLength(1);
-		expect(fp.completionActions[0]).toBe('Coder|merge-pr|script|4|gh pr merge');
-	});
-
-	it('returns empty completionActions when no node has completion actions', () => {
-		const wf = makeWorkflow();
-		const fp = buildWorkflowFingerprint(wf);
-		expect(fp.completionActions).toEqual([]);
-	});
-
 	it('includes completionAutonomyLevel in fingerprint', () => {
 		const wf = makeWorkflow({ completionAutonomyLevel: 5 });
 		const fp = buildWorkflowFingerprint(wf);
@@ -429,72 +399,6 @@ describe('computeWorkflowHash', () => {
 					id: 'n1',
 					name: 'Coder',
 					agents: [{ agentId: 'a1', name: 'coder', customPrompt: { value: 'New prompt' } }],
-				},
-			],
-		});
-		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
-	});
-
-	it('DOES change when a node completionAction is added', () => {
-		const wf1 = makeWorkflow({
-			nodes: [{ id: 'n1', name: 'Coder', agents: [{ agentId: 'a1', name: 'coder' }] }],
-		});
-		const wf2 = makeWorkflow({
-			nodes: [
-				{
-					id: 'n1',
-					name: 'Coder',
-					agents: [{ agentId: 'a1', name: 'coder' }],
-					completionActions: [
-						{
-							id: 'merge-pr',
-							name: 'Merge PR',
-							type: 'script',
-							requiredLevel: 4,
-							script: 'gh pr merge',
-						},
-					],
-				},
-			],
-		});
-		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
-	});
-
-	it('DOES change when a node completionAction script changes', () => {
-		const base = {
-			id: 'n1',
-			name: 'Coder',
-			agents: [{ agentId: 'a1', name: 'coder' }],
-		};
-		const wf1 = makeWorkflow({
-			nodes: [
-				{
-					...base,
-					completionActions: [
-						{
-							id: 'merge-pr',
-							name: 'Merge PR',
-							type: 'script' as const,
-							requiredLevel: 4 as const,
-							script: 'gh pr merge --squash',
-						},
-					],
-				},
-			],
-		});
-		const wf2 = makeWorkflow({
-			nodes: [
-				{
-					...base,
-					completionActions: [
-						{
-							id: 'merge-pr',
-							name: 'Merge PR',
-							type: 'script' as const,
-							requiredLevel: 4 as const,
-							script: 'gh pr merge --merge',
-						},
-					],
 				},
 			],
 		});

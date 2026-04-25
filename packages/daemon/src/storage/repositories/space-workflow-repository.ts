@@ -21,13 +21,15 @@ import type {
 	WorkflowNode,
 	WorkflowNodeInput,
 	WorkflowNodeAgent,
-	CompletionAction,
 	WorkflowChannel,
 	Gate,
 	CreateSpaceWorkflowParams,
 	PostApprovalRoute,
 	UpdateSpaceWorkflowParams,
 } from '@neokai/shared';
+import { Logger } from '../../lib/logger';
+
+const log = new Logger('space-workflow-repository');
 
 // ---------------------------------------------------------------------------
 // Internal DB row shapes
@@ -72,8 +74,16 @@ interface NodeRow {
 interface NodeConfigJson {
 	/** Multi-agent array */
 	agents?: WorkflowNodeAgent[];
-	/** Completion actions for end-node post-completion execution */
-	completionActions?: CompletionAction[];
+	/**
+	 * Forward-compat: rows persisted before PR 5/5 of the
+	 * task-agent-as-post-approval-executor refactor may carry a legacy
+	 * post-approval action list under this key. The runtime no longer reads it;
+	 * `rowToNode` strips it on load and logs a warning so the row can be
+	 * re-saved cleanly the next time the workflow is updated. The field is
+	 * intentionally untyped (`unknown`) because the action union has been
+	 * deleted from `@neokai/shared`.
+	 */
+	completionActions?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,7 +99,17 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
 	}
 }
 
-function rowToNode(row: NodeRow): WorkflowNode {
+/**
+ * Per-load migration accumulator. `rowToNode` pushes the names of any
+ * deprecated fields it strips into `strippedFields` so the caller can emit a
+ * single workflow-level `workflow.migrated` structured log line covering every
+ * stripped field across all nodes — instead of a noisy per-node warning.
+ */
+interface NodeMigrationContext {
+	strippedFields: Set<string>;
+}
+
+function rowToNode(row: NodeRow, ctx?: NodeMigrationContext): WorkflowNode {
 	const cfg = parseJson<NodeConfigJson>(row.config, {});
 	// Ensure agents is always a non-empty array
 	const agents: WorkflowNodeAgent[] =
@@ -101,13 +121,21 @@ function rowToNode(row: NodeRow): WorkflowNode {
 				}))
 			: [];
 
+	// Forward-compat: drop the deprecated `completionActions` key without
+	// failing the load. Older rows persisted before PR 5/5 of the
+	// task-agent-as-post-approval-executor refactor still carry it. The
+	// runtime no longer routes through it — the workflow's `postApproval`
+	// route is the supported replacement. We do NOT log here per-node; the
+	// caller aggregates stripped fields and emits a single structured
+	// `workflow.migrated` log line per workflow load. See plan §6.1.
+	if (cfg.completionActions !== undefined && ctx) {
+		ctx.strippedFields.add('completionActions');
+	}
+
 	return {
 		id: row.id,
 		name: row.name,
 		agents,
-		...(cfg.completionActions && cfg.completionActions.length > 0
-			? { completionActions: cfg.completionActions }
-			: {}),
 	};
 }
 
@@ -226,7 +254,9 @@ export class SpaceWorkflowRepository {
 			| WorkflowRow
 			| undefined;
 		if (!row) return null;
-		const nodes = this.fetchNodes(id);
+		const ctx: NodeMigrationContext = { strippedFields: new Set<string>() };
+		const nodes = this.fetchNodes(id, ctx);
+		this.emitMigrationLog(row, ctx);
 		return rowToWorkflow(row, nodes);
 	}
 
@@ -236,7 +266,31 @@ export class SpaceWorkflowRepository {
 				`SELECT * FROM space_workflows WHERE space_id = ? ORDER BY created_at ASC, rowid ASC`
 			)
 			.all(spaceId) as WorkflowRow[];
-		return rows.map((r) => rowToWorkflow(r, this.fetchNodes(r.id)));
+		return rows.map((r) => {
+			const ctx: NodeMigrationContext = { strippedFields: new Set<string>() };
+			const nodes = this.fetchNodes(r.id, ctx);
+			this.emitMigrationLog(r, ctx);
+			return rowToWorkflow(r, nodes);
+		});
+	}
+
+	/**
+	 * Emit the structured `workflow.migrated` log line when a load stripped
+	 * deprecated fields. Format is fixed by plan §6.1 so operators / log
+	 * aggregators can grep / parse it reliably:
+	 *
+	 *   `workflow.migrated: workflowId=<id> workflowName=<name> strippedFields=[<csv>]`
+	 *
+	 * The DB row is intentionally NOT rewritten — re-saving the workflow via
+	 * the editor is the documented way to clear persisted legacy fields.
+	 */
+	private emitMigrationLog(row: WorkflowRow, ctx: NodeMigrationContext): void {
+		if (ctx.strippedFields.size === 0) return;
+		const stripped = [...ctx.strippedFields].sort().join(',');
+		log.warn(
+			`workflow.migrated: workflowId=${row.id} workflowName=${row.name} ` +
+				`strippedFields=[${stripped}]`
+		);
 	}
 
 	// -------------------------------------------------------------------------
@@ -376,11 +430,11 @@ export class SpaceWorkflowRepository {
 	// Private helpers
 	// -------------------------------------------------------------------------
 
-	private fetchNodes(workflowId: string): WorkflowNode[] {
+	private fetchNodes(workflowId: string, ctx?: NodeMigrationContext): WorkflowNode[] {
 		const rows = this.db
 			.prepare(`SELECT * FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`)
 			.all(workflowId) as NodeRow[];
-		return rows.map(rowToNode);
+		return rows.map((r) => rowToNode(r, ctx));
 	}
 
 	private insertNode(
@@ -403,9 +457,6 @@ export class SpaceWorkflowRepository {
 		}
 		if (resolvedAgents && resolvedAgents.length > 0) {
 			nodeCfg.agents = resolvedAgents;
-		}
-		if (input.completionActions && input.completionActions.length > 0) {
-			nodeCfg.completionActions = input.completionActions;
 		}
 
 		this.db

@@ -15,9 +15,10 @@
  * Compact design: shows a single status line inline; full details and
  * confirmation are shown in modals opened by the Approve / Send back buttons.
  *
- * The legacy `completion_action` checkpoint pipeline (and its dedicated
- * `PendingCompletionActionBanner`) was removed in PR 4/5 — post-approval work
- * now runs through `PostApprovalRouter` instead. See
+ * The legacy completion-action checkpoint pipeline (and its dedicated banner)
+ * was removed in PR 4/5 — post-approval work now runs through
+ * `PostApprovalRouter` instead. PR 5/5 followed up by dropping the
+ * `'completion_action'` value from `pendingCheckpointType` entirely. See
  * `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`.
  */
 

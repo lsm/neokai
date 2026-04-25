@@ -18,7 +18,7 @@
  *   - Review-Only intentionally does NOT declare `postApproval` (no PR to
  *     merge) and its prompt no longer carries the "runtime verifies" boilerplate.
  *
- *   - Plan & Decompose is unchanged: it closes on its own `completionActions`
+ *   - Plan & Decompose is unchanged: it closes on its own end-node directive
  *     (verify-tasks-created) and has no `postApproval` route.
  *
  * These tests protect against silent regressions where someone edits an end-
@@ -199,8 +199,9 @@ describe('Review-Only end-node prompt loses verification boilerplate', () => {
 		const prompt = endNodePrompt(REVIEW_ONLY_WORKFLOW);
 		// The old trailing "; the runtime verifies at least one review/comment
 		// exists before accepting completion" sentence was removed — the
-		// completionAction (VERIFY_REVIEW_POSTED_COMPLETION_ACTION) still does
-		// that check, but the prompt no longer duplicates the claim.
+		// agent prompt no longer duplicates the claim. PR 4/5 removed the
+		// runtime verification action and PR 5/5 deleted the schema, so the
+		// review check now lives entirely in agent guidance.
 		expect(prompt).not.toContain('runtime verifies');
 		expect(prompt).not.toContain('before accepting completion');
 	});
