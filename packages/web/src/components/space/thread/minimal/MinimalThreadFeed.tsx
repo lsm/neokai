@@ -516,8 +516,10 @@ function RosterEntry({ entry, isLatest }: { entry: ToolCallEntry; isLatest: bool
  * synthetic bubble's `bg-dark-900`) differentiates "agent's own reply" from
  * "synthetic handoff" without competing with the human bubble's blue.
  *
- * `w-fit` lets short replies hug their content; `max-w-[85%] md:max-w-[70%]`
- * caps the width on long replies so they don't fill the column.
+ * `w-fit` lets short replies hug their content. On mobile we let long replies
+ * fill the full inner column (avatar + gap already eat ~48px on the left, so
+ * a further 15% cap would leave a too-narrow bubble); on desktop we cap at
+ * 70% so long markdown blocks stay readable instead of stretching edge-to-edge.
  */
 function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
 	const openSession = turn.sessionId
@@ -528,7 +530,7 @@ function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
 			}
 		: undefined;
 	return (
-		<div class="mt-1.5 w-fit max-w-[85%] md:max-w-[70%]">
+		<div class="mt-1.5 w-fit max-w-full md:max-w-[70%]">
 			<div
 				class="bg-dark-800 border border-dark-700 rounded-lg px-3 py-2"
 				data-testid="minimal-thread-agent-bubble"
