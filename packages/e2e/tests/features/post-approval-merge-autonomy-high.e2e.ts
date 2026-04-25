@@ -56,8 +56,7 @@ test.describe
 			// 4. Drive the workflow through its gates by short-circuiting the
 			//    Coder + Reviewer agents via the LLM mock: the Reviewer's
 			//    scripted tool calls must include save_artifact({ prUrl }),
-			//    send_message(task-agent, data:{ pr_url, post_approval_action: 'merge_pr' }),
-			//    approve_task().
+			//    send_message(task-agent, data:{ pr_url }), approve_task().
 			// 5. Assert: task transitions `in_progress → approved`.
 			// 6. Assert: PostApprovalRouter spawns a reviewer session; the mock
 			//    `gh pr merge --squash` runs; the session calls `mark_complete`.
