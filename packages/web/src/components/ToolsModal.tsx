@@ -235,9 +235,11 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	// Load current config and MCP servers when modal opens
 	useEffect(() => {
 		if (isOpen && session) {
+			// `loadConfig` is sync; the rest are async fire-and-forget — `void`
+			// keeps the floating-promise lint rule happy and signals intent.
 			loadConfig();
-			loadGlobalConfig();
-			loadRuntimeMcpServers();
+			void loadGlobalConfig();
+			void loadRuntimeMcpServers();
 			void loadSessionMcpEntries();
 			void skillsStore.subscribe().catch(() => {
 				toast.error('Failed to load App MCP Servers');
@@ -501,8 +503,10 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 			}
 
 			// 2. Persist session config changes (skills + advanced) via tools.save.
-			//    The handler restarts the SDK query so the new disabledSkills
-			//    set takes effect immediately for the next message.
+			//    `tools.save` updates `session.config` in-memory + DB and emits
+			//    `session.updated`; it does not restart the SDK query directly.
+			//    `QueryOptionsBuilder.build()` runs fresh on every message, so the
+			//    new `disabledSkills` set takes effect on the next user message.
 			const toolsConfig: ToolsConfig = {
 				...session.config.tools,
 				useClaudeCodePreset: useClaudeCodePreset.value,

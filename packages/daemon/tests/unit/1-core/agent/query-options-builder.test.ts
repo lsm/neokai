@@ -1698,6 +1698,19 @@ describe('QueryOptionsBuilder', () => {
 			createdAt: Date.now(),
 		};
 
+		const builtinSkill = {
+			id: 'skill-builtin-session-1',
+			name: 'session-builtin',
+			displayName: 'Session Builtin',
+			description: 'Builtin skill used in session disable tests',
+			sourceType: 'builtin' as const,
+			config: { type: 'builtin' as const, commandName: 'session-builtin' },
+			enabled: true,
+			builtIn: true,
+			validationStatus: 'valid' as const,
+			createdAt: Date.now(),
+		};
+
 		const mockSessionMcpServer = {
 			id: 'mcp-session-uuid',
 			name: 'session-mcp-server',
@@ -1722,6 +1735,28 @@ describe('QueryOptionsBuilder', () => {
 			const options = await builder.build();
 
 			// Session disable wins — plugin must not be injected.
+			expect(options.plugins).toBeUndefined();
+		});
+
+		it('excludes a builtin skill listed in tools.disabledSkills', async () => {
+			// Regression guard: `buildPluginsFromBuiltinSkills` must honour the
+			// session disable list the same way the plugin and mcp_server paths do.
+			// Without this filter, a session-disabled builtin would still show up
+			// as a `/<commandName>` slash command for that session.
+			mockSession.config.tools = { disabledSkills: [builtinSkill.id] };
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [builtinSkill]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			// Builtin skill is filtered — no plugin entry materialises for it.
 			expect(options.plugins).toBeUndefined();
 		});
 
