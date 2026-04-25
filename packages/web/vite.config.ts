@@ -1,7 +1,7 @@
-import { defineConfig } from 'vite';
 import preact from '@preact/preset-vite';
 import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'path';
+import { defineConfig } from 'vite';
 
 export default defineConfig({
 	plugins: [preact(), tailwindcss()],
@@ -16,6 +16,7 @@ export default defineConfig({
 		rollupOptions: {
 			input: {
 				main: resolve(__dirname, 'src/index.html'),
+				devMinimalThread: resolve(__dirname, 'src/dev-minimal-thread.html'),
 			},
 			output: {
 				manualChunks(id) {
