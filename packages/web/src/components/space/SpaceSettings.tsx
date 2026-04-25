@@ -19,6 +19,7 @@ import { Button } from '../ui/Button.tsx';
 import { AUTONOMY_LEVELS } from '../../lib/space-constants.ts';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary.tsx';
 import { SpaceMcpSettings } from './SpaceMcpSettings.tsx';
+import { SpaceAutomationPanel } from './SpaceAutomationPanel.tsx';
 
 interface SpaceSettingsProps {
 	space: Space;
@@ -320,6 +321,8 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 
 				{/* MCP Servers — per-space overrides for the application MCP registry. */}
 				<SpaceMcpSettings spaceId={space.id} disabled={saving} />
+
+				<SpaceAutomationPanel spaceId={space.id} workflows={spaceStore.workflows.value} />
 
 				{/* Export section */}
 				<section class="space-y-3">

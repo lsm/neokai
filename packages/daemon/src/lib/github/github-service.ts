@@ -196,6 +196,40 @@ export class GitHubService {
 		log.info('GitHub service started');
 	}
 
+	async getPullRequestStatus(
+		repository: string,
+		prNumber: number
+	): Promise<{
+		state: 'open' | 'closed' | 'merged';
+		draft: boolean;
+		headSha: string | null;
+	}> {
+		if (!this.githubToken) {
+			throw new Error('GitHub token is not configured');
+		}
+		const response = await fetch(`https://api.github.com/repos/${repository}/pulls/${prNumber}`, {
+			headers: {
+				Accept: 'application/vnd.github+json',
+				Authorization: `Bearer ${this.githubToken}`,
+				'X-GitHub-Api-Version': '2022-11-28',
+			},
+		});
+		if (!response.ok) {
+			throw new Error(`GitHub PR status request failed: ${response.status} ${response.statusText}`);
+		}
+		const payload = (await response.json()) as {
+			state?: string;
+			merged?: boolean;
+			draft?: boolean;
+			head?: { sha?: string };
+		};
+		return {
+			state: payload.merged ? 'merged' : payload.state === 'closed' ? 'closed' : 'open',
+			draft: payload.draft ?? false,
+			headSha: payload.head?.sha ?? null,
+		};
+	}
+
 	/**
 	 * Stop the GitHub service
 	 */

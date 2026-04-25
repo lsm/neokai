@@ -44,6 +44,7 @@ import { SkillRepository } from './repositories/skill-repository';
 import { RoomSkillOverrideRepository } from './repositories/room-skill-override-repository';
 import { NeoActivityLogRepository } from './repositories/neo-activity-log-repository';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository';
+import { AutomationRepository } from './repositories/automation-repository';
 import type { ReactiveDatabase } from './reactive-database';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
@@ -79,6 +80,7 @@ export type {
 } from './repositories/neo-activity-log-repository';
 export { WorkspaceHistoryRepository } from './repositories/workspace-history-repository';
 export type { WorkspaceHistoryRow } from './repositories/workspace-history-repository';
+export { AutomationRepository } from './repositories/automation-repository';
 
 /**
  * Database facade class that maintains backward compatibility with the original Database class.
@@ -103,6 +105,7 @@ export class Database {
 	private roomSkillOverrideRepo!: RoomSkillOverrideRepository;
 	private neoActivityLogRepo!: NeoActivityLogRepository;
 	private workspaceHistoryRepo!: WorkspaceHistoryRepository;
+	private automationRepo!: AutomationRepository;
 	private shortIdAllocator!: ShortIdAllocator;
 
 	constructor(dbPath: string) {
@@ -131,6 +134,7 @@ export class Database {
 		this.roomSkillOverrideRepo = new RoomSkillOverrideRepository(db, reactiveDb);
 		this.neoActivityLogRepo = new NeoActivityLogRepository(db);
 		this.workspaceHistoryRepo = new WorkspaceHistoryRepository(db);
+		this.automationRepo = new AutomationRepository(db, reactiveDb);
 	}
 
 	// ============================================================================
@@ -549,6 +553,10 @@ export class Database {
 	 */
 	get workspaceHistory(): WorkspaceHistoryRepository {
 		return this.workspaceHistoryRepo;
+	}
+
+	get automation(): AutomationRepository {
+		return this.automationRepo;
 	}
 
 	close(): void {

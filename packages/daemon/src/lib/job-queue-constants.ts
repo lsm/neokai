@@ -8,6 +8,8 @@ export const GITHUB_POLL = 'github.poll';
 export const ROOM_TICK = 'room.tick';
 export const JOB_QUEUE_CLEANUP = 'job_queue.cleanup';
 export const SKILL_VALIDATE = 'skill.validate';
+export const AUTOMATION_DISPATCH = 'automation.dispatch';
+export const AUTOMATION_SWEEP = 'automation.sweep';
 
 // ─── Space workflow run artifact sync queues ──────────────────────────────────
 // Background jobs that populate the workflow_run_artifact_cache table with

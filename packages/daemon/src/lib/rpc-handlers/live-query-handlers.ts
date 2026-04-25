@@ -89,6 +89,29 @@ function mapGoalRow(row: Record<string, unknown>): Record<string, unknown> {
 	};
 }
 
+function mapAutomationTaskRow(row: Record<string, unknown>): Record<string, unknown> {
+	return {
+		...row,
+		triggerConfig: parseJson<Record<string, unknown>>(
+			(row.triggerConfig as string | null) ?? '{}',
+			{}
+		),
+		targetConfig: parseJson<Record<string, unknown>>(
+			(row.targetConfig as string | null) ?? '{}',
+			{}
+		),
+		conditionConfig: parseJsonOptional(row.conditionConfig as string | null) ?? null,
+		lastConditionResult: parseJsonOptional(row.lastConditionResult as string | null) ?? null,
+	};
+}
+
+function mapAutomationRunRow(row: Record<string, unknown>): Record<string, unknown> {
+	return {
+		...row,
+		metadata: parseJsonOptional(row.metadata as string | null) ?? null,
+	};
+}
+
 /**
  * Map canonical task timeline rows into the SessionGroupMessage shape expected by the web client.
  * For SDK rows, inject `_taskMeta` directly into JSON content so TaskConversationRenderer can
@@ -309,6 +332,96 @@ SELECT
 FROM goals
 WHERE room_id = ?
 ORDER BY priority DESC, created_at ASC, id ASC
+`.trim();
+
+const AUTOMATIONS_BY_OWNER_SQL = `
+SELECT
+  id,
+  owner_type              AS ownerType,
+  owner_id                AS ownerId,
+  title,
+  description,
+  status,
+  trigger_type            AS triggerType,
+  trigger_config          AS triggerConfig,
+  target_type             AS targetType,
+  target_config           AS targetConfig,
+  condition_config        AS conditionConfig,
+  concurrency_policy      AS concurrencyPolicy,
+  notify_policy           AS notifyPolicy,
+  max_retries             AS maxRetries,
+  timeout_ms              AS timeoutMs,
+  next_run_at             AS nextRunAt,
+  last_run_at             AS lastRunAt,
+  last_checked_at         AS lastCheckedAt,
+  last_condition_result   AS lastConditionResult,
+  condition_failure_count AS conditionFailureCount,
+  created_at              AS createdAt,
+  updated_at              AS updatedAt,
+  archived_at             AS archivedAt
+FROM automation_tasks
+WHERE owner_type = ?1 AND ((?2 IS NULL AND owner_id IS NULL) OR owner_id = ?2) AND status != 'archived'
+ORDER BY updated_at DESC, created_at DESC, id DESC
+`.trim();
+
+const AUTOMATION_RUNS_BY_AUTOMATION_SQL = `
+SELECT
+  id,
+  automation_task_id      AS automationTaskId,
+  owner_type              AS ownerType,
+  owner_id                AS ownerId,
+  status,
+  trigger_type            AS triggerType,
+  trigger_reason          AS triggerReason,
+  job_id                  AS jobId,
+  room_task_id            AS roomTaskId,
+  room_goal_id            AS roomGoalId,
+  mission_execution_id    AS missionExecutionId,
+  space_task_id           AS spaceTaskId,
+  space_workflow_run_id   AS spaceWorkflowRunId,
+  session_id              AS sessionId,
+  attempt,
+  started_at              AS startedAt,
+  completed_at            AS completedAt,
+  result_summary          AS resultSummary,
+  error,
+  metadata,
+  created_at              AS createdAt,
+  updated_at              AS updatedAt
+FROM automation_runs
+WHERE automation_task_id = ?
+ORDER BY created_at DESC, id DESC
+LIMIT ?
+`.trim();
+
+const AUTOMATION_RUNS_ACTIVE_BY_OWNER_SQL = `
+SELECT
+  id,
+  automation_task_id      AS automationTaskId,
+  owner_type              AS ownerType,
+  owner_id                AS ownerId,
+  status,
+  trigger_type            AS triggerType,
+  trigger_reason          AS triggerReason,
+  job_id                  AS jobId,
+  room_task_id            AS roomTaskId,
+  room_goal_id            AS roomGoalId,
+  mission_execution_id    AS missionExecutionId,
+  space_task_id           AS spaceTaskId,
+  space_workflow_run_id   AS spaceWorkflowRunId,
+  session_id              AS sessionId,
+  attempt,
+  started_at              AS startedAt,
+  completed_at            AS completedAt,
+  result_summary          AS resultSummary,
+  error,
+  metadata,
+  created_at              AS createdAt,
+  updated_at              AS updatedAt
+FROM automation_runs
+WHERE owner_type = ?1 AND ((?2 IS NULL AND owner_id IS NULL) OR owner_id = ?2)
+  AND status IN ('queued', 'running')
+ORDER BY updated_at DESC, created_at DESC, id DESC
 `.trim();
 
 const MCP_SERVERS_GLOBAL_SQL = `
@@ -1344,6 +1457,30 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			sql: GOALS_BY_ROOM_SQL,
 			paramCount: 1,
 			mapRow: mapGoalRow,
+		},
+	],
+	[
+		'automations.byOwner',
+		{
+			sql: AUTOMATIONS_BY_OWNER_SQL,
+			paramCount: 2,
+			mapRow: mapAutomationTaskRow,
+		},
+	],
+	[
+		'automationRuns.byAutomation',
+		{
+			sql: AUTOMATION_RUNS_BY_AUTOMATION_SQL,
+			paramCount: 2,
+			mapRow: mapAutomationRunRow,
+		},
+	],
+	[
+		'automationRuns.activeByOwner',
+		{
+			sql: AUTOMATION_RUNS_ACTIVE_BY_OWNER_SQL,
+			paramCount: 2,
+			mapRow: mapAutomationRunRow,
 		},
 	],
 	[

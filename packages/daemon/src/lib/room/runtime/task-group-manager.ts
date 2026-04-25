@@ -13,6 +13,9 @@
 
 import { generateUUID } from '@neokai/shared';
 import type { Room, RoomGoal, NeoTask, MessageDeliveryMode, MessageOrigin } from '@neokai/shared';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { AgentSessionInit } from '../../agent/agent-session';
 import { Logger } from '../../logger';
 import type {
@@ -36,6 +39,13 @@ import type { LeaderAgentConfig, ReviewContext } from '../agents/leader-agent';
  */
 const log = new Logger('task-group-manager');
 
+type TaskGitMetadata = {
+	metadata?: {
+		requiresGit?: boolean;
+		requiresGitWorkspace?: boolean;
+	};
+};
+
 function taskTitleToBranchName(title: string): string | undefined {
 	const slug = title
 		.toLowerCase()
@@ -45,6 +55,23 @@ function taskTitleToBranchName(title: string): string | undefined {
 		.replace(/-+/g, '-') // collapse multiple hyphens
 		.slice(0, 50); // truncate
 	return slug ? `task/${slug}` : undefined;
+}
+
+function taskRequiresGitWorkspace(task: NeoTask): boolean {
+	const metadata = (task as NeoTask & TaskGitMetadata).metadata;
+	if (metadata?.requiresGit === true || metadata?.requiresGitWorkspace === true) {
+		return true;
+	}
+	const taskType = task.taskType ?? 'coding';
+	return taskType === 'coding' || taskType === 'planning';
+}
+
+function createFallbackWorkspace(taskId: string): string {
+	return mkdtempSync(join(tmpdir(), `neokai-task-${taskId.slice(0, 8)}-`));
+}
+
+function isFallbackWorkspacePath(taskId: string, workspacePath: string): boolean {
+	return workspacePath.startsWith(join(tmpdir(), `neokai-task-${taskId.slice(0, 8)}-`));
 }
 
 /**
@@ -262,95 +289,107 @@ export class TaskGroupManager {
 		// Colons in session IDs are invalid in git branch names, so sanitize the fallback.
 		const branchName =
 			taskTitleToBranchName(task.title) ?? `task/${workerSessionId.replace(/:/g, '-')}`;
-		const worktreePath = await this.sessionFactory.createWorktree(
+		let groupWorkspacePath = await this.sessionFactory.createWorktree(
 			this.workspacePath,
 			workerSessionId,
 			branchName
 		);
-		if (!worktreePath) {
+		if (!groupWorkspacePath && taskRequiresGitWorkspace(task)) {
 			await this.taskManager.failTask(task.id, 'Failed to create isolated worktree for task');
 			throw new Error('Worktree creation failed — task requires isolation');
 		}
-		const groupWorkspacePath = worktreePath;
+		if (!groupWorkspacePath) {
+			groupWorkspacePath = createFallbackWorkspace(task.id);
+			log.info(
+				`[spawn] Task ${task.id}: using temporary workspace ${groupWorkspacePath} because no git worktree was available`
+			);
+		}
 
-		// Build worker init from the provided config, using the group workspace path
-		const workerInit = workerConfig.initFactory(workerSessionId);
-		workerInit.workspacePath = groupWorkspacePath;
+		try {
+			// Build worker init from the provided config, using the group workspace path
+			const workerInit = workerConfig.initFactory(workerSessionId);
+			workerInit.workspacePath = groupWorkspacePath;
 
-		// Create session_groups record first so we have the real group.id for Leader callbacks.
-		// This is critical: Leader MCP tool callbacks must reference group.id, not task.id.
-		const group = this.groupRepo.createGroup(
-			task.id,
-			workerSessionId,
-			leaderSessionId,
-			workerConfig.role,
-			groupWorkspacePath
-		);
+			// Create session_groups record first so we have the real group.id for Leader callbacks.
+			// This is critical: Leader MCP tool callbacks must reference group.id, not task.id.
+			const group = this.groupRepo.createGroup(
+				task.id,
+				workerSessionId,
+				leaderSessionId,
+				workerConfig.role,
+				groupWorkspacePath
+			);
 
-		// Persist leader bootstrap config in DB metadata.
-		// Survives daemon restart (used by recoverZombieGroups to recreate leader if lost)
-		// and stores leaderTaskContext for the routing message injected when worker completes.
-		// eagerlyCreated=true signals that the leader session was created here in spawn(),
-		// not deferred — this lets recoverZombieGroups skip injecting "continue reviewing"
-		// when feedbackIteration==0 (the leader has no work to review yet on first restore).
-		const deferredLeader: LeaderBootstrapConfig = {
-			roomId: room.id,
-			goalId: goal?.id ?? null,
-			reviewContext,
-			leaderTaskContext: workerConfig.leaderTaskContext,
-			eagerlyCreated: true,
-		};
-		this.groupRepo.setDeferredLeader(group.id, deferredLeader);
+			// Persist leader bootstrap config in DB metadata.
+			// Survives daemon restart (used by recoverZombieGroups to recreate leader if lost)
+			// and stores leaderTaskContext for the routing message injected when worker completes.
+			// eagerlyCreated=true signals that the leader session was created here in spawn(),
+			// not deferred — this lets recoverZombieGroups skip injecting "continue reviewing"
+			// when feedbackIteration==0 (the leader has no work to review yet on first restore).
+			const deferredLeader: LeaderBootstrapConfig = {
+				roomId: room.id,
+				goalId: goal?.id ?? null,
+				reviewContext,
+				leaderTaskContext: workerConfig.leaderTaskContext,
+				eagerlyCreated: true,
+			};
+			this.groupRepo.setDeferredLeader(group.id, deferredLeader);
 
-		// Set task status to in_progress
-		await this.taskManager.startTask(task.id);
+			// Set task status to in_progress
+			await this.taskManager.startTask(task.id);
 
-		// Create and start worker session
-		await this.sessionFactory.createAndStartSession(workerInit, workerConfig.role);
+			// Create and start worker session
+			await this.sessionFactory.createAndStartSession(workerInit, workerConfig.role);
 
-		// Create and start leader session eagerly alongside the worker.
-		// This ensures the leader is ready when the worker completes and routing is triggered.
-		// Previously the leader was lazily created in routeWorkerToLeader(), but this caused
-		// routing to be skipped when the observer event fired before lazy init ran.
-		const leaderCallbacks = leaderCallbacksFactory(group.id);
-		const leaderConfig: LeaderAgentConfig = {
-			task,
-			goal,
-			room,
-			sessionId: leaderSessionId,
-			workspacePath: groupWorkspacePath,
-			groupId: group.id,
-			model: this._model,
-			provider: this._provider,
-			reviewContext,
-			goalManager: this.goalManager,
-			taskManager: this.taskManager,
-			groupRepo: this.groupRepo,
-			daemonHub: this.daemonHub,
-		};
-		const leaderInit = createLeaderAgentInit(leaderConfig, leaderCallbacks);
-		await this.sessionFactory.createAndStartSession(leaderInit, 'leader');
-		log.info(
-			`[spawn] Group ${group.id}: leader session ${leaderSessionId} created eagerly alongside worker`
-		);
+			// Create and start leader session eagerly alongside the worker.
+			// This ensures the leader is ready when the worker completes and routing is triggered.
+			// Previously the leader was lazily created in routeWorkerToLeader(), but this caused
+			// routing to be skipped when the observer event fired before lazy init ran.
+			const leaderCallbacks = leaderCallbacksFactory(group.id);
+			const leaderConfig: LeaderAgentConfig = {
+				task,
+				goal,
+				room,
+				sessionId: leaderSessionId,
+				workspacePath: groupWorkspacePath,
+				groupId: group.id,
+				model: this._model,
+				provider: this._provider,
+				reviewContext,
+				goalManager: this.goalManager,
+				taskManager: this.taskManager,
+				groupRepo: this.groupRepo,
+				daemonHub: this.daemonHub,
+			};
+			const leaderInit = createLeaderAgentInit(leaderConfig, leaderCallbacks);
+			await this.sessionFactory.createAndStartSession(leaderInit, 'leader');
+			log.info(
+				`[spawn] Group ${group.id}: leader session ${leaderSessionId} created eagerly alongside worker`
+			);
 
-		// Observe worker session for terminal state BEFORE injecting the initial message.
-		// This prevents a race where the worker processes and completes synchronously before
-		// the observer is registered, causing the terminal event to be missed entirely.
-		this.observer.observe(workerSessionId, (state) => {
-			onWorkerTerminal(group.id, state);
-		});
+			// Observe worker session for terminal state BEFORE injecting the initial message.
+			// This prevents a race where the worker processes and completes synchronously before
+			// the observer is registered, causing the terminal event to be missed entirely.
+			this.observer.observe(workerSessionId, (state) => {
+				onWorkerTerminal(group.id, state);
+			});
 
-		// Observe leader session for terminal state
-		this.observer.observe(leaderSessionId, (state) => {
-			onLeaderTerminal(group.id, state);
-		});
+			// Observe leader session for terminal state
+			this.observer.observe(leaderSessionId, (state) => {
+				onLeaderTerminal(group.id, state);
+			});
 
-		// Kick off worker so the SDK streaming loop starts processing immediately.
-		// Observer is already registered above — no race window.
-		await this.sessionFactory.injectMessage(workerSessionId, workerConfig.taskMessage);
+			// Kick off worker so the SDK streaming loop starts processing immediately.
+			// Observer is already registered above — no race window.
+			await this.sessionFactory.injectMessage(workerSessionId, workerConfig.taskMessage);
 
-		return group;
+			return group;
+		} catch (error) {
+			if (isFallbackWorkspacePath(task.id, groupWorkspacePath)) {
+				rmSync(groupWorkspacePath, { recursive: true, force: true });
+			}
+			throw error;
+		}
 	}
 
 	/**
@@ -605,7 +644,9 @@ export class TaskGroupManager {
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
 
-		// Worktree preserved for potential reactivation — only archiveGroup() cleans up
+		// Git worktrees are preserved for potential reactivation. Temporary fallback
+		// workspaces have no git state to preserve and are cleaned up at terminal state.
+		await this.cleanupWorktree(group);
 
 		return updated;
 	}
@@ -641,8 +682,9 @@ export class TaskGroupManager {
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
 
-		// NOTE: Worktree is NOT cleaned up on failure to allow debugging.
-		// Use archiveGroup() to cleanup worktree for failed tasks.
+		// Git worktrees are kept for debugging. Temporary fallback workspaces are
+		// removed because they are only scratch directories for non-git tasks.
+		await this.cleanupWorktree(group);
 
 		return updated;
 	}
@@ -769,7 +811,7 @@ export class TaskGroupManager {
 		if (group.completedAt !== null) {
 			this.observer.unobserve(group.workerSessionId);
 			this.observer.unobserve(group.leaderSessionId);
-			// Worktree preserved for potential reactivation — only archiveGroup() cleans up
+			await this.cleanupWorktree(group);
 			return group;
 		}
 
@@ -779,7 +821,7 @@ export class TaskGroupManager {
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
 
-		// Worktree preserved for potential reactivation — only archiveGroup() cleans up
+		await this.cleanupWorktree(group);
 
 		return updated;
 	}
@@ -812,7 +854,7 @@ export class TaskGroupManager {
 		if (!group) return null;
 
 		// Cleanup worktree (best-effort)
-		await this.cleanupWorktree(group);
+		await this.cleanupWorktree(group, true);
 
 		return group;
 	}
@@ -868,14 +910,20 @@ export class TaskGroupManager {
 	 *
 	 * Best-effort: logs errors but does not throw.
 	 */
-	private async cleanupWorktree(group: SessionGroup): Promise<void> {
+	private async cleanupWorktree(group: SessionGroup, includeGitWorktree = false): Promise<void> {
 		// Skip if no workspace path or if it's the main repo (not a worktree)
 		if (!group.workspacePath || group.workspacePath === this.workspacePath) {
 			return;
 		}
 
 		try {
-			await this.sessionFactory.removeWorktree(group.workspacePath);
+			if (isFallbackWorkspacePath(group.taskId, group.workspacePath)) {
+				rmSync(group.workspacePath, { recursive: true, force: true });
+				return;
+			}
+			if (includeGitWorktree) {
+				await this.sessionFactory.removeWorktree(group.workspacePath);
+			}
 		} catch (error) {
 			// Best-effort cleanup - don't fail the operation
 			const errorMsg = error instanceof Error ? error.message : String(error);

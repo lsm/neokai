@@ -46,6 +46,9 @@ const MissionDetail = lazy(() =>
 const GoalsEditor = lazy(() =>
 	import('../components/room/GoalsEditor').then((m) => ({ default: m.GoalsEditor }))
 );
+const AutomationPanel = lazy(() =>
+	import('../components/room/AutomationPanel').then((m) => ({ default: m.AutomationPanel }))
+);
 const RoomAgents = lazy(() =>
 	import('../components/room/RoomAgents').then((m) => ({ default: m.RoomAgents }))
 );
@@ -334,6 +337,7 @@ export default function Room({ roomId, sessionViewId, taskViewId, missionViewId 
 								<div class="h-full overflow-y-auto">
 									<ErrorBoundary>
 										<Suspense fallback={lazyTabFallback}>
+											<AutomationPanel roomId={roomId} goals={roomStore.goals.value} />
 											<GoalsEditor
 												roomId={roomId}
 												goals={roomStore.goals.value}

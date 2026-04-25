@@ -178,6 +178,10 @@ vi.mock('../../components/room/GoalsEditor', () => ({
 	GoalsEditor: () => <div data-testid="goals-editor">GoalsEditor</div>,
 }));
 
+vi.mock('../../components/room/AutomationPanel', () => ({
+	AutomationPanel: () => <div data-testid="automation-panel">AutomationPanel</div>,
+}));
+
 vi.mock('../../components/room/RoomSettings', () => ({
 	RoomSettings: () => <div data-testid="room-settings">RoomSettings</div>,
 }));

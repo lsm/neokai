@@ -494,6 +494,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//     dropping it is gated on a writer audit and shipped in a later
 	//     cleanup migration.
 	runMigration104(db);
+
+	// Migration 105: Automation Task System foundation. Creates the durable
+	// Automation definition table and append-only run ledger used by scheduled
+	// and continuous tracking.
+	runMigration105(db);
 }
 
 /**
@@ -7314,4 +7319,99 @@ export function runMigration104(db: BunDatabase): void {
 	) {
 		db.exec(`ALTER TABLE space_workflow_runs DROP COLUMN completion_actions_fired_at`);
 	}
+}
+
+/**
+ * Migration 105 — Automation Task System foundation.
+ *
+ * Creates two new tables:
+ *   - `automation_tasks`: long-lived user definitions for scheduled/continuous work
+ *   - `automation_runs`: append-only ledger entries for each execution attempt
+ *
+ * This migration is additive and idempotent. It does not alter existing Room,
+ * Space, Mission, or job queue tables.
+ */
+export function runMigration105(db: BunDatabase): void {
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS automation_tasks (
+			id TEXT PRIMARY KEY,
+			owner_type TEXT NOT NULL CHECK(owner_type IN ('room', 'space', 'global')),
+			owner_id TEXT,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'archived')),
+			trigger_type TEXT NOT NULL CHECK(trigger_type IN ('cron', 'at', 'interval', 'heartbeat', 'event', 'manual')),
+			trigger_config TEXT NOT NULL DEFAULT '{}',
+			target_type TEXT NOT NULL CHECK(target_type IN ('room_task', 'room_mission', 'space_task', 'space_workflow', 'neo_agent', 'job_handler')),
+			target_config TEXT NOT NULL DEFAULT '{}',
+			condition_config TEXT,
+			concurrency_policy TEXT NOT NULL DEFAULT 'skip' CHECK(concurrency_policy IN ('skip', 'queue', 'cancel_previous', 'allow_parallel')),
+			notify_policy TEXT NOT NULL DEFAULT 'done_only' CHECK(notify_policy IN ('silent', 'done_only', 'state_changes')),
+			max_retries INTEGER NOT NULL DEFAULT 3,
+			timeout_ms INTEGER,
+			next_run_at INTEGER,
+			last_run_at INTEGER,
+			last_checked_at INTEGER,
+			last_condition_result TEXT,
+			condition_failure_count INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			archived_at INTEGER,
+			CHECK(owner_type = 'global' OR owner_id IS NOT NULL)
+		)
+	`);
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS automation_runs (
+			id TEXT PRIMARY KEY,
+			automation_task_id TEXT NOT NULL,
+			owner_type TEXT NOT NULL CHECK(owner_type IN ('room', 'space', 'global')),
+			owner_id TEXT,
+			status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'running', 'succeeded', 'failed', 'timed_out', 'cancelled', 'lost')),
+			trigger_type TEXT NOT NULL CHECK(trigger_type IN ('cron', 'at', 'interval', 'heartbeat', 'event', 'manual')),
+			trigger_reason TEXT,
+			job_id TEXT,
+			room_task_id TEXT,
+			room_goal_id TEXT,
+			mission_execution_id TEXT,
+			space_task_id TEXT,
+			space_workflow_run_id TEXT,
+			session_id TEXT,
+			attempt INTEGER NOT NULL DEFAULT 1,
+			started_at INTEGER,
+			completed_at INTEGER,
+			result_summary TEXT,
+			error TEXT,
+			metadata TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (automation_task_id) REFERENCES automation_tasks(id) ON DELETE CASCADE
+		)
+	`);
+
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_automation_tasks_due ON automation_tasks(status, next_run_at)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_automation_tasks_owner ON automation_tasks(owner_type, owner_id, status)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_automation_tasks_trigger ON automation_tasks(trigger_type, status)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_automation_runs_task_created ON automation_runs(automation_task_id, created_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_automation_runs_owner ON automation_runs(owner_type, owner_id, created_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_automation_runs_status ON automation_runs(status, updated_at DESC)`
+	);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_automation_runs_job ON automation_runs(job_id)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_automation_runs_room_task ON automation_runs(room_task_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_automation_runs_space_task ON automation_runs(space_task_id)`
+	);
 }

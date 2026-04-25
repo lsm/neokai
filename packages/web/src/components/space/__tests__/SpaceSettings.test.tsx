@@ -54,6 +54,10 @@ vi.mock('../export-import-utils', () => ({
 	downloadBundle: (...args) => mockDownloadBundle(...args),
 }));
 
+vi.mock('../SpaceAutomationPanel', () => ({
+	SpaceAutomationPanel: () => <div data-testid="space-automation-panel" />,
+}));
+
 vi.mock('../../ui/Button', () => ({
 	Button: ({ children, onClick, type, loading, disabled, variant }) => (
 		<button

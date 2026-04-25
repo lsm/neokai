@@ -24,6 +24,7 @@ export * from './types/app-mcp-server.ts';
 export * from './types/mcp-enablement.ts';
 export * from './types/skills.ts';
 export * from './types/reference.ts';
+export * from './types/automation.ts';
 export * from './live-query-types.ts';
 export * from './validation/workspace-path.ts';
 export * from './lib/workflow-graph.ts';

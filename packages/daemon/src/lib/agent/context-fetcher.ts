@@ -85,17 +85,23 @@ export class ContextFetcher {
 				}
 			: undefined;
 
-		const messageBreakdown: ContextMessageBreakdown | undefined = response.messageBreakdown
+		const sdkMessageBreakdown = response.messageBreakdown as
+			| (NonNullable<SDKControlGetContextUsageResponse['messageBreakdown']> & {
+					redirectedContextTokens?: number;
+					unattributedTokens?: number;
+			  })
+			| undefined;
+		const messageBreakdown: ContextMessageBreakdown | undefined = sdkMessageBreakdown
 			? {
-					toolCallTokens: response.messageBreakdown.toolCallTokens,
-					toolResultTokens: response.messageBreakdown.toolResultTokens,
-					attachmentTokens: response.messageBreakdown.attachmentTokens,
-					assistantMessageTokens: response.messageBreakdown.assistantMessageTokens,
-					userMessageTokens: response.messageBreakdown.userMessageTokens,
-					redirectedContextTokens: response.messageBreakdown.redirectedContextTokens,
-					unattributedTokens: response.messageBreakdown.unattributedTokens,
-					toolCallsByType: response.messageBreakdown.toolCallsByType,
-					attachmentsByType: response.messageBreakdown.attachmentsByType,
+					toolCallTokens: sdkMessageBreakdown.toolCallTokens,
+					toolResultTokens: sdkMessageBreakdown.toolResultTokens,
+					attachmentTokens: sdkMessageBreakdown.attachmentTokens,
+					assistantMessageTokens: sdkMessageBreakdown.assistantMessageTokens,
+					userMessageTokens: sdkMessageBreakdown.userMessageTokens,
+					redirectedContextTokens: sdkMessageBreakdown.redirectedContextTokens,
+					unattributedTokens: sdkMessageBreakdown.unattributedTokens,
+					toolCallsByType: sdkMessageBreakdown.toolCallsByType,
+					attachmentsByType: sdkMessageBreakdown.attachmentsByType,
 				}
 			: undefined;
 

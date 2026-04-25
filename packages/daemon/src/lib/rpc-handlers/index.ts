@@ -101,6 +101,21 @@ import type { SkillsManager } from '../skills-manager';
 import { setupNeoHandlers } from './neo-handlers';
 import type { NeoAgentManager } from '../neo/neo-agent-manager';
 import { setupWorkspaceHandlers } from './workspace-handlers';
+import { setupAutomationHandlers } from './automation-handlers';
+import { AutomationConditionEvaluator } from '../automation/automation-condition-evaluator';
+import { AutomationManager } from '../automation/automation-manager';
+import { AutomationScheduler } from '../automation/automation-scheduler';
+import {
+	JobHandlerAutomationLauncher,
+	NeoAgentAutomationLauncher,
+	RoomMissionAutomationLauncher,
+	RoomTaskAutomationLauncher,
+	SpaceTaskAutomationLauncher,
+	SpaceWorkflowAutomationLauncher,
+} from '../automation/automation-target-launchers';
+import { createAutomationDispatchHandler } from '../job-handlers/automation-dispatch.handler';
+import { handleAutomationSweep } from '../job-handlers/automation-sweep.handler';
+import { AUTOMATION_DISPATCH, AUTOMATION_SWEEP } from '../job-queue-constants';
 import { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository';
 import { NeoActivityLogger } from '../neo/activity-logger';
 import { PendingActionStore } from '../neo/security-tier';
@@ -439,6 +454,137 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
 		return new SpaceTaskManager(deps.db.getDatabase(), spaceId, deps.reactiveDb);
 	};
+
+	const automationManager = new AutomationManager(deps.reactiveDb.db.automation);
+	const automationConditionEvaluator = new AutomationConditionEvaluator({
+		goalManagerFactory,
+		spaceTaskManagerFactory,
+		gitHubReader: deps.gitHubService,
+	});
+	const automationScheduler = new AutomationScheduler(
+		automationManager,
+		deps.jobQueue,
+		automationConditionEvaluator,
+		{
+			async getRoomTaskStatus(roomId, taskId) {
+				const task = await goalTaskManagerFactory(roomId).taskManager.getTask(taskId);
+				return task ? { status: task.status, result: task.result ?? null } : null;
+			},
+			async getSpaceTaskStatus(spaceId, taskId) {
+				const task = await spaceTaskManagerFactory(spaceId).getTask(taskId);
+				return task ? { status: task.status, result: task.result ?? null } : null;
+			},
+			async getMissionExecutionStatus(roomId, executionId) {
+				const goalManager = goalManagerFactory(roomId);
+				const goals = await goalManager.listGoals();
+				for (const goal of goals) {
+					const execution = goalManager
+						.listExecutions(goal.id, 100)
+						.find((item) => item.id === executionId);
+					if (execution) {
+						return { status: execution.status, resultSummary: execution.resultSummary };
+					}
+				}
+				return null;
+			},
+		}
+	);
+	automationScheduler.registerLauncher(
+		'room_task',
+		new RoomTaskAutomationLauncher(
+			(roomId) =>
+				new TaskManager(
+					deps.db.getDatabase(),
+					roomId,
+					deps.reactiveDb,
+					deps.db.getShortIdAllocator()
+				),
+			(roomId) =>
+				new GoalManager(
+					deps.db.getDatabase(),
+					roomId,
+					deps.reactiveDb,
+					deps.db.getShortIdAllocator()
+				),
+			deps.jobQueue
+		)
+	);
+	automationScheduler.registerLauncher(
+		'room_mission',
+		new RoomMissionAutomationLauncher(
+			(roomId) =>
+				new GoalManager(
+					deps.db.getDatabase(),
+					roomId,
+					deps.reactiveDb,
+					deps.db.getShortIdAllocator()
+				),
+			(roomId) => roomRuntimeService.getRuntime(roomId),
+			deps.jobQueue
+		)
+	);
+	automationScheduler.registerLauncher(
+		'space_task',
+		new SpaceTaskAutomationLauncher(spaceTaskManagerFactory)
+	);
+	automationScheduler.registerLauncher(
+		'space_workflow',
+		new SpaceWorkflowAutomationLauncher(spaceTaskManagerFactory)
+	);
+	automationScheduler.registerLauncher(
+		'job_handler',
+		new JobHandlerAutomationLauncher(deps.jobQueue)
+	);
+	automationScheduler.registerLauncher(
+		'neo_agent',
+		new NeoAgentAutomationLauncher((sessionId, message) =>
+			deps.sessionManager.injectMessage(sessionId, message, { origin: 'system' })
+		)
+	);
+	deps.jobProcessor.register(
+		AUTOMATION_DISPATCH,
+		createAutomationDispatchHandler(automationScheduler)
+	);
+	deps.jobProcessor.register(AUTOMATION_SWEEP, () =>
+		handleAutomationSweep(automationScheduler, deps.jobQueue)
+	);
+	if (
+		deps.jobQueue.listJobs({
+			queue: AUTOMATION_SWEEP,
+			status: ['pending', 'processing'],
+			limit: 1,
+		}).length === 0
+	) {
+		deps.jobQueue.enqueue({
+			queue: AUTOMATION_SWEEP,
+			payload: {},
+			runAt: Date.now(),
+			maxRetries: 0,
+		});
+	}
+	automationScheduler.seedSchedules();
+	setupAutomationHandlers(deps.messageHub, automationManager, automationScheduler);
+	const unsubGitHubAutomationEvents = deps.daemonHub.on(
+		'github.eventReceived',
+		(event) => {
+			void automationScheduler
+				.emitEvent('github.eventReceived', {
+					eventId: event.event.id,
+					eventType: event.event.eventType,
+					action: event.event.action,
+					repository: event.event.repository.fullName,
+					repositoryOwner: event.event.repository.owner,
+					repositoryName: event.event.repository.repo,
+					issueNumber: event.event.issue?.number,
+					sender: event.event.sender.login,
+					source: event.event.source,
+				})
+				.catch((error: unknown) => {
+					log.warn('GitHub automation event dispatch failed:', error);
+				});
+		},
+		{ sessionId: 'global' }
+	);
 
 	// Space agent handlers
 	setupSpaceAgentHandlers(
@@ -791,6 +937,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	return {
 		cleanup: async () => {
 			unsubRoomCreated();
+			unsubGitHubAutomationEvents();
 			unsubLiveQuery();
 			// roomRuntimeService.stop() is synchronous today. If it becomes
 			// async in the future, add await here to prevent silent promise discard.

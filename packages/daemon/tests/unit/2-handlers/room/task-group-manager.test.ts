@@ -1,5 +1,8 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
 	TaskGroupManager,
 	type SessionFactory,
@@ -47,7 +50,11 @@ function createMockDaemonHub() {
 // Mock SessionFactory
 function createMockSessionFactory(
 	initialLiveSessions: string[] = [],
-	options?: { restoreSessionFails?: boolean }
+	options?: {
+		restoreSessionFails?: boolean;
+		createWorktreeReturnsNull?: boolean;
+		failCreateSessionRole?: string;
+	}
 ) {
 	const calls: Array<{ method: string; args: unknown[] }> = [];
 	const liveSessions = new Set<string>(initialLiveSessions);
@@ -58,6 +65,9 @@ function createMockSessionFactory(
 		removedWorktrees,
 		async createAndStartSession(init: unknown, role: string) {
 			calls.push({ method: 'createAndStartSession', args: [init, role] });
+			if (options?.failCreateSessionRole === role) {
+				throw new Error(`Failed to create ${role} session`);
+			}
 			const sessionId =
 				typeof init === 'object' && init !== null && 'sessionId' in init
 					? ((init as { sessionId?: string }).sessionId ?? null)
@@ -78,6 +88,9 @@ function createMockSessionFactory(
 			return false;
 		},
 		async createWorktree(_basePath: string, sessionId: string, _branchName?: string) {
+			if (options?.createWorktreeReturnsNull) {
+				return null;
+			}
 			// Return a synthetic worktree path so isolation enforcement passes in tests
 			return `/tmp/worktrees/${sessionId}`;
 		},
@@ -315,6 +328,15 @@ describe('TaskGroupManager', () => {
 		});
 	}
 
+	async function createResearchTask(): Promise<NeoTask> {
+		return taskManager.createTask({
+			title: 'Research API docs',
+			description: 'Fetch and summarize the API documentation',
+			taskType: 'research',
+			assignedAgent: 'general',
+		});
+	}
+
 	describe('spawn', () => {
 		it('should create a session group record', async () => {
 			const task = await createTask();
@@ -335,6 +357,193 @@ describe('TaskGroupManager', () => {
 			expect(group.taskId).toBe(task.id);
 			expect(group.submittedForReview).toBe(false);
 			expect(group.feedbackIteration).toBe(0);
+		});
+
+		it('falls back to a temporary workspace for non-git research tasks', async () => {
+			const task = await createResearchTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+			const noGitFactory = createMockSessionFactory([], { createWorktreeReturnsNull: true });
+			const noGitManager = new TaskGroupManager({
+				groupRepo,
+				sessionObserver: observer,
+				taskManager,
+				goalManager,
+				sessionFactory: noGitFactory,
+				workspacePath: '/workspace',
+				getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+				getTask: (taskId) => taskManager.getTask(taskId),
+				getGoal: (goalId) => goalManager.getGoal(goalId),
+			});
+
+			const group = await noGitManager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				{
+					...makeDefaultWorkerConfig(),
+					role: 'general',
+					initFactory: (workerSessionId) => ({
+						sessionId: workerSessionId,
+						workspacePath: '/workspace',
+						systemPrompt: 'test',
+						type: 'worker',
+						model: 'claude-sonnet-4-5-20250929',
+					}),
+				}
+			);
+
+			expect(group.workspacePath).toStartWith(
+				join(tmpdir(), `neokai-task-${task.id.slice(0, 8)}-`)
+			);
+			expect(existsSync(group.workspacePath!)).toBe(true);
+			const sessionCalls = noGitFactory.calls.filter(
+				(call) => call.method === 'createAndStartSession'
+			);
+			expect(
+				sessionCalls.every(
+					(call) =>
+						(call.args[0] as { workspacePath?: string }).workspacePath === group.workspacePath
+				)
+			).toBe(true);
+
+			await noGitManager.complete(group.id, 'Research complete');
+			expect(existsSync(group.workspacePath!)).toBe(false);
+			expect(noGitFactory.removedWorktrees).toHaveLength(0);
+		});
+
+		it('cleans up temporary workspace on failure and cancellation paths', async () => {
+			for (const terminalAction of ['fail', 'cancel'] as const) {
+				const task = await createResearchTask();
+				const callbacks = createMockLeaderCallbacks();
+				const noGitFactory = createMockSessionFactory([], { createWorktreeReturnsNull: true });
+				const noGitManager = new TaskGroupManager({
+					groupRepo,
+					sessionObserver: observer,
+					taskManager,
+					goalManager,
+					sessionFactory: noGitFactory,
+					workspacePath: '/workspace',
+					getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+					getTask: (taskId) => taskManager.getTask(taskId),
+					getGoal: (goalId) => goalManager.getGoal(goalId),
+				});
+
+				const group = await noGitManager.spawn(
+					room,
+					task,
+					null,
+					() => {},
+					() => {},
+					(_groupId) => callbacks,
+					{
+						...makeDefaultWorkerConfig(),
+						role: 'general',
+						initFactory: (workerSessionId) => ({
+							sessionId: workerSessionId,
+							workspacePath: '/workspace',
+							systemPrompt: 'test',
+							type: 'worker',
+							model: 'claude-sonnet-4-5-20250929',
+						}),
+					}
+				);
+
+				expect(group.workspacePath).toContain('neokai-task-');
+				expect(existsSync(group.workspacePath!)).toBe(true);
+
+				if (terminalAction === 'fail') {
+					await noGitManager.fail(group.id, 'Failed after partial research');
+				} else {
+					await noGitManager.cancel(group.id);
+				}
+
+				expect(existsSync(group.workspacePath!)).toBe(false);
+				expect(noGitFactory.removedWorktrees).toHaveLength(0);
+			}
+		});
+
+		it('cleans up temporary workspace when spawn fails after fallback creation', async () => {
+			const task = await createResearchTask();
+			const callbacks = createMockLeaderCallbacks();
+			const noGitFactory = createMockSessionFactory([], {
+				createWorktreeReturnsNull: true,
+				failCreateSessionRole: 'leader',
+			});
+			const noGitManager = new TaskGroupManager({
+				groupRepo,
+				sessionObserver: observer,
+				taskManager,
+				goalManager,
+				sessionFactory: noGitFactory,
+				workspacePath: '/workspace',
+				getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+				getTask: (taskId) => taskManager.getTask(taskId),
+				getGoal: (goalId) => goalManager.getGoal(goalId),
+			});
+
+			await expect(
+				noGitManager.spawn(
+					room,
+					task,
+					null,
+					() => {},
+					() => {},
+					(_groupId) => callbacks,
+					{
+						...makeDefaultWorkerConfig(),
+						role: 'general',
+						initFactory: (workerSessionId) => ({
+							sessionId: workerSessionId,
+							workspacePath: '/workspace',
+							systemPrompt: 'test',
+							type: 'worker',
+							model: 'claude-sonnet-4-5-20250929',
+						}),
+					}
+				)
+			).rejects.toThrow('Failed to create leader session');
+
+			const workspacePath = groupRepo.getGroupByTaskId(task.id)?.workspacePath;
+			expect(workspacePath).toContain('neokai-task-');
+			expect(existsSync(workspacePath!)).toBe(false);
+		});
+
+		it('keeps coding tasks failed when git worktree creation is unavailable', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+			const noGitFactory = createMockSessionFactory([], { createWorktreeReturnsNull: true });
+			const noGitManager = new TaskGroupManager({
+				groupRepo,
+				sessionObserver: observer,
+				taskManager,
+				goalManager,
+				sessionFactory: noGitFactory,
+				workspacePath: '/workspace',
+				getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+				getTask: (taskId) => taskManager.getTask(taskId),
+				getGoal: (goalId) => goalManager.getGoal(goalId),
+			});
+
+			await expect(
+				noGitManager.spawn(
+					room,
+					task,
+					goal,
+					() => {},
+					() => {},
+					(_groupId) => callbacks,
+					makeDefaultWorkerConfig()
+				)
+			).rejects.toThrow('Worktree creation failed');
+
+			const failedTask = await taskManager.getTask(task.id);
+			expect(failedTask?.status).toBe('needs_attention');
+			expect(failedTask?.error).toBe('Failed to create isolated worktree for task');
 		});
 
 		it('should create both Worker and Leader sessions eagerly', async () => {
