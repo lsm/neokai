@@ -508,18 +508,17 @@ function RosterEntry({ entry, isLatest }: { entry: ToolCallEntry; isLatest: bool
  * Body for a completed agent turn — wraps the meta-line + reply text in a
  * left-aligned chat bubble that sizes to content up to a max-width cap.
  *
- * Why bubble-style instead of flush-left Slack rows: agent replies are often
- * long markdown blobs (review summaries, hand-off briefs) that look like
- * transcripts when stretched edge-to-edge. A capped bubble re-establishes the
- * conversational rhythm and matches the human/synthetic bubble language used
- * elsewhere in this feed. Using `bg-dark-800` (one shade lighter than the
- * synthetic bubble's `bg-dark-900`) differentiates "agent's own reply" from
+ * Why bubble-style at all: agent replies are often long markdown blobs
+ * (review summaries, hand-off briefs) that look like transcripts when
+ * rendered as plain flush-left rows. A subtle bubble (`bg-dark-800`, one
+ * shade lighter than the synthetic bubble's `bg-dark-900`) re-establishes
+ * the conversational rhythm and differentiates "agent's own reply" from
  * "synthetic handoff" without competing with the human bubble's blue.
  *
- * `w-fit` lets short replies hug their content. On mobile we let long replies
- * fill the full inner column (avatar + gap already eat ~48px on the left, so
- * a further 15% cap would leave a too-narrow bubble); on desktop we cap at
- * 70% so long markdown blocks stay readable instead of stretching edge-to-edge.
+ * Width strategy: stacked under the agent header (no avatar offset on the
+ * left), so `w-fit` lets short replies hug their content, `max-w-full`
+ * fills the row on mobile, and `md:max-w-[70%]` caps the width on desktop
+ * to keep long markdown readable instead of stretching edge-to-edge.
  */
 function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
 	const openSession = turn.sessionId
@@ -589,44 +588,57 @@ function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
 	);
 }
 
+/**
+ * Agent turn — Slack-style stacked layout. The header (avatar + name +
+ * timestamp-when-active) sits on its own row; the body (bubble or active
+ * rail) drops below the header at the full container width, aligned with
+ * the avatar's left edge.
+ *
+ * Why stacked instead of avatar-on-the-left-of-body: agent replies are
+ * frequently long markdown blobs. With the body indented under a flex
+ * column to the right of the avatar, the bubble is forced into a narrower
+ * sub-column (~48px lost to the avatar + gap) AND the legacy 85% cap left
+ * dead space on the right. Stacking lets the body use the full row width
+ * on mobile and feels closer to Slack/Reddit/Discord post layouts than
+ * iMessage chat bubbles — a better fit for "agent post with long output".
+ */
 function AgentTurnRow({ turn }: { turn: CompletedFeedTurn | ActiveFeedTurn }) {
 	const color = getAgentColor(turn.agent);
 	const initial = agentInitial(turn.agent);
 	return (
 		<div
-			class="flex gap-3"
 			data-testid="minimal-thread-turn"
 			data-agent-label={turn.agent}
 			data-agent-color={color}
 			data-turn-state={turn.state}
 		>
-			<div
-				class="h-9 w-9 shrink-0 rounded-md flex items-center justify-center text-sm font-bold text-dark-950"
-				style={{ backgroundColor: color }}
-				aria-hidden="true"
-			>
-				{initial}
-			</div>
-			<div class="min-w-0 flex-1">
-				<div class="flex items-center gap-3">
-					<span class="font-semibold" style={{ color }}>
-						{shortAgentName(turn.agent)}
-					</span>
-					{/* Active turns keep the header timestamp — they don't have an
-					    actions row below (no copy button while running). Completed
-					    turns surface time + copy under the bubble via
-					    SpaceTaskThreadMessageActions, so the header timestamp would
-					    duplicate that. */}
-					{turn.state === 'active' ? (
-						<span class="text-xs text-gray-500">{formatClock(turn.startedAt)}</span>
-					) : null}
+			{/* Header — avatar, agent name, and (active turns only) live clock. */}
+			<div class="flex items-center gap-3">
+				<div
+					class="h-9 w-9 shrink-0 rounded-md flex items-center justify-center text-sm font-bold text-dark-950"
+					style={{ backgroundColor: color }}
+					aria-hidden="true"
+				>
+					{initial}
 				</div>
+				<span class="font-semibold" style={{ color }}>
+					{shortAgentName(turn.agent)}
+				</span>
+				{/* Active turns keep the header timestamp — they don't have an
+				    actions row below (no copy button while running). Completed
+				    turns surface time + copy under the bubble via
+				    SpaceTaskThreadMessageActions, so the header timestamp would
+				    duplicate that. */}
 				{turn.state === 'active' ? (
-					<ActiveBody turn={turn} color={color} />
-				) : (
-					<CompletedBody turn={turn} />
-				)}
+					<span class="text-xs text-gray-500">{formatClock(turn.startedAt)}</span>
+				) : null}
 			</div>
+			{/* Body — full-width on mobile, capped on desktop for readability. */}
+			{turn.state === 'active' ? (
+				<ActiveBody turn={turn} color={color} />
+			) : (
+				<CompletedBody turn={turn} />
+			)}
 		</div>
 	);
 }
