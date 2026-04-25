@@ -1956,12 +1956,15 @@ export class TaskAgentManager {
 	/**
 	 * Rehydrate Task Agent sessions after a daemon restart.
 	 *
-	 * Queries `space_tasks` for tasks with status `in_progress` or `blocked`
-	 * that have a non-null `taskAgentSessionId`. For each such task that has a
-	 * `space_task_agent` session type in the DB, restores the Task Agent session via
-	 * `AgentSession.restore()`, re-attaches the MCP server and system prompt,
-	 * restarts the streaming query, and injects a re-orientation message so the
-	 * agent resumes from where it left off.
+	 * Queries `space_tasks` for tasks with status `in_progress`, `blocked`, or
+	 * `approved` that have a non-null `taskAgentSessionId`. For each such task
+	 * that has a `space_task_agent` session type in the DB, restores the Task
+	 * Agent session via `AgentSession.restore()`, re-attaches the MCP server
+	 * and system prompt, restarts the streaming query, and injects a
+	 * re-orientation message so the agent resumes from where it left off.
+	 * `'approved'` is included because the Task Agent session can still be
+	 * live while the post-approval sub-session runs — see
+	 * `SpaceTaskRepository.listActiveWithTaskAgentSession`.
 	 *
 	 * Sub-sessions are NOT fully rehydrated — the Task Agent will re-spawn them
 	 * via its MCP tools after receiving the re-orientation message. The in-memory
