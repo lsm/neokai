@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, screen, within } from '@testing-library/preact';
-import { computed, signal, type Signal } from '@preact/signals';
+import { signal, type Signal } from '@preact/signals';
 import type { SpaceTask, Space } from '@neokai/shared';
 
 const {
@@ -34,7 +34,6 @@ let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
 let mockCurrentSpaceTaskIdSignal!: Signal<string | null>;
 let mockSpaceOverlaySessionIdSignal!: Signal<string | null>;
 let mockSpaceOverlayAgentNameSignal!: Signal<string | null>;
-let mockAttentionCountSignal!: ReturnType<typeof computed<number>>;
 
 function initSignals() {
 	mockTasksSignal = signal([]);
@@ -42,7 +41,6 @@ function initSignals() {
 	mockLoadingSignal = signal(false);
 	mockSpaceIdSignal = signal('space-1');
 	mockSessionsSignal = signal([]);
-	mockAttentionCountSignal = computed(() => 0);
 	mockCurrentSpaceSessionIdSignal = signal(null);
 	mockCurrentSpaceTaskIdSignal = signal(null);
 	mockSpaceOverlaySessionIdSignal = signal(null);
@@ -59,7 +57,6 @@ vi.mock('../../lib/space-store.ts', () => ({
 			loading: mockLoadingSignal,
 			spaceId: mockSpaceIdSignal,
 			sessions: mockSessionsSignal,
-			attentionCount: mockAttentionCountSignal,
 		};
 	},
 }));
