@@ -5,6 +5,20 @@
 **Question:** Where are PR merge decisions made, and can a PR be auto-merged when the space is at autonomy **Level 1** (the lowest / most conservative level)?
 **Bottom line:** Yes — there are two concrete code paths that can merge a PR at Level 1 without any human approval step, and one design gap where the documented "merge-pr" completion action for the *Coding* workflow is effectively **dead code at Level 1** (it is never reached through the human-approval path).
 
+> **Status (2026-04-24):** this research drove the plan in
+> [`docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`](../plans/remove-completion-actions-task-agent-as-post-approval-executor.md),
+> which has now shipped in five PRs:
+> [#1620](https://github.com/focusdotcc/neokai/pull/1620),
+> [#1621](https://github.com/focusdotcc/neokai/pull/1621),
+> [#1623](https://github.com/focusdotcc/neokai/pull/1623),
+> [#1628](https://github.com/focusdotcc/neokai/pull/1628), and the
+> schema/docs cleanup PR (5/5). The `completionActions` pipeline described
+> below has been replaced by workflow-declared `postApproval: { targetAgent,
+> instructions }` routing dispatched by the runtime — the end-node agent no
+> longer carries an action list. The terminology in §1–§7 is preserved as a
+> historical record of the system that motivated the redesign; do not treat
+> any of the described code paths as live.
+
 ---
 
 ## 1. Background — The Three Dials That Govern Merging
