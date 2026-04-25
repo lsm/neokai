@@ -66,6 +66,8 @@ interface CompletedFeedTurn {
 	messages: number;
 	lastMessage: string;
 	fallback: boolean;
+	/** Tool names used in this turn — shown when lastMessage is empty. */
+	toolNames: string[];
 }
 
 interface ActiveFeedTurn {
@@ -188,6 +190,7 @@ function buildCompletedTurn(
 	const durationMs = Math.max(0, lastRow.createdAt - startedAt);
 	const durationSec = Math.max(1, Math.round(durationMs / 1000));
 	const { text, fallback } = extractLastAssistantText(rows);
+	const toolNames = extractToolCallEntries(rows, 99).map((e) => e.tool);
 	return {
 		state: 'completed',
 		id: turnId,
@@ -198,6 +201,7 @@ function buildCompletedTurn(
 		messages: rows.length,
 		lastMessage: text,
 		fallback,
+		toolNames: [...new Set(toolNames)],
 	};
 }
 
@@ -436,6 +440,22 @@ function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
 					) : (
 						<MarkdownRenderer content={turn.lastMessage} />
 					)}
+				</div>
+			) : turn.toolNames.length > 0 ? (
+				<div class="mt-1.5 flex flex-wrap gap-1">
+					{turn.toolNames.map((name) => (
+						<span
+							key={name}
+							class="inline-flex items-center gap-1 text-[11px] text-gray-400 bg-dark-800 px-1.5 py-0.5 rounded"
+						>
+							<span
+								class="w-1.5 h-1.5 rounded-full shrink-0"
+								style={{ backgroundColor: getToolDarkColor(name) }}
+								aria-hidden="true"
+							/>
+							{name}
+						</span>
+					))}
 				</div>
 			) : null}
 		</>
