@@ -962,14 +962,15 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
 		const pill = getByTestId('task-view-tab-pill');
-		// Floating overlay: absolute-positioned, full-width wrapper, high z-index,
-		// and pointer-events disabled on the wrapper so empty space around the
-		// pill never blocks underlying canvas / thread interactions. (CSS class
-		// strings are asserted directly because Tailwind utilities aren't
+		// Floating overlay: absolute-positioned at top-2 right-4 to mirror the
+		// agent name tag at top-2 left-4 inside SpaceTaskUnifiedThread, with a
+		// high z-index so the pill always sits above the rendered view. (CSS
+		// class strings are asserted directly because Tailwind utilities aren't
 		// loaded in jsdom — getComputedStyle would return defaults.)
 		expect(pill.className).toContain('absolute');
-		expect(pill.className).toContain('pointer-events-none');
-		expect(pill.className).toContain('z-10');
+		expect(pill.className).toContain('top-2');
+		expect(pill.className).toContain('right-4');
+		expect(pill.className).toContain('z-20');
 
 		// The pill is a direct child of the content wrapper, not nested inside
 		// the rendered view, so it overlays rather than displaces content.
@@ -1000,18 +1001,14 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		expect(queryByTestId('task-view-tab-pill')).toBeTruthy();
 	});
 
-	it('pill buttons remain clickable through the pointer-events-none wrapper', () => {
+	it('pill buttons are interactive', () => {
 		mockCurrentSpaceIdSignal.value = 'space-1';
 		mockTasks.value = [makeTask({ workflowRunId: 'run-1', taskAgentSessionId: 'session-abc' })];
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
-		// Direct child of the floating wrapper must restore pointer-events so
-		// the buttons inside it are still interactive.
-		const pill = getByTestId('task-view-tab-pill');
-		const innerPill = pill.firstElementChild as HTMLElement;
-		expect(innerPill.className).toContain('pointer-events-auto');
-
+		// The pill sits at top-2 right-4 with no pointer-events wrapper, so its
+		// buttons receive clicks directly.
 		fireEvent.click(getByTestId('canvas-toggle'));
 		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 'task-1', 'canvas');
 	});
@@ -1021,7 +1018,7 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
 		const thread = getByTestId('space-task-unified-thread');
-		expect(thread.getAttribute('data-top-inset')).toBe('pt-12');
+		expect(thread.getAttribute('data-top-inset')).toBe('pt-10');
 	});
 
 	it('renders the active banner outside task-pane-content so it is visible across tabs', () => {

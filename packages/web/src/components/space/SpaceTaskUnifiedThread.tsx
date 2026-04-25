@@ -2,10 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useSpaceTaskMessages } from '../../hooks/useSpaceTaskMessages';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
-import { SpaceTaskThreadEventFeed } from './thread/SpaceTaskThreadEventFeed';
 import { SpaceTaskCardFeed } from './thread/compact/SpaceTaskCardFeed';
-import { buildThreadEvents, parseThreadRow } from './thread/space-task-thread-events';
-import { getSpaceTaskThreadRenderStyle } from '../../lib/space-task-thread-config';
+import { parseThreadRow } from './thread/space-task-thread-events';
 
 interface AgentTag {
 	label: string;
@@ -76,15 +74,11 @@ export function SpaceTaskUnifiedThread({
 	topInsetClass = '',
 	isAgentActive = false,
 }: SpaceTaskUnifiedThreadProps) {
-	// Read render style on every render so that the value stays fresh after a
-	// localStorage write (e.g. via setSpaceTaskThreadRenderStyle in devtools).
-	const renderStyle = getSpaceTaskThreadRenderStyle();
 	const { rows, isLoading, isReconnecting } = useSpaceTaskMessages(taskId, 'compact');
 	const containerRef = useRef<HTMLDivElement>(null);
 	const didInitialCompactScrollRef = useRef<string | null>(null);
 
 	const parsedRows = useMemo(() => rows.map(parseThreadRow), [rows]);
-	const threadEvents = useMemo(() => buildThreadEvents(parsedRows), [parsedRows]);
 	const parsedMessages = useMemo(
 		() =>
 			parsedRows.map((row) => row.message).filter((message): message is SDKMessage => !!message),
@@ -94,21 +88,17 @@ export function SpaceTaskUnifiedThread({
 
 	useEffect(() => {
 		if (!containerRef.current) return;
-		if (renderStyle === 'compact') {
-			if (didInitialCompactScrollRef.current !== taskId) {
-				containerRef.current.scrollTop = 0;
-				didInitialCompactScrollRef.current = taskId;
-			}
-			return;
+		if (didInitialCompactScrollRef.current !== taskId) {
+			containerRef.current.scrollTop = 0;
+			didInitialCompactScrollRef.current = taskId;
 		}
-		containerRef.current.scrollTop = containerRef.current.scrollHeight;
-	}, [taskId, renderStyle, parsedRows.length, threadEvents.length]);
+	}, [taskId, parsedRows.length]);
 
 	const hasRows = parsedRows.length > 0;
 	const [currentAgent, setCurrentAgent] = useState<AgentTag | null>(null);
 
 	useEffect(() => {
-		if (renderStyle !== 'compact' || !hasRows) {
+		if (!hasRows) {
 			setCurrentAgent(null);
 			return;
 		}
@@ -120,15 +110,15 @@ export function SpaceTaskUnifiedThread({
 		update();
 		container.addEventListener('scroll', update, { passive: true });
 		return () => container.removeEventListener('scroll', update);
-	}, [hasRows, renderStyle]);
+	}, [hasRows]);
 
 	useEffect(() => {
-		if (renderStyle !== 'compact' || !hasRows || !containerRef.current) {
+		if (!hasRows || !containerRef.current) {
 			setCurrentAgent(null);
 			return;
 		}
 		setCurrentAgent(findCurrentAgent(containerRef.current));
-	}, [parsedRows.length, hasRows, renderStyle]);
+	}, [parsedRows.length, hasRows]);
 
 	if (isReconnecting) {
 		return (
@@ -182,16 +172,12 @@ export function SpaceTaskUnifiedThread({
 			)}
 			<div ref={containerRef} class={`flex-1 overflow-y-auto ${topInsetClass} ${bottomInsetClass}`}>
 				<div class="min-h-[calc(100%+1px)]">
-					{renderStyle === 'compact' ? (
-						<SpaceTaskCardFeed
-							parsedRows={parsedRows}
-							taskId={taskId}
-							maps={maps}
-							isAgentActive={isAgentActive}
-						/>
-					) : (
-						<SpaceTaskThreadEventFeed events={threadEvents} taskId={taskId} maps={maps} />
-					)}
+					<SpaceTaskCardFeed
+						parsedRows={parsedRows}
+						taskId={taskId}
+						maps={maps}
+						isAgentActive={isAgentActive}
+					/>
 				</div>
 			</div>
 		</div>

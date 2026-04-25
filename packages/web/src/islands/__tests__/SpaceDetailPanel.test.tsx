@@ -5,8 +5,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup, screen } from '@testing-library/preact';
-import { computed, signal, type Signal } from '@preact/signals';
+import { render, fireEvent, cleanup, screen, within } from '@testing-library/preact';
+import { signal, type Signal } from '@preact/signals';
 import type { SpaceTask, Space } from '@neokai/shared';
 
 const {
@@ -34,7 +34,6 @@ let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
 let mockCurrentSpaceTaskIdSignal!: Signal<string | null>;
 let mockSpaceOverlaySessionIdSignal!: Signal<string | null>;
 let mockSpaceOverlayAgentNameSignal!: Signal<string | null>;
-let mockAttentionCountSignal!: ReturnType<typeof computed<number>>;
 
 function initSignals() {
 	mockTasksSignal = signal([]);
@@ -42,7 +41,6 @@ function initSignals() {
 	mockLoadingSignal = signal(false);
 	mockSpaceIdSignal = signal('space-1');
 	mockSessionsSignal = signal([]);
-	mockAttentionCountSignal = computed(() => 0);
 	mockCurrentSpaceSessionIdSignal = signal(null);
 	mockCurrentSpaceTaskIdSignal = signal(null);
 	mockSpaceOverlaySessionIdSignal = signal(null);
@@ -59,7 +57,6 @@ vi.mock('../../lib/space-store.ts', () => ({
 			loading: mockLoadingSignal,
 			spaceId: mockSpaceIdSignal,
 			sessions: mockSessionsSignal,
-			attentionCount: mockAttentionCountSignal,
 		};
 	},
 }));
@@ -208,10 +205,11 @@ describe('SpaceDetailPanel', () => {
 
 		expect(screen.getByText('Blocked Task')).toBeTruthy();
 		expect(screen.queryByText('Queued Task')).toBeNull();
-		expect(screen.getByText('Active')).toBeTruthy();
-		expect(screen.getByText('Action')).toBeTruthy();
-		expect(screen.getByText('2')).toBeTruthy();
-		expect(screen.getByText('1')).toBeTruthy();
+
+		const activeTab = screen.getByRole('button', { name: /Active/i });
+		const actionTab = screen.getByRole('button', { name: /Action/i });
+		expect(within(activeTab).getByText('2')).toBeTruthy();
+		expect(within(actionTab).getByText('1')).toBeTruthy();
 	});
 
 	it('switches to Active tasks when the Active tab is clicked', () => {
@@ -335,7 +333,7 @@ describe('SpaceDetailPanel', () => {
 			mockTasksSignal.value = [makeTask('t1', 'Task A', 'open')];
 			const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
 
-			// Active: 1, Action: 0
+			// Active: 1, Action: 0 — Tasks-nav badge hidden (action count = 0)
 			expect(screen.getByText('1')).toBeTruthy();
 			expect(screen.getByText('0')).toBeTruthy();
 
@@ -346,9 +344,9 @@ describe('SpaceDetailPanel', () => {
 			];
 			rerender(<SpaceDetailPanel spaceId="space-1" />);
 
-			// Active: 1, Action: 1
+			// Active tab pill: 1, Action tab pill: 1, Tasks-nav badge: 1 → 3 elements
 			const badges = screen.getAllByText('1');
-			expect(badges.length).toBe(2);
+			expect(badges.length).toBe(3);
 		});
 
 		it('task status change updates tab counts and visibility', () => {
@@ -371,6 +369,57 @@ describe('SpaceDetailPanel', () => {
 			// Action tab should now show Task One (blocked) but not Task Two (done)
 			expect(screen.getByText('Task One')).toBeTruthy();
 			expect(screen.queryByText('Task Two')).toBeNull();
+		});
+
+		it('Tasks-nav badge counts blocked tasks even when no review tasks exist', () => {
+			// Regression: previously the sidebar Tasks badge only counted
+			// tasks the server-side `spaceTasks.needingAttention` query
+			// returned (review + blocked-with-specific-reasons). Plain
+			// blocked tasks shown under the Action tab were missed, so
+			// e.g. 2 blocked / 0 review rendered no badge at all.
+			mockTasksSignal.value = [
+				makeTask('t1', 'Blocked One', 'blocked'),
+				makeTask('t2', 'Blocked Two', 'blocked'),
+			];
+			render(<SpaceDetailPanel spaceId="space-1" />);
+
+			const tasksNav = screen.getByTestId('space-detail-tasks');
+			expect(tasksNav).toBeTruthy();
+			// The badge inside the Tasks nav row should read "2".
+			expect(within(tasksNav).getByText('2')).toBeTruthy();
+		});
+
+		it('Tasks-nav badge stays in sync with the Action tab count', () => {
+			mockTasksSignal.value = [
+				makeTask('t1', 'Blocked Task', 'blocked'),
+				makeTask('t2', 'Review Task', 'review'),
+				makeTask('t3', 'Open Task', 'open'),
+			];
+			render(<SpaceDetailPanel spaceId="space-1" />);
+
+			// Action tab badge inside the tab pill shows "2" (blocked + review).
+			const actionTabButton = screen.getByRole('button', { name: /Action/i });
+			expect(within(actionTabButton).getByText('2')).toBeTruthy();
+
+			// Sidebar Tasks badge should match.
+			const tasksNav = screen.getByTestId('space-detail-tasks');
+			expect(within(tasksNav).getByText('2')).toBeTruthy();
+		});
+
+		it('Tasks-nav badge is hidden when no action-required tasks exist', () => {
+			mockTasksSignal.value = [
+				makeTask('t1', 'Open Task', 'open'),
+				makeTask('t2', 'In Progress Task', 'in_progress'),
+				makeTask('t3', 'Done Task', 'done'),
+			];
+			render(<SpaceDetailPanel spaceId="space-1" />);
+
+			const tasksNav = screen.getByTestId('space-detail-tasks');
+			expect(tasksNav).toBeTruthy();
+			// No amber badge on the Tasks row — the only number on this row
+			// would come from the badge, which renders only when count > 0.
+			expect(within(tasksNav).queryByText('2')).toBeNull();
+			expect(within(tasksNav).queryByText('1')).toBeNull();
 		});
 
 		it('multiple tasks created via different paths all appear in panel', () => {

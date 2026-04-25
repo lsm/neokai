@@ -22,6 +22,7 @@ import {
 	currentSpaceTaskIdSignal,
 	currentSpaceViewModeSignal,
 } from '../lib/signals';
+import { isActionRequired, isActiveTask } from '../lib/task-filters';
 import { cn } from '../lib/utils';
 
 type TaskTab = 'active' | 'action';
@@ -109,10 +110,8 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		if (!selectedTaskId) return;
 		const task = tasks.find((t) => t.id === selectedTaskId);
 		if (!task) return;
-		const isActive = task.status === 'open' || task.status === 'in_progress';
-		const isAction = task.status === 'blocked' || task.status === 'review';
-		if (isActive && taskTab !== 'active') setTaskTab('active');
-		else if (isAction && taskTab !== 'action') setTaskTab('action');
+		if (isActiveTask(task) && taskTab !== 'active') setTaskTab('active');
+		else if (isActionRequired(task) && taskTab !== 'action') setTaskTab('action');
 		// Only re-run when the selected task changes, not on every task list update.
 	}, [selectedTaskId]);
 
@@ -124,29 +123,22 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	const isTasksSelected = currentSpaceViewModeSignal.value === 'tasks';
 	const isSessionsSelected = currentSpaceViewModeSignal.value === 'sessions';
 
-	const attentionCount = spaceStore.attentionCount.value;
-
+	// Action tab + Tasks-nav badge share the same predicate (`isActionRequired`)
+	// so the badge count cannot drift from what's visible under the Action tab.
 	const { activeCount, actionCount } = useMemo(() => {
 		let active = 0;
 		let action = 0;
 		for (const task of tasks) {
-			if (task.status === 'open' || task.status === 'in_progress') active++;
-			else if (task.status === 'blocked' || task.status === 'review') action++;
+			if (isActiveTask(task)) active++;
+			else if (isActionRequired(task)) action++;
 		}
 		return { activeCount: active, actionCount: action };
 	}, [tasks]);
 
 	const tasksForTab = useMemo(() => {
 		const sorted = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt);
-		let filtered: typeof sorted;
-
-		if (taskTab === 'action') {
-			filtered = sorted.filter((task) => task.status === 'blocked' || task.status === 'review');
-		} else {
-			filtered = sorted.filter((task) => task.status === 'open' || task.status === 'in_progress');
-		}
-
-		return filtered;
+		const predicate = taskTab === 'action' ? isActionRequired : isActiveTask;
+		return sorted.filter(predicate);
 	}, [tasks, taskTab, selectedTaskId]);
 
 	const sessions = useMemo(() => {
@@ -298,9 +290,9 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					</svg>
 				</div>
 				<span class="flex-1 text-sm text-gray-200 text-left truncate">Tasks</span>
-				{attentionCount > 0 && (
+				{actionCount > 0 && (
 					<span class="flex-shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-amber-600 text-white text-xs font-medium flex items-center justify-center tabular-nums">
-						{attentionCount}
+						{actionCount}
 					</span>
 				)}
 			</button>
