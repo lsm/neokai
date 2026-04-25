@@ -460,23 +460,23 @@ describe('SpaceOverview', () => {
 			navigateToSpaceTasksMock.mockClear();
 		});
 
-		it('is hidden when no tasks are paused at a completion action', () => {
+		it('is hidden when no tasks are paused at a submit_for_approval checkpoint', () => {
 			mockSpace.value = makeSpace();
 			mockTasks.value = [makeTask('t1', 'in_progress')];
 			const { queryByTestId } = render(<SpaceOverview spaceId="space-1" />);
 			expect(queryByTestId('awaiting-approval-summary')).toBeNull();
 		});
 
-		it('renders count when tasks are paused at completion actions', () => {
+		it('renders count when tasks are paused at submit_for_approval checkpoints', () => {
 			mockSpace.value = makeSpace();
 			mockTasks.value = [
 				makeTask('t1', 'review', {
 					pendingActionIndex: 0,
-					pendingCheckpointType: 'completion_action',
+					pendingCheckpointType: 'task_completion',
 				}),
 				makeTask('t2', 'review', {
 					pendingActionIndex: 1,
-					pendingCheckpointType: 'completion_action',
+					pendingCheckpointType: 'task_completion',
 				}),
 				// Gate-paused task should not contribute to the count
 				makeTask('t3', 'review', {
@@ -494,7 +494,7 @@ describe('SpaceOverview', () => {
 			mockTasks.value = [
 				makeTask('t1', 'review', {
 					pendingActionIndex: 0,
-					pendingCheckpointType: 'completion_action',
+					pendingCheckpointType: 'task_completion',
 				}),
 			];
 			const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);
@@ -506,7 +506,7 @@ describe('SpaceOverview', () => {
 			mockTasks.value = [
 				makeTask('t1', 'review', {
 					pendingActionIndex: 0,
-					pendingCheckpointType: 'completion_action',
+					pendingCheckpointType: 'task_completion',
 				}),
 			];
 			const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);

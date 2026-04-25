@@ -15,9 +15,10 @@ import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { getTransitionActions } from './TaskStatusActions';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { PendingGateBanner } from './PendingGateBanner';
-import { PendingCompletionActionBanner } from './PendingCompletionActionBanner';
 import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
 import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
+import { useRunGateSummaries } from './use-run-gate-summaries.ts';
+import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
@@ -32,9 +33,9 @@ const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
 	open: 'Open',
 	in_progress: 'In Progress',
 	review: 'Awaiting Review',
-	// `approved` is a transient post-approval status added in PR 1/5 of the
-	// task-agent-as-post-approval-executor refactor. Not yet written by any
-	// runtime path — PR 2 wires it in.
+	// `approved` is the post-approval staging status: tasks land here when an
+	// agent calls `approve_task`, then the PostApprovalRouter dispatches the
+	// follow-up (auto-merge, human gate, or no-route → `done`).
 	approved: 'Approved',
 	done: 'Done',
 	blocked: 'Blocked',
@@ -114,6 +115,15 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		}
 		setThreadSessionId(task.taskAgentSessionId ?? null);
 	}, [task?.id, task?.taskAgentSessionId]);
+
+	// Resolve runId/workflowId here (before the early returns) so the gate-status
+	// hook is always called — React's Rules of Hooks require a stable call order.
+	const _runId = task?.workflowRunId ?? null;
+	const _workflowRunForHook = _runId
+		? (spaceStore.workflowRuns.value.find((r) => r.id === _runId) ?? null)
+		: null;
+	const _workflowIdForHook = _workflowRunForHook?.workflowId ?? null;
+	const { summaries: gateSummaries } = useRunGateSummaries(_runId, _workflowIdForHook);
 
 	if (!taskId) {
 		return (
@@ -252,9 +262,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	const allTransitionActions = getTransitionActions(task.status);
 	const filteredTransitionActions =
-		task.pendingCheckpointType === 'completion_action' ||
-		task.pendingCheckpointType === 'task_completion' ||
-		task.pendingCheckpointType === 'gate'
+		task.pendingCheckpointType === 'task_completion' || task.pendingCheckpointType === 'gate'
 			? allTransitionActions.filter(({ target }) => target !== 'done' && target !== 'cancelled')
 			: allTransitionActions;
 
@@ -423,36 +431,39 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					/>
 				) : (
 					<div class="h-full flex flex-col relative">
-						{task.status === 'blocked' ? (
-							<TaskBlockedBanner
-								task={task}
-								spaceId={runtimeSpaceId}
-								onStatusTransition={handleStatusTransition}
-							/>
-						) : (
-							<>
-								{task.pendingCheckpointType === 'completion_action' && (
-									<PendingCompletionActionBanner
+						{(() => {
+							// Single-slot precedence renderer — at most one banner is
+							// ever shown. Precedence (high → low):
+							//   blocked > post_approval_blocked > task_completion_pending > gate_pending
+							// The helper captures the rule so it can be unit-tested
+							// independently of the render tree.
+							const banner = resolveActiveTaskBanner(task, gateSummaries);
+							if (!banner) return null;
+							if (banner.kind === 'blocked') {
+								return (
+									<TaskBlockedBanner
 										task={task}
 										spaceId={runtimeSpaceId}
-										spaceAutonomyLevel={spaceStore.space.value?.autonomyLevel}
+										onStatusTransition={handleStatusTransition}
 									/>
-								)}
-								{task.pendingCheckpointType === 'task_completion' && (
-									<PendingTaskCompletionBanner task={task} spaceId={runtimeSpaceId} />
-								)}
-								{task.status === 'approved' && task.postApprovalBlockedReason && (
-									<PendingPostApprovalBanner task={task} spaceId={runtimeSpaceId} />
-								)}
-								{task.workflowRunId && (
-									<PendingGateBanner
-										runId={task.workflowRunId}
-										spaceId={runtimeSpaceId}
-										workflowId={canvasWorkflowId}
-									/>
-								)}
-							</>
-						)}
+								);
+							}
+							if (banner.kind === 'post_approval_blocked') {
+								return <PendingPostApprovalBanner task={task} spaceId={runtimeSpaceId} />;
+							}
+							if (banner.kind === 'task_completion_pending') {
+								return <PendingTaskCompletionBanner task={task} spaceId={runtimeSpaceId} />;
+							}
+							// gate_pending — PendingGateBanner renders rows for every
+							// waiting gate on the run.
+							return (
+								<PendingGateBanner
+									runId={banner.runId}
+									spaceId={runtimeSpaceId}
+									workflowId={canvasWorkflowId}
+								/>
+							);
+						})()}
 						<div class="flex-1 min-h-0" data-testid="task-thread-panel">
 							{hasUnifiedWorkflowThread ? (
 								<SpaceTaskUnifiedThread

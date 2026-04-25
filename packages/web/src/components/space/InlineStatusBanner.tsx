@@ -1,11 +1,10 @@
 /**
  * InlineStatusBanner — shared thin-banner primitive for task-pane status lines.
  *
- * Prior to this primitive, `PendingCompletionActionBanner`,
- * `PendingTaskCompletionBanner`, and (in this PR) `PendingPostApprovalBanner`
- * each rolled their own one-line banner markup. Extracting the shape lets new
- * banners stay consistent and lets tests assert structure instead of class
- * strings.
+ * Prior to this primitive, `PendingTaskCompletionBanner` and (in this PR)
+ * `PendingPostApprovalBanner` each rolled their own one-line banner markup.
+ * Extracting the shape lets new banners stay consistent and lets tests assert
+ * structure instead of class strings.
  *
  * Tone palette matches existing banners:
  *   - `amber`  — awaiting approval / blocked on human

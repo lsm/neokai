@@ -878,24 +878,6 @@ export class SpaceRuntimeService {
 	}
 
 	/**
-	 * Resume completion action execution for a task paused at a pending action.
-	 *
-	 * Delegates to SpaceRuntime.resumeCompletionActions(). Called from the
-	 * spaceTask.update RPC handler when a human approves a task that was paused
-	 * at a completion action checkpoint.
-	 *
-	 * @param options.approvalReason Optional human-supplied rationale for the
-	 *   approval. Persisted on the resulting task record for audit.
-	 */
-	async resumeCompletionActions(
-		spaceId: string,
-		taskId: string,
-		options?: { approvalReason?: string | null }
-	): Promise<SpaceTask | null> {
-		return this.runtime.resumeCompletionActions(spaceId, taskId, options);
-	}
-
-	/**
 	 * Dispatch post-approval routing for a task. Delegates to
 	 * `SpaceRuntime.dispatchPostApproval`, which:
 	 *   1. Transitions the task into `approved` (via `SpaceTaskManager.setTaskStatus`).
@@ -905,8 +887,7 @@ export class SpaceRuntimeService {
 	 *      node-agent sub-session).
 	 *
 	 * Called from the `spaceTask.approvePendingCompletion` RPC handler when a
-	 * human approves a task paused at a `task_completion` checkpoint AND the
-	 * `NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING` feature flag is ON.
+	 * human approves a task paused at a `task_completion` checkpoint.
 	 *
 	 * The `spaceId` argument is only used for logging at this layer — the
 	 * underlying runtime looks up the task's actual spaceId from the repository.

@@ -121,8 +121,6 @@ export function formatEventMessage(
 			return formatWorkflowRunNeedsAttention(event, autonomyLevel);
 		case 'task_awaiting_approval':
 			return formatTaskAwaitingApproval(event, autonomyLevel);
-		case 'completion_action_executed':
-			return formatCompletionActionExecuted(event, autonomyLevel);
 	}
 }
 
@@ -400,42 +398,6 @@ function formatTaskAwaitingApproval(
 		payload['actionDescription'] = event.actionDescription;
 	}
 	return buildMessage(event.kind, humanReadable, payload);
-}
-
-function formatCompletionActionExecuted(
-	event: {
-		kind: 'completion_action_executed';
-		spaceId: string;
-		taskId: string;
-		runId: string;
-		actionId: string;
-		actionName: string;
-		approvedBy: 'human' | 'auto_policy';
-		approvalReason: string | null;
-		executedAt: string;
-		timestamp: string;
-	},
-	autonomyLevel: SpaceAutonomyLevel
-): string {
-	const approverLabel = event.approvedBy === 'human' ? 'a human reviewer' : 'auto-policy';
-	const reasonSuffix = event.approvalReason ? ` Reason: ${event.approvalReason}` : '';
-	const humanReadable =
-		`Completion action "${event.actionName}" (${event.actionId}) on task ${event.taskId} ` +
-		`in space ${event.spaceId} was approved by ${approverLabel} and executed successfully.` +
-		reasonSuffix;
-	return buildMessage(event.kind, humanReadable, {
-		kind: event.kind,
-		spaceId: event.spaceId,
-		taskId: event.taskId,
-		runId: event.runId,
-		actionId: event.actionId,
-		actionName: event.actionName,
-		approvedBy: event.approvedBy,
-		approvalReason: event.approvalReason,
-		executedAt: event.executedAt,
-		timestamp: event.timestamp,
-		autonomyLevel,
-	});
 }
 
 function buildMessage(

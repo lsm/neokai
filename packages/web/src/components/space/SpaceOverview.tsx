@@ -355,17 +355,18 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 	// Recent tasks — sorted by updatedAt, top 5
 	const recentTasks = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5);
 
-	// Awaiting-approval count: tasks paused at a completion action. Predicate
-	// matches the SpaceTasks filter chip exactly so the two surfaces agree.
+	// Awaiting-approval count: tasks paused at a `submit_for_approval`
+	// (`task_completion`) checkpoint. Predicate matches the SpaceTasks filter
+	// chip exactly so the two surfaces agree.
 	const awaitingApprovalCount = tasks.filter(
-		(t) => t.pendingCheckpointType === 'completion_action'
+		(t) => t.pendingCheckpointType === 'task_completion'
 	).length;
 
 	const handleTaskClick =
 		onSelectTask ?? ((taskId: string) => navigateToSpaceTask(spaceId, taskId));
 
 	const handleAwaitingApprovalClick = () => {
-		currentSpaceTasksFilterSignal.value = 'awaiting_completion_action';
+		currentSpaceTasksFilterSignal.value = 'awaiting_task_completion';
 		navigateToSpaceTasks(spaceId);
 	};
 
@@ -415,9 +416,10 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 					/>
 				</div>
 
-				{/* Awaiting-approval summary — surfaces tasks paused at a completion
-				action as a single click-through. Hidden when the count is zero so it
-				doesn't add visual noise to happy-path dashboards. */}
+				{/* Awaiting-approval summary — surfaces tasks paused at a
+				`submit_for_approval` checkpoint as a single click-through. Hidden when
+				the count is zero so it doesn't add visual noise to happy-path
+				dashboards. */}
 				{awaitingApprovalCount > 0 && (
 					<button
 						type="button"
@@ -434,9 +436,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 									{awaitingApprovalCount} {awaitingApprovalCount === 1 ? 'task' : 'tasks'} awaiting
 									your approval
 								</p>
-								<p class="text-xs text-amber-300/70">
-									Paused at completion actions — click to review
-								</p>
+								<p class="text-xs text-amber-300/70">Paused awaiting approval — click to review</p>
 							</div>
 						</div>
 						<span class="text-amber-400/80 text-sm" aria-hidden="true">

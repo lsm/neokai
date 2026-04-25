@@ -23,11 +23,12 @@ type TaskFilterTab = 'action' | 'active' | 'completed' | 'archived';
 
 /**
  * Predicate for the "Awaiting Approval" pre-filter chip — tasks paused at a
- * completion action. Matches `SpaceOverview`'s summary count exactly so both
- * surfaces stay in sync when the filter is activated via click-through.
+ * `submit_for_approval` (`task_completion`) checkpoint. Matches
+ * `SpaceOverview`'s summary count exactly so both surfaces stay in sync when
+ * the filter is activated via click-through.
  */
-function isAwaitingCompletionAction(task: SpaceTask): boolean {
-	return task.pendingCheckpointType === 'completion_action';
+function isAwaitingTaskCompletion(task: SpaceTask): boolean {
+	return task.pendingCheckpointType === 'task_completion';
 }
 
 /** Block reasons that indicate a task needs human attention */
@@ -410,7 +411,7 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 	// users coming in without a filter.
 	const activeTab: TaskFilterTab = currentSpaceTasksFilterTabSignal.value;
 	const spaceId = currentSpaceIdSignal.value ?? '';
-	const [activeFilter, setActiveFilter] = useState<'awaiting_completion_action' | null>(preFilter);
+	const [activeFilter, setActiveFilter] = useState<'awaiting_task_completion' | null>(preFilter);
 
 	// Sync from the signal once, then clear it so the filter doesn't re-apply on
 	// re-renders or when the component remounts from an unrelated cause. The
@@ -425,7 +426,7 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 	}, []);
 
 	const awaitingApprovalCount = useMemo(
-		() => tasks.filter(isAwaitingCompletionAction).length,
+		() => tasks.filter(isAwaitingTaskCompletion).length,
 		[tasks]
 	);
 
@@ -453,8 +454,8 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 	const filteredTasks = useMemo(() => {
 		const statuses = TAB_GROUPS[activeTab];
 		let list = [...tasks].filter((t) => statuses.includes(t.status as SpaceTaskStatus));
-		if (activeFilter === 'awaiting_completion_action') {
-			list = list.filter(isAwaitingCompletionAction);
+		if (activeFilter === 'awaiting_task_completion') {
+			list = list.filter(isAwaitingTaskCompletion);
 		}
 		return list.sort((a, b) => b.updatedAt - a.updatedAt);
 	}, [tasks, activeTab, activeFilter]);
@@ -523,29 +524,30 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 				</div>
 
 				{/* Awaiting-approval filter chip — visible when at least one task is
-				paused at a completion action. Toggling on narrows the list to those
-				tasks only; toggling off restores the full tab view. The count here
-				matches the Overview summary verbatim so click-through parity holds. */}
+				paused at a `submit_for_approval` checkpoint. Toggling on narrows the
+				list to those tasks only; toggling off restores the full tab view. The
+				count here matches the Overview summary verbatim so click-through
+				parity holds. */}
 				{awaitingApprovalCount > 0 && (
 					<div class="flex items-center gap-2" data-testid="space-tasks-filter-bar">
 						<button
 							type="button"
 							onClick={() =>
 								setActiveFilter((f) =>
-									f === 'awaiting_completion_action' ? null : 'awaiting_completion_action'
+									f === 'awaiting_task_completion' ? null : 'awaiting_task_completion'
 								)
 							}
 							data-testid="tasks-filter-awaiting-approval"
-							aria-pressed={activeFilter === 'awaiting_completion_action'}
+							aria-pressed={activeFilter === 'awaiting_task_completion'}
 							class={`px-2.5 py-1 text-xs font-medium rounded-full border transition-colors ${
-								activeFilter === 'awaiting_completion_action'
+								activeFilter === 'awaiting_task_completion'
 									? 'bg-amber-900/40 text-amber-200 border-amber-700/60'
 									: 'bg-dark-800 text-gray-300 border-dark-600 hover:bg-dark-700'
 							}`}
 						>
 							⏸ Awaiting Approval ({awaitingApprovalCount})
 						</button>
-						{activeFilter === 'awaiting_completion_action' && (
+						{activeFilter === 'awaiting_task_completion' && (
 							<button
 								type="button"
 								onClick={() => setActiveFilter(null)}

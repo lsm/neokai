@@ -92,7 +92,10 @@ describe('TaskBlockedBanner', () => {
 	it('renders fallback amber banner when blockReason is null', () => {
 		const { getByTestId } = render(<TaskBlockedBanner task={makeTask()} spaceId="space-1" />);
 		const banner = getByTestId('task-blocked-banner');
-		expect(banner.className).toContain('border-amber-500');
+		// Tone is exposed via data-tone rather than a border class — the banner
+		// composes the InlineStatusBanner primitive, so assertions target that
+		// attribute instead of the legacy hand-rolled class string.
+		expect(banner.getAttribute('data-tone')).toBe('amber');
 		expect(banner.textContent).toContain('Blocked');
 	});
 
@@ -126,7 +129,7 @@ describe('TaskBlockedBanner', () => {
 			expect(getByTestId('gate-review-btn')).toBeTruthy();
 		});
 		const banner = getByTestId('task-blocked-banner');
-		expect(banner.className).toContain('border-purple-500');
+		expect(banner.getAttribute('data-tone')).toBe('purple');
 		expect(banner.textContent).toContain('Gate Pending Approval');
 	});
 
@@ -137,7 +140,7 @@ describe('TaskBlockedBanner', () => {
 		});
 		const { getByTestId } = render(<TaskBlockedBanner task={task} spaceId="space-1" />);
 		const banner = getByTestId('task-blocked-banner');
-		expect(banner.className).toContain('border-red-500');
+		expect(banner.getAttribute('data-tone')).toBe('red');
 		expect(banner.textContent).toContain('Execution Failed');
 		expect(getByTestId('task-resume-btn')).toBeTruthy();
 	});
@@ -156,7 +159,7 @@ describe('TaskBlockedBanner', () => {
 			<TaskBlockedBanner task={task} spaceId="space-1" />
 		);
 		const banner = getByTestId('task-blocked-banner');
-		expect(banner.className).toContain('border-gray-500');
+		expect(banner.getAttribute('data-tone')).toBe('gray');
 		expect(banner.textContent).toContain('Blocked by Dependency');
 		expect(queryByTestId('task-resume-btn')).toBeNull();
 		expect(queryByTestId('gate-review-btn')).toBeNull();
