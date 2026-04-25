@@ -23,13 +23,14 @@
 
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { isSDKAssistantMessage, isToolUseBlock } from '@neokai/shared/sdk/type-guards';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import MarkdownRenderer from '../../../chat/MarkdownRenderer.tsx';
 import {
 	buildLogicalBlocks,
 	type CompactLogicalBlock,
 	isUserRow,
 } from '../compact/space-task-compact-reducer';
+import { SpaceTaskThreadMessageActions } from '../SpaceTaskThreadMessageActions';
 import { getAgentColor } from '../space-task-thread-agent-colors';
 import type { ParsedThreadRow } from '../space-task-thread-events';
 import {
@@ -543,15 +544,49 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 
 /**
  * Synthetic / agent→agent handoff — muted dark bubble with purple accent,
- * right-aligned. Header carries a `synthetic` badge plus a colored
- * `[FROM AGENT] → [TO AGENT]` badge so the conversational handoff is
- * obvious at a glance.
+ * right-aligned. Mirrors the Thinking block layout:
+ *   • Tall header: small icon + `text-sm` "Synthetic" label + agent→agent
+ *     route badge.
+ *   • Body collapsed to ~20 lines with a gradient fade and a centered
+ *     "Show more" / "Show less" toggle pinned to the bottom of the card.
+ *   • Below the card, a chat-style action row (timestamp + copy button) so
+ *     long handoff prompts can be copied just like assistant messages.
  */
+
+// Default visible height for synthetic message bodies before the user expands.
+const SYNTHETIC_PREVIEW_LINE_COUNT = 20;
+// Approximate rendered line height for `text-sm` prose with `leading-relaxed`
+// (matches the global `.prose p { line-height: 1.7 }` rule in styles.css for
+// 14px body text → ~24px per line). Used to gate the "Show more" button.
+const SYNTHETIC_LINE_HEIGHT_PX = 24;
+
 function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 	const fromColor = getAgentColor(turn.fromLabel);
 	const toColor = getAgentColor(turn.toLabel);
 	const fromShort = shortAgentName(turn.fromLabel);
 	const toShort = shortAgentName(turn.toLabel);
+
+	const [isExpanded, setIsExpanded] = useState(false);
+	const [needsTruncation, setNeedsTruncation] = useState(false);
+	const contentRef = useRef<HTMLDivElement>(null);
+
+	const previewMaxHeight = SYNTHETIC_PREVIEW_LINE_COUNT * SYNTHETIC_LINE_HEIGHT_PX;
+
+	// Re-measure after every body change. MarkdownRenderer parses async, so the
+	// final height isn't known on first paint — re-run on a microtask delay
+	// after content updates so the "Show more" button appears once parsing is
+	// done. useLayoutEffect runs synchronously before paint for the initial
+	// render; the timeout covers the deferred markdown render that follows.
+	useLayoutEffect(() => {
+		const measure = () => {
+			if (!contentRef.current) return;
+			setNeedsTruncation(contentRef.current.scrollHeight > previewMaxHeight);
+		};
+		measure();
+		const handle = window.setTimeout(measure, 100);
+		return () => window.clearTimeout(handle);
+	}, [turn.body, previewMaxHeight]);
+
 	return (
 		<div
 			class="flex justify-end"
@@ -568,10 +603,27 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 					class="bg-dark-900 border border-dark-700 rounded-[20px] overflow-hidden"
 					data-testid="minimal-thread-synthetic-bubble"
 				>
-					{/* Header — synthetic badge + agent→agent route. */}
+					{/* Header — same proportions as ThinkingBlock's header
+					    (`flex items-center gap-2 px-3 py-2`, `text-sm font-semibold`
+					    label, `w-4 h-4` icon) so the two block types feel
+					    structurally identical. */}
 					<div class="flex items-center gap-2 px-3 py-2 border-b border-dark-700 flex-wrap">
+						<svg
+							class="w-4 h-4 flex-shrink-0 text-purple-400"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							aria-hidden="true"
+						>
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth={2}
+								d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"
+							/>
+						</svg>
 						<span
-							class="text-xs font-semibold text-purple-400"
+							class="text-sm font-semibold text-purple-400"
 							data-testid="minimal-thread-synthetic-badge"
 						>
 							Synthetic
@@ -591,31 +643,104 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 							<span style={{ color: toColor }}>{toShort}</span>
 						</span>
 					</div>
-					{/* Synthetic markdown body. Purple is reserved ONLY for titles
-					    and headings so the message reads as system-generated at a
-					    glance without overwhelming the eye. Body paragraphs, lists,
-					    inline code, and links keep the project's global .prose
-					    colors (white/gray text, blue links/code) for readability.
-					    The `!` prefix on heading variants beats the equally-
-					    specific global `.prose h1-h6` rule in styles.css. */}
-					<div class="px-3 py-2">
-						{turn.body ? (
-							turn.bodyIsFallback ? (
-								<p class="text-sm text-gray-200 leading-relaxed whitespace-pre-wrap break-words">
-									{turn.body}
-								</p>
-							) : (
-								<MarkdownRenderer
-									content={turn.body}
-									class="text-sm leading-relaxed [&_h1]:!text-purple-400 [&_h2]:!text-purple-400 [&_h3]:!text-purple-400 [&_h4]:!text-purple-400 [&_h5]:!text-purple-400 [&_h6]:!text-purple-400"
-								/>
-							)
-						) : (
-							<p class="text-xs text-gray-500 italic">(empty message)</p>
+
+					{/* Content area. When the body exceeds 20 lines we cap the
+					    visible height and overlay a fade so the cut-off is
+					    obvious; expanding releases the cap. */}
+					<div class="relative">
+						<div
+							class={`px-3 py-2${!isExpanded && needsTruncation ? ' overflow-hidden' : ''}`}
+							style={
+								!isExpanded && needsTruncation ? { maxHeight: `${previewMaxHeight}px` } : undefined
+							}
+						>
+							<div ref={contentRef} data-testid="minimal-thread-synthetic-body">
+								{turn.body ? (
+									turn.bodyIsFallback ? (
+										<p class="text-sm text-gray-200 leading-relaxed whitespace-pre-wrap break-words">
+											{turn.body}
+										</p>
+									) : (
+										<MarkdownRenderer
+											content={turn.body}
+											class="text-sm leading-relaxed [&_h1]:!text-purple-400 [&_h2]:!text-purple-400 [&_h3]:!text-purple-400 [&_h4]:!text-purple-400 [&_h5]:!text-purple-400 [&_h6]:!text-purple-400"
+										/>
+									)
+								) : (
+									<p class="text-xs text-gray-500 italic">(empty message)</p>
+								)}
+							</div>
+						</div>
+
+						{/* Gradient fade hint — only when collapsed. */}
+						{needsTruncation && !isExpanded && (
+							<div
+								class="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-dark-900 to-transparent pointer-events-none"
+								aria-hidden="true"
+							/>
+						)}
+
+						{/* Show more / Show less toggle — pinned to the bottom edge
+						    of the card with a top border separator, matching the
+						    Thinking block. */}
+						{needsTruncation && (
+							<div class="flex justify-center py-2 border-t border-dark-700 bg-dark-900">
+								<button
+									type="button"
+									onClick={() => setIsExpanded((v) => !v)}
+									class="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors hover:bg-dark-800 text-purple-300"
+									data-testid="minimal-thread-synthetic-toggle"
+								>
+									{isExpanded ? (
+										<>
+											<svg
+												class="w-3.5 h-3.5"
+												fill="none"
+												viewBox="0 0 24 24"
+												stroke="currentColor"
+												aria-hidden="true"
+											>
+												<path
+													strokeLinecap="round"
+													strokeLinejoin="round"
+													strokeWidth={2}
+													d="M5 15l7-7 7 7"
+												/>
+											</svg>
+											Show less
+										</>
+									) : (
+										<>
+											<svg
+												class="w-3.5 h-3.5"
+												fill="none"
+												viewBox="0 0 24 24"
+												stroke="currentColor"
+												aria-hidden="true"
+											>
+												<path
+													strokeLinecap="round"
+													strokeLinejoin="round"
+													strokeWidth={2}
+													d="M19 9l-7 7-7-7"
+												/>
+											</svg>
+											Show more
+										</>
+									)}
+								</button>
+							</div>
 						)}
 					</div>
 				</div>
-				<div class="text-xs text-gray-500 text-right mt-1">{formatClock(turn.createdAt)}</div>
+
+				{/* Chat-style action row — timestamp + copy button under the
+				    bubble, right-aligned to track the right-anchored bubble. */}
+				<SpaceTaskThreadMessageActions
+					timestamp={turn.createdAt}
+					copyText={turn.body ?? ''}
+					align="right"
+				/>
 			</div>
 		</div>
 	);
