@@ -93,10 +93,9 @@ Gates support `writers: ['human']` and `spaceWorkflowRun.approveGate` RPC exists
 - ~~Human must manually check the workflow run state to discover pending gates~~
 
 **Implemented:**
-- LiveQuery `spaceTasks.needingAttention` — real-time attention task tracking (review + human-blocked)
+- Shared `isActionRequired` predicate (`packages/web/src/lib/task-filters.ts`) — single source of truth that classifies a task as needing action when its status is `review` or `blocked` (any block reason)
 - "Action" tab in SpaceTasks — groups tasks by reason: Needs Input, Gate Pending, Awaiting Review, Blocked
-- Amber attention badge on Tasks sidebar button and SpacesPage cards
-- LiveQuery-backed counts survive reconnect (no missed notifications)
+- Amber attention badge on Tasks sidebar button and SpacesPage cards, derived from the same predicate over the live `spaceStore.tasks` LiveQuery (no separate server-side attention query)
 
 **Impact:** Medium — humans don't know when approval is needed  
 **Effort:** Medium
