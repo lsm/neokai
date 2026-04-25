@@ -40,6 +40,10 @@ import type { RoomSkillOverride } from '@neokai/shared';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
 import { getProviderContextManager } from '../providers/factory.js';
 import { resolveSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.js';
+import {
+	builtinSkillPluginPath,
+	defaultBuiltinSkillPluginRoot,
+} from './builtin-skill-plugin-wrapper';
 import { homedir } from 'os';
 import { join } from 'path';
 
@@ -888,10 +892,20 @@ CRITICAL RULES:
 
 	/**
 	 * Build plugin entries from enabled skills with sourceType === 'builtin'.
-	 * Each builtin skill's commandName resolves to ~/.neokai/skills/{commandName}/
-	 * which is populated at startup (by the prod binary extraction step or the dev
-	 * server sync step). These directories are registered as local SDK plugins so
-	 * the SDK discovers their SKILL.md content as slash commands.
+	 *
+	 * Each builtin skill's commandName has a wrapper plugin materialised at
+	 * `~/.neokai/skill-plugins/{commandName}/` by `SkillsManager.ensureBuiltinPluginWrappers()`
+	 * during daemon startup. The wrapper has the layout the Claude Agent SDK
+	 * requires for `plugins: [{ type: 'local', path }]`:
+	 *
+	 *   <wrapper>/.claude-plugin/plugin.json
+	 *   <wrapper>/skills/<commandName>/   → symlink to ~/.neokai/skills/<commandName>/
+	 *
+	 * Without that wrapper the SDK silently drops the plugin (its loader
+	 * requires `.claude-plugin/plugin.json` at the root) and `/<commandName>`
+	 * never registers as a slash command. Pointing directly at
+	 * `~/.neokai/skills/<commandName>/` was the source of the
+	 * "Unknown command: /playwright" bug.
 	 *
 	 * Room overrides with enabled=false exclude the skill even if globally enabled.
 	 */
@@ -901,12 +915,13 @@ CRITICAL RULES:
 		const skills = this.ctx.skillsManager.getEnabledSkills();
 		const roomDisabled = this.getRoomDisabledSkillIds();
 		const plugins: Array<{ type: 'local'; path: string }> = [];
+		const wrappersRoot = defaultBuiltinSkillPluginRoot();
 
 		for (const skill of skills) {
 			if (roomDisabled.has(skill.id)) continue;
 			if (skill.sourceType === 'builtin' && skill.config.type === 'builtin') {
-				const skillDir = join(homedir(), '.neokai', 'skills', skill.config.commandName);
-				plugins.push({ type: 'local', path: skillDir });
+				const wrapperDir = builtinSkillPluginPath(wrappersRoot, skill.config.commandName);
+				plugins.push({ type: 'local', path: wrapperDir });
 			}
 		}
 
