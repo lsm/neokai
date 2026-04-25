@@ -592,8 +592,10 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 							<span style={{ color: toColor }}>{toShort}</span>
 						</span>
 					</div>
-					{/* Purple-tinted markdown body. */}
-					<div class="px-3 py-2 text-sm text-gray-200 leading-relaxed [&_a]:text-purple-300 [&_code]:text-purple-200 [&_code]:bg-purple-500/10 [&_code]:rounded [&_code]:px-1 [&_strong]:text-purple-100 [&_h1]:text-purple-100 [&_h2]:text-purple-100 [&_h3]:text-purple-100">
+					{/* Purple-tinted markdown body — headings, accents, links and code
+					    all read as purple so the message is visually marked as
+					    system-generated without changing MarkdownRenderer. */}
+					<div class="px-3 py-2 text-sm text-gray-200 leading-relaxed [&_a]:text-purple-300 [&_a]:underline [&_code]:text-purple-200 [&_code]:bg-purple-500/10 [&_code]:rounded [&_code]:px-1 [&_strong]:text-purple-200 [&_em]:text-purple-300 [&_h1]:text-purple-300 [&_h1]:font-semibold [&_h2]:text-purple-300 [&_h2]:font-semibold [&_h3]:text-purple-300 [&_h3]:font-semibold [&_h4]:text-purple-300 [&_h5]:text-purple-300 [&_h6]:text-purple-300 [&_blockquote]:border-l-2 [&_blockquote]:border-purple-500/50 [&_blockquote]:pl-3 [&_blockquote]:text-purple-200/90 [&_ul]:marker:text-purple-400 [&_ol]:marker:text-purple-400 [&_hr]:border-purple-500/30">
 						{turn.body ? (
 							turn.bodyIsFallback ? (
 								<p class="whitespace-pre-wrap break-words">{turn.body}</p>
