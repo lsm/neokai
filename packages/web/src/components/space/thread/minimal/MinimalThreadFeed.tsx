@@ -568,9 +568,8 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 					class="bg-dark-900 border border-dark-700 rounded-[20px] overflow-hidden"
 					data-testid="minimal-thread-synthetic-bubble"
 				>
-					{/* Header — purple accent + synthetic badge + agent→agent route. */}
+					{/* Header — synthetic badge + agent→agent route. */}
 					<div class="flex items-center gap-2 px-3 py-2 border-b border-dark-700 flex-wrap">
-						<span class="w-2 h-2 rounded-full bg-purple-500 shrink-0" aria-hidden="true" />
 						<span
 							class="text-xs font-semibold text-purple-400"
 							data-testid="minimal-thread-synthetic-badge"
