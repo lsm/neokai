@@ -23,11 +23,23 @@ interface AgentOverlayChatProps {
 	 * open; the visible title comes from `ChatContainer`'s session title.
 	 */
 	agentName?: string;
+	/**
+	 * Optional message UUID to scroll into view + briefly highlight when the
+	 * overlay opens. Used when the user opens a session from a specific message
+	 * (e.g. clicking the "open in session" button on a minimal thread turn) so
+	 * they land on the message they clicked instead of the session's tail.
+	 */
+	highlightMessageId?: string;
 	/** Called when the overlay should be closed. */
 	onClose: () => void;
 }
 
-export function AgentOverlayChat({ sessionId, agentName, onClose }: AgentOverlayChatProps) {
+export function AgentOverlayChat({
+	sessionId,
+	agentName,
+	highlightMessageId,
+	onClose,
+}: AgentOverlayChatProps) {
 	const panelRef = useRef<HTMLDivElement>(null);
 
 	// Close on Escape key
@@ -152,7 +164,12 @@ export function AgentOverlayChat({ sessionId, agentName, onClose }: AgentOverlay
 				>
 					{/* Chat content — ChatHeader owns the single header; back button replaces the mobile-menu toggle */}
 					<div class="flex-1 min-h-0 overflow-hidden flex flex-col">
-						<ChatContainer key={sessionId} sessionId={sessionId} onBack={onClose} />
+						<ChatContainer
+							key={sessionId}
+							sessionId={sessionId}
+							onBack={onClose}
+							highlightMessageId={highlightMessageId}
+						/>
 					</div>
 				</div>
 			</div>

@@ -33,6 +33,7 @@ import {
 	navSectionSignal,
 	spaceOverlaySessionIdSignal,
 	spaceOverlayAgentNameSignal,
+	spaceOverlayHighlightMessageIdSignal,
 } from './signals.ts';
 
 /** Route patterns */
@@ -1564,6 +1565,7 @@ function handlePopState(_event: PopStateEvent): void {
 	if (spaceOverlaySessionIdSignal.value && !window.history.state?.overlaySessionId) {
 		spaceOverlaySessionIdSignal.value = null;
 		spaceOverlayAgentNameSignal.value = null;
+		spaceOverlayHighlightMessageIdSignal.value = null;
 		return;
 	}
 
@@ -2147,7 +2149,11 @@ export function initializeRouter(): string | null {
  * Call `closeOverlayHistory()` when the overlay is dismissed by the user
  * (Escape, backdrop click, etc.) to go back in history.
  */
-export function pushOverlayHistory(sessionId: string, agentName?: string): void {
+export function pushOverlayHistory(
+	sessionId: string,
+	agentName?: string,
+	highlightMessageId?: string
+): void {
 	const currentPath = getCurrentPath();
 	window.history.pushState(
 		{ ...window.history.state, overlaySessionId: sessionId },
@@ -2157,6 +2163,7 @@ export function pushOverlayHistory(sessionId: string, agentName?: string): void 
 	// Set overlay signals after pushing history so the effect doesn't race
 	spaceOverlaySessionIdSignal.value = sessionId;
 	spaceOverlayAgentNameSignal.value = agentName ?? null;
+	spaceOverlayHighlightMessageIdSignal.value = highlightMessageId ?? null;
 }
 
 /**
@@ -2166,11 +2173,13 @@ export function closeOverlayHistory(): void {
 	if (window.history.state?.overlaySessionId) {
 		spaceOverlaySessionIdSignal.value = null;
 		spaceOverlayAgentNameSignal.value = null;
+		spaceOverlayHighlightMessageIdSignal.value = null;
 		window.history.back();
 	} else {
 		// No overlay history entry — just close the overlay signal
 		spaceOverlaySessionIdSignal.value = null;
 		spaceOverlayAgentNameSignal.value = null;
+		spaceOverlayHighlightMessageIdSignal.value = null;
 	}
 }
 
