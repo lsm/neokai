@@ -19,6 +19,7 @@
 import type { SpaceAgent } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentManager, SpaceAgentResult } from '../managers/space-agent-manager';
+import { computeAgentTemplateHash } from './agent-template-hash';
 
 // ---------------------------------------------------------------------------
 // Sub-session features
@@ -326,12 +327,18 @@ export async function seedPresetAgents(
 	const errors: Array<{ name: string; error: string }> = [];
 
 	for (const preset of PRESET_AGENTS) {
+		// Stamp template tracking so the row participates in drift detection /
+		// sync from day one. Hash is computed from the same canonical
+		// fingerprint that drift detection re-derives later.
+		const templateHash = computeAgentTemplateHash(preset);
 		const result: SpaceAgentResult<SpaceAgent> = await agentManager.create({
 			spaceId,
 			name: preset.name,
 			description: preset.description,
 			tools: preset.tools,
 			customPrompt: preset.customPrompt,
+			templateName: preset.name,
+			templateHash,
 		});
 
 		if (result.ok) {

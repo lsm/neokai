@@ -3,11 +3,13 @@
  *
  * RPC handlers for Space agent CRUD operations:
  * - spaceAgent.listBuiltInTemplates - List built-in agent templates from seeding source
- * - spaceAgent.create  - Create an agent in a Space
- * - spaceAgent.list    - List all agents in a Space
- * - spaceAgent.get     - Get a single agent by ID
- * - spaceAgent.update  - Update an agent's fields
- * - spaceAgent.delete  - Delete an agent (error if referenced by workflows)
+ * - spaceAgent.create           - Create an agent in a Space
+ * - spaceAgent.list             - List all agents in a Space
+ * - spaceAgent.get              - Get a single agent by ID
+ * - spaceAgent.update           - Update an agent's fields
+ * - spaceAgent.delete           - Delete an agent (error if referenced by workflows)
+ * - spaceAgent.getDriftReport   - Compare preset-tracked agents to live preset definitions
+ * - spaceAgent.syncFromTemplate - Reset a preset-tracked agent to the current preset definition
  */
 
 import type { MessageHub } from '@neokai/shared';
@@ -117,6 +119,60 @@ export function setupSpaceAgentHandlers(
 			customPrompt: updateFields.customPrompt,
 		});
 
+		if (!result.ok) throw new Error(result.error);
+
+		daemonHub
+			.emit('spaceAgent.updated', {
+				sessionId: `space:${result.value.spaceId}`,
+				spaceId: result.value.spaceId,
+				agent: result.value,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit spaceAgent.updated:', err);
+			});
+
+		return { agent: result.value };
+	});
+
+	// spaceAgent.getDriftReport — list preset-tracked agents and whether each
+	// has drifted from the source preset definition in code.
+	messageHub.onRequest('spaceAgent.getDriftReport', async (data) => {
+		const params = data as { spaceId: string };
+		if (!params.spaceId) throw new Error('spaceId is required');
+
+		// Validate space ownership for consistency with the rest of the
+		// spaceAgent.* handlers — keeps unauthenticated drift queries from
+		// leaking the existence of preset-tracked agents.
+		const space = await spaceManager.getSpace(params.spaceId);
+		if (!space) throw new Error(`Space not found: ${params.spaceId}`);
+
+		const report = spaceAgentManager.getAgentDriftReport(params.spaceId);
+		return { report };
+	});
+
+	// spaceAgent.syncFromTemplate — reset a preset-tracked agent to the
+	// current preset definition (description, tools, customPrompt) and
+	// re-stamp its template_hash. Throws if the agent has no template_name
+	// or the named preset no longer exists in code.
+	messageHub.onRequest('spaceAgent.syncFromTemplate', async (data) => {
+		const params = data as { spaceId: string; agentId: string };
+		if (!params.spaceId) throw new Error('spaceId is required');
+		if (!params.agentId) throw new Error('agentId is required');
+
+		const space = await spaceManager.getSpace(params.spaceId);
+		if (!space) throw new Error(`Space not found: ${params.spaceId}`);
+
+		// Defensive: verify the agent actually belongs to this space before
+		// running the sync. SpaceAgentManager.syncFromTemplate operates on the
+		// agent ID alone, so this check prevents one space from rewriting
+		// another space's agent via a forged spaceId.
+		const existing = spaceAgentManager.getById(params.agentId);
+		if (!existing) throw new Error(`Agent not found: ${params.agentId}`);
+		if (existing.spaceId !== params.spaceId) {
+			throw new Error(`Agent not found: ${params.agentId}`);
+		}
+
+		const result = await spaceAgentManager.syncFromTemplate(params.agentId);
 		if (!result.ok) throw new Error(result.error);
 
 		daemonHub
