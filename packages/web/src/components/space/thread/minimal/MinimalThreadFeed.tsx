@@ -26,8 +26,12 @@ import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import {
 	isSDKAssistantMessage,
 	isSDKResultMessage,
+	isSDKSystemInit,
 	isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
+
+type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
+type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
 import { useEffect, useState } from 'preact/hooks';
 import MarkdownRenderer from '../../../chat/MarkdownRenderer.tsx';
 import {
@@ -102,6 +106,14 @@ interface CompletedFeedTurn {
 	 * we fell back to `fallbackText` and no SDK message was available.
 	 */
 	highlightMessageUuid?: string;
+	/**
+	 * SDK `result` envelope for the exec that produced this turn. When
+	 * present, the actions row renders a result-info dropdown surfacing
+	 * usage tokens / cost / duration / errors. Undefined when the block
+	 * is non-terminal (e.g. the trailing fragment of a still-running
+	 * exec) — the result message hasn't arrived yet.
+	 */
+	resultInfo?: ResultMessage;
 }
 
 interface ActiveFeedTurn {
@@ -131,6 +143,14 @@ interface MessageFeedTurn {
 	sessionId: string | null;
 	/** SDK message UUID, used to deep-link the slide-over. */
 	highlightMessageUuid?: string;
+	/**
+	 * SDK `system:init` envelope for the recipient agent's exec — the agent
+	 * state this user message landed in. When present, the actions row
+	 * renders an info-circle dropdown surfacing model / cwd / tools / mcp
+	 * servers. Undefined when no init message exists in the same logical
+	 * block (e.g. for replays, or messages that didn't trigger a new exec).
+	 */
+	sessionInit?: SystemInitMessage;
 }
 
 type FeedTurn = CompletedFeedTurn | ActiveFeedTurn | MessageFeedTurn;
@@ -276,7 +296,8 @@ function extractLastAssistantText(rows: ParsedThreadRow[]): {
 function buildCompletedTurn(
 	block: CompactLogicalBlock,
 	rows: ParsedThreadRow[],
-	turnId: string
+	turnId: string,
+	resultInfo: ResultMessage | undefined
 ): CompletedFeedTurn {
 	const startedAt = rows[0].createdAt;
 	const lastRow = rows[rows.length - 1];
@@ -301,6 +322,7 @@ function buildCompletedTurn(
 		fallback,
 		sessionId: highlightSource?.sessionId ?? lastRow.sessionId,
 		highlightMessageUuid: highlightUuid,
+		resultInfo,
 	};
 }
 
@@ -398,7 +420,8 @@ function extractUserMessageText(row: ParsedThreadRow): { body: string; fallback:
 
 function buildMessageTurn(
 	row: ParsedThreadRow,
-	previousAgentLabel: string | null
+	previousAgentLabel: string | null,
+	sessionInit: SystemInitMessage | undefined
 ): MessageFeedTurn {
 	const { label: fromLabel, isSynthetic } = extractSenderLabel(
 		row.message ?? ({} as SDKMessage),
@@ -420,7 +443,36 @@ function buildMessageTurn(
 		isSynthetic,
 		sessionId: row.sessionId,
 		highlightMessageUuid: highlightUuid,
+		sessionInit,
 	};
+}
+
+/**
+ * Pre-scan a block's rows for the SDK envelope messages we surface as
+ * dropdown affordances:
+ *   - `system:init` → attached to the user message that triggered the
+ *     exec (so the user can introspect "what state did my message land
+ *     in?"). First match wins; an exec only emits one init.
+ *   - `result`      → attached to the completed agent turn. Last match
+ *     wins so we always grab the most recent envelope when a block
+ *     happens to contain multiple (rare; mostly defensive).
+ */
+function extractBlockEnvelopes(rows: ParsedThreadRow[]): {
+	init: SystemInitMessage | undefined;
+	result: ResultMessage | undefined;
+} {
+	let init: SystemInitMessage | undefined;
+	let result: ResultMessage | undefined;
+	for (const row of rows) {
+		if (!row.message) continue;
+		if (!init && isSDKSystemInit(row.message)) {
+			init = row.message as SystemInitMessage;
+		}
+		if (isSDKResultMessage(row.message)) {
+			result = row.message as ResultMessage;
+		}
+	}
+	return { init, result };
 }
 
 /**
@@ -448,11 +500,17 @@ function buildFeedTurns(parsedRows: ParsedThreadRow[], isAgentActive: boolean): 
 	let previousAgentLabel: string | null = null;
 
 	for (const block of blocks) {
+		// Pre-extract once per block so every turn we emit (user msg AND
+		// completed turn) shares the same view of the block's init/result
+		// envelopes. Cheap — single linear scan over rows we'd already be
+		// walking anyway.
+		const { init: blockInit, result: blockResult } = extractBlockEnvelopes(block.rows);
+
 		let pendingAgentRows: ParsedThreadRow[] = [];
 		const flushAgent = () => {
 			if (pendingAgentRows.length === 0) return;
 			const turnId = `${block.id}:${String(pendingAgentRows[0].id)}`;
-			turns.push(buildCompletedTurn(block, pendingAgentRows, turnId));
+			turns.push(buildCompletedTurn(block, pendingAgentRows, turnId, blockResult));
 			trailing.idx = turns.length - 1;
 			trailing.rows = pendingAgentRows;
 			trailing.block = block;
@@ -462,7 +520,7 @@ function buildFeedTurns(parsedRows: ParsedThreadRow[], isAgentActive: boolean): 
 		for (const row of block.rows) {
 			if (isUserRow(row)) {
 				flushAgent();
-				turns.push(buildMessageTurn(row, previousAgentLabel));
+				turns.push(buildMessageTurn(row, previousAgentLabel, blockInit));
 				continue;
 			}
 			pendingAgentRows.push(row);
@@ -618,6 +676,7 @@ function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
 				copyText={turn.lastMessage}
 				align="left"
 				onOpenSession={openSession}
+				resultInfo={turn.resultInfo}
 			/>
 		</div>
 	);
@@ -754,7 +813,16 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 						<p class="opacity-70 italic">(empty message)</p>
 					)}
 				</div>
-				<div class="text-xs text-gray-500 text-right mt-1">{formatClock(turn.createdAt)}</div>
+				{/* Right-aligned actions row — timestamp + (optional)
+				    session-init dropdown + copy. Replaces the bare
+				    timestamp so the human bubble has parity with synthetic
+				    messages and agent reply bubbles. */}
+				<SpaceTaskThreadMessageActions
+					timestamp={turn.createdAt}
+					copyText={turn.body}
+					align="right"
+					sessionInit={turn.sessionInit}
+				/>
 			</div>
 		</div>
 	);
@@ -797,6 +865,7 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 				fromShort={fromShort}
 				toShort={toShort}
 				renderAsPlainText={turn.bodyIsFallback}
+				sessionInit={turn.sessionInit}
 				onOpenSession={
 					turn.sessionId
 						? () =>

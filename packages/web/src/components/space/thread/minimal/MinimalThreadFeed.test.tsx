@@ -109,6 +109,52 @@ function replayUserMessage(uuid: string, text: string) {
 	};
 }
 
+function systemInitMessage(uuid: string) {
+	// Minimal `system:init` envelope. ResultInfoDropdown / MessageInfoDropdown
+	// only require the discriminator fields to render the affordance trigger;
+	// detailed-shape coverage lives in the component-level tests.
+	return {
+		type: 'system',
+		subtype: 'init',
+		uuid,
+		session_id: 'test-session',
+		model: 'claude-3-5-sonnet-20241022',
+		cwd: '/tmp',
+		tools: ['Read', 'Bash'],
+		mcp_servers: [],
+		permissionMode: 'default',
+		slash_commands: [],
+		output_style: 'default',
+		skills: [],
+		plugins: [],
+		agents: [],
+		apiKeySource: 'user',
+		betas: [],
+		claude_code_version: '1.2.3',
+	};
+}
+
+function errorResultMessage(uuid: string) {
+	return {
+		type: 'result',
+		uuid,
+		subtype: 'error_during_execution',
+		is_error: true,
+		duration_ms: 1000,
+		duration_api_ms: 800,
+		num_turns: 1,
+		errors: ['something failed'],
+		stop_reason: null,
+		total_cost_usd: 0.001,
+		usage: {
+			input_tokens: 50,
+			output_tokens: 25,
+			cache_read_input_tokens: 0,
+			cache_creation_input_tokens: 0,
+		},
+	};
+}
+
 describe('MinimalThreadFeed', () => {
 	beforeEach(() => cleanup());
 	afterEach(() => cleanup());
@@ -620,6 +666,154 @@ describe('MinimalThreadFeed', () => {
 		// are filtered out so they don't pollute the rail.
 		expect(entries.length).toBe(1);
 		expect(entries[0].dataset.rosterKind).toBe('tool');
+	});
+
+	describe('Action row dropdowns (system:init / result)', () => {
+		it('renders the result dropdown trigger under a completed agent turn', () => {
+			const t = Date.now();
+			const rows = [
+				makeRow({
+					id: 'a1',
+					label: 'Coder Agent',
+					createdAt: t,
+					message: assistantText('a1', 'all done'),
+				}),
+				makeRow({
+					id: 'r1',
+					label: 'Coder Agent',
+					createdAt: t + 1000,
+					message: resultMessage('r1'),
+				}),
+			];
+
+			const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+			// The trigger button has title="Run result" (see ResultInfoButton).
+			const trigger = container.querySelector('button[title="Run result"]');
+			expect(trigger).not.toBeNull();
+		});
+
+		it('does not render the result trigger when the block has no result envelope', () => {
+			const t = Date.now();
+			const rows = [
+				makeRow({
+					id: 'a1',
+					label: 'Coder Agent',
+					createdAt: t,
+					message: assistantText('a1', 'still working'),
+				}),
+				// No result row → no envelope.
+			];
+
+			const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+			expect(container.querySelector('button[title="Run result"]')).toBeNull();
+		});
+
+		it('renders the session-info dropdown trigger under a human user message when block has system:init', () => {
+			const t = Date.now();
+			const rows = [
+				makeRow({
+					id: 's1',
+					label: 'Coder Agent',
+					createdAt: t,
+					message: systemInitMessage('s1'),
+				}),
+				makeRow({
+					id: 'u1',
+					label: 'Coder Agent',
+					createdAt: t + 100,
+					message: humanUserMessage('u1', 'help me add dark mode'),
+				}),
+				makeRow({
+					id: 'a1',
+					label: 'Coder Agent',
+					createdAt: t + 1000,
+					message: assistantText('a1', 'on it'),
+				}),
+			];
+
+			const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+			// Both human msg and agent reply share the same block init, so we
+			// expect to see the session-info trigger present at least once.
+			const triggers = container.querySelectorAll('button[title="Session info"]');
+			expect(triggers.length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('renders the session-info dropdown trigger under a synthetic peer-origin message when block has system:init', () => {
+			const t = Date.now();
+			const rows = [
+				makeRow({
+					id: 's1',
+					label: 'Coder Agent',
+					createdAt: t,
+					message: systemInitMessage('s1'),
+				}),
+				makeRow({
+					id: 'u1',
+					label: 'Coder Agent',
+					createdAt: t + 100,
+					message: syntheticPeerMessage('u1', 'please look at the failing test', {
+						name: 'Reviewer Agent',
+						sessionId: 'session-rev',
+					}),
+				}),
+				makeRow({
+					id: 'a1',
+					label: 'Coder Agent',
+					createdAt: t + 1000,
+					message: assistantText('a1', 'looking'),
+				}),
+			];
+
+			const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+			const triggers = container.querySelectorAll('button[title="Session info"]');
+			expect(triggers.length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('does not render the session-info trigger when the block has no system:init envelope', () => {
+			const t = Date.now();
+			const rows = [
+				makeRow({
+					id: 'u1',
+					label: 'Coder Agent',
+					createdAt: t,
+					message: humanUserMessage('u1', 'no init in this block'),
+				}),
+				makeRow({
+					id: 'a1',
+					label: 'Coder Agent',
+					createdAt: t + 1000,
+					message: assistantText('a1', 'ok'),
+				}),
+			];
+
+			const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+			expect(container.querySelector('button[title="Session info"]')).toBeNull();
+		});
+
+		it('paints the result trigger amber for error subtypes', () => {
+			const t = Date.now();
+			const rows = [
+				makeRow({
+					id: 'a1',
+					label: 'Coder Agent',
+					createdAt: t,
+					message: assistantText('a1', 'attempting'),
+				}),
+				makeRow({
+					id: 'r1',
+					label: 'Coder Agent',
+					createdAt: t + 1000,
+					message: errorResultMessage('r1'),
+				}),
+			];
+
+			const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
+			const trigger = container.querySelector('button[title="Run result"]');
+			expect(trigger).not.toBeNull();
+			// `isError` flag wires the amber accent class onto the trigger so
+			// failures surface in the actions row before the dropdown opens.
+			expect(trigger?.className).toMatch(/amber/);
+		});
 	});
 
 	it('caps the active roster at 4 most-recent entries even with mixed kinds', () => {

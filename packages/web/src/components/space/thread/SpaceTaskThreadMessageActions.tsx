@@ -1,8 +1,17 @@
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useEffect, useState } from 'preact/hooks';
 import { copyToClipboard } from '../../../lib/utils';
+import { messageSpacing } from '../../../lib/design-tokens';
+import { Dropdown } from '../../ui/Dropdown';
 import { IconButton } from '../../ui/IconButton';
 import { Tooltip } from '../../ui/Tooltip';
-import { messageSpacing } from '../../../lib/design-tokens';
+import { MessageInfoButton } from '../../sdk/MessageInfoButton';
+import { MessageInfoDropdown } from '../../sdk/MessageInfoDropdown';
+import { ResultInfoButton } from '../../sdk/ResultInfoButton';
+import { ResultInfoDropdown } from '../../sdk/ResultInfoDropdown';
+
+type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
+type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
 
 interface SpaceTaskThreadMessageActionsProps {
 	timestamp: number;
@@ -15,6 +24,21 @@ interface SpaceTaskThreadMessageActionsProps {
 	 * always visible, no hover required.
 	 */
 	onOpenSession?: () => void;
+	/**
+	 * SDK `system:init` message for the agent exec this row triggered (or
+	 * is part of). When present an info-circle dropdown is rendered to the
+	 * left of the copy button, surfacing model / cwd / tools / mcp servers
+	 * etc. — useful for confirming "what agent state did this message land
+	 * in?" without leaving the thread.
+	 */
+	sessionInit?: SystemInitMessage;
+	/**
+	 * SDK `result` envelope for the agent exec this row terminates. When
+	 * present a check-badge dropdown is rendered to the left of the copy
+	 * button, surfacing usage tokens / duration / cost / num_turns / errors
+	 * — the symmetric counterpart to `sessionInit`.
+	 */
+	resultInfo?: ResultMessage;
 }
 
 function formatTime(timestamp: number): string {
@@ -33,6 +57,8 @@ export function SpaceTaskThreadMessageActions({
 	copyText,
 	align = 'left',
 	onOpenSession,
+	sessionInit,
+	resultInfo,
 }: SpaceTaskThreadMessageActionsProps) {
 	const [copied, setCopied] = useState(false);
 
@@ -47,6 +73,10 @@ export function SpaceTaskThreadMessageActions({
 		if (ok) setCopied(true);
 	};
 
+	// Result error subtypes paint the trigger amber so failures surface
+	// in the actions row even before the user opens the dropdown.
+	const resultIsError = resultInfo !== undefined && resultInfo.subtype !== 'success';
+
 	return (
 		<div
 			class={`flex items-center ${messageSpacing.actions.gap} ${messageSpacing.actions.marginTop} ${messageSpacing.actions.padding} ${
@@ -56,6 +86,29 @@ export function SpaceTaskThreadMessageActions({
 			<Tooltip content={formatFullTime(timestamp)} position={align === 'right' ? 'left' : 'right'}>
 				<span class="text-xs text-gray-500">{formatTime(timestamp)}</span>
 			</Tooltip>
+
+			{/* Init / result dropdowns — to the LEFT of the copy button per
+			    spec. These two slots are mutually exclusive in practice (init
+			    attaches to user messages; result attaches to agent reply
+			    bubbles), but the props are independent so the actions row
+			    stays a generic primitive. */}
+			{sessionInit && (
+				<Dropdown
+					trigger={<MessageInfoButton />}
+					items={[]}
+					position={align === 'right' ? 'right' : 'left'}
+					customContent={<MessageInfoDropdown sessionInfo={sessionInit} />}
+				/>
+			)}
+
+			{resultInfo && (
+				<Dropdown
+					trigger={<ResultInfoButton isError={resultIsError} />}
+					items={[]}
+					position={align === 'right' ? 'right' : 'left'}
+					customContent={<ResultInfoDropdown result={resultInfo} />}
+				/>
+			)}
 
 			<IconButton
 				size="md"

@@ -458,6 +458,47 @@ describe('SyntheticMessageBlock', () => {
 		});
 	});
 
+	describe('Session Info Dropdown', () => {
+		it('should not render the session-info trigger by default', () => {
+			const { container } = render(
+				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
+			);
+
+			expect(container.querySelector('button[title="Session info"]')).toBeNull();
+		});
+
+		it('should render the session-info trigger when sessionInit is provided', () => {
+			// Minimal `system:init` envelope — the dropdown only checks the
+			// discriminator fields here; full-shape coverage lives in
+			// MessageInfoDropdown's own tests.
+			const sessionInit = {
+				type: 'system',
+				subtype: 'init',
+				uuid: 'init-uuid',
+				session_id: 'sess',
+				model: 'claude-3-5-sonnet-20241022',
+				cwd: '/tmp',
+				tools: ['Bash'],
+				mcp_servers: [],
+				permissionMode: 'default',
+				slash_commands: [],
+				output_style: 'default',
+				skills: [],
+				plugins: [],
+				agents: [],
+				apiKeySource: 'user',
+				betas: [],
+				claude_code_version: '1.2.3',
+			};
+
+			const { container } = render(
+				<SyntheticMessageBlock content="Content" timestamp={Date.now()} sessionInit={sessionInit} />
+			);
+
+			expect(container.querySelector('button[title="Session info"]')).toBeTruthy();
+		});
+	});
+
 	describe('Open in Session', () => {
 		it('should not render an "open in session" button by default', () => {
 			const { container } = render(

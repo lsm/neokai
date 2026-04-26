@@ -23,9 +23,12 @@
  *   placement as the human bubble for visual consistency).
  */
 
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import { SpaceTaskThreadMessageActions } from '../space/thread/SpaceTaskThreadMessageActions.tsx';
+
+type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
 interface Props {
 	/** Content to display - can be a simple string or an array of content blocks. */
@@ -49,6 +52,10 @@ interface Props {
 	toShort?: string;
 	/** When provided, an "open in session" icon appears in the actions row. */
 	onOpenSession?: () => void;
+	/** When provided, a session-info dropdown appears in the actions row,
+	 *  surfacing the SDK system:init envelope (model, cwd, tools, mcp servers)
+	 *  for the agent exec this synthetic message triggered. */
+	sessionInit?: SystemInitMessage;
 	/** When `true`, render string content as plain pre-wrapped text instead
 	 *  of through `MarkdownRenderer`. Used for fallback bodies that aren't
 	 *  necessarily markdown. */
@@ -88,6 +95,7 @@ export function SyntheticMessageBlock({
 	fromShort,
 	toShort,
 	onOpenSession,
+	sessionInit,
 	renderAsPlainText = false,
 	emptyMessageLabel = '(empty message)',
 }: Props) {
@@ -314,12 +322,14 @@ export function SyntheticMessageBlock({
 					</div>
 				</div>
 
-				{/* Action row — timestamp + copy + (optional) open-in-session. */}
+				{/* Action row — timestamp + (optional) session-init + copy
+				    + (optional) open-in-session. */}
 				<SpaceTaskThreadMessageActions
 					timestamp={timestamp ?? Date.now()}
 					copyText={copyText}
 					align="right"
 					onOpenSession={onOpenSession}
+					sessionInit={sessionInit}
 				/>
 			</div>
 		</div>
