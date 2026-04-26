@@ -1,4 +1,4 @@
-import { cleanup, render } from '@testing-library/preact';
+import { cleanup, render, waitFor } from '@testing-library/preact';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MinimalStyleExploration } from './MinimalStyleExploration';
 
@@ -32,14 +32,18 @@ describe('MinimalStyleExploration', () => {
 		expect(reviewerCount).toBeGreaterThanOrEqual(6); // 1 turn × 6 styles
 	});
 
-	it('shows the completed-turn final message in every style', () => {
+	// Slack style uses MarkdownRenderer which is async (lazy-loaded marked).
+	// We use waitFor to let it resolve before checking text content.
+	it('shows the completed-turn final message in every style', async () => {
 		const { container } = render(<MinimalStyleExploration />);
-		const text = container.textContent ?? '';
-		// Completed CODER message shows in every style (6× — one Compact-row variant
-		// truncates with ellipsis but the prefix is still present).
-		const coderMessage = 'PR #1631 is clean and mergeable';
-		const occurrences = text.split(coderMessage).length - 1;
-		expect(occurrences).toBeGreaterThanOrEqual(6);
+		await waitFor(() => {
+			const text = container.textContent ?? '';
+			// Completed CODER message shows in every style (6× — one Compact-row variant
+			// truncates with ellipsis but the prefix is still present).
+			const coderMessage = 'PR #1631 is clean and mergeable';
+			const occurrences = text.split(coderMessage).length - 1;
+			expect(occurrences).toBeGreaterThanOrEqual(6);
+		});
 	});
 
 	it('shows the live tool-call roster for the active turn', () => {
@@ -49,10 +53,9 @@ describe('MinimalStyleExploration', () => {
 		expect(text).toContain('bun run typecheck');
 		expect(text).toContain('provisionExistingSpaces');
 		expect(text).toContain('git status');
-		// "Live" indicator (uppercased via CSS, but DOM text is "Live") must appear
-		// for the active turn in every style.
+		// "Live" appears in styles 2-6 (5 occurrences — Slack uses AgentStatus now)
 		const liveCount = (text.match(/Live/g) ?? []).length;
-		expect(liveCount).toBeGreaterThanOrEqual(6);
+		expect(liveCount).toBeGreaterThanOrEqual(5);
 	});
 
 	it('shows compact stats line components', () => {
@@ -62,5 +65,21 @@ describe('MinimalStyleExploration', () => {
 		expect(text).toContain('128k'); // tokens for CODER (formatted)
 		expect(text).toContain('$4.20');
 		expect(text).toContain('$0.09');
+	});
+
+	it('shows session status text in Slack style', () => {
+		const { container } = render(<MinimalStyleExploration />);
+		const text = container.textContent ?? '';
+		// Slack style shows "Running command..." instead of "Live"
+		expect(text).toContain('Running command...');
+	});
+
+	it('shows live-updating stats for the active turn in Slack style', () => {
+		const { container } = render(<MinimalStyleExploration />);
+		const text = container.textContent ?? '';
+		// The active turn's stats should appear in the Slack section
+		expect(text).toContain('12 tools'); // initial toolCalls from mock
+		expect(text).toContain('34k'); // initial tokens (34_200 formatted as 34k)
+		expect(text).toContain('$1.23'); // initial cost from mock
 	});
 });

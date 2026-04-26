@@ -196,6 +196,32 @@ describe('useAutoScroll', () => {
 			expect(scrollIntoViewMock).toHaveBeenCalled();
 		});
 
+		it('should NOT force-scroll on initial load when enabled=false (deep-link case)', () => {
+			// When the caller asks us to focus a specific row (e.g. via the
+			// `useScrollToMessage` hook), it sets `enabled: false` so the
+			// initial-load forced scroll-to-bottom does not race with — and
+			// override — the deep-link `scrollIntoView`.
+			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+
+			const { rerender } = renderHook(
+				({ messageCount, isInitialLoad, enabled }) =>
+					useAutoScroll({
+						containerRef,
+						endRef,
+						enabled,
+						messageCount,
+						isInitialLoad,
+					}),
+				{
+					initialProps: { messageCount: 0, isInitialLoad: true, enabled: false },
+				}
+			);
+
+			// Messages arrive while disabled — should NOT force scroll.
+			rerender({ messageCount: 5, isInitialLoad: true, enabled: false });
+			expect(scrollIntoViewMock).not.toHaveBeenCalled();
+		});
+
 		it('should scroll when new messages arrive and enabled', () => {
 			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
 
