@@ -241,7 +241,7 @@ export default function ContextUsageBar({
 						<circle
 							cx="18"
 							cy="18"
-							r="15"
+							r={CIRCLE_RADIUS}
 							fill="none"
 							stroke="currentColor"
 							stroke-width="3"
