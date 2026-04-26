@@ -367,21 +367,36 @@ export class SpaceTaskRepository {
 	/**
 	 * List all tasks that have an active Task Agent session.
 	 *
-	 * Returns tasks with status `in_progress`, `blocked`, or `approved` that
-	 * have a non-null `task_agent_session_id`. Used by
+	 * Returns tasks with status `in_progress`, `review`, `blocked`, or `approved`
+	 * that have a non-null `task_agent_session_id`. Used by
 	 * `TaskAgentManager.rehydrate()` on daemon restart to find Task Agent
 	 * sessions that need to be restarted.
 	 *
-	 * `'approved'` is included because the Task Agent session can still be live
-	 * while the post-approval sub-session runs — mark_complete may transition
-	 * the task back to `in_progress` or to `done`, and the UI's
-	 * `spaceTaskActivity.byTask` LiveQuery depends on the session being
-	 * rehydrated in-memory. Tasks in `'done'`/`'cancelled'`/`'archived'` are
-	 * terminal and their sessions are torn down.
+	 * Status inclusions:
+	 * - `'in_progress'` — actively being worked on; obvious rehydrate target.
+	 * - `'review'` — workflow agents finished but a human/auto reviewer must
+	 *   approve. The Task Agent session is still live: it owns the sub-session
+	 *   map (coder/reviewer/etc.) and is the only path that can re-attach the
+	 *   in-process `node-agent` / `space-agent-tools` MCP servers to those
+	 *   sub-sessions after a daemon restart. Excluding `'review'` here was the
+	 *   root cause of task #126: a coder/reviewer sub-session sitting at a gate
+	 *   while the parent task waited in `'review'` lost both MCP servers across
+	 *   a daemon restart, so `write_gate` / `read_gate` / `send_message` all
+	 *   silently failed with "No such tool available".
+	 * - `'blocked'` — task awaits human input but the Task Agent session must
+	 *   stay live so unblocking messages reach it.
+	 * - `'approved'` — the Task Agent can still be live while the post-approval
+	 *   sub-session runs; `mark_complete` may transition the task back to
+	 *   `in_progress` or to `done`, and the UI's `spaceTaskActivity.byTask`
+	 *   LiveQuery depends on the session being rehydrated in-memory.
+	 *
+	 * Tasks in `'done'`/`'cancelled'`/`'archived'`/`'open'` are excluded:
+	 * terminal states have their sessions torn down, and `'open'` tasks have
+	 * no Task Agent yet.
 	 */
 	listActiveWithTaskAgentSession(): SpaceTask[] {
 		const stmt = this.db.prepare(
-			`SELECT * FROM space_tasks WHERE status IN ('in_progress', 'blocked', 'approved') AND task_agent_session_id IS NOT NULL`
+			`SELECT * FROM space_tasks WHERE status IN ('in_progress', 'review', 'blocked', 'approved') AND task_agent_session_id IS NOT NULL`
 		);
 		const rows = stmt.all() as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
