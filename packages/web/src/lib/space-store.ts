@@ -1573,6 +1573,29 @@ class SpaceStore {
 	}
 
 	/**
+	 * Submit a task for human review (UI counterpart to the agent
+	 * `submit_for_approval` tool). Routes to the `spaceTask.submitForReview` RPC
+	 * which sets `status='review'`, `pendingCheckpointType='task_completion'`,
+	 * and the pending-completion metadata so `PendingTaskCompletionBanner`
+	 * renders. After unification, every task in `review` carries the banner —
+	 * the bare `updateTask({status:'review'})` path is rejected by the daemon.
+	 */
+	async submitForReview(taskId: string, reason?: string | null): Promise<SpaceTask> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const task = await hub.request<SpaceTask>('spaceTask.submitForReview', {
+			taskId,
+			spaceId,
+			reason: reason ?? null,
+		});
+		return task;
+	}
+
+	/**
 	 * Approve or reject a task awaiting human sign-off at a `submit_for_approval`
 	 * checkpoint (`pendingCheckpointType === 'task_completion'`). Routes to the
 	 * `spaceTask.approvePendingCompletion` RPC which handles status transition,

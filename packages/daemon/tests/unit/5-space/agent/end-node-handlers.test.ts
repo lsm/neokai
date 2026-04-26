@@ -17,6 +17,7 @@ import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { createEndNodeHandlers } from '../../../../src/lib/space/tools/end-node-handlers.ts';
 import type { EndNodeHandlerDeps } from '../../../../src/lib/space/tools/end-node-handlers.ts';
 import type { Space, SpaceWorkflow } from '@neokai/shared';
@@ -97,6 +98,7 @@ interface TestCtx {
 	db: BunDatabase;
 	spaceId: string;
 	taskRepo: SpaceTaskRepository;
+	taskManager: SpaceTaskManager;
 }
 
 function makeCtx(autonomyLevel = 1): TestCtx {
@@ -107,6 +109,10 @@ function makeCtx(autonomyLevel = 1): TestCtx {
 		db,
 		spaceId,
 		taskRepo: new SpaceTaskRepository(db),
+		// Real SpaceTaskManager so the centralised transition validator runs
+		// inside `submitTaskForReview` — exercises the same code path that the
+		// production wiring takes from `task-agent-manager.ts`.
+		taskManager: new SpaceTaskManager(db, spaceId),
 	};
 }
 
@@ -121,7 +127,9 @@ function makeDeps(
 		spaceId: ctx.spaceId,
 		workflow: makeWorkflow(3),
 		workflowNodeId: 'end-node',
+		agentName: 'test-agent',
 		taskRepo: ctx.taskRepo,
+		taskManager: ctx.taskManager,
 		spaceManager: {
 			getSpace: async () => makeSpace(ctx.spaceId, 3),
 		},

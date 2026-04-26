@@ -211,17 +211,28 @@ describe('TaskStatusActions component', () => {
 			expect(getByTestId('task-action-archived')).toBeTruthy();
 		});
 
-		it('keeps Approve / Cancel visible when pendingCheckpointType is null', () => {
+		it('hides Approve / Cancel for any review task even when pendingCheckpointType is null', () => {
+			// After unification (Task #123) every fresh `review` task carries
+			// `pendingCheckpointType === 'task_completion'` because the unified
+			// `submitTaskForReview` helper stamps it on transition. Legacy data
+			// from before unification (null checkpoint type, status=review) must
+			// still route through the banner — the bare review→done button would
+			// bypass `PostApprovalRouter` and the approval-metadata stamp. So
+			// we hide the generic Approve/Cancel buttons whenever status==='review'
+			// regardless of `pendingCheckpointType`.
 			const onTransition = vi.fn();
-			const { getByTestId } = render(
+			const { queryByTestId, getByTestId } = render(
 				<TaskStatusActions
 					status="review"
 					onTransition={onTransition}
 					pendingCheckpointType={null}
 				/>
 			);
-			expect(getByTestId('task-action-done')).toBeTruthy();
-			expect(getByTestId('task-action-cancelled')).toBeTruthy();
+			expect(queryByTestId('task-action-done')).toBeNull();
+			expect(queryByTestId('task-action-cancelled')).toBeNull();
+			// Non-approval escape hatches stay visible.
+			expect(getByTestId('task-action-in_progress')).toBeTruthy();
+			expect(getByTestId('task-action-archived')).toBeTruthy();
 		});
 
 		it('hides Approve (done) and Cancel (cancelled) when paused at gate approval', () => {
