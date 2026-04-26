@@ -494,7 +494,7 @@ function extractBlockEnvelopes(rows: ParsedThreadRow[]): {
 /**
  * Build the ordered turn list for the minimal feed.
  *
- * Walks `buildLogicalBlocks` output but splits each block on user-type rows:
+ * Walks `buildAgentTurns` output but splits each block on user-type rows:
  * - Each user/synthetic row becomes its own `MessageFeedTurn`, surfaced as a
  *   distinct row showing FROM → TO and the message body.
  * - Consecutive non-user rows (assistant + result) form `CompletedFeedTurn`s.
@@ -563,8 +563,6 @@ function buildFeedTurns(parsedRows: ParsedThreadRow[], isAgentActive: boolean): 
 		if (t.state !== 'completed') return true;
 		return t.lastMessage.length > 0;
 	});
-
-	return turns;
 }
 
 /**
