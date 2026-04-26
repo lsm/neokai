@@ -561,6 +561,154 @@ describe('ContextUsageBar', () => {
 		});
 	});
 
+	describe('Autocompact Buffer Zone', () => {
+		const usageWithAutoCompact: ContextInfo = {
+			totalUsed: 50000,
+			totalCapacity: 200000,
+			percentUsed: 25,
+			model: 'sonnet',
+			breakdown: {
+				Messages: { tokens: 50000, percent: 25 },
+			},
+			autoCompactThreshold: 160000,
+			isAutoCompactEnabled: true,
+		};
+
+		it('should render buffer zone when auto-compact is enabled', () => {
+			const { container } = render(<ContextUsageBar contextUsage={usageWithAutoCompact} />);
+
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
+
+			const bufferZone = container.querySelector('[data-testid="autocompact-buffer-zone"]');
+			expect(bufferZone).toBeTruthy();
+		});
+
+		it('should size the buffer zone using (capacity - threshold) / capacity', () => {
+			const { container } = render(<ContextUsageBar contextUsage={usageWithAutoCompact} />);
+
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
+
+			const bufferZone = container.querySelector(
+				'[data-testid="autocompact-buffer-zone"]'
+			) as HTMLElement;
+			// (200000 - 160000) / 200000 * 100 = 20%
+			expect(bufferZone?.style.width).toBe('20%');
+		});
+
+		it('should render threshold marker at autoCompactThreshold position', () => {
+			const { container } = render(<ContextUsageBar contextUsage={usageWithAutoCompact} />);
+
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
+
+			const marker = container.querySelector(
+				'[data-testid="autocompact-threshold-marker"]'
+			) as HTMLElement;
+			expect(marker).toBeTruthy();
+			// 160000 / 200000 * 100 = 80%
+			expect(marker?.style.left).toBe('80%');
+		});
+
+		it('should render a buffer arc on the circle indicator', () => {
+			const { container } = render(<ContextUsageBar contextUsage={usageWithAutoCompact} />);
+
+			const bufferArc = container.querySelector('[data-testid="autocompact-buffer-arc"]');
+			expect(bufferArc).toBeTruthy();
+		});
+
+		it('should expose tooltip text on the buffer zone', () => {
+			const { container } = render(<ContextUsageBar contextUsage={usageWithAutoCompact} />);
+
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
+
+			const bufferZone = container.querySelector('[data-testid="autocompact-buffer-zone"]');
+			expect(bufferZone?.getAttribute('title')).toContain('Autocompact buffer');
+		});
+
+		it('should expose tooltip text on the threshold marker', () => {
+			const { container } = render(<ContextUsageBar contextUsage={usageWithAutoCompact} />);
+
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
+
+			const marker = container.querySelector('[data-testid="autocompact-threshold-marker"]');
+			expect(marker?.getAttribute('title')).toBe('Autocompact threshold');
+		});
+
+		it('should not render buffer zone when isAutoCompactEnabled is false', () => {
+			const usage: ContextInfo = {
+				...usageWithAutoCompact,
+				isAutoCompactEnabled: false,
+			};
+			const { container } = render(<ContextUsageBar contextUsage={usage} />);
+
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
+
+			expect(container.querySelector('[data-testid="autocompact-buffer-zone"]')).toBeFalsy();
+			expect(container.querySelector('[data-testid="autocompact-threshold-marker"]')).toBeFalsy();
+			expect(container.querySelector('[data-testid="autocompact-buffer-arc"]')).toBeFalsy();
+		});
+
+		it('should not render buffer zone when autoCompactThreshold is 0', () => {
+			const usage: ContextInfo = {
+				...usageWithAutoCompact,
+				autoCompactThreshold: 0,
+			};
+			const { container } = render(<ContextUsageBar contextUsage={usage} />);
+
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
+
+			expect(container.querySelector('[data-testid="autocompact-buffer-zone"]')).toBeFalsy();
+			expect(container.querySelector('[data-testid="autocompact-threshold-marker"]')).toBeFalsy();
+			expect(container.querySelector('[data-testid="autocompact-buffer-arc"]')).toBeFalsy();
+		});
+
+		it('should not render buffer zone when threshold equals or exceeds capacity', () => {
+			const usage: ContextInfo = {
+				...usageWithAutoCompact,
+				autoCompactThreshold: 200000,
+			};
+			const { container } = render(<ContextUsageBar contextUsage={usage} />);
+
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
+
+			expect(container.querySelector('[data-testid="autocompact-buffer-zone"]')).toBeFalsy();
+			expect(container.querySelector('[data-testid="autocompact-buffer-arc"]')).toBeFalsy();
+		});
+
+		it('should not render buffer zone when threshold/enabled fields are missing', () => {
+			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
+
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
+
+			expect(container.querySelector('[data-testid="autocompact-buffer-zone"]')).toBeFalsy();
+			expect(container.querySelector('[data-testid="autocompact-threshold-marker"]')).toBeFalsy();
+			expect(container.querySelector('[data-testid="autocompact-buffer-arc"]')).toBeFalsy();
+		});
+
+		it('should not change the displayed percentage number', () => {
+			const { container } = render(<ContextUsageBar contextUsage={usageWithAutoCompact} />);
+
+			// Circle still shows percentUsed (25), not affected by buffer
+			const svgText = container.querySelector('svg text');
+			expect(svgText?.textContent).toBe('25');
+
+			// Open dropdown
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
+
+			// "X% used" label should also stay tied to percentUsed
+			expect(container.textContent).toContain('25.0%');
+		});
+	});
+
 	describe('Unmount Behavior', () => {
 		it('should clean up event listeners on unmount', () => {
 			const { container, unmount } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
