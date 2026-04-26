@@ -4,14 +4,14 @@
  * Tests task lifecycle, status transitions, and dependency validation.
  */
 
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
+	isValidSpaceTaskTransition,
 	SpaceTaskManager,
 	VALID_SPACE_TASK_TRANSITIONS,
-	isValidSpaceTaskTransition,
 } from '../../../../src/lib/space/managers/space-task-manager';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('SpaceTaskManager', () => {
@@ -936,6 +936,347 @@ describe('SpaceTaskManager', () => {
 			expect(uniqueNumbers.size).toBe(20);
 			expect(Math.min(...numbers)).toBe(1);
 			expect(Math.max(...numbers)).toBe(20);
+		});
+	});
+
+	// ─── submitTaskForReview ────────────────────────────────────────────────
+	//
+	// Single entry point for the agent `submit_for_approval` tool, the Task Agent
+	// self-submit path, and the UI "Submit for Review" RPC. The contract: any task
+	// landing in `review` MUST carry the pending-completion fields so
+	// `PendingTaskCompletionBanner` renders and approvals route through
+	// `PostApprovalRouter`. These tests pin that atomic write contract end-to-end
+	// against a real SQLite database.
+	describe('submitTaskForReview', () => {
+		it('transitions in_progress→review and stamps pending-completion fields atomically', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+
+			const reviewing = await manager.submitTaskForReview(task.id, {
+				submittedByNodeId: 'node-A',
+				reason: 'ready for human review',
+			});
+
+			expect(reviewing.status).toBe('review');
+			expect(reviewing.pendingCheckpointType).toBe('task_completion');
+			expect(reviewing.pendingCompletionSubmittedByNodeId).toBe('node-A');
+			expect(reviewing.pendingCompletionReason).toBe('ready for human review');
+			expect(typeof reviewing.pendingCompletionSubmittedAt).toBe('number');
+		});
+
+		it('accepts null submittedByNodeId for Task Agent / UI submissions', async () => {
+			// Task Agent self-submit and UI "Submit for Review" both pass null —
+			// no waiting end-node session to resume. The PostApprovalRouter
+			// distinguishes these cases via `pendingCompletionSubmittedByNodeId`.
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+
+			const reviewing = await manager.submitTaskForReview(task.id, {
+				submittedByNodeId: null,
+				reason: null,
+			});
+
+			expect(reviewing.status).toBe('review');
+			expect(reviewing.pendingCheckpointType).toBe('task_completion');
+			expect(reviewing.pendingCompletionSubmittedByNodeId).toBeNull();
+			expect(reviewing.pendingCompletionReason).toBeNull();
+		});
+
+		it('rejects illegal source statuses before any pending-* fields get written', async () => {
+			// `done → review` is not in VALID_SPACE_TASK_TRANSITIONS — the helper
+			// must surface the transition error from `setTaskStatus` *before*
+			// touching the pending-completion columns. Otherwise a banner would
+			// render on top of an already-completed task.
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.completeTask(task.id, 'done');
+
+			await expect(
+				manager.submitTaskForReview(task.id, {
+					submittedByNodeId: null,
+					reason: null,
+				})
+			).rejects.toThrow(/Invalid status transition/);
+
+			// Confirm no partial write — task is still `done` with no pending fields.
+			const after = await manager.getTask(task.id);
+			expect(after?.status).toBe('done');
+			expect(after?.pendingCheckpointType).toBeFalsy();
+			expect(after?.pendingCompletionSubmittedAt).toBeFalsy();
+		});
+
+		it('writes status and pending-completion fields in a single UPDATE (atomicity)', async () => {
+			// Atomicity regression guard. The earlier two-step implementation
+			// (setTaskStatus + follow-up updateTask) exposed a window where
+			// `status='review'` was visible without `pendingCheckpointType` set —
+			// the exact banner-less state this PR was supposed to eliminate. We
+			// pin the contract by spying on the underlying repository: on a
+			// successful submit, exactly ONE write must reach the DB and that
+			// write must carry both the status flip and the pending-* fields
+			// together.
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+
+			// Wrap the live repo's `updateTask` so we can count calls without
+			// breaking real DB writes. (Using bun:sqlite directly keeps the
+			// downstream pendingCheckpointType read in this test honest.)
+			// biome-ignore lint/suspicious/noExplicitAny: spy needs to reach into private repo
+			const repo: any = (manager as any).taskRepo;
+			const originalUpdate = repo.updateTask.bind(repo);
+			const calls: Array<{ id: string; params: Record<string, unknown> }> = [];
+			repo.updateTask = (id: string, params: Record<string, unknown>) => {
+				calls.push({ id, params });
+				return originalUpdate(id, params);
+			};
+
+			try {
+				const result = await manager.submitTaskForReview(task.id, {
+					submittedByNodeId: 'node-A',
+					reason: 'ready',
+				});
+
+				expect(result.status).toBe('review');
+				expect(result.pendingCheckpointType).toBe('task_completion');
+
+				// Exactly one repo.updateTask call — no two-write race window.
+				expect(calls).toHaveLength(1);
+				const onlyCall = calls[0];
+				expect(onlyCall.id).toBe(task.id);
+				// Both the status flip AND the pending-* fields ride the same UPDATE.
+				expect(onlyCall.params.status).toBe('review');
+				expect(onlyCall.params.pendingCheckpointType).toBe('task_completion');
+				expect(onlyCall.params.pendingCompletionSubmittedByNodeId).toBe('node-A');
+				expect(onlyCall.params.pendingCompletionReason).toBe('ready');
+				expect(typeof onlyCall.params.pendingCompletionSubmittedAt).toBe('number');
+			} finally {
+				repo.updateTask = originalUpdate;
+			}
+		});
+	});
+
+	// ─── Exit-status cleanup (review-out, approved-out) ─────────────────────
+	//
+	// Counterpart to the entry-side `submitTaskForReview` atomic write. The
+	// `setTaskStatus` helper now nulls the pending-completion fields on any
+	// transition out of `review`, and nulls the post-approval tracking
+	// fields on any transition out of `approved`, in the SAME SQL UPDATE
+	// that flips the status. These tests pin that contract end-to-end so:
+	//   - UI generic transitions (Reopen/Archive a `review` task, Mark
+	//     Done/Reopen/Archive an `approved` task) get the cleanup for free —
+	//     no banner-on-non-review state, no stale post-approval fields on
+	//     terminal tasks.
+	//   - The agent-tool simplifications (`mark_complete` no longer does a
+	//     follow-up `updateTask`) stay correct.
+	describe('exit-status cleanup', () => {
+		// --- review-exit -----------------------------------------------------
+
+		it('clears pending-* fields on review → in_progress (Reopen)', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.submitTaskForReview(task.id, {
+				submittedByNodeId: 'node-A',
+				reason: 'please review',
+			});
+
+			const reopened = await manager.setTaskStatus(task.id, 'in_progress');
+			expect(reopened.status).toBe('in_progress');
+			expect(reopened.pendingCheckpointType).toBeNull();
+			expect(reopened.pendingCompletionSubmittedByNodeId).toBeNull();
+			expect(reopened.pendingCompletionSubmittedAt).toBeNull();
+			expect(reopened.pendingCompletionReason).toBeNull();
+		});
+
+		it('clears pending-* fields on review → archived', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.submitTaskForReview(task.id, {
+				submittedByNodeId: null,
+				reason: 'go',
+			});
+
+			const archived = await manager.setTaskStatus(task.id, 'archived');
+			expect(archived.status).toBe('archived');
+			expect(archived.pendingCheckpointType).toBeNull();
+			expect(archived.pendingCompletionSubmittedByNodeId).toBeNull();
+			expect(archived.pendingCompletionSubmittedAt).toBeNull();
+			expect(archived.pendingCompletionReason).toBeNull();
+		});
+
+		it('clears pending-* fields on review → cancelled', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.submitTaskForReview(task.id, {
+				submittedByNodeId: 'node-Z',
+				reason: 'risky',
+			});
+
+			const cancelled = await manager.setTaskStatus(task.id, 'cancelled');
+			expect(cancelled.status).toBe('cancelled');
+			expect(cancelled.pendingCheckpointType).toBeNull();
+			expect(cancelled.pendingCompletionReason).toBeNull();
+		});
+
+		it('clears pending-* fields on review → done (human approval terminal write)', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.submitTaskForReview(task.id, {
+				submittedByNodeId: null,
+				reason: null,
+			});
+
+			const done = await manager.setTaskStatus(task.id, 'done', {
+				approvalSource: 'human',
+			});
+			expect(done.status).toBe('done');
+			expect(done.pendingCheckpointType).toBeNull();
+			expect(done.pendingCompletionSubmittedAt).toBeNull();
+		});
+
+		it('writes status flip and pending-* cleanup in a single UPDATE on review-exit (atomicity)', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.submitTaskForReview(task.id, {
+				submittedByNodeId: 'node-A',
+				reason: 'r',
+			});
+
+			// biome-ignore lint/suspicious/noExplicitAny: spy needs to reach into private repo
+			const repo: any = (manager as any).taskRepo;
+			const originalUpdate = repo.updateTask.bind(repo);
+			const calls: Array<{ id: string; params: Record<string, unknown> }> = [];
+			repo.updateTask = (id: string, params: Record<string, unknown>) => {
+				calls.push({ id, params });
+				return originalUpdate(id, params);
+			};
+
+			try {
+				await manager.setTaskStatus(task.id, 'in_progress');
+				expect(calls).toHaveLength(1);
+				const onlyCall = calls[0];
+				expect(onlyCall.params.status).toBe('in_progress');
+				// Cleanup rides the same UPDATE — no separate write.
+				expect(onlyCall.params.pendingCheckpointType).toBeNull();
+				expect(onlyCall.params.pendingCompletionSubmittedByNodeId).toBeNull();
+				expect(onlyCall.params.pendingCompletionSubmittedAt).toBeNull();
+				expect(onlyCall.params.pendingCompletionReason).toBeNull();
+			} finally {
+				repo.updateTask = originalUpdate;
+			}
+		});
+
+		// --- approved-exit ---------------------------------------------------
+
+		it('clears post-approval-* fields on approved → done (mark_complete)', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.setTaskStatus(task.id, 'approved', { approvalSource: 'agent' });
+			await manager.updateTask(task.id, {
+				postApprovalSessionId: 'sess-1',
+				postApprovalStartedAt: Date.now(),
+				postApprovalBlockedReason: null,
+			});
+
+			const done = await manager.setTaskStatus(task.id, 'done');
+			expect(done.status).toBe('done');
+			expect(done.postApprovalSessionId).toBeNull();
+			expect(done.postApprovalStartedAt).toBeNull();
+			expect(done.postApprovalBlockedReason).toBeNull();
+		});
+
+		it('clears post-approval-* fields on approved → in_progress (Reopen escape hatch)', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.setTaskStatus(task.id, 'approved', { approvalSource: 'human' });
+			await manager.updateTask(task.id, {
+				postApprovalSessionId: 'sess-2',
+				postApprovalStartedAt: 999,
+				postApprovalBlockedReason: 'router unavailable',
+			});
+
+			const reopened = await manager.setTaskStatus(task.id, 'in_progress');
+			expect(reopened.status).toBe('in_progress');
+			expect(reopened.postApprovalSessionId).toBeNull();
+			expect(reopened.postApprovalStartedAt).toBeNull();
+			expect(reopened.postApprovalBlockedReason).toBeNull();
+		});
+
+		it('clears post-approval-* fields on approved → archived', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.setTaskStatus(task.id, 'approved', { approvalSource: 'human' });
+			await manager.updateTask(task.id, {
+				postApprovalSessionId: 'sess-3',
+				postApprovalStartedAt: 1,
+				postApprovalBlockedReason: null,
+			});
+
+			const archived = await manager.setTaskStatus(task.id, 'archived');
+			expect(archived.status).toBe('archived');
+			expect(archived.postApprovalSessionId).toBeNull();
+			expect(archived.postApprovalStartedAt).toBeNull();
+		});
+
+		it('writes status flip and post-approval-* cleanup in a single UPDATE on approved → done (atomicity)', async () => {
+			// Atomicity regression guard for the centralised "exit approved"
+			// cleanup. The earlier two-step `mark_complete` implementation
+			// (setTaskStatus → updateTask) exposed a window where status='done'
+			// was visible alongside stale post-approval fields. This test pins
+			// the contract that the new single-UPDATE form holds.
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.setTaskStatus(task.id, 'approved', { approvalSource: 'agent' });
+			await manager.updateTask(task.id, {
+				postApprovalSessionId: 'sess-X',
+				postApprovalStartedAt: 5,
+				postApprovalBlockedReason: 'blocked-prior',
+			});
+
+			// biome-ignore lint/suspicious/noExplicitAny: spy needs to reach into private repo
+			const repo: any = (manager as any).taskRepo;
+			const originalUpdate = repo.updateTask.bind(repo);
+			const calls: Array<{ id: string; params: Record<string, unknown> }> = [];
+			repo.updateTask = (id: string, params: Record<string, unknown>) => {
+				calls.push({ id, params });
+				return originalUpdate(id, params);
+			};
+
+			try {
+				await manager.setTaskStatus(task.id, 'done');
+				expect(calls).toHaveLength(1);
+				const onlyCall = calls[0];
+				expect(onlyCall.params.status).toBe('done');
+				// All three post-approval-* fields cleared in the same UPDATE.
+				expect(onlyCall.params.postApprovalSessionId).toBeNull();
+				expect(onlyCall.params.postApprovalStartedAt).toBeNull();
+				expect(onlyCall.params.postApprovalBlockedReason).toBeNull();
+			} finally {
+				repo.updateTask = originalUpdate;
+			}
+		});
+
+		// --- guard: same-status writes don't trigger the cleanup -------------
+
+		it('does not clear pending-* fields on same-status writes (review → review noop guard)', async () => {
+			// `setTaskStatus` rejects same-status writes (no entry in the
+			// transition table). The cleanup branch keys off `task.status !==
+			// newStatus`, so even if a future caller tries to flip review→review
+			// it would never reach the cleanup. Pinned defensively so this stays
+			// safe even if the transition table is widened.
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.submitTaskForReview(task.id, {
+				submittedByNodeId: 'node-A',
+				reason: 'r',
+			});
+
+			await expect(manager.setTaskStatus(task.id, 'review')).rejects.toThrow(
+				'Invalid status transition'
+			);
+
+			// Pending fields untouched.
+			const after = await manager.getTask(task.id);
+			expect(after?.pendingCheckpointType).toBe('task_completion');
+			expect(after?.pendingCompletionReason).toBe('r');
 		});
 	});
 });

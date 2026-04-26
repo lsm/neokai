@@ -3577,6 +3577,14 @@ export class TaskAgentManager {
 		//   `submit_for_approval` — request human review of completion.
 		//                           Only available to end-node agents.
 		const isEndNode = !!workflow?.endNodeId && workflowNodeId === workflow.endNodeId;
+		// Bound SpaceTaskManager shared by the `submit_for_approval` and
+		// `mark_complete` tool handlers — both rely on the centralised transition
+		// validator so any illegal source status fails before fields get written.
+		const boundTaskManager = new SpaceTaskManager(
+			this.config.db.getDatabase(),
+			spaceId,
+			this.config.reactiveDb
+		);
 		const endNodeHandlers = isEndNode
 			? createEndNodeHandlers({
 					taskId,
@@ -3585,6 +3593,7 @@ export class TaskAgentManager {
 					workflowNodeId,
 					agentName,
 					taskRepo: this.config.taskRepo,
+					taskManager: boundTaskManager,
 					spaceManager: this.config.spaceManager,
 					daemonHub: this.config.daemonHub,
 				})
@@ -3596,18 +3605,12 @@ export class TaskAgentManager {
 		// post-approval sub-sessions can close the task via `approved → done`.
 		// The handler self-validates status (rejects non-approved) — a spawned
 		// agent that happens not to be running a post-approval step simply sees
-		// the tool reject with a clear error. Each session gets its own bound
-		// SpaceTaskManager so the centralised transition validator runs.
-		const markCompleteTaskManager = new SpaceTaskManager(
-			this.config.db.getDatabase(),
-			spaceId,
-			this.config.reactiveDb
-		);
+		// the tool reject with a clear error.
 		const onMarkComplete = createMarkCompleteHandler({
 			taskId,
 			spaceId,
 			taskRepo: this.config.taskRepo,
-			taskManager: markCompleteTaskManager,
+			taskManager: boundTaskManager,
 			daemonHub: this.config.daemonHub,
 		});
 
