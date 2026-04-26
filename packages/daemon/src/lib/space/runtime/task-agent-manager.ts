@@ -2904,12 +2904,29 @@ export class TaskAgentManager {
 	 *
 	 * Iterates `node_executions` for the run, finds rows that already have an
 	 * `agentSessionId` assigned (i.e. a sub-session was spawned before the
-	 * daemon restart), and calls `rehydrateSubSession` for each that is not
-	 * yet in the in-memory `agentSessionIndex`. `rehydrateSubSession` is
-	 * idempotent w.r.t. the maps (see its comments) — calling it for an entry
-	 * that is somehow already in memory would re-restore from DB, which is
-	 * wasteful but not harmful; the explicit `agentSessionIndex` guard avoids
-	 * that wasted work.
+	 * daemon restart) AND whose execution status indicates the agent is still
+	 * active (`'in_progress'` or `'blocked'`), and calls `rehydrateSubSession`
+	 * for each that is not yet in the in-memory `agentSessionIndex`.
+	 * `rehydrateSubSession` is idempotent w.r.t. the maps (see its comments) —
+	 * calling it for an entry that is somehow already in memory would re-restore
+	 * from DB, which is wasteful but not harmful; the explicit
+	 * `agentSessionIndex` guard avoids that wasted work.
+	 *
+	 * Status filter rationale (`NodeExecutionStatus` is
+	 * `'pending' | 'in_progress' | 'idle' | 'blocked' | 'cancelled'`):
+	 * - `'in_progress'` — agent actively working; must come back.
+	 * - `'blocked'` — agent sitting at a gate awaiting input; must come back.
+	 *   This is the original Task #126 scenario.
+	 * - `'pending'` — declared but never spawned, so `agentSessionId` is null
+	 *   and the row is already filtered by the `if (!subSessionId)` guard
+	 *   above. Listed here for completeness.
+	 * - `'idle'` — the agent finished its turn; `handleSubSessionComplete`
+	 *   already auto-transitioned the execution and fired the completion
+	 *   callback. Restoring would attach MCP servers, register a new
+	 *   completion callback, and restart the streaming query for an agent
+	 *   that has no remaining work — pure overhead.
+	 * - `'cancelled'` — the execution was explicitly stopped; same reasoning
+	 *   as `'idle'`.
 	 *
 	 * Failures are isolated per sub-session and logged at warn level — one
 	 * broken sub-session must not block rehydration of its siblings.
@@ -2923,6 +2940,13 @@ export class TaskAgentManager {
 		for (const execution of executions) {
 			const subSessionId = execution.agentSessionId;
 			if (!subSessionId) continue;
+
+			// Only rehydrate active executions. `idle` / `cancelled` agents have
+			// already finished their turn (or been explicitly stopped) and will
+			// not receive any new messages — restoring them would attach MCP
+			// servers, register a new completion callback, and restart the
+			// streaming query for nothing.
+			if (execution.status !== 'in_progress' && execution.status !== 'blocked') continue;
 
 			// Skip if already in memory (e.g. lazily rehydrated by an earlier
 			// inbound message during this same restart, or never torn down).

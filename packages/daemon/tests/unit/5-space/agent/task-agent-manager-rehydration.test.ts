@@ -1214,6 +1214,113 @@ describe('TaskAgentManager.rehydrate (eager sub-session rehydration — Task #12
 		expect(subSessionRestoreCalls).toEqual([]);
 	});
 
+	test("rehydrate() skips terminal NodeExecutions ('idle' / 'cancelled') even when agentSessionId is set", async () => {
+		// `handleSubSessionComplete` auto-transitions an execution to 'idle' the
+		// moment a sub-session finishes its turn (and fires the completion
+		// callback). The `agentSessionId` is intentionally retained on the row
+		// so post-mortem tooling and the workflow-completion `terminalResult`
+		// scan can still attribute output back to the agent. Eagerly rehydrating
+		// such an execution on the next daemon restart would attach MCP servers
+		// + restart the streaming query for an agent that has already finished
+		// — pure overhead.
+		//
+		// `'cancelled'` is the same shape: the execution was explicitly stopped
+		// but the row keeps `agentSessionId` for audit. Must also be skipped.
+		const wfRunId = 'run-eager-terminal';
+		const wfId = 'wf-eager-terminal';
+		const nodeId = 'node-eager-terminal';
+		seedWorkflowRun(ctx, wfRunId, wfId, nodeId);
+
+		const parentTask = await ctx.taskManager.createTask({
+			title: 'Parent task — terminal sub-sessions must not rehydrate',
+			description: '',
+			taskType: 'coding',
+			status: 'in_progress',
+			workflowRunId: wfRunId,
+		});
+		const taskAgentSessionId = `space:${ctx.spaceId}:task:${parentTask.id}`;
+		ctx.taskRepo.updateTask(parentTask.id, {
+			taskAgentSessionId,
+			status: 'in_progress',
+		});
+		ctx.mockDb.createSession({ id: taskAgentSessionId, type: 'space_task_agent' });
+
+		// One idle execution (finished its turn — completion callback already fired)
+		const idleSubSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:terminal-idle`;
+		const idleExec = ctx.nodeExecutionRepo.create({
+			workflowRunId: wfRunId,
+			workflowNodeId: nodeId,
+			agentName: 'coder',
+			agentId: null,
+			status: 'in_progress',
+		});
+		ctx.nodeExecutionRepo.updateSessionId(idleExec.id, idleSubSessionId);
+		// Transition to 'idle' (matches handleSubSessionComplete's behaviour at TAM:2316).
+		ctx.nodeExecutionRepo.update(idleExec.id, { status: 'idle' });
+		ctx.mockDb.createSession({ id: idleSubSessionId, type: 'worker' });
+
+		// One cancelled execution (explicitly stopped — same skip rationale)
+		const cancelledSubSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:terminal-cancelled`;
+		const cancelledExec = ctx.nodeExecutionRepo.create({
+			workflowRunId: wfRunId,
+			workflowNodeId: nodeId,
+			agentName: 'reviewer',
+			agentId: null,
+			status: 'in_progress',
+		});
+		ctx.nodeExecutionRepo.updateSessionId(cancelledExec.id, cancelledSubSessionId);
+		ctx.nodeExecutionRepo.update(cancelledExec.id, { status: 'cancelled' });
+		ctx.mockDb.createSession({ id: cancelledSubSessionId, type: 'worker' });
+
+		// One in_progress execution (must rehydrate as control). Distinct
+		// `agentName` because the schema enforces UNIQUE
+		// (workflow_run_id, workflow_node_id, agent_name).
+		const activeSubSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:terminal-active`;
+		const activeExec = ctx.nodeExecutionRepo.create({
+			workflowRunId: wfRunId,
+			workflowNodeId: nodeId,
+			agentName: 'tester',
+			agentId: null,
+			status: 'in_progress',
+		});
+		ctx.nodeExecutionRepo.updateSessionId(activeExec.id, activeSubSessionId);
+		ctx.mockDb.createSession({ id: activeSubSessionId, type: 'worker' });
+
+		// Track every restore call observed during rehydrate().
+		const restoredSessionIds: string[] = [];
+		const trackingSpy = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
+			restoredSessionIds.push(sessionId);
+			if (!ctx.mockDb.getSession(sessionId)) return null;
+			const existing = ctx.createdSessions.get(sessionId);
+			if (existing) return existing as unknown as AgentSession;
+			const mockSession = makeMockSession(sessionId);
+			ctx.createdSessions.set(sessionId, mockSession);
+			return mockSession as unknown as AgentSession;
+		});
+
+		try {
+			await ctx.manager.rehydrate();
+		} finally {
+			trackingSpy.mockRestore();
+		}
+
+		// AgentSession.restore must NOT have been called for the idle or cancelled sub-sessions.
+		expect(restoredSessionIds).not.toContain(idleSubSessionId);
+		expect(restoredSessionIds).not.toContain(cancelledSubSessionId);
+		// And the in-memory sub-session map must not contain them either.
+		expect(ctx.manager.getSubSession(idleSubSessionId)).toBeUndefined();
+		expect(ctx.manager.getSubSession(cancelledSubSessionId)).toBeUndefined();
+
+		// The active sub-session is the control: it MUST come back, with both MCP
+		// servers attached. If this fails the status filter is over-aggressive.
+		expect(restoredSessionIds).toContain(activeSubSessionId);
+		expect(ctx.manager.getSubSession(activeSubSessionId)).toBeDefined();
+		const activeSession = ctx.createdSessions.get(activeSubSessionId)!;
+		const attached = Object.keys(activeSession._mcpServers);
+		expect(attached).toContain('node-agent');
+		expect(attached).toContain('space-agent-tools');
+	});
+
 	test("SpaceTaskRepository.listActiveWithTaskAgentSession includes 'review' status (Task #126)", async () => {
 		// Direct repository-level guard: if this regresses, the daemon-restart
 		// rehydration loop will silently skip every task waiting at a review
