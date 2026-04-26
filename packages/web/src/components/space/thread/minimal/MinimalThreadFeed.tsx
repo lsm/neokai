@@ -4,17 +4,18 @@
  * Production renderer for the "minimal" task thread mode. Maps the same
  * `parsedRows` the compact feed receives into Slack-style turn rows:
  *
- *   ▢ AGENT  9:42 PM
- *   ▢   3 tool calls · 8 messages · 47m
- *   ▢   <last assistant message>           ← completed turn (no rail)
+ *   ▢ AGENT
+ *   ▢   3 tool calls · 8 messages · 47m       ← meta line under name
+ *   ▢   <last assistant message bubble>       ← completed turn (no rail)
  *
- *   ▢ AGENT  9:43 PM
+ *   ▢ AGENT
+ *   ▢   9:43 PM
  *   ▢ │ 12 tools · 2m 22s
  *   ▢ │ Bash: bun run typecheck
  *   ▢ │ Read: packages/.../space-task-runtime.ts
- *   ▢ │ Grep: provisionExistingSpaces
+ *   ▢ │ 💬 Looking into the failing test…    ← agent text mixes in with tools
  *   ▢ │ Bash: git status
- *   ▢ │ • Running…                         ← active turn (coloured rail)
+ *   ▢ │ • Running…                            ← active turn (coloured rail)
  *
  * No tool cards, no thinking blocks, no bracket rails. Reuses turn grouping
  * (`buildLogicalBlocks`) from the compact reducer so behaviour stays
@@ -57,10 +58,25 @@ interface MinimalThreadFeedProps {
 	isAgentActive?: boolean;
 }
 
-interface ToolCallEntry {
+/**
+ * Active-turn roster entry. The roster surfaces what the agent is "doing right
+ * now" — historically just tool invocations, now also the assistant's own text
+ * messages so the user can see the model thinking aloud between tool calls.
+ *
+ * Tagged on `kind` so the renderer can switch between two distinct visuals:
+ *   - `tool` : `BashCmd: bun run typecheck`     (colored TOOL prefix + preview)
+ *   - `message` : `💬 Investigating the failing test…`  (chat glyph + italic body)
+ */
+interface RosterToolEntry {
+	kind: 'tool';
 	tool: string;
 	preview: string;
 }
+interface RosterMessageEntry {
+	kind: 'message';
+	text: string;
+}
+type ActiveRosterEntry = RosterToolEntry | RosterMessageEntry;
 
 interface CompletedFeedTurn {
 	state: 'completed';
@@ -95,7 +111,7 @@ interface ActiveFeedTurn {
 	startedAt: number;
 	status: string;
 	toolCalls: number;
-	roster: ToolCallEntry[];
+	roster: ActiveRosterEntry[];
 }
 
 interface MessageFeedTurn {
@@ -159,15 +175,37 @@ function previewFromInput(input: Record<string, unknown>): string {
 	return `${firstKey}: …`;
 }
 
-function extractToolCallEntries(rows: ParsedThreadRow[], maxEntries: number): ToolCallEntry[] {
-	const entries: ToolCallEntry[] = [];
+/**
+ * Walk the active block's content blocks in chronological order and emit one
+ * roster entry per `tool_use` or non-empty `text` block. Capped at `maxEntries`
+ * (most-recent wins) so the rail stays compact even on long-running turns.
+ *
+ * Mixing tool calls with the agent's own text messages reproduces the cadence
+ * a developer would see watching the live SDK stream: "Reading…", "I think
+ * this is the bug.", "Editing…", "Confirmed it now passes." — much more
+ * informative than four anonymous tool names.
+ */
+function extractRosterEntries(rows: ParsedThreadRow[], maxEntries: number): ActiveRosterEntry[] {
+	const entries: ActiveRosterEntry[] = [];
 	for (const row of rows) {
-		for (const block of getToolUseContentBlocks(row)) {
-			const input =
-				typeof block.input === 'object' && block.input !== null
-					? (block.input as Record<string, unknown>)
-					: {};
-			entries.push({ tool: block.name, preview: previewFromInput(input) });
+		if (!row.message || !isSDKAssistantMessage(row.message)) continue;
+		const content = (row.message as { message?: { content?: unknown } }).message?.content;
+		if (!Array.isArray(content)) continue;
+		for (const block of content) {
+			if (isToolUseBlock(block as never)) {
+				const tu = block as { name: string; input?: unknown };
+				const input =
+					typeof tu.input === 'object' && tu.input !== null
+						? (tu.input as Record<string, unknown>)
+						: {};
+				entries.push({ kind: 'tool', tool: tu.name, preview: previewFromInput(input) });
+				continue;
+			}
+			const b = block as { type?: unknown; text?: unknown };
+			if (b.type === 'text' && typeof b.text === 'string') {
+				const text = b.text.trim();
+				if (text.length > 0) entries.push({ kind: 'message', text: oneLine(text) });
+			}
 		}
 	}
 	return entries.slice(-maxEntries);
@@ -278,7 +316,7 @@ function buildActiveTurn(
 		startedAt: rows[0].createdAt,
 		status: 'Running…',
 		toolCalls: countToolCalls(rows),
-		roster: extractToolCallEntries(rows, ROSTER_MAX_ENTRIES),
+		roster: extractRosterEntries(rows, ROSTER_MAX_ENTRIES),
 	};
 }
 
@@ -488,19 +526,49 @@ function StatusPill({ color, status }: { color: string; status: string }) {
 	);
 }
 
-function RosterEntry({ entry, isLatest }: { entry: ToolCallEntry; isLatest: boolean }) {
-	const toolColor = getToolDarkColor(entry.tool);
+function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: boolean }) {
+	const fadeClass = isLatest ? 'minimal-thread-roster-fade-in' : '';
+	const bodyClass = `truncate ${isLatest ? 'text-gray-100' : 'text-gray-400'}`;
+
+	if (entry.kind === 'tool') {
+		const toolColor = getToolDarkColor(entry.tool);
+		return (
+			<div
+				class={`flex items-baseline gap-2 font-mono text-xs leading-5 ${fadeClass}`}
+				data-testid="minimal-thread-roster-entry"
+				data-roster-kind="tool"
+			>
+				<span class={`${toolColor} font-semibold shrink-0`}>{entry.tool}:</span>
+				<span class={bodyClass}>{entry.preview}</span>
+			</div>
+		);
+	}
+
+	// Assistant message — small chat-bubble glyph (mirrors the open-session
+	// affordance) plus an italic preview of the text. No mono-font / TOOL:
+	// prefix so it visually reads as "the agent said this" rather than
+	// "another command ran".
 	return (
 		<div
-			class={`flex items-baseline gap-2 font-mono text-xs leading-5 ${
-				isLatest ? 'minimal-thread-roster-fade-in' : ''
-			}`}
+			class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
 			data-testid="minimal-thread-roster-entry"
+			data-roster-kind="message"
 		>
-			<span class={`${toolColor} font-semibold shrink-0`}>{entry.tool}:</span>
-			<span class={`truncate ${isLatest ? 'text-gray-100' : 'text-gray-400'}`}>
-				{entry.preview}
-			</span>
+			<svg
+				class="w-3 h-3 shrink-0 text-gray-500 self-center"
+				fill="none"
+				viewBox="0 0 24 24"
+				stroke="currentColor"
+				aria-hidden="true"
+			>
+				<path
+					strokeLinecap="round"
+					strokeLinejoin="round"
+					strokeWidth={2}
+					d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+				/>
+			</svg>
+			<span class={`${bodyClass} italic`}>{entry.text}</span>
 		</div>
 	);
 }
@@ -535,12 +603,8 @@ function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
 				class="bg-dark-800 border border-dark-700 rounded-lg px-3 py-2"
 				data-testid="minimal-thread-agent-bubble"
 			>
-				<div class="text-[11px] text-gray-500">
-					{turn.toolCalls} {turn.toolCalls === 1 ? 'tool call' : 'tool calls'} · {turn.messages}{' '}
-					{turn.messages === 1 ? 'message' : 'messages'} · {formatDuration(turn.durationSec)}
-				</div>
 				{turn.lastMessage ? (
-					<div class="mt-1.5 text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400">
+					<div class="text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400">
 						{turn.fallback ? (
 							<p class="whitespace-pre-wrap break-words">{turn.lastMessage}</p>
 						) : (
@@ -575,7 +639,7 @@ function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
 				<div class="mt-2 space-y-0.5">
 					{turn.roster.map((entry, i) => (
 						<RosterEntry
-							key={`${entry.tool}-${i}`}
+							key={`${entry.kind}-${i}`}
 							entry={entry}
 							isLatest={i === turn.roster.length - 1}
 						/>
@@ -613,7 +677,19 @@ function AgentTurnRow({ turn }: { turn: CompletedFeedTurn | ActiveFeedTurn }) {
 			data-agent-color={color}
 			data-turn-state={turn.state}
 		>
-			{/* Header — avatar, agent name, and (active turns only) live clock. */}
+			{/* Header — avatar + stacked (name / meta-or-clock) column. The meta
+			    line ("3 tool calls · 4 messages · 22s") lives here under the
+			    agent name on completed turns instead of inside the reply
+			    bubble — it's metadata about the turn, not part of the agent's
+			    spoken reply, so reading it as "subtitle" rather than "first
+			    line of the bubble" is more intuitive. Active turns swap the
+			    meta for a live clock; the rail body still shows the running
+			    tool counter + roster.
+
+			    Active turns don't get an actions row below (no copy while
+			    running), so completed turns surface time + copy under the
+			    bubble via SpaceTaskThreadMessageActions to avoid duplicating
+			    the header clock. */}
 			<div class="flex items-center gap-3">
 				<div
 					class="h-9 w-9 shrink-0 rounded-md flex items-center justify-center text-sm font-bold text-dark-950"
@@ -622,17 +698,22 @@ function AgentTurnRow({ turn }: { turn: CompletedFeedTurn | ActiveFeedTurn }) {
 				>
 					{initial}
 				</div>
-				<span class="font-semibold" style={{ color }}>
-					{shortAgentName(turn.agent)}
-				</span>
-				{/* Active turns keep the header timestamp — they don't have an
-				    actions row below (no copy button while running). Completed
-				    turns surface time + copy under the bubble via
-				    SpaceTaskThreadMessageActions, so the header timestamp would
-				    duplicate that. */}
-				{turn.state === 'active' ? (
-					<span class="text-xs text-gray-500">{formatClock(turn.startedAt)}</span>
-				) : null}
+				<div class="flex flex-col gap-0.5 min-w-0">
+					<span class="font-semibold leading-tight" style={{ color }}>
+						{shortAgentName(turn.agent)}
+					</span>
+					{turn.state === 'completed' ? (
+						<div
+							class="text-[11px] text-gray-500 leading-tight"
+							data-testid="minimal-thread-agent-meta"
+						>
+							{turn.toolCalls} {turn.toolCalls === 1 ? 'tool call' : 'tool calls'} · {turn.messages}{' '}
+							{turn.messages === 1 ? 'message' : 'messages'} · {formatDuration(turn.durationSec)}
+						</div>
+					) : (
+						<span class="text-xs text-gray-500 leading-tight">{formatClock(turn.startedAt)}</span>
+					)}
+				</div>
 			</div>
 			{/* Body — full-width on mobile, capped on desktop for readability. */}
 			{turn.state === 'active' ? (

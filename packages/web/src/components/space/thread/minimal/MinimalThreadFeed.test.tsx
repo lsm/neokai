@@ -499,7 +499,7 @@ describe('MinimalThreadFeed', () => {
 		expect(screen.getByTestId('minimal-thread-active-rail')).toBeTruthy();
 	});
 
-	it('shows the completed stats line with tool-call and message counts', async () => {
+	it('shows the completed stats line under the agent name (not inside the bubble)', async () => {
 		const t = Date.now();
 		const rows = [
 			makeRow({
@@ -527,5 +527,137 @@ describe('MinimalThreadFeed', () => {
 		// 1 tool call, 3 messages, ~31s duration.
 		expect(turn.textContent).toContain('1 tool call');
 		expect(turn.textContent).toContain('3 messages');
+
+		// The meta line lives in the header under the agent name now —
+		// outside the reply bubble so it reads as "subtitle of the turn"
+		// rather than "first line of the agent's reply".
+		const meta = screen.getByTestId('minimal-thread-agent-meta');
+		expect(meta).toBeTruthy();
+		expect(meta.textContent).toContain('1 tool call');
+		expect(meta.textContent).toContain('3 messages');
+
+		// Assert the meta line is NOT inside the agent reply bubble.
+		const bubble = screen.getByTestId('minimal-thread-agent-bubble');
+		expect(bubble.contains(meta)).toBe(false);
+		expect(bubble.textContent).not.toContain('1 tool call');
+	});
+
+	it('includes assistant text messages in the active roster alongside tool calls', () => {
+		const t = Date.now();
+		// Sequence: text → tool → text → tool. All four entries should appear
+		// in the roster in order, with kinds tagged on the data attribute.
+		const rows = [
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: {
+					type: 'assistant',
+					uuid: 'a1',
+					message: {
+						content: [
+							{ type: 'text', text: 'Investigating the failing test' },
+							{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } },
+						],
+					},
+				},
+			}),
+			makeRow({
+				id: 'a2',
+				label: 'Coder Agent',
+				createdAt: t + 1000,
+				message: {
+					type: 'assistant',
+					uuid: 'a2',
+					message: {
+						content: [
+							{ type: 'text', text: 'Now editing the broken assertion' },
+							{ type: 'tool_use', id: 'tu-2', name: 'Edit', input: { file_path: 'foo.ts' } },
+						],
+					},
+				},
+			}),
+		];
+
+		render(<MinimalThreadFeed parsedRows={rows} isAgentActive={true} />);
+
+		const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+		expect(entries.length).toBe(4);
+		expect(entries[0].dataset.rosterKind).toBe('message');
+		expect(entries[0].textContent).toContain('Investigating the failing test');
+		expect(entries[1].dataset.rosterKind).toBe('tool');
+		expect(entries[1].textContent).toContain('Bash');
+		expect(entries[2].dataset.rosterKind).toBe('message');
+		expect(entries[2].textContent).toContain('Now editing the broken assertion');
+		expect(entries[3].dataset.rosterKind).toBe('tool');
+		expect(entries[3].textContent).toContain('Edit');
+	});
+
+	it('skips empty/whitespace assistant text blocks when building the roster', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: {
+					type: 'assistant',
+					uuid: 'a1',
+					message: {
+						content: [
+							{ type: 'text', text: '   ' }, // whitespace-only
+							{ type: 'text', text: '' }, // empty string
+							{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } },
+						],
+					},
+				},
+			}),
+		];
+
+		render(<MinimalThreadFeed parsedRows={rows} isAgentActive={true} />);
+		const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+		// Only the tool entry survives — the empty/whitespace text blocks
+		// are filtered out so they don't pollute the rail.
+		expect(entries.length).toBe(1);
+		expect(entries[0].dataset.rosterKind).toBe('tool');
+	});
+
+	it('caps the active roster at 4 most-recent entries even with mixed kinds', () => {
+		const t = Date.now();
+		// 6 mixed entries — only the last 4 should render.
+		const rows = [
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: {
+					type: 'assistant',
+					uuid: 'a1',
+					message: {
+						content: [
+							{ type: 'text', text: 'msg-1' },
+							{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'echo 1' } },
+							{ type: 'text', text: 'msg-2' },
+							{ type: 'tool_use', id: 'tu-2', name: 'Bash', input: { command: 'echo 2' } },
+							{ type: 'text', text: 'msg-3' },
+							{ type: 'tool_use', id: 'tu-3', name: 'Bash', input: { command: 'echo 3' } },
+						],
+					},
+				},
+			}),
+		];
+
+		render(<MinimalThreadFeed parsedRows={rows} isAgentActive={true} />);
+		const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+		expect(entries.length).toBe(4);
+		const allText = entries.map((e) => e.textContent).join('\n');
+		// Oldest two trimmed.
+		expect(allText).not.toContain('msg-1');
+		expect(allText).not.toContain('echo 1');
+		// Latest four kept.
+		expect(allText).toContain('msg-2');
+		expect(allText).toContain('echo 2');
+		expect(allText).toContain('msg-3');
+		expect(allText).toContain('echo 3');
 	});
 });
