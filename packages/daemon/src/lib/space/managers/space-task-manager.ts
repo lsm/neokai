@@ -231,10 +231,14 @@ export class SpaceTaskManager {
 	 *     workflow node)
 	 *   - UI "Submit for Review" RPC (passes `null` — user-initiated)
 	 *
-	 * Validates the transition through `setTaskStatus` first so an illegal
-	 * source status (e.g. `done`, `archived`) fails with a clear error before
-	 * any pending-* fields get written. The follow-up `updateTask` call then
-	 * stamps the metadata in a single repository write.
+	 * Atomicity is load-bearing: the entire write — `status='review'` plus the
+	 * pending-completion fields — is issued as a single `taskRepo.updateTask`
+	 * call (one SQL UPDATE). A two-step write (`setTaskStatus` + a follow-up
+	 * pending-* update) would expose the exact banner-less in-between state
+	 * this PR is meant to eliminate: any concurrent reader landing between the
+	 * two writes would see `status='review' / pendingCheckpointType=null`. The
+	 * transition is validated inline against `isValidSpaceTaskTransition` so an
+	 * illegal source status (`done`, `archived`, …) throws before the write.
 	 */
 	async submitTaskForReview(
 		taskId: string,
@@ -250,11 +254,26 @@ export class SpaceTaskManager {
 			reason: string | null;
 		}
 	): Promise<SpaceTask> {
-		// Run the centralised transition validator first so that illegal source
-		// statuses fail before we write any pending-* fields.
-		await this.setTaskStatus(taskId, 'review');
+		const task = await this.getTask(taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
 
+		// Inline transition validation. Mirrors the check in `setTaskStatus` —
+		// kept here (rather than delegating) so the status flip and the pending-*
+		// stamp can happen in a single SQL UPDATE.
+		if (!isValidSpaceTaskTransition(task.status, 'review')) {
+			throw new Error(
+				`Invalid status transition from '${task.status}' to 'review'. ` +
+					`Allowed: ${VALID_SPACE_TASK_TRANSITIONS[task.status].join(', ') || 'none'}`
+			);
+		}
+
+		// Single atomic write: status flip + pending-completion stamp in one
+		// repository UPDATE. No reader can observe `status='review'` without the
+		// pending-* fields populated, which is the whole point of this helper.
 		const updated = this.taskRepo.updateTask(taskId, {
+			status: 'review',
 			pendingCheckpointType: 'task_completion',
 			pendingCompletionSubmittedByNodeId: opts.submittedByNodeId,
 			pendingCompletionSubmittedAt: Date.now(),

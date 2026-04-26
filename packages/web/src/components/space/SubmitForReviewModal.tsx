@@ -20,6 +20,19 @@ interface SubmitForReviewModalProps {
 	busy: boolean;
 	onCancel: () => void;
 	onConfirm: (reason: string | null) => void | Promise<void>;
+	/**
+	 * Inline error message rendered inside the modal when the submit RPC
+	 * fails. Owned by the parent so it can re-trigger by clearing/setting the
+	 * value across submit attempts.
+	 *
+	 * Why this lives in the modal rather than relying on `threadSendError`:
+	 * `threadSendError` is only painted inside `TaskSessionChatComposer`, which
+	 * is mounted only when the inline composer is visible. If a user submits
+	 * for review while the composer is hidden, an RPC failure leaves the modal
+	 * frozen with no feedback. Rendering the error here makes the failure
+	 * visible regardless of composer visibility.
+	 */
+	error?: string | null;
 }
 
 export function SubmitForReviewModal({
@@ -27,6 +40,7 @@ export function SubmitForReviewModal({
 	busy,
 	onCancel,
 	onConfirm,
+	error,
 }: SubmitForReviewModalProps) {
 	const [reason, setReason] = useState('');
 
@@ -72,6 +86,12 @@ export function SubmitForReviewModal({
 						placeholder="What should the reviewer look at?"
 					/>
 				</div>
+
+				{error && (
+					<p class="text-xs text-red-400" role="alert" data-testid="submit-for-review-error">
+						{error}
+					</p>
+				)}
 
 				<div class="flex items-center justify-end gap-3 pt-1">
 					<button

@@ -1,28 +1,28 @@
-import { useEffect, useState } from 'preact/hooks';
-import { spaceStore } from '../../lib/space-store';
-import { pushOverlayHistory, navigateToSpaceTask } from '../../lib/router';
-import { currentSpaceTaskViewTabSignal, currentSpaceIdSignal } from '../../lib/signals';
 import type {
 	SpaceTaskActivityMember,
 	SpaceTaskActivityState,
 	SpaceTaskPriority,
 	SpaceTaskStatus,
 } from '@neokai/shared';
-import { cn } from '../../lib/utils';
+import { useEffect, useState } from 'preact/hooks';
 import { borderColors } from '../../lib/design-tokens';
-import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
-import { TaskArtifactsPanel } from './TaskArtifactsPanel';
-import { getTransitionActions } from './TaskStatusActions';
-import { TaskBlockedBanner } from './TaskBlockedBanner';
-import { PendingGateBanner } from './PendingGateBanner';
-import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
-import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
-import { useRunGateSummaries } from './use-run-gate-summaries.ts';
+import { navigateToSpaceTask, pushOverlayHistory } from '../../lib/router';
+import { currentSpaceIdSignal, currentSpaceTaskViewTabSignal } from '../../lib/signals';
+import { spaceStore } from '../../lib/space-store';
 import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
-import { TaskSessionChatComposer } from './TaskSessionChatComposer';
-import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
+import { cn } from '../../lib/utils';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
+import { PendingGateBanner } from './PendingGateBanner';
+import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
+import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
+import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
+import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
+import { TaskArtifactsPanel } from './TaskArtifactsPanel';
+import { TaskBlockedBanner } from './TaskBlockedBanner';
+import { TaskSessionChatComposer } from './TaskSessionChatComposer';
+import { getTransitionActions } from './TaskStatusActions';
+import { useRunGateSummaries } from './use-run-gate-summaries.ts';
 
 interface SpaceTaskPaneProps {
 	taskId: string | null;
@@ -93,6 +93,12 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const [sendingThread, setSendingThread] = useState(false);
 	const [statusTransitioning, setStatusTransitioning] = useState(false);
 	const [showSubmitForReviewModal, setShowSubmitForReviewModal] = useState(false);
+	// Modal-local error feedback. Separate from `threadSendError` because
+	// `threadSendError` is rendered inside `TaskSessionChatComposer`, which is
+	// only mounted when the inline composer is visible. A failed submit-for-
+	// review RPC needs to surface inside the modal regardless of composer
+	// visibility — see `SubmitForReviewModalProps.error`.
+	const [submitForReviewError, setSubmitForReviewError] = useState<string | null>(null);
 	const activeView = currentSpaceTaskViewTabSignal.value;
 	const _spaceId = currentSpaceIdSignal.value ?? '';
 
@@ -258,6 +264,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		// `spaceStore.submitForReview` on confirm.
 		if (newStatus === 'review') {
 			setThreadSendError(null);
+			setSubmitForReviewError(null);
 			setShowSubmitForReviewModal(true);
 			return;
 		}
@@ -275,11 +282,14 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const handleSubmitForReviewConfirm = async (reason: string | null) => {
 		try {
 			setStatusTransitioning(true);
-			setThreadSendError(null);
+			setSubmitForReviewError(null);
 			await spaceStore.submitForReview(task.id, reason);
 			setShowSubmitForReviewModal(false);
 		} catch (err) {
-			setThreadSendError(formatTaskThreadError(err));
+			// Render the error inside the modal — `threadSendError` is invisible
+			// when the inline composer is hidden, which would leave the modal
+			// frozen with no feedback after a failed submit.
+			setSubmitForReviewError(formatTaskThreadError(err));
 		} finally {
 			setStatusTransitioning(false);
 		}
@@ -557,6 +567,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					if (!statusTransitioning) setShowSubmitForReviewModal(false);
 				}}
 				onConfirm={handleSubmitForReviewConfirm}
+				error={submitForReviewError}
 			/>
 		</div>
 	);

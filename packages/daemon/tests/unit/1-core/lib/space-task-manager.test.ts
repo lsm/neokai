@@ -1004,5 +1004,53 @@ describe('SpaceTaskManager', () => {
 			expect(after?.pendingCheckpointType).toBeFalsy();
 			expect(after?.pendingCompletionSubmittedAt).toBeFalsy();
 		});
+
+		it('writes status and pending-completion fields in a single UPDATE (atomicity)', async () => {
+			// Atomicity regression guard. The earlier two-step implementation
+			// (setTaskStatus + follow-up updateTask) exposed a window where
+			// `status='review'` was visible without `pendingCheckpointType` set —
+			// the exact banner-less state this PR was supposed to eliminate. We
+			// pin the contract by spying on the underlying repository: on a
+			// successful submit, exactly ONE write must reach the DB and that
+			// write must carry both the status flip and the pending-* fields
+			// together.
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+
+			// Wrap the live repo's `updateTask` so we can count calls without
+			// breaking real DB writes. (Using bun:sqlite directly keeps the
+			// downstream pendingCheckpointType read in this test honest.)
+			// biome-ignore lint/suspicious/noExplicitAny: spy needs to reach into private repo
+			const repo: any = (manager as any).taskRepo;
+			const originalUpdate = repo.updateTask.bind(repo);
+			const calls: Array<{ id: string; params: Record<string, unknown> }> = [];
+			repo.updateTask = (id: string, params: Record<string, unknown>) => {
+				calls.push({ id, params });
+				return originalUpdate(id, params);
+			};
+
+			try {
+				const result = await manager.submitTaskForReview(task.id, {
+					submittedByNodeId: 'node-A',
+					reason: 'ready',
+				});
+
+				expect(result.status).toBe('review');
+				expect(result.pendingCheckpointType).toBe('task_completion');
+
+				// Exactly one repo.updateTask call — no two-write race window.
+				expect(calls).toHaveLength(1);
+				const onlyCall = calls[0];
+				expect(onlyCall.id).toBe(task.id);
+				// Both the status flip AND the pending-* fields ride the same UPDATE.
+				expect(onlyCall.params.status).toBe('review');
+				expect(onlyCall.params.pendingCheckpointType).toBe('task_completion');
+				expect(onlyCall.params.pendingCompletionSubmittedByNodeId).toBe('node-A');
+				expect(onlyCall.params.pendingCompletionReason).toBe('ready');
+				expect(typeof onlyCall.params.pendingCompletionSubmittedAt).toBe('number');
+			} finally {
+				repo.updateTask = originalUpdate;
+			}
+		});
 	});
 });
