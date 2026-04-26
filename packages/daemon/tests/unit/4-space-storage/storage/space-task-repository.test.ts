@@ -561,8 +561,15 @@ describe('SpaceTaskRepository', () => {
 			return task.id;
 		}
 
-		it("includes 'in_progress', 'blocked', and 'approved' tasks with a non-null session id", () => {
+		it("includes 'in_progress', 'review', 'blocked', and 'approved' tasks with a non-null session id", () => {
+			// 'review' was added to the active set as part of the Task #126 fix:
+			// a coder/reviewer sub-session sitting at a code-ready-gate while the
+			// parent task waited in 'review' was previously excluded from rehydration,
+			// so the task agent's in-process MCP servers were never restored after a
+			// daemon restart. See `listActiveWithTaskAgentSession` docstring for the
+			// per-status justification.
 			const inProgress = seed('in_progress', 'sess-in-progress');
+			const review = seed('review', 'sess-review');
 			const blocked = seed('blocked', 'sess-blocked');
 			const approved = seed('approved', 'sess-approved');
 
@@ -570,9 +577,10 @@ describe('SpaceTaskRepository', () => {
 			const ids = new Set(active.map((t) => t.id));
 
 			expect(ids.has(inProgress)).toBe(true);
+			expect(ids.has(review)).toBe(true);
 			expect(ids.has(blocked)).toBe(true);
 			expect(ids.has(approved)).toBe(true);
-			expect(active.length).toBe(3);
+			expect(active.length).toBe(4);
 		});
 
 		it('excludes tasks without a task_agent_session_id', () => {
@@ -585,8 +593,12 @@ describe('SpaceTaskRepository', () => {
 		});
 
 		it('excludes terminal and open statuses even when a session id is present', () => {
+			// 'review' is intentionally NOT in this exclusion list — it is an
+			// active state where the Task Agent (and any sub-sessions sitting at
+			// the review gate) must come back after a daemon restart so their
+			// in-process MCP servers (`node-agent`, `space-agent-tools`) are
+			// re-attached. See the inclusion test above for the rationale.
 			seed('open', 'sess-open');
-			seed('review', 'sess-review');
 			seed('done', 'sess-done');
 			seed('cancelled', 'sess-cancelled');
 			seed('archived', 'sess-archived');
