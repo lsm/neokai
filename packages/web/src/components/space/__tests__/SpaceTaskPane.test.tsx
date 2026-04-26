@@ -1,7 +1,5 @@
 // @ts-nocheck
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
-import { signal } from '@preact/signals';
+
 import type {
 	SpaceAgent,
 	SpaceTask,
@@ -9,6 +7,9 @@ import type {
 	SpaceWorkflow,
 	SpaceWorkflowRun,
 } from '@neokai/shared';
+import { signal } from '@preact/signals';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Bridge objects: created in vi.hoisted so mock factories can reference them.
 // Real Preact signals are assigned to .signal after module init so that mock
@@ -85,6 +86,7 @@ let mockTaskActivity: ReturnType<typeof signal<Map<string, SpaceTaskActivityMemb
 let mockNodeExecutionsByNodeId: ReturnType<typeof signal<Map<string, unknown[]>>>;
 
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
+const mockSubmitForReview = vi.fn().mockResolvedValue(undefined);
 const mockEnsureTaskAgentSession = vi.fn();
 const mockSendTaskMessage = vi.fn().mockResolvedValue(undefined);
 const mockSubscribeTaskActivity = vi.fn().mockResolvedValue(undefined);
@@ -100,6 +102,7 @@ vi.mock('../../../lib/space-store', () => ({
 			taskActivity: mockTaskActivity,
 			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
 			updateTask: mockUpdateTask,
+			submitForReview: mockSubmitForReview,
 			ensureTaskAgentSession: mockEnsureTaskAgentSession,
 			sendTaskMessage: mockSendTaskMessage,
 			subscribeTaskActivity: mockSubscribeTaskActivity,
@@ -1060,5 +1063,91 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
 		expect(queryByTestId('task-pane-banner')).toBeNull();
+	});
+});
+
+// Submit-for-Review unification: the "Submit for Review" dropdown action must
+// open the optional-reason modal and route through `spaceStore.submitForReview`
+// (the unified RPC). It must NOT issue a bare `updateTask({status:'review'})`
+// — that path is rejected by the daemon because it would skip stamping
+// `pendingCheckpointType` / `pendingCompletionSubmittedByNodeId` /
+// `pendingCompletionReason`, leaving `PendingTaskCompletionBanner` invisible.
+describe('SpaceTaskPane — submit for review modal', () => {
+	beforeEach(() => {
+		cleanup();
+		mockTasks.value = [];
+		mockUpdateTask.mockClear();
+		mockSubmitForReview.mockReset();
+		mockSubmitForReview.mockResolvedValue(undefined);
+		mockEnsureTaskAgentSession.mockReset();
+		mockEnsureTaskAgentSession.mockImplementation(async () =>
+			makeTask({ status: 'in_progress', taskAgentSessionId: 'session-ensured' })
+		);
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('clicking "Submit for Review" opens the modal and does NOT call updateTask', () => {
+		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
+		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		fireEvent.click(getByText('Submit for Review'));
+
+		// Modal is open
+		expect(getByTestId('submit-for-review-modal-content')).toBeTruthy();
+		// Critical: the bare `→review` path must NOT have been used.
+		expect(mockUpdateTask).not.toHaveBeenCalled();
+		expect(mockSubmitForReview).not.toHaveBeenCalled();
+	});
+
+	it('confirming the modal calls spaceStore.submitForReview with the trimmed reason', async () => {
+		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
+		const { getByTestId, getByText, queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		fireEvent.click(getByText('Submit for Review'));
+
+		fireEvent.input(getByTestId('submit-for-review-reason'), {
+			target: { value: '  please verify the migration  ' },
+		});
+		fireEvent.click(getByTestId('submit-for-review-confirm'));
+
+		await waitFor(() =>
+			expect(mockSubmitForReview).toHaveBeenCalledWith('task-1', 'please verify the migration')
+		);
+		// updateTask must not be touched even on success.
+		expect(mockUpdateTask).not.toHaveBeenCalled();
+		// Modal closes after a successful confirm.
+		await waitFor(() => expect(queryByTestId('submit-for-review-modal-content')).toBeNull());
+	});
+
+	it('confirming with empty reason passes null (matches the agent tool contract)', async () => {
+		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
+		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		fireEvent.click(getByText('Submit for Review'));
+
+		fireEvent.click(getByTestId('submit-for-review-confirm'));
+
+		await waitFor(() => expect(mockSubmitForReview).toHaveBeenCalledWith('task-1', null));
+	});
+
+	it('renders RPC error inside the modal so the user gets feedback even when the inline composer is hidden', async () => {
+		mockSubmitForReview.mockRejectedValueOnce(new Error('Network down'));
+		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
+		const { getByTestId, getByText, findByTestId, queryByTestId } = render(
+			<SpaceTaskPane taskId="task-1" />
+		);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		fireEvent.click(getByText('Submit for Review'));
+		fireEvent.click(getByTestId('submit-for-review-confirm'));
+
+		// Error surfaces inside the modal — not via threadSendError, which is
+		// invisible when the inline composer isn't mounted.
+		const errEl = await findByTestId('submit-for-review-error');
+		expect(errEl.textContent).toContain('Network down');
+		// Modal stays open so the user can retry.
+		expect(queryByTestId('submit-for-review-modal-content')).toBeTruthy();
 	});
 });
