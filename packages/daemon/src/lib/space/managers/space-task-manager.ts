@@ -8,16 +8,16 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type {
+	CreateSpaceTaskParams,
+	SpaceApprovalSource,
+	SpaceBlockReason,
 	SpaceTask,
 	SpaceTaskStatus,
-	SpaceBlockReason,
-	SpaceApprovalSource,
-	CreateSpaceTaskParams,
 	UpdateSpaceTaskParams,
 } from '@neokai/shared';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
+import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 
 /**
  * Valid task status transitions for space tasks
@@ -199,6 +199,39 @@ export class SpaceTaskManager {
 			updates.approvedAt = null;
 		}
 
+		// Clear pending-completion fields on any transition out of `review`.
+		//
+		// Mirrors (and replaces) the explicit follow-up `updateTask` cleanups
+		// formerly issued by `approvePendingCompletion` (both branches) and the
+		// agent `approve_task` tool. Centralising here closes the exit-side
+		// counterpart of the unified `submitTaskForReview` entry: every task
+		// landing in `review` carries the pending-* fields, and every task
+		// leaving `review` (for any reason — Approve via banner, Reopen, Archive,
+		// review→done by RPC) gets those fields nulled in the same SQL UPDATE
+		// that flips the status. No banner-on-non-review state can persist.
+		if (task.status === 'review' && newStatus !== 'review') {
+			updates.pendingCheckpointType = null;
+			updates.pendingCompletionSubmittedByNodeId = null;
+			updates.pendingCompletionSubmittedAt = null;
+			updates.pendingCompletionReason = null;
+		}
+
+		// Clear post-approval tracking fields on any transition out of `approved`.
+		//
+		// Mirrors (and replaces) the follow-up `updateTask` formerly issued by
+		// the agent `mark_complete` tool. After this change, the `approved →
+		// done` transition writes status='done' and nulls the post-approval
+		// fields in a single repository UPDATE — closing the race window where
+		// a reader could observe `status='done'` with stale
+		// `postApprovalSessionId`/`postApprovalStartedAt`/`postApprovalBlockedReason`.
+		// Also covers UI-driven escape hatches (`approved → in_progress`,
+		// `approved → archived`) which previously left these fields lingering.
+		if (task.status === 'approved' && newStatus !== 'approved') {
+			updates.postApprovalSessionId = null;
+			updates.postApprovalStartedAt = null;
+			updates.postApprovalBlockedReason = null;
+		}
+
 		const updated = this.taskRepo.updateTask(taskId, updates);
 		if (!updated) {
 			throw new Error(`Failed to update task: ${taskId}`);
@@ -214,6 +247,75 @@ export class SpaceTaskManager {
 	 */
 	async startTask(taskId: string): Promise<SpaceTask> {
 		return this.setTaskStatus(taskId, 'in_progress');
+	}
+
+	/**
+	 * Submit a task for human review.
+	 *
+	 * Single entry point for both the agent `submit_for_approval` tool and the
+	 * UI "Submit for Review" button. Atomically transitions a task into `review`
+	 * and stamps the pending-completion metadata that drives the
+	 * `PendingTaskCompletionBanner` — meaning every task that lands in `review`
+	 * is guaranteed to carry the banner-eligible fields.
+	 *
+	 * Three callers, one set of writes:
+	 *   - End-node `submit_for_approval` (passes a real `submittedByNodeId`)
+	 *   - Task Agent `submit_for_approval` (passes `null` — orchestrator has no
+	 *     workflow node)
+	 *   - UI "Submit for Review" RPC (passes `null` — user-initiated)
+	 *
+	 * Atomicity is load-bearing: the entire write — `status='review'` plus the
+	 * pending-completion fields — is issued as a single `taskRepo.updateTask`
+	 * call (one SQL UPDATE). A two-step write (`setTaskStatus` + a follow-up
+	 * pending-* update) would expose the exact banner-less in-between state
+	 * this PR is meant to eliminate: any concurrent reader landing between the
+	 * two writes would see `status='review' / pendingCheckpointType=null`. The
+	 * transition is validated inline against `isValidSpaceTaskTransition` so an
+	 * illegal source status (`done`, `archived`, …) throws before the write.
+	 */
+	async submitTaskForReview(
+		taskId: string,
+		opts: {
+			/**
+			 * Workflow node ID of the submitting agent, or `null` when there is no
+			 * waiting end-node session (Task Agent self-submit, UI submit). Used by
+			 * `PostApprovalRouter` to distinguish agent-initiated vs user-initiated
+			 * approvals when emitting awareness events.
+			 */
+			submittedByNodeId: string | null;
+			/** Optional human-readable reason; surfaces in the approval banner. */
+			reason: string | null;
+		}
+	): Promise<SpaceTask> {
+		const task = await this.getTask(taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		// Inline transition validation. Mirrors the check in `setTaskStatus` —
+		// kept here (rather than delegating) so the status flip and the pending-*
+		// stamp can happen in a single SQL UPDATE.
+		if (!isValidSpaceTaskTransition(task.status, 'review')) {
+			throw new Error(
+				`Invalid status transition from '${task.status}' to 'review'. ` +
+					`Allowed: ${VALID_SPACE_TASK_TRANSITIONS[task.status].join(', ') || 'none'}`
+			);
+		}
+
+		// Single atomic write: status flip + pending-completion stamp in one
+		// repository UPDATE. No reader can observe `status='review'` without the
+		// pending-* fields populated, which is the whole point of this helper.
+		const updated = this.taskRepo.updateTask(taskId, {
+			status: 'review',
+			pendingCheckpointType: 'task_completion',
+			pendingCompletionSubmittedByNodeId: opts.submittedByNodeId,
+			pendingCompletionSubmittedAt: Date.now(),
+			pendingCompletionReason: opts.reason,
+		});
+		if (!updated) {
+			throw new Error(`Failed to submit task for review: ${taskId}`);
+		}
+		return updated;
 	}
 
 	/**

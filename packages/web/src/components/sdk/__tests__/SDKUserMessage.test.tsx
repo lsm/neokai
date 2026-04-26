@@ -267,11 +267,14 @@ describe('SDKUserMessage', () => {
 			expect(container.querySelector('[data-testid="synthetic-message"]')).toBeTruthy();
 		});
 
-		it('should show synthetic badge', () => {
+		it('should show synthetic label in the card header', () => {
 			const message = createSyntheticMessage();
 			const { container } = render(<SDKUserMessage message={message} />);
 
-			expect(container.textContent).toContain('synthetic');
+			// Capital "Synthetic" — the canonical header label on the card.
+			// The lowercase pill in the actions row was dropped when the synthetic
+			// rendering was unified across chat container + thread feed.
+			expect(container.textContent).toContain('Synthetic');
 		});
 
 		it('should handle synthetic message with non-object content blocks', () => {

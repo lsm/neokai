@@ -52,6 +52,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			system_prompt TEXT NOT NULL DEFAULT '',
 			instructions TEXT,
 			provider TEXT,
+			template_name TEXT DEFAULT NULL,
+			template_hash TEXT DEFAULT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE

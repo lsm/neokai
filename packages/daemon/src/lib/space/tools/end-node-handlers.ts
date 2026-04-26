@@ -24,19 +24,19 @@
  * `save_artifact({ type: 'result', append: true, ... })` instead.
  */
 
+import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { DaemonHub } from '../../daemon-hub';
+import { Logger } from '../../logger';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
-import type { DaemonHub } from '../../daemon-hub';
-import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
-import type { ToolResult } from './tool-result';
-import { jsonResult } from './tool-result';
 import type {
 	ApproveTaskInput,
-	SubmitForApprovalInput,
 	MarkCompleteInput,
+	SubmitForApprovalInput,
 } from './task-agent-tool-schemas';
-import { Logger } from '../../logger';
+import type { ToolResult } from './tool-result';
+import { jsonResult } from './tool-result';
 
 const log = new Logger('end-node-handlers');
 
@@ -58,6 +58,13 @@ export interface EndNodeHandlerDeps {
 	agentName: string;
 	/** Task repository. */
 	taskRepo: SpaceTaskRepository;
+	/**
+	 * Task manager bound to `spaceId`. Used by `submit_for_approval` so the
+	 * agent path and the UI "Submit for Review" RPC share `submitTaskForReview`,
+	 * which runs the centralised transition validator before stamping the
+	 * pending-completion fields.
+	 */
+	taskManager: Pick<SpaceTaskManager, 'submitTaskForReview'>;
 	/** Space manager — used to look up current autonomy level for approve_task. */
 	spaceManager: Pick<SpaceManager, 'getSpace'>;
 	/** Optional hub for emitting `space.task.updated` events after state changes. */
@@ -125,13 +132,12 @@ export function createMarkCompleteHandler(
 		}
 
 		try {
-			await taskManager.setTaskStatus(taskId, 'done', {
+			// Single atomic write: status flip + post-approval-* cleanup. The
+			// "exit approved" branch in `SpaceTaskManager.setTaskStatus` nulls
+			// `postApprovalSessionId`, `postApprovalStartedAt`, and
+			// `postApprovalBlockedReason` in the same UPDATE.
+			const updated = await taskManager.setTaskStatus(taskId, 'done', {
 				approvalSource: task.approvalSource ?? 'agent',
-			});
-			const updated = await taskManager.updateTask(taskId, {
-				postApprovalSessionId: null,
-				postApprovalStartedAt: null,
-				postApprovalBlockedReason: null,
 			});
 			emitTaskUpdated(updated);
 			log.info(
@@ -157,7 +163,16 @@ export function createMarkCompleteHandler(
  * with the same `deps` return independent instances.
  */
 export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers {
-	const { taskId, spaceId, workflow, workflowNodeId, taskRepo, spaceManager, daemonHub } = deps;
+	const {
+		taskId,
+		spaceId,
+		workflow,
+		workflowNodeId,
+		taskRepo,
+		taskManager,
+		spaceManager,
+		daemonHub,
+	} = deps;
 
 	const emitTaskUpdated = (task: SpaceTask): void => {
 		if (!daemonHub) return;
@@ -215,20 +230,22 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
 
 		// -------------------------------------------------------------------
 		// submit_for_approval — human sign-off. Always available to end nodes.
+		//
+		// Delegates to `SpaceTaskManager.submitTaskForReview` — the same helper
+		// used by the UI "Submit for Review" RPC and the Task Agent's
+		// `submit_for_approval` tool — so all three callers write identical
+		// fields and the resulting `review` task is always banner-eligible.
 		// -------------------------------------------------------------------
 		onSubmitForApproval: async (args: SubmitForApprovalInput) => {
 			const task = taskRepo.getTask(taskId);
 			if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
 
 			try {
-				const updated = taskRepo.updateTask(taskId, {
-					status: 'review',
-					pendingCheckpointType: 'task_completion',
-					pendingCompletionSubmittedByNodeId: workflowNodeId,
-					pendingCompletionSubmittedAt: Date.now(),
-					pendingCompletionReason: args.reason ?? null,
+				const updated = await taskManager.submitTaskForReview(taskId, {
+					submittedByNodeId: workflowNodeId,
+					reason: args.reason ?? null,
 				});
-				if (updated) emitTaskUpdated(updated);
+				emitTaskUpdated(updated);
 				return jsonResult({
 					success: true,
 					taskId,

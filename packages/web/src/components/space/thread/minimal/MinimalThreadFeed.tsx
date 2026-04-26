@@ -1,0 +1,940 @@
+/**
+ * MinimalThreadFeed
+ *
+ * Production renderer for Space task threads. Maps `parsedRows` into
+ * Slack-style turn rows:
+ *
+ *   ▢ AGENT
+ *   ▢   3 tool calls · 8 messages · 47m       ← meta line under name
+ *   ▢   <last assistant message bubble>       ← completed turn (no rail)
+ *
+ *   ▢ AGENT
+ *   ▢   9:43 PM
+ *   ▢ │ 12 tools · 2m 22s
+ *   ▢ │ Bash: bun run typecheck
+ *   ▢ │ Read: packages/.../space-task-runtime.ts
+ *   ▢ │ 💬 Looking into the failing test…    ← agent text mixes in with tools
+ *   ▢ │ Bash: git status
+ *   ▢ │ • Running…                            ← active turn (coloured rail)
+ *
+ * No tool cards, no thinking blocks, no bracket rails. Turn grouping comes
+ * from `buildAgentTurns` in `../space-task-thread-turns.ts` (one block per
+ * init→result cycle).
+ */
+
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import {
+	isSDKAssistantMessage,
+	isSDKResultMessage,
+	isSDKSystemInit,
+	isToolUseBlock,
+} from '@neokai/shared/sdk/type-guards';
+
+type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
+type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
+import { useEffect, useState } from 'preact/hooks';
+import MarkdownRenderer from '../../../chat/MarkdownRenderer.tsx';
+import { type AgentTurnBlock, buildAgentTurns, isUserRow } from '../space-task-thread-turns';
+import { SyntheticMessageBlock } from '../../../sdk/SyntheticMessageBlock';
+import { SpaceTaskThreadMessageActions } from '../SpaceTaskThreadMessageActions';
+import { getAgentColor } from '../space-task-thread-agent-colors';
+import type { ParsedThreadRow } from '../space-task-thread-events';
+import { pushOverlayHistory } from '../../../../lib/router';
+import {
+	agentInitial,
+	formatClock,
+	formatDuration,
+	getToolDarkColor,
+	shortAgentName,
+} from './minimal-mock-data';
+
+interface MinimalThreadFeedProps {
+	parsedRows: ParsedThreadRow[];
+	/**
+	 * Whether the underlying agent session is currently executing. When true
+	 * AND the last logical block is non-terminal, that block renders as the
+	 * active turn (coloured rail, live tool roster, ticking elapsed clock).
+	 */
+	isAgentActive?: boolean;
+}
+
+/**
+ * Active-turn roster entry. The roster surfaces what the agent is "doing right
+ * now" — historically just tool invocations, now also the assistant's own text
+ * messages so the user can see the model thinking aloud between tool calls.
+ *
+ * Tagged on `kind` so the renderer can switch between two distinct visuals:
+ *   - `tool` : `BashCmd: bun run typecheck`     (colored TOOL prefix + preview)
+ *   - `message` : `💬 Investigating the failing test…`  (chat glyph + italic body)
+ */
+interface RosterToolEntry {
+	kind: 'tool';
+	tool: string;
+	preview: string;
+}
+interface RosterMessageEntry {
+	kind: 'message';
+	text: string;
+}
+type ActiveRosterEntry = RosterToolEntry | RosterMessageEntry;
+
+interface CompletedFeedTurn {
+	state: 'completed';
+	id: string;
+	agent: string;
+	startedAt: number;
+	durationSec: number;
+	toolCalls: number;
+	messages: number;
+	lastMessage: string;
+	fallback: boolean;
+	/**
+	 * Session id that produced this turn's reply text. Used by the
+	 * "open in session" affordance so clicking the button lands the user
+	 * on the right session even when multiple sessions are interleaved
+	 * in the feed. Null when the underlying row had no resolvable session.
+	 */
+	sessionId: string | null;
+	/**
+	 * SDK message UUID of the row whose text was surfaced as `lastMessage`.
+	 * Forwarded as `highlightMessageId` to the slide-over so that message
+	 * is scrolled to + briefly highlighted on open. May be undefined when
+	 * we fell back to `fallbackText` and no SDK message was available.
+	 */
+	highlightMessageUuid?: string;
+	/**
+	 * SDK `result` envelope for the exec that produced this turn. When
+	 * present, the actions row renders a result-info dropdown surfacing
+	 * usage tokens / cost / duration / errors. Undefined when the block
+	 * is non-terminal (e.g. the trailing fragment of a still-running
+	 * exec) — the result message hasn't arrived yet.
+	 */
+	resultInfo?: ResultMessage;
+}
+
+interface ActiveFeedTurn {
+	state: 'active';
+	id: string;
+	agent: string;
+	startedAt: number;
+	status: string;
+	toolCalls: number;
+	roster: ActiveRosterEntry[];
+}
+
+interface MessageFeedTurn {
+	state: 'message';
+	id: string;
+	/** Human-readable sender label (e.g. "User", "Reviewer Agent", "Neo"). */
+	fromLabel: string;
+	/** Recipient agent label — the session this row belongs to. */
+	toLabel: string;
+	/** Rendered message text (markdown when not fallback). */
+	body: string;
+	bodyIsFallback: boolean;
+	createdAt: number;
+	/** True for synthetic agent→agent / system handoffs; false for human input. */
+	isSynthetic: boolean;
+	/** Recipient session id — same role as `CompletedFeedTurn.sessionId`. */
+	sessionId: string | null;
+	/** SDK message UUID, used to deep-link the slide-over. */
+	highlightMessageUuid?: string;
+	/**
+	 * SDK `system:init` envelope for the recipient agent's exec — the agent
+	 * state this user message landed in. When present, the actions row
+	 * renders an info-circle dropdown surfacing model / cwd / tools / mcp
+	 * servers. Undefined when no init message exists in the same logical
+	 * block (e.g. for replays, or messages that didn't trigger a new exec).
+	 */
+	sessionInit?: SystemInitMessage;
+}
+
+type FeedTurn = CompletedFeedTurn | ActiveFeedTurn | MessageFeedTurn;
+
+const PREVIEW_MAX_LEN = 80;
+const ROSTER_MAX_ENTRIES = 4;
+
+function oneLine(value: string, max = PREVIEW_MAX_LEN): string {
+	const collapsed = value.replace(/\s+/g, ' ').trim();
+	if (!collapsed) return '';
+	return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
+}
+
+function getToolUseContentBlocks(row: ParsedThreadRow) {
+	if (!row.message || !isSDKAssistantMessage(row.message)) return [];
+	const content = (row.message as { message?: { content?: unknown } }).message?.content;
+	if (!Array.isArray(content)) return [];
+	return content.filter((block): block is { type: 'tool_use'; name: string; input?: unknown } =>
+		isToolUseBlock(block as never)
+	);
+}
+
+function previewFromInput(input: Record<string, unknown>): string {
+	const command = typeof input.command === 'string' ? input.command : '';
+	if (command) return oneLine(command);
+	const filePath = typeof input.file_path === 'string' ? input.file_path : '';
+	if (filePath) return oneLine(filePath);
+	const path = typeof input.path === 'string' ? input.path : '';
+	if (path) return oneLine(path);
+	const pattern = typeof input.pattern === 'string' ? input.pattern : '';
+	if (pattern) return oneLine(pattern);
+	const url = typeof input.url === 'string' ? input.url : '';
+	if (url) return oneLine(url);
+	const description = typeof input.description === 'string' ? input.description : '';
+	if (description) return oneLine(description);
+	const keys = Object.keys(input);
+	if (keys.length === 0) return '';
+	// Fallback: show first key=value summary so the entry isn't blank.
+	const firstKey = keys[0];
+	const firstVal = input[firstKey];
+	if (typeof firstVal === 'string') return oneLine(`${firstKey}: ${firstVal}`);
+	return `${firstKey}: …`;
+}
+
+/**
+ * Walk the active block's content blocks in chronological order and emit one
+ * roster entry per `tool_use` or non-empty `text` block. Capped at `maxEntries`
+ * (most-recent wins) so the rail stays compact even on long-running turns.
+ *
+ * Mixing tool calls with the agent's own text messages reproduces the cadence
+ * a developer would see watching the live SDK stream: "Reading…", "I think
+ * this is the bug.", "Editing…", "Confirmed it now passes." — much more
+ * informative than four anonymous tool names.
+ */
+function extractRosterEntries(rows: ParsedThreadRow[], maxEntries: number): ActiveRosterEntry[] {
+	const entries: ActiveRosterEntry[] = [];
+	for (const row of rows) {
+		if (!row.message || !isSDKAssistantMessage(row.message)) continue;
+		const content = (row.message as { message?: { content?: unknown } }).message?.content;
+		if (!Array.isArray(content)) continue;
+		for (const block of content) {
+			if (isToolUseBlock(block as never)) {
+				const tu = block as { name: string; input?: unknown };
+				const input =
+					typeof tu.input === 'object' && tu.input !== null
+						? (tu.input as Record<string, unknown>)
+						: {};
+				entries.push({ kind: 'tool', tool: tu.name, preview: previewFromInput(input) });
+				continue;
+			}
+			const b = block as { type?: unknown; text?: unknown };
+			if (b.type === 'text' && typeof b.text === 'string') {
+				const text = b.text.trim();
+				if (text.length > 0) entries.push({ kind: 'message', text: oneLine(text) });
+			}
+		}
+	}
+	return entries.slice(-maxEntries);
+}
+
+function countToolCalls(rows: ParsedThreadRow[]): number {
+	let n = 0;
+	for (const row of rows) {
+		n += getToolUseContentBlocks(row).length;
+	}
+	return n;
+}
+
+/**
+ * Extract the closing text for a turn, walking rows last-to-first.
+ *
+ * Two viable text sources:
+ *   1. `assistant` rows — the model's `text` content blocks. Standard path,
+ *      and the preferred deep-link target so the chat-bubble click highlights
+ *      the agent's actual reply rather than the green result envelope below it.
+ *   2. `result|success` rows — the SDK's end-of-exec envelope, whose top-level
+ *      `result` string carries the agent's final reply. Used as a fallback for
+ *      turns where the agent emitted only `tool_use` / `thinking` blocks (e.g.
+ *      Reviewer runs that verify with Bash and never write a textual reply
+ *      mid-stream).
+ *
+ * Walk order: last-to-first looking for an assistant row with text. While
+ * walking, capture the most recent result-success row as a fallback candidate.
+ * Return the assistant row if found; otherwise fall back to the captured
+ * result row.
+ *
+ * Returns the surfaced row alongside the text so callers can build deep links
+ * back to the original SDK message (sessionId + uuid) for the slide-over.
+ */
+function extractLastAssistantText(rows: ParsedThreadRow[]): {
+	text: string;
+	fallback: boolean;
+	sourceRow: ParsedThreadRow | null;
+} {
+	let resultFallback: { text: string; sourceRow: ParsedThreadRow } | null = null;
+
+	for (let i = rows.length - 1; i >= 0; i--) {
+		const row = rows[i];
+		if (!row.message) continue;
+
+		// Result-success rows carry the agent's final reply on `.result`.
+		// Capture the most recent one as a fallback — but keep walking in case
+		// there is an assistant message above it we'd rather highlight.
+		if (isSDKResultMessage(row.message) && row.message.subtype === 'success') {
+			if (!resultFallback) {
+				const result = (row.message as { result?: unknown }).result;
+				if (typeof result === 'string' && result.trim().length > 0) {
+					resultFallback = { text: result.trim(), sourceRow: row };
+				}
+			}
+			continue;
+		}
+
+		if (!isSDKAssistantMessage(row.message)) continue;
+		const content = (row.message as { message?: { content?: unknown } }).message?.content;
+		if (!Array.isArray(content)) continue;
+		const texts = content
+			.filter(
+				(block): block is { type: 'text'; text: string } =>
+					typeof (block as { type?: unknown }).type === 'string' &&
+					(block as { type?: unknown }).type === 'text' &&
+					typeof (block as { text?: unknown }).text === 'string'
+			)
+			.map((block) => block.text.trim())
+			.filter((s) => s.length > 0);
+		if (texts.length > 0) return { text: texts.join('\n\n'), fallback: false, sourceRow: row };
+	}
+
+	// No assistant text anywhere in the turn — fall back to the result envelope.
+	if (resultFallback) {
+		return { text: resultFallback.text, fallback: false, sourceRow: resultFallback.sourceRow };
+	}
+
+	const tail = rows[rows.length - 1] ?? null;
+	const tailFallback = tail?.fallbackText ?? '';
+	return { text: tailFallback, fallback: true, sourceRow: tail };
+}
+
+function buildCompletedTurn(
+	block: AgentTurnBlock,
+	rows: ParsedThreadRow[],
+	turnId: string,
+	resultInfo: ResultMessage | undefined
+): CompletedFeedTurn {
+	const startedAt = rows[0].createdAt;
+	const lastRow = rows[rows.length - 1];
+	const durationMs = Math.max(0, lastRow.createdAt - startedAt);
+	const durationSec = Math.max(1, Math.round(durationMs / 1000));
+	const { text, fallback, sourceRow } = extractLastAssistantText(rows);
+	const highlightSource = sourceRow ?? lastRow;
+	const highlightUuid =
+		highlightSource?.message &&
+		typeof (highlightSource.message as { uuid?: unknown }).uuid === 'string'
+			? ((highlightSource.message as { uuid: string }).uuid as string)
+			: undefined;
+	return {
+		state: 'completed',
+		id: turnId,
+		agent: block.agentLabel,
+		startedAt,
+		durationSec,
+		toolCalls: countToolCalls(rows),
+		messages: rows.length,
+		lastMessage: text,
+		fallback,
+		sessionId: highlightSource?.sessionId ?? lastRow.sessionId,
+		highlightMessageUuid: highlightUuid,
+		resultInfo,
+	};
+}
+
+function buildActiveTurn(
+	block: AgentTurnBlock,
+	rows: ParsedThreadRow[],
+	turnId: string
+): ActiveFeedTurn {
+	return {
+		state: 'active',
+		id: turnId,
+		agent: block.agentLabel,
+		startedAt: rows[0].createdAt,
+		status: 'Running…',
+		toolCalls: countToolCalls(rows),
+		roster: extractRosterEntries(rows, ROSTER_MAX_ENTRIES),
+	};
+}
+
+/**
+ * Resolve the sender of a user-type SDK message.
+ *
+ * The origin field comes in two shapes in the wild:
+ * - Legacy string form ("neo" / "system") — what the daemon currently writes
+ *   to the DB for non-human-typed messages.
+ * - Typed `SDKMessageOrigin` object form (`{ kind: 'peer'/'channel'/... }`) —
+ *   what the SDK itself emits for richer provenance.
+ *
+ * For synthetic / replay messages without origin info, we fall back to the
+ * previous agent block's label — agent→agent handoffs almost always come from
+ * whichever agent ran immediately before the recipient. It's a heuristic, but
+ * it produces meaningful labels in the common case where origin metadata is
+ * missing.
+ */
+function extractSenderLabel(
+	message: SDKMessage,
+	previousAgentLabel: string | null
+): { label: string; isSynthetic: boolean } {
+	const m = message as SDKMessage & {
+		origin?: unknown;
+		isSynthetic?: boolean;
+		isReplay?: boolean;
+	};
+	const isSynthetic = !!m.isSynthetic || !!m.isReplay;
+	const origin = m.origin;
+
+	if (typeof origin === 'string') {
+		if (origin === 'neo') return { label: 'Neo', isSynthetic: true };
+		if (origin === 'system') return { label: 'System', isSynthetic: true };
+		if (origin === 'human') return { label: 'User', isSynthetic: false };
+	}
+
+	if (typeof origin === 'object' && origin !== null) {
+		const o = origin as { kind?: string; from?: string; name?: string; server?: string };
+		if (o.kind === 'human') return { label: 'User', isSynthetic: false };
+		if (o.kind === 'peer') {
+			return { label: o.name ?? o.from ?? previousAgentLabel ?? 'Peer Agent', isSynthetic: true };
+		}
+		if (o.kind === 'channel') return { label: o.server ?? 'Channel', isSynthetic: true };
+		if (o.kind === 'task-notification') return { label: 'Task', isSynthetic: true };
+		if (o.kind === 'coordinator') return { label: 'Coordinator', isSynthetic: true };
+	}
+
+	if (isSynthetic && previousAgentLabel) {
+		return { label: previousAgentLabel, isSynthetic: true };
+	}
+	if (isSynthetic) return { label: 'Agent', isSynthetic: true };
+	return { label: 'User', isSynthetic: false };
+}
+
+/**
+ * Extract a user-type message's text body. Concatenates all text blocks; falls
+ * back to the row's fallbackText when the message can't be parsed.
+ */
+function extractUserMessageText(row: ParsedThreadRow): { body: string; fallback: boolean } {
+	if (!row.message) {
+		return { body: row.fallbackText ?? '', fallback: true };
+	}
+	const apiMessage = (row.message as { message?: { content?: unknown } }).message;
+	const content = apiMessage?.content;
+	if (typeof content === 'string') return { body: content.trim(), fallback: false };
+	if (Array.isArray(content)) {
+		const parts: string[] = [];
+		for (const block of content) {
+			const b = block as { type?: unknown; text?: unknown };
+			if (b.type === 'text' && typeof b.text === 'string') {
+				parts.push(b.text);
+			}
+		}
+		const joined = parts.join('\n\n').trim();
+		return { body: joined, fallback: false };
+	}
+	return { body: '', fallback: false };
+}
+
+function buildMessageTurn(
+	row: ParsedThreadRow,
+	previousAgentLabel: string | null,
+	sessionInit: SystemInitMessage | undefined
+): MessageFeedTurn {
+	const { label: fromLabel, isSynthetic } = extractSenderLabel(
+		row.message ?? ({} as SDKMessage),
+		previousAgentLabel
+	);
+	const { body, fallback } = extractUserMessageText(row);
+	const highlightUuid =
+		row.message && typeof (row.message as { uuid?: unknown }).uuid === 'string'
+			? ((row.message as { uuid: string }).uuid as string)
+			: undefined;
+	return {
+		state: 'message',
+		id: `msg-${String(row.id)}`,
+		fromLabel,
+		toLabel: row.label,
+		body,
+		bodyIsFallback: fallback,
+		createdAt: row.createdAt,
+		isSynthetic,
+		sessionId: row.sessionId,
+		highlightMessageUuid: highlightUuid,
+		sessionInit,
+	};
+}
+
+/**
+ * Pre-scan a block's rows for the SDK envelope messages we surface as
+ * dropdown affordances:
+ *   - `system:init` → attached to the user message that triggered the
+ *     exec (so the user can introspect "what state did my message land
+ *     in?"). First match wins; an exec only emits one init.
+ *   - `result`      → attached to the completed agent turn. Last match
+ *     wins so we always grab the most recent envelope when a block
+ *     happens to contain multiple (rare; mostly defensive).
+ */
+function extractBlockEnvelopes(rows: ParsedThreadRow[]): {
+	init: SystemInitMessage | undefined;
+	result: ResultMessage | undefined;
+} {
+	let init: SystemInitMessage | undefined;
+	let result: ResultMessage | undefined;
+	for (const row of rows) {
+		if (!row.message) continue;
+		if (!init && isSDKSystemInit(row.message)) {
+			init = row.message as SystemInitMessage;
+		}
+		if (isSDKResultMessage(row.message)) {
+			result = row.message as ResultMessage;
+		}
+	}
+	return { init, result };
+}
+
+/**
+ * Build the ordered turn list for the minimal feed.
+ *
+ * Walks `buildAgentTurns` output but splits each block on user-type rows:
+ * - Each user/synthetic row becomes its own `MessageFeedTurn`, surfaced as a
+ *   distinct row showing FROM → TO and the message body.
+ * - Consecutive non-user rows (assistant + result) form `CompletedFeedTurn`s.
+ * - The very last agent turn upgrades to `ActiveFeedTurn` when the underlying
+ *   block is non-terminal AND `isAgentActive` is true.
+ */
+function buildFeedTurns(parsedRows: ParsedThreadRow[], isAgentActive: boolean): FeedTurn[] {
+	const blocks = buildAgentTurns(parsedRows);
+	if (blocks.length === 0) return [];
+
+	const turns: FeedTurn[] = [];
+	// Store mutable cross-iteration state in an object so TS doesn't
+	// over-narrow the closure-captured fields to `never` after the loop.
+	const trailing: {
+		idx: number;
+		rows: ParsedThreadRow[];
+		block: AgentTurnBlock | null;
+	} = { idx: -1, rows: [], block: null };
+	let previousAgentLabel: string | null = null;
+
+	for (const block of blocks) {
+		// Pre-extract once per block so every turn we emit (user msg AND
+		// completed turn) shares the same view of the block's init/result
+		// envelopes. Cheap — single linear scan over rows we'd already be
+		// walking anyway.
+		const { init: blockInit, result: blockResult } = extractBlockEnvelopes(block.rows);
+
+		let pendingAgentRows: ParsedThreadRow[] = [];
+		const flushAgent = () => {
+			if (pendingAgentRows.length === 0) return;
+			const turnId = `${block.id}:${String(pendingAgentRows[0].id)}`;
+			turns.push(buildCompletedTurn(block, pendingAgentRows, turnId, blockResult));
+			trailing.idx = turns.length - 1;
+			trailing.rows = pendingAgentRows;
+			trailing.block = block;
+			pendingAgentRows = [];
+		};
+
+		for (const row of block.rows) {
+			if (isUserRow(row)) {
+				flushAgent();
+				turns.push(buildMessageTurn(row, previousAgentLabel, blockInit));
+				continue;
+			}
+			pendingAgentRows.push(row);
+		}
+		flushAgent();
+		previousAgentLabel = block.agentLabel;
+	}
+
+	// Upgrade the last agent turn to active when the trailing block is
+	// non-terminal and the session is reportedly running.
+	if (isAgentActive && trailing.idx >= 0 && trailing.block && !trailing.block.isTerminal) {
+		const completed = turns[trailing.idx] as CompletedFeedTurn;
+		turns[trailing.idx] = buildActiveTurn(trailing.block, trailing.rows, completed.id);
+	}
+
+	// Drop empty completed turns. With result-message-aware text extraction in
+	// place, the only way a completed turn ends up with no body is if it's an
+	// agent-phase fragment that got cut off by another agent's rows before its
+	// own exec's result message arrived — its actual reply lives in a sibling
+	// turn from the same agent. Showing the fragment as its own header-only row
+	// (e.g. "REVIEWER 12:29 PM · 3 messages · 9s" with nothing under it) is
+	// noise; the reply is rendered in the sibling that holds the result text.
+	return turns.filter((t) => {
+		if (t.state !== 'completed') return true;
+		return t.lastMessage.length > 0;
+	});
+}
+
+/**
+ * Force a re-render every second so live-elapsed values derived from
+ * `Date.now() - startedAt` stay current. Single timer per component
+ * instance — cheap, and only mounted while there is an active turn.
+ */
+function useSecondsTick(): void {
+	const [, setTick] = useState(0);
+	useEffect(() => {
+		const id = setInterval(() => setTick((n) => (n + 1) | 0), 1000);
+		return () => clearInterval(id);
+	}, []);
+}
+
+/* ── visual building blocks ──────────────────────────────────────────────── */
+
+function PulseDot({ color }: { color: string }) {
+	return (
+		<span
+			class="inline-block h-2 w-2 rounded-full minimal-thread-live-dot shrink-0"
+			style={{ backgroundColor: color }}
+		/>
+	);
+}
+
+function StatusPill({ color, status }: { color: string; status: string }) {
+	return (
+		<span class="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-medium">
+			<PulseDot color={color} />
+			<span style={{ color }}>{status}</span>
+		</span>
+	);
+}
+
+function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: boolean }) {
+	const fadeClass = isLatest ? 'minimal-thread-roster-fade-in' : '';
+	const bodyClass = `truncate ${isLatest ? 'text-gray-100' : 'text-gray-400'}`;
+
+	if (entry.kind === 'tool') {
+		const toolColor = getToolDarkColor(entry.tool);
+		return (
+			<div
+				class={`flex items-baseline gap-2 font-mono text-xs leading-5 ${fadeClass}`}
+				data-testid="minimal-thread-roster-entry"
+				data-roster-kind="tool"
+			>
+				<span class={`${toolColor} font-semibold shrink-0`}>{entry.tool}:</span>
+				<span class={bodyClass}>{entry.preview}</span>
+			</div>
+		);
+	}
+
+	// Assistant message — small chat-bubble glyph (mirrors the open-session
+	// affordance) plus an italic preview of the text. No mono-font / TOOL:
+	// prefix so it visually reads as "the agent said this" rather than
+	// "another command ran".
+	return (
+		<div
+			class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
+			data-testid="minimal-thread-roster-entry"
+			data-roster-kind="message"
+		>
+			<svg
+				class="w-3 h-3 shrink-0 text-gray-500 self-center"
+				fill="none"
+				viewBox="0 0 24 24"
+				stroke="currentColor"
+				aria-hidden="true"
+			>
+				<path
+					strokeLinecap="round"
+					strokeLinejoin="round"
+					strokeWidth={2}
+					d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+				/>
+			</svg>
+			<span class={`${bodyClass} italic`}>{entry.text}</span>
+		</div>
+	);
+}
+
+/**
+ * Body for a completed agent turn — wraps the meta-line + reply text in a
+ * left-aligned chat bubble that sizes to content up to a max-width cap.
+ *
+ * Why bubble-style at all: agent replies are often long markdown blobs
+ * (review summaries, hand-off briefs) that look like transcripts when
+ * rendered as plain flush-left rows. A subtle bubble (`bg-dark-800`, one
+ * shade lighter than the synthetic bubble's `bg-dark-900`) re-establishes
+ * the conversational rhythm and differentiates "agent's own reply" from
+ * "synthetic handoff" without competing with the human bubble's blue.
+ *
+ * Width strategy: stacked under the agent header (no avatar offset on the
+ * left), so `w-fit` lets short replies hug their content, `max-w-full`
+ * fills the row on mobile, and `md:max-w-[70%]` caps the width on desktop
+ * to keep long markdown readable instead of stretching edge-to-edge.
+ */
+function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
+	const openSession = turn.sessionId
+		? () => {
+				// `pushOverlayHistory` reads the highlight signal; passing the message
+				// uuid scrolls the slide-over straight to this turn's surfaced reply.
+				pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid);
+			}
+		: undefined;
+	return (
+		<div class="mt-1.5 w-fit max-w-full md:max-w-[70%]">
+			<div
+				class="bg-dark-800 border border-dark-700 rounded-lg px-3 py-2"
+				data-testid="minimal-thread-agent-bubble"
+			>
+				{turn.lastMessage ? (
+					<div class="text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400">
+						{turn.fallback ? (
+							<p class="whitespace-pre-wrap break-words">{turn.lastMessage}</p>
+						) : (
+							<MarkdownRenderer content={turn.lastMessage} />
+						)}
+					</div>
+				) : null}
+			</div>
+			<SpaceTaskThreadMessageActions
+				timestamp={turn.startedAt}
+				copyText={turn.lastMessage}
+				align="left"
+				onOpenSession={openSession}
+				resultInfo={turn.resultInfo}
+			/>
+		</div>
+	);
+}
+
+function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
+	useSecondsTick();
+	const elapsedSec = Math.max(0, Math.round((Date.now() - turn.startedAt) / 1000));
+	return (
+		<div
+			class="mt-1.5 pl-3 border-l-2"
+			style={{ borderColor: color }}
+			data-testid="minimal-thread-active-rail"
+		>
+			<div class="text-[11px] text-gray-500 mt-0.5">
+				{turn.toolCalls} {turn.toolCalls === 1 ? 'tool' : 'tools'} · {formatDuration(elapsedSec)}
+			</div>
+			{turn.roster.length > 0 ? (
+				<div class="mt-2 space-y-0.5">
+					{turn.roster.map((entry, i) => (
+						<RosterEntry
+							key={`${entry.kind}-${i}`}
+							entry={entry}
+							isLatest={i === turn.roster.length - 1}
+						/>
+					))}
+				</div>
+			) : null}
+			<div class="mt-1.5">
+				<StatusPill color={color} status={turn.status} />
+			</div>
+		</div>
+	);
+}
+
+/**
+ * Agent turn — Slack-style stacked layout. The header (avatar + name +
+ * timestamp-when-active) sits on its own row; the body (bubble or active
+ * rail) drops below the header at the full container width, aligned with
+ * the avatar's left edge.
+ *
+ * Why stacked instead of avatar-on-the-left-of-body: agent replies are
+ * frequently long markdown blobs. With the body indented under a flex
+ * column to the right of the avatar, the bubble is forced into a narrower
+ * sub-column (~48px lost to the avatar + gap) AND the legacy 85% cap left
+ * dead space on the right. Stacking lets the body use the full row width
+ * on mobile and feels closer to Slack/Reddit/Discord post layouts than
+ * iMessage chat bubbles — a better fit for "agent post with long output".
+ */
+function AgentTurnRow({ turn }: { turn: CompletedFeedTurn | ActiveFeedTurn }) {
+	const color = getAgentColor(turn.agent);
+	const initial = agentInitial(turn.agent);
+	return (
+		<div
+			data-testid="minimal-thread-turn"
+			data-agent-label={turn.agent}
+			data-agent-color={color}
+			data-turn-state={turn.state}
+		>
+			{/* Header — avatar + stacked (name / meta-or-clock) column. The meta
+			    line ("3 tool calls · 4 messages · 22s") lives here under the
+			    agent name on completed turns instead of inside the reply
+			    bubble — it's metadata about the turn, not part of the agent's
+			    spoken reply, so reading it as "subtitle" rather than "first
+			    line of the bubble" is more intuitive. Active turns swap the
+			    meta for a live clock; the rail body still shows the running
+			    tool counter + roster.
+
+			    Active turns don't get an actions row below (no copy while
+			    running), so completed turns surface time + copy under the
+			    bubble via SpaceTaskThreadMessageActions to avoid duplicating
+			    the header clock. */}
+			<div class="flex items-center gap-3">
+				<div
+					class="h-9 w-9 shrink-0 rounded-md flex items-center justify-center text-sm font-bold text-dark-950"
+					style={{ backgroundColor: color }}
+					aria-hidden="true"
+				>
+					{initial}
+				</div>
+				<div class="flex flex-col gap-0.5 min-w-0">
+					<span class="font-semibold leading-tight" style={{ color }}>
+						{shortAgentName(turn.agent)}
+					</span>
+					{turn.state === 'completed' ? (
+						<div
+							class="text-[11px] text-gray-500 leading-tight"
+							data-testid="minimal-thread-agent-meta"
+						>
+							{turn.toolCalls} {turn.toolCalls === 1 ? 'tool call' : 'tool calls'} · {turn.messages}{' '}
+							{turn.messages === 1 ? 'message' : 'messages'} · {formatDuration(turn.durationSec)}
+						</div>
+					) : (
+						<span class="text-xs text-gray-500 leading-tight">{formatClock(turn.startedAt)}</span>
+					)}
+				</div>
+			</div>
+			{/* Body — full-width on mobile, capped on desktop for readability. */}
+			{turn.state === 'active' ? (
+				<ActiveBody turn={turn} color={color} />
+			) : (
+				<CompletedBody turn={turn} />
+			)}
+		</div>
+	);
+}
+
+/**
+ * Human user input — iMessage-style blue bubble, right-aligned. No header
+ * decoration: the user IS the human, the recipient is implicit (this is the
+ * recipient agent's session view).
+ */
+function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
+	const recipientColor = getAgentColor(turn.toLabel);
+	return (
+		<div
+			class="flex justify-end"
+			data-testid="minimal-thread-turn"
+			data-turn-state="message"
+			data-message-kind="human"
+			data-agent-label={turn.toLabel}
+			data-agent-color={recipientColor}
+			data-from-label={turn.fromLabel}
+			data-to-label={turn.toLabel}
+		>
+			<div class="max-w-[85%] md:max-w-[70%] w-auto">
+				<div
+					class="bg-blue-500 text-white rounded-[20px] px-4 py-2 leading-relaxed break-words"
+					data-testid="minimal-thread-human-bubble"
+				>
+					{turn.body ? (
+						<p class="whitespace-pre-wrap break-words">{turn.body}</p>
+					) : (
+						<p class="opacity-70 italic">(empty message)</p>
+					)}
+				</div>
+				{/* Right-aligned actions row — timestamp + (optional)
+				    session-init dropdown + copy. Replaces the bare
+				    timestamp so the human bubble has parity with synthetic
+				    messages and agent reply bubbles. */}
+				<SpaceTaskThreadMessageActions
+					timestamp={turn.createdAt}
+					copyText={turn.body}
+					align="right"
+					sessionInit={turn.sessionInit}
+				/>
+			</div>
+		</div>
+	);
+}
+
+/**
+ * Synthetic / agent→agent handoff — delegates rendering to the shared
+ * `SyntheticMessageBlock` so this idiom looks identical in the chat
+ * container and the task thread feed. The thread-feed wrapper adds:
+ *   • Turn-level data attributes consumed by E2E tests / sticky headers.
+ *   • Agent route info (FROM→TO badge) since the thread feed has agent
+ *     labels that the chat container doesn't surface.
+ *   • An "open in session" callback that pops the session overlay scrolled
+ *     to this synthetic message.
+ */
+function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
+	const fromColor = getAgentColor(turn.fromLabel);
+	const toColor = getAgentColor(turn.toLabel);
+	const fromShort = shortAgentName(turn.fromLabel);
+	const toShort = shortAgentName(turn.toLabel);
+
+	return (
+		<div
+			data-testid="minimal-thread-turn"
+			data-turn-state="message"
+			data-message-kind="synthetic"
+			data-agent-label={turn.toLabel}
+			data-agent-color={toColor}
+			data-from-label={turn.fromLabel}
+			data-to-label={turn.toLabel}
+		>
+			<SyntheticMessageBlock
+				content={turn.body ?? ''}
+				timestamp={turn.createdAt}
+				uuid={turn.highlightMessageUuid}
+				fromAgent={turn.fromLabel}
+				toAgent={turn.toLabel}
+				fromColor={fromColor}
+				toColor={toColor}
+				fromShort={fromShort}
+				toShort={toShort}
+				renderAsPlainText={turn.bodyIsFallback}
+				sessionInit={turn.sessionInit}
+				onOpenSession={
+					turn.sessionId
+						? () =>
+								pushOverlayHistory(
+									turn.sessionId as string,
+									turn.toLabel,
+									turn.highlightMessageUuid
+								)
+						: undefined
+				}
+			/>
+		</div>
+	);
+}
+
+function MinimalTurnRow({ turn }: { turn: FeedTurn }) {
+	if (turn.state === 'message') {
+		return turn.isSynthetic ? (
+			<SyntheticMessageTurn turn={turn} />
+		) : (
+			<HumanMessageTurn turn={turn} />
+		);
+	}
+	return <AgentTurnRow turn={turn} />;
+}
+
+/* ── public component ────────────────────────────────────────────────────── */
+
+export function MinimalThreadFeed({ parsedRows, isAgentActive = false }: MinimalThreadFeedProps) {
+	const turns = buildFeedTurns(parsedRows, isAgentActive);
+	if (turns.length === 0) return null;
+
+	return (
+		<>
+			<style>{ANIMATIONS_CSS}</style>
+			<div class="px-4 py-4 space-y-6" data-testid="space-task-event-feed-minimal">
+				{turns.map((turn) => (
+					<MinimalTurnRow key={turn.id} turn={turn} />
+				))}
+			</div>
+		</>
+	);
+}
+
+/* ── animations (scoped via local <style> tag) ───────────────────────────── */
+
+const ANIMATIONS_CSS = `
+@keyframes minimal-thread-roster-fade-in-kf {
+	from { opacity: 0; transform: translateY(2px); }
+	to   { opacity: 1; transform: translateY(0); }
+}
+.minimal-thread-roster-fade-in {
+	animation: minimal-thread-roster-fade-in-kf 250ms ease-out;
+}
+@keyframes minimal-thread-live-pulse-kf {
+	0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.0); transform: scale(1); }
+	50%      { box-shadow: 0 0 0 4px rgba(255,255,255,0.08); transform: scale(1.08); }
+}
+.minimal-thread-live-dot {
+	animation: minimal-thread-live-pulse-kf 1.6s ease-in-out infinite;
+}
+`;

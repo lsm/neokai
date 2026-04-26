@@ -13,7 +13,11 @@
 import { useCallback, useEffect } from 'preact/hooks';
 import { lazy, Suspense } from 'preact/compat';
 import type { SpaceViewMode } from '../lib/signals';
-import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../lib/signals';
+import {
+	spaceOverlaySessionIdSignal,
+	spaceOverlayAgentNameSignal,
+	spaceOverlayHighlightMessageIdSignal,
+} from '../lib/signals';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { spaceStore } from '../lib/space-store';
@@ -64,6 +68,7 @@ export default function SpaceIsland({
 	// Overlay session — shown as a slide-over on top of the current view
 	const overlaySessionId = spaceOverlaySessionIdSignal.value;
 	const overlayAgentName = spaceOverlayAgentNameSignal.value;
+	const overlayHighlightMessageId = spaceOverlayHighlightMessageIdSignal.value;
 	const handleOverlayClose = useCallback(() => {
 		closeOverlayHistory();
 	}, []);
@@ -110,6 +115,7 @@ export default function SpaceIsland({
 					<AgentOverlayChat
 						sessionId={overlaySessionId}
 						agentName={overlayAgentName ?? undefined}
+						highlightMessageId={overlayHighlightMessageId ?? undefined}
 						onClose={handleOverlayClose}
 					/>
 				)}
@@ -152,6 +158,7 @@ export default function SpaceIsland({
 					<AgentOverlayChat
 						sessionId={overlaySessionId}
 						agentName={overlayAgentName ?? undefined}
+						highlightMessageId={overlayHighlightMessageId ?? undefined}
 						onClose={handleOverlayClose}
 					/>
 				)}
@@ -180,6 +187,7 @@ export default function SpaceIsland({
 					<AgentOverlayChat
 						sessionId={overlaySessionId}
 						agentName={overlayAgentName ?? undefined}
+						highlightMessageId={overlayHighlightMessageId ?? undefined}
 						onClose={handleOverlayClose}
 					/>
 				)}
@@ -205,6 +213,7 @@ export default function SpaceIsland({
 					<AgentOverlayChat
 						sessionId={overlaySessionId}
 						agentName={overlayAgentName ?? undefined}
+						highlightMessageId={overlayHighlightMessageId ?? undefined}
 						onClose={handleOverlayClose}
 					/>
 				)}
@@ -230,6 +239,7 @@ export default function SpaceIsland({
 					<AgentOverlayChat
 						sessionId={overlaySessionId}
 						agentName={overlayAgentName ?? undefined}
+						highlightMessageId={overlayHighlightMessageId ?? undefined}
 						onClose={handleOverlayClose}
 					/>
 				)}

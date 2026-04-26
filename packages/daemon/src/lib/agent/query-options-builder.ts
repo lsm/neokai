@@ -869,6 +869,34 @@ CRITICAL RULES:
 	}
 
 	/**
+	 * Returns the set of skill IDs disabled at the session scope.
+	 *
+	 * Session-level overrides come from `session.config.tools.disabledSkills`,
+	 * managed by the session Tools modal. They are additive on top of room
+	 * overrides and the global `enabled` flag — see `ToolsConfig.disabledSkills`
+	 * for the full precedence rule.
+	 */
+	private getSessionDisabledSkillIds(): Set<string> {
+		const disabled = this.ctx.session.config.tools?.disabledSkills;
+		if (!disabled?.length) return new Set();
+		return new Set(disabled);
+	}
+
+	/**
+	 * Returns true when the skill is disabled at room or session scope. Either
+	 * level is sufficient to exclude a skill that is globally enabled — there is
+	 * no "session re-enables a room-disabled skill" path because the session
+	 * modal cannot promote skills above their inherited state.
+	 */
+	private isSkillScopeDisabled(
+		skillId: string,
+		roomDisabled: Set<string>,
+		sessionDisabled: Set<string>
+	): boolean {
+		return roomDisabled.has(skillId) || sessionDisabled.has(skillId);
+	}
+
+	/**
 	 * Build plugin entries from enabled skills with sourceType === 'plugin'.
 	 * Room overrides with enabled=false exclude the skill even if globally enabled.
 	 * Returns an array of SdkPluginConfig objects for injection into options.plugins.
@@ -878,10 +906,11 @@ CRITICAL RULES:
 
 		const skills = this.ctx.skillsManager.getEnabledSkills();
 		const roomDisabled = this.getRoomDisabledSkillIds();
+		const sessionDisabled = this.getSessionDisabledSkillIds();
 		const plugins: Array<{ type: 'local'; path: string }> = [];
 
 		for (const skill of skills) {
-			if (roomDisabled.has(skill.id)) continue;
+			if (this.isSkillScopeDisabled(skill.id, roomDisabled, sessionDisabled)) continue;
 			if (skill.sourceType === 'plugin' && skill.config.type === 'plugin') {
 				plugins.push({ type: 'local', path: skill.config.pluginPath });
 			}
@@ -914,11 +943,12 @@ CRITICAL RULES:
 
 		const skills = this.ctx.skillsManager.getEnabledSkills();
 		const roomDisabled = this.getRoomDisabledSkillIds();
+		const sessionDisabled = this.getSessionDisabledSkillIds();
 		const plugins: Array<{ type: 'local'; path: string }> = [];
 		const wrappersRoot = defaultBuiltinSkillPluginRoot();
 
 		for (const skill of skills) {
-			if (roomDisabled.has(skill.id)) continue;
+			if (this.isSkillScopeDisabled(skill.id, roomDisabled, sessionDisabled)) continue;
 			if (skill.sourceType === 'builtin' && skill.config.type === 'builtin') {
 				const wrapperDir = builtinSkillPluginPath(wrappersRoot, skill.config.commandName);
 				plugins.push({ type: 'local', path: wrapperDir });
@@ -949,11 +979,12 @@ CRITICAL RULES:
 
 		const skills = this.ctx.skillsManager.getEnabledSkills();
 		const roomDisabled = this.getRoomDisabledSkillIds();
+		const sessionDisabled = this.getSessionDisabledSkillIds();
 		const effectivelyEnabled = this.getEffectivelyEnabledAppServerIds();
 		const servers: Record<string, McpServerConfig> = {};
 
 		for (const skill of skills) {
-			if (roomDisabled.has(skill.id)) continue;
+			if (this.isSkillScopeDisabled(skill.id, roomDisabled, sessionDisabled)) continue;
 			if (skill.sourceType !== 'mcp_server' || skill.config.type !== 'mcp_server') continue;
 
 			const appServer = this.ctx.appMcpServerRepo.get(skill.config.appMcpServerId);

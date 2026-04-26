@@ -375,6 +375,120 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 
 			expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
 		});
+
+		// -----------------------------------------------------------------------
+		// Regression — task #127
+		//
+		// A task in `review` is paused waiting for human approval (the end-node
+		// agent finished, all sibling executions correctly went `idle`). It is
+		// NOT a stalled run. A daemon restart must leave the task and its run
+		// untouched. Same applies to `approved` (post-approval executor may be
+		// in flight, leaving prior node executions idle).
+		// -----------------------------------------------------------------------
+
+		test('canonical task in `review` → run + task untouched, no blocked notifications (task #127)', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Review-Pending Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Review-Pending Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'review',
+			});
+
+			// All node executions correctly idle while we wait for the human.
+			seedExec(run.id, STEP_A, 'Step A', 'idle');
+
+			const rt = makeRuntime();
+			await rt.recoverStalledRuns();
+
+			// Run + task must be unchanged — `review` is "at rest", not stalled.
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+			const after = taskRepo.getTask(task.id)!;
+			expect(after.status).toBe('review');
+			expect(after.blockReason).toBeNull();
+			// And no spurious blocked notifications.
+			expect(notifications.filter((n) => n.kind === 'workflow_run_blocked').length).toBe(0);
+			expect(notifications.filter((n) => n.kind === 'task_blocked').length).toBe(0);
+		});
+
+		test('canonical task in `review` with pendingCheckpointType=task_completion → not blocked', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Submit-For-Approval Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Submit-For-Approval Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'review',
+			});
+			// Mirror the real-world `submit_for_approval` checkpoint shape.
+			taskRepo.updateTask(task.id, { pendingCheckpointType: 'task_completion' });
+
+			seedExec(run.id, STEP_A, 'Step A', 'idle');
+
+			const rt = makeRuntime();
+			await rt.recoverStalledRuns();
+
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+			const after = taskRepo.getTask(task.id)!;
+			expect(after.status).toBe('review');
+			expect(after.pendingCheckpointType).toBe('task_completion');
+			expect(notifications.filter((n) => n.kind === 'task_blocked').length).toBe(0);
+		});
+
+		test('canonical task in `approved` → run + task untouched (post-approval may be in flight)', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Approved Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Approved Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'approved',
+			});
+
+			seedExec(run.id, STEP_A, 'Step A', 'idle');
+
+			const rt = makeRuntime();
+			await rt.recoverStalledRuns();
+
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+			expect(taskRepo.getTask(task.id)!.status).toBe('approved');
+			expect(notifications.filter((n) => n.kind === 'workflow_run_blocked').length).toBe(0);
+			expect(notifications.filter((n) => n.kind === 'task_blocked').length).toBe(0);
+		});
 	});
 
 	// -------------------------------------------------------------------------

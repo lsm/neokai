@@ -32,7 +32,8 @@ export function createSpaceAgentSchema(db: Database): void {
 	`);
 	db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
 
-	// Keep in sync with space-test-db.ts (post-M74 schema).
+	// Keep in sync with space-test-db.ts (post-M105 schema — template_name /
+	// template_hash columns added for preset-agent drift detection).
 	db.exec(`
 		CREATE TABLE space_agents (
 			id TEXT PRIMARY KEY,
@@ -43,6 +44,8 @@ export function createSpaceAgentSchema(db: Database): void {
 			tools TEXT NOT NULL DEFAULT '[]',
 			custom_prompt TEXT,
 			provider TEXT,
+			template_name TEXT DEFAULT NULL,
+			template_hash TEXT DEFAULT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
