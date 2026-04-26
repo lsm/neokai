@@ -1,13 +1,44 @@
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useEffect, useState } from 'preact/hooks';
 import { copyToClipboard } from '../../../lib/utils';
+import { messageSpacing } from '../../../lib/design-tokens';
+import { Dropdown } from '../../ui/Dropdown';
 import { IconButton } from '../../ui/IconButton';
 import { Tooltip } from '../../ui/Tooltip';
-import { messageSpacing } from '../../../lib/design-tokens';
+import { MessageInfoButton } from '../../sdk/MessageInfoButton';
+import { MessageInfoDropdown } from '../../sdk/MessageInfoDropdown';
+import { ResultInfoButton } from '../../sdk/ResultInfoButton';
+import { ResultInfoDropdown } from '../../sdk/ResultInfoDropdown';
+
+type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
+type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
 
 interface SpaceTaskThreadMessageActionsProps {
 	timestamp: number;
 	copyText: string;
 	align?: 'left' | 'right';
+	/**
+	 * When provided, an additional icon button is rendered next to the copy
+	 * action that opens the agent's full session in the slide-over chat
+	 * overlay (scrolling to the corresponding message). Touch-friendly:
+	 * always visible, no hover required.
+	 */
+	onOpenSession?: () => void;
+	/**
+	 * SDK `system:init` message for the agent exec this row triggered (or
+	 * is part of). When present an info-circle dropdown is rendered to the
+	 * left of the copy button, surfacing model / cwd / tools / mcp servers
+	 * etc. — useful for confirming "what agent state did this message land
+	 * in?" without leaving the thread.
+	 */
+	sessionInit?: SystemInitMessage;
+	/**
+	 * SDK `result` envelope for the agent exec this row terminates. When
+	 * present a check-badge dropdown is rendered to the left of the copy
+	 * button, surfacing usage tokens / duration / cost / num_turns / errors
+	 * — the symmetric counterpart to `sessionInit`.
+	 */
+	resultInfo?: ResultMessage;
 }
 
 function formatTime(timestamp: number): string {
@@ -25,6 +56,9 @@ export function SpaceTaskThreadMessageActions({
 	timestamp,
 	copyText,
 	align = 'left',
+	onOpenSession,
+	sessionInit,
+	resultInfo,
 }: SpaceTaskThreadMessageActionsProps) {
 	const [copied, setCopied] = useState(false);
 
@@ -39,6 +73,10 @@ export function SpaceTaskThreadMessageActions({
 		if (ok) setCopied(true);
 	};
 
+	// Result error subtypes paint the trigger amber so failures surface
+	// in the actions row even before the user opens the dropdown.
+	const resultIsError = resultInfo !== undefined && resultInfo.subtype !== 'success';
+
 	return (
 		<div
 			class={`flex items-center ${messageSpacing.actions.gap} ${messageSpacing.actions.marginTop} ${messageSpacing.actions.padding} ${
@@ -48,6 +86,29 @@ export function SpaceTaskThreadMessageActions({
 			<Tooltip content={formatFullTime(timestamp)} position={align === 'right' ? 'left' : 'right'}>
 				<span class="text-xs text-gray-500">{formatTime(timestamp)}</span>
 			</Tooltip>
+
+			{/* Init / result dropdowns — to the LEFT of the copy button per
+			    spec. These two slots are mutually exclusive in practice (init
+			    attaches to user messages; result attaches to agent reply
+			    bubbles), but the props are independent so the actions row
+			    stays a generic primitive. */}
+			{sessionInit && (
+				<Dropdown
+					trigger={<MessageInfoButton />}
+					items={[]}
+					position={align === 'right' ? 'right' : 'left'}
+					customContent={<MessageInfoDropdown sessionInfo={sessionInit} />}
+				/>
+			)}
+
+			{resultInfo && (
+				<Dropdown
+					trigger={<ResultInfoButton isError={resultIsError} />}
+					items={[]}
+					position={align === 'right' ? 'right' : 'left'}
+					customContent={<ResultInfoDropdown result={resultInfo} />}
+				/>
+			)}
 
 			<IconButton
 				size="md"
@@ -70,6 +131,21 @@ export function SpaceTaskThreadMessageActions({
 					</svg>
 				)}
 			</IconButton>
+
+			{onOpenSession && (
+				<IconButton size="md" onClick={onOpenSession} title="Open in session">
+					{/* Chat-bubble icon — the destination is a chat session, so the
+					    glyph reads more naturally than a generic external-link arrow. */}
+					<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							strokeWidth={2}
+							d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+						/>
+					</svg>
+				</IconButton>
+			)}
 		</div>
 	);
 }
