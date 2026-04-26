@@ -288,18 +288,20 @@ export function SDKUserMessage({
 	}
 
 	// If this is a synthetic message (compaction summary, interrupt, agent→agent
-	// handoff, etc.), use the reusable purple card component. Synthetic messages
-	// are always visually distinct from human input — the purple chrome marks
-	// that the message was system-generated, not typed by a human, regardless
-	// of whether we're in a normal chat or a task thread.
+	// handoff, etc.), use the reusable amber-trimmed card component. Synthetic
+	// messages are always visually distinct from human input — the amber chrome
+	// marks that the message was system-generated, not typed by a human,
+	// regardless of whether we're in a normal chat or a task thread.
 	if (syntheticContentBlocks) {
 		const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 		return (
-			<SyntheticMessageBlock
-				content={syntheticContentBlocks}
-				timestamp={messageWithTimestamp.timestamp}
-				uuid={message.uuid}
-			/>
+			<div class={cn(messageSpacing.user.container.combined)}>
+				<SyntheticMessageBlock
+					content={syntheticContentBlocks}
+					timestamp={messageWithTimestamp.timestamp}
+					uuid={message.uuid}
+				/>
+			</div>
 		);
 	}
 

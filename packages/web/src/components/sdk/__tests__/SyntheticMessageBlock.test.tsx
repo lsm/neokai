@@ -101,28 +101,52 @@ describe('SyntheticMessageBlock', () => {
 			expect(container.textContent).toContain('Synthetic');
 		});
 
-		it('should have purple dot icon in header', () => {
+		it('should show an amber arrow icon in the header', () => {
 			const { container } = render(
 				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
 			);
 
-			// Purple dot is a div with rounded-full bg-purple-500
-			const dot = container.querySelector('[data-testid="synthetic-dot"]');
-			expect(dot).toBeTruthy();
+			const icon = container.querySelector('[data-testid="synthetic-icon"]');
+			expect(icon).toBeTruthy();
+			expect(icon?.getAttribute('class')).toContain('text-amber-400');
 		});
 
-		it('should not show an SVG lightbulb in the card header', () => {
+		it('should style the Synthetic label with the amber accent', () => {
 			const { container } = render(
 				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
 			);
 
-			// The header area (inside the card) should NOT have an SVG lightbulb
-			const card = container.querySelector('[data-testid="synthetic-card"]');
-			// SVGs inside the card are only the toggle chevrons (which appear only when needsCollapse)
-			// For short content, no SVGs should appear inside the card header area
-			const headerBorderB = card?.querySelector('.border-b');
-			const svgInHeader = headerBorderB?.querySelector('svg');
-			expect(svgInHeader).toBeNull();
+			const label = container.querySelector('[data-testid="synthetic-label"]');
+			expect(label?.textContent).toBe('Synthetic');
+			expect(label?.getAttribute('class')).toContain('text-amber-400');
+		});
+
+		it('should not show an agent route badge by default', () => {
+			const { container } = render(
+				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
+			);
+
+			const routeBadge = container.querySelector('[data-testid="synthetic-route-badge"]');
+			expect(routeBadge).toBeNull();
+		});
+
+		it('should render the FROM→TO route badge when fromAgent and toAgent are provided', () => {
+			const { container } = render(
+				<SyntheticMessageBlock
+					content="Content"
+					timestamp={Date.now()}
+					fromAgent="Reviewer"
+					toAgent="Builder"
+					fromShort="rev"
+					toShort="build"
+				/>
+			);
+
+			const routeBadge = container.querySelector('[data-testid="synthetic-route-badge"]');
+			expect(routeBadge).toBeTruthy();
+			expect(routeBadge?.textContent).toContain('rev');
+			expect(routeBadge?.textContent).toContain('build');
+			expect(routeBadge?.getAttribute('aria-label')).toBe('From Reviewer agent to Builder agent');
 		});
 	});
 
@@ -287,21 +311,24 @@ describe('SyntheticMessageBlock', () => {
 		});
 	});
 
-	describe('Synthetic Badge', () => {
-		it('should show synthetic badge in action row', () => {
+	describe('Synthetic Label', () => {
+		it('should show "Synthetic" label in the card header', () => {
 			const { container } = render(
 				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
 			);
 
-			expect(container.textContent).toContain('synthetic');
+			// The header label is the canonical "this is synthetic" marker.
+			expect(container.textContent).toContain('Synthetic');
 		});
 
-		it('should have purple styling for synthetic badge', () => {
+		it('should not include a lowercase synthetic pill in the actions row', () => {
 			const { container } = render(
 				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
 			);
 
-			expect(container.querySelector('.bg-purple-500\\/20, .text-purple-300')).toBeTruthy();
+			// The redesigned actions row defers to SpaceTaskThreadMessageActions,
+			// which has timestamp + copy (+ optional open) only — no extra pill.
+			expect(container.querySelector('.bg-purple-500\\/20')).toBeNull();
 		});
 	});
 
@@ -331,7 +358,9 @@ describe('SyntheticMessageBlock', () => {
 			});
 		});
 
-		it('should not show green check and show error toast when copy fails', async () => {
+		it('should stay in "Copy message" state when copy fails', async () => {
+			// Copy is delegated to the shared SpaceTaskThreadMessageActions, which
+			// silently leaves the button in its original state on failure (no toast).
 			mockCopyToClipboard.mockResolvedValue(false);
 
 			const { container } = render(
@@ -344,7 +373,7 @@ describe('SyntheticMessageBlock', () => {
 			await waitFor(() => {
 				expect(mockCopyToClipboard).toHaveBeenCalledWith('Content to copy');
 				expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
-				expect(mockToastError).toHaveBeenCalledWith('Failed to copy message');
+				expect(container.querySelector('button[title="Copied!"]')).toBeNull();
 			});
 		});
 
@@ -429,6 +458,73 @@ describe('SyntheticMessageBlock', () => {
 		});
 	});
 
+	describe('Session Info Dropdown', () => {
+		it('should not render the session-info trigger by default', () => {
+			const { container } = render(
+				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
+			);
+
+			expect(container.querySelector('button[title="Session info"]')).toBeNull();
+		});
+
+		it('should render the session-info trigger when sessionInit is provided', () => {
+			// Minimal `system:init` envelope — the dropdown only checks the
+			// discriminator fields here; full-shape coverage lives in
+			// MessageInfoDropdown's own tests.
+			const sessionInit = {
+				type: 'system',
+				subtype: 'init',
+				uuid: 'init-uuid',
+				session_id: 'sess',
+				model: 'claude-3-5-sonnet-20241022',
+				cwd: '/tmp',
+				tools: ['Bash'],
+				mcp_servers: [],
+				permissionMode: 'default',
+				slash_commands: [],
+				output_style: 'default',
+				skills: [],
+				plugins: [],
+				agents: [],
+				apiKeySource: 'user',
+				betas: [],
+				claude_code_version: '1.2.3',
+			};
+
+			const { container } = render(
+				<SyntheticMessageBlock content="Content" timestamp={Date.now()} sessionInit={sessionInit} />
+			);
+
+			expect(container.querySelector('button[title="Session info"]')).toBeTruthy();
+		});
+	});
+
+	describe('Open in Session', () => {
+		it('should not render an "open in session" button by default', () => {
+			const { container } = render(
+				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
+			);
+
+			expect(container.querySelector('button[title="Open in session"]')).toBeNull();
+		});
+
+		it('should render an "open in session" button when onOpenSession is provided', () => {
+			const onOpenSession = vi.fn();
+			const { container } = render(
+				<SyntheticMessageBlock
+					content="Content"
+					timestamp={Date.now()}
+					onOpenSession={onOpenSession}
+				/>
+			);
+
+			const button = container.querySelector('button[title="Open in session"]');
+			expect(button).toBeTruthy();
+			fireEvent.click(button as HTMLElement);
+			expect(onOpenSession).toHaveBeenCalledTimes(1);
+		});
+	});
+
 	describe('Styling', () => {
 		it('should be right-aligned', () => {
 			const { container } = render(
@@ -438,17 +534,17 @@ describe('SyntheticMessageBlock', () => {
 			expect(container.querySelector('.justify-end')).toBeTruthy();
 		});
 
-		it('should use subtle dark card (gray-900 background, gray-700 border)', () => {
+		it('should use a gray panel with amber chrome', () => {
 			const { container } = render(
 				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
 			);
 
 			const card = container.querySelector('[data-testid="synthetic-card"]');
-			expect(card?.className).toContain('bg-gray-900');
-			expect(card?.className).toContain('border-gray-700');
+			expect(card?.className).toContain('bg-dark-800/60');
+			expect(card?.className).toContain('border-amber-700/50');
 		});
 
-		it('should NOT use purple background on the card', () => {
+		it('should NOT use purple background or border on the card', () => {
 			const { container } = render(
 				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
 			);
@@ -471,9 +567,7 @@ describe('SyntheticMessageBlock', () => {
 				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
 			);
 
-			expect(
-				container.querySelector('[data-testid="synthetic-card"].rounded-\\[20px\\]')
-			).toBeTruthy();
+			expect(container.querySelector('[data-testid="synthetic-card"].rounded-lg')).toBeTruthy();
 		});
 	});
 
@@ -536,7 +630,7 @@ describe('SyntheticMessageBlock', () => {
 			Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
 				configurable: true,
 				get() {
-					return 500; // Exceeds 8 * 21 = 168px threshold
+					return 500; // Exceeds 12 * 24 = 288px threshold
 				},
 			});
 
@@ -587,63 +681,6 @@ describe('SyntheticMessageBlock', () => {
 				const showLessButton = container.querySelector('[data-testid="synthetic-toggle"]');
 				fireEvent.click(showLessButton as HTMLElement);
 				expect(container.textContent).toContain('Show more');
-			} finally {
-				if (originalScrollHeight) {
-					Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight);
-				}
-			}
-		});
-
-		it('should show line count in header when collapsed and needs collapse', () => {
-			const originalScrollHeight = Object.getOwnPropertyDescriptor(
-				HTMLElement.prototype,
-				'scrollHeight'
-			);
-			Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
-				configurable: true,
-				get() {
-					return 500;
-				},
-			});
-
-			try {
-				const longContent = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5';
-				const { container } = render(
-					<SyntheticMessageBlock content={longContent} timestamp={Date.now()} />
-				);
-
-				// 5 lines in content → header shows "— 5 lines"
-				expect(container.textContent).toContain('5 lines');
-			} finally {
-				if (originalScrollHeight) {
-					Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight);
-				}
-			}
-		});
-
-		it('should hide line count when expanded', () => {
-			const originalScrollHeight = Object.getOwnPropertyDescriptor(
-				HTMLElement.prototype,
-				'scrollHeight'
-			);
-			Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
-				configurable: true,
-				get() {
-					return 500;
-				},
-			});
-
-			try {
-				const longContent = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5';
-				const { container } = render(
-					<SyntheticMessageBlock content={longContent} timestamp={Date.now()} />
-				);
-
-				const toggle = container.querySelector('[data-testid="synthetic-toggle"]');
-				fireEvent.click(toggle as HTMLElement);
-
-				// After expansion, line count should not be shown
-				expect(container.textContent).not.toContain('5 lines');
 			} finally {
 				if (originalScrollHeight) {
 					Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight);

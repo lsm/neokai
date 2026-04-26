@@ -916,6 +916,11 @@ export const SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT = 5;
  *
  * Visibility:
  *   - Keep ALL terminal rows.
+ *   - Keep ALL `system` rows (init / compact_boundary). These carry per-exec
+ *     metadata (model, cwd, tools, mcp servers…) that the UI surfaces as
+ *     dropdowns or banner cards; they're rare (≤2 per session) so passing
+ *     them through unconditionally is cheap, and dropping them on long turns
+ *     would silently break the affordance.
  *   - Keep only the last N renderable non-terminal rows per session-turn.
  *   - Rows that are known to render as `null` in compact UI (currently
  *     `user` messages whose content is tool_result blocks) are excluded from
@@ -983,12 +988,15 @@ scored AS (
         THEN 1
       ELSE 0
     END AS isInitialUserVisible,
-    SUM(CASE WHEN r.isTerminal = 0 AND r.isRenderable = 1 THEN 1 ELSE 0 END) OVER (
+    -- System rows (init / compact_boundary) are sidecar metadata, not real
+    -- messages — exclude them from both the total and visible counts so the
+    -- "N hidden" badge reflects user/assistant turns only.
+    SUM(CASE WHEN r.isTerminal = 0 AND r.isRenderable = 1 AND r.messageType != 'system' THEN 1 ELSE 0 END) OVER (
       PARTITION BY r.sessionId, r.turnIndex
     ) AS totalRenderableNonTerminalInTurn,
     SUM(
       CASE
-        WHEN r.isTerminal = 0 AND r.isRenderable = 1
+        WHEN r.isTerminal = 0 AND r.isRenderable = 1 AND r.messageType != 'system'
           AND (
             (r.nonTerminalRankDesc <= ${SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT})
             OR (r.messageType = 'user' AND r.userRowRankAsc = 1)
@@ -1007,6 +1015,12 @@ selected AS (
   FROM scored s
   WHERE
     s.isTerminal = 1
+    -- Always include system rows (init / compact_boundary). Without this they
+    -- would be dropped on any non-trivial turn (the system:init row sits at
+    -- position 1 of every session, far outside the tail of 5). System rows
+    -- are inherently rare so passing them through here is cheap and keeps the
+    -- per-exec metadata dropdowns working consistently.
+    OR s.messageType = 'system'
     OR (
       s.isTerminal = 0
       AND s.isRenderable = 1
