@@ -1280,16 +1280,42 @@ export class SpaceRuntime {
 		const tasks = this.config.taskRepo.listByWorkflowRun(run.id);
 		const canonicalTask = this.pickCanonicalTaskForRun(run, tasks);
 
+		// A canonical task is "at rest" — i.e. NOT a stalled run that needs
+		// daemon-restart intervention — when it is in any of these states:
+		//
+		//   - `done` / `cancelled`  → terminal; the tick loop's
+		//                             CompletionDetector will pick it up and
+		//                             finalize the run.
+		//   - `review`              → end-node agent finished and the workflow
+		//                             is paused awaiting human approval (e.g.
+		//                             via `submit_for_approval`). All node
+		//                             executions are correctly `idle` while we
+		//                             wait for the human; this is not a stall.
+		//   - `approved`            → human (or auto_policy) approved; a
+		//                             post-approval executor (e.g. PR merge)
+		//                             may still be in flight, leaving prior
+		//                             node executions `idle`.
+		//   - `reportedStatus !== null` → end-node agent reported a result;
+		//                                 the next tick will route through the
+		//                                 completion path.
+		//
+		// In all of these cases a daemon restart must NOT alter task status.
+		// Only when none of these hold is the run genuinely stalled and
+		// eligible to be flagged `blocked`.
 		const completionSignalled =
 			canonicalTask !== null &&
 			(canonicalTask.status === 'done' ||
 				canonicalTask.status === 'cancelled' ||
+				canonicalTask.status === 'review' ||
+				canonicalTask.status === 'approved' ||
 				canonicalTask.reportedStatus !== null);
 
 		if (completionSignalled) {
 			// Tick loop's CompletionDetector + processRunTick will fire on the
 			// next pass and transition the run to `done` (or pick up the
-			// cancelled task). Nothing to do here — the run will finalize.
+			// cancelled task), or the run will remain paused awaiting the
+			// human / post-approval executor that owns it. Nothing to do
+			// here — the run is at rest, not stalled.
 			return 'completion-pending';
 		}
 
