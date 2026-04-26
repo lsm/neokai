@@ -7,13 +7,6 @@ import { SpaceTaskUnifiedThread } from '../SpaceTaskUnifiedThread';
 let mockRows = [];
 let mockIsLoading = false;
 let mockIsReconnecting = false;
-let mockRenderStyle: 'compact' | 'minimal' = 'compact';
-
-vi.mock('../../../lib/space-task-thread-config', () => ({
-	getSpaceTaskThreadRenderStyle: () => mockRenderStyle,
-	setSpaceTaskThreadRenderStyle: vi.fn(),
-	DEFAULT_SPACE_TASK_THREAD_RENDER_STYLE: 'minimal',
-}));
 
 vi.mock('../../../hooks/useSpaceTaskMessages', () => ({
 	useSpaceTaskMessages: () => ({
@@ -27,31 +20,6 @@ vi.mock('../../../hooks/useSpaceTaskMessages', () => ({
 // so tests don't need to wait on async markdown parsing.
 vi.mock('../../chat/MarkdownRenderer.tsx', () => ({
 	default: ({ content }: { content: string }) => <div data-testid="md">{content}</div>,
-}));
-
-vi.mock('../../../hooks/useMessageMaps', () => ({
-	useMessageMaps: () => ({
-		toolResultsMap: new Map(),
-		toolInputsMap: new Map(),
-		subagentMessagesMap: new Map(),
-		sessionInfoMap: new Map(),
-	}),
-}));
-
-vi.mock('../../sdk/SDKMessageRenderer', () => ({
-	SDKMessageRenderer: ({ message }: { message: any }) => {
-		const content = message?.message?.content;
-		if (typeof content === 'string') return <div data-testid="sdk-message-renderer">{content}</div>;
-		if (Array.isArray(content)) {
-			const text = content
-				.filter((b: any) => b?.type === 'text' && typeof b?.text === 'string')
-				.map((b: any) => b.text)
-				.join(' ')
-				.trim();
-			return <div data-testid="sdk-message-renderer">{text || message?.type}</div>;
-		}
-		return <div data-testid="sdk-message-renderer">{message?.type}</div>;
-	},
 }));
 
 function makeRow(
@@ -75,7 +43,7 @@ function makeRow(
 	};
 }
 
-function makeCompactRows() {
+function makeMinimalRows() {
 	return [
 		makeRow(
 			'u1',
@@ -100,75 +68,32 @@ function makeCompactRows() {
 			{ type: 'assistant', uuid: 'a2', message: { content: [{ type: 'text', text: 'old-2' }] } },
 			3
 		),
-		makeRow(
-			'a3',
-			'Reviewer Agent',
-			{ type: 'assistant', uuid: 'a3', message: { content: [{ type: 'text', text: 'old-3' }] } },
-			4
-		),
-		makeRow(
-			'a4',
-			'Task Agent',
-			{ type: 'assistant', uuid: 'a4', message: { content: [{ type: 'text', text: 'tail-1' }] } },
-			5
-		),
-		makeRow(
-			'a5',
-			'Task Agent',
-			{ type: 'assistant', uuid: 'a5', message: { content: [{ type: 'text', text: 'tail-2' }] } },
-			6
-		),
-		makeRow(
-			'a6',
-			'Task Agent',
-			{ type: 'assistant', uuid: 'a6', message: { content: [{ type: 'text', text: 'tail-3' }] } },
-			7
-		),
-		makeRow(
-			'a7',
-			'Task Agent',
-			{ type: 'assistant', uuid: 'a7', message: { content: [{ type: 'text', text: 'tail-4' }] } },
-			8
-		),
-		makeRow(
-			'a8',
-			'Task Agent',
-			{ type: 'assistant', uuid: 'a8', message: { content: [{ type: 'text', text: 'tail-5' }] } },
-			9
-		),
 	];
 }
 
 describe('SpaceTaskUnifiedThread', () => {
 	beforeEach(() => {
 		cleanup();
-		mockRenderStyle = 'compact';
-		mockRows = makeCompactRows();
+		mockRows = makeMinimalRows();
 		mockIsLoading = false;
 		mockIsReconnecting = false;
 	});
 
 	afterEach(() => cleanup());
 
-	it('renders compact feed with full history grouped by turn', () => {
+	it('renders MinimalThreadFeed with one turn per agent block', () => {
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
 
-		expect(screen.getByTestId('space-task-event-feed-compact')).toBeTruthy();
-		expect(screen.getByText('Initial ask')).toBeTruthy();
-		expect(screen.getByText('old-1')).toBeTruthy();
-		expect(screen.getByText('old-2')).toBeTruthy();
-		expect(screen.getByText('old-3')).toBeTruthy();
-		expect(screen.getByText('tail-1')).toBeTruthy();
-		expect(screen.getByText('tail-5')).toBeTruthy();
-		expect(screen.queryByTestId('compact-flat-hidden-divider')).toBeNull();
-		expect(screen.queryByTestId('compact-turn-divider')).toBeNull();
+		expect(screen.getByTestId('space-task-event-feed-minimal')).toBeTruthy();
+		// Each agent block becomes one minimal turn row.
+		expect(screen.getAllByTestId('minimal-thread-turn').length).toBeGreaterThan(0);
 	});
 
-	it('renders the floating agent tag', () => {
+	it('does not render the legacy floating agent-name tag', () => {
+		// The compact-mode-only sticky agent label has been removed; minimal
+		// rows carry their own per-row header so the floating tag is redundant.
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
-		const tag = screen.getByTestId('agent-name-tag');
-		expect(tag).toBeTruthy();
-		expect(tag.textContent).toContain('TASK');
+		expect(screen.queryByTestId('agent-name-tag')).toBeNull();
 	});
 
 	it('shows loading state when loading', () => {
@@ -189,21 +114,5 @@ describe('SpaceTaskUnifiedThread', () => {
 		mockRows = [];
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
 		expect(screen.getByText('No task-agent activity yet.')).toBeTruthy();
-	});
-
-	it('renders the minimal feed when render style is "minimal"', () => {
-		mockRenderStyle = 'minimal';
-		render(<SpaceTaskUnifiedThread taskId="task-1" />);
-
-		expect(screen.getByTestId('space-task-event-feed-minimal')).toBeTruthy();
-		expect(screen.queryByTestId('space-task-event-feed-compact')).toBeNull();
-		// Each agent block becomes one minimal turn row.
-		expect(screen.getAllByTestId('minimal-thread-turn').length).toBeGreaterThan(0);
-	});
-
-	it('omits the floating agent tag in minimal mode (each row has its own header)', () => {
-		mockRenderStyle = 'minimal';
-		render(<SpaceTaskUnifiedThread taskId="task-1" />);
-		expect(screen.queryByTestId('agent-name-tag')).toBeNull();
 	});
 });

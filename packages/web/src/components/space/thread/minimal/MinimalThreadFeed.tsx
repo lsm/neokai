@@ -1,8 +1,8 @@
 /**
  * MinimalThreadFeed
  *
- * Production renderer for the "minimal" task thread mode. Maps the same
- * `parsedRows` the compact feed receives into Slack-style turn rows:
+ * Production renderer for Space task threads. Maps `parsedRows` into
+ * Slack-style turn rows:
  *
  *   ▢ AGENT
  *   ▢   3 tool calls · 8 messages · 47m       ← meta line under name
@@ -17,9 +17,9 @@
  *   ▢ │ Bash: git status
  *   ▢ │ • Running…                            ← active turn (coloured rail)
  *
- * No tool cards, no thinking blocks, no bracket rails. Reuses turn grouping
- * (`buildLogicalBlocks`) from the compact reducer so behaviour stays
- * consistent between modes.
+ * No tool cards, no thinking blocks, no bracket rails. Turn grouping comes
+ * from `buildAgentTurns` in `../space-task-thread-turns.ts` (one block per
+ * init→result cycle).
  */
 
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
@@ -34,11 +34,7 @@ type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }
 type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
 import { useEffect, useState } from 'preact/hooks';
 import MarkdownRenderer from '../../../chat/MarkdownRenderer.tsx';
-import {
-	buildAgentTurns,
-	type CompactLogicalBlock,
-	isUserRow,
-} from '../compact/space-task-compact-reducer';
+import { type AgentTurnBlock, buildAgentTurns, isUserRow } from '../space-task-thread-turns';
 import { SyntheticMessageBlock } from '../../../sdk/SyntheticMessageBlock';
 import { SpaceTaskThreadMessageActions } from '../SpaceTaskThreadMessageActions';
 import { getAgentColor } from '../space-task-thread-agent-colors';
@@ -310,7 +306,7 @@ function extractLastAssistantText(rows: ParsedThreadRow[]): {
 }
 
 function buildCompletedTurn(
-	block: CompactLogicalBlock,
+	block: AgentTurnBlock,
 	rows: ParsedThreadRow[],
 	turnId: string,
 	resultInfo: ResultMessage | undefined
@@ -343,7 +339,7 @@ function buildCompletedTurn(
 }
 
 function buildActiveTurn(
-	block: CompactLogicalBlock,
+	block: AgentTurnBlock,
 	rows: ParsedThreadRow[],
 	turnId: string
 ): ActiveFeedTurn {
@@ -511,7 +507,7 @@ function buildFeedTurns(parsedRows: ParsedThreadRow[], isAgentActive: boolean): 
 	const trailing: {
 		idx: number;
 		rows: ParsedThreadRow[];
-		block: CompactLogicalBlock | null;
+		block: AgentTurnBlock | null;
 	} = { idx: -1, rows: [], block: null };
 	let previousAgentLabel: string | null = null;
 
