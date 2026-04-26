@@ -619,6 +619,60 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				expect(rows.map((r) => r.id)).not.toContain('u1');
 			});
 
+			test('always includes system rows (init / compact_boundary) regardless of tail position', () => {
+				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+				// system:init lands at position 1 of the session — well outside the
+				// tail-of-5 window once the agent has produced any non-trivial run.
+				insertSdkMessageAt(
+					'sys-init',
+					sessionId,
+					now + 1000,
+					{
+						type: 'system',
+						subtype: 'init',
+						model: 'claude-3-5-sonnet-20241022',
+						cwd: '/tmp',
+						tools: ['Read', 'Bash'],
+					},
+					'system'
+				);
+				insertSdkMessageAt(
+					'u-initial',
+					sessionId,
+					now + 1100,
+					{
+						type: 'user',
+						message: { role: 'user', content: 'go' },
+					},
+					'user'
+				);
+				for (let i = 1; i <= 7; i += 1) {
+					insertSdkMessageAt(`a${i}`, sessionId, now + (1 + i) * 1000);
+				}
+				insertResultMessageAt('r1', sessionId, now + 10_000, 'success');
+
+				const rows = queryCompact(taskId);
+				// system:init survives even though it sits well before the tail
+				// window — UI affordances depend on it being present.
+				expect(rows.map((r) => r.id)).toEqual([
+					'sys-init',
+					'u-initial',
+					'a3',
+					'a4',
+					'a5',
+					'a6',
+					'a7',
+					'r1',
+				]);
+				// The hidden-count math should ignore system rows entirely
+				// (they're sidecar metadata, not real "messages") — only the two
+				// pruned assistant rows count toward hidden.
+				const resultRow = rows.find((r) => r.id === 'r1')!;
+				expect(resultRow.turnHiddenMessageCount).toBe(2);
+			});
+
 			test('final ordering is createdAt ASC, id ASC', () => {
 				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
 				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
