@@ -44,9 +44,10 @@ because only the imported portions are tracked.
      statements: 80,
    },
    ```
-4. Scan the existing config for any removed Vitest 4 options (`coverage.all`,
+4. Scan the existing config for all options removed in Vitest 4 and remove any that are
+   present. The full list of removed options is: `coverage.all`,
    `coverage.experimentalAstAwareRemapping`, `coverage.ignoreEmptyLines`,
-   `coverage.extensions`) and remove any that are present.
+   `coverage.extensions`. All four must be absent from the final config.
 5. Verify the file is valid TypeScript (run `bun run typecheck` from repo root or
    `bunx tsc --noEmit` from `packages/web`).
 6. Create a feature branch named `fix/coverage-infrastructure`, commit the change, and open
@@ -55,7 +56,8 @@ because only the imported portions are tracked.
 **Acceptance criteria:**
 - `packages/web/vitest.config.ts` contains `coverage.include: ['src/**/*.{ts,tsx}']`.
 - `coverage.thresholds` block is present with all four metrics set to 80.
-- No deprecated Vitest 4 coverage keys are present.
+- None of the four deprecated Vitest 4 coverage keys are present: `coverage.all`,
+  `coverage.experimentalAstAwareRemapping`, `coverage.ignoreEmptyLines`, `coverage.extensions`.
 - `bun run typecheck` passes without new errors.
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`.
 
@@ -78,9 +80,11 @@ thresholds via CLI flags — they must be specified in `bunfig.toml` under `[tes
    ```toml
    coverageReporter = ["text", "lcov"]
    coverageDir = "coverage"
-   coverageThreshold = { lines = 0.80, functions = 0.80, branches = 0.80 }
+   coverageThreshold = { lines = 0.80, functions = 0.80, statements = 0.80 }
    ```
-   Note: the existing `exclude` array in `[test]` must be preserved.
+   Note: Bun's `coverageThreshold` supports only `lines`, `functions`, and `statements` —
+   `branches` is NOT supported and must be omitted. The existing `exclude` array in `[test]`
+   must be preserved.
 3. Verify there are no syntax errors by running `bun test --help` (which parses `bunfig.toml`
    on startup) or `bun run test:unit` with no actual test files matched.
 4. If the threshold causes existing passing tests to break coverage checks, that is expected

@@ -52,8 +52,8 @@ are confirmed to meet the threshold.
 
 7. **Daemon repository and logic tests** — Write unit tests for daemon source files without
    direct dedicated test files: `skill-repository.ts`, `space-worktree-repository.ts`,
-   `workspace-history-repository.ts`, and the `buildSelectionPrompt` / `cleanIdResponse`
-   helper functions in `llm-workflow-selector.ts`.
+   `workspace-history-repository.ts`, `space-task-report-result-repository.ts`, and the
+   `buildSelectionPrompt` / `cleanIdResponse` helper functions in `llm-workflow-selector.ts`.
 
 8. **Raise CI gate to 80%** — Update `MIN_COVERAGE=30` to `MIN_COVERAGE=80` in
    `.github/workflows/main.yml` and confirm all packages pass the threshold in CI.
@@ -73,7 +73,7 @@ test-writing milestones to complete and be verified in CI.
 
 ## Total Estimated Task Count
 
-Approximately 24 tasks across 8 milestones.
+Approximately 25 tasks across 8 milestones.
 
 ## Key Technical Constraints
 

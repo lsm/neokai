@@ -228,3 +228,43 @@ already covered by the integration test; this task focuses only on the two pure 
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Depends on:** Milestone 2 baseline
+
+---
+
+### Task 7.5: Test SpaceTaskReportResultRepository
+
+**Agent type:** coder
+
+**Description:**
+Write direct unit tests for `SpaceTaskReportResultRepository`. This repository stores the
+results of task report processing (130 lines) and was identified during exploration as lacking
+any dedicated test file.
+
+**Subtasks (ordered):**
+1. Read `packages/daemon/src/storage/repositories/space-task-report-result-repository.ts` in
+   full to understand all public methods and their expected behavior.
+2. Identify the DDL for the underlying table. Search for `CREATE TABLE` related to
+   `space_task_report_result` in `packages/daemon/src/storage/schema/migrations/` or grep
+   the codebase.
+3. Create `packages/daemon/tests/unit/4-space-storage/storage/space-task-report-result-repository.test.ts`
+   following the same in-memory SQLite pattern used for Tasks 7.1–7.3:
+   - Cover all public methods on the repository.
+   - For insert/upsert methods: verify the row is retrievable after insertion with correct
+     field values.
+   - For query methods: verify empty-table behavior returns `null` or `[]` as appropriate.
+   - For update/delete methods: verify return value semantics (`true`/`false` or row count)
+     on hit and miss cases.
+   - If the repository emits `reactiveDb.notifyChange`, provide a mock and assert it is
+     called at the appropriate points.
+4. Run `bun test packages/daemon/tests/unit/4-space-storage/storage/space-task-report-result-repository.test.ts`
+   from the repo root (with the `--preload` flag matching `test:unit` config) and confirm all
+   tests pass.
+5. Commit to the `test/daemon-repositories` branch and open/update the PR via `gh pr create`.
+
+**Acceptance criteria:**
+- `space-task-report-result-repository.test.ts` exists and all tests pass.
+- `space-task-report-result-repository.ts` shows >= 90% line coverage when run with coverage
+  enabled.
+- Changes are on a feature branch with a GitHub PR created via `gh pr create`.
+
+**Depends on:** Milestone 2 baseline
