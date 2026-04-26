@@ -9,7 +9,6 @@ import { signal } from '@preact/signals';
 import type { SpaceTask } from '@neokai/shared';
 
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
-let mockAttentionCount: ReturnType<typeof signal<number>>;
 
 // Bridge pattern: hoisted bridge objects allow mockNavigateToSpaceTasks to update
 // the real Preact signals (which are created after import).
@@ -64,7 +63,7 @@ vi.mock('../../../lib/router', () => ({
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
-		return { tasks: mockTasks, attentionCount: mockAttentionCount };
+		return { tasks: mockTasks };
 	},
 }));
 
@@ -74,7 +73,6 @@ vi.mock('../../../lib/utils', () => ({
 }));
 
 mockTasks = signal<SpaceTask[]>([]);
-mockAttentionCount = signal<number>(0);
 
 import { SpaceTasks } from '../SpaceTasks';
 
@@ -107,7 +105,6 @@ describe('SpaceTasks', () => {
 	beforeEach(() => {
 		cleanup();
 		mockTasks.value = [];
-		mockAttentionCount.value = 0;
 		mockCurrentSpaceTasksFilterTabSignal.value = 'active';
 		mockCurrentSpaceTasksFilterSignal.value = null;
 		mockCurrentSpaceIdSignal.value = null;
