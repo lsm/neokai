@@ -1664,6 +1664,191 @@ describe('QueryOptionsBuilder', () => {
 		});
 	});
 
+	// Session-scoped skill disable list (task #122).
+	//
+	// `ToolsConfig.disabledSkills` lets the session Tools modal opt out of
+	// individual skills without mutating the global registry. The filter is
+	// additive on top of room overrides — see `getSessionDisabledSkillIds()` in
+	// `query-options-builder.ts` — and applies to both plugin and mcp_server
+	// skills, so the SDK build never sees the disabled entries.
+	describe('session disabledSkills override', () => {
+		const pluginSkill = {
+			id: 'skill-plugin-session-1',
+			name: 'session-plugin',
+			displayName: 'Session Plugin',
+			description: 'Plugin skill used in session disable tests',
+			sourceType: 'plugin' as const,
+			config: { type: 'plugin' as const, pluginPath: '/plugins/session-plugin' },
+			enabled: true,
+			builtIn: false,
+			validationStatus: 'valid' as const,
+			createdAt: Date.now(),
+		};
+
+		const mcpSkill = {
+			id: 'skill-mcp-session-1',
+			name: 'session-mcp',
+			displayName: 'Session MCP',
+			description: 'MCP skill used in session disable tests',
+			sourceType: 'mcp_server' as const,
+			config: { type: 'mcp_server' as const, appMcpServerId: 'mcp-session-uuid' },
+			enabled: true,
+			builtIn: false,
+			validationStatus: 'valid' as const,
+			createdAt: Date.now(),
+		};
+
+		const builtinSkill = {
+			id: 'skill-builtin-session-1',
+			name: 'session-builtin',
+			displayName: 'Session Builtin',
+			description: 'Builtin skill used in session disable tests',
+			sourceType: 'builtin' as const,
+			config: { type: 'builtin' as const, commandName: 'session-builtin' },
+			enabled: true,
+			builtIn: true,
+			validationStatus: 'valid' as const,
+			createdAt: Date.now(),
+		};
+
+		const mockSessionMcpServer = {
+			id: 'mcp-session-uuid',
+			name: 'session-mcp-server',
+			sourceType: 'stdio' as const,
+			command: 'npx',
+			args: ['-y', 'session-mcp'],
+			enabled: true,
+		};
+
+		it('excludes a plugin skill listed in tools.disabledSkills', async () => {
+			mockSession.config.tools = { disabledSkills: [pluginSkill.id] };
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [pluginSkill]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			// Session disable wins — plugin must not be injected.
+			expect(options.plugins).toBeUndefined();
+		});
+
+		it('excludes a builtin skill listed in tools.disabledSkills', async () => {
+			// Regression guard: `buildPluginsFromBuiltinSkills` must honour the
+			// session disable list the same way the plugin and mcp_server paths do.
+			// Without this filter, a session-disabled builtin would still show up
+			// as a `/<commandName>` slash command for that session.
+			mockSession.config.tools = { disabledSkills: [builtinSkill.id] };
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [builtinSkill]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			// Builtin skill is filtered — no plugin entry materialises for it.
+			expect(options.plugins).toBeUndefined();
+		});
+
+		it('excludes an mcp_server skill listed in tools.disabledSkills', async () => {
+			mockSession.config.tools = { disabledSkills: [mcpSkill.id] };
+			const mockAppMcpServerRepo = {
+				get: mock(() => mockSessionMcpServer),
+			};
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [mcpSkill]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
+				appMcpServerRepo:
+					mockAppMcpServerRepo as unknown as import('../../../../src/storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			// Skill bridge respects the session disable — no entry in mcpServers.
+			expect(options.mcpServers).toBeUndefined();
+		});
+
+		it('only filters skills whose IDs appear in the disable list', async () => {
+			const otherPlugin = {
+				...pluginSkill,
+				id: 'skill-plugin-session-other',
+				name: 'other-session-plugin',
+				config: { type: 'plugin' as const, pluginPath: '/plugins/other-session-plugin' },
+			};
+			mockSession.config.tools = { disabledSkills: [pluginSkill.id] };
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [pluginSkill, otherPlugin]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			// `pluginSkill` is filtered, `otherPlugin` survives — proves the filter
+			// is keyed by skill ID rather than wiping the whole list.
+			expect(options.plugins).toEqual([{ type: 'local', path: '/plugins/other-session-plugin' }]);
+		});
+
+		it('is additive with room overrides (room-disable wins even when session list is empty)', async () => {
+			// Regression guard: a session with `disabledSkills: []` must still
+			// honour a room-level override that says enabled=false. The two scopes
+			// are independent disable lists.
+			mockSession.config.tools = { disabledSkills: [] };
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [pluginSkill]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
+				roomSkillOverrides: [{ skillId: pluginSkill.id, roomId: 'room-x', enabled: false }],
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			expect(options.plugins).toBeUndefined();
+		});
+
+		it('is a no-op when tools.disabledSkills is undefined', async () => {
+			// Default for legacy sessions — must not regress the existing
+			// "all enabled skills are injected" behaviour.
+			mockSession.config.tools = {};
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [pluginSkill]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
+			};
+			const builder = new QueryOptionsBuilder(context);
+			const options = await builder.build();
+
+			expect(options.plugins).toEqual([{ type: 'local', path: '/plugins/session-plugin' }]);
+		});
+	});
+
 	// Task 7.1 regression: Skill/WebSearch/WebFetch tools must remain available after Skills registry changes
 	describe('regression: Skill, WebSearch, WebFetch tool availability (Task 7.1)', () => {
 		beforeEach(() => {

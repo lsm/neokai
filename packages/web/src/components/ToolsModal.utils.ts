@@ -12,23 +12,32 @@
  * the SDK is locked to `settingSources: []`.
  */
 
-import type { AppSkill, SessionMcpServerEntry } from '@neokai/shared';
+import type {
+	AppMcpServer,
+	AppSkill,
+	McpEffectiveEnablementSource,
+	SessionMcpServerEntry,
+} from '@neokai/shared';
 
 /**
- * Compute group-level toggle state for a list of app-level skills.
+ * Compute group-level toggle state for a list of items keyed only by an
+ * `enabled` flag.
+ *
  * Returns `allEnabled: false` and `someEnabled: false` when the list is empty
- * to avoid vacuous-truth `[].every()` returning `true`.
+ * to avoid vacuous-truth `[].every()` returning `true`. Used by both the
+ * Skills and MCP Servers sections to drive the "All on / Mixed / All off"
+ * group header in the modal.
  */
-export function computeSkillGroupState(skills: { enabled: boolean }[]): {
+export function computeSkillGroupState(items: { enabled: boolean }[]): {
 	allEnabled: boolean;
 	someEnabled: boolean;
 	isIndeterminate: boolean;
 } {
-	if (skills.length === 0) {
+	if (items.length === 0) {
 		return { allEnabled: false, someEnabled: false, isIndeterminate: false };
 	}
-	const allEnabled = skills.every((s) => s.enabled);
-	const someEnabled = skills.some((s) => s.enabled);
+	const allEnabled = items.every((s) => s.enabled);
+	const someEnabled = items.some((s) => s.enabled);
 	return { allEnabled, someEnabled, isIndeterminate: someEnabled && !allEnabled };
 }
 
@@ -214,4 +223,152 @@ export function computeMcpServerSkillLinkage(skills: AppSkill[]): Map<string, Ap
 		}
 	}
 	return map;
+}
+
+// ---------------------------------------------------------------------------
+// Unified-view helpers (session Tools modal — task #122)
+//
+// The session modal renders two unified lists: one for *all* skills (builtin,
+// plugin, mcp_server) and one for *all* MCP servers (registry + per-scope
+// effective state). Source is shown only as a small badge per row, never as
+// a top-level grouping axis. The helpers below compute:
+//
+//   - the effective enabled-for-this-session flag, given globals + the user's
+//     pending toggle state in the modal;
+//   - source-badge labels and colour pairs that stay consistent between the
+//     two lists.
+//
+// All toggles in the modal are deferred — `pendingDisabledSkills` /
+// `pendingMcpServerOverrides` capture the user's choices until they click
+// Save, at which point the modal applies them via `tools.save` +
+// `mcp.enablement.setOverride`. These helpers are pure so the same logic is
+// exercised by both the component and its unit tests.
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a skill is currently enabled for this session, given the registry
+ * state plus the modal's local pending changes.
+ *
+ * The session can only *opt out* of skills — it cannot opt in to a skill that
+ * is globally disabled. This matches the daemon-side filter in
+ * `QueryOptionsBuilder.getSessionDisabledSkillIds()` and keeps the UI in lockstep
+ * with the underlying enablement contract.
+ */
+export function isSkillEnabledForSession(
+	skill: AppSkill,
+	pendingDisabledSkills: ReadonlySet<string>
+): boolean {
+	if (!skill.enabled) return false;
+	return !pendingDisabledSkills.has(skill.id);
+}
+
+/**
+ * Return the set of skill IDs that should land in
+ * `ToolsConfig.disabledSkills` after the user clicks Save.
+ *
+ * We only persist IDs that are still in the registry — this prevents stale
+ * disabled-skill entries from accumulating across rename/delete cycles.
+ */
+export function buildDisabledSkillsList(
+	skills: AppSkill[],
+	pendingDisabledSkills: ReadonlySet<string>
+): string[] {
+	const out: string[] = [];
+	for (const skill of skills) {
+		if (pendingDisabledSkills.has(skill.id)) out.push(skill.id);
+	}
+	return out;
+}
+
+/**
+ * Stable visual identity for a skill source. Both the badge label and the
+ * Tailwind colour live here so the two lists (skills + MCP servers) stay
+ * visually consistent and tests can assert against a single source of truth.
+ *
+ * Colour rationale:
+ *   - builtin    → blue   (shipped with NeoKai)
+ *   - plugin     → violet (local plugin directory)
+ *   - mcp_server → amber  (matches the AppMcpServersSettings amber accent)
+ */
+export interface SourceBadgeStyle {
+	label: string;
+	className: string;
+}
+
+export function getSkillSourceBadge(skill: AppSkill): SourceBadgeStyle {
+	switch (skill.sourceType) {
+		case 'builtin':
+			return { label: 'Built-in', className: 'text-blue-400/80 bg-blue-400/10' };
+		case 'plugin':
+			return { label: 'Plugin', className: 'text-violet-400/80 bg-violet-400/10' };
+		case 'mcp_server':
+			return { label: 'MCP', className: 'text-amber-400/80 bg-amber-400/10' };
+	}
+}
+
+/**
+ * Effective enablement source ordering for MCP servers — most-specific first.
+ * Used to label the source badge and to keep ordering deterministic in tests.
+ */
+const MCP_SOURCE_LABELS: Record<McpEffectiveEnablementSource, SourceBadgeStyle> = {
+	session: { label: 'Session override', className: 'text-sky-400/80 bg-sky-400/10' },
+	room: { label: 'Inherited from room', className: 'text-purple-400/80 bg-purple-400/10' },
+	space: { label: 'Inherited from space', className: 'text-fuchsia-400/80 bg-fuchsia-400/10' },
+	registry: { label: 'Registry default', className: 'text-gray-400/80 bg-gray-400/10' },
+};
+
+/**
+ * Badge for the *effective enablement decision* — i.e., "where this server's
+ * on/off state currently comes from". Independent from the registry-provenance
+ * badge below.
+ */
+export function getMcpServerSourceBadge(source: McpEffectiveEnablementSource): SourceBadgeStyle {
+	return MCP_SOURCE_LABELS[source];
+}
+
+/**
+ * Badge for the *registry provenance* — where the underlying server entry was
+ * authored (built-in, user-created, imported from .mcp.json). Useful in the
+ * modal's hover tooltip so users can tell a built-in chrome-devtools row apart
+ * from one they imported from a project's .mcp.json.
+ */
+export function getMcpServerProvenanceBadge(server: AppMcpServer): SourceBadgeStyle {
+	switch (server.source) {
+		case 'builtin':
+			return { label: 'Built-in', className: 'text-blue-400/80 bg-blue-400/10' };
+		case 'imported':
+			return { label: 'Imported', className: 'text-emerald-400/80 bg-emerald-400/10' };
+		case 'user':
+			return { label: 'User', className: 'text-gray-300/80 bg-gray-400/10' };
+	}
+}
+
+/**
+ * Pending change to a single MCP server's effective enablement.
+ *
+ *   - `enabled: boolean` — user toggled the checkbox; persist as a session
+ *                          override on Save.
+ *   - `enabled: null`    — user clicked "Clear override"; delete any session
+ *                          override on Save and revert to inheritance.
+ *
+ * Callers diff this against the latest `SessionMcpServerEntry.enabled` to
+ * decide whether the change is still meaningful at Save time.
+ */
+export type PendingMcpOverride = { enabled: boolean | null };
+
+/**
+ * Effective enabled state for the modal checkbox, taking pending changes into
+ * account.
+ *
+ * If the user has a pending toggle, that wins. If they cleared the override,
+ * we fall back to whatever the daemon's resolution returned — but if the
+ * cleared override was previously a session-scope one, the daemon-side
+ * inherited value is what the user will see after Save, so we display that.
+ */
+export function getMcpServerEffectiveEnabled(
+	entry: SessionMcpServerEntry,
+	pending: PendingMcpOverride | undefined
+): boolean {
+	if (pending && pending.enabled !== null) return pending.enabled;
+	return entry.enabled;
 }

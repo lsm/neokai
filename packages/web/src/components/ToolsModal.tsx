@@ -1,16 +1,24 @@
 /**
- * Tools Modal Component
+ * Tools Modal Component (session-scoped, task #122)
  *
- * Unified view of MCP servers and tools for a session:
- * - Agent Runtime Tools: in-process MCPs attached at session-spawn time
- *   (space-agent-tools, db-query, task-agent, node-agent, etc.) — read-only.
- * - Session MCP Servers: per-session overrides of registry servers. Toggles
- *   write an `mcp_enablement` row at scope='session' so the override is
- *   applied on top of any room/space/registry defaults. Takes effect on the
- *   next session respawn (M6 of `unify-mcp-config-model`).
- * - App Skills & MCP Servers: from the unified skills registry, toggled
- *   globally (changes affect all sessions).
- * - Advanced: Claude Code preset toggle.
+ * Unified view of MCP servers and tools for a single session. The modal
+ * never mutates global registry state — every toggle here is session-scoped
+ * and deferred until the user clicks Save:
+ *
+ *   - Agent Runtime Tools — in-process MCPs attached at session-spawn time
+ *     (space-agent-tools, db-query, task-agent, node-agent, etc.). Read-only.
+ *   - Skills — *all* app-level skills (builtin, plugin, mcp_server) merged
+ *     into a single list. Source is shown as a per-row badge, not a grouping
+ *     axis. Disabling a skill writes the skill ID into
+ *     `ToolsConfig.disabledSkills` for this session only — globals are
+ *     untouched.
+ *   - MCP Servers — every `app_mcp_servers` registry entry visible to this
+ *     session, with its current effective enablement (resolved by the daemon
+ *     across the session > room > space > registry chain). Toggling a server
+ *     stages a pending session-scope override; on Save the modal calls
+ *     `mcp.enablement.setOverride` (or `clearOverride` for items the user
+ *     reverted to inheritance).
+ *   - Advanced — Claude Code preset toggle.
  */
 
 import { useSignal, useComputed } from '@preact/signals';
@@ -63,9 +71,15 @@ const RUNTIME_MCP_LABELS: Record<string, { title: string; description: string }>
 	},
 };
 import {
+	buildDisabledSkillsList,
 	computeMcpSkillRuntimeState,
 	computeSkillGroupState,
+	getMcpServerEffectiveEnabled,
+	getMcpServerProvenanceBadge,
 	getMcpSkillRuntimeClasses,
+	getSkillSourceBadge,
+	isSkillEnabledForSession,
+	type PendingMcpOverride,
 } from './ToolsModal.utils.ts';
 
 interface ToolsModalProps {
@@ -74,15 +88,13 @@ interface ToolsModalProps {
 	session: Session | null;
 }
 
-// Scope badge component
-function ScopeBadge({ scope }: { scope: 'global' | 'session' }) {
-	if (scope === 'global') {
-		return <span class="text-xs text-amber-500/70 font-medium">All sessions</span>;
-	}
-	return <span class="text-xs text-sky-500/70 font-medium">This session</span>;
-}
-
-// Collapsible group header component
+// Collapsible group header component.
+//
+// `scopeNote` is rendered in place of the legacy "All sessions / This session"
+// badge. With unified, deferred-save groups the entire modal is now session-
+// scoped, so the per-group scope badge would be redundant — but a short
+// inline note still helps anchor users to that fact for the section that has
+// the most cross-scope inheritance ambiguity (MCP Servers).
 interface GroupHeaderProps {
 	title: string;
 	isOpen: boolean;
@@ -90,9 +102,9 @@ interface GroupHeaderProps {
 	allEnabled: boolean;
 	someEnabled: boolean;
 	onToggleAll: () => void;
-	scope: 'global' | 'session';
 	itemCount: number;
 	disabled?: boolean;
+	scopeNote?: string;
 }
 
 function GroupHeader({
@@ -102,9 +114,9 @@ function GroupHeader({
 	allEnabled,
 	someEnabled,
 	onToggleAll,
-	scope,
 	itemCount,
 	disabled = false,
+	scopeNote,
 }: GroupHeaderProps) {
 	const isIndeterminate = someEnabled && !allEnabled;
 
@@ -128,7 +140,7 @@ function GroupHeader({
 				<span class="text-xs text-gray-600">({itemCount})</span>
 			</button>
 			<div class="flex items-center gap-3">
-				<ScopeBadge scope={scope} />
+				{scopeNote && <span class="text-xs text-sky-500/70 font-medium">{scopeNote}</span>}
 				<label
 					class="flex items-center gap-1.5 cursor-pointer"
 					title={allEnabled ? 'Disable all' : 'Enable all'}
@@ -152,31 +164,30 @@ function GroupHeader({
 	);
 }
 
+// Small inline source badge — same Tailwind pill styling for skills and MCP
+// servers so the two sections feel related.
+function SourceBadge({ label, className }: { label: string; className: string }) {
+	return <span class={`text-[10px] px-1.5 py-0.5 rounded font-medium ${className}`}>{label}</span>;
+}
+
 export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	const saving = useSignal(false);
-	const hasChanges = useSignal(false);
 	const globalConfig = useSignal<GlobalToolsConfig | null>(null);
 
 	// Collapsible group state (open by default)
 	const runtimeMcpGroupOpen = useSignal(true);
-	const appMcpGroupOpen = useSignal(true);
+	const skillsGroupOpen = useSignal(true);
+	const mcpServersGroupOpen = useSignal(true);
 	const advancedOpen = useSignal(false);
 
 	// Runtime-attached (SDK-type) MCP servers for this session —
 	// space-agent-tools, db-query, task-agent, node-agent, etc.
 	const runtimeMcpServers = useSignal<string[]>([]);
 
-	// Per-session MCP registry state (MCP M6).
-	//
-	// The daemon resolves session > room > space > registry precedence and
-	// returns, for each registry entry, its effective enabled flag and which
-	// scope owns that decision. Toggles write an `mcp_enablement` row at
-	// scope='session' so it always wins over less-specific scopes; clearing
-	// reverts to inheritance.
-	const sessionMcpGroupOpen = useSignal(true);
+	// Per-session MCP registry state (resolved server > room > space >
+	// registry by the daemon).
 	const sessionMcpEntries = useSignal<SessionMcpServerEntry[]>([]);
-	const sessionMcpToggling = useSignal<Set<string>>(new Set());
-	const sessionMcpSearch = useSignal('');
+	const mcpServerSearch = useSignal('');
 	// Tracks whether the per-session MCP list has been fetched at least once.
 	// We can't use `sessionMcpEntries.length > 0` as a proxy because an empty
 	// registry is a legitimate stable state — without this flag, runtime
@@ -184,21 +195,51 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	// during the initial load.
 	const sessionMcpLoaded = useSignal(false);
 
-	// Search filter for App Skills section
-	const appSkillSearch = useSignal('');
+	// Search filter for the unified Skills section.
+	const skillSearch = useSignal('');
 
-	// Per-skill loading state for immediate toggles
-	const skillToggling = useSignal<Set<string>>(new Set());
+	// Pending session-scope override changes for MCP servers, keyed by
+	// `app_mcp_servers.id`. Cleared on Cancel / Save.
+	//   `enabled: boolean` — user toggled the checkbox; queue an override.
+	//   `enabled: null`    — user cleared the existing session override.
+	const pendingMcpOverrides = useSignal<Map<string, PendingMcpOverride>>(new Map());
+
+	// Pending session-scope skill disable list — IDs the user has unchecked in
+	// the modal. Initialised from `session.config.tools.disabledSkills` on
+	// open.
+	const pendingDisabledSkills = useSignal<Set<string>>(new Set());
 
 	// Advanced settings (hidden by default)
 	const useClaudeCodePreset = useSignal(true);
 
+	// Has the user staged any change since the modal was opened? Drives the
+	// Save button's enabled state. Computed from the four sources of pending
+	// state so we don't have to manually flip a flag in every handler.
+	const initialDisabledSkills = useSignal<Set<string>>(new Set());
+	const initialClaudeCodePreset = useSignal(true);
+	const hasChanges = useComputed(() => {
+		// MCP overrides: any pending entry counts (we filter no-ops on Save).
+		if (pendingMcpOverrides.value.size > 0) return true;
+		// Skills: compare the current pending set against the snapshot taken on open.
+		const a = pendingDisabledSkills.value;
+		const b = initialDisabledSkills.value;
+		if (a.size !== b.size) return true;
+		for (const id of a) {
+			if (!b.has(id)) return true;
+		}
+		// Advanced: claudeCodePreset toggle.
+		if (useClaudeCodePreset.value !== initialClaudeCodePreset.value) return true;
+		return false;
+	});
+
 	// Load current config and MCP servers when modal opens
 	useEffect(() => {
 		if (isOpen && session) {
+			// `loadConfig` is sync; the rest are async fire-and-forget — `void`
+			// keeps the floating-promise lint rule happy and signals intent.
 			loadConfig();
-			loadGlobalConfig();
-			loadRuntimeMcpServers();
+			void loadGlobalConfig();
+			void loadRuntimeMcpServers();
 			void loadSessionMcpEntries();
 			void skillsStore.subscribe().catch(() => {
 				toast.error('Failed to load App MCP Servers');
@@ -213,7 +254,18 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		if (!session) return;
 		const tools = session.config.tools;
 		useClaudeCodePreset.value = tools?.useClaudeCodePreset ?? true;
-		hasChanges.value = false;
+		initialClaudeCodePreset.value = useClaudeCodePreset.value;
+
+		// Snapshot the persisted disable list and seed the pending set so the
+		// checkboxes reflect the saved state on open.
+		const disabled = new Set<string>(tools?.disabledSkills ?? []);
+		pendingDisabledSkills.value = disabled;
+		initialDisabledSkills.value = new Set(disabled);
+
+		// Reset MCP overrides — the modal always starts from a clean slate;
+		// it's the daemon's resolved view that drives the initial checkbox
+		// state.
+		pendingMcpOverrides.value = new Map();
 	};
 
 	const loadGlobalConfig = async () => {
@@ -261,96 +313,32 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		}
 	};
 
-	/**
-	 * Toggle the effective enablement of a single MCP server for this session.
-	 *
-	 * Precedence matters here: we always write an `mcp_enablement` row at
-	 * scope='session' on toggle, because the alternative ("clear the override
-	 * if new state matches the inherited state") leaks inheritance details
-	 * into the UI — users who want a stable on/off for this session shouldn't
-	 * have to care whether the room or space flipped underneath them later.
-	 * The "Clear override" affordance (handleClearSessionMcpOverride) is the
-	 * escape hatch for users who explicitly want to revert to inheritance.
-	 */
-	const toggleSessionMcp = async (entry: SessionMcpServerEntry) => {
-		if (!session) return;
-		const serverId = entry.server.id;
-		const next = !entry.enabled;
-		const toggling = new Set(sessionMcpToggling.value);
-		toggling.add(serverId);
-		sessionMcpToggling.value = toggling;
-		try {
-			const hub = await connectionManager.getHub();
-			await hub.request<McpEnablementSetOverrideResponse>('mcp.enablement.setOverride', {
-				scopeType: 'session',
-				scopeId: session.id,
-				serverId,
-				enabled: next,
-			});
-			await loadSessionMcpEntries();
-		} catch {
-			toast.error(`Failed to toggle ${entry.server.name}`);
-		} finally {
-			const done = new Set(sessionMcpToggling.value);
-			done.delete(serverId);
-			sessionMcpToggling.value = done;
-		}
-	};
-
-	/**
-	 * Delete the session-scope override row for a server, reverting to the
-	 * next most-specific scope (room → space → registry default). No-op when
-	 * the effective decision isn't already a session override.
-	 */
-	const handleClearSessionMcpOverride = async (entry: SessionMcpServerEntry) => {
-		if (!session) return;
-		if (entry.source !== 'session') return;
-		const serverId = entry.server.id;
-		const toggling = new Set(sessionMcpToggling.value);
-		toggling.add(serverId);
-		sessionMcpToggling.value = toggling;
-		try {
-			const hub = await connectionManager.getHub();
-			await hub.request<McpEnablementClearOverrideResponse>('mcp.enablement.clearOverride', {
-				scopeType: 'session',
-				scopeId: session.id,
-				serverId,
-			});
-			await loadSessionMcpEntries();
-		} catch {
-			toast.error(`Failed to clear override for ${entry.server.name}`);
-		} finally {
-			const done = new Set(sessionMcpToggling.value);
-			done.delete(serverId);
-			sessionMcpToggling.value = done;
-		}
-	};
-
 	const isClaudeCodePresetAllowed = useComputed(
 		() => globalConfig.value?.systemPrompt?.claudeCodePreset?.allowed ?? true
 	);
 
-	// App-level MCP and builtin skills (all)
-	const appMcpSkills = useComputed(() =>
-		skillsStore.skills.value.filter(
-			(s) => s.sourceType === 'mcp_server' || s.sourceType === 'builtin'
+	// Unified list of every app-level skill, sorted by display name so the
+	// merged view stays stable as new skills are registered.
+	const allSkills = useComputed(() =>
+		[...skillsStore.skills.value].sort((a, b) =>
+			a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' })
 		)
 	);
 
-	// Filtered by search query
-	const filteredAppSkills = useComputed(() => {
-		const q = appSkillSearch.value.trim().toLowerCase();
-		if (!q) return appMcpSkills.value;
-		return appMcpSkills.value.filter(
+	// Filtered by the skill search box.
+	const filteredSkills = useComputed(() => {
+		const q = skillSearch.value.trim().toLowerCase();
+		if (!q) return allSkills.value;
+		return allSkills.value.filter(
 			(s) =>
 				s.displayName.toLowerCase().includes(q) ||
 				(s.description?.toLowerCase().includes(q) ?? false)
 		);
 	});
 
-	// Filtered session MCP entries (MCP M6).
-	const filteredSessionMcpEntries = useComputed(() => {
-		const q = sessionMcpSearch.value.trim().toLowerCase();
+	// Filtered MCP server entries.
+	const filteredMcpEntries = useComputed(() => {
+		const q = mcpServerSearch.value.trim().toLowerCase();
 		if (!q) return sessionMcpEntries.value;
 		return sessionMcpEntries.value.filter(
 			(e) =>
@@ -359,66 +347,186 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		);
 	});
 
-	// App-level skill toggle (immediate, global)
-	const toggleSkill = async (skill: AppSkill) => {
-		const toggling = new Set(skillToggling.value);
-		toggling.add(skill.id);
-		skillToggling.value = toggling;
-		try {
-			await skillsStore.setEnabled(skill.id, !skill.enabled);
-		} catch {
-			toast.error(`Failed to toggle ${skill.displayName}`);
-		} finally {
-			const done = new Set(skillToggling.value);
-			done.delete(skill.id);
-			skillToggling.value = done;
+	// Group-state inputs — operate on the *effective for this session* flag,
+	// not the raw global enabled flag. This makes the "All on / Mixed / All
+	// off" header reflect what Save will actually do.
+	const skillsGroupState = useComputed(() => {
+		const items = allSkills.value
+			.filter((s) => s.enabled) // skills globally disabled are not togglable; exclude
+			.map((s) => ({
+				enabled: isSkillEnabledForSession(s, pendingDisabledSkills.value),
+			}));
+		return computeSkillGroupState(items);
+	});
+	const mcpGroupState = useComputed(() => {
+		const items = sessionMcpEntries.value.map((entry) => ({
+			enabled: getMcpServerEffectiveEnabled(entry, pendingMcpOverrides.value.get(entry.server.id)),
+		}));
+		return computeSkillGroupState(items);
+	});
+
+	// ---------------------------------------------------------------------------
+	// Toggle handlers — all session-scoped & deferred (no RPC until Save)
+	// ---------------------------------------------------------------------------
+
+	const toggleSkill = (skill: AppSkill) => {
+		if (!skill.enabled) return; // globally disabled skills are read-only here
+		const next = new Set(pendingDisabledSkills.value);
+		if (next.has(skill.id)) {
+			next.delete(skill.id);
+		} else {
+			next.add(skill.id);
 		}
+		pendingDisabledSkills.value = next;
 	};
 
-	// Group toggle for app-level skills
-	const toggleAppMcpGroup = async () => {
-		const skills = appMcpSkills.value;
-		if (skills.length === 0) return;
-		const allOn = skills.every((s) => s.enabled);
-		const newEnabled = !allOn;
-		const toToggle = skills.filter((s) => s.enabled !== newEnabled);
+	const toggleAllSkills = () => {
+		const togglable = allSkills.value.filter((s) => s.enabled);
+		if (togglable.length === 0) return;
+		const allOn = togglable.every((s) => isSkillEnabledForSession(s, pendingDisabledSkills.value));
+		const next = new Set(pendingDisabledSkills.value);
+		if (allOn) {
+			// Disable every togglable skill at session scope.
+			for (const s of togglable) next.add(s.id);
+		} else {
+			// Enable every togglable skill at session scope.
+			for (const s of togglable) next.delete(s.id);
+		}
+		pendingDisabledSkills.value = next;
+	};
 
-		// Mark all as toggling
-		skillToggling.value = new Set([...skillToggling.value, ...toToggle.map((s) => s.id)]);
+	const toggleMcpServer = (entry: SessionMcpServerEntry) => {
+		const current = pendingMcpOverrides.value.get(entry.server.id);
+		const effective = getMcpServerEffectiveEnabled(entry, current);
+		const next = new Map(pendingMcpOverrides.value);
+		next.set(entry.server.id, { enabled: !effective });
+		pendingMcpOverrides.value = next;
+	};
 
-		await Promise.allSettled(
-			toToggle.map((skill) =>
-				skillsStore.setEnabled(skill.id, newEnabled).catch(() => {
-					toast.error(`Failed to toggle ${skill.displayName}`);
-				})
-			)
+	const clearMcpOverride = (entry: SessionMcpServerEntry) => {
+		// Only meaningful when the daemon currently reports the source as
+		// 'session' — for other sources there is no override row to delete.
+		if (entry.source !== 'session') return;
+		const next = new Map(pendingMcpOverrides.value);
+		next.set(entry.server.id, { enabled: null });
+		pendingMcpOverrides.value = next;
+	};
+
+	const toggleAllMcpServers = () => {
+		if (sessionMcpEntries.value.length === 0) return;
+		const allOn = sessionMcpEntries.value.every((entry) =>
+			getMcpServerEffectiveEnabled(entry, pendingMcpOverrides.value.get(entry.server.id))
+		);
+		const next = new Map(pendingMcpOverrides.value);
+		for (const entry of sessionMcpEntries.value) {
+			next.set(entry.server.id, { enabled: !allOn });
+		}
+		pendingMcpOverrides.value = next;
+	};
+
+	// ---------------------------------------------------------------------------
+	// Save flow
+	// ---------------------------------------------------------------------------
+
+	/**
+	 * Apply pending MCP server overrides via the existing
+	 * `mcp.enablement.setOverride` / `clearOverride` RPCs. Each override is a
+	 * separate write because the daemon's API is row-at-a-time; we
+	 * `Promise.allSettled` so a single failure doesn't block the rest.
+	 *
+	 * Returns the count of overrides that succeeded so the caller can decide
+	 * whether the partial result still warrants a "saved" toast.
+	 */
+	const applyMcpOverrides = async (): Promise<{ ok: number; failed: string[] }> => {
+		if (!session) return { ok: 0, failed: [] };
+		const hub = await connectionManager.getHub();
+		const sessionId = session.id;
+
+		// Build the list of meaningful changes — drop entries that match the
+		// daemon's current effective state (no-op toggles when the user toggled
+		// twice, etc.).
+		const ops: Array<{ entry: SessionMcpServerEntry; pending: PendingMcpOverride }> = [];
+		for (const entry of sessionMcpEntries.value) {
+			const pending = pendingMcpOverrides.value.get(entry.server.id);
+			if (!pending) continue;
+			if (pending.enabled === null && entry.source !== 'session') continue; // already inherited
+			if (
+				pending.enabled !== null &&
+				pending.enabled === entry.enabled &&
+				entry.source === 'session'
+			) {
+				// User toggled to the same value that's already overridden at session scope.
+				continue;
+			}
+			ops.push({ entry, pending });
+		}
+
+		const results = await Promise.allSettled(
+			ops.map(({ entry, pending }) => {
+				if (pending.enabled === null) {
+					return hub.request<McpEnablementClearOverrideResponse>('mcp.enablement.clearOverride', {
+						scopeType: 'session',
+						scopeId: sessionId,
+						serverId: entry.server.id,
+					});
+				}
+				return hub.request<McpEnablementSetOverrideResponse>('mcp.enablement.setOverride', {
+					scopeType: 'session',
+					scopeId: sessionId,
+					serverId: entry.server.id,
+					enabled: pending.enabled,
+				});
+			})
 		);
 
-		// Clear toggling state for all
-		const done = new Set(skillToggling.value);
-		for (const skill of toToggle) done.delete(skill.id);
-		skillToggling.value = done;
+		const failed: string[] = [];
+		let ok = 0;
+		results.forEach((r, i) => {
+			if (r.status === 'fulfilled') ok++;
+			else failed.push(ops[i].entry.server.name);
+		});
+		return { ok, failed };
 	};
 
 	const handleSave = async () => {
 		if (!session || !hasChanges.value) return;
 		try {
 			saving.value = true;
+
+			// 1. Persist MCP server overrides first — these are session-scope
+			//    rows in `mcp_enablement`, independent from the session config.
+			const mcp = await applyMcpOverrides();
+			if (mcp.failed.length > 0) {
+				toast.error(
+					`Failed to update ${mcp.failed.length} MCP server(s): ${mcp.failed.join(', ')}`
+				);
+			}
+
+			// 2. Persist session config changes (skills + advanced) via tools.save.
+			//    `tools.save` updates `session.config` in-memory + DB and emits
+			//    `session.updated`; it does not restart the SDK query directly.
+			//    `QueryOptionsBuilder.build()` runs fresh on every message, so the
+			//    new `disabledSkills` set takes effect on the next user message.
 			const toolsConfig: ToolsConfig = {
+				...session.config.tools,
 				useClaudeCodePreset: useClaudeCodePreset.value,
+				disabledSkills: buildDisabledSkillsList(allSkills.value, pendingDisabledSkills.value),
 			};
 			const hub = await connectionManager.getHub();
 			const result = await hub.request<{ success: boolean; error?: string }>('tools.save', {
 				sessionId: session.id,
 				tools: toolsConfig,
 			});
-			if (result.success) {
-				hasChanges.value = false;
-				toast.success('Tools configuration saved');
-				onClose();
-			} else {
+			if (!result.success) {
 				toast.error(result.error || 'Failed to save tools configuration');
+				return;
 			}
+
+			// 3. Refresh the resolved MCP entries so the next open of the modal
+			//    sees the updated `source`/`enabled` flags.
+			await loadSessionMcpEntries();
+			toast.success('Tools configuration saved');
+			onClose();
 		} catch {
 			toast.error('Failed to save tools configuration');
 		} finally {
@@ -433,11 +541,11 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
 	if (!session) return null;
 
-	// App MCP counts (based on all, not filtered)
-	const appSkills = appMcpSkills.value;
-	const visibleAppSkills = filteredAppSkills.value;
-	const { allEnabled: appAllOn, someEnabled: appSomeOn } = computeSkillGroupState(appSkills);
-	const anySkillToggling = appSkills.some((s) => skillToggling.value.has(s.id));
+	const skillsState = skillsGroupState.value;
+	const mcpState = mcpGroupState.value;
+	const skillsRows = filteredSkills.value;
+	const mcpRows = filteredMcpEntries.value;
+	const togglableSkillCount = allSkills.value.filter((s) => s.enabled).length;
 
 	return (
 		<Modal isOpen={isOpen} onClose={handleCancel} title="Tools" size="md">
@@ -512,226 +620,83 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 					</>
 				)}
 
-				{/* Session MCP Servers (MCP M6) —
-				    Per-session overrides of the app-level registry. Hidden when the
-				    registry is empty so users aren't presented with a blank section
-				    during initial setup. */}
-				{sessionMcpEntries.value.length > 0 && (
-					<>
-						<div>
-							<div class="flex items-center justify-between py-2 cursor-pointer select-none group">
-								<button
-									type="button"
-									class="flex items-center gap-2 flex-1 text-left hover:text-gray-200 transition-colors"
-									onClick={() => {
-										sessionMcpGroupOpen.value = !sessionMcpGroupOpen.value;
-									}}
-									aria-expanded={sessionMcpGroupOpen.value}
-								>
-									<svg
-										class={`w-3.5 h-3.5 text-gray-500 transition-transform ${sessionMcpGroupOpen.value ? 'rotate-90' : ''}`}
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke="currentColor"
-									>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width={2}
-											d="M9 5l7 7-7 7"
-										/>
-									</svg>
-									<span class="text-sm font-medium text-gray-300">Session MCP Servers</span>
-									<span class="text-xs text-gray-600">({sessionMcpEntries.value.length})</span>
-								</button>
-								<ScopeBadge scope="session" />
-							</div>
-							{sessionMcpGroupOpen.value && (
-								<div class="mt-2 ml-5 space-y-2">
-									<div class="text-xs text-gray-500">
-										Overrides apply to this session only. Changes take effect on the next respawn.
-									</div>
-									{sessionMcpEntries.value.length > 4 && (
-										<input
-											type="search"
-											placeholder="Filter MCP servers…"
-											value={sessionMcpSearch.value}
-											onInput={(e) => {
-												sessionMcpSearch.value = (e.target as HTMLInputElement).value;
-											}}
-											class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2.5 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
-										/>
-									)}
-									{filteredSessionMcpEntries.value.length === 0 ? (
-										<div class="text-xs text-gray-600 py-1">
-											No servers match &ldquo;{sessionMcpSearch.value}&rdquo;.
-										</div>
-									) : (
-										<div class="space-y-1">
-											{filteredSessionMcpEntries.value.map((entry) => {
-												const isToggling = sessionMcpToggling.value.has(entry.server.id);
-												const sourceLabel =
-													entry.source === 'session'
-														? 'Session override'
-														: entry.source === 'room'
-															? 'Inherited from room'
-															: entry.source === 'space'
-																? 'Inherited from space'
-																: 'Registry default';
-												return (
-													<div
-														key={`session-mcp-${entry.server.id}`}
-														class={`flex items-center gap-2 p-2 rounded-lg bg-dark-800/50 min-w-0 ${
-															isToggling ? 'opacity-60' : ''
-														}`}
-													>
-														<svg
-															class="w-3.5 h-3.5 text-amber-400 flex-shrink-0"
-															fill="none"
-															viewBox="0 0 24 24"
-															stroke="currentColor"
-														>
-															<path
-																stroke-linecap="round"
-																stroke-linejoin="round"
-																stroke-width={2}
-																d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"
-															/>
-														</svg>
-														<div class="flex-1 min-w-0">
-															<div class="text-xs text-gray-200 truncate">{entry.server.name}</div>
-															<div class="text-[10px] text-gray-500 truncate">{sourceLabel}</div>
-														</div>
-														<div class="flex items-center gap-2 flex-shrink-0">
-															{entry.source === 'session' && (
-																<button
-																	type="button"
-																	class="text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
-																	title="Revert this session back to the inherited value"
-																	onClick={() => void handleClearSessionMcpOverride(entry)}
-																	disabled={isToggling}
-																>
-																	Clear
-																</button>
-															)}
-															{isToggling && (
-																<div class="w-2.5 h-2.5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
-															)}
-															<input
-																type="checkbox"
-																checked={entry.enabled}
-																onChange={() => void toggleSessionMcp(entry)}
-																disabled={isToggling}
-																class="w-3.5 h-3.5 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-															/>
-														</div>
-													</div>
-												);
-											})}
-										</div>
-									)}
-								</div>
-							)}
-						</div>
-						<div class={`border-t ${borderColors.ui.secondary}`} />
-					</>
-				)}
-
-				{/* App Skills & MCP Servers Section */}
+				{/* Unified Skills Section */}
 				<div>
-					{appSkills.length > 0 ? (
+					{allSkills.value.length > 0 ? (
 						<>
 							<GroupHeader
-								title="App Skills & MCP Servers"
-								isOpen={appMcpGroupOpen.value}
+								title="Skills"
+								isOpen={skillsGroupOpen.value}
 								onToggleOpen={() => {
-									appMcpGroupOpen.value = !appMcpGroupOpen.value;
+									skillsGroupOpen.value = !skillsGroupOpen.value;
 								}}
-								allEnabled={appAllOn}
-								someEnabled={appSomeOn}
-								onToggleAll={toggleAppMcpGroup}
-								scope="global"
-								itemCount={appSkills.length}
-								disabled={anySkillToggling}
+								allEnabled={skillsState.allEnabled}
+								someEnabled={skillsState.someEnabled}
+								onToggleAll={toggleAllSkills}
+								itemCount={allSkills.value.length}
+								disabled={togglableSkillCount === 0}
+								scopeNote="This session"
 							/>
-							{appMcpGroupOpen.value && (
+							{skillsGroupOpen.value && (
 								<div class="mt-2 ml-5 space-y-2">
-									{/* Search filter */}
-									{appSkills.length > 4 && (
+									<div class="text-xs text-gray-500">
+										Toggles apply to this session only. Click Save to persist.
+									</div>
+									{allSkills.value.length > 4 && (
 										<input
 											type="search"
 											placeholder="Filter skills…"
-											value={appSkillSearch.value}
+											value={skillSearch.value}
 											onInput={(e) => {
-												appSkillSearch.value = (e.target as HTMLInputElement).value;
+												skillSearch.value = (e.target as HTMLInputElement).value;
 											}}
 											class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2.5 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
 										/>
 									)}
-									{/* 2-column grid.
-									    Note: the checkbox reflects the registry toggle (global, all
-									    sessions). For MCP-backed skills we also surface the runtime
-									    effective state below each name so users can tell when an
-									    "enabled" skill actually reaches this session. */}
-									{visibleAppSkills.length === 0 ? (
+									{skillsRows.length === 0 ? (
 										<div class="text-xs text-gray-600 py-1">
-											No skills match &ldquo;{appSkillSearch.value}&rdquo;.
+											No skills match &ldquo;{skillSearch.value}&rdquo;.
 										</div>
 									) : (
 										<div class="grid grid-cols-2 gap-1">
-											{visibleAppSkills.map((skill) => {
-												const isToggling = skillToggling.value.has(skill.id);
+											{skillsRows.map((skill) => {
+												const sessionEnabled = isSkillEnabledForSession(
+													skill,
+													pendingDisabledSkills.value
+												);
 												const runtime = computeMcpSkillRuntimeState(
 													skill,
 													sessionMcpEntries.value,
 													sessionMcpLoaded.value
 												);
-												// Colour pair is derived from a pure util so the mapping is
-												// unit-tested and stays consistent with the amber orphan-
-												// warning in AppMcpServersSettings (see getMcpSkillRuntimeClasses).
 												const { dot: runtimeDotClass, text: runtimeTextClass } =
 													getMcpSkillRuntimeClasses(runtime.status);
+												const sourceBadge = getSkillSourceBadge(skill);
+												const globallyDisabled = !skill.enabled;
 												return (
 													<label
 														key={skill.id}
 														class={`flex items-center gap-2 p-2 rounded-lg bg-dark-800/50 transition-colors min-w-0 ${
-															isToggling ? 'opacity-60' : 'hover:bg-dark-800 cursor-pointer'
+															globallyDisabled
+																? 'opacity-50 cursor-not-allowed'
+																: 'hover:bg-dark-800 cursor-pointer'
 														}`}
+														title={
+															globallyDisabled
+																? 'This skill is disabled at the global level. Enable it in Settings to toggle here.'
+																: undefined
+														}
 													>
-														{skill.sourceType === 'builtin' ? (
-															<svg
-																class="w-3.5 h-3.5 text-blue-400 flex-shrink-0"
-																fill="none"
-																viewBox="0 0 24 24"
-																stroke="currentColor"
-															>
-																<path
-																	stroke-linecap="round"
-																	stroke-linejoin="round"
-																	stroke-width={2}
-																	d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
-																/>
-															</svg>
-														) : (
-															<svg
-																class="w-3.5 h-3.5 text-amber-400 flex-shrink-0"
-																fill="none"
-																viewBox="0 0 24 24"
-																stroke="currentColor"
-															>
-																<path
-																	stroke-linecap="round"
-																	stroke-linejoin="round"
-																	stroke-width={2}
-																	d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"
-																/>
-															</svg>
-														)}
 														<div class="flex-1 min-w-0">
-															<div class="text-xs text-gray-200 truncate">{skill.displayName}</div>
+															<div class="flex items-center gap-1.5">
+																<span class="text-xs text-gray-200 truncate">
+																	{skill.displayName}
+																</span>
+																<SourceBadge {...sourceBadge} />
+															</div>
 															{runtime.status !== 'unknown' && runtime.label && (
 																<div
-																	class={`text-[10px] truncate flex items-center gap-1 ${runtimeTextClass}`}
+																	class={`text-[10px] truncate flex items-center gap-1 mt-0.5 ${runtimeTextClass}`}
 																	title={runtime.label}
 																	data-testid={`skill-runtime-${skill.name}`}
 																	data-status={runtime.status}
@@ -744,14 +709,11 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 															)}
 														</div>
 														<div class="flex items-center gap-1 flex-shrink-0">
-															{isToggling && (
-																<div class="w-2.5 h-2.5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
-															)}
 															<input
 																type="checkbox"
-																checked={skill.enabled}
-																onChange={() => void toggleSkill(skill)}
-																disabled={isToggling}
+																checked={sessionEnabled}
+																onChange={() => toggleSkill(skill)}
+																disabled={globallyDisabled}
 																class="w-3.5 h-3.5 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 															/>
 														</div>
@@ -778,7 +740,132 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 									d="M9 5l7 7-7 7"
 								/>
 							</svg>
-							<span class="text-sm font-medium text-gray-500">App Skills & MCP Servers</span>
+							<span class="text-sm font-medium text-gray-500">Skills</span>
+							<span class="text-xs text-gray-700">(none configured)</span>
+						</div>
+					)}
+				</div>
+
+				<div class={`border-t ${borderColors.ui.secondary}`} />
+
+				{/* Unified MCP Servers Section */}
+				<div>
+					{sessionMcpEntries.value.length > 0 ? (
+						<>
+							<GroupHeader
+								title="MCP Servers"
+								isOpen={mcpServersGroupOpen.value}
+								onToggleOpen={() => {
+									mcpServersGroupOpen.value = !mcpServersGroupOpen.value;
+								}}
+								allEnabled={mcpState.allEnabled}
+								someEnabled={mcpState.someEnabled}
+								onToggleAll={toggleAllMcpServers}
+								itemCount={sessionMcpEntries.value.length}
+								scopeNote="This session"
+							/>
+							{mcpServersGroupOpen.value && (
+								<div class="mt-2 ml-5 space-y-2">
+									<div class="text-xs text-gray-500">
+										Overrides apply to this session only. Click Save to persist; changes take effect
+										on the next respawn.
+									</div>
+									{sessionMcpEntries.value.length > 4 && (
+										<input
+											type="search"
+											placeholder="Filter MCP servers…"
+											value={mcpServerSearch.value}
+											onInput={(e) => {
+												mcpServerSearch.value = (e.target as HTMLInputElement).value;
+											}}
+											class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2.5 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
+										/>
+									)}
+									{mcpRows.length === 0 ? (
+										<div class="text-xs text-gray-600 py-1">
+											No servers match &ldquo;{mcpServerSearch.value}&rdquo;.
+										</div>
+									) : (
+										<div class="space-y-1">
+											{mcpRows.map((entry) => {
+												const pending = pendingMcpOverrides.value.get(entry.server.id);
+												const effectiveEnabled = getMcpServerEffectiveEnabled(entry, pending);
+												const provenanceBadge = getMcpServerProvenanceBadge(entry.server);
+												const showClearAffordance =
+													entry.source === 'session' && (!pending || pending.enabled !== null);
+												return (
+													<div
+														key={`mcp-${entry.server.id}`}
+														class="flex items-center gap-2 p-2 rounded-lg bg-dark-800/50 min-w-0"
+													>
+														<svg
+															class="w-3.5 h-3.5 text-amber-400 flex-shrink-0"
+															fill="none"
+															viewBox="0 0 24 24"
+															stroke="currentColor"
+														>
+															<path
+																stroke-linecap="round"
+																stroke-linejoin="round"
+																stroke-width={2}
+																d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"
+															/>
+														</svg>
+														<div class="flex-1 min-w-0">
+															<div class="flex items-center gap-1.5">
+																<span class="text-xs text-gray-200 truncate">
+																	{entry.server.name}
+																</span>
+																<SourceBadge {...provenanceBadge} />
+															</div>
+															{entry.server.description && (
+																<div class="text-[10px] text-gray-500 truncate">
+																	{entry.server.description}
+																</div>
+															)}
+														</div>
+														<div class="flex items-center gap-2 flex-shrink-0">
+															{showClearAffordance && (
+																<button
+																	type="button"
+																	class="text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+																	title="Revert this session back to the inherited value"
+																	onClick={() => clearMcpOverride(entry)}
+																>
+																	Clear
+																</button>
+															)}
+															<input
+																type="checkbox"
+																checked={effectiveEnabled}
+																onChange={() => toggleMcpServer(entry)}
+																class="w-3.5 h-3.5 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+															/>
+														</div>
+													</div>
+												);
+											})}
+										</div>
+									)}
+								</div>
+							)}
+						</>
+					) : (
+						<div class="flex items-center gap-2 py-1">
+							<svg
+								class="w-3.5 h-3.5 text-gray-600"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M9 5l7 7-7 7"
+								/>
+							</svg>
+							<span class="text-sm font-medium text-gray-500">MCP Servers</span>
 							<span class="text-xs text-gray-700">(none configured)</span>
 						</div>
 					)}
@@ -831,7 +918,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 										checked={useClaudeCodePreset.value}
 										onChange={() => {
 											useClaudeCodePreset.value = !useClaudeCodePreset.value;
-											hasChanges.value = true;
 										}}
 										disabled={!isClaudeCodePresetAllowed.value}
 										class="w-4 h-4 rounded border-gray-600 text-blue-500"
