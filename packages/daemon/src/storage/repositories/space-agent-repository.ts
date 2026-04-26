@@ -4,8 +4,10 @@
  * CRUD operations for space_agents table.
  *
  * Column mapping:
- *   SpaceAgent.customPrompt  ↔  custom_prompt column (nullable text)
- *   SpaceAgent.tools         ↔  tools column (JSON string array; '[]' or null → undefined)
+ *   SpaceAgent.customPrompt   ↔  custom_prompt column (nullable text)
+ *   SpaceAgent.tools          ↔  tools column (JSON string array; '[]' or null → undefined)
+ *   SpaceAgent.templateName   ↔  template_name column (nullable text; null for user-created agents)
+ *   SpaceAgent.templateHash   ↔  template_hash column (nullable text; null for user-created agents)
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -26,8 +28,9 @@ export class SpaceAgentRepository {
 		this.db
 			.prepare(
 				`INSERT INTO space_agents
-					(id, space_id, name, description, model, provider, tools, custom_prompt, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					(id, space_id, name, description, model, provider, tools, custom_prompt,
+					 template_name, template_hash, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				id,
@@ -38,6 +41,8 @@ export class SpaceAgentRepository {
 				params.provider ?? null,
 				params.tools && params.tools.length > 0 ? JSON.stringify(params.tools) : '[]',
 				params.customPrompt ?? null,
+				params.templateName ?? null,
+				params.templateHash ?? null,
 				now,
 				now
 			);
@@ -128,6 +133,14 @@ export class SpaceAgentRepository {
 			fields.push('tools = ?');
 			values.push(params.tools && params.tools.length > 0 ? JSON.stringify(params.tools) : '[]');
 		}
+		if (params.templateName !== undefined) {
+			fields.push('template_name = ?');
+			values.push(params.templateName ?? null);
+		}
+		if (params.templateHash !== undefined) {
+			fields.push('template_hash = ?');
+			values.push(params.templateHash ?? null);
+		}
 
 		if (fields.length === 0) return this.getById(id);
 
@@ -183,6 +196,11 @@ export class SpaceAgentRepository {
 			provider: (row.provider as string | null) ?? undefined,
 			customPrompt: (row.custom_prompt as string | null) ?? null,
 			tools,
+			// `template_name` / `template_hash` may be missing entirely on
+			// schemas that predate M105 — guard with `??` so older test DBs
+			// (and any pre-migration call paths) don't return `undefined`.
+			templateName: (row.template_name as string | null | undefined) ?? null,
+			templateHash: (row.template_hash as string | null | undefined) ?? null,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
 		};

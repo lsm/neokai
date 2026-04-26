@@ -11,21 +11,26 @@
  *   with a clear message. When unreferenced, a standard confirm dialog is shown.
  */
 
-import { useState } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { Modal } from '../ui/Modal';
-import type { SpaceAgent } from '@neokai/shared';
+import type { SpaceAgent, AgentDriftReport } from '@neokai/shared';
 import { SpaceAgentEditor } from './SpaceAgentEditor';
+import { connectionManager } from '../../lib/connection-manager';
+import { toast } from '../../lib/toast';
 
 interface AgentCardProps {
 	agent: SpaceAgent;
+	drifted: boolean;
+	syncing: boolean;
 	onEdit: (agent: SpaceAgent) => void;
 	onDelete: (agent: SpaceAgent) => void;
+	onSync: (agent: SpaceAgent) => void;
 }
 
-function AgentCard({ agent, onEdit, onDelete }: AgentCardProps) {
+function AgentCard({ agent, drifted, syncing, onEdit, onDelete, onSync }: AgentCardProps) {
 	return (
 		<div class="bg-dark-850 border border-dark-700 rounded-lg p-4 hover:border-dark-600 transition-colors">
 			<div class="flex items-start justify-between gap-3">
@@ -33,6 +38,22 @@ function AgentCard({ agent, onEdit, onDelete }: AgentCardProps) {
 					<div class="flex items-center gap-2 flex-wrap">
 						<span class="text-sm font-medium text-gray-100">{agent.name}</span>
 						{agent.model && <span class="text-xs text-gray-500 font-mono">{agent.model}</span>}
+						{drifted && (
+							<span
+								class="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-amber-900/30 border border-amber-700/50 rounded text-amber-400"
+								title={`This agent was seeded from the "${agent.templateName}" preset and has drifted from the current definition.`}
+							>
+								<svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+									/>
+								</svg>
+								Out of sync
+							</span>
+						)}
 					</div>
 					{agent.description && (
 						<p class="text-xs text-gray-500 mt-1.5 line-clamp-2">{agent.description}</p>
@@ -54,6 +75,17 @@ function AgentCard({ agent, onEdit, onDelete }: AgentCardProps) {
 					)}
 				</div>
 				<div class="flex items-center gap-1 flex-shrink-0">
+					{drifted && (
+						<button
+							type="button"
+							onClick={() => onSync(agent)}
+							disabled={syncing}
+							class="px-2.5 py-1 text-xs text-amber-400 hover:text-amber-200 bg-dark-800 hover:bg-dark-700 rounded border border-amber-700/50 hover:border-amber-600/70 transition-colors disabled:opacity-50"
+							title="Sync from template (overwrites description, tools, and prompt)"
+						>
+							{syncing ? 'Syncing…' : 'Sync from template'}
+						</button>
+					)}
 					<button
 						type="button"
 						onClick={() => onEdit(agent)}
@@ -115,12 +147,84 @@ export function SpaceAgentList() {
 	const agents = spaceStore.agents.value;
 	const loading = spaceStore.loading.value;
 	const workflows = spaceStore.workflows.value;
+	const spaceId = spaceStore.spaceId.value;
 
 	const [editorOpen, setEditorOpen] = useState(false);
 	const [editingAgent, setEditingAgent] = useState<SpaceAgent | null>(null);
 	const [deletingAgent, setDeletingAgent] = useState<SpaceAgent | null>(null);
 	const [deleteError, setDeleteError] = useState<string | null>(null);
 	const [deleting, setDeleting] = useState(false);
+
+	// Drift detection: set of agent IDs that have drifted from their preset.
+	// Empty until the first successful drift report fetch — agents not in the
+	// set render without the badge or sync button (the safe default when the
+	// daemon hasn't responded yet).
+	const [driftedAgentIds, setDriftedAgentIds] = useState<Set<string>>(new Set());
+	const [syncingAgentId, setSyncingAgentId] = useState<string | null>(null);
+
+	// Re-fetch drift report whenever the agent set changes. We watch a
+	// concatenated key of (id, updatedAt) so the effect fires for adds,
+	// removes, and edits — but not for unrelated re-renders.
+	const driftKey = agents
+		.map((a) => `${a.id}:${a.updatedAt}`)
+		.sort()
+		.join('|');
+
+	useEffect(() => {
+		if (!spaceId) return;
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) return;
+
+		let cancelled = false;
+		hub
+			.request<{ report: AgentDriftReport }>('spaceAgent.getDriftReport', { spaceId })
+			.then((result) => {
+				if (cancelled) return;
+				const ids = new Set<string>();
+				for (const entry of result.report.agents) {
+					if (entry.drifted) ids.add(entry.agentId);
+				}
+				setDriftedAgentIds(ids);
+			})
+			.catch(() => {
+				// Drift detection is best-effort — silently swallow errors so
+				// list rendering never depends on the report succeeding.
+			});
+
+		return () => {
+			cancelled = true;
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- driftKey captures the list identity
+	}, [spaceId, driftKey]);
+
+	const handleSync = async (agent: SpaceAgent) => {
+		if (!spaceId) return;
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			toast.error('Connection lost.');
+			return;
+		}
+		setSyncingAgentId(agent.id);
+		try {
+			await hub.request('spaceAgent.syncFromTemplate', {
+				spaceId,
+				agentId: agent.id,
+			});
+			// Clear drift state for this agent eagerly so the badge disappears
+			// before the next refresh cycle. The spaceAgent.updated event will
+			// re-trigger the effect and reconcile authoritatively.
+			setDriftedAgentIds((prev) => {
+				const next = new Set(prev);
+				next.delete(agent.id);
+				return next;
+			});
+			toast.success(`"${agent.name}" synced from template`);
+		} catch (err) {
+			toast.error(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+		} finally {
+			setSyncingAgentId((current) => (current === agent.id ? null : current));
+		}
+	};
 
 	function getWorkflowNamesReferencingAgent(agentId: string): string[] {
 		return workflows
@@ -209,8 +313,11 @@ export function SpaceAgentList() {
 							<AgentCard
 								key={agent.id}
 								agent={agent}
+								drifted={driftedAgentIds.has(agent.id)}
+								syncing={syncingAgentId === agent.id}
 								onEdit={handleEdit}
 								onDelete={handleDeleteClick}
+								onSync={handleSync}
 							/>
 						))}
 					</div>

@@ -26,6 +26,7 @@ import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
+let mockSpaceId: ReturnType<typeof signal<string | null>>;
 
 const mockDeleteAgent = vi.fn();
 const mockCreateAgent = vi.fn();
@@ -37,10 +38,27 @@ vi.mock('../../../lib/space-store', () => ({
 			agents: mockAgents,
 			workflows: mockWorkflows,
 			loading: mockLoading,
+			spaceId: mockSpaceId,
 			deleteAgent: mockDeleteAgent,
 			createAgent: mockCreateAgent,
 			updateAgent: mockUpdateAgent,
 		};
+	},
+}));
+
+const mockHubRequest = vi.fn();
+vi.mock('../../../lib/connection-manager', () => ({
+	connectionManager: {
+		getHubIfConnected: () => ({ request: mockHubRequest }),
+	},
+}));
+
+vi.mock('../../../lib/toast', () => ({
+	toast: {
+		success: vi.fn(),
+		error: vi.fn(),
+		warning: vi.fn(),
+		info: vi.fn(),
 	},
 }));
 
@@ -159,6 +177,7 @@ vi.mock('../../ui/Modal', () => ({
 mockAgents = signal<SpaceAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockLoading = signal(false);
+mockSpaceId = signal<string | null>('space-1');
 
 import { SpaceAgentList } from '../SpaceAgentList';
 
@@ -201,9 +220,15 @@ describe('SpaceAgentList', () => {
 		mockAgents.value = [];
 		mockWorkflows.value = [];
 		mockLoading.value = false;
+		mockSpaceId.value = 'space-1';
 		mockDeleteAgent.mockReset();
 		mockCreateAgent.mockReset();
 		mockUpdateAgent.mockReset();
+		mockHubRequest.mockReset();
+		// Default: drift report returns no drifted agents so the list renders cleanly.
+		mockHubRequest.mockResolvedValue({
+			report: { spaceId: 'space-1', agents: [] },
+		});
 	});
 
 	afterEach(() => {
@@ -460,6 +485,117 @@ describe('SpaceAgentList', () => {
 		expect(getByTestId('block-modal')).toBeTruthy();
 		fireEvent.click(getByTestId('block-modal-close'));
 		expect(queryByTestId('block-modal')).toBeNull();
+	});
+
+	// ── Drift detection & sync ────────────────────────────────────────────────
+
+	it('renders "Out of sync" badge for drifted preset agents', async () => {
+		const agent = makeAgent({ id: 'agent-1', name: 'Coder', templateName: 'Coder' });
+		mockAgents.value = [agent];
+		mockHubRequest.mockResolvedValue({
+			report: {
+				spaceId: 'space-1',
+				agents: [
+					{
+						agentId: 'agent-1',
+						agentName: 'Coder',
+						templateName: 'Coder',
+						storedHash: 'a',
+						currentHash: 'b',
+						drifted: true,
+					},
+				],
+			},
+		});
+
+		const { findByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		expect(await findByText('Out of sync')).toBeTruthy();
+	});
+
+	it('does NOT render "Out of sync" badge for non-drifted preset agents', async () => {
+		const agent = makeAgent({ id: 'agent-1', name: 'Coder', templateName: 'Coder' });
+		mockAgents.value = [agent];
+		mockHubRequest.mockResolvedValue({
+			report: {
+				spaceId: 'space-1',
+				agents: [
+					{
+						agentId: 'agent-1',
+						agentName: 'Coder',
+						templateName: 'Coder',
+						storedHash: 'a',
+						currentHash: 'a',
+						drifted: false,
+					},
+				],
+			},
+		});
+
+		const { queryByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		// Allow the drift effect to settle.
+		await waitFor(() => {
+			expect(mockHubRequest).toHaveBeenCalledWith('spaceAgent.getDriftReport', {
+				spaceId: 'space-1',
+			});
+		});
+		expect(queryByText('Out of sync')).toBeNull();
+	});
+
+	it('clicking "Sync from template" calls spaceAgent.syncFromTemplate and clears badge', async () => {
+		const agent = makeAgent({ id: 'agent-1', name: 'Coder', templateName: 'Coder' });
+		mockAgents.value = [agent];
+
+		// First call: getDriftReport (drifted). Subsequent: syncFromTemplate (success).
+		mockHubRequest.mockImplementation(async (method: string) => {
+			if (method === 'spaceAgent.getDriftReport') {
+				return {
+					report: {
+						spaceId: 'space-1',
+						agents: [
+							{
+								agentId: 'agent-1',
+								agentName: 'Coder',
+								templateName: 'Coder',
+								storedHash: 'a',
+								currentHash: 'b',
+								drifted: true,
+							},
+						],
+					},
+				};
+			}
+			if (method === 'spaceAgent.syncFromTemplate') {
+				return { agent };
+			}
+			return {};
+		});
+
+		const { findByText, queryByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		const syncButton = await findByText('Sync from template');
+
+		fireEvent.click(syncButton);
+
+		await waitFor(() => {
+			expect(mockHubRequest).toHaveBeenCalledWith('spaceAgent.syncFromTemplate', {
+				spaceId: 'space-1',
+				agentId: 'agent-1',
+			});
+		});
+
+		// Optimistic clear: the badge should disappear after a successful sync.
+		await waitFor(() => {
+			expect(queryByText('Out of sync')).toBeNull();
+		});
+	});
+
+	it('does not crash when drift report request fails', async () => {
+		const agent = makeAgent({ id: 'agent-1', name: 'Coder', templateName: 'Coder' });
+		mockAgents.value = [agent];
+		mockHubRequest.mockRejectedValue(new Error('hub error'));
+
+		const { getByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		// The agent card still renders normally even when drift detection fails.
+		expect(getByText('Coder')).toBeTruthy();
 	});
 
 	// ── Existing agent names passed to editor ──────────────────────────────────
