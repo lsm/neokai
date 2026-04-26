@@ -16,6 +16,19 @@ interface ContextUsageBarProps {
 	maxContextTokens?: number;
 }
 
+// SVG geometry for the circular indicator (r=15, so circumference = 2π·15).
+const CIRCLE_RADIUS = 15;
+const CIRCLE_CIRCUMFERENCE = 2 * Math.PI * CIRCLE_RADIUS;
+
+// Diagonal-stripe pattern used to mark the autocompact buffer zone as
+// visually distinct from the regular free space.
+const AUTOCOMPACT_BUFFER_STRIPES =
+	'repeating-linear-gradient(135deg, rgba(255,255,255,0.08) 0, rgba(255,255,255,0.08) 2px, transparent 2px, transparent 5px)';
+
+const AUTOCOMPACT_BUFFER_TOOLTIP =
+	'Autocompact buffer — reserved for context compression. Not available for conversation.';
+const AUTOCOMPACT_THRESHOLD_TOOLTIP = 'Autocompact threshold';
+
 export default function ContextUsageBar({
 	contextUsage,
 	maxContextTokens = 200000, // Default to Sonnet 4.5's 200k context window
@@ -95,6 +108,21 @@ export default function ContextUsageBar({
 	const contextCapacity = contextUsage?.totalCapacity || maxContextTokens;
 	const contextPercentage = contextUsage?.percentUsed || 0;
 	const hasContextData = totalTokens > 0;
+
+	// Tokens between the autocompact threshold and total capacity are reserved
+	// by the SDK for context compression — not available for conversation. Only
+	// render the buffer when the SDK reports auto-compact is enabled with a
+	// threshold strictly inside the capacity range.
+	const autoCompactThreshold = contextUsage?.autoCompactThreshold ?? 0;
+	const showAutoCompactBuffer =
+		contextUsage?.isAutoCompactEnabled === true &&
+		autoCompactThreshold > 0 &&
+		autoCompactThreshold < contextCapacity &&
+		contextCapacity > 0;
+	const autoCompactThresholdPercent = showAutoCompactBuffer
+		? (autoCompactThreshold / contextCapacity) * 100
+		: 0;
+	const autoCompactBufferPercent = 100 - autoCompactThresholdPercent;
 
 	// Determine color based on usage - green for lower usage
 	const getContextColor = () => {
@@ -213,21 +241,37 @@ export default function ContextUsageBar({
 						<circle
 							cx="18"
 							cy="18"
-							r="15"
+							r={CIRCLE_RADIUS}
 							fill="none"
 							stroke="currentColor"
 							stroke-width="3"
 							class="text-dark-700"
 						/>
+						{/* Drawn before the progress arc so the colored fill sits on top. */}
+						{showAutoCompactBuffer && (
+							<circle
+								data-testid="autocompact-buffer-arc"
+								cx="18"
+								cy="18"
+								r={CIRCLE_RADIUS}
+								fill="none"
+								stroke="currentColor"
+								stroke-width="3"
+								stroke-dasharray={`0 ${(autoCompactThresholdPercent / 100) * CIRCLE_CIRCUMFERENCE} ${(autoCompactBufferPercent / 100) * CIRCLE_CIRCUMFERENCE} 0`}
+								class="text-dark-500 opacity-70"
+							>
+								<title>{AUTOCOMPACT_BUFFER_TOOLTIP}</title>
+							</circle>
+						)}
 						{/* Progress arc */}
 						<circle
 							cx="18"
 							cy="18"
-							r="15"
+							r={CIRCLE_RADIUS}
 							fill="none"
 							stroke="currentColor"
 							stroke-width="4"
-							stroke-dasharray={`${(contextPercentage / 100) * 94.2} 94.2`}
+							stroke-dasharray={`${(contextPercentage / 100) * CIRCLE_CIRCUMFERENCE} ${CIRCLE_CIRCUMFERENCE}`}
 							class={`transition-all duration-300 ${
 								contextPercentage >= 90
 									? 'text-red-500'
@@ -293,13 +337,32 @@ export default function ContextUsageBar({
 												{contextPercentage.toFixed(1)}%
 											</span>
 										</div>
-										<div class="w-full h-2.5 bg-dark-600 rounded-full overflow-hidden">
+										<div class="relative w-full h-2.5 bg-dark-600 rounded-full overflow-hidden">
+											{showAutoCompactBuffer && (
+												<div
+													data-testid="autocompact-buffer-zone"
+													class="absolute top-0 right-0 h-full bg-dark-500/70"
+													style={{
+														width: `${autoCompactBufferPercent}%`,
+														backgroundImage: AUTOCOMPACT_BUFFER_STRIPES,
+													}}
+													title={AUTOCOMPACT_BUFFER_TOOLTIP}
+												/>
+											)}
 											<div
-												class={`h-full transition-all duration-300 ${getContextBarColor()}`}
+												class={`absolute top-0 left-0 h-full transition-all duration-300 ${getContextBarColor()}`}
 												style={{
 													width: `${Math.min(contextPercentage, 100)}%`,
 												}}
 											/>
+											{showAutoCompactBuffer && (
+												<div
+													data-testid="autocompact-threshold-marker"
+													class="absolute top-0 h-full w-px bg-amber-500/60"
+													style={{ left: `${autoCompactThresholdPercent}%` }}
+													title={AUTOCOMPACT_THRESHOLD_TOOLTIP}
+												/>
+											)}
 										</div>
 										<div class="text-xs text-gray-500 mt-1">
 											{totalTokens.toLocaleString()} / {contextCapacity.toLocaleString()}
