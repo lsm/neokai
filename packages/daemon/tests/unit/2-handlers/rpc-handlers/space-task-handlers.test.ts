@@ -11,14 +11,13 @@
  * - DaemonHub events emitted on mutations
  */
 
-import { describe, expect, it, mock, beforeEach } from 'bun:test';
-import { MessageHub } from '@neokai/shared';
-import type { Space, SpaceTask } from '@neokai/shared';
-import { setupSpaceTaskHandlers } from '../../../../src/lib/rpc-handlers/space-task-handlers';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { MessageHub, Space, SpaceTask } from '@neokai/shared';
+import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { SpaceTaskManagerFactory } from '../../../../src/lib/rpc-handlers/space-task-handlers';
+import { setupSpaceTaskHandlers } from '../../../../src/lib/rpc-handlers/space-task-handlers';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
@@ -700,6 +699,58 @@ describe('space-task-handlers', () => {
 			// bad caller never gets a partial write.
 			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
 			expect(taskManager.updateTask).not.toHaveBeenCalled();
+		});
+
+		it('rejects bare → approved transitions and points at the post-approval router', async () => {
+			// Exit-side counterpart to the `→ review` guard. The `approved`
+			// status is owned by the post-approval pipeline:
+			//   - human approvals route through `spaceTask.approvePendingCompletion`
+			//     which dispatches `PostApprovalRouter` (the router calls
+			//     `setTaskStatus(approved)` with the right metadata).
+			//   - agent approvals route through the runtime's reactive
+			//     `reportedStatus='done'` handler — also via the router.
+			// A bare `update({status:'approved'})` would skip the awareness
+			// event, the dispatch, and the approval-source stamping. The
+			// handler must short-circuit so neither manager method is called.
+			const inProgressTask = { ...mockTask, status: 'in_progress' as const };
+			setup(mockSpace, inProgressTask);
+
+			await expect(
+				call('spaceTask.update', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					status: 'approved',
+				})
+			).rejects.toThrow(/approvePendingCompletion|post-approval/);
+			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+			expect(taskManager.updateTask).not.toHaveBeenCalled();
+		});
+
+		it('allows approved → done via spaceTask.update — relies on setTaskStatus to clear post-approval-* atomically', async () => {
+			// Counterpart fact: the `→ approved` guard does NOT block exits
+			// FROM `approved`. UI escape hatches (Mark Done / Reopen / Archive
+			// from approved) flow through `spaceTask.update`, which delegates
+			// to `setTaskStatus`. The manager's centralised "exit approved"
+			// cleanup nulls postApprovalSessionId/StartedAt/BlockedReason in
+			// the same SQL UPDATE — see the manager-level atomicity test.
+			const approvedTask = { ...mockTask, status: 'approved' as const };
+			setup(mockSpace, approvedTask);
+			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
+				...approvedTask,
+				status: 'done' as const,
+				postApprovalSessionId: null,
+				postApprovalStartedAt: null,
+				postApprovalBlockedReason: null,
+			});
+
+			const result = await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'done',
+			});
+
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'done', expect.any(Object));
+			expect((result as SpaceTask).status).toBe('done');
 		});
 
 		it('propagates errors from updateTask', async () => {

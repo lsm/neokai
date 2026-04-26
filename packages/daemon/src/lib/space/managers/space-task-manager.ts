@@ -8,16 +8,16 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type {
+	CreateSpaceTaskParams,
+	SpaceApprovalSource,
+	SpaceBlockReason,
 	SpaceTask,
 	SpaceTaskStatus,
-	SpaceBlockReason,
-	SpaceApprovalSource,
-	CreateSpaceTaskParams,
 	UpdateSpaceTaskParams,
 } from '@neokai/shared';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
+import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 
 /**
  * Valid task status transitions for space tasks
@@ -197,6 +197,39 @@ export class SpaceTaskManager {
 			updates.approvalSource = null;
 			updates.approvalReason = null;
 			updates.approvedAt = null;
+		}
+
+		// Clear pending-completion fields on any transition out of `review`.
+		//
+		// Mirrors (and replaces) the explicit follow-up `updateTask` cleanups
+		// formerly issued by `approvePendingCompletion` (both branches) and the
+		// agent `approve_task` tool. Centralising here closes the exit-side
+		// counterpart of the unified `submitTaskForReview` entry: every task
+		// landing in `review` carries the pending-* fields, and every task
+		// leaving `review` (for any reason — Approve via banner, Reopen, Archive,
+		// review→done by RPC) gets those fields nulled in the same SQL UPDATE
+		// that flips the status. No banner-on-non-review state can persist.
+		if (task.status === 'review' && newStatus !== 'review') {
+			updates.pendingCheckpointType = null;
+			updates.pendingCompletionSubmittedByNodeId = null;
+			updates.pendingCompletionSubmittedAt = null;
+			updates.pendingCompletionReason = null;
+		}
+
+		// Clear post-approval tracking fields on any transition out of `approved`.
+		//
+		// Mirrors (and replaces) the follow-up `updateTask` formerly issued by
+		// the agent `mark_complete` tool. After this change, the `approved →
+		// done` transition writes status='done' and nulls the post-approval
+		// fields in a single repository UPDATE — closing the race window where
+		// a reader could observe `status='done'` with stale
+		// `postApprovalSessionId`/`postApprovalStartedAt`/`postApprovalBlockedReason`.
+		// Also covers UI-driven escape hatches (`approved → in_progress`,
+		// `approved → archived`) which previously left these fields lingering.
+		if (task.status === 'approved' && newStatus !== 'approved') {
+			updates.postApprovalSessionId = null;
+			updates.postApprovalStartedAt = null;
+			updates.postApprovalBlockedReason = null;
 		}
 
 		const updated = this.taskRepo.updateTask(taskId, updates);

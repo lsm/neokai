@@ -24,19 +24,19 @@
  * `save_artifact({ type: 'result', append: true, ... })` instead.
  */
 
+import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { DaemonHub } from '../../daemon-hub';
+import { Logger } from '../../logger';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
-import type { DaemonHub } from '../../daemon-hub';
-import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
-import type { ToolResult } from './tool-result';
-import { jsonResult } from './tool-result';
 import type {
 	ApproveTaskInput,
-	SubmitForApprovalInput,
 	MarkCompleteInput,
+	SubmitForApprovalInput,
 } from './task-agent-tool-schemas';
-import { Logger } from '../../logger';
+import type { ToolResult } from './tool-result';
+import { jsonResult } from './tool-result';
 
 const log = new Logger('end-node-handlers');
 
@@ -132,13 +132,12 @@ export function createMarkCompleteHandler(
 		}
 
 		try {
-			await taskManager.setTaskStatus(taskId, 'done', {
+			// Single atomic write: status flip + post-approval-* cleanup. The
+			// "exit approved" branch in `SpaceTaskManager.setTaskStatus` nulls
+			// `postApprovalSessionId`, `postApprovalStartedAt`, and
+			// `postApprovalBlockedReason` in the same UPDATE.
+			const updated = await taskManager.setTaskStatus(taskId, 'done', {
 				approvalSource: task.approvalSource ?? 'agent',
-			});
-			const updated = await taskManager.updateTask(taskId, {
-				postApprovalSessionId: null,
-				postApprovalStartedAt: null,
-				postApprovalBlockedReason: null,
 			});
 			emitTaskUpdated(updated);
 			log.info(

@@ -23,46 +23,46 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { Space, SpaceTask } from '@neokai/shared';
 import { z } from 'zod';
+import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import type {
+	PendingAgentMessageRecord,
+	PendingAgentMessageRepository,
+} from '../../../storage/repositories/pending-agent-message-repository';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { DaemonHub } from '../../daemon-hub';
 import { Logger } from '../../logger';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
-import type {
-	PendingAgentMessageRepository,
-	PendingAgentMessageRecord,
-} from '../../../storage/repositories/pending-agent-message-repository';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
-import { jsonResult } from './tool-result';
-import type { ToolResult } from './tool-result';
+import type {
+	ListArtifactsInput,
+	SaveArtifactInput,
+	SendMessageInput,
+} from './node-agent-tool-schemas';
 import {
-	ApproveTaskSchema,
-	SubmitForApprovalSchema,
-	MarkCompleteSchema,
-	RequestHumanInputSchema,
-	ListGroupMembersSchema,
-} from './task-agent-tool-schemas';
-import {
-	SendMessageSchema,
-	SaveArtifactSchema,
 	ListArtifactsSchema,
+	SaveArtifactSchema,
+	SendMessageSchema,
 } from './node-agent-tool-schemas';
 import type {
 	ApproveTaskInput,
-	SubmitForApprovalInput,
+	ListGroupMembersInput,
 	MarkCompleteInput,
 	RequestHumanInputInput,
-	ListGroupMembersInput,
+	SubmitForApprovalInput,
 } from './task-agent-tool-schemas';
-import type {
-	SendMessageInput,
-	SaveArtifactInput,
-	ListArtifactsInput,
-} from './node-agent-tool-schemas';
+import {
+	ApproveTaskSchema,
+	ListGroupMembersSchema,
+	MarkCompleteSchema,
+	RequestHumanInputSchema,
+	SubmitForApprovalSchema,
+} from './task-agent-tool-schemas';
+import type { ToolResult } from './tool-result';
+import { jsonResult } from './tool-result';
 
 // Re-export for consumers that want the shared type
 export type { ToolResult };
@@ -429,10 +429,15 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 * Agent itself when `workflow.postApproval.targetAgent === 'task-agent'`,
 		 * or the spawned space-task-node-agent sub-session otherwise.
 		 *
-		 * Transitions the task `approved → done`, clears
-		 * `post_approval_session_id` and `post_approval_started_at`, and emits a
-		 * `space.task.updated` event. Rejects on any non-`approved` status with a
-		 * message that points the caller at the correct tool.
+		 * Transitions the task `approved → done` via `setTaskStatus`, which now
+		 * atomically clears `postApprovalSessionId`, `postApprovalStartedAt`,
+		 * and `postApprovalBlockedReason` in the same SQL UPDATE — the
+		 * centralised "exit `approved`" cleanup. No follow-up write is needed,
+		 * which closes the previous race window where a reader could observe
+		 * `status='done'` alongside stale post-approval fields.
+		 *
+		 * Rejects on any non-`approved` status with a message that points the
+		 * caller at the correct tool.
 		 */
 		async mark_complete(_args: MarkCompleteInput): Promise<ToolResult> {
 			const task = taskRepo.getTask(taskId);
@@ -448,16 +453,12 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			}
 
 			try {
-				// Use taskManager.setTaskStatus so the approved → done edge runs
-				// through the centralised transition validator.
-				let updated = await taskManager.setTaskStatus(taskId, 'done', {
+				// Single atomic write: status flip + post-approval-* cleanup. The
+				// "exit approved" branch in `setTaskStatus` nulls
+				// `postApprovalSessionId`, `postApprovalStartedAt`, and
+				// `postApprovalBlockedReason` in the same UPDATE.
+				const updated = await taskManager.setTaskStatus(taskId, 'done', {
 					approvalSource: task.approvalSource ?? 'agent',
-				});
-				// Clear post-approval tracking fields.
-				updated = await taskManager.updateTask(taskId, {
-					postApprovalSessionId: null,
-					postApprovalStartedAt: null,
-					postApprovalBlockedReason: null,
 				});
 				emitTaskUpdated(updated);
 				log.info(
