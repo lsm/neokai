@@ -228,10 +228,17 @@ export function useAutoScroll({
 		// entirely (the prop is already `false` by the time `messageCount`
 		// first becomes non-zero).
 		if (!hasScrolledOnMountRef.current && messageCount > 0) {
-			scrollToBottom();
 			hasScrolledOnMountRef.current = true;
 			prevMessageCountRef.current = messageCount;
 			isNearBottomRef.current = true;
+			// Gate the initial-load tail-follow on `enabled`. When a caller sets
+			// `enabled: false` during initial load (e.g. ChatContainer does this
+			// when `highlightMessageId` is set so that `useScrollToMessage` can
+			// scroll to the deep-linked row without racing against this scroll),
+			// suppress the auto-scroll and let the caller drive.
+			if (enabled || !isInitialLoad) {
+				scrollToBottom();
+			}
 			return;
 		}
 
