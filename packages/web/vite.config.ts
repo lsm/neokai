@@ -16,7 +16,6 @@ export default defineConfig({
 		rollupOptions: {
 			input: {
 				main: resolve(__dirname, 'src/index.html'),
-				devMinimalThread: resolve(__dirname, 'src/dev-minimal-thread.html'),
 			},
 			output: {
 				manualChunks(id) {
