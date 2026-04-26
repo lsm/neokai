@@ -441,6 +441,22 @@ export interface ToolsConfig {
 	settingSources?: SettingSource[];
 	// Legacy field - deprecated, use settingSources instead
 	loadSettingSources?: boolean;
+	/**
+	 * Session-scoped skill disable list.
+	 *
+	 * IDs of `app_skills` rows that the user has disabled for *this session
+	 * only*. Acts as an additive filter on top of the global `enabled` flag and
+	 * any room-level overrides — a skill is injected into the SDK build only if:
+	 *   - the global registry row has `enabled === true`, AND
+	 *   - no room-level override sets `enabled === false`, AND
+	 *   - the skill ID is not in this list.
+	 *
+	 * Empty / undefined means "no session-level skill overrides", which is the
+	 * default and matches the pre-existing behaviour. Used by the session
+	 * Tools modal so users can opt skills out for this session without mutating
+	 * the global app-level registry.
+	 */
+	disabledSkills?: string[];
 }
 
 /**

@@ -6,14 +6,23 @@
  *
  * NOTE: Legacy per-server disabled-list helpers and `resolveSettingSources`
  * were removed in M5 of `unify-mcp-config-model`; their tests went with them.
+ *
+ * Task #122 added unified-view helpers (session-scoped pending changes,
+ * source badges, effective enablement) — those have their own describe()
+ * blocks at the bottom of this file.
  */
 import { describe, it, expect } from 'vitest';
 import type { AppMcpServer, AppSkill, SessionMcpServerEntry } from '@neokai/shared';
 import {
+	buildDisabledSkillsList,
 	computeMcpServerSkillLinkage,
 	computeMcpSkillRuntimeState,
 	computeSkillGroupState,
+	getMcpServerEffectiveEnabled,
+	getMcpServerProvenanceBadge,
 	getMcpSkillRuntimeClasses,
+	getSkillSourceBadge,
+	isSkillEnabledForSession,
 } from '../ToolsModal.utils.ts';
 
 describe('computeSkillGroupState', () => {
@@ -76,6 +85,22 @@ function makeBuiltinSkill(overrides: Partial<AppSkill> = {}): AppSkill {
 		config: { type: 'builtin', commandName: 'playwright' },
 		enabled: true,
 		builtIn: true,
+		validationStatus: 'valid',
+		createdAt: 0,
+		...overrides,
+	};
+}
+
+function makePluginSkill(overrides: Partial<AppSkill> = {}): AppSkill {
+	return {
+		id: 'skill-plugin',
+		name: 'my-plugin',
+		displayName: 'My Plugin',
+		description: '',
+		sourceType: 'plugin',
+		config: { type: 'plugin', pluginPath: '/tmp/my-plugin' },
+		enabled: true,
+		builtIn: false,
 		validationStatus: 'valid',
 		createdAt: 0,
 		...overrides,
@@ -291,5 +316,141 @@ describe('getMcpSkillRuntimeClasses', () => {
 			dot: 'bg-gray-500',
 			text: 'text-gray-500',
 		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// isSkillEnabledForSession — session-scoped toggle resolution (task #122)
+// ---------------------------------------------------------------------------
+
+describe('isSkillEnabledForSession', () => {
+	it('returns false when the skill is globally disabled, regardless of session state', () => {
+		const skill = makeBuiltinSkill({ enabled: false });
+		// Even with the skill *not* in the disabled list, a globally-disabled skill
+		// can never be effectively enabled for the session — the daemon-side
+		// filter in QueryOptionsBuilder.getEnabledSkills() drops it before any
+		// session override is consulted.
+		expect(isSkillEnabledForSession(skill, new Set())).toBe(false);
+		// And of course adding it to the disabled list keeps it off.
+		expect(isSkillEnabledForSession(skill, new Set([skill.id]))).toBe(false);
+	});
+
+	it('returns true for a globally-enabled skill that is not in the session disable list', () => {
+		const skill = makeBuiltinSkill({ enabled: true });
+		expect(isSkillEnabledForSession(skill, new Set())).toBe(true);
+	});
+
+	it('returns false for a globally-enabled skill that the session has opted out of', () => {
+		const skill = makeBuiltinSkill({ id: 'opt-out', enabled: true });
+		expect(isSkillEnabledForSession(skill, new Set(['opt-out']))).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// buildDisabledSkillsList — Save-time normalisation (task #122)
+// ---------------------------------------------------------------------------
+
+describe('buildDisabledSkillsList', () => {
+	it('returns the IDs of skills currently in the pending set', () => {
+		const skills = [
+			makeBuiltinSkill({ id: 'a' }),
+			makeMcpSkill({ id: 'b' }),
+			makePluginSkill({ id: 'c' }),
+		];
+		expect(buildDisabledSkillsList(skills, new Set(['a', 'c']))).toEqual(['a', 'c']);
+	});
+
+	it('drops pending IDs that no longer correspond to a registry entry', () => {
+		// Defensive behaviour: if a skill was deleted while the modal was open,
+		// we mustn't persist a stale ID — that would silently keep the user in
+		// a "disabled" state for a skill that no longer exists, leaking
+		// confusion across rename/delete cycles.
+		const skills = [makeBuiltinSkill({ id: 'still-here' })];
+		expect(buildDisabledSkillsList(skills, new Set(['still-here', 'ghost-id']))).toEqual([
+			'still-here',
+		]);
+	});
+
+	it('returns an empty array when nothing is pending', () => {
+		const skills = [makeBuiltinSkill({ id: 'a' })];
+		expect(buildDisabledSkillsList(skills, new Set())).toEqual([]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// getSkillSourceBadge — visual identity per skill source (task #122)
+// ---------------------------------------------------------------------------
+
+describe('getSkillSourceBadge', () => {
+	it('gives builtin skills a "Built-in" badge', () => {
+		const badge = getSkillSourceBadge(makeBuiltinSkill());
+		expect(badge.label).toBe('Built-in');
+		expect(badge.className).toMatch(/blue/);
+	});
+
+	it('gives plugin skills a "Plugin" badge', () => {
+		const badge = getSkillSourceBadge(makePluginSkill());
+		expect(badge.label).toBe('Plugin');
+		expect(badge.className).toMatch(/violet/);
+	});
+
+	it('gives mcp_server skills an "MCP" badge', () => {
+		const badge = getSkillSourceBadge(makeMcpSkill());
+		expect(badge.label).toBe('MCP');
+		// Amber matches AppMcpServersSettings — visual consistency across
+		// the modal and the global settings page.
+		expect(badge.className).toMatch(/amber/);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// getMcpServerProvenanceBadge — distinct from effective-enablement source
+// ---------------------------------------------------------------------------
+
+describe('getMcpServerProvenanceBadge', () => {
+	it('labels builtin servers as "Built-in"', () => {
+		const badge = getMcpServerProvenanceBadge(makeAppMcpServer({ source: 'builtin' }));
+		expect(badge.label).toBe('Built-in');
+	});
+
+	it('labels imported servers as "Imported"', () => {
+		const badge = getMcpServerProvenanceBadge(
+			makeAppMcpServer({ source: 'imported', sourcePath: '/tmp/.mcp.json' })
+		);
+		expect(badge.label).toBe('Imported');
+	});
+
+	it('labels user-created servers as "User"', () => {
+		const badge = getMcpServerProvenanceBadge(makeAppMcpServer({ source: 'user' }));
+		expect(badge.label).toBe('User');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// getMcpServerEffectiveEnabled — pending toggles + clear-override semantics
+// ---------------------------------------------------------------------------
+
+describe('getMcpServerEffectiveEnabled', () => {
+	it('uses the daemon-resolved value when there is no pending change', () => {
+		const entry = makeEntry({ enabled: true });
+		expect(getMcpServerEffectiveEnabled(entry, undefined)).toBe(true);
+
+		const entry2 = makeEntry({ enabled: false });
+		expect(getMcpServerEffectiveEnabled(entry2, undefined)).toBe(false);
+	});
+
+	it('uses the pending boolean when set', () => {
+		const entry = makeEntry({ enabled: true });
+		// User unchecked the box — pending.enabled === false.
+		expect(getMcpServerEffectiveEnabled(entry, { enabled: false })).toBe(false);
+	});
+
+	it('falls back to the daemon-resolved value when pending is a clear (null)', () => {
+		// Clear-override semantics: until Save fires, the row is still in the
+		// daemon's `mcp_enablement` table, so the user keeps seeing whatever the
+		// resolver currently reports. Save-time logic decides whether to actually
+		// delete the row.
+		const entry = makeEntry({ enabled: false, source: 'session' });
+		expect(getMcpServerEffectiveEnabled(entry, { enabled: null })).toBe(false);
 	});
 });
