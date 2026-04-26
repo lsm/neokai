@@ -50,6 +50,7 @@ import { WorktreeChoiceInline } from '../components/WorktreeChoiceInline.tsx';
 import { WorkspaceSelector } from '../components/WorkspaceSelector.tsx';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
+import { useScrollToMessage } from '../hooks/useScrollToMessage.ts';
 // Hooks
 import { useModal } from '../hooks/useModal.ts';
 import { useChatComposerController } from '../hooks/useChatComposerController.ts';
@@ -656,44 +657,17 @@ export default function ChatContainer({
 	// ========================================
 	// Highlight a specific message (deep-link from minimal thread feed)
 	// ========================================
-	// When `highlightMessageId` is provided, scroll the matching row into view
-	// and apply a brief amber ring so the user can spot it. Re-runs when the
-	// id changes or messages finish loading (so the target may not be in the
-	// DOM on first render).
-	useEffect(() => {
-		if (!highlightMessageId) return;
-		if (isInitialLoad) return;
-
-		const container = messagesContainerRef.current;
-		if (!container) return;
-
-		const target = container.querySelector<HTMLElement>(
-			`[data-message-id="${CSS.escape(highlightMessageId)}"]`
-		);
-		if (!target) return;
-
-		// Scroll into view and apply a temporary highlight ring.
-		target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-		const HIGHLIGHT_CLASSES = [
-			'ring-2',
-			'ring-amber-400/70',
-			'ring-offset-2',
-			'ring-offset-dark-900',
-			'rounded-lg',
-			'transition-shadow',
-			'duration-700',
-		];
-		target.classList.add(...HIGHLIGHT_CLASSES);
-		const timer = window.setTimeout(() => {
-			target.classList.remove(...HIGHLIGHT_CLASSES);
-		}, 1800);
-
-		return () => {
-			window.clearTimeout(timer);
-			target.classList.remove(...HIGHLIGHT_CLASSES);
-		};
-	}, [highlightMessageId, isInitialLoad, messages.length]);
+	// `useScrollToMessage` scrolls the matching row to viewport center, applies
+	// a temporary amber ring, and re-anchors briefly to handle layout shifts.
+	// Note: `enabled: autoScroll && !highlightMessageId` is also passed to
+	// `useAutoScroll` above so the initial-load tail-follow can't race the
+	// deep-link scroll.
+	useScrollToMessage({
+		containerRef: messagesContainerRef,
+		messageId: highlightMessageId,
+		messageCount: messages.length,
+		isInitialLoad,
+	});
 
 	// ========================================
 	// Message Maps (for tool results/inputs)

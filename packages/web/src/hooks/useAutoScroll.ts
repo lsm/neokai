@@ -144,8 +144,12 @@ export function useAutoScroll({
 	useEffect(() => {
 		const hasNewContent = messageCount > prevMessageCountRef.current;
 
-		// Always scroll on initial load when first messages arrive
-		if (isInitialLoad && messageCount > 0 && !hasScrolledOnInitialLoad.current) {
+		// Scroll-to-bottom on initial load when first messages arrive — but only
+		// when auto-scroll is `enabled`. Callers that disable auto-scroll while
+		// asking us to focus a specific row (e.g. deep-link via `useScrollToMessage`)
+		// rely on this gate so that the initial-load scroll does not race with
+		// (and override) their `scrollIntoView` call.
+		if (enabled && isInitialLoad && messageCount > 0 && !hasScrolledOnInitialLoad.current) {
 			scrollToBottom();
 			hasScrolledOnInitialLoad.current = true;
 			prevMessageCountRef.current = messageCount;
