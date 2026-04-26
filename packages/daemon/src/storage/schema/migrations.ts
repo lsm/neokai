@@ -11,6 +11,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
+import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
 
 /**
  * Run all database migrations
@@ -494,6 +495,19 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//     dropping it is gated on a writer audit and shipped in a later
 	//     cleanup migration.
 	runMigration104(db);
+
+	// Migration 105: Add template_name and template_hash to space_agents for
+	//   preset-agent drift detection. Mirrors the workflow template-tracking
+	//   columns added in M90 so preset-seeded agents can detect when the source
+	//   definitions in seed-agents.ts have moved on, and the UI can offer a
+	//   one-click "Sync from template" action.
+	runMigration105(db);
+
+	// Migration 106: Backfill template_name + template_hash on existing
+	//   space_agents rows that match a preset agent by name but predate M105.
+	//   Self-contained (frozen preset fingerprints inlined) — same pattern as
+	//   M94 for workflow templates.
+	runMigration106(db);
 }
 
 /**
@@ -7314,4 +7328,37 @@ export function runMigration104(db: BunDatabase): void {
 	) {
 		db.exec(`ALTER TABLE space_workflow_runs DROP COLUMN completion_actions_fired_at`);
 	}
+}
+
+/**
+ * Migration 105: Add `template_name` and `template_hash` columns to
+ * `space_agents` for preset-agent drift detection. Mirrors the workflow
+ * template-tracking columns added in M90 — preset-seeded agents now carry
+ * these fields so the daemon can detect when the source preset definition
+ * has changed and the UI can surface a "Sync from template" action.
+ *
+ * Both columns are nullable: user-created agents always have NULL for both,
+ * which is the marker the drift-detection RPC uses to ignore them.
+ *
+ * Idempotent: re-running on a DB that already has the columns is a no-op.
+ */
+export function runMigration105(db: BunDatabase): void {
+	if (!tableExists(db, 'space_agents')) return;
+
+	if (!tableHasColumn(db, 'space_agents', 'template_name')) {
+		db.exec(`ALTER TABLE space_agents ADD COLUMN template_name TEXT DEFAULT NULL`);
+	}
+	if (!tableHasColumn(db, 'space_agents', 'template_hash')) {
+		db.exec(`ALTER TABLE space_agents ADD COLUMN template_hash TEXT DEFAULT NULL`);
+	}
+}
+
+/**
+ * Migration 106 — delegated to m106-backfill-agent-templates.ts so the
+ * frozen preset definitions don't bloat this file. Runs strictly *after*
+ * M105 so the columns exist. The behaviour is documented in that module.
+ * Exported for direct invocation from tests.
+ */
+export function runMigration106(db: BunDatabase): void {
+	runMigration106External(db);
 }

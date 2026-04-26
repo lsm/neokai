@@ -10,10 +10,18 @@
  *   - Deletion blocked when agent is referenced by workflow nodes
  */
 
-import type { SpaceAgent, CreateSpaceAgentParams, UpdateSpaceAgentParams } from '@neokai/shared';
+import type {
+	SpaceAgent,
+	CreateSpaceAgentParams,
+	UpdateSpaceAgentParams,
+	AgentDriftEntry,
+	AgentDriftReport,
+} from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
 import { isValidModel, getAvailableModels, getModelInfoUnfiltered } from '../../model-service';
+import { getPresetAgentTemplates } from '../agents/seed-agents';
+import { computeAgentTemplateHash } from '../agents/agent-template-hash';
 
 const KNOWN_TOOLS_SET = new Set<string>(KNOWN_TOOLS);
 
@@ -132,6 +140,82 @@ export class SpaceAgentManager {
 	 */
 	getAgentsByIds(ids: string[]): SpaceAgent[] {
 		return this.repo.getAgentsByIds(ids);
+	}
+
+	/**
+	 * Build a drift report for every preset-tracked agent in a space.
+	 *
+	 * For each `SpaceAgent` row that has a non-null `templateName`, this
+	 * recomputes the current preset's hash from `getPresetAgentTemplates()`
+	 * and compares it to the stored `templateHash`. Rows whose `templateName`
+	 * doesn't match any current preset (e.g. a preset was deleted in code) are
+	 * silently skipped — there's nothing to sync against.
+	 *
+	 * User-created agents (`templateName === null`) are NOT included in the
+	 * report at all; the UI relies on this to decide which cards get a badge.
+	 */
+	getAgentDriftReport(spaceId: string): AgentDriftReport {
+		const agents = this.repo.getBySpaceId(spaceId);
+		const presetByName = new Map(getPresetAgentTemplates().map((p) => [p.name.toLowerCase(), p]));
+
+		const entries: AgentDriftEntry[] = [];
+		for (const agent of agents) {
+			if (!agent.templateName) continue;
+			const preset = presetByName.get(agent.templateName.toLowerCase());
+			if (!preset) continue;
+
+			const currentHash = computeAgentTemplateHash(preset);
+			const storedHash = agent.templateHash ?? null;
+			entries.push({
+				agentId: agent.id,
+				agentName: agent.name,
+				templateName: agent.templateName,
+				storedHash,
+				currentHash,
+				drifted: storedHash !== currentHash,
+			});
+		}
+
+		return { spaceId, agents: entries };
+	}
+
+	/**
+	 * Reset a preset-tracked agent's `description`, `tools`, and
+	 * `customPrompt` to the current preset definition, then re-stamp the
+	 * stored `templateHash`. Throws when the agent is not preset-tracked or
+	 * when the preset can no longer be found in code.
+	 *
+	 * The agent's `id`, `spaceId`, `name`, `model`, and `provider` are
+	 * preserved — only the fields that participate in the fingerprint are
+	 * overwritten.
+	 */
+	async syncFromTemplate(agentId: string): Promise<SpaceAgentResult<SpaceAgent>> {
+		const existing = this.repo.getById(agentId);
+		if (!existing) return { ok: false, error: `Agent not found: ${agentId}` };
+		if (!existing.templateName) {
+			return {
+				ok: false,
+				error: `Agent "${existing.name}" is not linked to a preset template and cannot be synced.`,
+			};
+		}
+
+		const presetByName = new Map(getPresetAgentTemplates().map((p) => [p.name.toLowerCase(), p]));
+		const preset = presetByName.get(existing.templateName.toLowerCase());
+		if (!preset) {
+			return {
+				ok: false,
+				error: `Preset template "${existing.templateName}" not found. It may have been removed from the code.`,
+			};
+		}
+
+		const updated = this.repo.update(agentId, {
+			description: preset.description,
+			tools: preset.tools,
+			customPrompt: preset.customPrompt,
+			templateHash: computeAgentTemplateHash(preset),
+		});
+		if (!updated) return { ok: false, error: `Agent not found after sync: ${agentId}` };
+		return { ok: true, value: updated };
 	}
 
 	// ---------------------------------------------------------------------------

@@ -388,4 +388,209 @@ describe('SpaceAgentManager', () => {
 			if (result.ok) expect(result.value.tools).toBeUndefined();
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// drift detection — getAgentDriftReport / syncFromTemplate
+	// -------------------------------------------------------------------------
+
+	describe('getAgentDriftReport', () => {
+		it('returns an empty report when the space has no agents', () => {
+			const report = manager.getAgentDriftReport('space-1');
+			expect(report.spaceId).toBe('space-1');
+			expect(report.agents).toEqual([]);
+		});
+
+		it('omits user-created agents (no templateName) entirely from the report', async () => {
+			await manager.create({ spaceId: 'space-1', name: 'CustomBot' });
+			const report = manager.getAgentDriftReport('space-1');
+			expect(report.agents).toEqual([]);
+		});
+
+		it('reports drifted=false when stored hash matches the current preset hash', async () => {
+			// Use a known preset name ("Coder") so the manager can find a live
+			// preset to compare against. We seed it with the real preset's hash.
+			const { getPresetAgentTemplates } = await import(
+				'../../../../src/lib/space/agents/seed-agents'
+			);
+			const { computeAgentTemplateHash } = await import(
+				'../../../../src/lib/space/agents/agent-template-hash'
+			);
+			const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
+			if (!coder) throw new Error('Coder preset missing');
+			const hash = computeAgentTemplateHash(coder);
+
+			await manager.create({
+				spaceId: 'space-1',
+				name: 'Coder',
+				description: coder.description,
+				tools: coder.tools,
+				customPrompt: coder.customPrompt,
+				templateName: 'Coder',
+				templateHash: hash,
+			});
+
+			const report = manager.getAgentDriftReport('space-1');
+			expect(report.agents).toHaveLength(1);
+			expect(report.agents[0].agentName).toBe('Coder');
+			expect(report.agents[0].templateName).toBe('Coder');
+			expect(report.agents[0].drifted).toBe(false);
+			expect(report.agents[0].storedHash).toBe(hash);
+			expect(report.agents[0].currentHash).toBe(hash);
+		});
+
+		it('reports drifted=true when stored hash differs from the current preset hash', async () => {
+			await manager.create({
+				spaceId: 'space-1',
+				name: 'Coder',
+				description: 'Old description',
+				tools: ['Read'],
+				customPrompt: 'old prompt',
+				templateName: 'Coder',
+				templateHash: 'stale-hash-value',
+			});
+
+			const report = manager.getAgentDriftReport('space-1');
+			expect(report.agents).toHaveLength(1);
+			expect(report.agents[0].drifted).toBe(true);
+			expect(report.agents[0].storedHash).toBe('stale-hash-value');
+			expect(report.agents[0].currentHash).not.toBe('stale-hash-value');
+		});
+
+		it('reports drifted=true when storedHash is null (post-backfill unmatchable rows)', async () => {
+			await manager.create({
+				spaceId: 'space-1',
+				name: 'Coder',
+				templateName: 'Coder',
+				// Intentionally omit templateHash — exercises the null-hash branch.
+			});
+
+			const report = manager.getAgentDriftReport('space-1');
+			expect(report.agents).toHaveLength(1);
+			expect(report.agents[0].storedHash).toBeNull();
+			expect(report.agents[0].drifted).toBe(true);
+		});
+
+		it('skips rows whose templateName no longer matches any preset', async () => {
+			await manager.create({
+				spaceId: 'space-1',
+				name: 'Ghost',
+				templateName: 'NonExistentPreset',
+				templateHash: 'whatever',
+			});
+
+			const report = manager.getAgentDriftReport('space-1');
+			expect(report.agents).toEqual([]);
+		});
+	});
+
+	describe('syncFromTemplate', () => {
+		it('rejects user-created (non-preset) agents', async () => {
+			const created = await manager.create({ spaceId: 'space-1', name: 'CustomBot' });
+			if (!created.ok) throw new Error('create failed');
+
+			const result = await manager.syncFromTemplate(created.value.id);
+			expect(result.ok).toBe(false);
+			if (!result.ok) expect(result.error).toMatch(/not linked to a preset/i);
+		});
+
+		it('rejects when the agent ID does not exist', async () => {
+			const result = await manager.syncFromTemplate('does-not-exist');
+			expect(result.ok).toBe(false);
+			if (!result.ok) expect(result.error).toMatch(/not found/i);
+		});
+
+		it('rejects when the templateName references a preset that no longer exists', async () => {
+			const created = await manager.create({
+				spaceId: 'space-1',
+				name: 'Ghost',
+				templateName: 'NonExistentPreset',
+				templateHash: 'whatever',
+			});
+			if (!created.ok) throw new Error('create failed');
+
+			const result = await manager.syncFromTemplate(created.value.id);
+			expect(result.ok).toBe(false);
+			if (!result.ok) expect(result.error).toMatch(/not found/i);
+		});
+
+		it('overwrites description, tools, and customPrompt with current preset values', async () => {
+			const { getPresetAgentTemplates } = await import(
+				'../../../../src/lib/space/agents/seed-agents'
+			);
+			const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
+			if (!coder) throw new Error('Coder preset missing');
+
+			const created = await manager.create({
+				spaceId: 'space-1',
+				name: 'Coder',
+				description: 'User-edited description',
+				tools: ['Read'],
+				customPrompt: 'User-edited prompt',
+				templateName: 'Coder',
+				templateHash: 'stale-hash',
+			});
+			if (!created.ok) throw new Error('create failed');
+
+			const result = await manager.syncFromTemplate(created.value.id);
+			expect(result.ok).toBe(true);
+			if (!result.ok) throw new Error('expected ok');
+
+			expect(result.value.description).toBe(coder.description);
+			expect(result.value.tools).toEqual(coder.tools);
+			expect(result.value.customPrompt).toBe(coder.customPrompt);
+		});
+
+		it('preserves id, spaceId, name, model, and provider', async () => {
+			const created = await manager.create({
+				spaceId: 'space-1',
+				name: 'Coder',
+				description: 'old',
+				tools: ['Read'],
+				customPrompt: 'old',
+				templateName: 'Coder',
+				templateHash: 'stale',
+			});
+			if (!created.ok) throw new Error('create failed');
+
+			// Force a model + provider after create (to verify they survive sync).
+			const updated = await manager.update(created.value.id, {
+				model: 'sonnet',
+				provider: 'anthropic',
+			});
+			if (!updated.ok) throw new Error('update failed');
+
+			const result = await manager.syncFromTemplate(created.value.id);
+			expect(result.ok).toBe(true);
+			if (!result.ok) throw new Error('expected ok');
+
+			expect(result.value.id).toBe(created.value.id);
+			expect(result.value.spaceId).toBe(created.value.spaceId);
+			expect(result.value.name).toBe('Coder');
+			expect(result.value.model).toBe('sonnet');
+			expect(result.value.provider).toBe('anthropic');
+		});
+
+		it('re-stamps templateHash so a follow-up drift report shows drifted=false', async () => {
+			const created = await manager.create({
+				spaceId: 'space-1',
+				name: 'Coder',
+				description: 'old',
+				tools: ['Read'],
+				customPrompt: 'old',
+				templateName: 'Coder',
+				templateHash: 'stale-hash',
+			});
+			if (!created.ok) throw new Error('create failed');
+
+			const before = manager.getAgentDriftReport('space-1');
+			expect(before.agents[0].drifted).toBe(true);
+
+			const sync = await manager.syncFromTemplate(created.value.id);
+			expect(sync.ok).toBe(true);
+
+			const after = manager.getAgentDriftReport('space-1');
+			expect(after.agents[0].drifted).toBe(false);
+			expect(after.agents[0].storedHash).toBe(after.agents[0].currentHash);
+		});
+	});
 });

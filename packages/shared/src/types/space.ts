@@ -689,6 +689,18 @@ export interface SpaceAgent {
 	 * When unset, role-based defaults apply.
 	 */
 	tools?: string[];
+	/**
+	 * When this agent was seeded from a preset, the canonical preset name
+	 * (e.g. "Reviewer", "Coder"). Null/undefined for user-created agents and
+	 * for any preset row that predates template tracking.
+	 */
+	templateName?: string | null;
+	/**
+	 * SHA-256 fingerprint of the preset definition at the time it was last
+	 * seeded or synced. Compared against the live preset hash to detect drift.
+	 * Null/undefined when {@link templateName} is null.
+	 */
+	templateHash?: string | null;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
@@ -708,6 +720,17 @@ export interface CreateSpaceAgentParams {
 	customPrompt?: string | null;
 	/** Tool list override — any entry must be a name from KNOWN_TOOLS */
 	tools?: string[];
+	/**
+	 * Optional preset template name. Set by `seedPresetAgents()` when seeding
+	 * built-in presets; left undefined for user-created agents.
+	 * When set, `templateHash` should also be supplied.
+	 */
+	templateName?: string | null;
+	/**
+	 * Optional template fingerprint hash captured at seed time. Used by
+	 * drift-detection to spot when the source preset definition has changed.
+	 */
+	templateHash?: string | null;
 }
 
 /**
@@ -722,6 +745,56 @@ export interface UpdateSpaceAgentParams {
 	customPrompt?: string | null;
 	/** Tool list override — null clears (reverts to role defaults) */
 	tools?: string[] | null;
+	/**
+	 * Update the preset template name. Pass `null` to clear template tracking
+	 * (e.g. when a user converts a preset agent into a fully custom one).
+	 */
+	templateName?: string | null;
+	/**
+	 * Update the stored template fingerprint hash. Used by the
+	 * `spaceAgent.syncFromTemplate` RPC after re-stamping a preset row to
+	 * the current definition.
+	 */
+	templateHash?: string | null;
+}
+
+/**
+ * Single entry in an {@link AgentDriftReport}.
+ *
+ * Each entry corresponds to one preset-seeded `SpaceAgent` row in a space.
+ * Rows for user-created agents (no `templateName`) are not included in the
+ * report at all.
+ */
+export interface AgentDriftEntry {
+	/** Agent UUID. */
+	agentId: string;
+	/** Human-readable agent name (matches `SpaceAgent.name`). */
+	agentName: string;
+	/** Preset template name this agent was seeded from. */
+	templateName: string;
+	/**
+	 * Hash captured the last time this row was seeded or synced.
+	 * Null when the row predates template tracking and the backfill
+	 * migration could not match the row to a preset.
+	 */
+	storedHash: string | null;
+	/** Hash of the current preset definition in code. */
+	currentHash: string;
+	/** True when {@link storedHash} differs from {@link currentHash}. */
+	drifted: boolean;
+}
+
+/**
+ * Returned by `spaceAgent.getDriftReport`. Lists all preset-seeded agents in
+ * a space with the comparison between their stored fingerprint and the
+ * current preset definition. Callers typically filter by `drifted === true`
+ * to surface a UI badge / sync button.
+ */
+export interface AgentDriftReport {
+	/** Space the report was generated for. */
+	spaceId: string;
+	/** Per-agent drift entries — one row per preset-tracked SpaceAgent. */
+	agents: AgentDriftEntry[];
 }
 
 // ============================================================================
