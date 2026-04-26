@@ -22,6 +22,7 @@ import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
+import { SubmitForReviewModal } from './SubmitForReviewModal';
 
 interface SpaceTaskPaneProps {
 	taskId: string | null;
@@ -91,6 +92,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const [threadSendError, setThreadSendError] = useState<string | null>(null);
 	const [sendingThread, setSendingThread] = useState(false);
 	const [statusTransitioning, setStatusTransitioning] = useState(false);
+	const [showSubmitForReviewModal, setShowSubmitForReviewModal] = useState(false);
 	const activeView = currentSpaceTaskViewTabSignal.value;
 	const _spaceId = currentSpaceIdSignal.value ?? '';
 
@@ -249,6 +251,16 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	};
 
 	const handleStatusTransition = async (newStatus: SpaceTaskStatus) => {
+		// Submitting for review is the human counterpart of the agent
+		// `submit_for_approval` tool — it must stamp pending-completion metadata
+		// so `PendingTaskCompletionBanner` renders. Open the optional-reason
+		// modal instead of issuing a bare status update; the modal calls
+		// `spaceStore.submitForReview` on confirm.
+		if (newStatus === 'review') {
+			setThreadSendError(null);
+			setShowSubmitForReviewModal(true);
+			return;
+		}
 		try {
 			setStatusTransitioning(true);
 			setThreadSendError(null);
@@ -260,9 +272,29 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		}
 	};
 
+	const handleSubmitForReviewConfirm = async (reason: string | null) => {
+		try {
+			setStatusTransitioning(true);
+			setThreadSendError(null);
+			await spaceStore.submitForReview(task.id, reason);
+			setShowSubmitForReviewModal(false);
+		} catch (err) {
+			setThreadSendError(formatTaskThreadError(err));
+		} finally {
+			setStatusTransitioning(false);
+		}
+	};
+
 	const allTransitionActions = getTransitionActions(task.status);
+	// Mirrors the filter in `TaskStatusActions`: any task in `review` is
+	// "awaiting human approval via a dedicated banner" — the bare review→done /
+	// review→cancelled buttons would bypass `PostApprovalRouter` and the
+	// approval metadata stamping. Hide them so the only Approve / Cancel path
+	// is the banner. Non-approval escape hatches (Reopen, Archive) stay.
 	const filteredTransitionActions =
-		task.pendingCheckpointType === 'task_completion' || task.pendingCheckpointType === 'gate'
+		task.status === 'review' ||
+		task.pendingCheckpointType === 'task_completion' ||
+		task.pendingCheckpointType === 'gate'
 			? allTransitionActions.filter(({ target }) => target !== 'done' && target !== 'cancelled')
 			: allTransitionActions;
 
@@ -518,6 +550,14 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					</div>
 				)}
 			</div>
+			<SubmitForReviewModal
+				isOpen={showSubmitForReviewModal}
+				busy={statusTransitioning}
+				onCancel={() => {
+					if (!statusTransitioning) setShowSubmitForReviewModal(false);
+				}}
+				onConfirm={handleSubmitForReviewConfirm}
+			/>
 		</div>
 	);
 }

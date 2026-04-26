@@ -151,6 +151,21 @@ export function setupSpaceTaskHandlers(
 			}
 
 			if (updateParams.status !== currentTask.status) {
+				// Reject bare transitions into `review`. Every task that lands in
+				// `review` MUST carry the pending-completion fields so
+				// `PendingTaskCompletionBanner` renders and approvals route through
+				// `PostApprovalRouter`. Callers must use `spaceTask.submitForReview`
+				// (UI) or the agent `submit_for_approval` tool — both go through
+				// `SpaceTaskManager.submitTaskForReview` which writes the metadata
+				// atomically. Without this guard a stray `update({status:'review'})`
+				// would re-introduce the banner-less generic-button flow.
+				if (updateParams.status === 'review') {
+					throw new Error(
+						`spaceTask.update cannot transition a task into 'review' directly. ` +
+							`Use spaceTask.submitForReview (or the agent submit_for_approval tool) ` +
+							`so the pending-completion fields get stamped and the approval banner renders.`
+					);
+				}
 				// Status is changing — validate via setTaskStatus (enforces transitions).
 				// `approvalReason` is stamped on review→done; `cancelReason` is
 				// persisted into the same underlying column for review→cancelled
@@ -215,6 +230,55 @@ export function setupSpaceTaskHandlers(
 				sessionId: 'global',
 				spaceId,
 				taskId,
+				task,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit space.task.updated:', err);
+			});
+
+		return task;
+	});
+
+	// ─── spaceTask.submitForReview ──────────────────────────────────────────────
+	// User-initiated counterpart to the agent `submit_for_approval` tool. Both
+	// paths converge on `SpaceTaskManager.submitTaskForReview`, which atomically
+	// transitions the task into `review` and stamps the pending-completion
+	// fields that drive `PendingTaskCompletionBanner`. Without this RPC the UI
+	// "Submit for Review" button degraded to a bare status update — landing the
+	// task in `review` with no banner, no metadata, and a generic Approve button
+	// that bypassed `PostApprovalRouter`. After unification, every task in
+	// `review` is banner-eligible regardless of who submitted it.
+	//
+	// `pendingCompletionSubmittedByNodeId` is set to `null` for user-initiated
+	// submissions — same semantics as a Task Agent self-submit. The post-
+	// approval router treats both identically (no waiting end-node session to
+	// resume; awareness events are best-effort).
+	messageHub.onRequest('spaceTask.submitForReview', async (data) => {
+		const params = data as {
+			spaceId: string;
+			taskId: string;
+			reason?: string | null;
+		};
+
+		if (!params.spaceId) throw new Error('spaceId is required');
+		if (!params.taskId) throw new Error('taskId is required');
+
+		const space = await spaceManager.getSpace(params.spaceId);
+		if (!space) {
+			throw new Error(`Space not found: ${params.spaceId}`);
+		}
+
+		const taskManager = taskManagerFactory(params.spaceId);
+		const task = await taskManager.submitTaskForReview(params.taskId, {
+			submittedByNodeId: null,
+			reason: params.reason ?? null,
+		});
+
+		daemonHub
+			.emit('space.task.updated', {
+				sessionId: 'global',
+				spaceId: params.spaceId,
+				taskId: params.taskId,
 				task,
 			})
 			.catch((err) => {

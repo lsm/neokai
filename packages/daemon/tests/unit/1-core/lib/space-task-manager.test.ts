@@ -938,4 +938,71 @@ describe('SpaceTaskManager', () => {
 			expect(Math.max(...numbers)).toBe(20);
 		});
 	});
+
+	// ─── submitTaskForReview ────────────────────────────────────────────────
+	//
+	// Single entry point for the agent `submit_for_approval` tool, the Task Agent
+	// self-submit path, and the UI "Submit for Review" RPC. The contract: any task
+	// landing in `review` MUST carry the pending-completion fields so
+	// `PendingTaskCompletionBanner` renders and approvals route through
+	// `PostApprovalRouter`. These tests pin that atomic write contract end-to-end
+	// against a real SQLite database.
+	describe('submitTaskForReview', () => {
+		it('transitions in_progress→review and stamps pending-completion fields atomically', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+
+			const reviewing = await manager.submitTaskForReview(task.id, {
+				submittedByNodeId: 'node-A',
+				reason: 'ready for human review',
+			});
+
+			expect(reviewing.status).toBe('review');
+			expect(reviewing.pendingCheckpointType).toBe('task_completion');
+			expect(reviewing.pendingCompletionSubmittedByNodeId).toBe('node-A');
+			expect(reviewing.pendingCompletionReason).toBe('ready for human review');
+			expect(typeof reviewing.pendingCompletionSubmittedAt).toBe('number');
+		});
+
+		it('accepts null submittedByNodeId for Task Agent / UI submissions', async () => {
+			// Task Agent self-submit and UI "Submit for Review" both pass null —
+			// no waiting end-node session to resume. The PostApprovalRouter
+			// distinguishes these cases via `pendingCompletionSubmittedByNodeId`.
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+
+			const reviewing = await manager.submitTaskForReview(task.id, {
+				submittedByNodeId: null,
+				reason: null,
+			});
+
+			expect(reviewing.status).toBe('review');
+			expect(reviewing.pendingCheckpointType).toBe('task_completion');
+			expect(reviewing.pendingCompletionSubmittedByNodeId).toBeNull();
+			expect(reviewing.pendingCompletionReason).toBeNull();
+		});
+
+		it('rejects illegal source statuses before any pending-* fields get written', async () => {
+			// `done → review` is not in VALID_SPACE_TASK_TRANSITIONS — the helper
+			// must surface the transition error from `setTaskStatus` *before*
+			// touching the pending-completion columns. Otherwise a banner would
+			// render on top of an already-completed task.
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.completeTask(task.id, 'done');
+
+			await expect(
+				manager.submitTaskForReview(task.id, {
+					submittedByNodeId: null,
+					reason: null,
+				})
+			).rejects.toThrow(/Invalid status transition/);
+
+			// Confirm no partial write — task is still `done` with no pending fields.
+			const after = await manager.getTask(task.id);
+			expect(after?.status).toBe('done');
+			expect(after?.pendingCheckpointType).toBeFalsy();
+			expect(after?.pendingCompletionSubmittedAt).toBeFalsy();
+		});
+	});
 });

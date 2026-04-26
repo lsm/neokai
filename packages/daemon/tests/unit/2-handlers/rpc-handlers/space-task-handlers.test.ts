@@ -107,6 +107,18 @@ function createMockTaskManager(task: SpaceTask | null = mockTask): SpaceTaskMana
 		setTaskStatus: mock(async () => ({ ...task!, status: 'in_progress' as const })),
 		updateTask: mock(async () => ({ ...task!, title: 'Updated' })),
 		updateTaskProgress: mock(async () => ({ ...task!, progress: 50 })),
+		// Unified entry point used by both `spaceTask.submitForReview` (UI) and
+		// the agent `submit_for_approval` tool. Returns a task in `review` with
+		// the pending-completion fields stamped — mirrors the real manager's
+		// output shape so handler-level assertions stay accurate.
+		submitTaskForReview: mock(async (_taskId: string, opts: { reason: string | null }) => ({
+			...task!,
+			status: 'review' as const,
+			pendingCheckpointType: 'task_completion' as const,
+			pendingCompletionSubmittedByNodeId: null,
+			pendingCompletionSubmittedAt: NOW,
+			pendingCompletionReason: opts.reason,
+		})),
 	} as unknown as SpaceTaskManager;
 }
 
@@ -653,8 +665,29 @@ describe('space-task-handlers', () => {
 			setup(mockSpace, doneTask);
 
 			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockRejectedValue(
-				new Error("Invalid status transition from 'done' to 'review'. Allowed: none")
+				new Error("Invalid status transition from 'done' to 'in_progress'. Allowed: none")
 			);
+
+			await expect(
+				call('spaceTask.update', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					status: 'in_progress',
+				})
+			).rejects.toThrow('Invalid status transition');
+		});
+
+		it('rejects bare in_progress→review transitions and points at spaceTask.submitForReview', async () => {
+			// Unification (Task #123): every task that lands in `review` must
+			// carry the pending-completion fields so `PendingTaskCompletionBanner`
+			// renders and approvals route through `PostApprovalRouter`. The
+			// `spaceTask.update` path can't stamp those fields, so the handler
+			// must reject `status: 'review'` requests and direct callers to
+			// `spaceTask.submitForReview` (or the agent `submit_for_approval`
+			// tool). Without this guard the legacy bare-status flow would slip
+			// back in and produce banner-less `review` tasks.
+			const inProgressTask = { ...mockTask, status: 'in_progress' as const };
+			setup(mockSpace, inProgressTask);
 
 			await expect(
 				call('spaceTask.update', {
@@ -662,7 +695,11 @@ describe('space-task-handlers', () => {
 					taskId: 'task-1',
 					status: 'review',
 				})
-			).rejects.toThrow('Invalid status transition');
+			).rejects.toThrow(/spaceTask\.submitForReview/);
+			// The handler must short-circuit before hitting the manager so a
+			// bad caller never gets a partial write.
+			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+			expect(taskManager.updateTask).not.toHaveBeenCalled();
 		});
 
 		it('propagates errors from updateTask', async () => {
@@ -685,4 +722,102 @@ describe('space-task-handlers', () => {
 	// proceeds through the plain `taskManager.setTaskStatus` path for any task
 	// without a `task_completion` checkpoint; tasks with `task_completion` are
 	// routed through `approvePendingCompletion` (tested in its own file).
+
+	// ─── spaceTask.submitForReview ────────────────────────────────────────────
+	//
+	// User-initiated counterpart to the agent `submit_for_approval` tool. The
+	// handler must funnel the request through `SpaceTaskManager.submitTaskForReview`
+	// (the unified entry point) so the resulting task always carries the
+	// pending-completion fields that drive `PendingTaskCompletionBanner`. These
+	// tests pin the handler-level contract: argument shape, validation, event
+	// emission, and error propagation.
+	describe('spaceTask.submitForReview', () => {
+		beforeEach(() => setup());
+
+		it('delegates to taskManager.submitTaskForReview with submittedByNodeId=null and the reason', async () => {
+			// `submittedByNodeId: null` is load-bearing — it tells the
+			// PostApprovalRouter that no end-node session is waiting to be
+			// resumed (same semantics as a Task Agent self-submit).
+			const result = await call('spaceTask.submitForReview', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				reason: 'ready for human eyes',
+			});
+
+			expect(taskManager.submitTaskForReview).toHaveBeenCalledWith('task-1', {
+				submittedByNodeId: null,
+				reason: 'ready for human eyes',
+			});
+			expect((result as SpaceTask).status).toBe('review');
+			expect((result as SpaceTask).pendingCheckpointType).toBe('task_completion');
+			expect((result as SpaceTask).pendingCompletionReason).toBe('ready for human eyes');
+		});
+
+		it('coerces missing reason to null so the manager always receives an explicit value', async () => {
+			// Defensive: the manager treats `undefined` and `null` differently for
+			// its DB writer (only `null` clears the column). The handler must
+			// normalize so callers can omit the field without ambiguity.
+			await call('spaceTask.submitForReview', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+			});
+
+			expect(taskManager.submitTaskForReview).toHaveBeenCalledWith('task-1', {
+				submittedByNodeId: null,
+				reason: null,
+			});
+		});
+
+		it('emits space.task.updated with the post-submit task', async () => {
+			await call('spaceTask.submitForReview', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				reason: 'ready',
+			});
+
+			expect(daemonHub.emit).toHaveBeenCalledWith('space.task.updated', {
+				sessionId: 'global',
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				task: expect.objectContaining({
+					status: 'review',
+					pendingCheckpointType: 'task_completion',
+				}),
+			});
+		});
+
+		it('throws when spaceId is missing', async () => {
+			await expect(call('spaceTask.submitForReview', { taskId: 'task-1' })).rejects.toThrow(
+				'spaceId is required'
+			);
+			expect(taskManager.submitTaskForReview).not.toHaveBeenCalled();
+		});
+
+		it('throws when taskId is missing', async () => {
+			await expect(call('spaceTask.submitForReview', { spaceId: 'space-1' })).rejects.toThrow(
+				'taskId is required'
+			);
+			expect(taskManager.submitTaskForReview).not.toHaveBeenCalled();
+		});
+
+		it('throws Space not found when space does not exist', async () => {
+			setup(null);
+			await expect(
+				call('spaceTask.submitForReview', { spaceId: 'ghost', taskId: 'task-1' })
+			).rejects.toThrow('Space not found: ghost');
+			expect(taskManager.submitTaskForReview).not.toHaveBeenCalled();
+		});
+
+		it('propagates manager errors (e.g. invalid status transition)', async () => {
+			// E.g. attempting to submit an `archived` task — the manager's
+			// `setTaskStatus(taskId, 'review')` step rejects the transition.
+			(taskManager.submitTaskForReview as ReturnType<typeof mock>).mockRejectedValue(
+				new Error("Invalid status transition from 'archived' to 'review'. Allowed: none")
+			);
+
+			await expect(
+				call('spaceTask.submitForReview', { spaceId: 'space-1', taskId: 'task-1' })
+			).rejects.toThrow('Invalid status transition');
+		});
+	});
 });

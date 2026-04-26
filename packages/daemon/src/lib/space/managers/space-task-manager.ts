@@ -217,6 +217,56 @@ export class SpaceTaskManager {
 	}
 
 	/**
+	 * Submit a task for human review.
+	 *
+	 * Single entry point for both the agent `submit_for_approval` tool and the
+	 * UI "Submit for Review" button. Atomically transitions a task into `review`
+	 * and stamps the pending-completion metadata that drives the
+	 * `PendingTaskCompletionBanner` — meaning every task that lands in `review`
+	 * is guaranteed to carry the banner-eligible fields.
+	 *
+	 * Three callers, one set of writes:
+	 *   - End-node `submit_for_approval` (passes a real `submittedByNodeId`)
+	 *   - Task Agent `submit_for_approval` (passes `null` — orchestrator has no
+	 *     workflow node)
+	 *   - UI "Submit for Review" RPC (passes `null` — user-initiated)
+	 *
+	 * Validates the transition through `setTaskStatus` first so an illegal
+	 * source status (e.g. `done`, `archived`) fails with a clear error before
+	 * any pending-* fields get written. The follow-up `updateTask` call then
+	 * stamps the metadata in a single repository write.
+	 */
+	async submitTaskForReview(
+		taskId: string,
+		opts: {
+			/**
+			 * Workflow node ID of the submitting agent, or `null` when there is no
+			 * waiting end-node session (Task Agent self-submit, UI submit). Used by
+			 * `PostApprovalRouter` to distinguish agent-initiated vs user-initiated
+			 * approvals when emitting awareness events.
+			 */
+			submittedByNodeId: string | null;
+			/** Optional human-readable reason; surfaces in the approval banner. */
+			reason: string | null;
+		}
+	): Promise<SpaceTask> {
+		// Run the centralised transition validator first so that illegal source
+		// statuses fail before we write any pending-* fields.
+		await this.setTaskStatus(taskId, 'review');
+
+		const updated = this.taskRepo.updateTask(taskId, {
+			pendingCheckpointType: 'task_completion',
+			pendingCompletionSubmittedByNodeId: opts.submittedByNodeId,
+			pendingCompletionSubmittedAt: Date.now(),
+			pendingCompletionReason: opts.reason,
+		});
+		if (!updated) {
+			throw new Error(`Failed to submit task for review: ${taskId}`);
+		}
+		return updated;
+	}
+
+	/**
 	 * Complete a task
 	 */
 	async completeTask(taskId: string, result: string): Promise<SpaceTask> {

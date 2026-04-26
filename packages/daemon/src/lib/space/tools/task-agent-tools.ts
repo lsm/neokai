@@ -479,24 +479,23 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		/**
 		 * Request human sign-off for task completion.
 		 *
-		 * Always available regardless of autonomy level. Sets task.status = 'review'
-		 * and populates pending-completion fields so the UI can route a human to
-		 * approve or reject. Even at high autonomy levels agents may want to escalate
-		 * risky outcomes.
+		 * Always available regardless of autonomy level. Delegates to
+		 * `SpaceTaskManager.submitTaskForReview` — the same helper used by the
+		 * end-node `submit_for_approval` tool and the UI "Submit for Review" RPC
+		 * — so all three callers write identical fields and the resulting
+		 * `review` task is always banner-eligible. Even at high autonomy levels
+		 * agents may want to escalate risky outcomes.
 		 */
 		async submit_for_approval(args: SubmitForApprovalInput): Promise<ToolResult> {
 			const task = taskRepo.getTask(taskId);
 			if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
 
 			try {
-				const updated = taskRepo.updateTask(taskId, {
-					status: 'review',
-					pendingCheckpointType: 'task_completion',
-					pendingCompletionSubmittedByNodeId: null, // Task Agent has no workflow node
-					pendingCompletionSubmittedAt: Date.now(),
-					pendingCompletionReason: args.reason ?? null,
+				const updated = await taskManager.submitTaskForReview(taskId, {
+					submittedByNodeId: null, // Task Agent has no workflow node
+					reason: args.reason ?? null,
 				});
-				if (updated) emitTaskUpdated(updated);
+				emitTaskUpdated(updated);
 				return jsonResult({
 					success: true,
 					taskId,
