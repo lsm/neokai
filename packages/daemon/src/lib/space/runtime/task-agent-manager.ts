@@ -1956,20 +1956,22 @@ export class TaskAgentManager {
 	/**
 	 * Rehydrate Task Agent sessions after a daemon restart.
 	 *
-	 * Queries `space_tasks` for tasks with status `in_progress`, `blocked`, or
-	 * `approved` that have a non-null `taskAgentSessionId`. For each such task
-	 * that has a `space_task_agent` session type in the DB, restores the Task
-	 * Agent session via `AgentSession.restore()`, re-attaches the MCP server
-	 * and system prompt, restarts the streaming query, and injects a
-	 * re-orientation message so the agent resumes from where it left off.
-	 * `'approved'` is included because the Task Agent session can still be
-	 * live while the post-approval sub-session runs — see
-	 * `SpaceTaskRepository.listActiveWithTaskAgentSession`.
+	 * Queries `space_tasks` for tasks with status `in_progress`, `review`,
+	 * `blocked`, or `approved` that have a non-null `taskAgentSessionId`. For
+	 * each such task that has a `space_task_agent` session type in the DB,
+	 * restores the Task Agent session via `AgentSession.restore()`, re-attaches
+	 * the MCP server and system prompt, restarts the streaming query, and
+	 * injects a re-orientation message so the agent resumes from where it left
+	 * off. See `SpaceTaskRepository.listActiveWithTaskAgentSession` for the
+	 * full justification of which statuses are included.
 	 *
-	 * Sub-sessions are NOT fully rehydrated — the Task Agent will re-spawn them
-	 * via its MCP tools after receiving the re-orientation message. The in-memory
-	 * `subSessions` map is rebuilt from sub-session tasks found in the DB (so
-	 * cleanup works correctly), but their streaming queries are not restarted.
+	 * After each Task Agent is restored, `rehydrateTaskAgent` also eagerly
+	 * rehydrates every workflow sub-session attached to its workflow run via
+	 * `rehydrateSubSessionsForRun` — see that method for the full rationale.
+	 * Without that step, sub-sessions whose `node-agent` and `space-agent-tools`
+	 * MCP servers are in-process-only would silently sit without those servers
+	 * after a restart, breaking gate writes / peer messaging the moment a UI
+	 * overlay or peer message reached them (task #126 failure mode).
 	 *
 	 * This method is called from `SpaceRuntime.rehydrateExecutors()` after
 	 * WorkflowExecutors are loaded, so executors are ready when Task Agents run.
@@ -2650,7 +2652,10 @@ export class TaskAgentManager {
 	 * 5. Restarts the streaming query so the SDK resumes from conversation history.
 	 * 6. Injects a re-orientation message so the agent checks its current state and
 	 *    continues from where it left off.
-	 * 7. Rebuilds the `subSessions` map from node tasks in the same workflow run.
+	 * 7. Eagerly rehydrates every workflow sub-session attached to the workflow
+	 *    run via `rehydrateSubSessionsForRun`, so the in-process `node-agent`
+	 *    and `space-agent-tools` MCP servers are re-attached BEFORE any UI
+	 *    overlay or peer message can reach a sub-session (task #126 fix).
 	 */
 	private async rehydrateTaskAgent(task: SpaceTask, sessionId: string): Promise<void> {
 		const taskId = task.id;
@@ -2861,9 +2866,77 @@ export class TaskAgentManager {
 				'Please check the current task status and continue from where you left off.';
 		await this.injectMessageIntoSession(agentSession, reorientMessage);
 
+		// --- Eagerly rehydrate every workflow sub-session for this task.
+		//
+		// Without this, sub-sessions (coder/reviewer/etc.) that the workflow had
+		// already spawned before the daemon restart sit out-of-memory until
+		// `injectSubSessionMessage` is invoked. That lazy path is fine for the
+		// "Task Agent calls a tool that injects a message" flow, but it has two
+		// gaps that bite us in the wild (task #126):
+		//
+		//   1. UI/RPC paths that resolve a sub-session via
+		//      `SessionManager.getSessionAsync` short-circuit on
+		//      `AgentSession.restore()` and never reach `rehydrateSubSession` —
+		//      the bare restored session has neither `node-agent` nor
+		//      `space-agent-tools` attached, so `write_gate` / `read_gate` /
+		//      `send_message` calls die silently with "No such tool available".
+		//   2. A sub-session sitting idle at a gate has no incoming message to
+		//      trigger lazy rehydration, so the in-process MCP servers stay
+		//      missing for as long as the workflow waits.
+		//
+		// Eager rehydration here closes both gaps: every sub-session whose
+		// NodeExecution still has an `agentSessionId` (i.e. was spawned before
+		// the restart) is restored, registered in the in-memory maps + the
+		// SessionManager cache, and re-attached with `node-agent` +
+		// `space-agent-tools` BEFORE any UI/RPC consumer can ask for it.
+		await this.rehydrateSubSessionsForRun(workflowRun?.id ?? null);
+
 		log.info(
 			`TaskAgentManager.rehydrate: rehydrated task agent for task ${taskId} (session ${sessionId})`
 		);
+	}
+
+	/**
+	 * Eagerly rehydrate every workflow sub-session attached to a workflow run,
+	 * so the in-process `node-agent` and `space-agent-tools` MCP servers are
+	 * re-attached to each sub-session before any external consumer
+	 * (UI overlay, peer message, gate write) reaches them.
+	 *
+	 * Iterates `node_executions` for the run, finds rows that already have an
+	 * `agentSessionId` assigned (i.e. a sub-session was spawned before the
+	 * daemon restart), and calls `rehydrateSubSession` for each that is not
+	 * yet in the in-memory `agentSessionIndex`. `rehydrateSubSession` is
+	 * idempotent w.r.t. the maps (see its comments) — calling it for an entry
+	 * that is somehow already in memory would re-restore from DB, which is
+	 * wasteful but not harmful; the explicit `agentSessionIndex` guard avoids
+	 * that wasted work.
+	 *
+	 * Failures are isolated per sub-session and logged at warn level — one
+	 * broken sub-session must not block rehydration of its siblings.
+	 *
+	 * No-op when `workflowRunId` is null (standalone task with no workflow).
+	 */
+	private async rehydrateSubSessionsForRun(workflowRunId: string | null): Promise<void> {
+		if (!workflowRunId) return;
+
+		const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+		for (const execution of executions) {
+			const subSessionId = execution.agentSessionId;
+			if (!subSessionId) continue;
+
+			// Skip if already in memory (e.g. lazily rehydrated by an earlier
+			// inbound message during this same restart, or never torn down).
+			if (this.agentSessionIndex.has(subSessionId)) continue;
+
+			try {
+				await this.rehydrateSubSession(subSessionId);
+			} catch (err) {
+				log.warn(
+					`TaskAgentManager.rehydrateSubSessionsForRun: failed to rehydrate sub-session ${subSessionId} ` +
+						`(run=${workflowRunId}, exec=${execution.id}, agent=${execution.agentName}): ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
+		}
 	}
 
 	/**

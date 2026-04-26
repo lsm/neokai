@@ -948,3 +948,336 @@ describe('TaskAgentManager.tryResumeNodeAgentSession', () => {
 		expect(fastPathMsg).toBeDefined();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Tests: TaskAgentManager.rehydrate() eager sub-session rehydration (Task #126)
+// ---------------------------------------------------------------------------
+
+/**
+ * Regression coverage for Task #126: after a daemon restart, every workflow
+ * sub-session whose NodeExecution still has an `agentSessionId` must come back
+ * with both `node-agent` and `space-agent-tools` MCP servers attached. Without
+ * the eager rehydration step inside `rehydrateTaskAgent`, sub-sessions sitting
+ * idle at a gate (or first reached via a UI overlay path that resolves them
+ * through `SessionManager.getSessionAsync` rather than `injectSubSessionMessage`)
+ * would silently lose those in-process MCP servers and `write_gate` /
+ * `read_gate` / `send_message` calls would die with "No such tool available".
+ *
+ * These tests simulate the daemon-restart entry point by:
+ *   1. Seeding a parent task with a `space_task_agent` session row in the DB.
+ *   2. Seeding a workflow run + node execution whose `agentSessionId` points
+ *      at a sub-session row of type `'worker'`.
+ *   3. Calling `manager.rehydrate()` (NOT `injectSubSessionMessage`) — the
+ *      same path SpaceRuntime invokes during daemon startup.
+ *   4. Asserting the sub-session is present in the in-memory map AND has both
+ *      `node-agent` and `space-agent-tools` in its MCP server map.
+ */
+describe('TaskAgentManager.rehydrate (eager sub-session rehydration — Task #126)', () => {
+	let ctx: TestCtx;
+	let restoreSpy: ReturnType<typeof spyOn<typeof AgentSession, 'restore'>>;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+		restoreSpy = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
+			if (!ctx.mockDb.getSession(sessionId)) return null;
+			const existing = ctx.createdSessions.get(sessionId);
+			if (existing) return existing as unknown as AgentSession;
+			const mockSession = makeMockSession(sessionId);
+			ctx.createdSessions.set(sessionId, mockSession);
+			return mockSession as unknown as AgentSession;
+		});
+	});
+
+	afterEach(() => {
+		ctx.fromInitSpy.mockRestore();
+		restoreSpy.mockRestore();
+	});
+
+	test('rehydrate() restores sub-sessions with both node-agent and space-agent-tools MCP servers attached (in_progress task)', async () => {
+		const wfRunId = 'run-eager-inprogress';
+		const wfId = 'wf-eager-inprogress';
+		const nodeId = 'node-eager-inprogress';
+		seedWorkflowRun(ctx, wfRunId, wfId, nodeId);
+
+		// Parent task in 'in_progress' with a persisted Task Agent session
+		const parentTask = await ctx.taskManager.createTask({
+			title: 'Parent task — eager rehydration (in_progress)',
+			description: '',
+			taskType: 'coding',
+			status: 'in_progress',
+			workflowRunId: wfRunId,
+		});
+		const taskAgentSessionId = `space:${ctx.spaceId}:task:${parentTask.id}`;
+		ctx.taskRepo.updateTask(parentTask.id, {
+			taskAgentSessionId,
+			status: 'in_progress',
+		});
+		ctx.mockDb.createSession({ id: taskAgentSessionId, type: 'space_task_agent' });
+
+		// Sub-session created before the restart — represented by a NodeExecution
+		// row that has an `agentSessionId` plus a `'worker'` session row in DB.
+		const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:eager-sub-coder`;
+		const execution = ctx.nodeExecutionRepo.create({
+			workflowRunId: wfRunId,
+			workflowNodeId: nodeId,
+			agentName: 'coder',
+			agentId: null,
+			status: 'in_progress',
+		});
+		ctx.nodeExecutionRepo.updateSessionId(execution.id, subSessionId);
+		ctx.mockDb.createSession({ id: subSessionId, type: 'worker' });
+
+		// Daemon restart entry point: in-memory maps start empty.
+		expect(ctx.manager.getSubSession(subSessionId)).toBeUndefined();
+
+		await ctx.manager.rehydrate();
+
+		// Sub-session is in the in-memory index after rehydrate (no message injection
+		// was needed — this is the gap the fix closes).
+		const rehydrated = ctx.manager.getSubSession(subSessionId);
+		expect(rehydrated).toBeDefined();
+
+		// Both runtime-only MCP servers must be re-attached. Without these, the
+		// sub-session would silently fail any `write_gate` / `read_gate` /
+		// `send_message` call (the original Task #126 failure mode).
+		const session = ctx.createdSessions.get(subSessionId)!;
+		expect(session).toBeDefined();
+		const attachedNames = Object.keys(session._mcpServers);
+		expect(attachedNames).toContain('node-agent');
+		expect(attachedNames).toContain('space-agent-tools');
+
+		// Sub-session also gets registered in the SessionManager cache so the
+		// UI's `getSessionAsync` path resolves to the live (MCP-attached) instance
+		// instead of constructing a bare `AgentSession` from DB.
+		expect(ctx.registeredSessions).toContain(subSessionId);
+	});
+
+	test("rehydrate() includes 'review' status tasks and re-attaches sub-session MCP servers", async () => {
+		// 'review' is the original Task #126 failure mode: a coder/reviewer
+		// sub-session sat idle at a gate while the parent task waited in 'review'
+		// status, and the parent was excluded from `listActiveWithTaskAgentSession`
+		// (so no rehydration happened, so the sub-session never got node-agent /
+		// space-agent-tools re-attached).
+		const wfRunId = 'run-eager-review';
+		const wfId = 'wf-eager-review';
+		const nodeId = 'node-eager-review';
+		seedWorkflowRun(ctx, wfRunId, wfId, nodeId);
+
+		const parentTask = await ctx.taskManager.createTask({
+			title: 'Parent task — eager rehydration (review)',
+			description: '',
+			taskType: 'coding',
+			status: 'in_progress',
+			workflowRunId: wfRunId,
+		});
+		const taskAgentSessionId = `space:${ctx.spaceId}:task:${parentTask.id}`;
+		// Move the task into 'review' AFTER creation — this is the state a task
+		// is in when it has reached a `code-ready-gate` and is waiting for a
+		// reviewer node to evaluate.
+		ctx.taskRepo.updateTask(parentTask.id, {
+			taskAgentSessionId,
+			status: 'review',
+		});
+		ctx.mockDb.createSession({ id: taskAgentSessionId, type: 'space_task_agent' });
+
+		const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:eager-sub-reviewer`;
+		const execution = ctx.nodeExecutionRepo.create({
+			workflowRunId: wfRunId,
+			workflowNodeId: nodeId,
+			agentName: 'reviewer',
+			agentId: null,
+			status: 'in_progress',
+		});
+		ctx.nodeExecutionRepo.updateSessionId(execution.id, subSessionId);
+		ctx.mockDb.createSession({ id: subSessionId, type: 'worker' });
+
+		await ctx.manager.rehydrate();
+
+		// The parent Task Agent must come back...
+		expect(ctx.manager.getTaskAgent(parentTask.id)).toBeDefined();
+
+		// ...and so must the sub-session, with both MCP servers attached.
+		expect(ctx.manager.getSubSession(subSessionId)).toBeDefined();
+		const session = ctx.createdSessions.get(subSessionId)!;
+		const attachedNames = Object.keys(session._mcpServers);
+		expect(attachedNames).toContain('node-agent');
+		expect(attachedNames).toContain('space-agent-tools');
+	});
+
+	test('rehydrate() restores multiple sub-sessions per workflow run', async () => {
+		// A workflow run can have multiple node executions (e.g. coder + reviewer
+		// running in parallel, or multiple sequential nodes). All of them must
+		// come back with their MCP servers attached.
+		const wfRunId = 'run-eager-multi';
+		const wfId = 'wf-eager-multi';
+		const nodeId = 'node-eager-multi';
+		seedWorkflowRun(ctx, wfRunId, wfId, nodeId);
+
+		const parentTask = await ctx.taskManager.createTask({
+			title: 'Parent task — multi sub-session rehydration',
+			description: '',
+			taskType: 'coding',
+			status: 'in_progress',
+			workflowRunId: wfRunId,
+		});
+		const taskAgentSessionId = `space:${ctx.spaceId}:task:${parentTask.id}`;
+		ctx.taskRepo.updateTask(parentTask.id, {
+			taskAgentSessionId,
+			status: 'in_progress',
+		});
+		ctx.mockDb.createSession({ id: taskAgentSessionId, type: 'space_task_agent' });
+
+		const subSessionIds = [
+			`space:${ctx.spaceId}:task:${parentTask.id}:exec:eager-multi-coder`,
+			`space:${ctx.spaceId}:task:${parentTask.id}:exec:eager-multi-reviewer`,
+		];
+		const agentNames = ['coder', 'reviewer'];
+		for (let i = 0; i < subSessionIds.length; i++) {
+			const exec = ctx.nodeExecutionRepo.create({
+				workflowRunId: wfRunId,
+				workflowNodeId: nodeId,
+				agentName: agentNames[i]!,
+				agentId: null,
+				status: 'in_progress',
+			});
+			ctx.nodeExecutionRepo.updateSessionId(exec.id, subSessionIds[i]!);
+			ctx.mockDb.createSession({ id: subSessionIds[i]!, type: 'worker' });
+		}
+
+		await ctx.manager.rehydrate();
+
+		for (const id of subSessionIds) {
+			expect(ctx.manager.getSubSession(id)).toBeDefined();
+			const session = ctx.createdSessions.get(id)!;
+			expect(session).toBeDefined();
+			const attached = Object.keys(session._mcpServers);
+			expect(attached).toContain('node-agent');
+			expect(attached).toContain('space-agent-tools');
+		}
+	});
+
+	test('rehydrate() skips NodeExecutions that have no agentSessionId (never spawned)', async () => {
+		// An execution row with a null `agentSessionId` represents a node-agent
+		// that was declared in the workflow but never spawned (e.g. the workflow
+		// is paused before that node). It must NOT trigger any restore call —
+		// there is nothing to restore.
+		const wfRunId = 'run-eager-noagent';
+		const wfId = 'wf-eager-noagent';
+		const nodeId = 'node-eager-noagent';
+		seedWorkflowRun(ctx, wfRunId, wfId, nodeId);
+
+		const parentTask = await ctx.taskManager.createTask({
+			title: 'Parent task — execution with no agentSessionId',
+			description: '',
+			taskType: 'coding',
+			status: 'in_progress',
+			workflowRunId: wfRunId,
+		});
+		const taskAgentSessionId = `space:${ctx.spaceId}:task:${parentTask.id}`;
+		ctx.taskRepo.updateTask(parentTask.id, {
+			taskAgentSessionId,
+			status: 'in_progress',
+		});
+		ctx.mockDb.createSession({ id: taskAgentSessionId, type: 'space_task_agent' });
+
+		// Create an execution but DO NOT call updateSessionId — no agentSessionId.
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: wfRunId,
+			workflowNodeId: nodeId,
+			agentName: 'coder',
+			agentId: null,
+			status: 'pending',
+		});
+
+		// Track restore calls strictly for sub-session-shaped IDs.
+		const subSessionRestoreCalls: string[] = [];
+		const trackingSpy = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
+			if (sessionId.includes(':exec:')) {
+				subSessionRestoreCalls.push(sessionId);
+			}
+			if (!ctx.mockDb.getSession(sessionId)) return null;
+			const existing = ctx.createdSessions.get(sessionId);
+			if (existing) return existing as unknown as AgentSession;
+			const mockSession = makeMockSession(sessionId);
+			ctx.createdSessions.set(sessionId, mockSession);
+			return mockSession as unknown as AgentSession;
+		});
+
+		try {
+			await ctx.manager.rehydrate();
+		} finally {
+			trackingSpy.mockRestore();
+		}
+
+		// Parent task agent restored, but no sub-session restore attempt was made.
+		expect(ctx.manager.getTaskAgent(parentTask.id)).toBeDefined();
+		expect(subSessionRestoreCalls).toEqual([]);
+	});
+
+	test("SpaceTaskRepository.listActiveWithTaskAgentSession includes 'review' status (Task #126)", async () => {
+		// Direct repository-level guard: if this regresses, the daemon-restart
+		// rehydration loop will silently skip every task waiting at a review
+		// gate, and the sub-session MCP attachment fix above becomes unreachable.
+		const inProgress = await ctx.taskManager.createTask({
+			title: 'in_progress task',
+			description: '',
+			taskType: 'coding',
+			status: 'in_progress',
+		});
+		ctx.taskRepo.updateTask(inProgress.id, {
+			taskAgentSessionId: `space:${ctx.spaceId}:task:${inProgress.id}`,
+		});
+
+		const review = await ctx.taskManager.createTask({
+			title: 'review task',
+			description: '',
+			taskType: 'coding',
+			status: 'in_progress',
+		});
+		ctx.taskRepo.updateTask(review.id, {
+			taskAgentSessionId: `space:${ctx.spaceId}:task:${review.id}`,
+			status: 'review',
+		});
+
+		const blocked = await ctx.taskManager.createTask({
+			title: 'blocked task',
+			description: '',
+			taskType: 'coding',
+			status: 'in_progress',
+		});
+		ctx.taskRepo.updateTask(blocked.id, {
+			taskAgentSessionId: `space:${ctx.spaceId}:task:${blocked.id}`,
+			status: 'blocked',
+		});
+
+		const approved = await ctx.taskManager.createTask({
+			title: 'approved task',
+			description: '',
+			taskType: 'coding',
+			status: 'in_progress',
+		});
+		ctx.taskRepo.updateTask(approved.id, {
+			taskAgentSessionId: `space:${ctx.spaceId}:task:${approved.id}`,
+			status: 'approved',
+		});
+
+		// Excluded statuses — terminal or not-yet-spawned.
+		const done = await ctx.taskManager.createTask({
+			title: 'done task',
+			description: '',
+			taskType: 'coding',
+			status: 'in_progress',
+		});
+		ctx.taskRepo.updateTask(done.id, {
+			taskAgentSessionId: `space:${ctx.spaceId}:task:${done.id}`,
+			status: 'done',
+		});
+
+		const ids = ctx.taskRepo.listActiveWithTaskAgentSession().map((t) => t.id);
+		expect(ids).toContain(inProgress.id);
+		expect(ids).toContain(review.id);
+		expect(ids).toContain(blocked.id);
+		expect(ids).toContain(approved.id);
+		expect(ids).not.toContain(done.id);
+	});
+});
