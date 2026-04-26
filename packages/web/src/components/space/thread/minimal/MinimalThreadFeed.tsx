@@ -243,15 +243,19 @@ function countToolCalls(rows: ParsedThreadRow[]): number {
  * Extract the closing text for a turn, walking rows last-to-first.
  *
  * Two viable text sources:
- *   1. `assistant` rows — the model's `text` content blocks. Standard path.
+ *   1. `assistant` rows — the model's `text` content blocks. Standard path,
+ *      and the preferred deep-link target so the chat-bubble click highlights
+ *      the agent's actual reply rather than the green result envelope below it.
  *   2. `result|success` rows — the SDK's end-of-exec envelope, whose top-level
- *      `result` string carries the agent's final reply. Crucial for turns where
- *      the agent emitted only `tool_use` / `thinking` blocks (e.g. Reviewer
- *      runs that verify with Bash and never write a textual reply mid-stream).
+ *      `result` string carries the agent's final reply. Used as a fallback for
+ *      turns where the agent emitted only `tool_use` / `thinking` blocks (e.g.
+ *      Reviewer runs that verify with Bash and never write a textual reply
+ *      mid-stream).
  *
- * We check both per row in walk order. Walking last-to-first naturally prefers
- * the result message when one exists, which is what we want — it's the
- * canonical "what the agent said" string for that exec session.
+ * Walk order: last-to-first looking for an assistant row with text. While
+ * walking, capture the most recent result-success row as a fallback candidate.
+ * Return the assistant row if found; otherwise fall back to the captured
+ * result row.
  *
  * Returns the surfaced row alongside the text so callers can build deep links
  * back to the original SDK message (sessionId + uuid) for the slide-over.
@@ -261,15 +265,21 @@ function extractLastAssistantText(rows: ParsedThreadRow[]): {
 	fallback: boolean;
 	sourceRow: ParsedThreadRow | null;
 } {
+	let resultFallback: { text: string; sourceRow: ParsedThreadRow } | null = null;
+
 	for (let i = rows.length - 1; i >= 0; i--) {
 		const row = rows[i];
 		if (!row.message) continue;
 
 		// Result-success rows carry the agent's final reply on `.result`.
+		// Capture the most recent one as a fallback — but keep walking in case
+		// there is an assistant message above it we'd rather highlight.
 		if (isSDKResultMessage(row.message) && row.message.subtype === 'success') {
-			const result = (row.message as { result?: unknown }).result;
-			if (typeof result === 'string' && result.trim().length > 0) {
-				return { text: result.trim(), fallback: false, sourceRow: row };
+			if (!resultFallback) {
+				const result = (row.message as { result?: unknown }).result;
+				if (typeof result === 'string' && result.trim().length > 0) {
+					resultFallback = { text: result.trim(), sourceRow: row };
+				}
 			}
 			continue;
 		}
@@ -288,6 +298,12 @@ function extractLastAssistantText(rows: ParsedThreadRow[]): {
 			.filter((s) => s.length > 0);
 		if (texts.length > 0) return { text: texts.join('\n\n'), fallback: false, sourceRow: row };
 	}
+
+	// No assistant text anywhere in the turn — fall back to the result envelope.
+	if (resultFallback) {
+		return { text: resultFallback.text, fallback: false, sourceRow: resultFallback.sourceRow };
+	}
+
 	const tail = rows[rows.length - 1] ?? null;
 	const tailFallback = tail?.fallbackText ?? '';
 	return { text: tailFallback, fallback: true, sourceRow: tail };
