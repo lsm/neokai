@@ -33,9 +33,23 @@ export function isActionRequired(task: ActionRequiredTaskInput): boolean {
 
 /**
  * Returns true when a task is actively progressing — not yet awaiting
- * human action and not yet in a terminal state. Used by the "Active"
- * tab in `SpaceDetailPanel`.
+ * human action and not yet in a terminal state.
+ *
+ * Single source of truth for the "Active" tab — used by BOTH the sidebar
+ * `SpaceDetailPanel` and the main-pane `SpaceTasks` view, so the two
+ * surfaces cannot disagree about which tasks are Active.
+ *
+ * Includes:
+ * - `open`, `in_progress`: the obvious cases — work has started or is
+ *   ready to start, no human gate.
+ * - `approved`: a transient post-approval state. After `approve_task`,
+ *   the task sits in `approved` while the post-approval sub-session
+ *   runs; `mark_complete` then transitions `approved → done`. Routing
+ *   `approved` to Active keeps a task stuck in this state (e.g. with
+ *   `postApprovalBlockedReason` populated because dispatch failed)
+ *   visible to the user. The task-detail pane's
+ *   `PendingPostApprovalBanner` surfaces the actionable failure.
  */
 export function isActiveTask(task: ActionRequiredTaskInput): boolean {
-	return task.status === 'open' || task.status === 'in_progress';
+	return task.status === 'open' || task.status === 'in_progress' || task.status === 'approved';
 }
