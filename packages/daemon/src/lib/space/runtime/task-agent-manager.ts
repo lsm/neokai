@@ -2878,7 +2878,8 @@ export class TaskAgentManager {
 			this.config.daemonHub,
 			this.config.getApiKey,
 			this.config.skillsManager,
-			this.config.appMcpServerRepo
+			this.config.appMcpServerRepo,
+			{ autoReplayPendingMessages: false }
 		);
 		if (!agentSession) {
 			log.warn(
@@ -3044,6 +3045,7 @@ export class TaskAgentManager {
 
 		// --- Restart the streaming query (SDK resumes from conversation history in DB)
 		await agentSession.startStreamingQuery();
+		await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
 
 		// --- Inject re-orientation message so the agent checks state and continues.
 		const reorientMessage = task.workflowRunId
@@ -3219,7 +3221,8 @@ export class TaskAgentManager {
 			this.config.daemonHub,
 			this.config.getApiKey,
 			this.config.skillsManager,
-			this.config.appMcpServerRepo
+			this.config.appMcpServerRepo,
+			{ autoReplayPendingMessages: false }
 		);
 		if (!agentSession) {
 			log.warn(
@@ -3316,6 +3319,7 @@ export class TaskAgentManager {
 
 		// --- Restart the streaming query (idempotent if already running)
 		await agentSession.startStreamingQuery();
+		await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
 
 		// Flush any pending Task Agent → this agent messages that accumulated while
 		// the sub-session was not alive in memory.
@@ -3333,6 +3337,19 @@ export class TaskAgentManager {
 
 		void workflow; // Loaded for context but not needed directly; suppresses unused-var lint.
 		return agentSession;
+	}
+
+	private async replayPendingMessagesAfterRuntimeProvisioning(
+		session: AgentSession
+	): Promise<void> {
+		const replay = (
+			session as AgentSession & {
+				replayPendingMessagesForImmediateMode?: () => Promise<void>;
+			}
+		).replayPendingMessagesForImmediateMode;
+		if (typeof replay === 'function') {
+			await replay.call(session);
+		}
 	}
 
 	// -------------------------------------------------------------------------
