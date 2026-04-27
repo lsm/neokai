@@ -56,9 +56,13 @@ export function parseMentions(text: string): string[] {
  * Allows the handler to resolve @mention targets without depending on the concrete repository class.
  */
 export interface NodeExecutionLookup {
-	listByWorkflowRun(
-		workflowRunId: string
-	): Array<{ agentName: string; agentSessionId: string | null; status: string }>;
+	listByWorkflowRun(workflowRunId: string): Array<{
+		id?: string;
+		workflowNodeId?: string;
+		agentName: string;
+		agentSessionId: string | null;
+		status: string;
+	}>;
 }
 
 /**
@@ -79,6 +83,10 @@ export interface TaskAgentManagerInterface {
 	injectSubSessionMessage?(subSessionId: string, message: string): Promise<void>;
 }
 
+type SpaceTaskMessageTarget =
+	| { kind: 'task_agent' }
+	| { kind: 'node_agent'; agentName?: string; nodeExecutionId?: string };
+
 /**
  * Register RPC handlers for human ↔ Task Agent message routing.
  *
@@ -95,7 +103,8 @@ export function setupSpaceTaskMessageHandlers(
 	db: Database,
 	daemonHub: DaemonHub,
 	nodeExecutionRepo?: NodeExecutionLookup,
-	channelCycleResetter?: ChannelCycleResetter
+	channelCycleResetter?: ChannelCycleResetter,
+	activateNode?: (runId: string, nodeId: string) => Promise<void>
 ): void {
 	const taskRepo = new SpaceTaskRepository(db.getDatabase());
 
@@ -131,6 +140,82 @@ export function setupSpaceTaskMessageHandlers(
 				}`
 			);
 		}
+	}
+
+	async function routeToNodeAgents(
+		task: ReturnType<SpaceTaskRepository['getTask']>,
+		taskId: string,
+		message: string,
+		target: { agentName?: string; nodeExecutionId?: string }
+	): Promise<{ ok: true; routedTo: string[]; delivered?: false; activated?: true }> {
+		if (!task?.workflowRunId) {
+			throw new Error(`Task ${taskId} has no workflow run — cannot target workflow agents.`);
+		}
+		if (!nodeExecutionRepo || !taskAgentManager.injectSubSessionMessage) {
+			throw new Error('Workflow agent targeting is unavailable on this daemon.');
+		}
+
+		const executions = nodeExecutionRepo
+			.listByWorkflowRun(task.workflowRunId)
+			.filter((e) => e.status !== 'cancelled');
+		const matches = executions.filter((e) => {
+			if (target.nodeExecutionId && e.id === target.nodeExecutionId) return true;
+			return !!target.agentName && e.agentName.toLowerCase() === target.agentName.toLowerCase();
+		});
+
+		if (matches.length === 0) {
+			const available = [...new Set(executions.map((e) => e.agentName))].sort();
+			throw new Error(
+				`Workflow agent not found: ${target.agentName ?? target.nodeExecutionId ?? 'unknown'}. ` +
+					`Available agents: ${available.length > 0 ? available.join(', ') : 'none'}`
+			);
+		}
+
+		let activated = false;
+		let deliverable = matches.filter((e) => e.agentSessionId);
+		const missingSessionNodeIds = [
+			...new Set(
+				matches
+					.filter((e) => !e.agentSessionId && e.workflowNodeId)
+					.map((e) => e.workflowNodeId as string)
+			),
+		];
+
+		if (deliverable.length === 0 && missingSessionNodeIds.length > 0 && activateNode) {
+			await Promise.all(
+				missingSessionNodeIds.map((nodeId) => activateNode(task.workflowRunId!, nodeId))
+			);
+			activated = true;
+			const refreshed = nodeExecutionRepo
+				.listByWorkflowRun(task.workflowRunId)
+				.filter((e) => e.status !== 'cancelled');
+			const refreshedMatches = refreshed.filter((e) => {
+				if (target.nodeExecutionId && e.id === target.nodeExecutionId) return true;
+				return !!target.agentName && e.agentName.toLowerCase() === target.agentName.toLowerCase();
+			});
+			deliverable = refreshedMatches.filter((e) => e.agentSessionId);
+		}
+
+		if (deliverable.length === 0) {
+			return {
+				ok: true,
+				routedTo: [...new Set(matches.map((e) => e.agentName))],
+				...(activated ? { activated: true as const } : {}),
+				delivered: false,
+			};
+		}
+
+		await Promise.all(
+			deliverable.map((exec) =>
+				taskAgentManager.injectSubSessionMessage!(exec.agentSessionId!, message)
+			)
+		);
+
+		return {
+			ok: true,
+			routedTo: [...new Set(deliverable.map((e) => e.agentName))],
+			...(activated ? { activated: true as const } : {}),
+		};
 	}
 
 	// ─── space.task.ensureAgentSession ──────────────────────────────────────────
@@ -173,7 +258,12 @@ export function setupSpaceTaskMessageHandlers(
 
 	// ─── space.task.sendMessage ─────────────────────────────────────────────────
 	messageHub.onRequest('space.task.sendMessage', async (data) => {
-		const params = data as { spaceId: string; taskId: string; message: string };
+		const params = data as {
+			spaceId: string;
+			taskId: string;
+			message: string;
+			target?: SpaceTaskMessageTarget | null;
+		};
 
 		if (!params.spaceId) {
 			throw new Error('spaceId is required');
@@ -195,6 +285,15 @@ export function setupSpaceTaskMessageHandlers(
 		}
 		if (task.spaceId !== params.spaceId) {
 			throw new Error(`Task not found: ${params.taskId}`);
+		}
+
+		if (params.target?.kind === 'node_agent') {
+			const result = await routeToNodeAgents(task, params.taskId, params.message, params.target);
+			log.info(
+				`space.task.sendMessage: explicit target routing to [${result.routedTo.join(', ')}] for task ${params.taskId}`
+			);
+			await resetChannelCyclesOnHumanTouch(task.workflowRunId, params.taskId);
+			return result;
 		}
 
 		// ── @mention routing ──────────────────────────────────────────────────────

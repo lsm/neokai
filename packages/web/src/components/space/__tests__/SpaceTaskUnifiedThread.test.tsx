@@ -89,6 +89,15 @@ describe('SpaceTaskUnifiedThread', () => {
 		expect(screen.getAllByTestId('minimal-thread-turn').length).toBeGreaterThan(0);
 	});
 
+	it('reports the actual scroll container to the parent', () => {
+		const onScrollerChange = vi.fn();
+		render(<SpaceTaskUnifiedThread taskId="task-1" onScrollerChange={onScrollerChange} />);
+
+		const scroller = screen.getByTestId('space-task-unified-thread').firstElementChild;
+		expect(scroller).toBeInstanceOf(HTMLDivElement);
+		expect(onScrollerChange).toHaveBeenCalledWith(scroller);
+	});
+
 	it('does not render the legacy floating agent-name tag', () => {
 		// The compact-mode-only sticky agent label has been removed; minimal
 		// rows carry their own per-row header so the floating tag is redundant.

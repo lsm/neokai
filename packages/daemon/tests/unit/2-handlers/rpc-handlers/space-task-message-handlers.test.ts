@@ -615,7 +615,13 @@ describe('setupSpaceTaskMessageHandlers', () => {
 	describe('@mention routing in space.task.sendMessage', () => {
 		// Mock NodeExecutionLookup — includes status field (required by NodeExecutionLookup interface)
 		function makeNodeExecutionRepo(
-			agents: Array<{ agentName: string; agentSessionId: string | null; status?: string }>
+			agents: Array<{
+				id?: string;
+				workflowNodeId?: string;
+				agentName: string;
+				agentSessionId: string | null;
+				status?: string;
+			}>
 		): NodeExecutionLookup {
 			return {
 				listByWorkflowRun: mock(() =>
@@ -781,6 +787,39 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				'task-1',
 				'Please continue the work'
 			);
+		});
+
+		it('explicit node-agent target routes by node execution id without @mention text', async () => {
+			const { injectSubSession } = setupWithMention([
+				{
+					id: 'exec-coder',
+					workflowNodeId: 'node-1',
+					agentName: 'Coder',
+					agentSessionId: 'session-coder-1',
+				},
+				{
+					id: 'exec-reviewer',
+					workflowNodeId: 'node-1',
+					agentName: 'Reviewer',
+					agentSessionId: 'session-reviewer-1',
+				},
+			]);
+
+			const result = await call('space.task.sendMessage', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: 'Please review this',
+				target: {
+					kind: 'node_agent',
+					agentName: 'Reviewer',
+					nodeExecutionId: 'exec-reviewer',
+				},
+			});
+
+			expect(result).toMatchObject({ ok: true, routedTo: ['Reviewer'] });
+			expect(injectSubSession).toHaveBeenCalledTimes(1);
+			expect(injectSubSession).toHaveBeenCalledWith('session-reviewer-1', 'Please review this');
+			expect(taskAgentManager.injectTaskAgentMessage).not.toHaveBeenCalled();
 		});
 
 		it('@mention falls back to Task Agent when task has no workflowRunId', async () => {

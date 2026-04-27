@@ -1105,7 +1105,9 @@ export default function ChatContainer({
 				</div>
 
 				{/* Scroll Button - positioned relative to container, not scrollable content */}
-				{showScrollButton && <ScrollToBottomButton onClick={() => scrollToBottom(true)} />}
+				{showScrollButton && (
+					<ScrollToBottomButton onClick={() => scrollToBottom(true)} autoScroll={autoScroll} />
+				)}
 			</div>
 
 			{/* Footer - Floating Status Bar */}
