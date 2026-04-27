@@ -4,7 +4,7 @@ import type {
 	SpaceTaskPriority,
 	SpaceTaskStatus,
 } from '@neokai/shared';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import { borderColors } from '../../lib/design-tokens';
 import { navigateToSpaceTask, pushOverlayHistory } from '../../lib/router';
 import { currentSpaceIdSignal, currentSpaceTaskViewTabSignal } from '../../lib/signals';
@@ -180,10 +180,15 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	// its own active rail — a single boolean would collapse incorrectly when one
 	// agent's terminal result row lands after another agent's last visible row.
 	//
+	// `useMemo` keeps the `Set` reference stable between renders when the
+	// activity-members snapshot hasn't changed, so descendants that diff
+	// `activeAgentLabels` by identity (or use it as a hook dependency) don't
+	// see spurious churn on every re-render of the pane.
+	//
 	// Aggregate boolean is still useful for UI bits that ask "is anything
 	// running?" (the chat composer's processing indicator), so derive it from
 	// the set rather than recomputing from `activityMembers`.
-	const activeAgentLabels = (() => {
+	const activeAgentLabels = useMemo(() => {
 		const labels = new Set<string>();
 		for (const m of activityMembers) {
 			if (m.state === 'active' || m.state === 'queued' || m.state === 'waiting_for_input') {
@@ -191,7 +196,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			}
 		}
 		return labels;
-	})();
+	}, [activityMembers]);
 	const isAgentActive = activeAgentLabels.size > 0;
 	const hasUnifiedWorkflowThread =
 		!!task.workflowRunId || !!agentSessionId || activityMembers.length > 0;
