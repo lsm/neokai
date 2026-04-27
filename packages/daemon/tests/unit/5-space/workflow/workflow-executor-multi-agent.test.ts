@@ -74,10 +74,10 @@ function makeSpaceAgent(id: string, name: string): SpaceAgent {
 }
 
 /**
- * End nodes must have exactly 1 agent (validator-enforced — they own
- * `report_result`). When the last user-provided node is multi-agent, append a
- * synthetic single-agent terminal end node so the multi-agent node remains the
- * start (or middle) and validation passes.
+ * End nodes must have exactly 1 agent (validator-enforced — they own the
+ * `task.reportedStatus` completion signal). When the last user-provided node
+ * is multi-agent, append a synthetic single-agent terminal end node so the
+ * multi-agent node remains the start (or middle) and validation passes.
  */
 const SYNTHETIC_END_NODE_ID = '__test_end__';
 

@@ -232,29 +232,6 @@ export function createSpaceTables(db: BunDatabase): void {
 		)
 	`);
 
-	// Append-only audit log of `report_result` tool calls (Task #39). See
-	// migration 98 for the production schema — mirror here.
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS space_task_report_results (
-			id TEXT PRIMARY KEY,
-			task_id TEXT NOT NULL,
-			space_id TEXT NOT NULL,
-			workflow_node_id TEXT,
-			agent_name TEXT,
-			summary TEXT NOT NULL,
-			evidence TEXT,
-			recorded_at INTEGER NOT NULL,
-			FOREIGN KEY (task_id) REFERENCES space_tasks(id) ON DELETE CASCADE,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
-		)
-	`);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_task_report_results_task ON space_task_report_results(task_id, recorded_at)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_task_report_results_space ON space_task_report_results(space_id, recorded_at)`
-	);
-
 	db.exec(
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_space_task_number ON space_tasks(space_id, task_number)`
 	);

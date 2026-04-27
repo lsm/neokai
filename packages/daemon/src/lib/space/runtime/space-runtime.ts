@@ -16,7 +16,7 @@
  * - Clean up executors when runs reach terminal states
  *
  * In the agent-centric model, agents drive workflow progression via send_message
- * and report_result — SpaceRuntime no longer calls advance() directly.
+ * and `task.reportedStatus` — SpaceRuntime no longer calls advance() directly.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -1372,8 +1372,8 @@ export class SpaceRuntime {
 	 * - Spawns Task Agent sessions for pending tasks
 	 * - Monitors agent liveness and resets dead agents
 	 *
-	 * Agents drive workflow progression themselves via send_message and report_result.
-	 * This method never calls advance() directly.
+	 * Agents drive workflow progression themselves via send_message and
+	 * `task.reportedStatus`. This method never calls advance() directly.
 	 *
 	 * Errors from individual runs are caught and re-thrown after all runs have
 	 * been processed, so a single bad run cannot starve subsequent ones.
@@ -1557,7 +1557,8 @@ export class SpaceRuntime {
 		// When a TaskAgentManager is configured, Task Agents drive the workflow.
 		// SpaceRuntime's role here is lifecycle management only: spawn for pending
 		// tasks, check liveness, and recover from crashes. Agents drive progression
-		// themselves via send_message and report_result — SpaceRuntime never calls advance().
+		// themselves via send_message and `task.reportedStatus` — SpaceRuntime
+		// never calls advance().
 		if (this.config.taskAgentManager) {
 			const tam = this.config.taskAgentManager;
 			let blockedByCrash = false;
@@ -1690,8 +1691,9 @@ export class SpaceRuntime {
 			// In the reported-but-not-yet-resolved case, dispatch through the
 			// PostApprovalRouter (PR 2/5). The router handles the terminal
 			// transition — `approved`→(inline/spawn/already-routed) or directly
-			// to `done` when no route is defined. `report_result` no longer
-			// calls `setTaskStatus` directly.
+			// to `done` when no route is defined. End-node agents signal
+			// completion by setting `task.reportedStatus`, not by calling
+			// `setTaskStatus` directly.
 			if (runIsComplete) {
 				await this.transitionRunStatusAndEmit(runId, 'done');
 				const summary = this.resolveCompletionSummary(runId, meta.workflow);
@@ -1736,7 +1738,7 @@ export class SpaceRuntime {
 				// when the canonical task reaches a terminal status, transitioning them
 				// to `idle` so they remain reachable via send_message. The end-node
 				// execution itself is excluded so its session can finish writing back
-				// to the agent (it produced the report_result that triggered this
+				// to the agent (it set `task.reportedStatus`, which triggered this
 				// completion path). Skipped when the task is paused at `review` —
 				// the human may yet reject the completion, in which case sibling
 				// progress is still relevant.
@@ -1856,7 +1858,8 @@ export class SpaceRuntime {
 				}
 			}
 
-			// Agents drive workflow progression via send_message and report_result.
+			// Agents drive workflow progression via send_message and
+			// `task.reportedStatus`.
 			return;
 		}
 	}

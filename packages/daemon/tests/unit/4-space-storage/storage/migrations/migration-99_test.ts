@@ -6,14 +6,15 @@
  *     default 3). Built-in workflow rows get per-template overrides; user
  *     rows get the default.
  *   - Adds three nullable `pending_completion_*` columns to `space_tasks`.
- *   - Creates the append-only `space_task_report_results` audit table plus
- *     its two lookup indexes.
+ *   - Historically also created the `space_task_report_results` audit table.
+ *     That table was dropped by M107 once the `report_result` tool was
+ *     retired, so this test no longer asserts on it; the column-related
+ *     parts of M99 remain authoritative for the schema.
  *
  * Covers:
- *   - Fresh DB has the column, the NOT NULL default is 3, and the new table exists.
+ *   - Fresh DB has the column with NOT NULL default 3.
  *   - Pre-existing rows get per-template values via backfill.
  *   - Custom (non-built-in) workflows get the generic default.
- *   - `space_task_report_results.task_id NOT NULL` is enforced.
  *   - Idempotent — running the migration twice is a no-op.
  *   - `space_tasks.pending_completion_submitted_by_node_id` column exists.
  */
@@ -251,44 +252,6 @@ describe('Migration 99: tool-contract refactor (Task #39)', () => {
 			expect(row.pending_completion_submitted_by_node_id).toBeNull();
 			expect(row.pending_completion_submitted_at).toBeNull();
 			expect(row.pending_completion_reason).toBeNull();
-		});
-	});
-
-	describe('space_task_report_results table', () => {
-		test('table exists and has the expected columns', () => {
-			const cols = columnNames(db, 'space_task_report_results');
-			expect(cols.sort()).toEqual(
-				[
-					'id',
-					'task_id',
-					'space_id',
-					'workflow_node_id',
-					'agent_name',
-					'summary',
-					'evidence',
-					'recorded_at',
-				].sort()
-			);
-		});
-
-		test('task_id NOT NULL is enforced', () => {
-			expect(() => {
-				db.prepare(
-					`INSERT INTO space_task_report_results (id, task_id, space_id, summary, recorded_at)
-					 VALUES ('rr-1', NULL, 'sp-1', 'hi', ?)`
-				).run(Date.now());
-			}).toThrow();
-		});
-
-		test('indexes exist for task_id and space_id lookups', () => {
-			const indexes = db
-				.prepare(
-					`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'space_task_report_results'`
-				)
-				.all() as Array<{ name: string }>;
-			const names = indexes.map((r) => r.name);
-			expect(names).toContain('idx_space_task_report_results_task');
-			expect(names).toContain('idx_space_task_report_results_space');
 		});
 	});
 });

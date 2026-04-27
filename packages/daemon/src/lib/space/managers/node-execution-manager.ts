@@ -11,7 +11,7 @@
  * Note on "terminal" semantics: `TERMINAL_NODE_EXECUTION_STATUSES` describes
  * the terminal lifecycle of a single node-execution instance, NOT workflow
  * completion. Workflow completion is decided exclusively by `SpaceTask.status`
- * (set by `report_result`); see `CompletionDetector`.
+ * (resolved from `task.reportedStatus`); see `CompletionDetector`.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -47,8 +47,8 @@ export const VALID_NODE_EXECUTION_TRANSITIONS: Record<NodeExecutionStatus, NodeE
  * NOT imply workflow completion. A node going `idle` after sending a
  * message back through a cyclic channel is not "done" — the workflow may
  * continue iterating. Workflow completion is decided exclusively by
- * `SpaceTask.status` being set to a terminal value via `report_result`;
- * see `CompletionDetector`.
+ * `SpaceTask.status` being set to a terminal value (resolved from
+ * `task.reportedStatus`); see `CompletionDetector`.
  *
  * Used by:
  * - `ChannelRouter.activateNode` — to decide whether an existing execution

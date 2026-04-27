@@ -9,10 +9,11 @@
  * - Condition evaluation for transitions (always, human, condition, task_result)
  * - Timeout enforcement on condition-type evaluations
  *
- * In the agent-centric model, agents self-direct via send_message and report_result.
- * Workflow advancement is driven by agent-to-agent messaging (channel routing),
- * not by an explicit advance() call. This class provides read-only graph navigation
- * and condition evaluation utilities used by the runtime and channel layer.
+ * In the agent-centric model, agents self-direct via send_message and by setting
+ * `task.reportedStatus`. Workflow advancement is driven by agent-to-agent messaging
+ * (channel routing), not by an explicit advance() call. This class provides
+ * read-only graph navigation and condition evaluation utilities used by the
+ * runtime and channel layer.
  */
 
 import type { SpaceWorkflow, SpaceWorkflowRun } from '@neokai/shared';
