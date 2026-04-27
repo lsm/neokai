@@ -1796,6 +1796,131 @@ export class TaskAgentManager {
 		return [...names];
 	}
 
+	/**
+	 * Return every agent slot name declared in the static workflow definition
+	 * for this task, regardless of whether a `node_execution` row exists or a
+	 * session has been spawned. The workflow definition is the canonical source
+	 * for "is this a known peer?" — node_executions are lazily created when a
+	 * node is first activated, so they cannot stand in for it.
+	 *
+	 * Used by `send_message` to widen the queueable / reachable target set so
+	 * declared-but-not-yet-spawned peers can receive lazy activation rather
+	 * than failing with `notFoundAgentNames`.
+	 *
+	 * Returns `[]` if the task has no workflow run, or the workflow / run lookup
+	 * fails (e.g. on a standalone task).
+	 */
+	getWorkflowDeclaredAgentNamesForTask(taskId: string): string[] {
+		const task = this.config.taskRepo.getTask(taskId);
+		if (!task?.workflowRunId) return [];
+		const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+		if (!run?.workflowId) return [];
+		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+		if (!workflow) return [];
+		const names = new Set<string>();
+		for (const node of workflow.nodes) {
+			let slots: ReturnType<typeof resolveNodeAgents>;
+			try {
+				slots = resolveNodeAgents(node);
+			} catch {
+				// Defensive: a malformed node should not poison the lookup of valid siblings.
+				continue;
+			}
+			for (const slot of slots) {
+				names.add(slot.name);
+			}
+		}
+		return [...names];
+	}
+
+	/**
+	 * Lazily ensure a node_execution row exists for the workflow node that owns
+	 * `agentName` so that the SpaceRuntime tick loop will spawn its session.
+	 *
+	 * Used by the Task Agent `send_message` queue path when the target is a
+	 * workflow-declared peer that has never been activated. Without this hop
+	 * the queue would fill but no spawn would ever fire — the `pendingMessageRepo`
+	 * is drained only when the target session activates, which itself requires a
+	 * node_execution row to exist.
+	 *
+	 * Idempotent: `ChannelRouter.activateNode` is a no-op when active executions
+	 * already exist for the node, and `createOrIgnore` makes the underlying row
+	 * write safe under concurrent activation requests.
+	 *
+	 * Resolution:
+	 *  1. Look up the task → workflowRun → workflow.
+	 *  2. Find the workflow node whose `resolveNodeAgents()` includes `agentName`.
+	 *  3. Build a ChannelRouter (mirrors `buildNodeAgentMcpServerForSession`) and
+	 *     call `activateNode(runId, nodeId)`.
+	 *
+	 * Returns `false` when the agent is not declared in the workflow, or when
+	 * any required dependency is missing (best-effort — never throws).
+	 */
+	async ensureWorkflowNodeActivationForAgent(
+		taskId: string,
+		agentName: string,
+		options?: { reopenReason?: string; reopenBy?: string }
+	): Promise<boolean> {
+		try {
+			const task = this.config.taskRepo.getTask(taskId);
+			if (!task?.workflowRunId) return false;
+			const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+			if (!run?.workflowId) return false;
+			const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+			if (!workflow) return false;
+
+			// Find the node whose declared agent slots include `agentName`.
+			let targetNodeId: string | null = null;
+			for (const node of workflow.nodes) {
+				let slots: ReturnType<typeof resolveNodeAgents>;
+				try {
+					slots = resolveNodeAgents(node);
+				} catch {
+					continue;
+				}
+				if (slots.some((slot) => slot.name === agentName)) {
+					targetNodeId = node.id;
+					break;
+				}
+			}
+			if (!targetNodeId) return false;
+
+			const spaceManager = this.config.spaceManager;
+			const channelRouter = new ChannelRouter({
+				taskRepo: this.config.taskRepo,
+				workflowRunRepo: this.config.workflowRunRepo,
+				workflowManager: this.config.spaceWorkflowManager,
+				agentManager: this.config.spaceAgentManager,
+				nodeExecutionRepo: this.config.nodeExecutionRepo,
+				gateDataRepo: this.config.gateDataRepo,
+				channelCycleRepo: this.config.channelCycleRepo,
+				db: this.config.db.getDatabase(),
+				workspacePath: this.taskWorktreePaths.get(taskId) ?? '',
+				getSpaceAutonomyLevel: async (spaceId) => {
+					const s = await spaceManager.getSpace(spaceId);
+					return s?.autonomyLevel ?? 1;
+				},
+				isSessionAlive: (sid) => this.isSessionAlive(sid),
+				notificationSink: this.config.spaceRuntimeService.getSharedRuntime().getNotificationSink(),
+				onGatePendingApproval: (runId, gateId) =>
+					this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
+			});
+
+			await channelRouter.activateNode(run.id, targetNodeId, {
+				reopenReason: options?.reopenReason ?? `lazy activation of agent "${agentName}"`,
+				reopenBy: options?.reopenBy ?? 'task-agent',
+			});
+			return true;
+		} catch (err) {
+			log.warn(
+				`TaskAgentManager.ensureWorkflowNodeActivationForAgent: ` +
+					`failed for taskId=${taskId} agentName=${agentName}: ` +
+					(err instanceof Error ? err.message : String(err))
+			);
+			return false;
+		}
+	}
+
 	// -------------------------------------------------------------------------
 	// Public — helpers / query methods
 	// -------------------------------------------------------------------------

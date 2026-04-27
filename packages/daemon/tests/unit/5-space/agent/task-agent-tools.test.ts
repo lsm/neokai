@@ -1199,8 +1199,133 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 
 		expect(parsed.success).toBe(false);
 		expect(parsed.notFoundAgentNames).toEqual(['ghost-agent']);
+		// New error wording: "Unknown target" reserved for genuinely missing agents,
+		// no longer suggesting list_group_members for what is actually a hard miss.
+		expect(parsed.error).toContain('Unknown target');
+		expect(parsed.error).not.toContain('list_group_members');
 		// Nothing queued because agent isn't declared in the run.
 		expect(pendingRepo.listAllPending()).toHaveLength(0);
+	});
+
+	test('queues message for workflow-declared agent with no node_execution row yet', async () => {
+		// Regression test for Task #133: when the workflow definition declares
+		// `step-two` but the tick loop has not yet created its node_execution row,
+		// `send_message` to step-two must queue (not hard-fail) and trigger lazy
+		// activation of the owning node.
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Strip every node_execution row so the only record of "step-two"
+		// is the workflow definition. This exercises the workflow-declared
+		// fall-through that did not exist before the fix.
+		const stmts = ctx.db.prepare('DELETE FROM node_executions WHERE workflow_run_id = ?');
+		stmts.run(run.id);
+		expect(ctx.nodeExecutionRepo.listByWorkflowRun(run.id)).toHaveLength(0);
+
+		const { PendingAgentMessageRepository } = await import(
+			'../../../../src/storage/repositories/pending-agent-message-repository.ts'
+		);
+		const pendingRepo = new PendingAgentMessageRepository(ctx.db);
+
+		const ensureCalls: Array<{ taskId: string; agentName: string }> = [];
+		const mockTaskAgentManager = {
+			getAgentNamesForTask: async () => [],
+			getSubSessionByAgentName: async () => null,
+			tryResumeNodeAgentSession: async () => {},
+			getWorkflowDeclaredAgentNamesForTask: (_taskId: string) => ['step-one', 'step-two'],
+			ensureWorkflowNodeActivationForAgent: async (taskId: string, agentName: string) => {
+				ensureCalls.push({ taskId, agentName });
+				return true;
+			},
+		} as unknown as TaskAgentToolsConfig['taskAgentManager'];
+
+		const config: TaskAgentToolsConfig = {
+			...makeConfig(ctx, mainTask.id, run.id),
+			pendingMessageRepo: pendingRepo,
+			taskAgentManager: mockTaskAgentManager,
+		};
+		const handlers = createTaskAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'step-two',
+			message: 'kick off step-two',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.queued).toHaveLength(1);
+		expect(parsed.queued[0].agentName).toBe('step-two');
+		expect(parsed.queued[0].targetKind).toBe('node_agent');
+		expect(parsed.queued[0].deduped).toBe(false);
+		// Hard-error path was NOT taken — no notFoundAgentNames.
+		expect(parsed.notFoundAgentNames).toBeUndefined();
+
+		// Lazy activation hook fired so the SpaceRuntime tick loop will spawn
+		// the session that drains the queued message.
+		// Wait one microtask tick because the activation call is fire-and-forget.
+		await new Promise((r) => setTimeout(r, 0));
+		expect(ensureCalls).toHaveLength(1);
+		expect(ensureCalls[0].taskId).toBe(mainTask.id);
+		expect(ensureCalls[0].agentName).toBe('step-two');
+
+		// Pending row persisted for the eventual flush.
+		const pending = pendingRepo.listPendingForTarget(run.id, 'step-two');
+		expect(pending).toHaveLength(1);
+		expect(pending[0].message).toBe('kick off step-two');
+	});
+
+	test('does not call ensureWorkflowNodeActivationForAgent when target already has a node_execution row', async () => {
+		// Belt-and-braces: when a node_execution row already exists for the
+		// declared agent, we should NOT redundantly call activateNode — the
+		// tick loop is already on it. This guards against accidental flapping
+		// of in_progress executions back to pending.
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: 'declared-node',
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const { PendingAgentMessageRepository } = await import(
+			'../../../../src/storage/repositories/pending-agent-message-repository.ts'
+		);
+		const pendingRepo = new PendingAgentMessageRepository(ctx.db);
+
+		const ensureCalls: Array<{ taskId: string; agentName: string }> = [];
+		const mockTaskAgentManager = {
+			getAgentNamesForTask: async () => [],
+			getSubSessionByAgentName: async () => null,
+			tryResumeNodeAgentSession: async () => {},
+			// Workflow does NOT declare 'reviewer' as a slot — only node_execution does.
+			getWorkflowDeclaredAgentNamesForTask: (_taskId: string) => ['step-one', 'step-two'],
+			ensureWorkflowNodeActivationForAgent: async (taskId: string, agentName: string) => {
+				ensureCalls.push({ taskId, agentName });
+				return true;
+			},
+		} as unknown as TaskAgentToolsConfig['taskAgentManager'];
+
+		const config: TaskAgentToolsConfig = {
+			...makeConfig(ctx, mainTask.id, run.id),
+			pendingMessageRepo: pendingRepo,
+			taskAgentManager: mockTaskAgentManager,
+		};
+		const handlers = createTaskAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'ping',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.queued).toHaveLength(1);
+
+		await new Promise((r) => setTimeout(r, 0));
+		// node_execution row already exists for 'reviewer' → no redundant activation.
+		expect(ensureCalls).toHaveLength(0);
 	});
 
 	test('delivers to active target while queuing inactive target (partial)', async () => {

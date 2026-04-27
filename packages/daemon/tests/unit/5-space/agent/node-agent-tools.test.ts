@@ -673,8 +673,9 @@ describe('node-agent-tools: send_message', () => {
 
 	test('returns no-active-sessions when topology declares target but no session exists yet', async () => {
 		// "tester" is declared in channel topology (coder → tester) but has no active session.
-		// After the fix: target resolution succeeds (topology-declared), but delivery fails with
-		// "No active sessions found" — a more accurate error than the old "Unknown target".
+		// Target resolution succeeds (topology-declared), but delivery fails with
+		// a "could not deliver" error explaining the target is declared but has no session.
+		// Reworded in Task #133 to disambiguate from the genuinely-unknown-agent path.
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
 		});
@@ -683,7 +684,8 @@ describe('node-agent-tools: send_message', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
-		expect(data.error).toContain('No active sessions found for target agent(s): tester');
+		expect(data.error).toContain('Could not deliver message to target agent(s): tester');
+		expect(data.error).toContain('declared but has no active session');
 	});
 
 	test('returns unknown-target when role is not in topology or any execution', async () => {
