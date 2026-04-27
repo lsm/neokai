@@ -1646,6 +1646,9 @@ class SpaceStore {
 
 	/**
 	 * Send a human message into a task's agent thread.
+	 *
+	 * Returns the daemon response so callers can inspect delivered /
+	 * queued / activated for non-delivery feedback.
 	 */
 	async sendTaskMessage(
 		taskId: string,
@@ -1653,14 +1656,20 @@ class SpaceStore {
 		target?:
 			| { kind: 'task_agent' }
 			| { kind: 'node_agent'; agentName: string; nodeExecutionId?: string }
-	): Promise<void> {
+	): Promise<{
+		ok: boolean;
+		routedTo?: string[];
+		delivered?: false;
+		activated?: true;
+		queued?: true;
+	}> {
 		const spaceId = this.spaceId.value;
 		if (!spaceId) throw new Error('No space selected');
 
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
 
-		await hub.request('space.task.sendMessage', {
+		return hub.request('space.task.sendMessage', {
 			taskId,
 			spaceId,
 			message,
