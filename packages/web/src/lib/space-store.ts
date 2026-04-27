@@ -1647,7 +1647,13 @@ class SpaceStore {
 	/**
 	 * Send a human message into a task's agent thread.
 	 */
-	async sendTaskMessage(taskId: string, message: string): Promise<void> {
+	async sendTaskMessage(
+		taskId: string,
+		message: string,
+		target?:
+			| { kind: 'task_agent' }
+			| { kind: 'node_agent'; agentName: string; nodeExecutionId?: string }
+	): Promise<void> {
 		const spaceId = this.spaceId.value;
 		if (!spaceId) throw new Error('No space selected');
 
@@ -1658,6 +1664,7 @@ class SpaceStore {
 			taskId,
 			spaceId,
 			message,
+			...(target ? { target } : {}),
 		});
 	}
 

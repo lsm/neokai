@@ -106,7 +106,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 					.request('session.update', {
 						sessionId: prevSessionId,
 						metadata: {
-							inputDraft: trimmedContent || undefined,
+							inputDraft: trimmedContent || null,
 						},
 					})
 					.catch(() => {
@@ -126,7 +126,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 					.request('session.update', {
 						sessionId,
 						metadata: {
-							inputDraft: undefined,
+							inputDraft: null,
 						},
 					})
 					.catch(() => {
