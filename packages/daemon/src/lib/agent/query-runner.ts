@@ -824,8 +824,9 @@ export class QueryRunner {
 		try {
 			const errorMessage = error instanceof Error ? error.message : String(error);
 
-			// JSON-body 4xx (standard Anthropic API errors: "402 {...}")
-			const apiErrorMatch = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+			// JSON-body 4xx. Depending on where the Claude SDK raises it,
+			// this can arrive as either `402 {...}` or `API Error: 402 {...}`.
+			const apiErrorMatch = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 			if (apiErrorMatch) {
 				const [, statusCode, jsonBody] = apiErrorMatch;
 
@@ -848,7 +849,7 @@ export class QueryRunner {
 			}
 
 			// Plain-text 4xx (e.g. Copilot returns "402 You have no quota (Request ID: ...)")
-			const plainErrorMatch = errorMessage.match(/^(4\d{2})\s+(.+)$/s);
+			const plainErrorMatch = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(.+)$/s);
 			if (plainErrorMatch) {
 				const [, statusCode, plainMessage] = plainErrorMatch;
 				await this.displayErrorAsAssistantMessage(
