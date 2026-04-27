@@ -1097,15 +1097,76 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 		realServer.stop();
 	});
 
-	it('returns 404 JSON envelope for unknown URL paths', async () => {
+	it('returns 501 JSON envelope for unknown URL paths', async () => {
 		const resp = await fetch(`http://127.0.0.1:${realServer.port}/unknown/path`, {
 			method: 'GET',
 		});
-		expect(resp.status).toBe(404);
+		expect(resp.status).toBe(501);
 		expect(resp.headers.get('content-type')).toContain('application/json');
 		const body = (await resp.json()) as { type: string; error: { type: string; message: string } };
 		expect(body.type).toBe('error');
-		expect(body.error.type).toBe('not_found_error');
+		expect(body.error.type).toBe('not_implemented_error');
+	});
+
+	it('returns 200 with model listing for GET /v1/models', async () => {
+		const resp = await fetch(`http://127.0.0.1:${realServer.port}/v1/models`, {
+			method: 'GET',
+		});
+		expect(resp.ok).toBe(true);
+		expect(resp.headers.get('content-type')).toContain('application/json');
+		const body = (await resp.json()) as {
+			data: Array<{ id: string; type: string; display_name: string }>;
+			has_more: boolean;
+			first_id: string;
+			last_id: string;
+		};
+		expect(body.data.length).toBeGreaterThanOrEqual(3);
+		expect(body.has_more).toBe(false);
+		// All entries must have type 'model'
+		for (const m of body.data) {
+			expect(m.type).toBe('model');
+			expect(m.id).toBeTruthy();
+			expect(m.display_name).toBeTruthy();
+		}
+		// Known models should be present
+		const ids = body.data.map((m) => m.id);
+		expect(ids).toContain('gpt-5.3-codex');
+		expect(ids).toContain('gpt-5.4');
+		expect(ids).toContain('gpt-5.1-codex-mini');
+		expect(body.first_id).toBe(ids[0]);
+		expect(body.last_id).toBe(ids[ids.length - 1]);
+	});
+
+	it('returns dummy token count for POST /v1/messages/count_tokens', async () => {
+		const resp = await fetch(`http://127.0.0.1:${realServer.port}/v1/messages/count_tokens`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				messages: [{ role: 'user', content: 'hello' }],
+			}),
+		});
+		expect(resp.ok).toBe(true);
+		expect(resp.headers.get('content-type')).toContain('application/json');
+		const body = (await resp.json()) as { input_tokens: number };
+		expect(typeof body.input_tokens).toBe('number');
+	});
+
+	it('returns dummy token count for POST /v1/messages/count_tokens?beta=true', async () => {
+		const resp = await fetch(
+			`http://127.0.0.1:${realServer.port}/v1/messages/count_tokens?beta=true`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					model: 'gpt-5.3-codex',
+					messages: [{ role: 'user', content: 'hello' }],
+				}),
+			}
+		);
+		expect(resp.ok).toBe(true);
+		const body = (await resp.json()) as { input_tokens: number };
+		expect(typeof body.input_tokens).toBe('number');
 	});
 
 	it('returns 400 JSON envelope for invalid JSON body', async () => {
