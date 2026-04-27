@@ -653,6 +653,23 @@ export class AgentSession
 		await this.askUserQuestionHandler.handleQuestionCancel(toolUseId);
 	}
 
+	/**
+	 * Mark any pending AskUserQuestion as orphaned and reset the session to
+	 * idle. Called by reapers (force-completion, rehydrate failure) so the
+	 * UI removes the now-unanswerable question card.
+	 *
+	 * @param telemetryReason Annotates the `question.orphaned` daemonHub event
+	 *   only — the persisted `cancelReason` is hardcoded to
+	 *   `agent_session_terminated` (see `AskUserQuestionHandler.markQuestionOrphaned`).
+	 * @returns true if a question was actually orphaned, false if the session
+	 *   was not in `waiting_for_input`.
+	 */
+	async markPendingQuestionOrphaned(
+		telemetryReason: 'agent_session_terminated' | 'rehydrate_failed' = 'agent_session_terminated'
+	): Promise<boolean> {
+		return this.askUserQuestionHandler.markQuestionOrphaned(telemetryReason);
+	}
+
 	// ============================================================================
 	// Model Switching
 	// ============================================================================

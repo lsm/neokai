@@ -332,6 +332,40 @@ describe('QuestionPrompt', () => {
 			expect(container.textContent).toContain('Question skipped');
 		});
 
+		it('should show "agent session ended" header when cancelReason=agent_session_terminated', () => {
+			// Task #138: orphaned questions (session died before user answered)
+			// must render distinctly from a user-initiated Skip so users know
+			// the card was cleaned up by the runtime, not by them.
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={mockPendingQuestion}
+					resolvedState="cancelled"
+					finalResponses={[]}
+					cancelReason="agent_session_terminated"
+				/>
+			);
+
+			expect(container.textContent).toContain('Question cancelled — agent session ended');
+			// And does NOT collapse to the generic Skip wording
+			expect(container.textContent).not.toContain('Question skipped');
+		});
+
+		it('should show generic "Question skipped" when cancelReason=user_cancelled', () => {
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={mockPendingQuestion}
+					resolvedState="cancelled"
+					finalResponses={[]}
+					cancelReason="user_cancelled"
+				/>
+			);
+
+			expect(container.textContent).toContain('Question skipped');
+			expect(container.textContent).not.toContain('agent session ended');
+		});
+
 		it('should hide action buttons when resolved', () => {
 			const { container } = render(
 				<QuestionPrompt
