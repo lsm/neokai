@@ -2,10 +2,11 @@
  * AgentOverlayChat — slide-over panel that renders a ChatContainer on top of
  * the current view without replacing it.
  *
- * Triggered by `spaceOverlaySessionIdSignal`. The embedded `ChatContainer`
- * owns the only header; its left-slot back button (opted in via `onBack`)
- * doubles as the overlay dismiss control. Escape and backdrop-click also
- * dismiss for consistency with other modals.
+ * Triggered by `spaceOverlaySessionIdSignal` (live session) or
+ * `spaceOverlayPendingTaskIdSignal` (not-yet-spawned workflow peer).
+ * The embedded `ChatContainer` owns the only header; its left-slot back
+ * button (opted in via `onBack`) doubles as the overlay dismiss control.
+ * Escape and backdrop-click also dismiss for consistency with other modals.
  */
 
 import { useEffect, useRef } from 'preact/hooks';
@@ -16,7 +17,7 @@ import { cn } from '../../lib/utils';
 
 interface AgentOverlayChatProps {
 	/** Session ID to display inside the overlay. */
-	sessionId: string;
+	sessionId?: string;
 	/**
 	 * Human-readable label for the agent (e.g. "Task Agent"). Used only on the
 	 * wrapper dialog's aria-label so screen readers identify which agent is
@@ -32,6 +33,12 @@ interface AgentOverlayChatProps {
 	highlightMessageId?: string;
 	/** Called when the overlay should be closed. */
 	onClose: () => void;
+	/**
+	 * When set, renders a pending agent state (not-yet-spawned workflow peer)
+	 * inside the overlay instead of a live session. The ChatContainer shows a
+	 * "Starting…" composer and hands off to the live session when it appears.
+	 */
+	pendingAgent?: { taskId: string; agentName: string } | null;
 }
 
 export function AgentOverlayChat({
@@ -39,6 +46,7 @@ export function AgentOverlayChat({
 	agentName,
 	highlightMessageId,
 	onClose,
+	pendingAgent,
 }: AgentOverlayChatProps) {
 	const panelRef = useRef<HTMLDivElement>(null);
 
@@ -165,10 +173,11 @@ export function AgentOverlayChat({
 					{/* Chat content — ChatHeader owns the single header; back button replaces the mobile-menu toggle */}
 					<div class="flex-1 min-h-0 overflow-hidden flex flex-col">
 						<ChatContainer
-							key={sessionId}
-							sessionId={sessionId}
+							key={sessionId ?? `pending:${pendingAgent?.taskId}:${pendingAgent?.agentName}`}
+							sessionId={sessionId ?? ''}
 							onBack={onClose}
 							highlightMessageId={highlightMessageId}
+							pendingAgent={pendingAgent ?? null}
 						/>
 					</div>
 				</div>

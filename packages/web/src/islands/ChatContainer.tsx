@@ -63,14 +63,17 @@ import { sessionStore } from '../lib/session-store.ts';
 import { connectionState } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
 import { lobbyStore } from '../lib/lobby-store.ts';
+import { spaceStore } from '../lib/space-store.ts';
 
 import type { RoomContext } from '../components/ChatHeader.tsx';
 import { settingsSectionSignal } from '../lib/signals.ts';
-import { navigateToSettings } from '../lib/router.ts';
+import { navigateToSettings, replaceOverlayHistory } from '../lib/router.ts';
 import { ErrorCategory } from '../types/error.ts';
 import type { StructuredError } from '../types/error.ts';
 import { getProviderLabel } from '../hooks/index.ts';
 import type { ErrorBannerAction } from '../components/ErrorBanner.tsx';
+import { borderColors } from '../lib/design-tokens';
+import { cn } from '../lib/utils';
 
 interface ChatContainerProps {
 	sessionId: string;
@@ -94,6 +97,15 @@ interface ChatContainerProps {
 	 * around each `SDKMessageRenderer`. When absent, behavior is unchanged.
 	 */
 	highlightMessageId?: string;
+	/**
+	 * When set, renders a "pending agent" state instead of loading from
+	 * sessionStore. The agent has been declared in the workflow but has not yet
+	 * spawned a session. The user can type a first message; on send, the daemon
+	 * activates the agent. Once the live session appears in `taskActivity`, the
+	 * component calls `replaceOverlayHistory` to seamlessly transition to the
+	 * normal chat view.
+	 */
+	pendingAgent?: { taskId: string; agentName: string } | null;
 }
 
 export default function ChatContainer({
@@ -102,6 +114,7 @@ export default function ChatContainer({
 	hideRoomBreadcrumb = false,
 	onBack,
 	highlightMessageId,
+	pendingAgent,
 }: ChatContainerProps) {
 	// ========================================
 	// Refs
@@ -119,6 +132,77 @@ export default function ChatContainer({
 	const resolvingQuestionsRef = useRef<Map<string, ResolvedQuestion>>(new Map());
 	const pendingMessageVisibilityChecksRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
 		new Map()
+	);
+
+	// ========================================
+	// Pending Agent State (workflow agent not yet spawned)
+	// ========================================
+	const [pendingContent, setPendingContent] = useState('');
+	const [pendingSubmitting, setPendingSubmitting] = useState(false);
+	const [pendingWaitingForSession, setPendingWaitingForSession] = useState(false);
+	const [pendingErrorMessage, setPendingErrorMessage] = useState<string | null>(null);
+	const pendingTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+	// Watch taskActivity for the live session matching this pending agent.
+	const pendingLiveMember = useMemo(() => {
+		if (!pendingAgent) return undefined;
+		const members = spaceStore.taskActivity.value.get(pendingAgent.taskId) ?? [];
+		return members.find(
+			(m) => m.kind === 'node_agent' && m.role === pendingAgent.agentName && m.sessionId
+		);
+	}, [pendingAgent, spaceStore.taskActivity.value]);
+
+	// When a live session appears, hand off to the standard session-mode overlay.
+	useEffect(() => {
+		if (pendingLiveMember?.sessionId) {
+			replaceOverlayHistory(
+				pendingLiveMember.sessionId,
+				pendingLiveMember.label || pendingAgent!.agentName
+			);
+		}
+	}, [pendingLiveMember, pendingAgent]);
+
+	// Autofocus the pending composer on mount
+	useEffect(() => {
+		if (pendingAgent) {
+			pendingTextareaRef.current?.focus();
+		}
+	}, [pendingAgent]);
+
+	const handlePendingSend = useCallback(async () => {
+		if (!pendingAgent) return;
+		const trimmed = pendingContent.trim();
+		if (!trimmed || pendingSubmitting) return;
+		setPendingSubmitting(true);
+		setPendingErrorMessage(null);
+		try {
+			const result = await spaceStore.activateTaskNodeAgent(
+				pendingAgent.taskId,
+				pendingAgent.agentName,
+				trimmed
+			);
+			setPendingContent('');
+			if (result.sessionId) {
+				replaceOverlayHistory(result.sessionId, pendingAgent.agentName);
+			} else {
+				setPendingWaitingForSession(true);
+			}
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			setPendingErrorMessage(`Failed to start ${pendingAgent.agentName}: ${msg}`);
+		} finally {
+			setPendingSubmitting(false);
+		}
+	}, [pendingAgent, pendingContent, pendingSubmitting]);
+
+	const handlePendingKeyDown = useCallback(
+		(e: KeyboardEvent) => {
+			if (e.key === 'Enter' && !e.shiftKey) {
+				e.preventDefault();
+				void handlePendingSend();
+			}
+		},
+		[handlePendingSend]
 	);
 
 	// ========================================
@@ -598,7 +682,9 @@ export default function ChatContainer({
 	// Select session on mount or when sessionId changes
 	// This is needed when ChatContainer is used outside the main navigation flow
 	// (e.g., in Room.tsx for room chat with sessionId="room:{roomId}")
+	// Skip when in pending-agent mode — no real session exists yet.
 	useEffect(() => {
+		if (pendingAgent) return;
 		// Only select if this sessionId is different from the current active session
 		if (sessionId && sessionId !== sessionStore.activeSessionId.value) {
 			sessionStore.select(sessionId);
@@ -817,6 +903,125 @@ export default function ChatContainer({
 	const sessionStateLoaded = sessionStore.sessionState.value !== null;
 	const messagesLoaded = sessionStore.messagesLoaded.value;
 	const loading = !error && (!sessionStateLoaded || !messagesLoaded);
+
+	// ========================================
+	// Pending Agent Render (before loading check)
+	// ========================================
+	// When pendingAgent is set, show a "not started yet" state with a minimal
+	// composer. This replaces the standalone PendingAgentOverlay component.
+	if (pendingAgent) {
+		return (
+			<div
+				class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative"
+				data-testid="pending-agent-overlay"
+			>
+				{/* Header — mirrors ChatHeader height (h-[65px]) for visual consistency */}
+				<div
+					class={cn(
+						'px-4 min-h-[65px] flex-shrink-0 bg-dark-850 border-b flex items-center gap-3',
+						borderColors.ui.default
+					)}
+				>
+					{onBack && (
+						<button
+							type="button"
+							onClick={onBack}
+							class="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:bg-dark-800 hover:text-gray-200 transition-colors flex-shrink-0"
+							aria-label="Back"
+						>
+							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M15 19l-7-7 7-7"
+								/>
+							</svg>
+						</button>
+					)}
+					<div class="min-w-0 flex-1">
+						<div class="text-sm font-medium text-gray-100 truncate">{pendingAgent.agentName}</div>
+						<div class="text-xs text-gray-500 truncate">
+							{pendingWaitingForSession ? 'Starting session…' : 'Not started yet'}
+						</div>
+					</div>
+				</div>
+
+				{/* Body */}
+				<div class="flex-1 min-h-0 overflow-auto px-4 py-6">
+					<div
+						class={cn(
+							'mx-auto max-w-md text-center text-sm rounded-lg border bg-dark-850/60 px-4 py-6',
+							borderColors.ui.default
+						)}
+						data-testid="pending-agent-overlay-body"
+					>
+						{pendingWaitingForSession ? (
+							<>
+								<div class="mb-3 flex items-center justify-center">
+									<div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+								</div>
+								<p class="text-gray-200 font-medium mb-1">Starting {pendingAgent.agentName}…</p>
+								<p class="text-gray-500">
+									Your message has been queued. The session will open here as soon as the agent is
+									ready.
+								</p>
+							</>
+						) : (
+							<>
+								<p class="text-gray-200 font-medium mb-1">
+									{pendingAgent.agentName} hasn't started yet
+								</p>
+								<p class="text-gray-500">
+									Send a message below to start this agent's session. Your first message will be
+									delivered when the session is ready.
+								</p>
+							</>
+						)}
+					</div>
+				</div>
+
+				{/* Minimal Composer */}
+				<div class={cn('flex-shrink-0 border-t bg-dark-900 px-3 py-3', borderColors.ui.default)}>
+					{pendingErrorMessage && (
+						<p class="mb-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-300">
+							{pendingErrorMessage}
+						</p>
+					)}
+					<div class="flex gap-2">
+						<textarea
+							ref={pendingTextareaRef}
+							class="flex-1 min-h-[44px] max-h-40 resize-none rounded-md bg-dark-850 border border-dark-700 text-sm text-gray-100 px-3 py-2 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+							placeholder={
+								pendingWaitingForSession
+									? `Send another message to ${pendingAgent.agentName}…`
+									: `Send first message to ${pendingAgent.agentName}…`
+							}
+							value={pendingContent}
+							onInput={(e) => setPendingContent((e.target as HTMLTextAreaElement).value)}
+							onKeyDown={handlePendingKeyDown}
+							disabled={pendingSubmitting || pendingWaitingForSession}
+							data-testid="pending-agent-overlay-textarea"
+							rows={2}
+						/>
+						<button
+							type="button"
+							onClick={() => void handlePendingSend()}
+							disabled={!pendingContent.trim() || pendingSubmitting}
+							class={cn(
+								'inline-flex items-center justify-center rounded-md px-3 text-sm font-medium transition-colors flex-shrink-0',
+								'bg-blue-600 text-white hover:bg-blue-500',
+								'disabled:bg-dark-700 disabled:text-gray-500 disabled:cursor-not-allowed'
+							)}
+							data-testid="pending-agent-overlay-send"
+						>
+							{pendingSubmitting ? 'Starting…' : 'Send'}
+						</button>
+					</div>
+				</div>
+			</div>
+		);
+	}
 
 	// Render loading state
 	if (loading) {
