@@ -1487,6 +1487,21 @@ function tableHasColumn(db: BunDatabase, tableName: string, columnName: string):
 	return !!result;
 }
 
+function tableCreateSql(db: BunDatabase, tableName: string): string | null {
+	const row = db
+		.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`)
+		.get(tableName) as { sql?: string } | undefined;
+	return row?.sql ?? null;
+}
+
+function statusCheckContains(db: BunDatabase, tableName: string, status: string): boolean {
+	const sql = tableCreateSql(db, tableName);
+	if (!sql) return false;
+
+	const match = sql.match(/status\s+TEXT[\s\S]*?CHECK\s*\(\s*status\s+IN\s*\(([^)]*)\)/i);
+	return match?.[1]?.includes(`'${status}'`) ?? false;
+}
+
 /**
  * Room cleanup migration (consolidates former migrations 25–36)
  *
@@ -5043,25 +5058,21 @@ export function runMigration72(db: BunDatabase): void {
  *   REMOVED: config, iteration_count, max_iterations, goal_id
  *   UPDATED: status CHECK constraint
  *
- * Idempotency: probes whether the new 'open' status value is accepted by the
- * space_tasks CHECK constraint; if it is, the migration is already done.
+ * Idempotency: inspects the CHECK constraint and expected columns instead of
+ * probe-inserting fake rows, so foreign key enforcement cannot trigger a
+ * spurious rebuild on already-migrated databases.
  */
 function runMigration73(db: BunDatabase): void {
 	// ---- space_tasks ----
 	if (tableExists(db, 'space_tasks')) {
-		// Idempotency: try inserting a test row with status='open'.
-		// If the CHECK constraint rejects it, the table needs to be updated.
-		const testId = '__m73_probe__';
-		let needsTasksUpdate = false;
-		try {
-			db.prepare(
-				`INSERT INTO space_tasks (id, space_id, task_number, title, status, priority, depends_on, created_at, updated_at)
-         VALUES (?, '__probe__', 0, '__probe__', 'open', 'normal', '[]', 0, 0)`
-			).run(testId);
-			db.prepare(`DELETE FROM space_tasks WHERE id = ?`).run(testId);
-		} catch {
-			needsTasksUpdate = true;
-		}
+		// Idempotency: inspect the CHECK constraint instead of probe-inserting a
+		// fake row. With foreign_keys=ON, a probe using a non-existent space_id
+		// fails even on already-migrated schemas, which would trigger a destructive
+		// rebuild on every startup.
+		const needsTasksUpdate =
+			!statusCheckContains(db, 'space_tasks', 'open') ||
+			!tableHasColumn(db, 'space_tasks', 'labels') ||
+			tableHasColumn(db, 'space_tasks', 'task_type');
 
 		if (needsTasksUpdate) {
 			// pr_url/pr_number/pr_created_at may already be removed by M84.
@@ -5160,18 +5171,12 @@ function runMigration73(db: BunDatabase): void {
 
 	// ---- space_workflow_runs ----
 	if (tableExists(db, 'space_workflow_runs')) {
-		// Idempotency: try inserting with status='done'
-		const testRunId = '__m73_run_probe__';
-		let needsRunsUpdate = false;
-		try {
-			db.prepare(
-				`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
-         VALUES (?, '__probe__', '__probe__', '__probe__', 'done', 0, 0)`
-			).run(testRunId);
-			db.prepare(`DELETE FROM space_workflow_runs WHERE id = ?`).run(testRunId);
-		} catch {
-			needsRunsUpdate = true;
-		}
+		// Idempotency: inspect schema text instead of probe-inserting a fake row,
+		// for the same foreign-key reason as the space_tasks check above.
+		const needsRunsUpdate =
+			!statusCheckContains(db, 'space_workflow_runs', 'done') ||
+			!tableHasColumn(db, 'space_workflow_runs', 'started_at') ||
+			tableHasColumn(db, 'space_workflow_runs', 'config');
 
 		if (needsRunsUpdate) {
 			db.exec('PRAGMA foreign_keys = OFF');
@@ -5564,18 +5569,10 @@ function runMigration75(db: BunDatabase): void {
 function runMigration76(db: BunDatabase): void {
 	if (!tableExists(db, 'space_tasks')) return;
 
-	// Idempotency: try inserting a test row with status='review'.
-	const testId = '__m76_probe__';
-	let needsUpdate = false;
-	try {
-		db.prepare(
-			`INSERT INTO space_tasks (id, space_id, task_number, title, status, priority, depends_on, created_at, updated_at)
-       VALUES (?, '__probe__', 0, '__probe__', 'review', 'normal', '[]', 0, 0)`
-		).run(testId);
-		db.prepare(`DELETE FROM space_tasks WHERE id = ?`).run(testId);
-	} catch {
-		needsUpdate = true;
-	}
+	// Idempotency: inspect schema text instead of probe-inserting a fake task.
+	// The probe used to fail on already-migrated databases when foreign_keys=ON
+	// because it referenced a non-existent space_id.
+	const needsUpdate = !statusCheckContains(db, 'space_tasks', 'review');
 
 	if (!needsUpdate) return;
 
@@ -5746,22 +5743,11 @@ function runMigration79(db: BunDatabase): void {
 	if (!tableExists(db, 'node_executions')) return;
 
 	// Idempotency: check if 'idle' status is already accepted and data column exists.
-	const hasDataColumn = tableHasColumn(db, 'node_executions', 'data');
-	let needsStatusUpdate = false;
-	if (!hasDataColumn) {
-		needsStatusUpdate = true;
-	} else {
-		const testId = '__m78_probe__';
-		try {
-			db.prepare(
-				`INSERT INTO node_executions (id, workflow_run_id, workflow_node_id, agent_name, status, created_at, updated_at)
-         VALUES (?, '__probe__', '__probe__', '__probe__', 'idle', 0, 0)`
-			).run(testId);
-			db.prepare(`DELETE FROM node_executions WHERE id = ?`).run(testId);
-		} catch {
-			needsStatusUpdate = true;
-		}
-	}
+	// Use schema inspection instead of a probe insert so foreign_keys=ON cannot
+	// mistake a fake workflow_run_id for a missing CHECK value.
+	const needsStatusUpdate =
+		!tableHasColumn(db, 'node_executions', 'data') ||
+		!statusCheckContains(db, 'node_executions', 'idle');
 
 	if (!needsStatusUpdate) return;
 
@@ -6091,10 +6077,17 @@ export function runMigration86(db: BunDatabase): void {
 	}
 
 	// ── Parts 2+3: space_tasks columns and approval_source migration ──
-	// These run unconditionally (each guarded by its own tableHasColumn check) so
-	// that databases where Part 1 already ran but Parts 2+3 did not are caught up.
+	// These run independently from Part 1 so databases where the spaces rebuild
+	// already ran but task columns did not are caught up. Do not re-add
+	// pending_action_index after M104 has removed the completion_action schema.
 	if (tableExists(db, 'space_tasks')) {
-		if (!tableHasColumn(db, 'space_tasks', 'pending_action_index')) {
+		const taskSql = tableCreateSql(db, 'space_tasks') ?? '';
+		const completionActionAlreadyRemoved =
+			taskSql.includes("'task_completion'") && !taskSql.includes("'completion_action'");
+		if (
+			!tableHasColumn(db, 'space_tasks', 'pending_action_index') &&
+			!completionActionAlreadyRemoved
+		) {
 			db.exec(`ALTER TABLE space_tasks ADD COLUMN pending_action_index INTEGER DEFAULT NULL`);
 		}
 		if (!tableHasColumn(db, 'space_tasks', 'pending_checkpoint_type')) {
