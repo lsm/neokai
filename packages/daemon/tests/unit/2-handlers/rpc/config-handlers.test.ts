@@ -614,6 +614,54 @@ describe('SDK Config RPC Handlers', () => {
 				'Session not found'
 			);
 		});
+
+		// Task #140 acceptance #2 — config.mcp.update RPC must preserve in-process
+		// servers (`node-agent`/`task-agent`/`space-agent-tools`/`db-query`) by
+		// routing through `updateUserMcpServers` rather than `updateConfig`.
+		// Without this, editing the MCP server list in the UI silently drops the
+		// runtime-injected servers and the next query starts with no node-agent.
+		it('routes mcpServers updates through updateUserMcpServers (preserves in-process servers)', async () => {
+			const handler = messageHubData.handlers.get('config.mcp.update');
+			expect(handler).toBeDefined();
+
+			const { agentSession, mocks } = createMockAgentSession({
+				mcpServers: {
+					'node-agent': { type: 'sdk', name: 'node-agent', instance: {} } as never,
+					'space-agent-tools': { type: 'sdk', name: 'space-agent-tools', instance: {} } as never,
+					'existing-subprocess': { type: 'stdio', command: 'npx' } as never,
+				},
+			});
+			sessionManagerData.getSessionAsyncMock.mockResolvedValue(agentSession);
+
+			await handler!(
+				{
+					sessionId: 'session-123',
+					mcpServers: {
+						filesystem: { command: 'npx', args: ['-y', 'mcp-server-filesystem'] },
+					},
+				},
+				{}
+			);
+
+			// Critical: must use the merge-preserving API.
+			expect(mocks.updateUserMcpServers).toHaveBeenCalledTimes(1);
+			expect(mocks.updateConfig).not.toHaveBeenCalledWith(
+				expect.objectContaining({ mcpServers: expect.anything() })
+			);
+		});
+
+		it('does not call updateUserMcpServers when only strictMcpConfig is provided', async () => {
+			const handler = messageHubData.handlers.get('config.mcp.update');
+			expect(handler).toBeDefined();
+
+			const { agentSession, mocks } = createMockAgentSession();
+			sessionManagerData.getSessionAsyncMock.mockResolvedValue(agentSession);
+
+			await handler!({ sessionId: 'session-123', strictMcpConfig: true }, {});
+
+			expect(mocks.updateUserMcpServers).not.toHaveBeenCalled();
+			expect(mocks.updateConfig).toHaveBeenCalledWith({ strictMcpConfig: true });
+		});
 	});
 
 	describe('config.mcp.addServer', () => {
@@ -642,6 +690,45 @@ describe('SDK Config RPC Handlers', () => {
 			await expect(
 				handler!({ sessionId: 'non-existent', name: 'server', config: {} }, {})
 			).rejects.toThrow('Session not found');
+		});
+
+		// Task #140 acceptance #2 — addServer must filter out in-process servers
+		// from the existing config before merging the new one, so it preserves
+		// node-agent/space-agent-tools/etc.
+		it('routes addServer through updateUserMcpServers and preserves in-process servers', async () => {
+			const handler = messageHubData.handlers.get('config.mcp.addServer');
+			expect(handler).toBeDefined();
+
+			const { agentSession, mocks } = createMockAgentSession({
+				mcpServers: {
+					'node-agent': { type: 'sdk', name: 'node-agent', instance: {} } as never,
+					'space-agent-tools': { type: 'sdk', name: 'space-agent-tools', instance: {} } as never,
+					existing: { type: 'stdio', command: 'echo' } as never,
+				},
+			});
+			sessionManagerData.getSessionAsyncMock.mockResolvedValue(agentSession);
+
+			await handler!(
+				{
+					sessionId: 'session-123',
+					name: 'new-subprocess',
+					config: { command: 'npx', args: ['-y', 'fake-mcp'] },
+				},
+				{}
+			);
+
+			expect(mocks.updateUserMcpServers).toHaveBeenCalledTimes(1);
+			const passed = mocks.updateUserMcpServers.mock.calls[0][0] as Record<
+				string,
+				{ type?: string }
+			>;
+			// Must include the new subprocess + any pre-existing subprocess entries.
+			expect(passed).toHaveProperty('new-subprocess');
+			expect(passed).toHaveProperty('existing');
+			// Must NOT contain in-process (sdk) servers — those are preserved by
+			// updateUserMcpServers itself; the handler must not pass them through.
+			expect(passed).not.toHaveProperty('node-agent');
+			expect(passed).not.toHaveProperty('space-agent-tools');
 		});
 	});
 
@@ -677,6 +764,50 @@ describe('SDK Config RPC Handlers', () => {
 			await expect(handler!({ sessionId: 'non-existent', name: 'server' }, {})).rejects.toThrow(
 				'Session not found'
 			);
+		});
+
+		// Task #140 acceptance #2 — removeServer must reject attempts to remove
+		// in-process (sdk-type) runtime servers; those are managed by the daemon.
+		it('rejects attempts to remove an in-process (sdk-type) runtime server', async () => {
+			const handler = messageHubData.handlers.get('config.mcp.removeServer');
+			expect(handler).toBeDefined();
+
+			const { agentSession } = createMockAgentSession({
+				mcpServers: {
+					'node-agent': { type: 'sdk', name: 'node-agent', instance: {} } as never,
+				},
+			});
+			sessionManagerData.getSessionAsyncMock.mockResolvedValue(agentSession);
+
+			await expect(handler!({ sessionId: 'session-123', name: 'node-agent' }, {})).rejects.toThrow(
+				/runtime-managed in-process server/i
+			);
+		});
+
+		it('routes removeServer through updateUserMcpServers and preserves in-process servers', async () => {
+			const handler = messageHubData.handlers.get('config.mcp.removeServer');
+			expect(handler).toBeDefined();
+
+			const { agentSession, mocks } = createMockAgentSession({
+				mcpServers: {
+					'node-agent': { type: 'sdk', name: 'node-agent', instance: {} } as never,
+					'space-agent-tools': { type: 'sdk', name: 'space-agent-tools', instance: {} } as never,
+					'to-remove': { type: 'stdio', command: 'echo' } as never,
+					'to-keep': { type: 'stdio', command: 'echo' } as never,
+				},
+			});
+			sessionManagerData.getSessionAsyncMock.mockResolvedValue(agentSession);
+
+			await handler!({ sessionId: 'session-123', name: 'to-remove' }, {});
+
+			expect(mocks.updateUserMcpServers).toHaveBeenCalledTimes(1);
+			const passed = mocks.updateUserMcpServers.mock.calls[0][0] as Record<string, unknown>;
+			expect(passed).toHaveProperty('to-keep');
+			expect(passed).not.toHaveProperty('to-remove');
+			// In-process servers are not passed through — updateUserMcpServers
+			// preserves them on its own (asserted in session-config-handler.test.ts).
+			expect(passed).not.toHaveProperty('node-agent');
+			expect(passed).not.toHaveProperty('space-agent-tools');
 		});
 	});
 

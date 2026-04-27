@@ -136,7 +136,7 @@ export class SessionRepository {
 			const mergedConfig = existing ? { ...existing.config, ...updates.config } : updates.config;
 			// Strip runtime-only fields that must not be persisted:
 			// - mcpServers: may contain live Server instances with circular references
-			//   (set via AgentSession.setRuntimeMcpServers(), intentionally not serialized)
+			//   (attached via AgentSession.mergeRuntimeMcpServers(), intentionally not serialized)
 			// - function values (runtime-only fields like spawnClaudeCodeProcess)
 			let serializedConfig: string;
 			try {

@@ -471,7 +471,11 @@ export class NeoAgentManager {
 			dbQueryServers['db-query'] = this.dbQueryServer as unknown as McpServerConfig;
 		}
 
-		this.session.setRuntimeMcpServers({
+		// Merge (additive) so any servers another subsystem attached during Neo
+		// session bootstrap are preserved. Task #140 acceptance #1 — no replace-all
+		// in production code paths. The Neo session has no other concurrent
+		// attach surface today, but merge keeps the invariant uniform.
+		this.session.mergeRuntimeMcpServers({
 			...registryMcpServers,
 			...inProcessServers,
 			...dbQueryServers,
