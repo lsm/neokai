@@ -63,7 +63,11 @@ import { connectionManager } from '../lib/connection-manager';
 import { borderColors } from '../lib/design-tokens';
 import { MIN_MESSAGES_BOTTOM_PADDING_PX } from '../lib/layout-metrics.ts';
 import { lobbyStore } from '../lib/lobby-store.ts';
-import { navigateToSettings, replaceOverlayHistory } from '../lib/router.ts';
+import {
+	clearOverlayHighlightMessageId,
+	navigateToSettings,
+	replaceOverlayHistory,
+} from '../lib/router.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import { settingsSectionSignal } from '../lib/signals.ts';
 import { spaceStore } from '../lib/space-store.ts';
@@ -730,8 +734,8 @@ export default function ChatContainer({
 		containerRef: messagesContainerRef,
 		endRef: messagesEndRef,
 		// Disable tail-following auto-scroll while the caller is asking us to
-		// scroll a specific message into view — otherwise late-arriving rows
-		// would yank the viewport away from the highlighted target.
+		// scroll a specific message into view. The highlight id is cleared once
+		// that anchor succeeds, so normal tail-following resumes for new rows.
 		enabled: autoScroll && !highlightMessageId,
 		messageCount: messages.length,
 		isInitialLoad,
@@ -751,6 +755,7 @@ export default function ChatContainer({
 		messageId: highlightMessageId,
 		messageCount: messages.length,
 		isInitialLoad,
+		onAnchored: clearOverlayHighlightMessageId,
 	});
 
 	// ========================================
