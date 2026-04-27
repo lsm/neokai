@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from 'preact/hooks';
 import { useSpaceTaskMessages } from '../../hooks/useSpaceTaskMessages';
+import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { MinimalThreadFeed } from './thread/minimal/MinimalThreadFeed';
 import { parseThreadRow } from './thread/space-task-thread-events';
 
@@ -21,6 +22,9 @@ interface SpaceTaskUnifiedThreadProps {
 	 * last row can't suppress Coder's still-running rail.
 	 */
 	activeAgentLabels?: ReadonlySet<string>;
+	autoScrollEnabled?: boolean;
+	onShowScrollButtonChange?: (showScrollButton: boolean) => void;
+	onScrollToBottomChange?: (scrollToBottom: ((smooth?: boolean) => void) | null) => void;
 }
 
 export function SpaceTaskUnifiedThread({
@@ -28,25 +32,33 @@ export function SpaceTaskUnifiedThread({
 	bottomInsetClass = 'pb-3',
 	topInsetClass = '',
 	activeAgentLabels,
+	autoScrollEnabled = true,
+	onShowScrollButtonChange,
+	onScrollToBottomChange,
 }: SpaceTaskUnifiedThreadProps) {
 	const { rows, activeTurnSummaries, isLoading, isReconnecting } = useSpaceTaskMessages(
 		taskId,
 		'compact'
 	);
 	const containerRef = useRef<HTMLDivElement>(null);
-	const didInitialScrollRef = useRef<string | null>(null);
+	const messagesEndRef = useRef<HTMLDivElement>(null);
 
 	const parsedRows = useMemo(() => rows.map(parseThreadRow), [rows]);
+	const { showScrollButton, scrollToBottom } = useAutoScroll({
+		containerRef,
+		endRef: messagesEndRef,
+		enabled: autoScrollEnabled,
+		messageCount: rows.length,
+	});
 
 	useEffect(() => {
-		if (!containerRef.current) return;
-		// MinimalThreadFeed is a summary view — the entry point is the start
-		// of the conversation, not the latest event.
-		if (didInitialScrollRef.current !== taskId) {
-			containerRef.current.scrollTop = 0;
-			didInitialScrollRef.current = taskId;
-		}
-	}, [taskId, parsedRows.length]);
+		onShowScrollButtonChange?.(showScrollButton);
+	}, [onShowScrollButtonChange, showScrollButton]);
+
+	useEffect(() => {
+		onScrollToBottomChange?.(scrollToBottom);
+		return () => onScrollToBottomChange?.(null);
+	}, [onScrollToBottomChange, scrollToBottom]);
 
 	if (isReconnecting) {
 		return (
@@ -87,6 +99,7 @@ export function SpaceTaskUnifiedThread({
 						activeAgentLabels={activeAgentLabels}
 						activeTurnSummaries={activeTurnSummaries}
 					/>
+					<div ref={messagesEndRef} />
 				</div>
 			</div>
 		</div>

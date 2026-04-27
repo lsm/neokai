@@ -65,7 +65,9 @@ function renderComposer(overrides: Partial<Parameters<typeof TaskSessionChatComp
 			canSend={true}
 			isSending={false}
 			isProcessing={false}
+			autoScroll={true}
 			errorMessage={null}
+			onAutoScrollChange={vi.fn()}
 			onTargetSelect={onTargetSelect}
 			onSend={onSend}
 			{...overrides}
@@ -148,6 +150,13 @@ describe('TaskSessionChatComposer', () => {
 	it('forwards isProcessing to ChatComposer', () => {
 		renderComposer({ isProcessing: true });
 		expect(lastChatComposerProps?.isProcessing).toBe(true);
+	});
+
+	it('forwards auto-scroll state to ChatComposer', () => {
+		const onAutoScrollChange = vi.fn();
+		renderComposer({ autoScroll: false, onAutoScrollChange });
+		expect(lastChatComposerProps?.autoScroll).toBe(false);
+		expect(lastChatComposerProps?.onAutoScrollChange).toBe(onAutoScrollChange);
 	});
 
 	it('renders a recipient picker in the input leading slot', () => {

@@ -25,7 +25,9 @@ interface TaskSessionChatComposerProps {
 	canSend: boolean;
 	isSending: boolean;
 	isProcessing: boolean;
+	autoScroll: boolean;
 	errorMessage?: string | null;
+	onAutoScrollChange: (enabled: boolean) => void;
 	onTargetSelect: (targetId: string) => void;
 	onDraftActiveChange?: (hasDraft: boolean) => void;
 	onSend: (message: string, target: TaskComposerTarget | null) => Promise<boolean>;
@@ -40,7 +42,9 @@ export function TaskSessionChatComposer({
 	canSend,
 	isSending,
 	isProcessing,
+	autoScroll,
 	errorMessage,
+	onAutoScrollChange,
 	onTargetSelect,
 	onDraftActiveChange,
 	onSend,
@@ -146,7 +150,7 @@ export function TaskSessionChatComposer({
 				availableModels={availableModels}
 				modelSwitching={modelSwitching}
 				modelLoading={modelLoading}
-				autoScroll={false}
+				autoScroll={autoScroll}
 				coordinatorMode={false}
 				coordinatorSwitching={false}
 				sandboxEnabled={false}
@@ -155,7 +159,7 @@ export function TaskSessionChatComposer({
 				isConnected={true}
 				rewindMode={false}
 				onModelSwitch={switchModel}
-				onAutoScrollChange={() => {}}
+				onAutoScrollChange={onAutoScrollChange}
 				onCoordinatorModeChange={() => {}}
 				onSandboxModeChange={() => {}}
 				onSend={handleSend}

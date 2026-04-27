@@ -5,7 +5,7 @@ import type {
 	SpaceTaskStatus,
 } from '@neokai/shared';
 import type { ComponentChildren } from 'preact';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { borderColors } from '../../lib/design-tokens';
 import { navigateToSpaceTask, pushOverlayHistory } from '../../lib/router';
 import { currentSpaceIdSignal, currentSpaceTaskViewTabSignal } from '../../lib/signals';
@@ -13,6 +13,7 @@ import { spaceStore } from '../../lib/space-store';
 import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { cn } from '../../lib/utils';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
+import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { PendingGateBanner } from './PendingGateBanner';
 import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
 import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
@@ -150,7 +151,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const [targetLocked, setTargetLocked] = useState(false);
 	const [hasComposerDraft, setHasComposerDraft] = useState(false);
 	const [visibleTargetName, setVisibleTargetName] = useState<string | null>(null);
+	const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+	const [showScrollButton, setShowScrollButton] = useState(false);
 	const threadPanelRef = useRef<HTMLDivElement>(null);
+	const scrollToBottomRef = useRef<((smooth?: boolean) => void) | null>(null);
 	const draftWasActiveRef = useRef(false);
 	// Modal-local error feedback. Separate from `threadSendError` because
 	// `threadSendError` is rendered inside `TaskSessionChatComposer`, which is
@@ -166,6 +170,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		setTargetLocked(false);
 		setHasComposerDraft(false);
 		setVisibleTargetName(null);
+		setAutoScrollEnabled(true);
+		setShowScrollButton(false);
+		scrollToBottomRef.current = null;
 		draftWasActiveRef.current = false;
 	}, [taskId]);
 
@@ -477,6 +484,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			setSendingThread(false);
 		}
 	};
+
+	const handleScrollToBottom = useCallback(() => {
+		scrollToBottomRef.current?.(true);
+		setAutoScrollEnabled(true);
+	}, []);
 
 	const handleStatusTransition = async (newStatus: SpaceTaskStatus) => {
 		// Submitting for review is the human counterpart of the agent
@@ -805,6 +817,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 											: 'pb-3'
 									}
 									activeAgentLabels={activeAgentLabels}
+									autoScrollEnabled={autoScrollEnabled}
+									onShowScrollButtonChange={setShowScrollButton}
+									onScrollToBottomChange={(scrollToBottom) => {
+										scrollToBottomRef.current = scrollToBottom;
+									}}
 								/>
 							) : (
 								<div class="h-full overflow-y-auto">
@@ -824,6 +841,14 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							)}
 						</div>
 
+						{showScrollButton && (
+							<ScrollToBottomButton
+								onClick={handleScrollToBottom}
+								bottomClass={threadSendError ? 'bottom-52 sm:bottom-44' : 'bottom-44 sm:bottom-36'}
+								autoScroll={autoScrollEnabled}
+							/>
+						)}
+
 						{showInlineComposer && (
 							<TaskSessionChatComposer
 								sessionId={agentSessionId ?? ''}
@@ -834,7 +859,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								canSend={canSendThreadMessage}
 								isSending={sendingThread}
 								isProcessing={isAgentActive}
+								autoScroll={autoScrollEnabled}
 								errorMessage={threadSendError}
+								onAutoScrollChange={setAutoScrollEnabled}
 								onTargetSelect={(targetId) => {
 									setSelectedTargetId(targetId);
 									setTargetLocked(true);
