@@ -456,7 +456,7 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 						}
 					);
 				} catch {
-					return createAnthropicError(400, 'invalid_request_error', 'Bad Request: invalid JSON');
+					return createAnthropicError(400, 'invalid_request_error', 'Bad Request');
 				}
 			}
 
