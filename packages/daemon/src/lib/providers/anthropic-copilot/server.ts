@@ -32,7 +32,7 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { isAbsolute, normalize } from 'node:path';
-import type { CopilotClient, SessionConfig } from '@github/copilot-sdk';
+import { approveAll, type CopilotClient, type SessionConfig } from '@github/copilot-sdk';
 import { isAnthropicRequest, type AnthropicRequest } from './types.js';
 import { formatAnthropicPrompt, extractSystemText, extractToolResultIds } from './prompt.js';
 import { ConversationManager } from './conversation.js';
@@ -129,7 +129,7 @@ function buildPlainSessionConfig(
 		...(systemMessage
 			? { systemMessage: { mode: 'replace' as const, content: systemMessage } }
 			: {}),
-		onPermissionRequest: () => Promise.resolve({ kind: 'approve-once' as const }),
+		onPermissionRequest: approveAll,
 		onUserInputRequest: () =>
 			Promise.resolve({
 				answer: 'User input is not available. Ask your question in your response instead.',
