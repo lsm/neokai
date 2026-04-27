@@ -252,7 +252,7 @@ describe('MinimalThreadFeed', () => {
 			}),
 		];
 
-		render(<MinimalThreadFeed parsedRows={rows} isAgentActive={true} />);
+		render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
 		const trigger = screen.getByTestId('minimal-thread-agent-open');
 		expect(trigger.getAttribute('aria-label')).toBe('Open Coder Agent session');
 		fireEvent.click(trigger);

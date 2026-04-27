@@ -79,6 +79,7 @@ describe('TaskSessionChatComposer', () => {
 
 	it('renders a non-interactive readability scrim behind the floating composer', () => {
 		const { container, getByTestId } = renderComposer();
+		expect(getByTestId('task-session-chat-composer').className).toContain('relative');
 		const scrim = getByTestId('task-composer-readability-scrim');
 		expect(scrim.className).toContain('pointer-events-none');
 		expect(container.querySelector('.bg-gradient-to-t')).toBeTruthy();

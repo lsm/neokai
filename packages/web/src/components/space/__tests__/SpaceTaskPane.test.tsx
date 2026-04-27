@@ -1021,6 +1021,22 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 'task-1', 'canvas');
 	});
 
+	it('falls back to task.spaceId for tab navigation when no route space id is available', () => {
+		mockCurrentSpaceIdSignal.value = null;
+		mockTasks.value = [
+			makeTask({
+				spaceId: 'task-space',
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'session-abc',
+			}),
+		];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+
+		fireEvent.click(getByTestId('canvas-toggle'));
+		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('task-space', 'task-1', 'canvas');
+	});
+
 	it('passes insets to SpaceTaskUnifiedThread so messages clear floating controls', () => {
 		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);

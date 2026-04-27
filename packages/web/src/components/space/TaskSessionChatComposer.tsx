@@ -42,7 +42,7 @@ export function TaskSessionChatComposer({
 	};
 
 	return (
-		<div data-testid="task-session-chat-composer">
+		<div class="relative z-10" data-testid="task-session-chat-composer">
 			<div
 				class="pointer-events-none absolute bottom-0 left-0 right-0 z-[9] h-24"
 				data-testid="task-composer-readability-scrim"
