@@ -476,7 +476,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				setEnsuringThread(false);
 			}
 
-			await spaceStore.sendTaskMessage(
+			const result = await spaceStore.sendTaskMessage(
 				task.id,
 				nextMessage,
 				target?.kind === 'node_agent' && target.agentName
@@ -487,6 +487,17 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						}
 					: { kind: 'task_agent' }
 			);
+
+			// When the daemon queued the message for a not-yet-spawned agent,
+			// keep the draft and surface a user-visible signal so the message
+			// is never silently lost.
+			if (result?.delivered === false && !result?.queued) {
+				setThreadSendError(
+					'Agent is starting — your message could not be delivered. Try again in a moment.'
+				);
+				return false;
+			}
+
 			setTargetLocked(false);
 			setHasComposerDraft(false);
 			draftWasActiveRef.current = false;
