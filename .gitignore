@@ -62,5 +62,10 @@ browser-coverage.lcov
 .devproxy/.devproxy.pid
 .devproxy/devproxy.log
 
+# Desktop (Tauri) build artifacts
+packages/desktop/src-tauri/target/
+packages/desktop/src-tauri/binaries/
+packages/desktop/src-tauri/gen/
+
 # Claude Code — ignore everything under .claude/
 .claude/

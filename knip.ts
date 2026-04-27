@@ -20,6 +20,10 @@ const config: KnipConfig = {
 			// Web entry is client.tsx (rendered by vite), not index.ts
 			entry: ['src/client.tsx', 'src/index.html'],
 		},
+		'packages/desktop': {
+			// Pure Tauri/Rust shell — no TS/JS sources, scripts only.
+			entry: [],
+		},
 	},
 
 	// Ignore patterns
