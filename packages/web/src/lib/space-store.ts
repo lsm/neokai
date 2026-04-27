@@ -1668,6 +1668,54 @@ class SpaceStore {
 		});
 	}
 
+	/**
+	 * Lazy-activate a workflow-declared node agent for a task.
+	 *
+	 * Used by the agent dropdown when the user clicks a "(Not started)" peer:
+	 * triggers the daemon to spawn the corresponding sub-session and
+	 * (optionally) queues a first message that will be delivered as soon as
+	 * the spawn completes.
+	 *
+	 * Returns the live sessionId when the agent is already spawned, otherwise
+	 * `null` — callers should watch `taskActivity` for the new session to
+	 * appear via the existing live-query subscription.
+	 */
+	async activateTaskNodeAgent(
+		taskId: string,
+		agentName: string,
+		message?: string
+	): Promise<{
+		sessionId: string | null;
+		activated: boolean;
+		queued: boolean;
+		queuedMessageId?: string;
+	}> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const response = await hub.request<{
+			sessionId: string | null;
+			activated: boolean;
+			queued: boolean;
+			queuedMessageId?: string;
+		}>('space.task.activateNodeAgent', {
+			taskId,
+			spaceId,
+			agentName,
+			...(message !== undefined ? { message } : {}),
+		});
+
+		return {
+			sessionId: response?.sessionId ?? null,
+			activated: response?.activated ?? false,
+			queued: response?.queued ?? false,
+			...(response?.queuedMessageId ? { queuedMessageId: response.queuedMessageId } : {}),
+		};
+	}
+
 	// ========================================
 	// Gate Methods
 	// ========================================

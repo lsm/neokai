@@ -728,7 +728,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		channelCycleRepo,
 		async (runId, nodeId) => {
 			await spaceRuntimeService.activateWorkflowNode(runId, nodeId);
-		}
+		},
+		pendingMessageRepo
 	);
 
 	// Space export/import handlers
