@@ -342,6 +342,7 @@ export type AnthropicErrorType =
 	| 'invalid_request_error'
 	| 'authentication_error'
 	| 'not_found_error'
+	| 'not_implemented_error'
 	| 'api_error'
 	| 'overloaded_error';
 
