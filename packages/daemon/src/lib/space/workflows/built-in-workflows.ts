@@ -20,13 +20,12 @@
  *   `resolveChannels()` matches node names via the `nodeNameToAgents` lookup.
  */
 
+import type { GateScript, SpaceWorkflow, WorkflowNode } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
-import type { SpaceWorkflow, WorkflowNode } from '@neokai/shared';
-import type { GateScript } from '@neokai/shared';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { Logger } from '../../logger';
-import { computeWorkflowHash } from './template-hash.ts';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './post-approval-merge-template.ts';
+import { computeWorkflowHash } from './template-hash.ts';
 
 const builtInSeederLog = new Logger('seed-built-in-workflows');
 
@@ -318,9 +317,14 @@ const FULLSTACK_REVIEW_PROMPT =
 	'`REQUEST_CHANGES`: send actionable feedback to Coding via `send_message(' +
 	'target="Coding", ...)` — do NOT write the approval gate, and the workflow stays ' +
 	'open for the next cycle.\n\n' +
+	'Note: writing `approved = true` to `review-approval-gate` carries the **same ' +
+	'approval semantic** as `approve_task` / `submit_for_approval` would on an end ' +
+	'node — it is a terminal hand-off. Treat it with the same care: never flip the ' +
+	'gate while P0–P3 findings are open.\n\n' +
 	'If the change is ready for QA, write to review-approval-gate (field: approved = true). ' +
-	'If changes are needed, send actionable feedback to Coding. Review is not the end node, ' +
-	'so the task-completion tools are not available to you.';
+	'If changes are needed, send actionable feedback to Coding via ' +
+	'`send_message(target="Coding", ...)`. Review is not the end node, so the ' +
+	'task-completion tools are not available to you.';
 
 const FULLSTACK_QA_PROMPT =
 	'You are the QA node in a Fullstack QA Loop workflow. Run thorough validation, including backend tests, ' +
@@ -1102,7 +1106,9 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'3. Validate CI and mergeability\n' +
 							'4. If fail: send detailed failures and repro steps to Coding, then call ' +
 							'`save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` to record the audit entry. Do ' +
-							'NOT call `approve_task` — leave the workflow open for the next Coding cycle.\n' +
+							'NOT call `approve_task` or `submit_for_approval` — both are TERMINAL and ' +
+							'carry the same approval semantic. Leave the workflow open for the next ' +
+							'Coding cycle.\n' +
 							'5. If all green:\n' +
 							'   a. Signal the Task Agent that the PR is ready for post-approval:\n' +
 							'      send_message(\n' +

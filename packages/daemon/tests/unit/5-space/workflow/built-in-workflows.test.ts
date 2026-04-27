@@ -15,27 +15,27 @@
  * - Export/import round-trip: isCyclic and task_result conditions are preserved
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
-import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import {
-	CODING_WORKFLOW,
-	PLAN_AND_DECOMPOSE_WORKFLOW,
-	FULLSTACK_QA_LOOP_WORKFLOW,
-	RESEARCH_WORKFLOW,
-	REVIEW_ONLY_WORKFLOW,
-	getBuiltInWorkflows,
-	getBuiltInGateScript,
-	seedBuiltInWorkflows,
-} from '../../../../src/lib/space/workflows/built-in-workflows.ts';
-import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash.ts';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 import {
 	exportWorkflow,
 	validateExportedWorkflow,
 } from '../../../../src/lib/space/export-format.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import {
+	CODING_WORKFLOW,
+	FULLSTACK_QA_LOOP_WORKFLOW,
+	getBuiltInGateScript,
+	getBuiltInWorkflows,
+	PLAN_AND_DECOMPOSE_WORKFLOW,
+	RESEARCH_WORKFLOW,
+	REVIEW_ONLY_WORKFLOW,
+	seedBuiltInWorkflows,
+} from '../../../../src/lib/space/workflows/built-in-workflows.ts';
+import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash.ts';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2271,6 +2271,16 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 		expect(prompt).toContain('P0–P3');
 		expect(prompt).toContain('REQUEST_CHANGES');
 		expect(prompt).toContain('review-approval-gate');
+		// Failure-path routing: the prompt must explicitly tell the reviewer to
+		// send feedback back to Coding via send_message rather than silently
+		// stalling. Asserting this catches future drift in the routing wording.
+		expect(prompt).toContain('send_message(target="Coding", ...)');
+		// Same approval semantic clarifier: even though approve_task /
+		// submit_for_approval are unavailable on this mid-graph node, writing
+		// the approval gate is the equivalent terminal hand-off and the prompt
+		// must call out the parallel so a future split (where the tools become
+		// available) does not accidentally remove the gating.
+		expect(prompt).toMatch(/same approval semantic/i);
 	});
 
 	test('FULLSTACK_QA_LOOP_WORKFLOW QA node prompt contains Terminal Action Pre-conditions block', () => {

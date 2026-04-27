@@ -6,18 +6,18 @@
  * on name collision are captured but do not abort remaining seeds).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
-import {
-	seedPresetAgents,
-	PRESET_AGENT_TOOLS,
-	SUB_SESSION_FEATURES,
-	getPresetAgentTemplates,
-} from '../../../../src/lib/space/agents/seed-agents';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import { setModelsCache } from '../../../../src/lib/model-service';
+import {
+	getPresetAgentTemplates,
+	PRESET_AGENT_TOOLS,
+	SUB_SESSION_FEATURES,
+	seedPresetAgents,
+} from '../../../../src/lib/space/agents/seed-agents';
+import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { createSpaceAgentSchema, insertSpace } from '../../helpers/space-agent-schema';
 
 describe('seedPresetAgents', () => {
@@ -264,6 +264,24 @@ describe('seedPresetAgents', () => {
 		// Decision rule: request changes when any P0–P3 finding exists (P3 included).
 		expect(reviewer?.customPrompt).toContain('P0–P3');
 		expect(reviewer?.customPrompt).toMatch(/P3 included/i);
+	});
+
+	it('Reviewer custom prompt fences terminal actions while findings are open (Task #136 regression)', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const reviewer = seeded.find((a) => a.name === 'Reviewer');
+
+		// Preset-level fence must apply to ALL Reviewer instances, even when
+		// the workflow template forgets to add a customPrompt overlay. The
+		// section header, both terminal tools, the P0–P3 gate, and the
+		// "same approval semantic" clarifier must be present so future
+		// workflows inherit the gating by default.
+		expect(reviewer?.customPrompt).toContain('Terminal Action Pre-Conditions');
+		expect(reviewer?.customPrompt).toContain('`approve_task`');
+		expect(reviewer?.customPrompt).toContain('`submit_for_approval`');
+		expect(reviewer?.customPrompt).toContain('P0–P3');
+		expect(reviewer?.customPrompt).toMatch(/Do NOT call `approve_task`/);
+		expect(reviewer?.customPrompt).toMatch(/Do NOT call `submit_for_approval`/);
+		expect(reviewer?.customPrompt).toMatch(/same approval semantic/i);
 	});
 
 	it('Reviewer custom prompt includes own-PR detection', async () => {

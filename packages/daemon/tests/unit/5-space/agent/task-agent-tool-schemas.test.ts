@@ -6,14 +6,14 @@
  * - Rejects invalid inputs with a ZodError
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import {
 	ApproveTaskSchema,
-	SubmitForApprovalSchema,
-	RequestHumanInputSchema,
-	TASK_AGENT_TOOL_SCHEMAS,
 	ListGroupMembersSchema,
 	MarkCompleteSchema,
+	RequestHumanInputSchema,
+	SubmitForApprovalSchema,
+	TASK_AGENT_TOOL_SCHEMAS,
 } from '../../../../src/lib/space/tools/task-agent-tool-schemas.ts';
 
 // ---------------------------------------------------------------------------
