@@ -39,8 +39,20 @@ import { z } from 'zod';
  * Takes no arguments — the task, workflow, and node are implicit from the
  * calling session's context. Strict schema so future fields fail fast until
  * explicitly added.
+ *
+ * Pre-conditions (enforced by the agent's prompt, not the schema):
+ *   - For review-style end-node agents: your verdict on the current round MUST
+ *     be APPROVE (zero P0–P3 findings) AND any prior-round P0–P3 findings must
+ *     be resolved in the commits you've reviewed.
+ *   - This tool is a TERMINAL ACTION: it closes the review loop. Do NOT call
+ *     it while findings are open — request changes and continue the loop instead.
  */
-export const ApproveTaskSchema = z.object({}).strict();
+export const ApproveTaskSchema = z
+	.object({})
+	.strict()
+	.describe(
+		'Self-close the task as approved. TERMINAL: closes the review/QA loop. Pre-condition: your current-round verdict MUST be APPROVE (zero P0–P3 findings) AND any prior-round P0–P3 findings must be addressed in the latest commits you reviewed. While findings are open, request changes and continue the loop instead — do NOT call this tool.'
+	);
 
 export type ApproveTaskInput = z.infer<typeof ApproveTaskSchema>;
 
@@ -56,6 +68,17 @@ export type ApproveTaskInput = z.infer<typeof ApproveTaskSchema>;
  * `task.status = 'review'` and populates the pending-completion fields so the
  * UI can route a human to approve or reject. Even at high autonomy levels this
  * remains available — agents may want to escalate a risky result for attention.
+ *
+ * IMPORTANT: This tool is TERMINAL — it closes the review loop. It carries the
+ * same approval semantic as `approve_task` ("the work is approved by me, but
+ * autonomy rules block me from self-closing, so a human must rubber-stamp the
+ * final close"). It is NOT a way to defer judgment while findings are open.
+ *
+ * Pre-conditions (enforced by the agent's prompt, not the schema):
+ *   - Your current-round verdict MUST be APPROVE (zero P0–P3 findings) AND any
+ *     prior-round P0–P3 findings must be resolved in the commits you've reviewed.
+ *   - Do NOT use `submit_for_approval` to defer judgment while findings are
+ *     open — request changes and continue the loop instead.
  */
 export const SubmitForApprovalSchema = z
 	.object({
@@ -70,7 +93,10 @@ export const SubmitForApprovalSchema = z
 			)
 			.optional(),
 	})
-	.strict();
+	.strict()
+	.describe(
+		'Request human sign-off as the final close action. TERMINAL: closes the review/QA loop, equivalent in semantic to `approve_task` (both signal "the work is approved by me"). Pre-condition: your current-round verdict MUST be APPROVE (zero P0–P3 findings) AND any prior-round P0–P3 findings must be resolved in the commits you reviewed. Do NOT use this to defer judgment while findings are open — request changes and continue the loop instead.'
+	);
 
 export type SubmitForApprovalInput = z.infer<typeof SubmitForApprovalSchema>;
 
