@@ -64,7 +64,6 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceRuntimeService } from './space-runtime-service';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { SpaceTaskReportResultRepository } from '../../../storage/repositories/space-task-report-result-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
@@ -120,14 +119,6 @@ export interface TaskAgentManagerConfig {
 	spaceRuntimeService: SpaceRuntimeService;
 	/** Task repository — direct DB reads */
 	taskRepo: SpaceTaskRepository;
-	/**
-	 * Append-only audit log repository for historical `report_result` rows.
-	 * No longer used by active tool handlers (report_result was removed in favor
-	 * of save_artifact). Kept for backward compatibility with callers; existing
-	 * rows in the space_task_report_results table remain as historical data.
-	 * @deprecated Tool handlers no longer write to this table.
-	 */
-	taskReportResultRepo: SpaceTaskReportResultRepository;
 	/** Workflow run repository — reading and updating runs */
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Gate data repository — for reading and writing gate runtime data in node agent tools */
@@ -2291,7 +2282,7 @@ export class TaskAgentManager {
 	 * Called when a node agent sub-session completes (session goes idle).
 	 *
 	 * Automatically transitions the execution to `idle` when the agent's session
-	 * finishes naturally — no explicit `report_result` call needed.
+	 * finishes naturally — completion is signaled by `task.reportedStatus`.
 	 * Notifies the Task Agent (when present) about workflow node session completion.
 	 */
 	private async handleSubSessionComplete(
@@ -3270,7 +3261,7 @@ export class TaskAgentManager {
 	 * first turn runs. See `ensureNodeAgentAttached` / `ensureRequiredMcpServersAttached`
 	 * for the invariant enforcement logic.
 	 *
-	 * - `node-agent`: peer communication (list_peers, send_message, report_result).
+	 * - `node-agent`: peer communication (list_peers, send_message, save_artifact).
 	 *   Without this the Coder→Reviewer handoff dies silently with "No such tool
 	 *   available" (PR #1535 failure mode).
 	 * - `space-agent-tools`: gate + task surface (read_gate, write_gate, approve_gate,
@@ -3574,7 +3565,7 @@ export class TaskAgentManager {
 	 * at node-start (stored in the run config by SpaceRuntime.storeResolvedChannels()).
 	 *
 	 * The server gives the node agent peer communication tools (list_peers, send_message,
-	 * report_result) that are scoped to its group, channel topology, and node task.
+	 * save_artifact) that are scoped to its group, channel topology, and node task.
 	 */
 	private buildNodeAgentMcpServerForSession(
 		taskId: string,

@@ -5,10 +5,9 @@
  * 1. SpaceRuntime detects a pending task and spawns a Task Agent session
  * 2. Task Agent session has correct type, context, and MCP tools attached
  * 3. Task Agent processes its initial context message
- * 4. Task Agent can call each workflow tool (spawn_node_agent, check_node_status,
- *    report_result) verified via probe mocks
- * 5. When report_result is called (via full MCP name mock), task status becomes 'done'
- * 6. Space Agent receives the completion notification event
+ * 4. Task Agent can call each workflow tool (spawn_node_agent, check_node_status)
+ *    verified via probe mocks
+ * 5. Completing a node execution transitions it to `idle`
  *
  * Note: advance_workflow was removed in Task 3.5 (agent-driven progression).
  *
@@ -26,10 +25,6 @@
  * "mcp__task-agent__spawn_node_agent"), dispatch fails and the SDK retries indefinitely
  * (each retry re-sends the probe phrase, matching the same mock — infinite loop). Instead,
  * the mocks return text mentioning the tool name and relevant IDs for test assertions.
- *
- * The report_result test uses the full MCP name "mcp__task-agent__report_result" with
- * stop_reason "tool_use" so the SDK dispatches the tool, which updates the task status
- * to 'done' and emits the DaemonHub space.task.done event.
  *
  * ## Running
  *

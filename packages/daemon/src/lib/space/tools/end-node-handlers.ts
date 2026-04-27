@@ -19,9 +19,6 @@
  *     through.
  *   - `onSubmitForApproval` sets `status='review'` plus pending-completion
  *     fields so the UI banner can route a human to approve/reject.
- *
- * Note: The `report_result` (append-only audit) handler was removed. Use
- * `save_artifact({ type: 'result', append: true, ... })` instead.
  */
 
 import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';

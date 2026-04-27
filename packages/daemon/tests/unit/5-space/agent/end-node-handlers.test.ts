@@ -6,9 +6,6 @@
  *   - approve_task        — autonomy-gated self-close
  *   - submit_for_approval — always-available human sign-off request
  *
- * Note: report_result was removed. Audit records are now written via
- * save_artifact({ type: 'result', append: true }) on the node-agent tool surface.
- *
  * These handlers were extracted from task-agent-manager.ts so they can be
  * unit-tested directly with a real SQLite DB and no live agent sessions.
  */

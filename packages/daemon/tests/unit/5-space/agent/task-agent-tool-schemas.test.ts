@@ -135,7 +135,6 @@ describe('TASK_AGENT_TOOL_SCHEMAS', () => {
 
 	test('does not contain removed tools', () => {
 		const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
-		expect(keys).not.toContain('report_result');
 		expect(keys).not.toContain('spawn_node_agent');
 		expect(keys).not.toContain('check_node_status');
 		expect(keys).not.toContain('advance_workflow');

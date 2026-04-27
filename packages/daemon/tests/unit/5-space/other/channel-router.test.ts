@@ -82,7 +82,7 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string): void {
 
 /**
  * End nodes must have exactly 1 agent (validator enforced — they own the
- * `report_result` completion signal). When the last user-provided node is
+ * `task.reportedStatus` completion signal). When the last user-provided node is
  * multi-agent, we synthesize a separate terminal single-agent end node so the
  * multi-agent node remains the start (or middle) and validation passes.
  */

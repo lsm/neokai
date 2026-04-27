@@ -5,8 +5,9 @@
  * Node-execution statuses (idle/cancelled/etc.) are NOT completion signals —
  * they are per-execution lifecycle. Workflow completion is signalled by:
  *   1. `task.status` being terminal (`done` | `cancelled`), OR
- *   2. `task.reportedStatus` being non-null (agent called `report_result` —
- *      runtime will resolve final status on next tick via completion-actions).
+ *   2. `task.reportedStatus` being non-null (set directly by the end-node
+ *      agent — runtime will resolve final status on next tick via
+ *      completion-actions).
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
