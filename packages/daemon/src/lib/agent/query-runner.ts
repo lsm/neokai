@@ -289,99 +289,75 @@ export class QueryRunner {
 					(isWorkflowSubSession ? ' (workflow sub-session)' : '') +
 					` ${JSON.stringify(snapshotPayload)}`
 			);
-			// P2-6: Self-heal + health-check: detect missing required MCP servers for
-			// workflow sub-sessions and attempt recovery. Required servers:
+			// P2-6 / P1-5: Self-heal — detect missing required MCP servers for workflow
+			// sub-sessions and recover via the registered callback. Required servers:
 			//   - node-agent: peer comms (send_message, list_peers, save_artifact)
 			//   - space-agent-tools: gate surface (read_gate, write_gate, approve_gate)
-			// Both must be attached AND healthy (tools registered) before first turn.
+			//
+			// Only enters this block when servers are actually missing. The callback
+			// (TaskAgentManager.mcpSelfHeal) calls ensureRequiredMcpServersAttached which
+			// already verifies post-injection — no separate functional check needed here.
+			// No health check on healthy starts — the outer condition is strictly
+			// `missingServers.length > 0` to avoid false-positive throws.
 			if (isWorkflowSubSession) {
 				const requiredServers = ['node-agent', 'space-agent-tools'] as const;
 				const missingServers = requiredServers.filter((name) => !mcpServerNames.includes(name));
-				if (missingServers.length > 0 || this.ctx.onMissingWorkflowMcpServers) {
-					// ── Step 1: Emit structured diagnostic event ────────────────────────
+
+				if (missingServers.length > 0) {
 					const diagnosticPayload = {
-						event: missingServers.length > 0 ? 'workflow.mcp.missing' : 'workflow.mcp.healthcheck',
+						event: 'workflow.mcp.missing',
 						sessionId: session.id,
 						spaceId: session.context?.spaceId,
 						sessionType: session.type,
-						...(missingServers.length > 0
-							? { missingServers, presentServers: mcpServerNames }
-							: {}),
+						missingServers,
+						presentServers: mcpServerNames,
 					};
 
-					// ── Step 2: Self-heal — attempt re-injection via registered callback ──
-					if (missingServers.length > 0) {
-						logger.error(
-							`QueryRunner.start(): workflow sub-session ${session.id} is MISSING required MCP servers. ` +
-								`Missing: [${missingServers.join(', ')}]. ` +
-								`Present: [${mcpServerNames.join(', ')}]. ` +
-								`Attempting self-heal via onMissingWorkflowMcpServers callback...`
-						);
-						if (this.ctx.onMissingWorkflowMcpServers) {
-							try {
-								await this.ctx.onMissingWorkflowMcpServers(session.id, missingServers);
-								logger.info(
-									`QueryRunner.start(): self-heal callback completed for session ${session.id}`
-								);
-							} catch (err) {
-								logger.error(
-									`QueryRunner.start(): self-heal callback FAILED for session ${session.id}: ` +
-										`${err instanceof Error ? err.message : String(err)}. ` +
-										`The session will start without required MCP servers — expect "No such tool available" failures at runtime.`
-								);
-							}
+					logger.error(
+						`QueryRunner.start(): workflow sub-session ${session.id} is MISSING required MCP servers. ` +
+							`Missing: [${missingServers.join(', ')}]. ` +
+							`Present: [${mcpServerNames.join(', ')}]. ` +
+							`Attempting self-heal via onMissingWorkflowMcpServers callback...`
+					);
+
+					// ── Self-heal: call the registered callback to re-inject servers ─────
+					if (this.ctx.onMissingWorkflowMcpServers) {
+						try {
+							await this.ctx.onMissingWorkflowMcpServers(session.id, missingServers);
+							logger.info(
+								`QueryRunner.start(): self-heal callback completed for session ${session.id}. ` +
+									`${JSON.stringify(diagnosticPayload)}`
+							);
+						} catch (err) {
+							logger.error(
+								`QueryRunner.start(): self-heal callback FAILED for session ${session.id}: ` +
+									`${err instanceof Error ? err.message : String(err)}. ` +
+									`The session will start without required MCP servers — expect "No such tool available" failures at runtime.`
+							);
 						}
 					}
 
-					// ── Step 3: Health check — verify servers are now attached AND usable ──
-					// Re-read the live MCP server map after the self-heal attempt.
+					// Belt-and-suspenders: re-read the live map and throw if still missing.
+					// The callback may have thrown, in which case we never reach here.
+					// If it succeeded without throwing but servers are still absent (should not
+					// happen with ensureRequiredMcpServersAttached), catch it here.
 					const currentMcpServers =
 						(session.config?.mcpServers as Record<string, unknown> | undefined) ?? {};
 					const currentServerNames = Object.keys(currentMcpServers);
 					const stillMissing = requiredServers.filter((name) => !currentServerNames.includes(name));
-					// Functional check: each server must expose at least one tool.
-					// If the server is present but has no tools, it was created broken.
-					const unhealthyServers = requiredServers.filter((name) => {
-						if (!currentServerNames.includes(name)) return false;
-						const cfg = currentMcpServers[name] as Record<string, unknown> | undefined;
-						// node-agent and space-agent-tools are both SDK-type servers that expose
-						// tools via the `tools` property on the config. If tools is missing/empty,
-						// the server was created but is non-functional.
-						const tools = cfg?.tools as unknown[] | undefined;
-						return !tools || tools.length === 0;
-					});
-
-					if (stillMissing.length > 0 || unhealthyServers.length > 0) {
-						const errorPayload = {
-							event: 'workflow.mcp.unhealthy',
-							sessionId: session.id,
-							...(stillMissing.length > 0
-								? { stillMissing, presentServers: currentServerNames }
-								: {}),
-							...(unhealthyServers.length > 0 ? { unhealthyServers } : {}),
-						};
+					if (stillMissing.length > 0) {
 						logger.error(
-							`QueryRunner.start(): workflow sub-session ${session.id} MCP servers still unhealthy after self-heal. ` +
-								`${stillMissing.length > 0 ? `Still missing: [${stillMissing.join(', ')}]. ` : ''}` +
-								`${unhealthyServers.length > 0 ? `Servers with no tools (non-functional): [${unhealthyServers.join(', ')}]. ` : ''}` +
-								`Diagnostic: ${JSON.stringify(errorPayload)}`
+							`QueryRunner.start(): workflow sub-session ${session.id} servers still missing after self-heal. ` +
+								`Still absent: [${stillMissing.join(', ')}]. ` +
+								`Present: [${currentServerNames.join(', ')}]. ` +
+								`Refusing to start.`
 						);
-						// Always throw — starting a broken session is worse than failing loudly.
 						throw new Error(
-							`[MCP invariant] Workflow sub-session ${session.id} has unhealthy MCP servers ` +
-								`after self-heal. ` +
-								`${stillMissing.length > 0 ? `Missing: [${stillMissing.join(', ')}]. ` : ''}` +
-								`${unhealthyServers.length > 0 ? `Non-functional: [${unhealthyServers.join(', ')}]. ` : ''}` +
+							`[MCP invariant] Workflow sub-session ${session.id} still missing required ` +
+								`MCP servers after self-heal: [${stillMissing.join(', ')}]. ` +
 								`Refusing to start — fix the injection logic.`
 						);
 					}
-
-					// All servers present and functional.
-					logger.info(
-						`QueryRunner.start(): workflow sub-session ${session.id} MCP servers verified healthy. ` +
-							`Servers: [${currentServerNames.join(', ')}]. ` +
-							`${JSON.stringify(diagnosticPayload)}`
-					);
 				}
 			}
 
