@@ -5,7 +5,7 @@ import type {
 	SpaceTaskStatus,
 } from '@neokai/shared';
 import type { ComponentChildren } from 'preact';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { borderColors } from '../../lib/design-tokens';
 import { navigateToSpaceTask, pushOverlayHistory } from '../../lib/router';
 import { currentSpaceIdSignal, currentSpaceTaskViewTabSignal } from '../../lib/signals';
@@ -13,6 +13,7 @@ import { spaceStore } from '../../lib/space-store';
 import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { cn } from '../../lib/utils';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
+import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { PendingGateBanner } from './PendingGateBanner';
 import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
 import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
@@ -21,7 +22,7 @@ import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
-import { TaskSessionChatComposer } from './TaskSessionChatComposer';
+import { TaskSessionChatComposer, type TaskComposerTarget } from './TaskSessionChatComposer';
 import { getTransitionActions } from './TaskStatusActions';
 import { useRunGateSummaries } from './use-run-gate-summaries.ts';
 
@@ -80,6 +81,21 @@ const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
 	urgent: 'border-red-500/30 bg-red-500/10 text-red-300',
 };
 
+function formatAgentSlotLabel(name: string): string {
+	return name
+		.split(/[\s_-]+/)
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(' ');
+}
+
+function normalizeTargetName(name: string | null | undefined): string {
+	return (name ?? '')
+		.toLowerCase()
+		.replace(/(?:\s+agent)+$/, '')
+		.replace(/[\s_-]+/g, '');
+}
+
 function TaskMetaBadge({
 	children,
 	class: className,
@@ -131,6 +147,16 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const [sendingThread, setSendingThread] = useState(false);
 	const [statusTransitioning, setStatusTransitioning] = useState(false);
 	const [showSubmitForReviewModal, setShowSubmitForReviewModal] = useState(false);
+	const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
+	const [targetLocked, setTargetLocked] = useState(false);
+	const [hasComposerDraft, setHasComposerDraft] = useState(false);
+	const [visibleTargetName, setVisibleTargetName] = useState<string | null>(null);
+	const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+	const [showScrollButton, setShowScrollButton] = useState(false);
+	const [threadScroller, setThreadScroller] = useState<HTMLDivElement | null>(null);
+	const threadPanelRef = useRef<HTMLDivElement>(null);
+	const scrollToBottomRef = useRef<((smooth?: boolean) => void) | null>(null);
+	const draftWasActiveRef = useRef(false);
 	// Modal-local error feedback. Separate from `threadSendError` because
 	// `threadSendError` is rendered inside `TaskSessionChatComposer`, which is
 	// only mounted when the inline composer is visible. A failed submit-for-
@@ -141,6 +167,15 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	useEffect(() => {
 		setThreadSendError(null);
+		setSelectedTargetId(null);
+		setTargetLocked(false);
+		setHasComposerDraft(false);
+		setVisibleTargetName(null);
+		setAutoScrollEnabled(true);
+		setShowScrollButton(false);
+		setThreadScroller(null);
+		scrollToBottomRef.current = null;
+		draftWasActiveRef.current = false;
 	}, [taskId]);
 
 	useEffect(() => {
@@ -200,13 +235,55 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const workflow = canvasWorkflowId
 		? (spaceStore.workflows.value.find((w) => w.id === canvasWorkflowId) ?? null)
 		: null;
-	const workflowAgentIds = workflow
-		? new Set(workflow.nodes.flatMap((n) => n.agents.map((a) => a.agentId)))
-		: null;
-	const mentionCandidates =
-		workflowAgentIds !== null
-			? spaceStore.agents.value.filter((a) => workflowAgentIds.has(a.id))
-			: [];
+	const spaceAgents = spaceStore.agents.value;
+	const nodeExecutions = spaceStore.nodeExecutions.value;
+	const taskAgentMember = activityMembers.find((m) => m.kind === 'task_agent') ?? null;
+	const composerTargets: TaskComposerTarget[] = useMemo(() => {
+		const nodeTargets =
+			workflow?.nodes.flatMap((node) =>
+				node.agents.map((agent) => {
+					const member =
+						activityMembers.find(
+							(m) =>
+								m.kind === 'node_agent' &&
+								(normalizeTargetName(m.role) === normalizeTargetName(agent.name) ||
+									normalizeTargetName(m.nodeExecution?.agentName) ===
+										normalizeTargetName(agent.name))
+						) ?? null;
+					const nodeExecution =
+						task.workflowRunId && node.id
+							? (nodeExecutions.find(
+									(execution) =>
+										execution.workflowRunId === task.workflowRunId &&
+										execution.workflowNodeId === node.id &&
+										normalizeTargetName(execution.agentName) === normalizeTargetName(agent.name)
+								) ?? null)
+							: null;
+					const spaceAgent = spaceAgents.find((a) => a.id === agent.agentId) ?? null;
+					return {
+						id: `node:${node.id}:${agent.name}`,
+						kind: 'node_agent' as const,
+						label: member?.label ?? spaceAgent?.name ?? formatAgentSlotLabel(agent.name),
+						agentName: agent.name,
+						nodeExecutionId: nodeExecution?.id,
+						nodeName: node.name,
+						state: member ? ACTIVITY_STATE_LABELS[member.state] : 'Not started',
+					};
+				})
+			) ?? [];
+
+		const taskAgentTarget: TaskComposerTarget = {
+			id: 'task-agent',
+			kind: 'task_agent',
+			label: 'Task Agent',
+			state: taskAgentMember ? ACTIVITY_STATE_LABELS[taskAgentMember.state] : undefined,
+		};
+
+		return nodeTargets.length > 0 ? [...nodeTargets, taskAgentTarget] : [taskAgentTarget];
+	}, [workflow, activityMembers, task.workflowRunId, taskAgentMember, nodeExecutions, spaceAgents]);
+	const mentionCandidates = composerTargets
+		.filter((target) => target.kind === 'node_agent' && target.agentName)
+		.map((target) => ({ id: target.id, name: target.agentName as string }));
 
 	const isTerminalTask =
 		task.status === 'done' || task.status === 'cancelled' || task.status === 'archived';
@@ -252,6 +329,95 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				: agentSessionId
 					? 'View Agent Session'
 					: 'Open Space Agent';
+	const visibleTarget = visibleTargetName
+		? composerTargets.find(
+				(target) =>
+					normalizeTargetName(target.label) === normalizeTargetName(visibleTargetName) ||
+					normalizeTargetName(target.agentName) === normalizeTargetName(visibleTargetName)
+			)
+		: null;
+	const defaultTarget =
+		visibleTarget ?? composerTargets.find((t) => t.kind === 'node_agent') ?? null;
+	const selectedTarget =
+		composerTargets.find((target) => target.id === selectedTargetId) ?? defaultTarget;
+
+	useEffect(() => {
+		if (selectedTargetId && composerTargets.some((target) => target.id === selectedTargetId)) {
+			return;
+		}
+		setSelectedTargetId(defaultTarget?.id ?? null);
+	}, [composerTargets, defaultTarget?.id, selectedTargetId]);
+
+	useEffect(() => {
+		if (targetLocked || hasComposerDraft || !defaultTarget) return;
+		if (selectedTargetId === defaultTarget.id) return;
+		setSelectedTargetId(defaultTarget.id);
+	}, [defaultTarget, hasComposerDraft, selectedTargetId, targetLocked]);
+
+	useEffect(() => {
+		if (activeView !== 'thread' || !showInlineComposer) return;
+		const root = threadPanelRef.current;
+		if (!root) return;
+		const scroller =
+			threadScroller ??
+			root.querySelector<HTMLElement>('[data-testid="space-task-unified-thread"] > div');
+		if (!scroller) return;
+
+		let frame = 0;
+		const updateVisibleTarget = (options?: { unlockManualTarget?: boolean }) => {
+			cancelAnimationFrame(frame);
+			frame = requestAnimationFrame(() => {
+				const rootRect = scroller.getBoundingClientRect();
+				const targetAnchorY = rootRect.top + rootRect.height * 0.72;
+				const turns = Array.from(
+					root.querySelectorAll<HTMLElement>('[data-testid="minimal-thread-turn"]')
+				);
+				let best: { targetName: string; distance: number; visibleHeight: number } | null = null;
+				for (const turn of turns) {
+					const rect = turn.getBoundingClientRect();
+					const visibleTop = Math.max(rect.top, rootRect.top);
+					const visibleBottom = Math.min(rect.bottom, rootRect.bottom);
+					const visibleHeight = visibleBottom - visibleTop;
+					if (visibleHeight < 8) continue;
+					const targetName =
+						turn.dataset.toLabel || turn.dataset.agentLabel || turn.dataset.fromLabel || null;
+					if (!targetName) continue;
+					const visibleCenter = visibleTop + visibleHeight / 2;
+					const distance = Math.abs(visibleCenter - targetAnchorY);
+					if (
+						!best ||
+						distance < best.distance ||
+						(distance === best.distance && visibleHeight >= best.visibleHeight)
+					) {
+						best = { targetName, distance, visibleHeight };
+					}
+				}
+				setVisibleTargetName(best?.targetName ?? null);
+				if (options?.unlockManualTarget && targetLocked && !hasComposerDraft && !sendingThread) {
+					setTargetLocked(false);
+				}
+			});
+		};
+
+		const handleScroll = () => updateVisibleTarget({ unlockManualTarget: true });
+		const observer = new MutationObserver(() => updateVisibleTarget());
+		observer.observe(root, { childList: true, subtree: true });
+		scroller.addEventListener('scroll', handleScroll, { passive: true });
+		updateVisibleTarget();
+
+		return () => {
+			cancelAnimationFrame(frame);
+			observer.disconnect();
+			scroller.removeEventListener('scroll', handleScroll);
+		};
+	}, [
+		activeView,
+		hasComposerDraft,
+		sendingThread,
+		showInlineComposer,
+		targetLocked,
+		threadScroller,
+	]);
 
 	useEffect(() => {
 		if (activeView === 'canvas' && !canShowCanvasTab) {
@@ -288,7 +454,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		}
 	};
 
-	const sendThreadMessage = async (nextMessage: string): Promise<boolean> => {
+	const sendThreadMessage = async (
+		nextMessage: string,
+		target: TaskComposerTarget | null
+	): Promise<boolean> => {
 		if (!nextMessage) return false;
 		if (!runtimeSpaceId || !task) return false;
 
@@ -296,14 +465,27 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			setSendingThread(true);
 			setThreadSendError(null);
 
-			if (!agentSessionId) {
+			if (target?.kind !== 'node_agent' && !agentSessionId) {
 				setEnsuringThread(true);
 				const ensured = await spaceStore.ensureTaskAgentSession(task.id);
 				setThreadSessionId(ensured.taskAgentSessionId ?? null);
 				setEnsuringThread(false);
 			}
 
-			await spaceStore.sendTaskMessage(task.id, nextMessage);
+			await spaceStore.sendTaskMessage(
+				task.id,
+				nextMessage,
+				target?.kind === 'node_agent' && target.agentName
+					? {
+							kind: 'node_agent',
+							agentName: target.agentName,
+							...(target.nodeExecutionId ? { nodeExecutionId: target.nodeExecutionId } : {}),
+						}
+					: { kind: 'task_agent' }
+			);
+			setTargetLocked(false);
+			setHasComposerDraft(false);
+			draftWasActiveRef.current = false;
 			return true;
 		} catch (err) {
 			setThreadSendError(formatTaskThreadError(err));
@@ -313,6 +495,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			setSendingThread(false);
 		}
 	};
+
+	const handleScrollToBottom = useCallback(() => {
+		scrollToBottomRef.current?.(true);
+		setAutoScrollEnabled(true);
+	}, []);
 
 	const handleStatusTransition = async (newStatus: SpaceTaskStatus) => {
 		// Submitting for review is the human counterpart of the agent
@@ -628,7 +815,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					/>
 				) : (
 					<div class="h-full flex flex-col relative">
-						<div class="flex-1 min-h-0" data-testid="task-thread-panel">
+						<div ref={threadPanelRef} class="flex-1 min-h-0" data-testid="task-thread-panel">
 							{hasUnifiedWorkflowThread ? (
 								<SpaceTaskUnifiedThread
 									taskId={task.id}
@@ -641,6 +828,12 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 											: 'pb-3'
 									}
 									activeAgentLabels={activeAgentLabels}
+									autoScrollEnabled={autoScrollEnabled}
+									onShowScrollButtonChange={setShowScrollButton}
+									onScrollToBottomChange={(scrollToBottom) => {
+										scrollToBottomRef.current = scrollToBottom;
+									}}
+									onScrollerChange={setThreadScroller}
 								/>
 							) : (
 								<div class="h-full overflow-y-auto">
@@ -660,15 +853,36 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							)}
 						</div>
 
+						{showScrollButton && (
+							<ScrollToBottomButton
+								onClick={handleScrollToBottom}
+								bottomClass={threadSendError ? 'bottom-52 sm:bottom-44' : 'bottom-44 sm:bottom-36'}
+								autoScroll={autoScrollEnabled}
+							/>
+						)}
+
 						{showInlineComposer && (
 							<TaskSessionChatComposer
 								sessionId={agentSessionId ?? ''}
 								mentionCandidates={mentionCandidates}
+								targets={composerTargets}
+								selectedTargetId={selectedTarget?.id ?? null}
 								hasTaskAgentSession={!!agentSessionId}
 								canSend={canSendThreadMessage}
 								isSending={sendingThread}
 								isProcessing={isAgentActive}
+								autoScroll={autoScrollEnabled}
 								errorMessage={threadSendError}
+								onAutoScrollChange={setAutoScrollEnabled}
+								onTargetSelect={(targetId) => {
+									setSelectedTargetId(targetId);
+									setTargetLocked(true);
+								}}
+								onDraftActiveChange={(hasDraft) => {
+									setHasComposerDraft(hasDraft);
+									if (draftWasActiveRef.current && !hasDraft) setTargetLocked(false);
+									draftWasActiveRef.current = hasDraft;
+								}}
 								onSend={sendThreadMessage}
 							/>
 						)}
