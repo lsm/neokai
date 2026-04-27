@@ -1258,6 +1258,284 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(emitCalls.some((c) => c[0] === 'space.workflowRun.cyclesReset')).toBe(false);
 		});
 	});
+
+	// ─── space.task.activateNodeAgent ─────────────────────────────────────────────
+
+	describe('space.task.activateNodeAgent', () => {
+		// Web client RPC for Task #139 Fix 2 — lazy-activate a workflow-declared
+		// node agent on first click of a "(Not started)" entry. Validates the
+		// agent name against the workflow declaration, short-circuits to a live
+		// session when present, and otherwise queues the user's first message
+		// while triggering the daemon's activation kick.
+
+		const mockTaskWithRun: SpaceTask = {
+			...mockTaskWithSession,
+			workflowRunId: 'run-act-1',
+		};
+
+		function setupActivate(
+			opts: {
+				task?: SpaceTask | null;
+				declared?: string[];
+				liveSession?: { session: { id: string } } | null;
+				ensureReturns?: boolean;
+				includeQueue?: boolean;
+			} = {}
+		) {
+			const mh = createMockMessageHub();
+			const declared = opts.declared ?? ['reviewer', 'coder'];
+			const liveSession = opts.liveSession ?? null;
+
+			const ensureCalls: Array<{ taskId: string; agentName: string }> = [];
+			const injectCalls: Array<{ sessionId: string; message: string }> = [];
+			const enqueueCalls: Array<{
+				targetAgentName: string;
+				message: string;
+				sourceAgentName?: string | null;
+			}> = [];
+
+			const localTaskAgentManager: TaskAgentManagerInterface = {
+				...createMockTaskAgentManager(null, opts.task ?? mockTaskWithRun),
+				injectSubSessionMessage: mock(async (sid: string, msg: string) => {
+					injectCalls.push({ sessionId: sid, message: msg });
+				}),
+				getSubSessionByAgentName: mock(async (_taskId: string, agentName: string) => {
+					if (liveSession && declared.includes(agentName)) return liveSession;
+					return null;
+				}),
+				getWorkflowDeclaredAgentNamesForTask: mock(() => declared),
+				ensureWorkflowNodeActivationForAgent: mock(async (taskId: string, agentName: string) => {
+					ensureCalls.push({ taskId, agentName });
+					return opts.ensureReturns ?? true;
+				}),
+			};
+
+			const localDb = createMockDatabase(
+				opts.task === null ? null : (opts.task ?? mockTaskWithRun)
+			);
+			const localDaemonHub = { emit: mock(async () => {}) } as unknown as DaemonHub;
+
+			let pendingQueue: ReturnType<typeof mock> | undefined;
+			let pendingMessageQueue: undefined | { enqueue: typeof pendingQueue };
+			if (opts.includeQueue ?? true) {
+				pendingQueue = mock(
+					(input: {
+						targetAgentName: string;
+						message: string;
+						sourceAgentName?: string | null;
+					}) => {
+						enqueueCalls.push({
+							targetAgentName: input.targetAgentName,
+							message: input.message,
+							sourceAgentName: input.sourceAgentName,
+						});
+						return { record: { id: `pending-${enqueueCalls.length}` }, deduped: false };
+					}
+				);
+				pendingMessageQueue = { enqueue: pendingQueue };
+			}
+
+			setupSpaceTaskMessageHandlers(
+				mh.hub,
+				localTaskAgentManager,
+				localDb,
+				localDaemonHub,
+				undefined,
+				undefined,
+				undefined,
+				pendingMessageQueue as Parameters<typeof setupSpaceTaskMessageHandlers>[7]
+			);
+
+			return {
+				handlers: mh.handlers,
+				taskAgentManager: localTaskAgentManager,
+				ensureCalls,
+				injectCalls,
+				enqueueCalls,
+				daemonHub: localDaemonHub,
+			};
+		}
+
+		it('registers space.task.activateNodeAgent', () => {
+			const { handlers: h } = setupActivate();
+			expect(h.has('space.task.activateNodeAgent')).toBe(true);
+		});
+
+		it('throws when spaceId is missing', async () => {
+			const { handlers: h } = setupActivate();
+			await expect(
+				(h.get('space.task.activateNodeAgent') as RequestHandler)({
+					taskId: 'task-1',
+					agentName: 'reviewer',
+				})
+			).rejects.toThrow('spaceId is required');
+		});
+
+		it('throws when taskId is missing', async () => {
+			const { handlers: h } = setupActivate();
+			await expect(
+				(h.get('space.task.activateNodeAgent') as RequestHandler)({
+					spaceId: 'space-1',
+					agentName: 'reviewer',
+				})
+			).rejects.toThrow('taskId is required');
+		});
+
+		it('throws when agentName is missing or empty', async () => {
+			const { handlers: h } = setupActivate();
+			await expect(
+				(h.get('space.task.activateNodeAgent') as RequestHandler)({
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					agentName: '   ',
+				})
+			).rejects.toThrow('agentName is required');
+		});
+
+		it('throws when agent is not workflow-declared', async () => {
+			const { handlers: h } = setupActivate({ declared: ['reviewer'] });
+			await expect(
+				(h.get('space.task.activateNodeAgent') as RequestHandler)({
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					agentName: 'ghost-agent',
+				})
+			).rejects.toThrow(/not declared/);
+		});
+
+		it('throws when message exceeds 10,000 characters', async () => {
+			const { handlers: h } = setupActivate();
+			await expect(
+				(h.get('space.task.activateNodeAgent') as RequestHandler)({
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					agentName: 'reviewer',
+					message: 'x'.repeat(10_001),
+				})
+			).rejects.toThrow(/too long/);
+		});
+
+		it('short-circuits to live session when target is already spawned (returns sessionId)', async () => {
+			const {
+				handlers: h,
+				ensureCalls,
+				injectCalls,
+				enqueueCalls,
+			} = setupActivate({
+				liveSession: { session: { id: 'sess-live-reviewer' } },
+			});
+			const result = (await (h.get('space.task.activateNodeAgent') as RequestHandler)({
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				agentName: 'reviewer',
+				message: 'hi reviewer',
+			})) as Record<string, unknown>;
+
+			expect(result.sessionId).toBe('sess-live-reviewer');
+			expect(result.activated).toBe(false);
+			expect(result.queued).toBe(false);
+			// Direct injection — no queue, no activation kick.
+			expect(injectCalls).toHaveLength(1);
+			expect(injectCalls[0].sessionId).toBe('sess-live-reviewer');
+			expect(injectCalls[0].message).toBe('[Message from human]: hi reviewer');
+			expect(enqueueCalls).toHaveLength(0);
+			expect(ensureCalls).toHaveLength(0);
+		});
+
+		it('queues the message and triggers ensureWorkflowNodeActivationForAgent when no live session exists', async () => {
+			const { handlers: h, ensureCalls, injectCalls, enqueueCalls } = setupActivate();
+			const result = (await (h.get('space.task.activateNodeAgent') as RequestHandler)({
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				agentName: 'reviewer',
+				message: 'wake up reviewer',
+			})) as Record<string, unknown>;
+
+			expect(result.sessionId).toBeNull();
+			expect(result.activated).toBe(true);
+			expect(result.queued).toBe(true);
+			expect(result.queuedMessageId).toBe('pending-1');
+
+			// No direct injection — target had no live session.
+			expect(injectCalls).toHaveLength(0);
+
+			// Message queued for the lazily-spawned target to drain on first activation.
+			expect(enqueueCalls).toHaveLength(1);
+			expect(enqueueCalls[0].targetAgentName).toBe('reviewer');
+			expect(enqueueCalls[0].message).toBe('wake up reviewer');
+			expect(enqueueCalls[0].sourceAgentName).toBe('human');
+
+			// Activation kick fired against the workflow-declared peer.
+			expect(ensureCalls).toHaveLength(1);
+			expect(ensureCalls[0].taskId).toBe('task-1');
+			expect(ensureCalls[0].agentName).toBe('reviewer');
+		});
+
+		it('skips queueing when no message is provided but still triggers activation', async () => {
+			const { handlers: h, ensureCalls, enqueueCalls } = setupActivate();
+			const result = (await (h.get('space.task.activateNodeAgent') as RequestHandler)({
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				agentName: 'reviewer',
+			})) as Record<string, unknown>;
+
+			expect(result.sessionId).toBeNull();
+			expect(result.queued).toBe(false);
+			expect(result.queuedMessageId).toBeUndefined();
+			expect(enqueueCalls).toHaveLength(0);
+			expect(ensureCalls).toHaveLength(1);
+		});
+
+		it('cross-space access throws Task not found', async () => {
+			const { handlers: h } = setupActivate();
+			await expect(
+				(h.get('space.task.activateNodeAgent') as RequestHandler)({
+					spaceId: 'space-other',
+					taskId: 'task-1',
+					agentName: 'reviewer',
+				})
+			).rejects.toThrow('Task not found');
+		});
+
+		it('throws when task is archived', async () => {
+			const { handlers: h } = setupActivate({
+				task: { ...mockTaskWithRun, status: 'archived' },
+			});
+			await expect(
+				(h.get('space.task.activateNodeAgent') as RequestHandler)({
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					agentName: 'reviewer',
+				})
+			).rejects.toThrow('archived');
+		});
+
+		it('throws when task is done', async () => {
+			const { handlers: h } = setupActivate({
+				task: { ...mockTaskWithRun, status: 'done' },
+			});
+			await expect(
+				(h.get('space.task.activateNodeAgent') as RequestHandler)({
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					agentName: 'reviewer',
+				})
+			).rejects.toThrow(/done.*active task/);
+		});
+
+		it('throws when task is cancelled', async () => {
+			const { handlers: h } = setupActivate({
+				task: { ...mockTaskWithRun, status: 'cancelled' },
+			});
+			await expect(
+				(h.get('space.task.activateNodeAgent') as RequestHandler)({
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					agentName: 'reviewer',
+				})
+			).rejects.toThrow(/cancelled.*active task/);
+		});
+	});
 });
 
 // ─── parseMentions unit tests ────────────────────────────────────────────────

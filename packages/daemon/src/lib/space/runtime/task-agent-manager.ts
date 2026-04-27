@@ -3772,15 +3772,39 @@ export class TaskAgentManager {
 			pendingMessageRepo: this.config.pendingMessageRepo,
 			spaceId,
 			taskId,
-			// Auto-resume callback: when a message is queued for an inactive peer,
-			// immediately attempt to resume that peer's last known session so the
-			// message is delivered without waiting for external activation.
+			// Auto-resume + lazy-activation callback fired when a message is queued
+			// for an inactive peer:
+			//
+			//   1. `tryResumeNodeAgentSession` — fast path that rehydrates a known
+			//      idle/completed session so the queue is drained immediately.
+			//   2. `ensureWorkflowNodeActivationForAgent` — explicit activation kick
+			//      for workflow-declared peers that have no live session. Mirrors the
+			//      Task Agent send-path fix in #139: relying on `channelRouter`'s
+			//      activation-on-deliverMessage step is not enough because that step
+			//      only fires when the target node has zero active executions; a
+			//      workflow node stranded in `pending` state would otherwise queue
+			//      forever. `activateNode` is idempotent so this is safe regardless
+			//      of the existing row's status.
 			onMessageQueued: (targetAgentName) => {
 				void this.tryResumeNodeAgentSession(workflowRunId, targetAgentName).catch((err) => {
 					log.warn(
 						`AgentMessageRouter.onMessageQueued: tryResumeNodeAgentSession failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
 					);
 				});
+				const declaredAgentNames = this.getWorkflowDeclaredAgentNamesForTask(taskId);
+				if (declaredAgentNames.includes(targetAgentName)) {
+					log.info(
+						`agent-message-router.onMessageQueued: lazy-activated peer ${targetAgentName} for task ${taskId}`
+					);
+					void this.ensureWorkflowNodeActivationForAgent(taskId, targetAgentName, {
+						reopenReason: `node-agent send_message to lazily activate "${targetAgentName}"`,
+						reopenBy: `agent:${agentName}`,
+					}).catch((err) => {
+						log.warn(
+							`AgentMessageRouter.onMessageQueued: ensureWorkflowNodeActivationForAgent failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
+						);
+					});
+				}
 			},
 		});
 
