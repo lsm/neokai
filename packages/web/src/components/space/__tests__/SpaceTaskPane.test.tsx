@@ -1010,7 +1010,11 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
 		expect(getByText('Open reviewer (Not started)')).toBeTruthy();
 	});
 
-	it('clicking a workflow-declared (Not started) agent opens overlay with the task-agent session as fallback', () => {
+	it('renders workflow-declared (Not started) agents as disabled with an explanatory tooltip', () => {
+		// Clicking the entry must NOT open the Task Agent session under the
+		// peer's label — that was misleading (overlay said "reviewer" but
+		// rendered the Task Agent thread). The peer becomes openable only when
+		// the daemon lazily activates it and an activity member appears.
 		mockTasks.value = [
 			makeTask({
 				workflowRunId: 'run-1',
@@ -1036,12 +1040,17 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
 
 		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 		fireEvent.click(getByTestId('task-actions-menu-trigger'));
-		fireEvent.click(getByText('Open reviewer (Not started)'));
 
-		// Falls back to the task-agent session — the natural place to address the
-		// peer via chat. The daemon's task-agent-tools.send_message will lazily
-		// activate the reviewer node when the user messages it.
-		expect(mockPushOverlayHistory).toHaveBeenCalledWith('sess-task-agent', 'reviewer');
+		const reviewerItem = getByText('Open reviewer (Not started)').closest('button');
+		expect(reviewerItem).toBeTruthy();
+		expect(reviewerItem?.disabled).toBe(true);
+		expect(reviewerItem?.title).toContain('reviewer');
+		expect(reviewerItem?.title).toContain('Task Agent');
+
+		fireEvent.click(getByText('Open reviewer (Not started)'));
+		// Disabled entries do not push overlay history under any session id —
+		// no misleading reuse of the Task Agent session under the peer's label.
+		expect(mockPushOverlayHistory).not.toHaveBeenCalled();
 	});
 
 	it('hides workflow-declared entry once the agent has a live activity member (avoids duplicate)', () => {

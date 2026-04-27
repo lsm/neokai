@@ -1868,6 +1868,9 @@ export class TaskAgentManager {
 			if (!run?.workflowId) return false;
 			const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
 			if (!workflow) return false;
+			const spaceManager = this.config.spaceManager;
+			const space = await spaceManager.getSpace(task.spaceId);
+			if (!space) return false;
 
 			// Find the node whose declared agent slots include `agentName`.
 			let targetNodeId: string | null = null;
@@ -1885,7 +1888,6 @@ export class TaskAgentManager {
 			}
 			if (!targetNodeId) return false;
 
-			const spaceManager = this.config.spaceManager;
 			const channelRouter = new ChannelRouter({
 				taskRepo: this.config.taskRepo,
 				workflowRunRepo: this.config.workflowRunRepo,
@@ -1895,7 +1897,11 @@ export class TaskAgentManager {
 				gateDataRepo: this.config.gateDataRepo,
 				channelCycleRepo: this.config.channelCycleRepo,
 				db: this.config.db.getDatabase(),
-				workspacePath: this.taskWorktreePaths.get(taskId) ?? '',
+				// Mirror the canonical resolution used by spawn/rehydrate paths:
+				// prefer the cached worktree path (with DB-sync fallback inside
+				// `getTaskWorktreePath`), and fall back to the space root if no
+				// worktree exists yet for this task.
+				workspacePath: this.getTaskWorktreePath(taskId) ?? space.workspacePath,
 				getSpaceAutonomyLevel: async (spaceId) => {
 					const s = await spaceManager.getSpace(spaceId);
 					return s?.autonomyLevel ?? 1;

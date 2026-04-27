@@ -360,22 +360,20 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			}))
 		);
 	}
-	// Workflow-declared agents that have never spawned a session yet. We can't
-	// open their session directly (none exists), so the click falls back to the
-	// Task Agent / leader session — the natural place to address the peer via a
-	// chat message, which the daemon will lazily route to the declared agent.
+	// Workflow-declared agents that have never spawned a session yet. We surface
+	// them in the dropdown so users see every reachable peer, but render them as
+	// disabled — there is no session to open, and routing the click to the Task
+	// Agent's session under the peer's label was misleading (the overlay would
+	// say "reviewer" but render the Task Agent thread). Once the daemon lazily
+	// activates the node (e.g. after Task Agent send_message), the activity
+	// member appears via the live store and replaces this entry naturally.
 	if (declaredAgentSlots.length > 0) {
-		const fallbackSessionId =
-			activityMembers.find((m) => m.kind === 'task_agent')?.sessionId ?? agentSessionId;
 		taskActionItems.push(
 			...declaredAgentSlots.map((slot) => ({
 				label: `Open ${slot.name} (Not started)`,
-				onClick: () => {
-					if (fallbackSessionId) {
-						pushOverlayHistory(fallbackSessionId, slot.name);
-					}
-				},
-				disabled: !fallbackSessionId,
+				onClick: () => {},
+				disabled: true,
+				title: `${slot.name} hasn't been activated yet. Send a message from the Task Agent thread to start its session.`,
 			}))
 		);
 	}

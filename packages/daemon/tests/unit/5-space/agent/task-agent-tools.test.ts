@@ -1361,6 +1361,8 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 				return null;
 			},
 			tryResumeNodeAgentSession: async () => {},
+			getWorkflowDeclaredAgentNamesForTask: () => [],
+			ensureWorkflowNodeActivationForAgent: async () => false,
 		} as unknown as TaskAgentToolsConfig['taskAgentManager'];
 
 		const delivered: Array<{ sessionId: string; message: string }> = [];
@@ -1637,6 +1639,8 @@ describe('createTaskAgentToolHandlers — send_message auto-resume on queue', ()
 			tryResumeNodeAgentSession: async (workflowRunId: string, agentName: string) => {
 				resumeAttempts.push({ workflowRunId, agentName });
 			},
+			getWorkflowDeclaredAgentNamesForTask: () => [],
+			ensureWorkflowNodeActivationForAgent: async () => false,
 		} as unknown as TaskAgentToolsConfig['taskAgentManager'];
 
 		const config: TaskAgentToolsConfig = {
@@ -1685,6 +1689,8 @@ describe('createTaskAgentToolHandlers — send_message auto-resume on queue', ()
 			tryResumeNodeAgentSession: async (_workflowRunId: string, agentName: string) => {
 				resumeAttempts.push(agentName);
 			},
+			getWorkflowDeclaredAgentNamesForTask: () => [],
+			ensureWorkflowNodeActivationForAgent: async () => false,
 		} as unknown as TaskAgentToolsConfig['taskAgentManager'];
 
 		const config: TaskAgentToolsConfig = {

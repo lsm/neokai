@@ -425,6 +425,18 @@ function makeMockTaskAgentManager(
 			if (!exec?.agentSessionId) return null;
 			return { session: { id: exec.agentSessionId } };
 		},
+		// These tests don't exercise lazy node activation — return empty / no-op
+		// stubs so the production send_message path can call them via plain
+		// optional chaining without runtime errors.
+		getWorkflowDeclaredAgentNamesForTask(_taskId: string): string[] {
+			return [];
+		},
+		async ensureWorkflowNodeActivationForAgent(
+			_taskId: string,
+			_agentName: string
+		): Promise<boolean> {
+			return false;
+		},
 	} as unknown as TaskAgentToolsConfig['taskAgentManager'];
 }
 

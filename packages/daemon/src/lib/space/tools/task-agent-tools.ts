@@ -613,12 +613,8 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// source for "is this peer reachable?" — node_executions are lazily created
 			// when a node first activates, so they understate the candidate set on
 			// pre-first-activation runs (the bug Task #133 closes).
-			//
-			// Use a duck-typed presence check so partial mocks in tests don't crash.
 			const workflowDeclaredAgentNames = new Set(
-				typeof taskAgentManager?.getWorkflowDeclaredAgentNamesForTask === 'function'
-					? taskAgentManager.getWorkflowDeclaredAgentNamesForTask(taskId)
-					: []
+				taskAgentManager?.getWorkflowDeclaredAgentNamesForTask(taskId) ?? []
 			);
 
 			// Union: known to the run (any source). Used for the "queue vs hard-error"
@@ -784,13 +780,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 						// peers so the tick loop creates node_execution rows and spawns the
 						// session. Without this hop the message would queue forever for an
 						// agent that has no spawn pathway.
-						if (
-							!deduped &&
-							needsLazyActivation &&
-							typeof taskAgentManager?.ensureWorkflowNodeActivationForAgent === 'function'
-						) {
+						if (!deduped && needsLazyActivation) {
 							void taskAgentManager
-								.ensureWorkflowNodeActivationForAgent(taskId, targetAgentName, {
+								?.ensureWorkflowNodeActivationForAgent(taskId, targetAgentName, {
 									reopenReason: `task-agent send_message to lazily activate "${targetAgentName}"`,
 									reopenBy: 'task-agent',
 								})
