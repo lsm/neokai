@@ -38,6 +38,7 @@ import { SpaceAgentRepository } from '../../../../src/storage/repositories/space
 import { SpaceAgentManager as AgentMgr } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/space-manager.ts';
+import { createTestDaemonHub } from '../../../helpers/database.ts';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -765,6 +766,240 @@ describe('SpaceRuntimeService', () => {
 			expect(mergeMock).toHaveBeenCalledTimes(2);
 
 			await svc.stop();
+		});
+	});
+
+	// ─── daemonHub session.created subscription regression (Task #137) ───────
+	//
+	// Before this fix, subscribeToSpaceEvents() registered the session.created
+	// and session.deleted handlers with `{ sessionId: 'global' }`. TypedHub
+	// stores that under the literal `'global'` key, NOT under the `'__global__'`
+	// GLOBAL_KEY used for unfiltered subscriptions, AND its cross-transport
+	// hubHandler filters with `if (sessionId && eventData.sessionId !== sessionId)
+	// return`. Both checks reject events emitted with a UUID `sessionId` (which
+	// is what `SessionLifecycle.create()` and `deleteResources()` actually emit),
+	// so the handlers never fired. The visible symptom: ad-hoc Space worker /
+	// coder / room_chat / general sessions silently came up missing
+	// `space-agent-tools` and `db-query`.
+	//
+	// These tests use a real DaemonHub so the bug reproduces end-to-end if the
+	// `{ sessionId: 'global' }` filter is reintroduced.
+
+	describe('daemonHub session.created subscription (Task #137 regression)', () => {
+		function makeMemberAgentSession() {
+			return {
+				mergeRuntimeMcpServers: mock((_: Record<string, McpServerConfig>) => {}),
+				setRuntimeMcpServers: mock(() => {}),
+				setRuntimeSystemPrompt: mock(() => {}),
+			} as unknown as AgentSession;
+		}
+
+		function makeMemberSession(overrides: Partial<Session> = {}): Session {
+			return {
+				id: 'worker-session-uuid-123',
+				title: 'Worker',
+				workspacePath: '/tmp/ws',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: { tools: {} },
+				metadata: {},
+				type: 'worker',
+				context: { spaceId: mockSpace.id },
+				...overrides,
+			} as unknown as Session;
+		}
+
+		test('attaches space-agent-tools when daemonHub emits session.created with a UUID sessionId', async () => {
+			const agent = makeMemberAgentSession();
+			const sessionManager = {
+				getSessionAsync: mock(async () => agent),
+				listSessions: mock(() => [] as Session[]),
+			} as unknown as SessionManager;
+
+			const daemonHub = await createTestDaemonHub('space-rts-test-created');
+			const svc = new SpaceRuntimeService({
+				db: {} as BunDatabase,
+				spaceManager: createMockSpaceManager(mockSpace),
+				spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
+				spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
+				workflowRunRepo: {} as SpaceWorkflowRunRepository,
+				taskRepo: {} as SpaceTaskRepository,
+				tickIntervalMs: 60_000,
+				sessionManager,
+				daemonHub,
+			});
+			svc.start();
+
+			const session = makeMemberSession();
+			// Emit with the actual session UUID — exactly what SessionLifecycle.create
+			// does. With the broken `{ sessionId: 'global' }` filter, neither
+			// dispatchLocally nor the cross-transport hubHandler matches this.
+			await daemonHub.emit('session.created', { sessionId: session.id, session });
+
+			// Allow microtasks to flush (dispatchLocally schedules via queueMicrotask
+			// and does not await the async handler).
+			await new Promise<void>((resolve) => setTimeout(resolve, 10));
+
+			const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
+			expect(mergeMock).toHaveBeenCalledTimes(1);
+			const [additional] = mergeMock.mock.calls[0];
+			expect(additional).toHaveProperty('space-agent-tools');
+
+			await svc.stop();
+			await daemonHub.close();
+		});
+
+		test('does NOT attach for sessions without context.spaceId (non-space sessions)', async () => {
+			const agent = makeMemberAgentSession();
+			const sessionManager = {
+				getSessionAsync: mock(async () => agent),
+				listSessions: mock(() => [] as Session[]),
+			} as unknown as SessionManager;
+
+			const daemonHub = await createTestDaemonHub('space-rts-test-non-space');
+			const svc = new SpaceRuntimeService({
+				db: {} as BunDatabase,
+				spaceManager: createMockSpaceManager(mockSpace),
+				spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
+				spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
+				workflowRunRepo: {} as SpaceWorkflowRunRepository,
+				taskRepo: {} as SpaceTaskRepository,
+				tickIntervalMs: 60_000,
+				sessionManager,
+				daemonHub,
+			});
+			svc.start();
+
+			const nonSpaceSession = makeMemberSession({ context: undefined });
+			await daemonHub.emit('session.created', {
+				sessionId: nonSpaceSession.id,
+				session: nonSpaceSession,
+			});
+			await new Promise<void>((resolve) => setTimeout(resolve, 10));
+
+			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
+
+			await svc.stop();
+			await daemonHub.close();
+		});
+
+		test('does NOT attach for space_chat sessions (handled by setupSpaceAgentSession)', async () => {
+			const agent = makeMemberAgentSession();
+			const sessionManager = {
+				getSessionAsync: mock(async () => agent),
+				listSessions: mock(() => [] as Session[]),
+			} as unknown as SessionManager;
+
+			const daemonHub = await createTestDaemonHub('space-rts-test-space-chat');
+			const svc = new SpaceRuntimeService({
+				db: {} as BunDatabase,
+				spaceManager: createMockSpaceManager(mockSpace),
+				spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
+				spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
+				workflowRunRepo: {} as SpaceWorkflowRunRepository,
+				taskRepo: {} as SpaceTaskRepository,
+				tickIntervalMs: 60_000,
+				sessionManager,
+				daemonHub,
+			});
+			svc.start();
+
+			const chatSession = makeMemberSession({
+				type: 'space_chat',
+				id: `space:chat:${mockSpace.id}`,
+			});
+			await daemonHub.emit('session.created', {
+				sessionId: chatSession.id,
+				session: chatSession,
+			});
+			await new Promise<void>((resolve) => setTimeout(resolve, 10));
+
+			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
+
+			await svc.stop();
+			await daemonHub.close();
+		});
+
+		test('does NOT attach for space_task_agent sessions (handled by TaskAgentManager)', async () => {
+			const agent = makeMemberAgentSession();
+			const sessionManager = {
+				getSessionAsync: mock(async () => agent),
+				listSessions: mock(() => [] as Session[]),
+			} as unknown as SessionManager;
+
+			const daemonHub = await createTestDaemonHub('space-rts-test-task-agent');
+			const svc = new SpaceRuntimeService({
+				db: {} as BunDatabase,
+				spaceManager: createMockSpaceManager(mockSpace),
+				spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
+				spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
+				workflowRunRepo: {} as SpaceWorkflowRunRepository,
+				taskRepo: {} as SpaceTaskRepository,
+				tickIntervalMs: 60_000,
+				sessionManager,
+				daemonHub,
+			});
+			svc.start();
+
+			const taskAgentSession = makeMemberSession({ type: 'space_task_agent' });
+			await daemonHub.emit('session.created', {
+				sessionId: taskAgentSession.id,
+				session: taskAgentSession,
+			});
+			await new Promise<void>((resolve) => setTimeout(resolve, 10));
+
+			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
+
+			await svc.stop();
+			await daemonHub.close();
+		});
+
+		test('session.deleted handler runs when daemonHub emits with a UUID sessionId', async () => {
+			// Arrange a service in a state where it has a per-session db-query
+			// server cached for the deleted session, so we can observe whether the
+			// handler ran by checking the cache state after the emit.
+			const sessionManager = {
+				getSessionAsync: mock(async () => null),
+				listSessions: mock(() => [] as Session[]),
+			} as unknown as SessionManager;
+
+			const daemonHub = await createTestDaemonHub('space-rts-test-deleted');
+			const svc = new SpaceRuntimeService({
+				db: {} as BunDatabase,
+				spaceManager: createMockSpaceManager(mockSpace),
+				spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
+				spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
+				workflowRunRepo: {} as SpaceWorkflowRunRepository,
+				taskRepo: {} as SpaceTaskRepository,
+				tickIntervalMs: 60_000,
+				sessionManager,
+				daemonHub,
+			});
+
+			// Stub a db-query server entry so we can observe its removal as proof
+			// the session.deleted handler actually ran. Doing this via internals is
+			// the lightest-weight way; the production code paths that populate this
+			// map are integration-level (require a real db file).
+			const memberDbQueryServers = (
+				svc as unknown as {
+					memberSessionDbQueryServers: Map<string, { close: () => void }>;
+				}
+			).memberSessionDbQueryServers;
+			const closeMock = mock(() => {});
+			memberDbQueryServers.set('worker-session-uuid-456', { close: closeMock });
+
+			svc.start();
+
+			await daemonHub.emit('session.deleted', { sessionId: 'worker-session-uuid-456' });
+			await new Promise<void>((resolve) => setTimeout(resolve, 10));
+
+			// Handler ran → the cached server was closed and removed.
+			expect(closeMock).toHaveBeenCalledTimes(1);
+			expect(memberDbQueryServers.has('worker-session-uuid-456')).toBe(false);
+
+			await svc.stop();
+			await daemonHub.close();
 		});
 	});
 
