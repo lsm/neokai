@@ -26,6 +26,14 @@ export function SDKResultMessage({ message }: Props) {
 	const isSuccess = isSDKResultSuccess(message);
 	const isError = isSDKResultError(message);
 
+	// Defense in depth: bridge providers (Copilot / Codex) may omit usage at runtime
+	// despite TypeScript declaring it as NonNullableUsage. Guard all accesses.
+	const usage = (message as { usage?: Record<string, number | undefined> }).usage ?? {};
+	const inputTokens = (usage.input_tokens as number | undefined) ?? 0;
+	const outputTokens = (usage.output_tokens as number | undefined) ?? 0;
+	const cacheReadTokens = (usage.cache_read_input_tokens as number | undefined) ?? 0;
+	const cacheCreationTokens = (usage.cache_creation_input_tokens as number | undefined) ?? 0;
+
 	return (
 		<div
 			class={`rounded border mb-4 ${
@@ -70,7 +78,7 @@ export function SDKResultMessage({ message }: Props) {
 						</svg>
 					)}
 					<span class="font-medium text-green-900 dark:text-green-100">
-						{message.usage.input_tokens}→{message.usage.output_tokens} tokens
+						{inputTokens}→{outputTokens} tokens
 					</span>
 					<span class="text-green-700 dark:text-green-300">•</span>
 					<span class="font-mono text-green-700 dark:text-green-300">
@@ -98,7 +106,7 @@ export function SDKResultMessage({ message }: Props) {
 					<div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
 						<StatCard
 							label="Input Tokens"
-							value={message.usage.input_tokens.toLocaleString()}
+							value={inputTokens.toLocaleString()}
 							icon={
 								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path
@@ -112,7 +120,7 @@ export function SDKResultMessage({ message }: Props) {
 						/>
 						<StatCard
 							label="Output Tokens"
-							value={message.usage.output_tokens.toLocaleString()}
+							value={outputTokens.toLocaleString()}
 							icon={
 								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path
@@ -156,8 +164,7 @@ export function SDKResultMessage({ message }: Props) {
 					</div>
 
 					{/* Cache Stats (if any) */}
-					{(message.usage.cache_read_input_tokens > 0 ||
-						message.usage.cache_creation_input_tokens > 0) && (
+					{(cacheReadTokens > 0 || cacheCreationTokens > 0) && (
 						<div class="pt-2 border-t border-green-200 dark:border-green-800">
 							<div class="flex items-center gap-4 text-xs text-green-700 dark:text-green-300">
 								<div class="flex items-center gap-1">
@@ -169,11 +176,9 @@ export function SDKResultMessage({ message }: Props) {
 											d="M5 13l4 4L19 7"
 										/>
 									</svg>
-									<span>
-										Cache Read: {message.usage.cache_read_input_tokens.toLocaleString()} tokens
-									</span>
+									<span>Cache Read: {cacheReadTokens.toLocaleString()} tokens</span>
 								</div>
-								{message.usage.cache_creation_input_tokens > 0 && (
+								{cacheCreationTokens > 0 && (
 									<div class="flex items-center gap-1">
 										<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 											<path
@@ -183,10 +188,7 @@ export function SDKResultMessage({ message }: Props) {
 												d="M12 4v16m8-8H4"
 											/>
 										</svg>
-										<span>
-											Cache Created: {message.usage.cache_creation_input_tokens.toLocaleString()}{' '}
-											tokens
-										</span>
+										<span>Cache Created: {cacheCreationTokens.toLocaleString()} tokens</span>
 									</div>
 								)}
 							</div>

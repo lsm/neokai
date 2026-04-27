@@ -168,7 +168,7 @@ export class ConversationManager {
 			...(systemMessage
 				? { systemMessage: { mode: 'replace' as const, content: systemMessage } }
 				: {}),
-			onPermissionRequest: () => Promise.resolve({ kind: 'approved' as const }),
+			onPermissionRequest: () => Promise.resolve({ kind: 'approve-once' as const }),
 			onUserInputRequest: () =>
 				Promise.resolve({ answer: 'User input is not available in API mode.', wasFreeform: true }),
 			hooks: {
