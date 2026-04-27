@@ -96,6 +96,23 @@ export class QueryOptionsBuilder {
 	}
 
 	/**
+	 * Return the effective MCP server map for dynamic SDK updates.
+	 *
+	 * This mirrors the `build()` merge path without rebuilding the full SDK
+	 * options object. Runtime MCP attachment can happen after a streaming query
+	 * already exists; callers use this method before `queryObject.setMcpServers()`
+	 * so dynamic updates preserve skill-contributed MCP servers instead of
+	 * replacing the live query with only `session.config.mcpServers`.
+	 */
+	getEffectiveMcpServers(): Record<string, McpServerConfig> | undefined {
+		const mcpServers = this.getMcpServers();
+		const mcpServersFromSkills = this.getMcpServersFromSkills();
+		return this.mergeMcpServers(mcpServers, mcpServersFromSkills) as
+			| Record<string, McpServerConfig>
+			| undefined;
+	}
+
+	/**
 	 * Build complete SDK query options
 	 *
 	 * Maps all SessionConfig (which extends SDKConfig) options to SDK Options

@@ -249,6 +249,67 @@ describe('QueryRunner', () => {
 
 			expect(ctx.firstMessageReceived).toBe(false);
 		});
+
+		it('rebuilds query options after workflow MCP self-heal before SDK query creation', async () => {
+			const savedApiKey = process.env.ANTHROPIC_API_KEY;
+			process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+			try {
+				mockSession.id = 'space:s1:task:t1:exec:e1';
+				mockSession.workspacePath = tmpdir();
+				mockSession.type = 'worker';
+				mockSession.context = { spaceId: 's1', taskId: 't1' };
+				mockSession.config.mcpServers = {};
+
+				const repairedServers = {
+					'node-agent': {
+						type: 'sdk',
+						name: 'node-agent',
+						instance: {},
+					},
+					'space-agent-tools': {
+						type: 'sdk',
+						name: 'space-agent-tools',
+						instance: {},
+					},
+				};
+				buildSpy
+					.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
+					.mockResolvedValueOnce({
+						model: 'claude-sonnet-4-20250514',
+						mcpServers: repairedServers,
+					});
+				let addOptionsCalls = 0;
+				addSessionStateOptionsSpy.mockImplementation((options: unknown) => {
+					addOptionsCalls++;
+					if (addOptionsCalls === 2) {
+						throw new Error('stop after rebuilt options');
+					}
+					return options;
+				});
+				const onMissingWorkflowMcpServers = mock(async () => {
+					mockSession.config.mcpServers =
+						repairedServers as unknown as Session['config']['mcpServers'];
+				});
+
+				const ctx = createContext({ onMissingWorkflowMcpServers });
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				expect(onMissingWorkflowMcpServers).toHaveBeenCalledWith('space:s1:task:t1:exec:e1', [
+					'node-agent',
+					'space-agent-tools',
+				]);
+				expect(buildSpy).toHaveBeenCalledTimes(2);
+				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(2);
+			} finally {
+				if (savedApiKey === undefined) {
+					delete process.env.ANTHROPIC_API_KEY;
+				} else {
+					process.env.ANTHROPIC_API_KEY = savedApiKey;
+				}
+			}
+		});
 	});
 
 	describe('displayErrorAsAssistantMessage', () => {
