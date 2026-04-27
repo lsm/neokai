@@ -23,10 +23,10 @@
 		"test:proxy:restart": "./scripts/dev-proxy.sh restart"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.4.12",
+		"@biomejs/biome": "2.4.13",
 		"@testing-library/preact": "3.2.4",
-		"knip": "6.4.1",
-		"oxlint": "1.60.0",
+		"knip": "6.7.0",
+		"oxlint": "1.61.0",
 		"typescript": "6.0.3"
 	}
 }
