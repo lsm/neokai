@@ -294,6 +294,45 @@ describe('buildThreadEvents — multi-agent ordering and label preservation', ()
 		expect(events[0].title).toBe('Sub-agent');
 	});
 
+	it('produces result event with token summary from usage', () => {
+		const row = makeRow({
+			id: 'success-result',
+			label: 'Task Agent',
+			messageType: 'result',
+			content: JSON.stringify({
+				type: 'result',
+				subtype: 'success',
+				uuid: 'r1',
+				session_id: 'session-1',
+				usage: { input_tokens: 100, output_tokens: 50 },
+			}),
+			createdAt: 1_000,
+		});
+		const events = buildThreadEvents([parseThreadRow(row)]);
+		expect(events).toHaveLength(1);
+		expect(events[0].kind).toBe('result');
+		expect(events[0].summary).toContain('100→50 tokens');
+	});
+
+	it('produces result event with dash summary when usage is missing', () => {
+		const row = makeRow({
+			id: 'no-usage-result',
+			label: 'Task Agent',
+			messageType: 'result',
+			content: JSON.stringify({
+				type: 'result',
+				subtype: 'success',
+				uuid: 'r2',
+				session_id: 'session-1',
+			}),
+			createdAt: 1_000,
+		});
+		const events = buildThreadEvents([parseThreadRow(row)]);
+		expect(events).toHaveLength(1);
+		expect(events[0].kind).toBe('result');
+		expect(events[0].summary).toBe('— tokens');
+	});
+
 	it('produces result event with error flag for non-success result', () => {
 		const row = makeRow({
 			id: 'err-result',
