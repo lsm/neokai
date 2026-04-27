@@ -77,6 +77,12 @@ describe('TaskSessionChatComposer', () => {
 		expect(getByTestId('mock-chat-composer')).toBeTruthy();
 	});
 
+	it('anchors the shared floating ChatComposer shell locally', () => {
+		const { queryByTestId, getByTestId } = renderComposer();
+		expect(getByTestId('task-session-chat-composer').className).toContain('relative');
+		expect(queryByTestId('task-composer-readability-scrim')).toBeNull();
+	});
+
 	it('passes sessionId to ChatComposer', () => {
 		renderComposer({ sessionId: 'my-session' });
 		expect(lastChatComposerProps?.sessionId).toBe('my-session');

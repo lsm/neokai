@@ -555,11 +555,28 @@ describe('SyntheticMessageBlock', () => {
 		});
 
 		it('should have max-width constraint', () => {
-			const { container } = render(
+			const { getByTestId } = render(
 				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
 			);
 
-			expect(container.querySelector('.max-w-\\[85\\%\\]')).toBeTruthy();
+			const widthWrapper = getByTestId('synthetic-card').parentElement;
+			expect(widthWrapper?.className).toContain('max-w-[85%]');
+			expect(widthWrapper?.className).toContain('md:max-w-[70%]');
+		});
+
+		it('should honor custom widthClass overrides', () => {
+			const { getByTestId } = render(
+				<SyntheticMessageBlock
+					content="Content"
+					timestamp={Date.now()}
+					widthClass="max-w-[85%] md:max-w-[86%]"
+				/>
+			);
+
+			const widthWrapper = getByTestId('synthetic-card').parentElement;
+			expect(widthWrapper?.className).toContain('max-w-[85%]');
+			expect(widthWrapper?.className).toContain('md:max-w-[86%]');
+			expect(widthWrapper?.className).not.toContain('md:max-w-[70%]');
 		});
 
 		it('should have rounded borders', () => {

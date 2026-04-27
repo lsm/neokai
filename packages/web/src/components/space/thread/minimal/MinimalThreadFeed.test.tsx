@@ -1,14 +1,20 @@
 // @ts-nocheck
 
-import { cleanup, render, screen, waitFor } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseThreadRow } from '../space-task-thread-events';
 import { MinimalThreadFeed } from './MinimalThreadFeed';
+
+const mockPushOverlayHistory = vi.hoisted(() => vi.fn());
 
 // Stub MarkdownRenderer to a synchronous text renderer so tests can assert
 // content without waiting on the lazy-loaded marked import.
 vi.mock('../../../chat/MarkdownRenderer.tsx', () => ({
 	default: ({ content }: { content: string }) => <div data-testid="md">{content}</div>,
+}));
+
+vi.mock('../../../../lib/router', () => ({
+	pushOverlayHistory: mockPushOverlayHistory,
 }));
 
 function makeRow(opts: {
@@ -156,7 +162,10 @@ function errorResultMessage(uuid: string) {
 }
 
 describe('MinimalThreadFeed', () => {
-	beforeEach(() => cleanup());
+	beforeEach(() => {
+		cleanup();
+		mockPushOverlayHistory.mockClear();
+	});
 	afterEach(() => cleanup());
 
 	it('renders nothing when there are no rows', () => {
@@ -203,6 +212,51 @@ describe('MinimalThreadFeed', () => {
 		expect(turns[1].textContent).toContain('REVIEWER');
 		// Both blocks contain a result row → both rendered as completed turns.
 		expect(turns.every((t) => t.dataset.turnState === 'completed')).toBe(true);
+	});
+
+	it('opens the completed agent session from the avatar/name header with a highlight target', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: assistantText('a1', 'done'),
+				sessionId: 'session-completed',
+			}),
+			makeRow({
+				id: 'r1',
+				label: 'Coder Agent',
+				createdAt: t + 1000,
+				message: resultMessage('r1'),
+				sessionId: 'session-completed',
+			}),
+		];
+
+		render(<MinimalThreadFeed parsedRows={rows} />);
+		const trigger = screen.getByTestId('minimal-thread-agent-open');
+		expect(trigger.className).toContain('min-h-11');
+		fireEvent.click(trigger);
+		expect(mockPushOverlayHistory).toHaveBeenCalledWith('session-completed', 'Coder Agent', 'a1');
+	});
+
+	it('opens the running agent session from the avatar/name header without requiring a highlight target', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+				sessionId: 'session-active',
+			}),
+		];
+
+		render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+		const trigger = screen.getByTestId('minimal-thread-agent-open');
+		expect(trigger.getAttribute('aria-label')).toBe('Open Coder Agent session');
+		fireEvent.click(trigger);
+		expect(mockPushOverlayHistory).toHaveBeenCalledWith('session-active', 'Coder Agent', undefined);
 	});
 
 	it('renders the last assistant text of a completed block as its message body', async () => {
@@ -430,6 +484,9 @@ describe('MinimalThreadFeed', () => {
 		// Synthetic handoffs render with a "Synthetic" badge (was "handoff" earlier;
 		// renamed when the bubble was redesigned to mirror the Thinking block).
 		expect(messageTurn.textContent?.toLowerCase()).toContain('synthetic');
+		expect(
+			messageTurn.querySelector('[data-testid="synthetic-message"] > div')?.className
+		).toContain('md:max-w-[86%]');
 		await waitFor(() => {
 			expect(screen.getByText('please address the failing test')).toBeTruthy();
 		});

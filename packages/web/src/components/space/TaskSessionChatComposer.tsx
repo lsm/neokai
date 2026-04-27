@@ -42,7 +42,7 @@ export function TaskSessionChatComposer({
 	};
 
 	return (
-		<div data-testid="task-session-chat-composer">
+		<div class="relative z-10" data-testid="task-session-chat-composer">
 			<ChatComposer
 				sessionId={sessionId}
 				readonly={false}

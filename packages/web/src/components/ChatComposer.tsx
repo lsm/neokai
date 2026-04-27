@@ -55,6 +55,8 @@ export interface ChatComposerProps {
 	errorMessage?: string | null;
 }
 
+export const CHAT_COMPOSER_READABILITY_SCRIM_TEST_ID = 'chat-composer-readability-scrim';
+
 export function ChatComposer({
 	sessionId,
 	readonly,
@@ -92,81 +94,91 @@ export function ChatComposer({
 	errorMessage,
 }: ChatComposerProps) {
 	return (
-		<div class="chat-footer absolute bottom-0 left-0 right-0 z-10 pt-4 bg-transparent">
-			{errorMessage && (
-				<div class="px-3 mb-1">
-					<p class="rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-300">
-						{errorMessage}
-					</p>
-				</div>
-			)}
-			<SessionStatusBar
-				sessionId={sessionId}
-				isProcessing={isProcessing}
-				currentAction={currentAction}
-				streamingPhase={streamingPhase}
-				contextUsage={contextUsage}
-				maxContextTokens={200000}
-				features={features}
-				currentModel={currentModel}
-				currentModelInfo={currentModelInfo}
-				availableModels={availableModels}
-				modelSwitching={modelSwitching}
-				modelLoading={modelLoading}
-				onModelSwitch={onModelSwitch}
-				autoScroll={autoScroll}
-				onAutoScrollChange={onAutoScrollChange}
-				coordinatorMode={coordinatorMode}
-				coordinatorSwitching={coordinatorSwitching}
-				onCoordinatorModeChange={onCoordinatorModeChange}
-				sandboxEnabled={sandboxEnabled}
-				sandboxSwitching={sandboxSwitching}
-				onSandboxModeChange={onSandboxModeChange}
-				thinkingLevel={thinkingLevel}
-			/>
+		<div class="chat-footer absolute bottom-0 left-0 right-0 z-10 isolate pt-4 bg-transparent">
+			<div
+				class="pointer-events-none absolute bottom-0 left-0 right-0 z-0 h-24"
+				data-testid={CHAT_COMPOSER_READABILITY_SCRIM_TEST_ID}
+				aria-hidden="true"
+			>
+				<div class="absolute inset-0 bg-gradient-to-t from-dark-900/90 via-dark-900/40 to-transparent" />
+				<div class="absolute inset-0 backdrop-blur-[1px] [mask-image:linear-gradient(to_top,black_0%,black_55%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_top,black_0%,black_55%,transparent_100%)]" />
+			</div>
+			<div class="relative z-10">
+				{errorMessage && (
+					<div class="px-3 mb-1">
+						<p class="rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-300">
+							{errorMessage}
+						</p>
+					</div>
+				)}
+				<SessionStatusBar
+					sessionId={sessionId}
+					isProcessing={isProcessing}
+					currentAction={currentAction}
+					streamingPhase={streamingPhase}
+					contextUsage={contextUsage}
+					maxContextTokens={200000}
+					features={features}
+					currentModel={currentModel}
+					currentModelInfo={currentModelInfo}
+					availableModels={availableModels}
+					modelSwitching={modelSwitching}
+					modelLoading={modelLoading}
+					onModelSwitch={onModelSwitch}
+					autoScroll={autoScroll}
+					onAutoScrollChange={onAutoScrollChange}
+					coordinatorMode={coordinatorMode}
+					coordinatorSwitching={coordinatorSwitching}
+					onCoordinatorModeChange={onCoordinatorModeChange}
+					sandboxEnabled={sandboxEnabled}
+					sandboxSwitching={sandboxSwitching}
+					onSandboxModeChange={onSandboxModeChange}
+					thinkingLevel={thinkingLevel}
+				/>
 
-			{sessionStatus === 'archived' ? (
-				<div class="p-4">
-					<div class="max-w-4xl mx-auto">
-						<div
-							class={cn(
-								'rounded-3xl border px-5 py-3 text-center',
-								'bg-dark-800/60 backdrop-blur-sm',
-								borderColors.ui.default
-							)}
-						>
-							<span class="text-gray-400 text-sm flex items-center justify-center gap-2">
-								<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										strokeLinecap="round"
-										strokeLinejoin="round"
-										strokeWidth={2}
-										d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
-									/>
-								</svg>
-								Session archived
-							</span>
+				{sessionStatus === 'archived' ? (
+					<div class="p-4">
+						<div class="max-w-4xl mx-auto">
+							<div
+								class={cn(
+									'rounded-3xl border px-5 py-3 text-center',
+									'bg-dark-800/60 backdrop-blur-sm',
+									borderColors.ui.default
+								)}
+							>
+								<span class="text-gray-400 text-sm flex items-center justify-center gap-2">
+									<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path
+											strokeLinecap="round"
+											strokeLinejoin="round"
+											strokeWidth={2}
+											d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
+										/>
+									</svg>
+									Session archived
+								</span>
+							</div>
 						</div>
 					</div>
-				</div>
-			) : (
-				!readonly && (
-					<MessageInput
-						sessionId={sessionId}
-						sessionType={sessionType}
-						onSend={onSend}
-						disabled={isWaitingForInput || !isConnected}
-						autoScroll={autoScroll}
-						onAutoScrollChange={onAutoScrollChange}
-						onOpenTools={onOpenTools}
-						onEnterRewindMode={onEnterRewindMode}
-						rewindMode={rewindMode}
-						onExitRewindMode={onExitRewindMode}
-						agentMentionCandidates={agentMentionCandidates}
-						placeholder={inputPlaceholder}
-					/>
-				)
-			)}
+				) : (
+					!readonly && (
+						<MessageInput
+							sessionId={sessionId}
+							sessionType={sessionType}
+							onSend={onSend}
+							disabled={isWaitingForInput || !isConnected}
+							autoScroll={autoScroll}
+							onAutoScrollChange={onAutoScrollChange}
+							onOpenTools={onOpenTools}
+							onEnterRewindMode={onEnterRewindMode}
+							rewindMode={rewindMode}
+							onExitRewindMode={onExitRewindMode}
+							agentMentionCandidates={agentMentionCandidates}
+							placeholder={inputPlaceholder}
+						/>
+					)
+				)}
+			</div>
 		</div>
 	);
 }
