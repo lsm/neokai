@@ -34,7 +34,12 @@ type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }
 type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
 import { useEffect, useState } from 'preact/hooks';
 import MarkdownRenderer from '../../../chat/MarkdownRenderer.tsx';
-import { type AgentTurnBlock, buildAgentTurns, isUserRow } from '../space-task-thread-turns';
+import {
+	type AgentTurnBlock,
+	buildAgentTurns,
+	isUserRow,
+	normalizeAgentKey,
+} from '../space-task-thread-turns';
 import { SyntheticMessageBlock } from '../../../sdk/SyntheticMessageBlock';
 import { SpaceTaskThreadMessageActions } from '../SpaceTaskThreadMessageActions';
 import { getAgentColor } from '../space-task-thread-agent-colors';
@@ -51,11 +56,24 @@ import {
 interface MinimalThreadFeedProps {
 	parsedRows: ParsedThreadRow[];
 	/**
-	 * Whether the underlying agent session is currently executing. When true
-	 * AND the last logical block is non-terminal, that block renders as the
-	 * active turn (coloured rail, live tool roster, ticking elapsed clock).
+	 * Labels of agents whose underlying sessions are currently executing.
+	 * The trailing non-terminal block **for each label in this set** renders as
+	 * the active turn (coloured rail, live tool roster, ticking elapsed clock).
+	 *
+	 * Per-agent rather than a single boolean: in multi-session workflows
+	 * (e.g. Coder + Reviewer interleaved), the Reviewer's terminal `result`
+	 * row can land *after* the Coder's last visible row. With a single
+	 * boolean + globally-trailing block check, that suppresses the Coder's
+	 * still-running rail because the global tail is now terminal. Keying
+	 * activity by agent label lets each agent's trailing block be upgraded
+	 * independently of what other agents emitted afterwards.
+	 *
+	 * Labels are matched case-insensitively / whitespace-insensitively against
+	 * each block's `agentLabel` so activity-member labels (which are run
+	 * through a title-casing helper on the daemon) collide with raw row
+	 * labels (e.g. "coder agent" → "Coder Agent").
 	 */
-	isAgentActive?: boolean;
+	activeAgentLabels?: ReadonlySet<string>;
 }
 
 /**
@@ -494,21 +512,32 @@ function extractBlockEnvelopes(rows: ParsedThreadRow[]): {
  * - Each user/synthetic row becomes its own `MessageFeedTurn`, surfaced as a
  *   distinct row showing FROM → TO and the message body.
  * - Consecutive non-user rows (assistant + result) form `CompletedFeedTurn`s.
- * - The very last agent turn upgrades to `ActiveFeedTurn` when the underlying
- *   block is non-terminal AND `isAgentActive` is true.
+ * - For every agent label in `activeAgentLabels`, the trailing non-terminal
+ *   completed turn from that agent upgrades to an `ActiveFeedTurn`. Tracking
+ *   trailing state per agent (rather than a single global "last block") is
+ *   what keeps the Coder rail visible when a Reviewer's terminal `result` row
+ *   lands after Coder's last row in a multi-session workflow.
  */
-function buildFeedTurns(parsedRows: ParsedThreadRow[], isAgentActive: boolean): FeedTurn[] {
+function buildFeedTurns(
+	parsedRows: ParsedThreadRow[],
+	activeAgentLabels: ReadonlySet<string>
+): FeedTurn[] {
 	const blocks = buildAgentTurns(parsedRows);
 	if (blocks.length === 0) return [];
 
 	const turns: FeedTurn[] = [];
-	// Store mutable cross-iteration state in an object so TS doesn't
-	// over-narrow the closure-captured fields to `never` after the loop.
-	const trailing: {
-		idx: number;
+	// Per-agent trailing completed-turn pointer. Keyed by the normalised agent
+	// label so case/whitespace variants between activity-member labels (run
+	// through a title-casing helper on the daemon) and raw row labels collide
+	// on the same entry. Each `flushAgent` call overwrites the entry for
+	// `block.agentLabel`, so after the loop the map points at the *last*
+	// completed turn each agent produced — exactly what we want to upgrade.
+	type AgentTrailing = {
+		turnIdx: number;
 		rows: ParsedThreadRow[];
-		block: AgentTurnBlock | null;
-	} = { idx: -1, rows: [], block: null };
+		block: AgentTurnBlock;
+	};
+	const perAgentTrailing = new Map<string, AgentTrailing>();
 	let previousAgentLabel: string | null = null;
 
 	for (const block of blocks) {
@@ -517,15 +546,18 @@ function buildFeedTurns(parsedRows: ParsedThreadRow[], isAgentActive: boolean): 
 		// envelopes. Cheap — single linear scan over rows we'd already be
 		// walking anyway.
 		const { init: blockInit, result: blockResult } = extractBlockEnvelopes(block.rows);
+		const blockKey = normalizeAgentKey(block.agentLabel);
 
 		let pendingAgentRows: ParsedThreadRow[] = [];
 		const flushAgent = () => {
 			if (pendingAgentRows.length === 0) return;
 			const turnId = `${block.id}:${String(pendingAgentRows[0].id)}`;
 			turns.push(buildCompletedTurn(block, pendingAgentRows, turnId, blockResult));
-			trailing.idx = turns.length - 1;
-			trailing.rows = pendingAgentRows;
-			trailing.block = block;
+			perAgentTrailing.set(blockKey, {
+				turnIdx: turns.length - 1,
+				rows: pendingAgentRows,
+				block,
+			});
 			pendingAgentRows = [];
 		};
 
@@ -541,11 +573,22 @@ function buildFeedTurns(parsedRows: ParsedThreadRow[], isAgentActive: boolean): 
 		previousAgentLabel = block.agentLabel;
 	}
 
-	// Upgrade the last agent turn to active when the trailing block is
-	// non-terminal and the session is reportedly running.
-	if (isAgentActive && trailing.idx >= 0 && trailing.block && !trailing.block.isTerminal) {
-		const completed = turns[trailing.idx] as CompletedFeedTurn;
-		turns[trailing.idx] = buildActiveTurn(trailing.block, trailing.rows, completed.id);
+	// Per-agent active-rail upgrade. For every label in `activeAgentLabels`
+	// whose trailing block is non-terminal, swap that agent's last completed
+	// turn for an active turn. Independent across agents — a Reviewer terminal
+	// block landing after Coder's last row can no longer suppress the Coder
+	// rail because Coder has its own entry in `perAgentTrailing`.
+	if (activeAgentLabels.size > 0) {
+		const normalisedActive = new Set<string>();
+		for (const label of activeAgentLabels) {
+			normalisedActive.add(normalizeAgentKey(label));
+		}
+		for (const [key, trailing] of perAgentTrailing) {
+			if (!normalisedActive.has(key)) continue;
+			if (trailing.block.isTerminal) continue;
+			const completed = turns[trailing.turnIdx] as CompletedFeedTurn;
+			turns[trailing.turnIdx] = buildActiveTurn(trailing.block, trailing.rows, completed.id);
+		}
 	}
 
 	// Drop empty completed turns. With result-message-aware text extraction in
@@ -904,8 +947,13 @@ function MinimalTurnRow({ turn }: { turn: FeedTurn }) {
 
 /* ── public component ────────────────────────────────────────────────────── */
 
-export function MinimalThreadFeed({ parsedRows, isAgentActive = false }: MinimalThreadFeedProps) {
-	const turns = buildFeedTurns(parsedRows, isAgentActive);
+const EMPTY_ACTIVE_AGENT_LABELS: ReadonlySet<string> = new Set();
+
+export function MinimalThreadFeed({
+	parsedRows,
+	activeAgentLabels = EMPTY_ACTIVE_AGENT_LABELS,
+}: MinimalThreadFeedProps) {
+	const turns = buildFeedTurns(parsedRows, activeAgentLabels);
 	if (turns.length === 0) return null;
 
 	return (

@@ -173,12 +173,26 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const isTerminalTask =
 		task.status === 'done' || task.status === 'cancelled' || task.status === 'archived';
 
-	// True when at least one activity member is actively executing (not idle /
-	// completed / failed / interrupted). Used to gate the running-border animation
-	// in the compact thread feed.
-	const isAgentActive = activityMembers.some(
-		(m) => m.state === 'active' || m.state === 'queued' || m.state === 'waiting_for_input'
-	);
+	// Per-agent activity. Each member that's currently executing (not idle /
+	// completed / failed / interrupted) contributes its label to the active set.
+	// The thread feed keys the live rail off this set so that, in multi-session
+	// workflows, every still-running agent's trailing non-terminal block renders
+	// its own active rail — a single boolean would collapse incorrectly when one
+	// agent's terminal result row lands after another agent's last visible row.
+	//
+	// Aggregate boolean is still useful for UI bits that ask "is anything
+	// running?" (the chat composer's processing indicator), so derive it from
+	// the set rather than recomputing from `activityMembers`.
+	const activeAgentLabels = (() => {
+		const labels = new Set<string>();
+		for (const m of activityMembers) {
+			if (m.state === 'active' || m.state === 'queued' || m.state === 'waiting_for_input') {
+				labels.add(m.label);
+			}
+		}
+		return labels;
+	})();
+	const isAgentActive = activeAgentLabels.size > 0;
 	const hasUnifiedWorkflowThread =
 		!!task.workflowRunId || !!agentSessionId || activityMembers.length > 0;
 	const showInlineComposer = !isTerminalTask;
@@ -525,7 +539,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 									bottomInsetClass={
 										showInlineComposer ? (threadSendError ? 'pb-24' : 'pb-16') : 'pb-3'
 									}
-									isAgentActive={isAgentActive}
+									activeAgentLabels={activeAgentLabels}
 								/>
 							) : (
 								<div class="h-full overflow-y-auto">
