@@ -74,7 +74,8 @@ vi.mock('../../../lib/utils', () => ({
 
 mockTasks = signal<SpaceTask[]>([]);
 
-import { SpaceTasks } from '../SpaceTasks';
+import { isActiveTask } from '../../../lib/task-filters';
+import { SpaceTasks, TAB_PREDICATES } from '../SpaceTasks';
 
 function makeTask(
 	id: string,
@@ -479,6 +480,66 @@ describe('SpaceTasks', () => {
 			// Toggle off via Clear filter
 			fireEvent.click(getByTestId('tasks-filter-clear'));
 			expect(getByText('Task t2')).toBeTruthy();
+		});
+	});
+
+	describe("Active-tab parity with sidebar's isActiveTask", () => {
+		// The sidebar in `SpaceDetailPanel` calls `isActiveTask` directly;
+		// the tasks-view here goes through `TAB_PREDICATES.active`. This
+		// suite asserts those two paths agree across every `SpaceTaskStatus`,
+		// so a future re-inlining of the predicate in `SpaceTasks.tsx` (the
+		// shape the original bug took) would fail loudly here rather than
+		// silently shipping diverging Active lists.
+		const ALL_STATUSES: SpaceTask['status'][] = [
+			'open',
+			'in_progress',
+			'review',
+			'approved',
+			'done',
+			'blocked',
+			'cancelled',
+			'archived',
+		];
+
+		it('TAB_PREDICATES.active and isActiveTask classify every status identically', () => {
+			for (const status of ALL_STATUSES) {
+				const task = makeTask(`t-${status}`, status);
+				expect({ status, value: TAB_PREDICATES.active(task) }).toEqual({
+					status,
+					value: isActiveTask(task),
+				});
+			}
+		});
+
+		it('produces the same set of task IDs as the sidebar over a heterogeneous fixture', () => {
+			// Mirrors the bug scenario: a mixed list including approved
+			// rows. Both consumers must select the exact same IDs.
+			const fixture: SpaceTask[] = [
+				makeTask('t-open-1', 'open'),
+				makeTask('t-open-2', 'open'),
+				makeTask('t-inprog', 'in_progress'),
+				makeTask('t-review', 'review'),
+				makeTask('t-approved-1', 'approved'),
+				makeTask('t-approved-2', 'approved'),
+				makeTask('t-done', 'done'),
+				makeTask('t-blocked', 'blocked'),
+				makeTask('t-cancelled', 'cancelled'),
+				makeTask('t-archived', 'archived'),
+			];
+
+			const sidebarIds = fixture
+				.filter(isActiveTask)
+				.map((t) => t.id)
+				.sort();
+			const tasksViewIds = fixture
+				.filter(TAB_PREDICATES.active)
+				.map((t) => t.id)
+				.sort();
+
+			expect(tasksViewIds).toEqual(sidebarIds);
+			expect(sidebarIds).toEqual(
+				['t-approved-1', 't-approved-2', 't-inprog', 't-open-1', 't-open-2'].sort()
+			);
 		});
 	});
 });

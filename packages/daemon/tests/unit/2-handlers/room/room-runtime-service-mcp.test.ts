@@ -3,7 +3,7 @@
  *
  * Verifies that:
  * 1. Registry-sourced MCP servers are merged into the final mcpServers map
- *    passed to setRuntimeMcpServers() alongside file-based servers.
+ *    passed to mergeRuntimeMcpServers() alongside file-based servers.
  * 2. room-agent-tools always takes precedence (applied last).
  * 3. On mcp.registry.changed, all live room chat sessions are updated.
  */
@@ -89,7 +89,7 @@ function makeConfig(overrides: Partial<RoomRuntimeServiceConfig> = {}): RoomRunt
 // ---------------------------------------------------------------------------
 
 describe('RoomRuntimeService MCP merge — setupRoomAgentSession', () => {
-	it('includes registry-sourced servers in the map passed to setRuntimeMcpServers', async () => {
+	it('includes registry-sourced servers in the map passed to mergeRuntimeMcpServers', async () => {
 		const registryServer: McpServerConfig = { type: 'stdio', command: 'npx', args: ['my-mcp'] };
 
 		const appMcpManager = {
@@ -98,11 +98,11 @@ describe('RoomRuntimeService MCP merge — setupRoomAgentSession', () => {
 			getEnabledMcpConfigsForSession: () => ({ 'registry-server': registryServer }),
 		};
 
-		const setRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
+		const mergeRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
 
 		const roomChatSession = {
-			setRuntimeMcpServers: (map: Record<string, McpServerConfig>) => {
-				setRuntimeMcpServersCalls.push(map);
+			mergeRuntimeMcpServers: (map: Record<string, McpServerConfig>) => {
+				mergeRuntimeMcpServersCalls.push(map);
 			},
 			setRuntimeSystemPrompt: () => {},
 			getSessionData: () => ({
@@ -160,8 +160,8 @@ describe('RoomRuntimeService MCP merge — setupRoomAgentSession', () => {
 		// Wait for the async getSessionAsync promise to resolve
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
-		expect(setRuntimeMcpServersCalls.length).toBeGreaterThanOrEqual(1);
-		const finalMap = setRuntimeMcpServersCalls[setRuntimeMcpServersCalls.length - 1]!;
+		expect(mergeRuntimeMcpServersCalls.length).toBeGreaterThanOrEqual(1);
+		const finalMap = mergeRuntimeMcpServersCalls[mergeRuntimeMcpServersCalls.length - 1]!;
 
 		// Registry server must be present
 		expect(finalMap['registry-server']).toEqual(registryServer);
@@ -182,11 +182,11 @@ describe('RoomRuntimeService MCP merge — setupRoomAgentSession', () => {
 			getEnabledMcpConfigsForSession: () => ({ 'room-agent-tools': conflictingServer }),
 		};
 
-		const setRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
+		const mergeRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
 
 		const roomChatSession = {
-			setRuntimeMcpServers: (map: Record<string, McpServerConfig>) => {
-				setRuntimeMcpServersCalls.push(map);
+			mergeRuntimeMcpServers: (map: Record<string, McpServerConfig>) => {
+				mergeRuntimeMcpServersCalls.push(map);
 			},
 			setRuntimeSystemPrompt: () => {},
 			getSessionData: () => ({
@@ -234,8 +234,8 @@ describe('RoomRuntimeService MCP merge — setupRoomAgentSession', () => {
 
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
-		expect(setRuntimeMcpServersCalls.length).toBeGreaterThanOrEqual(1);
-		const finalMap = setRuntimeMcpServersCalls[setRuntimeMcpServersCalls.length - 1]!;
+		expect(mergeRuntimeMcpServersCalls.length).toBeGreaterThanOrEqual(1);
+		const finalMap = mergeRuntimeMcpServersCalls[mergeRuntimeMcpServersCalls.length - 1]!;
 
 		// room-agent-tools must NOT be the conflicting registry entry
 		expect(
@@ -257,11 +257,11 @@ describe('RoomRuntimeService MCP merge — setupRoomAgentSession', () => {
 			getEnabledMcpServersConfig: () => ({ 'file-mcp': fileServer }),
 		};
 
-		const setRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
+		const mergeRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
 
 		const roomChatSession = {
-			setRuntimeMcpServers: (map: Record<string, McpServerConfig>) => {
-				setRuntimeMcpServersCalls.push(map);
+			mergeRuntimeMcpServers: (map: Record<string, McpServerConfig>) => {
+				mergeRuntimeMcpServersCalls.push(map);
 			},
 			setRuntimeSystemPrompt: () => {},
 			getSessionData: () => ({
@@ -310,8 +310,8 @@ describe('RoomRuntimeService MCP merge — setupRoomAgentSession', () => {
 
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
-		expect(setRuntimeMcpServersCalls.length).toBeGreaterThanOrEqual(1);
-		const finalMap = setRuntimeMcpServersCalls[setRuntimeMcpServersCalls.length - 1]!;
+		expect(mergeRuntimeMcpServersCalls.length).toBeGreaterThanOrEqual(1);
+		const finalMap = mergeRuntimeMcpServersCalls[mergeRuntimeMcpServersCalls.length - 1]!;
 
 		expect(finalMap['file-mcp']).toEqual(fileServer);
 		expect(finalMap['registry-mcp']).toEqual(registryServer);
@@ -326,11 +326,11 @@ describe('RoomRuntimeService MCP merge — setupRoomAgentSession', () => {
 			getEnabledMcpServersConfig: () => ({ 'file-mcp': fileServer }),
 		};
 
-		const setRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
+		const mergeRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
 
 		const roomChatSession = {
-			setRuntimeMcpServers: (map: Record<string, McpServerConfig>) => {
-				setRuntimeMcpServersCalls.push(map);
+			mergeRuntimeMcpServers: (map: Record<string, McpServerConfig>) => {
+				mergeRuntimeMcpServersCalls.push(map);
 			},
 			setRuntimeSystemPrompt: () => {},
 			getSessionData: () => ({
@@ -379,8 +379,8 @@ describe('RoomRuntimeService MCP merge — setupRoomAgentSession', () => {
 
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
-		expect(setRuntimeMcpServersCalls.length).toBeGreaterThanOrEqual(1);
-		const finalMap = setRuntimeMcpServersCalls[setRuntimeMcpServersCalls.length - 1]!;
+		expect(mergeRuntimeMcpServersCalls.length).toBeGreaterThanOrEqual(1);
+		const finalMap = mergeRuntimeMcpServersCalls[mergeRuntimeMcpServersCalls.length - 1]!;
 
 		expect(finalMap['file-mcp']).toEqual(fileServer);
 		expect(finalMap['room-agent-tools']).toBeDefined();
@@ -402,11 +402,11 @@ describe('RoomRuntimeService — mcp.registry.changed hot-reload', () => {
 			getEnabledMcpConfigsForSession: () => ({ 'hot-server': registryServer }),
 		};
 
-		const setRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
+		const mergeRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
 
 		const roomChatSession = {
-			setRuntimeMcpServers: (map: Record<string, McpServerConfig>) => {
-				setRuntimeMcpServersCalls.push(map);
+			mergeRuntimeMcpServers: (map: Record<string, McpServerConfig>) => {
+				mergeRuntimeMcpServersCalls.push(map);
 			},
 			setRuntimeSystemPrompt: () => {},
 			getSessionData: () => ({
@@ -467,8 +467,8 @@ describe('RoomRuntimeService — mcp.registry.changed hot-reload', () => {
 		// Wait for the async session lookup to resolve
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
-		expect(setRuntimeMcpServersCalls.length).toBeGreaterThanOrEqual(1);
-		const updatedMap = setRuntimeMcpServersCalls[setRuntimeMcpServersCalls.length - 1]!;
+		expect(mergeRuntimeMcpServersCalls.length).toBeGreaterThanOrEqual(1);
+		const updatedMap = mergeRuntimeMcpServersCalls[mergeRuntimeMcpServersCalls.length - 1]!;
 
 		// Registry-sourced server must be in the updated map
 		expect(updatedMap['hot-server']).toEqual(registryServer);
@@ -486,11 +486,11 @@ describe('RoomRuntimeService — mcp.registry.changed hot-reload', () => {
 			getEnabledMcpConfigsForSession: () => ({ 'reg-server': registryServer }),
 		};
 
-		const setRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
+		const mergeRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
 
 		const roomChatSession = {
-			setRuntimeMcpServers: (map: Record<string, McpServerConfig>) => {
-				setRuntimeMcpServersCalls.push(map);
+			mergeRuntimeMcpServers: (map: Record<string, McpServerConfig>) => {
+				mergeRuntimeMcpServersCalls.push(map);
 			},
 			setRuntimeSystemPrompt: () => {},
 			getSessionData: () => ({
@@ -540,8 +540,8 @@ describe('RoomRuntimeService — mcp.registry.changed hot-reload', () => {
 		await daemonHub.emit('mcp.registry.changed', { sessionId: 'global' });
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
-		expect(setRuntimeMcpServersCalls.length).toBeGreaterThanOrEqual(1);
-		const updatedMap = setRuntimeMcpServersCalls[setRuntimeMcpServersCalls.length - 1]!;
+		expect(mergeRuntimeMcpServersCalls.length).toBeGreaterThanOrEqual(1);
+		const updatedMap = mergeRuntimeMcpServersCalls[mergeRuntimeMcpServersCalls.length - 1]!;
 
 		// Registry server is still applied
 		expect(updatedMap['reg-server']).toEqual(registryServer);
@@ -549,7 +549,7 @@ describe('RoomRuntimeService — mcp.registry.changed hot-reload', () => {
 		expect(updatedMap['room-agent-tools']).toBeUndefined();
 	});
 
-	it('does not call setRuntimeMcpServers for rooms with no live session', async () => {
+	it('does not call mergeRuntimeMcpServers for rooms with no live session', async () => {
 		const daemonHub = makeDaemonHub();
 
 		const sessionManager = {
@@ -616,11 +616,11 @@ describe('RoomRuntimeService MCP merge — collision resolution', () => {
 			getEnabledMcpServersConfig: () => ({ 'shared-name': fileServer }),
 		};
 
-		const setRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
+		const mergeRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
 
 		const roomChatSession = {
-			setRuntimeMcpServers: (map: Record<string, McpServerConfig>) => {
-				setRuntimeMcpServersCalls.push(map);
+			mergeRuntimeMcpServers: (map: Record<string, McpServerConfig>) => {
+				mergeRuntimeMcpServersCalls.push(map);
 			},
 			setRuntimeSystemPrompt: () => {},
 			getSessionData: () => ({
@@ -669,8 +669,8 @@ describe('RoomRuntimeService MCP merge — collision resolution', () => {
 
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
-		expect(setRuntimeMcpServersCalls.length).toBeGreaterThanOrEqual(1);
-		const finalMap = setRuntimeMcpServersCalls[setRuntimeMcpServersCalls.length - 1]!;
+		expect(mergeRuntimeMcpServersCalls.length).toBeGreaterThanOrEqual(1);
+		const finalMap = mergeRuntimeMcpServersCalls[mergeRuntimeMcpServersCalls.length - 1]!;
 
 		// Registry wins on name collision with file-based
 		expect((finalMap['shared-name'] as McpServerConfig & { command?: string }).command).toBe(

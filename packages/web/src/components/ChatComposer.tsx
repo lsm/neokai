@@ -7,6 +7,7 @@ import type {
 	SessionType,
 	ThinkingLevel,
 } from '@neokai/shared';
+import type { ComponentChildren } from 'preact';
 import MessageInput from './MessageInput.tsx';
 import SessionStatusBar from './SessionStatusBar.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -51,6 +52,9 @@ export interface ChatComposerProps {
 	agentMentionCandidates?: Array<{ id: string; name: string }>;
 	/** Override the default placeholder text in the message input */
 	inputPlaceholder?: string;
+	inputLeadingElement?: ComponentChildren;
+	inputLeadingPaddingClass?: string;
+	onDraftActiveChange?: (hasDraft: boolean) => void;
 	/** Optional inline error message rendered above the status bar (used by task sessions) */
 	errorMessage?: string | null;
 }
@@ -91,6 +95,9 @@ export function ChatComposer({
 	onExitRewindMode,
 	agentMentionCandidates,
 	inputPlaceholder,
+	inputLeadingElement,
+	inputLeadingPaddingClass,
+	onDraftActiveChange,
 	errorMessage,
 }: ChatComposerProps) {
 	return (
@@ -175,6 +182,9 @@ export function ChatComposer({
 							onExitRewindMode={onExitRewindMode}
 							agentMentionCandidates={agentMentionCandidates}
 							placeholder={inputPlaceholder}
+							leadingElement={inputLeadingElement}
+							leadingPaddingClass={inputLeadingPaddingClass}
+							onDraftActiveChange={onDraftActiveChange}
 						/>
 					)
 				)}

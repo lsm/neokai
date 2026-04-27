@@ -56,9 +56,13 @@ export function parseMentions(text: string): string[] {
  * Allows the handler to resolve @mention targets without depending on the concrete repository class.
  */
 export interface NodeExecutionLookup {
-	listByWorkflowRun(
-		workflowRunId: string
-	): Array<{ agentName: string; agentSessionId: string | null; status: string }>;
+	listByWorkflowRun(workflowRunId: string): Array<{
+		id?: string;
+		workflowNodeId?: string;
+		agentName: string;
+		agentSessionId: string | null;
+		status: string;
+	}>;
 }
 
 /**
@@ -77,7 +81,59 @@ export interface TaskAgentManagerInterface {
 	 * Required for @mention routing to specific agents.
 	 */
 	injectSubSessionMessage?(subSessionId: string, message: string): Promise<void>;
+	/**
+	 * Optional: lazy-activate a workflow-declared node agent for a given task.
+	 *
+	 * Used by `space.task.activateNodeAgent` so the web UI can spawn a
+	 * not-started workflow peer (e.g. clicking "Reviewer (Not started)" in
+	 * the agent dropdown) without going through the Task Agent first.
+	 *
+	 * Returns true when the agent's workflow node was activated (or already
+	 * active), false otherwise (unknown agent, missing workflow, etc.).
+	 */
+	ensureWorkflowNodeActivationForAgent?(
+		taskId: string,
+		agentName: string,
+		options?: { reopenReason?: string; reopenBy?: string }
+	): Promise<boolean>;
+	/**
+	 * Optional: list all workflow-declared agent names for a task. Used to
+	 * validate `space.task.activateNodeAgent` requests before invoking
+	 * `ensureWorkflowNodeActivationForAgent`.
+	 */
+	getWorkflowDeclaredAgentNamesForTask?(taskId: string): string[];
+	/**
+	 * Optional: look up a live sub-session by agent name within a task. Used
+	 * by `space.task.activateNodeAgent` to short-circuit when the target is
+	 * already spawned and to return its sessionId to the caller.
+	 */
+	getSubSessionByAgentName?(
+		taskId: string,
+		agentName: string
+	): Promise<{ session: { id: string } } | null>;
 }
+
+/**
+ * Minimal interface for the pending-message queue used by
+ * `space.task.activateNodeAgent` to persist a first-message payload from the
+ * web client until the lazily-spawned target session drains the queue.
+ */
+export interface PendingAgentMessageQueue {
+	enqueue(input: {
+		workflowRunId: string;
+		spaceId: string;
+		taskId: string;
+		sourceAgentName?: string;
+		targetKind: 'node_agent' | 'space_agent';
+		targetAgentName: string;
+		message: string;
+		idempotencyKey?: string | null;
+	}): { record: { id: string }; deduped: boolean };
+}
+
+type SpaceTaskMessageTarget =
+	| { kind: 'task_agent' }
+	| { kind: 'node_agent'; agentName?: string; nodeExecutionId?: string };
 
 /**
  * Register RPC handlers for human ↔ Task Agent message routing.
@@ -95,7 +151,9 @@ export function setupSpaceTaskMessageHandlers(
 	db: Database,
 	daemonHub: DaemonHub,
 	nodeExecutionRepo?: NodeExecutionLookup,
-	channelCycleResetter?: ChannelCycleResetter
+	channelCycleResetter?: ChannelCycleResetter,
+	activateNode?: (runId: string, nodeId: string) => Promise<void>,
+	pendingMessageQueue?: PendingAgentMessageQueue
 ): void {
 	const taskRepo = new SpaceTaskRepository(db.getDatabase());
 
@@ -131,6 +189,82 @@ export function setupSpaceTaskMessageHandlers(
 				}`
 			);
 		}
+	}
+
+	async function routeToNodeAgents(
+		task: ReturnType<SpaceTaskRepository['getTask']>,
+		taskId: string,
+		message: string,
+		target: { agentName?: string; nodeExecutionId?: string }
+	): Promise<{ ok: true; routedTo: string[]; delivered?: false; activated?: true }> {
+		if (!task?.workflowRunId) {
+			throw new Error(`Task ${taskId} has no workflow run — cannot target workflow agents.`);
+		}
+		if (!nodeExecutionRepo || !taskAgentManager.injectSubSessionMessage) {
+			throw new Error('Workflow agent targeting is unavailable on this daemon.');
+		}
+
+		const executions = nodeExecutionRepo
+			.listByWorkflowRun(task.workflowRunId)
+			.filter((e) => e.status !== 'cancelled');
+		const matches = executions.filter((e) => {
+			if (target.nodeExecutionId && e.id === target.nodeExecutionId) return true;
+			return !!target.agentName && e.agentName.toLowerCase() === target.agentName.toLowerCase();
+		});
+
+		if (matches.length === 0) {
+			const available = [...new Set(executions.map((e) => e.agentName))].sort();
+			throw new Error(
+				`Workflow agent not found: ${target.agentName ?? target.nodeExecutionId ?? 'unknown'}. ` +
+					`Available agents: ${available.length > 0 ? available.join(', ') : 'none'}`
+			);
+		}
+
+		let activated = false;
+		let deliverable = matches.filter((e) => e.agentSessionId);
+		const missingSessionNodeIds = [
+			...new Set(
+				matches
+					.filter((e) => !e.agentSessionId && e.workflowNodeId)
+					.map((e) => e.workflowNodeId as string)
+			),
+		];
+
+		if (deliverable.length === 0 && missingSessionNodeIds.length > 0 && activateNode) {
+			await Promise.all(
+				missingSessionNodeIds.map((nodeId) => activateNode(task.workflowRunId!, nodeId))
+			);
+			activated = true;
+			const refreshed = nodeExecutionRepo
+				.listByWorkflowRun(task.workflowRunId)
+				.filter((e) => e.status !== 'cancelled');
+			const refreshedMatches = refreshed.filter((e) => {
+				if (target.nodeExecutionId && e.id === target.nodeExecutionId) return true;
+				return !!target.agentName && e.agentName.toLowerCase() === target.agentName.toLowerCase();
+			});
+			deliverable = refreshedMatches.filter((e) => e.agentSessionId);
+		}
+
+		if (deliverable.length === 0) {
+			return {
+				ok: true,
+				routedTo: [...new Set(matches.map((e) => e.agentName))],
+				...(activated ? { activated: true as const } : {}),
+				delivered: false,
+			};
+		}
+
+		await Promise.all(
+			deliverable.map((exec) =>
+				taskAgentManager.injectSubSessionMessage!(exec.agentSessionId!, message)
+			)
+		);
+
+		return {
+			ok: true,
+			routedTo: [...new Set(deliverable.map((e) => e.agentName))],
+			...(activated ? { activated: true as const } : {}),
+		};
 	}
 
 	// ─── space.task.ensureAgentSession ──────────────────────────────────────────
@@ -173,7 +307,12 @@ export function setupSpaceTaskMessageHandlers(
 
 	// ─── space.task.sendMessage ─────────────────────────────────────────────────
 	messageHub.onRequest('space.task.sendMessage', async (data) => {
-		const params = data as { spaceId: string; taskId: string; message: string };
+		const params = data as {
+			spaceId: string;
+			taskId: string;
+			message: string;
+			target?: SpaceTaskMessageTarget | null;
+		};
 
 		if (!params.spaceId) {
 			throw new Error('spaceId is required');
@@ -195,6 +334,15 @@ export function setupSpaceTaskMessageHandlers(
 		}
 		if (task.spaceId !== params.spaceId) {
 			throw new Error(`Task not found: ${params.taskId}`);
+		}
+
+		if (params.target?.kind === 'node_agent') {
+			const result = await routeToNodeAgents(task, params.taskId, params.message, params.target);
+			log.info(
+				`space.task.sendMessage: explicit target routing to [${result.routedTo.join(', ')}] for task ${params.taskId}`
+			);
+			await resetChannelCyclesOnHumanTouch(task.workflowRunId, params.taskId);
+			return result;
 		}
 
 		// ── @mention routing ──────────────────────────────────────────────────────
@@ -286,6 +434,156 @@ export function setupSpaceTaskMessageHandlers(
 		await resetChannelCyclesOnHumanTouch(task.workflowRunId, params.taskId);
 
 		return { ok: true };
+	});
+
+	// ─── space.task.activateNodeAgent ───────────────────────────────────────────
+	// Lazy-activate a workflow-declared node agent on demand. Used by the web UI
+	// when the user clicks a "(Not started)" peer in the task agent dropdown:
+	// the click triggers this RPC, which creates the underlying node_execution
+	// row (if missing), spawns the sub-session via the SpaceRuntime tick loop,
+	// and (optionally) queues a first message so the spawned session receives
+	// the user's prompt as soon as it comes online.
+	//
+	// Returns the live session ID when one already exists, otherwise indicates
+	// that activation has been kicked off — the web client can then watch
+	// `space.task.activity` for the new session via the existing live-query
+	// subscription.
+	messageHub.onRequest('space.task.activateNodeAgent', async (data) => {
+		const params = data as {
+			spaceId: string;
+			taskId: string;
+			agentName: string;
+			message?: string;
+		};
+
+		if (!params.spaceId) throw new Error('spaceId is required');
+		if (!params.taskId) throw new Error('taskId is required');
+		if (!params.agentName || params.agentName.trim() === '') {
+			throw new Error('agentName is required');
+		}
+		if (params.message !== undefined) {
+			if (typeof params.message !== 'string') {
+				throw new Error('message must be a string');
+			}
+			if (params.message.length > 10_000) {
+				throw new Error('Message is too long (max 10,000 characters)');
+			}
+		}
+
+		const task = taskRepo.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+		if (task.spaceId !== params.spaceId) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+		if (!task.workflowRunId) {
+			throw new Error(`Task ${params.taskId} has no associated workflow run`);
+		}
+		if (task.status === 'archived') {
+			throw new Error(`Task ${params.taskId} is archived and cannot activate agents`);
+		}
+		if (task.status === 'done' || task.status === 'cancelled') {
+			throw new Error(
+				`Task ${params.taskId} is ${task.status} — activateNodeAgent requires an active task`
+			);
+		}
+
+		const workflowRunId = task.workflowRunId;
+
+		// Validate the requested agent is actually declared by the workflow.
+		// Without this guard, a typo would silently no-op (the helper returns
+		// `false` for unknown names) and the user would never see an error.
+		const declaredNames =
+			taskAgentManager.getWorkflowDeclaredAgentNamesForTask?.(params.taskId) ?? [];
+		if (!declaredNames.includes(params.agentName)) {
+			throw new Error(
+				`Agent "${params.agentName}" is not declared in this task's workflow. ` +
+					(declaredNames.length > 0
+						? `Declared agents: ${declaredNames.join(', ')}.`
+						: 'No agents are declared for this task.')
+			);
+		}
+
+		// Short-circuit when the target is already spawned: skip activation,
+		// inject the message directly into the live session (if any), and
+		// return its sessionId so the caller hydrates the overlay immediately.
+		const liveSession = taskAgentManager.getSubSessionByAgentName
+			? await taskAgentManager.getSubSessionByAgentName(params.taskId, params.agentName)
+			: null;
+
+		if (liveSession && params.message && taskAgentManager.injectSubSessionMessage) {
+			const prefixed = `[Message from human]: ${params.message}`;
+			await taskAgentManager.injectSubSessionMessage(liveSession.session.id, prefixed);
+			log.info(
+				`space.task.activateNodeAgent: delivered message to live session ${liveSession.session.id} ` +
+					`(agent=${params.agentName}, task=${params.taskId})`
+			);
+			await resetChannelCyclesOnHumanTouch(workflowRunId, params.taskId);
+			return {
+				ok: true,
+				agentName: params.agentName,
+				sessionId: liveSession.session.id,
+				activated: false,
+				queued: false,
+			};
+		}
+
+		if (liveSession) {
+			// Live session, no message — just acknowledge.
+			return {
+				ok: true,
+				agentName: params.agentName,
+				sessionId: liveSession.session.id,
+				activated: false,
+				queued: false,
+			};
+		}
+
+		// No live session. Optionally queue the message so the future spawn
+		// drains it via `flushPendingMessagesForTarget`.
+		let queuedMessageId: string | null = null;
+		if (params.message && pendingMessageQueue) {
+			const { record } = pendingMessageQueue.enqueue({
+				workflowRunId,
+				spaceId: params.spaceId,
+				taskId: params.taskId,
+				sourceAgentName: 'human',
+				targetKind: 'node_agent',
+				targetAgentName: params.agentName,
+				message: params.message,
+			});
+			queuedMessageId = record.id;
+		}
+
+		// Fire the activation kick. Idempotent — `channelRouter.activateNode`
+		// returns existing tasks early if the node already has active executions.
+		const activated = taskAgentManager.ensureWorkflowNodeActivationForAgent
+			? await taskAgentManager.ensureWorkflowNodeActivationForAgent(
+					params.taskId,
+					params.agentName,
+					{
+						reopenReason: `web client lazy activation of "${params.agentName}"`,
+						reopenBy: 'web-client',
+					}
+				)
+			: false;
+
+		log.info(
+			`space.task.activateNodeAgent: agent=${params.agentName} task=${params.taskId} ` +
+				`activated=${activated} queuedMessageId=${queuedMessageId ?? 'none'}`
+		);
+
+		await resetChannelCyclesOnHumanTouch(workflowRunId, params.taskId);
+
+		return {
+			ok: true,
+			agentName: params.agentName,
+			sessionId: null,
+			activated,
+			queued: queuedMessageId !== null,
+			...(queuedMessageId !== null ? { queuedMessageId } : {}),
+		};
 	});
 
 	// ─── space.task.getMessages ─────────────────────────────────────────────────

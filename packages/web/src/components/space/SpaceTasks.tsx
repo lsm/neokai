@@ -1,24 +1,26 @@
 /**
  * SpaceTasks — tabbed task list for a space.
  *
- * Tabs: Action (review + blocked, grouped by reason), Active (open + in_progress),
+ * Tabs: Action (review + blocked, grouped by reason),
+ *       Active (open + in_progress + approved — see `task-filters.ts` for why
+ *       `approved` belongs here),
  *       Completed (done + cancelled), Archived.
  *
  * Within each tab, tasks are grouped by status/reason in TaskGroup cards,
  * matching the RoomTasks component style.
  */
 
-import { useEffect, useMemo, useState } from 'preact/hooks';
-import { spaceStore } from '../../lib/space-store';
 import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus } from '@neokai/shared';
-import { isActionRequired } from '../../lib/task-filters';
-import { getRelativeTime } from '../../lib/utils';
+import { useEffect, useMemo, useState } from 'preact/hooks';
+import { navigateToSpaceTasks } from '../../lib/router';
 import {
+	currentSpaceIdSignal,
 	currentSpaceTasksFilterSignal,
 	currentSpaceTasksFilterTabSignal,
-	currentSpaceIdSignal,
 } from '../../lib/signals';
-import { navigateToSpaceTasks } from '../../lib/router';
+import { spaceStore } from '../../lib/space-store';
+import { isActionRequired, isActiveTask } from '../../lib/task-filters';
+import { getRelativeTime } from '../../lib/utils';
 
 type TaskFilterTab = 'action' | 'active' | 'completed' | 'archived';
 
@@ -36,21 +38,21 @@ function isAwaitingTaskCompletion(task: SpaceTask): boolean {
 const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested', 'gate_rejected'];
 
 /**
- * Per-tab membership predicates. The `action` predicate is the shared
- * `isActionRequired` from `task-filters.ts`, which is the single source of
- * truth used by the Tasks-nav badge in `SpaceDetailPanel` — the badge and
- * this tab list cannot drift.
+ * Per-tab membership predicates. The `action` and `active` predicates are
+ * the shared helpers from `task-filters.ts`, which are the single source
+ * of truth also used by the sidebar in `SpaceDetailPanel` (Tasks-nav
+ * badge, "Active"/"Action" sub-tabs). Both surfaces import from the same
+ * helper so the lists and the badge counts cannot drift apart — see the
+ * `task-filters.ts` doc comments for why `approved` belongs in Active.
  *
- * `approved` is transient (post-approval sub-session runs, then
- * `mark_complete` transitions `approved → done`). We route it to the
- * `active` tab so a stuck `approved` task (e.g. with
- * `postApprovalBlockedReason` set) remains visible to the user rather
- * than disappearing between tabs. The task-detail pane's
- * PendingPostApprovalBanner surfaces the actionable failure state.
+ * Exported for tests that assert the tasks-view's `active` predicate
+ * matches the sidebar's `isActiveTask` exactly. Keeping this exported is
+ * a regression guard: if someone later re-inlines the predicate here,
+ * the parity test in `task-filters.test.ts` will fail.
  */
-const TAB_PREDICATES: Record<TaskFilterTab, (task: SpaceTask) => boolean> = {
+export const TAB_PREDICATES: Record<TaskFilterTab, (task: SpaceTask) => boolean> = {
 	action: isActionRequired,
-	active: (t) => t.status === 'open' || t.status === 'in_progress' || t.status === 'approved',
+	active: isActiveTask,
 	completed: (t) => t.status === 'done' || t.status === 'cancelled',
 	archived: (t) => t.status === 'archived',
 };

@@ -411,6 +411,30 @@ describe('SSE builders', () => {
 		expect((data as { usage: { output_tokens: number } }).usage.output_tokens).toBe(10);
 	});
 
+	it('messageDeltaSSE includes optional usage fields when provided', () => {
+		const { data } = parseSSE(
+			messageDeltaSSE('end_turn', {
+				outputTokens: 42,
+				inputTokens: 100,
+				cacheCreationInputTokens: 50,
+				cacheReadInputTokens: 25,
+			})
+		);
+		const usage = (data as { usage: Record<string, unknown> }).usage;
+		expect(usage.input_tokens).toBe(100);
+		expect(usage.output_tokens).toBe(42);
+		expect(usage.cache_creation_input_tokens).toBe(50);
+		expect(usage.cache_read_input_tokens).toBe(25);
+	});
+
+	it('messageDeltaSSE null-coalesces missing optional usage fields', () => {
+		const { data } = parseSSE(messageDeltaSSE('end_turn', { outputTokens: 42 }));
+		const usage = (data as { usage: Record<string, unknown> }).usage;
+		expect(usage.input_tokens).toBeNull();
+		expect(usage.cache_creation_input_tokens).toBeNull();
+		expect(usage.cache_read_input_tokens).toBeNull();
+	});
+
 	it('messageStopSSE emits message_stop', () => {
 		const { event, data } = parseSSE(messageStopSSE());
 		expect(event).toBe('message_stop');

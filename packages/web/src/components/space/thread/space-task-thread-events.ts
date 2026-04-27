@@ -422,6 +422,10 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 		}
 
 		if (isSDKResultMessage(row.message)) {
+			const usage = (row.message as { usage?: Record<string, number | undefined> }).usage;
+			const tokenSummary = usage
+				? `${usage.input_tokens ?? 0}→${usage.output_tokens ?? 0} tokens`
+				: '— tokens';
 			events.push({
 				id: `${String(row.id)}-result`,
 				label: row.label,
@@ -431,7 +435,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 				createdAt: row.createdAt,
 				kind: 'result',
 				title: row.message.subtype === 'success' ? 'Completed' : 'Error',
-				summary: `${row.message.usage.input_tokens}→${row.message.usage.output_tokens} tokens`,
+				summary: tokenSummary,
 				message: row.message,
 				resultSubtype: row.message.subtype,
 				isError: row.message.subtype !== 'success',

@@ -309,6 +309,12 @@ export type MessageDeltaUsage = {
 	 * The `outputTokens > 0` guard in `drainToSSE` selects between the two.
 	 */
 	outputTokens: number;
+	/** Input token count for this message (from Codex usage events when available). */
+	inputTokens?: number | null;
+	/** Cache creation input token count (from Codex usage events when available). */
+	cacheCreationInputTokens?: number | null;
+	/** Cache read input token count (from Codex usage events when available). */
+	cacheReadInputTokens?: number | null;
 };
 
 export function messageDeltaSSE(
@@ -318,7 +324,12 @@ export function messageDeltaSSE(
 	return sseEvent('message_delta', {
 		type: 'message_delta',
 		delta: { stop_reason: stopReason, stop_sequence: null },
-		usage: { output_tokens: usage.outputTokens },
+		usage: {
+			input_tokens: usage.inputTokens ?? null,
+			output_tokens: usage.outputTokens,
+			cache_creation_input_tokens: usage.cacheCreationInputTokens ?? null,
+			cache_read_input_tokens: usage.cacheReadInputTokens ?? null,
+		},
 	});
 }
 

@@ -39,6 +39,10 @@ const taskStatusColors: Record<string, string> = {
 	in_progress: 'bg-blue-500',
 	blocked: 'bg-amber-500',
 	review: 'bg-purple-500',
+	// `approved` tasks now appear in the sidebar Active tab — match the
+	// emerald accent used by `SpaceTasks.tsx` (`STATUS_BORDER`) so the dot
+	// colour reads consistently across both surfaces.
+	approved: 'bg-emerald-500',
 	done: 'bg-green-500',
 	cancelled: 'bg-gray-600',
 	archived: 'bg-gray-700',
