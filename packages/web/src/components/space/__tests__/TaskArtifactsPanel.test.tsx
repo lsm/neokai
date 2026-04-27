@@ -442,6 +442,7 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 					agents: signal([]),
 					workflows: signal([]),
 					workflowRuns: signal([]),
+					nodeExecutions: signal([]),
 					updateTask: vi.fn().mockResolvedValue(undefined),
 					ensureTaskAgentSession: vi.fn().mockResolvedValue({
 						id: 'task-1',
@@ -521,6 +522,7 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 					agents: signal([]),
 					workflows: signal([]),
 					workflowRuns: signal([]),
+					nodeExecutions: signal([]),
 					updateTask: vi.fn().mockResolvedValue(undefined),
 					ensureTaskAgentSession: vi.fn().mockResolvedValue({ id: 'task-2' }),
 					sendTaskMessage: vi.fn().mockResolvedValue(undefined),
@@ -595,6 +597,7 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 					agents: signal([]),
 					workflows: signal([]),
 					workflowRuns: signal([]),
+					nodeExecutions: signal([]),
 					updateTask: vi.fn().mockResolvedValue(undefined),
 					ensureTaskAgentSession: vi.fn().mockResolvedValue({
 						id: 'task-3',
