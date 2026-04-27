@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { LiveQueryDeltaEvent, LiveQuerySnapshotEvent } from '@neokai/shared';
+import type {
+	ActiveTurnSummary,
+	LiveQueryDeltaEvent,
+	LiveQuerySnapshotEvent,
+} from '@neokai/shared';
 import { useMessageHub } from './useMessageHub';
 
 export interface SpaceTaskThreadMessageRow {
@@ -38,8 +42,48 @@ export type SpaceTaskMessagesQueryVariant = 'compact' | 'full';
 
 export interface UseSpaceTaskMessagesResult {
 	rows: SpaceTaskThreadMessageRow[];
+	/**
+	 * Server-computed activity summary for the currently-active turn of each
+	 * session in the task. Empty array when no session has an open turn.
+	 *
+	 * Populated only by the `compact` query variant — the daemon ships this
+	 * alongside the compacted rows on the LiveQuery `metadata` channel so the
+	 * running roster on the task view can surface activity from the *full*
+	 * active turn (not the compacted slice). Closed turns are intentionally
+	 * absent.
+	 */
+	activeTurnSummaries: ActiveTurnSummary[];
 	isLoading: boolean;
 	isReconnecting: boolean;
+}
+
+/**
+ * Coerce a raw `metadata.activeTurnSummaries` payload into the typed
+ * `ActiveTurnSummary[]` shape. The daemon already produces well-formed entries,
+ * but defensive parsing here means a malformed snapshot can never crash the
+ * thread renderer — it just falls back to an empty roster.
+ */
+function parseActiveTurnSummaries(value: unknown): ActiveTurnSummary[] {
+	if (!Array.isArray(value)) return [];
+	const out: ActiveTurnSummary[] = [];
+	for (const raw of value) {
+		if (!raw || typeof raw !== 'object') continue;
+		const r = raw as Record<string, unknown>;
+		const sessionId = typeof r.sessionId === 'string' ? r.sessionId : null;
+		if (!sessionId) continue;
+		const turnIndex = typeof r.turnIndex === 'number' ? r.turnIndex : 0;
+		const entries = Array.isArray(r.entries)
+			? (r.entries as Record<string, unknown>[]).filter(
+					(e): e is Record<string, unknown> => !!e && typeof e === 'object'
+				)
+			: [];
+		out.push({
+			sessionId,
+			turnIndex,
+			entries: entries as ActiveTurnSummary['entries'],
+		});
+	}
+	return out;
 }
 
 let _taskMessageSubCounter = 0;
@@ -78,6 +122,7 @@ export function useSpaceTaskMessages(
 ): UseSpaceTaskMessagesResult {
 	const { request, onEvent, isConnected } = useMessageHub();
 	const [rows, setRows] = useState<SpaceTaskThreadMessageRow[]>([]);
+	const [activeTurnSummaries, setActiveTurnSummaries] = useState<ActiveTurnSummary[]>([]);
 	/**
 	 * The task id whose LiveQuery snapshot has been applied to `rows`.
 	 * `null` means either no subscription is active or we are still waiting
@@ -96,6 +141,7 @@ export function useSpaceTaskMessages(
 	useEffect(() => {
 		if (!taskId || !isConnected) {
 			setRows([]);
+			setActiveTurnSummaries([]);
 			setLoadedForTaskId(null);
 			activeSubIdRef.current = null;
 			return;
@@ -107,17 +153,24 @@ export function useSpaceTaskMessages(
 		// empty-state UI is still suppressed because `loadedForTaskId` is now
 		// out of sync with `taskId`, so consumers see the loading state.
 		setRows([]);
+		setActiveTurnSummaries([]);
 		setLoadedForTaskId(null);
 
 		const unsubSnapshot = onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
 			if (event.subscriptionId !== activeSubIdRef.current) return;
 			setRows(sortRows((event.rows as SpaceTaskThreadMessageRow[]) ?? []));
+			setActiveTurnSummaries(parseActiveTurnSummaries(event.metadata?.activeTurnSummaries));
 			setLoadedForTaskId(taskId);
 		});
 
 		const unsubDelta = onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
 			if (event.subscriptionId !== activeSubIdRef.current) return;
 			setRows((prev) => applyDelta(prev, event));
+			// `metadata` is recomputed every evaluation, so a delta carries the
+			// current active-turn summary for the task — overwrite, don't merge.
+			if (event.metadata && 'activeTurnSummaries' in event.metadata) {
+				setActiveTurnSummaries(parseActiveTurnSummaries(event.metadata.activeTurnSummaries));
+			}
 		});
 
 		request('liveQuery.subscribe', {
@@ -152,6 +205,7 @@ export function useSpaceTaskMessages(
 
 	return {
 		rows: sortedRows,
+		activeTurnSummaries,
 		isLoading,
 		isReconnecting: !isConnected && taskId !== null,
 	};
