@@ -940,6 +940,167 @@ describe('SpaceTaskPane — activity members actions', () => {
 	});
 });
 
+describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
+	// Regression for Task #133: the dropdown only listed agents that already had
+	// a session (driven by `taskActivity`). Workflow agents that haven't been
+	// activated yet — e.g. a `reviewer` whose node is gated behind an earlier
+	// step — were invisible, even though Task Agent send_message can lazily
+	// activate them on first contact. The dropdown now merges workflow.nodes
+	// with activityMembers and surfaces inactive peers as `(Not started)`.
+
+	beforeEach(() => {
+		cleanup();
+		mockTasks.value = [];
+		mockWorkflows.value = [];
+		mockWorkflowRuns.value = [];
+		mockTaskActivity.value = new Map();
+		mockEnsureTaskAgentSession.mockReset();
+		mockEnsureTaskAgentSession.mockImplementation(async () =>
+			makeTask({ status: 'in_progress', taskAgentSessionId: 'session-ensured' })
+		);
+		mockPushOverlayHistory.mockClear();
+		mockSpaceOverlaySessionIdSignal.value = null;
+		mockSpaceOverlayAgentNameSignal.value = null;
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	function makeWorkflowWithAgents(agentNames: string[]): SpaceWorkflow {
+		return {
+			id: 'workflow-1',
+			spaceId: 'space-1',
+			name: 'Coding Workflow',
+			description: '',
+			nodes: agentNames.map((name, i) => ({
+				id: `node-${i + 1}`,
+				name: `${name}-node`,
+				agents: [{ agentId: `agent-${name}`, name }],
+			})),
+			startNodeId: 'node-1',
+			channels: [],
+			gates: [],
+			tags: [],
+			createdAt: 1000,
+			updatedAt: 1000,
+		} as SpaceWorkflow;
+	}
+
+	it('renders workflow-declared agents that have not spawned a session as "(Not started)"', () => {
+		mockTasks.value = [
+			makeTask({
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'session-task',
+				status: 'in_progress',
+			}),
+		];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		mockWorkflows.value = [makeWorkflowWithAgents(['coder', 'reviewer'])];
+		// Only the task_agent has a live session; coder/reviewer haven't spawned.
+		mockTaskActivity.value = new Map([
+			['task-1', [makeActivityMember({ id: 'm1', label: 'Task Agent', state: 'active' })]],
+		]);
+
+		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+
+		expect(getByText('Open Task Agent (Active)')).toBeTruthy();
+		expect(getByText('Open coder (Not started)')).toBeTruthy();
+		expect(getByText('Open reviewer (Not started)')).toBeTruthy();
+	});
+
+	it('clicking a workflow-declared (Not started) agent opens overlay with the task-agent session as fallback', () => {
+		mockTasks.value = [
+			makeTask({
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'session-task',
+				status: 'in_progress',
+			}),
+		];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		mockWorkflows.value = [makeWorkflowWithAgents(['reviewer'])];
+		mockTaskActivity.value = new Map([
+			[
+				'task-1',
+				[
+					makeActivityMember({
+						id: 'm1',
+						sessionId: 'sess-task-agent',
+						label: 'Task Agent',
+						state: 'active',
+					}),
+				],
+			],
+		]);
+
+		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		fireEvent.click(getByText('Open reviewer (Not started)'));
+
+		// Falls back to the task-agent session — the natural place to address the
+		// peer via chat. The daemon's task-agent-tools.send_message will lazily
+		// activate the reviewer node when the user messages it.
+		expect(mockPushOverlayHistory).toHaveBeenCalledWith('sess-task-agent', 'reviewer');
+	});
+
+	it('hides workflow-declared entry once the agent has a live activity member (avoids duplicate)', () => {
+		mockTasks.value = [
+			makeTask({
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'session-task',
+				status: 'in_progress',
+			}),
+		];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		mockWorkflows.value = [makeWorkflowWithAgents(['coder', 'reviewer'])];
+		// `coder` has a live session; `reviewer` does not. Only `reviewer` should
+		// appear as (Not started); `coder` appears via its activity member.
+		mockTaskActivity.value = new Map([
+			[
+				'task-1',
+				[
+					makeActivityMember({ id: 'm1', label: 'Task Agent', state: 'active' }),
+					makeActivityMember({
+						id: 'm2',
+						sessionId: 'sess-coder',
+						kind: 'node_agent',
+						role: 'coder',
+						label: 'Coder',
+						state: 'active',
+					}),
+				],
+			],
+		]);
+
+		const { getByTestId, getByText, queryByText } = render(
+			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
+		);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+
+		expect(getByText('Open Coder (Active)')).toBeTruthy();
+		expect(queryByText('Open coder (Not started)')).toBeNull();
+		expect(getByText('Open reviewer (Not started)')).toBeTruthy();
+	});
+
+	it('does not render workflow-declared entries for tasks with no workflow run', () => {
+		mockTasks.value = [makeTask({ workflowRunId: null, taskAgentSessionId: 'session-task' })];
+		mockWorkflowRuns.value = [];
+		mockWorkflows.value = [makeWorkflowWithAgents(['coder', 'reviewer'])];
+		mockTaskActivity.value = new Map([
+			['task-1', [makeActivityMember({ id: 'm1', label: 'Task Agent', state: 'active' })]],
+		]);
+
+		const { getByTestId, queryByText } = render(
+			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
+		);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+
+		expect(queryByText('Open coder (Not started)')).toBeNull();
+		expect(queryByText('Open reviewer (Not started)')).toBeNull();
+	});
+});
+
 describe('SpaceTaskPane — floating tab pill layout', () => {
 	beforeEach(() => {
 		cleanup();

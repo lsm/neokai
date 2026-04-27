@@ -308,6 +308,28 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			? allTransitionActions.filter(({ target }) => target !== 'done' && target !== 'cancelled')
 			: allTransitionActions;
 
+	// Merge live activity members with workflow-declared agents so the dropdown
+	// renders every peer the task can ever address — even those that haven't
+	// spawned a session yet. Activity members are the source of truth for state;
+	// the workflow definition is the source of truth for "what peers exist".
+	//
+	// Without this merge, a workflow-declared agent (e.g. `reviewer`) would not
+	// appear until the workflow tick loop activates its node, which made the
+	// peer feel "missing" to the user even though Task Agent send_message can
+	// already lazily activate it on first contact (see Task #133).
+	const activityRoles = new Set(
+		activityMembers.filter((m) => m.kind === 'node_agent').map((m) => m.role)
+	);
+	const declaredAgentSlots: Array<{ name: string; nodeName: string }> = [];
+	if (workflow) {
+		for (const node of workflow.nodes) {
+			for (const agent of node.agents) {
+				if (activityRoles.has(agent.name)) continue;
+				declaredAgentSlots.push({ name: agent.name, nodeName: node.name });
+			}
+		}
+	}
+
 	const taskActionItems: DropdownMenuItem[] = [];
 	if (activityMembers.length > 0) {
 		taskActionItems.push(
@@ -316,6 +338,25 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				onClick: () => {
 					pushOverlayHistory(member.sessionId, member.label);
 				},
+			}))
+		);
+	}
+	// Workflow-declared agents that have never spawned a session yet. We can't
+	// open their session directly (none exists), so the click falls back to the
+	// Task Agent / leader session — the natural place to address the peer via a
+	// chat message, which the daemon will lazily route to the declared agent.
+	if (declaredAgentSlots.length > 0) {
+		const fallbackSessionId =
+			activityMembers.find((m) => m.kind === 'task_agent')?.sessionId ?? agentSessionId;
+		taskActionItems.push(
+			...declaredAgentSlots.map((slot) => ({
+				label: `Open ${slot.name} (Not started)`,
+				onClick: () => {
+					if (fallbackSessionId) {
+						pushOverlayHistory(fallbackSessionId, slot.name);
+					}
+				},
+				disabled: !fallbackSessionId,
 			}))
 		);
 	}
