@@ -2880,4 +2880,233 @@ describe('AgentSession', () => {
 			expect(agentSession.startupTimeoutTimer).toBeNull();
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// mcp.attach telemetry — Task #140 acceptance #9
+	// -------------------------------------------------------------------------
+
+	describe('mcp.attach telemetry log format', () => {
+		const makeMockSession = (
+			overrides: Partial<Session> & { context?: Record<string, unknown> } = {}
+		): Session => ({
+			id: 'space:worker:test',
+			title: 'Space Worker',
+			workspacePath: '/test/workspace',
+			createdAt: new Date().toISOString(),
+			lastActiveAt: new Date().toISOString(),
+			status: 'active',
+			config: {
+				model: 'claude-sonnet-4-5-20250929',
+				maxTokens: 8192,
+				temperature: 1.0,
+			},
+			metadata: {
+				messageCount: 0,
+				totalTokens: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				totalCost: 0,
+				toolCallCount: 0,
+			},
+			type: 'general',
+			...overrides,
+		});
+
+		const makeMocks = () => {
+			const mockDb = {
+				getSession: mock(() => null),
+				createSession: mock(() => {}),
+				updateSession: mock(() => {}),
+				getMessagesByStatus: mock(() => []),
+			} as unknown as Database;
+			const mockMessageHub = {} as MessageHub;
+			const mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+			const mockGetApiKey = mock(async () => 'test-api-key');
+			return { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey };
+		};
+
+		/**
+		 * Capture mcp.attach log lines by monkey-patching the agentSession.logger.
+		 * The structured payload is the second arg passed to logger.info, but the
+		 * production code passes a single pre-formatted string `mcp.attach {...}`.
+		 * We parse out the JSON tail.
+		 */
+		const captureLogs = (
+			agentSession: AgentSession
+		): { entries: Array<Record<string, unknown>> } => {
+			const entries: Array<Record<string, unknown>> = [];
+			const session = agentSession as unknown as { logger: { info: (msg: string) => void } };
+			const original = session.logger.info.bind(session.logger);
+			session.logger.info = (...args: unknown[]) => {
+				const first = args[0];
+				if (typeof first === 'string' && first.startsWith('mcp.attach ')) {
+					const tail = first.slice('mcp.attach '.length);
+					try {
+						entries.push(JSON.parse(tail));
+					} catch {
+						// ignore
+					}
+				}
+				original(...(args as [unknown]));
+			};
+			return { entries };
+		};
+
+		it('emits a structured payload with sessionId, action, sorted servers on merge', () => {
+			const mockSession = makeMockSession();
+			const { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey } = makeMocks();
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+			const { entries } = captureLogs(agentSession);
+
+			agentSession.mergeRuntimeMcpServers({
+				zeta: { type: 'sdk', name: 'zeta' } as unknown as McpServerConfig,
+				alpha: { type: 'sdk', name: 'alpha' } as unknown as McpServerConfig,
+			});
+
+			expect(entries.length).toBe(1);
+			const payload = entries[0]!;
+			expect(payload.event).toBe('mcp.attach');
+			expect(payload.sessionId).toBe('space:worker:test');
+			expect(payload.action).toBe('merge');
+			// Servers must be sorted for deterministic grep output
+			expect(payload.servers).toEqual(['alpha', 'zeta']);
+		});
+
+		it('emits action=detach with the single server name', () => {
+			const mockSession = makeMockSession({
+				config: {
+					model: 'claude-sonnet-4-5-20250929',
+					maxTokens: 8192,
+					temperature: 1.0,
+					mcpServers: {
+						'node-agent': { type: 'sdk', name: 'node-agent' } as unknown as McpServerConfig,
+					},
+				},
+			});
+			const { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey } = makeMocks();
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+			const { entries } = captureLogs(agentSession);
+
+			agentSession.detachRuntimeMcpServer('node-agent');
+
+			expect(entries.length).toBe(1);
+			expect(entries[0]).toMatchObject({
+				event: 'mcp.attach',
+				action: 'detach',
+				servers: ['node-agent'],
+			});
+		});
+
+		it('emits action=replace from the deprecated replaceAllRuntimeMcpServers entry point', () => {
+			const mockSession = makeMockSession();
+			const { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey } = makeMocks();
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+			const { entries } = captureLogs(agentSession);
+
+			agentSession.replaceAllRuntimeMcpServers({
+				'task-agent': { type: 'sdk', name: 'task-agent' } as unknown as McpServerConfig,
+			});
+
+			expect(entries.length).toBe(1);
+			expect(entries[0]!.action).toBe('replace');
+			expect(entries[0]!.servers).toEqual(['task-agent']);
+		});
+
+		it('extracts taskId from a workflow sub-session id when context is missing', () => {
+			const mockSession = makeMockSession({
+				id: 'space:s1:task:t-42:exec:e7',
+			});
+			const { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey } = makeMocks();
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+			const { entries } = captureLogs(agentSession);
+
+			agentSession.mergeRuntimeMcpServers({
+				'node-agent': { type: 'sdk', name: 'node-agent' } as unknown as McpServerConfig,
+			});
+
+			expect(entries.length).toBe(1);
+			expect(entries[0]!.taskId).toBe('t-42');
+		});
+
+		it('includes spaceId and taskId from session context when present', () => {
+			const mockSession = makeMockSession({
+				id: 'space:abc:agent:reviewer',
+				context: { spaceId: 'abc', taskId: 'task-99' },
+			});
+			const { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey } = makeMocks();
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+			const { entries } = captureLogs(agentSession);
+
+			agentSession.mergeRuntimeMcpServers({
+				'space-agent-tools': {
+					type: 'sdk',
+					name: 'space-agent-tools',
+				} as unknown as McpServerConfig,
+			});
+
+			expect(entries.length).toBe(1);
+			expect(entries[0]!.spaceId).toBe('abc');
+			expect(entries[0]!.taskId).toBe('task-99');
+		});
+
+		it('omits spaceId/taskId when neither context nor sub-session shape provides them', () => {
+			const mockSession = makeMockSession({ id: 'standalone-session' });
+			const { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey } = makeMocks();
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+			const { entries } = captureLogs(agentSession);
+
+			agentSession.mergeRuntimeMcpServers({
+				foo: { type: 'sdk', name: 'foo' } as unknown as McpServerConfig,
+			});
+
+			expect(entries.length).toBe(1);
+			expect(entries[0]).not.toHaveProperty('spaceId');
+			expect(entries[0]).not.toHaveProperty('taskId');
+		});
+	});
 });

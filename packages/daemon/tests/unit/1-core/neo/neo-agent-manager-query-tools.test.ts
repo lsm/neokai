@@ -2,8 +2,8 @@
  * Integration tests for NeoAgentManager query tools attachment.
  *
  * Covers:
- * - provision() with setToolsConfig() calls setRuntimeMcpServers() with neo-query server
- * - provision() without setToolsConfig() does NOT call setRuntimeMcpServers()
+ * - provision() with setToolsConfig() calls mergeRuntimeMcpServers() with neo-query server
+ * - provision() without setToolsConfig() does NOT call mergeRuntimeMcpServers()
  * - Registry MCP servers are merged with the in-process neo-query server
  * - In-process 'neo-query' takes precedence on name collision with registry entry
  * - MCP tools are re-attached after destroyAndRecreate() (startup health-check failure)
@@ -64,7 +64,7 @@ function makeSession(
 		isCleaningUp: mock(() => cleaningUp),
 		setRuntimeSystemPrompt: mock(() => undefined),
 		setRuntimeModel: mock(() => undefined),
-		setRuntimeMcpServers: mock(() => undefined),
+		mergeRuntimeMcpServers: mock(() => undefined),
 		cleanup: mock(async () => undefined),
 		queryPromise,
 		queryObject,
@@ -240,13 +240,13 @@ describe('NeoAgentManager — query tools attachment', () => {
 
 			await mgr.provision();
 
-			const calls = (session.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+			const calls = (session.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
 			expect(calls.length).toBe(1);
 			const servers = calls[0][0] as Record<string, McpServerConfig>;
 			expect('neo-query' in servers).toBe(true);
 		});
 
-		test('does NOT call setRuntimeMcpServers when toolsConfig is not set', async () => {
+		test('does NOT call mergeRuntimeMcpServers when toolsConfig is not set', async () => {
 			const session = makeSession();
 			const sm = makeSessionManager({ existingSession: null, createdSession: session });
 			const mgr = new NeoAgentManager(sm, makeSettingsManager());
@@ -254,7 +254,7 @@ describe('NeoAgentManager — query tools attachment', () => {
 
 			await mgr.provision();
 
-			const calls = (session.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+			const calls = (session.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
 			expect(calls.length).toBe(0);
 		});
 
@@ -270,7 +270,7 @@ describe('NeoAgentManager — query tools attachment', () => {
 
 			await mgr.provision();
 
-			const calls = (session.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+			const calls = (session.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
 			expect(calls.length).toBe(1);
 			const servers = calls[0][0] as Record<string, McpServerConfig>;
 			expect('neo-query' in servers).toBe(true);
@@ -295,7 +295,7 @@ describe('NeoAgentManager — query tools attachment', () => {
 
 			await mgr.provision();
 
-			const calls = (session.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+			const calls = (session.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
 			const servers = calls[0][0] as Record<string, McpServerConfig>;
 			// The in-process server should be an object (MCP server instance), not the registry entry
 			expect(servers['neo-query']).not.toBe(registryNeoQuery);
@@ -310,7 +310,7 @@ describe('NeoAgentManager — query tools attachment', () => {
 
 			await mgr.provision();
 
-			const calls = (session.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+			const calls = (session.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
 			expect(calls.length).toBe(1);
 			const servers = calls[0][0] as Record<string, McpServerConfig>;
 			const keys = Object.keys(servers);
@@ -336,13 +336,14 @@ describe('NeoAgentManager — query tools attachment', () => {
 
 			await mgr.provision();
 
-			// Stuck session should not have setRuntimeMcpServers called (it was never healthy)
-			expect((stuckSession.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls.length).toBe(
-				0
-			);
+			// Stuck session should not have mergeRuntimeMcpServers called (it was never healthy)
+			expect(
+				(stuckSession.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock.calls.length
+			).toBe(0);
 			// Fresh session has applyRuntimeConfig() called twice: once inside destroyAndRecreate()
 			// and once at the end of provision(). Both calls should include neo-query.
-			const freshCalls = (freshSession.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+			const freshCalls = (freshSession.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock
+				.calls;
 			expect(freshCalls.length).toBeGreaterThanOrEqual(1);
 			expect('neo-query' in (freshCalls[0][0] as Record<string, McpServerConfig>)).toBe(true);
 		});
@@ -360,13 +361,13 @@ describe('NeoAgentManager — query tools attachment', () => {
 			await mgr.provision();
 			await mgr.clearSession();
 
-			// Both sessions should have had setRuntimeMcpServers called
+			// Both sessions should have had mergeRuntimeMcpServers called
 			expect(
-				(initialSession.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls.length
+				(initialSession.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock.calls.length
 			).toBe(1);
-			expect((freshSession.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls.length).toBe(
-				1
-			);
+			expect(
+				(freshSession.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock.calls.length
+			).toBe(1);
 		});
 	});
 
@@ -379,7 +380,7 @@ describe('NeoAgentManager — query tools attachment', () => {
 
 			await mgr.provision();
 
-			const calls = (existingSession.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+			const calls = (existingSession.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
 			expect(calls.length).toBe(1);
 			expect('neo-query' in (calls[0][0] as Record<string, McpServerConfig>)).toBe(true);
 		});

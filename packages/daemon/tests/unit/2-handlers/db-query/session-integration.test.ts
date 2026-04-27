@@ -2,7 +2,7 @@
  * Integration tests: db-query MCP server wired into NeoAgentManager sessions.
  *
  * Covers:
- * - NeoAgentManager with setDbPath() includes 'db-query' key in setRuntimeMcpServers
+ * - NeoAgentManager with setDbPath() includes 'db-query' key in mergeRuntimeMcpServers
  * - NeoAgentManager cleanup() calls close() on the db-query server without error
  * - createDbQueryMcpServer can be created, queried, and closed end-to-end
  * - db-query server scoped as 'global' includes correct tool descriptions
@@ -121,7 +121,7 @@ function makeSession(): AgentSession {
 		isCleaningUp: mock(() => false),
 		setRuntimeSystemPrompt: mock(() => undefined),
 		setRuntimeModel: mock(() => undefined),
-		setRuntimeMcpServers: mock(() => undefined),
+		mergeRuntimeMcpServers: mock(() => undefined),
 		cleanup: mock(async () => undefined),
 		queryPromise: null,
 		queryObject: null,
@@ -260,7 +260,7 @@ describe('db-query session integration — NeoAgentManager', () => {
 		teardownTempDb();
 	});
 
-	it('setDbPath() causes db-query key to appear in setRuntimeMcpServers when toolsConfig is set', async () => {
+	it('setDbPath() causes db-query key to appear in mergeRuntimeMcpServers when toolsConfig is set', async () => {
 		const session = makeSession();
 		const mgr = new NeoAgentManager(makeSessionManager(session), makeSettingsManager());
 		mgr.setToolsConfig(makeMinimalQueryConfig());
@@ -268,13 +268,13 @@ describe('db-query session integration — NeoAgentManager', () => {
 
 		await mgr.provision();
 
-		const calls = (session.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+		const calls = (session.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
 		expect(calls.length).toBe(1);
 		const servers = calls[0][0] as Record<string, McpServerConfig>;
 		expect('db-query' in servers).toBe(true);
 	});
 
-	it('db-query key is absent from setRuntimeMcpServers when setDbPath() is not called', async () => {
+	it('db-query key is absent from mergeRuntimeMcpServers when setDbPath() is not called', async () => {
 		const session = makeSession();
 		const mgr = new NeoAgentManager(makeSessionManager(session), makeSettingsManager());
 		mgr.setToolsConfig(makeMinimalQueryConfig());
@@ -282,7 +282,7 @@ describe('db-query session integration — NeoAgentManager', () => {
 
 		await mgr.provision();
 
-		const calls = (session.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+		const calls = (session.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
 		expect(calls.length).toBe(1);
 		const servers = calls[0][0] as Record<string, McpServerConfig>;
 		expect('db-query' in servers).toBe(false);
@@ -314,7 +314,7 @@ describe('db-query session integration — NeoAgentManager', () => {
 		await expect(mgr.cleanup()).resolves.toBeUndefined();
 	});
 
-	it('neo-query server coexists with db-query server in setRuntimeMcpServers', async () => {
+	it('neo-query server coexists with db-query server in mergeRuntimeMcpServers', async () => {
 		const session = makeSession();
 		const mgr = new NeoAgentManager(makeSessionManager(session), makeSettingsManager());
 		mgr.setToolsConfig(makeMinimalQueryConfig());
@@ -322,7 +322,7 @@ describe('db-query session integration — NeoAgentManager', () => {
 
 		await mgr.provision();
 
-		const calls = (session.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+		const calls = (session.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
 		const servers = calls[0][0] as Record<string, McpServerConfig>;
 		expect('neo-query' in servers).toBe(true);
 		expect('db-query' in servers).toBe(true);

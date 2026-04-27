@@ -1418,6 +1418,45 @@ describe('TaskAgentManager.reinjectNodeAgentMcpServer — server-side restore pr
 		expect(session.session.config.mcpServers!['node-agent']).toBeDefined();
 		expect(session.session.config.mcpServers!['registry-mcp']).toBeDefined();
 	});
+
+	// Task #140 acceptance #3 — reinjectNodeAgentMcpServer must call restartQuery
+	// so the SDK rebuilds Options and picks up the freshly merged node-agent.
+	// Without the restart, the running turn keeps the old (pre-merge) tool
+	// surface and the self-heal has no visible effect until the next turn.
+	test('calls restartQuery() on the session after merging the new node-agent', async () => {
+		const { manager, fromInitSpy, space } = buildManager({});
+		spies.push(fromInitSpy);
+
+		const session = makeMockSession('sub-session-reinject-restart');
+		let restartCount = 0;
+		session.restartQuery = async () => {
+			restartCount += 1;
+		};
+
+		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
+			() => {
+				return { name: 'node-agent', _stub: true } as unknown as ReturnType<
+					typeof nodeAgentToolsModule.createNodeAgentMcpServer
+				>;
+			}
+		);
+		spies.push(mcpServerSpy);
+
+		const mgr = manager as unknown as {
+			reinjectNodeAgentMcpServer: (s: unknown, c: unknown) => Promise<void>;
+		};
+		await mgr.reinjectNodeAgentMcpServer(session, {
+			taskId: 'task-1',
+			subSessionId: 'sub-session-reinject-restart',
+			agentName: 'coder',
+			spaceId: space.id,
+			workflowRunId: '',
+			workspacePath: space.workspacePath,
+			workflowNodeId: 'node-1',
+		});
+
+		expect(restartCount).toBe(1);
+	});
 });
 
 describe('TaskAgentManager.reinjectSpaceAgentToolsMcpServer — server-side restore primitive (Task #99)', () => {

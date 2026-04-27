@@ -3,12 +3,12 @@
  *
  * Verifies that:
  * 1. Worker sessions (coder/general) receive the merged (file-based + registry) MCP map
- *    via setRuntimeMcpServers() when createAndStartSession is called.
+ *    via mergeRuntimeMcpServers() when createAndStartSession is called.
  * 2. File-based servers take precedence over registry servers on name collision.
  * 3. The merged map is complete — neither source is dropped.
  * 4. Non-worker roles (leader, planner) do NOT get the worker MCP injection.
  * 5. appMcpManager is optional — missing it does not throw.
- * 6. setRuntimeMcpServers is NOT called when both sources are empty (no-op guard).
+ * 6. mergeRuntimeMcpServers is NOT called when both sources are empty (no-op guard).
  */
 
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
@@ -69,7 +69,7 @@ function makeMinimalInit(sessionId = 'session-1'): AgentSessionInit {
 
 /**
  * Build a minimal SessionFactory that lets us observe calls to the underlying
- * AgentSession mock. Returns the factory, a collector for setRuntimeMcpServers calls,
+ * AgentSession mock. Returns the factory, a collector for mergeRuntimeMcpServers calls,
  * and the spy so the caller can restore it in afterEach.
  *
  * We exercise createAndStartSession by extracting the factory from a configured
@@ -82,8 +82,8 @@ async function buildSessionFactory(opts: {
 }) {
 	const { fileMcpServers = {}, registryMcpServers = {}, hasAppMcpManager = true } = opts;
 
-	// Capture setRuntimeMcpServers calls per session
-	const setRuntimeMcpServersCalls = new Map<string, Array<Record<string, McpServerConfig>>>();
+	// Capture mergeRuntimeMcpServers calls per session
+	const mergeRuntimeMcpServersCalls = new Map<string, Array<Record<string, McpServerConfig>>>();
 
 	// Mock AgentSession.fromInit to return a controllable stub.
 	// The spy is returned so tests can restore it in afterEach even when assertions throw.
@@ -92,12 +92,12 @@ async function buildSessionFactory(opts: {
 		init: AgentSessionInit
 	) => {
 		const id = init.sessionId;
-		if (!setRuntimeMcpServersCalls.has(id)) {
-			setRuntimeMcpServersCalls.set(id, []);
+		if (!mergeRuntimeMcpServersCalls.has(id)) {
+			mergeRuntimeMcpServersCalls.set(id, []);
 		}
 		return {
-			setRuntimeMcpServers: (map: Record<string, McpServerConfig>) => {
-				setRuntimeMcpServersCalls.get(id)!.push(map);
+			mergeRuntimeMcpServers: (map: Record<string, McpServerConfig>) => {
+				mergeRuntimeMcpServersCalls.get(id)!.push(map);
 			},
 			startStreamingQuery: mock(async () => {}),
 			getProcessingState: () => ({ status: 'idle' }),
@@ -148,7 +148,7 @@ async function buildSessionFactory(opts: {
 		}
 	).createSessionFactory();
 
-	return { factory, setRuntimeMcpServersCalls, fromInitSpy };
+	return { factory, mergeRuntimeMcpServersCalls, fromInitSpy };
 }
 
 // ---------------------------------------------------------------------------
@@ -170,7 +170,7 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 		const fileServer: McpServerConfig = { type: 'stdio', command: 'file-cmd' };
 		const registryServer: McpServerConfig = { type: 'stdio', command: 'registry-cmd' };
 
-		const { factory, setRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
+		const { factory, mergeRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
 			fileMcpServers: { 'file-mcp': fileServer },
 			registryMcpServers: { 'registry-mcp': registryServer },
 		});
@@ -178,7 +178,7 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 
 		await factory.createAndStartSession(makeMinimalInit('s1'), 'coder');
 
-		const calls = setRuntimeMcpServersCalls.get('s1') ?? [];
+		const calls = mergeRuntimeMcpServersCalls.get('s1') ?? [];
 		expect(calls.length).toBe(1);
 		expect(calls[0]!['file-mcp']).toEqual(fileServer);
 		expect(calls[0]!['registry-mcp']).toEqual(registryServer);
@@ -188,7 +188,7 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 		const fileServer: McpServerConfig = { type: 'stdio', command: 'file-cmd' };
 		const registryServer: McpServerConfig = { type: 'stdio', command: 'registry-cmd' };
 
-		const { factory, setRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
+		const { factory, mergeRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
 			fileMcpServers: { 'file-mcp': fileServer },
 			registryMcpServers: { 'registry-mcp': registryServer },
 		});
@@ -197,7 +197,7 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 		const init = { ...makeMinimalInit('s2'), type: 'general' as const };
 		await factory.createAndStartSession(init, 'general');
 
-		const calls = setRuntimeMcpServersCalls.get('s2') ?? [];
+		const calls = mergeRuntimeMcpServersCalls.get('s2') ?? [];
 		expect(calls.length).toBe(1);
 		expect(calls[0]!['file-mcp']).toEqual(fileServer);
 		expect(calls[0]!['registry-mcp']).toEqual(registryServer);
@@ -207,7 +207,7 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 		const fileServer: McpServerConfig = { type: 'stdio', command: 'file-wins' };
 		const registryServer: McpServerConfig = { type: 'stdio', command: 'registry-loses' };
 
-		const { factory, setRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
+		const { factory, mergeRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
 			fileMcpServers: { 'shared-name': fileServer },
 			registryMcpServers: { 'shared-name': registryServer },
 		});
@@ -215,7 +215,7 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 
 		await factory.createAndStartSession(makeMinimalInit('s3'), 'coder');
 
-		const calls = setRuntimeMcpServersCalls.get('s3') ?? [];
+		const calls = mergeRuntimeMcpServersCalls.get('s3') ?? [];
 		expect(calls.length).toBe(1);
 		const merged = calls[0]!;
 		expect((merged['shared-name'] as McpServerConfig & { command?: string }).command).toBe(
@@ -227,7 +227,7 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 		const fileServer: McpServerConfig = { type: 'stdio', command: 'file-only' };
 		const registryServer: McpServerConfig = { type: 'stdio', command: 'registry-only' };
 
-		const { factory, setRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
+		const { factory, mergeRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
 			fileMcpServers: { 'file-unique': fileServer },
 			registryMcpServers: { 'registry-unique': registryServer },
 		});
@@ -235,7 +235,7 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 
 		await factory.createAndStartSession(makeMinimalInit('s4'), 'coder');
 
-		const calls = setRuntimeMcpServersCalls.get('s4') ?? [];
+		const calls = mergeRuntimeMcpServersCalls.get('s4') ?? [];
 		expect(calls.length).toBe(1);
 		const merged = calls[0]!;
 		expect(merged['file-unique']).toEqual(fileServer);
@@ -246,7 +246,7 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 		const fileServer: McpServerConfig = { type: 'stdio', command: 'file-cmd' };
 		const registryServer: McpServerConfig = { type: 'stdio', command: 'registry-cmd' };
 
-		const { factory, setRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
+		const { factory, mergeRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
 			fileMcpServers: { 'file-mcp': fileServer },
 			registryMcpServers: { 'registry-mcp': registryServer },
 		});
@@ -254,29 +254,29 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 
 		await factory.createAndStartSession(makeMinimalInit('s5'), 'leader');
 
-		const calls = setRuntimeMcpServersCalls.get('s5') ?? [];
-		// setRuntimeMcpServers should NOT be called for leader
+		const calls = mergeRuntimeMcpServersCalls.get('s5') ?? [];
+		// mergeRuntimeMcpServers should NOT be called for leader
 		expect(calls.length).toBe(0);
 	});
 
 	it('does NOT inject MCP servers for planner sessions', async () => {
 		const fileServer: McpServerConfig = { type: 'stdio', command: 'file-cmd' };
 
-		const { factory, setRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
+		const { factory, mergeRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
 			fileMcpServers: { 'file-mcp': fileServer },
 		});
 		spies.push(fromInitSpy);
 
 		await factory.createAndStartSession(makeMinimalInit('s6'), 'planner');
 
-		const calls = setRuntimeMcpServersCalls.get('s6') ?? [];
+		const calls = mergeRuntimeMcpServersCalls.get('s6') ?? [];
 		expect(calls.length).toBe(0);
 	});
 
 	it('works without appMcpManager — file-based servers are still injected', async () => {
 		const fileServer: McpServerConfig = { type: 'stdio', command: 'file-only-cmd' };
 
-		const { factory, setRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
+		const { factory, mergeRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
 			fileMcpServers: { 'file-mcp': fileServer },
 			hasAppMcpManager: false,
 		});
@@ -284,16 +284,16 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 
 		await factory.createAndStartSession(makeMinimalInit('s7'), 'coder');
 
-		const calls = setRuntimeMcpServersCalls.get('s7') ?? [];
+		const calls = mergeRuntimeMcpServersCalls.get('s7') ?? [];
 		expect(calls.length).toBe(1);
 		expect(calls[0]!['file-mcp']).toEqual(fileServer);
 	});
 
-	it('does NOT call setRuntimeMcpServers when both sources are empty', async () => {
-		// When neither file-based nor registry has any servers, setRuntimeMcpServers
+	it('does NOT call mergeRuntimeMcpServers when both sources are empty', async () => {
+		// When neither file-based nor registry has any servers, mergeRuntimeMcpServers
 		// should be skipped entirely so the SDK can use its own default discovery
 		// instead of being handed an empty map that suppresses it.
-		const { factory, setRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
+		const { factory, mergeRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
 			fileMcpServers: {},
 			registryMcpServers: {},
 		});
@@ -301,7 +301,7 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 
 		await factory.createAndStartSession(makeMinimalInit('s8'), 'coder');
 
-		const calls = setRuntimeMcpServersCalls.get('s8') ?? [];
+		const calls = mergeRuntimeMcpServersCalls.get('s8') ?? [];
 		expect(calls.length).toBe(0);
 	});
 });

@@ -11,7 +11,7 @@
  *
  * Usage:
  *   const servers = createNeoToolsMcpServers(queryConfig, actionConfig);
- *   session.setRuntimeMcpServers({ ...registryServers, ...servers });
+ *   session.mergeRuntimeMcpServers({ ...registryServers, ...servers });
  */
 
 import type { McpServerConfig } from '@neokai/shared';
@@ -23,7 +23,7 @@ export type { NeoActionToolsConfig } from './neo-action-tools';
 
 /**
  * Create the neo-query and (optionally) neo-action MCP servers and return
- * them as a named map suitable for session.setRuntimeMcpServers().
+ * them as a named map suitable for session.mergeRuntimeMcpServers().
  *
  * When actionConfig is provided, both servers are created and returned.
  * When omitted, only the neo-query server is returned (backward-compatible).
