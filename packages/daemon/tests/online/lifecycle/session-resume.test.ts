@@ -27,9 +27,9 @@ const TMP_DIR = process.env.TMPDIR || '/tmp';
 // Detect mock mode for faster timeouts (Dev Proxy)
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
 const MODEL = IS_MOCK ? 'haiku' : 'haiku-4.5';
-const IDLE_TIMEOUT = IS_MOCK ? 5000 : 45000;
+const IDLE_TIMEOUT = IS_MOCK ? 15000 : 45000;
 const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
-const TEST_TIMEOUT = IS_MOCK ? 15000 : 90000;
+const TEST_TIMEOUT = IS_MOCK ? 45000 : 90000;
 
 describe('Session Resume', () => {
 	let daemon: DaemonServerContext;

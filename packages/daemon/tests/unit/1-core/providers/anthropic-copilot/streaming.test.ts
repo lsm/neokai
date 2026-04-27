@@ -53,16 +53,26 @@ class MockSession {
 	}
 }
 
-function makeMockRes(): { written: string[]; state: { ended: boolean }; res: ServerResponse } {
+function makeMockRes(): {
+	written: string[];
+	state: { ended: boolean; statusCode?: number; headers?: Record<string, string> };
+	res: ServerResponse;
+} {
 	const written: string[] = [];
-	const state = { ended: false };
+	const state: { ended: boolean; statusCode?: number; headers?: Record<string, string> } = {
+		ended: false,
+	};
 	const res = {
-		writeHead: () => {},
+		writeHead: (statusCode: number, headers?: Record<string, string>) => {
+			state.statusCode = statusCode;
+			state.headers = headers;
+		},
 		write: (chunk: string) => {
 			written.push(chunk);
 			return true;
 		},
-		end: () => {
+		end: (chunk?: string) => {
+			if (chunk) written.push(chunk);
 			state.ended = true;
 		},
 		headersSent: false,
@@ -103,7 +113,32 @@ describe('runSessionStreaming', () => {
 		expect(session.disconnectCalled).toBe(true);
 	});
 
-	it('resolves completed on session.error', async () => {
+	it('returns a JSON error when session.error happens before any SSE output', async () => {
+		const session = new MockSession();
+		const { written, state, res } = makeMockRes();
+		const { req } = makeMockReq();
+
+		const p = runSessionStreaming(
+			session as unknown as CopilotSession,
+			'prompt',
+			'model',
+			req,
+			res
+		);
+		await Promise.resolve();
+		session.emit('session.error', { message: '402 You have no quota' });
+
+		const outcome = await p;
+		expect(outcome.kind).toBe('completed');
+		expect(session.disconnectCalled).toBe(true);
+		expect(state.statusCode).toBe(402);
+		expect(state.headers?.['Content-Type']).toBe('application/json');
+		expect(written.some((c) => c.includes('event: message_start'))).toBe(false);
+		expect(written.some((c) => c.includes('"type":"rate_limit_error"'))).toBe(true);
+		expect(written.some((c) => c.includes('You have no quota'))).toBe(true);
+	});
+
+	it('emits an SSE error when session.error happens after streaming output started', async () => {
 		const session = new MockSession();
 		const { written, res } = makeMockRes();
 		const { req } = makeMockReq();
@@ -116,12 +151,13 @@ describe('runSessionStreaming', () => {
 			res
 		);
 		await Promise.resolve();
+		session.emit('assistant.message_delta', { deltaContent: 'partial' });
 		session.emit('session.error', { message: 'bad token' });
 
 		const outcome = await p;
 		expect(outcome.kind).toBe('completed');
 		expect(session.disconnectCalled).toBe(true);
-		// Must emit an Anthropic-format error SSE event (not a silent end_turn)
+		expect(written.some((c) => c.includes('event: message_start'))).toBe(true);
 		expect(written.some((c) => c.includes('event: error'))).toBe(true);
 		expect(written.some((c) => c.includes('"type":"api_error"'))).toBe(true);
 	});
@@ -203,7 +239,7 @@ describe('runSessionStreaming', () => {
 		jest.useFakeTimers();
 		try {
 			const session = new MockSession();
-			const { written, res } = makeMockRes();
+			const { written, state, res } = makeMockRes();
 			const { req } = makeMockReq();
 
 			expect(STREAMING_TIMEOUT_MS).toBeGreaterThan(0);
@@ -218,8 +254,9 @@ describe('runSessionStreaming', () => {
 			// Timeout path must abort and disconnect the session.
 			expect(session.abortCalled).toBe(true);
 			expect(session.disconnectCalled).toBe(true);
-			// Must emit an Anthropic-format error SSE event (not a silent end_turn)
-			expect(written.some((c) => c.includes('event: error'))).toBe(true);
+			expect(state.statusCode).toBe(500);
+			expect(state.headers?.['Content-Type']).toBe('application/json');
+			expect(written.some((c) => c.includes('event: message_start'))).toBe(false);
 			expect(written.some((c) => c.includes('"type":"api_error"'))).toBe(true);
 		} finally {
 			jest.useRealTimers();

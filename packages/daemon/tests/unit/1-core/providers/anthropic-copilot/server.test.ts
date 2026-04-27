@@ -481,39 +481,36 @@ describe('startEmbeddedServer', () => {
 		}
 	});
 
-	it('emits Anthropic error SSE event on session error', async () => {
+	it('returns Anthropic JSON error when session errors before streaming output', async () => {
 		session.shouldError = true;
 		const r = await postMessages(serverUrl, {
 			model: 'x',
 			max_tokens: 100,
 			messages: [{ role: 'user', content: 'err' }],
 		});
-		expect(r.status).toBe(200);
-		// Must emit an `error` SSE event (Anthropic streaming error format)
-		const errorEvent = r.events.find((e) => e.type === 'error');
-		expect(errorEvent).toBeDefined();
-		const data = errorEvent!.data as Record<string, unknown>;
+		expect(r.status).toBe(500);
+		expect(r.events).toEqual([]);
+		const data = JSON.parse(r.rawBody ?? '{}') as Record<string, unknown>;
 		expect(data['type']).toBe('error');
 		const err = data['error'] as Record<string, unknown>;
 		expect(err['type']).toBe('api_error');
-		expect(typeof err['message']).toBe('string');
+		expect(err['message']).toBe('mock error');
 	});
 
-	it('emits Anthropic error SSE event when session.send() rejects', async () => {
+	it('returns Anthropic JSON error when session.send() rejects before streaming output', async () => {
 		session.shouldRejectSend = true;
 		const r = await postMessages(serverUrl, {
 			model: 'x',
 			max_tokens: 100,
 			messages: [{ role: 'user', content: 'err' }],
 		});
-		expect(r.status).toBe(200);
-		// Must emit an `error` SSE event (Anthropic streaming error format)
-		const errorEvent = r.events.find((e) => e.type === 'error');
-		expect(errorEvent).toBeDefined();
-		const data = errorEvent!.data as Record<string, unknown>;
+		expect(r.status).toBe(500);
+		expect(r.events).toEqual([]);
+		const data = JSON.parse(r.rawBody ?? '{}') as Record<string, unknown>;
 		expect(data['type']).toBe('error');
 		const err = data['error'] as Record<string, unknown>;
 		expect(err['type']).toBe('api_error');
+		expect(err['message']).toBe('Internal streaming error');
 	});
 
 	// -------------------------------------------------------------------------

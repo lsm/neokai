@@ -1047,7 +1047,7 @@ describe('QueryRunner API validation error parsing', () => {
 	it('should parse 400 status code errors', () => {
 		const errorMessage =
 			'400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long"}}';
-		const match = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
 		expect(match).not.toBeNull();
 		expect(match![1]).toBe('400');
@@ -1060,7 +1060,7 @@ describe('QueryRunner API validation error parsing', () => {
 	it('should parse 401 status code errors', () => {
 		const errorMessage =
 			'401 {"type":"error","error":{"type":"authentication_error","message":"invalid api key"}}';
-		const match = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
 		expect(match).not.toBeNull();
 		expect(match![1]).toBe('401');
@@ -1069,29 +1069,41 @@ describe('QueryRunner API validation error parsing', () => {
 	it('should parse 429 status code errors', () => {
 		const errorMessage =
 			'429 {"type":"error","error":{"type":"rate_limit_error","message":"rate limit exceeded"}}';
-		const match = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
 		expect(match).not.toBeNull();
 		expect(match![1]).toBe('429');
 	});
 
+	it('should parse Claude SDK API Error-prefixed JSON errors', () => {
+		const errorMessage =
+			'API Error: 402 {"type":"error","error":{"type":"rate_limit_error","message":"402 You have no quota"}}';
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
+
+		expect(match).not.toBeNull();
+		expect(match![1]).toBe('402');
+		const body = JSON.parse(match![2]);
+		expect(body.error.type).toBe('rate_limit_error');
+		expect(body.error.message).toBe('402 You have no quota');
+	});
+
 	it('should not match 5xx errors', () => {
 		const errorMessage = '500 {"error":"internal server error"}';
-		const match = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
 		expect(match).toBeNull();
 	});
 
 	it('should not match non-JSON errors', () => {
 		const errorMessage = 'Connection refused';
-		const match = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
 		expect(match).toBeNull();
 	});
 
 	it('should handle malformed JSON gracefully', () => {
 		const errorMessage = '400 {invalid json}';
-		const match = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
 		// Match exists but JSON parsing will fail
 		expect(match).not.toBeNull();
@@ -1101,7 +1113,7 @@ describe('QueryRunner API validation error parsing', () => {
 	it('should extract error message from body', () => {
 		const errorMessage =
 			'400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt exceeds limit"}}';
-		const match = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
 		const body = JSON.parse(match![2]);
 		const apiErrorMessage = body.error?.message || errorMessage;
@@ -1111,7 +1123,7 @@ describe('QueryRunner API validation error parsing', () => {
 	it('should extract error type from body', () => {
 		const errorMessage =
 			'400 {"type":"error","error":{"type":"invalid_request_error","message":"test"}}';
-		const match = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
 		const body = JSON.parse(match![2]);
 		const apiErrorType = body.error?.type || 'api_error';
