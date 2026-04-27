@@ -2655,6 +2655,75 @@ describe('AgentSession', () => {
 				.updateSession.mock.calls;
 			expect(updateSessionCalls.length).toBe(0);
 		});
+
+		it('pushes merged runtime MCP servers into an active SDK query', async () => {
+			const existing = {
+				'task-agent': {
+					type: 'sdk',
+					name: 'task-agent',
+					instance: {},
+				} as unknown as McpServerConfig,
+			};
+			const mockSession = makeMockSession(existing);
+			const { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey } = makeMocks();
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+			const setMcpServers = mock(async () => ({ added: [], removed: [], errors: {} }));
+			agentSession.queryObject = {
+				setMcpServers,
+			} as unknown as import('@anthropic-ai/claude-agent-sdk').Query;
+
+			const spaceAgent = {
+				type: 'sdk',
+				name: 'space-agent-tools',
+				instance: {},
+			} as unknown as McpServerConfig;
+			agentSession.mergeRuntimeMcpServers({ 'space-agent-tools': spaceAgent });
+			await Promise.resolve();
+
+			expect(setMcpServers).toHaveBeenCalledTimes(1);
+			expect(setMcpServers).toHaveBeenCalledWith({
+				'task-agent': existing['task-agent'],
+				'space-agent-tools': spaceAgent,
+			});
+		});
+
+		it('can defer constructor pending-message replay until runtime provisioning completes', async () => {
+			const mockSession = makeMockSession();
+			const replayStatusReads: string[] = [];
+			const getMessagesByStatus = mock((_sessionId: string, status: string) => {
+				if (status === 'enqueued' || status === 'deferred') {
+					replayStatusReads.push(status);
+				}
+				return [];
+			});
+			const { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey } = makeMocks();
+			(mockDb as unknown as { getMessagesByStatus: ReturnType<typeof mock> }).getMessagesByStatus =
+				getMessagesByStatus;
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey,
+				undefined,
+				undefined,
+				undefined,
+				{ autoReplayPendingMessages: false }
+			);
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(replayStatusReads).toEqual([]);
+
+			await agentSession.replayPendingMessagesForImmediateMode();
+			expect(replayStatusReads).toEqual(['enqueued', 'deferred']);
+		});
 	});
 
 	describe('detachRuntimeMcpServer', () => {

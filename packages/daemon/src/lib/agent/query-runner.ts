@@ -11,7 +11,7 @@
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Query, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, Query, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
 import { spawn as nodeSpawn } from 'node:child_process';
 import type { UUID } from 'crypto';
 import type { Session, MessageHub } from '@neokai/shared';
@@ -309,15 +309,21 @@ export class QueryRunner {
 						sessionId: session.id,
 						spaceId: session.context?.spaceId,
 						sessionType: session.type,
+						requiredServers,
 						missingServers,
 						presentServers: mcpServerNames,
+						liveSdkServers: this.getLiveSdkMcpServerNames(queryOptions),
+						selfHealAttempted: !!this.ctx.onMissingWorkflowMcpServers,
 					};
 
 					logger.error(
 						`QueryRunner.start(): workflow sub-session ${session.id} is MISSING required MCP servers. ` +
 							`Missing: [${missingServers.join(', ')}]. ` +
 							`Present: [${mcpServerNames.join(', ')}]. ` +
-							`Attempting self-heal via onMissingWorkflowMcpServers callback...`
+							`Live SDK servers: [${diagnosticPayload.liveSdkServers.join(', ')}]. ` +
+							`Self-heal attempted: ${diagnosticPayload.selfHealAttempted}. ` +
+							`Attempting self-heal via onMissingWorkflowMcpServers callback... ` +
+							`${JSON.stringify(diagnosticPayload)}`
 					);
 
 					// ── Self-heal: call the registered callback to re-inject servers ─────
@@ -350,6 +356,7 @@ export class QueryRunner {
 							`QueryRunner.start(): workflow sub-session ${session.id} servers still missing after self-heal. ` +
 								`Still absent: [${stillMissing.join(', ')}]. ` +
 								`Present: [${currentServerNames.join(', ')}]. ` +
+								`Live SDK servers: [${this.getLiveSdkMcpServerNames({ mcpServers: currentMcpServers } as Options).join(', ')}]. ` +
 								`Refusing to start.`
 						);
 						throw new Error(
@@ -358,6 +365,25 @@ export class QueryRunner {
 								`Refusing to start — fix the injection logic.`
 						);
 					}
+
+					// The self-heal callback mutates session.config.mcpServers. The
+					// queryOptions object was built before that mutation, so rebuild it
+					// now or the SDK will still start with the stale server map.
+					queryOptions = await optionsBuilder.build();
+					queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
+					const repairedServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
+					logger.info(
+						`QueryRunner.start(): rebuilt query options after MCP self-heal for session ${session.id}. ` +
+							`Present: [${repairedServerNames.join(', ')}]. ` +
+							`${JSON.stringify({
+								event: 'workflow.mcp.self_heal.rebuilt_query_options',
+								sessionId: session.id,
+								sessionType: session.type,
+								requiredServers,
+								presentServers: repairedServerNames,
+								liveSdkServers: this.getLiveSdkMcpServerNames(queryOptions),
+							})}`
+					);
 				}
 			}
 
@@ -780,6 +806,16 @@ export class QueryRunner {
 			}
 			// Stale query: skip all cleanup — new query owns shared state
 		}
+	}
+
+	private getLiveSdkMcpServerNames(queryOptions: Pick<Options, 'mcpServers'>): string[] {
+		return Object.entries(queryOptions.mcpServers ?? {})
+			.filter(([, config]) => {
+				const maybeSdk = config as { type?: unknown; instance?: unknown };
+				return maybeSdk.type === 'sdk' && !!maybeSdk.instance;
+			})
+			.map(([name]) => name)
+			.sort();
 	}
 
 	/**
