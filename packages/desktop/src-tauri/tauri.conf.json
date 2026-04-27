@@ -26,7 +26,7 @@
 			}
 		],
 		"security": {
-			"csp": null
+			"csp": "default-src 'self' http://localhost:9283 ws://localhost:9283; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"
 		},
 		"trayIcon": {
 			"iconPath": "icons/icon.png",
@@ -51,7 +51,7 @@
 		"macOS": {
 			"minimumSystemVersion": "10.13",
 			"entitlements": null,
-			"exceptionDomain": "",
+			"exceptionDomain": null,
 			"frameworks": [],
 			"providerShortName": null,
 			"signingIdentity": null

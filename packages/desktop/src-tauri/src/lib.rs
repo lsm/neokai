@@ -15,7 +15,6 @@ struct SidecarState {
 }
 
 const DAEMON_URL: &str = "http://localhost:9283";
-const DAEMON_PORT: &str = "9283";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -62,6 +61,16 @@ pub fn run() {
 						}
 					}
 					"quit" => {
+						// Kill the bundled daemon before exit; app.exit(0) calls
+						// std::process::exit which skips Drop, so without this the
+						// child can outlive the desktop app.
+						if let Some(state) = app.try_state::<SidecarState>() {
+							if let Ok(mut guard) = state.child.lock() {
+								if let Some(child) = guard.take() {
+									let _ = child.kill();
+								}
+							}
+						}
 						app.exit(0);
 					}
 					_ => {}
@@ -122,7 +131,7 @@ pub fn run() {
 					.shell()
 					.sidecar("neokai")
 					.expect("Failed to create sidecar command")
-					.args(["--port", DAEMON_PORT, "--workspace", &workspace_str]);
+					.args(["--port", "9283", "--workspace", &workspace_str]);
 
 				let (mut rx, child) = sidecar_command
 					.spawn()
@@ -185,10 +194,15 @@ pub fn run() {
 					}
 
 					if ready {
-						if let Err(e) = window
-							.eval(&format!("window.location.href = '{}'", DAEMON_URL))
-						{
-							log::error!("Failed to navigate to daemon: {}", e);
+						match tauri::Url::parse(DAEMON_URL) {
+							Ok(url) => {
+								if let Err(e) = window.navigate(url) {
+									log::error!("Failed to navigate to daemon: {}", e);
+								}
+							}
+							Err(e) => {
+								log::error!("Invalid DAEMON_URL '{}': {}", DAEMON_URL, e);
+							}
 						}
 					} else {
 						log::error!("Daemon failed to start within timeout");
@@ -228,16 +242,4 @@ pub fn run() {
 		})
 		.run(tauri::generate_context!())
 		.expect("error while running tauri application");
-}
-
-/// Show a notification (callable from the frontend).
-#[tauri::command]
-fn show_notification(app: tauri::AppHandle, title: String, body: String) {
-	use tauri_plugin_notification::NotificationExt;
-	let _ = app
-		.notification()
-		.builder()
-		.title(&title)
-		.body(&body)
-		.show();
 }

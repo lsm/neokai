@@ -27,7 +27,7 @@ case "$TARGET" in
 		BUN_TARGET="bun-darwin-x64"
 		;;
 	"x86_64-pc-windows-msvc")
-		BUN_TARGET="bun-win-x64"
+		BUN_TARGET="bun-windows-x64"
 		EXT=".exe"
 		;;
 	"x86_64-unknown-linux-gnu")
