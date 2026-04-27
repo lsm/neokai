@@ -34,6 +34,8 @@ import {
 	spaceOverlaySessionIdSignal,
 	spaceOverlayAgentNameSignal,
 	spaceOverlayHighlightMessageIdSignal,
+	spaceOverlayPendingTaskIdSignal,
+	spaceOverlayPendingAgentNameSignal,
 } from './signals.ts';
 
 /** Route patterns */
@@ -1562,10 +1564,13 @@ function handlePopState(_event: PopStateEvent): void {
 
 	// If the overlay is open and the user pressed back, close the overlay
 	// instead of navigating away from the current view.
-	if (spaceOverlaySessionIdSignal.value && !window.history.state?.overlaySessionId) {
+	const overlayOpen = spaceOverlaySessionIdSignal.value || spaceOverlayPendingAgentNameSignal.value;
+	if (overlayOpen && !window.history.state?.overlaySessionId) {
 		spaceOverlaySessionIdSignal.value = null;
 		spaceOverlayAgentNameSignal.value = null;
 		spaceOverlayHighlightMessageIdSignal.value = null;
+		spaceOverlayPendingTaskIdSignal.value = null;
+		spaceOverlayPendingAgentNameSignal.value = null;
 		return;
 	}
 
@@ -2164,6 +2169,62 @@ export function pushOverlayHistory(
 	spaceOverlaySessionIdSignal.value = sessionId;
 	spaceOverlayAgentNameSignal.value = agentName ?? null;
 	spaceOverlayHighlightMessageIdSignal.value = highlightMessageId ?? null;
+	// Clear any pending-agent overlay state — opening a real session takes
+	// precedence and the overlay can only display one mode at a time.
+	spaceOverlayPendingTaskIdSignal.value = null;
+	spaceOverlayPendingAgentNameSignal.value = null;
+}
+
+/**
+ * Push an overlay entry for a workflow-declared peer that has not been spawned
+ * yet. The overlay renders a "Starting…" composer scoped to (taskId, agentName);
+ * on first send the daemon spawns the sub-session and the overlay hydrates to
+ * the live session via the `taskActivity` subscription.
+ *
+ * Use this in place of `pushOverlayHistory` when the user clicks a
+ * "(Not started)" entry in the task agent dropdown.
+ */
+export function pushOverlayHistoryForPendingAgent(taskId: string, agentName: string): void {
+	const currentPath = getCurrentPath();
+	window.history.pushState(
+		{ ...window.history.state, overlaySessionId: `pending:${taskId}:${agentName}` },
+		'',
+		currentPath
+	);
+	spaceOverlayPendingTaskIdSignal.value = taskId;
+	spaceOverlayPendingAgentNameSignal.value = agentName;
+	// Clear any session-mode overlay state so the renderer picks up the
+	// pending-agent variant unambiguously.
+	spaceOverlaySessionIdSignal.value = null;
+	spaceOverlayAgentNameSignal.value = agentName;
+	spaceOverlayHighlightMessageIdSignal.value = null;
+}
+
+/**
+ * Replace the current overlay history entry instead of pushing a new one.
+ *
+ * Use this for "handoff" transitions where a pending-agent entry is being
+ * replaced by the live session entry (e.g. `PendingAgentOverlay` →
+ * `AgentOverlayChat`). Using `replaceState` avoids pushing a second history
+ * entry, so pressing Back from the live session overlay closes it cleanly
+ * instead of restoring a stale `pending:…` ghost state.
+ */
+export function replaceOverlayHistory(
+	sessionId: string,
+	agentName?: string,
+	highlightMessageId?: string
+): void {
+	const currentPath = getCurrentPath();
+	window.history.replaceState(
+		{ ...window.history.state, overlaySessionId: sessionId },
+		'',
+		currentPath
+	);
+	spaceOverlaySessionIdSignal.value = sessionId;
+	spaceOverlayAgentNameSignal.value = agentName ?? null;
+	spaceOverlayHighlightMessageIdSignal.value = highlightMessageId ?? null;
+	spaceOverlayPendingTaskIdSignal.value = null;
+	spaceOverlayPendingAgentNameSignal.value = null;
 }
 
 /**
@@ -2174,12 +2235,16 @@ export function closeOverlayHistory(): void {
 		spaceOverlaySessionIdSignal.value = null;
 		spaceOverlayAgentNameSignal.value = null;
 		spaceOverlayHighlightMessageIdSignal.value = null;
+		spaceOverlayPendingTaskIdSignal.value = null;
+		spaceOverlayPendingAgentNameSignal.value = null;
 		window.history.back();
 	} else {
 		// No overlay history entry — just close the overlay signal
 		spaceOverlaySessionIdSignal.value = null;
 		spaceOverlayAgentNameSignal.value = null;
 		spaceOverlayHighlightMessageIdSignal.value = null;
+		spaceOverlayPendingTaskIdSignal.value = null;
+		spaceOverlayPendingAgentNameSignal.value = null;
 	}
 }
 

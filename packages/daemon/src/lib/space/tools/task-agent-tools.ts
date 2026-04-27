@@ -735,15 +735,16 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					// Agent is declared but hasn't been spawned yet (pre-first-execution).
 					// Queue the message if we have the pending-message repo, else fall back to notFound.
 					const isDeclaredInRun = declaredAgentNames.has(targetAgentName);
-					// Workflow-declared but never activated: no node_execution row exists,
-					// so `tryResumeNodeAgentSession` would be a no-op. We also need to
-					// trigger lazy activation of the owning workflow node so the tick
-					// loop can spawn the session and `flushPendingMessagesForTarget`
-					// drains the queue we are about to populate.
-					const needsLazyActivation =
-						isDeclaredInRun &&
-						workflowDeclaredAgentNames.has(targetAgentName) &&
-						!executionDeclaredAgentNames.has(targetAgentName);
+					// Whether the agent is declared in the workflow definition (and therefore
+					// has a workflow node we can lazily activate). The earlier #133 implementation
+					// gated the activation kick on `!executionDeclaredAgentNames.has(...)` so
+					// activation only fired when no node_execution row existed yet. That left a
+					// hole: a workflow-declared peer with a `pending` row stranded by a missed
+					// tick (e.g. the run was idle when the message arrived) would queue forever
+					// because `tryResumeNodeAgentSession` only resumes existing sessions.
+					// `channelRouter.activateNode` is idempotent, so it is safe to call even
+					// when a row already exists — it returns early without flapping state.
+					const isWorkflowDeclared = workflowDeclaredAgentNames.has(targetAgentName);
 					if (isDeclaredInRun && pendingMessageRepo) {
 						const { record, deduped } = pendingMessageRepo.enqueue({
 							workflowRunId,
@@ -776,13 +777,19 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 									);
 								});
 						}
-						// Trigger workflow-node activation for never-spawned, workflow-declared
-						// peers so the tick loop creates node_execution rows and spawns the
-						// session. Without this hop the message would queue forever for an
-						// agent that has no spawn pathway.
-						if (!deduped && needsLazyActivation) {
+						// Always trigger workflow-node activation when queuing for a
+						// workflow-declared peer that has no live session — even when a
+						// `node_execution` row already exists. `channelRouter.activateNode`
+						// is idempotent on existing active executions and resets terminal
+						// rows back to pending for re-spawn. Without this kick the queued
+						// message would wait forever on a stranded run that never receives
+						// an external activation signal (Task #139, Symptom 2).
+						if (!deduped && isWorkflowDeclared && taskAgentManager) {
+							log.info(
+								`task-agent.send: lazy-activated peer ${targetAgentName} for task ${taskId}`
+							);
 							void taskAgentManager
-								?.ensureWorkflowNodeActivationForAgent(taskId, targetAgentName, {
+								.ensureWorkflowNodeActivationForAgent(taskId, targetAgentName, {
 									reopenReason: `task-agent send_message to lazily activate "${targetAgentName}"`,
 									reopenBy: 'task-agent',
 								})

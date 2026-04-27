@@ -424,6 +424,9 @@ export class AgentMessageRouter {
 						);
 
 				if (isDeclaredOrActivated && pendingMessageRepo && spaceId) {
+					// Audited (Task #139): onMessageQueued below covers all
+					// queuing paths. No independent activation gap exists —
+					// every branch that enqueues also fires the callback.
 					// Queue the message (without the "[Message from X]:" prefix — flushPendingMessages
 					// adds it at delivery time so the source name is always accurate).
 					const rawMessage = `${message}${dataAppendix}`;
