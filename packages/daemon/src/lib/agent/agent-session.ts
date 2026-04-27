@@ -653,6 +653,23 @@ export class AgentSession
 		await this.askUserQuestionHandler.handleQuestionCancel(toolUseId);
 	}
 
+	/**
+	 * Mark any pending AskUserQuestion as orphaned and reset the session to
+	 * idle. Called by reapers (force-completion, rehydrate failure) so the
+	 * UI removes the now-unanswerable question card.
+	 *
+	 * @param telemetryReason Annotates the `question.orphaned` daemonHub event
+	 *   only — the persisted `cancelReason` is hardcoded to
+	 *   `agent_session_terminated` (see `AskUserQuestionHandler.markQuestionOrphaned`).
+	 * @returns true if a question was actually orphaned, false if the session
+	 *   was not in `waiting_for_input`.
+	 */
+	async markPendingQuestionOrphaned(
+		telemetryReason: 'agent_session_terminated' | 'rehydrate_failed' = 'agent_session_terminated'
+	): Promise<boolean> {
+		return this.askUserQuestionHandler.markQuestionOrphaned(telemetryReason);
+	}
+
 	// ============================================================================
 	// Model Switching
 	// ============================================================================
@@ -699,30 +716,42 @@ export class AgentSession
 	}
 
 	/**
-	 * Apply runtime MCP servers to in-memory session config only.
-	 * These servers may contain non-serializable instances and must not be persisted.
+	 * Replace the entire in-memory runtime MCP-server map for this session.
 	 *
-	 * @deprecated Prefer `mergeRuntimeMcpServers` (which preserves existing entries)
-	 * plus `detachRuntimeMcpServer` (which removes a single named entry) over this
-	 * replace-all API. Using `setRuntimeMcpServers` when other subsystems have already
-	 * attached servers (e.g. `space-agent-tools`, `db-query`) silently drops those
-	 * attachments, causing "No such tool available" failures during workflow execution.
+	 * @deprecated Production code MUST NOT use this method. Prefer
+	 * `mergeRuntimeMcpServers` (which preserves existing entries) plus
+	 * `detachRuntimeMcpServer` (which removes a single named entry).
 	 *
-	 * Remaining callers to migrate (do not add new call sites):
-	 *   - room-runtime-service.ts × 4  (room-tools, room-chat, workflow-chat injection)
-	 *   - neo-agent-manager.ts × 1     (neo session bootstrap)
+	 * Replace-semantics call sites silently drop concurrent attaches by other
+	 * subsystems (`space-agent-tools`, `db-query`, `node-agent`, …) and have
+	 * caused recurring "No such tool available" failures during workflow
+	 * execution. See `docs/research/node-agent-mcp-loss-root-cause.md` §3.
+	 *
+	 * Retained as a clearly-named escape hatch only for tests that need to
+	 * assert against an empty runtime map. Acceptance criterion #1 of Task #140
+	 * requires zero remaining production call sites.
 	 */
-	setRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): void {
+	replaceAllRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): void {
 		this.session.config = {
 			...this.session.config,
 			mcpServers,
 		};
+		this.emitMcpAttachLog('replace', Object.keys(mcpServers));
+	}
+
+	/**
+	 * @deprecated Renamed to `replaceAllRuntimeMcpServers`. This alias remains
+	 * temporarily so external callers (e.g. tests, downstream consumers of
+	 * `AgentSession`) keep compiling while migrations land. Will be removed.
+	 */
+	setRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): void {
+		this.replaceAllRuntimeMcpServers(mcpServers);
 	}
 
 	/**
 	 * Merge additional runtime MCP servers into the in-memory session config.
 	 *
-	 * Unlike `setRuntimeMcpServers`, this preserves existing entries and only
+	 * Unlike `replaceAllRuntimeMcpServers`, this preserves existing entries and only
 	 * overwrites the keys present in `additional`. Used when a cross-cutting
 	 * subsystem (e.g., `SpaceRuntimeService`) wants to attach a shared MCP
 	 * server (like `space-agent-tools`) to a session without disturbing other
@@ -738,6 +767,7 @@ export class AgentSession
 				...additional,
 			},
 		};
+		this.emitMcpAttachLog('merge', Object.keys(additional));
 	}
 
 	/**
@@ -756,6 +786,44 @@ export class AgentSession
 			...this.session.config,
 			mcpServers: updated,
 		};
+		this.emitMcpAttachLog('detach', [name]);
+	}
+
+	/**
+	 * Emit a structured `mcp.attach` log line for runtime MCP map mutations.
+	 *
+	 * Goal: every mutation of `session.config.mcpServers` produces a single,
+	 * grep-able, joinable diagnostic record. When the next "tool disconnected"
+	 * regression surfaces, the log trail is sufficient to reconstruct exactly
+	 * which subsystem attached/detached/replaced what — without scattering
+	 * bespoke log lines at every call site.
+	 *
+	 * Joinable fields:
+	 *   - sessionId      — the agent session this mutation targets
+	 *   - taskId?        — present for task-agent sessions (from SessionContext)
+	 *   - spaceId?       — present for any Space-bound session
+	 *   - workflowRunId? — present when this looks like a workflow sub-session
+	 *
+	 * Acceptance criterion #9 of Task #140.
+	 */
+	private emitMcpAttachLog(action: 'merge' | 'detach' | 'replace', servers: string[]): void {
+		const ctx = this.session.context ?? {};
+		const sessionId = this.session.id;
+		// Best-effort sub-session metadata: workflow sub-session ids carry the
+		// shape "space:<spaceId>:task:<taskId>:exec:<execId>". Parsing here is
+		// purely diagnostic — never used for behavior.
+		const isSubSession = sessionId.includes(':task:') && sessionId.includes(':exec:');
+		const taskId =
+			ctx.taskId ?? (isSubSession ? sessionId.split(':task:')[1]?.split(':')[0] : undefined);
+		const payload = {
+			event: 'mcp.attach',
+			sessionId,
+			action,
+			servers: [...servers].sort(),
+			...(ctx.spaceId ? { spaceId: ctx.spaceId } : {}),
+			...(taskId ? { taskId } : {}),
+		};
+		this.logger.info(`mcp.attach ${JSON.stringify(payload)}`);
 	}
 
 	/**

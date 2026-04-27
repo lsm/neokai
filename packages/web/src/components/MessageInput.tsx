@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
 import type {
 	MessageDeliveryMode,
 	MessageImage,
@@ -81,6 +82,12 @@ interface MessageInputProps {
 	agentMentionCandidates?: Array<{ id: string; name: string }>;
 	/** Override the default placeholder derived from sessionType */
 	placeholder?: string;
+	/** Optional control rendered inside the input, on the left side */
+	leadingElement?: ComponentChildren;
+	/** Left padding class used when leadingElement is present */
+	leadingPaddingClass?: string;
+	/** Emits whether the current draft has non-whitespace content */
+	onDraftActiveChange?: (hasDraft: boolean) => void;
 }
 
 interface QueuedOverlayMessage {
@@ -104,6 +111,9 @@ export default function MessageInput({
 	onExitRewindMode,
 	agentMentionCandidates,
 	placeholder: placeholderProp,
+	leadingElement,
+	leadingPaddingClass,
+	onDraftActiveChange,
 }: MessageInputProps) {
 	// Cache touch device detection — computed once on first render, stable thereafter.
 	// Using useRef (not a module constant) so tests can mock matchMedia before render.
@@ -141,6 +151,10 @@ export default function MessageInput({
 		handlePaste,
 	} = useFileAttachments();
 	const { handleInterrupt } = useInterrupt({ sessionId });
+
+	useEffect(() => {
+		onDraftActiveChange?.(content.trim().length > 0);
+	}, [content, onDraftActiveChange]);
 
 	// Command autocomplete
 	const handleCommandSelect = useCallback(
@@ -667,6 +681,8 @@ export default function MessageInput({
 							onPaste={disabled ? undefined : handlePaste}
 							textareaRef={textareaInputRef}
 							transparent={true}
+							leadingElement={leadingElement}
+							leadingPaddingClass={leadingPaddingClass}
 							onHeightChange={handleTextareaHeightChange}
 						/>
 					</div>

@@ -1,6 +1,7 @@
 // @ts-nocheck
 
 import type {
+	NodeExecution,
 	SpaceAgent,
 	SpaceTask,
 	SpaceTaskActivityMember,
@@ -27,23 +28,27 @@ const {
 	idBridge: { signal: null as ReturnType<typeof signal<string | null>> | null },
 }));
 
-const { mockNavigateToSpaceAgent, mockPushOverlayHistory, mockNavigateToSpaceTask } = vi.hoisted(
-	() => ({
-		mockNavigateToSpaceAgent: vi.fn(),
-		mockPushOverlayHistory: vi.fn((sessionId: string, agentName?: string) => {
-			mockSpaceOverlaySessionIdSignal.value = sessionId;
-			mockSpaceOverlayAgentNameSignal.value = agentName ?? null;
-		}),
-		mockNavigateToSpaceTask: vi.fn((_spaceId: string, _taskId: string, view: string) => {
-			if (viewTabBridge.signal) {
-				viewTabBridge.signal.value = view ?? 'thread';
-			}
-			if (idBridge.signal) {
-				idBridge.signal.value = _spaceId;
-			}
-		}),
-	})
-);
+const {
+	mockNavigateToSpaceAgent,
+	mockPushOverlayHistory,
+	mockPushOverlayHistoryForPendingAgent,
+	mockNavigateToSpaceTask,
+} = vi.hoisted(() => ({
+	mockNavigateToSpaceAgent: vi.fn(),
+	mockPushOverlayHistory: vi.fn((sessionId: string, agentName?: string) => {
+		mockSpaceOverlaySessionIdSignal.value = sessionId;
+		mockSpaceOverlayAgentNameSignal.value = agentName ?? null;
+	}),
+	mockPushOverlayHistoryForPendingAgent: vi.fn(),
+	mockNavigateToSpaceTask: vi.fn((_spaceId: string, _taskId: string, view: string) => {
+		if (viewTabBridge.signal) {
+			viewTabBridge.signal.value = view ?? 'thread';
+		}
+		if (idBridge.signal) {
+			idBridge.signal.value = _spaceId;
+		}
+	}),
+}));
 
 // Real Preact signals — these enable reactivity for values read during render
 const mockCurrentSpaceTaskViewTabSignal = signal<string>('thread');
@@ -56,6 +61,7 @@ idBridge.signal = mockCurrentSpaceIdSignal;
 vi.mock('../../../lib/router', () => ({
 	navigateToSpaceAgent: mockNavigateToSpaceAgent,
 	pushOverlayHistory: mockPushOverlayHistory,
+	pushOverlayHistoryForPendingAgent: mockPushOverlayHistoryForPendingAgent,
 	navigateToSpaceTask: mockNavigateToSpaceTask,
 }));
 
@@ -83,6 +89,7 @@ let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
 let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
 let mockTaskActivity: ReturnType<typeof signal<Map<string, SpaceTaskActivityMember[]>>>;
+let mockNodeExecutions: ReturnType<typeof signal<NodeExecution[]>>;
 let mockNodeExecutionsByNodeId: ReturnType<typeof signal<Map<string, unknown[]>>>;
 
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
@@ -100,6 +107,7 @@ vi.mock('../../../lib/space-store', () => ({
 			workflows: mockWorkflows,
 			workflowRuns: mockWorkflowRuns,
 			taskActivity: mockTaskActivity,
+			nodeExecutions: mockNodeExecutions,
 			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
 			updateTask: mockUpdateTask,
 			submitForReview: mockSubmitForReview,
@@ -189,6 +197,7 @@ mockAgents = signal<SpaceAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
 mockTaskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());
+mockNodeExecutions = signal<NodeExecution[]>([]);
 mockNodeExecutionsByNodeId = signal<Map<string, unknown[]>>(new Map());
 
 import { SpaceTaskPane } from '../SpaceTaskPane';
@@ -216,6 +225,7 @@ describe('SpaceTaskPane', () => {
 		mockWorkflows.value = [];
 		mockWorkflowRuns.value = [];
 		mockTaskActivity.value = new Map();
+		mockNodeExecutions.value = [];
 		mockUpdateTask.mockClear();
 		mockEnsureTaskAgentSession.mockReset();
 		mockEnsureTaskAgentSession.mockImplementation(async () =>
@@ -254,6 +264,12 @@ describe('SpaceTaskPane', () => {
 		expect(getByText('My Task')).toBeTruthy();
 		expect(getAllByText('In Progress').length).toBeGreaterThan(0);
 		expect(getByText('High Priority')).toBeTruthy();
+	});
+
+	it('omits the header status badge for review tasks because the approval banner owns that state', () => {
+		mockTasks.value = [makeTask({ status: 'review', taskAgentSessionId: 'session-abc' })];
+		const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(queryByTestId('task-status-label')).toBeNull();
 	});
 
 	it('renders unified task thread component when session exists', () => {
@@ -304,7 +320,9 @@ describe('SpaceTaskPane — composer', () => {
 		fireEvent.click(getByTestId('send-button'));
 
 		await waitFor(() =>
-			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Looks good to me')
+			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Looks good to me', {
+				kind: 'task_agent',
+			})
 		);
 		expect(mockEnsureTaskAgentSession).not.toHaveBeenCalled();
 	});
@@ -361,7 +379,9 @@ describe('SpaceTaskPane — composer', () => {
 		fireEvent.submit(textarea.form!);
 
 		await waitFor(() =>
-			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Approve the PR')
+			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Approve the PR', {
+				kind: 'task_agent',
+			})
 		);
 		await waitFor(() => expect(textarea.value).toBe(''));
 	});
@@ -375,7 +395,9 @@ describe('SpaceTaskPane — composer', () => {
 		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
 		await waitFor(() =>
-			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Quick approve')
+			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Quick approve', {
+				kind: 'task_agent',
+			})
 		);
 	});
 
@@ -940,6 +962,185 @@ describe('SpaceTaskPane — activity members actions', () => {
 	});
 });
 
+describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
+	// Regression for Task #133: the dropdown only listed agents that already had
+	// a session (driven by `taskActivity`). Workflow agents that haven't been
+	// activated yet — e.g. a `reviewer` whose node is gated behind an earlier
+	// step — were invisible, even though Task Agent send_message can lazily
+	// activate them on first contact. The dropdown now merges workflow.nodes
+	// with activityMembers and surfaces inactive peers as `(Not started)`.
+
+	beforeEach(() => {
+		cleanup();
+		mockTasks.value = [];
+		mockWorkflows.value = [];
+		mockWorkflowRuns.value = [];
+		mockTaskActivity.value = new Map();
+		mockEnsureTaskAgentSession.mockReset();
+		mockEnsureTaskAgentSession.mockImplementation(async () =>
+			makeTask({ status: 'in_progress', taskAgentSessionId: 'session-ensured' })
+		);
+		mockPushOverlayHistory.mockClear();
+		mockPushOverlayHistoryForPendingAgent.mockClear();
+		mockSpaceOverlaySessionIdSignal.value = null;
+		mockSpaceOverlayAgentNameSignal.value = null;
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	function makeWorkflowWithAgents(agentNames: string[]): SpaceWorkflow {
+		return {
+			id: 'workflow-1',
+			spaceId: 'space-1',
+			name: 'Coding Workflow',
+			description: '',
+			nodes: agentNames.map((name, i) => ({
+				id: `node-${i + 1}`,
+				name: `${name}-node`,
+				agents: [{ agentId: `agent-${name}`, name }],
+			})),
+			startNodeId: 'node-1',
+			channels: [],
+			gates: [],
+			tags: [],
+			createdAt: 1000,
+			updatedAt: 1000,
+		} as SpaceWorkflow;
+	}
+
+	it('renders workflow-declared agents that have not spawned a session as "(Not started)"', () => {
+		mockTasks.value = [
+			makeTask({
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'session-task',
+				status: 'in_progress',
+			}),
+		];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		mockWorkflows.value = [makeWorkflowWithAgents(['coder', 'reviewer'])];
+		// Only the task_agent has a live session; coder/reviewer haven't spawned.
+		mockTaskActivity.value = new Map([
+			['task-1', [makeActivityMember({ id: 'm1', label: 'Task Agent', state: 'active' })]],
+		]);
+
+		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+
+		expect(getByText('Open Task Agent (Active)')).toBeTruthy();
+		expect(getByText('Open coder (Not started)')).toBeTruthy();
+		expect(getByText('Open reviewer (Not started)')).toBeTruthy();
+	});
+
+	it('renders workflow-declared (Not started) agents as clickable and routes to a pending-agent overlay', () => {
+		// Task #139 regression fix: in #133 these entries were rendered as
+		// disabled — that violated #133's own AC #4 ("clicking a declared-but-
+		// not-spawned agent opens the chat overlay; the first message activates
+		// the session"). The fix re-enables the click and routes it to the
+		// pending-agent overlay variant (`pushOverlayHistoryForPendingAgent`)
+		// which carries (taskId, agentName) instead of a sessionId — so the
+		// overlay header reads "reviewer" and not the Task Agent thread.
+		mockTasks.value = [
+			makeTask({
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'session-task',
+				status: 'in_progress',
+			}),
+		];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		mockWorkflows.value = [makeWorkflowWithAgents(['reviewer'])];
+		mockTaskActivity.value = new Map([
+			[
+				'task-1',
+				[
+					makeActivityMember({
+						id: 'm1',
+						sessionId: 'sess-task-agent',
+						label: 'Task Agent',
+						state: 'active',
+					}),
+				],
+			],
+		]);
+
+		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+
+		const reviewerItem = getByText('Open reviewer (Not started)').closest('button');
+		expect(reviewerItem).toBeTruthy();
+		// No longer disabled — the click is routed to the pending-agent overlay.
+		expect(reviewerItem?.disabled).toBeFalsy();
+		expect(reviewerItem?.title).toContain('reviewer');
+
+		fireEvent.click(getByText('Open reviewer (Not started)'));
+		// Click routes through pushOverlayHistoryForPendingAgent so the overlay
+		// renders the pending-agent variant scoped to (taskId, agentName).
+		// Crucially, pushOverlayHistory (session-mode) MUST NOT be invoked —
+		// that would have surfaced the Task Agent's session under the peer's
+		// label, which was the very bug #133 first introduced.
+		expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledTimes(1);
+		expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith('task-1', 'reviewer');
+		expect(mockPushOverlayHistory).not.toHaveBeenCalled();
+	});
+
+	it('hides workflow-declared entry once the agent has a live activity member (avoids duplicate)', () => {
+		mockTasks.value = [
+			makeTask({
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'session-task',
+				status: 'in_progress',
+			}),
+		];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		mockWorkflows.value = [makeWorkflowWithAgents(['coder', 'reviewer'])];
+		// `coder` has a live session; `reviewer` does not. Only `reviewer` should
+		// appear as (Not started); `coder` appears via its activity member.
+		mockTaskActivity.value = new Map([
+			[
+				'task-1',
+				[
+					makeActivityMember({ id: 'm1', label: 'Task Agent', state: 'active' }),
+					makeActivityMember({
+						id: 'm2',
+						sessionId: 'sess-coder',
+						kind: 'node_agent',
+						role: 'coder',
+						label: 'Coder',
+						state: 'active',
+					}),
+				],
+			],
+		]);
+
+		const { getByTestId, getByText, queryByText } = render(
+			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
+		);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+
+		expect(getByText('Open Coder (Active)')).toBeTruthy();
+		expect(queryByText('Open coder (Not started)')).toBeNull();
+		expect(getByText('Open reviewer (Not started)')).toBeTruthy();
+	});
+
+	it('does not render workflow-declared entries for tasks with no workflow run', () => {
+		mockTasks.value = [makeTask({ workflowRunId: null, taskAgentSessionId: 'session-task' })];
+		mockWorkflowRuns.value = [];
+		mockWorkflows.value = [makeWorkflowWithAgents(['coder', 'reviewer'])];
+		mockTaskActivity.value = new Map([
+			['task-1', [makeActivityMember({ id: 'm1', label: 'Task Agent', state: 'active' })]],
+		]);
+
+		const { getByTestId, queryByText } = render(
+			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
+		);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+
+		expect(queryByText('Open coder (Not started)')).toBeNull();
+		expect(queryByText('Open reviewer (Not started)')).toBeNull();
+	});
+});
+
 describe('SpaceTaskPane — floating tab pill layout', () => {
 	beforeEach(() => {
 		cleanup();
@@ -965,14 +1166,13 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
 		const pill = getByTestId('task-view-tab-pill');
-		// Floating overlay: absolute-positioned at top-2 right-4 to mirror the
-		// agent name tag at top-2 left-4 inside SpaceTaskUnifiedThread, with a
+		// Floating overlay: absolute-positioned near the top-right with a
 		// high z-index so the pill always sits above the rendered view. (CSS
 		// class strings are asserted directly because Tailwind utilities aren't
 		// loaded in jsdom — getComputedStyle would return defaults.)
 		expect(pill.className).toContain('absolute');
-		expect(pill.className).toContain('top-2');
-		expect(pill.className).toContain('right-4');
+		expect(pill.className).toContain('top-3');
+		expect(pill.className).toContain('justify-center');
 		expect(pill.className).toContain('z-20');
 
 		// The pill is a direct child of the content wrapper, not nested inside
@@ -1010,18 +1210,35 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
-		// The pill sits at top-2 right-4 with no pointer-events wrapper, so its
-		// buttons receive clicks directly.
+		// The outer overlay ignores pointer events while the inner control
+		// receives clicks directly.
 		fireEvent.click(getByTestId('canvas-toggle'));
 		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 'task-1', 'canvas');
 	});
 
-	it('passes topInsetClass to SpaceTaskUnifiedThread so messages clear the floating pill', () => {
+	it('falls back to task.spaceId for tab navigation when no route space id is available', () => {
+		mockCurrentSpaceIdSignal.value = null;
+		mockTasks.value = [
+			makeTask({
+				spaceId: 'task-space',
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'session-abc',
+			}),
+		];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+
+		fireEvent.click(getByTestId('canvas-toggle'));
+		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('task-space', 'task-1', 'canvas');
+	});
+
+	it('passes insets to SpaceTaskUnifiedThread so messages clear floating controls', () => {
 		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
 		const thread = getByTestId('space-task-unified-thread');
-		expect(thread.getAttribute('data-top-inset')).toBe('pt-10');
+		expect(thread.getAttribute('data-top-inset')).toBe('pt-12');
+		expect(thread.getAttribute('data-bottom-inset')).toBe('pb-44 sm:pb-36');
 	});
 
 	it('renders the active banner outside task-pane-content so it is visible across tabs', () => {

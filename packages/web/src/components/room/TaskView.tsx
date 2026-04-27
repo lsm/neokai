@@ -387,7 +387,11 @@ export function TaskView({ roomId, taskId, viewVersion }: TaskViewProps) {
 						</svg>
 					</button>
 					{showScrollButton && (
-						<ScrollToBottomButton onClick={handleScrollToBottom} bottomClass="bottom-0" />
+						<ScrollToBottomButton
+							onClick={handleScrollToBottom}
+							bottomClass="bottom-0"
+							autoScroll={autoScrollEnabled}
+						/>
 					)}
 				</div>
 			</div>

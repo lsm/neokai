@@ -959,7 +959,10 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
 		});
 
 		expect(result.success).toBe(false);
-		expect(result.reason).toContain('No active sessions found for target agent(s): reviewer');
+		// Reworded in Task #133: distinguishes "declared but no session" from
+		// "unknown agent". Both pre-pendingRepo paths converge on this message.
+		expect(result.reason).toContain('Could not deliver message to target agent(s): reviewer');
+		expect(result.reason).toContain('declared but has no active session');
 	});
 });
 
@@ -1079,8 +1082,99 @@ describe('AgentMessageRouter: queue enqueue failure graceful degradation', () =>
 
 		// Enqueue threw → graceful degradation to notFound path
 		expect(result.success).toBe(false);
-		expect(result.reason).toContain('No active sessions found for target agent(s): reviewer');
+		// Reworded in Task #133: distinguishes "declared but no session" from
+		// "unknown agent". Both pre-pendingRepo paths converge on this message.
+		expect(result.reason).toContain('Could not deliver message to target agent(s): reviewer');
+		expect(result.reason).toContain('declared but has no active session');
 		expect(result.notFoundAgentNames).toContain('reviewer');
+	});
+});
+
+describe('AgentMessageRouter: workflow-declared (via nodeGroups) slot target with no execution row', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('queues message when target is a workflow-declared slot with no node_execution row', async () => {
+		// Regression for Task #133: a slot declared in workflow.nodes (via nodeGroups)
+		// but never spawned (no node_execution row) should be reachable as a queue target,
+		// not rejected as "Unknown target". The fix populates `allDeclaredAgentNames`
+		// from nodeGroups so the slot-name lookup resolves before topology fallback.
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('coder-node', 'review-node'),
+		]);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		// `reviewer` is in nodeGroups but has NO node_execution row. The previous
+		// implementation's allDeclaredAgentNames was sourced solely from
+		// node_executions, so this fell through to the topology fallback (which
+		// happens to also resolve here, but only for slot-name targets that the
+		// workflow definition exposes). Direct slot-name target now hits the
+		// nodeGroups-derived allDeclaredAgentNames and queues cleanly.
+		const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+		const router = makeRouter(ctx, workflowRunId, [], [makeChannel('coder-node', 'review-node')], {
+			nodeGroups: {
+				'coder-node': ['coder'],
+				'review-node': ['reviewer'],
+			},
+			pendingMessageRepo,
+			spaceId: ctx.spaceId,
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'reviewer',
+			message: 'lazy activation please',
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.queued).toHaveLength(1);
+		expect(result.queued![0].agentName).toBe('reviewer');
+		expect(result.delivered).toHaveLength(0);
+		// The hard-error path was NOT taken — no notFoundAgentNames and no
+		// "Unknown target" reason.
+		expect(result.notFoundAgentNames).toBeUndefined();
+
+		const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
+		expect(pending).toHaveLength(1);
+		expect(pending[0].message).toContain('lazy activation please');
+	});
+
+	test('returns "Unknown target" when slot is not declared in workflow nor in node_executions', async () => {
+		// Positive control: a name that is genuinely unknown — not in nodeGroups
+		// AND not in any node_execution row — must still return the hard error.
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('coder-node', 'review-node'),
+		]);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+
+		const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+		const router = makeRouter(ctx, workflowRunId, [], [makeChannel('coder-node', 'review-node')], {
+			nodeGroups: {
+				'coder-node': ['coder'],
+				'review-node': ['reviewer'],
+			},
+			pendingMessageRepo,
+			spaceId: ctx.spaceId,
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'ghost-slot',
+			message: 'who?',
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.reason).toContain("Unknown target 'ghost-slot'");
+		// Reachable peers list now includes nodeGroups-derived 'reviewer'.
+		expect(result.reason).toContain('reviewer');
 	});
 });
 

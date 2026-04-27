@@ -23,6 +23,7 @@
  */
 
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { ActiveTurnSummary, ActivityEntry } from '@neokai/shared';
 import {
 	isSDKAssistantMessage,
 	isSDKResultMessage,
@@ -74,16 +75,37 @@ interface MinimalThreadFeedProps {
 	 * labels (e.g. "coder agent" → "Coder Agent").
 	 */
 	activeAgentLabels?: ReadonlySet<string>;
+	/**
+	 * Server-derived activity summaries — one per session with an active
+	 * (non-terminal) turn. The roster on each active feed turn is built from
+	 * the matching summary's full entry list, so the rail stays accurate even
+	 * when the compact feed has dropped older non-terminal rows from the
+	 * trailing turn. Empty array when no session is mid-turn.
+	 *
+	 * Optional for backwards-compatibility with tests / call sites that
+	 * haven't been updated; an absent payload silently falls back to no
+	 * roster (rather than the previous client-side derivation, which is now
+	 * gone).
+	 */
+	activeTurnSummaries?: ActiveTurnSummary[];
 }
 
 /**
  * Active-turn roster entry. The roster surfaces what the agent is "doing right
- * now" — historically just tool invocations, now also the assistant's own text
- * messages so the user can see the model thinking aloud between tool calls.
+ * now" — tool invocations interleaved with the assistant's own outputs and the
+ * user-side rows (real human input or synthetic agent→agent handoff) that are
+ * sitting inside the active turn.
  *
- * Tagged on `kind` so the renderer can switch between two distinct visuals:
- *   - `tool` : `BashCmd: bun run typecheck`     (colored TOOL prefix + preview)
- *   - `message` : `💬 Investigating the failing test…`  (chat glyph + italic body)
+ * Tagged on `kind` so the renderer can switch between distinct visuals:
+ *   - `tool`     : `BashCmd: bun run typecheck`             (colored TOOL: + preview)
+ *   - `message`  : `💬 Investigating the failing test…`     (chat glyph + italic body)
+ *   - `thinking` : `✦ Considering edge cases…`              (sparkle + dim italic body)
+ *   - `user`     : `👤 You: please retry`                   (user glyph + body)
+ *   - `handoff`  : `↪ Reviewer Agent: please verify`        (handoff glyph + body)
+ *
+ * Server-derived: shapes mirror `ActivityEntry` from `@neokai/shared` 1:1. The
+ * mapping happens in `rosterEntriesFromSummary` so the renderer stays decoupled
+ * from the wire format.
  */
 interface RosterToolEntry {
 	kind: 'tool';
@@ -94,7 +116,27 @@ interface RosterMessageEntry {
 	kind: 'message';
 	text: string;
 }
-type ActiveRosterEntry = RosterToolEntry | RosterMessageEntry;
+interface RosterThinkingEntry {
+	kind: 'thinking';
+	preview: string;
+}
+interface RosterUserEntry {
+	kind: 'user';
+	text: string;
+}
+interface RosterHandoffEntry {
+	kind: 'handoff';
+	text: string;
+}
+type ActiveRosterEntry =
+	| RosterToolEntry
+	| RosterMessageEntry
+	| RosterThinkingEntry
+	| RosterUserEntry
+	| RosterHandoffEntry;
+
+const TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS = 'max-w-[85%] md:max-w-[86%]';
+const TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS = 'max-w-full md:max-w-[86%]';
 
 interface CompletedFeedTurn {
 	state: 'completed';
@@ -138,6 +180,8 @@ interface ActiveFeedTurn {
 	status: string;
 	toolCalls: number;
 	roster: ActiveRosterEntry[];
+	/** Session id for the still-running turn; used by the agent header open affordance. */
+	sessionId: string | null;
 }
 
 interface MessageFeedTurn {
@@ -169,14 +213,7 @@ interface MessageFeedTurn {
 
 type FeedTurn = CompletedFeedTurn | ActiveFeedTurn | MessageFeedTurn;
 
-const PREVIEW_MAX_LEN = 80;
 const ROSTER_MAX_ENTRIES = 4;
-
-function oneLine(value: string, max = PREVIEW_MAX_LEN): string {
-	const collapsed = value.replace(/\s+/g, ' ').trim();
-	if (!collapsed) return '';
-	return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
-}
 
 function getToolUseContentBlocks(row: ParsedThreadRow) {
 	if (!row.message || !isSDKAssistantMessage(row.message)) return [];
@@ -187,62 +224,96 @@ function getToolUseContentBlocks(row: ParsedThreadRow) {
 	);
 }
 
-function previewFromInput(input: Record<string, unknown>): string {
-	const command = typeof input.command === 'string' ? input.command : '';
-	if (command) return oneLine(command);
-	const filePath = typeof input.file_path === 'string' ? input.file_path : '';
-	if (filePath) return oneLine(filePath);
-	const path = typeof input.path === 'string' ? input.path : '';
-	if (path) return oneLine(path);
-	const pattern = typeof input.pattern === 'string' ? input.pattern : '';
-	if (pattern) return oneLine(pattern);
-	const url = typeof input.url === 'string' ? input.url : '';
-	if (url) return oneLine(url);
-	const description = typeof input.description === 'string' ? input.description : '';
-	if (description) return oneLine(description);
-	const keys = Object.keys(input);
-	if (keys.length === 0) return '';
-	// Fallback: show first key=value summary so the entry isn't blank.
-	const firstKey = keys[0];
-	const firstVal = input[firstKey];
-	if (typeof firstVal === 'string') return oneLine(`${firstKey}: ${firstVal}`);
-	return `${firstKey}: …`;
+/**
+ * Translate the server-derived `ActivityEntry` union into the renderer's
+ * tagged `ActiveRosterEntry` shape and apply the display cap (most-recent
+ * wins). Server entries are already chronologically sorted and have their
+ * previews/text collapsed onto a single line; the cap is the last piece of
+ * presentation policy that lives client-side.
+ *
+ * Empty `text` entries (e.g. a model response containing only whitespace)
+ * are still defensively dropped here even though the server already filters
+ * them — defence in depth lets renderer-level invariants hold even if a
+ * future server change relaxes the filter.
+ */
+function rosterEntriesFromSummary(
+	summary: ActiveTurnSummary | undefined,
+	maxEntries: number
+): ActiveRosterEntry[] {
+	if (!summary) return [];
+	const out: ActiveRosterEntry[] = [];
+	for (const entry of summary.entries) {
+		const mapped = mapActivityEntry(entry);
+		if (mapped) out.push(mapped);
+	}
+	return out.slice(-maxEntries);
 }
 
 /**
- * Walk the active block's content blocks in chronological order and emit one
- * roster entry per `tool_use` or non-empty `text` block. Capped at `maxEntries`
- * (most-recent wins) so the rail stays compact even on long-running turns.
- *
- * Mixing tool calls with the agent's own text messages reproduces the cadence
- * a developer would see watching the live SDK stream: "Reading…", "I think
- * this is the bug.", "Editing…", "Confirmed it now passes." — much more
- * informative than four anonymous tool names.
+ * Defensive string coercion for fields that the typed `ActivityEntry` shape
+ * declares as `string`. `parseActiveTurnSummaries` validates the wrapper but
+ * intentionally trusts entry-level fields (the daemon already normalises
+ * them), so we coerce here as a belt-and-braces guard against a malformed
+ * entry crashing the renderer with a `TypeError` on `.trim()`.
  */
-function extractRosterEntries(rows: ParsedThreadRow[], maxEntries: number): ActiveRosterEntry[] {
-	const entries: ActiveRosterEntry[] = [];
-	for (const row of rows) {
-		if (!row.message || !isSDKAssistantMessage(row.message)) continue;
-		const content = (row.message as { message?: { content?: unknown } }).message?.content;
-		if (!Array.isArray(content)) continue;
-		for (const block of content) {
-			if (isToolUseBlock(block as never)) {
-				const tu = block as { name: string; input?: unknown };
-				const input =
-					typeof tu.input === 'object' && tu.input !== null
-						? (tu.input as Record<string, unknown>)
-						: {};
-				entries.push({ kind: 'tool', tool: tu.name, preview: previewFromInput(input) });
-				continue;
-			}
-			const b = block as { type?: unknown; text?: unknown };
-			if (b.type === 'text' && typeof b.text === 'string') {
-				const text = b.text.trim();
-				if (text.length > 0) entries.push({ kind: 'message', text: oneLine(text) });
-			}
+function asTrimmedString(value: unknown): string {
+	return typeof value === 'string' ? value.trim() : '';
+}
+
+function mapActivityEntry(entry: ActivityEntry): ActiveRosterEntry | null {
+	switch (entry.kind) {
+		case 'tool_use':
+			return {
+				kind: 'tool',
+				tool: typeof entry.toolName === 'string' ? entry.toolName : '',
+				preview: typeof entry.preview === 'string' ? entry.preview : '',
+			};
+		case 'text': {
+			const text = asTrimmedString(entry.text);
+			if (!text) return null;
+			return { kind: 'message', text };
 		}
+		case 'thinking': {
+			const preview = asTrimmedString(entry.preview);
+			if (!preview) return null;
+			return { kind: 'thinking', preview };
+		}
+		case 'user_message': {
+			const text = asTrimmedString(entry.text);
+			if (!text) return null;
+			return { kind: 'user', text };
+		}
+		case 'agent_handoff': {
+			const text = asTrimmedString(entry.text);
+			if (!text) return null;
+			return { kind: 'handoff', text };
+		}
+		default:
+			return null;
 	}
-	return entries.slice(-maxEntries);
+}
+
+/**
+ * Count tool calls within the active turn from the server-derived summary
+ * (preferred — covers the *full* turn, not the truncated compact slice) or
+ * fall back to the parsed rows when no summary is available.
+ */
+function countToolCallsForActive(
+	rows: ParsedThreadRow[],
+	summary: ActiveTurnSummary | undefined
+): number {
+	if (summary) {
+		let n = 0;
+		for (const e of summary.entries) {
+			if (e.kind === 'tool_use') n += 1;
+		}
+		return n;
+	}
+	let n = 0;
+	for (const row of rows) {
+		n += getToolUseContentBlocks(row).length;
+	}
+	return n;
 }
 
 function countToolCalls(rows: ParsedThreadRow[]): number {
@@ -251,6 +322,13 @@ function countToolCalls(rows: ParsedThreadRow[]): number {
 		n += getToolUseContentBlocks(row).length;
 	}
 	return n;
+}
+
+function latestSessionId(rows: ParsedThreadRow[]): string | null {
+	for (let i = rows.length - 1; i >= 0; i--) {
+		if (rows[i].sessionId) return rows[i].sessionId;
+	}
+	return null;
 }
 
 /**
@@ -359,7 +437,8 @@ function buildCompletedTurn(
 function buildActiveTurn(
 	block: AgentTurnBlock,
 	rows: ParsedThreadRow[],
-	turnId: string
+	turnId: string,
+	summary: ActiveTurnSummary | undefined
 ): ActiveFeedTurn {
 	return {
 		state: 'active',
@@ -367,8 +446,9 @@ function buildActiveTurn(
 		agent: block.agentLabel,
 		startedAt: rows[0].createdAt,
 		status: 'Running…',
-		toolCalls: countToolCalls(rows),
-		roster: extractRosterEntries(rows, ROSTER_MAX_ENTRIES),
+		toolCalls: countToolCallsForActive(rows, summary),
+		roster: rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES),
+		sessionId: latestSessionId(rows),
 	};
 }
 
@@ -520,10 +600,19 @@ function extractBlockEnvelopes(rows: ParsedThreadRow[]): {
  */
 function buildFeedTurns(
 	parsedRows: ParsedThreadRow[],
-	activeAgentLabels: ReadonlySet<string>
+	activeAgentLabels: ReadonlySet<string>,
+	activeTurnSummaries: ActiveTurnSummary[]
 ): FeedTurn[] {
 	const blocks = buildAgentTurns(parsedRows);
 	if (blocks.length === 0) return [];
+
+	// Index summaries by sessionId so the trailing-block upgrade can pick the
+	// right summary in O(1) rather than scanning the (small but not bounded)
+	// list once per render. The server emits at most one summary per session.
+	const summariesBySession = new Map<string, ActiveTurnSummary>();
+	for (const summary of activeTurnSummaries) {
+		summariesBySession.set(summary.sessionId, summary);
+	}
 
 	const turns: FeedTurn[] = [];
 	// Per-agent trailing completed-turn pointer. Keyed by the normalised agent
@@ -577,7 +666,11 @@ function buildFeedTurns(
 	// whose trailing block is non-terminal, swap that agent's last completed
 	// turn for an active turn. Independent across agents — a Reviewer terminal
 	// block landing after Coder's last row can no longer suppress the Coder
-	// rail because Coder has its own entry in `perAgentTrailing`.
+	// rail because Coder has its own entry in `perAgentTrailing`. The roster
+	// is built from the server-derived summary keyed on the trailing rows'
+	// session id; missing summary → empty roster (e.g. server hasn't shipped
+	// metadata yet, or the active turn lives on a different session than the
+	// trailing fragment).
 	if (activeAgentLabels.size > 0) {
 		const normalisedActive = new Set<string>();
 		for (const label of activeAgentLabels) {
@@ -587,7 +680,14 @@ function buildFeedTurns(
 			if (!normalisedActive.has(key)) continue;
 			if (trailing.block.isTerminal) continue;
 			const completed = turns[trailing.turnIdx] as CompletedFeedTurn;
-			turns[trailing.turnIdx] = buildActiveTurn(trailing.block, trailing.rows, completed.id);
+			const sessionId = completed.sessionId;
+			const summary = sessionId ? summariesBySession.get(sessionId) : undefined;
+			turns[trailing.turnIdx] = buildActiveTurn(
+				trailing.block,
+				trailing.rows,
+				completed.id,
+				summary
+			);
 		}
 	}
 
@@ -655,6 +755,60 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
 		);
 	}
 
+	if (entry.kind === 'thinking') {
+		// Thinking block — sparkle glyph + dim italic preview. Visually
+		// closer to "the model is reasoning" than "the model said this", so
+		// the body is one shade dimmer than the message branch even when
+		// it's the latest entry.
+		const thinkBody = `truncate italic ${isLatest ? 'text-gray-300' : 'text-gray-500'}`;
+		return (
+			<div
+				class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
+				data-testid="minimal-thread-roster-entry"
+				data-roster-kind="thinking"
+			>
+				<span class="shrink-0 text-gray-500" aria-hidden="true">
+					✦
+				</span>
+				<span class={thinkBody}>{entry.preview}</span>
+			</div>
+		);
+	}
+
+	if (entry.kind === 'user') {
+		// Real human input that landed inside the active turn — surface it
+		// distinctly from agent text so a user reading the rail can tell at
+		// a glance which line is theirs.
+		return (
+			<div
+				class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
+				data-testid="minimal-thread-roster-entry"
+				data-roster-kind="user"
+			>
+				<span class="shrink-0 text-blue-400" aria-hidden="true">
+					👤
+				</span>
+				<span class={bodyClass}>{entry.text}</span>
+			</div>
+		);
+	}
+
+	if (entry.kind === 'handoff') {
+		// Synthetic agent→agent / system handoff — arrow glyph + body.
+		return (
+			<div
+				class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
+				data-testid="minimal-thread-roster-entry"
+				data-roster-kind="handoff"
+			>
+				<span class="shrink-0 text-gray-500" aria-hidden="true">
+					↪
+				</span>
+				<span class={bodyClass}>{entry.text}</span>
+			</div>
+		);
+	}
+
 	// Assistant message — small chat-bubble glyph (mirrors the open-session
 	// affordance) plus an italic preview of the text. No mono-font / TOOL:
 	// prefix so it visually reads as "the agent said this" rather than
@@ -697,7 +851,7 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
  *
  * Width strategy: stacked under the agent header (no avatar offset on the
  * left), so `w-fit` lets short replies hug their content, `max-w-full`
- * fills the row on mobile, and `md:max-w-[70%]` caps the width on desktop
+ * fills the row on mobile, and `md:max-w-[86%]` caps the width on desktop
  * to keep long markdown readable instead of stretching edge-to-edge.
  */
 function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
@@ -709,7 +863,7 @@ function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
 			}
 		: undefined;
 	return (
-		<div class="mt-1.5 w-fit max-w-full md:max-w-[70%]">
+		<div class={`mt-1.5 w-fit ${TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS}`}>
 			<div
 				class="bg-dark-800 border border-dark-700 rounded-lg px-3 py-2"
 				data-testid="minimal-thread-agent-bubble"
@@ -782,6 +936,40 @@ function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
 function AgentTurnRow({ turn }: { turn: CompletedFeedTurn | ActiveFeedTurn }) {
 	const color = getAgentColor(turn.agent);
 	const initial = agentInitial(turn.agent);
+	const openSession = turn.sessionId
+		? () => {
+				const highlightMessageUuid =
+					turn.state === 'completed' ? turn.highlightMessageUuid : undefined;
+				pushOverlayHistory(turn.sessionId as string, turn.agent, highlightMessageUuid);
+			}
+		: undefined;
+	const headerContent = (
+		<>
+			<div
+				class="h-9 w-9 shrink-0 rounded-md flex items-center justify-center text-sm font-bold text-dark-950"
+				style={{ backgroundColor: color }}
+				aria-hidden="true"
+			>
+				{initial}
+			</div>
+			<div class="flex flex-col gap-0.5 min-w-0">
+				<span class="font-semibold leading-tight" style={{ color }}>
+					{shortAgentName(turn.agent)}
+				</span>
+				{turn.state === 'completed' ? (
+					<div
+						class="text-[11px] text-gray-500 leading-tight"
+						data-testid="minimal-thread-agent-meta"
+					>
+						{turn.toolCalls} {turn.toolCalls === 1 ? 'tool call' : 'tool calls'} · {turn.messages}{' '}
+						{turn.messages === 1 ? 'message' : 'messages'} · {formatDuration(turn.durationSec)}
+					</div>
+				) : (
+					<span class="text-xs text-gray-500 leading-tight">{formatClock(turn.startedAt)}</span>
+				)}
+			</div>
+		</>
+	);
 	return (
 		<div
 			data-testid="minimal-thread-turn"
@@ -802,31 +990,20 @@ function AgentTurnRow({ turn }: { turn: CompletedFeedTurn | ActiveFeedTurn }) {
 			    running), so completed turns surface time + copy under the
 			    bubble via SpaceTaskThreadMessageActions to avoid duplicating
 			    the header clock. */}
-			<div class="flex items-center gap-3">
-				<div
-					class="h-9 w-9 shrink-0 rounded-md flex items-center justify-center text-sm font-bold text-dark-950"
-					style={{ backgroundColor: color }}
-					aria-hidden="true"
+			{openSession ? (
+				<button
+					type="button"
+					class="-m-1 flex min-h-11 max-w-full items-center gap-3 rounded-lg p-1 pr-2 text-left transition-colors hover:bg-dark-800/55 active:bg-dark-800/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+					onClick={openSession}
+					title="Open session"
+					aria-label={`Open ${turn.agent} session`}
+					data-testid="minimal-thread-agent-open"
 				>
-					{initial}
-				</div>
-				<div class="flex flex-col gap-0.5 min-w-0">
-					<span class="font-semibold leading-tight" style={{ color }}>
-						{shortAgentName(turn.agent)}
-					</span>
-					{turn.state === 'completed' ? (
-						<div
-							class="text-[11px] text-gray-500 leading-tight"
-							data-testid="minimal-thread-agent-meta"
-						>
-							{turn.toolCalls} {turn.toolCalls === 1 ? 'tool call' : 'tool calls'} · {turn.messages}{' '}
-							{turn.messages === 1 ? 'message' : 'messages'} · {formatDuration(turn.durationSec)}
-						</div>
-					) : (
-						<span class="text-xs text-gray-500 leading-tight">{formatClock(turn.startedAt)}</span>
-					)}
-				</div>
-			</div>
+					{headerContent}
+				</button>
+			) : (
+				<div class="flex min-h-11 items-center gap-3">{headerContent}</div>
+			)}
 			{/* Body — full-width on mobile, capped on desktop for readability. */}
 			{turn.state === 'active' ? (
 				<ActiveBody turn={turn} color={color} />
@@ -855,7 +1032,7 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 			data-from-label={turn.fromLabel}
 			data-to-label={turn.toLabel}
 		>
-			<div class="max-w-[85%] md:max-w-[70%] w-auto">
+			<div class={`${TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS} w-auto`}>
 				<div
 					class="bg-blue-500 text-white rounded-[20px] px-4 py-2 leading-relaxed break-words"
 					data-testid="minimal-thread-human-bubble"
@@ -919,6 +1096,7 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 				toShort={toShort}
 				renderAsPlainText={turn.bodyIsFallback}
 				sessionInit={turn.sessionInit}
+				widthClass={TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS}
 				onOpenSession={
 					turn.sessionId
 						? () =>
@@ -952,8 +1130,9 @@ const EMPTY_ACTIVE_AGENT_LABELS: ReadonlySet<string> = new Set();
 export function MinimalThreadFeed({
 	parsedRows,
 	activeAgentLabels = EMPTY_ACTIVE_AGENT_LABELS,
+	activeTurnSummaries = [],
 }: MinimalThreadFeedProps) {
-	const turns = buildFeedTurns(parsedRows, activeAgentLabels);
+	const turns = buildFeedTurns(parsedRows, activeAgentLabels, activeTurnSummaries);
 	if (turns.length === 0) return null;
 
 	return (

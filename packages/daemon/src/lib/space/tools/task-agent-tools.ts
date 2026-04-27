@@ -606,7 +606,23 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// Agent names declared in any NodeExecution for this run — used to detect
 			// "agent exists but not yet spawned" (queueable) vs "unknown agent" (hard error).
 			const allExecutions = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
-			const declaredAgentNames = [...new Set(allExecutions.map((e) => e.agentName))];
+			const executionDeclaredAgentNames = new Set(allExecutions.map((e) => e.agentName));
+
+			// Workflow-declared agent names: every slot in workflow.nodes, regardless of
+			// whether a node_execution row has been created yet. This is the canonical
+			// source for "is this peer reachable?" — node_executions are lazily created
+			// when a node first activates, so they understate the candidate set on
+			// pre-first-activation runs (the bug Task #133 closes).
+			const workflowDeclaredAgentNames = new Set(
+				taskAgentManager?.getWorkflowDeclaredAgentNamesForTask(taskId) ?? []
+			);
+
+			// Union: known to the run (any source). Used for the "queue vs hard-error"
+			// gate in the per-target loop below.
+			const declaredAgentNames = new Set<string>([
+				...executionDeclaredAgentNames,
+				...workflowDeclaredAgentNames,
+			]);
 
 			if (target === '*') {
 				if (liveAgentNames.length === 0) {
@@ -718,7 +734,17 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				if (!liveSession) {
 					// Agent is declared but hasn't been spawned yet (pre-first-execution).
 					// Queue the message if we have the pending-message repo, else fall back to notFound.
-					const isDeclaredInRun = declaredAgentNames.includes(targetAgentName);
+					const isDeclaredInRun = declaredAgentNames.has(targetAgentName);
+					// Whether the agent is declared in the workflow definition (and therefore
+					// has a workflow node we can lazily activate). The earlier #133 implementation
+					// gated the activation kick on `!executionDeclaredAgentNames.has(...)` so
+					// activation only fired when no node_execution row existed yet. That left a
+					// hole: a workflow-declared peer with a `pending` row stranded by a missed
+					// tick (e.g. the run was idle when the message arrived) would queue forever
+					// because `tryResumeNodeAgentSession` only resumes existing sessions.
+					// `channelRouter.activateNode` is idempotent, so it is safe to call even
+					// when a row already exists — it returns early without flapping state.
+					const isWorkflowDeclared = workflowDeclaredAgentNames.has(targetAgentName);
 					if (isDeclaredInRun && pendingMessageRepo) {
 						const { record, deduped } = pendingMessageRepo.enqueue({
 							workflowRunId,
@@ -751,6 +777,28 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 									);
 								});
 						}
+						// Always trigger workflow-node activation when queuing for a
+						// workflow-declared peer that has no live session — even when a
+						// `node_execution` row already exists. `channelRouter.activateNode`
+						// is idempotent on existing active executions and resets terminal
+						// rows back to pending for re-spawn. Without this kick the queued
+						// message would wait forever on a stranded run that never receives
+						// an external activation signal (Task #139, Symptom 2).
+						if (!deduped && isWorkflowDeclared && taskAgentManager) {
+							log.info(
+								`task-agent.send: lazy-activated peer ${targetAgentName} for task ${taskId}`
+							);
+							void taskAgentManager
+								.ensureWorkflowNodeActivationForAgent(taskId, targetAgentName, {
+									reopenReason: `task-agent send_message to lazily activate "${targetAgentName}"`,
+									reopenBy: 'task-agent',
+								})
+								.catch((err) => {
+									log.warn(
+										`send_message: ensureWorkflowNodeActivationForAgent failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
+									);
+								});
+						}
 						continue;
 					}
 					notFound.push(targetAgentName);
@@ -772,17 +820,24 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			}
 
 			// If the only outcome was "notFound" with nothing delivered or queued, return hard error.
+			// `notFound` here is reserved for genuinely unknown agent names — i.e. names that
+			// are not declared in the workflow definition AND not present in any node_execution
+			// row for the run. Workflow-declared peers that have not been spawned yet are
+			// handled above via the queue + lazy-activation path.
 			if (
 				notFound.length > 0 &&
 				delivered.length === 0 &&
 				queued.length === 0 &&
 				failed.length === 0
 			) {
+				const reachable = [...declaredAgentNames].sort();
 				return jsonResult({
 					success: false,
 					error:
-						`No active sessions found for target agent(s): ${notFound.join(', ')}. ` +
-						`Use list_group_members to check which peers are currently active.`,
+						`Unknown target agent(s): ${notFound.join(', ')}. ` +
+						(reachable.length > 0
+							? `Reachable peers in this workflow: ${reachable.join(', ')}.`
+							: 'No peers are declared for this run.'),
 					notFoundAgentNames: notFound,
 				});
 			}

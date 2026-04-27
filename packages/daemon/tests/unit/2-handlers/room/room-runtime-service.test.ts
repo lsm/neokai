@@ -163,7 +163,7 @@ describe('RoomRuntimeService', () => {
 
 	describe('setupRoomAgentSession MCP merging', () => {
 		let db: Database;
-		let setRuntimeMcpServersSpy: ReturnType<typeof mock>;
+		let mergeRuntimeMcpServersSpy: ReturnType<typeof mock>;
 		let roomCreatedHandler: ((event: { room: Room }) => void) | undefined;
 
 		// All rooms must have defaultPath set after the backfill migration.
@@ -184,7 +184,7 @@ describe('RoomRuntimeService', () => {
 			// Real in-memory SQLite — no schema needed since repo constructors don't execute SQL
 			db = new Database(':memory:');
 
-			setRuntimeMcpServersSpy = mock(() => {});
+			mergeRuntimeMcpServersSpy = mock(() => {});
 
 			// DaemonHub mock that captures the room.created handler
 			const daemonHub = {
@@ -201,7 +201,7 @@ describe('RoomRuntimeService', () => {
 				getSessionData: () => ({
 					config: { model: 'claude-3', provider: 'anthropic' },
 				}),
-				setRuntimeMcpServers: setRuntimeMcpServersSpy,
+				mergeRuntimeMcpServers: mergeRuntimeMcpServersSpy,
 				setRuntimeSystemPrompt: mock(() => {}),
 			};
 
@@ -254,7 +254,7 @@ describe('RoomRuntimeService', () => {
 			roomCreatedHandler = undefined;
 		});
 
-		it('should call setRuntimeMcpServers with project servers merged with room-agent-tools', async () => {
+		it('should call mergeRuntimeMcpServers with project servers merged with room-agent-tools', async () => {
 			// Start service — subscribes to room.created, initializes no rooms
 			await service.start();
 
@@ -265,8 +265,8 @@ describe('RoomRuntimeService', () => {
 			// Wait for the async .then() inside setupRoomAgentSession to settle
 			await new Promise((r) => setTimeout(r, 0));
 
-			expect(setRuntimeMcpServersSpy).toHaveBeenCalledTimes(1);
-			const callArg = setRuntimeMcpServersSpy.mock.calls[0][0] as Record<string, unknown>;
+			expect(mergeRuntimeMcpServersSpy).toHaveBeenCalledTimes(1);
+			const callArg = mergeRuntimeMcpServersSpy.mock.calls[0][0] as Record<string, unknown>;
 
 			// Should include the project server
 			expect(callArg).toHaveProperty('github');
@@ -286,8 +286,8 @@ describe('RoomRuntimeService', () => {
 			roomCreatedHandler!({ room: mockRoom() });
 			await new Promise((r) => setTimeout(r, 0));
 
-			expect(setRuntimeMcpServersSpy).toHaveBeenCalledTimes(1);
-			const callArg = setRuntimeMcpServersSpy.mock.calls[0][0] as Record<string, unknown>;
+			expect(mergeRuntimeMcpServersSpy).toHaveBeenCalledTimes(1);
+			const callArg = mergeRuntimeMcpServersSpy.mock.calls[0][0] as Record<string, unknown>;
 
 			// room-agent-tools should be the runtime version, not the project version
 			expect(callArg['room-agent-tools']).not.toEqual({
@@ -298,7 +298,7 @@ describe('RoomRuntimeService', () => {
 			expect(callArg).toHaveProperty('other-tool');
 		});
 
-		it('should call setRuntimeMcpServers with only room-agent-tools when no project servers', async () => {
+		it('should call mergeRuntimeMcpServers with only room-agent-tools when no project servers', async () => {
 			(mockSettingsManager.getEnabledMcpServersConfig as ReturnType<typeof mock>).mockReturnValue(
 				{}
 			);
@@ -308,8 +308,8 @@ describe('RoomRuntimeService', () => {
 			roomCreatedHandler!({ room: mockRoom() });
 			await new Promise((r) => setTimeout(r, 0));
 
-			expect(setRuntimeMcpServersSpy).toHaveBeenCalledTimes(1);
-			const callArg = setRuntimeMcpServersSpy.mock.calls[0][0] as Record<string, unknown>;
+			expect(mergeRuntimeMcpServersSpy).toHaveBeenCalledTimes(1);
+			const callArg = mergeRuntimeMcpServersSpy.mock.calls[0][0] as Record<string, unknown>;
 
 			expect(Object.keys(callArg)).toEqual(['room-agent-tools']);
 		});
@@ -1059,12 +1059,12 @@ describe('SessionFactory.restoreSession — worker MCP injection and skills', ()
 	}
 
 	function makeMockSession() {
-		const setRuntimeMcpServersSpy = mock((_servers: unknown) => {});
+		const mergeRuntimeMcpServersSpy = mock((_servers: unknown) => {});
 		return {
 			session: {
-				setRuntimeMcpServers: setRuntimeMcpServersSpy,
+				mergeRuntimeMcpServers: mergeRuntimeMcpServersSpy,
 			} as unknown as AgentSession,
-			setRuntimeMcpServersSpy,
+			mergeRuntimeMcpServersSpy,
 		};
 	}
 
@@ -1096,7 +1096,7 @@ describe('SessionFactory.restoreSession — worker MCP injection and skills', ()
 	});
 
 	it('applies file + registry MCP merge for a restored coder session', async () => {
-		const { session, setRuntimeMcpServersSpy } = makeMockSession();
+		const { session, mergeRuntimeMcpServersSpy } = makeMockSession();
 		const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(session);
 
 		try {
@@ -1111,8 +1111,8 @@ describe('SessionFactory.restoreSession — worker MCP injection and skills', ()
 
 			await factory.restoreSession('coder:room-1:task-1:abc12345');
 
-			expect(setRuntimeMcpServersSpy).toHaveBeenCalledTimes(1);
-			const merged = setRuntimeMcpServersSpy.mock.calls[0][0] as Record<string, unknown>;
+			expect(mergeRuntimeMcpServersSpy).toHaveBeenCalledTimes(1);
+			const merged = mergeRuntimeMcpServersSpy.mock.calls[0][0] as Record<string, unknown>;
 			expect(merged).toHaveProperty('file-server');
 			expect(merged).toHaveProperty('registry-server');
 		} finally {
@@ -1121,7 +1121,7 @@ describe('SessionFactory.restoreSession — worker MCP injection and skills', ()
 	});
 
 	it('applies file + registry MCP merge for a restored general session', async () => {
-		const { session, setRuntimeMcpServersSpy } = makeMockSession();
+		const { session, mergeRuntimeMcpServersSpy } = makeMockSession();
 		const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(session);
 
 		try {
@@ -1135,8 +1135,8 @@ describe('SessionFactory.restoreSession — worker MCP injection and skills', ()
 
 			await factory.restoreSession('general:room-1:task-1:abc12345');
 
-			expect(setRuntimeMcpServersSpy).toHaveBeenCalledTimes(1);
-			const merged = setRuntimeMcpServersSpy.mock.calls[0][0] as Record<string, unknown>;
+			expect(mergeRuntimeMcpServersSpy).toHaveBeenCalledTimes(1);
+			const merged = mergeRuntimeMcpServersSpy.mock.calls[0][0] as Record<string, unknown>;
 			expect(merged).toHaveProperty('file-server');
 		} finally {
 			restoreSpy.mockRestore();
@@ -1144,7 +1144,7 @@ describe('SessionFactory.restoreSession — worker MCP injection and skills', ()
 	});
 
 	it('file-based MCP servers take precedence over registry on name collision', async () => {
-		const { session, setRuntimeMcpServersSpy } = makeMockSession();
+		const { session, mergeRuntimeMcpServersSpy } = makeMockSession();
 		const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(session);
 
 		try {
@@ -1159,7 +1159,7 @@ describe('SessionFactory.restoreSession — worker MCP injection and skills', ()
 
 			await factory.restoreSession('coder:room-1:task-1:abc12345');
 
-			const merged = setRuntimeMcpServersSpy.mock.calls[0][0] as Record<
+			const merged = mergeRuntimeMcpServersSpy.mock.calls[0][0] as Record<
 				string,
 				{ command: string }
 			>;
@@ -1170,7 +1170,7 @@ describe('SessionFactory.restoreSession — worker MCP injection and skills', ()
 	});
 
 	it('does NOT apply worker MCP merge for a restored planner session', async () => {
-		const { session, setRuntimeMcpServersSpy } = makeMockSession();
+		const { session, mergeRuntimeMcpServersSpy } = makeMockSession();
 		const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(session);
 
 		try {
@@ -1184,14 +1184,14 @@ describe('SessionFactory.restoreSession — worker MCP injection and skills', ()
 
 			await factory.restoreSession('planner:room-1:task-1:abc12345');
 
-			expect(setRuntimeMcpServersSpy).not.toHaveBeenCalled();
+			expect(mergeRuntimeMcpServersSpy).not.toHaveBeenCalled();
 		} finally {
 			restoreSpy.mockRestore();
 		}
 	});
 
 	it('does NOT apply worker MCP merge for a restored leader session', async () => {
-		const { session, setRuntimeMcpServersSpy } = makeMockSession();
+		const { session, mergeRuntimeMcpServersSpy } = makeMockSession();
 		const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(session);
 
 		try {
@@ -1205,14 +1205,14 @@ describe('SessionFactory.restoreSession — worker MCP injection and skills', ()
 
 			await factory.restoreSession('leader:room-1:task-1:abc12345');
 
-			expect(setRuntimeMcpServersSpy).not.toHaveBeenCalled();
+			expect(mergeRuntimeMcpServersSpy).not.toHaveBeenCalled();
 		} finally {
 			restoreSpy.mockRestore();
 		}
 	});
 
-	it('does not call setRuntimeMcpServers when no MCP servers are configured', async () => {
-		const { session, setRuntimeMcpServersSpy } = makeMockSession();
+	it('does not call mergeRuntimeMcpServers when no MCP servers are configured', async () => {
+		const { session, mergeRuntimeMcpServersSpy } = makeMockSession();
 		const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(session);
 
 		try {
@@ -1227,7 +1227,7 @@ describe('SessionFactory.restoreSession — worker MCP injection and skills', ()
 
 			await factory.restoreSession('coder:room-1:task-1:abc12345');
 
-			expect(setRuntimeMcpServersSpy).not.toHaveBeenCalled();
+			expect(mergeRuntimeMcpServersSpy).not.toHaveBeenCalled();
 		} finally {
 			restoreSpy.mockRestore();
 		}

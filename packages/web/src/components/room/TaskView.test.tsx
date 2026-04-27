@@ -114,11 +114,18 @@ vi.mock('../ScrollToBottomButton.tsx', () => ({
 	ScrollToBottomButton: ({
 		onClick,
 		bottomClass,
+		autoScroll,
 	}: {
 		onClick: () => void;
 		bottomClass?: string;
+		autoScroll?: boolean;
 	}) => (
-		<button data-testid="scroll-to-bottom" data-bottom-class={bottomClass} onClick={onClick}>
+		<button
+			data-testid="scroll-to-bottom"
+			data-bottom-class={bottomClass}
+			data-auto-scroll={String(autoScroll)}
+			onClick={onClick}
+		>
 			↓
 		</button>
 	),
@@ -1105,6 +1112,7 @@ describe('TaskView — ScrollToBottomButton bottomClass', () => {
 		});
 
 		expect(getByTestId('scroll-to-bottom').getAttribute('data-bottom-class')).toBe('bottom-0');
+		expect(getByTestId('scroll-to-bottom').getAttribute('data-auto-scroll')).toBe('true');
 	});
 });
 

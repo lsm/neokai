@@ -30,6 +30,7 @@ import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { ChannelRouter } from '../../../../src/lib/space/runtime/channel-router.ts';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import type { Space, SpaceWorkflow, SpaceWorkflowRun, SpaceTask } from '@neokai/shared';
@@ -824,6 +825,144 @@ describe('TaskAgentManager', () => {
 			// Should have returned the original session ID, not created a new one.
 			expect(returned2).toBe(subSessionId1);
 			expect(ctx.createdSessions.size).toBe(sessionsBefore);
+		});
+
+		// Task #140 acceptance #4 — when a sub-session is reused on workflow re-entry,
+		// node-agent must be rebuilt with the NEW workflowNodeId in its closure context.
+		// Without this rebuild the reused session's node-agent retains a stale
+		// workflowNodeId / execution row / channel resolver, producing silent topology
+		// routing errors ("peer not receiving messages").
+		test('reused sub-session has node-agent rebuilt with the new workflowNodeId on re-entry', async () => {
+			const wfId = 'wf-reuse-rebuild';
+			const wfRunId = 'run-reuse-rebuild';
+			const now = Date.now();
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, tags, layout, created_at, updated_at)
+       VALUES (?, ?, ?, '', null, '[]', '{}', ?, ?)`
+				)
+				.run(wfId, ctx.spaceId, 'WF Reuse Rebuild', now, now);
+			const stepIdA = 'step-A';
+			const stepIdB = 'step-B';
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_nodes (id, workflow_id, name, description, config, created_at, updated_at)
+       VALUES (?, ?, ?, '', ?, ?, ?)`
+				)
+				.run(
+					stepIdA,
+					wfId,
+					'Step A',
+					JSON.stringify({ agents: [{ agentId: ctx.agentId, name: 'coder' }] }),
+					now,
+					now
+				);
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_nodes (id, workflow_id, name, description, config, created_at, updated_at)
+       VALUES (?, ?, ?, '', ?, ?, ?)`
+				)
+				.run(
+					stepIdB,
+					wfId,
+					'Step B',
+					JSON.stringify({ agents: [{ agentId: ctx.agentId, name: 'coder' }] }),
+					now,
+					now
+				);
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+       VALUES (?, ?, ?, '', 'in_progress', ?, ?)`
+				)
+				.run(wfRunId, ctx.spaceId, wfId, now, now);
+
+			const parentTask = await ctx.taskManager.createTask({
+				title: 'Reuse rebuild task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+			});
+			await ctx.manager.spawnTaskAgent(
+				{ ...parentTask, workflowRunId: wfRunId },
+				ctx.space,
+				null,
+				null
+			);
+
+			// Spy on reinjectNodeAgentMcpServer so we can verify it is called with the
+			// fresh workflowNodeId on the reuse path. Replace with a no-op (the real
+			// implementation requires a fully wired workflow run + repos).
+			const mgr = ctx.manager as unknown as {
+				reinjectNodeAgentMcpServer: (
+					session: unknown,
+					ctx: { workflowNodeId: string; subSessionId: string }
+				) => Promise<void>;
+				ensureRequiredMcpServersAttached: (session: unknown, ctx: unknown) => Promise<void>;
+			};
+			const originalReinject = mgr.reinjectNodeAgentMcpServer.bind(ctx.manager);
+			const originalEnsure = mgr.ensureRequiredMcpServersAttached.bind(ctx.manager);
+			const reinjectCalls: Array<{ workflowNodeId: string; subSessionId: string }> = [];
+			mgr.reinjectNodeAgentMcpServer = async (_session, callCtx) => {
+				reinjectCalls.push({
+					workflowNodeId: callCtx.workflowNodeId,
+					subSessionId: callCtx.subSessionId,
+				});
+			};
+			mgr.ensureRequiredMcpServersAttached = async () => {};
+
+			try {
+				// First execution on Node A.
+				const execA = ctx.nodeExecutionRepo.create({
+					workflowRunId: wfRunId,
+					workflowNodeId: stepIdA,
+					agentName: 'coder',
+					agentId: ctx.agentId,
+					status: 'in_progress',
+				});
+				const subSessionId1 = `space:${ctx.spaceId}:task:${parentTask.id}:exec:${execA.id}`;
+				await ctx.manager.createSubSession(
+					parentTask.id,
+					subSessionId1,
+					{
+						sessionId: subSessionId1,
+						workspacePath: '/tmp/ws',
+					} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+					{ agentId: ctx.agentId, agentName: 'coder', nodeId: stepIdA }
+				);
+
+				// Mark Node A complete; transition the agent into Node B's NodeExecution row.
+				const execB = ctx.nodeExecutionRepo.create({
+					workflowRunId: wfRunId,
+					workflowNodeId: stepIdB,
+					agentName: 'coder',
+					agentId: ctx.agentId,
+					status: 'in_progress',
+				});
+				const subSessionId2 = `space:${ctx.spaceId}:task:${parentTask.id}:exec:${execB.id}`;
+				const reinjectCallsBefore = reinjectCalls.length;
+				const returned2 = await ctx.manager.createSubSession(
+					parentTask.id,
+					subSessionId2,
+					{
+						sessionId: subSessionId2,
+						workspacePath: '/tmp/ws',
+					} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+					// IMPORTANT: nodeId is now Node B — this is the workflow re-entry case.
+					{ agentId: ctx.agentId, agentName: 'coder', nodeId: stepIdB }
+				);
+
+				// Reuse must have triggered a rebuild of node-agent for Node B.
+				expect(returned2).toBe(subSessionId1); // session is reused
+				expect(reinjectCalls.length).toBeGreaterThan(reinjectCallsBefore);
+				const lastCall = reinjectCalls[reinjectCalls.length - 1];
+				expect(lastCall.workflowNodeId).toBe(stepIdB);
+				expect(lastCall.subSessionId).toBe(subSessionId1);
+			} finally {
+				mgr.reinjectNodeAgentMcpServer = originalReinject;
+				mgr.ensureRequiredMcpServersAttached = originalEnsure;
+			}
 		});
 
 		test('second createSubSession for same agent clears stale callbacks before registering new one', async () => {
@@ -2203,6 +2342,230 @@ describe('TaskAgentManager', () => {
 			expect(injectorCalled).toBe(false);
 
 			testDb.close();
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// ensureWorkflowNodeActivationForAgent — lazy node activation for
+	// workflow-declared agents that have no node_execution row yet.
+	// (Task #133 — daemon side of the lazy-activation fix.)
+	// -----------------------------------------------------------------------
+
+	describe('ensureWorkflowNodeActivationForAgent', () => {
+		// Helper: seed a workflow with two nodes (`coding` owns the `coder` slot,
+		// `review` owns the `reviewer` slot), a run, and a task pointing at the
+		// run. Returns the ids needed by the assertions.
+		async function seedRunWithTwoNodes(): Promise<{
+			wfId: string;
+			wfRunId: string;
+			codingNodeId: string;
+			reviewNodeId: string;
+			taskId: string;
+		}> {
+			const wfId = 'wf-lazy-activation';
+			const wfRunId = 'run-lazy-activation';
+			const codingNodeId = 'node-coding';
+			const reviewNodeId = 'node-review';
+			const now = Date.now();
+
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, tags, layout, created_at, updated_at)
+           VALUES (?, ?, ?, '', ?, '[]', '{}', ?, ?)`
+				)
+				.run(wfId, ctx.spaceId, 'Coding+Review WF', codingNodeId, now, now);
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_nodes (id, workflow_id, name, description, config, created_at, updated_at)
+           VALUES (?, ?, ?, '', ?, ?, ?)`
+				)
+				.run(
+					codingNodeId,
+					wfId,
+					'Coding',
+					JSON.stringify({ agents: [{ agentId: ctx.agentId, name: 'coder' }] }),
+					now,
+					now
+				);
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_nodes (id, workflow_id, name, description, config, created_at, updated_at)
+           VALUES (?, ?, ?, '', ?, ?, ?)`
+				)
+				.run(
+					reviewNodeId,
+					wfId,
+					'Review',
+					JSON.stringify({ agents: [{ agentId: ctx.agentId, name: 'reviewer' }] }),
+					now,
+					now
+				);
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+           VALUES (?, ?, ?, '', 'in_progress', ?, ?)`
+				)
+				.run(wfRunId, ctx.spaceId, wfId, now, now);
+
+			const task = await ctx.taskManager.createTask({
+				title: 'Lazy activation task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+			});
+
+			return { wfId, wfRunId, codingNodeId, reviewNodeId, taskId: task.id };
+		}
+
+		test('looks up the owning node and calls ChannelRouter.activateNode for a workflow-declared agent', async () => {
+			const { wfRunId, reviewNodeId, taskId } = await seedRunWithTwoNodes();
+
+			const calls: Array<{
+				runId: string;
+				nodeId: string;
+				options?: { reopenReason?: string; reopenBy?: string };
+			}> = [];
+			const activateSpy = spyOn(ChannelRouter.prototype, 'activateNode').mockImplementation(
+				async function (
+					this: ChannelRouter,
+					runId: string,
+					nodeId: string,
+					options?: { reopenReason?: string; reopenBy?: string }
+				) {
+					calls.push({ runId, nodeId, options });
+					return [];
+				}
+			);
+
+			try {
+				const ok = await ctx.manager.ensureWorkflowNodeActivationForAgent(taskId, 'reviewer');
+
+				expect(ok).toBe(true);
+				expect(calls).toHaveLength(1);
+				expect(calls[0].runId).toBe(wfRunId);
+				// Resolved by walking workflow.nodes — the `reviewer` slot lives on
+				// the `Review` node, NOT on the start node. This proves the lookup
+				// loop matches by agent slot name (not just by start node).
+				expect(calls[0].nodeId).toBe(reviewNodeId);
+				// Default attribution propagated through.
+				expect(calls[0].options?.reopenBy).toBe('task-agent');
+				expect(calls[0].options?.reopenReason).toContain('reviewer');
+			} finally {
+				activateSpy.mockRestore();
+			}
+		});
+
+		test('honors caller-supplied reopenReason / reopenBy', async () => {
+			const { reviewNodeId, taskId } = await seedRunWithTwoNodes();
+
+			const calls: Array<{
+				nodeId: string;
+				options?: { reopenReason?: string; reopenBy?: string };
+			}> = [];
+			const activateSpy = spyOn(ChannelRouter.prototype, 'activateNode').mockImplementation(
+				async function (
+					this: ChannelRouter,
+					_runId: string,
+					nodeId: string,
+					options?: { reopenReason?: string; reopenBy?: string }
+				) {
+					calls.push({ nodeId, options });
+					return [];
+				}
+			);
+
+			try {
+				const ok = await ctx.manager.ensureWorkflowNodeActivationForAgent(taskId, 'reviewer', {
+					reopenReason: 'custom reason',
+					reopenBy: 'unit-test',
+				});
+
+				expect(ok).toBe(true);
+				expect(calls).toHaveLength(1);
+				expect(calls[0].nodeId).toBe(reviewNodeId);
+				expect(calls[0].options?.reopenReason).toBe('custom reason');
+				expect(calls[0].options?.reopenBy).toBe('unit-test');
+			} finally {
+				activateSpy.mockRestore();
+			}
+		});
+
+		test('returns false and skips activateNode when agentName is not in any workflow node', async () => {
+			const { taskId } = await seedRunWithTwoNodes();
+
+			const activateSpy = spyOn(ChannelRouter.prototype, 'activateNode').mockImplementation(
+				async () => []
+			);
+
+			try {
+				const ok = await ctx.manager.ensureWorkflowNodeActivationForAgent(taskId, 'unknown-agent');
+				expect(ok).toBe(false);
+				expect(activateSpy).not.toHaveBeenCalled();
+			} finally {
+				activateSpy.mockRestore();
+			}
+		});
+
+		test('returns false when task has no workflowRunId (standalone task)', async () => {
+			const standaloneTask = await ctx.taskManager.createTask({
+				title: 'Standalone',
+				description: '',
+				taskType: 'coding',
+				status: 'open',
+			});
+
+			const activateSpy = spyOn(ChannelRouter.prototype, 'activateNode').mockImplementation(
+				async () => []
+			);
+
+			try {
+				const ok = await ctx.manager.ensureWorkflowNodeActivationForAgent(
+					standaloneTask.id,
+					'reviewer'
+				);
+				expect(ok).toBe(false);
+				expect(activateSpy).not.toHaveBeenCalled();
+			} finally {
+				activateSpy.mockRestore();
+			}
+		});
+
+		test('returns false when the task does not exist', async () => {
+			const activateSpy = spyOn(ChannelRouter.prototype, 'activateNode').mockImplementation(
+				async () => []
+			);
+
+			try {
+				const ok = await ctx.manager.ensureWorkflowNodeActivationForAgent(
+					'no-such-task',
+					'reviewer'
+				);
+				expect(ok).toBe(false);
+				expect(activateSpy).not.toHaveBeenCalled();
+			} finally {
+				activateSpy.mockRestore();
+			}
+		});
+
+		test('returns false (and logs) when ChannelRouter.activateNode throws — does not propagate', async () => {
+			const { taskId } = await seedRunWithTwoNodes();
+
+			const activateSpy = spyOn(ChannelRouter.prototype, 'activateNode').mockImplementation(
+				async () => {
+					throw new Error('simulated activation failure');
+				}
+			);
+
+			try {
+				const ok = await ctx.manager.ensureWorkflowNodeActivationForAgent(taskId, 'reviewer');
+				// The call site is fire-and-forget; this method must swallow errors
+				// and return false rather than crash the surrounding send_message.
+				expect(ok).toBe(false);
+				expect(activateSpy).toHaveBeenCalledTimes(1);
+			} finally {
+				activateSpy.mockRestore();
+			}
 		});
 	});
 });

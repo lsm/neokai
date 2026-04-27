@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type {
 	SpaceAgent,
+	NodeExecution,
 	SpaceTask,
 	SpaceTaskActivityMember,
 	SpaceWorkflow,
@@ -14,10 +15,16 @@ vi.mock('../../../lib/router', () => ({
 	navigateToSpaceAgent: vi.fn(),
 }));
 
-const { mockSpaceOverlaySessionIdSignal, mockSpaceOverlayAgentNameSignal } = vi.hoisted(() => ({
-	mockSpaceOverlaySessionIdSignal: { value: null as string | null },
-	mockSpaceOverlayAgentNameSignal: { value: null as string | null },
-}));
+const { mockSpaceOverlaySessionIdSignal, mockSpaceOverlayAgentNameSignal, mockThreadTurns } =
+	vi.hoisted(() => ({
+		mockSpaceOverlaySessionIdSignal: { value: null as string | null },
+		mockSpaceOverlayAgentNameSignal: { value: null as string | null },
+		mockThreadTurns: [] as Array<{
+			agentLabel?: string;
+			fromLabel?: string;
+			toLabel?: string;
+		}>,
+	}));
 vi.mock('../../../lib/signals', async (importOriginal) => {
 	const actual = await importOriginal();
 	return {
@@ -35,6 +42,7 @@ let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
 let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
 let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
+let mockNodeExecutions: ReturnType<typeof signal<NodeExecution[]>>;
 let mockTaskActivity: ReturnType<typeof signal<Map<string, SpaceTaskActivityMember[]>>>;
 
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
@@ -50,6 +58,7 @@ vi.mock('../../../lib/space-store', () => ({
 			agents: mockAgents,
 			workflows: mockWorkflows,
 			workflowRuns: mockWorkflowRuns,
+			nodeExecutions: mockNodeExecutions,
 			taskActivity: mockTaskActivity,
 			updateTask: mockUpdateTask,
 			ensureTaskAgentSession: mockEnsureTaskAgentSession,
@@ -64,7 +73,19 @@ vi.mock('../../../lib/space-store', () => ({
 
 vi.mock('../SpaceTaskUnifiedThread', () => ({
 	SpaceTaskUnifiedThread: ({ taskId }: { taskId: string }) => (
-		<div data-testid="space-task-unified-thread" data-task-id={taskId} />
+		<div data-testid="space-task-unified-thread" data-task-id={taskId}>
+			<div>
+				{mockThreadTurns.map((turn, index) => (
+					<div
+						key={index}
+						data-testid="minimal-thread-turn"
+						data-agent-label={turn.agentLabel}
+						data-from-label={turn.fromLabel}
+						data-to-label={turn.toLabel}
+					/>
+				))}
+			</div>
+		</div>
 	),
 }));
 
@@ -82,6 +103,7 @@ mockTasks = signal<SpaceTask[]>([]);
 mockAgents = signal<SpaceAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
+mockNodeExecutions = signal<NodeExecution[]>([]);
 mockTaskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());
 
 import { SpaceTaskPane } from '../SpaceTaskPane';
@@ -160,6 +182,31 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 				updatedAt: 0,
 			},
 		];
+		mockThreadTurns.length = 0;
+		mockNodeExecutions.value = [
+			{
+				id: 'exec-coder',
+				workflowRunId: 'run-1',
+				workflowNodeId: 'node-1',
+				agentName: 'Coder',
+				status: 'idle',
+				agentSessionId: 'session-coder',
+				result: null,
+				createdAt: 0,
+				updatedAt: 0,
+			},
+			{
+				id: 'exec-reviewer',
+				workflowRunId: 'run-1',
+				workflowNodeId: 'node-1',
+				agentName: 'Reviewer',
+				status: 'idle',
+				agentSessionId: 'session-reviewer',
+				result: null,
+				createdAt: 0,
+				updatedAt: 0,
+			},
+		];
 		mockTaskActivity.value = new Map();
 		mockEnsureTaskAgentSession.mockReset();
 		mockEnsureTaskAgentSession.mockImplementation(async () =>
@@ -177,7 +224,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	});
 
 	function getTextarea(container: ReturnType<typeof render>) {
-		return container.getByPlaceholderText('Message task agent...') as HTMLTextAreaElement;
+		return container.getByPlaceholderText(/^Message /) as HTMLTextAreaElement;
 	}
 
 	function typeIntoTextarea(textarea: HTMLTextAreaElement, value: string) {
@@ -214,6 +261,152 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 			expect(items[0].textContent).toContain('@Coder');
 			expect(items[1].textContent).toContain('@Reviewer');
 		});
+	});
+
+	it('targets the first workflow agent by default when sending from a workflow task', async () => {
+		mockTasks.value = [makeWorkflowTask()];
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+		const textarea = getTextarea(container);
+
+		expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
+			'Send to Coder'
+		);
+		typeIntoTextarea(textarea, 'Can you check this?');
+		fireEvent.click(container.getByTestId('send-button'));
+
+		await waitFor(() =>
+			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Can you check this?', {
+				kind: 'node_agent',
+				agentName: 'Coder',
+				nodeExecutionId: 'exec-coder',
+			})
+		);
+	});
+
+	it('sends to the manually selected workflow agent', async () => {
+		mockTasks.value = [makeWorkflowTask()];
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+
+		fireEvent.click(container.getByTestId('task-composer-target-trigger'));
+		const options = container.getAllByTestId('task-composer-target-option');
+		fireEvent.click(options[1]);
+
+		const textarea = getTextarea(container);
+		expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
+			'Send to Reviewer'
+		);
+		typeIntoTextarea(textarea, 'Please review again');
+		fireEvent.click(container.getByTestId('send-button'));
+
+		await waitFor(() =>
+			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Please review again', {
+				kind: 'node_agent',
+				agentName: 'Reviewer',
+				nodeExecutionId: 'exec-reviewer',
+			})
+		);
+		await waitFor(() =>
+			expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
+				'Send to Coder'
+			)
+		);
+	});
+
+	it('auto-targets the task agent when the visible turn is addressed to task agent', async () => {
+		mockTasks.value = [makeWorkflowTask()];
+		mockThreadTurns.push({ fromLabel: 'Coder Agent', toLabel: 'Task Agent agent' });
+		const rectSpy = vi
+			.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+			.mockImplementation(function () {
+				if ((this as HTMLElement).getAttribute('data-testid') === 'minimal-thread-turn') {
+					return { top: 20, bottom: 80, left: 0, right: 100, width: 100, height: 60 } as DOMRect;
+				}
+				return { top: 0, bottom: 100, left: 0, right: 100, width: 100, height: 100 } as DOMRect;
+			});
+
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+
+		await waitFor(() =>
+			expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
+				'Send to Task Agent'
+			)
+		);
+		rectSpy.mockRestore();
+	});
+
+	it('auto-targets the lowest visible turn instead of a tall row extending below the viewport', async () => {
+		mockTasks.value = [makeWorkflowTask()];
+		mockThreadTurns.push(
+			{ fromLabel: 'Agent', toLabel: 'Coder Agent' },
+			{ fromLabel: 'Coder Agent', toLabel: 'Reviewer Agent' }
+		);
+		const rectSpy = vi
+			.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+			.mockImplementation(function () {
+				if ((this as HTMLElement).getAttribute('data-testid') === 'minimal-thread-turn') {
+					const toLabel = (this as HTMLElement).dataset.toLabel;
+					if (toLabel === 'Coder Agent') {
+						return {
+							top: 0,
+							bottom: 1000,
+							left: 0,
+							right: 100,
+							width: 100,
+							height: 1000,
+						} as DOMRect;
+					}
+					return { top: 80, bottom: 120, left: 0, right: 100, width: 100, height: 40 } as DOMRect;
+				}
+				return { top: 0, bottom: 100, left: 0, right: 100, width: 100, height: 100 } as DOMRect;
+			});
+
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+
+		await waitFor(() =>
+			expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
+				'Send to Reviewer'
+			)
+		);
+		rectSpy.mockRestore();
+	});
+
+	it('releases a manual empty-composer target lock when the thread scrolls', async () => {
+		mockTasks.value = [makeWorkflowTask()];
+		mockThreadTurns.push({ fromLabel: 'Reviewer Agent', toLabel: 'Coder Agent' });
+		const rectSpy = vi
+			.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+			.mockImplementation(function () {
+				if ((this as HTMLElement).getAttribute('data-testid') === 'minimal-thread-turn') {
+					return { top: 20, bottom: 80, left: 0, right: 100, width: 100, height: 60 } as DOMRect;
+				}
+				return { top: 0, bottom: 100, left: 0, right: 100, width: 100, height: 100 } as DOMRect;
+			});
+
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+
+		await waitFor(() =>
+			expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
+				'Send to Coder'
+			)
+		);
+
+		fireEvent.click(container.getByTestId('task-composer-target-trigger'));
+		const options = container.getAllByTestId('task-composer-target-option');
+		fireEvent.click(options[1]);
+		expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
+			'Send to Reviewer'
+		);
+
+		const scroller = container.getByTestId('space-task-unified-thread').firstElementChild;
+		expect(scroller).toBeTruthy();
+		fireEvent.scroll(scroller as Element);
+
+		await waitFor(() =>
+			expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
+				'Send to Coder'
+			)
+		);
+		rectSpy.mockRestore();
 	});
 
 	it('filters agents when @partial is typed', async () => {

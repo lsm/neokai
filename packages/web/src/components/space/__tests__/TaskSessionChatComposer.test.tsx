@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { cleanup, render } from '@testing-library/preact';
+import { cleanup, fireEvent, render } from '@testing-library/preact';
 import type { ChatComposerProps } from '../../ChatComposer';
 
 // Mock useModelSwitcher — avoids real WebSocket/RPC calls in unit tests
@@ -27,7 +27,9 @@ vi.mock('../../ChatComposer', () => ({
 				data-session-id={props.sessionId}
 				data-is-waiting={String(props.isWaitingForInput)}
 				data-placeholder={props.inputPlaceholder}
-			/>
+			>
+				{props.inputLeadingElement}
+			</div>
 		);
 	},
 }));
@@ -38,23 +40,40 @@ const mentionCandidates = [
 	{ id: 'a1', name: 'Coder' },
 	{ id: 'a2', name: 'Reviewer' },
 ];
+const targets = [
+	{
+		id: 'node:n1:coder',
+		kind: 'node_agent' as const,
+		label: 'Coder',
+		agentName: 'coder',
+		nodeName: 'Coding',
+		state: 'Active',
+	},
+	{ id: 'task-agent', kind: 'task_agent' as const, label: 'Task Agent' },
+];
 
 function renderComposer(overrides: Partial<Parameters<typeof TaskSessionChatComposer>[0]> = {}) {
 	const onSend = vi.fn().mockResolvedValue(true);
+	const onTargetSelect = vi.fn();
 	const view = render(
 		<TaskSessionChatComposer
 			sessionId="task-session-id"
 			mentionCandidates={mentionCandidates}
+			targets={targets}
+			selectedTargetId="node:n1:coder"
 			hasTaskAgentSession={true}
 			canSend={true}
 			isSending={false}
 			isProcessing={false}
+			autoScroll={true}
 			errorMessage={null}
+			onAutoScrollChange={vi.fn()}
+			onTargetSelect={onTargetSelect}
 			onSend={onSend}
 			{...overrides}
 		/>
 	);
-	return { ...view, onSend };
+	return { ...view, onSend, onTargetSelect };
 }
 
 describe('TaskSessionChatComposer', () => {
@@ -75,6 +94,12 @@ describe('TaskSessionChatComposer', () => {
 	it('renders the inner ChatComposer', () => {
 		const { getByTestId } = renderComposer();
 		expect(getByTestId('mock-chat-composer')).toBeTruthy();
+	});
+
+	it('anchors the shared floating ChatComposer shell locally', () => {
+		const { queryByTestId, getByTestId } = renderComposer();
+		expect(getByTestId('task-session-chat-composer').className).toContain('relative');
+		expect(queryByTestId('task-composer-readability-scrim')).toBeNull();
 	});
 
 	it('passes sessionId to ChatComposer', () => {
@@ -114,16 +139,40 @@ describe('TaskSessionChatComposer', () => {
 
 	it('uses task agent session placeholder when hasTaskAgentSession is true', () => {
 		renderComposer({ hasTaskAgentSession: true });
-		expect(lastChatComposerProps?.inputPlaceholder).toBe('Message task agent...');
+		expect(lastChatComposerProps?.inputPlaceholder).toBe('Message Coder...');
 	});
 
 	it('uses auto-start placeholder when hasTaskAgentSession is false', () => {
-		renderComposer({ hasTaskAgentSession: false });
+		renderComposer({ hasTaskAgentSession: false, targets: [], selectedTargetId: null });
 		expect(lastChatComposerProps?.inputPlaceholder).toBe('Message task agent (auto-start)...');
 	});
 
 	it('forwards isProcessing to ChatComposer', () => {
 		renderComposer({ isProcessing: true });
 		expect(lastChatComposerProps?.isProcessing).toBe(true);
+	});
+
+	it('forwards auto-scroll state to ChatComposer', () => {
+		const onAutoScrollChange = vi.fn();
+		renderComposer({ autoScroll: false, onAutoScrollChange });
+		expect(lastChatComposerProps?.autoScroll).toBe(false);
+		expect(lastChatComposerProps?.onAutoScrollChange).toBe(onAutoScrollChange);
+	});
+
+	it('renders a recipient picker in the input leading slot', () => {
+		const { getByTestId } = renderComposer();
+		const trigger = getByTestId('task-composer-target-trigger');
+		expect(trigger.textContent).toBe('C');
+		expect(trigger.getAttribute('title')).toBe('Send to Coder');
+		expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+		expect(lastChatComposerProps?.inputLeadingPaddingClass).toBe('pl-12');
+		expect(lastChatComposerProps?.inputLeadingElement).toBeTruthy();
+	});
+
+	it('calls onTargetSelect when a recipient is selected', () => {
+		const { getByTestId, getAllByTestId, onTargetSelect } = renderComposer();
+		fireEvent.click(getByTestId('task-composer-target-trigger'));
+		fireEvent.click(getAllByTestId('task-composer-target-option')[1]);
+		expect(onTargetSelect).toHaveBeenCalledWith('task-agent');
 	});
 });

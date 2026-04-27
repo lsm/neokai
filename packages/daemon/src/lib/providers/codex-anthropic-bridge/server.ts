@@ -38,6 +38,47 @@ import { Logger } from '../../logger.js';
 
 const logger = new Logger('codex-bridge-server');
 
+// ---------------------------------------------------------------------------
+// Model catalogue for GET /v1/models stub
+// ---------------------------------------------------------------------------
+// The bridge server is model-agnostic (it receives the model in each request
+// body), but the Claude Agent SDK calls GET /v1/models during initialisation
+// for capability caching.  Returning 404 for this endpoint triggers a misleading
+// "model not found" error in the SDK's CLI error handler.  We therefore expose
+// a minimal Anthropic-compatible model listing that covers the models offered
+// by the parent AnthropicToCodexBridgeProvider.
+
+const BRIDGE_MODELS = [
+	{
+		id: 'gpt-5.3-codex',
+		display_name: 'GPT-5.3 Codex',
+		created_at: '2025-12-01T00:00:00Z',
+		max_input_tokens: 200000,
+		max_tokens: 16384,
+	},
+	{
+		id: 'gpt-5.4',
+		display_name: 'GPT-5.4',
+		created_at: '2026-01-01T00:00:00Z',
+		max_input_tokens: 200000,
+		max_tokens: 16384,
+	},
+	{
+		id: 'gpt-5.1-codex-mini',
+		display_name: 'GPT-5.1 Codex Mini',
+		created_at: '2026-01-01T00:00:00Z',
+		max_input_tokens: 128000,
+		max_tokens: 16384,
+	},
+] as const;
+
+const MODELS_LIST_RESPONSE = {
+	data: BRIDGE_MODELS.map((m) => ({ ...m, type: 'model' as const })),
+	has_more: false,
+	first_id: BRIDGE_MODELS[0].id,
+	last_id: BRIDGE_MODELS[BRIDGE_MODELS.length - 1].id,
+};
+
 function isClosedControllerError(error: unknown): boolean {
 	if (!(error instanceof Error)) {
 		return false;
@@ -193,7 +234,7 @@ export async function drainToSSE(
 				send(contentBlockStopSSE(blockIndex));
 				// At tool_call time, thread/tokenUsage/updated has not yet fired (the model
 				// hasn't finished the turn yet), so always use the heuristic count here.
-				send(messageDeltaSSE('tool_use', { outputTokens }));
+				send(messageDeltaSSE('tool_use', { outputTokens, inputTokens: 0 }));
 				send(messageStopSSE());
 
 				// Store the session so the next HTTP request can resume it.
@@ -228,7 +269,12 @@ export async function drainToSSE(
 				// event.outputTokens is populated from thread/tokenUsage/updated (v2 protocol)
 				// or from legacy inline usage. Fall back to heuristic count if both are 0.
 				const endOutputTokens = event.outputTokens > 0 ? event.outputTokens : outputTokens;
-				send(messageDeltaSSE('end_turn', { outputTokens: endOutputTokens }));
+				send(
+					messageDeltaSSE('end_turn', {
+						outputTokens: endOutputTokens,
+						inputTokens: event.inputTokens || 0,
+					})
+				);
 				send(messageStopSSE());
 				onTurnDone();
 				controller.close();
@@ -253,7 +299,7 @@ export async function drainToSSE(
 		if (textBlockOpen) {
 			send(contentBlockStopSSE(blockIndex));
 		}
-		send(messageDeltaSSE('end_turn', { outputTokens: outputTokens }));
+		send(messageDeltaSSE('end_turn', { outputTokens: outputTokens, inputTokens: 0 }));
 		send(messageStopSSE());
 		session.kill();
 		onError?.();
@@ -334,8 +380,30 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				return new Response('ok');
 			}
 
+			// Model listing — the Claude Agent SDK calls this during init for
+			// capability caching.  A 404 here would trigger a misleading "model
+			// not found" error in the SDK's CLI error handler.
+			if (url.pathname === '/v1/models' && req.method === 'GET') {
+				return new Response(JSON.stringify(MODELS_LIST_RESPONSE), {
+					headers: { 'Content-Type': 'application/json' },
+				});
+			}
+
+			// Token counting stub — the SDK calls this for context/token
+			// estimation.  It already catches errors, but returning a proper
+			// response avoids unnecessary error noise.
+			if (url.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
+				return new Response(JSON.stringify({ input_tokens: 0 }), {
+					headers: { 'Content-Type': 'application/json' },
+				});
+			}
+
+			// Catch-all: return 501 instead of 404.  The SDK specifically maps
+			// HTTP 404 to a user-facing "model not found" message regardless of
+			// which endpoint returned it.  501 falls through to the generic
+			// error handler which does not produce that misleading message.
 			if (url.pathname !== '/v1/messages' || req.method !== 'POST') {
-				return createAnthropicError(404, 'not_found_error', 'Not found');
+				return createAnthropicError(501, 'not_implemented_error', 'Not implemented');
 			}
 
 			let body: AnthropicRequest;

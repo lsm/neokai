@@ -655,11 +655,11 @@ export class TaskAgentManager {
 				artifactRepo: this.config.artifactRepo,
 			});
 
-			// setRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`
+			// mergeRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`
 			// object is structurally compatible at runtime — the AgentSession only reads
 			// the `server` property for the live Server instance. The cast is safe because
 			// createTaskAgentMcpServer returns { server, cleanup } which satisfies the
-			// runtime shape used inside AgentSession.setRuntimeMcpServers().
+			// runtime shape used inside AgentSession.mergeRuntimeMcpServers().
 			//
 			// Merge registry-sourced MCP servers from AppMcpLifecycleManager alongside the
 			// in-process task-agent server. The task-agent server always wins on collision
@@ -1796,6 +1796,137 @@ export class TaskAgentManager {
 		return [...names];
 	}
 
+	/**
+	 * Return every agent slot name declared in the static workflow definition
+	 * for this task, regardless of whether a `node_execution` row exists or a
+	 * session has been spawned. The workflow definition is the canonical source
+	 * for "is this a known peer?" — node_executions are lazily created when a
+	 * node is first activated, so they cannot stand in for it.
+	 *
+	 * Used by `send_message` to widen the queueable / reachable target set so
+	 * declared-but-not-yet-spawned peers can receive lazy activation rather
+	 * than failing with `notFoundAgentNames`.
+	 *
+	 * Returns `[]` if the task has no workflow run, or the workflow / run lookup
+	 * fails (e.g. on a standalone task).
+	 */
+	getWorkflowDeclaredAgentNamesForTask(taskId: string): string[] {
+		const task = this.config.taskRepo.getTask(taskId);
+		if (!task?.workflowRunId) return [];
+		const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+		if (!run?.workflowId) return [];
+		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+		if (!workflow) return [];
+		const names = new Set<string>();
+		for (const node of workflow.nodes) {
+			let slots: ReturnType<typeof resolveNodeAgents>;
+			try {
+				slots = resolveNodeAgents(node);
+			} catch {
+				// Defensive: a malformed node should not poison the lookup of valid siblings.
+				continue;
+			}
+			for (const slot of slots) {
+				names.add(slot.name);
+			}
+		}
+		return [...names];
+	}
+
+	/**
+	 * Lazily ensure a node_execution row exists for the workflow node that owns
+	 * `agentName` so that the SpaceRuntime tick loop will spawn its session.
+	 *
+	 * Used by the Task Agent `send_message` queue path when the target is a
+	 * workflow-declared peer that has never been activated. Without this hop
+	 * the queue would fill but no spawn would ever fire — the `pendingMessageRepo`
+	 * is drained only when the target session activates, which itself requires a
+	 * node_execution row to exist.
+	 *
+	 * Idempotent: `ChannelRouter.activateNode` is a no-op when active executions
+	 * already exist for the node, and `createOrIgnore` makes the underlying row
+	 * write safe under concurrent activation requests.
+	 *
+	 * Resolution:
+	 *  1. Look up the task → workflowRun → workflow.
+	 *  2. Find the workflow node whose `resolveNodeAgents()` includes `agentName`.
+	 *  3. Build a ChannelRouter (mirrors `buildNodeAgentMcpServerForSession`) and
+	 *     call `activateNode(runId, nodeId)`.
+	 *
+	 * Returns `false` when the agent is not declared in the workflow, or when
+	 * any required dependency is missing (best-effort — never throws).
+	 */
+	async ensureWorkflowNodeActivationForAgent(
+		taskId: string,
+		agentName: string,
+		options?: { reopenReason?: string; reopenBy?: string }
+	): Promise<boolean> {
+		try {
+			const task = this.config.taskRepo.getTask(taskId);
+			if (!task?.workflowRunId) return false;
+			const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+			if (!run?.workflowId) return false;
+			const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+			if (!workflow) return false;
+			const spaceManager = this.config.spaceManager;
+			const space = await spaceManager.getSpace(task.spaceId);
+			if (!space) return false;
+
+			// Find the node whose declared agent slots include `agentName`.
+			let targetNodeId: string | null = null;
+			for (const node of workflow.nodes) {
+				let slots: ReturnType<typeof resolveNodeAgents>;
+				try {
+					slots = resolveNodeAgents(node);
+				} catch {
+					continue;
+				}
+				if (slots.some((slot) => slot.name === agentName)) {
+					targetNodeId = node.id;
+					break;
+				}
+			}
+			if (!targetNodeId) return false;
+
+			const channelRouter = new ChannelRouter({
+				taskRepo: this.config.taskRepo,
+				workflowRunRepo: this.config.workflowRunRepo,
+				workflowManager: this.config.spaceWorkflowManager,
+				agentManager: this.config.spaceAgentManager,
+				nodeExecutionRepo: this.config.nodeExecutionRepo,
+				gateDataRepo: this.config.gateDataRepo,
+				channelCycleRepo: this.config.channelCycleRepo,
+				db: this.config.db.getDatabase(),
+				// Mirror the canonical resolution used by spawn/rehydrate paths:
+				// prefer the cached worktree path (with DB-sync fallback inside
+				// `getTaskWorktreePath`), and fall back to the space root if no
+				// worktree exists yet for this task.
+				workspacePath: this.getTaskWorktreePath(taskId) ?? space.workspacePath,
+				getSpaceAutonomyLevel: async (spaceId) => {
+					const s = await spaceManager.getSpace(spaceId);
+					return s?.autonomyLevel ?? 1;
+				},
+				isSessionAlive: (sid) => this.isSessionAlive(sid),
+				notificationSink: this.config.spaceRuntimeService.getSharedRuntime().getNotificationSink(),
+				onGatePendingApproval: (runId, gateId) =>
+					this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
+			});
+
+			await channelRouter.activateNode(run.id, targetNodeId, {
+				reopenReason: options?.reopenReason ?? `lazy activation of agent "${agentName}"`,
+				reopenBy: options?.reopenBy ?? 'task-agent',
+			});
+			return true;
+		} catch (err) {
+			log.warn(
+				`TaskAgentManager.ensureWorkflowNodeActivationForAgent: ` +
+					`failed for taskId=${taskId} agentName=${agentName}: ` +
+					(err instanceof Error ? err.message : String(err))
+			);
+			return false;
+		}
+	}
+
 	// -------------------------------------------------------------------------
 	// Public — helpers / query methods
 	// -------------------------------------------------------------------------
@@ -1880,6 +2011,53 @@ export class TaskAgentManager {
 			if (session) return session;
 		}
 		return undefined;
+	}
+
+	/**
+	 * Look up an AgentSession by its session ID across every in-memory map this
+	 * manager owns. Used by reapers (e.g. SpaceRuntime force-completion) that
+	 * have only the session ID and need to inspect/mutate the session before
+	 * reaping it (e.g. clear an orphaned AskUserQuestion card).
+	 *
+	 * Lookup order (mirrors `isSessionAlive`):
+	 *  1. `agentSessionIndex` (fast reverse index for sub-sessions)
+	 *  2. `taskAgentSessions` map (Task Agents)
+	 *  3. `SessionManager.getSession()` (general session cache)
+	 *
+	 * Step 3 may **lazy-hydrate** an AgentSession from the database if it's
+	 * not currently in any in-memory map — this is intentional, because:
+	 *
+	 *  - The hydrated `AgentSession` constructor calls
+	 *    `ProcessingStateManager.restoreFromDatabase()`, which preserves
+	 *    `waiting_for_input` state across daemon restarts (see
+	 *    `processing-state-manager.ts:62-65`). So `getProcessingState()`
+	 *    on a hydrated session returns the *persisted* status, not `idle`.
+	 *  - The Step 1.5 "spare waiting_for_input" guard relies on this
+	 *    lazy hydration: after a daemon restart, before any explicit
+	 *    rehydrate path runs, this lookup is what the runtime uses to
+	 *    detect that a session is still waiting on the user.
+	 *
+	 * Caveat: hydration *does* have side effects (event subscriptions,
+	 * orphaned-message recovery, cache insertion). In practice this is
+	 * fine because callers reach this method only after `isSessionAlive`
+	 * has already triggered the same lookup, so hydration happens at most
+	 * once per session per tick.
+	 *
+	 * Returns undefined when the session is not in memory and either does
+	 * not exist in the DB or fails to load.
+	 */
+	getAgentSessionById(sessionId: string): AgentSession | undefined {
+		const indexed = this.agentSessionIndex.get(sessionId);
+		if (indexed) return indexed;
+
+		for (const taskAgent of this.taskAgentSessions.values()) {
+			if (taskAgent.session.id === sessionId) return taskAgent;
+		}
+
+		// SessionManager.getSession may hydrate a fresh AgentSession from DB;
+		// that's intentional — see method JSDoc for why. Normalize null → undefined
+		// so the return contract stays uniform.
+		return this.config.sessionManager.getSession(sessionId) ?? undefined;
 	}
 
 	// -------------------------------------------------------------------------
@@ -3641,15 +3819,39 @@ export class TaskAgentManager {
 			pendingMessageRepo: this.config.pendingMessageRepo,
 			spaceId,
 			taskId,
-			// Auto-resume callback: when a message is queued for an inactive peer,
-			// immediately attempt to resume that peer's last known session so the
-			// message is delivered without waiting for external activation.
+			// Auto-resume + lazy-activation callback fired when a message is queued
+			// for an inactive peer:
+			//
+			//   1. `tryResumeNodeAgentSession` — fast path that rehydrates a known
+			//      idle/completed session so the queue is drained immediately.
+			//   2. `ensureWorkflowNodeActivationForAgent` — explicit activation kick
+			//      for workflow-declared peers that have no live session. Mirrors the
+			//      Task Agent send-path fix in #139: relying on `channelRouter`'s
+			//      activation-on-deliverMessage step is not enough because that step
+			//      only fires when the target node has zero active executions; a
+			//      workflow node stranded in `pending` state would otherwise queue
+			//      forever. `activateNode` is idempotent so this is safe regardless
+			//      of the existing row's status.
 			onMessageQueued: (targetAgentName) => {
 				void this.tryResumeNodeAgentSession(workflowRunId, targetAgentName).catch((err) => {
 					log.warn(
 						`AgentMessageRouter.onMessageQueued: tryResumeNodeAgentSession failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
 					);
 				});
+				const declaredAgentNames = this.getWorkflowDeclaredAgentNamesForTask(taskId);
+				if (declaredAgentNames.includes(targetAgentName)) {
+					log.info(
+						`agent-message-router.onMessageQueued: lazy-activated peer ${targetAgentName} for task ${taskId}`
+					);
+					void this.ensureWorkflowNodeActivationForAgent(taskId, targetAgentName, {
+						reopenReason: `node-agent send_message to lazily activate "${targetAgentName}"`,
+						reopenBy: `agent:${agentName}`,
+					}).catch((err) => {
+						log.warn(
+							`AgentMessageRouter.onMessageQueued: ensureWorkflowNodeActivationForAgent failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
+						);
+					});
+				}
 			},
 		});
 

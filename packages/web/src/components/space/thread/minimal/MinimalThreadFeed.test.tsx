@@ -1,14 +1,19 @@
-// @ts-nocheck
-
-import { cleanup, render, screen, waitFor } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ActiveTurnSummary } from '@neokai/shared';
 import { parseThreadRow } from '../space-task-thread-events';
 import { MinimalThreadFeed } from './MinimalThreadFeed';
+
+const mockPushOverlayHistory = vi.hoisted(() => vi.fn());
 
 // Stub MarkdownRenderer to a synchronous text renderer so tests can assert
 // content without waiting on the lazy-loaded marked import.
 vi.mock('../../../chat/MarkdownRenderer.tsx', () => ({
 	default: ({ content }: { content: string }) => <div data-testid="md">{content}</div>,
+}));
+
+vi.mock('../../../../lib/router', () => ({
+	pushOverlayHistory: mockPushOverlayHistory,
 }));
 
 function makeRow(opts: {
@@ -156,7 +161,10 @@ function errorResultMessage(uuid: string) {
 }
 
 describe('MinimalThreadFeed', () => {
-	beforeEach(() => cleanup());
+	beforeEach(() => {
+		cleanup();
+		mockPushOverlayHistory.mockClear();
+	});
 	afterEach(() => cleanup());
 
 	it('renders nothing when there are no rows', () => {
@@ -203,6 +211,51 @@ describe('MinimalThreadFeed', () => {
 		expect(turns[1].textContent).toContain('REVIEWER');
 		// Both blocks contain a result row → both rendered as completed turns.
 		expect(turns.every((t) => t.dataset.turnState === 'completed')).toBe(true);
+	});
+
+	it('opens the completed agent session from the avatar/name header with a highlight target', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: assistantText('a1', 'done'),
+				sessionId: 'session-completed',
+			}),
+			makeRow({
+				id: 'r1',
+				label: 'Coder Agent',
+				createdAt: t + 1000,
+				message: resultMessage('r1'),
+				sessionId: 'session-completed',
+			}),
+		];
+
+		render(<MinimalThreadFeed parsedRows={rows} />);
+		const trigger = screen.getByTestId('minimal-thread-agent-open');
+		expect(trigger.className).toContain('min-h-11');
+		fireEvent.click(trigger);
+		expect(mockPushOverlayHistory).toHaveBeenCalledWith('session-completed', 'Coder Agent', 'a1');
+	});
+
+	it('opens the running agent session from the avatar/name header without requiring a highlight target', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+				sessionId: 'session-active',
+			}),
+		];
+
+		render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+		const trigger = screen.getByTestId('minimal-thread-agent-open');
+		expect(trigger.getAttribute('aria-label')).toBe('Open Coder Agent session');
+		fireEvent.click(trigger);
+		expect(mockPushOverlayHistory).toHaveBeenCalledWith('session-active', 'Coder Agent', undefined);
 	});
 
 	it('renders the last assistant text of a completed block as its message body', async () => {
@@ -259,7 +312,39 @@ describe('MinimalThreadFeed', () => {
 			}),
 		];
 
-		render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+		// Server-derived summary: same activity as the parsed rows would produce
+		// under the old client-side derivation, but expressed as the wire shape
+		// (`ActivityEntry[]`) the renderer now consumes.
+		const summary: ActiveTurnSummary = {
+			sessionId: 'space:s:task:t',
+			turnIndex: 1,
+			entries: [
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'bun run typecheck', ts: t, uuid: 'a1' },
+				{
+					kind: 'tool_use',
+					toolName: 'Read',
+					preview: 'packages/web/src/foo.ts',
+					ts: t,
+					uuid: 'a1',
+				},
+				{
+					kind: 'tool_use',
+					toolName: 'Grep',
+					preview: 'provisionExistingSpaces',
+					ts: t + 1000,
+					uuid: 'a2',
+				},
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'git status', ts: t + 1000, uuid: 'a2' },
+			],
+		};
+
+		render(
+			<MinimalThreadFeed
+				parsedRows={rows}
+				activeAgentLabels={new Set(['Coder Agent'])}
+				activeTurnSummaries={[summary]}
+			/>
+		);
 
 		const turn = screen.getByTestId('minimal-thread-turn');
 		expect(turn.dataset.turnState).toBe('active');
@@ -285,25 +370,36 @@ describe('MinimalThreadFeed', () => {
 
 	it('caps the active roster at 4 most-recent tool calls', () => {
 		const t = Date.now();
-		// 6 tool calls in one block — only the last 4 should render.
-		const tools = [
-			{ name: 'Bash', input: { command: 'echo 1' } },
-			{ name: 'Bash', input: { command: 'echo 2' } },
-			{ name: 'Bash', input: { command: 'echo 3' } },
-			{ name: 'Bash', input: { command: 'echo 4' } },
-			{ name: 'Bash', input: { command: 'echo 5' } },
-			{ name: 'Bash', input: { command: 'echo 6' } },
-		];
 		const rows = [
 			makeRow({
 				id: 'a1',
 				label: 'Coder Agent',
 				createdAt: t,
-				message: assistantToolUse('a1', tools),
+				message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'placeholder' } }]),
 			}),
 		];
 
-		render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+		// 6 tool entries in the active-turn summary — only the last 4 should render.
+		const summary: ActiveTurnSummary = {
+			sessionId: 'space:s:task:t',
+			turnIndex: 1,
+			entries: [
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 1', ts: t + 1, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 2', ts: t + 2, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 3', ts: t + 3, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 4', ts: t + 4, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 5', ts: t + 5, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 6', ts: t + 6, uuid: 'a1' },
+			],
+		};
+
+		render(
+			<MinimalThreadFeed
+				parsedRows={rows}
+				activeAgentLabels={new Set(['Coder Agent'])}
+				activeTurnSummaries={[summary]}
+			/>
+		);
 		const entries = screen.getAllByTestId('minimal-thread-roster-entry');
 		expect(entries.length).toBe(4);
 		expect(entries[0].textContent).toContain('echo 3');
@@ -430,6 +526,9 @@ describe('MinimalThreadFeed', () => {
 		// Synthetic handoffs render with a "Synthetic" badge (was "handoff" earlier;
 		// renamed when the bubble was redesigned to mirror the Thinking block).
 		expect(messageTurn.textContent?.toLowerCase()).toContain('synthetic');
+		expect(
+			messageTurn.querySelector('[data-testid="synthetic-message"] > div')?.className
+		).toContain('md:max-w-[86%]');
 		await waitFor(() => {
 			expect(screen.getByText('please address the failing test')).toBeTruthy();
 		});
@@ -590,42 +689,35 @@ describe('MinimalThreadFeed', () => {
 
 	it('includes assistant text messages in the active roster alongside tool calls', () => {
 		const t = Date.now();
-		// Sequence: text → tool → text → tool. All four entries should appear
-		// in the roster in order, with kinds tagged on the data attribute.
 		const rows = [
 			makeRow({
 				id: 'a1',
 				label: 'Coder Agent',
 				createdAt: t,
-				message: {
-					type: 'assistant',
-					uuid: 'a1',
-					message: {
-						content: [
-							{ type: 'text', text: 'Investigating the failing test' },
-							{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } },
-						],
-					},
-				},
-			}),
-			makeRow({
-				id: 'a2',
-				label: 'Coder Agent',
-				createdAt: t + 1000,
-				message: {
-					type: 'assistant',
-					uuid: 'a2',
-					message: {
-						content: [
-							{ type: 'text', text: 'Now editing the broken assertion' },
-							{ type: 'tool_use', id: 'tu-2', name: 'Edit', input: { file_path: 'foo.ts' } },
-						],
-					},
-				},
+				message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'ls' } }]),
 			}),
 		];
 
-		render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+		// Sequence: text → tool → text → tool. All four entries should appear
+		// in the roster in order, with kinds tagged on the data attribute.
+		const summary: ActiveTurnSummary = {
+			sessionId: 'space:s:task:t',
+			turnIndex: 1,
+			entries: [
+				{ kind: 'text', text: 'Investigating the failing test', ts: t, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'ls', ts: t, uuid: 'a1' },
+				{ kind: 'text', text: 'Now editing the broken assertion', ts: t + 1000, uuid: 'a2' },
+				{ kind: 'tool_use', toolName: 'Edit', preview: 'foo.ts', ts: t + 1000, uuid: 'a2' },
+			],
+		};
+
+		render(
+			<MinimalThreadFeed
+				parsedRows={rows}
+				activeAgentLabels={new Set(['Coder Agent'])}
+				activeTurnSummaries={[summary]}
+			/>
+		);
 
 		const entries = screen.getAllByTestId('minimal-thread-roster-entry');
 		expect(entries.length).toBe(4);
@@ -639,31 +731,39 @@ describe('MinimalThreadFeed', () => {
 		expect(entries[3].textContent).toContain('Edit');
 	});
 
-	it('skips empty/whitespace assistant text blocks when building the roster', () => {
+	it('skips empty/whitespace assistant text entries when building the roster', () => {
 		const t = Date.now();
 		const rows = [
 			makeRow({
 				id: 'a1',
 				label: 'Coder Agent',
 				createdAt: t,
-				message: {
-					type: 'assistant',
-					uuid: 'a1',
-					message: {
-						content: [
-							{ type: 'text', text: '   ' }, // whitespace-only
-							{ type: 'text', text: '' }, // empty string
-							{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } },
-						],
-					},
-				},
+				message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'ls' } }]),
 			}),
 		];
 
-		render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+		// Server is the canonical filter — but the renderer also defensively
+		// drops empty text/thinking entries so a future relaxation upstream
+		// can't bleed whitespace into the rail.
+		const summary: ActiveTurnSummary = {
+			sessionId: 'space:s:task:t',
+			turnIndex: 1,
+			entries: [
+				{ kind: 'text', text: '   ', ts: t, uuid: 'a1' }, // whitespace-only
+				{ kind: 'text', text: '', ts: t, uuid: 'a1' }, // empty string
+				{ kind: 'thinking', preview: '', ts: t, uuid: 'a1' }, // empty thinking
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'ls', ts: t, uuid: 'a1' },
+			],
+		};
+
+		render(
+			<MinimalThreadFeed
+				parsedRows={rows}
+				activeAgentLabels={new Set(['Coder Agent'])}
+				activeTurnSummaries={[summary]}
+			/>
+		);
 		const entries = screen.getAllByTestId('minimal-thread-roster-entry');
-		// Only the tool entry survives — the empty/whitespace text blocks
-		// are filtered out so they don't pollute the rail.
 		expect(entries.length).toBe(1);
 		expect(entries[0].dataset.rosterKind).toBe('tool');
 	});
@@ -818,30 +918,36 @@ describe('MinimalThreadFeed', () => {
 
 	it('caps the active roster at 4 most-recent entries even with mixed kinds', () => {
 		const t = Date.now();
-		// 6 mixed entries — only the last 4 should render.
 		const rows = [
 			makeRow({
 				id: 'a1',
 				label: 'Coder Agent',
 				createdAt: t,
-				message: {
-					type: 'assistant',
-					uuid: 'a1',
-					message: {
-						content: [
-							{ type: 'text', text: 'msg-1' },
-							{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'echo 1' } },
-							{ type: 'text', text: 'msg-2' },
-							{ type: 'tool_use', id: 'tu-2', name: 'Bash', input: { command: 'echo 2' } },
-							{ type: 'text', text: 'msg-3' },
-							{ type: 'tool_use', id: 'tu-3', name: 'Bash', input: { command: 'echo 3' } },
-						],
-					},
-				},
+				message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'echo 3' } }]),
 			}),
 		];
 
-		render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+		// 6 mixed entries — only the last 4 should render.
+		const summary: ActiveTurnSummary = {
+			sessionId: 'space:s:task:t',
+			turnIndex: 1,
+			entries: [
+				{ kind: 'text', text: 'msg-1', ts: t + 1, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 1', ts: t + 2, uuid: 'a1' },
+				{ kind: 'text', text: 'msg-2', ts: t + 3, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 2', ts: t + 4, uuid: 'a1' },
+				{ kind: 'text', text: 'msg-3', ts: t + 5, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 3', ts: t + 6, uuid: 'a1' },
+			],
+		};
+
+		render(
+			<MinimalThreadFeed
+				parsedRows={rows}
+				activeAgentLabels={new Set(['Coder Agent'])}
+				activeTurnSummaries={[summary]}
+			/>
+		);
 		const entries = screen.getAllByTestId('minimal-thread-roster-entry');
 		expect(entries.length).toBe(4);
 		const allText = entries.map((e) => e.textContent).join('\n');
@@ -1029,5 +1135,131 @@ describe('MinimalThreadFeed', () => {
 			const turn = screen.getByTestId('minimal-thread-turn');
 			expect(turn.dataset.turnState).toBe('active');
 		});
+	});
+
+	it('renders thinking-block entries with a distinct visual treatment', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'ls' } }]),
+			}),
+		];
+
+		const summary: ActiveTurnSummary = {
+			sessionId: 'space:s:task:t',
+			turnIndex: 1,
+			entries: [
+				{
+					kind: 'thinking',
+					preview: 'Considering the edge case where the cache is cold',
+					ts: t,
+					uuid: 'a1',
+				},
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'ls', ts: t, uuid: 'a1' },
+			],
+		};
+
+		render(
+			<MinimalThreadFeed
+				parsedRows={rows}
+				activeAgentLabels={new Set(['Coder Agent'])}
+				activeTurnSummaries={[summary]}
+			/>
+		);
+		const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+		expect(entries.length).toBe(2);
+		expect(entries[0].dataset.rosterKind).toBe('thinking');
+		expect(entries[0].textContent).toContain('Considering the edge case');
+		expect(entries[1].dataset.rosterKind).toBe('tool');
+	});
+
+	it('renders synthetic agent-handoff entries distinctly from real human messages', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'ls' } }]),
+			}),
+		];
+
+		const summary: ActiveTurnSummary = {
+			sessionId: 'space:s:task:t',
+			turnIndex: 1,
+			entries: [
+				{ kind: 'user_message', text: 'please retry that step', ts: t, uuid: 'u1' },
+				{
+					kind: 'agent_handoff',
+					text: 'Reviewer Agent: please verify the fix',
+					ts: t + 1,
+					uuid: 'h1',
+				},
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'ls', ts: t + 2, uuid: 'a1' },
+			],
+		};
+
+		render(
+			<MinimalThreadFeed
+				parsedRows={rows}
+				activeAgentLabels={new Set(['Coder Agent'])}
+				activeTurnSummaries={[summary]}
+			/>
+		);
+
+		const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+		expect(entries.length).toBe(3);
+
+		// First entry: real human user input — distinct kind data attribute.
+		expect(entries[0].dataset.rosterKind).toBe('user');
+		expect(entries[0].textContent).toContain('please retry that step');
+
+		// Second entry: synthetic agent→agent handoff — uses its own kind, NOT
+		// the same `user` kind, so the rail can render the visual distinction.
+		expect(entries[1].dataset.rosterKind).toBe('handoff');
+		expect(entries[1].textContent).toContain('Reviewer Agent');
+
+		// Third entry: tool — confirms the handoff/user entries don't displace
+		// or break the existing tool rendering.
+		expect(entries[2].dataset.rosterKind).toBe('tool');
+	});
+
+	it('falls back to an empty roster when no summary covers the active session', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'ls' } }]),
+				sessionId: 'space:s:task:t',
+			}),
+		];
+
+		// Summary keyed on a different session id — the trailing block's
+		// session id has no match, so the rail renders empty rather than
+		// surfacing stale activity from another session.
+		const summary: ActiveTurnSummary = {
+			sessionId: 'space:s:other-task:o',
+			turnIndex: 1,
+			entries: [
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'should not show', ts: t, uuid: 'x1' },
+			],
+		};
+
+		render(
+			<MinimalThreadFeed
+				parsedRows={rows}
+				activeAgentLabels={new Set(['Coder Agent'])}
+				activeTurnSummaries={[summary]}
+			/>
+		);
+		expect(screen.queryByTestId('minimal-thread-roster-entry')).toBeNull();
+		// Active rail is still present (the block IS active) — it just has
+		// no entries.
+		expect(screen.getByTestId('minimal-thread-active-rail')).toBeTruthy();
 	});
 });

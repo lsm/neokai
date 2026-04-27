@@ -351,10 +351,10 @@ describe('useInputDraft', () => {
 				result.current.setContent('');
 			});
 
-			// Should save immediately with undefined (no debounce for clearing)
+			// Should save immediately with null (undefined is dropped by JSON-RPC serialization)
 			expect(mockHub.request).toHaveBeenCalledWith('session.update', {
 				sessionId: 'session-1',
-				metadata: { inputDraft: undefined },
+				metadata: { inputDraft: null },
 			});
 		});
 
@@ -511,7 +511,7 @@ describe('useInputDraft', () => {
 			// Should clear immediately
 			expect(mockHub.request).toHaveBeenCalledWith('session.update', {
 				sessionId: 'session-1',
-				metadata: { inputDraft: undefined },
+				metadata: { inputDraft: null },
 			});
 		});
 
