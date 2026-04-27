@@ -15,9 +15,12 @@
  *   - `{{pr_url}}`          — signalled by the end node via
  *                             `send_message(task-agent, …, data:{ pr_url })`.
  *   - `{{autonomy_level}}`  — space autonomy level at routing time.
- *   - `{{approval_source}}` — `'end_node' | 'human_review'` (distinguishes
- *                             reviewer self-close from human-approved review).
- *
+ *   - `{{approval_source}}` — `'human' | 'agent'` (from
+ *                             `SpaceApprovalSource`; `auto_policy` is
+ *                             theoretically possible but no caller produces
+ *                             it for post-approval). Step 2 uses this to
+ *                             skip redundant merge approval when human
+ *                             already approved.
  * NOTE: The `{{reviewer_name}}` token was intentionally replaced with the
  * static string `[end-node reviewer]` in PR 3/5 because nothing in
  * `dispatchPostApproval` currently resolves the approving agent's slot name
@@ -53,7 +56,7 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
 	'1. Verify the PR is still open and passes CI:',
 	'     gh pr view {{pr_url}} --json state,mergeStateStatus,statusCheckRollup',
 	'   If state is MERGED, record an audit artifact and exit — the work is done.',
-	'2. If autonomy_level < 4:',
+	'2. If approval_source != "human" AND autonomy_level < 4:',
 	'     Call request_human_input with',
 	'       question: "Approve merging PR {{pr_url}}?"',
 	'       context: "Reviewer: [end-node reviewer]. CI: <from step 1>."',
