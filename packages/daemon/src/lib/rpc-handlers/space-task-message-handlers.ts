@@ -480,6 +480,14 @@ export function setupSpaceTaskMessageHandlers(
 		if (!task.workflowRunId) {
 			throw new Error(`Task ${params.taskId} has no associated workflow run`);
 		}
+		if (task.status === 'archived') {
+			throw new Error(`Task ${params.taskId} is archived and cannot activate agents`);
+		}
+		if (task.status === 'done' || task.status === 'cancelled') {
+			throw new Error(
+				`Task ${params.taskId} is ${task.status} — activateNodeAgent requires an active task`
+			);
+		}
 
 		const workflowRunId = task.workflowRunId;
 

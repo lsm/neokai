@@ -33,13 +33,13 @@ import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 // errors. Hoist plain objects here and assign real Preact signals to
 // `taskActivityBridge.signal` after import so reactivity works inside the
 // component.
-const { taskActivityBridge, mockActivateTaskNodeAgent, mockPushOverlayHistory } = vi.hoisted(
+const { taskActivityBridge, mockActivateTaskNodeAgent, mockReplaceOverlayHistory } = vi.hoisted(
 	() => ({
 		taskActivityBridge: {
 			signal: null as ReturnType<typeof signal<Map<string, unknown[]>>> | null,
 		},
 		mockActivateTaskNodeAgent: vi.fn(),
-		mockPushOverlayHistory: vi.fn(),
+		mockReplaceOverlayHistory: vi.fn(),
 	})
 );
 
@@ -55,7 +55,7 @@ vi.mock('../../../lib/space-store', () => ({
 }));
 
 vi.mock('../../../lib/router', () => ({
-	pushOverlayHistory: mockPushOverlayHistory,
+	replaceOverlayHistory: mockReplaceOverlayHistory,
 }));
 
 vi.mock('../../../lib/utils', () => ({
@@ -79,7 +79,7 @@ describe('PendingAgentOverlay', () => {
 		onClose = vi.fn();
 		taskActivityBridge.signal!.value = new Map();
 		mockActivateTaskNodeAgent.mockReset();
-		mockPushOverlayHistory.mockClear();
+		mockReplaceOverlayHistory.mockClear();
 	});
 
 	afterEach(() => {
@@ -127,7 +127,7 @@ describe('PendingAgentOverlay', () => {
 		await waitFor(() => expect(mockActivateTaskNodeAgent).toHaveBeenCalledTimes(1));
 		expect(mockActivateTaskNodeAgent).toHaveBeenCalledWith(TASK_ID, AGENT_NAME, 'wake up reviewer');
 		await waitFor(() =>
-			expect(mockPushOverlayHistory).toHaveBeenCalledWith('sess-live-1', AGENT_NAME)
+			expect(mockReplaceOverlayHistory).toHaveBeenCalledWith('sess-live-1', AGENT_NAME)
 		);
 	});
 
@@ -150,7 +150,7 @@ describe('PendingAgentOverlay', () => {
 		// After send, the overlay is waiting for the activity subscription to
 		// surface the new session.
 		await waitFor(() => expect(getByText(`Starting ${AGENT_NAME}…`)).toBeTruthy());
-		expect(mockPushOverlayHistory).not.toHaveBeenCalled();
+		expect(mockReplaceOverlayHistory).not.toHaveBeenCalled();
 
 		// Simulate the live-query subscription delivering the new session.
 		taskActivityBridge.signal!.value = new Map([
@@ -171,7 +171,7 @@ describe('PendingAgentOverlay', () => {
 		]);
 
 		await waitFor(() =>
-			expect(mockPushOverlayHistory).toHaveBeenCalledWith('sess-spawned-2', 'Reviewer')
+			expect(mockReplaceOverlayHistory).toHaveBeenCalledWith('sess-spawned-2', 'Reviewer')
 		);
 	});
 
@@ -191,7 +191,7 @@ describe('PendingAgentOverlay', () => {
 		);
 		// Input is re-enabled so the user can retry.
 		expect((textarea as HTMLTextAreaElement).disabled).toBe(false);
-		expect(mockPushOverlayHistory).not.toHaveBeenCalled();
+		expect(mockReplaceOverlayHistory).not.toHaveBeenCalled();
 	});
 
 	it('calls onClose when the Escape key is pressed', () => {
@@ -232,6 +232,6 @@ describe('PendingAgentOverlay', () => {
 			],
 		]);
 		render(<PendingAgentOverlay taskId={TASK_ID} agentName={AGENT_NAME} onClose={onClose} />);
-		expect(mockPushOverlayHistory).toHaveBeenCalledWith('sess-pre-existing-3', 'Reviewer');
+		expect(mockReplaceOverlayHistory).toHaveBeenCalledWith('sess-pre-existing-3', 'Reviewer');
 	});
 });

@@ -12,7 +12,7 @@
  *     activation kick.
  *   - The component watches `spaceStore.taskActivity` for a node-agent member
  *     whose `role === agentName`. When that member appears with a sessionId,
- *     the overlay hands off to `pushOverlayHistory(sessionId, agentName)`,
+ *     the overlay hands off to `replaceOverlayHistory(sessionId, agentName)`,
  *     which clears pending signals and switches the renderer to the standard
  *     `AgentOverlayChat`.
  *
@@ -25,7 +25,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Portal } from '../ui/Portal';
 import { setupFocusTrap } from '../ui/Modal';
 import { spaceStore } from '../../lib/space-store';
-import { pushOverlayHistory } from '../../lib/router';
+import { replaceOverlayHistory } from '../../lib/router';
 import { cn } from '../../lib/utils';
 import { borderColors } from '../../lib/design-tokens';
 
@@ -56,7 +56,7 @@ export function PendingAgentOverlay({ taskId, agentName, onClose }: PendingAgent
 
 	useEffect(() => {
 		if (liveMember && liveMember.sessionId) {
-			pushOverlayHistory(liveMember.sessionId, liveMember.label || agentName);
+			replaceOverlayHistory(liveMember.sessionId, liveMember.label || agentName);
 		}
 	}, [liveMember, agentName]);
 
@@ -93,7 +93,7 @@ export function PendingAgentOverlay({ taskId, agentName, onClose }: PendingAgent
 			// spawned), pivot immediately. Otherwise, wait for the activity
 			// subscription to surface the new session.
 			if (result.sessionId) {
-				pushOverlayHistory(result.sessionId, agentName);
+				replaceOverlayHistory(result.sessionId, agentName);
 			} else {
 				setWaitingForSession(true);
 			}
@@ -211,7 +211,11 @@ export function PendingAgentOverlay({ taskId, agentName, onClose }: PendingAgent
 							<textarea
 								ref={textareaRef}
 								class="flex-1 min-h-[44px] max-h-40 resize-none rounded-md bg-dark-850 border border-dark-700 text-sm text-gray-100 px-3 py-2 placeholder-gray-500 focus:outline-none focus:border-blue-500"
-								placeholder={`Send first message to ${agentName}…`}
+								placeholder={
+									waitingForSession
+										? `Send another message to ${agentName}…`
+										: `Send first message to ${agentName}…`
+								}
 								value={content}
 								onInput={(e) => setContent((e.target as HTMLTextAreaElement).value)}
 								onKeyDown={handleKeyDown}
@@ -222,7 +226,7 @@ export function PendingAgentOverlay({ taskId, agentName, onClose }: PendingAgent
 							<button
 								type="button"
 								onClick={() => void handleSend()}
-								disabled={!content.trim() || submitting || waitingForSession}
+								disabled={!content.trim() || submitting}
 								class={cn(
 									'inline-flex items-center justify-center rounded-md px-3 text-sm font-medium transition-colors flex-shrink-0',
 									'bg-blue-600 text-white hover:bg-blue-500',
