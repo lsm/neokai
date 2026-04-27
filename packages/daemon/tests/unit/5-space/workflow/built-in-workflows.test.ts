@@ -15,27 +15,27 @@
  * - Export/import round-trip: isCyclic and task_result conditions are preserved
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
-import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import {
-	CODING_WORKFLOW,
-	PLAN_AND_DECOMPOSE_WORKFLOW,
-	FULLSTACK_QA_LOOP_WORKFLOW,
-	RESEARCH_WORKFLOW,
-	REVIEW_ONLY_WORKFLOW,
-	getBuiltInWorkflows,
-	getBuiltInGateScript,
-	seedBuiltInWorkflows,
-} from '../../../../src/lib/space/workflows/built-in-workflows.ts';
-import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash.ts';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 import {
 	exportWorkflow,
 	validateExportedWorkflow,
 } from '../../../../src/lib/space/export-format.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import {
+	CODING_WORKFLOW,
+	FULLSTACK_QA_LOOP_WORKFLOW,
+	getBuiltInGateScript,
+	getBuiltInWorkflows,
+	PLAN_AND_DECOMPOSE_WORKFLOW,
+	RESEARCH_WORKFLOW,
+	REVIEW_ONLY_WORKFLOW,
+	seedBuiltInWorkflows,
+} from '../../../../src/lib/space/workflows/built-in-workflows.ts';
+import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash.ts';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2166,5 +2166,167 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW agent slot customPrompt', () => {
 		expect(agent.customPrompt?.value).toBeDefined();
 		expect(agent.customPrompt?.value).toContain('create_standalone_task');
 		expect(agent.customPrompt?.value).toContain('save_artifact');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Reviewer Terminal Action Pre-conditions
+//
+// Regression coverage for Task #136: Reviewer agents were calling
+// `submit_for_approval` / `approve_task` mid-loop while their own posted review
+// still contained pending P0–P3 findings, prematurely closing the iterative
+// Coding ↔ Review loop. Every Reviewer / review-style end-node prompt must now
+// contain an explicit Terminal Action Pre-conditions block establishing the
+// hard gate: zero pending P0–P3 findings AND verdict = APPROVE.
+// ---------------------------------------------------------------------------
+
+describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () => {
+	/**
+	 * Asserts that a review-style prompt contains the canonical pre-conditions
+	 * block. The check is content-based rather than token-exact so the prompt
+	 * can evolve without breaking the test, but every load-bearing phrase from
+	 * the design spec (severity range, both terminal tools, REQUEST_CHANGES
+	 * branch instructions, "same approval semantic") must be present.
+	 */
+	function assertTerminalActionPreconditions(prompt: string, opts: { upstream: string }): void {
+		// Header-style phrase identifying the block.
+		expect(prompt).toContain('TERMINAL ACTION PRE-CONDITIONS');
+		// Both terminal tools must be named explicitly so the model cannot
+		// interpret "approve_task only" or "submit_for_approval only".
+		expect(prompt).toContain('`approve_task`');
+		expect(prompt).toContain('`submit_for_approval`');
+		// Severity envelope must reference P0–P3 (covers the full classification
+		// rule from REVIEWER_CUSTOM_PROMPT in seed-agents.ts).
+		expect(prompt).toContain('P0–P3');
+		// Verdict gate — APPROVE must be the only path to a terminal call.
+		expect(prompt).toMatch(/verdict.*APPROVE|APPROVE.*verdict/i);
+		// REQUEST_CHANGES path must explicitly forbid both terminal calls.
+		expect(prompt).toContain('REQUEST_CHANGES');
+		expect(prompt).toMatch(/Do NOT call `approve_task`/);
+		expect(prompt).toMatch(/Do NOT call `submit_for_approval`/);
+		// The upstream node name must appear in the send_message instruction so
+		// the reviewer knows where to route feedback when continuing the loop.
+		expect(prompt).toContain(`send_message(target="${opts.upstream}"`);
+		// Equivalence statement: submit_for_approval is NOT a "let a human
+		// decide" escape hatch — it carries the same approval semantic as
+		// approve_task. This prevents the original bug recurring.
+		expect(prompt).toMatch(/same approval semantic|same.*semantic/i);
+	}
+
+	test('CODING_WORKFLOW Review node prompt contains Terminal Action Pre-conditions block', () => {
+		const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+		const prompt = reviewNode.agents[0].customPrompt!.value;
+		assertTerminalActionPreconditions(prompt, { upstream: 'Coding' });
+	});
+
+	test('CODING_WORKFLOW Review node REQUEST_CHANGES branch forbids both terminal tools', () => {
+		const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+		const prompt = reviewNode.agents[0].customPrompt!.value;
+		// Step 4 ("If changes are needed") must explicitly forbid both terminal
+		// calls, not just `approve_task`. Pre-Task #136 it only mentioned
+		// approve_task, leaving submit_for_approval as an unintended escape.
+		const stepFour = prompt.split('5. If satisfied')[0];
+		expect(stepFour).toMatch(/Do NOT call `approve_task`/);
+		expect(stepFour).toMatch(/Do NOT call `submit_for_approval`/);
+	});
+
+	test('RESEARCH_WORKFLOW Review node prompt contains Terminal Action Pre-conditions block', () => {
+		const reviewNode = RESEARCH_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+		const prompt = reviewNode.agents[0].customPrompt!.value;
+		assertTerminalActionPreconditions(prompt, { upstream: 'Research' });
+	});
+
+	test('RESEARCH_WORKFLOW Review node REQUEST_CHANGES branch forbids both terminal tools', () => {
+		const reviewNode = RESEARCH_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+		const prompt = reviewNode.agents[0].customPrompt!.value;
+		// "more research is needed" branch must forbid both terminal tools.
+		const requestBranch = prompt.split('6. If satisfied')[0];
+		expect(requestBranch).toMatch(/Do NOT call `approve_task`/);
+		expect(requestBranch).toMatch(/Do NOT call `submit_for_approval`/);
+	});
+
+	test('REVIEW_ONLY_WORKFLOW prompt forbids terminal calls when verdict is REQUEST_CHANGES', () => {
+		const prompt = REVIEW_ONLY_WORKFLOW.nodes[0].agents[0].customPrompt!.value;
+		// Header & severity coverage.
+		expect(prompt).toContain('TERMINAL ACTION PRE-CONDITIONS');
+		expect(prompt).toContain('P0–P3');
+		expect(prompt).toContain('`approve_task`');
+		expect(prompt).toContain('`submit_for_approval`');
+		// Both terminal tools must be forbidden on the REQUEST_CHANGES branch.
+		expect(prompt).toMatch(/Do NOT call `approve_task`/);
+		expect(prompt).toMatch(/Do NOT call `submit_for_approval`/);
+		// Same approval semantic clarifier so submit_for_approval is not
+		// treated as an escape hatch in the single-node case either.
+		expect(prompt).toMatch(/same approval semantic/i);
+	});
+
+	test('FULLSTACK_QA_LOOP_WORKFLOW Review node forbids gate-write while findings are open', () => {
+		const reviewNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+		const prompt = reviewNode.agents[0].customPrompt!.value;
+		// Review is mid-graph in this workflow — terminal tools are unavailable
+		// to it — but the pre-conditions block must still be present so the
+		// reviewer does not silently flip review-approval-gate while findings
+		// are open.
+		expect(prompt).toContain('TERMINAL ACTION PRE-CONDITIONS');
+		expect(prompt).toContain('P0–P3');
+		expect(prompt).toContain('REQUEST_CHANGES');
+		expect(prompt).toContain('review-approval-gate');
+		// Failure-path routing: the prompt must explicitly tell the reviewer to
+		// send feedback back to Coding via send_message rather than silently
+		// stalling. Asserting this catches future drift in the routing wording.
+		expect(prompt).toContain('send_message(target="Coding", ...)');
+		// Same approval semantic clarifier: even though approve_task /
+		// submit_for_approval are unavailable on this mid-graph node, writing
+		// the approval gate is the equivalent terminal hand-off and the prompt
+		// must call out the parallel so a future split (where the tools become
+		// available) does not accidentally remove the gating.
+		expect(prompt).toMatch(/same approval semantic/i);
+	});
+
+	test('FULLSTACK_QA_LOOP_WORKFLOW QA node prompt contains Terminal Action Pre-conditions block', () => {
+		const qaNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
+		const prompt = qaNode.agents[0].customPrompt!.value;
+		// QA is the end node for the fullstack loop — both terminal tools must
+		// be guarded the same way as a code reviewer.
+		expect(prompt).toContain('TERMINAL ACTION PRE-CONDITIONS');
+		expect(prompt).toContain('`approve_task`');
+		expect(prompt).toContain('`submit_for_approval`');
+		expect(prompt).toContain('P0–P3');
+		// Failure branch must forbid both calls.
+		expect(prompt).toMatch(/Do NOT call `approve_task`/);
+		expect(prompt).toMatch(/Do NOT call `submit_for_approval`/);
+		// Same approval semantic clarifier so submit_for_approval is not used
+		// as an "escalate this failing QA" escape hatch.
+		expect(prompt).toMatch(/same approval semantic/i);
+	});
+
+	test('PLAN_AND_DECOMPOSE_WORKFLOW Plan Review reviewers carry Terminal Action Pre-conditions', () => {
+		const reviewNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
+		expect(reviewNode.agents).toHaveLength(4);
+		for (const agent of reviewNode.agents) {
+			const prompt = agent.customPrompt!.value;
+			// Plan reviewers are not end-node agents but the same gating
+			// principle applies — voting `approved: true` while P0–P3 findings
+			// are open is the gate-write equivalent of `approve_task`.
+			expect(prompt).toContain('TERMINAL ACTION PRE-CONDITIONS');
+			expect(prompt).toContain('P0–P3');
+			expect(prompt).toContain('`approve_task`');
+			expect(prompt).toContain('`submit_for_approval`');
+		}
+	});
+
+	test('PLAN_AND_DECOMPOSE_WORKFLOW Task Dispatcher prompt forbids terminal calls while dispatch incomplete', () => {
+		const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
+			(n) => n.name === 'Task Dispatcher'
+		)!;
+		const prompt = dispatcherNode.agents[0].customPrompt!.value;
+		expect(prompt).toContain('TERMINAL ACTION PRE-CONDITIONS');
+		expect(prompt).toContain('`approve_task`');
+		expect(prompt).toContain('`submit_for_approval`');
+		// Dispatcher's REQUEST_CHANGES analogue: dispatch incomplete.
+		expect(prompt).toMatch(/Do NOT call `approve_task`/);
+		expect(prompt).toMatch(/Do NOT call `submit_for_approval`/);
+		// Same approval semantic clarifier.
+		expect(prompt).toMatch(/same approval semantic/i);
 	});
 });

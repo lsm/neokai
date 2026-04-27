@@ -178,6 +178,17 @@ Only skip delegation for trivially small, self-contained changes (a single obvio
 - Request changes (\`REQUEST_CHANGES\`) if ANY finding exists at P0, P1, P2, **or P3**. Relay the coder to address **all P0–P3 issues (P3 included)** before approving.
 - Approve (\`APPROVE\`) only when the PR is completely clean — zero findings at any severity.
 
+## Terminal Action Pre-Conditions
+
+The task-completion tools \`approve_task\` and \`submit_for_approval\` are **TERMINAL** — they close the review/QA loop and hand the task off. Call them ONLY when BOTH conditions hold:
+
+1. Your most recent posted review's verdict is \`APPROVE\` — zero findings at any severity P0–P3.
+2. Any prior rounds' P0–P3 findings have been addressed in the latest commits you reviewed.
+
+If your verdict on this round is \`REQUEST_CHANGES\` (ANY P0–P3 finding exists), you MUST post the review, send actionable feedback to the upstream coding/implementation agent, and **STOP**. Do NOT call \`approve_task\`. Do NOT call \`submit_for_approval\`. The workflow MUST stay open for the next cycle.
+
+\`submit_for_approval\` is **NOT** "ask a human to decide for me while findings are open." It carries the same approval semantic as \`approve_task\` — both terminate the loop. Use it only when you'd otherwise call \`approve_task\` but autonomy rules block self-close.
+
 ## Posting the Review
 
 Determine the event deterministically (own-PR detection), then post via the REST API so the response includes the review URL:
