@@ -1,4 +1,4 @@
-.PHONY: dev serve-random self self-test run run-e2e build test test-daemon test-daemon-shard test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release release-prepare sync-sdk-types setup-hooks setup test-proxy-start test-proxy-stop test-proxy-status test-proxy-restart
+.PHONY: dev serve-random self self-test run run-e2e build test test-daemon test-daemon-shard test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release release-prepare sync-sdk-types setup-hooks setup test-proxy-start test-proxy-stop test-proxy-status test-proxy-restart desktop-dev desktop-build desktop-build-sidecar
 
 # Development server - uses random available port by default
 # Usage: make dev
@@ -191,3 +191,16 @@ test-proxy-status:
 
 test-proxy-restart:
 	@./scripts/dev-proxy.sh restart
+
+# Desktop (Tauri) — see packages/desktop/README.md.
+# `make desktop-dev` assumes a daemon is reachable on http://localhost:9283.
+# Run it in a separate terminal:
+#   make dev DB_PATH=/tmp/beokai-9283 PORT=9283
+desktop-dev:
+	@cd packages/desktop && bun run dev
+
+desktop-build-sidecar:
+	@cd packages/desktop && bun run build:sidecar
+
+desktop-build:
+	@cd packages/desktop && bun run build
