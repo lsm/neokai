@@ -389,15 +389,21 @@ export class RoomRuntimeService {
 		}
 
 		// Merge: registry first, then file-based overwrites on collision.
-		// Only call setRuntimeMcpServers when there is at least one server to inject —
-		// an undefined config lets the SDK use its own default discovery, while an
-		// empty map would suppress it entirely with no benefit.
+		// Only attach when there is at least one server to inject — an undefined
+		// config lets the SDK use its own default discovery, while an empty map
+		// would suppress it entirely with no benefit.
+		//
+		// Use `mergeRuntimeMcpServers` (additive) rather than the deprecated
+		// replace-all API: worker sessions are usually fresh here, but callers
+		// such as `restoreSession` may run after another subsystem has already
+		// attached helpers, and merge guarantees those survive. See Task #140 /
+		// `docs/research/node-agent-mcp-loss-root-cause.md` §2.
 		const merged: Record<string, McpServerConfig> = {
 			...registryMcpServers,
 			...fileMcpServers,
 		};
 		if (Object.keys(merged).length > 0) {
-			session.setRuntimeMcpServers(merged);
+			session.mergeRuntimeMcpServers(merged);
 		}
 	}
 
@@ -580,7 +586,12 @@ export class RoomRuntimeService {
 			setSessionMcpServers: (sessionId, mcpServers) => {
 				const session = agentSessions.get(sessionId);
 				if (!session) return false;
-				session.setRuntimeMcpServers(
+				// Merge rather than replace — call sites (planner-tools / leader-agent-tools)
+				// always attach a single named server, never the full map. The deprecated
+				// replace-all API would silently drop any concurrently-attached servers
+				// (db-query, registry MCP entries) and cause "No such tool available"
+				// regressions. See Task #140 acceptance criterion #1.
+				session.mergeRuntimeMcpServers(
 					mcpServers as Record<string, import('@neokai/shared').McpServerConfig>
 				);
 				return true;
@@ -839,9 +850,10 @@ export class RoomRuntimeService {
 				// because they run inside the project workspace where local config is more specific.
 				// See createSessionFactory() for the worker merge logic.
 				//
-				// Note: setRuntimeMcpServers() replaces the config used for the NEXT query; it does
-				// NOT restart any in-flight query. This is intentional — MCP server changes between
-				// queries are the expected use case, and disrupting an active query is not safe.
+				// Note: the runtime MCP attach path updates the config used for the NEXT
+				// query; it does NOT restart any in-flight query. This is intentional —
+				// MCP server changes between queries are the expected use case, and
+				// disrupting an active query is not safe.
 				//
 				// Note: getEnabledMcpServersConfig() reads from the global workspace path that
 				// the SettingsManager was constructed with (i.e., the daemon's workspaceRoot), NOT
@@ -888,7 +900,10 @@ export class RoomRuntimeService {
 					roomMcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
 				}
 
-				roomChatSession.setRuntimeMcpServers(roomMcpServers);
+				// Merge (additive) so any servers another subsystem may have attached
+				// to this room-chat session are preserved. Task #140 acceptance #1 —
+				// no replace-all in production code paths.
+				roomChatSession.mergeRuntimeMcpServers(roomMcpServers);
 				// Inject the room chat system prompt so the agent knows the proper
 				// goal → plan → approval → task workflow and never creates tasks
 				// prematurely when a goal is created.
@@ -993,7 +1008,7 @@ export class RoomRuntimeService {
 		// mcp.registry.changed — re-apply MCP configs to all live room chat sessions when the
 		// application-level registry changes (entry created/updated/deleted/toggled).
 		//
-		// Note: setRuntimeMcpServers() updates the config used for subsequent queries only;
+		// Note: runtime MCP attach updates the config used for subsequent queries only;
 		// it does NOT interrupt a query that is already in-flight. This is sufficient because
 		// MCP server changes between queries are the expected use case.
 		const unsubMcpChanged = this.ctx.daemonHub.on(
@@ -1028,7 +1043,10 @@ export class RoomRuntimeService {
 							if (dbQueryServer) {
 								merged['db-query'] = dbQueryServer as unknown as McpServerConfig;
 							}
-							session.setRuntimeMcpServers(merged);
+							// Merge so any servers attached by other subsystems
+							// (e.g. workflow tooling) are preserved across registry refreshes.
+							// Task #140 acceptance #1.
+							session.mergeRuntimeMcpServers(merged);
 						})
 						.catch((error) => {
 							log.warn(`Failed to re-apply MCP servers for room ${roomId}:`, error);
