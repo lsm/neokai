@@ -192,6 +192,7 @@ export function buildWorkflowCreateParams(
 				customPrompt?: import('@neokai/shared').WorkflowNodeAgentOverride;
 				disabledSkillIds?: string[];
 				extraMcpServers?: import('@neokai/shared').WorkflowNodeAgent['extraMcpServers'];
+				timeoutMs?: number;
 			} = {
 				agentId: agentId ?? '',
 				name: a.name,
@@ -213,6 +214,7 @@ export function buildWorkflowCreateParams(
 					string,
 					import('@neokai/shared').McpServerConfig
 				>;
+			if (typeof a.timeoutMs === 'number') entry.timeoutMs = a.timeoutMs;
 			return entry;
 		});
 
