@@ -367,7 +367,14 @@ export class QueryRunner {
 				const providerService = getProviderService();
 				// Use the resolved provider ID (falls back to 'anthropic' for legacy sessions)
 				const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
-				const originalEnvVars = providerService.applyEnvVarsToProcess(modelId, resolvedProviderId);
+				const originalEnvVars = providerService.applyEnvVarsToProcessForSession({
+					...session,
+					config: {
+						...session.config,
+						model: modelId,
+						provider: resolvedProviderId as Session['config']['provider'],
+					},
+				});
 				this.ctx.originalEnvVars = originalEnvVars;
 			}
 

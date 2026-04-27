@@ -92,8 +92,20 @@ export class ProviderContextManager {
 		const provider = this.resolveProvider(session);
 		const modelId = session.config.model || 'default';
 
-		// Build SDK configuration for this provider
-		const sessionConfig = session.config.providerConfig;
+		// Build SDK configuration for this provider. Some bridge providers encode
+		// session identity and cwd in their SDK config, so provider context creation
+		// must pass the full session scope rather than only providerConfig.
+		const providerConfig = session.config.providerConfig;
+		const sessionConfig = {
+			workspacePath: session.worktree?.worktreePath ?? session.workspacePath ?? undefined,
+			sessionId: session.id,
+			...(providerConfig
+				? {
+						apiKey: providerConfig.apiKey,
+						baseUrl: providerConfig.baseUrl,
+					}
+				: {}),
+		};
 		const sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
 
 		return new ContextImpl(provider, sdkConfig, modelId, sessionConfig);

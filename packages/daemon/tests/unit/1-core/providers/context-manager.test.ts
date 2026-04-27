@@ -396,6 +396,8 @@ describe('ProviderContextManager', () => {
 			expect(context.sessionConfig).toEqual({
 				apiKey: 'custom-key',
 				baseUrl: 'https://custom.api.com',
+				sessionId: 'test-session',
+				workspacePath: '/test',
 			});
 		});
 	});

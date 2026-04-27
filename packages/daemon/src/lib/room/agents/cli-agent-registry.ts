@@ -54,6 +54,8 @@ const COPILOT_REVIEW_MODELS = [
 	'gemini-3.1-pro-preview',
 	'gpt-5.3-codex',
 	'gpt-5.4',
+	'gpt-5.4-mini',
+	'gpt-5.5',
 ] as const;
 
 const KNOWN_CLI_AGENTS: CliAgentDefinition[] = [
@@ -62,14 +64,14 @@ const KNOWN_CLI_AGENTS: CliAgentDefinition[] = [
 		name: 'Codex',
 		command: 'codex',
 		provider: 'OpenAI',
-		knownModels: ['gpt-5.3-codex', 'gpt-5.4'],
+		knownModels: ['gpt-5.3-codex', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.5'],
 	},
 	{
 		id: 'codex-review',
 		name: 'Codex Review',
 		command: 'codex',
 		provider: 'OpenAI',
-		knownModels: ['gpt-5.3-codex', 'gpt-5.4'],
+		knownModels: ['gpt-5.3-codex', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.5'],
 	},
 	{
 		id: 'gemini',
