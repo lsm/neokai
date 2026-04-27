@@ -420,3 +420,85 @@ describe('Passive Event Listener', () => {
 		expect(addEventListenerCalls[0].options).toEqual({ passive: true });
 	});
 });
+
+/**
+ * Pending Agent Mode — Source-Level Structural Tests
+ *
+ * When the `pendingAgent` prop is set, ChatContainer renders a completely
+ * separate UI tree (early return before the loading skeleton). These tests
+ * guard against regressions in the pending agent render by asserting on the
+ * raw source code.
+ *
+ * The pending agent mode replaced the standalone `PendingAgentOverlay`
+ * component (deleted in PR #1670). The logic is:
+ *   1. Render a "not started yet" state with a minimal composer.
+ *   2. On send, call `spaceStore.activateTaskNodeAgent(taskId, agentName, msg)`.
+ *   3. Watch `spaceStore.taskActivity` for a live session; when found, call
+ *      `replaceOverlayHistory(sessionId, agentName)` to hand off.
+ */
+describe('Pending Agent Mode', () => {
+	const source = chatContainerSource;
+
+	it('pendingAgent prop is declared on the interface', () => {
+		expect(source).toMatch(
+			/pendingAgent\?:\s*\{\s*taskId:\s*string;\s*agentName:\s*string\s*\}\s*\|\s*null/
+		);
+	});
+
+	it('pending render root div has data-testid="pending-agent-overlay"', () => {
+		// The early-return block for pendingAgent renders a div with this test ID
+		expect(source).toMatch(/data-testid="pending-agent-overlay"/);
+	});
+
+	it('pending render root div has an aria-label for accessibility', () => {
+		// Screen readers need to identify which agent overlay is open
+		expect(source).toMatch(
+			/aria-label=\{\`\$\{pendingAgent\.agentName\}\s*chat\s*\(starting\)\`\}/
+		);
+	});
+
+	it('pending header mirrors ChatHeader height (h-[65px]) for CLS prevention', () => {
+		// The pending header must match ChatHeader's fixed 65px height to avoid
+		// layout shift when the overlay hands off to the live session view.
+		const pendingBlock =
+			source.match(/Pending Agent Render[\s\S]*?pending-agent-overlay-textarea/)?.[0] ?? '';
+		expect(pendingBlock).toContain('min-h-[65px]');
+	});
+
+	it('pending body has data-testid="pending-agent-overlay-body"', () => {
+		expect(source).toMatch(/data-testid="pending-agent-overlay-body"/);
+	});
+
+	it('handoff calls replaceOverlayHistory when live session appears', () => {
+		// The effect that watches pendingLiveMember must call replaceOverlayHistory
+		// with the session ID to transition from pending to live session mode.
+		expect(source).toMatch(/pendingLiveMember\?\.sessionId[\s\S]*?replaceOverlayHistory/);
+	});
+
+	it('send handler calls spaceStore.activateTaskNodeAgent', () => {
+		// On send, the pending mode activates the agent via the store method
+		expect(source).toMatch(/spaceStore\.activateTaskNodeAgent\(/);
+	});
+
+	it('send handler calls replaceOverlayHistory when daemon returns sessionId', () => {
+		// If the daemon returns a sessionId synchronously, hand off immediately
+		expect(source).toMatch(/result\.sessionId[\s\S]*?replaceOverlayHistory/);
+	});
+
+	it('error state sets pendingErrorMessage on failure', () => {
+		// When activateTaskNodeAgent throws, the error message must be surfaced
+		expect(source).toMatch(/setPendingErrorMessage\(/);
+	});
+
+	it('Enter key triggers send (without Shift)', () => {
+		// The pending composer should send on Enter alone, like the main composer
+		expect(source).toMatch(/handlePendingKeyDown[\s\S]*?e\.key === 'Enter' && !e\.shiftKey/);
+	});
+
+	it('pending mode skips sessionStore.select() on mount', () => {
+		// When pendingAgent is set, the component must NOT call sessionStore.select()
+		// since there is no live session to load.
+		const selectGuard = source.match(/pendingAgent[\s\S]*?sessionStore\.select\(/)?.[0] ?? '';
+		expect(selectGuard).toContain('!');
+	});
+});

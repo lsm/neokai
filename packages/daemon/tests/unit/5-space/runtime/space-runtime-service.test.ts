@@ -743,6 +743,22 @@ describe('SpaceRuntimeService', () => {
 			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
 		});
 
+		test('skips workflow node-agent sub-sessions (session ID contains :task:…:exec:)', async () => {
+			const agent = makeMemberAgentSession();
+			const sessionManager = makeSessionManager(agent);
+			const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+
+			// Simulate a workflow sub-session ID: space:<spaceId>:task:<taskId>:exec:<execId>
+			await svc.attachSpaceToolsToMemberSession(
+				makeMemberSession({
+					type: 'worker',
+					id: `space:${mockSpace.id}:task:task-1:exec:exec-a`,
+				})
+			);
+
+			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
+		});
+
 		test('start() attaches tools to existing member sessions listed by sessionManager', async () => {
 			const agent = makeMemberAgentSession();
 			const sessionManager = makeSessionManager(agent);
@@ -946,6 +962,45 @@ describe('SpaceRuntimeService', () => {
 			await daemonHub.emit('session.created', {
 				sessionId: taskAgentSession.id,
 				session: taskAgentSession,
+			});
+			await new Promise<void>((resolve) => setTimeout(resolve, 10));
+
+			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
+
+			await svc.stop();
+			await daemonHub.close();
+		});
+
+		test('does NOT attach for workflow node-agent sub-sessions (session ID contains :task:…:exec:)', async () => {
+			const sessionManager = {
+				getSessionAsync: mock(async () => null),
+				listSessions: mock(() => [] as Session[]),
+			} as unknown as SessionManager;
+			const daemonHub = await createTestDaemonHub('space-rts-test-sub-session-guard');
+			const agent = makeMemberAgentSession();
+			const svc = new SpaceRuntimeService({
+				db: {} as BunDatabase,
+				spaceManager: createMockSpaceManager(mockSpace),
+				spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
+				spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
+				workflowRunRepo: {} as SpaceWorkflowRunRepository,
+				taskRepo: {} as SpaceTaskRepository,
+				tickIntervalMs: 60_000,
+				sessionManager,
+				daemonHub,
+				getSessionAsync: mock(async () => agent),
+			});
+
+			svc.start();
+
+			// Simulate a workflow sub-session ID: space:<spaceId>:task:<taskId>:exec:<execId>
+			const subSession = makeMemberSession({
+				type: 'worker',
+				id: `space:${mockSpace.id}:task:task-1:exec:exec-a`,
+			});
+			await daemonHub.emit('session.created', {
+				sessionId: subSession.id,
+				session: subSession,
 			});
 			await new Promise<void>((resolve) => setTimeout(resolve, 10));
 
