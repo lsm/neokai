@@ -193,7 +193,7 @@ export async function drainToSSE(
 				send(contentBlockStopSSE(blockIndex));
 				// At tool_call time, thread/tokenUsage/updated has not yet fired (the model
 				// hasn't finished the turn yet), so always use the heuristic count here.
-				send(messageDeltaSSE('tool_use', { outputTokens }));
+				send(messageDeltaSSE('tool_use', { outputTokens, inputTokens: 0 }));
 				send(messageStopSSE());
 
 				// Store the session so the next HTTP request can resume it.
@@ -228,7 +228,12 @@ export async function drainToSSE(
 				// event.outputTokens is populated from thread/tokenUsage/updated (v2 protocol)
 				// or from legacy inline usage. Fall back to heuristic count if both are 0.
 				const endOutputTokens = event.outputTokens > 0 ? event.outputTokens : outputTokens;
-				send(messageDeltaSSE('end_turn', { outputTokens: endOutputTokens }));
+				send(
+					messageDeltaSSE('end_turn', {
+						outputTokens: endOutputTokens,
+						inputTokens: event.inputTokens || 0,
+					})
+				);
 				send(messageStopSSE());
 				onTurnDone();
 				controller.close();
@@ -253,7 +258,7 @@ export async function drainToSSE(
 		if (textBlockOpen) {
 			send(contentBlockStopSSE(blockIndex));
 		}
-		send(messageDeltaSSE('end_turn', { outputTokens: outputTokens }));
+		send(messageDeltaSSE('end_turn', { outputTokens: outputTokens, inputTokens: 0 }));
 		send(messageStopSSE());
 		session.kill();
 		onError?.();
