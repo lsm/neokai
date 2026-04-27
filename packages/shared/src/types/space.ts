@@ -177,7 +177,7 @@ export type SpaceTaskStatus =
 	| 'archived';
 
 /**
- * Outcome an end-node agent reports via `report_result`.
+ * Outcome an end-node agent reports via `task.reportedStatus`.
  *
  * This is the agent's claimed terminal state for the workflow — distinct from
  * `SpaceTask.status`, which is the runtime's final decision after the report
@@ -302,11 +302,12 @@ export interface SpaceTask {
 	 */
 	pendingCompletionReason?: string | null;
 	/**
-	 * Status the end-node agent reported via `report_result`. Null until the agent
-	 * reports. Recorded separately from `status` so the runtime can resolve the
-	 * final task status through the `submit_for_approval` review path (supervised
-	 * modes) without the agent bypassing the gate. Once recorded, this field is
-	 * preserved for audit even after `status` reaches a terminal value.
+	 * Status the end-node agent reported by writing this field. Null until the
+	 * agent reports. Recorded separately from `status` so the runtime can resolve
+	 * the final task status through the `submit_for_approval` review path
+	 * (supervised modes) without the agent bypassing the gate. Once recorded,
+	 * this field is preserved for audit even after `status` reaches a terminal
+	 * value.
 	 */
 	reportedStatus: SpaceReportedStatus | null;
 	/**
@@ -381,7 +382,7 @@ export interface SpaceTaskActivityMember {
 		agentName: string;
 		/** Execution status */
 		status: NodeExecutionStatus;
-		/** Result output from `report_result`, if set */
+		/** Result output reported by the end-node agent, if set */
 		result?: string | null;
 	} | null;
 	/** Last update timestamp from the linked SpaceTask or backing session metadata */
@@ -474,9 +475,9 @@ export interface UpdateSpaceTaskParams {
 	pendingCompletionSubmittedAt?: number | null;
 	/** Agent-supplied rationale for `submit_for_approval`; null to clear. */
 	pendingCompletionReason?: string | null;
-	/** Agent-reported terminal status from `report_result`; null to clear */
+	/** Agent-reported terminal status (written to `task.reportedStatus`); null to clear */
 	reportedStatus?: SpaceReportedStatus | null;
-	/** Agent-reported summary from `report_result`; null to clear */
+	/** Agent-reported summary (written to `task.reportedSummary`); null to clear */
 	reportedSummary?: string | null;
 	/**
 	 * Session ID of the post-approval executor; null to clear.
@@ -493,34 +494,6 @@ export interface UpdateSpaceTaskParams {
 	 * Schema only in PR 1; no runtime consumer yet.
 	 */
 	postApprovalBlockedReason?: string | null;
-}
-
-/**
- * Append-only audit record of an end-node agent's `report_result` call.
- *
- * `report_result` is pure outcome reporting — each call creates a new row here
- * rather than overwriting the previous one, so the full history is visible
- * post-hoc. Writing to this table does NOT touch `task.reportedStatus`; that
- * is set only by `approve_task` (agent self-close) or by the runtime after a
- * human approves a `submit_for_approval` request.
- */
-export interface SpaceTaskReportResult {
-	/** Unique identifier */
-	id: string;
-	/** Task this result belongs to */
-	taskId: string;
-	/** Space this task belongs to (denormalized for fast per-space queries) */
-	spaceId: string;
-	/** Workflow node ID of the reporting agent */
-	workflowNodeId: string | null;
-	/** Agent name (slot) that reported */
-	agentName: string | null;
-	/** Human-readable summary */
-	summary: string;
-	/** Structured evidence, if supplied; stored as JSON blob */
-	evidence: Record<string, unknown> | null;
-	/** Record creation timestamp (milliseconds since epoch) */
-	recordedAt: number;
 }
 
 // ============================================================================
@@ -607,7 +580,7 @@ export interface UpdateNodeExecutionParams {
  *
  * - `pending`     — run created, awaiting Task Agent to start nodes
  * - `in_progress` — at least one node execution is active
- * - `done`        — end node called `report_result` or all nodes completed
+ * - `done`        — end node set `task.reportedStatus` or all nodes completed
  * - `blocked`     — run requires human intervention (gate rejection, crash, etc.)
  * - `cancelled`   — run was cancelled before completion
  */
@@ -1183,8 +1156,8 @@ export interface SpaceWorkflow {
 	startNodeId: string;
 	/**
 	 * ID of the node where execution ends.
-	 * When the end node's execution calls `report_result`, the workflow run is
-	 * automatically marked `done`. If absent, completion relies on the
+	 * When the end node's execution sets `task.reportedStatus`, the workflow run
+	 * is automatically marked `done`. If absent, completion relies on the
 	 * `CompletionDetector` all-agents-done check as a safety net.
 	 */
 	endNodeId?: string;
@@ -1269,7 +1242,8 @@ export interface CreateSpaceWorkflowParams {
 	startNodeId?: string;
 	/**
 	 * ID of the node where execution ends.
-	 * When the end node's execution calls `report_result`, the workflow run auto-completes.
+	 * When the end node's execution sets `task.reportedStatus`, the workflow run
+	 * auto-completes.
 	 */
 	endNodeId?: string;
 	/** Workflow-level messaging channels. */
@@ -1526,7 +1500,8 @@ export interface ExportedSpaceWorkflow {
 	startNode: string;
 	/**
 	 * Name of the node where execution ends (optional — mirrors `SpaceWorkflow.endNodeId`).
-	 * When present, the end node's `report_result` call auto-completes the workflow run.
+	 * When present, the end node setting `task.reportedStatus` auto-completes the
+	 * workflow run.
 	 */
 	endNode?: string;
 	/** Tags for categorization */

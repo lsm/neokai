@@ -391,7 +391,7 @@ export class SpaceWorkflowManager {
 				`endNodeId "${endNodeId}" does not match any node in this workflow`
 			);
 		}
-		// End nodes own the workflow's completion signal via `report_result`.
+		// End nodes own the workflow's completion signal via `task.reportedStatus`.
 		// Multi-agent end nodes create ambiguity: who declares the workflow done?
 		// Restrict to exactly one agent so there's a single unambiguous owner of
 		// the workflow's commitment.
@@ -399,7 +399,7 @@ export class SpaceWorkflowManager {
 		if (agentCount !== 1) {
 			throw new WorkflowValidationError(
 				`endNode "${endNode.name}" must have exactly 1 agent (has ${agentCount}); ` +
-					`end nodes own the workflow completion signal via report_result`
+					`end nodes own the workflow completion signal via task.reportedStatus`
 			);
 		}
 	}

@@ -18,10 +18,10 @@
  *     here — completion handling is for active workflow lifecycle, not soft-delete.
  *
  *  2. `task.reportedStatus` is non-null — the end-node agent reported its result
- *     via `report_result`. The runtime's tick will resolve the final task status
- *     on the next pass through `resolveTaskApproval` (which honors the
- *     supervised-mode review gate — i.e. `completionAutonomyLevel`). Returning
- *     true here causes that resolution to fire.
+ *     by writing the field directly (task is the single source of truth). The
+ *     runtime's tick will resolve the final task status on the next pass through
+ *     `resolveTaskApproval` (which honors the supervised-mode review gate — i.e.
+ *     `completionAutonomyLevel`). Returning true here causes that resolution to fire.
  *
  * TODO: stall detection (gap #13) — once nothing is `pending`/`in_progress` and
  * the task is still `in_progress` with no `reportedStatus`, the workflow is

@@ -87,11 +87,11 @@ function buildLinearWorkflow(
 
 /**
  * End-node validation requires exactly 1 agent (validator enforced — they own
- * the `report_result` completion signal). When a test workflow has its last
- * node as multi-agent (which used to double as start+end), append a synthetic
- * single-agent terminal node so the multi-agent node remains the start (or
- * middle) and validation passes. Tests that don't activate the synthetic end
- * node continue to behave the same.
+ * the `task.reportedStatus` completion signal). When a test workflow has its
+ * last node as multi-agent (which used to double as start+end), append a
+ * synthetic single-agent terminal node so the multi-agent node remains the
+ * start (or middle) and validation passes. Tests that don't activate the
+ * synthetic end node continue to behave the same.
  */
 const SYNTHETIC_END_NODE_ID = '__test_end__';
 

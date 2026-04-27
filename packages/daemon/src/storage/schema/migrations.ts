@@ -508,6 +508,14 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   Self-contained (frozen preset fingerprints inlined) — same pattern as
 	//   M94 for workflow templates.
 	runMigration106(db);
+
+	// Migration 107: Drop the legacy `space_task_report_results` audit table.
+	//   M104's plan §4.4 step 9 deferred this drop pending a writer audit; the
+	//   audit is now complete (no remaining production code path writes to the
+	//   table — the `report_result` end-node tool, repository, and helpers were
+	//   all removed). Runs after every previous migration that may still
+	//   reference the table.
+	runMigration107(db);
 }
 
 /**
@@ -7361,4 +7369,25 @@ export function runMigration105(db: BunDatabase): void {
  */
 export function runMigration106(db: BunDatabase): void {
 	runMigration106External(db);
+}
+
+/**
+ * Migration 107: Drop the legacy `space_task_report_results` table.
+ *
+ * Background: the `report_result` end-node tool (Task #39) wrote append-only
+ * audit rows here. The tool has since been removed in favour of
+ * `task.reportedStatus` plus `save_artifact({ append: true })`. M104's plan
+ * §4.4 step 9 deferred dropping the table pending a writer audit; that audit
+ * is now complete and no production code path still references the table —
+ * the repository, helpers, and tests have all been deleted alongside this
+ * migration.
+ *
+ * Idempotent: `DROP TABLE IF EXISTS` and `DROP INDEX IF EXISTS` make this a
+ * safe no-op on databases that have already been migrated or that never had
+ * the table.
+ */
+export function runMigration107(db: BunDatabase): void {
+	db.exec(`DROP INDEX IF EXISTS idx_space_task_report_results_task`);
+	db.exec(`DROP INDEX IF EXISTS idx_space_task_report_results_space`);
+	db.exec(`DROP TABLE IF EXISTS space_task_report_results`);
 }

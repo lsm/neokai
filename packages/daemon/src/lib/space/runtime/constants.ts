@@ -4,18 +4,6 @@
  * Shared configuration constants for the Space runtime layer.
  */
 
-/**
- * Default timeout for auto-completing a stuck agent.
- *
- * An agent is considered "stuck" when it is alive (session active) but has not
- * called `report_result` after this duration since the task was started. The
- * task is auto-completed with a system-generated result so the workflow can
- * continue without manual intervention.
- *
- * Default: 10 minutes.
- */
-export const AGENT_REPORT_RESULT_TIMEOUT_MS = 10 * 60 * 1000;
-
 // ---------------------------------------------------------------------------
 // Per-node agent name timeout constants (M9.4)
 // ---------------------------------------------------------------------------

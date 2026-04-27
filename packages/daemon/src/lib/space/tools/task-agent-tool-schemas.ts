@@ -18,8 +18,8 @@
  *   - optional fields use .optional() after .describe()
  *   - enum fields use z.enum([...])
  *
- * Note: The `report_result` schema was removed. Use `save_artifact` (from
- * node-agent-tool-schemas.ts) with `append: true` for append-only audit records.
+ * Note: For append-only audit records, use `save_artifact` (from
+ * node-agent-tool-schemas.ts) with `append: true`.
  */
 
 import { z } from 'zod';

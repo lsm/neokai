@@ -233,11 +233,6 @@ describe('buildTaskAgentSystemPrompt — result handling (Stage-2 result-only co
 		expect(prompt).toContain('summary');
 	});
 
-	test('does not reference the removed report_result tool', () => {
-		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).not.toContain('report_result');
-	});
-
 	test('references the completion-action pipeline as the status arbiter', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
 		expect(prompt.toLowerCase()).toContain('completion-action');

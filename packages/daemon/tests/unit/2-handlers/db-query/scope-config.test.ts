@@ -64,7 +64,6 @@ describe('scope-config', () => {
 				'space_workflow_nodes',
 				'space_workflow_runs',
 				'space_tasks',
-				'space_task_report_results',
 				'space_worktrees',
 				'gate_data',
 				'channel_cycles',
@@ -76,7 +75,7 @@ describe('scope-config', () => {
 				'session_groups',
 				'session_group_members',
 			]);
-			expect(names).toHaveLength(15);
+			expect(names).toHaveLength(14);
 		});
 
 		it('all table configs have a description', () => {
