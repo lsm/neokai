@@ -1606,3 +1606,46 @@ export interface ApprovalRecord {
 	/** True if the human chose to skip this action instead of approving */
 	skipped?: boolean;
 }
+
+// ── Active-turn activity summary ──────────────────────────────────────────────
+//
+// The Space task view's running roster ("what is the agent doing right now?")
+// summarises the *currently active* turn for each agent session. Historically
+// the client derived the roster from the same compacted feed rows used by the
+// minimal thread renderer — capped at the last 5 non-terminal renderable rows
+// per turn — so long turns under-reported their activity. The server now
+// computes the full chronological activity list per active turn alongside the
+// compact feed and ships it as `activeTurnSummaries` on the LiveQuery
+// metadata channel; the client display cap is applied at render time.
+
+/** A single chronological activity entry within an active turn. */
+export type ActivityEntry =
+	/** Assistant `tool_use` block — surfaces tool name + an input preview. */
+	| { kind: 'tool_use'; toolName: string; preview: string; ts: number; uuid: string }
+	/** Assistant `text` block (non-empty) — surfaces the assistant's text. */
+	| { kind: 'text'; text: string; ts: number; uuid: string }
+	/** Assistant `thinking` block (non-empty) — surfaces a thinking preview. */
+	| { kind: 'thinking'; preview: string; ts: number; uuid: string }
+	/** Real human user input (`type: 'user'`, `isReplay` falsy). */
+	| { kind: 'user_message'; text: string; ts: number; uuid: string }
+	/** Synthetic agent→agent / system handoff (`type: 'user'`, `isReplay: true`). */
+	| { kind: 'agent_handoff'; text: string; ts: number; uuid: string };
+
+/**
+ * Per-(session, turn) summary of activity entries within an active (incomplete)
+ * turn. Emitted on the `liveQuery.snapshot`/`liveQuery.delta` `metadata` field
+ * for the `spaceTaskMessages.byTask.compact` query under
+ * `metadata.activeTurnSummaries`.
+ *
+ * The server only emits a summary for the highest turnIndex per session that
+ * has not yet seen a terminal `result` row. Closed turns are excluded —
+ * they are not "active" for the purposes of the running roster.
+ */
+export interface ActiveTurnSummary {
+	/** Agent session id whose active turn this summary describes. */
+	sessionId: string;
+	/** Server-computed turn index (1-based, mirrors compact feed `turnIndex`). */
+	turnIndex: number;
+	/** All activity entries in the active turn, chronological order preserved. */
+	entries: ActivityEntry[];
+}

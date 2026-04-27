@@ -38,8 +38,17 @@ export interface NamedQuery {
 	/**
 	 * Optional hook to extract metadata from raw query results (before mapRow).
 	 * Called once per query evaluation; result is attached to snapshot/delta events.
+	 *
+	 * The bound query parameters are forwarded as a second argument so handlers
+	 * that need to run a sidecar prepared statement (e.g., `spaceTaskMessages.
+	 * byTask.compact`'s active-turn aggregation) can reuse the same param values
+	 * the live query was subscribed with — they aren't otherwise visible to
+	 * `mapResult`.
 	 */
-	mapResult?: (rawRows: Record<string, unknown>[]) => Record<string, unknown> | undefined;
+	mapResult?: (
+		rawRows: Record<string, unknown>[],
+		params: ReadonlyArray<unknown>
+	) => Record<string, unknown> | undefined;
 }
 
 // ============================================================================
@@ -937,6 +946,9 @@ session_turns AS (
       ELSE 0
     END AS isTerminal,
     CASE
+      -- Drop user rows whose content is exclusively tool_result blocks — they
+      -- render as null in the compact UI and would otherwise consume slots
+      -- in the per-turn cap without contributing visible content.
       WHEN j.messageType = 'user'
         AND json_type(j.content, '$.message.content') = 'array'
         AND EXISTS (
@@ -944,6 +956,27 @@ session_turns AS (
         FROM json_each(json_extract(j.content, '$.message.content')) AS je
         WHERE json_extract(je.value, '$.type') = 'tool_result'
       ) THEN 0
+      -- Drop assistant rows that have *no* renderable content — i.e. the
+      -- content array exists but every block is either an empty/whitespace
+      -- text block or has no non-empty thinking/tool_use sibling. These
+      -- show up rarely in practice but bloat the per-turn cap when they
+      -- do; the active-turn summary applies the same filter so server and
+      -- client agree on what counts as visible activity.
+      WHEN j.messageType = 'assistant'
+        AND json_type(j.content, '$.message.content') = 'array'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM json_each(json_extract(j.content, '$.message.content')) AS je
+          WHERE json_extract(je.value, '$.type') = 'tool_use'
+             OR (
+                json_extract(je.value, '$.type') = 'text'
+                AND TRIM(COALESCE(json_extract(je.value, '$.text'), '')) != ''
+             )
+             OR (
+                json_extract(je.value, '$.type') = 'thinking'
+                AND TRIM(COALESCE(json_extract(je.value, '$.thinking'), '')) != ''
+             )
+        ) THEN 0
       ELSE 1
     END AS isRenderable,
     COALESCE(
@@ -1049,6 +1082,329 @@ SELECT
 FROM selected
 ORDER BY createdAt ASC, id ASC
 `.trim();
+
+/**
+ * SQL for the active-turn activity summary that ships alongside the compact
+ * feed.
+ *
+ * Per the design in task #131: the running roster on the Space task view is
+ * supposed to summarise the *currently active* turn — every tool_use, text,
+ * thinking block, plus user-row activity (real human input + synthetic
+ * agent→agent handoffs). The compact feed query keeps only the last 5
+ * non-terminal renderable rows per `(session, turn)`, which is right for the
+ * feed but too narrow for the roster.
+ *
+ * Strategy:
+ *   1. Reuse the base CTE chain to identify per-session turns (turnIndex is
+ *      the cumulative count of `result` rows preceding each row, plus one).
+ *   2. For each session, find the highest turnIndex with no terminal row yet —
+ *      that's the *active* turn. Closed turns are intentionally excluded.
+ *   3. Walk every row of the active turn (NOT the compacted slice). For
+ *      assistant rows, explode the SDK content blocks via `json_each` and
+ *      classify each one (`tool_use` / `text` / `thinking`). For user rows,
+ *      emit a single entry tagged either `__user_message` (human input) or
+ *      `__user_replay` (synthetic handoff) per `isReplay`. Empty/whitespace
+ *      `text` and `thinking` blocks are filtered out — they're noise. User
+ *      rows whose content is exclusively `tool_result` blocks are dropped
+ *      (mirrors the compact-feed transmission filter).
+ *   4. Order the union deterministically: `(sessionId, ts, rowId, blockIdx)`
+ *      so chronological sequence is preserved across rows AND across
+ *      multiple content blocks within a single row.
+ *
+ * The JS-side `mapResult` hook for `spaceTaskMessages.byTask.compact` runs
+ * this SQL with the same `?1 = task_id` param the compact subscription was
+ * bound with, then aggregates the per-entry rows by sessionId into the
+ * `ActiveTurnSummary[]` shape consumers expect. Closed turns produce zero
+ * rows here and so simply don't appear in the metadata payload.
+ */
+export const SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL = `
+${SPACE_TASK_MESSAGES_BASE_CTE},
+session_turns AS (
+  SELECT
+    j.id,
+    j.sessionId,
+    j.kind,
+    j.role,
+    j.label,
+    j.taskId,
+    j.taskTitle,
+    j.messageType,
+    j.content,
+    j.createdAt,
+    j.iteration,
+    j.parentToolUseId,
+    COALESCE(
+      SUM(CASE WHEN j.messageType = 'result' THEN 1 ELSE 0 END) OVER (
+        PARTITION BY j.sessionId
+        ORDER BY j.createdAt ASC, j.id ASC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+      ),
+      0
+    ) + 1 AS turnIndex
+  FROM joined j
+),
+session_max_turn AS (
+  SELECT sessionId, MAX(turnIndex) AS maxTurnIndex
+  FROM session_turns
+  GROUP BY sessionId
+),
+active_turn AS (
+  -- The latest turn per session that has not yet seen a terminal result row.
+  SELECT
+    smt.sessionId AS sessionId,
+    smt.maxTurnIndex AS turnIndex
+  FROM session_max_turn smt
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM session_turns st
+    WHERE st.sessionId = smt.sessionId
+      AND st.turnIndex = smt.maxTurnIndex
+      AND st.messageType = 'result'
+  )
+),
+active_rows AS (
+  SELECT st.*
+  FROM session_turns st
+  JOIN active_turn at
+    ON at.sessionId = st.sessionId
+   AND at.turnIndex = st.turnIndex
+),
+-- One row per assistant content block (tool_use / non-empty text / thinking).
+assistant_entries AS (
+  SELECT
+    ar.sessionId AS sessionId,
+    ar.turnIndex AS turnIndex,
+    ar.createdAt AS ts,
+    ar.id AS rowId,
+    CAST(je.key AS INTEGER) AS blockIdx,
+    json_extract(ar.content, '$.uuid') AS uuid,
+    json_extract(je.value, '$.type') AS blockType,
+    json_extract(je.value, '$.name') AS toolName,
+    json_extract(je.value, '$.input') AS toolInput,
+    json_extract(je.value, '$.text') AS textValue,
+    json_extract(je.value, '$.thinking') AS thinkingValue
+  FROM active_rows ar,
+       json_each(json_extract(ar.content, '$.message.content')) je
+  WHERE ar.messageType = 'assistant'
+    AND json_type(ar.content, '$.message.content') = 'array'
+    AND (
+      json_extract(je.value, '$.type') = 'tool_use'
+      OR (
+        json_extract(je.value, '$.type') = 'text'
+        AND TRIM(COALESCE(json_extract(je.value, '$.text'), '')) != ''
+      )
+      OR (
+        json_extract(je.value, '$.type') = 'thinking'
+        AND TRIM(COALESCE(json_extract(je.value, '$.thinking'), '')) != ''
+      )
+    )
+),
+-- One row per user-typed message row (real human or synthetic replay).
+user_entries AS (
+  SELECT
+    ar.sessionId AS sessionId,
+    ar.turnIndex AS turnIndex,
+    ar.createdAt AS ts,
+    ar.id AS rowId,
+    -1 AS blockIdx,
+    json_extract(ar.content, '$.uuid') AS uuid,
+    CASE
+      WHEN COALESCE(CAST(json_extract(ar.content, '$.isReplay') AS INTEGER), 0) = 1
+        THEN '__user_replay'
+      ELSE '__user_message'
+    END AS blockType,
+    NULL AS toolName,
+    NULL AS toolInput,
+    -- Extract the plain-text body of the message.
+    -- - String content → use directly.
+    -- - Array content → concatenate text blocks.
+    -- - Otherwise → empty string.
+    CASE
+      WHEN json_type(ar.content, '$.message.content') = 'text'
+        THEN json_extract(ar.content, '$.message.content')
+      WHEN json_type(ar.content, '$.message.content') = 'array' THEN (
+        SELECT GROUP_CONCAT(json_extract(je.value, '$.text'), ' ')
+        FROM json_each(json_extract(ar.content, '$.message.content')) je
+        WHERE json_extract(je.value, '$.type') = 'text'
+          AND COALESCE(json_extract(je.value, '$.text'), '') != ''
+      )
+      ELSE ''
+    END AS textValue,
+    NULL AS thinkingValue
+  FROM active_rows ar
+  WHERE ar.messageType = 'user'
+    -- Skip user rows whose content is exclusively tool_result blocks. Such
+    -- rows render as null in the compact feed and don't represent activity.
+    AND NOT (
+      json_type(ar.content, '$.message.content') = 'array'
+      AND EXISTS (
+        SELECT 1
+        FROM json_each(json_extract(ar.content, '$.message.content')) je
+        WHERE json_extract(je.value, '$.type') = 'tool_result'
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM json_each(json_extract(ar.content, '$.message.content')) je
+        WHERE json_extract(je.value, '$.type') = 'text'
+      )
+    )
+)
+SELECT
+  sessionId,
+  turnIndex,
+  ts,
+  rowId,
+  blockIdx,
+  uuid,
+  blockType,
+  toolName,
+  toolInput,
+  textValue,
+  thinkingValue
+FROM assistant_entries
+UNION ALL
+SELECT
+  sessionId,
+  turnIndex,
+  ts,
+  rowId,
+  blockIdx,
+  uuid,
+  blockType,
+  toolName,
+  toolInput,
+  textValue,
+  thinkingValue
+FROM user_entries
+ORDER BY sessionId ASC, ts ASC, rowId ASC, blockIdx ASC
+`.trim();
+
+// ============================================================================
+// Active-turn entry aggregation
+// ============================================================================
+
+const ACTIVITY_PREVIEW_MAX_LEN = 200;
+
+/**
+ * Collapse arbitrary text into a single line and cap its length so the
+ * server-side preview matches what the rail can render without further work.
+ * Mirrors the client-side `oneLine` shape so trailing ellipses and whitespace
+ * collapsing line up byte-for-byte across server and client.
+ */
+function activityOneLine(value: string, max = ACTIVITY_PREVIEW_MAX_LEN): string {
+	const collapsed = value.replace(/\s+/g, ' ').trim();
+	if (collapsed.length === 0) return '';
+	return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
+}
+
+/**
+ * Pick a human-friendly preview from a tool_use input object. Falls back
+ * through the most common Claude tool-input shapes (Bash command, file path,
+ * grep pattern, URL, description) before settling for a `key: value` pair so
+ * even tools we don't recognise produce a non-empty preview line.
+ *
+ * Server-side equivalent of the existing client-side `previewFromInput`.
+ */
+function activityPreviewFromInput(input: Record<string, unknown>): string {
+	const command = typeof input.command === 'string' ? input.command : '';
+	if (command) return activityOneLine(command);
+	const filePath = typeof input.file_path === 'string' ? input.file_path : '';
+	if (filePath) return activityOneLine(filePath);
+	const path = typeof input.path === 'string' ? input.path : '';
+	if (path) return activityOneLine(path);
+	const pattern = typeof input.pattern === 'string' ? input.pattern : '';
+	if (pattern) return activityOneLine(pattern);
+	const url = typeof input.url === 'string' ? input.url : '';
+	if (url) return activityOneLine(url);
+	const description = typeof input.description === 'string' ? input.description : '';
+	if (description) return activityOneLine(description);
+	const keys = Object.keys(input);
+	if (keys.length === 0) return '';
+	const firstKey = keys[0];
+	const firstVal = input[firstKey];
+	if (typeof firstVal === 'string') return activityOneLine(`${firstKey}: ${firstVal}`);
+	return `${firstKey}: …`;
+}
+
+/**
+ * Aggregate the per-entry rows produced by `SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL`
+ * into the `ActiveTurnSummary[]` payload the client consumes.
+ *
+ * Each row corresponds to a single activity entry (one assistant content
+ * block, or one user-row entry). Rows are already chronologically sorted by
+ * the SQL — we only need to group by sessionId and translate the raw
+ * `blockType` discriminator into the public `ActivityEntry.kind` shape, while
+ * computing previews / unwrapping `tool_use.input` JSON server-side.
+ *
+ * Exported for unit-test coverage.
+ */
+export function buildActiveTurnSummariesFromRows(
+	rows: Record<string, unknown>[]
+): Array<{ sessionId: string; turnIndex: number; entries: Record<string, unknown>[] }> {
+	const bySession = new Map<
+		string,
+		{ sessionId: string; turnIndex: number; entries: Record<string, unknown>[] }
+	>();
+
+	for (const row of rows) {
+		const sessionId = typeof row.sessionId === 'string' ? row.sessionId : null;
+		if (!sessionId) continue;
+		const turnIndex = Number(row.turnIndex ?? 0);
+		const ts = Number(row.ts ?? 0);
+		const uuid = typeof row.uuid === 'string' ? row.uuid : '';
+		const blockType = typeof row.blockType === 'string' ? row.blockType : '';
+
+		let entry: Record<string, unknown> | null = null;
+		if (blockType === 'tool_use') {
+			const toolName = typeof row.toolName === 'string' ? row.toolName : '';
+			const rawInput = row.toolInput;
+			let parsedInput: Record<string, unknown> = {};
+			if (typeof rawInput === 'string') {
+				try {
+					const maybe = JSON.parse(rawInput);
+					if (maybe && typeof maybe === 'object') {
+						parsedInput = maybe as Record<string, unknown>;
+					}
+				} catch {
+					// Leave parsedInput empty — preview falls through to `tool_name: …`.
+				}
+			} else if (rawInput && typeof rawInput === 'object') {
+				parsedInput = rawInput as Record<string, unknown>;
+			}
+			entry = {
+				kind: 'tool_use',
+				toolName,
+				preview: activityPreviewFromInput(parsedInput),
+				ts,
+				uuid,
+			};
+		} else if (blockType === 'text') {
+			const text = typeof row.textValue === 'string' ? row.textValue : '';
+			if (text.trim().length === 0) continue;
+			entry = { kind: 'text', text: activityOneLine(text), ts, uuid };
+		} else if (blockType === 'thinking') {
+			const thinking = typeof row.thinkingValue === 'string' ? row.thinkingValue : '';
+			if (thinking.trim().length === 0) continue;
+			entry = { kind: 'thinking', preview: activityOneLine(thinking), ts, uuid };
+		} else if (blockType === '__user_message') {
+			const text = typeof row.textValue === 'string' ? row.textValue : '';
+			entry = { kind: 'user_message', text: activityOneLine(text), ts, uuid };
+		} else if (blockType === '__user_replay') {
+			const text = typeof row.textValue === 'string' ? row.textValue : '';
+			entry = { kind: 'agent_handoff', text: activityOneLine(text), ts, uuid };
+		}
+		if (!entry) continue;
+
+		let summary = bySession.get(sessionId);
+		if (!summary) {
+			summary = { sessionId, turnIndex, entries: [] };
+			bySession.set(sessionId, summary);
+		}
+		summary.entries.push(entry);
+	}
+
+	return Array.from(bySession.values());
+}
 
 // ============================================================================
 // Registry
@@ -1506,8 +1862,45 @@ export function setupLiveQueryHandlers(
 	// visible session list is empty (e.g. all sessions are archived, showArchived=false).
 	const stmtSessionsTotalCount = db.prepare(SESSIONS_TOTAL_COUNT_SQL);
 	const stmtSessionsArchivedCount = db.prepare(SESSIONS_ARCHIVED_COUNT_SQL);
+
+	// Sidecar prepared statement for the compact-thread mapResult: emits one
+	// row per activity entry in each session's currently-active turn. The
+	// compact thread query itself caps rows per turn at 5; this sidecar is
+	// the uncapped feed used to drive the running roster on the task view.
+	//
+	// Prepared lazily on first use so daemon startup doesn't depend on every
+	// table referenced by the CTE chain (e.g. `node_executions`) being live
+	// yet. Preparing eagerly here regressed test setups whose minimal schema
+	// hadn't run the migration that creates that table.
+	let _stmtActiveTurnEntries: ReturnType<BunDatabase['prepare']> | null = null;
+	const getStmtActiveTurnEntries = () => {
+		if (!_stmtActiveTurnEntries) {
+			_stmtActiveTurnEntries = db.prepare(SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL);
+		}
+		return _stmtActiveTurnEntries;
+	};
+
 	const sessionsListBase = NAMED_QUERY_REGISTRY.get('sessions.list')!;
 	const activeRegistry = new Map(NAMED_QUERY_REGISTRY);
+
+	// Override the compact-thread query so each evaluation also computes the
+	// active-turn activity summary alongside the compact rows. Wired through
+	// the metadata channel so existing snapshot/delta plumbing carries it
+	// without a parallel subscription.
+	const compactThreadBase = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
+	activeRegistry.set('spaceTaskMessages.byTask.compact', {
+		...compactThreadBase,
+		mapResult: (_rawRows, params) => {
+			const taskId = params[0];
+			if (typeof taskId !== 'string' || taskId.length === 0) return undefined;
+			const entryRows = getStmtActiveTurnEntries().all(taskId) as Record<string, unknown>[];
+			const summaries = buildActiveTurnSummariesFromRows(entryRows);
+			// Always emit the field so the client sees an authoritative empty
+			// list rather than a stale value from a prior snapshot.
+			return { activeTurnSummaries: summaries };
+		},
+	});
+
 	activeRegistry.set('sessions.list', {
 		...sessionsListBase,
 		mapResult: (rawRows) => {
@@ -1696,8 +2089,10 @@ export function setupLiveQueryHandlers(
 					return;
 				}
 
-				// Extract metadata from raw rows (before mapRow strips internal columns)
-				const metadata = namedQuery.mapResult?.(diff.rows as Record<string, unknown>[]);
+				// Extract metadata from raw rows (before mapRow strips internal columns).
+				// Params are forwarded so handlers like the compact-thread mapResult can
+				// run a sidecar prepared statement bound to the same task id.
+				const metadata = namedQuery.mapResult?.(diff.rows as Record<string, unknown>[], params);
 
 				let message: ReturnType<typeof createEventMessage>;
 

@@ -705,6 +705,316 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				}
 			});
 		});
+
+		// -----------------------------------------------------------------------
+		// SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL — server-derived running
+		// roster source. Drives `metadata.activeTurnSummaries` on the compact
+		// LiveQuery; the client renders this directly without re-deriving from
+		// the (potentially truncated) compact rows.
+		// -----------------------------------------------------------------------
+
+		describe('active-turn entries SQL', () => {
+			function insertSdkMessageAt(
+				id: string,
+				sessionIdValue: string,
+				timestampMs: number,
+				sdkMessage?: Record<string, unknown>,
+				messageType = 'assistant'
+			): void {
+				const iso = new Date(timestampMs).toISOString();
+				const payload =
+					sdkMessage ??
+					({
+						type: 'assistant',
+						uuid: id,
+						message: { role: 'assistant', content: [{ type: 'text', text: id }] },
+					} as Record<string, unknown>);
+				db.exec(`
+					INSERT INTO sdk_messages (
+						id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin
+					) VALUES (
+						'${id}', '${sessionIdValue}', '${messageType}', NULL, '${JSON.stringify(payload).replace(/'/g, "''")}',
+						'${iso}', 'consumed', 'system'
+					)
+				`);
+			}
+
+			function insertResultAt(
+				id: string,
+				sessionIdValue: string,
+				timestampMs: number,
+				subtype: 'success' | 'error_during_execution' = 'success'
+			): void {
+				insertSdkMessageAt(
+					id,
+					sessionIdValue,
+					timestampMs,
+					{
+						type: 'result',
+						uuid: id,
+						subtype,
+						duration_ms: 1,
+						duration_api_ms: 1,
+						is_error: subtype !== 'success',
+						total_cost_usd: 0,
+						usage: {
+							input_tokens: 1,
+							cached_input_tokens: 0,
+							output_tokens: 1,
+							reasoning_output_tokens: 0,
+							total_tokens: 2,
+						},
+					},
+					'result'
+				);
+			}
+
+			async function runEntries(taskId: string): Promise<unknown[]> {
+				const mod = await import('../../../../src/lib/rpc-handlers/live-query-handlers');
+				const sql = mod.SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL;
+				return db.prepare(sql).all(taskId);
+			}
+
+			async function buildSummaries(taskId: string): Promise<
+				Array<{
+					sessionId: string;
+					turnIndex: number;
+					entries: Record<string, unknown>[];
+				}>
+			> {
+				const mod = await import('../../../../src/lib/rpc-handlers/live-query-handlers');
+				const rows = (await runEntries(taskId)) as Record<string, unknown>[];
+				return mod.buildActiveTurnSummariesFromRows(rows);
+			}
+
+			test('emits a summary only for the active (non-terminal) turn per session', async () => {
+				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+				// Closed turn: assistant text → result.
+				insertSdkMessageAt('t1-a1', sessionId, now + 1000, {
+					type: 'assistant',
+					uuid: 't1-a1',
+					message: { content: [{ type: 'text', text: 'closed-text' }] },
+				});
+				insertResultAt('t1-r', sessionId, now + 2000, 'success');
+
+				// Active turn: tool_use only, NO result row yet.
+				insertSdkMessageAt('t2-a1', sessionId, now + 3000, {
+					type: 'assistant',
+					uuid: 't2-a1',
+					message: {
+						content: [
+							{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'bun test' } },
+						],
+					},
+				});
+
+				const summaries = await buildSummaries(taskId);
+				expect(summaries).toHaveLength(1);
+				expect(summaries[0].sessionId).toBe(sessionId);
+				expect(summaries[0].turnIndex).toBe(2);
+				const entries = summaries[0].entries as Array<Record<string, unknown>>;
+				expect(entries).toHaveLength(1);
+				expect(entries[0].kind).toBe('tool_use');
+				expect(entries[0].toolName).toBe('Bash');
+				expect(entries[0].preview).toBe('bun test');
+				// No closed-turn entries leak through.
+				const previews = entries.map((e) => String(e.preview ?? e.text ?? ''));
+				expect(previews).not.toContain('closed-text');
+			});
+
+			test('emits no summary when the latest turn is closed', async () => {
+				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+				insertSdkMessageAt('a1', sessionId, now + 1000);
+				insertResultAt('r1', sessionId, now + 2000, 'success');
+
+				const summaries = await buildSummaries(taskId);
+				expect(summaries).toHaveLength(0);
+			});
+
+			test('explodes assistant blocks into per-block entries (tool_use, text, thinking)', async () => {
+				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+				insertSdkMessageAt('a1', sessionId, now + 1000, {
+					type: 'assistant',
+					uuid: 'a1',
+					message: {
+						content: [
+							{ type: 'thinking', thinking: 'Considering options' },
+							{ type: 'text', text: 'Investigating the failing test' },
+							{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } },
+							{ type: 'text', text: '   ' }, // whitespace-only — server should drop
+						],
+					},
+				});
+
+				const summaries = await buildSummaries(taskId);
+				expect(summaries).toHaveLength(1);
+				const entries = summaries[0].entries as Array<Record<string, unknown>>;
+				const kinds = entries.map((e) => e.kind);
+				expect(kinds).toEqual(['thinking', 'text', 'tool_use']);
+				expect(entries[0].preview).toBe('Considering options');
+				expect(entries[1].text).toBe('Investigating the failing test');
+				expect(entries[2].toolName).toBe('Bash');
+				expect(entries[2].preview).toBe('ls');
+			});
+
+			test('distinguishes real human input from synthetic agent handoffs via isReplay', async () => {
+				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+				// Real human input — isReplay falsy.
+				insertSdkMessageAt(
+					'u1',
+					sessionId,
+					now + 1000,
+					{
+						type: 'user',
+						uuid: 'u1',
+						message: { role: 'user', content: 'please retry' },
+					},
+					'user'
+				);
+				// Synthetic handoff — isReplay = true.
+				insertSdkMessageAt(
+					'u2',
+					sessionId,
+					now + 2000,
+					{
+						type: 'user',
+						uuid: 'u2',
+						isReplay: true,
+						message: {
+							role: 'user',
+							content: [{ type: 'text', text: 'Reviewer Agent: take over' }],
+						},
+					},
+					'user'
+				);
+				// Active turn open with a tool_use to anchor the active-turn detection.
+				insertSdkMessageAt('a1', sessionId, now + 3000, {
+					type: 'assistant',
+					uuid: 'a1',
+					message: {
+						content: [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } }],
+					},
+				});
+
+				const summaries = await buildSummaries(taskId);
+				expect(summaries).toHaveLength(1);
+				const entries = summaries[0].entries as Array<Record<string, unknown>>;
+				const kinds = entries.map((e) => e.kind);
+				// Server distinguishes the two user-row variants on the wire.
+				expect(kinds).toContain('user_message');
+				expect(kinds).toContain('agent_handoff');
+				const userEntry = entries.find((e) => e.kind === 'user_message') as Record<string, unknown>;
+				const handoffEntry = entries.find((e) => e.kind === 'agent_handoff') as Record<
+					string,
+					unknown
+				>;
+				expect(userEntry.text).toBe('please retry');
+				expect(handoffEntry.text).toBe('Reviewer Agent: take over');
+			});
+
+			test('skips user rows whose content is exclusively tool_result blocks', async () => {
+				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+				// User row with only a tool_result block — should be dropped.
+				insertSdkMessageAt(
+					'u1',
+					sessionId,
+					now + 1000,
+					{
+						type: 'user',
+						uuid: 'u1',
+						message: {
+							role: 'user',
+							content: [
+								{
+									type: 'tool_result',
+									tool_use_id: 'tu-x',
+									content: [{ type: 'text', text: 'tool output' }],
+								},
+							],
+						},
+					},
+					'user'
+				);
+				// Anchor the active turn with an assistant block.
+				insertSdkMessageAt('a1', sessionId, now + 2000, {
+					type: 'assistant',
+					uuid: 'a1',
+					message: {
+						content: [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } }],
+					},
+				});
+
+				const summaries = await buildSummaries(taskId);
+				expect(summaries).toHaveLength(1);
+				const entries = summaries[0].entries as Array<Record<string, unknown>>;
+				const kinds = entries.map((e) => e.kind);
+				// No user_message / agent_handoff entry from the tool_result row.
+				expect(kinds).not.toContain('user_message');
+				expect(kinds).not.toContain('agent_handoff');
+				// The assistant tool_use survives.
+				expect(kinds).toContain('tool_use');
+			});
+
+			test('produces independent summaries per session when multiple sessions are active', async () => {
+				const orchestrationSessionId = 'space:test:task:ates-orch';
+				const nodeSessionId = 'space:test:task:atea-node';
+				const workflowRunId = 'wr-active-turn-multi';
+				const workflowNodeId = 'node-multi';
+				const taskId = insertSpaceTask({
+					taskAgentSessionId: orchestrationSessionId,
+					workflowRunId,
+				});
+
+				insertSession(orchestrationSessionId, 'space_task_agent', '{"status":"processing"}');
+				insertSession(nodeSessionId, 'space_task_agent', '{"status":"processing"}');
+
+				db.exec(`
+					INSERT INTO node_executions (
+						id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+						agent_session_id, status, result, created_at, started_at,
+						completed_at, updated_at
+					) VALUES (
+						'ne-multi', '${workflowRunId}', '${workflowNodeId}', 'coder', NULL,
+						'${nodeSessionId}', 'in_progress', NULL, ${now}, ${now},
+						NULL, ${now}
+					)
+				`);
+
+				// Both sessions have an active turn (no result row yet) — both
+				// should appear in the summaries.
+				insertSdkMessageAt('orch-a1', orchestrationSessionId, now + 1000, {
+					type: 'assistant',
+					uuid: 'orch-a1',
+					message: { content: [{ type: 'text', text: 'orch active' }] },
+				});
+				insertSdkMessageAt('node-a1', nodeSessionId, now + 1000, {
+					type: 'assistant',
+					uuid: 'node-a1',
+					message: { content: [{ type: 'text', text: 'node active' }] },
+				});
+
+				const summaries = await buildSummaries(taskId);
+				const bySession = new Map(summaries.map((s) => [s.sessionId, s]));
+				expect(bySession.has(orchestrationSessionId)).toBe(true);
+				expect(bySession.has(nodeSessionId)).toBe(true);
+				const orchEntries = bySession.get(orchestrationSessionId)!.entries as Array<
+					Record<string, unknown>
+				>;
+				const nodeEntries = bySession.get(nodeSessionId)!.entries as Array<Record<string, unknown>>;
+				expect(orchEntries.map((e) => e.text)).toContain('orch active');
+				expect(nodeEntries.map((e) => e.text)).toContain('node active');
+			});
+		});
 	});
 
 	// -------------------------------------------------------------------------
