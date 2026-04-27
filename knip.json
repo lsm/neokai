@@ -15,6 +15,7 @@
 		"packages/shared/src/neo-prompt/**",
 		"packages/web/src/**",
 		"packages/cli/**",
+		"packages/desktop/**",
 		"packages/daemon/scripts/**",
 		"knip.ts",
 		"npm/**",

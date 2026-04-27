@@ -63,7 +63,10 @@
 			"!packages/shared/src/sdk",
 			"!.claude",
 			"!.worktrees",
-			"!**/.worktrees"
+			"!**/.worktrees",
+			"!packages/desktop/src-tauri/target",
+			"!packages/desktop/src-tauri/gen",
+			"!packages/desktop/src-tauri/binaries"
 		]
 	}
 }
