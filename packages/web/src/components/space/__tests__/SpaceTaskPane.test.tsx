@@ -1,6 +1,7 @@
 // @ts-nocheck
 
 import type {
+	NodeExecution,
 	SpaceAgent,
 	SpaceTask,
 	SpaceTaskActivityMember,
@@ -83,6 +84,7 @@ let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
 let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
 let mockTaskActivity: ReturnType<typeof signal<Map<string, SpaceTaskActivityMember[]>>>;
+let mockNodeExecutions: ReturnType<typeof signal<NodeExecution[]>>;
 let mockNodeExecutionsByNodeId: ReturnType<typeof signal<Map<string, unknown[]>>>;
 
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
@@ -100,6 +102,7 @@ vi.mock('../../../lib/space-store', () => ({
 			workflows: mockWorkflows,
 			workflowRuns: mockWorkflowRuns,
 			taskActivity: mockTaskActivity,
+			nodeExecutions: mockNodeExecutions,
 			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
 			updateTask: mockUpdateTask,
 			submitForReview: mockSubmitForReview,
@@ -189,6 +192,7 @@ mockAgents = signal<SpaceAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
 mockTaskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());
+mockNodeExecutions = signal<NodeExecution[]>([]);
 mockNodeExecutionsByNodeId = signal<Map<string, unknown[]>>(new Map());
 
 import { SpaceTaskPane } from '../SpaceTaskPane';
@@ -216,6 +220,7 @@ describe('SpaceTaskPane', () => {
 		mockWorkflows.value = [];
 		mockWorkflowRuns.value = [];
 		mockTaskActivity.value = new Map();
+		mockNodeExecutions.value = [];
 		mockUpdateTask.mockClear();
 		mockEnsureTaskAgentSession.mockReset();
 		mockEnsureTaskAgentSession.mockImplementation(async () =>
@@ -310,7 +315,9 @@ describe('SpaceTaskPane — composer', () => {
 		fireEvent.click(getByTestId('send-button'));
 
 		await waitFor(() =>
-			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Looks good to me')
+			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Looks good to me', {
+				kind: 'task_agent',
+			})
 		);
 		expect(mockEnsureTaskAgentSession).not.toHaveBeenCalled();
 	});
@@ -367,7 +374,9 @@ describe('SpaceTaskPane — composer', () => {
 		fireEvent.submit(textarea.form!);
 
 		await waitFor(() =>
-			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Approve the PR')
+			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Approve the PR', {
+				kind: 'task_agent',
+			})
 		);
 		await waitFor(() => expect(textarea.value).toBe(''));
 	});
@@ -381,7 +390,9 @@ describe('SpaceTaskPane — composer', () => {
 		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
 		await waitFor(() =>
-			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Quick approve')
+			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Quick approve', {
+				kind: 'task_agent',
+			})
 		);
 	});
 
