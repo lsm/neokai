@@ -212,9 +212,24 @@ export class AgentMessageRouter {
 		}));
 
 		// All declared agent names (with or without a live session) for target resolution.
+		// Source 1: node_executions (lazily created on first activation).
+		// Source 2: workflow definition — every slot declared in any node group is a
+		//   legitimate peer name even before its node_execution row exists. nodeGroups
+		//   is derived from `workflow.nodes.map(n => resolveNodeAgents(n).map(a => a.name))`
+		//   in TaskAgentManager.buildNodeAgentMcpServerForSession, so it covers the full
+		//   static workflow surface. Without source 2, never-activated peers fall through
+		//   to "Unknown target" — the bug Task #133 closes.
 		const allDeclaredAgentNames = new Set(
 			allExecutions.filter((e) => e.agentSessionId !== fromSessionId).map((e) => e.agentName)
 		);
+		if (nodeGroups) {
+			for (const slots of Object.values(nodeGroups)) {
+				for (const slot of slots) {
+					if (slot === fromAgentName) continue;
+					allDeclaredAgentNames.add(slot);
+				}
+			}
+		}
 
 		// --- Resolve target agent names ---
 		let targetAgentNames: string[];
@@ -465,7 +480,14 @@ export class AgentMessageRouter {
 			}
 		}
 
-		// All outcomes failed (nothing delivered, queued, or in-flight)
+		// All outcomes failed (nothing delivered, queued, or in-flight).
+		// `notFound` here means: target was resolved (it's declared in topology or
+		// node_executions) but no live session existed AND no pendingMessageRepo was
+		// configured for queuing — so the message could not be persisted for later
+		// delivery. We surface a different, less misleading message than the original
+		// "no active sessions / use list_peers" wording, which conflated this case
+		// with the genuinely-unknown-agent case (which now returns earlier with a
+		// "Unknown target" reason).
 		if (
 			notFound.length > 0 &&
 			delivered.length === 0 &&
@@ -477,8 +499,9 @@ export class AgentMessageRouter {
 				delivered: [],
 				failed: [],
 				reason:
-					`No active sessions found for target agent(s): ${notFound.join(', ')}. ` +
-					`Use list_peers to check which peers are currently active.`,
+					`Could not deliver message to target agent(s): ${notFound.join(', ')}. ` +
+					`The target is declared but has no active session, and no pending-message ` +
+					`queue is configured for this run.`,
 				notFoundAgentNames: notFound,
 			};
 		}
