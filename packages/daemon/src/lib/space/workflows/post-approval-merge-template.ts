@@ -53,7 +53,7 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
 	'1. Verify the PR is still open and passes CI:',
 	'     gh pr view {{pr_url}} --json state,mergeStateStatus,statusCheckRollup',
 	'   If state is MERGED, record an audit artifact and exit — the work is done.',
-	'2. If approval_source == "auto" AND autonomy_level < 4:',
+	'2. If approval_source != "human" AND autonomy_level < 4:',
 	'     Call request_human_input with',
 	'       question: "Approve merging PR {{pr_url}}?"',
 	'       context: "Reviewer: [end-node reviewer]. CI: <from step 1>."',
