@@ -33,6 +33,7 @@ import type { CopilotSession, SessionEvent } from '@github/copilot-sdk';
 import type { ToolBridgeRegistry } from './tool-bridge.js';
 import type { ToolResult } from './conversation.js';
 import { AnthropicStreamWriter, estimateTokens } from './sse.js';
+import { type AnthropicErrorType, createAnthropicErrorBody } from '../shared/error-envelope.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('anthropic-copilot-streaming');
@@ -56,6 +57,27 @@ export type StreamingOutcome =
 	 * these IDs — the caller does not need to enumerate them.
 	 */
 	| { kind: 'tool_use'; toolCallIds: string[] };
+
+function classifyError(message: string): { status: number; type: AnthropicErrorType } {
+	const status = Number(message.match(/\b([45]\d{2})\b/)?.[1] ?? 500);
+	if (status === 401 || status === 403) return { status, type: 'authentication_error' };
+	if (status === 402 || status === 429) return { status, type: 'rate_limit_error' };
+	if (status === 400) return { status, type: 'invalid_request_error' };
+	if (status === 404) return { status, type: 'not_found_error' };
+	if (status === 413) return { status, type: 'request_too_large' };
+	if (status === 529) return { status, type: 'overloaded_error' };
+	return { status, type: 'api_error' };
+}
+
+function sendJsonError(
+	res: ServerResponse,
+	status: number,
+	type: AnthropicErrorType,
+	message: string
+): void {
+	res.writeHead(status, { 'Content-Type': 'application/json' });
+	res.end(createAnthropicErrorBody(type, message));
+}
 
 // ---------------------------------------------------------------------------
 // Shared streaming core
@@ -89,7 +111,7 @@ function streamSession(
 	inputText = ''
 ): Promise<StreamingOutcome> {
 	const writer = new AnthropicStreamWriter();
-	writer.start(res, model, estimateTokens(inputText.length));
+	writer.configure(model, estimateTokens(inputText.length));
 
 	let sessionDone = false;
 	let pendingDeltas: string[] = [];
@@ -159,10 +181,16 @@ function streamSession(
 				break;
 
 			case 'session.error':
-				logger.warn(`Copilot session error: ${String(event.data.message)}`);
+				const message = String(event.data.message) || 'Session error';
+				logger.warn(`Copilot session error: ${message}`);
 				flushDeltas();
-				writer.sendFailed(res, 'api_error', String(event.data.message) || 'Session error');
-				res.end();
+				if (writer.hasStarted()) {
+					writer.sendFailed(res, 'api_error', message);
+					res.end();
+				} else {
+					const { status, type } = classifyError(message);
+					sendJsonError(res, status, type, message);
+				}
 				finishCompleted();
 				break;
 
@@ -183,8 +211,12 @@ function streamSession(
 			onDone();
 			session.abort().catch(() => {});
 			session.disconnect().catch(() => {});
-			writer.sendFailed(res, 'api_error', 'Streaming timeout');
-			res.end();
+			if (writer.hasStarted()) {
+				writer.sendFailed(res, 'api_error', 'Streaming timeout');
+				res.end();
+			} else {
+				sendJsonError(res, 500, 'api_error', 'Streaming timeout');
+			}
 			resolve({ kind: 'completed' });
 		}
 	}, STREAMING_TIMEOUT_MS);
@@ -220,8 +252,12 @@ function streamSession(
 	// fire between them.
 	startFn(finishCompleted, () => {
 		if (!sessionDone) {
-			writer.sendFailed(res, 'api_error', 'Internal streaming error');
-			res.end();
+			if (writer.hasStarted()) {
+				writer.sendFailed(res, 'api_error', 'Internal streaming error');
+				res.end();
+			} else {
+				sendJsonError(res, 500, 'api_error', 'Internal streaming error');
+			}
 		}
 	});
 
