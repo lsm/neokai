@@ -7,7 +7,7 @@
  *   applies the amber highlight classes.
  * - No-ops when `messageId` is falsy or `isInitialLoad` is true.
  * - Cleanup on unmount removes the highlight and clears timers.
- * - Re-runs and re-anchors when `messageCount` changes (streaming).
+ * - Re-runs on `messageCount` changes until the target is found, then latches.
  */
 
 import { renderHook, act } from '@testing-library/preact';
@@ -18,14 +18,17 @@ const HIGHLIGHT_CLASS = 'ring-amber-400/70';
 
 function createTargetEl(id: string) {
 	const scrollIntoViewMock = vi.fn();
+	const classes = new Set<string>();
+	const addMock = vi.fn((...names: string[]) => {
+		for (const n of names) classes.add(n);
+	});
+	const removeMock = vi.fn((...names: string[]) => {
+		for (const n of names) classes.delete(n);
+	});
 	const classList = {
-		_set: new Set<string>(),
-		add(...names: string[]) {
-			for (const n of names) this._set.add(n);
-		},
-		remove(...names: string[]) {
-			for (const n of names) this._set.delete(n);
-		},
+		_set: classes,
+		add: addMock,
+		remove: removeMock,
 		contains(name: string) {
 			return this._set.has(name);
 		},
@@ -35,13 +38,14 @@ function createTargetEl(id: string) {
 		classList,
 		dataset: { messageId: id },
 	} as unknown as HTMLElement;
-	return { el, scrollIntoViewMock, classList };
+	return { el, scrollIntoViewMock, classList, addMock, removeMock };
 }
 
-function createContainer(target: HTMLElement | null) {
+function createContainer(target: HTMLElement | null | (() => HTMLElement | null)) {
+	const getTarget = typeof target === 'function' ? target : () => target;
 	const querySelector = vi.fn((sel: string) => {
 		// Pretend it found the element if the selector matches by id
-		return target;
+		return getTarget();
 	});
 	const container = {
 		querySelector,
@@ -228,9 +232,10 @@ describe('useScrollToMessage', () => {
 		expect(classList.contains(HIGHLIGHT_CLASS)).toBe(false);
 	});
 
-	it('re-runs when messageCount changes (streaming case)', () => {
+	it('re-runs on messageCount changes until a late-rendered target is found', () => {
 		const { el, scrollIntoViewMock } = createTargetEl('msg-1');
-		const { ref } = createContainer(el);
+		let target: HTMLElement | null = null;
+		const { ref } = createContainer(() => target);
 
 		const { rerender } = renderHook(
 			({ messageCount }) =>
@@ -243,13 +248,70 @@ describe('useScrollToMessage', () => {
 			{ initialProps: { messageCount: 3 } }
 		);
 
-		const callsAfterInitial = scrollIntoViewMock.mock.calls.length;
+		expect(scrollIntoViewMock).not.toHaveBeenCalled();
 
-		// New message streams in — hook should re-anchor in case the target was
-		// only just rendered.
+		// New message streams in and the previously missing target is now in the DOM.
+		target = el;
 		rerender({ messageCount: 4 });
 
-		expect(scrollIntoViewMock.mock.calls.length).toBeGreaterThan(callsAfterInitial);
+		expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: 'auto', block: 'center' });
+	});
+
+	it('does not re-anchor or re-highlight appended messages after a successful anchor', () => {
+		const { el, scrollIntoViewMock, classList, addMock } = createTargetEl('msg-1');
+		const { ref } = createContainer(el);
+
+		const { rerender } = renderHook(
+			({ messageCount }) =>
+				useScrollToMessage({
+					containerRef: ref,
+					messageId: 'msg-1',
+					messageCount,
+					isInitialLoad: false,
+					highlightDurationMs: 5000,
+				}),
+			{ initialProps: { messageCount: 3 } }
+		);
+
+		expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+		expect(classList.contains(HIGHLIGHT_CLASS)).toBe(true);
+
+		act(() => {
+			vi.advanceTimersByTime(5001);
+		});
+		expect(classList.contains(HIGHLIGHT_CLASS)).toBe(false);
+
+		const scrollCallsAfterFade = scrollIntoViewMock.mock.calls.length;
+		const highlightCallsAfterFade = addMock.mock.calls.length;
+
+		rerender({ messageCount: 4 });
+
+		expect(scrollIntoViewMock).toHaveBeenCalledTimes(scrollCallsAfterFade);
+		expect(addMock).toHaveBeenCalledTimes(highlightCallsAfterFade);
+		expect(classList.contains(HIGHLIGHT_CLASS)).toBe(false);
+	});
+
+	it('calls onAnchored once when the target is first found', () => {
+		const { el } = createTargetEl('msg-1');
+		const onAnchored = vi.fn();
+		const { ref } = createContainer(el);
+
+		const { rerender } = renderHook(
+			({ messageCount }) =>
+				useScrollToMessage({
+					containerRef: ref,
+					messageId: 'msg-1',
+					messageCount,
+					isInitialLoad: false,
+					onAnchored,
+				}),
+			{ initialProps: { messageCount: 3 } }
+		);
+
+		rerender({ messageCount: 4 });
+
+		expect(onAnchored).toHaveBeenCalledTimes(1);
+		expect(onAnchored).toHaveBeenCalledWith('msg-1');
 	});
 
 	it('does not throw when target is missing from the DOM', () => {

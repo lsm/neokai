@@ -9,9 +9,9 @@
  *   2. Applies a temporary amber ring so the user can spot it.
  *   3. Re-anchors a couple of times during a short settling window to handle
  *      late-arriving layout (lazy-loaded rows, image/font loads, etc.).
- *   4. Re-runs whenever `messageCount` changes, so streamed messages can
- *      still be located if the target row is appended after the deep link
- *      was set.
+ *   4. Re-runs whenever `messageCount` changes until the first successful
+ *      anchor, so streamed messages can still be located if the target row is
+ *      appended after the deep link was set.
  *
  * Robustness considerations:
  *
@@ -38,7 +38,7 @@
  */
 
 import type { RefObject } from 'preact';
-import { useEffect } from 'preact/hooks';
+import { useEffect, useRef } from 'preact/hooks';
 
 export interface UseScrollToMessageOptions {
 	/** Ref to the scrollable container element. */
@@ -70,6 +70,12 @@ export interface UseScrollToMessageOptions {
 	 * 250ms. Kept short so the user can scroll freely after that.
 	 */
 	settleWindowMs?: number;
+	/**
+	 * Called once after the target message is first found and anchored.
+	 * Useful for clearing deep-link state while allowing the highlight timer
+	 * owned by this hook to finish normally.
+	 */
+	onAnchored?: (messageId: string) => void;
 }
 
 const HIGHLIGHT_CLASSES = [
@@ -92,31 +98,101 @@ export function useScrollToMessage({
 	isInitialLoad = false,
 	highlightDurationMs = DEFAULT_HIGHLIGHT_DURATION_MS,
 	settleWindowMs = DEFAULT_SETTLE_WINDOW_MS,
+	onAnchored,
 }: UseScrollToMessageOptions): void {
+	const activeMessageIdRef = useRef<string | null>(null);
+	const anchoredMessageIdRef = useRef<string | null>(null);
+	const highlightedElRef = useRef<HTMLElement | null>(null);
+	const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const settleTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+	const runIdRef = useRef(0);
+	const onAnchoredRef = useRef(onAnchored);
+
 	useEffect(() => {
-		if (!messageId) return;
+		onAnchoredRef.current = onAnchored;
+	}, [onAnchored]);
+
+	const clearSettleTimers = () => {
+		for (const id of settleTimersRef.current) clearTimeout(id);
+		settleTimersRef.current = [];
+	};
+
+	const clearFadeTimer = () => {
+		if (fadeTimerRef.current) {
+			clearTimeout(fadeTimerRef.current);
+			fadeTimerRef.current = null;
+		}
+	};
+
+	const clearHighlight = () => {
+		if (highlightedElRef.current) {
+			highlightedElRef.current.classList.remove(...HIGHLIGHT_CLASSES);
+			highlightedElRef.current = null;
+		}
+	};
+
+	useEffect(() => {
+		return () => {
+			runIdRef.current += 1;
+			clearSettleTimers();
+			clearFadeTimer();
+			clearHighlight();
+			activeMessageIdRef.current = null;
+			anchoredMessageIdRef.current = null;
+		};
+	}, []);
+
+	useEffect(() => {
+		if (!messageId) {
+			if (!anchoredMessageIdRef.current) {
+				runIdRef.current += 1;
+				clearSettleTimers();
+				activeMessageIdRef.current = null;
+			}
+			return;
+		}
+
+		if (activeMessageIdRef.current !== messageId) {
+			runIdRef.current += 1;
+			clearSettleTimers();
+			clearFadeTimer();
+			clearHighlight();
+			activeMessageIdRef.current = messageId;
+			anchoredMessageIdRef.current = null;
+		}
+
 		if (isInitialLoad) return;
+		if (anchoredMessageIdRef.current === messageId) return;
 
 		const container = containerRef.current;
 		if (!container) return;
 
-		let cancelled = false;
-		let highlightedEl: HTMLElement | null = null;
-		const settleTimers: Array<ReturnType<typeof setTimeout>> = [];
+		const runId = runIdRef.current + 1;
+		runIdRef.current = runId;
+		clearSettleTimers();
 
 		const findTarget = (): HTMLElement | null =>
 			container.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
 
 		const anchor = (): HTMLElement | null => {
-			if (cancelled) return null;
+			if (runIdRef.current !== runId) return null;
 			const target = findTarget();
 			if (!target) return null;
 			// Instant scroll — deterministic, can't be cancelled mid-animation.
 			target.scrollIntoView({ behavior: 'auto', block: 'center' });
-			if (highlightedEl !== target) {
-				if (highlightedEl) highlightedEl.classList.remove(...HIGHLIGHT_CLASSES);
+			if (highlightedElRef.current !== target) {
+				clearHighlight();
 				target.classList.add(...HIGHLIGHT_CLASSES);
-				highlightedEl = target;
+				highlightedElRef.current = target;
+			}
+			if (anchoredMessageIdRef.current !== messageId) {
+				anchoredMessageIdRef.current = messageId;
+				clearFadeTimer();
+				fadeTimerRef.current = setTimeout(() => {
+					clearHighlight();
+					fadeTimerRef.current = null;
+				}, highlightDurationMs);
+				onAnchoredRef.current?.(messageId);
 			}
 			return target;
 		};
@@ -131,30 +207,11 @@ export function useScrollToMessage({
 			const delays = [16, 64, settleWindowMs]; // ~next frame, mid-settle, end-of-settle
 			for (const delay of delays) {
 				const id = setTimeout(() => {
-					if (cancelled) return;
 					anchor();
 				}, delay);
-				settleTimers.push(id);
+				settleTimersRef.current.push(id);
 			}
 		};
 		scheduleSettleRetries();
-
-		// Drop the highlight ring after the configured duration.
-		const fadeTimer = setTimeout(() => {
-			if (highlightedEl) {
-				highlightedEl.classList.remove(...HIGHLIGHT_CLASSES);
-				highlightedEl = null;
-			}
-		}, highlightDurationMs);
-
-		return () => {
-			cancelled = true;
-			for (const id of settleTimers) clearTimeout(id);
-			clearTimeout(fadeTimer);
-			if (highlightedEl) {
-				highlightedEl.classList.remove(...HIGHLIGHT_CLASSES);
-				highlightedEl = null;
-			}
-		};
 	}, [messageId, isInitialLoad, messageCount, highlightDurationMs, settleWindowMs, containerRef]);
 }

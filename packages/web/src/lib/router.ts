@@ -2228,6 +2228,13 @@ export function replaceOverlayHistory(
 }
 
 /**
+ * Clear the one-shot overlay message highlight after the target row anchors.
+ */
+export function clearOverlayHighlightMessageId(): void {
+	spaceOverlayHighlightMessageIdSignal.value = null;
+}
+
+/**
  * Close the overlay and go back in history to the pre-overlay entry.
  */
 export function closeOverlayHistory(): void {
