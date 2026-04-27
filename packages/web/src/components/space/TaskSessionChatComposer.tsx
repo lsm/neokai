@@ -43,6 +43,14 @@ export function TaskSessionChatComposer({
 
 	return (
 		<div data-testid="task-session-chat-composer">
+			<div
+				class="pointer-events-none absolute bottom-0 left-0 right-0 z-[9] h-24"
+				data-testid="task-composer-readability-scrim"
+				aria-hidden="true"
+			>
+				<div class="absolute inset-0 bg-gradient-to-t from-dark-900/90 via-dark-900/40 to-transparent" />
+				<div class="absolute inset-0 backdrop-blur-[1px] [mask-image:linear-gradient(to_top,black_0%,black_55%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_top,black_0%,black_55%,transparent_100%)]" />
+			</div>
 			<ChatComposer
 				sessionId={sessionId}
 				readonly={false}
