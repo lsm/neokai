@@ -287,10 +287,12 @@ describe('Shared merge template canonical content', () => {
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('DO NOT call approve_task');
 	});
 
-	test('template gates auto-merge behind autonomy_level >= 4', () => {
+	test('template gates auto-merge behind approval_source == "auto" AND autonomy_level < 4', () => {
 		// Section 2 of the template body is the human-approval fallback for
-		// autonomy < 4. Dropping the fallback would silently auto-merge for
-		// low-autonomy spaces, which is explicitly forbidden by the plan.
+		// auto-approved tasks at autonomy < 4. When approval_source is
+		// "human" (the human already reviewed and approved), step 2 is
+		// skipped to avoid redundant double-approval.
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('approval_source == "auto"');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('autonomy_level < 4');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('request_human_input');
 	});
