@@ -2,6 +2,18 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.15.0] - 2026-04-27
+
+A stability release fixing session persistence, message routing, and provider bridge issues. 15 commits since v0.14.0.
+
+### Fixed
+
+- **Session persistence**: `AskUserQuestion` survives daemon restart; dead sessions cleaned up; in-process MCP servers preserved across runtime mutations
+- **Message routing**: Guard sub-session MCP servers; prevent silent message drop; tighten matcher in task-composer target picker
+- **Workflow execution**: Lazy-activate stranded executions; clickable not-started entries; skip redundant merge approval when human already approved
+- **Provider bridges**: Fix Codex model routing + stub endpoints; normalize usage on BetaMessages to prevent SDK crash; fix usage.input_tokens crash on bridge providers; upgrade copilot-sdk; fix copilot early error handling
+- **Space sessions**: Drop bogus sessionId filter from session.created/deleted subs; unify Active-tab filter between sidebar and tasks view
+
 ## [0.14.0] - 2026-04-24
 
 A release introducing the Tauri desktop wrapper, server-derived active-turn tracking, and workflow definition improvements. 10 commits since v0.13.0.
