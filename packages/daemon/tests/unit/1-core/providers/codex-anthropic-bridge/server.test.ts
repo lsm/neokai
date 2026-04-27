@@ -1132,6 +1132,8 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 		const ids = body.data.map((m) => m.id);
 		expect(ids).toContain('gpt-5.3-codex');
 		expect(ids).toContain('gpt-5.4');
+		expect(ids).toContain('gpt-5.5');
+		expect(ids).toContain('gpt-5.4-mini');
 		expect(ids).toContain('gpt-5.1-codex-mini');
 		expect(body.first_id).toBe(ids[0]);
 		expect(body.last_id).toBe(ids[ids.length - 1]);
@@ -1303,6 +1305,25 @@ describe('tool_choice warning — codex bridge', () => {
 		const events = await readSSEEvents(resp.body);
 		const types = events.map((e) => e.event);
 		expect(types).toContain('message_stop');
+	});
+
+	it('resolves bridge model aliases to canonical Codex model IDs', async () => {
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-latest',
+				messages: [{ role: 'user', content: 'hello' }],
+				stream: true,
+			}),
+		});
+
+		expect(resp.ok).toBe(true);
+		const events = await readSSEEvents(resp.body);
+		const messageStart = events.find((e) => e.event === 'message_start');
+		expect(
+			(messageStart?.data as { message?: { model?: string } } | undefined)?.message?.model
+		).toBe('gpt-5.5');
 	});
 
 	it('does NOT log a tool_choice warning when tool_choice is absent', async () => {

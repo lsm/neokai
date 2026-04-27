@@ -4,7 +4,7 @@ This document covers how to configure the `anthropic-codex` provider in NeoKai, 
 
 ## Overview
 
-The `anthropic-codex` provider exposes OpenAI Codex as an Anthropic-compatible API endpoint. This allows NeoKai to use Codex models (like `gpt-5.3-codex`, `gpt-5.4`, `gpt-5.1-codex-mini`) through the standard Anthropic API interface.
+The `anthropic-codex` provider exposes OpenAI Codex as an Anthropic-compatible API endpoint. This allows NeoKai to use Codex models (like `gpt-5.3-codex`, `gpt-5.5`, `gpt-5.4-mini`) through the standard Anthropic API interface.
 
 ### What It Does
 
