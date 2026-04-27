@@ -506,6 +506,7 @@ function ToolUseBlock({
 						pendingQuestion={resolved.question}
 						resolvedState={resolved.state}
 						finalResponses={resolved.responses}
+						cancelReason={resolved.cancelReason}
 					/>
 				) : isPending ? (
 					<QuestionPrompt

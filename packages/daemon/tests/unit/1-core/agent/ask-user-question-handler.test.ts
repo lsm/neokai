@@ -12,6 +12,7 @@ import {
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { Database } from '../../../../src/storage/database';
+import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { PendingUserQuestion, AgentProcessingState, Session } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 
@@ -20,16 +21,21 @@ describe('AskUserQuestionHandler', () => {
 	let mockStateManager: ProcessingStateManager;
 	let mockDaemonHub: DaemonHub;
 	let mockDb: Database;
+	let mockMessageQueue: MessageQueue;
 	let mockContext: AskUserQuestionHandlerContext;
 	let emitSpy: ReturnType<typeof mock>;
 	let setWaitingForInputSpy: ReturnType<typeof mock>;
 	let setProcessingSpy: ReturnType<typeof mock>;
+	let setIdleSpy: ReturnType<typeof mock>;
 	let getStateSpy: ReturnType<typeof mock>;
 	let updateQuestionDraftSpy: ReturnType<typeof mock>;
 	let updateSessionSpy: ReturnType<typeof mock>;
+	let enqueueWithIdSpy: ReturnType<typeof mock>;
+	let ensureQueryStartedSpy: ReturnType<typeof mock>;
 	const testSessionId = generateUUID();
 
 	let currentState: AgentProcessingState;
+	let mockSession: Session;
 
 	beforeEach(() => {
 		currentState = { status: 'idle' };
@@ -51,12 +57,16 @@ describe('AskUserQuestionHandler', () => {
 				phase: 'streaming',
 			};
 		});
+		setIdleSpy = mock(async () => {
+			currentState = { status: 'idle' };
+		});
 		getStateSpy = mock(() => currentState);
 		updateQuestionDraftSpy = mock(async () => {});
 
 		mockStateManager = {
 			setWaitingForInput: setWaitingForInputSpy,
 			setProcessing: setProcessingSpy,
+			setIdle: setIdleSpy,
 			getState: getStateSpy,
 			updateQuestionDraft: updateQuestionDraftSpy,
 		} as unknown as ProcessingStateManager;
@@ -67,8 +77,14 @@ describe('AskUserQuestionHandler', () => {
 			updateSession: updateSessionSpy,
 		} as unknown as Database;
 
+		// Create mock MessageQueue
+		enqueueWithIdSpy = mock(async () => {});
+		mockMessageQueue = {
+			enqueueWithId: enqueueWithIdSpy,
+		} as unknown as MessageQueue;
+
 		// Create mock session
-		const mockSession: Session = {
+		mockSession = {
 			id: testSessionId,
 			title: 'Test Session',
 			workspacePath: '/test/workspace',
@@ -79,12 +95,16 @@ describe('AskUserQuestionHandler', () => {
 			metadata: {},
 		};
 
+		ensureQueryStartedSpy = mock(async () => {});
+
 		// Create context
 		mockContext = {
 			session: mockSession,
 			db: mockDb,
 			stateManager: mockStateManager,
 			daemonHub: mockDaemonHub,
+			messageQueue: mockMessageQueue,
+			ensureQueryStarted: ensureQueryStartedSpy,
 		};
 
 		handler = new AskUserQuestionHandler(mockContext);
@@ -198,13 +218,88 @@ describe('AskUserQuestionHandler', () => {
 			).rejects.toThrow('agent is not waiting for input');
 		});
 
-		it('should throw when no pending resolver', async () => {
+		it('should queue answer + inject tool_result when no pending resolver (post-restart)', async () => {
+			// Simulate persisted waiting_for_input state with no in-memory resolver
+			// (this is the post-restart scenario — task #138).
 			const pendingQuestion: PendingUserQuestion = {
 				toolUseId: 'tool-123',
 				questions: [
 					{
-						question: 'Test?',
-						header: 'Test',
+						question: 'What do you want?',
+						header: 'Choice',
+						options: [
+							{ label: 'A', description: 'A' },
+							{ label: 'B', description: 'B' },
+						],
+						multiSelect: false,
+					},
+				],
+				askedAt: Date.now(),
+			};
+			currentState = { status: 'waiting_for_input', pendingQuestion };
+
+			await handler.handleQuestionResponse('tool-123', [
+				{ questionIndex: 0, selectedLabels: ['A'] },
+			]);
+
+			// Should mark resolved-question metadata (submitted)
+			expect(updateSessionSpy).toHaveBeenCalled();
+			const updateCall = updateSessionSpy.mock.calls[0];
+			expect(updateCall[1].metadata.resolvedQuestions['tool-123'].state).toBe('submitted');
+
+			// Should drop waiting_for_input via setIdle (NOT setProcessing — let
+			// ensureQueryStarted resume cleanly).
+			expect(setIdleSpy).toHaveBeenCalled();
+			expect(setProcessingSpy).not.toHaveBeenCalled();
+
+			// Should queue the answer for canUseTool re-fire
+			const queued = handler.getQueuedAnswersForTesting();
+			expect(queued.has('tool-123')).toBe(true);
+			expect(queued.get('tool-123')!.behavior).toBe('allow');
+
+			// Should inject tool_result into the message queue
+			expect(enqueueWithIdSpy).toHaveBeenCalled();
+			const enqueueCall = enqueueWithIdSpy.mock.calls[0];
+			expect(enqueueCall[1]).toEqual([
+				expect.objectContaining({
+					type: 'tool_result',
+					tool_use_id: 'tool-123',
+					content: expect.stringContaining('A'),
+				}),
+			]);
+
+			// Should restart the query
+			expect(ensureQueryStartedSpy).toHaveBeenCalled();
+
+			// Should emit injected_as_tool_result telemetry
+			expect(emitSpy).toHaveBeenCalledWith(
+				'question.injected_as_tool_result',
+				expect.objectContaining({
+					sessionId: testSessionId,
+					toolUseId: 'tool-123',
+					mode: 'submitted',
+					viaCanUseTool: false,
+				})
+			);
+		});
+
+		it('queues the answer but does NOT call enqueueWithId when ensureQueryStarted is missing', async () => {
+			// Some unit-test contexts (and a few legacy code paths) construct the
+			// handler without an `ensureQueryStarted` on the context. Verify the
+			// post-restart delivery path falls back to queue-only without calling
+			// MessageQueue.enqueueWithId — a future canUseTool fire can still
+			// consume the queued answer.
+			const handlerNoStart = new AskUserQuestionHandler({
+				...mockContext,
+				ensureQueryStarted: undefined,
+			});
+
+			const pendingQuestion: PendingUserQuestion = {
+				toolUseId: 'tool-no-start',
+				questions: [
+					{
+						question: 'Pick?',
+						header: 'P',
 						options: [{ label: 'A', description: 'A' }],
 						multiSelect: false,
 					},
@@ -213,9 +308,22 @@ describe('AskUserQuestionHandler', () => {
 			};
 			currentState = { status: 'waiting_for_input', pendingQuestion };
 
-			await expect(
-				handler.handleQuestionResponse('tool-123', [{ questionIndex: 0, selectedLabels: ['A'] }])
-			).rejects.toThrow('No pending question');
+			await handlerNoStart.handleQuestionResponse('tool-no-start', [
+				{ questionIndex: 0, selectedLabels: ['A'] },
+			]);
+
+			// Answer is queued for a future canUseTool fire
+			const queued = handlerNoStart.getQueuedAnswersForTesting();
+			expect(queued.has('tool-no-start')).toBe(true);
+			expect(queued.get('tool-no-start')!.behavior).toBe('allow');
+
+			// State dropped from waiting_for_input
+			expect(setIdleSpy).toHaveBeenCalled();
+
+			// But: no SDK injection — the warn path returns before
+			// enqueueWithId / ensureQueryStarted are touched.
+			expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+			expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
 		});
 
 		it('should throw on toolUseId mismatch', async () => {
@@ -484,7 +592,9 @@ describe('AskUserQuestionHandler', () => {
 			);
 		});
 
-		it('should throw when no pending resolver', async () => {
+		it('should queue deny + inject cancellation tool_result when no pending resolver', async () => {
+			// Same post-restart scenario as the response test, but for the cancel
+			// (Skip) path.
 			const pendingQuestion: PendingUserQuestion = {
 				toolUseId: 'tool-123',
 				questions: [
@@ -499,8 +609,29 @@ describe('AskUserQuestionHandler', () => {
 			};
 			currentState = { status: 'waiting_for_input', pendingQuestion };
 
-			await expect(handler.handleQuestionCancel('tool-123')).rejects.toThrow(
-				'No pending question to cancel'
+			await handler.handleQuestionCancel('tool-123');
+
+			expect(updateSessionSpy).toHaveBeenCalled();
+			const updateCall = updateSessionSpy.mock.calls[0];
+			expect(updateCall[1].metadata.resolvedQuestions['tool-123'].state).toBe('cancelled');
+			expect(updateCall[1].metadata.resolvedQuestions['tool-123'].cancelReason).toBe(
+				'user_cancelled'
+			);
+
+			expect(setIdleSpy).toHaveBeenCalled();
+
+			const queued = handler.getQueuedAnswersForTesting();
+			expect(queued.has('tool-123')).toBe(true);
+			expect(queued.get('tool-123')!.behavior).toBe('deny');
+
+			expect(enqueueWithIdSpy).toHaveBeenCalled();
+			expect(ensureQueryStartedSpy).toHaveBeenCalled();
+			expect(emitSpy).toHaveBeenCalledWith(
+				'question.injected_as_tool_result',
+				expect.objectContaining({
+					mode: 'cancelled',
+					viaCanUseTool: false,
+				})
 			);
 		});
 
@@ -679,6 +810,206 @@ describe('AskUserQuestionHandler', () => {
 		it('should be safe to call cleanup when no pending resolver', () => {
 			// Should not throw
 			expect(() => handler.cleanup()).not.toThrow();
+		});
+	});
+
+	describe('markQuestionOrphaned', () => {
+		it('returns false when no question is pending', async () => {
+			currentState = { status: 'idle' };
+			const result = await handler.markQuestionOrphaned();
+			expect(result).toBe(false);
+			expect(emitSpy).not.toHaveBeenCalledWith('question.orphaned', expect.any(Object));
+		});
+
+		it('flips waiting_for_input to cancelled with agent_session_terminated reason', async () => {
+			const pendingQuestion: PendingUserQuestion = {
+				toolUseId: 'orphan-tool-1',
+				questions: [
+					{
+						question: 'Pending?',
+						header: 'Pending',
+						options: [{ label: 'A', description: 'A' }],
+						multiSelect: false,
+					},
+				],
+				askedAt: Date.now(),
+			};
+			currentState = { status: 'waiting_for_input', pendingQuestion };
+
+			const result = await handler.markQuestionOrphaned('agent_session_terminated');
+			expect(result).toBe(true);
+
+			// Persisted as cancelled with the right reason
+			expect(updateSessionSpy).toHaveBeenCalled();
+			const updateCall = updateSessionSpy.mock.calls[0];
+			expect(updateCall[1].metadata.resolvedQuestions['orphan-tool-1'].state).toBe('cancelled');
+			expect(updateCall[1].metadata.resolvedQuestions['orphan-tool-1'].cancelReason).toBe(
+				'agent_session_terminated'
+			);
+
+			// Drops waiting_for_input
+			expect(setIdleSpy).toHaveBeenCalled();
+
+			// Telemetry
+			expect(emitSpy).toHaveBeenCalledWith(
+				'question.orphaned',
+				expect.objectContaining({
+					sessionId: testSessionId,
+					toolUseId: 'orphan-tool-1',
+					reason: 'agent_session_terminated',
+				})
+			);
+		});
+
+		it('records rehydrate_failed reason when passed', async () => {
+			const pendingQuestion: PendingUserQuestion = {
+				toolUseId: 'orphan-tool-2',
+				questions: [
+					{
+						question: '?',
+						header: 'X',
+						options: [{ label: 'A', description: 'A' }],
+						multiSelect: false,
+					},
+				],
+				askedAt: Date.now(),
+			};
+			currentState = { status: 'waiting_for_input', pendingQuestion };
+
+			await handler.markQuestionOrphaned('rehydrate_failed');
+
+			const updateCall = updateSessionSpy.mock.calls[0];
+			expect(updateCall[1].metadata.resolvedQuestions['orphan-tool-2'].cancelReason).toBe(
+				'agent_session_terminated'
+			);
+			// Note: persisted reason is always agent_session_terminated for the UI;
+			// the telemetry event carries the more granular reason.
+			expect(emitSpy).toHaveBeenCalledWith(
+				'question.orphaned',
+				expect.objectContaining({ reason: 'rehydrate_failed' })
+			);
+		});
+
+		it('clears any queued answers and rejects in-memory resolvers', async () => {
+			const callback = handler.createCanUseToolCallback();
+			const input = {
+				questions: [
+					{
+						question: 'Test?',
+						header: 'T',
+						options: [
+							{ label: 'A', description: 'A' },
+							{ label: 'B', description: 'B' },
+						],
+						multiSelect: false,
+					},
+				],
+			};
+			const resultPromise = callback('AskUserQuestion', input, {
+				signal: new AbortController().signal,
+				toolUseID: 'orphan-with-resolver',
+			});
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Force-orphan while resolver is live
+			await handler.markQuestionOrphaned('agent_session_terminated');
+
+			// Live SDK promise should reject
+			await expect(resultPromise).rejects.toThrow(/orphaned/i);
+
+			// queuedAnswers map should be empty for that toolUseId
+			expect(handler.getQueuedAnswersForTesting().has('orphan-with-resolver')).toBe(false);
+		});
+	});
+
+	describe('createCanUseToolCallback queued-answer fast path', () => {
+		it('consumes a queued allow without re-prompting and emits viaCanUseTool=true', async () => {
+			// Pre-populate the queued-answer map by simulating a post-restart
+			// handleQuestionResponse that ran before the SDK re-issued the
+			// AskUserQuestion call.
+			const pendingQuestion: PendingUserQuestion = {
+				toolUseId: 'replay-tool',
+				questions: [
+					{
+						question: 'Pick?',
+						header: 'P',
+						options: [{ label: 'A', description: 'A' }],
+						multiSelect: false,
+					},
+				],
+				askedAt: Date.now(),
+			};
+			currentState = { status: 'waiting_for_input', pendingQuestion };
+
+			await handler.handleQuestionResponse('replay-tool', [
+				{ questionIndex: 0, selectedLabels: ['A'] },
+			]);
+
+			// SDK now re-issues the canUseTool call (post-restart replay).
+			currentState = { status: 'idle' };
+			emitSpy.mockClear();
+			setWaitingForInputSpy.mockClear();
+
+			const callback = handler.createCanUseToolCallback();
+			const result = await callback(
+				'AskUserQuestion',
+				{ questions: pendingQuestion.questions },
+				{ signal: new AbortController().signal, toolUseID: 'replay-tool' }
+			);
+
+			// Should not re-transition to waiting_for_input
+			expect(setWaitingForInputSpy).not.toHaveBeenCalled();
+
+			// Should resolve immediately with the queued allow result
+			expect(result.behavior).toBe('allow');
+			expect(
+				(result as { updatedInput: { answers: Record<string, string> } }).updatedInput.answers
+			).toEqual({ 'Pick?': 'A' });
+
+			// Telemetry should record viaCanUseTool=true on consume
+			expect(emitSpy).toHaveBeenCalledWith(
+				'question.injected_as_tool_result',
+				expect.objectContaining({
+					toolUseId: 'replay-tool',
+					mode: 'submitted',
+					viaCanUseTool: true,
+				})
+			);
+
+			// Queue should now be empty for that toolUseId
+			expect(handler.getQueuedAnswersForTesting().has('replay-tool')).toBe(false);
+		});
+
+		it('consumes a queued deny without re-prompting', async () => {
+			const pendingQuestion: PendingUserQuestion = {
+				toolUseId: 'replay-cancel',
+				questions: [
+					{
+						question: 'Skip?',
+						header: 'S',
+						options: [{ label: 'A', description: 'A' }],
+						multiSelect: false,
+					},
+				],
+				askedAt: Date.now(),
+			};
+			currentState = { status: 'waiting_for_input', pendingQuestion };
+
+			await handler.handleQuestionCancel('replay-cancel');
+
+			currentState = { status: 'idle' };
+			setWaitingForInputSpy.mockClear();
+
+			const callback = handler.createCanUseToolCallback();
+			const result = await callback(
+				'AskUserQuestion',
+				{ questions: pendingQuestion.questions },
+				{ signal: new AbortController().signal, toolUseID: 'replay-cancel' }
+			);
+
+			expect(setWaitingForInputSpy).not.toHaveBeenCalled();
+			expect(result.behavior).toBe('deny');
+			expect((result as { message: string }).message).toMatch(/cancel/i);
 		});
 	});
 });
