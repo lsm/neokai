@@ -14,18 +14,20 @@ interface SpaceTaskUnifiedThreadProps {
 	 */
 	topInsetClass?: string;
 	/**
-	 * Whether the agent session is currently active (not idle / completed /
-	 * failed / interrupted). Forwarded to MinimalThreadFeed to gate the live
-	 * rail / coloured running indicator.
+	 * Labels of agents whose underlying sessions are currently active. Forwarded
+	 * to `MinimalThreadFeed` so the trailing non-terminal block of each
+	 * still-running agent renders its own active rail. Per-agent (rather than a
+	 * single boolean) so a Reviewer terminal `result` row landing after Coder's
+	 * last row can't suppress Coder's still-running rail.
 	 */
-	isAgentActive?: boolean;
+	activeAgentLabels?: ReadonlySet<string>;
 }
 
 export function SpaceTaskUnifiedThread({
 	taskId,
 	bottomInsetClass = 'pb-3',
 	topInsetClass = '',
-	isAgentActive = false,
+	activeAgentLabels,
 }: SpaceTaskUnifiedThreadProps) {
 	const { rows, isLoading, isReconnecting } = useSpaceTaskMessages(taskId, 'compact');
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -77,7 +79,7 @@ export function SpaceTaskUnifiedThread({
 		<div class="h-full min-h-0 flex flex-col relative" data-testid="space-task-unified-thread">
 			<div ref={containerRef} class={`flex-1 overflow-y-auto ${topInsetClass} ${bottomInsetClass}`}>
 				<div class="min-h-[calc(100%+1px)]">
-					<MinimalThreadFeed parsedRows={parsedRows} isAgentActive={isAgentActive} />
+					<MinimalThreadFeed parsedRows={parsedRows} activeAgentLabels={activeAgentLabels} />
 				</div>
 			</div>
 		</div>
