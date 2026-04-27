@@ -2,6 +2,32 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.14.0] - 2026-04-24
+
+A release introducing the Tauri desktop wrapper, server-derived active-turn tracking, and workflow definition improvements. 10 commits since v0.13.0.
+
+### Added
+
+- **`@neokai/desktop` Tauri wrapper**: Bundles daemon as sidecar for native desktop app
+- **Server-derived active-turn roster**: Decoupled from compact feed for accurate per-agent turn tracking
+- **Lazy workflow agent activation**: Agents activate on first message instead of at workflow start
+
+### Changed
+
+- Per-node timeouts moved from runtime constants into workflow definitions
+- Removed all `report_result` references
+
+### Fixed
+
+- Space migrations made idempotent with foreign keys
+- Reviewer terminal actions forbidden while P0–P3 findings are open
+- Active-turn rail tracked per agent label
+- Space task view polished (Codex)
+
+### Dependencies
+
+- Patch + minor bumps across the monorepo
+
 ## [0.13.0] - 2026-04-23
 
 A major release replacing the completion-actions pipeline with workflow-declared post-approval routing, unifying the MCP/Tools modal, and hardening daemon restart resilience. 38 commits since v0.12.0.
