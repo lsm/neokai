@@ -62,6 +62,8 @@ interface Props {
 	renderAsPlainText?: boolean;
 	/** Placeholder shown when `content` is empty (empty string or empty array). */
 	emptyMessageLabel?: string;
+	/** Optional width classes for the right-aligned card wrapper. */
+	widthClass?: string;
 }
 
 // Default visible height before "Show more". Matches the per-line height
@@ -98,6 +100,7 @@ export function SyntheticMessageBlock({
 	sessionInit,
 	renderAsPlainText = false,
 	emptyMessageLabel = '(empty message)',
+	widthClass = 'max-w-[85%] md:max-w-[70%]',
 }: Props) {
 	// Normalize content to array of blocks for the renderer below.
 	const contentBlocks = typeof content === 'string' ? [{ type: 'text', text: content }] : content;
@@ -142,7 +145,7 @@ export function SyntheticMessageBlock({
 			data-message-uuid={uuid}
 			data-message-timestamp={timestamp || 0}
 		>
-			<div class="max-w-[85%] md:max-w-[70%] w-auto">
+			<div class={`${widthClass} w-auto`}>
 				<div
 					class="border border-amber-700/50 rounded-lg overflow-hidden bg-dark-800/60"
 					data-testid="synthetic-card"
