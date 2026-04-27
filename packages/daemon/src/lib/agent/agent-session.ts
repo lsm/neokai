@@ -239,6 +239,15 @@ export class AgentSession
 	readonly logger: Logger;
 
 	/**
+	 * Self-heal callback for workflow sub-sessions: invoked by `QueryRunner.start()`
+	 * when it detects missing MCP servers. Set by `TaskAgentManager.createSubSession`
+	 * so that the manager can re-attach the servers before the first turn runs.
+	 *
+	 * undefined for generic sessions (chat, worker, etc.) where this hook is N/A.
+	 */
+	onMissingWorkflowMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
+
+	/**
 	 * Unified per-scope MCP enablement repo — exposed on the context so the
 	 * QueryOptionsBuilder can resolve the session > room > space > registry
 	 * precedence for skill-wrapped MCP servers (MCP M6).
