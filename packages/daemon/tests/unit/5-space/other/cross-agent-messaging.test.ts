@@ -425,6 +425,18 @@ function makeMockTaskAgentManager(
 			if (!exec?.agentSessionId) return null;
 			return { session: { id: exec.agentSessionId } };
 		},
+		// These tests don't exercise lazy node activation — return empty / no-op
+		// stubs so the production send_message path can call them via plain
+		// optional chaining without runtime errors.
+		getWorkflowDeclaredAgentNamesForTask(_taskId: string): string[] {
+			return [];
+		},
+		async ensureWorkflowNodeActivationForAgent(
+			_taskId: string,
+			_agentName: string
+		): Promise<boolean> {
+			return false;
+		},
 	} as unknown as TaskAgentToolsConfig['taskAgentManager'];
 }
 
@@ -1133,7 +1145,8 @@ describe('Error cases — non-existent targets and injection failures', () => {
 
 		const result = parse(await handlers.send_message({ target: 'ghost', message: 'Hello ghost' }));
 		expect(result.success).toBe(false);
-		expect((result.error as string).toLowerCase()).toContain('no active sessions found');
+		// Reworded in Task #133 — declared-but-no-session now reads "could not deliver".
+		expect((result.error as string).toLowerCase()).toContain('could not deliver');
 		expect((result.error as string).toLowerCase()).toContain('ghost');
 	});
 
@@ -1395,14 +1408,17 @@ describe('Task Agent send_message — error cases', () => {
 		ctx.db.close();
 	});
 
-	test('returns error when no active sessions found for target', async () => {
+	test('returns error when target is not declared in this workflow run', async () => {
 		ctx = makeTaskCtx();
 		const wf = buildSingleStepWf(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 
 		// Note: run.config column was removed in M71; channel topology is no longer
-		// stored on the workflow run. send_message always fails with no topology error
-		// before it even gets to check for active sessions.
+		// stored on the workflow run. The single-step workflow declares slot "Coder"
+		// (capitalized agent name); sending to "coder" (lowercase) is genuinely an
+		// unknown agent and should fall into the hard-error path.
+		// Reworded in Task #133 — workflow-declared peers now go through the queue +
+		// lazy-activation path, so the hard-error path is reserved for unknown names.
 
 		const handlers = createTaskAgentToolHandlers(
 			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
@@ -1410,6 +1426,7 @@ describe('Task Agent send_message — error cases', () => {
 
 		const result = parse(await handlers.send_message({ target: 'coder', message: 'Hello' }));
 		expect(result.success).toBe(false);
-		expect((result.error as string).toLowerCase()).toContain('no active sessions');
+		expect((result.error as string).toLowerCase()).toContain('unknown target');
+		expect((result.error as string).toLowerCase()).toContain('coder');
 	});
 });

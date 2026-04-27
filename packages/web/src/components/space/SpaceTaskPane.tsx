@@ -366,6 +366,28 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			? allTransitionActions.filter(({ target }) => target !== 'done' && target !== 'cancelled')
 			: allTransitionActions;
 
+	// Merge live activity members with workflow-declared agents so the dropdown
+	// renders every peer the task can ever address — even those that haven't
+	// spawned a session yet. Activity members are the source of truth for state;
+	// the workflow definition is the source of truth for "what peers exist".
+	//
+	// Without this merge, a workflow-declared agent (e.g. `reviewer`) would not
+	// appear until the workflow tick loop activates its node, which made the
+	// peer feel "missing" to the user even though Task Agent send_message can
+	// already lazily activate it on first contact (see Task #133).
+	const activityRoles = new Set(
+		activityMembers.filter((m) => m.kind === 'node_agent').map((m) => m.role)
+	);
+	const declaredAgentSlots: Array<{ name: string; nodeName: string }> = [];
+	if (workflow) {
+		for (const node of workflow.nodes) {
+			for (const agent of node.agents) {
+				if (activityRoles.has(agent.name)) continue;
+				declaredAgentSlots.push({ name: agent.name, nodeName: node.name });
+			}
+		}
+	}
+
 	const taskActionItems: DropdownMenuItem[] = [];
 	if (activityMembers.length > 0) {
 		taskActionItems.push(
@@ -374,6 +396,23 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				onClick: () => {
 					pushOverlayHistory(member.sessionId, member.label);
 				},
+			}))
+		);
+	}
+	// Workflow-declared agents that have never spawned a session yet. We surface
+	// them in the dropdown so users see every reachable peer, but render them as
+	// disabled — there is no session to open, and routing the click to the Task
+	// Agent's session under the peer's label was misleading (the overlay would
+	// say "reviewer" but render the Task Agent thread). Once the daemon lazily
+	// activates the node (e.g. after Task Agent send_message), the activity
+	// member appears via the live store and replaces this entry naturally.
+	if (declaredAgentSlots.length > 0) {
+		taskActionItems.push(
+			...declaredAgentSlots.map((slot) => ({
+				label: `Open ${slot.name} (Not started)`,
+				onClick: () => {},
+				disabled: true,
+				title: `${slot.name} hasn't been activated yet. Send a message from the Task Agent thread to start its session.`,
 			}))
 		);
 	}

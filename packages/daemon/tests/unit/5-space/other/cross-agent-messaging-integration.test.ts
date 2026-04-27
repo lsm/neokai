@@ -1013,7 +1013,9 @@ describe('error paths — missing workflowRunId', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
-		expect((data.error as string).toLowerCase()).toContain('no active sessions found');
+		// Reworded in Task #133 to disambiguate from "unknown agent" — the
+		// declared-but-no-session case now reads "could not deliver".
+		expect((data.error as string).toLowerCase()).toContain('could not deliver');
 		expect((data.error as string).toLowerCase()).toContain('reviewer');
 		expect(messages).toHaveLength(0);
 	});
@@ -1121,7 +1123,8 @@ describe('Task Agent channel participation', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
-		expect((data.error as string).toLowerCase()).toContain('no active sessions found');
+		// Reworded in Task #133 — see test above for context.
+		expect((data.error as string).toLowerCase()).toContain('could not deliver');
 		expect((data.error as string).toLowerCase()).toContain('task-agent');
 		expect(messages).toHaveLength(0);
 	});

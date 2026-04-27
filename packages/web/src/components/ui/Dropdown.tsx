@@ -9,6 +9,11 @@ export interface DropdownItem {
 	icon?: ComponentChildren;
 	danger?: boolean;
 	disabled?: boolean;
+	/**
+	 * Native browser tooltip shown on hover. Useful for explaining why a
+	 * disabled item is disabled, or providing additional context for an action.
+	 */
+	title?: string;
 }
 
 export interface DropdownDivider {
@@ -258,6 +263,7 @@ export function Dropdown({
 										key={index}
 										role="menuitem"
 										disabled={menuItem.disabled}
+										title={menuItem.title}
 										onKeyDown={(e) => {
 											if (menuItem.disabled) return;
 											if (
