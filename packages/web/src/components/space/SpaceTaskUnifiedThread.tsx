@@ -29,7 +29,10 @@ export function SpaceTaskUnifiedThread({
 	topInsetClass = '',
 	activeAgentLabels,
 }: SpaceTaskUnifiedThreadProps) {
-	const { rows, isLoading, isReconnecting } = useSpaceTaskMessages(taskId, 'compact');
+	const { rows, activeTurnSummaries, isLoading, isReconnecting } = useSpaceTaskMessages(
+		taskId,
+		'compact'
+	);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const didInitialScrollRef = useRef<string | null>(null);
 
@@ -79,7 +82,11 @@ export function SpaceTaskUnifiedThread({
 		<div class="h-full min-h-0 flex flex-col relative" data-testid="space-task-unified-thread">
 			<div ref={containerRef} class={`flex-1 overflow-y-auto ${topInsetClass} ${bottomInsetClass}`}>
 				<div class="min-h-[calc(100%+1px)]">
-					<MinimalThreadFeed parsedRows={parsedRows} activeAgentLabels={activeAgentLabels} />
+					<MinimalThreadFeed
+						parsedRows={parsedRows}
+						activeAgentLabels={activeAgentLabels}
+						activeTurnSummaries={activeTurnSummaries}
+					/>
 				</div>
 			</div>
 		</div>
