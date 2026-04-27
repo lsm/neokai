@@ -243,16 +243,37 @@ export class QueryRunner {
 			// "No such tool available" issues where an expected MCP server (e.g. node-agent
 			// for workflow sub-sessions) is missing from session config at first turn.
 			// Always logged at info level so production logs preserve the evidence trail.
+			//
+			// Task #140 acceptance #9: emit a structured `query.mcp.snapshot` payload
+			// (joinable by sessionId/taskId/workflowRunId) so monitoring can detect
+			// regressions without grepping prose log lines.
 			const mcpServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
 			const isWorkflowSubSession = !!(
 				session.context?.spaceId &&
 				session.id.includes(':task:') &&
 				session.id.includes(':exec:')
 			);
+			// Best-effort taskId / workflowRunId extraction from sub-session ids.
+			// Sub-session id shape: "space:<spaceId>:task:<taskId>:exec:<execId>".
+			// The fields are diagnostic only — never used to drive behavior.
+			const subSessionTaskId = isWorkflowSubSession
+				? session.id.split(':task:')[1]?.split(':')[0]
+				: undefined;
+			const sessionTaskId = (session.context?.taskId as string | undefined) ?? subSessionTaskId;
+			const snapshotPayload = {
+				event: 'query.mcp.snapshot',
+				sessionId: session.id,
+				sessionType: session.type,
+				...(session.context?.spaceId ? { spaceId: session.context.spaceId } : {}),
+				...(sessionTaskId ? { taskId: sessionTaskId } : {}),
+				...(isWorkflowSubSession ? { workflowSubSession: true } : {}),
+				mcpServers: mcpServerNames,
+			};
 			logger.info(
 				`QueryRunner.start(): session ${session.id} mcp servers visible at first turn: ` +
 					`[${mcpServerNames.join(', ')}]` +
-					(isWorkflowSubSession ? ' (workflow sub-session)' : '')
+					(isWorkflowSubSession ? ' (workflow sub-session)' : '') +
+					` ${JSON.stringify(snapshotPayload)}`
 			);
 			// P2-6: Structured metric — detect missing required MCP servers for workflow sub-sessions.
 			// Required servers: node-agent (peer comms) and space-agent-tools (space tool surface).

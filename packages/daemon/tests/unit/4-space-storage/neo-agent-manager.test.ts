@@ -12,7 +12,7 @@
  * - cleanup(): delegates to AgentSession.cleanup()
  * - getSecurityMode(): reads from settings, defaults to 'balanced'
  * - getModel(): reads neoModel, falls back to model, then 'sonnet'
- * - setDbPath(): wires db-query server into setRuntimeMcpServers
+ * - setDbPath(): wires db-query server into mergeRuntimeMcpServers
  * - cleanup(): closes db-query server
  * - destroyAndRecreate(): closes old db-query server and creates new one
  */
@@ -76,7 +76,7 @@ function makeSession(
 		isCleaningUp: mock(() => cleaningUp),
 		setRuntimeSystemPrompt: mock(() => undefined),
 		setRuntimeModel: mock(() => undefined),
-		setRuntimeMcpServers: mock(() => undefined),
+		mergeRuntimeMcpServers: mock(() => undefined),
 		cleanup: mock(async () => undefined),
 		queryPromise,
 		queryObject,
@@ -657,7 +657,7 @@ describe('NeoAgentManager — setDbPath() / db-query server', () => {
 		rmSync(tmpDir, { recursive: true, force: true });
 	});
 
-	test('when setDbPath() is called and toolsConfig is set, db-query key appears in setRuntimeMcpServers', async () => {
+	test('when setDbPath() is called and toolsConfig is set, db-query key appears in mergeRuntimeMcpServers', async () => {
 		const session = makeSession();
 		const sm = makeDbSessionManager({ createdSession: session });
 		const mgr = new NeoAgentManager(sm, makeSettingsManager());
@@ -666,13 +666,13 @@ describe('NeoAgentManager — setDbPath() / db-query server', () => {
 
 		await mgr.provision();
 
-		const calls = (session.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+		const calls = (session.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
 		expect(calls.length).toBe(1);
 		const servers = calls[0][0] as Record<string, McpServerConfig>;
 		expect('db-query' in servers).toBe(true);
 	});
 
-	test('when setDbPath() is NOT called, db-query key is absent from setRuntimeMcpServers', async () => {
+	test('when setDbPath() is NOT called, db-query key is absent from mergeRuntimeMcpServers', async () => {
 		const session = makeSession();
 		const sm = makeDbSessionManager({ createdSession: session });
 		const mgr = new NeoAgentManager(sm, makeSettingsManager());
@@ -681,7 +681,7 @@ describe('NeoAgentManager — setDbPath() / db-query server', () => {
 
 		await mgr.provision();
 
-		const calls = (session.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+		const calls = (session.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
 		expect(calls.length).toBe(1);
 		const servers = calls[0][0] as Record<string, McpServerConfig>;
 		expect('db-query' in servers).toBe(false);
@@ -744,7 +744,7 @@ describe('NeoAgentManager — setDbPath() / db-query server', () => {
 		await mgr.provision();
 		expect(mgr.getSession()).toBe(firstSession);
 
-		const firstCalls = (firstSession.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+		const firstCalls = (firstSession.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
 		expect(firstCalls.length).toBe(1);
 		const firstServers = firstCalls[0][0] as Record<string, McpServerConfig>;
 		expect('db-query' in firstServers).toBe(true);
@@ -753,7 +753,8 @@ describe('NeoAgentManager — setDbPath() / db-query server', () => {
 		await mgr.clearSession();
 		expect(mgr.getSession()).toBe(secondSession);
 
-		const secondCalls = (secondSession.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+		const secondCalls = (secondSession.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock
+			.calls;
 		expect(secondCalls.length).toBe(1);
 		const secondServers = secondCalls[0][0] as Record<string, McpServerConfig>;
 		expect('db-query' in secondServers).toBe(true);
@@ -762,7 +763,7 @@ describe('NeoAgentManager — setDbPath() / db-query server', () => {
 		await expect(mgr.cleanup()).resolves.toBeUndefined();
 	});
 
-	test('when toolsConfig is not set, setDbPath() alone does NOT call setRuntimeMcpServers', async () => {
+	test('when toolsConfig is not set, setDbPath() alone does NOT call mergeRuntimeMcpServers', async () => {
 		const session = makeSession();
 		const sm = makeDbSessionManager({ createdSession: session });
 		const mgr = new NeoAgentManager(sm, makeSettingsManager());
@@ -771,8 +772,8 @@ describe('NeoAgentManager — setDbPath() / db-query server', () => {
 
 		await mgr.provision();
 
-		// attachTools() is a no-op when toolsConfig is null, so setRuntimeMcpServers is never called.
-		const calls = (session.setRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
+		// attachTools() is a no-op when toolsConfig is null, so mergeRuntimeMcpServers is never called.
+		const calls = (session.mergeRuntimeMcpServers as ReturnType<typeof mock>).mock.calls;
 		expect(calls.length).toBe(0);
 	});
 });

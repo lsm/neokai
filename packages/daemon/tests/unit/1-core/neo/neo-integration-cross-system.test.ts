@@ -251,7 +251,7 @@ function makeAgentSession(
 		isCleaningUp: mock(() => cleaningUp),
 		setRuntimeSystemPrompt: mock(() => undefined),
 		setRuntimeModel: mock(() => undefined),
-		setRuntimeMcpServers: mock(() => undefined),
+		mergeRuntimeMcpServers: mock(() => undefined),
 		cleanup: mock(async () => undefined),
 		queryPromise,
 		queryObject,

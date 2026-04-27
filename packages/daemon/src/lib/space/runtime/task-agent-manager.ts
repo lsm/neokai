@@ -655,11 +655,11 @@ export class TaskAgentManager {
 				artifactRepo: this.config.artifactRepo,
 			});
 
-			// setRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`
+			// mergeRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`
 			// object is structurally compatible at runtime — the AgentSession only reads
 			// the `server` property for the live Server instance. The cast is safe because
 			// createTaskAgentMcpServer returns { server, cleanup } which satisfies the
-			// runtime shape used inside AgentSession.setRuntimeMcpServers().
+			// runtime shape used inside AgentSession.mergeRuntimeMcpServers().
 			//
 			// Merge registry-sourced MCP servers from AppMcpLifecycleManager alongside the
 			// in-process task-agent server. The task-agent server always wins on collision
