@@ -17,26 +17,28 @@
  */
 
 import type {
+	ChatMessage,
 	MessageDeliveryMode,
 	MessageImage,
 	ResolvedQuestion,
 	SessionFeatures,
 } from '@neokai/shared';
 import {
-	DEFAULT_WORKER_FEATURES,
-	DEFAULT_ROOM_CHAT_FEATURES,
 	DEFAULT_LOBBY_FEATURES,
+	DEFAULT_ROOM_CHAT_FEATURES,
+	DEFAULT_WORKER_FEATURES,
 } from '@neokai/shared';
 import type { SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import type { ChatMessage } from '@neokai/shared';
 import { useSignalEffect } from '@preact/signals';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
-import { ChatHeader } from '../components/ChatHeader.tsx';
-import { ErrorBanner } from '../components/ErrorBanner.tsx';
-import { ErrorDialog } from '../components/ErrorDialog.tsx';
 // Components
 import { ChatComposer } from '../components/ChatComposer.tsx';
+import type { RoomContext } from '../components/ChatHeader.tsx';
+import { ChatHeader } from '../components/ChatHeader.tsx';
+import type { ErrorBannerAction } from '../components/ErrorBanner.tsx';
+import { ErrorBanner } from '../components/ErrorBanner.tsx';
+import { ErrorDialog } from '../components/ErrorDialog.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { SessionInfoModal } from '../components/SessionInfoModal.tsx';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
@@ -44,36 +46,32 @@ import { ToolsModal } from '../components/ToolsModal.tsx';
 import { Button } from '../components/ui/Button.tsx';
 import { ContentContainer } from '../components/ui/ContentContainer.tsx';
 import { Modal } from '../components/ui/Modal.tsx';
-
 import { Spinner } from '../components/ui/Spinner.tsx';
-import { WorktreeChoiceInline } from '../components/WorktreeChoiceInline.tsx';
 import { WorkspaceSelector } from '../components/WorkspaceSelector.tsx';
+import { WorktreeChoiceInline } from '../components/WorktreeChoiceInline.tsx';
+import { getProviderLabel } from '../hooks/index.ts';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
+import { useChatComposerController } from '../hooks/useChatComposerController.ts';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
-import { useScrollToMessage } from '../hooks/useScrollToMessage.ts';
 // Hooks
 import { useModal } from '../hooks/useModal.ts';
-import { useChatComposerController } from '../hooks/useChatComposerController.ts';
+import { useScrollToMessage } from '../hooks/useScrollToMessage.ts';
 import { useSendMessage } from '../hooks/useSendMessage.ts';
 import { useSessionActions } from '../hooks/useSessionActions.ts';
 import { updateSession } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager';
+import { borderColors } from '../lib/design-tokens';
 import { MIN_MESSAGES_BOTTOM_PADDING_PX } from '../lib/layout-metrics.ts';
+import { lobbyStore } from '../lib/lobby-store.ts';
+import { navigateToSettings, replaceOverlayHistory } from '../lib/router.ts';
 import { sessionStore } from '../lib/session-store.ts';
+import { settingsSectionSignal } from '../lib/signals.ts';
+import { spaceStore } from '../lib/space-store.ts';
 import { connectionState } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
-import { lobbyStore } from '../lib/lobby-store.ts';
-import { spaceStore } from '../lib/space-store.ts';
-
-import type { RoomContext } from '../components/ChatHeader.tsx';
-import { settingsSectionSignal } from '../lib/signals.ts';
-import { navigateToSettings, replaceOverlayHistory } from '../lib/router.ts';
-import { ErrorCategory } from '../types/error.ts';
-import type { StructuredError } from '../types/error.ts';
-import { getProviderLabel } from '../hooks/index.ts';
-import type { ErrorBannerAction } from '../components/ErrorBanner.tsx';
-import { borderColors } from '../lib/design-tokens';
 import { cn } from '../lib/utils';
+import type { StructuredError } from '../types/error.ts';
+import { ErrorCategory } from '../types/error.ts';
 
 interface ChatContainerProps {
 	sessionId: string;
@@ -914,6 +912,7 @@ export default function ChatContainer({
 			<div
 				class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative"
 				data-testid="pending-agent-overlay"
+				aria-label={`${pendingAgent.agentName} chat (starting)`}
 			>
 				{/* Header — mirrors ChatHeader height (h-[65px]) for visual consistency */}
 				<div
