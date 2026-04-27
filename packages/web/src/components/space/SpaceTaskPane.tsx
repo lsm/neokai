@@ -153,6 +153,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const [visibleTargetName, setVisibleTargetName] = useState<string | null>(null);
 	const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
 	const [showScrollButton, setShowScrollButton] = useState(false);
+	const [threadScroller, setThreadScroller] = useState<HTMLDivElement | null>(null);
 	const threadPanelRef = useRef<HTMLDivElement>(null);
 	const scrollToBottomRef = useRef<((smooth?: boolean) => void) | null>(null);
 	const draftWasActiveRef = useRef(false);
@@ -172,6 +173,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		setVisibleTargetName(null);
 		setAutoScrollEnabled(true);
 		setShowScrollButton(false);
+		setThreadScroller(null);
 		scrollToBottomRef.current = null;
 		draftWasActiveRef.current = false;
 	}, [taskId]);
@@ -357,7 +359,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		const root = threadPanelRef.current;
 		if (!root) return;
 		const scroller =
-			root.querySelector<HTMLElement>('[data-testid="space-task-unified-thread"] > div') ?? root;
+			threadScroller ??
+			root.querySelector<HTMLElement>('[data-testid="space-task-unified-thread"] > div');
+		if (!scroller) return;
 
 		let frame = 0;
 		const updateVisibleTarget = (options?: { unlockManualTarget?: boolean }) => {
@@ -406,7 +410,14 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			observer.disconnect();
 			scroller.removeEventListener('scroll', handleScroll);
 		};
-	}, [activeView, hasComposerDraft, sendingThread, showInlineComposer, targetLocked]);
+	}, [
+		activeView,
+		hasComposerDraft,
+		sendingThread,
+		showInlineComposer,
+		targetLocked,
+		threadScroller,
+	]);
 
 	useEffect(() => {
 		if (activeView === 'canvas' && !canShowCanvasTab) {
@@ -822,6 +833,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 									onScrollToBottomChange={(scrollToBottom) => {
 										scrollToBottomRef.current = scrollToBottom;
 									}}
+									onScrollerChange={setThreadScroller}
 								/>
 							) : (
 								<div class="h-full overflow-y-auto">

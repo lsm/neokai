@@ -25,6 +25,7 @@ interface SpaceTaskUnifiedThreadProps {
 	autoScrollEnabled?: boolean;
 	onShowScrollButtonChange?: (showScrollButton: boolean) => void;
 	onScrollToBottomChange?: (scrollToBottom: ((smooth?: boolean) => void) | null) => void;
+	onScrollerChange?: (scroller: HTMLDivElement | null) => void;
 }
 
 export function SpaceTaskUnifiedThread({
@@ -35,6 +36,7 @@ export function SpaceTaskUnifiedThread({
 	autoScrollEnabled = true,
 	onShowScrollButtonChange,
 	onScrollToBottomChange,
+	onScrollerChange,
 }: SpaceTaskUnifiedThreadProps) {
 	const { rows, activeTurnSummaries, isLoading, isReconnecting } = useSpaceTaskMessages(
 		taskId,
@@ -59,6 +61,11 @@ export function SpaceTaskUnifiedThread({
 		onScrollToBottomChange?.(scrollToBottom);
 		return () => onScrollToBottomChange?.(null);
 	}, [onScrollToBottomChange, scrollToBottom]);
+
+	useEffect(() => {
+		onScrollerChange?.(containerRef.current);
+		return () => onScrollerChange?.(null);
+	}, [onScrollerChange, parsedRows.length, isLoading, isReconnecting]);
 
 	if (isReconnecting) {
 		return (
