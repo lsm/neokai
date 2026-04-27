@@ -697,7 +697,7 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
  *
  * Width strategy: stacked under the agent header (no avatar offset on the
  * left), so `w-fit` lets short replies hug their content, `max-w-full`
- * fills the row on mobile, and `md:max-w-[70%]` caps the width on desktop
+ * fills the row on mobile, and `md:max-w-[86%]` caps the width on desktop
  * to keep long markdown readable instead of stretching edge-to-edge.
  */
 function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
@@ -709,7 +709,7 @@ function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
 			}
 		: undefined;
 	return (
-		<div class="mt-1.5 w-fit max-w-full md:max-w-[70%]">
+		<div class="mt-1.5 w-fit max-w-full md:max-w-[86%]">
 			<div
 				class="bg-dark-800 border border-dark-700 rounded-lg px-3 py-2"
 				data-testid="minimal-thread-agent-bubble"
@@ -855,7 +855,7 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 			data-from-label={turn.fromLabel}
 			data-to-label={turn.toLabel}
 		>
-			<div class="max-w-[85%] md:max-w-[70%] w-auto">
+			<div class="max-w-[85%] md:max-w-[86%] w-auto">
 				<div
 					class="bg-blue-500 text-white rounded-[20px] px-4 py-2 leading-relaxed break-words"
 					data-testid="minimal-thread-human-bubble"
@@ -919,6 +919,7 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 				toShort={toShort}
 				renderAsPlainText={turn.bodyIsFallback}
 				sessionInit={turn.sessionInit}
+				widthClass="max-w-[85%] md:max-w-[86%]"
 				onOpenSession={
 					turn.sessionId
 						? () =>

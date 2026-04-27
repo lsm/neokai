@@ -256,6 +256,12 @@ describe('SpaceTaskPane', () => {
 		expect(getByText('High Priority')).toBeTruthy();
 	});
 
+	it('omits the header status badge for review tasks because the approval banner owns that state', () => {
+		mockTasks.value = [makeTask({ status: 'review', taskAgentSessionId: 'session-abc' })];
+		const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(queryByTestId('task-status-label')).toBeNull();
+	});
+
 	it('renders unified task thread component when session exists', () => {
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);

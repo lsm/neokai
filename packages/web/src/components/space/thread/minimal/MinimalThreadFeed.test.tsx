@@ -430,6 +430,9 @@ describe('MinimalThreadFeed', () => {
 		// Synthetic handoffs render with a "Synthetic" badge (was "handoff" earlier;
 		// renamed when the bubble was redesigned to mirror the Thinking block).
 		expect(messageTurn.textContent?.toLowerCase()).toContain('synthetic');
+		expect(
+			messageTurn.querySelector('[data-testid="synthetic-message"] > div')?.className
+		).toContain('md:max-w-[86%]');
 		await waitFor(() => {
 			expect(screen.getByText('please address the failing test')).toBeTruthy();
 		});
