@@ -340,14 +340,20 @@ export class AskUserQuestionHandler {
 	 *
 	 * Idempotent: safe to call when the session is not in `waiting_for_input`
 	 * (returns false). The persisted question is flipped to a `cancelled`
-	 * ResolvedQuestion with cancelReason `agent_session_terminated` and the
+	 * ResolvedQuestion with cancelReason `agent_session_terminated` (always —
+	 * the UI only renders one orphan-cancelled state today) and the
 	 * processing state is reset to `idle` so the UI removes the dead-end card.
 	 *
+	 * @param telemetryReason Annotates the `question.orphaned` daemonHub event
+	 *   only. Does NOT affect the persisted `cancelReason` on the resolved
+	 *   record — that's hardcoded to `agent_session_terminated` because the UI
+	 *   has no separate rendering for `rehydrate_failed`. If a future UX
+	 *   distinguishes the two, plumb this param through to `trackResolvedQuestion`.
 	 * @returns true if a question was actually orphaned, false if there was
 	 *   nothing to clean up.
 	 */
 	async markQuestionOrphaned(
-		reason: 'agent_session_terminated' | 'rehydrate_failed' = 'agent_session_terminated'
+		telemetryReason: 'agent_session_terminated' | 'rehydrate_failed' = 'agent_session_terminated'
 	): Promise<boolean> {
 		const { stateManager, daemonHub, session } = this.ctx;
 		const currentState = stateManager.getState();
@@ -357,8 +363,9 @@ export class AskUserQuestionHandler {
 
 		const pendingQuestion = currentState.pendingQuestion;
 
-		// Track as cancelled with the orphan reason so the UI can render
-		// distinctly ("Question cancelled — agent session ended").
+		// Track as cancelled. The persisted `cancelReason` is intentionally
+		// always `agent_session_terminated` — see JSDoc on `telemetryReason`
+		// for why we don't pass `telemetryReason` through here.
 		this.trackResolvedQuestion(
 			pendingQuestion.toolUseId,
 			pendingQuestion,
@@ -388,11 +395,11 @@ export class AskUserQuestionHandler {
 		await daemonHub.emit('question.orphaned', {
 			sessionId: session.id,
 			toolUseId: pendingQuestion.toolUseId,
-			reason,
+			reason: telemetryReason,
 		});
 
 		this.logger.info(
-			`AskUserQuestion ${pendingQuestion.toolUseId} orphaned (reason=${reason}); UI card cleaned up`
+			`AskUserQuestion ${pendingQuestion.toolUseId} orphaned (telemetryReason=${telemetryReason}); UI card cleaned up`
 		);
 		return true;
 	}
@@ -488,9 +495,14 @@ export class AskUserQuestionHandler {
 			// `parent_tool_use_id` on the SDK user message — that's the wire
 			// format the Anthropic API expects for a user→assistant tool reply.
 			//
-			// If the SDK has already moved past this tool_use (because the
-			// queued answer was consumed by canUseTool above), this message
-			// becomes a no-op text from the SDK's perspective.
+			// Redundancy note: if the resumed SDK query *also* re-fires
+			// canUseTool for the same `tool_use_id` (path A — queuedAnswers
+			// consumed), the SDK will see two responses for that tool_use:
+			// the canUseTool return and this enqueued tool_result. In
+			// practice the SDK we use treats the canUseTool response as
+			// authoritative and forwards the tool_result as a regular user
+			// message. We tolerate the duplicate rather than try to detect
+			// which path the SDK will pick before it picks one.
 			await messageQueue.enqueueWithId(`question-${toolUseId}-${Date.now()}`, [
 				{
 					type: 'tool_result',
@@ -573,8 +585,13 @@ export class AskUserQuestionHandler {
 	}
 
 	/**
-	 * Test-only: inspect the current queued-answer map.
-	 * Returns a shallow copy so callers cannot mutate handler internals.
+	 * Inspect the current queued-answer map.
+	 *
+	 * @internal Test-only inspector. Production code MUST NOT depend on this
+	 * — it bypasses the canUseTool delivery contract and is exposed solely so
+	 * unit tests can assert side-effects of `submitQuestionResponse` and
+	 * `cancelQuestion` along the post-restart path. Returns a shallow copy
+	 * so callers cannot mutate handler internals.
 	 */
 	getQueuedAnswersForTesting(): Map<string, PermissionResult> {
 		return new Map(this.queuedAnswers);

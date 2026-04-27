@@ -141,8 +141,14 @@ export interface ResolvedQuestion {
 	/** When the question was resolved */
 	resolvedAt: number;
 	/**
-	 * When state === 'cancelled', explains who/what cancelled the question.
-	 * Defaults to 'user_cancelled' for back-compat when missing.
+	 * When `state === 'cancelled'`, explains who/what cancelled the question.
+	 *
+	 * Optional and unset on records persisted before this field was added —
+	 * the field has no runtime default. Renderers that need a fallback
+	 * (e.g. `QuestionPrompt`) must handle `undefined` explicitly; the
+	 * current UI displays a generic "Question skipped" header for missing
+	 * `cancelReason` and a specific "agent session ended" header for
+	 * `cancelReason === 'agent_session_terminated'`.
 	 */
 	cancelReason?: QuestionCancelReason;
 }

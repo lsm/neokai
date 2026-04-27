@@ -1697,11 +1697,14 @@ export class SpaceRuntime {
 
 				const timeoutMinutes = Math.round(timeoutMs / 60_000);
 
-				// Part C: if (somehow) we're force-completing a session that *is*
-				// in waiting_for_input despite the guard above (e.g. state changed
-				// between checks), clear the orphaned question first so the UI
-				// doesn't render a card whose resolver no longer exists. Best-
-				// effort — never let cleanup failure block the auto-complete.
+				// Defensive Part C call: the Part D guard above already skips
+				// `waiting_for_input` sessions, so by construction this code only
+				// runs for sessions that are NOT in `waiting_for_input` — and
+				// `markPendingQuestionOrphaned` is a no-op (returns false) for
+				// those. We keep the call as belt-and-braces against a future
+				// refactor that loosens the guard or introduces an `await`
+				// between the guard and this point. Best-effort: never let
+				// cleanup failure block the auto-complete.
 				if (liveSession) {
 					try {
 						await liveSession.markPendingQuestionOrphaned('agent_session_terminated');

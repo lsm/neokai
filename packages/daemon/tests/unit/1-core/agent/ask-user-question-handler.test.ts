@@ -283,6 +283,49 @@ describe('AskUserQuestionHandler', () => {
 			);
 		});
 
+		it('queues the answer but does NOT call enqueueWithId when ensureQueryStarted is missing', async () => {
+			// Some unit-test contexts (and a few legacy code paths) construct the
+			// handler without an `ensureQueryStarted` on the context. Verify the
+			// post-restart delivery path falls back to queue-only without calling
+			// MessageQueue.enqueueWithId — a future canUseTool fire can still
+			// consume the queued answer.
+			const handlerNoStart = new AskUserQuestionHandler({
+				...mockContext,
+				ensureQueryStarted: undefined,
+			});
+
+			const pendingQuestion: PendingUserQuestion = {
+				toolUseId: 'tool-no-start',
+				questions: [
+					{
+						question: 'Pick?',
+						header: 'P',
+						options: [{ label: 'A', description: 'A' }],
+						multiSelect: false,
+					},
+				],
+				askedAt: Date.now(),
+			};
+			currentState = { status: 'waiting_for_input', pendingQuestion };
+
+			await handlerNoStart.handleQuestionResponse('tool-no-start', [
+				{ questionIndex: 0, selectedLabels: ['A'] },
+			]);
+
+			// Answer is queued for a future canUseTool fire
+			const queued = handlerNoStart.getQueuedAnswersForTesting();
+			expect(queued.has('tool-no-start')).toBe(true);
+			expect(queued.get('tool-no-start')!.behavior).toBe('allow');
+
+			// State dropped from waiting_for_input
+			expect(setIdleSpy).toHaveBeenCalled();
+
+			// But: no SDK injection — the warn path returns before
+			// enqueueWithId / ensureQueryStarted are touched.
+			expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+			expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
+		});
+
 		it('should throw on toolUseId mismatch', async () => {
 			const callback = handler.createCanUseToolCallback();
 
