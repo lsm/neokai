@@ -77,14 +77,10 @@ describe('TaskSessionChatComposer', () => {
 		expect(getByTestId('mock-chat-composer')).toBeTruthy();
 	});
 
-	it('renders a non-interactive readability scrim behind the floating composer', () => {
-		const { container, getByTestId } = renderComposer();
+	it('anchors the shared floating ChatComposer shell locally', () => {
+		const { queryByTestId, getByTestId } = renderComposer();
 		expect(getByTestId('task-session-chat-composer').className).toContain('relative');
-		const scrim = getByTestId('task-composer-readability-scrim');
-		expect(scrim.className).toContain('pointer-events-none');
-		expect(container.querySelector('.bg-gradient-to-t')).toBeTruthy();
-		expect(container.querySelector('.backdrop-blur-\\[1px\\]')).toBeTruthy();
-		expect(scrim.getAttribute('aria-hidden')).toBe('true');
+		expect(queryByTestId('task-composer-readability-scrim')).toBeNull();
 	});
 
 	it('passes sessionId to ChatComposer', () => {

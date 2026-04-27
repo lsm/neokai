@@ -94,6 +94,9 @@ interface RosterMessageEntry {
 	kind: 'message';
 	text: string;
 }
+
+const TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS = 'max-w-[85%] md:max-w-[86%]';
+const TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS = 'max-w-full md:max-w-[86%]';
 type ActiveRosterEntry = RosterToolEntry | RosterMessageEntry;
 
 interface CompletedFeedTurn {
@@ -719,7 +722,7 @@ function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
 			}
 		: undefined;
 	return (
-		<div class="mt-1.5 w-fit max-w-full md:max-w-[86%]">
+		<div class={`mt-1.5 w-fit ${TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS}`}>
 			<div
 				class="bg-dark-800 border border-dark-700 rounded-lg px-3 py-2"
 				data-testid="minimal-thread-agent-bubble"
@@ -888,7 +891,7 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 			data-from-label={turn.fromLabel}
 			data-to-label={turn.toLabel}
 		>
-			<div class="max-w-[85%] md:max-w-[86%] w-auto">
+			<div class={`${TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS} w-auto`}>
 				<div
 					class="bg-blue-500 text-white rounded-[20px] px-4 py-2 leading-relaxed break-words"
 					data-testid="minimal-thread-human-bubble"
@@ -952,7 +955,7 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 				toShort={toShort}
 				renderAsPlainText={turn.bodyIsFallback}
 				sessionInit={turn.sessionInit}
-				widthClass="max-w-[85%] md:max-w-[86%]"
+				widthClass={TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS}
 				onOpenSession={
 					turn.sessionId
 						? () =>
