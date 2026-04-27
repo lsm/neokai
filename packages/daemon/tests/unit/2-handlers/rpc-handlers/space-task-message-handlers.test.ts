@@ -1496,6 +1496,45 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				})
 			).rejects.toThrow('Task not found');
 		});
+
+		it('throws when task is archived', async () => {
+			const { handlers: h } = setupActivate({
+				task: { ...mockTaskWithRun, status: 'archived' },
+			});
+			await expect(
+				(h.get('space.task.activateNodeAgent') as RequestHandler)({
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					agentName: 'reviewer',
+				})
+			).rejects.toThrow('archived');
+		});
+
+		it('throws when task is done', async () => {
+			const { handlers: h } = setupActivate({
+				task: { ...mockTaskWithRun, status: 'done' },
+			});
+			await expect(
+				(h.get('space.task.activateNodeAgent') as RequestHandler)({
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					agentName: 'reviewer',
+				})
+			).rejects.toThrow(/done.*active task/);
+		});
+
+		it('throws when task is cancelled', async () => {
+			const { handlers: h } = setupActivate({
+				task: { ...mockTaskWithRun, status: 'cancelled' },
+			});
+			await expect(
+				(h.get('space.task.activateNodeAgent') as RequestHandler)({
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					agentName: 'reviewer',
+				})
+			).rejects.toThrow(/cancelled.*active task/);
+		});
 	});
 });
 
