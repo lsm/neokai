@@ -14,7 +14,11 @@
  */
 
 import { useState, useCallback, useEffect } from 'preact/hooks';
-import type { PendingUserQuestion, QuestionDraftResponse } from '@neokai/shared';
+import type {
+	PendingUserQuestion,
+	QuestionCancelReason,
+	QuestionDraftResponse,
+} from '@neokai/shared';
 import { useMessageHub } from '../hooks/useMessageHub.ts';
 import { Button } from './ui/Button.tsx';
 import { cn } from '../lib/utils.ts';
@@ -57,6 +61,14 @@ interface QuestionPromptProps {
 	resolvedState?: ResolvedState;
 	/** Final responses when resolved (for display) */
 	finalResponses?: QuestionDraftResponse[];
+	/**
+	 * When `resolvedState === 'cancelled'`, explains who cancelled the question.
+	 * - `user_cancelled` (default): user clicked Skip
+	 * - `agent_session_terminated`: session ended before the user answered, so
+	 *   the card is rendered as an orphan note rather than a "Question skipped"
+	 *   pretending the user dismissed it.
+	 */
+	cancelReason?: QuestionCancelReason;
 	/** Callback when the question is resolved (submitted or cancelled) */
 	onResolved?: (state: 'submitted' | 'cancelled', responses: QuestionDraftResponse[]) => void;
 }
@@ -66,6 +78,7 @@ export function QuestionPrompt({
 	pendingQuestion,
 	resolvedState = null,
 	finalResponses,
+	cancelReason,
 	onResolved,
 }: QuestionPromptProps) {
 	const { questions, toolUseId, draftResponses } = pendingQuestion;
@@ -334,7 +347,15 @@ export function QuestionPrompt({
 	// Get header title based on state
 	const getHeaderTitle = () => {
 		if (resolvedState === 'submitted') return 'Response submitted';
-		if (resolvedState === 'cancelled') return 'Question skipped';
+		if (resolvedState === 'cancelled') {
+			// `agent_session_terminated`: the session ended before the user
+			// answered, so the question card is being cleaned up by the
+			// runtime rather than dismissed by the user.
+			if (cancelReason === 'agent_session_terminated') {
+				return 'Question cancelled — agent session ended';
+			}
+			return 'Question skipped';
+		}
 		return 'Claude needs your input';
 	};
 

@@ -114,6 +114,29 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		sessionId: string;
 		pendingQuestion: PendingUserQuestion;
 	};
+	/**
+	 * Emitted when a pending question is cleaned up because its owning session
+	 * ended (force-completion, rehydrate failure, daemon shutdown). The card
+	 * is flipped to a `cancelled` ResolvedQuestion with cancelReason
+	 * `agent_session_terminated` so the UI can render it distinctly.
+	 */
+	'question.orphaned': {
+		sessionId: string;
+		toolUseId: string;
+		reason: 'agent_session_terminated' | 'rehydrate_failed';
+	};
+	/**
+	 * Emitted when an AskUserQuestion answer is delivered after the original
+	 * canUseTool resolver was lost (e.g. daemon restart). Helps verify the
+	 * restart-survival path works in production.
+	 */
+	'question.injected_as_tool_result': {
+		sessionId: string;
+		toolUseId: string;
+		mode: 'submitted' | 'cancelled';
+		/** True when the queued answer was consumed by a re-played canUseTool call. */
+		viaCanUseTool: boolean;
+	};
 
 	// User message processing events (3-layer communication pattern)
 	'userMessage.persisted': {

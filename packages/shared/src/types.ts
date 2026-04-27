@@ -529,7 +529,7 @@ export interface SessionMetadata {
 	titleGenerated?: boolean; // Flag to track if title has been auto-generated
 	workspaceInitialized?: boolean; // Flag to track if workspace (title + worktree) has been initialized
 	lastContextInfo?: ContextInfo | null; // Last known context info (persisted)
-	inputDraft?: string; // Draft input text (persisted across sessions and devices)
+	inputDraft?: string | null; // Draft input text (null to clear; persisted across sessions and devices)
 	removedOutputs?: string[]; // UUIDs of messages whose tool_result outputs were removed from SDK session file
 	resolvedQuestions?: Record<string, ResolvedQuestion>; // Resolved AskUserQuestion responses, keyed by toolUseId
 	// Cost tracking: SDK reports cumulative cost per run, but resets on agent restart

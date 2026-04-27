@@ -1691,4 +1691,81 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
 		);
 		expect(subscribeCalls).toHaveLength(1);
 	});
+	describe('sendTaskMessage', () => {
+		beforeEach(async () => {
+			await spaceStore.selectSpace('space-1');
+		});
+
+		it('returns daemon response for task_agent target', async () => {
+			mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+				if (method === 'space.task.sendMessage') {
+					return { ok: true };
+				}
+				return {};
+			});
+
+			const result = await spaceStore.sendTaskMessage('task-1', 'Hello', {
+				kind: 'task_agent',
+			});
+
+			expect(result).toEqual({ ok: true });
+			expect(mockHub.request).toHaveBeenCalledWith(
+				'space.task.sendMessage',
+				expect.objectContaining({
+					taskId: 'task-1',
+					message: 'Hello',
+					target: { kind: 'task_agent' },
+				})
+			);
+		});
+
+		it('returns delivered:false when daemon queues for inactive agent', async () => {
+			mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+				if (method === 'space.task.sendMessage') {
+					return {
+						ok: true,
+						routedTo: ['Reviewer'],
+						delivered: false,
+						queued: true,
+						activated: true,
+					};
+				}
+				return {};
+			});
+
+			const result = await spaceStore.sendTaskMessage('task-1', 'Please review', {
+				kind: 'node_agent',
+				agentName: 'Reviewer',
+			});
+
+			expect(result).toMatchObject({
+				ok: true,
+				routedTo: ['Reviewer'],
+				delivered: false,
+				queued: true,
+			});
+		});
+
+		it('returns delivered:false without queued when daemon has no queue', async () => {
+			mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+				if (method === 'space.task.sendMessage') {
+					return {
+						ok: true,
+						routedTo: ['Reviewer'],
+						delivered: false,
+						activated: true,
+					};
+				}
+				return {};
+			});
+
+			const result = await spaceStore.sendTaskMessage('task-1', 'Orphaned', {
+				kind: 'node_agent',
+				agentName: 'Reviewer',
+			});
+
+			expect(result?.delivered).toBe(false);
+			expect((result as { queued?: boolean }).queued).toBeUndefined();
+		});
+	});
 });

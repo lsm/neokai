@@ -133,7 +133,8 @@ export interface PendingAgentMessageQueue {
 
 type SpaceTaskMessageTarget =
 	| { kind: 'task_agent' }
-	| { kind: 'node_agent'; agentName?: string; nodeExecutionId?: string };
+	| { kind: 'node_agent'; agentName: string; nodeExecutionId?: string }
+	| { kind: 'node_agent'; nodeExecutionId: string; agentName?: string };
 
 /**
  * Register RPC handlers for human ↔ Task Agent message routing.
@@ -196,7 +197,13 @@ export function setupSpaceTaskMessageHandlers(
 		taskId: string,
 		message: string,
 		target: { agentName?: string; nodeExecutionId?: string }
-	): Promise<{ ok: true; routedTo: string[]; delivered?: false; activated?: true }> {
+	): Promise<{
+		ok: true;
+		routedTo: string[];
+		delivered?: false;
+		activated?: true;
+		queued?: true;
+	}> {
 		if (!task?.workflowRunId) {
 			throw new Error(`Task ${taskId} has no workflow run — cannot target workflow agents.`);
 		}
@@ -207,10 +214,16 @@ export function setupSpaceTaskMessageHandlers(
 		const executions = nodeExecutionRepo
 			.listByWorkflowRun(task.workflowRunId)
 			.filter((e) => e.status !== 'cancelled');
-		const matches = executions.filter((e) => {
-			if (target.nodeExecutionId && e.id === target.nodeExecutionId) return true;
-			return !!target.agentName && e.agentName.toLowerCase() === target.agentName.toLowerCase();
-		});
+
+		// When nodeExecutionId is provided, require an exact match — the user
+		// disambiguated by execution, so falling back to agentName broadens the
+		// match to every execution sharing the same name across all nodes.
+		// agentName-only matching is only used when nodeExecutionId is absent.
+		const matches = target.nodeExecutionId
+			? executions.filter((e) => e.id === target.nodeExecutionId)
+			: executions.filter(
+					(e) => !!target.agentName && e.agentName.toLowerCase() === target.agentName!.toLowerCase()
+				);
 
 		if (matches.length === 0) {
 			const available = [...new Set(executions.map((e) => e.agentName))].sort();
@@ -238,32 +251,64 @@ export function setupSpaceTaskMessageHandlers(
 			const refreshed = nodeExecutionRepo
 				.listByWorkflowRun(task.workflowRunId)
 				.filter((e) => e.status !== 'cancelled');
-			const refreshedMatches = refreshed.filter((e) => {
-				if (target.nodeExecutionId && e.id === target.nodeExecutionId) return true;
-				return !!target.agentName && e.agentName.toLowerCase() === target.agentName.toLowerCase();
-			});
+			// Re-apply the same strict matching logic used above (exact
+			// nodeExecutionId match when provided, agentName otherwise).
+			const refreshedMatches = target.nodeExecutionId
+				? refreshed.filter((e) => e.id === target.nodeExecutionId)
+				: refreshed.filter(
+						(e) =>
+							!!target.agentName && e.agentName.toLowerCase() === target.agentName!.toLowerCase()
+					);
 			deliverable = refreshedMatches.filter((e) => e.agentSessionId);
 		}
 
-		if (deliverable.length === 0) {
+		// Direct delivery: at least one target has a live session.
+		if (deliverable.length > 0) {
+			await Promise.all(
+				deliverable.map((exec) =>
+					taskAgentManager.injectSubSessionMessage!(exec.agentSessionId!, message)
+				)
+			);
 			return {
 				ok: true,
-				routedTo: [...new Set(matches.map((e) => e.agentName))],
+				routedTo: [...new Set(deliverable.map((e) => e.agentName))],
 				...(activated ? { activated: true as const } : {}),
-				delivered: false,
 			};
 		}
 
-		await Promise.all(
-			deliverable.map((exec) =>
-				taskAgentManager.injectSubSessionMessage!(exec.agentSessionId!, message)
-			)
-		);
+		// No live session after activation — persist the message to the
+		// pending-message queue so it is delivered when the session spawns.
+		// This prevents the user's message from being silently dropped.
+		if (pendingMessageQueue) {
+			const queuedNames: string[] = [];
+			for (const exec of matches) {
+				const { record } = pendingMessageQueue.enqueue({
+					workflowRunId: task.workflowRunId!,
+					spaceId: task.spaceId,
+					taskId,
+					sourceAgentName: 'human',
+					targetKind: 'node_agent',
+					targetAgentName: exec.agentName,
+					message,
+				});
+				if (record) queuedNames.push(exec.agentName);
+			}
+			return {
+				ok: true,
+				routedTo: [...new Set(queuedNames)],
+				...(activated ? { activated: true as const } : {}),
+				delivered: false,
+				queued: true,
+			};
+		}
 
+		// No queue available — signal that the message could not be delivered.
+		// The client is responsible for surfacing this to the user.
 		return {
 			ok: true,
-			routedTo: [...new Set(deliverable.map((e) => e.agentName))],
+			routedTo: [...new Set(matches.map((e) => e.agentName))],
 			...(activated ? { activated: true as const } : {}),
+			delivered: false,
 		};
 	}
 

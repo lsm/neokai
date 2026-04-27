@@ -2013,6 +2013,53 @@ export class TaskAgentManager {
 		return undefined;
 	}
 
+	/**
+	 * Look up an AgentSession by its session ID across every in-memory map this
+	 * manager owns. Used by reapers (e.g. SpaceRuntime force-completion) that
+	 * have only the session ID and need to inspect/mutate the session before
+	 * reaping it (e.g. clear an orphaned AskUserQuestion card).
+	 *
+	 * Lookup order (mirrors `isSessionAlive`):
+	 *  1. `agentSessionIndex` (fast reverse index for sub-sessions)
+	 *  2. `taskAgentSessions` map (Task Agents)
+	 *  3. `SessionManager.getSession()` (general session cache)
+	 *
+	 * Step 3 may **lazy-hydrate** an AgentSession from the database if it's
+	 * not currently in any in-memory map — this is intentional, because:
+	 *
+	 *  - The hydrated `AgentSession` constructor calls
+	 *    `ProcessingStateManager.restoreFromDatabase()`, which preserves
+	 *    `waiting_for_input` state across daemon restarts (see
+	 *    `processing-state-manager.ts:62-65`). So `getProcessingState()`
+	 *    on a hydrated session returns the *persisted* status, not `idle`.
+	 *  - The Step 1.5 "spare waiting_for_input" guard relies on this
+	 *    lazy hydration: after a daemon restart, before any explicit
+	 *    rehydrate path runs, this lookup is what the runtime uses to
+	 *    detect that a session is still waiting on the user.
+	 *
+	 * Caveat: hydration *does* have side effects (event subscriptions,
+	 * orphaned-message recovery, cache insertion). In practice this is
+	 * fine because callers reach this method only after `isSessionAlive`
+	 * has already triggered the same lookup, so hydration happens at most
+	 * once per session per tick.
+	 *
+	 * Returns undefined when the session is not in memory and either does
+	 * not exist in the DB or fails to load.
+	 */
+	getAgentSessionById(sessionId: string): AgentSession | undefined {
+		const indexed = this.agentSessionIndex.get(sessionId);
+		if (indexed) return indexed;
+
+		for (const taskAgent of this.taskAgentSessions.values()) {
+			if (taskAgent.session.id === sessionId) return taskAgent;
+		}
+
+		// SessionManager.getSession may hydrate a fresh AgentSession from DB;
+		// that's intentional — see method JSDoc for why. Normalize null → undefined
+		// so the return contract stays uniform.
+		return this.config.sessionManager.getSession(sessionId) ?? undefined;
+	}
+
 	// -------------------------------------------------------------------------
 	// Public — cleanup
 	// -------------------------------------------------------------------------
