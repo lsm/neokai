@@ -1,7 +1,9 @@
 /**
  * SpaceTasks — tabbed task list for a space.
  *
- * Tabs: Action (review + blocked, grouped by reason), Active (open + in_progress),
+ * Tabs: Action (review + blocked, grouped by reason),
+ *       Active (open + in_progress + approved — see `task-filters.ts` for why
+ *       `approved` belongs here),
  *       Completed (done + cancelled), Archived.
  *
  * Within each tab, tasks are grouped by status/reason in TaskGroup cards,
@@ -42,8 +44,13 @@ const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested', 'g
  * badge, "Active"/"Action" sub-tabs). Both surfaces import from the same
  * helper so the lists and the badge counts cannot drift apart — see the
  * `task-filters.ts` doc comments for why `approved` belongs in Active.
+ *
+ * Exported for tests that assert the tasks-view's `active` predicate
+ * matches the sidebar's `isActiveTask` exactly. Keeping this exported is
+ * a regression guard: if someone later re-inlines the predicate here,
+ * the parity test in `task-filters.test.ts` will fail.
  */
-const TAB_PREDICATES: Record<TaskFilterTab, (task: SpaceTask) => boolean> = {
+export const TAB_PREDICATES: Record<TaskFilterTab, (task: SpaceTask) => boolean> = {
 	action: isActionRequired,
 	active: isActiveTask,
 	completed: (t) => t.status === 'done' || t.status === 'cancelled',

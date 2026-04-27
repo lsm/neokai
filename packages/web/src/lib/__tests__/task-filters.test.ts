@@ -82,16 +82,14 @@ describe('isActionRequired and isActiveTask are mutually exclusive', () => {
 /**
  * Regression test for the bug where the sidebar "Active" tab and the
  * main-pane Tasks "Active" tab disagreed about whether `approved` tasks
- * belong in Active. Both surfaces now import the same `isActiveTask`
- * predicate; this test verifies the predicate's output across the
- * complete status surface so any future drift would fail loudly.
- *
- * The fixture mirrors how both consumers compute their lists: filter a
- * heterogeneous task set with the predicate and compare the resulting
- * task IDs. If both consumers go through the same helper, the resulting
- * sets must be identical.
+ * belong in Active. The fixture covers every `SpaceTaskStatus` and asserts
+ * the predicate's output over a heterogeneous list. The companion check
+ * that the tasks-view's `TAB_PREDICATES.active` resolves to the same
+ * function lives in `SpaceTasks.test.tsx` (where the necessary signal /
+ * store mocks are already configured), keeping this file focused on the
+ * pure-function predicate behaviour.
  */
-describe('Active filter parity across consumers', () => {
+describe('Active filter — fixture coverage', () => {
 	type Row = { id: string; status: SpaceTaskStatus };
 
 	const fixture: Row[] = [
@@ -107,23 +105,11 @@ describe('Active filter parity across consumers', () => {
 		{ id: 'archived-1', status: 'archived' },
 	];
 
-	// Both consumers reduce to: `tasks.filter(isActiveTask).map(t => t.id)`.
-	// Modeling each path independently makes the parity assertion explicit
-	// rather than relying on a shared import alone.
-	const sidebarActiveIds = (rows: Row[]): string[] =>
-		rows.filter((r) => isActiveTask({ status: r.status })).map((r) => r.id);
-
-	const tasksViewActiveIds = (rows: Row[]): string[] =>
-		rows.filter((r) => isActiveTask({ status: r.status })).map((r) => r.id);
-
-	it('sidebar and tasks-view produce the same set of task IDs', () => {
-		const sidebarSet = new Set(sidebarActiveIds(fixture));
-		const tasksViewSet = new Set(tasksViewActiveIds(fixture));
-		expect([...sidebarSet].sort()).toEqual([...tasksViewSet].sort());
-	});
-
 	it('selects exactly the open / in_progress / approved rows', () => {
-		const ids = sidebarActiveIds(fixture).sort();
+		const ids = fixture
+			.filter((r) => isActiveTask({ status: r.status }))
+			.map((r) => r.id)
+			.sort();
 		expect(ids).toEqual(['approved-1', 'approved-2', 'in_progress-1', 'open-1', 'open-2'].sort());
 	});
 
