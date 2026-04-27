@@ -122,6 +122,13 @@ describe('SDKResultMessage', () => {
 			expect(container.textContent).toContain('tokens');
 		});
 
+		it('should handle missing usage gracefully', () => {
+			const message = createSuccessResult({ usage: undefined as unknown });
+			const { container } = render(<SDKResultMessage message={message} />);
+
+			expect(container.textContent).toContain('0→0 tokens');
+		});
+
 		it('should show cost', () => {
 			const message = createSuccessResult();
 			const { container } = render(<SDKResultMessage message={message} />);
