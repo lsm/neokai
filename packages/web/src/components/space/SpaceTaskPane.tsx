@@ -353,7 +353,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			root.querySelector<HTMLElement>('[data-testid="space-task-unified-thread"] > div') ?? root;
 
 		let frame = 0;
-		const updateVisibleTarget = () => {
+		const updateVisibleTarget = (options?: { unlockManualTarget?: boolean }) => {
 			cancelAnimationFrame(frame);
 			frame = requestAnimationFrame(() => {
 				const rootRect = scroller.getBoundingClientRect();
@@ -382,20 +382,24 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					}
 				}
 				setVisibleTargetName(best?.targetName ?? null);
+				if (options?.unlockManualTarget && targetLocked && !hasComposerDraft && !sendingThread) {
+					setTargetLocked(false);
+				}
 			});
 		};
 
-		const observer = new MutationObserver(updateVisibleTarget);
+		const handleScroll = () => updateVisibleTarget({ unlockManualTarget: true });
+		const observer = new MutationObserver(() => updateVisibleTarget());
 		observer.observe(root, { childList: true, subtree: true });
-		scroller.addEventListener('scroll', updateVisibleTarget, { passive: true });
+		scroller.addEventListener('scroll', handleScroll, { passive: true });
 		updateVisibleTarget();
 
 		return () => {
 			cancelAnimationFrame(frame);
 			observer.disconnect();
-			scroller.removeEventListener('scroll', updateVisibleTarget);
+			scroller.removeEventListener('scroll', handleScroll);
 		};
-	}, [activeView, showInlineComposer]);
+	}, [activeView, hasComposerDraft, sendingThread, showInlineComposer, targetLocked]);
 
 	useEffect(() => {
 		if (activeView === 'canvas' && !canShowCanvasTab) {

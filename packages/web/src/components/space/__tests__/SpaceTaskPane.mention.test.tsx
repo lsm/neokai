@@ -370,6 +370,45 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 		rectSpy.mockRestore();
 	});
 
+	it('releases a manual empty-composer target lock when the thread scrolls', async () => {
+		mockTasks.value = [makeWorkflowTask()];
+		mockThreadTurns.push({ fromLabel: 'Reviewer Agent', toLabel: 'Coder Agent' });
+		const rectSpy = vi
+			.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+			.mockImplementation(function () {
+				if ((this as HTMLElement).getAttribute('data-testid') === 'minimal-thread-turn') {
+					return { top: 20, bottom: 80, left: 0, right: 100, width: 100, height: 60 } as DOMRect;
+				}
+				return { top: 0, bottom: 100, left: 0, right: 100, width: 100, height: 100 } as DOMRect;
+			});
+
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+
+		await waitFor(() =>
+			expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
+				'Send to Coder'
+			)
+		);
+
+		fireEvent.click(container.getByTestId('task-composer-target-trigger'));
+		const options = container.getAllByTestId('task-composer-target-option');
+		fireEvent.click(options[1]);
+		expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
+			'Send to Reviewer'
+		);
+
+		const scroller = container.getByTestId('space-task-unified-thread').firstElementChild;
+		expect(scroller).toBeTruthy();
+		fireEvent.scroll(scroller as Element);
+
+		await waitFor(() =>
+			expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
+				'Send to Coder'
+			)
+		);
+		rectSpy.mockRestore();
+	});
+
 	it('filters agents when @partial is typed', async () => {
 		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
