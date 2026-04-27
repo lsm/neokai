@@ -1,7 +1,6 @@
-// @ts-nocheck
-
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ActiveTurnSummary } from '@neokai/shared';
 import { parseThreadRow } from '../space-task-thread-events';
 import { MinimalThreadFeed } from './MinimalThreadFeed';
 
@@ -316,7 +315,7 @@ describe('MinimalThreadFeed', () => {
 		// Server-derived summary: same activity as the parsed rows would produce
 		// under the old client-side derivation, but expressed as the wire shape
 		// (`ActivityEntry[]`) the renderer now consumes.
-		const summary = {
+		const summary: ActiveTurnSummary = {
 			sessionId: 'space:s:task:t',
 			turnIndex: 1,
 			entries: [
@@ -381,7 +380,7 @@ describe('MinimalThreadFeed', () => {
 		];
 
 		// 6 tool entries in the active-turn summary — only the last 4 should render.
-		const summary = {
+		const summary: ActiveTurnSummary = {
 			sessionId: 'space:s:task:t',
 			turnIndex: 1,
 			entries: [
@@ -701,7 +700,7 @@ describe('MinimalThreadFeed', () => {
 
 		// Sequence: text → tool → text → tool. All four entries should appear
 		// in the roster in order, with kinds tagged on the data attribute.
-		const summary = {
+		const summary: ActiveTurnSummary = {
 			sessionId: 'space:s:task:t',
 			turnIndex: 1,
 			entries: [
@@ -746,7 +745,7 @@ describe('MinimalThreadFeed', () => {
 		// Server is the canonical filter — but the renderer also defensively
 		// drops empty text/thinking entries so a future relaxation upstream
 		// can't bleed whitespace into the rail.
-		const summary = {
+		const summary: ActiveTurnSummary = {
 			sessionId: 'space:s:task:t',
 			turnIndex: 1,
 			entries: [
@@ -929,7 +928,7 @@ describe('MinimalThreadFeed', () => {
 		];
 
 		// 6 mixed entries — only the last 4 should render.
-		const summary = {
+		const summary: ActiveTurnSummary = {
 			sessionId: 'space:s:task:t',
 			turnIndex: 1,
 			entries: [
@@ -1149,7 +1148,7 @@ describe('MinimalThreadFeed', () => {
 			}),
 		];
 
-		const summary = {
+		const summary: ActiveTurnSummary = {
 			sessionId: 'space:s:task:t',
 			turnIndex: 1,
 			entries: [
@@ -1188,7 +1187,7 @@ describe('MinimalThreadFeed', () => {
 			}),
 		];
 
-		const summary = {
+		const summary: ActiveTurnSummary = {
 			sessionId: 'space:s:task:t',
 			turnIndex: 1,
 			entries: [
@@ -1243,7 +1242,7 @@ describe('MinimalThreadFeed', () => {
 		// Summary keyed on a different session id — the trailing block's
 		// session id has no match, so the rail renders empty rather than
 		// surfacing stale activity from another session.
-		const summary = {
+		const summary: ActiveTurnSummary = {
 			sessionId: 'space:s:other-task:o',
 			turnIndex: 1,
 			entries: [

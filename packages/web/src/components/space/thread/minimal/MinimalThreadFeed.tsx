@@ -249,24 +249,45 @@ function rosterEntriesFromSummary(
 	return out.slice(-maxEntries);
 }
 
+/**
+ * Defensive string coercion for fields that the typed `ActivityEntry` shape
+ * declares as `string`. `parseActiveTurnSummaries` validates the wrapper but
+ * intentionally trusts entry-level fields (the daemon already normalises
+ * them), so we coerce here as a belt-and-braces guard against a malformed
+ * entry crashing the renderer with a `TypeError` on `.trim()`.
+ */
+function asTrimmedString(value: unknown): string {
+	return typeof value === 'string' ? value.trim() : '';
+}
+
 function mapActivityEntry(entry: ActivityEntry): ActiveRosterEntry | null {
 	switch (entry.kind) {
 		case 'tool_use':
-			return { kind: 'tool', tool: entry.toolName, preview: entry.preview };
+			return {
+				kind: 'tool',
+				tool: typeof entry.toolName === 'string' ? entry.toolName : '',
+				preview: typeof entry.preview === 'string' ? entry.preview : '',
+			};
 		case 'text': {
-			const text = entry.text.trim();
+			const text = asTrimmedString(entry.text);
 			if (!text) return null;
 			return { kind: 'message', text };
 		}
 		case 'thinking': {
-			const preview = entry.preview.trim();
+			const preview = asTrimmedString(entry.preview);
 			if (!preview) return null;
 			return { kind: 'thinking', preview };
 		}
-		case 'user_message':
-			return { kind: 'user', text: entry.text };
-		case 'agent_handoff':
-			return { kind: 'handoff', text: entry.text };
+		case 'user_message': {
+			const text = asTrimmedString(entry.text);
+			if (!text) return null;
+			return { kind: 'user', text };
+		}
+		case 'agent_handoff': {
+			const text = asTrimmedString(entry.text);
+			if (!text) return null;
+			return { kind: 'handoff', text };
+		}
 		default:
 			return null;
 	}

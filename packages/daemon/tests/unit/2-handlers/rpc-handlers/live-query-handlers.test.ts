@@ -1015,6 +1015,119 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				expect(nodeEntries.map((e) => e.text)).toContain('node active');
 			});
 		});
+
+		// ---------------------------------------------------------------------
+		// Integration: the central decoupling claim of the PR — a long active
+		// turn yields ≤5 rows in the compact feed (server cap unchanged) AND
+		// every entry in `activeTurnSummaries` (no cap on the summary side).
+		// ---------------------------------------------------------------------
+
+		describe('compact-feed cap and active-turn-summary decoupling', () => {
+			function insertSdkMessageAt(
+				id: string,
+				sessionIdValue: string,
+				timestampMs: number,
+				sdkMessage?: Record<string, unknown>,
+				messageType = 'assistant'
+			): void {
+				const iso = new Date(timestampMs).toISOString();
+				const payload =
+					sdkMessage ??
+					({
+						type: 'assistant',
+						uuid: id,
+						message: { role: 'assistant', content: [{ type: 'text', text: id }] },
+					} as Record<string, unknown>);
+				db.exec(`
+					INSERT INTO sdk_messages (
+						id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin
+					) VALUES (
+						'${id}', '${sessionIdValue}', '${messageType}', NULL, '${JSON.stringify(payload).replace(/'/g, "''")}',
+						'${iso}', 'consumed', 'system'
+					)
+				`);
+			}
+
+			function queryCompact(taskId: string): Record<string, unknown>[] {
+				const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
+				const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+				return entry.mapRow ? rows.map(entry.mapRow) : rows;
+			}
+
+			async function runEntries(taskId: string): Promise<Record<string, unknown>[]> {
+				const mod = await import('../../../../src/lib/rpc-handlers/live-query-handlers');
+				const sql = mod.SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL;
+				return db.prepare(sql).all(taskId) as Record<string, unknown>[];
+			}
+
+			async function buildSummaries(taskId: string): Promise<
+				Array<{
+					sessionId: string;
+					turnIndex: number;
+					entries: Record<string, unknown>[];
+				}>
+			> {
+				const mod = await import('../../../../src/lib/rpc-handlers/live-query-handlers');
+				const rows = await runEntries(taskId);
+				return mod.buildActiveTurnSummariesFromRows(rows);
+			}
+
+			test('long active turn: compact feed ≤5 non-terminal rows AND summary carries every entry', async () => {
+				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+				// Insert 8 distinct assistant tool_use rows in the same active turn.
+				// Each emits one ActivityEntry (one tool_use block per row), so the
+				// summary should carry exactly 8 entries while the compact feed
+				// caps at 5.
+				const turnSize = 8;
+				const toolNames = [
+					'Bash',
+					'Read',
+					'Grep',
+					'Glob',
+					'Edit',
+					'Write',
+					'WebFetch',
+					'WebSearch',
+				];
+				for (let i = 0; i < turnSize; i += 1) {
+					insertSdkMessageAt(`a${i}`, sessionId, now + (i + 1) * 1000, {
+						type: 'assistant',
+						uuid: `a${i}`,
+						message: {
+							content: [
+								{
+									type: 'tool_use',
+									id: `tu-a${i}`,
+									name: toolNames[i],
+									input: { foo: i },
+								},
+							],
+						},
+					});
+				}
+				// Active turn: no terminal `result` row inserted.
+
+				// Compact feed: capped at the per-turn non-terminal limit (5).
+				const compactRows = queryCompact(taskId);
+				expect(compactRows.length).toBeLessThanOrEqual(
+					5 // SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT
+				);
+				// Sanity: cap was actually exercised — we inserted more than the cap.
+				expect(turnSize).toBeGreaterThan(compactRows.length);
+
+				// Active-turn summary: uncapped, full chronological activity.
+				const summaries = await buildSummaries(taskId);
+				expect(summaries).toHaveLength(1);
+				const entries = summaries[0].entries as Array<Record<string, unknown>>;
+				expect(entries).toHaveLength(turnSize);
+				expect(entries.map((e) => e.toolName)).toEqual(toolNames);
+				// Confirms entries are not subject to the compact cap that limits
+				// the row stream — this is the decoupling the PR establishes.
+				expect(entries.length).toBeGreaterThan(compactRows.length);
+			});
+		});
 	});
 
 	// -------------------------------------------------------------------------

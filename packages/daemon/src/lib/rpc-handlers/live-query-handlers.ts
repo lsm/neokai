@@ -1233,8 +1233,14 @@ user_entries AS (
     NULL AS thinkingValue
   FROM active_rows ar
   WHERE ar.messageType = 'user'
-    -- Skip user rows whose content is exclusively tool_result blocks. Such
-    -- rows render as null in the compact feed and don't represent activity.
+    -- Skip user rows whose content is exclusively tool_result blocks (or
+    -- mixes tool_result with empty/whitespace-only text blocks). Such rows
+    -- render as null in the compact feed and would otherwise produce a
+    -- blank rail entry — the GROUP_CONCAT above already filters empty text,
+    -- so the row would survive the filter with textValue = NULL.
+    --
+    -- Mirrors the assistant-entries filter on lines above, which also
+    -- excludes empty-text blocks from contributing to the roster.
     AND NOT (
       json_type(ar.content, '$.message.content') = 'array'
       AND EXISTS (
@@ -1246,6 +1252,7 @@ user_entries AS (
         SELECT 1
         FROM json_each(json_extract(ar.content, '$.message.content')) je
         WHERE json_extract(je.value, '$.type') = 'text'
+          AND TRIM(COALESCE(json_extract(je.value, '$.text'), '')) != ''
       )
     )
 )
