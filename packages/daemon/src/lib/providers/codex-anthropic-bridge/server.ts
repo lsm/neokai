@@ -64,6 +64,20 @@ const BRIDGE_MODELS = [
 		max_tokens: 16384,
 	},
 	{
+		id: 'gpt-5.5',
+		display_name: 'GPT-5.5',
+		created_at: '2026-04-01T00:00:00Z',
+		max_input_tokens: 200000,
+		max_tokens: 16384,
+	},
+	{
+		id: 'gpt-5.4-mini',
+		display_name: 'GPT-5.4 Mini',
+		created_at: '2026-01-01T00:00:00Z',
+		max_input_tokens: 128000,
+		max_tokens: 16384,
+	},
+	{
 		id: 'gpt-5.1-codex-mini',
 		display_name: 'GPT-5.1 Codex Mini',
 		created_at: '2026-01-01T00:00:00Z',
@@ -78,6 +92,18 @@ const MODELS_LIST_RESPONSE = {
 	first_id: BRIDGE_MODELS[0].id,
 	last_id: BRIDGE_MODELS[BRIDGE_MODELS.length - 1].id,
 };
+
+const BRIDGE_MODEL_ALIASES = new Map<string, string>([
+	['codex', 'gpt-5.3-codex'],
+	['codex-5.4', 'gpt-5.4'],
+	['codex-latest', 'gpt-5.5'],
+	['codex-mini', 'gpt-5.4-mini'],
+	['codex-5.1-mini', 'gpt-5.1-codex-mini'],
+]);
+
+function resolveBridgeModelId(model: string): string {
+	return BRIDGE_MODEL_ALIASES.get(model) ?? model;
+}
 
 function isClosedControllerError(error: unknown): boolean {
 	if (!(error instanceof Error)) {
@@ -524,7 +550,7 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			// New conversation turn: look up or create a persistent session
 			// ------------------------------------------------------------------
 			const neokaiSessionId = extractSessionId(req);
-			const model = body.model;
+			const model = resolveBridgeModelId(body.model);
 			const system = extractSystemText(body.system);
 			const anthropicTools = body.tools ?? [];
 			const dynamicTools = buildDynamicTools(anthropicTools);

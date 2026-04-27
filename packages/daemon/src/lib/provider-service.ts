@@ -389,10 +389,11 @@ export class ProviderService {
 		}
 
 		// Build SDK config with session override.
-		// workspacePath is always forwarded so the embedded Copilot server can use
-		// the correct cwd per request (encoded in ANTHROPIC_AUTH_TOKEN by the provider).
+		// workspacePath is always forwarded so embedded bridge providers can use
+		// the correct cwd per request (encoded in ANTHROPIC_AUTH_TOKEN by some providers).
+		const effectiveWorkspacePath = session.worktree?.worktreePath ?? session.workspacePath;
 		const sessionConfig = {
-			workspacePath: session.workspacePath ?? undefined,
+			workspacePath: effectiveWorkspacePath ?? undefined,
 			sessionId: session.id,
 			...(session.config.providerConfig
 				? {
@@ -410,6 +411,23 @@ export class ProviderService {
 			// provider not yet initialised (e.g. embedded server not started)
 			return {};
 		}
+	}
+
+	/**
+	 * Apply provider environment variables to process.env using the full session.
+	 *
+	 * Session-aware bridge providers (Codex, Copilot) encode the NeoKai session ID
+	 * and effective workspace path into their SDK config. Using only (model, provider)
+	 * collapses all sessions to provider defaults such as `sessionId=default`.
+	 */
+	applyEnvVarsToProcessForSession(session: Session): OriginalEnvVars {
+		const envVars = this.getProviderEnvVars(session);
+
+		if (Object.keys(envVars).length === 0) {
+			return this.clearProviderRoutingEnvVars();
+		}
+
+		return this.applyEnvVars(envVars);
 	}
 
 	/**

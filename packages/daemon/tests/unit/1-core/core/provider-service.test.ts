@@ -162,6 +162,37 @@ class CopilotMockProvider extends MockProvider {
 	}
 }
 
+class SessionAwareBridgeMockProvider extends MockProvider {
+	readonly id = 'session-aware' as const;
+	readonly displayName = 'Session Aware Bridge';
+	seenSessionConfigs: Array<{ workspacePath?: string; sessionId?: string }> = [];
+
+	constructor() {
+		super('session-aware', 'Session Aware Bridge', true, 'bridge-');
+	}
+
+	ownsModel(modelId: string): boolean {
+		return modelId.toLowerCase().startsWith('bridge-');
+	}
+
+	buildSdkConfig(
+		_modelId: string,
+		sessionConfig?: { workspacePath?: string; sessionId?: string }
+	): ProviderSdkConfig {
+		this.seenSessionConfigs.push({
+			workspacePath: sessionConfig?.workspacePath,
+			sessionId: sessionConfig?.sessionId,
+		});
+		return {
+			envVars: {
+				ANTHROPIC_BASE_URL: 'http://127.0.0.1:60000',
+				ANTHROPIC_API_KEY: `bridge-${sessionConfig?.sessionId ?? 'default'}`,
+			},
+			isAnthropicCompatible: true,
+		};
+	}
+}
+
 // Anthropic-like provider for testing
 class AnthropicMockProvider extends MockProvider {
 	readonly id = 'anthropic' as const;
@@ -624,6 +655,46 @@ describe('ProviderService', () => {
 			const envVars = service.getProviderEnvVars(session);
 			expect(envVars).toEqual({});
 		});
+
+		it('passes session id and effective worktree path to session-aware providers', () => {
+			const provider = new SessionAwareBridgeMockProvider();
+			registry.register(provider);
+			const session: Session = {
+				id: 'neo-session-123',
+				title: 'Test',
+				workspacePath: '/repo/root',
+				worktree: {
+					worktreePath: '/repo/worktrees/neo-session-123',
+					mainRepoPath: '/repo/root',
+					branch: 'codex/test',
+				},
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'bridge-model',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'session-aware' as unknown as import('@neokai/shared/provider').ProviderId,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			const envVars = service.getProviderEnvVars(session);
+
+			expect(envVars.ANTHROPIC_API_KEY).toBe('bridge-neo-session-123');
+			expect(provider.seenSessionConfigs.at(-1)).toEqual({
+				sessionId: 'neo-session-123',
+				workspacePath: '/repo/worktrees/neo-session-123',
+			});
+		});
 	});
 
 	describe('applyEnvVarsToProcess', () => {
@@ -659,6 +730,44 @@ describe('ProviderService', () => {
 
 			// Check env vars were updated
 			expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
+		});
+
+		it('applies session-scoped bridge env vars from the full session', () => {
+			const provider = new SessionAwareBridgeMockProvider();
+			registry.register(provider);
+			const session: Session = {
+				id: 'neo-session-456',
+				title: 'Test',
+				workspacePath: '/repo/root',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'bridge-model',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'session-aware' as unknown as import('@neokai/shared/provider').ProviderId,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			const original = service.applyEnvVarsToProcessForSession(session);
+
+			expect(process.env.ANTHROPIC_AUTH_TOKEN).toBe('bridge-neo-session-456');
+			expect(process.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:60000');
+			expect(provider.seenSessionConfigs.at(-1)).toEqual({
+				sessionId: 'neo-session-456',
+				workspacePath: '/repo/root',
+			});
+
+			service.restoreEnvVars(original);
 		});
 
 		it('deletes ANTHROPIC_API_KEY when provider returns empty-string sentinel, restores on restoreEnvVars', () => {
