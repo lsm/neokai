@@ -190,7 +190,7 @@ export class SessionManager {
 				// STEP 2: Clear draft if it matches the sent message content
 				if (hasDraftToClear) {
 					await this.sessionLifecycle.update(sessionId, {
-						metadata: { inputDraft: undefined },
+						metadata: { inputDraft: null },
 					} as Partial<Session>);
 				}
 			} catch (error) {
