@@ -15,9 +15,12 @@
  *   - `{{pr_url}}`          — signalled by the end node via
  *                             `send_message(task-agent, …, data:{ pr_url })`.
  *   - `{{autonomy_level}}`  — space autonomy level at routing time.
- *   - `{{approval_source}}` — `'end_node' | 'human_review'` (distinguishes
- *                             reviewer self-close from human-approved review).
- *
+ *   - `{{approval_source}}` — `'human' | 'agent'` (from
+ *                             `SpaceApprovalSource`; `auto_policy` is
+ *                             theoretically possible but no caller produces
+ *                             it for post-approval). Step 2 uses this to
+ *                             skip redundant merge approval when human
+ *                             already approved.
  * NOTE: The `{{reviewer_name}}` token was intentionally replaced with the
  * static string `[end-node reviewer]` in PR 3/5 because nothing in
  * `dispatchPostApproval` currently resolves the approving agent's slot name
