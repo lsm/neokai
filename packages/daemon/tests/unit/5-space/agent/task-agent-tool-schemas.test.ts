@@ -30,6 +30,17 @@ describe('ApproveTaskSchema', () => {
 		const result = ApproveTaskSchema.safeParse({ reason: 'done' });
 		expect(result.success).toBe(false);
 	});
+
+	test('schema description encodes Terminal Action pre-conditions (Task #136)', () => {
+		// The description is what surfaces to the LLM at tool-call time. It
+		// must restate the gating that the workflow node prompt also enforces
+		// so the model cannot interpret approve_task as valid mid-loop.
+		const description = (ApproveTaskSchema as unknown as { description?: string }).description;
+		expect(description).toBeDefined();
+		expect(description).toMatch(/TERMINAL/i);
+		expect(description).toMatch(/APPROVE/);
+		expect(description).toContain('P0–P3');
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -63,6 +74,22 @@ describe('SubmitForApprovalSchema', () => {
 	test('rejects extra fields (strict schema)', () => {
 		const result = SubmitForApprovalSchema.safeParse({ reason: 'ok', extra: 'bad' });
 		expect(result.success).toBe(false);
+	});
+
+	test('schema description equates submit_for_approval with approve_task (Task #136)', () => {
+		// Reviewer agents were treating submit_for_approval as "let a human
+		// decide for me" while findings were still open. The description must
+		// explicitly call out that it carries the same approval semantic as
+		// approve_task — both close the review loop.
+		const description = (SubmitForApprovalSchema as unknown as { description?: string })
+			.description;
+		expect(description).toBeDefined();
+		expect(description).toMatch(/TERMINAL/i);
+		expect(description).toMatch(/approve_task/);
+		expect(description).toContain('P0–P3');
+		expect(description).toMatch(/APPROVE/);
+		// Must explicitly reject the "defer judgment" interpretation.
+		expect(description).toMatch(/defer judgment|request changes/i);
 	});
 });
 

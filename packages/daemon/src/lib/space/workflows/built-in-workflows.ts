@@ -142,6 +142,49 @@ const REVIEW_POSTED_BASH_SCRIPT = [
 	'jq -n --arg url "$PR_URL" --argjson n "$COMMENT_COUNT" \'{"pr_url":$url,"review_count":$n}\'',
 ].join('\n');
 
+/**
+ * Reviewer Terminal Action Pre-conditions block.
+ *
+ * Prepended to every review-style end-node prompt that exposes the terminal
+ * task-completion tools (`approve_task`, `submit_for_approval`). Establishes a
+ * hard pre-condition: terminal actions are valid ONLY when the review verdict
+ * is APPROVE with zero P0–P3 findings. While findings are open, the cycle MUST
+ * continue via `send_message(target="<upstream>", ...)` — the reviewer must not
+ * close the loop or hand off to a human until the work is actually clean.
+ *
+ * The wording deliberately equates `submit_for_approval` with `approve_task`
+ * (both close the review loop) so the model cannot interpret it as "let a
+ * human decide while findings are still open".
+ *
+ * @param upstreamNodeName - The peer node the reviewer must send feedback to
+ *   when posting REQUEST_CHANGES (e.g. "Coding", "Research", "Planning").
+ */
+function reviewerTerminalActionPreconditions(upstreamNodeName: string): string {
+	return (
+		'TERMINAL ACTION PRE-CONDITIONS (read before considering `approve_task` or ' +
+		'`submit_for_approval`):\n\n' +
+		'**Terminal actions (`approve_task`, `submit_for_approval`) close the review ' +
+		'loop and hand the task off.** You may call them ONLY when BOTH conditions hold:\n' +
+		"1. Your most recent posted review's verdict is `APPROVE` — zero findings at " +
+		'any severity P0–P3.\n' +
+		"2. Any prior rounds' P0–P3 findings have been addressed in the latest commits " +
+		'you reviewed.\n\n' +
+		'If your verdict on this round is `REQUEST_CHANGES` (ANY finding exists at P0, ' +
+		'P1, P2, or P3), you MUST:\n' +
+		`- Post the review with \`--request-changes\` (or \`--comment\` for own-PR).\n` +
+		`- \`send_message(target="${upstreamNodeName}", ...)\` with the feedback summary ` +
+		'plus the review URL and inline-comment URLs.\n' +
+		'- `save_artifact({ type: "result", append: true, summary: "Requested ' +
+		'changes: ..." })` to record the cycle.\n' +
+		'- **STOP. Do NOT call `approve_task`. Do NOT call `submit_for_approval`.** ' +
+		'The workflow MUST stay open for the next cycle.\n\n' +
+		'`submit_for_approval` is **NOT** "ask a human to decide for me while findings ' +
+		'are open." It is "the work is approved by me, but autonomy rules block me ' +
+		'from self-closing, so a human must rubber-stamp the final close." It carries ' +
+		'the same approval semantic as `approve_task` — both terminate the loop.\n\n'
+	);
+}
+
 const PD_PLANNING_PROMPT =
 	'You are the Planning node in a Plan & Decompose Workflow. Your role is to turn the user goal ' +
 	'into a concrete, decomposable plan that a Task Dispatcher can fan out into standalone tasks.\n\n' +
@@ -159,6 +202,16 @@ const PD_PLAN_REVIEW_PROMPT =
 	'You are one of four parallel Reviewers in the Plan Review node of a Plan & Decompose Workflow. ' +
 	'You receive a plan from the Planning node and must evaluate it through your specific lens ' +
 	'before tasks are dispatched. You do not coordinate with other reviewers; vote independently.\n\n' +
+	'TERMINAL ACTION PRE-CONDITIONS:\n' +
+	'Plan Review is NOT the end node in this workflow — the task-completion tools ' +
+	'(`approve_task`, `submit_for_approval`) are not available to you. Your terminal ' +
+	'action is your vote on `plan-approval-gate`. Vote `approved: true` ONLY when your ' +
+	'lens-specific verdict is APPROVE (zero P0–P3 findings under your lens). If ANY ' +
+	'P0–P3 finding exists, you MUST vote `approved: false` AND send_message to the ' +
+	'Planning node describing what to change. Do NOT vote `approved: true` to "let a ' +
+	'human decide" or to defer judgment — that is equivalent to silently passing the ' +
+	'plan through with findings open. The 4-of-4 approval threshold exists precisely ' +
+	'so that no lens can be skipped.\n\n' +
 	'Steps:\n' +
 	'1. Read the plan file in the PR (`gh pr diff` and `gh pr view`).\n' +
 	'2. Evaluate the plan against your lens criteria (described below).\n' +
@@ -176,13 +229,26 @@ const PD_TASK_DISPATCHER_PROMPT =
 	'standalone follow-up tasks using the `create_standalone_task` MCP tool. Each task ' +
 	'description must include stacked PR instructions so the downstream coder knows exactly ' +
 	'which base branch to target, forming a reviewable PR chain across the plan.\n\n' +
+	'TERMINAL ACTION PRE-CONDITIONS (read before considering `approve_task` or ' +
+	'`submit_for_approval`):\n\n' +
+	'**Terminal actions (`approve_task`, `submit_for_approval`) close this task ' +
+	'and the entire Plan & Decompose run.** You may call them ONLY when every ' +
+	'required downstream standalone task has been created via ' +
+	'`create_standalone_task` AND every returned task ID has been recorded in a ' +
+	'`save_artifact` audit entry.\n\n' +
+	'If `create_standalone_task` fails, the plan is empty/ambiguous, or any work ' +
+	'item is missing, you MUST send feedback to Planning and STOP. **Do NOT call ' +
+	'`approve_task`. Do NOT call `submit_for_approval`** while dispatch is ' +
+	'incomplete — both are terminal and would close the run with the plan ' +
+	'unfinished. `submit_for_approval` carries the same approval semantic as ' +
+	'`approve_task`; it is NOT a way to defer judgment while dispatch is open.\n\n' +
 	'TOOL CONTRACT (Design v2):\n' +
 	'- `save_artifact({ type: "result", append: true, summary, ...data? })` — append-only audit. Records the dispatch ' +
 	'outcome. Does NOT close the task.\n' +
 	'- `approve_task()` — closes this task as done. Call after every required downstream task ' +
 	'has been created.\n' +
 	'- `submit_for_approval({ reason? })` — request human sign-off instead of self-closing. ' +
-	'Use when autonomy blocks self-close.\n\n' +
+	'Same pre-conditions as `approve_task` apply — use when autonomy blocks self-close, NOT to skip dispatch.\n\n' +
 	'Steps:\n' +
 	'1. Read the approved plan from the plan PR (`gh pr diff` or `gh pr view --json files`). ' +
 	'Identify each actionable work item in order and record its title, description, priority, ' +
@@ -243,6 +309,15 @@ const FULLSTACK_CODING_PROMPT =
 const FULLSTACK_REVIEW_PROMPT =
 	'You are the Reviewer in a Fullstack QA Loop workflow. Review the PR for correctness, ' +
 	'maintainability, and coverage before QA.\n\n' +
+	'TERMINAL ACTION PRE-CONDITIONS:\n' +
+	'Review is NOT the end node in this workflow — the task-completion tools ' +
+	'(`approve_task`, `submit_for_approval`) are not available to you. Your terminal ' +
+	'action is writing `approved = true` to the `review-approval-gate`, which hands ' +
+	'the PR to QA. You may write the gate ONLY when your verdict is APPROVE (zero ' +
+	'findings at P0–P3). If ANY P0–P3 finding exists this round, your verdict is ' +
+	'`REQUEST_CHANGES`: send actionable feedback to Coding via `send_message(' +
+	'target="Coding", ...)` — do NOT write the approval gate, and the workflow stays ' +
+	'open for the next cycle.\n\n' +
 	'If the change is ready for QA, write to review-approval-gate (field: approved = true). ' +
 	'If changes are needed, send actionable feedback to Coding. Review is not the end node, ' +
 	'so the task-completion tools are not available to you.';
@@ -250,19 +325,35 @@ const FULLSTACK_REVIEW_PROMPT =
 const FULLSTACK_QA_PROMPT =
 	'You are the QA node in a Fullstack QA Loop workflow. Run thorough validation, including backend tests, ' +
 	'frontend tests, and browser-based checks for critical flows.\n\n' +
+	'TERMINAL ACTION PRE-CONDITIONS (read before considering `approve_task` or ' +
+	'`submit_for_approval`):\n\n' +
+	'**Terminal actions (`approve_task`, `submit_for_approval`) close the QA loop ' +
+	'and hand the task off.** You may call them ONLY when QA passes cleanly — every ' +
+	'required test suite is green AND no P0–P3 issues remain open from this or any ' +
+	'prior cycle.\n\n' +
+	'If QA finds ANY blocking failure or regression, you MUST:\n' +
+	'- `send_message(target="Coding", ...)` with the failure list and repro steps.\n' +
+	'- `save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` ' +
+	'to record the cycle.\n' +
+	'- **STOP. Do NOT call `approve_task`. Do NOT call `submit_for_approval`.** The ' +
+	'workflow MUST stay open for the next Coding cycle.\n\n' +
+	'`submit_for_approval` carries the same approval semantic as `approve_task` — ' +
+	'both terminate the loop. It is NOT a way to defer judgment while issues are ' +
+	'open; it is "QA passes, but autonomy rules block me from self-closing, so a ' +
+	'human must rubber-stamp the final close."\n\n' +
 	'TOOL CONTRACT (Design v2):\n' +
 	'- `save_artifact({ type: "result", append: true, summary, ...data? })` — append-only audit. Records what you observed ' +
 	'during this cycle. Does NOT close the task.\n' +
 	'- `approve_task()` — closes this task as done. Only call after QA passes and the ' +
 	'post-approval handoff to the Task Agent has been sent.\n' +
 	'- `submit_for_approval({ reason? })` — request human sign-off instead of self-closing. ' +
-	'Use when autonomy blocks self-close.\n\n' +
+	'Use when autonomy blocks self-close (and only when QA passes — see pre-conditions above).\n\n' +
 	'If everything passes, signal the Task Agent that a merge is the post-approval action, ' +
 	'then `save_artifact({ type: "result", append: true, summary: "QA passed." })` and ' +
 	'`approve_task`. Do NOT merge the PR yourself — a post-approval reviewer session runs ' +
 	'the merge after the task transitions to `approved`. If issues are found, send a detailed ' +
 	'fix list to Coding and record a `save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` ' +
-	'audit entry; do NOT call `approve_task`.';
+	'audit entry; do NOT call `approve_task` and do NOT call `submit_for_approval`.';
 
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
 const RESEARCH_REVIEW_NODE = 'tpl-research-review';
@@ -350,20 +441,23 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'- The Review → Coding channel is gated by `review-posted-gate` — the runtime ' +
 							'checks GitHub for a fresh review before releasing your message. If you skip ' +
 							'`gh pr review`, the gate will block and the coder will never hear from you.\n\n' +
+							reviewerTerminalActionPreconditions('Coding') +
 							'TOOL CONTRACT (Design v2):\n' +
 							'- `save_artifact({ type: "result", append: true, summary, ...data? })` — append-only audit. Records what you ' +
 							'observed. Does NOT close the task. Call it every cycle (changes-requested AND ' +
 							'approval) so the audit log has a clear trail of each decision.\n' +
 							'- `approve_task()` — closes this task as done. Call this ONLY when you are ' +
-							'satisfied the work is shippable. It is gated by autonomy level; the runtime ' +
-							'will tell you if the level is too low.\n' +
+							'satisfied the work is shippable AND the pre-conditions above are met. It is ' +
+							'gated by autonomy level; the runtime will tell you if the level is too low.\n' +
 							'- `submit_for_approval({ reason? })` — request human sign-off instead of self- ' +
-							'closing. Use when the change is risky or the autonomy rules block self-close.\n\n' +
+							'closing. Use when the change is approved by you but autonomy rules block ' +
+							'self-close. Same pre-conditions as `approve_task` apply — do NOT call this ' +
+							'while findings are open.\n\n' +
 							'Review checklist:\n' +
 							'1. Read the PR diff (`gh pr diff`) AND explore the worktree for context\n' +
 							'2. Check for correctness, style, test coverage, and integration impact\n' +
 							'3. Run the relevant tests yourself if uncertain\n' +
-							'4. If changes are needed:\n' +
+							'4. If changes are needed (verdict = REQUEST_CHANGES, any P0–P3 finding):\n' +
 							'   a. Post a summary review: `gh pr review <pr-url> --request-changes ' +
 							'--body-file /tmp/review.md`. Capture the returned review URL.\n' +
 							'   b. For each issue, post a line-level comment: `gh api ' +
@@ -374,9 +468,13 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'comment_urls: ["<comment #1 url>", "<comment #2 url>"] }). The `data` payload ' +
 							'satisfies the review-posted-gate and gives the coder direct links to each ' +
 							'thread.\n' +
-							'   d. Call `save_artifact({ type: "result", append: true, summary: "Requested changes: ...", data: { prUrl: "<url>", reviewUrl: "<gh pr review url>" } })` so the cycle is recorded. Do NOT call `approve_task` — ' +
-							'the workflow must stay open for the next cycle.\n' +
-							'5. If satisfied:\n' +
+							'   d. Call `save_artifact({ type: "result", append: true, summary: "Requested changes: ...", data: { prUrl: "<url>", reviewUrl: "<gh pr review url>" } })` so the cycle is recorded.\n' +
+							'   e. **STOP. Do NOT call `approve_task`. Do NOT call `submit_for_approval`.** ' +
+							'Both are terminal actions that close the review loop — calling either while ' +
+							'P0–P3 findings are open hands the task off before Coding can address them. ' +
+							'The workflow MUST stay open for the next cycle.\n' +
+							'5. If satisfied (verdict = APPROVE, zero findings at any severity AND any ' +
+							'prior-round P0–P3 findings have been addressed in the latest commits):\n' +
 							'   a. Post an approval review: `gh pr review <pr-url> --approve ' +
 							'--body-file <file>`.\n' +
 							'   b. Verify the PR is still open and mergeable.\n' +
@@ -531,21 +629,26 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 						value:
 							'You are the Reviewer in a Research→Reviewer iterative workflow. You review the ' +
 							'research findings for completeness, accuracy, and quality.\n\n' +
+							reviewerTerminalActionPreconditions('Research') +
 							'TOOL CONTRACT (Design v2):\n' +
 							'- `save_artifact({ type: "result", append: true, summary, ...data? })` — append-only audit. Records what you ' +
 							'observed during this cycle. Does NOT close the task.\n' +
-							'- `approve_task()` — closes the task as done. Call only when satisfied.\n' +
+							'- `approve_task()` — closes the task as done. Call only when satisfied AND the ' +
+							'pre-conditions above are met.\n' +
 							'- `submit_for_approval({ reason? })` — request human sign-off instead of self- ' +
-							'closing. Use when autonomy rules block self-close or the finding is sensitive.\n\n' +
+							'closing. Use when autonomy rules block self-close. Same pre-conditions as ' +
+							'`approve_task` apply — do NOT call this while findings are open.\n\n' +
 							'Review checklist:\n' +
 							'1. Read all research documents in the PR (`gh pr diff`)\n' +
 							'2. Check completeness: does the research answer the original question?\n' +
 							'3. Check accuracy: are claims supported by evidence or sources?\n' +
 							'4. Check clarity: are findings well-organized and easy to follow?\n' +
-							'5. If more research is needed: send_message back to Research with specific areas ' +
-							'to investigate, then `save_artifact({ type: "result", append: true, summary: "Requested more research: ..." })` ' +
-							'to record the cycle. Do NOT call `approve_task` — leave the workflow open.\n' +
-							'6. If satisfied:\n' +
+							'5. If more research is needed (verdict = REQUEST_CHANGES, any P0–P3 finding): ' +
+							'send_message back to Research with specific areas to investigate, then ' +
+							'`save_artifact({ type: "result", append: true, summary: "Requested more research: ..." })` ' +
+							'to record the cycle. **Do NOT call `approve_task`. Do NOT call ' +
+							'`submit_for_approval`.** Both terminate the loop. Leave the workflow open.\n' +
+							'6. If satisfied (verdict = APPROVE, zero findings at any severity):\n' +
 							'   a. Post an approval review: `gh pr review <pr-url> --approve ' +
 							'--body-file <file>`. A visible GitHub review is required — an internal ' +
 							'summary is not enough.\n' +
@@ -649,13 +752,30 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 						value:
 							'You are the sole Reviewer in a single-node Review-Only workflow. There is no planning ' +
 							'or coding phase — you are reviewing an existing PR or codebase directly.\n\n' +
+							'TERMINAL ACTION PRE-CONDITIONS (read before considering `approve_task` or ' +
+							'`submit_for_approval`):\n\n' +
+							'**Terminal actions (`approve_task`, `submit_for_approval`) close this task.** ' +
+							'Because Review-Only is a single-node workflow there is no upstream coder to ' +
+							'send back to — but the loop-closing semantic is still strict:\n' +
+							'1. You MUST post your review to GitHub via `gh pr review` (and inline comments ' +
+							'where relevant) BEFORE calling either terminal tool. An internal summary is ' +
+							'not enough.\n' +
+							'2. If your verdict on the PR is `REQUEST_CHANGES` (any P0–P3 finding), call ' +
+							'`save_artifact({ type: "result", append: true, summary: "Requested ' +
+							'changes: ..." })` and STOP — return control to the caller. **Do NOT call ' +
+							'`approve_task`. Do NOT call `submit_for_approval`.** They both signal "the ' +
+							'work is approved by me" and would close the task with findings still open.\n' +
+							'3. Only when your verdict is `APPROVE` (zero findings at any severity) may you ' +
+							'call `approve_task` (or `submit_for_approval` when autonomy blocks self-close, ' +
+							'which carries the same approval semantic).\n\n' +
 							'TOOL CONTRACT (Design v2):\n' +
 							'- `save_artifact({ type: "result", append: true, summary, ...data? })` — append-only audit. Records what you ' +
 							'observed. Does NOT close the task.\n' +
-							'- `approve_task()` — closes the task as done. Call only after you have posted ' +
-							'your review to the PR via `gh pr review`.\n' +
+							'- `approve_task()` — closes the task as done. Call only when verdict is APPROVE ' +
+							'AND you have posted your review to the PR via `gh pr review`.\n' +
 							'- `submit_for_approval({ reason? })` — request human sign-off instead of self- ' +
-							'closing. Use when autonomy blocks self-close.\n\n' +
+							'closing. Same pre-conditions as `approve_task` apply — do NOT call this while ' +
+							'findings are open.\n\n' +
 							'**You MUST post your review to the PR via `gh pr review` BEFORE calling ' +
 							'`approve_task` or `submit_for_approval`.** An internal summary is not enough — the ' +
 							'author must be able to see your feedback on GitHub. Use:\n' +
@@ -670,8 +790,10 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'4. Post your review to the PR via `gh pr review` (+ inline comments via `gh api` ' +
 							'where relevant) — this is required, not optional\n' +
 							'5. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>" } })` to record the audit entry. Nest `prUrl` inside `data`; top-level keys outside `data` are stripped by the tool schema\n' +
-							'6. Call `approve_task()` as your final action. If autonomy blocks self-close, call ' +
-							'`submit_for_approval({ reason: "..." })` instead.',
+							'6. If your verdict is APPROVE: call `approve_task()` as your final action. If ' +
+							'autonomy blocks self-close, call `submit_for_approval({ reason: "..." })` ' +
+							'instead. If your verdict is REQUEST_CHANGES: stop after step 5 — do NOT call ' +
+							'either terminal tool.',
 					},
 				},
 			],
