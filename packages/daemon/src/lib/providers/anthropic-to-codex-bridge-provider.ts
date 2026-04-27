@@ -63,18 +63,40 @@ const ANTHROPIC_CODEX_MODELS: ModelInfo[] = [
 	{
 		id: 'gpt-5.4',
 		name: 'GPT-5.4',
+		alias: 'codex-5.4',
+		family: 'gpt',
+		provider: 'anthropic-codex',
+		contextWindow: 200000,
+		description: 'GPT-5.4 · Frontier agentic coding model',
+		releaseDate: '2026-01-01',
+		available: true,
+	},
+	{
+		id: 'gpt-5.5',
+		name: 'GPT-5.5',
 		alias: 'codex-latest',
 		family: 'gpt',
 		provider: 'anthropic-codex',
 		contextWindow: 200000,
-		description: 'GPT-5.4 · Latest frontier agentic coding model',
+		description: 'GPT-5.5 · Latest frontier agentic coding model',
+		releaseDate: '2026-04-01',
+		available: true,
+	},
+	{
+		id: 'gpt-5.4-mini',
+		name: 'GPT-5.4 Mini',
+		alias: 'codex-mini',
+		family: 'gpt',
+		provider: 'anthropic-codex',
+		contextWindow: 128000,
+		description: 'GPT-5.4 Mini · Fast and efficient for simpler tasks',
 		releaseDate: '2026-01-01',
 		available: true,
 	},
 	{
 		id: 'gpt-5.1-codex-mini',
 		name: 'GPT-5.1 Codex Mini',
-		alias: 'codex-mini',
+		alias: 'codex-5.1-mini',
 		family: 'gpt',
 		provider: 'anthropic-codex',
 		contextWindow: 128000,
@@ -466,16 +488,22 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		return ANTHROPIC_CODEX_MODELS.some((m) => m.id === modelId || m.alias === modelId);
 	}
 
+	translateModelIdForSdk(modelId: string): string {
+		return (
+			ANTHROPIC_CODEX_MODELS.find((m) => m.id === modelId || m.alias === modelId)?.id ?? modelId
+		);
+	}
+
 	getModelForTier(tier: ModelTier): string | undefined {
 		// Routing policy:
-		//   opus    → gpt-5.4           (latest frontier, matches ANTHROPIC_DEFAULT_OPUS_MODEL)
+		//   opus    → gpt-5.5           (latest frontier, matches ANTHROPIC_DEFAULT_OPUS_MODEL)
 		//   sonnet  → gpt-5.3-codex     (primary Codex model, matches ANTHROPIC_DEFAULT_SONNET_MODEL)
-		//   haiku   → gpt-5.1-codex-mini (fast/cheap, matches ANTHROPIC_DEFAULT_HAIKU_MODEL)
+		//   haiku   → gpt-5.4-mini       (fast/cheap, matches ANTHROPIC_DEFAULT_HAIKU_MODEL)
 		//   default → gpt-5.3-codex     (same as sonnet; no separate env var needed)
 		const map: Record<ModelTier, string> = {
-			opus: 'gpt-5.4',
+			opus: 'gpt-5.5',
 			sonnet: 'gpt-5.3-codex',
-			haiku: 'gpt-5.1-codex-mini',
+			haiku: 'gpt-5.4-mini',
 			default: 'gpt-5.3-codex',
 		};
 		return map[tier];
@@ -530,12 +558,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 				// subprocess never falls back to Anthropic model names (e.g.
 				// 'claude-haiku-4-5-20251001') which the Codex bridge does not recognise.
 				// Routing policy (mirrors getModelForTier):
-				//   Opus   → gpt-5.4           (latest frontier)
+				//   Opus   → gpt-5.5           (latest frontier)
 				//   Sonnet → resolvedId         (user-selected model)
-				//   Haiku  → gpt-5.1-codex-mini (fast/cheap fallback)
-				ANTHROPIC_DEFAULT_OPUS_MODEL: 'gpt-5.4',
+				//   Haiku  → gpt-5.4-mini       (fast/cheap fallback)
+				ANTHROPIC_DEFAULT_OPUS_MODEL: 'gpt-5.5',
 				ANTHROPIC_DEFAULT_SONNET_MODEL: resolvedId,
-				ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gpt-5.1-codex-mini',
+				ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gpt-5.4-mini',
 			},
 			isAnthropicCompatible: true,
 			apiVersion: 'v1',
