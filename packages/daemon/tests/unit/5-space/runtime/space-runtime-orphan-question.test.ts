@@ -1,0 +1,321 @@
+/**
+ * SpaceRuntime — Orphaned-question cleanup tests (Task #138)
+ *
+ * Covers two related guarantees that protect users from a "dead-end" question
+ * card after the runtime force-completes or blocks a session that was sitting
+ * in `waiting_for_input`:
+ *
+ *   1. Step 1.5 force-idle SPARES sessions in `waiting_for_input` — the
+ *      session is not stuck (a human is), so we leave it alone. (Part D)
+ *
+ *   2. When Step 1 (liveness check) decides to reset/block a node-execution,
+ *      we call `markPendingQuestionOrphaned('agent_session_terminated')` on
+ *      the live AgentSession before tearing it down. (Part C)
+ *
+ * The tests exercise the runtime through `processRunTick`-style flows with a
+ * mock TaskAgentManager whose `getAgentSessionById` returns a stub that
+ * tracks calls to `getProcessingState` / `markPendingQuestionOrphaned`.
+ */
+
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { Database as BunDatabase } from 'bun:sqlite';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import type { SpaceWorkflow, AgentProcessingState } from '@neokai/shared';
+
+// ---------------------------------------------------------------------------
+// DB / seed helpers
+// ---------------------------------------------------------------------------
+
+function makeDb(): BunDatabase {
+	const db = new BunDatabase(':memory:');
+	db.exec('PRAGMA foreign_keys = ON');
+	runMigrations(db, () => {});
+	return db;
+}
+
+function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/ws'): void {
+	db.prepare(
+		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+     allowed_models, session_ids, slug, status, created_at, updated_at)
+     VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+	).run(spaceId, workspacePath, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
+}
+
+function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
+	db.prepare(
+		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+	).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
+}
+
+function buildLinearWorkflow(
+	spaceId: string,
+	workflowManager: SpaceWorkflowManager,
+	nodes: Array<{ id: string; name: string; agentId: string }>
+): SpaceWorkflow {
+	const transitions = nodes.slice(0, -1).map((step, i) => ({
+		from: step.id,
+		to: nodes[i + 1].id,
+		condition: { type: 'always' as const },
+		order: 0,
+	}));
+	return workflowManager.createWorkflow({
+		spaceId,
+		name: `Workflow-${Date.now()}-${Math.random()}`,
+		description: 'Test',
+		nodes,
+		transitions,
+		startNodeId: nodes[0].id,
+		rules: [],
+		tags: [],
+		completionAutonomyLevel: 3,
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Mock AgentSession stub
+// ---------------------------------------------------------------------------
+
+interface AgentSessionStub {
+	getProcessingState(): AgentProcessingState;
+	markPendingQuestionOrphaned: (
+		reason: 'agent_session_terminated' | 'rehydrate_failed'
+	) => Promise<boolean>;
+	_orphanCalls: Array<'agent_session_terminated' | 'rehydrate_failed'>;
+}
+
+function makeAgentSessionStub(state: AgentProcessingState): AgentSessionStub {
+	const orphanCalls: Array<'agent_session_terminated' | 'rehydrate_failed'> = [];
+	return {
+		getProcessingState: () => state,
+		markPendingQuestionOrphaned: async (reason) => {
+			orphanCalls.push(reason);
+			return true;
+		},
+		_orphanCalls: orphanCalls,
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Mock TaskAgentManager
+// ---------------------------------------------------------------------------
+
+function makeMockTaskAgentManager(opts: {
+	aliveSessions?: Set<string>;
+	sessionStubs?: Map<string, AgentSessionStub>;
+}) {
+	return {
+		isSpawning: () => false,
+		isTaskAgentAlive: () => false,
+		isExecutionSpawning: () => false,
+		isSessionAlive: (sessionId: string) => opts.aliveSessions?.has(sessionId) ?? false,
+		spawnWorkflowNodeAgent: async () => 'unused',
+		spawnWorkflowNodeAgentForExecution: async () => 'unused',
+		rehydrate: async () => {},
+		cancelBySessionId: () => {},
+		interruptBySessionId: async () => {},
+		getAgentSessionById: (sessionId: string) => opts.sessionStubs?.get(sessionId) ?? null,
+		injectIntoTaskAgent: async () => ({ injected: false, reason: 'no-session' }),
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('SpaceRuntime — orphaned-question cleanup (Task #138)', () => {
+	let db: BunDatabase;
+	let workflowRunRepo: SpaceWorkflowRunRepository;
+	let taskRepo: SpaceTaskRepository;
+	let agentManager: SpaceAgentManager;
+	let workflowManager: SpaceWorkflowManager;
+	let spaceManager: SpaceManager;
+	let nodeExecutionRepo: NodeExecutionRepository;
+
+	const SPACE_ID = 'space-orphan-1';
+	const AGENT = 'agent-orphan-1';
+	const STEP_A = 'step-a';
+
+	function buildConfig(tam: ReturnType<typeof makeMockTaskAgentManager>): SpaceRuntimeConfig {
+		return {
+			db,
+			spaceManager,
+			spaceAgentManager: agentManager,
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			taskAgentManager: tam as never,
+		};
+	}
+
+	beforeEach(() => {
+		db = makeDb();
+		seedSpaceRow(db, SPACE_ID);
+		seedAgentRow(db, AGENT, SPACE_ID);
+
+		workflowRunRepo = new SpaceWorkflowRunRepository(db);
+		taskRepo = new SpaceTaskRepository(db);
+		const agentRepo = new SpaceAgentRepository(db);
+		agentManager = new SpaceAgentManager(agentRepo);
+		const workflowRepo = new SpaceWorkflowRepository(db);
+		workflowManager = new SpaceWorkflowManager(workflowRepo);
+		spaceManager = new SpaceManager(db);
+		nodeExecutionRepo = new NodeExecutionRepository(db);
+	});
+
+	afterEach(() => {
+		try {
+			db.close();
+		} catch {
+			/* ignore */
+		}
+	});
+
+	// --------------------------------------------------------------------
+	// Part D: Step 1.5 spares waiting_for_input sessions
+	// --------------------------------------------------------------------
+
+	describe('Step 1.5 (force-idle) spares waiting_for_input sessions', () => {
+		test('does NOT auto-complete or orphan a session that is waiting_for_input past timeout', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Pending-question run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Pending-question run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+
+			// Seed an in_progress execution whose startedAt is far in the past so
+			// elapsedMs > timeout. The Step 1.5 path would normally auto-complete
+			// this — Part D guard should spare it because the session is
+			// waiting_for_input.
+			const sessionId = 'session-waiting';
+			const created = nodeExecutionRepo.createOrIgnore({
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				agentName: 'Step A',
+				agentId: AGENT,
+				status: 'pending',
+			});
+			nodeExecutionRepo.update(created.id, {
+				status: 'in_progress',
+				agentSessionId: sessionId,
+			});
+			// Force startedAt into the deep past (-1 day)
+			db.prepare('UPDATE node_executions SET started_at = ? WHERE id = ?').run(
+				Date.now() - 24 * 60 * 60 * 1000,
+				created.id
+			);
+
+			const stub = makeAgentSessionStub({
+				status: 'waiting_for_input',
+				pendingQuestion: {
+					toolUseId: 'tool-spared',
+					questions: [
+						{
+							question: '?',
+							header: 'X',
+							options: [{ label: 'A', description: 'A' }],
+							multiSelect: false,
+						},
+					],
+					askedAt: Date.now(),
+				},
+			});
+
+			const tam = makeMockTaskAgentManager({
+				aliveSessions: new Set([sessionId]),
+				sessionStubs: new Map([[sessionId, stub]]),
+			});
+			const rt = new SpaceRuntime(buildConfig(tam));
+
+			await rt.executeTick();
+
+			// Execution still in_progress — not auto-completed
+			const after = nodeExecutionRepo.listByNode(run.id, STEP_A)[0]!;
+			expect(after.status).toBe('in_progress');
+			expect(after.result).toBeFalsy();
+
+			// Orphan cleanup must NOT have been called for the spared session
+			expect(stub._orphanCalls).toEqual([]);
+		});
+
+		test('DOES auto-complete a stuck (processing, not waiting) session past timeout', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Stuck run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Stuck run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+
+			const sessionId = 'session-stuck';
+			const created = nodeExecutionRepo.createOrIgnore({
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				agentName: 'Step A',
+				agentId: AGENT,
+				status: 'pending',
+			});
+			nodeExecutionRepo.update(created.id, {
+				status: 'in_progress',
+				agentSessionId: sessionId,
+			});
+			db.prepare('UPDATE node_executions SET started_at = ? WHERE id = ?').run(
+				Date.now() - 24 * 60 * 60 * 1000,
+				created.id
+			);
+
+			// Session reports it is *processing* (not waiting_for_input) — Step 1.5
+			// should still force-idle it.
+			const stub = makeAgentSessionStub({
+				status: 'processing',
+				messageId: 'm1',
+				phase: 'streaming',
+			});
+			const tam = makeMockTaskAgentManager({
+				aliveSessions: new Set([sessionId]),
+				sessionStubs: new Map([[sessionId, stub]]),
+			});
+			const rt = new SpaceRuntime(buildConfig(tam));
+
+			await rt.executeTick();
+
+			const after = nodeExecutionRepo.listByNode(run.id, STEP_A)[0]!;
+			expect(after.status).toBe('idle');
+			expect(after.result).toMatch(/Auto-completed.*timed out/);
+		});
+	});
+});

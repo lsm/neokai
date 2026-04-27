@@ -13,14 +13,45 @@
  * 4. When user responds via RPC, resolves the Promise with formatted answers
  * 5. The SDK automatically continues with the answers
  *
+ * ## Restart-survival path (task #138)
+ *
+ * The in-memory `pendingResolver` is bound to the live SDK query process. When
+ * the daemon restarts, the SDK process dies and the resolver is gone — but the
+ * persisted `waiting_for_input` state still renders the question card in the
+ * UI. To make Submit/Skip work after a restart we maintain a `queuedAnswers`
+ * map keyed by toolUseId:
+ *
+ * - On user submit/cancel after restart (no resolver): we stash a
+ *   `PermissionResult` in `queuedAnswers`, transition out of
+ *   `waiting_for_input`, inject a synthetic user message containing a
+ *   `tool_result` block referencing the original `tool_use_id`, and trigger
+ *   `ensureQueryStarted()`. The SDK resumes the conversation with the answer
+ *   delivered as a normal `tool_result` user message.
+ * - On the chance the SDK re-issues the AskUserQuestion call after resume,
+ *   `createCanUseToolCallback` consults `queuedAnswers` first and returns the
+ *   queued result immediately without re-prompting the user.
+ *
+ * ## Orphan cleanup
+ *
+ * When a session is force-completed or fails to rehydrate while in
+ * `waiting_for_input`, `markQuestionOrphaned()` flips the question to a
+ * `cancelled` ResolvedQuestion with cancelReason `agent_session_terminated`.
+ * The UI renders these distinctly so the user knows why the card disappeared.
+ *
  * See: https://platform.claude.com/docs/en/agent-sdk/permissions#handling-the-askuserquestion-tool
  */
 
-import type { PendingUserQuestion, QuestionDraftResponse, Session } from '@neokai/shared';
+import type {
+	PendingUserQuestion,
+	QuestionCancelReason,
+	QuestionDraftResponse,
+	Session,
+} from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { ProcessingStateManager } from './processing-state-manager';
+import type { MessageQueue } from './message-queue';
 import { Logger } from '../logger';
 
 /**
@@ -32,6 +63,14 @@ export interface AskUserQuestionHandlerContext {
 	readonly db: Database;
 	readonly stateManager: ProcessingStateManager;
 	readonly daemonHub: DaemonHub;
+	readonly messageQueue: MessageQueue;
+	/**
+	 * Ensure the SDK query is running so a queued tool_result can flow through
+	 * the streaming input pipeline. Implemented by AgentSession via
+	 * QueryLifecycleManager. Optional because legacy tests/contexts may not
+	 * provide it; callers must handle the absent case.
+	 */
+	ensureQueryStarted?(): Promise<void>;
 }
 
 /**
@@ -60,9 +99,23 @@ interface PendingQuestionResolver {
 	reject: (error: Error) => void;
 }
 
+/**
+ * Cancellation message delivered to the agent when the user clicks Skip.
+ * Exported so tests and other layers can assert on the exact wording.
+ */
+export const QUESTION_CANCEL_MESSAGE =
+	'User cancelled: The user chose not to answer this question. Please proceed accordingly or ask a different question if needed.';
+
 export class AskUserQuestionHandler {
 	private logger: Logger;
 	private pendingResolver: PendingQuestionResolver | null = null;
+	/**
+	 * Answers received via RPC after the in-memory resolver was lost (e.g.
+	 * daemon restart). Keyed by toolUseId. If the SDK re-issues the same
+	 * AskUserQuestion call after resume, `createCanUseToolCallback` consumes
+	 * the queued answer instead of re-prompting the user.
+	 */
+	private queuedAnswers: Map<string, PermissionResult> = new Map();
 
 	constructor(private ctx: AskUserQuestionHandlerContext) {
 		this.logger = new Logger(`AskUserQuestionHandler ${ctx.session.id}`);
@@ -93,6 +146,34 @@ export class AskUserQuestionHandler {
 			if (toolName !== 'AskUserQuestion') {
 				// Allow all other tools (they go through permission mode settings)
 				return { behavior: 'allow', updatedInput: input };
+			}
+
+			// Restart-survival fast path: if a queued answer is waiting for this
+			// toolUseId, resolve immediately and skip the user prompt entirely.
+			const queued = this.queuedAnswers.get(options.toolUseID);
+			if (queued) {
+				this.queuedAnswers.delete(options.toolUseID);
+				// If the queued PermissionResult was an `allow`, the SDK expects
+				// updatedInput to include the original input fields plus answers.
+				// Patch in any missing fields from the live `input` so we don't
+				// drop required schema fields just because the resolver was lost.
+				const merged: PermissionResult =
+					queued.behavior === 'allow'
+						? {
+								behavior: 'allow',
+								updatedInput: { ...input, ...queued.updatedInput },
+							}
+						: queued;
+				this.logger.info(
+					`AskUserQuestion ${options.toolUseID}: consuming queued answer (behavior=${queued.behavior})`
+				);
+				await daemonHub.emit('question.injected_as_tool_result', {
+					sessionId: session.id,
+					toolUseId: options.toolUseID,
+					mode: queued.behavior === 'allow' ? 'submitted' : 'cancelled',
+					viaCanUseTool: true,
+				});
+				return merged;
 			}
 
 			const askInput = input as unknown as AskUserQuestionInput;
@@ -159,12 +240,7 @@ export class AskUserQuestionHandler {
 			);
 		}
 
-		// Verify we have a pending resolver
-		if (!this.pendingResolver) {
-			throw new Error('No pending question to respond to');
-		}
-
-		// Verify the toolUseId matches (uses SDK's toolUseID)
+		// Verify the toolUseId matches the persisted question
 		if (currentState.pendingQuestion.toolUseId !== toolUseId) {
 			throw new Error(
 				`Tool use ID mismatch: expected ${currentState.pendingQuestion.toolUseId}, got ${toolUseId}`
@@ -176,38 +252,36 @@ export class AskUserQuestionHandler {
 
 		// Format the answers as expected by the SDK
 		// Maps question text to selected option label(s)
-		const answers: Record<string, string> = {};
-		for (const response of responses) {
-			const question = pendingQuestion.questions[response.questionIndex];
-			if (!question) continue;
+		const answers = this.buildAnswers(pendingQuestion, responses);
 
-			if (response.customText) {
-				// User provided custom text via "Other" option
-				answers[question.question] = response.customText;
-			} else if (response.selectedLabels.length > 0) {
-				// User selected one or more predefined options
-				// Multi-select answers are comma-separated
-				answers[question.question] = response.selectedLabels.join(', ');
-			}
-		}
-
-		// Transition back to processing state
-		await stateManager.setProcessing(toolUseId, 'streaming');
-
-		// Track resolved question in session metadata
+		// Track resolved question in session metadata. We do this BEFORE the
+		// state transition so the metadata is durable even if the deliver step
+		// throws midway.
 		this.trackResolvedQuestion(toolUseId, pendingQuestion, 'submitted', responses);
 
-		// Resolve the pending Promise with the answers
-		// This allows the SDK to continue with the user's input
-		const resolver = this.pendingResolver;
-		this.pendingResolver = null;
+		// Happy path: a live SDK query is awaiting our resolver — resolve in-memory.
+		if (this.pendingResolver && this.pendingResolver.toolUseId === toolUseId) {
+			// Transition back to processing state
+			await stateManager.setProcessing(toolUseId, 'streaming');
+			const resolver = this.pendingResolver;
+			this.pendingResolver = null;
+			resolver.resolve({
+				behavior: 'allow',
+				updatedInput: {
+					...resolver.input,
+					answers,
+				},
+			});
+			return;
+		}
 
-		resolver.resolve({
+		// Restart-survival path: the original resolver is gone (daemon restart,
+		// session cleanup, etc.). Queue the answer for the resumed SDK and
+		// inject a synthetic tool_result user message to drive the conversation
+		// forward.
+		await this.deliverQueuedAnswer(toolUseId, pendingQuestion, {
 			behavior: 'allow',
-			updatedInput: {
-				...resolver.input,
-				answers,
-			},
+			updatedInput: { answers },
 		});
 	}
 
@@ -228,11 +302,6 @@ export class AskUserQuestionHandler {
 			);
 		}
 
-		// Verify we have a pending resolver
-		if (!this.pendingResolver) {
-			throw new Error('No pending question to cancel');
-		}
-
 		// Verify the toolUseId matches
 		if (currentState.pendingQuestion.toolUseId !== toolUseId) {
 			throw new Error(
@@ -243,22 +312,208 @@ export class AskUserQuestionHandler {
 		// Capture the pending question before transitioning state
 		const pendingQuestion = currentState.pendingQuestion;
 
-		// Transition back to processing state
-		await stateManager.setProcessing(toolUseId, 'streaming');
+		// Track cancelled question in session metadata (user-initiated cancel)
+		this.trackResolvedQuestion(toolUseId, pendingQuestion, 'cancelled', [], 'user_cancelled');
 
-		// Track cancelled question in session metadata
-		this.trackResolvedQuestion(toolUseId, pendingQuestion, 'cancelled', []);
+		// Happy path: a live SDK query is awaiting our resolver.
+		if (this.pendingResolver && this.pendingResolver.toolUseId === toolUseId) {
+			await stateManager.setProcessing(toolUseId, 'streaming');
+			const resolver = this.pendingResolver;
+			this.pendingResolver = null;
+			resolver.resolve({
+				behavior: 'deny',
+				message: QUESTION_CANCEL_MESSAGE,
+			});
+			return;
+		}
 
-		// Resolve with a deny behavior
-		// This tells Claude the user declined to answer
-		const resolver = this.pendingResolver;
-		this.pendingResolver = null;
-
-		resolver.resolve({
+		// Restart-survival path: queue a deny + inject the cancellation message.
+		await this.deliverQueuedAnswer(toolUseId, pendingQuestion, {
 			behavior: 'deny',
-			message:
-				'User cancelled: The user chose not to answer this question. Please proceed accordingly or ask a different question if needed.',
+			message: QUESTION_CANCEL_MESSAGE,
 		});
+	}
+
+	/**
+	 * Mark a pending question as orphaned because the owning session is no
+	 * longer alive (force-completion, rehydrate failure, daemon shutdown, etc.).
+	 *
+	 * Idempotent: safe to call when the session is not in `waiting_for_input`
+	 * (returns false). The persisted question is flipped to a `cancelled`
+	 * ResolvedQuestion with cancelReason `agent_session_terminated` and the
+	 * processing state is reset to `idle` so the UI removes the dead-end card.
+	 *
+	 * @returns true if a question was actually orphaned, false if there was
+	 *   nothing to clean up.
+	 */
+	async markQuestionOrphaned(
+		reason: 'agent_session_terminated' | 'rehydrate_failed' = 'agent_session_terminated'
+	): Promise<boolean> {
+		const { stateManager, daemonHub, session } = this.ctx;
+		const currentState = stateManager.getState();
+		if (currentState.status !== 'waiting_for_input') {
+			return false;
+		}
+
+		const pendingQuestion = currentState.pendingQuestion;
+
+		// Track as cancelled with the orphan reason so the UI can render
+		// distinctly ("Question cancelled — agent session ended").
+		this.trackResolvedQuestion(
+			pendingQuestion.toolUseId,
+			pendingQuestion,
+			'cancelled',
+			[],
+			'agent_session_terminated'
+		);
+
+		// Reject any pending in-memory resolver so an awaiting SDK query (rare
+		// but possible) doesn't leak a hanging Promise.
+		if (this.pendingResolver) {
+			try {
+				this.pendingResolver.reject(new Error('Question orphaned: agent session ended'));
+			} catch {
+				// Ignore — best-effort cleanup
+			}
+			this.pendingResolver = null;
+		}
+		// Drop any queued answer for this question; nothing left to deliver to.
+		this.queuedAnswers.delete(pendingQuestion.toolUseId);
+
+		// Drop waiting_for_input state so the UI removes the live card. The
+		// resolved-question record persisted above is what the UI renders going
+		// forward.
+		await stateManager.setIdle();
+
+		await daemonHub.emit('question.orphaned', {
+			sessionId: session.id,
+			toolUseId: pendingQuestion.toolUseId,
+			reason,
+		});
+
+		this.logger.info(
+			`AskUserQuestion ${pendingQuestion.toolUseId} orphaned (reason=${reason}); UI card cleaned up`
+		);
+		return true;
+	}
+
+	/**
+	 * Build the answers map from the user's responses.
+	 * Maps question text → selected option label(s) or custom text.
+	 */
+	private buildAnswers(
+		pendingQuestion: PendingUserQuestion,
+		responses: QuestionDraftResponse[]
+	): Record<string, string> {
+		const answers: Record<string, string> = {};
+		for (const response of responses) {
+			const question = pendingQuestion.questions[response.questionIndex];
+			if (!question) continue;
+
+			if (response.customText) {
+				// User provided custom text via "Other" option
+				answers[question.question] = response.customText;
+			} else if (response.selectedLabels.length > 0) {
+				// User selected one or more predefined options
+				// Multi-select answers are comma-separated
+				answers[question.question] = response.selectedLabels.join(', ');
+			}
+		}
+		return answers;
+	}
+
+	/**
+	 * Restart-survival delivery: queue the answer for the resumed SDK and
+	 * inject a synthetic tool_result user message into the streaming queue so
+	 * the conversation moves forward even if the SDK does not re-issue the
+	 * canUseTool call.
+	 *
+	 * Both halves are intentionally redundant:
+	 * 1. `queuedAnswers` covers the case where the SDK re-plays the
+	 *    AskUserQuestion call (canUseTool consumes the queued answer).
+	 * 2. The injected `tool_result` user message covers the case where the SDK
+	 *    treats the prior tool_use as already-resolved and just needs the
+	 *    matching tool_result to continue the conversation cleanly.
+	 */
+	private async deliverQueuedAnswer(
+		toolUseId: string,
+		pendingQuestion: PendingUserQuestion,
+		result: PermissionResult
+	): Promise<void> {
+		const { stateManager, daemonHub, session, messageQueue, ensureQueryStarted } = this.ctx;
+
+		this.queuedAnswers.set(toolUseId, result);
+
+		// Drop waiting_for_input state — the question is resolved from the user's
+		// perspective. Going to idle (rather than processing) lets the SDK
+		// query restart cleanly via ensureQueryStarted().
+		await stateManager.setIdle();
+
+		// Build the tool_result content text. For `allow`, serialize the answers
+		// as JSON so the agent can parse them. For `deny`, use the cancellation
+		// message as the tool_result content (matches what the SDK would have
+		// produced in the live-resolver path).
+		const toolResultText =
+			result.behavior === 'allow'
+				? JSON.stringify({
+						answers:
+							(result.updatedInput as { answers?: Record<string, string> } | undefined)?.answers ??
+							{},
+					})
+				: result.message;
+
+		const mode: 'submitted' | 'cancelled' = result.behavior === 'allow' ? 'submitted' : 'cancelled';
+
+		await daemonHub.emit('question.injected_as_tool_result', {
+			sessionId: session.id,
+			toolUseId,
+			mode,
+			viaCanUseTool: false,
+		});
+
+		// Best-effort: start the SDK query and enqueue the tool_result. If the
+		// agent session has no ensureQueryStarted (e.g. a unit-test context),
+		// we still queue the answer for whenever the SDK eventually resumes.
+		if (!ensureQueryStarted) {
+			this.logger.warn(
+				`AskUserQuestion ${toolUseId}: no ensureQueryStarted on context; answer queued only`
+			);
+			return;
+		}
+
+		try {
+			await ensureQueryStarted();
+			// Inject as a tool_result content block. MessageQueue extracts
+			// `tool_use_id` from the block and forwards it as
+			// `parent_tool_use_id` on the SDK user message — that's the wire
+			// format the Anthropic API expects for a user→assistant tool reply.
+			//
+			// If the SDK has already moved past this tool_use (because the
+			// queued answer was consumed by canUseTool above), this message
+			// becomes a no-op text from the SDK's perspective.
+			await messageQueue.enqueueWithId(`question-${toolUseId}-${Date.now()}`, [
+				{
+					type: 'tool_result',
+					tool_use_id: toolUseId,
+					content: toolResultText,
+				},
+			]);
+		} catch (error) {
+			this.logger.error(
+				`AskUserQuestion ${toolUseId}: failed to inject tool_result after restart`,
+				error
+			);
+			// Leave the queued answer in place — a future canUseTool fire can
+			// still consume it. Do not rethrow; the user's RPC already
+			// succeeded from their perspective (the question is marked
+			// resolved and removed from the UI).
+		}
+
+		// Mention the toolUseId in the closing log so production traces can
+		// follow a single question end-to-end through restart.
+		this.logger.info(
+			`AskUserQuestion ${toolUseId}: queued ${result.behavior} answer + injected tool_result for ${pendingQuestion.questions.length} question(s)`
+		);
 	}
 
 	/**
@@ -270,7 +525,8 @@ export class AskUserQuestionHandler {
 		toolUseId: string,
 		pendingQuestion: PendingUserQuestion,
 		state: 'submitted' | 'cancelled',
-		responses: QuestionDraftResponse[]
+		responses: QuestionDraftResponse[],
+		cancelReason?: QuestionCancelReason
 	): void {
 		const { session, db } = this.ctx;
 
@@ -281,6 +537,7 @@ export class AskUserQuestionHandler {
 			state,
 			responses,
 			resolvedAt: Date.now(),
+			...(state === 'cancelled' && cancelReason ? { cancelReason } : {}),
 		};
 
 		// Update session metadata
@@ -301,12 +558,25 @@ export class AskUserQuestionHandler {
 	}
 
 	/**
-	 * Cleanup any pending resolvers (called during session cleanup)
+	 * Cleanup any pending resolvers (called during session cleanup).
+	 *
+	 * Note: this does NOT mark the persisted question as cancelled — callers
+	 * that want the UI card to update should invoke `markQuestionOrphaned`
+	 * first. `cleanup()` only releases in-memory references.
 	 */
 	cleanup(): void {
 		if (this.pendingResolver) {
 			this.pendingResolver.reject(new Error('Session cleanup'));
 			this.pendingResolver = null;
 		}
+		this.queuedAnswers.clear();
+	}
+
+	/**
+	 * Test-only: inspect the current queued-answer map.
+	 * Returns a shallow copy so callers cannot mutate handler internals.
+	 */
+	getQueuedAnswersForTesting(): Map<string, PermissionResult> {
+		return new Map(this.queuedAnswers);
 	}
 }

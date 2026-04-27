@@ -1581,6 +1581,24 @@ export class SpaceRuntime {
 				const crashCount = (this.taskCrashCounts.get(crashKey) ?? 0) + 1;
 				this.taskCrashCounts.set(crashKey, crashCount);
 
+				// Part C (task #138): if the dead session was sitting in
+				// `waiting_for_input`, the persisted AskUserQuestion card is now
+				// unanswerable. Try to flip it to `cancelled` (cancelReason
+				// `agent_session_terminated`) so the UI removes the dead-end
+				// rather than rendering a permanently-frozen card. Best-effort:
+				// the AgentSession instance may already be gone from every map.
+				try {
+					const liveSession = tam.getAgentSessionById(execution.agentSessionId);
+					if (liveSession) {
+						await liveSession.markPendingQuestionOrphaned('agent_session_terminated');
+					}
+				} catch (err) {
+					log.warn(
+						`SpaceRuntime: failed to clean up pending question for crashed session ${execution.agentSessionId}:`,
+						err
+					);
+				}
+
 				if (crashCount <= MAX_TASK_AGENT_CRASH_RETRIES) {
 					log.warn(
 						`SpaceRuntime: workflow node agent crashed for execution ${execution.id} ` +
@@ -1650,7 +1668,14 @@ export class SpaceRuntime {
 
 			// Step 1.5: Auto-complete alive agents that have exceeded their timeout.
 			// Transitions to 'idle' — the same state as a naturally completing session.
+			//
+			// Part D (task #138): a session in `waiting_for_input` is *legitimately*
+			// blocked on a human, not stuck. Force-completing it here turns the
+			// pending AskUserQuestion card into a dead-end (Submit/Skip have no
+			// resolver to wake) and confuses the user. Skip those sessions; the
+			// long-term fix (Tier 0) removes Step 1.5 entirely.
 			let autoCompleted = 0;
+			let skippedWaitingForInput = 0;
 			const now = Date.now();
 			for (const execution of nodeExecutions) {
 				if (execution.status !== 'in_progress' || !execution.agentSessionId) continue;
@@ -1662,7 +1687,32 @@ export class SpaceRuntime {
 				const elapsedMs = now - referenceTime;
 				if (elapsedMs <= timeoutMs) continue;
 
+				// Part D guard: spare sessions waiting for user input. The agent is
+				// not stuck — a human is.
+				const liveSession = tam.getAgentSessionById(execution.agentSessionId);
+				if (liveSession?.getProcessingState().status === 'waiting_for_input') {
+					skippedWaitingForInput++;
+					continue;
+				}
+
 				const timeoutMinutes = Math.round(timeoutMs / 60_000);
+
+				// Part C: if (somehow) we're force-completing a session that *is*
+				// in waiting_for_input despite the guard above (e.g. state changed
+				// between checks), clear the orphaned question first so the UI
+				// doesn't render a card whose resolver no longer exists. Best-
+				// effort — never let cleanup failure block the auto-complete.
+				if (liveSession) {
+					try {
+						await liveSession.markPendingQuestionOrphaned('agent_session_terminated');
+					} catch (err) {
+						log.warn(
+							`SpaceRuntime: failed to clean up pending question for session ${execution.agentSessionId}:`,
+							err
+						);
+					}
+				}
+
 				this.config.nodeExecutionRepo.update(execution.id, {
 					status: 'idle',
 					result: `Auto-completed: agent timed out after ${timeoutMinutes} minutes`,
@@ -1679,6 +1729,11 @@ export class SpaceRuntime {
 			if (autoCompleted > 0) {
 				log.warn(
 					`SpaceRuntime: auto-completed ${autoCompleted} stuck node agent(s) for run ${runId}`
+				);
+			}
+			if (skippedWaitingForInput > 0) {
+				log.info(
+					`SpaceRuntime: spared ${skippedWaitingForInput} node agent(s) blocked on waiting_for_input for run ${runId}`
 				);
 			}
 

@@ -2013,6 +2013,29 @@ export class TaskAgentManager {
 		return undefined;
 	}
 
+	/**
+	 * Look up an AgentSession by its session ID across every in-memory map this
+	 * manager owns. Used by reapers (e.g. SpaceRuntime force-completion) that
+	 * have only the session ID and need to inspect/mutate the session before
+	 * reaping it (e.g. clear an orphaned AskUserQuestion card).
+	 *
+	 * Mirrors the lookup order in `isSessionAlive`: reverse index first, then
+	 * task agent map, then SessionManager. Returns undefined for ghost
+	 * session IDs that have no live AgentSession instance.
+	 */
+	getAgentSessionById(sessionId: string): AgentSession | undefined {
+		const indexed = this.agentSessionIndex.get(sessionId);
+		if (indexed) return indexed;
+
+		for (const taskAgent of this.taskAgentSessions.values()) {
+			if (taskAgent.session.id === sessionId) return taskAgent;
+		}
+
+		// SessionManager returns null for unknown sessions; normalize to undefined
+		// so the return contract stays uniform.
+		return this.config.sessionManager.getSession(sessionId) ?? undefined;
+	}
+
 	// -------------------------------------------------------------------------
 	// Public — cleanup
 	// -------------------------------------------------------------------------

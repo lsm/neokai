@@ -119,6 +119,15 @@ export interface QuestionDraftResponse {
 }
 
 /**
+ * Reason a question was cancelled.
+ * - `user_cancelled`: user clicked Skip in the UI
+ * - `agent_session_terminated`: agent session ended before the user answered
+ *   (force-completion, rehydrate failure, daemon shutdown). UI should render
+ *   the card distinctly so the user understands why the question went away.
+ */
+export type QuestionCancelReason = 'user_cancelled' | 'agent_session_terminated';
+
+/**
  * Resolved question - saved after user submits or cancels
  * Used to persist question UI state across page refreshes
  */
@@ -131,6 +140,11 @@ export interface ResolvedQuestion {
 	responses: QuestionDraftResponse[];
 	/** When the question was resolved */
 	resolvedAt: number;
+	/**
+	 * When state === 'cancelled', explains who/what cancelled the question.
+	 * Defaults to 'user_cancelled' for back-compat when missing.
+	 */
+	cancelReason?: QuestionCancelReason;
 }
 
 /**
