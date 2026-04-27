@@ -1428,6 +1428,18 @@ export class TaskAgentManager {
 							});
 						}
 
+						// P1-5: Register the self-heal callback so QueryRunner.start() can
+						// recover the session if MCP servers go missing at any point in its
+						// lifetime (not just at spawn). The callback fires inside the
+						// workflow sub-session's first-turn setup window — the latest point
+						// before the agent tries to call send_message.
+						existing.onMissingWorkflowMcpServers = async (
+							cbSessionId: string,
+							missing: string[]
+						) => {
+							await this.mcpSelfHeal(cbSessionId, missing);
+						};
+
 						// Flush any pending messages for this agent.
 						const runId = parentTask.workflowRunId;
 						void this.flushPendingMessagesForTarget(
@@ -1525,6 +1537,12 @@ export class TaskAgentManager {
 				}
 			}
 		}
+
+		// P1-5: Register the self-heal callback (see reuse path above for rationale).
+		// mcpSelfHeal does its own context lookup so no pre-computation needed here.
+		subSession.onMissingWorkflowMcpServers = async (cbSessionId: string, missing: string[]) => {
+			await this.mcpSelfHeal(cbSessionId, missing);
+		};
 
 		// Start streaming query for the sub-session.
 		//
@@ -3290,6 +3308,12 @@ export class TaskAgentManager {
 			await this.handleSubSessionComplete(taskId, execution.workflowNodeId, subSessionId);
 		});
 
+		// P1-5: Register the self-heal callback on the rehydrated session so that
+		// if MCP servers go missing during its lifetime, QueryRunner.start() can recover.
+		agentSession.onMissingWorkflowMcpServers = async (cbSessionId: string, missing: string[]) => {
+			await this.mcpSelfHeal(cbSessionId, missing);
+		};
+
 		// --- Restart the streaming query (idempotent if already running)
 		await agentSession.startStreamingQuery();
 
@@ -3540,6 +3564,83 @@ export class TaskAgentManager {
 		log.info(
 			`TaskAgentManager.ensureNodeAgentAttached: successfully re-attached MCP servers [${missing.join(', ')}] to session ${ctx.subSessionId} (phase=${ctx.phase})`
 		);
+	}
+
+	/**
+	 * P1-5: Final backstop — self-heals a workflow sub-session's MCP servers on demand.
+	 *
+	 * Called by the `onMissingWorkflowMcpServers` callback that `QueryRunner.start()`
+	 * invokes when it detects missing `node-agent` or `space-agent-tools` at the moment
+	 * of first-turn setup. This is the last line of defence for any session that slipped
+	 * through the spawn/rehydrate path without the required servers attached:
+	 *
+	 *   - Old sessions that never had the callback registered (before this fix)
+	 *   - Sessions created by older daemon versions with incomplete MCP injection
+	 *   - Sessions that lost their servers due to a clobbering `setRuntimeMcpServers`
+	 *     call from an unknown subsystem
+	 *   - Reused sessions where the reuse-path MCP rebuild was also missed
+	 *
+	 * Recovery steps:
+	 *   1. Look up the NodeExecution by agentSessionId (same as rehydrateSubSession).
+	 *   2. Build the full context (taskId, spaceId, workflowRunId, workspacePath).
+	 *   3. Call `ensureRequiredMcpServersAttached` which re-injects both servers and
+	 *      verifies them.
+	 *
+	 * @param sessionId   The sub-session ID (matches NodeExecution.agentSessionId).
+	 * @param missing     The list of server names that were detected as missing.
+	 */
+	async mcpSelfHeal(sessionId: string, missing: string[]): Promise<void> {
+		log.warn(
+			`TaskAgentManager.mcpSelfHeal: triggered for session ${sessionId}, missing [${missing.join(', ')}]`
+		);
+
+		// Step 1: Look up the NodeExecution (same lookup as rehydrateSubSession).
+		const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+		if (!execution) {
+			log.error(
+				`TaskAgentManager.mcpSelfHeal: no NodeExecution found for agentSessionId=${sessionId} — cannot self-heal`
+			);
+			return;
+		}
+
+		// Step 2: Build context.
+		const tasks = this.config.taskRepo.listByWorkflowRun(execution.workflowRunId);
+		const parentTask = tasks.find((t) => t.taskAgentSessionId != null) ?? tasks[0] ?? null;
+		if (!parentTask) {
+			log.error(
+				`TaskAgentManager.mcpSelfHeal: no parent task found for workflowRunId=${execution.workflowRunId} — cannot self-heal`
+			);
+			return;
+		}
+		const space = await this.config.spaceManager.getSpace(parentTask.spaceId);
+		if (!space) {
+			log.error(
+				`TaskAgentManager.mcpSelfHeal: space ${parentTask.spaceId} not found for task ${parentTask.id} — cannot self-heal`
+			);
+			return;
+		}
+
+		// Step 3: Get the live AgentSession from memory.
+		const agentSession = this.agentSessionIndex.get(sessionId);
+		if (!agentSession) {
+			log.error(
+				`TaskAgentManager.mcpSelfHeal: AgentSession ${sessionId} not in memory — cannot self-heal`
+			);
+			return;
+		}
+
+		// Step 4: Call ensureRequiredMcpServersAttached which re-injects and verifies.
+		// Uses phase='rehydrate' since we're recovering an existing session.
+		await this.ensureRequiredMcpServersAttached(agentSession, {
+			taskId: parentTask.id,
+			subSessionId: sessionId,
+			agentName: execution.agentName,
+			spaceId: parentTask.spaceId,
+			workflowRunId: execution.workflowRunId,
+			workspacePath: this.taskWorktreePaths.get(parentTask.id) ?? space.workspacePath,
+			workflowNodeId: execution.workflowNodeId,
+			phase: 'rehydrate',
+		});
 	}
 
 	/**

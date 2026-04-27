@@ -549,6 +549,16 @@ export class SpaceRuntimeService {
 		if (session.type === 'space_chat') return;
 		if (session.type === 'space_task_agent') return;
 
+		// Skip workflow node-agent sub-sessions (session ID contains `:task:…:exec:`).
+		// These are owned by TaskAgentManager, which builds a SUB-SESSION-SPECIFIC
+		// `space-agent-tools` server via `buildSpaceAgentToolsMcpServerForSubSession`.
+		// That server carries `myAgentName` / `myNodeId` context required for gate
+		// writer authorization — context the generic member-session server lacks.
+		// Merging the generic server here would silently overwrite the specialised
+		// one (mergeRuntimeMcpServers overwrites on key collision), breaking
+		// `write_gate` / `read_gate` / `approve_gate` for the sub-session.
+		if (session.id.includes(':task:') && session.id.includes(':exec:')) return;
+
 		const space = await this.config.spaceManager.getSpace(spaceId);
 		if (!space) {
 			log.warn(
