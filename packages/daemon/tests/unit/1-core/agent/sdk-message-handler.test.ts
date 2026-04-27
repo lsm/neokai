@@ -208,6 +208,65 @@ describe('SDKMessageHandler', () => {
 			expect(saveSDKMessageSpy).toHaveBeenCalledWith('test-session-id', message);
 		});
 
+		it('should normalize missing usage on messages with BetaMessage (bridge provider crash guard)', async () => {
+			// Bridge providers (Codex, Copilot) may produce messages without a
+			// usage field on the nested BetaMessage. The Claude Agent SDK's
+			// internal functions access message.usage.input_tokens without
+			// null-checking, so we must ensure all persisted messages with a
+			// BetaMessage have a usage object.
+			const message: SDKMessage = {
+				type: 'assistant',
+				uuid: 'test-uuid',
+				message: { role: 'assistant', content: [] },
+			} as unknown as SDKMessage;
+
+			// message.message.usage should be undefined before handling
+			expect(
+				(message as unknown as { message: { usage?: unknown } }).message.usage
+			).toBeUndefined();
+
+			await handler.handleMessage(message);
+
+			// After handling, usage should be normalized with zeroed fields
+			expect(
+				(message as unknown as { message: { usage: Record<string, number> } }).message.usage
+			).toEqual({
+				input_tokens: 0,
+				output_tokens: 0,
+				cache_creation_input_tokens: 0,
+				cache_read_input_tokens: 0,
+			});
+
+			// The normalized message should be saved to DB
+			expect(saveSDKMessageSpy).toHaveBeenCalledWith('test-session-id', message);
+		});
+
+		it('should not overwrite existing usage on messages with BetaMessage', async () => {
+			// When usage is already present (e.g. direct Anthropic provider),
+			// it should be left untouched.
+			const originalUsage = {
+				input_tokens: 500,
+				output_tokens: 200,
+				cache_creation_input_tokens: 100,
+				cache_read_input_tokens: 50,
+			};
+			const message: SDKMessage = {
+				type: 'assistant',
+				uuid: 'test-uuid',
+				message: {
+					role: 'assistant',
+					content: [],
+					usage: originalUsage,
+				},
+			} as unknown as SDKMessage;
+
+			await handler.handleMessage(message);
+
+			expect(
+				(message as unknown as { message: { usage: Record<string, number> } }).message.usage
+			).toBe(originalUsage);
+		});
+
 		it('should publish message delta', async () => {
 			const message: SDKMessage = {
 				type: 'assistant',

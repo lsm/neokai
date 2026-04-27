@@ -487,6 +487,25 @@ export class SDKMessageHandler {
 			(message as SDKUserMessage & { isSynthetic: boolean }).isSynthetic = true;
 		}
 
+		// Ensure messages with a nested BetaMessage have a usage object to
+		// prevent SDK crashes. The Claude Agent SDK's internal functions
+		// access message.usage.input_tokens without null-checking. When the
+		// SDK subprocess is restarted and reloads conversation history from
+		// the daemon, messages without usage cause:
+		//   "undefined is not an object (evaluating 'K.input_tokens')"
+		if (
+			'message' in message &&
+			message.message &&
+			!(message.message as Record<string, unknown>).usage
+		) {
+			(message.message as Record<string, unknown>).usage = {
+				input_tokens: 0,
+				output_tokens: 0,
+				cache_creation_input_tokens: 0,
+				cache_read_input_tokens: 0,
+			};
+		}
+
 		// Save to DB FIRST before broadcasting to clients
 		// This ensures we only broadcast messages that are successfully persisted
 		const deferredSuccessfully = db.saveSDKMessage(session.id, message);
