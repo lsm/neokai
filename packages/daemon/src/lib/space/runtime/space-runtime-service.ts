@@ -391,30 +391,29 @@ export class SpaceRuntimeService {
 		// covers the remaining cases: worker/coder/general/room_chat sessions
 		// that live inside a Space and need to send/receive messages via
 		// `send_message_to_agent`, inspect tasks, etc.
-		const unsubSessionCreated = daemonHub.on(
-			'session.created',
-			(event) => {
-				void this.attachSpaceToolsToMemberSession(event.session).catch((err) => {
-					log.error(
-						`Failed to attach space tools to session ${event.sessionId} (space ${event.session.context?.spaceId ?? '?'}):`,
-						err
-					);
-				});
-			},
-			{ sessionId: 'global' }
-		);
+		//
+		// NOTE: no `{ sessionId: 'global' }` filter here — `session.created` is
+		// emitted with `data.sessionId = <new session UUID>`, so a `'global'`
+		// filter would never match. We want every session.created event, so we
+		// subscribe globally (TypedHub's default).
+		const unsubSessionCreated = daemonHub.on('session.created', (event) => {
+			void this.attachSpaceToolsToMemberSession(event.session).catch((err) => {
+				log.error(
+					`Failed to attach space tools to session ${event.sessionId} (space ${event.session.context?.spaceId ?? '?'}):`,
+					err
+				);
+			});
+		});
 		this.unsubscribers.push(unsubSessionCreated);
 
 		// When a session is deleted, release any per-session db-query server we
 		// spun up for it so read-only SQLite handles don't accumulate on a
 		// long-lived daemon serving many short-lived worker sessions.
-		const unsubSessionDeleted = daemonHub.on(
-			'session.deleted',
-			(event) => {
-				this.releaseMemberSessionDbQuery(event.sessionId);
-			},
-			{ sessionId: 'global' }
-		);
+		// (Same reasoning as above: `session.deleted` is emitted with the
+		// deleted session's UUID as `sessionId`, not `'global'`.)
+		const unsubSessionDeleted = daemonHub.on('session.deleted', (event) => {
+			this.releaseMemberSessionDbQuery(event.sessionId);
+		});
 		this.unsubscribers.push(unsubSessionDeleted);
 	}
 
