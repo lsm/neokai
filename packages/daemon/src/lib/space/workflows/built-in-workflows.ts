@@ -436,7 +436,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'You are the Reviewer in a Coding→Review iterative workflow. You review the work ' +
 							'and either approve it or request changes.\n\n' +
 							'You share the same worktree as the engineer — review the codebase as a whole, ' +
-							'not just the PR diff. Read related files, run tests, check for issues the diff ' +
+							'not just the PR diff. Read related files, check for issues the diff ' +
 							'might not surface (e.g. callers of changed functions, integration points).\n' +
 							'- All feedback MUST be posted to the PR on GitHub — not just summarized in your ' +
 							'response. Use `gh pr review <pr-url> --request-changes --body-file <file>` for ' +
