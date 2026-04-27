@@ -25,12 +25,12 @@
 		"@anthropic-ai/claude-agent-sdk": "0.2.112",
 		"@github/copilot-sdk": "0.2.2",
 		"@neokai/shared": "workspace:*",
-		"@openai/codex": "0.121.0",
+		"@openai/codex": "0.125.0",
 		"croner": "10.0.1",
 		"simple-git": "3.36.0",
 		"zod": "4.3.6"
 	},
 	"devDependencies": {
-		"@types/bun": "1.3.12"
+		"@types/bun": "1.3.13"
 	}
 }
