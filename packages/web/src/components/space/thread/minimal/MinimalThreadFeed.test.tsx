@@ -236,7 +236,7 @@ describe('MinimalThreadFeed', () => {
 		expect(screen.queryByText('preliminary')).toBeNull();
 	});
 
-	it('renders the active rail and tool roster for the live turn when isAgentActive', () => {
+	it('renders the active rail and tool roster for the live turn when activeAgentLabels includes the agent', () => {
 		const t = Date.now();
 		const rows = [
 			makeRow({
@@ -259,7 +259,7 @@ describe('MinimalThreadFeed', () => {
 			}),
 		];
 
-		render(<MinimalThreadFeed parsedRows={rows} isAgentActive={true} />);
+		render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
 
 		const turn = screen.getByTestId('minimal-thread-turn');
 		expect(turn.dataset.turnState).toBe('active');
@@ -303,7 +303,7 @@ describe('MinimalThreadFeed', () => {
 			}),
 		];
 
-		render(<MinimalThreadFeed parsedRows={rows} isAgentActive={true} />);
+		render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
 		const entries = screen.getAllByTestId('minimal-thread-roster-entry');
 		expect(entries.length).toBe(4);
 		expect(entries[0].textContent).toContain('echo 3');
@@ -331,12 +331,12 @@ describe('MinimalThreadFeed', () => {
 			}),
 		];
 
-		render(<MinimalThreadFeed parsedRows={rows} isAgentActive={true} />);
+		render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
 		expect(screen.queryByTestId('minimal-thread-active-rail')).toBeNull();
 		expect(screen.getByTestId('minimal-thread-turn').dataset.turnState).toBe('completed');
 	});
 
-	it('treats the last block as completed when isAgentActive is false', () => {
+	it('treats the last block as completed when activeAgentLabels is empty', () => {
 		const t = Date.now();
 		// No result message — block is non-terminal. Need an assistant text row
 		// alongside the tool-use so the completed turn has surfaceable text and
@@ -356,7 +356,7 @@ describe('MinimalThreadFeed', () => {
 			}),
 		];
 
-		render(<MinimalThreadFeed parsedRows={rows} isAgentActive={false} />);
+		render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set()} />);
 		const turn = screen.getByTestId('minimal-thread-turn');
 		expect(turn.dataset.turnState).toBe('completed');
 		expect(screen.queryByTestId('minimal-thread-active-rail')).toBeNull();
@@ -538,7 +538,7 @@ describe('MinimalThreadFeed', () => {
 			}),
 		];
 
-		render(<MinimalThreadFeed parsedRows={rows} isAgentActive={true} />);
+		render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
 		const turns = screen.getAllByTestId('minimal-thread-turn');
 		expect(turns[0].dataset.turnState).toBe('message');
 		expect(turns[1].dataset.turnState).toBe('active');
@@ -625,7 +625,7 @@ describe('MinimalThreadFeed', () => {
 			}),
 		];
 
-		render(<MinimalThreadFeed parsedRows={rows} isAgentActive={true} />);
+		render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
 
 		const entries = screen.getAllByTestId('minimal-thread-roster-entry');
 		expect(entries.length).toBe(4);
@@ -660,7 +660,7 @@ describe('MinimalThreadFeed', () => {
 			}),
 		];
 
-		render(<MinimalThreadFeed parsedRows={rows} isAgentActive={true} />);
+		render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
 		const entries = screen.getAllByTestId('minimal-thread-roster-entry');
 		// Only the tool entry survives — the empty/whitespace text blocks
 		// are filtered out so they don't pollute the rail.
@@ -841,7 +841,7 @@ describe('MinimalThreadFeed', () => {
 			}),
 		];
 
-		render(<MinimalThreadFeed parsedRows={rows} isAgentActive={true} />);
+		render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
 		const entries = screen.getAllByTestId('minimal-thread-roster-entry');
 		expect(entries.length).toBe(4);
 		const allText = entries.map((e) => e.textContent).join('\n');
@@ -853,5 +853,181 @@ describe('MinimalThreadFeed', () => {
 		expect(allText).toContain('echo 2');
 		expect(allText).toContain('msg-3');
 		expect(allText).toContain('echo 3');
+	});
+
+	describe('Per-agent active rail (multi-session)', () => {
+		// In a multi-session workflow (e.g. Coder + Reviewer in the Coding
+		// Workflow), agent rows interleave. With the original "globally
+		// trailing block" check, a Reviewer terminal `result` row landing
+		// after Coder's last visible row would suppress Coder's still-
+		// running rail because the global tail is now terminal. The fix
+		// is to track trailing non-terminal blocks per agent label.
+		it('keeps the Coder rail active when Reviewer just emitted a terminal result after Coder', () => {
+			const t = Date.now();
+			const rows = [
+				// Coder is mid-action — assistant rows but no result yet.
+				makeRow({
+					id: 'a-coder-1',
+					label: 'Coder Agent',
+					createdAt: t,
+					message: assistantToolUse('a-coder-1', [
+						{ name: 'Bash', input: { command: 'bun run typecheck' } },
+					]),
+				}),
+				makeRow({
+					id: 'a-coder-2',
+					label: 'Coder Agent',
+					createdAt: t + 1000,
+					message: assistantText('a-coder-2', 'investigating'),
+				}),
+				// Reviewer ran briefly and just finished — its terminal `result`
+				// row lands AFTER Coder's last row. Pre-fix, this is what
+				// suppressed Coder's rail.
+				makeRow({
+					id: 'a-rev',
+					label: 'Reviewer Agent',
+					createdAt: t + 2000,
+					message: assistantText('a-rev', 'looks good so far'),
+				}),
+				makeRow({
+					id: 'r-rev',
+					label: 'Reviewer Agent',
+					createdAt: t + 2500,
+					message: resultMessage('r-rev'),
+				}),
+			];
+
+			render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+
+			const turns = screen.getAllByTestId('minimal-thread-turn');
+			// Coder turn first, Reviewer turn second.
+			const coderTurn = turns.find((t) => t.dataset.agentLabel === 'Coder Agent');
+			const reviewerTurn = turns.find((t) => t.dataset.agentLabel === 'Reviewer Agent');
+			expect(coderTurn?.dataset.turnState).toBe('active');
+			expect(reviewerTurn?.dataset.turnState).toBe('completed');
+			// Exactly one rail — Coder's.
+			expect(screen.getAllByTestId('minimal-thread-active-rail').length).toBe(1);
+		});
+
+		it('mirrors: keeps the Reviewer rail active when Coder just finished before Reviewer', () => {
+			const t = Date.now();
+			const rows = [
+				// Coder fully ran and emitted a terminal result.
+				makeRow({
+					id: 'a-coder',
+					label: 'Coder Agent',
+					createdAt: t,
+					message: assistantText('a-coder', 'patch sent'),
+				}),
+				makeRow({
+					id: 'r-coder',
+					label: 'Coder Agent',
+					createdAt: t + 500,
+					message: resultMessage('r-coder'),
+				}),
+				// Reviewer is mid-action — assistant rows, no result yet.
+				makeRow({
+					id: 'a-rev-1',
+					label: 'Reviewer Agent',
+					createdAt: t + 1000,
+					message: assistantToolUse('a-rev-1', [{ name: 'Bash', input: { command: 'bun test' } }]),
+				}),
+				makeRow({
+					id: 'a-rev-2',
+					label: 'Reviewer Agent',
+					createdAt: t + 1500,
+					message: assistantText('a-rev-2', 'verifying tests'),
+				}),
+			];
+
+			render(
+				<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Reviewer Agent'])} />
+			);
+
+			const turns = screen.getAllByTestId('minimal-thread-turn');
+			const coderTurn = turns.find((t) => t.dataset.agentLabel === 'Coder Agent');
+			const reviewerTurn = turns.find((t) => t.dataset.agentLabel === 'Reviewer Agent');
+			expect(coderTurn?.dataset.turnState).toBe('completed');
+			expect(reviewerTurn?.dataset.turnState).toBe('active');
+			expect(screen.getAllByTestId('minimal-thread-active-rail').length).toBe(1);
+		});
+
+		it('renders one rail per agent when both agents are running concurrently', () => {
+			const t = Date.now();
+			const rows = [
+				// Coder mid-action — non-terminal.
+				makeRow({
+					id: 'a-coder-1',
+					label: 'Coder Agent',
+					createdAt: t,
+					message: assistantToolUse('a-coder-1', [
+						{ name: 'Bash', input: { command: 'bun build' } },
+					]),
+				}),
+				makeRow({
+					id: 'a-coder-2',
+					label: 'Coder Agent',
+					createdAt: t + 1000,
+					message: assistantText('a-coder-2', 'still going'),
+				}),
+				// Reviewer mid-action — also non-terminal.
+				makeRow({
+					id: 'a-rev-1',
+					label: 'Reviewer Agent',
+					createdAt: t + 2000,
+					message: assistantToolUse('a-rev-1', [{ name: 'Read', input: { file_path: 'foo.ts' } }]),
+				}),
+				makeRow({
+					id: 'a-rev-2',
+					label: 'Reviewer Agent',
+					createdAt: t + 3000,
+					message: assistantText('a-rev-2', 'checking'),
+				}),
+			];
+
+			render(
+				<MinimalThreadFeed
+					parsedRows={rows}
+					activeAgentLabels={new Set(['Coder Agent', 'Reviewer Agent'])}
+				/>
+			);
+
+			const turns = screen.getAllByTestId('minimal-thread-turn');
+			const coderTurn = turns.find((t) => t.dataset.agentLabel === 'Coder Agent');
+			const reviewerTurn = turns.find((t) => t.dataset.agentLabel === 'Reviewer Agent');
+			expect(coderTurn?.dataset.turnState).toBe('active');
+			expect(reviewerTurn?.dataset.turnState).toBe('active');
+			// Two rails — one per agent.
+			expect(screen.getAllByTestId('minimal-thread-active-rail').length).toBe(2);
+		});
+
+		it('matches active-agent labels case- and whitespace-insensitively', () => {
+			// Activity members are run through a title-casing helper on the
+			// daemon ("coder agent" → "Coder Agent") while raw row labels
+			// can be either form. The renderer should treat them as the
+			// same agent regardless of casing or extra whitespace.
+			const t = Date.now();
+			const rows = [
+				makeRow({
+					id: 'a1',
+					label: 'coder agent',
+					createdAt: t,
+					message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'ls' } }]),
+				}),
+				makeRow({
+					id: 'a2',
+					label: 'coder agent',
+					createdAt: t + 1000,
+					message: assistantText('a2', 'running'),
+				}),
+			];
+
+			render(
+				<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder   Agent'])} />
+			);
+
+			const turn = screen.getByTestId('minimal-thread-turn');
+			expect(turn.dataset.turnState).toBe('active');
+		});
 	});
 });

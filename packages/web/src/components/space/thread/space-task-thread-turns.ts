@@ -38,7 +38,15 @@ export interface AgentTurnBlock {
 	isTerminal: boolean;
 }
 
-function normalizeAgentKey(label: string): string {
+/**
+ * Lowercase + collapse-whitespace agent label normaliser. Exported so callers
+ * that match block agent labels against external label sources (e.g. activity
+ * members emitted by the daemon, which run their `role` through a separate
+ * title-casing helper before reaching the renderer) can compare against the
+ * same canonical form `buildAgentTurns` uses internally to detect agent
+ * boundaries.
+ */
+export function normalizeAgentKey(label: string): string {
 	return label.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
