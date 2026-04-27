@@ -94,6 +94,9 @@ interface RosterMessageEntry {
 	kind: 'message';
 	text: string;
 }
+
+const TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS = 'max-w-[85%] md:max-w-[86%]';
+const TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS = 'max-w-full md:max-w-[86%]';
 type ActiveRosterEntry = RosterToolEntry | RosterMessageEntry;
 
 interface CompletedFeedTurn {
@@ -138,6 +141,8 @@ interface ActiveFeedTurn {
 	status: string;
 	toolCalls: number;
 	roster: ActiveRosterEntry[];
+	/** Session id for the still-running turn; used by the agent header open affordance. */
+	sessionId: string | null;
 }
 
 interface MessageFeedTurn {
@@ -251,6 +256,13 @@ function countToolCalls(rows: ParsedThreadRow[]): number {
 		n += getToolUseContentBlocks(row).length;
 	}
 	return n;
+}
+
+function latestSessionId(rows: ParsedThreadRow[]): string | null {
+	for (let i = rows.length - 1; i >= 0; i--) {
+		if (rows[i].sessionId) return rows[i].sessionId;
+	}
+	return null;
 }
 
 /**
@@ -369,6 +381,7 @@ function buildActiveTurn(
 		status: 'Running…',
 		toolCalls: countToolCalls(rows),
 		roster: extractRosterEntries(rows, ROSTER_MAX_ENTRIES),
+		sessionId: latestSessionId(rows),
 	};
 }
 
@@ -697,7 +710,7 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
  *
  * Width strategy: stacked under the agent header (no avatar offset on the
  * left), so `w-fit` lets short replies hug their content, `max-w-full`
- * fills the row on mobile, and `md:max-w-[70%]` caps the width on desktop
+ * fills the row on mobile, and `md:max-w-[86%]` caps the width on desktop
  * to keep long markdown readable instead of stretching edge-to-edge.
  */
 function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
@@ -709,7 +722,7 @@ function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
 			}
 		: undefined;
 	return (
-		<div class="mt-1.5 w-fit max-w-full md:max-w-[70%]">
+		<div class={`mt-1.5 w-fit ${TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS}`}>
 			<div
 				class="bg-dark-800 border border-dark-700 rounded-lg px-3 py-2"
 				data-testid="minimal-thread-agent-bubble"
@@ -782,6 +795,40 @@ function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
 function AgentTurnRow({ turn }: { turn: CompletedFeedTurn | ActiveFeedTurn }) {
 	const color = getAgentColor(turn.agent);
 	const initial = agentInitial(turn.agent);
+	const openSession = turn.sessionId
+		? () => {
+				const highlightMessageUuid =
+					turn.state === 'completed' ? turn.highlightMessageUuid : undefined;
+				pushOverlayHistory(turn.sessionId as string, turn.agent, highlightMessageUuid);
+			}
+		: undefined;
+	const headerContent = (
+		<>
+			<div
+				class="h-9 w-9 shrink-0 rounded-md flex items-center justify-center text-sm font-bold text-dark-950"
+				style={{ backgroundColor: color }}
+				aria-hidden="true"
+			>
+				{initial}
+			</div>
+			<div class="flex flex-col gap-0.5 min-w-0">
+				<span class="font-semibold leading-tight" style={{ color }}>
+					{shortAgentName(turn.agent)}
+				</span>
+				{turn.state === 'completed' ? (
+					<div
+						class="text-[11px] text-gray-500 leading-tight"
+						data-testid="minimal-thread-agent-meta"
+					>
+						{turn.toolCalls} {turn.toolCalls === 1 ? 'tool call' : 'tool calls'} · {turn.messages}{' '}
+						{turn.messages === 1 ? 'message' : 'messages'} · {formatDuration(turn.durationSec)}
+					</div>
+				) : (
+					<span class="text-xs text-gray-500 leading-tight">{formatClock(turn.startedAt)}</span>
+				)}
+			</div>
+		</>
+	);
 	return (
 		<div
 			data-testid="minimal-thread-turn"
@@ -802,31 +849,20 @@ function AgentTurnRow({ turn }: { turn: CompletedFeedTurn | ActiveFeedTurn }) {
 			    running), so completed turns surface time + copy under the
 			    bubble via SpaceTaskThreadMessageActions to avoid duplicating
 			    the header clock. */}
-			<div class="flex items-center gap-3">
-				<div
-					class="h-9 w-9 shrink-0 rounded-md flex items-center justify-center text-sm font-bold text-dark-950"
-					style={{ backgroundColor: color }}
-					aria-hidden="true"
+			{openSession ? (
+				<button
+					type="button"
+					class="-m-1 flex min-h-11 max-w-full items-center gap-3 rounded-lg p-1 pr-2 text-left transition-colors hover:bg-dark-800/55 active:bg-dark-800/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+					onClick={openSession}
+					title="Open session"
+					aria-label={`Open ${turn.agent} session`}
+					data-testid="minimal-thread-agent-open"
 				>
-					{initial}
-				</div>
-				<div class="flex flex-col gap-0.5 min-w-0">
-					<span class="font-semibold leading-tight" style={{ color }}>
-						{shortAgentName(turn.agent)}
-					</span>
-					{turn.state === 'completed' ? (
-						<div
-							class="text-[11px] text-gray-500 leading-tight"
-							data-testid="minimal-thread-agent-meta"
-						>
-							{turn.toolCalls} {turn.toolCalls === 1 ? 'tool call' : 'tool calls'} · {turn.messages}{' '}
-							{turn.messages === 1 ? 'message' : 'messages'} · {formatDuration(turn.durationSec)}
-						</div>
-					) : (
-						<span class="text-xs text-gray-500 leading-tight">{formatClock(turn.startedAt)}</span>
-					)}
-				</div>
-			</div>
+					{headerContent}
+				</button>
+			) : (
+				<div class="flex min-h-11 items-center gap-3">{headerContent}</div>
+			)}
 			{/* Body — full-width on mobile, capped on desktop for readability. */}
 			{turn.state === 'active' ? (
 				<ActiveBody turn={turn} color={color} />
@@ -855,7 +891,7 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 			data-from-label={turn.fromLabel}
 			data-to-label={turn.toLabel}
 		>
-			<div class="max-w-[85%] md:max-w-[70%] w-auto">
+			<div class={`${TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS} w-auto`}>
 				<div
 					class="bg-blue-500 text-white rounded-[20px] px-4 py-2 leading-relaxed break-words"
 					data-testid="minimal-thread-human-bubble"
@@ -919,6 +955,7 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 				toShort={toShort}
 				renderAsPlainText={turn.bodyIsFallback}
 				sessionInit={turn.sessionInit}
+				widthClass={TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS}
 				onOpenSession={
 					turn.sessionId
 						? () =>

@@ -256,6 +256,12 @@ describe('SpaceTaskPane', () => {
 		expect(getByText('High Priority')).toBeTruthy();
 	});
 
+	it('omits the header status badge for review tasks because the approval banner owns that state', () => {
+		mockTasks.value = [makeTask({ status: 'review', taskAgentSessionId: 'session-abc' })];
+		const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(queryByTestId('task-status-label')).toBeNull();
+	});
+
 	it('renders unified task thread component when session exists', () => {
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
@@ -965,14 +971,13 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
 		const pill = getByTestId('task-view-tab-pill');
-		// Floating overlay: absolute-positioned at top-2 right-4 to mirror the
-		// agent name tag at top-2 left-4 inside SpaceTaskUnifiedThread, with a
+		// Floating overlay: absolute-positioned near the top-right with a
 		// high z-index so the pill always sits above the rendered view. (CSS
 		// class strings are asserted directly because Tailwind utilities aren't
 		// loaded in jsdom — getComputedStyle would return defaults.)
 		expect(pill.className).toContain('absolute');
-		expect(pill.className).toContain('top-2');
-		expect(pill.className).toContain('right-4');
+		expect(pill.className).toContain('top-3');
+		expect(pill.className).toContain('justify-center');
 		expect(pill.className).toContain('z-20');
 
 		// The pill is a direct child of the content wrapper, not nested inside
@@ -1010,18 +1015,35 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
-		// The pill sits at top-2 right-4 with no pointer-events wrapper, so its
-		// buttons receive clicks directly.
+		// The outer overlay ignores pointer events while the inner control
+		// receives clicks directly.
 		fireEvent.click(getByTestId('canvas-toggle'));
 		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 'task-1', 'canvas');
 	});
 
-	it('passes topInsetClass to SpaceTaskUnifiedThread so messages clear the floating pill', () => {
+	it('falls back to task.spaceId for tab navigation when no route space id is available', () => {
+		mockCurrentSpaceIdSignal.value = null;
+		mockTasks.value = [
+			makeTask({
+				spaceId: 'task-space',
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'session-abc',
+			}),
+		];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+
+		fireEvent.click(getByTestId('canvas-toggle'));
+		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('task-space', 'task-1', 'canvas');
+	});
+
+	it('passes insets to SpaceTaskUnifiedThread so messages clear floating controls', () => {
 		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
 		const thread = getByTestId('space-task-unified-thread');
-		expect(thread.getAttribute('data-top-inset')).toBe('pt-10');
+		expect(thread.getAttribute('data-top-inset')).toBe('pt-12');
+		expect(thread.getAttribute('data-bottom-inset')).toBe('pb-44 sm:pb-36');
 	});
 
 	it('renders the active banner outside task-pane-content so it is visible across tabs', () => {
