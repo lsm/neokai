@@ -22,7 +22,6 @@ import {
 } from '../lib/signals';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
-import { PendingAgentOverlay } from '../components/space/PendingAgentOverlay';
 import { spaceStore } from '../lib/space-store';
 import {
 	navigateToSpace,
@@ -88,10 +87,10 @@ export default function SpaceIsland({
 	// two are never both set at the same time in practice.
 	const overlay =
 		overlayPendingTaskId && overlayPendingAgentName ? (
-			<PendingAgentOverlay
-				taskId={overlayPendingTaskId}
+			<AgentOverlayChat
 				agentName={overlayPendingAgentName}
 				onClose={handleOverlayClose}
+				pendingAgent={{ taskId: overlayPendingTaskId, agentName: overlayPendingAgentName }}
 			/>
 		) : overlaySessionId ? (
 			<AgentOverlayChat

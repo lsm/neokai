@@ -111,6 +111,20 @@ export interface QueryRunnerContext {
 	onSlashCommandsFetched(): Promise<void>;
 	onModelsFetched(): Promise<void>;
 	onMarkApiSuccess(): Promise<void>;
+
+	/**
+	 * Self-heal hook: called when `QueryRunner.start()` detects that a workflow
+	 * sub-session is missing required MCP servers (`node-agent`, `space-agent-tools`).
+	 *
+	 * The callback receives the session so the caller (TaskAgentManager) can
+	 * re-attach the missing servers before the first turn runs. This is the
+	 * final backstop — even if spawn/rehydrate/ensureRequiredMcpServersAttached
+	 * all failed silently, this fires at the moment of detection and can recover.
+	 *
+	 * Undefined for generic sessions (chat, worker, etc.) where this hook is
+	 * not applicable.
+	 */
+	onMissingWorkflowMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
 }
 
 /**
@@ -275,14 +289,20 @@ export class QueryRunner {
 					(isWorkflowSubSession ? ' (workflow sub-session)' : '') +
 					` ${JSON.stringify(snapshotPayload)}`
 			);
-			// P2-6: Structured metric — detect missing required MCP servers for workflow sub-sessions.
-			// Required servers: node-agent (peer comms) and space-agent-tools (space tool surface).
-			// Emit a structured error log with joinable fields (sessionId, spaceId, context) so
-			// production monitoring can detect and alert on MCP injection failures without requiring
-			// grep-based log analysis.
+			// P2-6 / P1-5: Self-heal — detect missing required MCP servers for workflow
+			// sub-sessions and recover via the registered callback. Required servers:
+			//   - node-agent: peer comms (send_message, list_peers, save_artifact)
+			//   - space-agent-tools: gate surface (read_gate, write_gate, approve_gate)
+			//
+			// Only enters this block when servers are actually missing. The callback
+			// (TaskAgentManager.mcpSelfHeal) calls ensureRequiredMcpServersAttached which
+			// already verifies post-injection — no separate functional check needed here.
+			// No health check on healthy starts — the outer condition is strictly
+			// `missingServers.length > 0` to avoid false-positive throws.
 			if (isWorkflowSubSession) {
-				const requiredServers = ['node-agent', 'space-agent-tools'];
+				const requiredServers = ['node-agent', 'space-agent-tools'] as const;
 				const missingServers = requiredServers.filter((name) => !mcpServerNames.includes(name));
+
 				if (missingServers.length > 0) {
 					const diagnosticPayload = {
 						event: 'workflow.mcp.missing',
@@ -292,20 +312,50 @@ export class QueryRunner {
 						missingServers,
 						presentServers: mcpServerNames,
 					};
+
 					logger.error(
 						`QueryRunner.start(): workflow sub-session ${session.id} is MISSING required MCP servers. ` +
 							`Missing: [${missingServers.join(', ')}]. ` +
 							`Present: [${mcpServerNames.join(', ')}]. ` +
-							`The agent will not be able to call the corresponding tools. ` +
-							`This is a runtime injection failure — see TaskAgentManager.spawnWorkflowNodeAgentForExecution, createSubSession, and rehydrateSubSession. ` +
-							`Diagnostic: ${JSON.stringify(diagnosticPayload)}`
+							`Attempting self-heal via onMissingWorkflowMcpServers callback...`
 					);
-					// P2-7: Debug-build invariant assertion — throws in test/dev environments
-					// to surface injection regressions immediately rather than letting them
-					// silently produce "No such tool available" failures at runtime.
-					if (process.env.NODE_ENV === 'test' || process.env.NEOKAI_DEBUG_MCP_INVARIANTS === '1') {
+
+					// ── Self-heal: call the registered callback to re-inject servers ─────
+					if (this.ctx.onMissingWorkflowMcpServers) {
+						try {
+							await this.ctx.onMissingWorkflowMcpServers(session.id, missingServers);
+							logger.info(
+								`QueryRunner.start(): self-heal callback completed for session ${session.id}. ` +
+									`${JSON.stringify(diagnosticPayload)}`
+							);
+						} catch (err) {
+							logger.error(
+								`QueryRunner.start(): self-heal callback FAILED for session ${session.id}: ` +
+									`${err instanceof Error ? err.message : String(err)}. ` +
+									`The session will start without required MCP servers — expect "No such tool available" failures at runtime.`
+							);
+						}
+					}
+
+					// Belt-and-suspenders: re-read the live map and throw if still missing.
+					// The callback may have thrown, in which case we never reach here.
+					// If it succeeded without throwing but servers are still absent (should not
+					// happen with ensureRequiredMcpServersAttached), catch it here.
+					const currentMcpServers =
+						(session.config?.mcpServers as Record<string, unknown> | undefined) ?? {};
+					const currentServerNames = Object.keys(currentMcpServers);
+					const stillMissing = requiredServers.filter((name) => !currentServerNames.includes(name));
+					if (stillMissing.length > 0) {
+						logger.error(
+							`QueryRunner.start(): workflow sub-session ${session.id} servers still missing after self-heal. ` +
+								`Still absent: [${stillMissing.join(', ')}]. ` +
+								`Present: [${currentServerNames.join(', ')}]. ` +
+								`Refusing to start.`
+						);
 						throw new Error(
-							`[MCP invariant] Workflow sub-session ${session.id} is missing required MCP servers: [${missingServers.join(', ')}]`
+							`[MCP invariant] Workflow sub-session ${session.id} still missing required ` +
+								`MCP servers after self-heal: [${stillMissing.join(', ')}]. ` +
+								`Refusing to start — fix the injection logic.`
 						);
 					}
 				}
