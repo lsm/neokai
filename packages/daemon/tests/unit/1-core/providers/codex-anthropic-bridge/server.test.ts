@@ -966,6 +966,76 @@ describe('Bridge HTTP server', () => {
 		expect(usageOutputTokens).toBe(55);
 	});
 
+	it('drainToSSE sends estimated input_tokens at start and real Codex usage at turn end', async () => {
+		async function* usageGen(): AsyncGenerator<BridgeEvent> {
+			yield { type: 'text_delta', text: 'Hi' };
+			yield { type: 'turn_done', inputTokens: 120, outputTokens: 55 };
+		}
+
+		const mockSession = { kill: () => {} } as unknown as BridgeSession;
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				void drainToSSE(
+					usageGen(),
+					mockSession,
+					'test-model',
+					new Map(),
+					controller,
+					5000,
+					'test-session',
+					() => {},
+					undefined,
+					33
+				);
+			},
+		});
+
+		const events = await readSSEEvents(stream);
+		const msgStart = events.find((e) => e.event === 'message_start');
+		const startUsage = (msgStart?.data as { message?: { usage?: { input_tokens?: number } } })
+			?.message?.usage;
+		expect(startUsage?.input_tokens).toBe(33);
+
+		const msgDelta = events.find((e) => e.event === 'message_delta');
+		const deltaUsage = (
+			msgDelta?.data as { usage?: { input_tokens?: number; output_tokens?: number } }
+		)?.usage;
+		expect(deltaUsage?.input_tokens).toBe(120);
+		expect(deltaUsage?.output_tokens).toBe(55);
+	});
+
+	it('drainToSSE falls back to estimated input_tokens when Codex usage is unavailable', async () => {
+		async function* usageGen(): AsyncGenerator<BridgeEvent> {
+			yield { type: 'text_delta', text: 'fallback' };
+			yield { type: 'turn_done', inputTokens: 0, outputTokens: 0 };
+		}
+
+		const mockSession = { kill: () => {} } as unknown as BridgeSession;
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				void drainToSSE(
+					usageGen(),
+					mockSession,
+					'test-model',
+					new Map(),
+					controller,
+					5000,
+					'test-session',
+					() => {},
+					undefined,
+					44
+				);
+			},
+		});
+
+		const events = await readSSEEvents(stream);
+		const msgDelta = events.find((e) => e.event === 'message_delta');
+		const usage = (msgDelta?.data as { usage?: { input_tokens?: number; output_tokens?: number } })
+			?.usage;
+		expect(usage?.input_tokens).toBe(44);
+		expect(usage?.output_tokens).toBeGreaterThan(0);
+	});
+
 	it('message_delta falls back to heuristic outputTokens when turn_done has 0 tokens', async () => {
 		// Simulate no thread/tokenUsage/updated notification — turn_done carries 0 tokens
 		mockSessionFactory = () =>
@@ -1077,6 +1147,23 @@ describe('createAnthropicError', () => {
 	});
 });
 
+describe('daemon context path guard', () => {
+	it('keeps Codex-specific context fallback logic out of provider-agnostic daemon paths', async () => {
+		const guardedFiles = [
+			`${import.meta.dir}/../../../../../src/lib/agent/context-fetcher.ts`,
+			`${import.meta.dir}/../../../../../src/lib/agent/sdk-message-handler.ts`,
+			`${import.meta.dir}/../../../../../src/lib/agent/context-tracker.ts`,
+			`${import.meta.dir}/../../../../../src/lib/agent/sdk-runtime-config.ts`,
+		];
+
+		const contents = await Promise.all(guardedFiles.map((file) => Bun.file(file).text()));
+		for (const content of contents) {
+			expect(content).not.toContain('anthropic-codex');
+			expect(content).not.toContain('codex-anthropic-bridge');
+		}
+	});
+});
+
 // ---------------------------------------------------------------------------
 // Real createBridgeServer — HTTP error envelope integration tests
 // ---------------------------------------------------------------------------
@@ -1115,7 +1202,13 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 		expect(resp.ok).toBe(true);
 		expect(resp.headers.get('content-type')).toContain('application/json');
 		const body = (await resp.json()) as {
-			data: Array<{ id: string; type: string; display_name: string }>;
+			data: Array<{
+				id: string;
+				type: string;
+				display_name: string;
+				max_input_tokens?: number;
+				model_context_window?: number;
+			}>;
 			has_more: boolean;
 			first_id: string;
 			last_id: string;
@@ -1135,16 +1228,20 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 		expect(ids).toContain('gpt-5.5');
 		expect(ids).toContain('gpt-5.4-mini');
 		expect(ids).toContain('gpt-5.1-codex-mini');
+		const gpt55 = body.data.find((m) => m.id === 'gpt-5.5');
+		expect(gpt55?.max_input_tokens).toBe(200000);
+		expect(gpt55?.model_context_window).toBe(200000);
 		expect(body.first_id).toBe(ids[0]);
 		expect(body.last_id).toBe(ids[ids.length - 1]);
 	});
 
-	it('returns dummy token count for POST /v1/messages/count_tokens', async () => {
+	it('returns a meaningful non-zero token count for POST /v1/messages/count_tokens', async () => {
 		const resp = await fetch(`http://127.0.0.1:${realServer.port}/v1/messages/count_tokens`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				model: 'gpt-5.3-codex',
+				system: 'You are a concise coding assistant.',
 				messages: [{ role: 'user', content: 'hello' }],
 			}),
 		});
@@ -1152,9 +1249,60 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 		expect(resp.headers.get('content-type')).toContain('application/json');
 		const body = (await resp.json()) as { input_tokens: number };
 		expect(typeof body.input_tokens).toBe('number');
+		expect(body.input_tokens).toBeGreaterThan(0);
 	});
 
-	it('returns dummy token count for POST /v1/messages/count_tokens?beta=true', async () => {
+	it('returns a larger token count as messages, tool schemas, and tool results grow', async () => {
+		const count = async (requestBody: unknown) => {
+			const resp = await fetch(`http://127.0.0.1:${realServer.port}/v1/messages/count_tokens`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(requestBody),
+			});
+			expect(resp.ok).toBe(true);
+			return ((await resp.json()) as { input_tokens: number }).input_tokens;
+		};
+
+		const small = await count({
+			model: 'gpt-5.3-codex',
+			messages: [{ role: 'user', content: 'hello' }],
+		});
+		const large = await count({
+			model: 'gpt-5.3-codex',
+			system: [{ type: 'text', text: 'Follow the repository conventions and explain failures.' }],
+			messages: [
+				{ role: 'user', content: 'hello' },
+				{ role: 'assistant', content: 'I can help with that.' },
+				{
+					role: 'user',
+					content: [
+						{ type: 'text', text: 'Run the formatter and summarize the output.' },
+						{
+							type: 'tool_result',
+							tool_use_id: 'toolu_1',
+							content: 'Formatted 24 files and left 2 files unchanged.',
+						},
+					],
+				},
+			],
+			tools: [
+				{
+					name: 'bash',
+					description: 'Run a shell command in the workspace',
+					input_schema: {
+						type: 'object',
+						properties: { command: { type: 'string' }, timeout_ms: { type: 'number' } },
+						required: ['command'],
+					},
+				},
+			],
+		});
+
+		expect(small).toBeGreaterThan(0);
+		expect(large).toBeGreaterThan(small);
+	});
+
+	it('returns token count for POST /v1/messages/count_tokens?beta=true', async () => {
 		const resp = await fetch(
 			`http://127.0.0.1:${realServer.port}/v1/messages/count_tokens?beta=true`,
 			{
@@ -1169,6 +1317,7 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 		expect(resp.ok).toBe(true);
 		const body = (await resp.json()) as { input_tokens: number };
 		expect(typeof body.input_tokens).toBe('number');
+		expect(body.input_tokens).toBeGreaterThan(0);
 	});
 
 	it('returns 400 JSON envelope for invalid JSON body', async () => {
