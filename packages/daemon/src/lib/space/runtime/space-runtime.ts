@@ -53,10 +53,11 @@ import {
 } from './post-approval-router';
 import type { SpaceApprovalSource } from '@neokai/shared';
 import {
+	DEFAULT_NODE_TIMEOUT_MS,
 	MAX_BLOCKED_RUN_RETRIES,
 	MAX_TASK_AGENT_CRASH_RETRIES,
-	resolveNodeTimeout,
 } from './constants';
+import { resolveTimeoutForExecution } from './resolve-node-timeout';
 
 const log = new Logger('space-runtime');
 
@@ -1655,7 +1656,8 @@ export class SpaceRuntime {
 				if (execution.status !== 'in_progress' || !execution.agentSessionId) continue;
 				if (!tam.isSessionAlive(execution.agentSessionId)) continue;
 
-				const timeoutMs = resolveNodeTimeout(execution.agentName ?? 'general');
+				const timeoutMs =
+					resolveTimeoutForExecution(execution, meta.workflow) ?? DEFAULT_NODE_TIMEOUT_MS;
 				const referenceTime = execution.startedAt ?? execution.createdAt;
 				const elapsedMs = now - referenceTime;
 				if (elapsedMs <= timeoutMs) continue;

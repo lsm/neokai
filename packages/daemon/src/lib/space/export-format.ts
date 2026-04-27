@@ -83,6 +83,8 @@ const exportedWorkflowNodeAgentSchema = z.object({
 	 * Validated as a loose record to stay forward-compatible with SDK McpServerConfig shape changes.
 	 */
 	extraMcpServers: z.record(z.string(), z.unknown()).optional(),
+	/** Optional per-slot agent timeout in milliseconds. Positive integer. */
+	timeoutMs: z.number().int().positive().optional(),
 });
 
 /**
@@ -245,6 +247,7 @@ export function exportWorkflow(
 			if (a.customPrompt !== undefined) entry.systemPrompt = a.customPrompt;
 			if (a.disabledSkillIds !== undefined) entry.disabledSkillIds = a.disabledSkillIds;
 			if (a.extraMcpServers !== undefined) entry.extraMcpServers = a.extraMcpServers;
+			if (a.timeoutMs !== undefined) entry.timeoutMs = a.timeoutMs;
 			return entry;
 		});
 
