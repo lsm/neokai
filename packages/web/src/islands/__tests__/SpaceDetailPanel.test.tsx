@@ -4,10 +4,10 @@
  * Covers overview/agent navigation, task tab defaults, counters, and sessions behavior.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup, screen, within } from '@testing-library/preact';
-import { signal, type Signal } from '@preact/signals';
-import type { SpaceTask, Space } from '@neokai/shared';
+import type { Space, SpaceTask } from '@neokai/shared';
+import { type Signal, signal } from '@preact/signals';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
 	mockNavigateToSpace,
@@ -420,6 +420,29 @@ describe('SpaceDetailPanel', () => {
 			// would come from the badge, which renders only when count > 0.
 			expect(within(tasksNav).queryByText('2')).toBeNull();
 			expect(within(tasksNav).queryByText('1')).toBeNull();
+		});
+
+		it('shows approved (post-approval running) tasks under the Active tab', () => {
+			// Regression: the sidebar "Active" tab and the main-pane Tasks
+			// "Active" tab disagreed about `approved` tasks — the sidebar
+			// hid them while the tasks-view surfaced them. Both now share
+			// `isActiveTask` from `task-filters.ts`, which includes
+			// `approved` so a stuck post-approval task stays visible.
+			mockTasksSignal.value = [
+				makeTask('t1', 'Approved Task', 'approved'),
+				makeTask('t2', 'Open Task', 'open'),
+				makeTask('t3', 'Blocked Task', 'blocked'),
+			];
+			render(<SpaceDetailPanel spaceId="space-1" />);
+
+			fireEvent.click(screen.getByRole('button', { name: /Active/i }));
+			expect(screen.getByText('Approved Task')).toBeTruthy();
+			expect(screen.getByText('Open Task')).toBeTruthy();
+			expect(screen.queryByText('Blocked Task')).toBeNull();
+
+			// Active count should include the approved task (2 = open + approved)
+			const activeTab = screen.getByRole('button', { name: /Active/i });
+			expect(within(activeTab).getByText('2')).toBeTruthy();
 		});
 
 		it('multiple tasks created via different paths all appear in panel', () => {
