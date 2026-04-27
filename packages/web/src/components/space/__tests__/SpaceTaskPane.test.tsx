@@ -28,23 +28,27 @@ const {
 	idBridge: { signal: null as ReturnType<typeof signal<string | null>> | null },
 }));
 
-const { mockNavigateToSpaceAgent, mockPushOverlayHistory, mockNavigateToSpaceTask } = vi.hoisted(
-	() => ({
-		mockNavigateToSpaceAgent: vi.fn(),
-		mockPushOverlayHistory: vi.fn((sessionId: string, agentName?: string) => {
-			mockSpaceOverlaySessionIdSignal.value = sessionId;
-			mockSpaceOverlayAgentNameSignal.value = agentName ?? null;
-		}),
-		mockNavigateToSpaceTask: vi.fn((_spaceId: string, _taskId: string, view: string) => {
-			if (viewTabBridge.signal) {
-				viewTabBridge.signal.value = view ?? 'thread';
-			}
-			if (idBridge.signal) {
-				idBridge.signal.value = _spaceId;
-			}
-		}),
-	})
-);
+const {
+	mockNavigateToSpaceAgent,
+	mockPushOverlayHistory,
+	mockPushOverlayHistoryForPendingAgent,
+	mockNavigateToSpaceTask,
+} = vi.hoisted(() => ({
+	mockNavigateToSpaceAgent: vi.fn(),
+	mockPushOverlayHistory: vi.fn((sessionId: string, agentName?: string) => {
+		mockSpaceOverlaySessionIdSignal.value = sessionId;
+		mockSpaceOverlayAgentNameSignal.value = agentName ?? null;
+	}),
+	mockPushOverlayHistoryForPendingAgent: vi.fn(),
+	mockNavigateToSpaceTask: vi.fn((_spaceId: string, _taskId: string, view: string) => {
+		if (viewTabBridge.signal) {
+			viewTabBridge.signal.value = view ?? 'thread';
+		}
+		if (idBridge.signal) {
+			idBridge.signal.value = _spaceId;
+		}
+	}),
+}));
 
 // Real Preact signals — these enable reactivity for values read during render
 const mockCurrentSpaceTaskViewTabSignal = signal<string>('thread');
@@ -57,6 +61,7 @@ idBridge.signal = mockCurrentSpaceIdSignal;
 vi.mock('../../../lib/router', () => ({
 	navigateToSpaceAgent: mockNavigateToSpaceAgent,
 	pushOverlayHistory: mockPushOverlayHistory,
+	pushOverlayHistoryForPendingAgent: mockPushOverlayHistoryForPendingAgent,
 	navigateToSpaceTask: mockNavigateToSpaceTask,
 }));
 
@@ -976,6 +981,7 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
 			makeTask({ status: 'in_progress', taskAgentSessionId: 'session-ensured' })
 		);
 		mockPushOverlayHistory.mockClear();
+		mockPushOverlayHistoryForPendingAgent.mockClear();
 		mockSpaceOverlaySessionIdSignal.value = null;
 		mockSpaceOverlayAgentNameSignal.value = null;
 	});
@@ -1027,11 +1033,14 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
 		expect(getByText('Open reviewer (Not started)')).toBeTruthy();
 	});
 
-	it('renders workflow-declared (Not started) agents as disabled with an explanatory tooltip', () => {
-		// Clicking the entry must NOT open the Task Agent session under the
-		// peer's label — that was misleading (overlay said "reviewer" but
-		// rendered the Task Agent thread). The peer becomes openable only when
-		// the daemon lazily activates it and an activity member appears.
+	it('renders workflow-declared (Not started) agents as clickable and routes to a pending-agent overlay', () => {
+		// Task #139 regression fix: in #133 these entries were rendered as
+		// disabled — that violated #133's own AC #4 ("clicking a declared-but-
+		// not-spawned agent opens the chat overlay; the first message activates
+		// the session"). The fix re-enables the click and routes it to the
+		// pending-agent overlay variant (`pushOverlayHistoryForPendingAgent`)
+		// which carries (taskId, agentName) instead of a sessionId — so the
+		// overlay header reads "reviewer" and not the Task Agent thread.
 		mockTasks.value = [
 			makeTask({
 				workflowRunId: 'run-1',
@@ -1060,13 +1069,18 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
 
 		const reviewerItem = getByText('Open reviewer (Not started)').closest('button');
 		expect(reviewerItem).toBeTruthy();
-		expect(reviewerItem?.disabled).toBe(true);
+		// No longer disabled — the click is routed to the pending-agent overlay.
+		expect(reviewerItem?.disabled).toBeFalsy();
 		expect(reviewerItem?.title).toContain('reviewer');
-		expect(reviewerItem?.title).toContain('Task Agent');
 
 		fireEvent.click(getByText('Open reviewer (Not started)'));
-		// Disabled entries do not push overlay history under any session id —
-		// no misleading reuse of the Task Agent session under the peer's label.
+		// Click routes through pushOverlayHistoryForPendingAgent so the overlay
+		// renders the pending-agent variant scoped to (taskId, agentName).
+		// Crucially, pushOverlayHistory (session-mode) MUST NOT be invoked —
+		// that would have surfaced the Task Agent's session under the peer's
+		// label, which was the very bug #133 first introduced.
+		expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledTimes(1);
+		expect(mockPushOverlayHistoryForPendingAgent).toHaveBeenCalledWith('task-1', 'reviewer');
 		expect(mockPushOverlayHistory).not.toHaveBeenCalled();
 	});
 

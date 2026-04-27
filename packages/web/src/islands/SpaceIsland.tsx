@@ -17,9 +17,12 @@ import {
 	spaceOverlaySessionIdSignal,
 	spaceOverlayAgentNameSignal,
 	spaceOverlayHighlightMessageIdSignal,
+	spaceOverlayPendingTaskIdSignal,
+	spaceOverlayPendingAgentNameSignal,
 } from '../lib/signals';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
+import { PendingAgentOverlay } from '../components/space/PendingAgentOverlay';
 import { spaceStore } from '../lib/space-store';
 import {
 	navigateToSpace,
@@ -69,9 +72,35 @@ export default function SpaceIsland({
 	const overlaySessionId = spaceOverlaySessionIdSignal.value;
 	const overlayAgentName = spaceOverlayAgentNameSignal.value;
 	const overlayHighlightMessageId = spaceOverlayHighlightMessageIdSignal.value;
+	// Pending-agent overlay — workflow-declared peer that hasn't spawned yet.
+	// When set, renders PendingAgentOverlay; once the daemon spawns the session
+	// (via taskActivity), the overlay hands off to spaceOverlaySessionIdSignal
+	// and the standard AgentOverlayChat takes over.
+	const overlayPendingTaskId = spaceOverlayPendingTaskIdSignal.value;
+	const overlayPendingAgentName = spaceOverlayPendingAgentNameSignal.value;
 	const handleOverlayClose = useCallback(() => {
 		closeOverlayHistory();
 	}, []);
+
+	// Single overlay element shared across every rendering branch below — keeps
+	// the overlay/pending precedence in one place. Pending takes precedence over
+	// session because pending is cleared as part of pushOverlayHistory, so the
+	// two are never both set at the same time in practice.
+	const overlay =
+		overlayPendingTaskId && overlayPendingAgentName ? (
+			<PendingAgentOverlay
+				taskId={overlayPendingTaskId}
+				agentName={overlayPendingAgentName}
+				onClose={handleOverlayClose}
+			/>
+		) : overlaySessionId ? (
+			<AgentOverlayChat
+				sessionId={overlaySessionId}
+				agentName={overlayAgentName ?? undefined}
+				highlightMessageId={overlayHighlightMessageId ?? undefined}
+				onClose={handleOverlayClose}
+			/>
+		) : null;
 
 	// Test hook: expose overlay controls on window.__neokai_space_overlay so E2E
 	// tests can trigger the overlay programmatically. Opening is purely
@@ -111,14 +140,7 @@ export default function SpaceIsland({
 		return (
 			<>
 				<ChatContainer key={sessionViewId} sessionId={sessionViewId} />
-				{overlaySessionId && (
-					<AgentOverlayChat
-						sessionId={overlaySessionId}
-						agentName={overlayAgentName ?? undefined}
-						highlightMessageId={overlayHighlightMessageId ?? undefined}
-						onClose={handleOverlayClose}
-					/>
-				)}
+				{overlay}
 			</>
 		);
 	}
@@ -154,14 +176,7 @@ export default function SpaceIsland({
 						<SpaceTaskPane taskId={taskViewId} spaceId={spaceId} onClose={handleTaskPaneClose} />
 					</Suspense>
 				</div>
-				{overlaySessionId && (
-					<AgentOverlayChat
-						sessionId={overlaySessionId}
-						agentName={overlayAgentName ?? undefined}
-						highlightMessageId={overlayHighlightMessageId ?? undefined}
-						onClose={handleOverlayClose}
-					/>
-				)}
+				{overlay}
 			</>
 		);
 	}
@@ -183,14 +198,7 @@ export default function SpaceIsland({
 						</Suspense>
 					</div>
 				</div>
-				{overlaySessionId && (
-					<AgentOverlayChat
-						sessionId={overlaySessionId}
-						agentName={overlayAgentName ?? undefined}
-						highlightMessageId={overlayHighlightMessageId ?? undefined}
-						onClose={handleOverlayClose}
-					/>
-				)}
+				{overlay}
 			</>
 		);
 	}
@@ -209,14 +217,7 @@ export default function SpaceIsland({
 						</Suspense>
 					</div>
 				</div>
-				{overlaySessionId && (
-					<AgentOverlayChat
-						sessionId={overlaySessionId}
-						agentName={overlayAgentName ?? undefined}
-						highlightMessageId={overlayHighlightMessageId ?? undefined}
-						onClose={handleOverlayClose}
-					/>
-				)}
+				{overlay}
 			</>
 		);
 	}
@@ -235,27 +236,14 @@ export default function SpaceIsland({
 						</Suspense>
 					</div>
 				</div>
-				{overlaySessionId && (
-					<AgentOverlayChat
-						sessionId={overlaySessionId}
-						agentName={overlayAgentName ?? undefined}
-						highlightMessageId={overlayHighlightMessageId ?? undefined}
-						onClose={handleOverlayClose}
-					/>
-				)}
+				{overlay}
 			</>
 		);
 	}
 
 	return (
 		<>
-			{overlaySessionId && (
-				<AgentOverlayChat
-					sessionId={overlaySessionId}
-					agentName={overlayAgentName ?? undefined}
-					onClose={handleOverlayClose}
-				/>
-			)}
+			{overlay}
 			<div
 				class="flex-1 flex flex-col overflow-hidden bg-dark-900"
 				data-testid="space-overview-view"

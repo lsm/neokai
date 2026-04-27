@@ -76,6 +76,14 @@ export const spaceOverlayAgentNameSignal = signal<string | null>(null);
 // minimal thread feed so they land on the message they clicked instead of the
 // session's tail. Cleared along with the other overlay signals on close.
 export const spaceOverlayHighlightMessageIdSignal = signal<string | null>(null);
+// Pending-agent overlay routing — set when the user opens a not-started peer
+// from the task agent dropdown. The overlay renders a "Starting…" composer
+// against the agent name; on first send it invokes
+// `space.task.activateNodeAgent` to lazily spawn the workflow node, and
+// hydrates to a normal chat overlay as soon as the live session appears in
+// `taskActivity`. Both signals are cleared together on close.
+export const spaceOverlayPendingTaskIdSignal = signal<string | null>(null);
+export const spaceOverlayPendingAgentNameSignal = signal<string | null>(null);
 
 // Mobile drawer signals
 export const contextPanelOpenSignal = signal<boolean>(false);
