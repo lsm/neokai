@@ -249,7 +249,7 @@ The implementation plan (Task 3.1) addresses this with `AppMcpLifecycleManager` 
 - Coder helper agents (`coder-agent.ts:193`): includes `WebFetch`, `WebSearch`
 - Coder simple path: uses Claude Code preset which includes web search
 
-The goal description's concern about "Planner agent likely lacks web search capability" is **not a gap in the current implementation**. The plan-writer uses `Task(subagent_type: "Explore", ...)` for deep codebase exploration and has `WebFetch`/`WebSearch` available directly. If a web search MCP (brave-search, etc.) were added to the application-level registry, it could be enabled per-room or globally.
+The goal description's concern about "Planner agent likely lacks web search capability" is **not a gap in the current implementation**. The plan-writer uses `Task(subagent_type: "Explore", ...)` for deep codebase exploration and has `WebFetch`/`WebSearch` available directly.
 
 ---
 

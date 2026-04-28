@@ -20,6 +20,7 @@ import { NodeExecutionRepository } from '../../../storage/repositories/node-exec
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { NotificationSink } from './notification-sink';
 import type { TaskAgentManager } from './task-agent-manager';
@@ -66,6 +67,11 @@ export interface SpaceRuntimeServiceConfig {
 	 * activation after gate data is written externally (e.g. human approval via RPC).
 	 */
 	gateDataRepo?: GateDataRepository;
+	/**
+	 * Optional pending message repository for queueing messages to not-yet-spawned
+	 * workflow node agents.
+	 */
+	pendingMessageRepo?: PendingAgentMessageRepository;
 	channelCycleRepo?: ChannelCycleRepository;
 	/**
 	 * Optional SessionManager for provisioning space:chat:${spaceId} sessions.
@@ -578,6 +584,7 @@ export class SpaceRuntimeService {
 			spaceId: space.id,
 			runtime: this.runtime,
 			workflowManager: this.config.spaceWorkflowManager,
+			spaceManager: this.config.spaceManager,
 			taskRepo: this.config.taskRepo,
 			nodeExecutionRepo: this.nodeExecutionRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
@@ -589,6 +596,7 @@ export class SpaceRuntimeService {
 			onGateChanged: (runId, gateId) => {
 				void this.notifyGateDataChanged(runId, gateId).catch(() => {});
 			},
+			pendingMessageQueue: this.config.pendingMessageRepo,
 			getSpaceAutonomyLevel: async (sid) => {
 				const s = await spaceManagerForApproval.getSpace(sid);
 				return s?.autonomyLevel ?? 1;
@@ -663,6 +671,7 @@ export class SpaceRuntimeService {
 			spaceId: space.id,
 			runtime: this.runtime,
 			workflowManager: spaceWorkflowManager,
+			spaceManager: this.config.spaceManager,
 			taskRepo,
 			nodeExecutionRepo: this.nodeExecutionRepo,
 			workflowRunRepo,
@@ -677,6 +686,7 @@ export class SpaceRuntimeService {
 			activateNode: async (runId, nodeId) => {
 				await this.activateWorkflowNode(runId, nodeId);
 			},
+			pendingMessageQueue: this.config.pendingMessageRepo,
 			getSpaceAutonomyLevel: async (sid) => {
 				const s = await spaceManagerForApproval.getSpace(sid);
 				return s?.autonomyLevel ?? 1;
@@ -946,8 +956,7 @@ export class SpaceRuntimeService {
 	 * Dispatch post-approval routing for a task. Delegates to
 	 * `SpaceRuntime.dispatchPostApproval`, which:
 	 *   1. Transitions the task into `approved` (via `SpaceTaskManager.setTaskStatus`).
-	 *   2. Emits `[TASK_APPROVED]` into the Task Agent session (best-effort).
-	 *   3. Calls `PostApprovalRouter.route()` to dispatch the configured
+	 *   2. Calls `PostApprovalRouter.route()` to dispatch the configured
 	 *      post-approval step (no-route, inline Task Agent, or spawn fresh
 	 *      node-agent sub-session).
 	 *
@@ -965,5 +974,14 @@ export class SpaceRuntimeService {
 	): Promise<void> {
 		log.info(`dispatchPostApproval: spaceId=${spaceId} taskId=${taskId} source=${approvalSource}`);
 		await this.runtime.dispatchPostApproval(taskId, approvalSource, contextExtras ?? {});
+	}
+
+	async recoverWorkflowBackedTask(
+		spaceId: string,
+		taskId: string,
+		targetStatus: 'open' | 'in_progress'
+	): Promise<SpaceTask> {
+		const recovered = await this.runtime.recoverWorkflowBackedTask(spaceId, taskId, targetStatus);
+		return recovered.task;
 	}
 }

@@ -23,7 +23,10 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import type { Database } from '../../storage/database';
 import type { DaemonHub } from '../daemon-hub';
 import type { Logger } from '../logger';
-import { truncateSessionFileAtMessage } from '../sdk-session-file-manager';
+import {
+	messageUuidExistsInSessionFile,
+	truncateSessionFileAtMessage,
+} from '../sdk-session-file-manager';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 
 /**
@@ -329,10 +332,18 @@ export class RewindHandler {
 				? remainingUserMessages[remainingUserMessages.length - 1]
 				: null;
 
-		if (previousUserMessage) {
+		if (
+			previousUserMessage &&
+			messageUuidExistsInSessionFile(
+				sdkWorkspacePath,
+				session.sdkSessionId,
+				session.id,
+				previousUserMessage.uuid
+			)
+		) {
 			session.metadata.resumeSessionAt = previousUserMessage.uuid;
 		} else {
-			// No previous user message - clear resumeSessionAt for fresh start
+			// No resumable previous user message - clear resumeSessionAt for fresh start
 			delete session.metadata.resumeSessionAt;
 		}
 		db.updateSession(session.id, { metadata: session.metadata });
@@ -722,15 +733,16 @@ export class RewindHandler {
 				// Delete messages from DB at and after the earliest timestamp (inclusive)
 				messagesDeleted = db.deleteMessagesAtAndAfter(session.id, earliestTimestamp);
 
+				const rewindSdkPath = session.worktree
+					? session.worktree.worktreePath
+					: session.workspacePath;
+				if (!rewindSdkPath) {
+					throw new Error('Cannot rewind unbound session without a workspace path');
+				}
+
 				// Truncate JSONL at the earliest selected message
 				const jsonlUuid = (earliestMessage as { uuid?: string }).uuid;
 				if (jsonlUuid) {
-					const rewindSdkPath = session.worktree
-						? session.worktree.worktreePath
-						: session.workspacePath;
-					if (!rewindSdkPath) {
-						throw new Error('Cannot rewind unbound session without a workspace path');
-					}
 					const _jsonlResult = truncateSessionFileAtMessage(
 						rewindSdkPath,
 						session.sdkSessionId,
@@ -746,7 +758,15 @@ export class RewindHandler {
 						? remainingUserMessages[remainingUserMessages.length - 1]
 						: null;
 
-				if (previousUserMessage) {
+				if (
+					previousUserMessage &&
+					messageUuidExistsInSessionFile(
+						rewindSdkPath,
+						session.sdkSessionId,
+						session.id,
+						previousUserMessage.uuid
+					)
+				) {
 					session.metadata.resumeSessionAt = previousUserMessage.uuid;
 				} else {
 					delete session.metadata.resumeSessionAt;

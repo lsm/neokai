@@ -93,6 +93,7 @@ let mockNodeExecutions: ReturnType<typeof signal<NodeExecution[]>>;
 let mockNodeExecutionsByNodeId: ReturnType<typeof signal<Map<string, unknown[]>>>;
 
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
+const mockRecoverWorkflowTask = vi.fn().mockResolvedValue(undefined);
 const mockSubmitForReview = vi.fn().mockResolvedValue(undefined);
 const mockEnsureTaskAgentSession = vi.fn();
 const mockSendTaskMessage = vi.fn().mockResolvedValue(undefined);
@@ -110,6 +111,7 @@ vi.mock('../../../lib/space-store', () => ({
 			nodeExecutions: mockNodeExecutions,
 			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
 			updateTask: mockUpdateTask,
+			recoverWorkflowTask: mockRecoverWorkflowTask,
 			submitForReview: mockSubmitForReview,
 			ensureTaskAgentSession: mockEnsureTaskAgentSession,
 			sendTaskMessage: mockSendTaskMessage,
@@ -142,16 +144,19 @@ vi.mock('../SpaceTaskUnifiedThread', () => ({
 		taskId,
 		topInsetClass,
 		bottomInsetClass,
+		bottomScrollPaddingClass,
 	}: {
 		taskId: string;
 		topInsetClass?: string;
 		bottomInsetClass?: string;
+		bottomScrollPaddingClass?: string;
 	}) => (
 		<div
 			data-testid="space-task-unified-thread"
 			data-task-id={taskId}
 			data-top-inset={topInsetClass ?? ''}
 			data-bottom-inset={bottomInsetClass ?? ''}
+			data-bottom-scroll-padding={bottomScrollPaddingClass ?? ''}
 		/>
 	),
 }));
@@ -227,6 +232,7 @@ describe('SpaceTaskPane', () => {
 		mockTaskActivity.value = new Map();
 		mockNodeExecutions.value = [];
 		mockUpdateTask.mockClear();
+		mockRecoverWorkflowTask.mockClear();
 		mockEnsureTaskAgentSession.mockReset();
 		mockEnsureTaskAgentSession.mockImplementation(async () =>
 			makeTask({ status: 'in_progress', taskAgentSessionId: 'session-ensured' })
@@ -340,6 +346,9 @@ describe('SpaceTaskPane — composer', () => {
 		fireEvent.click(getByTestId('send-button'));
 
 		await waitFor(() => expect(getByText('Invalid transition')).toBeTruthy());
+		const thread = getByTestId('space-task-unified-thread');
+		expect(thread.getAttribute('data-bottom-inset')).toBe('pb-52 sm:pb-44');
+		expect(thread.getAttribute('data-bottom-scroll-padding')).toBe('scroll-pb-52 sm:scroll-pb-44');
 	});
 
 	it('does not submit empty message', () => {
@@ -854,6 +863,26 @@ describe('SpaceTaskPane — activity members actions', () => {
 		);
 	});
 
+	it('uses workflow recovery action and label for workflow-backed terminal tasks', async () => {
+		mockTasks.value = [
+			makeTask({
+				status: 'cancelled',
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'session-abc',
+			}),
+		];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', status: 'cancelled' })];
+		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		fireEvent.click(getByText('Resume workflow'));
+
+		await waitFor(() =>
+			expect(mockRecoverWorkflowTask).toHaveBeenCalledWith('task-1', 'in_progress')
+		);
+		expect(mockUpdateTask).not.toHaveBeenCalled();
+	});
+
 	it('shows divider between activity members and transition actions', () => {
 		mockTasks.value = [makeTask({ status: 'done', taskAgentSessionId: 'session-abc' })];
 		mockTaskActivity.value = new Map([
@@ -1239,6 +1268,7 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		const thread = getByTestId('space-task-unified-thread');
 		expect(thread.getAttribute('data-top-inset')).toBe('pt-12');
 		expect(thread.getAttribute('data-bottom-inset')).toBe('pb-44 sm:pb-36');
+		expect(thread.getAttribute('data-bottom-scroll-padding')).toBe('scroll-pb-44 sm:scroll-pb-36');
 	});
 
 	it('renders the active banner outside task-pane-content so it is visible across tabs', () => {

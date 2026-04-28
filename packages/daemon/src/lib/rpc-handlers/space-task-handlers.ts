@@ -8,7 +8,13 @@
  * - spaceTask.update - Update task fields (metadata and status with transition validation)
  */
 
-import type { CreateSpaceTaskParams, MessageHub, UpdateSpaceTaskParams } from '@neokai/shared';
+import {
+	isWorkflowRecoveryTransition,
+	type CreateSpaceTaskParams,
+	type MessageHub,
+	type SpaceTask,
+	type UpdateSpaceTaskParams,
+} from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { Logger } from '../logger';
 import type { SpaceManager } from '../space/managers/space-manager';
@@ -136,7 +142,8 @@ export function setupSpaceTaskHandlers(
 
 		const taskManager = taskManagerFactory(spaceId);
 
-		let task;
+		let task: SpaceTask;
+		let emitTaskUpdated = true;
 
 		// Route to setTaskStatus only when the status is actually changing.
 		// Sending the current status as part of a broader metadata update must not
@@ -150,87 +157,118 @@ export function setupSpaceTaskHandlers(
 			}
 
 			if (updateParams.status !== currentTask.status) {
-				// Reject bare transitions into `review`. Every task that lands in
-				// `review` MUST carry the pending-completion fields so
-				// `PendingTaskCompletionBanner` renders and approvals route through
-				// `PostApprovalRouter`. Callers must use `spaceTask.submitForReview`
-				// (UI) or the agent `submit_for_approval` tool — both go through
-				// `SpaceTaskManager.submitTaskForReview` which writes the metadata
-				// atomically. Without this guard a stray `update({status:'review'})`
-				// would re-introduce the banner-less generic-button flow.
-				if (updateParams.status === 'review') {
-					throw new Error(
-						`spaceTask.update cannot transition a task into 'review' directly. ` +
-							`Use spaceTask.submitForReview (or the agent submit_for_approval tool) ` +
-							`so the pending-completion fields get stamped and the approval banner renders.`
-					);
-				}
-				// Reject bare transitions into `approved`. The `approved` status
-				// is owned by the post-approval pipeline:
-				//   - human approvals → `spaceTask.approvePendingCompletion`,
-				//     which dispatches `PostApprovalRouter` (it calls
-				//     `setTaskStatus(approved)` with the right metadata).
-				//   - agent approvals → the runtime's reactive
-				//     `reportedStatus='done'` handler, again routing through
-				//     `PostApprovalRouter`.
-				// A bare `update({status:'approved'})` would skip the awareness
-				// event, the post-approval dispatch, and the approval-source
-				// stamping — the same kind of gap the `→ review` guard above
-				// closes on the entry side.
-				if (updateParams.status === 'approved') {
-					throw new Error(
-						`spaceTask.update cannot transition a task into 'approved' directly. ` +
-							`Use spaceTask.approvePendingCompletion (UI Approve banner) or let the ` +
-							`runtime's post-approval router handle the transition — both stamp the ` +
-							`approval metadata and dispatch the configured post-approval step.`
-					);
-				}
-				// Status is changing — validate via setTaskStatus (enforces transitions).
-				// `approvalReason` is stamped on review→done; `cancelReason` is
-				// persisted into the same underlying column for review→cancelled
-				// transitions (and other terminal rejections). We map both onto the
-				// manager's `approvalReason` option because the DB schema keeps a
-				// single `approval_reason` column doubling as audit trail for
-				// approvals *and* rejections.
-				const mappedReason =
-					updateParams.status === 'cancelled'
-						? (updateParams.cancelReason ?? updateParams.approvalReason ?? undefined)
-						: (updateParams.approvalReason ?? undefined);
-
-				task = await taskManager.setTaskStatus(taskId, updateParams.status, {
-					result: updateParams.result ?? undefined,
-					// Human-initiated approval when transitioning from review → done
-					approvalSource:
-						currentTask.status === 'review' && updateParams.status === 'done' ? 'human' : undefined,
-					approvalReason: mappedReason,
-				});
-
-				// When the transition alone cannot carry the rejection reason (e.g.
-				// review → cancelled — setTaskStatus only stamps approvalReason on
-				// review→done), apply it in a follow-up write. Keeps the audit trail
-				// complete regardless of direction.
 				if (
-					updateParams.status === 'cancelled' &&
-					(updateParams.cancelReason ?? updateParams.approvalReason)
+					currentTask.workflowRunId &&
+					isWorkflowRecoveryTransition(currentTask.status, updateParams.status)
 				) {
-					task = await taskManager.updateTask(taskId, {
-						approvalReason: updateParams.cancelReason ?? updateParams.approvalReason ?? null,
-					});
-				}
+					if (!spaceRuntimeService) {
+						throw new Error(
+							`Cannot recover workflow-backed task ${taskId}: SpaceRuntimeService is unavailable.`
+						);
+					}
+					task = await spaceRuntimeService.recoverWorkflowBackedTask(
+						spaceId,
+						taskId,
+						updateParams.status
+					);
+					emitTaskUpdated = false;
 
-				// When a status transition is combined with other field updates
-				// (e.g. taskAgentSessionId), those fields are silently dropped by
-				// setTaskStatus. Apply them in a follow-up updateTask call so
-				// callers can atomically set status + metadata in one RPC.
-				const {
-					status: _s,
-					result: _r,
-					approvalReason: _ar,
-					cancelReason: _cr,
-					...otherFields
-				} = updateParams;
-				if (Object.keys(otherFields).length > 0) {
-					task = await taskManager.updateTask(taskId, otherFields);
+					const {
+						status: _s,
+						result: _r,
+						approvalReason: _ar,
+						cancelReason: _cr,
+						...otherFields
+					} = updateParams;
+					if (Object.keys(otherFields).length > 0) {
+						task = await taskManager.updateTask(taskId, otherFields);
+						emitTaskUpdated = true;
+					}
+				} else {
+					// Reject bare transitions into `review`. Every task that lands in
+					// `review` MUST carry the pending-completion fields so
+					// `PendingTaskCompletionBanner` renders and approvals route through
+					// `PostApprovalRouter`. Callers must use `spaceTask.submitForReview`
+					// (UI) or the agent `submit_for_approval` tool — both go through
+					// `SpaceTaskManager.submitTaskForReview` which writes the metadata
+					// atomically. Without this guard a stray `update({status:'review'})`
+					// would re-introduce the banner-less generic-button flow.
+					if (updateParams.status === 'review') {
+						throw new Error(
+							`spaceTask.update cannot transition a task into 'review' directly. ` +
+								`Use spaceTask.submitForReview (or the agent submit_for_approval tool) ` +
+								`so the pending-completion fields get stamped and the approval banner renders.`
+						);
+					}
+					// Reject bare transitions into `approved`. The `approved` status
+					// is owned by the post-approval pipeline:
+					//   - human approvals → `spaceTask.approvePendingCompletion`,
+					//     which dispatches `PostApprovalRouter` (it calls
+					//     `setTaskStatus(approved)` with the right metadata).
+					//   - agent approvals → the runtime's reactive
+					//     `reportedStatus='done'` handler, again routing through
+					//     `PostApprovalRouter`.
+					// A bare `update({status:'approved'})` would skip the awareness
+					// event, the post-approval dispatch, and the approval-source
+					// stamping — the same kind of gap the `→ review` guard above
+					// closes on the entry side.
+					if (updateParams.status === 'approved') {
+						throw new Error(
+							`spaceTask.update cannot transition a task into 'approved' directly. ` +
+								`Use spaceTask.approvePendingCompletion (UI Approve banner) or let the ` +
+								`runtime's post-approval router handle the transition — both stamp the ` +
+								`approval metadata and dispatch the configured post-approval step.`
+						);
+					}
+					// Status is changing — validate via setTaskStatus (enforces transitions).
+					// `approvalReason` is stamped on review→done; `cancelReason` is
+					// persisted into the same underlying column for review→cancelled
+					// transitions (and other terminal rejections). We map both onto the
+					// manager's `approvalReason` option because the DB schema keeps a
+					// single `approval_reason` column doubling as audit trail for
+					// approvals *and* rejections.
+					const mappedReason =
+						updateParams.status === 'cancelled'
+							? (updateParams.cancelReason ?? updateParams.approvalReason ?? undefined)
+							: (updateParams.approvalReason ?? undefined);
+
+					task = await taskManager.setTaskStatus(taskId, updateParams.status, {
+						result: updateParams.result ?? undefined,
+						// Human-initiated approval when transitioning from review → done
+						approvalSource:
+							currentTask.status === 'review' && updateParams.status === 'done'
+								? 'human'
+								: undefined,
+						approvalReason: mappedReason,
+					});
+
+					// When the transition alone cannot carry the rejection reason (e.g.
+					// review → cancelled — setTaskStatus only stamps approvalReason on
+					// review→done), apply it in a follow-up write. Keeps the audit trail
+					// complete regardless of direction.
+					if (
+						updateParams.status === 'cancelled' &&
+						(updateParams.cancelReason ?? updateParams.approvalReason)
+					) {
+						task = await taskManager.updateTask(taskId, {
+							approvalReason: updateParams.cancelReason ?? updateParams.approvalReason ?? null,
+						});
+					}
+
+					// When a status transition is combined with other field updates
+					// (e.g. taskAgentSessionId), those fields are silently dropped by
+					// setTaskStatus. Apply them in a follow-up updateTask call so
+					// callers can atomically set status + metadata in one RPC.
+					const {
+						status: _s,
+						result: _r,
+						approvalReason: _ar,
+						cancelReason: _cr,
+						...otherFields
+					} = updateParams;
+					if (Object.keys(otherFields).length > 0) {
+						task = await taskManager.updateTask(taskId, otherFields);
+					}
 				}
 			} else {
 				// Status is the same — treat as a regular field update.
@@ -244,18 +282,51 @@ export function setupSpaceTaskHandlers(
 			task = await taskManager.updateTask(taskId, updateParams);
 		}
 
-		daemonHub
-			.emit('space.task.updated', {
-				sessionId: 'global',
-				spaceId,
-				taskId,
-				task,
-			})
-			.catch((err) => {
-				log.warn('Failed to emit space.task.updated:', err);
-			});
+		if (emitTaskUpdated) {
+			daemonHub
+				.emit('space.task.updated', {
+					sessionId: 'global',
+					spaceId,
+					taskId,
+					task,
+				})
+				.catch((err) => {
+					log.warn('Failed to emit space.task.updated:', err);
+				});
+		}
 
 		return task;
+	});
+
+	// ─── spaceTask.recoverWorkflow ────────────────────────────────────────────
+	messageHub.onRequest('spaceTask.recoverWorkflow', async (data) => {
+		const params = data as {
+			spaceId: string;
+			taskId: string;
+			status: 'open' | 'in_progress';
+		};
+
+		if (!params.spaceId) throw new Error('spaceId is required');
+		if (!params.taskId) throw new Error('taskId is required');
+		if (params.status !== 'open' && params.status !== 'in_progress') {
+			throw new Error(`status must be 'open' or 'in_progress'`);
+		}
+		if (!spaceRuntimeService) {
+			throw new Error(
+				`Cannot recover workflow-backed task ${params.taskId}: SpaceRuntimeService is unavailable.`
+			);
+		}
+
+		const space = await spaceManager.getSpace(params.spaceId);
+		if (!space) {
+			throw new Error(`Space not found: ${params.spaceId}`);
+		}
+
+		return spaceRuntimeService.recoverWorkflowBackedTask(
+			params.spaceId,
+			params.taskId,
+			params.status
+		);
 	});
 
 	// ─── spaceTask.submitForReview ──────────────────────────────────────────────
@@ -355,7 +426,7 @@ export function setupSpaceTaskHandlers(
 			);
 		}
 
-		let task;
+		let task: SpaceTask;
 		if (params.approved) {
 			if (!spaceRuntimeService) {
 				throw new Error(
@@ -363,8 +434,8 @@ export function setupSpaceTaskHandlers(
 				);
 			}
 			// Delegate to the PostApprovalRouter. It transitions review → approved
-			// (via SpaceTaskManager.setTaskStatus), emits [TASK_APPROVED], and
-			// dispatches the configured post-approval step (no-route → done,
+			// (via SpaceTaskManager.setTaskStatus) and dispatches the configured
+			// post-approval step (no-route → done,
 			// inline Task Agent, or spawn fresh node-agent).
 			//
 			// The router's review→approved `setTaskStatus` call carries both

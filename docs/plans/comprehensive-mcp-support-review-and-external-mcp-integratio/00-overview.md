@@ -9,7 +9,7 @@ This plan audits the current MCP system, then implements:
 2. A **Lifecycle Manager** that converts registry entries to SDK configs, integrates them into room/session and space/task-agent contexts, and provides error feedback for failed MCP servers.
 3. A **Web UI** for adding, editing, enabling/disabling, and deleting application-level MCPs (including secure env-var editor for API keys).
 4. **Room/session MCP enablement**: per-room opt-in from the registry.
-5. **Default MCP seeds** (`fetch-mcp`, `brave-search`) as useful out-of-the-box registry entries for end-users, plus documentation confirming that the Planner and plan-writer already have built-in `WebFetch`/`WebSearch` tools.
+5. **Default MCP seeds** (`fetch-mcp`) as a useful out-of-the-box registry entry for end-users, plus documentation confirming that the Planner and plan-writer already have built-in `WebFetch`/`WebSearch` tools.
 
 ## Approach
 
@@ -29,7 +29,7 @@ No existing MCP file-based flows are removed — the registry is additive.
 3. **MCP Lifecycle Manager** — Convert registry entries to SDK configs, inject via `setRuntimeMcpServers()` into room sessions (Task 3.2), worker sessions (Task 3.3), and space agents (Task 3.4). Validation error reporting for misconfigured entries. Health-check/auto-restart deferred to a future iteration.
 4. **Room and Session MCP Integration** — Per-room enablement stored in the DB, integration in `RoomRuntimeService` and `QueryOptionsBuilder`, and online tests.
 5. **Web UI for MCP Registry** — Settings panel for adding/editing/deleting application-level MCP entries with enable/disable per room.
-6. **Default MCP Seeds and Planner Web Search Verification** — Document that the Planner and plan-writer already have `WebFetch`/`WebSearch` built-in tools (no new wiring needed). Seed `fetch-mcp` and `brave-search` as default registry entries for end-users.
+6. **Default MCP Seeds and Planner Web Search Verification** — Document that the Planner and plan-writer already have `WebFetch`/`WebSearch` built-in tools (no new wiring needed). Seed `fetch-mcp` as a default registry entry for end-users.
 7. **E2E Tests** — End-to-end Playwright test: add an MCP, enable in a room, verify tools available to the room agent.
 
 ## Cross-Milestone Dependencies

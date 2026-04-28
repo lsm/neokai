@@ -177,6 +177,15 @@ export class SpaceTaskRepository {
 				// not when the task was originally created.
 				fields.push('started_at = ?');
 				values.push(Date.now());
+				if (params.completedAt === undefined) {
+					fields.push('completed_at = ?');
+					values.push(null);
+				}
+			} else if (params.status === 'open') {
+				if (params.completedAt === undefined) {
+					fields.push('completed_at = ?');
+					values.push(null);
+				}
 			} else if (
 				params.status === 'done' ||
 				params.status === 'blocked' ||

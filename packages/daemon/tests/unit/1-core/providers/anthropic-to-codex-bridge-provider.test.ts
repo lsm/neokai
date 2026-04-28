@@ -140,6 +140,16 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		fsSpies.forEach((spy) => spy.mockRestore());
 	});
 
+	describe('capabilities', () => {
+		beforeEach(() => {
+			provider = makeProvider({}, undefined, undefined, fakeCodexFound);
+		});
+
+		it('reports the maximum Codex context window', () => {
+			expect(provider.capabilities.maxContextWindow).toBe(272000);
+		});
+	});
+
 	describe('getAuthStatus()', () => {
 		let emptyDir: string;
 
@@ -552,6 +562,18 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fakeCodexFound);
 			const models = await provider.getModels();
 			expect(models.length).toBeGreaterThan(0);
+		});
+
+		it('reports correct context windows for Codex catalogue models', async () => {
+			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fakeCodexFound);
+			const models = await provider.getModels();
+			const contextWindows = new Map(models.map((model) => [model.id, model.contextWindow]));
+
+			expect(contextWindows.get('gpt-5.3-codex')).toBe(272000);
+			expect(contextWindows.get('gpt-5.4')).toBe(272000);
+			expect(contextWindows.get('gpt-5.5')).toBe(272000);
+			expect(contextWindows.get('gpt-5.4-mini')).toBe(128000);
+			expect(contextWindows.get('gpt-5.1-codex-mini')).toBe(128000);
 		});
 
 		it('returns models when NeoKai OAuth credentials are in auth.json', async () => {

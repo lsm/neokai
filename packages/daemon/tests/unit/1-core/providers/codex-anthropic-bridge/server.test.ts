@@ -969,7 +969,12 @@ describe('Bridge HTTP server', () => {
 	it('drainToSSE sends estimated input_tokens at start and real Codex usage at turn end', async () => {
 		async function* usageGen(): AsyncGenerator<BridgeEvent> {
 			yield { type: 'text_delta', text: 'Hi' };
-			yield { type: 'turn_done', inputTokens: 120, outputTokens: 55 };
+			yield {
+				type: 'turn_done',
+				inputTokens: 120,
+				outputTokens: 55,
+				modelContextWindow: 272000,
+			};
 		}
 
 		const mockSession = { kill: () => {} } as unknown as BridgeSession;
@@ -978,7 +983,7 @@ describe('Bridge HTTP server', () => {
 				void drainToSSE(
 					usageGen(),
 					mockSession,
-					'test-model',
+					'gpt-5.5',
 					new Map(),
 					controller,
 					5000,
@@ -992,16 +997,27 @@ describe('Bridge HTTP server', () => {
 
 		const events = await readSSEEvents(stream);
 		const msgStart = events.find((e) => e.event === 'message_start');
-		const startUsage = (msgStart?.data as { message?: { usage?: { input_tokens?: number } } })
-			?.message?.usage;
+		const startUsage = (
+			msgStart?.data as {
+				message?: { usage?: { input_tokens?: number; model_context_window?: number } };
+			}
+		)?.message?.usage;
 		expect(startUsage?.input_tokens).toBe(33);
+		expect(startUsage?.model_context_window).toBe(272000);
 
 		const msgDelta = events.find((e) => e.event === 'message_delta');
 		const deltaUsage = (
-			msgDelta?.data as { usage?: { input_tokens?: number; output_tokens?: number } }
+			msgDelta?.data as {
+				usage?: {
+					input_tokens?: number;
+					output_tokens?: number;
+					model_context_window?: number;
+				};
+			}
 		)?.usage;
 		expect(deltaUsage?.input_tokens).toBe(120);
 		expect(deltaUsage?.output_tokens).toBe(55);
+		expect(deltaUsage?.model_context_window).toBe(272000);
 	});
 
 	it('drainToSSE falls back to estimated input_tokens when Codex usage is unavailable', async () => {
@@ -1207,7 +1223,11 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 				type: string;
 				display_name: string;
 				max_input_tokens?: number;
+				context_window?: number;
+				max_context_window?: number;
 				model_context_window?: number;
+				auto_compact_token_limit?: number;
+				model_auto_compact_token_limit?: number;
 			}>;
 			has_more: boolean;
 			first_id: string;
@@ -1228,9 +1248,21 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 		expect(ids).toContain('gpt-5.5');
 		expect(ids).toContain('gpt-5.4-mini');
 		expect(ids).toContain('gpt-5.1-codex-mini');
-		const gpt55 = body.data.find((m) => m.id === 'gpt-5.5');
-		expect(gpt55?.max_input_tokens).toBe(200000);
-		expect(gpt55?.model_context_window).toBe(200000);
+		const expectContextWindow = (id: string, contextWindow: number) => {
+			const model = body.data.find((m) => m.id === id);
+			const autoCompactTokenLimit = Math.floor(contextWindow * 0.9);
+			expect(model?.max_input_tokens).toBe(contextWindow);
+			expect(model?.context_window).toBe(contextWindow);
+			expect(model?.max_context_window).toBe(contextWindow);
+			expect(model?.model_context_window).toBe(contextWindow);
+			expect(model?.auto_compact_token_limit).toBe(autoCompactTokenLimit);
+			expect(model?.model_auto_compact_token_limit).toBe(autoCompactTokenLimit);
+		};
+		expectContextWindow('gpt-5.3-codex', 272000);
+		expectContextWindow('gpt-5.4', 272000);
+		expectContextWindow('gpt-5.5', 272000);
+		expectContextWindow('gpt-5.4-mini', 128000);
+		expectContextWindow('gpt-5.1-codex-mini', 128000);
 		expect(body.first_id).toBe(ids[0]);
 		expect(body.last_id).toBe(ids[ids.length - 1]);
 	});

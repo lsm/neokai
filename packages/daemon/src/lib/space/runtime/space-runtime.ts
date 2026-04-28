@@ -21,6 +21,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
+	Space,
 	SpaceTask,
 	SpaceWorkflow,
 	SpaceWorkflowRun,
@@ -36,7 +37,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { TaskAgentManager } from './task-agent-manager';
-import { SpaceTaskManager } from '../managers/space-task-manager';
+import { isValidSpaceTaskTransition, SpaceTaskManager } from '../managers/space-task-manager';
 import { WorkflowExecutor } from './workflow-executor';
 import { selectWorkflow } from './workflow-selector';
 import { Logger } from '../../logger';
@@ -47,7 +48,6 @@ import { CompletionDetector } from './completion-detector';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
 import {
 	PostApprovalRouter,
-	buildTaskApprovedEvent,
 	type PostApprovalRouteContext,
 	type PostApprovalRouteResult,
 } from './post-approval-router';
@@ -172,6 +172,8 @@ interface StartWorkflowRunOptions {
 	 */
 	parentTaskId?: string;
 }
+
+type WorkflowTaskRecoveryTargetStatus = 'open' | 'in_progress';
 
 // ---------------------------------------------------------------------------
 // SpaceRuntime
@@ -414,9 +416,7 @@ export class SpaceRuntime {
 	 *   1. If the task is not already `approved`, transition it there via
 	 *      `SpaceTaskManager.setTaskStatus` (so the centralised transition
 	 *      validator runs).
-	 *   2. Emit a `[TASK_APPROVED]` awareness event into the Task Agent session
-	 *      on a best-effort basis (missing session → log + continue).
-	 *   3. Call `PostApprovalRouter.route()` — which handles the no-route,
+	 *   2. Call `PostApprovalRouter.route()` — which handles the no-route,
 	 *      inline (Task Agent), spawn, already-routed, and skip branches.
 	 *
 	 * Returns the `PostApprovalRouteResult` from the router (or a `skipped`
@@ -482,31 +482,7 @@ export class SpaceRuntime {
 			);
 		}
 
-		// 2. Emit [TASK_APPROVED] awareness event (informational; best-effort).
-		const routeTarget = workflow?.postApproval?.targetAgent ?? null;
-		const mode: 'spawning' | 'self' | 'none' =
-			routeTarget === null || routeTarget === undefined
-				? 'none'
-				: routeTarget === 'task-agent'
-					? 'self'
-					: 'spawning';
-		const awarenessBody = buildTaskApprovedEvent({
-			task: approvedTask,
-			workflow,
-			approvalSource,
-			mode,
-		});
-		const manager = this.config.taskAgentManager;
-		if (manager) {
-			const injected = await manager.injectIntoTaskAgent(taskId, awarenessBody);
-			if (!injected.injected) {
-				log.warn(
-					`dispatchPostApproval: no Task Agent session for task ${taskId} — [TASK_APPROVED] not delivered`
-				);
-			}
-		}
-
-		// 3. Dispatch the actual post-approval step.
+		// 2. Dispatch the actual post-approval step.
 		//
 		// `{{pr_url}}` in the merge template is sourced from the most recent
 		// `workflow_run_artifacts` row whose `data` carries `prUrl` / `pr_url`.
@@ -1101,6 +1077,154 @@ export class SpaceRuntime {
 	}
 
 	/**
+	 * Reopen or resume a workflow-backed task as one lifecycle operation.
+	 *
+	 * A bare SpaceTask status update is not enough for workflow tasks: terminal
+	 * workflow runs are reconciled back to their run status on the next tick, and
+	 * terminal node executions need either a live session reattached or a pending
+	 * row for the tick loop to spawn. This method updates the task, run, and the
+	 * current node execution rows together, then ensures the executor map is ready.
+	 */
+	async recoverWorkflowBackedTask(
+		spaceId: string,
+		taskId: string,
+		targetStatus: WorkflowTaskRecoveryTargetStatus
+	): Promise<{ task: SpaceTask; run: SpaceWorkflowRun }> {
+		if (targetStatus !== 'open' && targetStatus !== 'in_progress') {
+			throw new Error(
+				`Workflow task recovery only supports active target statuses: open, in_progress`
+			);
+		}
+
+		const liveSessionIds = new Set<string>();
+		const recoverTx = this.config.db.transaction(() => {
+			const task = this.config.taskRepo.getTask(taskId);
+			if (!task) throw new Error(`Task not found: ${taskId}`);
+			if (task.spaceId !== spaceId) throw new Error(`Task not found: ${taskId}`);
+			if (!task.workflowRunId) {
+				throw new Error(`Task ${taskId} is not backed by a workflow run`);
+			}
+			if (task.status !== targetStatus && !isValidSpaceTaskTransition(task.status, targetStatus)) {
+				throw new Error(`Invalid status transition from '${task.status}' to '${targetStatus}'.`);
+			}
+
+			const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+			if (!run) throw new Error(`WorkflowRun not found: ${task.workflowRunId}`);
+			if (run.spaceId !== spaceId) throw new Error(`WorkflowRun not found: ${task.workflowRunId}`);
+
+			let updatedRun =
+				run.status === 'in_progress'
+					? run
+					: this.config.workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			updatedRun =
+				this.config.workflowRunRepo.updateRun(run.id, {
+					failureReason: null,
+					completedAt: null,
+				}) ?? updatedRun;
+
+			const updatedTask = this.config.taskRepo.updateTask(task.id, {
+				status: targetStatus,
+				completedAt: null,
+				result: null,
+				blockReason: null,
+				approvalSource: null,
+				approvalReason: null,
+				approvedAt: null,
+				pendingCheckpointType: null,
+				pendingCompletionSubmittedByNodeId: null,
+				pendingCompletionSubmittedAt: null,
+				pendingCompletionReason: null,
+				postApprovalSessionId: null,
+				postApprovalStartedAt: null,
+				postApprovalBlockedReason: null,
+				reportedStatus: null,
+				reportedSummary: null,
+			});
+			if (!updatedTask) throw new Error(`Failed to update task: ${task.id}`);
+
+			let executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
+			if (executions.length === 0) {
+				const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+				if (!workflow) throw new Error(`Workflow not found: ${run.workflowId}`);
+				const startNode = workflow.nodes.find((node) => node.id === workflow.startNodeId);
+				if (!startNode) {
+					throw new Error(
+						`Start node "${workflow.startNodeId}" not found in workflow "${workflow.id}"`
+					);
+				}
+				for (const agentEntry of resolveNodeAgents(startNode)) {
+					this.config.nodeExecutionRepo.createOrIgnore({
+						workflowRunId: run.id,
+						workflowNodeId: startNode.id,
+						agentName: agentEntry.name,
+						agentId: agentEntry.agentId ?? null,
+						status: 'pending',
+					});
+				}
+				executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
+			}
+
+			const currentExecution = [...executions].sort((a, b) => {
+				const aTime = a.updatedAt ?? a.startedAt ?? a.createdAt;
+				const bTime = b.updatedAt ?? b.startedAt ?? b.createdAt;
+				if (aTime !== bTime) return bTime - aTime;
+				return b.id.localeCompare(a.id);
+			})[0];
+			const currentNodeExecutions = currentExecution
+				? executions.filter(
+						(execution) => execution.workflowNodeId === currentExecution.workflowNodeId
+					)
+				: [];
+
+			for (const execution of currentNodeExecutions) {
+				const sessionId = execution.agentSessionId;
+				const hasLiveSession =
+					!!sessionId && (this.config.taskAgentManager?.isSessionAlive(sessionId) ?? false);
+
+				if (hasLiveSession && sessionId) {
+					this.config.nodeExecutionRepo.update(execution.id, {
+						status: 'in_progress',
+						completedAt: null,
+					});
+					liveSessionIds.add(sessionId);
+				} else {
+					this.config.nodeExecutionRepo.update(execution.id, {
+						status: 'pending',
+						agentSessionId: null,
+						result: null,
+						data: null,
+						startedAt: null,
+						completedAt: null,
+					});
+				}
+			}
+
+			return { task: updatedTask, run: updatedRun };
+		});
+
+		const recovered = recoverTx();
+		await this.ensureExecutorRegistered(recovered.run);
+		for (const sessionId of liveSessionIds) {
+			const prepared =
+				(await this.config.taskAgentManager?.prepareSubSessionForWorkflowResume(sessionId)) ?? true;
+			if (!prepared) {
+				log.warn(
+					`Workflow resume could not prepare MCP tools for live node-agent session ${sessionId}`
+				);
+			}
+		}
+		await this.safeOnWorkflowRunUpdated(
+			spaceId,
+			this.config.workflowRunRepo.getRun(recovered.run.id)!
+		);
+		await this.safeOnTaskUpdated(spaceId, this.config.taskRepo.getTask(recovered.task.id)!);
+		return {
+			run: this.config.workflowRunRepo.getRun(recovered.run.id) ?? recovered.run,
+			task: this.config.taskRepo.getTask(recovered.task.id) ?? recovered.task,
+		};
+	}
+
+	/**
 	 * Returns the number of executors currently tracked (active runs).
 	 */
 	get executorCount(): number {
@@ -1110,6 +1234,28 @@ export class SpaceRuntime {
 	// -------------------------------------------------------------------------
 	// Private — rehydration
 	// -------------------------------------------------------------------------
+
+	private async ensureExecutorRegistered(
+		run: SpaceWorkflowRun,
+		knownSpace?: Space
+	): Promise<boolean> {
+		if (this.executors.has(run.id)) return true;
+
+		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+		if (!workflow) return false;
+
+		const space = knownSpace ?? (await this.config.spaceManager.getSpace(run.spaceId));
+		if (!space) return false;
+
+		const meta: ExecutorMeta = {
+			workflow,
+			spaceId: space.id,
+			workspacePath: space.workspacePath,
+		};
+		this.executorMeta.set(run.id, meta);
+		this.executors.set(run.id, this.buildExecutor(workflow, run, space.id, space.workspacePath));
+		return true;
+	}
 
 	/**
 	 * Rehydrates WorkflowExecutors from the DB for all in-progress workflow runs,
@@ -1137,23 +1283,7 @@ export class SpaceRuntime {
 			for (const run of activeRuns) {
 				// Skip if executor already registered (e.g. called twice)
 				if (this.executors.has(run.id)) continue;
-
-				const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
-				if (!workflow) {
-					// Workflow was deleted while a run was in-progress — skip silently.
-					// The run will remain in_progress in the DB; it will need manual cleanup.
-					continue;
-				}
-
-				const meta: ExecutorMeta = {
-					workflow,
-					spaceId: space.id,
-					workspacePath: space.workspacePath,
-				};
-				this.executorMeta.set(run.id, meta);
-
-				const executor = this.buildExecutor(workflow, run, space.id, space.workspacePath);
-				this.executors.set(run.id, executor);
+				await this.ensureExecutorRegistered(run, space);
 			}
 		}
 
