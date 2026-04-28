@@ -730,6 +730,64 @@ describe('VisualWorkflowEditor', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// Post-approval route
+	// -------------------------------------------------------------------------
+
+	describe('Post-approval route', () => {
+		it('reflects workflow postApproval in edit mode', () => {
+			const { getByTestId } = render(
+				<VisualWorkflowEditor
+					{...makeProps({
+						workflow: makeWorkflow({
+							postApproval: {
+								targetAgent: 'coder',
+								instructions: 'Deploy {{task_id}}.',
+							},
+						}),
+					})}
+				/>
+			);
+
+			expect((getByTestId('post-approval-enabled-checkbox') as HTMLInputElement).checked).toBe(
+				true
+			);
+			expect((getByTestId('post-approval-target-select') as HTMLSelectElement).value).toBe('coder');
+			expect(
+				(getByTestId('post-approval-instructions-textarea') as HTMLTextAreaElement).value
+			).toBe('Deploy {{task_id}}.');
+		});
+
+		it('includes edited postApproval in updateWorkflow call', async () => {
+			const { getByTestId } = render(
+				<VisualWorkflowEditor
+					{...makeProps({
+						workflow: makeWorkflow({
+							postApproval: {
+								targetAgent: 'coder',
+								instructions: 'Old instructions.',
+							},
+						}),
+					})}
+				/>
+			);
+
+			fireEvent.input(getByTestId('post-approval-instructions-textarea'), {
+				target: { value: 'Deploy {{task_id}}.' },
+			});
+			await act(async () => {
+				fireEvent.click(getByTestId('save-button'));
+			});
+
+			await waitFor(() => expect(mockUpdateWorkflow).toHaveBeenCalledOnce());
+			const params = mockUpdateWorkflow.mock.calls[0][1];
+			expect(params.postApproval).toEqual({
+				targetAgent: 'coder',
+				instructions: 'Deploy {{task_id}}.',
+			});
+		});
+	});
+
+	// -------------------------------------------------------------------------
 	// Tags
 	// -------------------------------------------------------------------------
 
