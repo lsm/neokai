@@ -1313,7 +1313,7 @@ describe('Task Agent Session Lifecycle', () => {
 				taskAgentSession._enqueuedMessages[taskAgentSession._enqueuedMessages.length - 1];
 			expect(lastMsg.msg).toContain('[NODE_FAILED]');
 			expect(lastMsg.msg).toContain('Agent crashed: OOM');
-			expect(lastMsg.msg).toContain('Escalation reason: MISSING_INTENT');
+			expect(lastMsg.msg).toContain('Escalation reason: NODE_FAILURE');
 		});
 
 		test('does not throw for unknown sub-session ID', async () => {

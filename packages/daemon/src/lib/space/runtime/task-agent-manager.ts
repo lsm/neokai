@@ -2521,8 +2521,6 @@ export class TaskAgentManager {
 			this.config.nodeExecutionRepo.update(execution.id, { status: 'idle' });
 			execution = this.config.nodeExecutionRepo.getById(execution.id);
 		}
-
-		void nodeId;
 	}
 
 	/**
@@ -2562,7 +2560,7 @@ export class TaskAgentManager {
 		const failedNodeId = failedExecution?.workflowNodeId ?? 'unknown-node';
 		await this.injectMessageIntoSession(
 			taskAgentSession,
-			`[NODE_FAILED] Node "${failedNodeId}" sub-session (${subSessionId}) reported an error: ${error}\nEscalation reason: ${RUNTIME_ESCALATION_REASONS.MISSING_INTENT}\nWorkflow progression is runtime-driven; use this as context for human coordination only.`,
+			`[NODE_FAILED] Node "${failedNodeId}" sub-session (${subSessionId}) reported an error: ${error}\nEscalation reason: ${RUNTIME_ESCALATION_REASONS.NODE_FAILURE}\nWorkflow progression is runtime-driven; use this as context for human coordination only.`,
 			'defer'
 		);
 	}
@@ -2675,7 +2673,9 @@ export class TaskAgentManager {
 
 				const gate = gateById.get(gateId);
 				if (!gate) {
-					lines.push('  - Gate definition not found in workflow (treat as blocked until fixed).');
+					lines.push(
+						`  - Gate definition not found in workflow (treat as blocked until fixed). Escalation reason: ${RUNTIME_ESCALATION_REASONS.AMBIGUOUS_GATE}.`
+					);
 					continue;
 				}
 
