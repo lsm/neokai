@@ -133,6 +133,10 @@ export class SpaceWorkflowRunRepository {
 			} else if (params.status === 'in_progress') {
 				fields.push('started_at = ?');
 				values.push(Date.now());
+				if (params.completedAt === undefined) {
+					fields.push('completed_at = ?');
+					values.push(null);
+				}
 			}
 		}
 		if (params.failureReason !== undefined) {
