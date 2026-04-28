@@ -568,7 +568,7 @@ All 21 pre-existing failures are identical to those documented in run #239042709
 
 #### New Failure: `features-app-mcp-registry` — Strict Mode Violation **[NEW]**
 
-**Test**: `should show disabled globally badge for brave-search in room settings` (line 207)
+**Test**: `should show disabled globally badge in room settings` (line 207)
 
 **Error**:
 ```

@@ -240,7 +240,7 @@ A major release introducing the **Space Workflow System** — a multi-agent orch
 - Mission detail page with header, status sidebar, and main content sections; type-specific creation and detail views; "Goal" → "Mission" UI terminology rename
 
 #### Skills & MCP Registry
-- Global skills registry UI with per-room enablement overrides; built-in `playwright`, `playwright-interactive`, `chrome-devtools-mcp`, `web-search-mcp`, `fetch-mcp`, and `brave-search` seeds; async validation via `SKILL_VALIDATE` job queue
+- Global skills registry UI with per-room enablement overrides; built-in `playwright`, `playwright-interactive`, `chrome-devtools-mcp`, and `fetch-mcp` seeds; async validation via `SKILL_VALIDATE` job queue
 - Application-level MCP settings panel with per-room enablement; `AppMcpLifecycleManager`; reactive `mcp.registry.listErrors` RPC
 - `db-query` MCP server: scoped read-only SQL access with validation layer
 

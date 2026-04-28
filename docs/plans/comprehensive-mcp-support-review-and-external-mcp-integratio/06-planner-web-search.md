@@ -6,7 +6,7 @@
 
 This milestone therefore covers two things:
 1. **Document** the existing planner web search capability so it is not accidentally removed in future refactors.
-2. **Seed** useful default MCP entries (`fetch-mcp`, `brave-search`) into the application-level registry at daemon startup — these are useful defaults for end-users and are required by the E2E test in Task 7.1.
+2. **Seed** the useful default MCP entry `fetch-mcp` into the application-level registry at daemon startup — this is useful for end-users and required by the E2E test in Task 7.1.
 
 ## Scope
 
@@ -47,7 +47,7 @@ Verify and document that the Planner agent and plan-writer sub-agent already hav
 **Agent type:** coder
 
 **Description:**
-On daemon startup, seed two useful default MCP entries into the application-level registry if they do not already exist. These are for end-users (not for the planner's own web search, which uses built-in tools). The `fetch-mcp` entry is also required by the E2E test in Task 7.1.
+On daemon startup, seed the useful default `fetch-mcp` entry into the application-level registry if it does not already exist. This is for end-users (not for the planner's own web search, which uses built-in tools). The `fetch-mcp` entry is also required by the E2E test in Task 7.1.
 
 **Subtasks (ordered):**
 
@@ -63,26 +63,14 @@ On daemon startup, seed two useful default MCP entries into the application-leve
      "enabled": true
    }
    ```
-3. Check if `brave-search` entry exists; if not, create it (disabled by default):
-   ```json
-   {
-     "name": "brave-search",
-     "description": "Web search via Brave Search API (requires BRAVE_API_KEY env var)",
-     "sourceType": "stdio",
-     "command": "npx",
-     "args": ["-y", "@modelcontextprotocol/server-brave-search"],
-     "env": {},
-     "enabled": false
-   }
-   ```
-4. The seed is idempotent — if entries already exist (by name), skip creation.
-5. **Verify package names at implementation time** — `@tokenizin/mcp-npx-fetch` and `@modelcontextprotocol/server-brave-search` are the expected packages as of plan creation but npm package names can change. The implementing agent must verify these packages exist on npm before hardcoding them.
-6. Write unit tests that verify the seed function is idempotent and creates expected entries on a fresh registry.
+3. The seed is idempotent — if the entry already exists (by name), skip creation.
+4. **Verify package names at implementation time** — `@tokenizin/mcp-npx-fetch` is the expected package as of plan creation but npm package names can change. The implementing agent must verify this package exists on npm before hardcoding it.
+5. Write unit tests that verify the seed function is idempotent and creates expected entries on a fresh registry.
 
 **Acceptance criteria:**
-- On first daemon start, `fetch-mcp` and `brave-search` entries appear in the registry.
+- On first daemon start, the `fetch-mcp` entry appears in the registry.
 - On subsequent starts, no duplicate entries are created.
-- `fetch-mcp` is enabled; `brave-search` is disabled until the user sets the API key.
+- `fetch-mcp` is enabled.
 - Unit tests pass.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create` targeting `dev`.
 
