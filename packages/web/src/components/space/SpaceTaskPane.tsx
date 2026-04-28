@@ -679,9 +679,14 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						</button>
 					)}
 					<div class="min-w-0 flex-1 sm:flex sm:items-center sm:gap-3">
-						<h2 class="text-sm sm:text-base font-semibold text-gray-100 min-w-0 leading-5 sm:flex-1 overflow-hidden break-words [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]">
-							{task.title}
-						</h2>
+						<div class="flex items-center gap-2 min-w-0 sm:flex-1">
+							<h2 class="text-sm sm:text-base font-semibold text-gray-100 min-w-0 leading-5 flex-1 overflow-hidden break-words [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]">
+								{task.title}
+							</h2>
+							<span class="inline-flex items-center text-xs font-mono font-medium text-gray-400 bg-dark-700 border border-dark-600 px-1.5 py-0.5 rounded flex-shrink-0">
+								#{task.taskNumber}
+							</span>
+						</div>
 						<div class="mt-1 flex items-center gap-1.5 overflow-hidden sm:mt-0 sm:flex-shrink-0">
 							{showHeaderStatusBadge && (
 								<TaskMetaBadge class={cn(STATUS_BADGE_CLASSES[task.status])}>
