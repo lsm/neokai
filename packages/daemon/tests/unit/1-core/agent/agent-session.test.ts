@@ -1875,6 +1875,24 @@ describe('AgentSession', () => {
 			});
 			expect(session.config.model).toBe('claude-opus-4-20250514');
 		});
+
+		it('should preserve SDK tool permission fields from init', () => {
+			const init = {
+				sessionId: 'restricted-worker',
+				workspacePath: '/test/workspace',
+				type: 'worker' as const,
+				model: 'claude-sonnet-4-5-20250929',
+				sdkToolsPreset: ['Read', 'Bash'],
+				allowedTools: ['Read', 'Bash'],
+				disallowedTools: ['Write', 'Edit'],
+			};
+
+			const session = AgentSession.createSessionFromInit(init, 'claude-sonnet-4-5-20250929');
+
+			expect(session.config.sdkToolsPreset).toEqual(['Read', 'Bash']);
+			expect(session.config.allowedTools).toEqual(['Read', 'Bash']);
+			expect(session.config.disallowedTools).toEqual(['Write', 'Edit']);
+		});
 	});
 
 	describe('fromInit', () => {
