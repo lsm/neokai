@@ -31,7 +31,11 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigration103, runMigrations } from '../../../../../src/storage/schema/migrations.ts';
+import {
+	runMigration103,
+	runMigration104,
+	runMigrations,
+} from '../../../../../src/storage/schema/migrations.ts';
 
 function columnNames(db: BunDatabase, table: string): string[] {
 	const rows = db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>;
@@ -43,6 +47,13 @@ function indexNames(db: BunDatabase, table: string): string[] {
 		.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL`)
 		.all(table) as Array<{ name: string }>;
 	return rows.map((r) => r.name);
+}
+
+function tableSql(db: BunDatabase, table: string): string {
+	const row = db
+		.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`)
+		.get(table) as { sql?: string } | undefined;
+	return row?.sql ?? '';
 }
 
 function seedPreM103Schema(db: BunDatabase): void {
@@ -127,6 +138,89 @@ function seedPreM103Schema(db: BunDatabase): void {
 		)
 	`);
 
+	db.exec('PRAGMA foreign_keys = ON');
+}
+
+function seedPreM103SchemaWithLaterColumns(db: BunDatabase): void {
+	db.exec('PRAGMA foreign_keys = OFF');
+	db.exec(`
+		CREATE TABLE spaces (
+			id TEXT PRIMARY KEY,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`);
+	db.exec(`
+		CREATE TABLE space_workflow_runs (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			completion_actions_fired_at INTEGER DEFAULT NULL
+		)
+	`);
+	db.exec(`
+		CREATE TABLE space_workflows (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			tags TEXT NOT NULL DEFAULT '[]',
+			completion_autonomy_level INTEGER NOT NULL DEFAULT 3,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`
+		CREATE TABLE space_tasks (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			task_number INTEGER NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'open'
+				CHECK(status IN ('open', 'in_progress', 'review', 'done', 'blocked', 'cancelled', 'archived')),
+			priority TEXT NOT NULL DEFAULT 'normal'
+				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+			labels TEXT NOT NULL DEFAULT '[]',
+			workflow_run_id TEXT,
+			preferred_workflow_id TEXT,
+			created_by_task_id TEXT,
+			custom_agent_id TEXT,
+			goal_id TEXT,
+			slot_role TEXT,
+			result TEXT,
+			depends_on TEXT NOT NULL DEFAULT '[]',
+			active_session TEXT
+				CHECK(active_session IN ('worker', 'leader')),
+			task_agent_session_id TEXT,
+			approval_source TEXT,
+			approval_reason TEXT,
+			approved_at INTEGER,
+			block_reason TEXT,
+			archived_at INTEGER,
+			created_at INTEGER NOT NULL,
+			started_at INTEGER,
+			completed_at INTEGER,
+			updated_at INTEGER NOT NULL,
+			pending_action_index INTEGER DEFAULT NULL,
+			pending_checkpoint_type TEXT DEFAULT NULL
+				CHECK(pending_checkpoint_type IN ('completion_action', 'gate', 'task_completion')),
+			pending_completion_submitted_by_node_id TEXT DEFAULT NULL,
+			pending_completion_submitted_at INTEGER DEFAULT NULL,
+			pending_completion_reason TEXT DEFAULT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL
+		)
+	`);
+	db.exec(
+		`CREATE UNIQUE INDEX idx_space_tasks_space_task_number ON space_tasks(space_id, task_number)`
+	);
+	db.exec(`CREATE INDEX idx_space_tasks_custom_agent_id ON space_tasks(custom_agent_id)`);
+	db.exec(`CREATE INDEX idx_space_tasks_goal_id ON space_tasks(goal_id)`);
+	db.exec(`CREATE INDEX idx_space_tasks_slot_role ON space_tasks(slot_role)`);
+	db.exec(`CREATE INDEX idx_space_tasks_pending_action_index ON space_tasks(pending_action_index)`);
 	db.exec('PRAGMA foreign_keys = ON');
 }
 
@@ -381,6 +475,118 @@ describe('Migration 103: task status "approved" + post_approval schema', () => {
 
 			expect(countAfter2).toBe(countAfter1);
 			expect(cols2).toEqual(cols1);
+		});
+	});
+
+	describe('regression — pre-M103 DB with later columns and indexes', () => {
+		beforeEach(() => {
+			seedPreM103SchemaWithLaterColumns(db);
+			const now = Date.now();
+			db.prepare(`INSERT INTO spaces (id, created_at, updated_at) VALUES (?, ?, ?)`).run(
+				'sp-1',
+				now,
+				now
+			);
+			db.prepare(
+				`INSERT INTO space_workflow_runs (
+						id, space_id, created_at, updated_at, completion_actions_fired_at
+					) VALUES (?, ?, ?, ?, ?)`
+			).run('run-1', 'sp-1', now, now, now + 1);
+			db.prepare(
+				`INSERT INTO space_workflows (
+						id, space_id, name, description, tags, completion_autonomy_level,
+						created_at, updated_at
+					) VALUES (?, ?, ?, '', '[]', 3, ?, ?)`
+			).run('wf-1', 'sp-1', 'Workflow', now, now);
+			db.prepare(
+				`INSERT INTO space_tasks (
+						id, space_id, task_number, title, description, status, priority,
+						labels, workflow_run_id, custom_agent_id, goal_id, slot_role,
+						depends_on, created_at, updated_at,
+						pending_checkpoint_type, pending_action_index
+					) VALUES (?, ?, ?, ?, ?, 'review', 'high', '["bug"]', ?, ?, ?, ?, '[]', ?, ?, 'completion_action', 7)`
+			).run(
+				't-legacy',
+				'sp-1',
+				1,
+				'Legacy indexed task',
+				'preserve me',
+				'run-1',
+				'agent-1',
+				'goal-1',
+				'implementer',
+				now,
+				now + 10
+			);
+		});
+
+		test('runs migrations 103 and 104 without dropping later columns or compatible indexes', () => {
+			expect(() => runMigration103(db)).not.toThrow();
+			expect(() => runMigration104(db)).not.toThrow();
+
+			const cols = columnNames(db, 'space_tasks');
+			expect(cols).toContain('custom_agent_id');
+			expect(cols).toContain('goal_id');
+			expect(cols).toContain('slot_role');
+			expect(cols).toContain('post_approval_session_id');
+			expect(cols).toContain('post_approval_started_at');
+			expect(cols).toContain('post_approval_blocked_reason');
+			expect(cols).not.toContain('pending_action_index');
+			expect(columnNames(db, 'space_workflows')).toContain('post_approval');
+			expect(columnNames(db, 'space_workflow_runs')).not.toContain('completion_actions_fired_at');
+
+			const sql = tableSql(db, 'space_tasks');
+			expect(sql).toContain("'approved'");
+			expect(sql).not.toContain("'completion_action'");
+			expect(sql).not.toContain('pending_action_index');
+
+			const indexes = new Set(indexNames(db, 'space_tasks'));
+			expect(indexes).toContain('idx_space_tasks_custom_agent_id');
+			expect(indexes).toContain('idx_space_tasks_goal_id');
+			expect(indexes).toContain('idx_space_tasks_slot_role');
+			expect(indexes).not.toContain('idx_space_tasks_pending_action_index');
+
+			const row = db
+				.prepare(
+					`SELECT title, description, status, priority, labels, workflow_run_id,
+						        custom_agent_id, goal_id, slot_role, pending_checkpoint_type
+						   FROM space_tasks
+						  WHERE id = ?`
+				)
+				.get('t-legacy') as {
+				title: string;
+				description: string;
+				status: string;
+				priority: string;
+				labels: string;
+				workflow_run_id: string;
+				custom_agent_id: string;
+				goal_id: string;
+				slot_role: string;
+				pending_checkpoint_type: string;
+			};
+			expect(row).toEqual({
+				title: 'Legacy indexed task',
+				description: 'preserve me',
+				status: 'review',
+				priority: 'high',
+				labels: '["bug"]',
+				workflow_run_id: 'run-1',
+				custom_agent_id: 'agent-1',
+				goal_id: 'goal-1',
+				slot_role: 'implementer',
+				pending_checkpoint_type: 'task_completion',
+			});
+
+			const now = Date.now();
+			expect(() => {
+				db.prepare(
+					`INSERT INTO space_tasks (
+							id, space_id, task_number, title, description, status, priority,
+							labels, depends_on, created_at, updated_at
+						) VALUES (?, ?, ?, ?, '', 'approved', 'normal', '[]', '[]', ?, ?)`
+				).run('t-approved', 'sp-1', 2, 'Approved', now, now);
+			}).not.toThrow();
 		});
 	});
 
