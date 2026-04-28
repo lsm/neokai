@@ -20,6 +20,7 @@ import { NodeExecutionRepository } from '../../../storage/repositories/node-exec
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { NotificationSink } from './notification-sink';
 import type { TaskAgentManager } from './task-agent-manager';
@@ -66,6 +67,11 @@ export interface SpaceRuntimeServiceConfig {
 	 * activation after gate data is written externally (e.g. human approval via RPC).
 	 */
 	gateDataRepo?: GateDataRepository;
+	/**
+	 * Optional pending message repository for queueing messages to not-yet-spawned
+	 * workflow node agents.
+	 */
+	pendingMessageRepo?: PendingAgentMessageRepository;
 	channelCycleRepo?: ChannelCycleRepository;
 	/**
 	 * Optional SessionManager for provisioning space:chat:${spaceId} sessions.
@@ -589,6 +595,7 @@ export class SpaceRuntimeService {
 			onGateChanged: (runId, gateId) => {
 				void this.notifyGateDataChanged(runId, gateId).catch(() => {});
 			},
+			pendingMessageQueue: this.config.pendingMessageRepo,
 			getSpaceAutonomyLevel: async (sid) => {
 				const s = await spaceManagerForApproval.getSpace(sid);
 				return s?.autonomyLevel ?? 1;
@@ -677,6 +684,7 @@ export class SpaceRuntimeService {
 			activateNode: async (runId, nodeId) => {
 				await this.activateWorkflowNode(runId, nodeId);
 			},
+			pendingMessageQueue: this.config.pendingMessageRepo,
 			getSpaceAutonomyLevel: async (sid) => {
 				const s = await spaceManagerForApproval.getSpace(sid);
 				return s?.autonomyLevel ?? 1;
