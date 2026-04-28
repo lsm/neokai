@@ -1138,3 +1138,52 @@ export function truncateSessionFileAtMessage(
 		return { truncated: false, linesRemoved: 0 };
 	}
 }
+
+/**
+ * Check whether a message UUID still exists in the SDK session JSONL file.
+ *
+ * This is used before passing resumeSessionAt back to the SDK. Auto-compaction
+ * can replace older transcript entries with a summary, so a UUID that remains
+ * in NeoKai's DB may no longer be resumable from the SDK transcript.
+ *
+ * @param workspacePath - The session's workspace path
+ * @param sdkSessionId - The SDK session ID (for direct file path lookup)
+ * @param kaiSessionId - The NeoKai session ID (fallback for file search)
+ * @param messageUuid - The UUID of the message to find
+ * @returns true when the UUID exists in the JSONL transcript
+ */
+export function messageUuidExistsInSessionFile(
+	workspacePath: string,
+	sdkSessionId: string | null | undefined,
+	kaiSessionId: string,
+	messageUuid: string
+): boolean {
+	let filePath: string | null = null;
+	if (sdkSessionId) {
+		const candidatePath = getSDKSessionFilePath(workspacePath, sdkSessionId);
+		if (existsSync(candidatePath)) {
+			filePath = candidatePath;
+		}
+	}
+	if (!filePath) {
+		filePath = findSDKSessionFile(workspacePath, kaiSessionId);
+	}
+	if (!filePath || !existsSync(filePath)) {
+		return false;
+	}
+
+	try {
+		const content = readFileSync(filePath, 'utf-8');
+		const lines = content.split('\n');
+
+		for (const line of lines) {
+			if (line.includes(`"uuid":"${messageUuid}"`) || line.includes(`"uuid": "${messageUuid}"`)) {
+				return true;
+			}
+		}
+
+		return lines.some((line) => line.includes(messageUuid));
+	} catch {
+		return false;
+	}
+}

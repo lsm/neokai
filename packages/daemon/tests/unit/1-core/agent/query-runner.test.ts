@@ -42,6 +42,7 @@ describe('QueryRunner', () => {
 	let handleErrorSpy: ReturnType<typeof mock>;
 	let publishSpy: ReturnType<typeof mock>;
 	let saveSDKMessageSpy: ReturnType<typeof mock>;
+	let updateSessionSpy: ReturnType<typeof mock>;
 	let getMessagesByStatusSpy: ReturnType<typeof mock>;
 	let updateMessageStatusSpy: ReturnType<typeof mock>;
 	let buildSpy: ReturnType<typeof mock>;
@@ -90,10 +91,12 @@ describe('QueryRunner', () => {
 
 		// Database spies
 		saveSDKMessageSpy = mock(() => {});
+		updateSessionSpy = mock(() => {});
 		getMessagesByStatusSpy = mock(() => []);
 		updateMessageStatusSpy = mock(() => {});
 		mockDb = {
 			saveSDKMessage: saveSDKMessageSpy,
+			updateSession: updateSessionSpy,
 			getMessagesByStatus: getMessagesByStatusSpy,
 			updateMessageStatus: updateMessageStatusSpy,
 		} as unknown as Database;
@@ -868,6 +871,45 @@ describe('QueryRunner', () => {
 			expect(userMessage).not.toContain('NEOKAI_SDK_STARTUP_TIMEOUT_MS');
 			// Should NOT contain retry count language
 			expect(userMessage).not.toContain('attempt(s)');
+		});
+
+		it('should clear stale resumeSessionAt and SDK session state before retrying no-message-found', async () => {
+			mockSession.sdkSessionId = 'sdk-session-id';
+			mockSession.sdkOriginPath = '/old/sdk/path';
+			mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
+			buildSpy
+				.mockRejectedValueOnce(
+					new Error('No message found with message.uuid of: missing-message-uuid')
+				)
+				.mockRejectedValueOnce(new Error('stop after retry'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(buildSpy).toHaveBeenCalledTimes(2);
+			expect(mockSession.metadata.resumeSessionAt).toBeUndefined();
+			expect(mockSession.sdkSessionId).toBeUndefined();
+			expect(mockSession.sdkOriginPath).toBeUndefined();
+			expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
+				metadata: mockSession.metadata,
+				sdkSessionId: undefined,
+				sdkOriginPath: undefined,
+			});
+			expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
+					type: 'assistant',
+					message: expect.objectContaining({
+						content: expect.arrayContaining([
+							expect.objectContaining({
+								text: expect.stringContaining('Conversation context was reset'),
+							}),
+						]),
+					}),
+				})
+			);
 		});
 
 		it('should call stateManager.setIdle after handling startup timeout error', async () => {

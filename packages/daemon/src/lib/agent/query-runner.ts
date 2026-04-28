@@ -546,6 +546,7 @@ export class QueryRunner {
 			const isAbortError = error instanceof Error && error.name === 'AbortError';
 			const isStartupTimeout = errorMessage.includes('SDK startup timeout');
 			const isConversationNotFound = errorMessage.includes('No conversation found');
+			const isMessageNotFound = errorMessage.includes('No message found');
 
 			// Startup timeout is transient — always keep sdkSessionId so resume works.
 			// Never clear sdkSessionId on timeout: the session file is valid and the
@@ -594,6 +595,38 @@ export class QueryRunner {
 					// Best-effort — don't let message emission block cleanup
 				}
 			}
+			if (isMessageNotFound) {
+				// The SDK found the transcript but could not find resumeSessionAt inside it.
+				// This commonly happens after SDK compaction removes old message UUIDs.
+				// Clear both the rewind pointer and SDK transcript identity so the retry
+				// starts with a fresh context instead of looping on stale JSONL state.
+				const oldResumeSessionAt = session.metadata.resumeSessionAt;
+				logger.error(
+					`No message found for resumeSessionAt (${oldResumeSessionAt ?? 'unknown'}). ` +
+						'Clearing resumeSessionAt, sdkSessionId, and sdkOriginPath before retry.'
+				);
+				delete session.metadata.resumeSessionAt;
+				session.sdkSessionId = undefined;
+				session.sdkOriginPath = undefined;
+				this.ctx.db.updateSession(session.id, {
+					metadata: session.metadata,
+					sdkSessionId: undefined,
+					sdkOriginPath: undefined,
+				});
+
+				try {
+					await this.displayErrorAsAssistantMessage(
+						'⚠️ **Conversation context was reset.**\n\n' +
+							'The previous rewind point is no longer present in the Claude SDK transcript. ' +
+							'This can happen after SDK compaction. Your conversation history in NeoKai is ' +
+							'preserved; only the AI context window has been reset.\n\n' +
+							'Retrying your message with a fresh AI session.',
+						{ markAsError: false }
+					);
+				} catch {
+					// Best-effort — don't let message emission block cleanup
+				}
+			}
 
 			// Auto-retry once on startup timeout — the user shouldn't have to resend.
 			// This handles transient SDK startup failures (e.g., after a model switch)
@@ -631,6 +664,30 @@ export class QueryRunner {
 				// Use `return await` so this call's finally{} runs only after the retry
 				// completes. Otherwise finally{} would race the retry and can tear down
 				// shared state (queue/controller/queryObject) while it is still running.
+				return await this.runQuery(queryGeneration, true);
+			}
+			if (isMessageNotFound && !isRetry && !this.ctx.isCleaningUp()) {
+				logger.warn('Auto-retrying query after clearing stale resumeSessionAt.');
+				await stateManager.setIdle();
+
+				if (this.ctx.queryObject) {
+					try {
+						this.ctx.queryObject.close();
+					} catch {
+						// Ignore close errors — transport may already be in a broken state
+					}
+					this.ctx.queryObject = null;
+				}
+
+				const exitPromise = this.ctx.processExitedPromise;
+				if (exitPromise) {
+					await Promise.race([
+						exitPromise,
+						new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+					]);
+					this.ctx.processExitedPromise = null;
+				}
+
 				return await this.runQuery(queryGeneration, true);
 			}
 
@@ -702,7 +759,7 @@ export class QueryRunner {
 
 					const processingState = stateManager.getState();
 
-					// For startup timeouts / conversation-not-found, provide actionable recovery hints.
+					// For startup timeouts / resume failures, provide actionable recovery hints.
 					// Keep the hints distinct: NEOKAI_SDK_STARTUP_TIMEOUT_MS is irrelevant to a
 					// missing/corrupt session file — the session ID was already cleared above,
 					// so the next message will automatically start a fresh session.
@@ -719,7 +776,13 @@ export class QueryRunner {
 								`workspace path change, or if the ~/.claude/projects/ directory was cleaned up. ` +
 								`Your message history in NeoKai is preserved; only the AI context window is reset. ` +
 								`Please resend your message — a fresh session starts automatically.`
-							: undefined;
+							: isMessageNotFound
+								? `The AI session could not resume from the previous rewind point ` +
+									`(workspace: ${session.workspacePath ?? 'unbound'}). The Claude SDK transcript no longer ` +
+									`contains that message UUID, likely after SDK compaction. Your message history in NeoKai ` +
+									`is preserved; only the AI context window is reset. Please resend your message — a fresh ` +
+									`session starts automatically.`
+								: undefined;
 
 					await errorManager.handleError(
 						session.id,

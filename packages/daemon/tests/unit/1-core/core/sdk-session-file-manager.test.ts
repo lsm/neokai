@@ -20,6 +20,7 @@ import {
 	identifyOrphanedSDKFiles,
 	removeToolResultFromSessionFile,
 	truncateSessionFileAtMessage,
+	messageUuidExistsInSessionFile,
 	findSDKSessionFileGlobally,
 	migrateSDKSessionFile,
 } from '../../../../src/lib/sdk-session-file-manager';
@@ -1091,6 +1092,62 @@ describe('SDK Session File Manager', () => {
 
 			expect(userMessage.message.content[0].content[0].text).toContain('Output removed by user');
 			expect(userMessage.message.content[1].content[0].text).toContain('Output removed by user');
+		});
+	});
+
+	describe('messageUuidExistsInSessionFile', () => {
+		test('should return true when UUID exists in direct session file', () => {
+			const messages = [
+				JSON.stringify({ type: 'user', uuid: 'message-uuid-1' }),
+				JSON.stringify({ type: 'assistant', uuid: 'message-uuid-2' }),
+			];
+			writeFileSync(testSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			const exists = messageUuidExistsInSessionFile(
+				testWorkspacePath,
+				testSdkSessionId,
+				'kai-session-id',
+				'message-uuid-2'
+			);
+
+			expect(exists).toBe(true);
+		});
+
+		test('should return false when UUID is absent from direct session file', () => {
+			writeFileSync(
+				testSessionFile,
+				JSON.stringify({ type: 'user', uuid: 'message-uuid-1' }) + '\n',
+				'utf-8'
+			);
+
+			const exists = messageUuidExistsInSessionFile(
+				testWorkspacePath,
+				testSdkSessionId,
+				'kai-session-id',
+				'missing-message-uuid'
+			);
+
+			expect(exists).toBe(false);
+		});
+
+		test('should fall back to Kai session ID lookup when sdkSessionId is unavailable', () => {
+			writeFileSync(
+				testSessionFile,
+				[
+					JSON.stringify({ type: 'system', sessionId: 'kai-session-fallback' }),
+					JSON.stringify({ type: 'user', uuid: 'fallback-message-uuid' }),
+				].join('\n') + '\n',
+				'utf-8'
+			);
+
+			const exists = messageUuidExistsInSessionFile(
+				testWorkspacePath,
+				undefined,
+				'kai-session-fallback',
+				'fallback-message-uuid'
+			);
+
+			expect(exists).toBe(true);
 		});
 	});
 

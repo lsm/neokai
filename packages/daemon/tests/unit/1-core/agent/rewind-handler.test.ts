@@ -7,6 +7,9 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Session } from '@neokai/shared';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
 import {
 	RewindHandler,
@@ -35,6 +38,8 @@ describe('RewindHandler', () => {
 	let deleteMessagesAtAndAfterSpy: ReturnType<typeof mock>;
 	let rewindFilesSpy: ReturnType<typeof mock>;
 	let updateSessionSpy: ReturnType<typeof mock>;
+	let testSdkSessionDir: string;
+	let originalTestSdkSessionDir: string | undefined;
 
 	const testTimestamp = Date.now();
 	const testRewindPoint: RewindPoint = {
@@ -49,6 +54,7 @@ describe('RewindHandler', () => {
 			id: 'test-session-id',
 			title: 'Test Session',
 			workspacePath: '/test/path',
+			sdkSessionId: 'test-sdk-session-id',
 			status: 'active',
 			config: { model: 'claude-sonnet-4-20250514' },
 			metadata: {},
@@ -107,6 +113,25 @@ describe('RewindHandler', () => {
 		mockQueryObject = {
 			rewindFiles: rewindFilesSpy,
 		} as unknown as Query;
+
+		originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
+		testSdkSessionDir = join(
+			tmpdir(),
+			`rewind-sdk-sessions-${Date.now()}-${Math.random().toString(36).slice(2)}`
+		);
+		process.env.TEST_SDK_SESSION_DIR = testSdkSessionDir;
+	});
+
+	afterEach(() => {
+		if (existsSync(testSdkSessionDir)) {
+			rmSync(testSdkSessionDir, { recursive: true, force: true });
+		}
+
+		if (originalTestSdkSessionDir !== undefined) {
+			process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
+		} else {
+			delete process.env.TEST_SDK_SESSION_DIR;
+		}
 	});
 
 	function createContext(overrides: Partial<RewindHandlerContext> = {}): RewindHandlerContext {
@@ -124,6 +149,27 @@ describe('RewindHandler', () => {
 
 	function createHandler(overrides: Partial<RewindHandlerContext> = {}): RewindHandler {
 		return new RewindHandler(createContext(overrides));
+	}
+
+	function writeSdkTranscript(uuids: string[], session = mockSession): void {
+		const workspacePath = session.worktree ? session.worktree.worktreePath : session.workspacePath;
+		if (!workspacePath || !session.sdkSessionId) {
+			throw new Error('Test session requires workspacePath and sdkSessionId');
+		}
+
+		const projectKey = workspacePath.replace(/[/.]/g, '-');
+		const sessionDir = join(testSdkSessionDir, 'projects', projectKey);
+		mkdirSync(sessionDir, { recursive: true });
+		const sessionFile = join(sessionDir, `${session.sdkSessionId}.jsonl`);
+		const lines = uuids.map((uuid) =>
+			JSON.stringify({
+				type: 'user',
+				uuid,
+				sessionId: session.id,
+				message: { role: 'user', content: [{ type: 'text', text: uuid }] },
+			})
+		);
+		writeFileSync(sessionFile, lines.join('\n') + '\n', 'utf-8');
 	}
 
 	describe('constructor', () => {
@@ -344,11 +390,31 @@ describe('RewindHandler', () => {
 				};
 				// getUserMessages is called AFTER deleteMessagesAtAndAfter, so it should return only remaining messages
 				getUserMessagesSpy.mockReturnValue([previousMessage]);
+				writeSdkTranscript([previousMessage.uuid]);
 
 				handler = createHandler();
 				await handler.executeRewind(testRewindPoint.uuid, 'conversation');
 
 				expect(mockSession.metadata.resumeSessionAt).toBe('prev-msg-uuid');
+				expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
+					metadata: mockSession.metadata,
+				});
+			});
+
+			it('should clear resumeSessionAt when previous user message is missing from SDK transcript', async () => {
+				const previousMessage = {
+					uuid: 'compacted-prev-msg-uuid',
+					timestamp: testTimestamp - 10000,
+					content: 'Previous message',
+				};
+				mockSession.metadata.resumeSessionAt = 'old-resume-uuid';
+				getUserMessagesSpy.mockReturnValue([previousMessage]);
+				writeSdkTranscript(['different-message-uuid']);
+
+				handler = createHandler();
+				await handler.executeRewind(testRewindPoint.uuid, 'conversation');
+
+				expect(mockSession.metadata.resumeSessionAt).toBeUndefined();
 				expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
 					metadata: mockSession.metadata,
 				});
@@ -610,11 +676,33 @@ describe('RewindHandler', () => {
 			}));
 			// After deletion, getUserMessages returns only the previous message
 			getUserMessagesSpy.mockReturnValue([previousMessage]);
+			writeSdkTranscript([previousMessage.uuid]);
 
 			handler = createHandler();
 			await handler.executeSelectiveRewind([testRewindPoint.uuid]);
 
 			expect(mockSession.metadata.resumeSessionAt).toBe('prev-msg-uuid');
+			expect(updateSessionSpy).toHaveBeenCalled();
+		});
+
+		it('should clear resumeSessionAt after selective rewind when previous UUID is missing from SDK transcript', async () => {
+			const previousMessage = {
+				uuid: 'compacted-prev-msg-uuid',
+				timestamp: testTimestamp - 10000,
+				content: 'Previous message',
+			};
+			mockSession.metadata.resumeSessionAt = 'old-resume-uuid';
+			mockDb.getSDKMessages = mock(() => ({
+				messages: [{ uuid: testRewindPoint.uuid, timestamp: testTimestamp }],
+				hasMore: false,
+			}));
+			getUserMessagesSpy.mockReturnValue([previousMessage]);
+			writeSdkTranscript(['different-message-uuid']);
+
+			handler = createHandler();
+			await handler.executeSelectiveRewind([testRewindPoint.uuid]);
+
+			expect(mockSession.metadata.resumeSessionAt).toBeUndefined();
 			expect(updateSessionSpy).toHaveBeenCalled();
 		});
 	});
