@@ -114,10 +114,10 @@ export interface QueryRunnerContext {
 
 	/**
 	 * Self-heal hook: called when `QueryRunner.start()` detects that a workflow
-	 * sub-session is missing required MCP servers (`node-agent`, `space-agent-tools`).
+	 * sub-session is missing required MCP servers (`node-agent`).
 	 *
 	 * The callback receives the session so the caller (TaskAgentManager) can
-	 * re-attach the missing servers before the first turn runs. This is the
+	 * re-attach the missing server before the first turn runs. This is the
 	 * final backstop — even if spawn/rehydrate/ensureRequiredMcpServersAttached
 	 * all failed silently, this fires at the moment of detection and can recover.
 	 *
@@ -289,10 +289,10 @@ export class QueryRunner {
 					(isWorkflowSubSession ? ' (workflow sub-session)' : '') +
 					` ${JSON.stringify(snapshotPayload)}`
 			);
-			// P2-6 / P1-5: Self-heal — detect missing required MCP servers for workflow
-			// sub-sessions and recover via the registered callback. Required servers:
-			//   - node-agent: peer comms (send_message, list_peers, save_artifact)
-			//   - space-agent-tools: gate surface (read_gate, write_gate, approve_gate)
+			// P2-6 / P1-5: Self-heal — detect a missing required MCP server for
+			// workflow sub-sessions and recover via the registered callback.
+			// Required server:
+			//   - node-agent: peer comms, artifact writes, and node-safe task actions
 			//
 			// Only enters this block when servers are actually missing. The callback
 			// (TaskAgentManager.mcpSelfHeal) calls ensureRequiredMcpServersAttached which
@@ -300,7 +300,7 @@ export class QueryRunner {
 			// No health check on healthy starts — the outer condition is strictly
 			// `missingServers.length > 0` to avoid false-positive throws.
 			if (isWorkflowSubSession) {
-				const requiredServers = ['node-agent', 'space-agent-tools'] as const;
+				const requiredServers = ['node-agent'] as const;
 				const missingServers = requiredServers.filter((name) => !mcpServerNames.includes(name));
 
 				if (missingServers.length > 0) {

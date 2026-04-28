@@ -5,6 +5,7 @@
  * Action tools:
  *   send_message    — channel-validated direct messaging; writes gate data on gated channels
  *   save_artifact   — persist typed data to the workflow run artifact store (replaces save/write_artifact)
+ *   create_standalone_task — create a new task in the same Space
  *
  * Discovery tools (read-only):
  *   list_artifacts       — list artifacts for the current workflow run
@@ -159,6 +160,43 @@ export const SaveArtifactSchema = z.object({
 export type SaveArtifactInput = z.infer<typeof SaveArtifactSchema>;
 
 // ---------------------------------------------------------------------------
+// create_standalone_task
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `create_standalone_task` input.
+ *
+ * Mirrors the Space Agent tool so workflow node agents can dispatch follow-up
+ * work without needing the broader space-agent-tools MCP namespace.
+ */
+export const CreateStandaloneTaskSchema = z.object({
+	title: z.string().describe('Short title for the task'),
+	description: z.string().describe('Detailed description of the work to be done'),
+	priority: z
+		.enum(['low', 'normal', 'high', 'urgent'])
+		.describe('Task priority (default: normal)')
+		.optional(),
+	custom_agent_id: z
+		.string()
+		.describe('ID of a custom Space agent to assign this task to')
+		.optional(),
+	workflow_id: z
+		.string()
+		.describe(
+			'ID of the workflow to use for this task. When provided, the runtime uses this workflow instead of auto-selecting one.'
+		)
+		.optional(),
+	depends_on: z
+		.array(z.string())
+		.describe(
+			'List of task IDs this task depends on. All must be in the same space. The task will be blocked until every dependency reaches status=done.'
+		)
+		.optional(),
+});
+
+export type CreateStandaloneTaskInput = z.infer<typeof CreateStandaloneTaskSchema>;
+
+// ---------------------------------------------------------------------------
 // list_reachable_agents
 // ---------------------------------------------------------------------------
 
@@ -276,6 +314,7 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
 	list_peers: ListPeersSchema,
 	send_message: SendMessageSchema,
 	save_artifact: SaveArtifactSchema,
+	create_standalone_task: CreateStandaloneTaskSchema,
 	list_artifacts: ListArtifactsSchema,
 	list_reachable_agents: ListReachableAgentsSchema,
 	list_channels: ListChannelsSchema,

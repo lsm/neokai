@@ -32,6 +32,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
+import type { SpaceManager } from '../managers/space-manager';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import type { DaemonHub } from '../../daemon-hub';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
@@ -82,6 +83,8 @@ export interface SpaceAgentToolsConfig {
 	runtime: SpaceRuntime;
 	/** Workflow manager for listing available workflows. */
 	workflowManager: SpaceWorkflowManager;
+	/** Space manager for approve_task autonomy checks. */
+	spaceManager?: Pick<SpaceManager, 'getSpace'>;
 	/** Task repository for read queries (list/filter). */
 	taskRepo: SpaceTaskRepository;
 	/** Node execution repository for workflow run node execution queries. */
@@ -145,8 +148,7 @@ export interface SpaceAgentToolsConfig {
 	 * even if the `node-agent` MCP server is missing — breaking the namespace paradox
 	 * where the self-heal tool lived in the same namespace as the server it repairs.
 	 *
-	 * Wired by TaskAgentManager when building space-agent-tools for workflow sub-sessions.
-	 * Not set for task-agent or space-chat sessions (they have no node-agent to restore).
+	 * Only set for specialised sessions that intentionally mirror this restore hook.
 	 */
 	onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
 }
@@ -903,6 +905,28 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					error: `Task ${args.task_id} does not belong to this space.`,
 				});
 			}
+
+			const space = config.spaceManager ? await config.spaceManager.getSpace(spaceId) : null;
+			const currentLevel =
+				space?.autonomyLevel ?? (getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 1);
+			let completionAutonomyLevel = 5;
+			if (task.workflowRunId) {
+				const run = workflowRunRepo.getRun(task.workflowRunId);
+				if (run?.workflowId) {
+					const workflow = workflowManager.getWorkflow(run.workflowId);
+					if (workflow?.completionAutonomyLevel !== undefined) {
+						completionAutonomyLevel = workflow.completionAutonomyLevel;
+					}
+				}
+			}
+
+			if (currentLevel < completionAutonomyLevel) {
+				return jsonResult({
+					success: false,
+					error: `approve_task not permitted: space autonomy level ${currentLevel} < workflow completionAutonomyLevel ${completionAutonomyLevel}. Use submit_for_approval to request human review.`,
+				});
+			}
+
 			if (task.status !== 'review') {
 				return jsonResult({
 					success: false,
@@ -1180,12 +1204,8 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 	];
 
-	// P3-8: expose restore_node_agent in the space-agent-tools namespace so it remains
-	// callable even when the node-agent MCP server is missing. The node-agent namespace
-	// has a self-referential paradox: if node-agent is gone, restore_node_agent (which
-	// lives inside that namespace) is also gone and cannot be called. Placing a copy here
-	// breaks the dependency — space-agent-tools is always present for workflow sub-sessions
-	// (attached both at spawn and rehydrate, independent of node-agent health).
+	// Optional legacy restore mirror. Workflow node sessions should use the
+	// node-agent namespace directly; space-agent-tools is no longer attached there.
 	if (config.onRestoreNodeAgent) {
 		const restoreCallback = config.onRestoreNodeAgent;
 		tools.push(
