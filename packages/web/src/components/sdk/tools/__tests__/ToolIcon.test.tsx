@@ -48,6 +48,12 @@ describe('ToolIcon', () => {
 			expect(svg).toBeTruthy();
 		});
 
+		it('should render MultiEdit icon', () => {
+			const { container } = render(<ToolIcon toolName="MultiEdit" />);
+			const svg = container.querySelector('svg');
+			expect(svg).toBeTruthy();
+		});
+
 		it('should render Read icon', () => {
 			const { container } = render(<ToolIcon toolName="Read" />);
 			const svg = container.querySelector('svg');
@@ -132,6 +138,18 @@ describe('ToolIcon', () => {
 	});
 
 	describe('System Operation Icons', () => {
+		it('should render AskUserQuestion icon', () => {
+			const { container } = render(<ToolIcon toolName="AskUserQuestion" />);
+			const svg = container.querySelector('svg');
+			expect(svg).toBeTruthy();
+		});
+
+		it('should render EnterPlanMode icon', () => {
+			const { container } = render(<ToolIcon toolName="EnterPlanMode" />);
+			const svg = container.querySelector('svg');
+			expect(svg).toBeTruthy();
+		});
+
 		it('should render ExitPlanMode icon', () => {
 			const { container } = render(<ToolIcon toolName="ExitPlanMode" />);
 			const svg = container.querySelector('svg');
