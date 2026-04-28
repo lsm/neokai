@@ -310,14 +310,42 @@ function readNumber(record: Record<string, unknown>, keys: string[]): number | u
 	return undefined;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: undefined;
+}
+
+function selectUsageBreakdown(rawParams: unknown): Record<string, unknown> {
+	const params = asRecord(rawParams) ?? {};
+	const usageContainer =
+		asRecord(params.usage) ??
+		asRecord(params.tokenUsage) ??
+		asRecord(params.token_usage) ??
+		asRecord(params.totalTokenUsage) ??
+		asRecord(params.total_token_usage);
+
+	if (usageContainer) {
+		// Codex app-server v2 sends:
+		//   { tokenUsage: { total: {...}, last: {...}, modelContextWindow } }
+		// `last` is the turn-level usage that best matches Anthropic message usage;
+		// `total` is retained as a fallback for restored/cumulative snapshots.
+		return (
+			asRecord(usageContainer.last) ??
+			asRecord(usageContainer.lastTokenUsage) ??
+			asRecord(usageContainer.last_token_usage) ??
+			asRecord(usageContainer.total) ??
+			asRecord(usageContainer.totalTokenUsage) ??
+			asRecord(usageContainer.total_token_usage) ??
+			usageContainer
+		);
+	}
+
+	return params;
+}
+
 function normalizeTokenUsage(rawParams: unknown): TokenUsage {
-	const params = (rawParams ?? {}) as Record<string, unknown>;
-	const nested = (params.usage ??
-		params.tokenUsage ??
-		params.token_usage ??
-		params.totalTokenUsage ??
-		params.total_token_usage ??
-		params) as Record<string, unknown>;
+	const nested = selectUsageBreakdown(rawParams);
 
 	const outputTokens = readNumber(nested, ['outputTokens', 'output_tokens']) ?? 0;
 	const cacheReadInputTokens =
@@ -429,11 +457,12 @@ export class BridgeSession {
 		// (or around the same time as) turn/completed.  We store it so that
 		// turn/completed can populate turn_done with real counts instead of zeros.
 		this.conn.onNotification('thread/tokenUsage/updated', (rawParams) => {
-			// The Codex app-server may send usage as a nested object or flat:
+			// The Codex app-server sends v2 usage as:
+			//   { tokenUsage: { total, last, modelContextWindow } }
+			// Older builds and tests may send usage as a nested breakdown or flat:
 			//   { threadId, usage: { inputTokens, outputTokens } }
 			//   { threadId, inputTokens, outputTokens }
-			// Newer app-server builds may use snake_case fields and include cache
-			// counters, so normalize both protocol shapes here.
+			// Normalize camelCase and snake_case fields, including cache counters.
 			const usage = normalizeTokenUsage(rawParams);
 			logger.debug(
 				`BridgeSession: thread/tokenUsage/updated inputTokens=${usage.inputTokens} outputTokens=${usage.outputTokens}`
