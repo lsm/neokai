@@ -62,7 +62,7 @@ Build `AppMcpServersSettings` component in the global settings panel for managin
    - List all registry entries from `appMcpServers` signal, showing name, source type, enabled toggle.
    - "Add MCP Server" button opens a form with fields: Name, Description (optional), Source Type (stdio / sse / http), Command (stdio), Args (stdio, space-separated), Env vars (key=value list), URL (sse/http), Headers (key=value list).
    - Inline validation: stdio requires command; sse/http require url.
-   - Env vars section: key=value list editor. Display an informational note: "For API keys and secrets, set them in your system environment (e.g., `export BRAVE_API_KEY=...`) and reference them by name here. Values stored here are saved in plain text." This avoids storing raw secrets in SQLite.
+   - Env vars section: key=value list editor. Display an informational note: "For API keys and secrets, set them in your system environment and reference them by name here. Values stored here are saved in plain text." This avoids storing raw secrets in SQLite.
    - Edit mode: click entry to open the same form pre-populated.
    - Delete: confirmation dialog before calling `deleteAppMcpServer`.
    - Enable/disable toggle per entry.

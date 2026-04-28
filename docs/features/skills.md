@@ -48,12 +48,7 @@ When enabled, all tools exposed by that MCP server become available to the agent
 
 #### Built-in
 
-Built-in skills are shipped with NeoKai and cannot be deleted. They require no additional configuration beyond what the underlying tool needs (e.g., an API key). NeoKai ships with four built-in skills: **Web Search (MCP)**, **Chrome DevTools (MCP)**, **Playwright**, and **Playwright Interactive**.
-
-To use the Web Search skill:
-1. Add a `BRAVE_API_KEY` environment variable (get one from [brave.com/search/api](https://brave.com/search/api/))
-2. Enable the **Web Search (MCP)** skill in the skills registry
-3. Enable it in your room's settings
+Built-in skills are shipped with NeoKai and cannot be deleted. NeoKai ships with four built-in skills: **Fetch MCP**, **Chrome DevTools (MCP)**, **Playwright**, and **Playwright Interactive**.
 
 ## Enabling Skills Per Room
 

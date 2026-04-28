@@ -516,6 +516,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   all removed). Runs after every previous migration that may still
 	//   reference the table.
 	runMigration107(db);
+
+	// Migration 108: Remove stale persisted Brave Search MCP rows from older
+	//   databases. The built-in registry no longer seeds this MCP server or its
+	//   wrapper skill, but users who ran older builds can still have rows in
+	//   app_mcp_servers, skills, and enablement override tables. Delete those
+	//   legacy rows so settings surfaces no longer display them.
+	runMigration108(db);
 }
 
 /**
@@ -7383,4 +7390,175 @@ export function runMigration107(db: BunDatabase): void {
 	db.exec(`DROP INDEX IF EXISTS idx_space_task_report_results_task`);
 	db.exec(`DROP INDEX IF EXISTS idx_space_task_report_results_space`);
 	db.exec(`DROP TABLE IF EXISTS space_task_report_results`);
+}
+
+/**
+ * Migration 108: Remove stale Brave Search MCP registry data.
+ *
+ * Earlier builds seeded an application MCP server and a built-in skill for a
+ * Brave-backed web search integration. Those seed definitions have been
+ * removed, but existing SQLite databases can still contain the rows and their
+ * per-room/space/session overrides. This migration removes only the known
+ * legacy identifiers and rows whose MCP command/config explicitly points at
+ * the removed package/API key, while leaving unrelated user-created MCP
+ * servers intact.
+ */
+export function runMigration108(db: BunDatabase): void {
+	const legacyServerNames = ['brave-search', 'web-search-brave'];
+	const legacySkillNames = ['web-search-mcp', 'builtin-web-search-mcp'];
+
+	const legacyServerIds = new Set<string>();
+	if (tableExists(db, 'app_mcp_servers')) {
+		const rows = db
+			.prepare(
+				`SELECT id, name, description, command, args, env
+				   FROM app_mcp_servers`
+			)
+			.all() as Array<{
+			id: string;
+			name: string;
+			description: string | null;
+			command: string | null;
+			args: string | null;
+			env: string | null;
+		}>;
+
+		for (const row of rows) {
+			const searchable = [
+				row.name,
+				row.description ?? '',
+				row.command ?? '',
+				row.args ?? '',
+				row.env ?? '',
+			]
+				.join('\n')
+				.toLowerCase();
+			if (
+				legacyServerNames.includes(row.name.toLowerCase()) ||
+				searchable.includes('server-brave-search') ||
+				searchable.includes('brave_api_key') ||
+				searchable.includes('brave search')
+			) {
+				legacyServerIds.add(row.id);
+			}
+		}
+	}
+
+	const legacySkillIds = new Set<string>();
+	if (tableExists(db, 'skills')) {
+		const rows = db
+			.prepare(`SELECT id, name, display_name, description, config FROM skills`)
+			.all() as Array<{
+			id: string;
+			name: string;
+			display_name: string;
+			description: string;
+			config: string;
+		}>;
+
+		for (const row of rows) {
+			const lowerName = row.name.toLowerCase();
+			const searchable = [row.name, row.display_name, row.description, row.config]
+				.join('\n')
+				.toLowerCase();
+			const referencesLegacyServer = [...legacyServerIds].some((id) => row.config.includes(id));
+			if (
+				legacySkillNames.includes(lowerName) ||
+				row.display_name.toLowerCase() === 'web search (mcp)' ||
+				searchable.includes('brave search') ||
+				searchable.includes('brave_api_key') ||
+				referencesLegacyServer
+			) {
+				legacySkillIds.add(row.id);
+			}
+		}
+	}
+
+	if (legacySkillIds.size > 0) {
+		if (tableExists(db, 'room_skill_overrides')) {
+			const deleteOverride = db.prepare(`DELETE FROM room_skill_overrides WHERE skill_id = ?`);
+			for (const id of legacySkillIds) deleteOverride.run(id);
+		}
+		const deleteSkill = db.prepare(`DELETE FROM skills WHERE id = ?`);
+		for (const id of legacySkillIds) deleteSkill.run(id);
+	}
+
+	if (legacyServerIds.size > 0) {
+		if (tableExists(db, 'mcp_enablement')) {
+			const deleteEnablement = db.prepare(`DELETE FROM mcp_enablement WHERE server_id = ?`);
+			for (const id of legacyServerIds) deleteEnablement.run(id);
+		}
+		if (tableExists(db, 'room_mcp_enablement')) {
+			const deleteRoomEnablement = db.prepare(
+				`DELETE FROM room_mcp_enablement WHERE server_id = ?`
+			);
+			for (const id of legacyServerIds) deleteRoomEnablement.run(id);
+		}
+		const deleteServer = db.prepare(`DELETE FROM app_mcp_servers WHERE id = ?`);
+		for (const id of legacyServerIds) deleteServer.run(id);
+	}
+
+	const legacyNames = new Set([...legacyServerNames, ...legacySkillNames]);
+	if (tableExists(db, 'global_settings')) {
+		try {
+			const row = db.prepare(`SELECT settings FROM global_settings WHERE id = 1`).get() as
+				| { settings: string }
+				| undefined;
+			if (row) {
+				const settings = JSON.parse(row.settings) as Record<string, unknown>;
+				let mutated = false;
+				for (const key of ['disabledMcpServers', 'enabledMcpServers'] as const) {
+					const value = settings[key];
+					if (!Array.isArray(value)) continue;
+					const filtered = value.filter((name) => {
+						return typeof name !== 'string' || !legacyNames.has(name.toLowerCase());
+					});
+					if (filtered.length !== value.length) {
+						settings[key] = filtered;
+						mutated = true;
+					}
+				}
+				if (mutated) {
+					db.prepare(
+						`UPDATE global_settings SET settings = ?, updated_at = datetime('now') WHERE id = 1`
+					).run(JSON.stringify(settings));
+				}
+			}
+		} catch {
+			// Malformed settings should not block startup; the registry rows above
+			// are the authoritative availability surface.
+		}
+	}
+
+	if (tableExists(db, 'sessions')) {
+		const rows = db.prepare(`SELECT id, config FROM sessions`).all() as Array<{
+			id: string;
+			config: string | null;
+		}>;
+		const update = db.prepare(`UPDATE sessions SET config = ? WHERE id = ?`);
+		for (const row of rows) {
+			try {
+				const config = JSON.parse(row.config ?? '{}') as Record<string, unknown> & {
+					tools?: Record<string, unknown>;
+				};
+				let mutated = false;
+				for (const holder of [config, config.tools].filter(Boolean) as Array<
+					Record<string, unknown>
+				>) {
+					const value = holder.disabledMcpServers;
+					if (!Array.isArray(value)) continue;
+					const filtered = value.filter((name) => {
+						return typeof name !== 'string' || !legacyNames.has(name.toLowerCase());
+					});
+					if (filtered.length !== value.length) {
+						holder.disabledMcpServers = filtered;
+						mutated = true;
+					}
+				}
+				if (mutated) update.run(JSON.stringify(config), row.id);
+			} catch {
+				continue;
+			}
+		}
+	}
 }
