@@ -462,12 +462,21 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			if (url.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
 				try {
 					const body = (await req.json()) as AnthropicRequest;
-					return new Response(
-						JSON.stringify({ input_tokens: estimateAnthropicInputTokens(body) }),
-						{
-							headers: { 'Content-Type': 'application/json' },
-						}
-					);
+					const sessionId = extractSessionId(req);
+					const ps = persistentSessions.get(sessionId);
+					const resolvedModel = resolveBridgeModelId(body.model);
+					const currentToolsKey = toolsKey(body.tools ?? []);
+					const shouldCountOnlyCurrentTurn =
+						ps !== undefined &&
+						!ps.isFirstTurn &&
+						ps.model === resolvedModel &&
+						ps.toolsKey === currentToolsKey;
+					const inputTokens = shouldCountOnlyCurrentTurn
+						? estimateLastMessageInputTokens(body)
+						: estimateAnthropicInputTokens(body);
+					return new Response(JSON.stringify({ input_tokens: inputTokens }), {
+						headers: { 'Content-Type': 'application/json' },
+					});
 				} catch {
 					return createAnthropicError(400, 'invalid_request_error', 'Bad Request');
 				}

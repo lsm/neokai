@@ -1028,6 +1028,20 @@ describe('mapRawModelsToModelInfos', () => {
 		expect(result[0].provider).toBe('anthropic');
 	});
 
+	it('preserves GPT-5.5 context window metadata from models.list', () => {
+		const result = mapRawModelsToModelInfos([
+			{
+				id: 'gpt-5.5',
+				display_name: 'GPT-5.5',
+				description: 'Latest Codex model',
+				provider: 'anthropic-codex',
+				contextWindow: 272000,
+			},
+		]);
+
+		expect(result[0].contextWindow).toBe(272000);
+	});
+
 	it('sorts by PROVIDER_ORDER: anthropic before copilot before codex', () => {
 		const result = mapRawModelsToModelInfos([
 			{ id: 'codex-sonnet', display_name: 'Codex', description: '', provider: 'anthropic-codex' },

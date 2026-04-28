@@ -1554,6 +1554,43 @@ describe('tool_choice warning — codex bridge', () => {
 		expect(deltaUsage?.input_tokens).toBe(startUsage?.input_tokens);
 	});
 
+	it('counts later persistent Codex turns from the sent user message, not replayed history', async () => {
+		const headers = {
+			'Content-Type': 'application/json',
+			Authorization: 'Bearer codex-bridge-count-estimate',
+		};
+
+		const firstResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				model: 'gpt-5.5',
+				messages: [{ role: 'user', content: 'Start' }],
+				stream: true,
+			}),
+		});
+		expect(firstResp.ok).toBe(true);
+		await readSSEEvents(firstResp.body);
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages/count_tokens`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				model: 'gpt-5.5',
+				messages: [
+					{ role: 'user', content: 'x '.repeat(20_000) },
+					{ role: 'assistant', content: 'ok' },
+					{ role: 'user', content: 'Hey' },
+				],
+			}),
+		});
+
+		expect(resp.ok).toBe(true);
+		const body = (await resp.json()) as { input_tokens: number };
+		expect(body.input_tokens).toBeGreaterThan(0);
+		expect(body.input_tokens).toBeLessThan(50);
+	});
+
 	it('does NOT log a tool_choice warning when tool_choice is absent', async () => {
 		const warnSpy = spyOn(Logger.prototype, 'warn');
 
