@@ -35,6 +35,7 @@ import {
 	errorSSE,
 } from './translator.js';
 import { estimateAnthropicInputTokens } from './token-estimator.js';
+import { getModelContextWindow, type CodexBridgeModelId } from './model-context-windows.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('codex-bridge-server');
@@ -49,26 +50,16 @@ const logger = new Logger('codex-bridge-server');
 // a minimal Anthropic-compatible model listing that covers the models offered
 // by the parent AnthropicToCodexBridgeProvider.
 
-const MODEL_CONTEXT_WINDOWS = {
-	'gpt-5.3-codex': 272000,
-	'gpt-5.4': 272000,
-	'gpt-5.5': 272000,
-	'gpt-5.4-mini': 128000,
-	'gpt-5.1-codex-mini': 128000,
-} as const;
-
-type BridgeModelId = keyof typeof MODEL_CONTEXT_WINDOWS;
-
 function bridgeModel({
 	id,
 	display_name,
 	created_at,
 }: {
-	id: BridgeModelId;
+	id: CodexBridgeModelId;
 	display_name: string;
 	created_at: string;
 }) {
-	const contextWindow = MODEL_CONTEXT_WINDOWS[id];
+	const contextWindow = getModelContextWindow(id)!;
 	const autoCompactTokenLimit = Math.floor(contextWindow * 0.9);
 	return {
 		id,
@@ -245,10 +236,11 @@ export async function drainToSSE(
 	let blockIndex = 0;
 	let outputTokens = 0;
 	let suspendedCallId: string | null = null;
+	let modelContextWindow = getModelContextWindow(model);
 
 	try {
 		const msgId = generateMsgId();
-		send(messageStartSSE(msgId, model, initialInputTokens));
+		send(messageStartSSE(msgId, model, initialInputTokens, modelContextWindow));
 		send(pingSSE());
 
 		// Use gen.next() manually instead of for-await-of.  The for-await-of
@@ -283,7 +275,13 @@ export async function drainToSSE(
 				send(contentBlockStopSSE(blockIndex));
 				// At tool_call time, thread/tokenUsage/updated has not yet fired (the model
 				// hasn't finished the turn yet), so use the request-side estimate here.
-				send(messageDeltaSSE('tool_use', { outputTokens, inputTokens: initialInputTokens }));
+				send(
+					messageDeltaSSE('tool_use', {
+						outputTokens,
+						inputTokens: initialInputTokens,
+						modelContextWindow,
+					})
+				);
 				send(messageStopSSE());
 
 				// Store the session so the next HTTP request can resume it.
@@ -319,12 +317,14 @@ export async function drainToSSE(
 				// or from legacy inline usage. Fall back to heuristic count if both are 0.
 				const endOutputTokens = event.outputTokens > 0 ? event.outputTokens : outputTokens;
 				const endInputTokens = event.inputTokens > 0 ? event.inputTokens : initialInputTokens;
+				modelContextWindow = event.modelContextWindow ?? modelContextWindow;
 				send(
 					messageDeltaSSE('end_turn', {
 						outputTokens: endOutputTokens,
 						inputTokens: endInputTokens,
 						cacheCreationInputTokens: event.cacheCreationInputTokens,
 						cacheReadInputTokens: event.cacheReadInputTokens,
+						modelContextWindow,
 					})
 				);
 				send(messageStopSSE());
@@ -352,7 +352,11 @@ export async function drainToSSE(
 			send(contentBlockStopSSE(blockIndex));
 		}
 		send(
-			messageDeltaSSE('end_turn', { outputTokens: outputTokens, inputTokens: initialInputTokens })
+			messageDeltaSSE('end_turn', {
+				outputTokens: outputTokens,
+				inputTokens: initialInputTokens,
+				modelContextWindow,
+			})
 		);
 		send(messageStopSSE());
 		session.kill();

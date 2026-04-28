@@ -969,7 +969,12 @@ describe('Bridge HTTP server', () => {
 	it('drainToSSE sends estimated input_tokens at start and real Codex usage at turn end', async () => {
 		async function* usageGen(): AsyncGenerator<BridgeEvent> {
 			yield { type: 'text_delta', text: 'Hi' };
-			yield { type: 'turn_done', inputTokens: 120, outputTokens: 55 };
+			yield {
+				type: 'turn_done',
+				inputTokens: 120,
+				outputTokens: 55,
+				modelContextWindow: 272000,
+			};
 		}
 
 		const mockSession = { kill: () => {} } as unknown as BridgeSession;
@@ -978,7 +983,7 @@ describe('Bridge HTTP server', () => {
 				void drainToSSE(
 					usageGen(),
 					mockSession,
-					'test-model',
+					'gpt-5.5',
 					new Map(),
 					controller,
 					5000,
@@ -992,16 +997,27 @@ describe('Bridge HTTP server', () => {
 
 		const events = await readSSEEvents(stream);
 		const msgStart = events.find((e) => e.event === 'message_start');
-		const startUsage = (msgStart?.data as { message?: { usage?: { input_tokens?: number } } })
-			?.message?.usage;
+		const startUsage = (
+			msgStart?.data as {
+				message?: { usage?: { input_tokens?: number; model_context_window?: number } };
+			}
+		)?.message?.usage;
 		expect(startUsage?.input_tokens).toBe(33);
+		expect(startUsage?.model_context_window).toBe(272000);
 
 		const msgDelta = events.find((e) => e.event === 'message_delta');
 		const deltaUsage = (
-			msgDelta?.data as { usage?: { input_tokens?: number; output_tokens?: number } }
+			msgDelta?.data as {
+				usage?: {
+					input_tokens?: number;
+					output_tokens?: number;
+					model_context_window?: number;
+				};
+			}
 		)?.usage;
 		expect(deltaUsage?.input_tokens).toBe(120);
 		expect(deltaUsage?.output_tokens).toBe(55);
+		expect(deltaUsage?.model_context_window).toBe(272000);
 	});
 
 	it('drainToSSE falls back to estimated input_tokens when Codex usage is unavailable', async () => {
