@@ -330,6 +330,7 @@ export function parseThreadRow(row: SpaceTaskThreadMessageRow): ParsedThreadRow 
 		const withTimestamp = {
 			...(parsed as Record<string, unknown>),
 			timestamp: row.createdAt,
+			...(row.origin ? { origin: row.origin } : {}),
 		} as unknown as SDKMessage;
 
 		return {
