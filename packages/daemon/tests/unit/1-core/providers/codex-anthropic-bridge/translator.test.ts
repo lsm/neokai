@@ -365,6 +365,12 @@ describe('SSE builders', () => {
 		expect(msg.usage.cache_read_input_tokens).toBe(0);
 	});
 
+	it('messageStartSSE includes model_context_window when provided', () => {
+		const { data } = parseSSE(messageStartSSE('msg_abc', 'gpt-5.5', 25, 272000));
+		const msg = (data as { message: { usage: Record<string, unknown> } }).message;
+		expect(msg.usage.model_context_window).toBe(272000);
+	});
+
 	it('contentBlockStartTextSSE emits text block at given index', () => {
 		const { data } = parseSSE(contentBlockStartTextSSE(0));
 		expect((data as { content_block: { type: string } }).content_block.type).toBe('text');
@@ -418,6 +424,7 @@ describe('SSE builders', () => {
 				inputTokens: 100,
 				cacheCreationInputTokens: 50,
 				cacheReadInputTokens: 25,
+				modelContextWindow: 272000,
 			})
 		);
 		const usage = (data as { usage: Record<string, unknown> }).usage;
@@ -425,6 +432,7 @@ describe('SSE builders', () => {
 		expect(usage.output_tokens).toBe(42);
 		expect(usage.cache_creation_input_tokens).toBe(50);
 		expect(usage.cache_read_input_tokens).toBe(25);
+		expect(usage.model_context_window).toBe(272000);
 	});
 
 	it('messageDeltaSSE null-coalesces missing optional usage fields', () => {
@@ -433,6 +441,7 @@ describe('SSE builders', () => {
 		expect(usage.input_tokens).toBeNull();
 		expect(usage.cache_creation_input_tokens).toBeNull();
 		expect(usage.cache_read_input_tokens).toBeNull();
+		expect(usage.model_context_window).toBeNull();
 	});
 
 	it('messageStopSSE emits message_stop', () => {

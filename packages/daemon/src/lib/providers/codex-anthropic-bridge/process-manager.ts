@@ -33,6 +33,7 @@ export type BridgeEvent =
 			outputTokens: number;
 			cacheCreationInputTokens?: number;
 			cacheReadInputTokens?: number;
+			modelContextWindow?: number;
 	  }
 	| { type: 'error'; message: string };
 
@@ -298,6 +299,7 @@ export type TokenUsage = {
 	outputTokens: number;
 	cacheCreationInputTokens?: number;
 	cacheReadInputTokens?: number;
+	modelContextWindow?: number;
 };
 
 function readNumber(record: Record<string, unknown>, keys: string[]): number | undefined {
@@ -316,14 +318,20 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 		: undefined;
 }
 
-function selectUsageBreakdown(rawParams: unknown): Record<string, unknown> {
+function selectUsageContainer(rawParams: unknown): Record<string, unknown> | undefined {
 	const params = asRecord(rawParams) ?? {};
-	const usageContainer =
+	return (
 		asRecord(params.usage) ??
 		asRecord(params.tokenUsage) ??
 		asRecord(params.token_usage) ??
 		asRecord(params.totalTokenUsage) ??
-		asRecord(params.total_token_usage);
+		asRecord(params.total_token_usage)
+	);
+}
+
+function selectUsageBreakdown(rawParams: unknown): Record<string, unknown> {
+	const params = asRecord(rawParams) ?? {};
+	const usageContainer = selectUsageContainer(rawParams);
 
 	if (usageContainer) {
 		// Codex app-server v2 sends:
@@ -345,6 +353,8 @@ function selectUsageBreakdown(rawParams: unknown): Record<string, unknown> {
 }
 
 function normalizeTokenUsage(rawParams: unknown): TokenUsage {
+	const params = asRecord(rawParams) ?? {};
+	const usageContainer = selectUsageContainer(rawParams);
 	const nested = selectUsageBreakdown(rawParams);
 
 	const outputTokens = readNumber(nested, ['outputTokens', 'output_tokens']) ?? 0;
@@ -361,6 +371,12 @@ function normalizeTokenUsage(rawParams: unknown): TokenUsage {
 	const totalTokens = readNumber(nested, ['totalTokens', 'total_tokens']);
 	const reasoningOutputTokens =
 		readNumber(nested, ['reasoningOutputTokens', 'reasoning_output_tokens']) ?? 0;
+	const modelContextWindow =
+		readNumber(nested, ['modelContextWindow', 'model_context_window']) ??
+		(usageContainer
+			? readNumber(usageContainer, ['modelContextWindow', 'model_context_window'])
+			: undefined) ??
+		readNumber(params, ['modelContextWindow', 'model_context_window']);
 
 	const inputTokens =
 		explicitInputTokens ??
@@ -373,6 +389,7 @@ function normalizeTokenUsage(rawParams: unknown): TokenUsage {
 		outputTokens,
 		cacheCreationInputTokens,
 		cacheReadInputTokens,
+		modelContextWindow,
 	};
 }
 
@@ -465,7 +482,7 @@ export class BridgeSession {
 			// Normalize camelCase and snake_case fields, including cache counters.
 			const usage = normalizeTokenUsage(rawParams);
 			logger.debug(
-				`BridgeSession: thread/tokenUsage/updated inputTokens=${usage.inputTokens} outputTokens=${usage.outputTokens}`
+				`BridgeSession: thread/tokenUsage/updated inputTokens=${usage.inputTokens} outputTokens=${usage.outputTokens} modelContextWindow=${usage.modelContextWindow ?? 'unknown'}`
 			);
 			this.latestUsage = usage;
 		});

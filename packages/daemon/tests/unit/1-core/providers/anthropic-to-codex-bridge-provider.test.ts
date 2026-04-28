@@ -554,6 +554,14 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			expect(models.length).toBeGreaterThan(0);
 		});
 
+		it('reports 272k context windows for GPT-5.3/5.4/5.5 Codex bridge models', async () => {
+			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fakeCodexFound);
+			const models = await provider.getModels();
+			for (const modelId of ['gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5']) {
+				expect(models.find((model) => model.id === modelId)?.contextWindow).toBe(272000);
+			}
+		});
+
 		it('returns models when NeoKai OAuth credentials are in auth.json', async () => {
 			const neokaiDir = path.join(tmpDir, 'neokai');
 			writeNeokaiAuth(neokaiDir, {

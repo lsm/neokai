@@ -34,6 +34,7 @@ import {
 	type BridgeServer,
 	createBridgeServer,
 } from './codex-anthropic-bridge/server.js';
+import { getModelContextWindow } from './codex-anthropic-bridge/model-context-windows.js';
 import { Logger } from '../logger.js';
 import * as fs from 'fs/promises';
 import { existsSync } from 'node:fs';
@@ -55,7 +56,7 @@ const ANTHROPIC_CODEX_MODELS: ModelInfo[] = [
 		alias: 'codex',
 		family: 'gpt',
 		provider: 'anthropic-codex',
-		contextWindow: 200000,
+		contextWindow: getModelContextWindow('gpt-5.3-codex')!,
 		description: 'GPT-5.3 Codex · Best for coding and complex reasoning',
 		releaseDate: '2025-12-01',
 		available: true,
@@ -66,7 +67,7 @@ const ANTHROPIC_CODEX_MODELS: ModelInfo[] = [
 		alias: 'codex-5.4',
 		family: 'gpt',
 		provider: 'anthropic-codex',
-		contextWindow: 200000,
+		contextWindow: getModelContextWindow('gpt-5.4')!,
 		description: 'GPT-5.4 · Frontier agentic coding model',
 		releaseDate: '2026-01-01',
 		available: true,
@@ -77,7 +78,7 @@ const ANTHROPIC_CODEX_MODELS: ModelInfo[] = [
 		alias: 'codex-latest',
 		family: 'gpt',
 		provider: 'anthropic-codex',
-		contextWindow: 200000,
+		contextWindow: getModelContextWindow('gpt-5.5')!,
 		description: 'GPT-5.5 · Latest frontier agentic coding model',
 		releaseDate: '2026-04-01',
 		available: true,
@@ -88,7 +89,7 @@ const ANTHROPIC_CODEX_MODELS: ModelInfo[] = [
 		alias: 'codex-mini',
 		family: 'gpt',
 		provider: 'anthropic-codex',
-		contextWindow: 128000,
+		contextWindow: getModelContextWindow('gpt-5.4-mini')!,
 		description: 'GPT-5.4 Mini · Fast and efficient for simpler tasks',
 		releaseDate: '2026-01-01',
 		available: true,
@@ -99,7 +100,7 @@ const ANTHROPIC_CODEX_MODELS: ModelInfo[] = [
 		alias: 'codex-5.1-mini',
 		family: 'gpt',
 		provider: 'anthropic-codex',
-		contextWindow: 128000,
+		contextWindow: getModelContextWindow('gpt-5.1-codex-mini')!,
 		description: 'GPT-5.1 Codex Mini · Fast and efficient for simpler tasks',
 		releaseDate: '2026-01-01',
 		available: true,
