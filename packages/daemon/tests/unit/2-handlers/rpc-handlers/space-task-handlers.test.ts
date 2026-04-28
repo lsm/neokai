@@ -377,6 +377,87 @@ describe('space-task-handlers', () => {
 	// ─── reactivation via spaceTask.update ─────────────────────────────────────
 
 	describe('spaceTask.reactivate via spaceTask.update', () => {
+		it('routes workflow-backed Resume through workflow recovery instead of task-only status update', async () => {
+			const workflowTask = {
+				...mockTask,
+				status: 'cancelled' as const,
+				workflowRunId: 'run-1',
+				completedAt: NOW - 1_000,
+			};
+			const recoveredTask = {
+				...workflowTask,
+				status: 'in_progress' as const,
+				completedAt: null,
+			};
+			const runtime = {
+				recoverWorkflowBackedTask: mock(async () => recoveredTask),
+			} as unknown as SpaceRuntimeService;
+			setup(mockSpace, workflowTask, runtime);
+
+			const result = await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'in_progress',
+			});
+
+			expect(result).toEqual(recoveredTask);
+			expect(runtime.recoverWorkflowBackedTask).toHaveBeenCalledWith(
+				'space-1',
+				'task-1',
+				'in_progress'
+			);
+			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+		});
+
+		it('routes workflow-backed start through workflow recovery to keep task and run consistent', async () => {
+			const workflowTask = {
+				...mockTask,
+				status: 'open' as const,
+				workflowRunId: 'run-1',
+			};
+			const recoveredTask = { ...workflowTask, status: 'in_progress' as const };
+			const runtime = {
+				recoverWorkflowBackedTask: mock(async () => recoveredTask),
+			} as unknown as SpaceRuntimeService;
+			setup(mockSpace, workflowTask, runtime);
+
+			const result = await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'in_progress',
+			});
+
+			expect(result).toEqual(recoveredTask);
+			expect(runtime.recoverWorkflowBackedTask).toHaveBeenCalledWith(
+				'space-1',
+				'task-1',
+				'in_progress'
+			);
+			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+		});
+
+		it('exposes explicit workflow recovery RPC', async () => {
+			const workflowTask = {
+				...mockTask,
+				status: 'cancelled' as const,
+				workflowRunId: 'run-1',
+			};
+			const recoveredTask = { ...workflowTask, status: 'open' as const };
+			const runtime = {
+				recoverWorkflowBackedTask: mock(async () => recoveredTask),
+			} as unknown as SpaceRuntimeService;
+			setup(mockSpace, workflowTask, runtime);
+
+			const result = await call('spaceTask.recoverWorkflow', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'open',
+			});
+
+			expect(result).toEqual(recoveredTask);
+			expect(runtime.recoverWorkflowBackedTask).toHaveBeenCalledWith('space-1', 'task-1', 'open');
+		});
+
 		it('reactivates a completed task to in_progress and emits space.task.updated', async () => {
 			const completedTask = { ...mockTask, status: 'completed' as const };
 			setup(mockSpace, completedTask);

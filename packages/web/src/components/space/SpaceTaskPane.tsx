@@ -85,6 +85,30 @@ const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
 	urgent: 'border-red-500/30 bg-red-500/10 text-red-300',
 };
 
+function isWorkflowRecoveryTransition(
+	from: SpaceTaskStatus,
+	to: SpaceTaskStatus
+): to is 'open' | 'in_progress' {
+	return (
+		(from === 'done' || from === 'blocked' || from === 'cancelled') &&
+		(to === 'open' || to === 'in_progress')
+	);
+}
+
+function getTaskActionLabel(
+	task: { status: SpaceTaskStatus; workflowRunId?: string | null },
+	target: SpaceTaskStatus,
+	label: string
+): string {
+	if (!task.workflowRunId || !isWorkflowRecoveryTransition(task.status, target)) {
+		return label;
+	}
+	if (label.toLowerCase().includes('reopen')) {
+		return 'Reopen workflow';
+	}
+	return target === 'in_progress' ? 'Resume workflow' : 'Reopen workflow';
+}
+
 function formatAgentSlotLabel(name: string): string {
 	return name
 		.split(/[\s_-]+/)
@@ -531,7 +555,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		try {
 			setStatusTransitioning(true);
 			setThreadSendError(null);
-			await spaceStore.updateTask(task.id, { status: newStatus });
+			if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, newStatus)) {
+				await spaceStore.recoverWorkflowTask(task.id, newStatus);
+			} else {
+				await spaceStore.updateTask(task.id, { status: newStatus });
+			}
 		} catch (err) {
 			setThreadSendError(formatTaskThreadError(err));
 		} finally {
@@ -625,7 +653,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		}
 		taskActionItems.push(
 			...filteredTransitionActions.map(({ target, label }) => ({
-				label,
+				label: getTaskActionLabel(task, target, label),
 				onClick: () => {
 					handleStatusTransition(target);
 				},

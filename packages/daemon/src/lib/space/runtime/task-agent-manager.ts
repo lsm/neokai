@@ -2078,6 +2078,22 @@ export class TaskAgentManager {
 		return this.config.sessionManager.getSession(sessionId) ?? undefined;
 	}
 
+	/**
+	 * Prepare an existing node-agent sub-session for workflow resume/reopen.
+	 *
+	 * The caller has already verified the NodeExecution row is still bound to a
+	 * live session. Re-run the same runtime MCP attachment path used by self-heal
+	 * so a resumed workflow has node-agent and space-agent-tools available even if
+	 * the in-memory session was restored from DB without workflow MCP servers.
+	 */
+	async prepareSubSessionForWorkflowResume(sessionId: string): Promise<boolean> {
+		if (!this.isSessionAlive(sessionId)) return false;
+		const session = this.getAgentSessionById(sessionId);
+		if (!session) return false;
+		await this.mcpSelfHeal(sessionId, ['node-agent', 'space-agent-tools']);
+		return true;
+	}
+
 	// -------------------------------------------------------------------------
 	// Public — cleanup
 	// -------------------------------------------------------------------------
