@@ -241,9 +241,14 @@ function RecentTaskItem({ task, onClick }: { task: SpaceTask; onClick?: () => vo
 		>
 			<div class={cn('w-2 h-2 rounded-full flex-shrink-0', statusColor.replace('text-', 'bg-'))} />
 			<div class="flex-1 min-w-0">
-				<span class="text-sm text-gray-200 group-hover:text-gray-100 truncate block">
-					{task.title}
-				</span>
+				<div class="flex items-center gap-2 min-w-0">
+					<span class="text-sm text-gray-200 group-hover:text-gray-100 truncate block">
+						{task.title}
+					</span>
+					<span class="inline-flex items-center text-xs font-mono font-medium text-gray-400 bg-dark-700 border border-dark-600 px-1.5 py-0.5 rounded flex-shrink-0">
+						#{task.taskNumber}
+					</span>
+				</div>
 			</div>
 			<span class="text-xs text-gray-500 flex-shrink-0 tabular-nums">
 				{getRelativeTime(task.updatedAt)}

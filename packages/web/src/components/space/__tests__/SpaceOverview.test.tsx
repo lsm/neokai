@@ -164,6 +164,17 @@ describe('SpaceOverview', () => {
 		expect(getByText('Task t3')).toBeTruthy();
 	});
 
+	it('shows task numbers in recent task items', () => {
+		mockSpace.value = makeSpace();
+		mockTasks.value = [
+			makeTask('task-171', 'open', { title: 'Investigate toolbar state', taskNumber: 171 }),
+		];
+
+		const { getByText } = render(<SpaceOverview spaceId="space-1" />);
+		expect(getByText('Investigate toolbar state')).toBeTruthy();
+		expect(getByText('#171')).toBeTruthy();
+	});
+
 	it('shows empty state when there are no tasks', () => {
 		mockSpace.value = makeSpace();
 		const { getByText } = render(<SpaceOverview spaceId="space-1" />);

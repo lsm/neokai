@@ -211,6 +211,7 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
 	return {
 		id: 'task-1',
 		spaceId: 'space-1',
+		taskNumber: 1,
 		title: 'Fix the bug',
 		description: 'Task description',
 		status: 'open',
@@ -270,6 +271,13 @@ describe('SpaceTaskPane', () => {
 		expect(getByText('My Task')).toBeTruthy();
 		expect(getAllByText('In Progress').length).toBeGreaterThan(0);
 		expect(getByText('High Priority')).toBeTruthy();
+	});
+
+	it('shows the task number in the header', () => {
+		mockTasks.value = [makeTask({ title: 'Review launch checklist', taskNumber: 173 })];
+		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByText('Review launch checklist')).toBeTruthy();
+		expect(getByText('#173')).toBeTruthy();
 	});
 
 	it('omits the header status badge for review tasks because the approval banner owns that state', () => {
