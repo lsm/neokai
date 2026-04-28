@@ -418,6 +418,28 @@ describe('NodeExecutionRepository', () => {
 		});
 	});
 
+	describe('getByAgentSessionId', () => {
+		it('prefers active executions when a reused session appears on multiple rows', () => {
+			const sessionId = 'session-reused';
+			const idleExec = createExecution({
+				workflowNodeId: 'node-old',
+				agentSessionId: sessionId,
+				status: 'idle',
+			});
+			const activeExec = createExecution({
+				workflowNodeId: 'node-current',
+				agentSessionId: sessionId,
+				status: 'in_progress',
+			});
+
+			expect(repo.getByAgentSessionId(sessionId)?.id).toBe(activeExec.id);
+			expect(repo.listByAgentSessionId(sessionId).map((e) => e.id)).toEqual([
+				activeExec.id,
+				idleExec.id,
+			]);
+		});
+	});
+
 	describe('delete', () => {
 		it('deletes a node execution', () => {
 			const exec = createExecution();
