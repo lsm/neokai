@@ -56,6 +56,7 @@ interface Ctx {
 	runtime: SpaceRuntime;
 	taskRepo: SpaceTaskRepository;
 	emitted: Array<{ spaceId: string; task: SpaceTask }>;
+	injected: string[];
 }
 
 function buildRuntime(): Ctx {
@@ -70,6 +71,7 @@ function buildRuntime(): Ctx {
 	const spaceManager = new SpaceManager(db);
 
 	const emitted: Array<{ spaceId: string; task: SpaceTask }> = [];
+	const injected: string[] = [];
 	const config: SpaceRuntimeConfig = {
 		db,
 		spaceManager,
@@ -81,18 +83,20 @@ function buildRuntime(): Ctx {
 		onTaskUpdated: async ({ spaceId, task }) => {
 			emitted.push({ spaceId, task });
 		},
-		// Minimal Task Agent stub — the router only needs injectIntoTaskAgent
-		// for the [TASK_APPROVED] awareness fan-out. Return `injected: false`
-		// (no live session) so the runtime logs and continues.
+		// Minimal Task Agent stub — only inline Task Agent post-approval routes
+		// use injectIntoTaskAgent. The no-route tests below must not touch it.
 		taskAgentManager: {
-			injectIntoTaskAgent: async () => ({ injected: false }),
+			injectIntoTaskAgent: async (_taskId, message) => {
+				injected.push(message);
+				return { injected: false };
+			},
 			spawnPostApprovalSubSession: async () => ({ sessionId: 'stub-session' }),
 			isSessionAlive: () => false,
 		} as unknown as NonNullable<SpaceRuntimeConfig['taskAgentManager']>,
 	};
 
 	const runtime = new SpaceRuntime(config);
-	return { db, runtime, taskRepo, emitted };
+	return { db, runtime, taskRepo, emitted, injected };
 }
 
 function seedReviewTask(taskRepo: SpaceTaskRepository): SpaceTask {
@@ -191,5 +195,14 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
 		expect(final?.status).toBe('done');
 		// Should still emit even though the transition step was skipped.
 		expect(ctx.emitted.some((e) => e.task.id === t.id && e.task.status === 'done')).toBe(true);
+	});
+
+	test('no-route dispatch does not inject informational Task Agent awareness', async () => {
+		const task = seedReviewTask(ctx.taskRepo);
+
+		await ctx.runtime.dispatchPostApproval(task.id, 'agent');
+
+		expect(ctx.taskRepo.getTask(task.id)?.status).toBe('done');
+		expect(ctx.injected).toHaveLength(0);
 	});
 });

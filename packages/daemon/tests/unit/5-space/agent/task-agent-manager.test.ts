@@ -1067,8 +1067,11 @@ describe('TaskAgentManager', () => {
 			// The stale callback registered between the two createSubSession calls should
 			// have been cleared by the second createSubSession, so it must NOT have fired.
 			expect(staleCallbackFired).toBe(false);
-			// The new callback (handleSubSessionComplete) should have fired — injecting NODE_COMPLETE
-			expect(taskAgentSession._enqueuedMessages.length).toBeGreaterThan(msgsBefore);
+			// The new callback (handleSubSessionComplete) should have fired and
+			// moved the execution to idle, but normal completion no longer relays
+			// a Task Agent message.
+			expect(ctx.nodeExecutionRepo.getById(exec.id)?.status).toBe('idle');
+			expect(taskAgentSession._enqueuedMessages.length).toBe(msgsBefore);
 		});
 
 		test('preserves init mcpServers when app MCP registry servers are injected', async () => {
@@ -1292,12 +1295,12 @@ describe('TaskAgentManager', () => {
 
 			await callHandleSubSessionComplete(ctx.manager, parentTask.id, stepId, subSessionId);
 
-			// Step status remains runtime-driven; handleSubSessionComplete only notifies.
+			// Step status remains runtime-driven; normal completion does not notify Task Agent.
 			const updated = ctx.taskRepo.getTask(stepTask.id);
 			expect(updated?.status).toBe('in_progress');
 		});
 
-		test('injects [NODE_COMPLETE] notification into Task Agent session', async () => {
+		test('does not inject [NODE_COMPLETE] into Task Agent session on normal completion', async () => {
 			const stepId = 'step-notify-1';
 			const parentTask = await ctx.taskManager.createTask({
 				title: 'Parent task',
@@ -1322,12 +1325,7 @@ describe('TaskAgentManager', () => {
 				`space:${ctx.spaceId}:task:${parentTask.id}:step:${stepId}`
 			);
 
-			// Task Agent should have received a [NODE_COMPLETE] message
-			expect(taskAgentSession._enqueuedMessages.length).toBeGreaterThan(msgsBefore);
-			const lastMsg =
-				taskAgentSession._enqueuedMessages[taskAgentSession._enqueuedMessages.length - 1];
-			expect(lastMsg.msg).toContain('[NODE_COMPLETE]');
-			expect(lastMsg.msg).toContain(stepId);
+			expect(taskAgentSession._enqueuedMessages.length).toBe(msgsBefore);
 		});
 
 		test('does not throw when no matching step task exists', async () => {

@@ -954,8 +954,7 @@ export class SpaceRuntimeService {
 	 * Dispatch post-approval routing for a task. Delegates to
 	 * `SpaceRuntime.dispatchPostApproval`, which:
 	 *   1. Transitions the task into `approved` (via `SpaceTaskManager.setTaskStatus`).
-	 *   2. Emits `[TASK_APPROVED]` into the Task Agent session (best-effort).
-	 *   3. Calls `PostApprovalRouter.route()` to dispatch the configured
+	 *   2. Calls `PostApprovalRouter.route()` to dispatch the configured
 	 *      post-approval step (no-route, inline Task Agent, or spawn fresh
 	 *      node-agent sub-session).
 	 *
