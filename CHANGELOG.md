@@ -2,6 +2,21 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.16.0] - 2026-04-27
+
+A release improving context usage reporting for Copilot/Codex bridges and fixing Space session rehydration and workflow prompt handling. 5 commits since v0.15.0.
+
+### Added
+
+- **Copilot context usage**: Consume Copilot SDK `session.usage_info` events in bridge stream; add `/v1/messages/count_tokens` and `/v1/models` endpoints
+- **Codex context reporting**: Report non-zero Codex context estimates through the bridge; handle v2 nested token usage
+
+### Fixed
+
+- **Space MCP rehydration**: Restore Space-owned sessions attach live runtime MCP servers before replaying pending messages; propagate late MCP changes into active SDK queries
+- **Post-approval workflow prompts**: Fix prompt routing after human approval in workflow execution
+- **Overlay highlight**: Make overlay message highlight one-shot
+
 ## [0.15.0] - 2026-04-27
 
 A stability release fixing session persistence, message routing, and provider bridge issues. 15 commits since v0.14.0.
