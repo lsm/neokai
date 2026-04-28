@@ -243,15 +243,38 @@ export class NodeExecutionRepository {
 
 	/**
 	 * Find a node execution by its agent session ID.
-	 * Returns the first match or null if none exists.
+	 * Returns the most relevant active/latest match or null if none exists.
+	 *
+	 * A long-lived named agent session can be reused across multiple workflow
+	 * node executions. Prefer active executions so runtime MCP self-heal rebuilds
+	 * node-agent with the current node context rather than an older completed row.
 	 */
 	getByAgentSessionId(agentSessionId: string): NodeExecution | null {
-		const row = this.db
-			.prepare(`SELECT * FROM node_executions WHERE agent_session_id = ? LIMIT 1`)
-			.get(agentSessionId) as Record<string, unknown> | undefined;
+		return this.listByAgentSessionId(agentSessionId)[0] ?? null;
+	}
 
-		if (!row) return null;
-		return this.rowToNodeExecution(row);
+	/**
+	 * List node executions bound to an agent session, with active/latest rows first.
+	 */
+	listByAgentSessionId(agentSessionId: string): NodeExecution[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM node_executions
+				 WHERE agent_session_id = ?
+				 ORDER BY
+				   CASE status
+				     WHEN 'in_progress' THEN 0
+				     WHEN 'blocked' THEN 1
+				     WHEN 'pending' THEN 2
+				     ELSE 3
+				   END,
+				   updated_at DESC,
+				   created_at DESC,
+				   id DESC`
+			)
+			.all(agentSessionId) as Record<string, unknown>[];
+
+		return rows.map((row) => this.rowToNodeExecution(row));
 	}
 
 	/**

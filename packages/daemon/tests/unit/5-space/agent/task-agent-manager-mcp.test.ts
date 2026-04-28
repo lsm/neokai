@@ -188,6 +188,7 @@ function buildManager(opts: {
 	bunDb: BunDatabase;
 	taskRepo: SpaceTaskRepository;
 	taskManager: SpaceTaskManager;
+	nodeExecutionRepo: NodeExecutionRepository;
 	space: Space;
 	mockSkillsManager: object;
 	mockAppMcpServerRepo: object;
@@ -313,6 +314,7 @@ function buildManager(opts: {
 		bunDb,
 		taskRepo,
 		taskManager,
+		nodeExecutionRepo,
 		space,
 		mockSkillsManager,
 		mockAppMcpServerRepo,
@@ -1359,6 +1361,67 @@ describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session inva
 
 		// Servers untouched.
 		expect(session.session.config.mcpServers!['node-agent']).toBeDefined();
+	});
+
+	test('mcpSelfHeal repairs missing node execution session id from embedded exec id', async () => {
+		const { manager, fromInitSpy, bunDb, taskManager, nodeExecutionRepo, space } = buildManager({});
+		spies.push(fromInitSpy);
+
+		const workflow = new SpaceWorkflowRepository(bunDb).createWorkflow({
+			spaceId: space.id,
+			name: 'MCP self-heal workflow',
+			description: '',
+			nodes: [],
+			transitions: [],
+			startNodeId: 'coding',
+			rules: [],
+			completionAutonomyLevel: 3,
+		});
+		const workflowRun = new SpaceWorkflowRunRepository(bunDb).createRun({
+			spaceId: space.id,
+			workflowId: workflow.id,
+			title: 'MCP self-heal run',
+		});
+		const task = await taskManager.createTask({
+			title: 'MCP self-heal task',
+			description: 'desc',
+			taskType: 'coding',
+			status: 'in_progress',
+			workflowRunId: workflowRun.id,
+			taskAgentSessionId: `space:${space.id}:task:task-agent`,
+		});
+		const execution = nodeExecutionRepo.create({
+			workflowRunId: workflowRun.id,
+			workflowNodeId: 'coding',
+			agentName: 'coder',
+			status: 'in_progress',
+		});
+		const subSessionId = `space:${space.id}:task:${task.id}:exec:${execution.id}`;
+		const session = makeMockSession(subSessionId);
+		session.session.config.mcpServers = { 'registry-mcp': { name: 'registry' } };
+
+		const mgr = manager as unknown as {
+			agentSessionIndex: Map<string, MockAgentSession>;
+			mcpSelfHeal: (sessionId: string, missing: string[]) => Promise<void>;
+			reinjectNodeAgentMcpServer: (s: unknown, c: unknown) => void;
+		};
+		mgr.agentSessionIndex.set(subSessionId, session);
+		const originalReinject = mgr.reinjectNodeAgentMcpServer.bind(manager);
+		mgr.reinjectNodeAgentMcpServer = (s) => {
+			(s as MockAgentSession).mergeRuntimeMcpServers({
+				'node-agent': { name: 'node-agent', _stub: true },
+			});
+		};
+
+		try {
+			await mgr.mcpSelfHeal(subSessionId, ['node-agent']);
+		} finally {
+			mgr.reinjectNodeAgentMcpServer = originalReinject;
+		}
+
+		expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBe(subSessionId);
+		expect(session.session.config.mcpServers!['node-agent']).toBeDefined();
+		expect(session.session.config.mcpServers!['registry-mcp']).toBeDefined();
 	});
 });
 
