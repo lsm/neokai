@@ -252,6 +252,8 @@ describe('PostApprovalRouter.route', () => {
 		expect(delegates.spawned).toHaveLength(1);
 		expect(delegates.spawned[0].targetAgent).toBe('deployer');
 		expect(delegates.spawned[0].kickoffMessage).toContain(task.title ?? '');
+		expect(delegates.spawned[0].kickoffMessage).toContain('mark_complete');
+		expect(delegates.spawned[0].kickoffMessage).toContain('Do NOT call approve_task');
 		expect(delegates.injected).toHaveLength(0);
 
 		const final = taskRepo.getTask(task.id);

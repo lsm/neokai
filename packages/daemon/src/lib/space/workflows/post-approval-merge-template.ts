@@ -14,13 +14,10 @@
  *
  *   - `{{pr_url}}`          — signalled by the end node via
  *                             `send_message(task-agent, …, data:{ pr_url })`.
- *   - `{{autonomy_level}}`  — space autonomy level at routing time.
  *   - `{{approval_source}}` — `'human' | 'agent'` (from
  *                             `SpaceApprovalSource`; `auto_policy` is
  *                             theoretically possible but no caller produces
- *                             it for post-approval). Step 2 uses this to
- *                             skip redundant merge approval when human
- *                             already approved.
+ *                             it for post-approval).
  * NOTE: The `{{reviewer_name}}` token was intentionally replaced with the
  * static string `[end-node reviewer]` in PR 3/5 because nothing in
  * `dispatchPostApproval` currently resolves the approving agent's slot name
@@ -37,16 +34,12 @@
  * `post_approval_action` discriminator was removed — post-approval routing is
  * declarative on the workflow's `postApproval` field, not signalled at runtime.
  *
- * Step 6 MUST instruct the post-approval session to call `mark_complete` (not
- * `approve_task`); this is the hard distinction between the
- * `in_progress → approved` and `approved → done` transitions — see §3.2 of the
- * plan and the `mark_complete` tool docstring in
- * `packages/daemon/src/lib/space/tools/task-agent-tools.ts`.
+ * The runtime appends the universal `mark_complete` instruction in
+ * `PostApprovalRouter`; keep this workflow data focused on PR-specific work.
  */
 export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
 	'The task has been approved. Your job is to merge PR {{pr_url}}.',
 	'',
-	'Space autonomy level: {{autonomy_level}} (threshold for auto-merge: 4).',
 	// TODO(PR 4/5 or 5/5): resolve the approving agent's slot name and replace
 	// this static label with `{{reviewer_name}}`. See file-level NOTE.
 	'Reviewer: [end-node reviewer].',
@@ -56,22 +49,13 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
 	'1. Verify the PR is still open and passes CI:',
 	'     gh pr view {{pr_url}} --json state,mergeStateStatus,statusCheckRollup',
 	'   If state is MERGED, record an audit artifact and exit — the work is done.',
-	'2. If approval_source != "human" AND autonomy_level < 4:',
-	'     Call request_human_input with',
-	'       question: "Approve merging PR {{pr_url}}?"',
-	'       context: "Reviewer: [end-node reviewer]. CI: <from step 1>."',
-	'     Wait for the response before proceeding.',
-	'3. Merge:',
+	'2. Merge:',
 	'     gh pr merge {{pr_url}} --squash --delete-branch',
 	'   On a merge conflict, do NOT force — exit, call request_human_input with',
 	'   a clear summary of the conflict, and let the human resolve.',
-	'4. Sync your worktree with main/dev:',
+	'3. Sync your worktree with main/dev:',
 	'     git fetch origin && git checkout dev && git pull --ff-only',
-	'5. Save an audit artifact:',
+	'4. Save an audit artifact:',
 	'     save_artifact({ type: "result", append: true,',
-	'                     data: { merged_pr_url, mergedAt, approval: "auto"|"human" } })',
-	'6. Call mark_complete() to signal post-approval finished',
-	'   (transitions the task from `approved` to `done`).',
-	'   DO NOT call approve_task — that\'s for the initial "work is good"',
-	'   transition (in_progress → approved), which already happened upstream.',
+	'                     data: { merged_pr_url, mergedAt, approval_source: "{{approval_source}}" } })',
 ].join('\n');

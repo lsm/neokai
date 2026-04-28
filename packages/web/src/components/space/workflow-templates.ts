@@ -13,6 +13,7 @@ import type {
 	WorkflowChannel,
 	Gate,
 	WorkflowNodeAgent,
+	PostApprovalRoute,
 } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { NodeDraft } from './WorkflowNodeCard';
@@ -38,6 +39,8 @@ export interface WorkflowTemplate {
 	gates?: Gate[];
 	/** Optional tags to seed with the template. */
 	tags?: string[];
+	/** Optional workflow-level post-approval route to seed with the template. */
+	postApproval?: PostApprovalRoute;
 }
 
 export interface WorkflowTemplateStep {
@@ -216,6 +219,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
 			fields: [...(gate.fields ?? [])],
 		})),
 		tags: [...(workflow.tags ?? [])],
+		postApproval: workflow.postApproval ? { ...workflow.postApproval } : undefined,
 	};
 }
 
