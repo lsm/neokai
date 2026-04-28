@@ -98,6 +98,7 @@ interface TestCtx {
 	agentManager: SpaceAgentManager;
 	runtime: SpaceRuntime;
 	nodeExecutionRepo: NodeExecutionRepository;
+	spaceManager: SpaceManager;
 }
 
 function makeCtx(): TestCtx {
@@ -144,6 +145,7 @@ function makeCtx(): TestCtx {
 		agentManager,
 		runtime,
 		nodeExecutionRepo,
+		spaceManager,
 	};
 }
 
@@ -157,6 +159,7 @@ function makeHandlers(ctx: TestCtx) {
 		taskManager: ctx.taskManager,
 		spaceAgentManager: ctx.agentManager,
 		nodeExecutionRepo: ctx.nodeExecutionRepo,
+		spaceManager: ctx.spaceManager,
 	});
 }
 
@@ -1489,7 +1492,8 @@ describe('createSpaceAgentToolHandlers — approve_task plain path', () => {
 		ctx.db.close();
 	});
 
-	test('allows plain review→done approvals (no pending checkpoint)', async () => {
+	test('allows plain review→done approvals with sufficient autonomy', async () => {
+		await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
 		const createResult = await makeHandlers(ctx).create_standalone_task({
 			title: 'plain review task',
 			description: 'no pending action',

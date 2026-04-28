@@ -954,7 +954,7 @@ describe('TaskAgentManager.tryResumeNodeAgentSession', () => {
 /**
  * Regression coverage for Task #126: after a daemon restart, every workflow
  * sub-session whose NodeExecution still has an `agentSessionId` must come back
- * with both `node-agent` and `space-agent-tools` MCP servers attached. Without
+ * with its `node-agent` MCP server attached. Without
  * the eager rehydration step inside `rehydrateTaskAgent`, sub-sessions sitting
  * idle at a gate (or first reached via a UI overlay path that resolves them
  * through `SessionManager.getSessionAsync` rather than `injectSubSessionMessage`)
@@ -967,8 +967,8 @@ describe('TaskAgentManager.tryResumeNodeAgentSession', () => {
  *      at a sub-session row of type `'worker'`.
  *   3. Calling `manager.rehydrate()` (NOT `injectSubSessionMessage`) — the
  *      same path SpaceRuntime invokes during daemon startup.
- *   4. Asserting the sub-session is present in the in-memory map AND has both
- *      `node-agent` and `space-agent-tools` in its MCP server map.
+ *   4. Asserting the sub-session is present in the in-memory map AND has
+ *      `node-agent` in its MCP server map.
  */
 describe('TaskAgentManager.rehydrate (eager sub-session rehydration — Task #126)', () => {
 	let ctx: TestCtx;
@@ -991,7 +991,7 @@ describe('TaskAgentManager.rehydrate (eager sub-session rehydration — Task #12
 		restoreSpy.mockRestore();
 	});
 
-	test('rehydrate() restores sub-sessions with both node-agent and space-agent-tools MCP servers attached (in_progress task)', async () => {
+	test('rehydrate() restores sub-sessions with node-agent MCP server attached (in_progress task)', async () => {
 		const wfRunId = 'run-eager-inprogress';
 		const wfId = 'wf-eager-inprogress';
 		const nodeId = 'node-eager-inprogress';
@@ -1035,14 +1035,14 @@ describe('TaskAgentManager.rehydrate (eager sub-session rehydration — Task #12
 		const rehydrated = ctx.manager.getSubSession(subSessionId);
 		expect(rehydrated).toBeDefined();
 
-		// Both runtime-only MCP servers must be re-attached. Without these, the
+		// The runtime-only node-agent MCP server must be re-attached. Without it, the
 		// sub-session would silently fail any `write_gate` / `read_gate` /
 		// `send_message` call (the original Task #126 failure mode).
 		const session = ctx.createdSessions.get(subSessionId)!;
 		expect(session).toBeDefined();
 		const attachedNames = Object.keys(session._mcpServers);
 		expect(attachedNames).toContain('node-agent');
-		expect(attachedNames).toContain('space-agent-tools');
+		expect(attachedNames).not.toContain('space-agent-tools');
 
 		// Sub-session also gets registered in the SessionManager cache so the
 		// UI's `getSessionAsync` path resolves to the live (MCP-attached) instance
@@ -1054,8 +1054,8 @@ describe('TaskAgentManager.rehydrate (eager sub-session rehydration — Task #12
 		// 'review' is the original Task #126 failure mode: a coder/reviewer
 		// sub-session sat idle at a gate while the parent task waited in 'review'
 		// status, and the parent was excluded from `listActiveWithTaskAgentSession`
-		// (so no rehydration happened, so the sub-session never got node-agent /
-		// space-agent-tools re-attached).
+		// (so no rehydration happened, so the sub-session never got node-agent
+		// re-attached).
 		const wfRunId = 'run-eager-review';
 		const wfId = 'wf-eager-review';
 		const nodeId = 'node-eager-review';
@@ -1094,12 +1094,12 @@ describe('TaskAgentManager.rehydrate (eager sub-session rehydration — Task #12
 		// The parent Task Agent must come back...
 		expect(ctx.manager.getTaskAgent(parentTask.id)).toBeDefined();
 
-		// ...and so must the sub-session, with both MCP servers attached.
+		// ...and so must the sub-session, with node-agent attached.
 		expect(ctx.manager.getSubSession(subSessionId)).toBeDefined();
 		const session = ctx.createdSessions.get(subSessionId)!;
 		const attachedNames = Object.keys(session._mcpServers);
 		expect(attachedNames).toContain('node-agent');
-		expect(attachedNames).toContain('space-agent-tools');
+		expect(attachedNames).not.toContain('space-agent-tools');
 	});
 
 	test('rehydrate() restores multiple sub-sessions per workflow run', async () => {
@@ -1150,7 +1150,7 @@ describe('TaskAgentManager.rehydrate (eager sub-session rehydration — Task #12
 			expect(session).toBeDefined();
 			const attached = Object.keys(session._mcpServers);
 			expect(attached).toContain('node-agent');
-			expect(attached).toContain('space-agent-tools');
+			expect(attached).not.toContain('space-agent-tools');
 		}
 	});
 
@@ -1309,14 +1309,14 @@ describe('TaskAgentManager.rehydrate (eager sub-session rehydration — Task #12
 		expect(ctx.manager.getSubSession(idleSubSessionId)).toBeUndefined();
 		expect(ctx.manager.getSubSession(cancelledSubSessionId)).toBeUndefined();
 
-		// The active sub-session is the control: it MUST come back, with both MCP
-		// servers attached. If this fails the status filter is over-aggressive.
+		// The active sub-session is the control: it MUST come back, with node-agent
+		// attached. If this fails the status filter is over-aggressive.
 		expect(restoredSessionIds).toContain(activeSubSessionId);
 		expect(ctx.manager.getSubSession(activeSubSessionId)).toBeDefined();
 		const activeSession = ctx.createdSessions.get(activeSubSessionId)!;
 		const attached = Object.keys(activeSession._mcpServers);
 		expect(attached).toContain('node-agent');
-		expect(attached).toContain('space-agent-tools');
+		expect(attached).not.toContain('space-agent-tools');
 	});
 
 	test("SpaceTaskRepository.listActiveWithTaskAgentSession includes 'review' status (Task #126)", async () => {

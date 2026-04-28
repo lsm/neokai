@@ -75,6 +75,7 @@ import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
 import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import { createEndNodeHandlers, createMarkCompleteHandler } from '../tools/end-node-handlers';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
+import { jsonResult } from '../tools/tool-result';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
@@ -709,6 +710,7 @@ export class TaskAgentManager {
 				spaceId,
 				runtime: this.config.spaceRuntimeService.getSharedRuntime(),
 				workflowManager: this.config.spaceWorkflowManager,
+				spaceManager: this.config.spaceManager,
 				taskRepo: this.config.taskRepo,
 				nodeExecutionRepo: this.config.nodeExecutionRepo,
 				workflowRunRepo: this.config.workflowRunRepo,
@@ -966,34 +968,11 @@ export class TaskAgentManager {
 				execution.workflowNodeId
 			);
 
-			// Build space-agent-tools for this sub-session so it has the same Space
-			// tool surface as the task-agent (list_peers, approve_gate, etc.). This server
-			// is NOT re-attached by SpaceRuntimeService because workflow sub-sessions are
-			// created via AgentSession.fromInit + registerSession (not SessionLifecycle
-			// which fires the `session.created` event that drives attachSpaceToolsToMemberSession).
-			//
-			// Uses the shared helper so the same server shape (callbacks, closures)
-			// is built on spawn, rehydrate, and self-heal paths. The `subSessionId`
-			// closure captures the tentative ID; if the reuse path in createSubSession
-			// swaps to an existing session, `onRestoreNodeAgent` will still resolve
-			// the live session via `getSubSession(subSessionId)` which returns
-			// undefined for the unused ID (logs a warning), so no wrong-target fire.
-			const subSessionSpaceAgentMcpServer = this.buildSpaceAgentToolsMcpServerForSubSession({
-				taskId,
-				subSessionId: sessionId,
-				agentName: execution.agentName,
-				spaceId: space.id,
-				workflowRunId: workflowRun.id,
-				workspacePath,
-				workflowNodeId: execution.workflowNodeId,
-			});
-
 			init = {
 				...init,
 				mcpServers: {
 					...init.mcpServers,
 					'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
-					'space-agent-tools': subSessionSpaceAgentMcpServer as unknown as McpServerConfig,
 				},
 			};
 
@@ -1191,24 +1170,11 @@ export class TaskAgentManager {
 					workspacePath,
 					nodeId
 				);
-				// Uses the shared helper so eager-spawn, on-demand spawn, rehydrate,
-				// and self-heal paths build the same server shape (same callbacks,
-				// same closures).
-				const subSessionSpaceAgentMcpServer = this.buildSpaceAgentToolsMcpServerForSubSession({
-					taskId,
-					subSessionId: sessionId,
-					agentName,
-					spaceId,
-					workflowRunId: workflowRun.id,
-					workspacePath,
-					workflowNodeId: nodeId,
-				});
 				init = {
 					...init,
 					mcpServers: {
 						...init.mcpServers,
 						'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
-						'space-agent-tools': subSessionSpaceAgentMcpServer as unknown as McpServerConfig,
 					},
 				};
 
@@ -1389,13 +1355,9 @@ export class TaskAgentManager {
 						// Re-merging with a fresh node-agent and restarting the query ensures the
 						// session's tool surface reflects the new node activation context.
 						//
-						// Task #99: Also re-attach `space-agent-tools` and enforce the full
-						// required-servers invariant on the reused session. Previously this
-						// path only re-injected node-agent, leaving space-agent-tools behind
-						// if the session had lost it (e.g. a deprecated setRuntimeMcpServers
-						// call earlier in its lifetime clobbered the map). The result was a
-						// reused Coder/Reviewer session that could not call `write_gate` —
-						// workflow stalls at the gate boundary with "No such tool available".
+						// Re-inject node-agent and enforce the required-server invariant on
+						// the reused session. Node agents intentionally do not receive
+						// space-agent-tools; task creation is mirrored onto node-agent instead.
 						if (memberInfo.nodeId) {
 							const reuseWorkspacePath = this.taskWorktreePaths.get(taskId) ?? init.workspacePath;
 							const reuseCtx = {
@@ -1409,9 +1371,6 @@ export class TaskAgentManager {
 							};
 							// Unconditionally rebuild node-agent (fresh node context).
 							await this.reinjectNodeAgentMcpServer(existing, reuseCtx);
-							// Defensive guarantee: make sure space-agent-tools is also present
-							// on the reused session. ensureRequiredMcpServersAttached is a no-op
-							// when the server is already attached, and self-heals when it isn't.
 							await this.ensureRequiredMcpServersAttached(existing, {
 								...reuseCtx,
 								phase: 'spawn',
@@ -2085,14 +2044,14 @@ export class TaskAgentManager {
 	 *
 	 * The caller has already verified the NodeExecution row is still bound to a
 	 * live session. Re-run the same runtime MCP attachment path used by self-heal
-	 * so a resumed workflow has node-agent and space-agent-tools available even if
+	 * so a resumed workflow has node-agent available even if
 	 * the in-memory session was restored from DB without workflow MCP servers.
 	 */
 	async prepareSubSessionForWorkflowResume(sessionId: string): Promise<boolean> {
 		if (!this.isSessionAlive(sessionId)) return false;
 		const session = this.getAgentSessionById(sessionId);
 		if (!session) return false;
-		await this.mcpSelfHeal(sessionId, ['node-agent', 'space-agent-tools']);
+		await this.mcpSelfHeal(sessionId, ['node-agent']);
 		return true;
 	}
 
@@ -2173,10 +2132,10 @@ export class TaskAgentManager {
 	 * After each Task Agent is restored, `rehydrateTaskAgent` also eagerly
 	 * rehydrates every workflow sub-session attached to its workflow run via
 	 * `rehydrateSubSessionsForRun` — see that method for the full rationale.
-	 * Without that step, sub-sessions whose `node-agent` and `space-agent-tools`
-	 * MCP servers are in-process-only would silently sit without those servers
-	 * after a restart, breaking gate writes / peer messaging the moment a UI
-	 * overlay or peer message reached them (task #126 failure mode).
+	 * Without that step, sub-sessions whose `node-agent` MCP server is
+	 * in-process-only would silently sit without it after a restart, breaking
+	 * peer messaging the moment a UI overlay or peer message reached them
+	 * (task #126 failure mode).
 	 *
 	 * This method is called from `SpaceRuntime.rehydrateExecutors()` after
 	 * WorkflowExecutors are loaded, so executors are ready when Task Agents run.
@@ -3001,6 +2960,7 @@ export class TaskAgentManager {
 			spaceId,
 			runtime: this.config.spaceRuntimeService.getSharedRuntime(),
 			workflowManager: this.config.spaceWorkflowManager,
+			spaceManager: this.config.spaceManager,
 			taskRepo: this.config.taskRepo,
 			nodeExecutionRepo: this.config.nodeExecutionRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
@@ -3258,28 +3218,6 @@ export class TaskAgentManager {
 			'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
 		};
 
-		// Re-attach `space-agent-tools` so the rehydrated sub-session has the same
-		// tool surface as a freshly spawned one. This server is stripped from DB
-		// persistence and is NOT re-attached by SpaceRuntimeService for rehydrated
-		// sessions (which do not fire `session.created`). Without this, the sub-session
-		// loses access to read_gate / write_gate / approve_gate / etc. after a daemon
-		// restart mid-workflow.
-		//
-		// Built via the shared `buildSpaceAgentToolsMcpServerForSubSession` helper
-		// so that spawn, eager-spawn, rehydrate, and self-heal paths all construct
-		// the same server shape (same callbacks, same closures).
-		const subSessionSpaceAgentMcpServer = this.buildSpaceAgentToolsMcpServerForSubSession({
-			taskId,
-			subSessionId,
-			agentName: execution.agentName,
-			spaceId,
-			workflowRunId,
-			workspacePath,
-			workflowNodeId: execution.workflowNodeId,
-		});
-		mergedMcpServers['space-agent-tools'] =
-			subSessionSpaceAgentMcpServer as unknown as McpServerConfig;
-
 		// Use merge semantics: the restored session has no in-memory MCP servers
 		// (stripped from DB) so this is effectively a full set, but mergeRuntimeMcpServers
 		// is safer than the deprecated replace-all setRuntimeMcpServers.
@@ -3481,36 +3419,26 @@ export class TaskAgentManager {
 	 * first turn runs. See `ensureNodeAgentAttached` / `ensureRequiredMcpServersAttached`
 	 * for the invariant enforcement logic.
 	 *
-	 * - `node-agent`: peer communication (list_peers, send_message, save_artifact).
+	 * - `node-agent`: peer communication, artifact writes, and node-safe task
+	 *   actions (including create_standalone_task).
 	 *   Without this the Coder→Reviewer handoff dies silently with "No such tool
 	 *   available" (PR #1535 failure mode).
-	 * - `space-agent-tools`: gate + task surface (read_gate, write_gate, approve_gate,
-	 *   list_tasks, send_message_to_task, etc.). Without this a workflow node cannot
-	 *   record a PR URL on a gate and the workflow stalls at the gate boundary
-	 *   (Task #99 failure mode).
 	 */
-	private static readonly REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS = [
-		'node-agent',
-		'space-agent-tools',
-	] as const;
+	private static readonly REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS = ['node-agent'] as const;
 
 	/**
-	 * Verify that a workflow node sub-session has **all required MCP servers**
-	 * (`node-agent` and `space-agent-tools`) attached to its in-memory config,
-	 * and self-heal by re-attaching any that are missing.
+	 * Verify that a workflow node sub-session has its required MCP server
+	 * (`node-agent`) attached to its in-memory config, and self-heal by
+	 * re-attaching it when missing.
 	 *
-	 * This is a defensive guard against silent recurrence of two related failure modes:
+	 * This is a defensive guard against silent recurrence of the peer-communication
+	 * failure mode:
 	 *   - PR #1535: Coder sub-session ran without `node-agent`, so
 	 *     `mcp__node-agent__send_message` returned "No such tool available" and the
 	 *     Coder→Reviewer handoff died silently.
-	 *   - Task #99 : Workflow sub-sessions spawned/rehydrated without
-	 *     `space-agent-tools`, so gate writes (e.g. `write_gate` with `pr_url`)
-	 *     returned "No such tool available" and the workflow stalled at the gate
-	 *     boundary, again with no diagnostic trail.
 	 *
 	 * Called from both spawn and rehydrate paths to guarantee the invariant:
-	 *   "every workflow-node sub-session has `node-agent` AND `space-agent-tools`
-	 *    attached BEFORE first turn".
+	 *   "every workflow-node sub-session has `node-agent` attached BEFORE first turn".
 	 *
 	 * If any required server is missing (which should never happen given the merge
 	 * logic in createSubSession + rehydrateSubSession), this method:
@@ -3561,13 +3489,10 @@ export class TaskAgentManager {
 				`Self-healing by re-injecting before first turn — but this indicates a regression in the spawn/rehydrate merge logic.`
 		);
 
-		// Re-attach each missing server. Order does not matter: both builders are
-		// idempotent w.r.t. other runtime servers (they use mergeRuntimeMcpServers).
+		// Re-attach the missing required server while preserving other runtime servers.
 		for (const name of missing) {
 			if (name === 'node-agent') {
 				await this.reinjectNodeAgentMcpServer(session, ctx);
-			} else if (name === 'space-agent-tools') {
-				await this.reinjectSpaceAgentToolsMcpServer(session, ctx);
 			}
 		}
 
@@ -3588,9 +3513,9 @@ export class TaskAgentManager {
 	 * P1-5: Final backstop — self-heals a workflow sub-session's MCP servers on demand.
 	 *
 	 * Called by the `onMissingWorkflowMcpServers` callback that `QueryRunner.start()`
-	 * invokes when it detects missing `node-agent` or `space-agent-tools` at the moment
-	 * of first-turn setup. This is the last line of defence for any session that slipped
-	 * through the spawn/rehydrate path without the required servers attached:
+	 * invokes when it detects a missing `node-agent` at the moment of first-turn
+	 * setup. This is the last line of defence for any session that slipped through
+	 * the spawn/rehydrate path without the required server attached:
 	 *
 	 *   - Old sessions that never had the callback registered (before this fix)
 	 *   - Sessions created by older daemon versions with incomplete MCP injection
@@ -3601,8 +3526,8 @@ export class TaskAgentManager {
 	 * Recovery steps:
 	 *   1. Look up the NodeExecution by agentSessionId (same as rehydrateSubSession).
 	 *   2. Build the full context (taskId, spaceId, workflowRunId, workspacePath).
-	 *   3. Call `ensureRequiredMcpServersAttached` which re-injects both servers and
-	 *      verifies them.
+	 *   3. Call `ensureRequiredMcpServersAttached` which re-injects node-agent and
+	 *      verifies it.
 	 *
 	 * @param sessionId   The sub-session ID (matches NodeExecution.agentSessionId).
 	 * @param missing     The list of server names that were detected as missing.
@@ -3812,6 +3737,7 @@ export class TaskAgentManager {
 			spaceId: ctx.spaceId,
 			runtime: this.config.spaceRuntimeService.getSharedRuntime(),
 			workflowManager: this.config.spaceWorkflowManager,
+			spaceManager: this.config.spaceManager,
 			taskRepo: this.config.taskRepo,
 			nodeExecutionRepo: this.config.nodeExecutionRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
@@ -4062,6 +3988,29 @@ export class TaskAgentManager {
 			}
 		};
 
+		const onCreateStandaloneTask = async (args: {
+			title: string;
+			description: string;
+			priority?: 'low' | 'normal' | 'high' | 'urgent';
+			custom_agent_id?: string;
+			workflow_id?: string;
+			depends_on?: string[];
+		}) => {
+			try {
+				const task = await boundTaskManager.createTask({
+					title: args.title,
+					description: args.description,
+					priority: args.priority,
+					preferredWorkflowId: args.workflow_id ?? null,
+					dependsOn: args.depends_on,
+				});
+				return jsonResult({ success: true, task });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		};
+
 		return createNodeAgentMcpServer({
 			mySessionId: subSessionId,
 			myAgentName: agentName,
@@ -4090,6 +4039,7 @@ export class TaskAgentManager {
 			onApproveTask,
 			onSubmitForApproval,
 			onMarkComplete,
+			onCreateStandaloneTask,
 			artifactRepo: this.config.artifactRepo,
 			getSpaceAutonomyLevel: async (sid) => {
 				const s = await spaceManager.getSpace(sid);
@@ -4144,7 +4094,7 @@ export class TaskAgentManager {
 	 *   2. Build an `AgentSessionInit` using the same resolver the regular node
 	 *      activation path uses (so tool registry + system prompt line up).
 	 *   3. Attach the same MCP server surface as a normal node-agent spawn —
-	 *      `node-agent` (with `mark_complete` mirrored) and `space-agent-tools`.
+	 *      `node-agent` (with `mark_complete` mirrored).
 	 *   4. Kick off the session with the interpolated post-approval instructions
 	 *      as the first user turn.
 	 *
@@ -4241,21 +4191,11 @@ export class TaskAgentManager {
 			workspacePath,
 			matchedNodeId
 		);
-		const subSessionSpaceAgentMcpServer = this.buildSpaceAgentToolsMcpServerForSubSession({
-			taskId,
-			subSessionId: sessionId,
-			agentName: matchedSlot.name,
-			spaceId,
-			workflowRunId: workflowRunId ?? '',
-			workspacePath,
-			workflowNodeId: matchedNodeId,
-		});
 		init = {
 			...init,
 			mcpServers: {
 				...init.mcpServers,
 				'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
-				'space-agent-tools': subSessionSpaceAgentMcpServer as unknown as McpServerConfig,
 			},
 		};
 
