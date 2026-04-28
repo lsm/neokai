@@ -7,7 +7,9 @@
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import {
+	CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
 	QueryOptionsBuilder,
+	buildProviderSettings,
 	type QueryOptionsBuilderContext,
 } from '../../../../src/lib/agent/query-options-builder';
 import type { Session } from '@neokai/shared';
@@ -138,12 +140,32 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.env).toEqual({ MY_VAR: 'value' });
 		});
 
+		it('should not override SDK auto-compaction settings for other providers', async () => {
+			const options = await builder.build();
+
+			expect(options.settings).toBeUndefined();
+		});
+
 		it('should remove undefined values from options', async () => {
 			const options = await builder.build();
 			// Should not have undefined values
 			for (const [_key, value] of Object.entries(options)) {
 				expect(value).not.toBeUndefined();
 			}
+		});
+	});
+
+	describe('provider settings', () => {
+		it('should disable SDK auto-compaction for Codex bridge provider sessions', () => {
+			expect(buildProviderSettings('anthropic-codex')).toEqual({
+				autoCompactWindow: CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
+			});
+		});
+
+		it('should not override SDK auto-compaction settings for other providers', () => {
+			expect(buildProviderSettings('anthropic')).toBeUndefined();
+			expect(buildProviderSettings('glm')).toBeUndefined();
+			expect(buildProviderSettings('anthropic-copilot')).toBeUndefined();
 		});
 	});
 
