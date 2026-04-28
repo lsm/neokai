@@ -1711,10 +1711,20 @@ export class TaskAgentManager {
 	 * Inject a message into a sub-session.
 	 * Called by the Task Agent MCP tool handler via the messageInjector callback.
 	 */
-	async injectSubSessionMessage(subSessionId: string, message: string): Promise<void> {
+	async injectSubSessionMessage(
+		subSessionId: string,
+		message: string,
+		isSyntheticMessage = true
+	): Promise<void> {
 		const indexed = this.agentSessionIndex.get(subSessionId);
 		if (indexed) {
-			await this.injectMessageIntoSession(indexed, message);
+			await this.injectMessageIntoSession(
+				indexed,
+				message,
+				'immediate',
+				undefined,
+				isSyntheticMessage
+			);
 			return;
 		}
 
@@ -1722,7 +1732,13 @@ export class TaskAgentManager {
 		for (const [, nodeMap] of this.subSessions) {
 			const session = nodeMap.get(subSessionId);
 			if (session) {
-				await this.injectMessageIntoSession(session, message);
+				await this.injectMessageIntoSession(
+					session,
+					message,
+					'immediate',
+					undefined,
+					isSyntheticMessage
+				);
 				return;
 			}
 		}
@@ -1730,7 +1746,13 @@ export class TaskAgentManager {
 		// Not in memory — attempt lazy rehydration from DB
 		const rehydrated = await this.rehydrateSubSession(subSessionId);
 		if (rehydrated) {
-			await this.injectMessageIntoSession(rehydrated, message);
+			await this.injectMessageIntoSession(
+				rehydrated,
+				message,
+				'immediate',
+				undefined,
+				isSyntheticMessage
+			);
 			return;
 		}
 		throw new Error(`Sub-session not found: ${subSessionId}`);

@@ -17,6 +17,8 @@ export interface SpaceTaskThreadMessageRow {
 	messageType: string;
 	content: string;
 	createdAt: number;
+	/** Message origin from the DB (human, neo, system). Used to classify sender in the thread UI. */
+	origin?: string | null;
 	parentToolUseId?: string | null;
 	/**
 	 * Server-computed turn index (per session) for compact thread grouping.

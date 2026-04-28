@@ -879,6 +879,7 @@ joined AS (
     ase.task_title AS taskTitle,
     sm.message_type AS messageType,
     sm.sdk_message AS content,
+    sm.origin AS origin,
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
     CAST(COALESCE(json_extract(sm.sdk_message, '$._taskMeta.iteration'), 0) AS INTEGER) AS iteration,
     json_extract(sm.sdk_message, '$.parent_tool_use_id') AS parentToolUseId
