@@ -2230,6 +2230,86 @@ describe('node-agent-tools: async gate evaluation', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: create_standalone_task
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: create_standalone_task', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('delegates to onCreateStandaloneTask and returns the created task', async () => {
+		const config = makeConfig(ctx, {
+			onCreateStandaloneTask: async (args) => {
+				const task = await ctx.taskManager.createTask({
+					title: args.title,
+					description: args.description,
+					priority: args.priority,
+					preferredWorkflowId: args.workflow_id ?? null,
+					dependsOn: args.depends_on,
+				});
+				return {
+					content: [{ type: 'text', text: JSON.stringify({ success: true, task }) }],
+				};
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.create_standalone_task({
+			title: 'Follow-up task',
+			description: 'Do the follow-up work',
+			priority: 'high',
+			workflow_id: 'wf-follow-up',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.task.title).toBe('Follow-up task');
+		expect(data.task.priority).toBe('high');
+		expect(data.task.preferredWorkflowId).toBe('wf-follow-up');
+	});
+
+	test('returns a clear error when callback is not wired', async () => {
+		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+		const result = await handlers.create_standalone_task({
+			title: 'Follow-up task',
+			description: 'Do the follow-up work',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('not available');
+	});
+
+	test('createNodeAgentMcpServer registers create_standalone_task only when callback is wired', () => {
+		const withoutCallback = createNodeAgentMcpServer(makeConfig(ctx));
+		const withoutRegistered = Object.keys(
+			(withoutCallback as unknown as { instance: { _registeredTools: Record<string, unknown> } })
+				.instance._registeredTools
+		);
+		expect(withoutRegistered).not.toContain('create_standalone_task');
+
+		const withCallback = createNodeAgentMcpServer(
+			makeConfig(ctx, {
+				onCreateStandaloneTask: async () => ({
+					content: [{ type: 'text', text: JSON.stringify({ success: true }) }],
+				}),
+			})
+		);
+		const withRegistered = Object.keys(
+			(withCallback as unknown as { instance: { _registeredTools: Record<string, unknown> } })
+				.instance._registeredTools
+		);
+		expect(withRegistered).toContain('create_standalone_task');
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Tests: restore_node_agent (self-heal primitive)
 // ---------------------------------------------------------------------------
 

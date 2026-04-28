@@ -2,8 +2,9 @@
  * Node Agent Tools — MCP tool handlers for node agent sub-sessions.
  *
  * Action tools:
- *   send_message   — channel-validated direct messaging; auto-writes gate data on gated channels
- *   save_artifact  — persist typed data to the workflow run artifact store
+ *   send_message            — channel-validated direct messaging; auto-writes gate data on gated channels
+ *   save_artifact           — persist typed data to the workflow run artifact store
+ *   create_standalone_task  — create a new task in the same Space
  *
  * Discovery tools (read-only):
  *   list_artifacts        — list artifacts for the current workflow run
@@ -57,6 +58,7 @@ import {
 	ListPeersSchema,
 	SendMessageSchema,
 	SaveArtifactSchema,
+	CreateStandaloneTaskSchema,
 	ListArtifactsSchema,
 	ListReachableAgentsSchema,
 	ListChannelsSchema,
@@ -68,6 +70,7 @@ import type {
 	ListPeersInput,
 	SendMessageInput,
 	SaveArtifactInput,
+	CreateStandaloneTaskInput,
 	ListArtifactsInput,
 	ListReachableAgentsInput,
 	ListChannelsInput,
@@ -188,6 +191,12 @@ export interface NodeAgentToolsConfig {
 	 * autonomy / status validation is centralised on the task side.
 	 */
 	onMarkComplete?: (args: MarkCompleteInput) => Promise<ToolResult>;
+	/**
+	 * Optional callback for `create_standalone_task`. When provided, node agents
+	 * can create follow-up tasks without receiving the broader space-agent-tools
+	 * namespace.
+	 */
+	onCreateStandaloneTask?: (args: CreateStandaloneTaskInput) => Promise<ToolResult>;
 	/**
 	 * Resolves the space's current autonomy level.
 	 * When provided, agent gate writes via send_message are blocked when
@@ -1009,6 +1018,16 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			}
 		},
 
+		async create_standalone_task(args: CreateStandaloneTaskInput): Promise<ToolResult> {
+			if (!config.onCreateStandaloneTask) {
+				return jsonResult({
+					success: false,
+					error: 'create_standalone_task is not available in this node-agent session.',
+				});
+			}
+			return config.onCreateStandaloneTask(args);
+		},
+
 		// ── Self-heal ────────────────────────────────────────────────────
 
 		/**
@@ -1151,6 +1170,16 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 							'Optionally filter by nodeId or type (e.g. "progress", "result", "review").',
 						ListArtifactsSchema.shape,
 						(args) => handlers.list_artifacts(args)
+					),
+				]
+			: []),
+		...(config.onCreateStandaloneTask
+			? [
+					tool(
+						'create_standalone_task',
+						'Create a task request in this Space. Runtime may attach and execute a workflow for this task during orchestration. Supports structured task dependencies via depends_on — the task will be blocked until every listed dependency reaches status=done, and cascade-cancelled if a dependency is cancelled.',
+						CreateStandaloneTaskSchema.shape,
+						(args) => handlers.create_standalone_task(args)
 					),
 				]
 			: []),
