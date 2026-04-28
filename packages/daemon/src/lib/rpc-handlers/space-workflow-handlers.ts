@@ -104,8 +104,10 @@ function buildTemplateUpdateParams(
 		channels: newChannels,
 		gates: newGates,
 		tags: [...template.tags],
+		completionAutonomyLevel: template.completionAutonomyLevel,
 		templateName: template.name,
 		templateHash,
+		postApproval: template.postApproval ? { ...template.postApproval } : null,
 	};
 }
 
@@ -331,6 +333,7 @@ export function setupSpaceWorkflowHandlers(
 			channels: workflow.channels ? [...workflow.channels] : undefined,
 			gates: workflow.gates ? [...workflow.gates] : undefined,
 			tags: [...workflow.tags],
+			postApproval: workflow.postApproval ? { ...workflow.postApproval } : undefined,
 		}));
 		return { workflows };
 	});

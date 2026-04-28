@@ -27,7 +27,13 @@ export type BridgeEvent =
 			/** Call this to provide the tool result and resume the Codex turn. */
 			provideResult: (text: string) => void;
 	  }
-	| { type: 'turn_done'; inputTokens: number; outputTokens: number }
+	| {
+			type: 'turn_done';
+			inputTokens: number;
+			outputTokens: number;
+			cacheCreationInputTokens?: number;
+			cacheReadInputTokens?: number;
+	  }
 	| { type: 'error'; message: string };
 
 // ---------------------------------------------------------------------------
@@ -290,7 +296,85 @@ type TurnStartResult = { turn: { id: string } };
 export type TokenUsage = {
 	inputTokens: number;
 	outputTokens: number;
+	cacheCreationInputTokens?: number;
+	cacheReadInputTokens?: number;
 };
+
+function readNumber(record: Record<string, unknown>, keys: string[]): number | undefined {
+	for (const key of keys) {
+		const value = record[key];
+		if (typeof value === 'number' && Number.isFinite(value)) {
+			return value;
+		}
+	}
+	return undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: undefined;
+}
+
+function selectUsageBreakdown(rawParams: unknown): Record<string, unknown> {
+	const params = asRecord(rawParams) ?? {};
+	const usageContainer =
+		asRecord(params.usage) ??
+		asRecord(params.tokenUsage) ??
+		asRecord(params.token_usage) ??
+		asRecord(params.totalTokenUsage) ??
+		asRecord(params.total_token_usage);
+
+	if (usageContainer) {
+		// Codex app-server v2 sends:
+		//   { tokenUsage: { total: {...}, last: {...}, modelContextWindow } }
+		// `last` is the turn-level usage that best matches Anthropic message usage;
+		// `total` is retained as a fallback for restored/cumulative snapshots.
+		return (
+			asRecord(usageContainer.last) ??
+			asRecord(usageContainer.lastTokenUsage) ??
+			asRecord(usageContainer.last_token_usage) ??
+			asRecord(usageContainer.total) ??
+			asRecord(usageContainer.totalTokenUsage) ??
+			asRecord(usageContainer.total_token_usage) ??
+			usageContainer
+		);
+	}
+
+	return params;
+}
+
+function normalizeTokenUsage(rawParams: unknown): TokenUsage {
+	const nested = selectUsageBreakdown(rawParams);
+
+	const outputTokens = readNumber(nested, ['outputTokens', 'output_tokens']) ?? 0;
+	const cacheReadInputTokens =
+		readNumber(nested, [
+			'cacheReadInputTokens',
+			'cache_read_input_tokens',
+			'cachedInputTokens',
+			'cached_input_tokens',
+		]) ?? 0;
+	const cacheCreationInputTokens =
+		readNumber(nested, ['cacheCreationInputTokens', 'cache_creation_input_tokens']) ?? 0;
+	const explicitInputTokens = readNumber(nested, ['inputTokens', 'input_tokens']);
+	const totalTokens = readNumber(nested, ['totalTokens', 'total_tokens']);
+	const reasoningOutputTokens =
+		readNumber(nested, ['reasoningOutputTokens', 'reasoning_output_tokens']) ?? 0;
+
+	const inputTokens =
+		explicitInputTokens ??
+		(totalTokens !== undefined
+			? Math.max(0, totalTokens - outputTokens - reasoningOutputTokens)
+			: 0);
+
+	return {
+		inputTokens,
+		outputTokens,
+		cacheCreationInputTokens,
+		cacheReadInputTokens,
+	};
+}
 
 export class BridgeSession {
 	private threadId: string | null = null;
@@ -373,20 +457,17 @@ export class BridgeSession {
 		// (or around the same time as) turn/completed.  We store it so that
 		// turn/completed can populate turn_done with real counts instead of zeros.
 		this.conn.onNotification('thread/tokenUsage/updated', (rawParams) => {
-			// The Codex app-server may send usage as a nested object or flat:
+			// The Codex app-server sends v2 usage as:
+			//   { tokenUsage: { total, last, modelContextWindow } }
+			// Older builds and tests may send usage as a nested breakdown or flat:
 			//   { threadId, usage: { inputTokens, outputTokens } }
 			//   { threadId, inputTokens, outputTokens }
-			const params = rawParams as {
-				usage?: { inputTokens?: number; outputTokens?: number };
-				inputTokens?: number;
-				outputTokens?: number;
-			};
-			const inputTokens = params?.usage?.inputTokens ?? params?.inputTokens ?? 0;
-			const outputTokens = params?.usage?.outputTokens ?? params?.outputTokens ?? 0;
+			// Normalize camelCase and snake_case fields, including cache counters.
+			const usage = normalizeTokenUsage(rawParams);
 			logger.debug(
-				`BridgeSession: thread/tokenUsage/updated inputTokens=${inputTokens} outputTokens=${outputTokens}`
+				`BridgeSession: thread/tokenUsage/updated inputTokens=${usage.inputTokens} outputTokens=${usage.outputTokens}`
 			);
-			this.latestUsage = { inputTokens, outputTokens };
+			this.latestUsage = usage;
 		});
 
 		// Wire notification handlers
@@ -415,7 +496,7 @@ export class BridgeSession {
 			// Legacy protocol had usage in this notification; v2 sends it separately.
 			const params = rawParams as {
 				turn?: { id?: string; status?: string; error?: { message?: string } | null };
-				usage?: { inputTokens?: number; outputTokens?: number };
+				usage?: Record<string, unknown>;
 			};
 			const status = params?.turn?.status;
 			logger.debug(`BridgeSession: turn/completed status=${status}`);
@@ -425,9 +506,9 @@ export class BridgeSession {
 			} else {
 				// Prefer token counts from thread/tokenUsage/updated (v2 protocol), then
 				// fall back to inline usage in turn/completed (legacy protocol), then 0.
-				const inputTokens = this.latestUsage?.inputTokens ?? params?.usage?.inputTokens ?? 0;
-				const outputTokens = this.latestUsage?.outputTokens ?? params?.usage?.outputTokens ?? 0;
-				this.queue.push({ type: 'turn_done', inputTokens, outputTokens });
+				const inlineUsage = params?.usage ? normalizeTokenUsage(params.usage) : null;
+				const usage = this.latestUsage ?? inlineUsage ?? { inputTokens: 0, outputTokens: 0 };
+				this.queue.push({ type: 'turn_done', ...usage });
 			}
 		});
 

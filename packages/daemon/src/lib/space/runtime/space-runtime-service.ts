@@ -620,6 +620,7 @@ export class SpaceRuntimeService {
 		// Merge rather than replace — other subsystems (e.g., room tools) may
 		// have already attached their own MCP servers on this session.
 		agentSession.mergeRuntimeMcpServers(additional);
+		await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
 
 		log.info(
 			`Attached space-agent-tools to member session ${session.id} (space ${space.id}, type ${session.type ?? 'worker'})`
@@ -735,6 +736,7 @@ export class SpaceRuntimeService {
 		);
 
 		log.info(`Space chat session provisioned for space ${space.id}`);
+		await this.replayPendingMessagesAfterRuntimeProvisioning(session);
 
 		// Flush any Task Agent → Space Agent messages that were queued before
 		// this session was provisioned (handles the daemon-restart activation race).
@@ -882,6 +884,14 @@ export class SpaceRuntimeService {
 			onGatePendingApproval: (runId, gateId) => this.handleGatePendingApproval(runId, gateId),
 		});
 		return router.onGateDataChanged(runId, gateId);
+	}
+
+	private async replayPendingMessagesAfterRuntimeProvisioning(session: {
+		replayPendingMessagesForImmediateMode?: () => Promise<void>;
+	}): Promise<void> {
+		if (typeof session.replayPendingMessagesForImmediateMode === 'function') {
+			await session.replayPendingMessagesForImmediateMode();
+		}
 	}
 
 	/**

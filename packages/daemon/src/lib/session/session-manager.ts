@@ -98,7 +98,11 @@ export class SessionManager {
 				eventBus,
 				() => this.authManager.getCurrentApiKey(),
 				this.skillsManager,
-				this.appMcpServerRepo
+				this.appMcpServerRepo,
+				undefined,
+				{
+					autoReplayPendingMessages: !this.needsSpaceRuntimeProvisioning(session),
+				}
 			);
 		};
 
@@ -134,6 +138,12 @@ export class SessionManager {
 
 		// Setup EventBus subscribers for async message processing
 		this.setupEventSubscriptions();
+	}
+
+	private needsSpaceRuntimeProvisioning(session: Session): boolean {
+		if (session.type === 'space_chat') return true;
+		if (session.type === 'space_task_agent') return true;
+		return typeof session.context?.spaceId === 'string';
 	}
 
 	/**

@@ -298,8 +298,8 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`error. If you want to move an approved task to done, call \`mark_complete\`.\n` +
 			`- \`[POST_APPROVAL_INSTRUCTIONS]\` arrive as a user-turn message. Treat them as authoritative ` +
 			`work to execute; do not ask for human approval before starting.\n` +
-			`- If the post-approval work fails, call \`submit_for_approval\` (or surface the error via ` +
-			`\`request_human_input\`) rather than swallowing it.`
+			`- If the post-approval work fails or needs a human decision, surface the issue with ` +
+			`\`request_human_input\` rather than swallowing it.`
 	);
 
 	// ---- Behavioral rules ---------------------------------------------------

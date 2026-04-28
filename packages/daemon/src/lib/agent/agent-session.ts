@@ -145,6 +145,18 @@ export interface AgentSessionInit {
 	roomSkillOverrides?: RoomSkillOverride[];
 }
 
+export interface AgentSessionRuntimeOptions {
+	/**
+	 * Whether the constructor should replay persisted pending messages for
+	 * immediate-mode sessions.
+	 *
+	 * Space-owned restored sessions need owner-specific in-process MCP servers
+	 * rebuilt before any query can start, so their managers pass false and call
+	 * replayPendingMessagesForImmediateMode() after runtime provisioning.
+	 */
+	autoReplayPendingMessages?: boolean;
+}
+
 // Extracted components
 import { MessageQueue } from './message-queue';
 import { ProcessingStateManager } from './processing-state-manager';
@@ -232,6 +244,7 @@ export class AgentSession
 	// Session state
 	private _isCleaningUp = false;
 	pendingRestartReason: 'settings.local.json' | null = null;
+	private initialPendingReplayScheduled = false;
 
 	// Services (accessible to handlers)
 	readonly errorManager: ErrorManager;
@@ -268,7 +281,8 @@ export class AgentSession
 		private getApiKey: () => Promise<string | null>,
 		readonly skillsManager?: import('../skills-manager').SkillsManager,
 		readonly appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
-		readonly roomSkillOverrides?: RoomSkillOverride[]
+		readonly roomSkillOverrides?: RoomSkillOverride[],
+		private readonly runtimeOptions: AgentSessionRuntimeOptions = {}
 	) {
 		this.errorManager = new ErrorManager(this.messageHub, this.daemonHub);
 		this.logger = new Logger(`AgentSession ${session.id}`);
@@ -343,15 +357,8 @@ export class AgentSession
 		// Setup event subscriptions (moved callbacks into EventSubscriptionSetup)
 		this.eventSubscriptionSetup.setup();
 
-		// Replay persisted pending messages after startup/recovery in immediate mode.
-		// Priority: enqueued/immediate first, then deferred/defer.
-		const restoredState = this.stateManager.getState();
-		if (session.config.queryMode !== 'manual' && restoredState.status !== 'waiting_for_input') {
-			queueMicrotask(() => {
-				this.queryModeHandler.replayPendingMessagesForImmediateMode().catch((error) => {
-					this.logger.warn('Failed to replay pending messages after startup:', error);
-				});
-			});
+		if (this.runtimeOptions.autoReplayPendingMessages ?? true) {
+			this.scheduleInitialPendingMessageReplay();
 		}
 	}
 
@@ -512,7 +519,8 @@ export class AgentSession
 		daemonHub: DaemonHub,
 		getApiKey: () => Promise<string | null>,
 		skillsManager?: import('../skills-manager').SkillsManager,
-		appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository
+		appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+		options?: AgentSessionRuntimeOptions
 	): AgentSession | null {
 		const session = db.getSession(sessionId);
 		if (!session) return null;
@@ -524,7 +532,9 @@ export class AgentSession
 			daemonHub,
 			getApiKey,
 			skillsManager,
-			appMcpServerRepo
+			appMcpServerRepo,
+			undefined,
+			options
 		);
 		return agentSession;
 	}
@@ -616,6 +626,34 @@ export class AgentSession
 
 	async startStreamingQuery(): Promise<void> {
 		await this.queryRunner.start();
+	}
+
+	private scheduleInitialPendingMessageReplay(): void {
+		if (this.initialPendingReplayScheduled) return;
+		const restoredState = this.stateManager.getState();
+		if (this.session.config.queryMode === 'manual') return;
+		if (restoredState.status === 'waiting_for_input') return;
+		this.initialPendingReplayScheduled = true;
+		queueMicrotask(() => {
+			this.replayPendingMessagesForImmediateMode().catch((error) => {
+				this.logger.warn('Failed to replay pending messages after startup:', error);
+			});
+		});
+	}
+
+	/**
+	 * Replay persisted pending messages after runtime-only session provisioning
+	 * has completed.
+	 *
+	 * Space owners call this after attaching live SDK MCP server instances on
+	 * restored sessions. It is also what the constructor schedules for generic
+	 * sessions where no owner-specific provisioning is required.
+	 */
+	async replayPendingMessagesForImmediateMode(): Promise<void> {
+		if (this.session.config.queryMode === 'manual') return;
+		const restoredState = this.stateManager.getState();
+		if (restoredState.status === 'waiting_for_input') return;
+		await this.queryModeHandler.replayPendingMessagesForImmediateMode();
 	}
 
 	async ensureQueryStarted(): Promise<void> {
@@ -746,6 +784,7 @@ export class AgentSession
 			mcpServers,
 		};
 		this.emitMcpAttachLog('replace', Object.keys(mcpServers));
+		this.syncRuntimeMcpServersToActiveQuery('replace', Object.keys(mcpServers));
 	}
 
 	/**
@@ -777,6 +816,7 @@ export class AgentSession
 			},
 		};
 		this.emitMcpAttachLog('merge', Object.keys(additional));
+		this.syncRuntimeMcpServersToActiveQuery('merge', Object.keys(additional));
 	}
 
 	/**
@@ -796,6 +836,43 @@ export class AgentSession
 			mcpServers: updated,
 		};
 		this.emitMcpAttachLog('detach', [name]);
+		this.syncRuntimeMcpServersToActiveQuery('detach', [name]);
+	}
+
+	private syncRuntimeMcpServersToActiveQuery(
+		action: 'merge' | 'detach' | 'replace',
+		servers: string[]
+	): void {
+		const queryObject = this.queryObject;
+		if (!queryObject) return;
+
+		const setMcpServers = queryObject.setMcpServers?.bind(queryObject);
+		if (!setMcpServers) return;
+
+		const effectiveMcpServers = this.optionsBuilder.getEffectiveMcpServers() ?? {};
+		void setMcpServers(effectiveMcpServers)
+			.then((result) => {
+				this.logger.info(
+					`mcp.attach.live ${JSON.stringify({
+						event: 'mcp.attach.live',
+						sessionId: this.session.id,
+						action,
+						servers: [...servers].sort(),
+						effectiveServers: Object.keys(effectiveMcpServers).sort(),
+						added: result.added,
+						removed: result.removed,
+						errors: result.errors,
+					})}`
+				);
+			})
+			.catch((error) => {
+				this.logger.warn(
+					`mcp.attach.live failed for session ${this.session.id} after ${action} [${servers
+						.slice()
+						.sort()
+						.join(', ')}]: ${error instanceof Error ? error.message : String(error)}`
+				);
+			});
 	}
 
 	/**

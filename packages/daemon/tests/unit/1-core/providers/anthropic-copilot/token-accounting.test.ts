@@ -225,4 +225,17 @@ describe('message_delta output_tokens', () => {
 		// ceil(11/4) = 3
 		expect(usage['output_tokens']).toBe(3);
 	});
+
+	it('message_delta preserves the best known input_tokens value', () => {
+		const { written, res } = makeRes();
+		const writer = new AnthropicStreamWriter();
+		writer.start(res, 'model', 12);
+		writer.updateInputTokens(345);
+		writer.flushDeltas(res, ['hello']);
+		writer.sendCompleted(res);
+		const events = parseEvents(written);
+		const delta = events.find((e) => e.type === 'message_delta');
+		const usage = (delta!.data as Record<string, unknown>)['usage'] as Record<string, unknown>;
+		expect(usage['input_tokens']).toBe(345);
+	});
 });

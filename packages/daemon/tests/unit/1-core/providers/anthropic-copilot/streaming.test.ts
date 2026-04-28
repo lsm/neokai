@@ -16,6 +16,7 @@ import {
 	STREAMING_TIMEOUT_MS,
 } from '../../../../../src/lib/providers/anthropic-copilot/streaming';
 import { estimateTokens } from '../../../../../src/lib/providers/anthropic-copilot/sse';
+import { ContextUsageStore } from '../../../../../src/lib/providers/anthropic-copilot/context-usage';
 import { ToolBridgeRegistry } from '../../../../../src/lib/providers/anthropic-copilot/tool-bridge';
 
 // ---------------------------------------------------------------------------
@@ -414,6 +415,50 @@ describe('runSessionStreaming — inputText / input_tokens', () => {
 			'usage'
 		] as Record<string, unknown>;
 		expect(usage['input_tokens']).toBe(0);
+	});
+
+	it('consumes session.usage_info and uses it for final input_tokens', async () => {
+		const session = new MockSession();
+		const { written, res } = makeMockRes();
+		const { req } = makeMockReq();
+		const store = new ContextUsageStore();
+
+		const p = runSessionStreaming(
+			session as unknown as CopilotSession,
+			'prompt',
+			'gpt-5-mini',
+			req,
+			res,
+			undefined,
+			() => {},
+			'heuristic input',
+			{ store, requestKey: '/tmp:gpt-5-mini', outputTokenLimit: 100 }
+		);
+		await Promise.resolve();
+		session.emit('session.usage_info', {
+			currentTokens: 18_000,
+			tokenLimit: 160_000,
+			messagesLength: 12,
+			systemTokens: 3_000,
+			toolDefinitionsTokens: 2_000,
+			conversationTokens: 13_000,
+		});
+		session.emit('assistant.message_delta', { deltaContent: 'done' });
+		session.emit('session.idle');
+		await p;
+
+		const snapshot = store.getForRequestKey('/tmp:gpt-5-mini');
+		expect(snapshot?.systemTokens).toBe(3_000);
+		expect(snapshot?.toolDefinitionsTokens).toBe(2_000);
+		expect(snapshot?.conversationTokens).toBe(13_000);
+		expect(snapshot?.totalTokens).toBe(18_000);
+		expect(snapshot?.promptTokenLimit).toBe(160_000);
+		expect(snapshot?.bufferTokens).toBeGreaterThan(0);
+
+		const events = parseEvents(written);
+		const delta = events.find((e) => e.type === 'message_delta');
+		const usage = (delta!.data as Record<string, unknown>)['usage'] as Record<string, unknown>;
+		expect(usage['input_tokens']).toBe(18_000);
 	});
 });
 

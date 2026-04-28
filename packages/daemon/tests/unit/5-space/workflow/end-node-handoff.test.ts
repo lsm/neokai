@@ -90,8 +90,8 @@ describe('End-node post-approval declarations', () => {
 		test(`${label} declares postApproval targeting the reviewer role`, () => {
 			expect(wf.postApproval).toBeDefined();
 			expect(wf.postApproval!.targetAgent).toBe('reviewer');
-			// Uses the canonical shared merge template — not a bespoke string.
-			// Any edit to the template reaches all three workflows atomically.
+			// Uses the workflow-level merge prompt. The runtime appends the
+			// shared mark_complete instruction separately.
 			expect(wf.postApproval!.instructions).toBe(PR_MERGE_POST_APPROVAL_INSTRUCTIONS);
 		});
 
@@ -271,31 +271,22 @@ describe('Shared merge template canonical content', () => {
 		// sub-session. A follow-up PR will thread the approving agent's slot
 		// name through and restore the token.
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('{{pr_url}}');
-		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('{{autonomy_level}}');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('{{approval_source}}');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('{{autonomy_level}}');
 		// Locked: `{{reviewer_name}}` must NOT appear — swap to static label.
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('{{reviewer_name}}');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('[end-node reviewer]');
 	});
 
-	test('template instructs mark_complete (NOT approve_task) for the final step', () => {
-		// Post-approval closes the `approved → done` transition via
-		// `mark_complete`. Using `approve_task` here would be a double-fire
-		// and the MCP tool rejects it anyway, but the prompt must use the
-		// correct verb so the session calls the right tool.
-		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('mark_complete()');
-		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('DO NOT call approve_task');
+	test('merge template does not include the runtime-owned completion step', () => {
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('mark_complete');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('approve_task');
 	});
 
-	test('template gates auto-merge behind approval_source != "human" AND autonomy_level < 4', () => {
-		// Section 2 of the template body is the human-approval fallback for
-		// non-human approvals (auto_policy, agent) at autonomy < 4. When
-		// approval_source is "human", step 2 is skipped to avoid redundant
-		// double-approval. Uses != to cover both SpaceApprovalSource
-		// variants ("auto_policy" and "agent").
-		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('approval_source != "human"');
-		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('autonomy_level < 4');
-		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('request_human_input');
+	test('merge template does not ask for redundant approval after task approval', () => {
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('Approve merging PR');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('approval_source != "human"');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('autonomy_level < 4');
 	});
 
 	test('template contains the squash-merge command and conflict guard', () => {
