@@ -3156,8 +3156,9 @@ export class TaskAgentManager {
 	private async rehydrateSubSession(subSessionId: string): Promise<AgentSession | null> {
 		log.warn(`TaskAgentManager: rehydrating ghost sub-session ${subSessionId} from DB...`);
 
-		// --- Look up the NodeExecution by agentSessionId
-		const execution = this.config.nodeExecutionRepo.getByAgentSessionId(subSessionId);
+		// --- Look up the NodeExecution by agentSessionId, falling back to the
+		// execution id embedded in deterministic workflow sub-session ids.
+		const execution = this.resolveNodeExecutionForSubSession(subSessionId);
 		if (!execution) {
 			log.warn(
 				`TaskAgentManager.rehydrateSubSession: no NodeExecution found with agentSessionId=${subSessionId}`
@@ -3299,6 +3300,71 @@ export class TaskAgentManager {
 
 		void workflow; // Loaded for context but not needed directly; suppresses unused-var lint.
 		return agentSession;
+	}
+
+	/**
+	 * Resolve the workflow execution that owns a sub-session.
+	 *
+	 * Normal path: NodeExecution.agentSessionId points at the sub-session.
+	 * Recovery path: deterministic workflow sub-session ids include the execution
+	 * id (`space:<spaceId>:task:<taskId>:exec:<nodeExecutionId>`). If a daemon
+	 * restart or spawn race left `agent_session_id` null, use that embedded id to
+	 * repair the row and continue rehydration/self-heal without discarding the
+	 * existing session transcript or queued message.
+	 */
+	private resolveNodeExecutionForSubSession(subSessionId: string): NodeExecution | null {
+		const bySessionId = this.config.nodeExecutionRepo.listByAgentSessionId(subSessionId);
+		const embeddedExecutionId = this.parseExecutionIdFromSubSessionId(subSessionId);
+		const embedded = embeddedExecutionId
+			? this.config.nodeExecutionRepo.getById(embeddedExecutionId)
+			: null;
+
+		if (embedded && !embedded.agentSessionId) {
+			const repaired = this.config.nodeExecutionRepo.updateSessionId(embedded.id, subSessionId);
+			if (repaired) {
+				log.warn(
+					`TaskAgentManager.resolveNodeExecutionForSubSession: repaired missing agent_session_id ` +
+						`for execution ${embedded.id} from sub-session id ${subSessionId}`
+				);
+				return this.pickBestNodeExecution([repaired, ...bySessionId]);
+			}
+		}
+
+		const candidates =
+			embedded?.agentSessionId === subSessionId ? [embedded, ...bySessionId] : bySessionId;
+		return this.pickBestNodeExecution(candidates);
+	}
+
+	private parseExecutionIdFromSubSessionId(subSessionId: string): string | null {
+		const marker = ':exec:';
+		const markerIndex = subSessionId.indexOf(marker);
+		if (markerIndex === -1) return null;
+		const rest = subSessionId.slice(markerIndex + marker.length);
+		const executionId = rest.split(':')[0];
+		return executionId || null;
+	}
+
+	private pickBestNodeExecution(candidates: NodeExecution[]): NodeExecution | null {
+		if (candidates.length === 0) return null;
+		const statusRank = (execution: NodeExecution): number => {
+			switch (execution.status) {
+				case 'in_progress':
+					return 0;
+				case 'blocked':
+					return 1;
+				case 'pending':
+					return 2;
+				default:
+					return 3;
+			}
+		};
+		return [...candidates].sort((a, b) => {
+			const rankDiff = statusRank(a) - statusRank(b);
+			if (rankDiff !== 0) return rankDiff;
+			const updatedDiff = b.updatedAt - a.updatedAt;
+			if (updatedDiff !== 0) return updatedDiff;
+			return b.createdAt - a.createdAt;
+		})[0]!;
 	}
 
 	private async replayPendingMessagesAfterRuntimeProvisioning(
@@ -3560,8 +3626,8 @@ export class TaskAgentManager {
 			`TaskAgentManager.mcpSelfHeal: triggered for session ${sessionId}, missing [${missing.join(', ')}]`
 		);
 
-		// Step 1: Look up the NodeExecution (same lookup as rehydrateSubSession).
-		const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+		// Step 1: Look up the NodeExecution (same resolver as rehydrateSubSession).
+		const execution = this.resolveNodeExecutionForSubSession(sessionId);
 		if (!execution) {
 			log.error(
 				`TaskAgentManager.mcpSelfHeal: no NodeExecution found for agentSessionId=${sessionId} — cannot self-heal`
