@@ -1,8 +1,9 @@
-import type {
-	SpaceTaskActivityMember,
-	SpaceTaskActivityState,
-	SpaceTaskPriority,
-	SpaceTaskStatus,
+import {
+	isWorkflowRecoveryTransition,
+	type SpaceTaskActivityMember,
+	type SpaceTaskActivityState,
+	type SpaceTaskPriority,
+	type SpaceTaskStatus,
 } from '@neokai/shared';
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -84,16 +85,6 @@ const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
 	high: 'border-orange-500/30 bg-orange-500/10 text-orange-300',
 	urgent: 'border-red-500/30 bg-red-500/10 text-red-300',
 };
-
-function isWorkflowRecoveryTransition(
-	from: SpaceTaskStatus,
-	to: SpaceTaskStatus
-): to is 'open' | 'in_progress' {
-	return (
-		(from === 'done' || from === 'blocked' || from === 'cancelled') &&
-		(to === 'open' || to === 'in_progress')
-	);
-}
 
 function getTaskActionLabel(
 	task: { status: SpaceTaskStatus; workflowRunId?: string | null },

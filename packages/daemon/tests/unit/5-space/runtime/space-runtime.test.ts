@@ -223,6 +223,151 @@ describe('SpaceRuntime', () => {
 			expect(recoveredRun.completedAt).toBeNull();
 		});
 
+		test('reopening a done workflow task clears completion timestamps and keeps run active', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Reopen me');
+			const task = tasks[0];
+			const completedAt = Date.now() - 10_000;
+
+			workflowRunRepo.transitionStatus(run.id, 'done');
+			workflowRunRepo.updateRun(run.id, { completedAt });
+			taskRepo.updateTask(task.id, { status: 'done', completedAt, result: 'old result' });
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'cancelled',
+				completedAt,
+				result: 'stale result',
+			});
+
+			await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
+			await runtime.executeTick();
+
+			const recoveredTask = taskRepo.getTask(task.id)!;
+			const recoveredRun = workflowRunRepo.getRun(run.id)!;
+			expect(recoveredTask.status).toBe('in_progress');
+			expect(recoveredTask.completedAt).toBeNull();
+			expect(recoveredTask.result).toBeNull();
+			expect(recoveredRun.status).toBe('in_progress');
+			expect(recoveredRun.completedAt).toBeNull();
+		});
+
+		test('reopening a blocked workflow task leaves task open while run processes active', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Unblock me');
+			const task = tasks[0];
+			const completedAt = Date.now() - 10_000;
+
+			workflowRunRepo.transitionStatus(run.id, 'blocked');
+			workflowRunRepo.updateRun(run.id, { completedAt, failureReason: 'Needs input' });
+			taskRepo.updateTask(task.id, {
+				status: 'blocked',
+				completedAt,
+				blockReason: 'human_input_requested',
+			});
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'blocked',
+				completedAt,
+				result: 'blocked result',
+			});
+
+			await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'open');
+			await runtime.executeTick();
+
+			const recoveredTask = taskRepo.getTask(task.id)!;
+			const recoveredRun = workflowRunRepo.getRun(run.id)!;
+			expect(recoveredTask.status).toBe('open');
+			expect(recoveredTask.completedAt).toBeNull();
+			expect(recoveredTask.blockReason).toBeNull();
+			expect(recoveredRun.status).toBe('in_progress');
+			expect(recoveredRun.completedAt).toBeNull();
+			expect(recoveredRun.failureReason).toBeUndefined();
+		});
+
+		test('resuming a blocked workflow task moves task and run in progress', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Resume blocked'
+			);
+			const task = tasks[0];
+			const completedAt = Date.now() - 10_000;
+
+			workflowRunRepo.transitionStatus(run.id, 'blocked');
+			workflowRunRepo.updateRun(run.id, { completedAt, failureReason: 'Needs input' });
+			taskRepo.updateTask(task.id, {
+				status: 'blocked',
+				completedAt,
+				blockReason: 'human_input_requested',
+			});
+
+			await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
+
+			const recoveredTask = taskRepo.getTask(task.id)!;
+			const recoveredRun = workflowRunRepo.getRun(run.id)!;
+			expect(recoveredTask.status).toBe('in_progress');
+			expect(recoveredTask.completedAt).toBeNull();
+			expect(recoveredTask.blockReason).toBeNull();
+			expect(recoveredRun.status).toBe('in_progress');
+			expect(recoveredRun.completedAt).toBeNull();
+			expect(recoveredRun.failureReason).toBeUndefined();
+		});
+
+		test('recreates start node executions when recovery finds none', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'Multi-agent start',
+				description: 'Test',
+				nodes: [
+					{
+						id: STEP_A,
+						name: 'Plan',
+						agents: [
+							{ name: 'Planner', agentId: AGENT_PLANNER },
+							{ name: 'Coder', agentId: AGENT_CODER },
+						],
+					},
+					{ id: STEP_B, name: 'End', agentId: AGENT_GENERAL },
+				],
+				transitions: [
+					{
+						from: STEP_A,
+						to: STEP_B,
+						condition: { type: 'always' },
+						order: 0,
+					},
+				],
+				startNodeId: STEP_A,
+				rules: [],
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Missing nodes');
+			const task = tasks[0];
+
+			workflowRunRepo.transitionStatus(run.id, 'cancelled');
+			taskRepo.updateTask(task.id, { status: 'cancelled' });
+			nodeExecutionRepo.deleteByWorkflowRun(run.id);
+
+			await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
+
+			const executions = nodeExecutionRepo.listByWorkflowRun(run.id);
+			expect(executions).toHaveLength(2);
+			expect(executions.map((execution) => execution.agentName).sort()).toEqual([
+				'Coder',
+				'Planner',
+			]);
+			expect(executions.every((execution) => execution.workflowNodeId === STEP_A)).toBe(true);
+			expect(executions.every((execution) => execution.status === 'pending')).toBe(true);
+		});
+
 		test('resets terminal node execution without live session to pending', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },

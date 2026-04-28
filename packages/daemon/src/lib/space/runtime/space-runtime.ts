@@ -1232,7 +1232,13 @@ export class SpaceRuntime {
 		const recovered = recoverTx();
 		await this.ensureExecutorRegistered(recovered.run);
 		for (const sessionId of liveSessionIds) {
-			await this.config.taskAgentManager?.prepareSubSessionForWorkflowResume(sessionId);
+			const prepared =
+				(await this.config.taskAgentManager?.prepareSubSessionForWorkflowResume(sessionId)) ?? true;
+			if (!prepared) {
+				log.warn(
+					`Workflow resume could not prepare MCP tools for live node-agent session ${sessionId}`
+				);
+			}
 		}
 		await this.safeOnWorkflowRunUpdated(
 			spaceId,

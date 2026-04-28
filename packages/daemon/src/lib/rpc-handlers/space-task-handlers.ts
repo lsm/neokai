@@ -8,12 +8,12 @@
  * - spaceTask.update - Update task fields (metadata and status with transition validation)
  */
 
-import type {
-	CreateSpaceTaskParams,
-	MessageHub,
-	SpaceTask,
-	SpaceTaskStatus,
-	UpdateSpaceTaskParams,
+import {
+	isWorkflowRecoveryTransition,
+	type CreateSpaceTaskParams,
+	type MessageHub,
+	type SpaceTask,
+	type UpdateSpaceTaskParams,
 } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { Logger } from '../logger';
@@ -22,16 +22,6 @@ import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 
 const log = new Logger('space-task-handlers');
-
-function isWorkflowRecoveryTransition(
-	from: SpaceTaskStatus,
-	to: SpaceTaskStatus
-): to is 'open' | 'in_progress' {
-	return (
-		(from === 'done' || from === 'blocked' || from === 'cancelled') &&
-		(to === 'open' || to === 'in_progress')
-	);
-}
 
 /**
  * Factory that creates a SpaceTaskManager bound to a specific spaceId.

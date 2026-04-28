@@ -12,6 +12,7 @@
 
 import type {
 	SpaceAgent,
+	SpaceTaskStatus,
 	SpaceWorkflow,
 	WorkflowChannel,
 	WorkflowNode,
@@ -47,6 +48,25 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
 	throw new Error(
 		`WorkflowNode "${node.name}" (id: ${node.id}) has no agents defined. ` +
 			'At least one agent must be provided.'
+	);
+}
+
+// ============================================================================
+// Space task workflow recovery transitions
+// ============================================================================
+
+/**
+ * Returns true when a task status change should recover the linked workflow run
+ * instead of updating only the task row.
+ */
+export function isWorkflowRecoveryTransition(
+	from: SpaceTaskStatus,
+	to: SpaceTaskStatus
+): to is 'open' | 'in_progress' {
+	return (
+		(from === 'done' && to === 'in_progress') ||
+		(from === 'blocked' && (to === 'open' || to === 'in_progress')) ||
+		(from === 'cancelled' && (to === 'open' || to === 'in_progress'))
 	);
 }
 
