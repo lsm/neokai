@@ -409,33 +409,6 @@ describe('space-task-handlers', () => {
 			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
 		});
 
-		it('routes workflow-backed start through workflow recovery to keep task and run consistent', async () => {
-			const workflowTask = {
-				...mockTask,
-				status: 'open' as const,
-				workflowRunId: 'run-1',
-			};
-			const recoveredTask = { ...workflowTask, status: 'in_progress' as const };
-			const runtime = {
-				recoverWorkflowBackedTask: mock(async () => recoveredTask),
-			} as unknown as SpaceRuntimeService;
-			setup(mockSpace, workflowTask, runtime);
-
-			const result = await call('spaceTask.update', {
-				spaceId: 'space-1',
-				taskId: 'task-1',
-				status: 'in_progress',
-			});
-
-			expect(result).toEqual(recoveredTask);
-			expect(runtime.recoverWorkflowBackedTask).toHaveBeenCalledWith(
-				'space-1',
-				'task-1',
-				'in_progress'
-			);
-			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
-		});
-
 		it('exposes explicit workflow recovery RPC', async () => {
 			const workflowTask = {
 				...mockTask,

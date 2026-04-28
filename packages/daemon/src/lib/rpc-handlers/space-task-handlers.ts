@@ -23,20 +23,13 @@ import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service
 
 const log = new Logger('space-task-handlers');
 
-function isWorkflowRecoveryTransition(from: SpaceTaskStatus, to: SpaceTaskStatus): boolean {
-	return (
-		(from === 'done' || from === 'blocked' || from === 'cancelled') &&
-		(to === 'open' || to === 'in_progress')
-	);
-}
-
-function shouldUseWorkflowRecoveryPath(
+function isWorkflowRecoveryTransition(
 	from: SpaceTaskStatus,
 	to: SpaceTaskStatus
 ): to is 'open' | 'in_progress' {
 	return (
-		(to === 'open' || to === 'in_progress') &&
-		(isWorkflowRecoveryTransition(from, to) || (from === 'open' && to === 'in_progress'))
+		(from === 'done' || from === 'blocked' || from === 'cancelled') &&
+		(to === 'open' || to === 'in_progress')
 	);
 }
 
@@ -176,7 +169,7 @@ export function setupSpaceTaskHandlers(
 			if (updateParams.status !== currentTask.status) {
 				if (
 					currentTask.workflowRunId &&
-					shouldUseWorkflowRecoveryPath(currentTask.status, updateParams.status)
+					isWorkflowRecoveryTransition(currentTask.status, updateParams.status)
 				) {
 					if (!spaceRuntimeService) {
 						throw new Error(
