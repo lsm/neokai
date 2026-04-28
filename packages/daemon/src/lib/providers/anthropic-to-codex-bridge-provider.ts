@@ -55,7 +55,7 @@ const ANTHROPIC_CODEX_MODELS: ModelInfo[] = [
 		alias: 'codex',
 		family: 'gpt',
 		provider: 'anthropic-codex',
-		contextWindow: 200000,
+		contextWindow: 272000,
 		description: 'GPT-5.3 Codex · Best for coding and complex reasoning',
 		releaseDate: '2025-12-01',
 		available: true,
@@ -66,7 +66,7 @@ const ANTHROPIC_CODEX_MODELS: ModelInfo[] = [
 		alias: 'codex-5.4',
 		family: 'gpt',
 		provider: 'anthropic-codex',
-		contextWindow: 200000,
+		contextWindow: 272000,
 		description: 'GPT-5.4 · Frontier agentic coding model',
 		releaseDate: '2026-01-01',
 		available: true,
@@ -77,7 +77,7 @@ const ANTHROPIC_CODEX_MODELS: ModelInfo[] = [
 		alias: 'codex-latest',
 		family: 'gpt',
 		provider: 'anthropic-codex',
-		contextWindow: 200000,
+		contextWindow: 272000,
 		description: 'GPT-5.5 · Latest frontier agentic coding model',
 		releaseDate: '2026-04-01',
 		available: true,
@@ -268,7 +268,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		// and SSE events contain no thinking_delta events. Codex (OpenAI-backed) does not
 		// expose extended thinking capability.
 		extendedThinking: false,
-		maxContextWindow: 200000,
+		maxContextWindow: 272000,
 		functionCalling: true,
 		vision: false,
 	};

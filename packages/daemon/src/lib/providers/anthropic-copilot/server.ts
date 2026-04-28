@@ -55,6 +55,8 @@ const FALLBACK_MODELS = [
 	{ id: 'claude-opus-4.6', display_name: 'Claude Opus 4.6', max_input_tokens: 200000 },
 	{ id: 'claude-sonnet-4.6', display_name: 'Claude Sonnet 4.6', max_input_tokens: 200000 },
 	{ id: 'gpt-5.3-codex', display_name: 'GPT-5.3 Codex', max_input_tokens: 272000 },
+	{ id: 'gpt-5.4', display_name: 'GPT-5.4', max_input_tokens: 272000 },
+	{ id: 'gpt-5.5', display_name: 'GPT-5.5', max_input_tokens: 272000 },
 	{ id: 'gpt-5-mini', display_name: 'GPT-5 Mini', max_input_tokens: 128000 },
 	{
 		id: 'gemini-3.1-pro-preview',
