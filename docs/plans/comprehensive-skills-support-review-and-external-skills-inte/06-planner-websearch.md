@@ -20,7 +20,7 @@ Audit the planner agent's tool configuration and confirm `WebSearch` is correctl
 1. Run `bun install` at the worktree root.
 2. Read `packages/daemon/src/lib/room/agents/planner-agent.ts` — verify both `Planner` and `plan-writer` agent definitions include `WebSearch` in their `tools` arrays.
 3. Read `packages/daemon/src/lib/agent/query-options-builder.ts` — check whether `room_chat` session type (which the planner runs as `type: 'planner'`) restricts or allows `WebSearch`.
-4. Check `packages/shared/src/types/settings.ts` `DEFAULT_GLOBAL_SETTINGS.sandbox.network.allowedDomains` — verify that search API domains are included (or add them: e.g., `api.search.brave.com`, `duckduckgo.com`).
+4. Check `packages/shared/src/types/settings.ts` `DEFAULT_GLOBAL_SETTINGS.sandbox.network.allowedDomains` — verify that search API domains are included.
 5. Add missing search API domains to `allowedDomains` if needed.
 6. Add an inline comment in `planner-agent.ts` documenting why WebSearch is included for both agents.
 7. Run `bun run typecheck`.
@@ -98,55 +98,3 @@ Write an online test that verifies the planner agent session can invoke `WebSear
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`
 
 **depends_on:** ["Task 6.2: Planner Prompt Enhancement for Web Search"]
-
----
-
-### Task 6.4: WebSearch MCP Server Skill — Brave/Tavily Integration Option
-
-**Agent type:** coder
-
-**Description:**
-Create a built-in `McpServerSkillConfig` entry for a web search MCP server (e.g., Brave Search or Tavily MCP) that users can enable via the Skills registry. This provides an alternative to the SDK's built-in `WebSearch` tool for agents that don't have it in their tool list.
-
-**Subtasks (ordered):**
-
-1. Run `bun install` at the worktree root.
-2. Research available web search MCP servers (Brave Search MCP, Tavily MCP, DuckDuckGo MCP). Document the chosen one in `docs/architecture/web-search-mcp.md`.
-3. In `SkillsManager.initializeBuiltins()`, register a built-in skill entry. Because `McpServerSkillConfig` references an existing `app_mcp_servers` entry by ID, the initializer must first ensure the corresponding app MCP server record exists, then reference it:
-   ```
-   // Step 1: ensure app MCP server entry exists (upsert)
-   const appMcpEntry = appMcpServerRepo.getByName('web-search-brave') ??
-     appMcpServerRepo.create({
-       name: 'web-search-brave',
-       description: 'Brave Search MCP server for web search capability',
-       sourceType: 'stdio',
-       command: 'npx',
-       args: ['-y', '@modelcontextprotocol/server-brave-search'],
-       enabled: true,
-     });
-   // Note: AppMcpServer has no displayName field — use name + description only
-
-   // Step 2: register the skill referencing the app MCP entry
-   {
-     id: 'builtin-web-search-mcp',
-     name: 'web-search-mcp',
-     displayName: 'Web Search (MCP)',
-     description: 'Web search capability via Brave Search MCP. Requires BRAVE_API_KEY env var.',
-     sourceType: 'mcp_server',
-     config: { appMcpServerId: appMcpEntry.id },
-     enabled: false,  // opt-in, not default
-     builtIn: true,
-   }
-   ```
-4. Add `BRAVE_API_KEY` (or equivalent) to sandbox `allowedDomains` if needed.
-5. Test that enabling this skill and starting a session results in the MCP server being included in `mcpServers`.
-6. Write unit test verifying the built-in web search MCP skill registration.
-
-**Acceptance criteria:**
-- Built-in web search MCP skill is registered in `initializeBuiltins()`
-- Enabling the skill injects the MCP server into session options
-- Skill is disabled by default (opt-in)
-- Unit test verifies registration and injection
-- Changes are on a feature branch with a GitHub PR created via `gh pr create`
-
-**depends_on:** ["Task 3.1: Skills Injection in QueryOptionsBuilder (with strictMcpConfig handling)", "Task 6.1: Verify Planner WebSearch Wiring"]

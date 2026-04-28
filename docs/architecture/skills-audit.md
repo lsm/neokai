@@ -153,7 +153,7 @@ return {
 
 `WebSearch` is a **built-in SDK tool**, not an MCP tool. It does not require any additional MCP server configuration. It is available to any agent that lists it in its tools array.
 
-The Planner does **not** currently have a dedicated web search Skill (e.g., Brave, Tavily). It uses the SDK's built-in `WebSearch` which routes through the SDK's internal search implementation.
+The Planner does **not** currently have a dedicated web search Skill. It uses the SDK's built-in `WebSearch` which routes through the SDK's internal search implementation.
 
 ---
 
