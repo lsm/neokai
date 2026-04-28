@@ -506,6 +506,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		sessionManager: deps.sessionManager,
 		daemonHub: deps.daemonHub,
 		artifactRepo,
+		pendingMessageRepo,
 	});
 
 	// Session handlers — registered here (after spaceRuntimeService is built) so
