@@ -183,6 +183,7 @@ function makeMockHub() {
 			// Daemon returns SpaceTask directly (not wrapped)
 			if (method === 'spaceTask.create') return makeTask('new-task');
 			if (method === 'spaceTask.update') return makeTask('t1', 'in_progress');
+			if (method === 'spaceTask.recoverWorkflow') return makeTask('t1', 'in_progress');
 			// spaceAgent handlers return wrapped { agent }
 			if (method === 'spaceAgent.create') return { agent: makeAgent('new-agent') };
 			if (method === 'spaceAgent.update') return { agent: makeAgent('a1') };
@@ -977,6 +978,18 @@ describe('SpaceStore — CRUD methods', () => {
 		const task = await spaceStore.updateTask('t1', { status: 'in_progress' });
 
 		expect(mockHub.request).toHaveBeenCalledWith('spaceTask.update', {
+			taskId: 't1',
+			spaceId: 'space-1',
+			status: 'in_progress',
+		});
+		expect(task.status).toBe('in_progress');
+	});
+
+	it('recoverWorkflowTask calls spaceTask.recoverWorkflow RPC', async () => {
+		await spaceStore.selectSpace('space-1');
+		const task = await spaceStore.recoverWorkflowTask('t1', 'in_progress');
+
+		expect(mockHub.request).toHaveBeenCalledWith('spaceTask.recoverWorkflow', {
 			taskId: 't1',
 			spaceId: 'space-1',
 			status: 'in_progress',

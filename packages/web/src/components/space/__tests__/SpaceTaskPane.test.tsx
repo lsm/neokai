@@ -93,6 +93,7 @@ let mockNodeExecutions: ReturnType<typeof signal<NodeExecution[]>>;
 let mockNodeExecutionsByNodeId: ReturnType<typeof signal<Map<string, unknown[]>>>;
 
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
+const mockRecoverWorkflowTask = vi.fn().mockResolvedValue(undefined);
 const mockSubmitForReview = vi.fn().mockResolvedValue(undefined);
 const mockEnsureTaskAgentSession = vi.fn();
 const mockSendTaskMessage = vi.fn().mockResolvedValue(undefined);
@@ -110,6 +111,7 @@ vi.mock('../../../lib/space-store', () => ({
 			nodeExecutions: mockNodeExecutions,
 			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
 			updateTask: mockUpdateTask,
+			recoverWorkflowTask: mockRecoverWorkflowTask,
 			submitForReview: mockSubmitForReview,
 			ensureTaskAgentSession: mockEnsureTaskAgentSession,
 			sendTaskMessage: mockSendTaskMessage,
@@ -227,6 +229,7 @@ describe('SpaceTaskPane', () => {
 		mockTaskActivity.value = new Map();
 		mockNodeExecutions.value = [];
 		mockUpdateTask.mockClear();
+		mockRecoverWorkflowTask.mockClear();
 		mockEnsureTaskAgentSession.mockReset();
 		mockEnsureTaskAgentSession.mockImplementation(async () =>
 			makeTask({ status: 'in_progress', taskAgentSessionId: 'session-ensured' })
@@ -852,6 +855,26 @@ describe('SpaceTaskPane — activity members actions', () => {
 		await waitFor(() =>
 			expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'in_progress' })
 		);
+	});
+
+	it('uses workflow recovery action and label for workflow-backed terminal tasks', async () => {
+		mockTasks.value = [
+			makeTask({
+				status: 'cancelled',
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'session-abc',
+			}),
+		];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', status: 'cancelled' })];
+		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		fireEvent.click(getByText('Resume workflow'));
+
+		await waitFor(() =>
+			expect(mockRecoverWorkflowTask).toHaveBeenCalledWith('task-1', 'in_progress')
+		);
+		expect(mockUpdateTask).not.toHaveBeenCalled();
 	});
 
 	it('shows divider between activity members and transition actions', () => {

@@ -1,8 +1,9 @@
-import type {
-	SpaceTaskActivityMember,
-	SpaceTaskActivityState,
-	SpaceTaskPriority,
-	SpaceTaskStatus,
+import {
+	isWorkflowRecoveryTransition,
+	type SpaceTaskActivityMember,
+	type SpaceTaskActivityState,
+	type SpaceTaskPriority,
+	type SpaceTaskStatus,
 } from '@neokai/shared';
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -84,6 +85,20 @@ const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
 	high: 'border-orange-500/30 bg-orange-500/10 text-orange-300',
 	urgent: 'border-red-500/30 bg-red-500/10 text-red-300',
 };
+
+function getTaskActionLabel(
+	task: { status: SpaceTaskStatus; workflowRunId?: string | null },
+	target: SpaceTaskStatus,
+	label: string
+): string {
+	if (!task.workflowRunId || !isWorkflowRecoveryTransition(task.status, target)) {
+		return label;
+	}
+	if (label.toLowerCase().includes('reopen')) {
+		return 'Reopen workflow';
+	}
+	return target === 'in_progress' ? 'Resume workflow' : 'Reopen workflow';
+}
 
 function formatAgentSlotLabel(name: string): string {
 	return name
@@ -531,7 +546,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		try {
 			setStatusTransitioning(true);
 			setThreadSendError(null);
-			await spaceStore.updateTask(task.id, { status: newStatus });
+			if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, newStatus)) {
+				await spaceStore.recoverWorkflowTask(task.id, newStatus);
+			} else {
+				await spaceStore.updateTask(task.id, { status: newStatus });
+			}
 		} catch (err) {
 			setThreadSendError(formatTaskThreadError(err));
 		} finally {
@@ -625,7 +644,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		}
 		taskActionItems.push(
 			...filteredTransitionActions.map(({ target, label }) => ({
-				label,
+				label: getTaskActionLabel(task, target, label),
 				onClick: () => {
 					handleStatusTransition(target);
 				},
