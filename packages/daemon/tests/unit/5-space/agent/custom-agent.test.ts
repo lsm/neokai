@@ -468,6 +468,27 @@ describe('createCustomAgentInit', () => {
 		expect(init.agents?.['restricted-agent']?.tools).toEqual(['Read', 'Bash']);
 		expect(init.systemPrompt?.preset).toBe('claude_code');
 		expect(init.systemPrompt?.append).toBeUndefined();
+		expect(init.sdkToolsPreset).toEqual(['Read', 'Bash']);
+		expect(init.allowedTools).toEqual(['Read', 'Bash']);
+		expect(init.disallowedTools).toEqual(
+			expect.arrayContaining(['Write', 'Edit', 'Task', 'NotebookEdit', 'TodoWrite', 'Skill'])
+		);
+		expect(init.disallowedTools).not.toContain('Read');
+		expect(init.disallowedTools).not.toContain('Bash');
+	});
+
+	it('leaves session-level tool restrictions unset when no tools are configured', () => {
+		const init = createCustomAgentInit(
+			makeConfig({
+				customAgent: makeAgent({ tools: undefined }),
+			})
+		);
+
+		expect(init.agent).toBeUndefined();
+		expect(init.agents).toBeUndefined();
+		expect(init.sdkToolsPreset).toBeUndefined();
+		expect(init.allowedTools).toBeUndefined();
+		expect(init.disallowedTools).toBeUndefined();
 	});
 
 	it('applies model precedence slot > agent > space > default', () => {
