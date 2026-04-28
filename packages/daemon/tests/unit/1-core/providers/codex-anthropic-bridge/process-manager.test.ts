@@ -289,6 +289,7 @@ describe('BridgeSession thread/tokenUsage/updated', () => {
 			outputTokens: 75,
 			cacheCreationInputTokens: 0,
 			cacheReadInputTokens: 0,
+			modelContextWindow: undefined,
 		});
 	});
 
@@ -320,6 +321,7 @@ describe('BridgeSession thread/tokenUsage/updated', () => {
 			outputTokens: 100,
 			cacheCreationInputTokens: 0,
 			cacheReadInputTokens: 0,
+			modelContextWindow: undefined,
 		});
 	});
 
@@ -387,7 +389,7 @@ describe('BridgeSession thread/tokenUsage/updated', () => {
 						outputTokens: 80,
 						reasoningOutputTokens: 20,
 					},
-					modelContextWindow: 200000,
+					modelContextWindow: 272000,
 				},
 			});
 			fireNotification('turn/completed', {
@@ -409,11 +411,13 @@ describe('BridgeSession thread/tokenUsage/updated', () => {
 					inputTokens: number;
 					outputTokens: number;
 					cacheReadInputTokens?: number;
+					modelContextWindow?: number;
 			  }
 			| undefined;
 		expect(done?.inputTokens).toBe(540);
 		expect(done?.outputTokens).toBe(80);
 		expect(done?.cacheReadInputTokens).toBe(40);
+		expect(done?.modelContextWindow).toBe(272000);
 	});
 
 	it('falls back to upstream Codex v2 tokenUsage.total when last usage is absent', async () => {
@@ -433,7 +437,7 @@ describe('BridgeSession thread/tokenUsage/updated', () => {
 						outputTokens: 100,
 						reasoningOutputTokens: 40,
 					},
-					modelContextWindow: 200000,
+					modelContextWindow: 272000,
 				},
 			});
 			fireNotification('turn/completed', {
@@ -455,11 +459,13 @@ describe('BridgeSession thread/tokenUsage/updated', () => {
 					inputTokens: number;
 					outputTokens: number;
 					cacheReadInputTokens?: number;
+					modelContextWindow?: number;
 			  }
 			| undefined;
 		expect(done?.inputTokens).toBe(760);
 		expect(done?.outputTokens).toBe(100);
 		expect(done?.cacheReadInputTokens).toBe(60);
+		expect(done?.modelContextWindow).toBe(272000);
 	});
 
 	it('populates turn_done with actual token counts from thread/tokenUsage/updated', async () => {
