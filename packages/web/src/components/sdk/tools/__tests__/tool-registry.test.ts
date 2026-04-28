@@ -32,6 +32,12 @@ describe('tool-registry', () => {
 				expect(config.category).toBe('file');
 			});
 
+			it('should return config for MultiEdit tool', () => {
+				const config = getToolConfig('MultiEdit');
+				expect(config.displayName).toBe('Multi Edit');
+				expect(config.category).toBe('file');
+			});
+
 			it('should return config for NotebookEdit tool', () => {
 				const config = getToolConfig('NotebookEdit');
 				expect(config.displayName).toBe('Notebook Edit');
@@ -117,6 +123,13 @@ describe('tool-registry', () => {
 				const config = getToolConfig('Agent');
 				expect(config.displayName).toBe('Agent');
 				expect(config.category).toBe('agent');
+			});
+
+			it('should return config for task lifecycle tools', () => {
+				expect(getToolConfig('TaskOutput').displayName).toBe('Task Output');
+				expect(getToolConfig('TaskStop').displayName).toBe('Stop Task');
+				expect(getToolConfig('TaskOutput').category).toBe('agent');
+				expect(getToolConfig('TaskStop').category).toBe('agent');
 			});
 		});
 
@@ -209,6 +222,19 @@ describe('tool-registry', () => {
 		});
 
 		describe('System Tools', () => {
+			it('should return config for AskUserQuestion tool', () => {
+				const config = getToolConfig('AskUserQuestion');
+				expect(config.displayName).toBe('AskUserQuestion');
+				expect(config.category).toBe('system');
+				expect(config.colors?.iconColor).toContain('rose');
+			});
+
+			it('should return config for EnterPlanMode tool', () => {
+				const config = getToolConfig('EnterPlanMode');
+				expect(config.displayName).toBe('Plan Mode');
+				expect(config.category).toBe('system');
+			});
+
 			it('should return config for ExitPlanMode tool', () => {
 				const config = getToolConfig('ExitPlanMode');
 				expect(config.displayName).toBe('Exit Plan Mode');
@@ -353,6 +379,7 @@ describe('tool-registry', () => {
 		const allKnownTools = [
 			'Write',
 			'Edit',
+			'MultiEdit',
 			'Read',
 			'NotebookEdit',
 			'Glob',
@@ -362,11 +389,15 @@ describe('tool-registry', () => {
 			'KillShell',
 			'Task',
 			'Agent',
+			'TaskOutput',
+			'TaskStop',
 			'WebFetch',
 			'WebSearch',
 			'TodoWrite',
 			'ListMcpResourcesTool',
 			'ReadMcpResourceTool',
+			'AskUserQuestion',
+			'EnterPlanMode',
 			'ExitPlanMode',
 			'TimeMachine',
 			'Thinking',
@@ -534,6 +565,15 @@ describe('tool-registry', () => {
 			expect(summary).toBe('Agent execution');
 		});
 
+		it('should handle task lifecycle summaries', () => {
+			expect(getToolConfig('TaskOutput').summaryExtractor?.({ task_id: 'task-123' })).toBe(
+				'task-123'
+			);
+			expect(getToolConfig('TaskStop').summaryExtractor?.({ shell_id: 'shell-123' })).toBe(
+				'shell-123'
+			);
+		});
+
 		it('should handle WebFetch with long URL', () => {
 			const config = getToolConfig('WebFetch');
 			const longUrl = 'https://example.com/' + 'a'.repeat(100);
@@ -560,6 +600,23 @@ describe('tool-registry', () => {
 			expect(summary).toBe('Exiting plan mode');
 		});
 
+		it('should handle AskUserQuestion summaryExtractor', () => {
+			const config = getToolConfig('AskUserQuestion');
+			const summary = config.summaryExtractor?.({
+				questions: [
+					{ question: 'Which validation path should run?' },
+					{ question: 'Should this be durable?' },
+				],
+			});
+			expect(summary).toBe('Which validation path should run? (+1)');
+		});
+
+		it('should handle EnterPlanMode summaryExtractor', () => {
+			const config = getToolConfig('EnterPlanMode');
+			const summary = config.summaryExtractor?.({});
+			expect(summary).toBe('Entering plan mode');
+		});
+
 		it('should handle TimeMachine with message_prefix', () => {
 			const config = getToolConfig('TimeMachine');
 			const summary = config.summaryExtractor?.({ message_prefix: 'Rewinding to checkpoint' });
@@ -582,6 +639,12 @@ describe('tool-registry', () => {
 
 		it('should handle Edit tool with file_path', () => {
 			const config = getToolConfig('Edit');
+			const summary = config.summaryExtractor?.({ file_path: '/path/to/edited.ts' });
+			expect(summary).toBe('edited.ts');
+		});
+
+		it('should handle MultiEdit tool with file_path', () => {
+			const config = getToolConfig('MultiEdit');
 			const summary = config.summaryExtractor?.({ file_path: '/path/to/edited.ts' });
 			expect(summary).toBe('edited.ts');
 		});
