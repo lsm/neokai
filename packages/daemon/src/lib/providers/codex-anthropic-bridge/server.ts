@@ -196,6 +196,15 @@ function toolsKey(anthropicTools: { name: string }[]): string {
 		.join(',');
 }
 
+function estimateLastMessageInputTokens(body: AnthropicRequest): number {
+	const last = body.messages.at(-1);
+	if (!last) return 0;
+	return estimateAnthropicInputTokens({
+		model: body.model,
+		messages: [last],
+	});
+}
+
 /** Persistent Codex session across multiple conversation turns. */
 type PersistentSession = {
 	session: BridgeSession;
@@ -551,7 +560,7 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				}
 
 				const { gen, session, model: sessionModel, sessionId: tsSessionId } = primaryStored;
-				const estimatedInputTokens = estimateAnthropicInputTokens(body);
+				const estimatedInputTokens = estimateLastMessageInputTokens(body);
 				const toolContinuationPs = persistentSessions.get(tsSessionId);
 				const onTurnDone = toolContinuationPs
 					? () => {
@@ -660,11 +669,14 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			// has context from any messages that pre-date the persistent session.
 			// Subsequent turns: Codex already has the thread history — send only the new
 			// user message to avoid duplicating context.
-			const userText = ps.isFirstTurn
+			const isFirstTurn = ps.isFirstTurn;
+			const userText = isFirstTurn
 				? buildConversationText(body.messages, system)
 				: extractLastUserMessage(body.messages);
 			ps.isFirstTurn = false;
-			const estimatedInputTokens = estimateAnthropicInputTokens(body);
+			const estimatedInputTokens = isFirstTurn
+				? estimateAnthropicInputTokens(body)
+				: estimateLastMessageInputTokens(body);
 
 			const gen = bridgeSession.startTurn(userText);
 

@@ -1507,6 +1507,53 @@ describe('tool_choice warning — codex bridge', () => {
 		).toBe('gpt-5.5');
 	});
 
+	it('estimates later persistent turns from the sent user message, not full history', async () => {
+		const headers = {
+			'Content-Type': 'application/json',
+			Authorization: 'Bearer codex-bridge-usage-estimate',
+		};
+
+		const firstResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'Start' }],
+				stream: true,
+			}),
+		});
+		expect(firstResp.ok).toBe(true);
+		await readSSEEvents(firstResp.body);
+
+		const secondResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [
+					{ role: 'user', content: 'x '.repeat(20_000) },
+					{ role: 'assistant', content: 'ok' },
+					{ role: 'user', content: 'Hey' },
+				],
+				stream: true,
+			}),
+		});
+
+		expect(secondResp.ok).toBe(true);
+		const events = await readSSEEvents(secondResp.body);
+		expect(startTurnSpy.mock.calls[1]?.[0]).toBe('Hey');
+
+		const msgStart = events.find((e) => e.event === 'message_start');
+		const startUsage = (msgStart?.data as { message?: { usage?: { input_tokens?: number } } })
+			?.message?.usage;
+		expect(startUsage?.input_tokens).toBeGreaterThan(0);
+		expect(startUsage?.input_tokens).toBeLessThan(50);
+
+		const msgDelta = events.find((e) => e.event === 'message_delta');
+		const deltaUsage = (msgDelta?.data as { usage?: { input_tokens?: number } })?.usage;
+		expect(deltaUsage?.input_tokens).toBe(startUsage?.input_tokens);
+	});
+
 	it('does NOT log a tool_choice warning when tool_choice is absent', async () => {
 		const warnSpy = spyOn(Logger.prototype, 'warn');
 
