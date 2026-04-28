@@ -6,7 +6,10 @@
 
 import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { QueryRunner, type QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
+import { getSDKSessionFilePath } from '../../../../src/lib/sdk-session-file-manager';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
@@ -42,6 +45,7 @@ describe('QueryRunner', () => {
 	let handleErrorSpy: ReturnType<typeof mock>;
 	let publishSpy: ReturnType<typeof mock>;
 	let saveSDKMessageSpy: ReturnType<typeof mock>;
+	let updateSessionSpy: ReturnType<typeof mock>;
 	let getMessagesByStatusSpy: ReturnType<typeof mock>;
 	let updateMessageStatusSpy: ReturnType<typeof mock>;
 	let buildSpy: ReturnType<typeof mock>;
@@ -90,10 +94,12 @@ describe('QueryRunner', () => {
 
 		// Database spies
 		saveSDKMessageSpy = mock(() => {});
+		updateSessionSpy = mock(() => {});
 		getMessagesByStatusSpy = mock(() => []);
 		updateMessageStatusSpy = mock(() => {});
 		mockDb = {
 			saveSDKMessage: saveSDKMessageSpy,
+			updateSession: updateSessionSpy,
 			getMessagesByStatus: getMessagesByStatusSpy,
 			updateMessageStatus: updateMessageStatusSpy,
 		} as unknown as Database;
@@ -551,6 +557,25 @@ describe('QueryRunner', () => {
 
 			expect(onMarkApiSuccessSpy).toHaveBeenCalled();
 		});
+
+		it('should clear carried compaction summary after the first handled SDK message', async () => {
+			mockSession.metadata.compactionSummary = 'Temporary compacted context';
+			runner = createRunner();
+
+			const message = {
+				type: 'system',
+				subtype: 'init',
+				uuid: 'init-uuid',
+				session_id: 'sdk-session-123',
+			};
+
+			await runner.handleSDKMessage(message as unknown as SDKMessage);
+
+			expect(mockSession.metadata.compactionSummary).toBeUndefined();
+			expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
+				metadata: mockSession.metadata,
+			});
+		});
 	});
 
 	describe('createAbortableQuery', () => {
@@ -868,6 +893,84 @@ describe('QueryRunner', () => {
 			expect(userMessage).not.toContain('NEOKAI_SDK_STARTUP_TIMEOUT_MS');
 			// Should NOT contain retry count language
 			expect(userMessage).not.toContain('attempt(s)');
+		});
+
+		it('should carry compacted summary while clearing stale resumeSessionAt and SDK state before retrying no-message-found', async () => {
+			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
+			const testSdkDir = join(
+				tmpdir(),
+				`query-runner-compaction-${Date.now()}-${Math.random().toString(36).slice(2)}`
+			);
+			try {
+				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
+				mockSession.sdkSessionId = 'sdk-session-id';
+				mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
+				const sessionFilePath = getSDKSessionFilePath(
+					mockSession.workspacePath!,
+					mockSession.sdkSessionId
+				);
+				mkdirSync(dirname(sessionFilePath), { recursive: true });
+				writeFileSync(
+					sessionFilePath,
+					[
+						JSON.stringify({
+							type: 'system',
+							subtype: 'compact_boundary',
+							compact_metadata: { trigger: 'auto', pre_tokens: 150000 },
+						}),
+						JSON.stringify({
+							type: 'assistant',
+							message: {
+								role: 'assistant',
+								content: [{ type: 'text', text: 'Recovered compacted context' }],
+							},
+						}),
+					].join('\n') + '\n',
+					'utf-8'
+				);
+
+				buildSpy
+					.mockRejectedValueOnce(
+						new Error('No message found with message.uuid of: missing-message-uuid')
+					)
+					.mockRejectedValueOnce(new Error('stop after retry'));
+
+				const ctx = createContext();
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				expect(buildSpy).toHaveBeenCalledTimes(2);
+				expect(mockSession.metadata.resumeSessionAt).toBeUndefined();
+				expect(mockSession.metadata.compactionSummary).toBe('Recovered compacted context');
+				expect(mockSession.sdkSessionId).toBeUndefined();
+				expect(mockSession.sdkOriginPath).toBeUndefined();
+				expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
+					metadata: mockSession.metadata,
+					sdkSessionId: undefined,
+					sdkOriginPath: undefined,
+				});
+				expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+					'test-session-id',
+					expect.objectContaining({
+						type: 'assistant',
+						message: expect.objectContaining({
+							content: expect.arrayContaining([
+								expect.objectContaining({
+									text: expect.stringContaining('compacted summary'),
+								}),
+							]),
+						}),
+					})
+				);
+			} finally {
+				rmSync(testSdkDir, { recursive: true, force: true });
+				if (originalTestSdkSessionDir !== undefined) {
+					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
+				} else {
+					delete process.env.TEST_SDK_SESSION_DIR;
+				}
+			}
 		});
 
 		it('should call stateManager.setIdle after handling startup timeout error', async () => {

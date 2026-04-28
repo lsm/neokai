@@ -514,6 +514,7 @@ export class QueryOptionsBuilder {
 	 */
 	private buildSystemPrompt(): Options['systemPrompt'] {
 		const config = this.ctx.session.config;
+		const compactionSummaryText = this.getCompactionSummaryAppendText();
 
 		// Priority 1: Check if SDKConfig systemPrompt is explicitly set
 		if (config.systemPrompt !== undefined) {
@@ -530,9 +531,12 @@ export class QueryOptionsBuilder {
 				preset: 'claude_code',
 			};
 
-			// Append worktree isolation instructions if session uses a worktree
-			if (this.ctx.session.worktree) {
-				presetConfig.append = this.getWorktreeIsolationText();
+			const append = this.joinSystemPromptAppendParts([
+				compactionSummaryText,
+				this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
+			]);
+			if (append) {
+				presetConfig.append = append;
 			}
 
 			return presetConfig;
@@ -541,7 +545,14 @@ export class QueryOptionsBuilder {
 		// No Claude Code preset - use minimal system prompt or undefined
 		// When worktree is used, still append isolation instructions
 		if (this.ctx.session.worktree) {
-			return this.getMinimalWorktreePrompt();
+			return this.joinSystemPromptAppendParts([
+				compactionSummaryText,
+				this.getMinimalWorktreePrompt(),
+			]);
+		}
+
+		if (compactionSummaryText) {
+			return compactionSummaryText;
 		}
 
 		// If no worktree, systemPromptConfig remains undefined (SDK default behavior)
@@ -554,13 +565,15 @@ export class QueryOptionsBuilder {
 	 * Handles both custom string prompts and Claude Code preset configuration
 	 */
 	private buildCustomSystemPrompt(systemPrompt: SystemPromptConfig): Options['systemPrompt'] {
+		const compactionSummaryText = this.getCompactionSummaryAppendText();
+
 		// Custom string prompt
 		if (typeof systemPrompt === 'string') {
-			// Append worktree isolation if needed
-			if (this.ctx.session.worktree) {
-				return systemPrompt + '\n\n' + this.getWorktreeIsolationText();
-			}
-			return systemPrompt;
+			return this.joinSystemPromptAppendParts([
+				systemPrompt,
+				compactionSummaryText,
+				this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
+			]);
 		}
 
 		// Claude Code preset configuration
@@ -570,15 +583,11 @@ export class QueryOptionsBuilder {
 				preset: 'claude_code',
 			};
 
-			// Combine existing append with worktree isolation
-			let append = systemPrompt.append || '';
-			if (this.ctx.session.worktree) {
-				if (append) {
-					append += '\n\n';
-				}
-				append += this.getWorktreeIsolationText();
-			}
-
+			const append = this.joinSystemPromptAppendParts([
+				systemPrompt.append,
+				compactionSummaryText,
+				this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
+			]);
 			if (append) {
 				presetConfig.append = append;
 			}
@@ -588,6 +597,22 @@ export class QueryOptionsBuilder {
 
 		// Unknown format - return as-is
 		return undefined;
+	}
+
+	private getCompactionSummaryAppendText(): string | undefined {
+		const summary = this.ctx.session.metadata.compactionSummary?.trim();
+		if (!summary) {
+			return undefined;
+		}
+
+		return `[Previous conversation summary - context was reset due to SDK compaction]\n${summary}`;
+	}
+
+	private joinSystemPromptAppendParts(parts: Array<string | undefined>): string {
+		return parts
+			.map((part) => part?.trim())
+			.filter((part): part is string => !!part)
+			.join('\n\n');
 	}
 
 	/**
