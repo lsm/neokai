@@ -48,7 +48,6 @@ import { CompletionDetector } from './completion-detector';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
 import {
 	PostApprovalRouter,
-	buildTaskApprovedEvent,
 	type PostApprovalRouteContext,
 	type PostApprovalRouteResult,
 } from './post-approval-router';
@@ -417,9 +416,7 @@ export class SpaceRuntime {
 	 *   1. If the task is not already `approved`, transition it there via
 	 *      `SpaceTaskManager.setTaskStatus` (so the centralised transition
 	 *      validator runs).
-	 *   2. Emit a `[TASK_APPROVED]` awareness event into the Task Agent session
-	 *      on a best-effort basis (missing session → log + continue).
-	 *   3. Call `PostApprovalRouter.route()` — which handles the no-route,
+	 *   2. Call `PostApprovalRouter.route()` — which handles the no-route,
 	 *      inline (Task Agent), spawn, already-routed, and skip branches.
 	 *
 	 * Returns the `PostApprovalRouteResult` from the router (or a `skipped`
@@ -485,31 +482,7 @@ export class SpaceRuntime {
 			);
 		}
 
-		// 2. Emit [TASK_APPROVED] awareness event (informational; best-effort).
-		const routeTarget = workflow?.postApproval?.targetAgent ?? null;
-		const mode: 'spawning' | 'self' | 'none' =
-			routeTarget === null || routeTarget === undefined
-				? 'none'
-				: routeTarget === 'task-agent'
-					? 'self'
-					: 'spawning';
-		const awarenessBody = buildTaskApprovedEvent({
-			task: approvedTask,
-			workflow,
-			approvalSource,
-			mode,
-		});
-		const manager = this.config.taskAgentManager;
-		if (manager) {
-			const injected = await manager.injectIntoTaskAgent(taskId, awarenessBody);
-			if (!injected.injected) {
-				log.warn(
-					`dispatchPostApproval: no Task Agent session for task ${taskId} — [TASK_APPROVED] not delivered`
-				);
-			}
-		}
-
-		// 3. Dispatch the actual post-approval step.
+		// 2. Dispatch the actual post-approval step.
 		//
 		// `{{pr_url}}` in the merge template is sourced from the most recent
 		// `workflow_run_artifacts` row whose `data` carries `prUrl` / `pr_url`.
