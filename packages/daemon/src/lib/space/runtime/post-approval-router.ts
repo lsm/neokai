@@ -221,6 +221,17 @@ export type PostApprovalRouteResult =
 // Event shapes (§2.3)
 // ---------------------------------------------------------------------------
 
+const POST_APPROVAL_COMPLETION_INSTRUCTIONS =
+	`When the post-approval work is finished, call mark_complete to transition the\n` +
+	`task from \`approved\` to \`done\`. If you need human input mid-work, call\n` +
+	`request_human_input as usual.\n\n` +
+	`Do NOT call approve_task; the task has already been approved upstream.`;
+
+export function appendPostApprovalCompletionInstructions(interpolatedInstructions: string): string {
+	const trimmed = interpolatedInstructions.trim();
+	return `${trimmed}\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`;
+}
+
 /**
  * Build the `[TASK_APPROVED]` awareness event body. Emitted on both the
  * end-node and human-review paths, regardless of which mode the router
@@ -259,10 +270,7 @@ export function buildPostApprovalInstructionsEvent(args: {
 }): string {
 	return (
 		`[POST_APPROVAL_INSTRUCTIONS] Task ${args.task.id} post-approval work begins now.\n\n` +
-		`${args.interpolatedInstructions}\n\n` +
-		`When you finish (or need to abort), call mark_complete to transition the\n` +
-		`task from \`approved\` to \`done\`. If you need human input mid-work, call\n` +
-		`request_human_input as usual.`
+		appendPostApprovalCompletionInstructions(args.interpolatedInstructions)
 	);
 }
 
@@ -375,12 +383,13 @@ export class PostApprovalRouter {
 			}
 		}
 
-		// Interpolate the kickoff from the workflow template.
-		const { text: kickoffMessage, missingKeys } = interpolatePostApprovalTemplate(
+		// Interpolate the workflow-specific kickoff, then append the runtime-owned
+		// completion instruction shared by every post-approval route.
+		const { text: interpolatedInstructions, missingKeys } = interpolatePostApprovalTemplate(
 			instructions ?? '',
 			context
 		);
-		if (!kickoffMessage.trim()) {
+		if (!interpolatedInstructions.trim()) {
 			const reason = `task ${task.id}: node-agent post-approval has empty instructions template`;
 			log.warn(`PostApprovalRouter.route: ${reason}`);
 			return { mode: 'skipped', reason };
@@ -395,6 +404,7 @@ export class PostApprovalRouter {
 			log.warn(`PostApprovalRouter.route: ${reason}`);
 			return { mode: 'skipped', reason };
 		}
+		const kickoffMessage = appendPostApprovalCompletionInstructions(interpolatedInstructions);
 
 		const startedAt = Date.now();
 		const { sessionId } = await this.deps.spawner.spawnPostApprovalSubSession({

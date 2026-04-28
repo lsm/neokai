@@ -340,14 +340,9 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
 		expect(h.spawned[0].targetAgent).toBe('reviewer');
 		expect(h.spawned[0].kickoffMessage).toContain(PR_URL);
 		expect(h.spawned[0].kickoffMessage).not.toContain('{{pr_url}}');
-		// All other merge-template tokens MUST also interpolate — historically
-		// the routeContext carried camelCase keys that didn't match the
-		// snake_case template tokens, so `{{autonomy_level}}` /
-		// `{{approval_source}}` survived as literals and the autonomy-gate
-		// step ("If autonomy_level < 4 …") was unenforceable. The fix adds
-		// explicit snake_case aliases to `routeContext`; these assertions
-		// turn the previous "kickoff referenced unknown keys" warning into a
-		// hard test failure on regression.
+		// All merge-template tokens MUST interpolate — historically the
+		// routeContext carried camelCase keys that didn't match the snake_case
+		// template tokens, so placeholders survived all the way to kickoff.
 		expect(h.spawned[0].kickoffMessage).not.toContain('{{autonomy_level}}');
 		expect(h.spawned[0].kickoffMessage).not.toContain('{{approval_source}}');
 		// `{{reviewer_name}}` was collapsed to the static label
@@ -355,10 +350,8 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
 		// populates routeContext.reviewer_name yet.
 		expect(h.spawned[0].kickoffMessage).not.toContain('{{reviewer_name}}');
 		expect(h.spawned[0].kickoffMessage).toContain('[end-node reviewer]');
-		// Value spot-checks — 4 is seeded by makeDb() so the auto-merge-gate
-		// header reads as a real comparison the LLM can evaluate.
-		expect(h.spawned[0].kickoffMessage).toContain('Space autonomy level: 4');
 		expect(h.spawned[0].kickoffMessage).toContain('Approval source: agent');
+		expect(h.spawned[0].kickoffMessage).toContain('mark_complete');
 
 		// dispatchPostApproval stamped the session on the task.
 		const mid = h.taskRepo.getTask(taskId)!;

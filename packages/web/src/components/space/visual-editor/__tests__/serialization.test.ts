@@ -202,6 +202,19 @@ describe('workflowToVisualState', () => {
 		});
 	});
 
+	it('passes postApproval through', () => {
+		const wf = makeWorkflow({
+			nodes: [makeStep('s1')],
+			startNodeId: 's1',
+			postApproval: { targetAgent: 'reviewer', instructions: 'Merge PR {{pr_url}}.' },
+		});
+		const state = workflowToVisualState(wf);
+		expect(state.postApproval).toEqual({
+			targetAgent: 'reviewer',
+			instructions: 'Merge PR {{pr_url}}.',
+		});
+	});
+
 	it('assigns fresh localIds to each node (including Task Agent)', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
@@ -397,6 +410,17 @@ describe('visualStateToCreateParams', () => {
 		expect(params.endNodeId).toBe('s2');
 	});
 
+	it('passes postApproval through to create params', () => {
+		const state = makeState({
+			postApproval: { targetAgent: 'reviewer', instructions: 'Merge PR {{pr_url}}.' },
+		});
+		const params = visualStateToCreateParams(state, 'space-1', 'WF');
+		expect(params.postApproval).toEqual({
+			targetAgent: 'reviewer',
+			instructions: 'Merge PR {{pr_url}}.',
+		});
+	});
+
 	it('endNodeId is undefined when not set on state', () => {
 		const state = makeState();
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
@@ -585,6 +609,28 @@ describe('visualStateToUpdateParams', () => {
 		};
 		const params = visualStateToUpdateParams(state);
 		expect(params.endNodeId).toBe('s2');
+	});
+
+	it('passes postApproval through to update params', () => {
+		const state: VisualEditorState = {
+			nodes: [
+				{
+					step: { localId: 'l1', id: 's1', name: 'S1', agentId: 'a' },
+					position: { x: 0, y: 0 },
+				},
+			],
+			edges: [],
+			startNodeId: 's1',
+			tags: [],
+			channels: [],
+			gates: [],
+			postApproval: { targetAgent: 'task-agent', instructions: 'Publish release.' },
+		};
+		const params = visualStateToUpdateParams(state);
+		expect(params.postApproval).toEqual({
+			targetAgent: 'task-agent',
+			instructions: 'Publish release.',
+		});
 	});
 
 	it('endNodeId is null when not set on state', () => {

@@ -1138,9 +1138,8 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 	updatedAt: 0,
 	// QA no longer merges the PR — the post-approval reviewer session does that.
 	// Aligned with Coding's autonomy tier (3) since QA-approve is now a plain
-	// "work is good" signal, orthogonal to auto-merge. Auto-merge remains an
-	// autonomy-gated decision enforced by the merge-template's `autonomy_level`
-	// conditional at the post-approval session layer.
+	// "work is good" signal. Post-approval runs only after that approval has
+	// already happened.
 	completionAutonomyLevel: 3,
 	// Post-approval routing (PR 3/5): after QA approves, spawn a fresh
 	// `reviewer` session that runs the PR merge + worktree sync.
