@@ -98,6 +98,20 @@ describe('SpaceTaskUnifiedThread', () => {
 		expect(onScrollerChange).toHaveBeenCalledWith(scroller);
 	});
 
+	it('applies bottom scroll padding to the scroll container', () => {
+		render(
+			<SpaceTaskUnifiedThread
+				taskId="task-1"
+				bottomInsetClass="pb-44 sm:pb-36"
+				bottomScrollPaddingClass="scroll-pb-44 sm:scroll-pb-36"
+			/>
+		);
+
+		const scroller = screen.getByTestId('space-task-unified-thread').firstElementChild!;
+		expect(scroller.className).toContain('pb-44 sm:pb-36');
+		expect(scroller.className).toContain('scroll-pb-44 sm:scroll-pb-36');
+	});
+
 	it('does not render the legacy floating agent-name tag', () => {
 		// The compact-mode-only sticky agent label has been removed; minimal
 		// rows carry their own per-row header so the floating tag is redundant.
