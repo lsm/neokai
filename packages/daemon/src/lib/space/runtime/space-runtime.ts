@@ -21,6 +21,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
+	Space,
 	SpaceTask,
 	SpaceWorkflow,
 	SpaceWorkflowRun,
@@ -1255,13 +1256,16 @@ export class SpaceRuntime {
 	// Private — rehydration
 	// -------------------------------------------------------------------------
 
-	private async ensureExecutorRegistered(run: SpaceWorkflowRun): Promise<boolean> {
+	private async ensureExecutorRegistered(
+		run: SpaceWorkflowRun,
+		knownSpace?: Space
+	): Promise<boolean> {
 		if (this.executors.has(run.id)) return true;
 
 		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
 		if (!workflow) return false;
 
-		const space = await this.config.spaceManager.getSpace(run.spaceId);
+		const space = knownSpace ?? (await this.config.spaceManager.getSpace(run.spaceId));
 		if (!space) return false;
 
 		const meta: ExecutorMeta = {
@@ -1300,7 +1304,7 @@ export class SpaceRuntime {
 			for (const run of activeRuns) {
 				// Skip if executor already registered (e.g. called twice)
 				if (this.executors.has(run.id)) continue;
-				await this.ensureExecutorRegistered(run);
+				await this.ensureExecutorRegistered(run, space);
 			}
 		}
 
