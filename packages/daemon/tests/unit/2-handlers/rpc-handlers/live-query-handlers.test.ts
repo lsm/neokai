@@ -1127,6 +1127,121 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				// the row stream — this is the decoupling the PR establishes.
 				expect(entries.length).toBeGreaterThan(compactRows.length);
 			});
+
+			test('active summaries use full-block semantics for tool previews', async () => {
+				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+				const blocks = [
+					{
+						id: 'bash',
+						name: 'Bash',
+						input: { description: 'Run the focused tests', command: 'bun test raw-command' },
+					},
+					{
+						id: 'todo',
+						name: 'TodoWrite',
+						input: {
+							todos: [
+								{
+									content: 'Run validation',
+									activeForm: 'Running validation',
+									status: 'in_progress',
+								},
+							],
+						},
+					},
+					{
+						id: 'mcp',
+						name: 'mcp__node-agent__send_message',
+						input: { message: 'opaque raw payload' },
+					},
+					{
+						id: 'question',
+						name: 'AskUserQuestion',
+						input: { questions: [{ question: 'Which validation path should run?' }] },
+					},
+					{
+						id: 'multi-edit',
+						name: 'MultiEdit',
+						input: { file_path: '/repo/packages/web/src/MinimalThreadFeed.tsx' },
+					},
+					{
+						id: 'lifecycle',
+						name: 'EnterPlanMode',
+						input: {},
+					},
+				];
+
+				for (let i = 0; i < blocks.length; i += 1) {
+					const block = blocks[i];
+					insertSdkMessageAt(block.id, sessionId, now + (i + 1) * 1000, {
+						type: 'assistant',
+						uuid: block.id,
+						message: {
+							content: [
+								{
+									type: 'tool_use',
+									id: `tu-${block.id}`,
+									name: block.name,
+									input: block.input,
+								},
+							],
+						},
+					});
+				}
+				insertSdkMessageAt('thinking', sessionId, now + 7000, {
+					type: 'assistant',
+					uuid: 'thinking',
+					message: {
+						content: [
+							{
+								type: 'thinking',
+								thinking: 'First line\nSecond line with detail',
+							},
+						],
+					},
+				});
+
+				const summaries = await buildSummaries(taskId);
+				expect(summaries).toHaveLength(1);
+				const entries = summaries[0].entries as Array<Record<string, unknown>>;
+
+				expect(entries[0]).toMatchObject({
+					kind: 'tool_use',
+					toolName: 'Bash',
+					preview: 'Run the focused tests',
+				});
+				expect(entries[1]).toMatchObject({
+					kind: 'tool_use',
+					toolName: 'TodoWrite',
+					preview: 'Running: Running validation',
+				});
+				expect(entries[2]).toMatchObject({
+					kind: 'tool_use',
+					toolName: 'mcp__node-agent__send_message',
+					preview: '',
+				});
+				expect(entries[3]).toMatchObject({
+					kind: 'tool_use',
+					toolName: 'AskUserQuestion',
+					preview: 'Which validation path should run?',
+				});
+				expect(entries[4]).toMatchObject({
+					kind: 'tool_use',
+					toolName: 'MultiEdit',
+					preview: 'MinimalThreadFeed.tsx',
+				});
+				expect(entries[5]).toMatchObject({
+					kind: 'tool_use',
+					toolName: 'EnterPlanMode',
+					preview: 'Entering plan mode',
+				});
+				expect(entries[6]).toMatchObject({
+					kind: 'thinking',
+					preview: 'First line\nSecond line with detail',
+				});
+			});
 		});
 	});
 

@@ -70,6 +70,8 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 			expect(provider.ownsModel('copilot-anthropic-opus')).toBe(true);
 			expect(provider.ownsModel('copilot-anthropic-sonnet')).toBe(true);
 			expect(provider.ownsModel('copilot-anthropic-codex')).toBe(true);
+			expect(provider.ownsModel('copilot-anthropic-gpt-5.4')).toBe(true);
+			expect(provider.ownsModel('copilot-anthropic-gpt-5.5')).toBe(true);
 			expect(provider.ownsModel('copilot-anthropic-gemini')).toBe(true);
 			expect(provider.ownsModel('copilot-anthropic-mini')).toBe(true);
 		});
@@ -79,6 +81,8 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 			expect(provider.ownsModel('claude-opus-4.6')).toBe(true);
 			expect(provider.ownsModel('claude-sonnet-4.6')).toBe(true);
 			expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
+			expect(provider.ownsModel('gpt-5.4')).toBe(true);
+			expect(provider.ownsModel('gpt-5.5')).toBe(true);
 			expect(provider.ownsModel('gpt-5-mini')).toBe(true);
 		});
 
@@ -526,6 +530,8 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 			// Should fall back to static list
 			expect(models.length).toBeGreaterThan(0);
 			expect(models.some((m) => m.id === 'claude-sonnet-4.6')).toBe(true);
+			expect(models.find((m) => m.id === 'gpt-5.4')?.contextWindow).toBe(272000);
+			expect(models.find((m) => m.id === 'gpt-5.5')?.contextWindow).toBe(272000);
 		});
 
 		it('returns cached models within TTL without calling listModels() again', async () => {
@@ -586,6 +592,8 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 			// Should fall back to static list
 			expect(models.length).toBeGreaterThan(0);
 			expect(models.some((m) => m.id === 'claude-sonnet-4.6')).toBe(true);
+			expect(models.find((m) => m.id === 'gpt-5.4')?.contextWindow).toBe(272000);
+			expect(models.find((m) => m.id === 'gpt-5.5')?.contextWindow).toBe(272000);
 		});
 	});
 

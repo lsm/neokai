@@ -269,7 +269,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		// and SSE events contain no thinking_delta events. Codex (OpenAI-backed) does not
 		// expose extended thinking capability.
 		extendedThinking: false,
-		maxContextWindow: 200000,
+		maxContextWindow: 272000,
 		functionCalling: true,
 		vision: false,
 	};

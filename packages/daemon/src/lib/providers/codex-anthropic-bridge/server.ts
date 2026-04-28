@@ -35,7 +35,7 @@ import {
 	errorSSE,
 } from './translator.js';
 import { estimateAnthropicInputTokens } from './token-estimator.js';
-import { getModelContextWindow } from './model-context-windows.js';
+import { getModelContextWindow, type CodexBridgeModelId } from './model-context-windows.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('codex-bridge-server');
@@ -50,67 +50,57 @@ const logger = new Logger('codex-bridge-server');
 // a minimal Anthropic-compatible model listing that covers the models offered
 // by the parent AnthropicToCodexBridgeProvider.
 
+function bridgeModel({
+	id,
+	display_name,
+	created_at,
+}: {
+	id: CodexBridgeModelId;
+	display_name: string;
+	created_at: string;
+}) {
+	const contextWindow = getModelContextWindow(id)!;
+	const autoCompactTokenLimit = Math.floor(contextWindow * 0.9);
+	return {
+		id,
+		display_name,
+		created_at,
+		max_input_tokens: contextWindow,
+		context_window: contextWindow,
+		max_context_window: contextWindow,
+		model_context_window: contextWindow,
+		auto_compact_token_limit: autoCompactTokenLimit,
+		model_auto_compact_token_limit: autoCompactTokenLimit,
+		max_tokens: 16384,
+	};
+}
+
 const BRIDGE_MODELS = [
-	{
+	bridgeModel({
 		id: 'gpt-5.3-codex',
 		display_name: 'GPT-5.3 Codex',
 		created_at: '2025-12-01T00:00:00Z',
-		max_input_tokens: getModelContextWindow('gpt-5.3-codex'),
-		context_window: getModelContextWindow('gpt-5.3-codex'),
-		max_context_window: getModelContextWindow('gpt-5.3-codex'),
-		model_context_window: getModelContextWindow('gpt-5.3-codex'),
-		auto_compact_token_limit: 180000,
-		model_auto_compact_token_limit: 180000,
-		max_tokens: 16384,
-	},
-	{
+	}),
+	bridgeModel({
 		id: 'gpt-5.4',
 		display_name: 'GPT-5.4',
 		created_at: '2026-01-01T00:00:00Z',
-		max_input_tokens: getModelContextWindow('gpt-5.4'),
-		context_window: getModelContextWindow('gpt-5.4'),
-		max_context_window: getModelContextWindow('gpt-5.4'),
-		model_context_window: getModelContextWindow('gpt-5.4'),
-		auto_compact_token_limit: 180000,
-		model_auto_compact_token_limit: 180000,
-		max_tokens: 16384,
-	},
-	{
+	}),
+	bridgeModel({
 		id: 'gpt-5.5',
 		display_name: 'GPT-5.5',
 		created_at: '2026-04-01T00:00:00Z',
-		max_input_tokens: getModelContextWindow('gpt-5.5'),
-		context_window: getModelContextWindow('gpt-5.5'),
-		max_context_window: getModelContextWindow('gpt-5.5'),
-		model_context_window: getModelContextWindow('gpt-5.5'),
-		auto_compact_token_limit: 180000,
-		model_auto_compact_token_limit: 180000,
-		max_tokens: 16384,
-	},
-	{
+	}),
+	bridgeModel({
 		id: 'gpt-5.4-mini',
 		display_name: 'GPT-5.4 Mini',
 		created_at: '2026-01-01T00:00:00Z',
-		max_input_tokens: getModelContextWindow('gpt-5.4-mini'),
-		context_window: getModelContextWindow('gpt-5.4-mini'),
-		max_context_window: getModelContextWindow('gpt-5.4-mini'),
-		model_context_window: getModelContextWindow('gpt-5.4-mini'),
-		auto_compact_token_limit: 115200,
-		model_auto_compact_token_limit: 115200,
-		max_tokens: 16384,
-	},
-	{
+	}),
+	bridgeModel({
 		id: 'gpt-5.1-codex-mini',
 		display_name: 'GPT-5.1 Codex Mini',
 		created_at: '2026-01-01T00:00:00Z',
-		max_input_tokens: getModelContextWindow('gpt-5.1-codex-mini'),
-		context_window: getModelContextWindow('gpt-5.1-codex-mini'),
-		max_context_window: getModelContextWindow('gpt-5.1-codex-mini'),
-		model_context_window: getModelContextWindow('gpt-5.1-codex-mini'),
-		auto_compact_token_limit: 115200,
-		model_auto_compact_token_limit: 115200,
-		max_tokens: 16384,
-	},
+	}),
 ] as const;
 
 const MODELS_LIST_RESPONSE = {
