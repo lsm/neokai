@@ -862,6 +862,13 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 												: 'pb-44 sm:pb-36'
 											: 'pb-3'
 									}
+									bottomScrollPaddingClass={
+										showInlineComposer
+											? threadSendError
+												? 'scroll-pb-52 sm:scroll-pb-44'
+												: 'scroll-pb-44 sm:scroll-pb-36'
+											: 'scroll-pb-3'
+									}
 									activeAgentLabels={activeAgentLabels}
 									autoScrollEnabled={autoScrollEnabled}
 									onShowScrollButtonChange={setShowScrollButton}
