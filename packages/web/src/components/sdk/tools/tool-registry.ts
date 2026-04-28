@@ -60,6 +60,20 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
 		hasLongOutput: false,
 		defaultExpanded: false,
 	},
+	MultiEdit: {
+		displayName: 'Multi Edit',
+		category: 'file',
+		summaryExtractor: (input) => extractFileName(getProp(input, 'file_path')),
+		colors: {
+			bg: 'bg-blue-50 dark:bg-blue-900/20',
+			text: 'text-blue-900 dark:text-blue-100',
+			border: borderColors.tool.file,
+			iconColor: 'text-green-600 dark:text-green-400',
+			lightText: 'text-blue-700 dark:text-blue-300',
+		},
+		hasLongOutput: false,
+		defaultExpanded: false,
+	},
 	Read: {
 		displayName: 'Read',
 		category: 'file',
@@ -139,6 +153,21 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
 		hasLongOutput: true,
 		defaultExpanded: false,
 	},
+	TaskOutput: {
+		displayName: 'Task Output',
+		category: 'agent',
+		summaryExtractor: (input) => getProp(input, 'task_id') || 'Task output',
+		hasLongOutput: true,
+		defaultExpanded: false,
+	},
+	TaskStop: {
+		displayName: 'Stop Task',
+		category: 'agent',
+		summaryExtractor: (input) =>
+			getProp(input, 'task_id') || getProp(input, 'shell_id') || 'Stop task',
+		hasLongOutput: false,
+		defaultExpanded: false,
+	},
 
 	// Web operations
 	WebFetch: {
@@ -193,6 +222,27 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
 	},
 
 	// System operations
+	AskUserQuestion: {
+		displayName: 'AskUserQuestion',
+		category: 'system',
+		summaryExtractor: summarizeQuestionInput,
+		hasLongOutput: false,
+		defaultExpanded: true,
+		colors: {
+			bg: 'bg-rose-950/30',
+			text: 'text-rose-200',
+			border: 'border-rose-200 dark:border-rose-800',
+			iconColor: 'text-rose-400',
+			lightText: 'text-rose-300',
+		},
+	},
+	EnterPlanMode: {
+		displayName: 'Plan Mode',
+		category: 'system',
+		summaryExtractor: () => 'Entering plan mode',
+		hasLongOutput: false,
+		defaultExpanded: false,
+	},
 	ExitPlanMode: {
 		displayName: 'Exit Plan Mode',
 		category: 'system',
@@ -332,6 +382,18 @@ function extractFileName(path: string | undefined): string | null {
 function truncateString(str: string | undefined, maxLength: number): string | null {
 	if (!str) return null;
 	return str.length > maxLength ? str.slice(0, maxLength) + '...' : str;
+}
+
+function summarizeQuestionInput(input: unknown): string {
+	const questions = getPropAny(input, 'questions');
+	if (!Array.isArray(questions) || questions.length === 0) return 'Ask user';
+	const firstQuestion = questions.find(
+		(question): question is Record<string, unknown> => !!question && typeof question === 'object'
+	);
+	const text = firstQuestion ? getProp(firstQuestion, 'question') : undefined;
+	if (!text) return `${questions.length} question${questions.length !== 1 ? 's' : ''}`;
+	const suffix = questions.length > 1 ? ` (+${questions.length - 1})` : '';
+	return `${truncateString(text, 60) ?? text}${suffix}`;
 }
 
 /**

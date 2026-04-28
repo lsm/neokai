@@ -1304,33 +1304,131 @@ function activityOneLine(value: string, max = ACTIVITY_PREVIEW_MAX_LEN): string 
 	return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
 }
 
+function activityStringProp(input: Record<string, unknown>, key: string): string {
+	const value = input[key];
+	return typeof value === 'string' ? value : '';
+}
+
+function activityPathBase(path: string): string {
+	const parts = path.split('/').filter(Boolean);
+	return parts[parts.length - 1] || path;
+}
+
+function activityPreviewFromTodoInput(input: Record<string, unknown>): string {
+	const todos = input.todos;
+	if (!Array.isArray(todos)) return 'Update todos';
+	const todoItems = todos
+		.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+		.map((item) => {
+			const content = activityStringProp(item, 'content');
+			const activeForm = activityStringProp(item, 'activeForm');
+			const status = activityStringProp(item, 'status');
+			return { content, activeForm, status };
+		});
+	const running = todoItems.find((item) => item.status === 'in_progress');
+	if (running) {
+		return activityOneLine(`Running: ${running.activeForm || running.content || 'todo item'}`);
+	}
+	const completed = [...todoItems].reverse().find((item) => item.status === 'completed');
+	if (completed?.content) return activityOneLine(`Marked done: ${completed.content}`);
+	const pending = todoItems.find((item) => item.status === 'pending');
+	if (pending?.content) return activityOneLine(`Added task: ${pending.content}`);
+	const count = todoItems.length;
+	return count ? `${count} todo${count !== 1 ? 's' : ''}` : 'Update todos';
+}
+
+function activityPreviewFromQuestionInput(input: Record<string, unknown>): string {
+	const questions = input.questions;
+	if (!Array.isArray(questions) || questions.length === 0) return 'Ask user';
+	const firstQuestion = questions.find(
+		(question): question is Record<string, unknown> => !!question && typeof question === 'object'
+	);
+	const text = firstQuestion ? activityStringProp(firstQuestion, 'question') : '';
+	if (!text) return `${questions.length} question${questions.length !== 1 ? 's' : ''}`;
+	const suffix = questions.length > 1 ? ` (+${questions.length - 1})` : '';
+	return `${activityOneLine(text, 60)}${suffix}`;
+}
+
 /**
- * Pick a human-friendly preview from a tool_use input object. Falls back
- * through the most common Claude tool-input shapes (Bash command, file path,
- * grep pattern, URL, description) before settling for a `key: value` pair so
- * even tools we don't recognise produce a non-empty preview line.
- *
- * Server-side equivalent of the existing client-side `previewFromInput`.
+ * Pick a human-friendly preview from a tool_use input object. The branch order
+ * mirrors the SDK tool registry summaries where possible so compact roster
+ * lines carry the same primary meaning as full chat tool blocks.
  */
-function activityPreviewFromInput(input: Record<string, unknown>): string {
-	const command = typeof input.command === 'string' ? input.command : '';
-	if (command) return activityOneLine(command);
-	const filePath = typeof input.file_path === 'string' ? input.file_path : '';
-	if (filePath) return activityOneLine(filePath);
-	const path = typeof input.path === 'string' ? input.path : '';
-	if (path) return activityOneLine(path);
-	const pattern = typeof input.pattern === 'string' ? input.pattern : '';
-	if (pattern) return activityOneLine(pattern);
-	const url = typeof input.url === 'string' ? input.url : '';
-	if (url) return activityOneLine(url);
-	const description = typeof input.description === 'string' ? input.description : '';
-	if (description) return activityOneLine(description);
-	const keys = Object.keys(input);
-	if (keys.length === 0) return '';
-	const firstKey = keys[0];
-	const firstVal = input[firstKey];
-	if (typeof firstVal === 'string') return activityOneLine(`${firstKey}: ${firstVal}`);
-	return `${firstKey}: …`;
+function activityPreviewFromToolInput(toolName: string, input: Record<string, unknown>): string {
+	if (toolName.startsWith('mcp__')) {
+		return '';
+	}
+	switch (toolName) {
+		case 'Bash': {
+			const description = activityStringProp(input, 'description');
+			if (description) return activityOneLine(description);
+			return activityOneLine(activityStringProp(input, 'command'));
+		}
+		case 'Write':
+		case 'Edit': {
+			const filePath = activityStringProp(input, 'file_path');
+			return filePath ? activityOneLine(activityPathBase(filePath)) : '';
+		}
+		case 'MultiEdit': {
+			const filePath = activityStringProp(input, 'file_path');
+			return filePath ? activityOneLine(activityPathBase(filePath)) : '';
+		}
+		case 'Read': {
+			const filePath = activityStringProp(input, 'file_path');
+			return filePath ? activityOneLine(activityPathBase(filePath)) : '';
+		}
+		case 'NotebookEdit': {
+			const notebookPath = activityStringProp(input, 'notebook_path');
+			return notebookPath ? activityOneLine(activityPathBase(notebookPath)) : '';
+		}
+		case 'Glob':
+		case 'Grep':
+			return activityOneLine(activityStringProp(input, 'pattern'), 50);
+		case 'WebFetch':
+			return activityOneLine(activityStringProp(input, 'url'), 50);
+		case 'WebSearch':
+			return activityOneLine(activityStringProp(input, 'query'), 50);
+		case 'Task':
+			return activityOneLine(activityStringProp(input, 'description') || 'Task execution');
+		case 'Agent':
+			return activityOneLine(activityStringProp(input, 'description') || 'Agent execution');
+		case 'TaskOutput':
+			return activityOneLine(activityStringProp(input, 'task_id') || 'Task output');
+		case 'TaskStop':
+			return activityOneLine(
+				activityStringProp(input, 'task_id') || activityStringProp(input, 'shell_id') || 'Stop task'
+			);
+		case 'BashOutput': {
+			const bashId = activityStringProp(input, 'bash_id');
+			return `Shell: ${bashId.slice(0, 8) || 'unknown'}`;
+		}
+		case 'KillShell': {
+			const shellId = activityStringProp(input, 'shell_id');
+			return `Shell: ${shellId.slice(0, 8) || 'unknown'}`;
+		}
+		case 'TodoWrite':
+			return activityPreviewFromTodoInput(input);
+		case 'ListMcpResourcesTool':
+			return activityOneLine(activityStringProp(input, 'server') || 'All servers');
+		case 'ReadMcpResourceTool':
+			return activityOneLine(activityStringProp(input, 'uri'), 50);
+		case 'AskUserQuestion':
+			return activityPreviewFromQuestionInput(input);
+		case 'EnterPlanMode':
+			return 'Entering plan mode';
+		case 'ExitPlanMode':
+			return 'Exiting plan mode';
+		case 'TimeMachine':
+			return activityOneLine(activityStringProp(input, 'message_prefix'), 40);
+		default: {
+			const keys = Object.keys(input);
+			if (keys.length === 0) return '';
+			const firstKey = keys[0];
+			const firstVal = input[firstKey];
+			if (typeof firstVal === 'string') return activityOneLine(firstVal, 40);
+			return `${firstKey}: …`;
+		}
+	}
 }
 
 /**
@@ -1381,7 +1479,7 @@ export function buildActiveTurnSummariesFromRows(
 			entry = {
 				kind: 'tool_use',
 				toolName,
-				preview: activityPreviewFromInput(parsedInput),
+				preview: activityPreviewFromToolInput(toolName, parsedInput),
 				ts,
 				uuid,
 			};
@@ -1392,7 +1490,7 @@ export function buildActiveTurnSummariesFromRows(
 		} else if (blockType === 'thinking') {
 			const thinking = typeof row.thinkingValue === 'string' ? row.thinkingValue : '';
 			if (thinking.trim().length === 0) continue;
-			entry = { kind: 'thinking', preview: activityOneLine(thinking), ts, uuid };
+			entry = { kind: 'thinking', preview: thinking.trim(), ts, uuid };
 		} else if (blockType === '__user_message') {
 			const text = typeof row.textValue === 'string' ? row.textValue : '';
 			entry = { kind: 'user_message', text: activityOneLine(text), ts, uuid };
