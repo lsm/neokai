@@ -1577,10 +1577,31 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		return created;
 	}
 
+	interface FakePendingMessageQueue {
+		enqueued: Array<{
+			workflowRunId: string;
+			spaceId: string;
+			taskId?: string | null;
+			sourceAgentName?: string;
+			targetKind: 'node_agent' | 'space_agent';
+			targetAgentName: string;
+			message: string;
+			idempotencyKey?: string | null;
+		}>;
+	}
+
+	function makeFakePendingMessageQueue(): FakePendingMessageQueue {
+		return { enqueued: [] };
+	}
+
 	function makeHandlersWith(
 		tam: FakeTaskAgentManager,
-		opts: { activateNode?: (runId: string, nodeId: string) => Promise<void> } = {}
+		opts: {
+			activateNode?: (runId: string, nodeId: string) => Promise<void>;
+			pendingMessageQueue?: FakePendingMessageQueue;
+		} = {}
 	) {
+		const fakeQueue = opts.pendingMessageQueue;
 		return createSpaceAgentToolHandlers({
 			spaceId: ctx.spaceId,
 			runtime: ctx.runtime,
@@ -1592,6 +1613,18 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 			nodeExecutionRepo: ctx.nodeExecutionRepo,
 			taskAgentManager: tam.manager,
 			activateNode: opts.activateNode,
+			pendingMessageQueue: fakeQueue
+				? {
+						enqueue(input) {
+							const index = fakeQueue.enqueued.length;
+							fakeQueue.enqueued.push(input);
+							return {
+								record: { id: `pending-message-${index}` },
+								deduped: false,
+							};
+						},
+					}
+				: undefined,
 		});
 	}
 
@@ -1880,8 +1913,58 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.activated).toBe(true);
 		expect(parsed.delivered).toBe(false);
+		expect(parsed.queued).toBe(false);
+		expect(parsed.queuedMessageId).toBeUndefined();
 		expect(parsed.node_execution_id).toBe(exec.id);
 		expect(tam.subSessionInjects).toHaveLength(0);
+	});
+
+	test('queues the message when activation creates no live session and a pending queue is configured', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Queued');
+		const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Queued');
+		const task = tasks[0];
+		const exec = ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: run.id,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const fakeQueue = makeFakePendingMessageQueue();
+		const handlers = makeHandlersWith(tam, {
+			activateNode: async () => {
+				// Activation succeeded but the tick loop has not spawned the session yet.
+			},
+			pendingMessageQueue: fakeQueue,
+		});
+
+		const result = await handlers.send_message_to_task({
+			task_id: task.id,
+			node_id: 'reviewer',
+			message: 'please review this PR',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.activated).toBe(true);
+		expect(parsed.delivered).toBe(false);
+		expect(parsed.queued).toBe(true);
+		expect(parsed.queuedMessageId).toBe('pending-message-0');
+		expect(parsed.node_execution_id).toBe(exec.id);
+		expect(tam.subSessionInjects).toHaveLength(0);
+
+		expect(fakeQueue.enqueued).toEqual([
+			{
+				workflowRunId: run.id,
+				spaceId: ctx.spaceId,
+				taskId: task.id,
+				sourceAgentName: undefined,
+				targetKind: 'node_agent',
+				targetAgentName: 'reviewer',
+				message: 'please review this PR',
+			},
+		]);
 	});
 
 	test('returns an error when node_id does not match any execution', async () => {
