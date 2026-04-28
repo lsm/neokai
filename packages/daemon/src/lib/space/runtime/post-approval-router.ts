@@ -14,18 +14,13 @@
  *
  *   1. **No route declared** → runtime transitions `approved → done` directly
  *      and emits `task.status-transition: approved → done source=no-post-approval`.
- *   2. **`targetAgent === 'task-agent'`** → inject a `[POST_APPROVAL_INSTRUCTIONS]`
- *      user turn into the existing Task Agent session. No new session spawn,
- *      no `post_approval_session_id` stamped.
+ *   2. **`targetAgent === 'task-agent'`** → explicit escalation route: inject a
+ *      `[POST_APPROVAL_INSTRUCTIONS]` user turn into the existing Task Agent
+ *      session. No new session spawn, no `post_approval_session_id` stamped.
  *   3. **Any other `targetAgent`** (a *space task node agent* — see terminology
  *      below) → spawn a fresh sub-session for that agent with the interpolated
  *      kickoff message, and stamp `post_approval_session_id` +
  *      `post_approval_started_at` on the task.
- *
- * In all cases the router also emits a `[TASK_APPROVED]` awareness event into
- * the Task Agent session (see §2.3). This is informational only — the Task
- * Agent never *acts* on it; it only acts on the `[POST_APPROVAL_INSTRUCTIONS]`
- * event that accompanies the `'task-agent'` route.
  *
  * ## Terminology — "space task node agent"
  *
@@ -72,6 +67,7 @@ import {
 } from '../workflows/post-approval-template';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
 import { Logger } from '../../logger';
+import { RUNTIME_ESCALATION_REASONS, type RuntimeEscalationReason } from './escalation-reasons';
 
 const log = new Logger('post-approval-router');
 
@@ -178,7 +174,7 @@ export interface PostApprovalRouterDeps {
  * extra keys signalled by the end-node agent (e.g. `pr_url`).
  */
 export interface PostApprovalRouteContext extends PostApprovalTemplateContext {
-	/** How the task reached `approved`. Drives `[TASK_APPROVED]` payload shape. */
+	/** How the task reached `approved`. Included in post-approval routing context. */
 	approvalSource: SpaceApprovalSource;
 	/** Slot/name of the agent that approved the task. */
 	reviewerName?: string;
@@ -207,7 +203,12 @@ export interface PostApprovalRouteContext extends PostApprovalTemplateContext {
  */
 export type PostApprovalRouteResult =
 	| { mode: 'no-route'; taskStatus: 'done' }
-	| { mode: 'inline'; taskAgentSessionId?: string; missingKeys: string[] }
+	| {
+			mode: 'inline';
+			taskAgentSessionId?: string;
+			missingKeys: string[];
+			escalationReason: RuntimeEscalationReason;
+	  }
 	| {
 			mode: 'spawn';
 			postApprovalSessionId: string;
@@ -230,34 +231,6 @@ const POST_APPROVAL_COMPLETION_INSTRUCTIONS =
 export function appendPostApprovalCompletionInstructions(interpolatedInstructions: string): string {
 	const trimmed = interpolatedInstructions.trim();
 	return `${trimmed}\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`;
-}
-
-/**
- * Build the `[TASK_APPROVED]` awareness event body. Emitted on both the
- * end-node and human-review paths, regardless of which mode the router
- * eventually takes. See §2.3 of the plan for the exact shape.
- */
-export function buildTaskApprovedEvent(args: {
-	task: SpaceTask;
-	workflow: SpaceWorkflow | null;
-	approvalSource: SpaceApprovalSource;
-	mode: 'spawning' | 'self' | 'none';
-}): string {
-	const workflowName = args.workflow?.name ?? 'none';
-	const targetAgent = args.workflow?.postApproval?.targetAgent ?? 'none';
-	const title = args.task.title ?? '(untitled)';
-	return (
-		`[TASK_APPROVED] Task ${args.task.id} ("${title}") was approved.\n\n` +
-		`Post-approval routing:\n` +
-		`  workflow: ${workflowName}\n` +
-		`  target_agent: ${targetAgent}\n` +
-		`  approval_source: ${args.approvalSource}\n` +
-		`  session_status: ${args.mode}\n\n` +
-		`No action required from you — this is informational. The runtime will\n` +
-		`spawn the post-approval session (if target_agent is a space task node\n` +
-		`agent) or deliver the instructions to you directly (if target_agent is\n` +
-		`"task-agent") or close the task immediately (if no target).`
-	);
 }
 
 /**
@@ -358,9 +331,14 @@ export class PostApprovalRouter {
 				);
 			}
 			log.info(
-				`post-approval.route: spaceId=${task.spaceId} taskId=${task.id} targetAgent=${targetAgent} mode=inline autonomyLevel=${context.autonomyLevel ?? 'unknown'}`
+				`post-approval.route: spaceId=${task.spaceId} taskId=${task.id} targetAgent=${targetAgent} mode=inline escalationReason=${RUNTIME_ESCALATION_REASONS.HUMAN_APPROVAL} autonomyLevel=${context.autonomyLevel ?? 'unknown'}`
 			);
-			return { mode: 'inline', taskAgentSessionId: sessionId, missingKeys };
+			return {
+				mode: 'inline',
+				taskAgentSessionId: sessionId,
+				missingKeys,
+				escalationReason: RUNTIME_ESCALATION_REASONS.HUMAN_APPROVAL,
+			};
 		}
 
 		// -------------------------------------------------------------------

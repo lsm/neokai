@@ -79,6 +79,7 @@ import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/to
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
 import { AgentMessageRouter } from './agent-message-router';
+import { RUNTIME_ESCALATION_REASONS } from './escalation-reasons';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { executeGateScript } from './gate-script-executor';
 import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
@@ -1421,7 +1422,7 @@ export class TaskAgentManager {
 						// Clear any stale callback registered by a previous execution (e.g. from
 						// rehydrateSubSession, which registers with the old nodeId). Without this,
 						// two callbacks would fire on the next idle: one for the old execution and
-						// one for the new — causing a double NODE_COMPLETE notification.
+						// one for the new — causing duplicate completion handling.
 						if (memberInfo.nodeId) {
 							this.completionCallbacks.delete(existingSessionId);
 							this.registerCompletionCallback(existingSessionId, async () => {
@@ -2496,7 +2497,7 @@ export class TaskAgentManager {
 	 *
 	 * Automatically transitions the execution to `idle` when the agent's session
 	 * finishes naturally — completion is signaled by `task.reportedStatus`.
-	 * Notifies the Task Agent (when present) about workflow node session completion.
+	 * Normal completion is runtime-owned and does not notify the Task Agent.
 	 */
 	private async handleSubSessionComplete(
 		taskId: string,
@@ -2521,25 +2522,7 @@ export class TaskAgentManager {
 			execution = this.config.nodeExecutionRepo.getById(execution.id);
 		}
 
-		const resolvedNodeId = execution?.workflowNodeId ?? nodeId;
-		const resultSummary = execution?.result ? `\nAgent result summary: ${execution.result}` : '';
-
-		// Notify the Task Agent that a sub-session has completed.
-		const taskAgentSession = this.taskAgentSessions.get(taskId);
-		if (taskAgentSession) {
-			try {
-				await this.injectMessageIntoSession(
-					taskAgentSession,
-					`[NODE_COMPLETE] Node "${resolvedNodeId}" sub-session (${subSessionId}) has completed.${resultSummary}\nUse this event for communication context only. Workflow progression is driven by Space Runtime and workflow agents.`,
-					'defer'
-				);
-			} catch (err) {
-				log.warn(
-					`TaskAgentManager: failed to notify task agent of node completion for task ${taskId}:`,
-					err
-				);
-			}
-		}
+		void nodeId;
 	}
 
 	/**
@@ -2579,7 +2562,7 @@ export class TaskAgentManager {
 		const failedNodeId = failedExecution?.workflowNodeId ?? 'unknown-node';
 		await this.injectMessageIntoSession(
 			taskAgentSession,
-			`[NODE_FAILED] Node "${failedNodeId}" sub-session (${subSessionId}) reported an error: ${error}\nWorkflow progression is runtime-driven; use this as context for human coordination only.`,
+			`[NODE_FAILED] Node "${failedNodeId}" sub-session (${subSessionId}) reported an error: ${error}\nEscalation reason: ${RUNTIME_ESCALATION_REASONS.MISSING_INTENT}\nWorkflow progression is runtime-driven; use this as context for human coordination only.`,
 			'defer'
 		);
 	}

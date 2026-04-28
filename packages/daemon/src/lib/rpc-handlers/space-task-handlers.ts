@@ -434,8 +434,8 @@ export function setupSpaceTaskHandlers(
 				);
 			}
 			// Delegate to the PostApprovalRouter. It transitions review → approved
-			// (via SpaceTaskManager.setTaskStatus), emits [TASK_APPROVED], and
-			// dispatches the configured post-approval step (no-route → done,
+			// (via SpaceTaskManager.setTaskStatus) and dispatches the configured
+			// post-approval step (no-route → done,
 			// inline Task Agent, or spawn fresh node-agent).
 			//
 			// The router's review→approved `setTaskStatus` call carries both

@@ -646,10 +646,8 @@ describe('TaskAgentManager.rehydrateSubSession (lazy rehydration)', () => {
 		// Allow async callbacks to flush
 		await new Promise((r) => setTimeout(r, 0));
 
-		// The task agent should have received a [NODE_COMPLETE] notification
-		expect(taskAgentSession._enqueuedMessages.length).toBeGreaterThan(msgsBefore);
-		const lastMsg = taskAgentSession._enqueuedMessages.at(-1);
-		expect(lastMsg?.msg).toContain('[NODE_COMPLETE]');
+		// Normal node completion is runtime-owned and does not notify the Task Agent.
+		expect(taskAgentSession._enqueuedMessages.length).toBe(msgsBefore);
 	});
 
 	test('rehydrates same sub-session only once (second call uses in-memory map)', async () => {

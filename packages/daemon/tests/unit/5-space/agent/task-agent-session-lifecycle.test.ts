@@ -1313,6 +1313,7 @@ describe('Task Agent Session Lifecycle', () => {
 				taskAgentSession._enqueuedMessages[taskAgentSession._enqueuedMessages.length - 1];
 			expect(lastMsg.msg).toContain('[NODE_FAILED]');
 			expect(lastMsg.msg).toContain('Agent crashed: OOM');
+			expect(lastMsg.msg).toContain('Escalation reason: MISSING_INTENT');
 		});
 
 		test('does not throw for unknown sub-session ID', async () => {
@@ -1522,7 +1523,7 @@ describe('Task Agent Session Lifecycle', () => {
 			expect(ctx.sessionManagerArchiveCalls).toHaveLength(0);
 		});
 
-		test('end-to-end: sub-session completion triggers [NODE_COMPLETE] notification with workflow run', async () => {
+		test('end-to-end: sub-session completion stays runtime-owned without [NODE_COMPLETE] notification', async () => {
 			// Seed a workflow run so handleSubSessionComplete can find the step task
 			const wfRunId = 'wf-run-e2e-complete';
 			const wfId = 'wf-id-e2e-complete';
@@ -1553,6 +1554,8 @@ describe('Task Agent Session Lifecycle', () => {
 				null,
 				null
 			);
+			const taskAgentSession = ctx.createdSessions.get(taskSessionId)!;
+			const msgsBefore = taskAgentSession._enqueuedMessages.length;
 
 			// Create step task with matching subSessionId
 			const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:step:${stepId}`;
@@ -1582,12 +1585,8 @@ describe('Task Agent Session Lifecycle', () => {
 			// Step completion notifications are session-context only; step task status is runtime-driven.
 			expect(ctx.taskRepo.getTask(stepTask.id)?.status).toBe('in_progress');
 
-			// Task agent should receive [NODE_COMPLETE] notification
-			const taskAgentSession = ctx.createdSessions.get(taskSessionId)!;
-			const hasStepComplete = taskAgentSession._enqueuedMessages.some((m) =>
-				m.msg.includes('[NODE_COMPLETE]')
-			);
-			expect(hasStepComplete).toBe(true);
+			// Task Agent receives no normal completion relay.
+			expect(taskAgentSession._enqueuedMessages.length).toBe(msgsBefore);
 
 			void stepTask;
 		});
