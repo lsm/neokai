@@ -196,6 +196,15 @@ function toolsKey(anthropicTools: { name: string }[]): string {
 		.join(',');
 }
 
+function estimateLastMessageInputTokens(body: AnthropicRequest): number {
+	const last = body.messages.at(-1);
+	if (!last) return 0;
+	return estimateAnthropicInputTokens({
+		model: body.model,
+		messages: [last],
+	});
+}
+
 /** Persistent Codex session across multiple conversation turns. */
 type PersistentSession = {
 	session: BridgeSession;
@@ -453,12 +462,21 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			if (url.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
 				try {
 					const body = (await req.json()) as AnthropicRequest;
-					return new Response(
-						JSON.stringify({ input_tokens: estimateAnthropicInputTokens(body) }),
-						{
-							headers: { 'Content-Type': 'application/json' },
-						}
-					);
+					const sessionId = extractSessionId(req);
+					const ps = persistentSessions.get(sessionId);
+					const resolvedModel = resolveBridgeModelId(body.model);
+					const currentToolsKey = toolsKey(body.tools ?? []);
+					const shouldCountOnlyCurrentTurn =
+						ps !== undefined &&
+						!ps.isFirstTurn &&
+						ps.model === resolvedModel &&
+						ps.toolsKey === currentToolsKey;
+					const inputTokens = shouldCountOnlyCurrentTurn
+						? estimateLastMessageInputTokens(body)
+						: estimateAnthropicInputTokens(body);
+					return new Response(JSON.stringify({ input_tokens: inputTokens }), {
+						headers: { 'Content-Type': 'application/json' },
+					});
 				} catch {
 					return createAnthropicError(400, 'invalid_request_error', 'Bad Request');
 				}
@@ -551,7 +569,7 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				}
 
 				const { gen, session, model: sessionModel, sessionId: tsSessionId } = primaryStored;
-				const estimatedInputTokens = estimateAnthropicInputTokens(body);
+				const estimatedInputTokens = estimateLastMessageInputTokens(body);
 				const toolContinuationPs = persistentSessions.get(tsSessionId);
 				const onTurnDone = toolContinuationPs
 					? () => {
@@ -660,11 +678,14 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			// has context from any messages that pre-date the persistent session.
 			// Subsequent turns: Codex already has the thread history — send only the new
 			// user message to avoid duplicating context.
-			const userText = ps.isFirstTurn
+			const isFirstTurn = ps.isFirstTurn;
+			const userText = isFirstTurn
 				? buildConversationText(body.messages, system)
 				: extractLastUserMessage(body.messages);
 			ps.isFirstTurn = false;
-			const estimatedInputTokens = estimateAnthropicInputTokens(body);
+			const estimatedInputTokens = isFirstTurn
+				? estimateAnthropicInputTokens(body)
+				: estimateLastMessageInputTokens(body);
 
 			const gen = bridgeSession.startTurn(userText);
 

@@ -53,10 +53,10 @@ export class ContextFetcher {
 	 * Convert an SDK `getContextUsage()` response into NeoKai's `ContextInfo`.
 	 *
 	 * Mapping rules:
-	 * - `totalTokens → totalUsed`, `maxTokens → totalCapacity`,
-	 *   `percentage → percentUsed`, `model → model`
+	 * - `totalTokens → totalUsed`, `rawMaxTokens/maxTokens → totalCapacity`,
+	 *   recomputed percentage → percentUsed, `model → model`
 	 * - `categories[] → breakdown` (flattened into `Record<name, {tokens, percent}>`);
-	 *   percentages are recomputed relative to `maxTokens` because the SDK
+	 *   percentages are recomputed relative to capacity because the SDK
 	 *   response doesn't include them per-category.
 	 * - `apiUsage` on the SDK response (which uses snake_case) is mapped to
 	 *   our camelCase `ContextAPIUsage` shape.
@@ -65,7 +65,12 @@ export class ContextFetcher {
 	 */
 	static toContextInfo(response: SDKControlGetContextUsageResponse): ContextInfo {
 		const breakdown: Record<string, ContextCategoryBreakdown> = {};
-		const capacity = response.maxTokens > 0 ? response.maxTokens : 0;
+		const capacity =
+			response.rawMaxTokens > 0
+				? response.rawMaxTokens
+				: response.maxTokens > 0
+					? response.maxTokens
+					: 0;
 		for (const category of response.categories ?? []) {
 			// Compute percent relative to capacity (SDK response doesn't carry it).
 			// Round to 1 decimal place to match the display the UI already expects.
@@ -99,16 +104,29 @@ export class ContextFetcher {
 				}
 			: undefined;
 
+		const percentUsed =
+			capacity > 0
+				? Math.min(100, Math.max(0, Math.round((response.totalTokens / capacity) * 100)))
+				: Math.max(0, Math.round(response.percentage));
+		let autoCompactThreshold = response.autoCompactThreshold;
+		if (
+			typeof autoCompactThreshold === 'number' &&
+			capacity > 0 &&
+			response.maxTokens > 0 &&
+			response.maxTokens !== capacity &&
+			Math.abs(autoCompactThreshold - Math.floor(response.maxTokens * 0.9)) <= 1
+		) {
+			autoCompactThreshold = Math.floor(capacity * 0.9);
+		}
+
 		return {
 			model: response.model ?? null,
 			totalUsed: response.totalTokens,
-			totalCapacity: response.maxTokens,
-			// SDK returns fractional percent (e.g. 10.5). Round to nearest whole
-			// to match the legacy shape and what ContextUsageBar renders today.
-			percentUsed: Math.round(response.percentage),
+			totalCapacity: capacity,
+			percentUsed,
 			breakdown,
 			apiUsage,
-			autoCompactThreshold: response.autoCompactThreshold,
+			autoCompactThreshold,
 			isAutoCompactEnabled: response.isAutoCompactEnabled,
 			messageBreakdown,
 			lastUpdated: Date.now(),
