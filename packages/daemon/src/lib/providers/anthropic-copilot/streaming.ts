@@ -33,6 +33,7 @@ import type { CopilotSession, SessionEvent } from '@github/copilot-sdk';
 import type { ToolBridgeRegistry } from './tool-bridge.js';
 import type { ToolResult } from './conversation.js';
 import { AnthropicStreamWriter, estimateTokens } from './sse.js';
+import type { ContextUsageStore, CopilotUsageInfoData } from './context-usage.js';
 import { type AnthropicErrorType, createAnthropicErrorBody } from '../shared/error-envelope.js';
 import { Logger } from '../../logger.js';
 
@@ -57,6 +58,12 @@ export type StreamingOutcome =
 	 * these IDs — the caller does not need to enumerate them.
 	 */
 	| { kind: 'tool_use'; toolCallIds: string[] };
+
+export interface StreamingContextUsageOptions {
+	store: ContextUsageStore;
+	requestKey: string;
+	outputTokenLimit?: number;
+}
 
 function classifyError(message: string): { status: number; type: AnthropicErrorType } {
 	const status = Number(message.match(/\b([45]\d{2})\b/)?.[1] ?? 500);
@@ -108,7 +115,8 @@ function streamSession(
 	startFn: (finish: () => void, writeFailed: () => void) => void,
 	onDone: () => void,
 	/** Raw input text used for heuristic token estimation (system prompt + formatted messages). */
-	inputText = ''
+	inputText = '',
+	contextUsage?: StreamingContextUsageOptions
 ): Promise<StreamingOutcome> {
 	const writer = new AnthropicStreamWriter();
 	writer.configure(model, estimateTokens(inputText.length));
@@ -172,6 +180,18 @@ function streamSession(
 				}
 				flushDeltas();
 				break;
+
+			case 'session.usage_info': {
+				const snapshot = contextUsage?.store.updateForSession(
+					session as object,
+					contextUsage.requestKey,
+					model,
+					event.data as CopilotUsageInfoData,
+					contextUsage.outputTokenLimit
+				);
+				if (snapshot) writer.updateInputTokens(snapshot.totalTokens);
+				break;
+			}
 
 			case 'session.idle':
 				flushDeltas();
@@ -283,7 +303,8 @@ export function runSessionStreaming(
 	registry?: ToolBridgeRegistry,
 	onDone: () => void = () => {},
 	/** Raw input text (system prompt + formatted messages) for heuristic token estimation. */
-	inputText = ''
+	inputText = '',
+	contextUsage?: StreamingContextUsageOptions
 ): Promise<StreamingOutcome> {
 	return streamSession(
 		session,
@@ -303,7 +324,8 @@ export function runSessionStreaming(
 			});
 		},
 		onDone,
-		inputText
+		inputText,
+		contextUsage
 	);
 }
 
@@ -322,7 +344,8 @@ export function resumeSessionStreaming(
 	toolResults: ToolResult[],
 	onDone: () => void = () => {},
 	/** Raw input text (system prompt + full message history) for heuristic token estimation. */
-	inputText = ''
+	inputText = '',
+	contextUsage?: StreamingContextUsageOptions
 ): Promise<StreamingOutcome> {
 	return streamSession(
 		session,
@@ -338,6 +361,7 @@ export function resumeSessionStreaming(
 			}
 		},
 		onDone,
-		inputText
+		inputText,
+		contextUsage
 	);
 }
