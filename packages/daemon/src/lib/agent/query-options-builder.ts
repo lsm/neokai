@@ -47,6 +47,26 @@ import {
 import { homedir } from 'os';
 import { join } from 'path';
 
+export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
+
+/**
+ * Provider-specific SDK settings overrides.
+ */
+export function buildProviderSettings(providerId: string): Options['settings'] {
+	if (providerId !== 'anthropic-codex') {
+		return undefined;
+	}
+
+	// The Claude Agent SDK can auto-compact by starting a second /v1/messages
+	// request while the original turn is still streaming. The Codex bridge
+	// fronts one Codex subprocess per session and intentionally rejects that
+	// concurrent turn with 409, so raise the SDK threshold above every Codex
+	// bridge context window and let Codex manage its own context.
+	return {
+		autoCompactWindow: CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
+	};
+}
+
 /**
  * Context interface - what QueryOptionsBuilder needs from AgentSession
  * Using interface instead of importing AgentSession to avoid circular deps
@@ -132,6 +152,7 @@ export class QueryOptionsBuilder {
 		// (default, haiku, opus) since the SDK only knows Anthropic model IDs
 		const contextManager = getProviderContextManager();
 		const providerContext = contextManager.createContext(this.ctx.session);
+		const providerId = providerContext.provider.id;
 		const sdkModelId = providerContext.getSdkModelId();
 		let sdkFallbackModel: string | undefined;
 		if (config.fallbackModel) {
@@ -244,6 +265,7 @@ export class QueryOptionsBuilder {
 			// or other settings from on-disk files. NeoKai is the sole arbiter of
 			// what reaches the SDK. See M5 of `unify-mcp-config-model`.
 			settingSources: [],
+			settings: buildProviderSettings(providerId),
 
 			// ============ Streaming ============
 			includePartialMessages: config.includePartialMessages,
