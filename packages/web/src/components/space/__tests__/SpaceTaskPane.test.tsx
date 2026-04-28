@@ -144,16 +144,19 @@ vi.mock('../SpaceTaskUnifiedThread', () => ({
 		taskId,
 		topInsetClass,
 		bottomInsetClass,
+		bottomScrollPaddingClass,
 	}: {
 		taskId: string;
 		topInsetClass?: string;
 		bottomInsetClass?: string;
+		bottomScrollPaddingClass?: string;
 	}) => (
 		<div
 			data-testid="space-task-unified-thread"
 			data-task-id={taskId}
 			data-top-inset={topInsetClass ?? ''}
 			data-bottom-inset={bottomInsetClass ?? ''}
+			data-bottom-scroll-padding={bottomScrollPaddingClass ?? ''}
 		/>
 	),
 }));
@@ -343,6 +346,9 @@ describe('SpaceTaskPane — composer', () => {
 		fireEvent.click(getByTestId('send-button'));
 
 		await waitFor(() => expect(getByText('Invalid transition')).toBeTruthy());
+		const thread = getByTestId('space-task-unified-thread');
+		expect(thread.getAttribute('data-bottom-inset')).toBe('pb-52 sm:pb-44');
+		expect(thread.getAttribute('data-bottom-scroll-padding')).toBe('scroll-pb-52 sm:scroll-pb-44');
 	});
 
 	it('does not submit empty message', () => {
@@ -1262,6 +1268,7 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		const thread = getByTestId('space-task-unified-thread');
 		expect(thread.getAttribute('data-top-inset')).toBe('pt-12');
 		expect(thread.getAttribute('data-bottom-inset')).toBe('pb-44 sm:pb-36');
+		expect(thread.getAttribute('data-bottom-scroll-padding')).toBe('scroll-pb-44 sm:scroll-pb-36');
 	});
 
 	it('renders the active banner outside task-pane-content so it is visible across tabs', () => {
