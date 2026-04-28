@@ -34,6 +34,7 @@ import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import type { DaemonHub } from '../../daemon-hub';
+import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import { canTransition } from '../runtime/workflow-run-status-machine';
@@ -115,6 +116,11 @@ export interface SpaceAgentToolsConfig {
 	 */
 	activateNode?: (runId: string, nodeId: string) => Promise<void>;
 	/**
+	 * Pending message queue for messages addressed to workflow node agents that
+	 * have been activated but do not have a live session yet.
+	 */
+	pendingMessageQueue?: PendingAgentMessageQueue;
+	/**
 	 * Resolves the space's current autonomy level.
 	 * Required for approve_gate autonomy enforcement: agent approvals are rejected
 	 * when space autonomy < gate.requiredLevel (default 5 if gate has no requiredLevel).
@@ -168,6 +174,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		daemonHub,
 		onGateChanged,
 		activateNode,
+		pendingMessageQueue,
 		getSpaceAutonomyLevel,
 		myAgentName,
 		myAgentNameAliases,
@@ -647,8 +654,22 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				}
 			}
 
-			// No live session yet — the tick loop will spawn one. Surface that state so
-			// the caller knows activation succeeded but delivery is deferred.
+			let queuedMessageId: string | null = null;
+			if (pendingMessageQueue) {
+				const { record } = pendingMessageQueue.enqueue({
+					workflowRunId: task.workflowRunId,
+					spaceId,
+					taskId: task.id,
+					sourceAgentName: myAgentName,
+					targetKind: 'node_agent',
+					targetAgentName: resolved.agentName,
+					message: args.message,
+				});
+				queuedMessageId = record.id;
+			}
+
+			// No live session yet — the tick loop will spawn one. When a queue is
+			// available, the queued row will be flushed into that session on activation.
 			return jsonResult({
 				success: true,
 				task_id: task.id,
@@ -657,9 +678,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				agent_name: resolved.agentName,
 				activated: true,
 				delivered: false,
+				queued: queuedMessageId !== null,
+				...(queuedMessageId !== null ? { queuedMessageId } : {}),
 				message:
-					`Node "${resolved.agentName}" was activated but does not yet have a live session; ` +
-					`the message was not injected. Retry after the node starts.`,
+					queuedMessageId !== null
+						? `Node "${resolved.agentName}" was activated and the message was queued; it will be delivered once the session spawns.`
+						: `Node "${resolved.agentName}" was activated but does not yet have a live session; ` +
+							`the message was not queued because no pending message queue is configured. Retry after the node starts.`,
 			});
 		},
 

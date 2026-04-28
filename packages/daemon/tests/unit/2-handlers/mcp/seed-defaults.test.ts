@@ -85,6 +85,15 @@ describe('seedDefaultMcpEntries', () => {
 		expect(repo.list()).toHaveLength(2);
 	});
 
+	test('does not seed the removed Brave Search MCP entry', () => {
+		seedDefaultMcpEntries(db);
+
+		const serialized = JSON.stringify(repo.list()).toLowerCase();
+		expect(repo.getByName('brave-search')).toBeNull();
+		expect(serialized).not.toContain('brave');
+		expect(serialized).not.toContain('server-brave-search');
+	});
+
 	test('does not overwrite a pre-existing fetch-mcp entry', () => {
 		repo.create({
 			name: 'fetch-mcp',

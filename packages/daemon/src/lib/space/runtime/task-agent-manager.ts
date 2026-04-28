@@ -719,6 +719,7 @@ export class TaskAgentManager {
 				onGateChanged: (runId, gateId) => {
 					void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 				},
+				pendingMessageQueue: this.config.pendingMessageRepo,
 				getSpaceAutonomyLevel: async (sid) => {
 					const s = await this.config.spaceManager.getSpace(sid);
 					return s?.autonomyLevel ?? 1;
@@ -3028,6 +3029,7 @@ export class TaskAgentManager {
 			onGateChanged: (runId, gateId) => {
 				void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 			},
+			pendingMessageQueue: this.config.pendingMessageRepo,
 			getSpaceAutonomyLevel: async (sid) => {
 				const s = await this.config.spaceManager.getSpace(sid);
 				return s?.autonomyLevel ?? 1;
@@ -3838,6 +3840,7 @@ export class TaskAgentManager {
 			onGateChanged: (runId, gateId) => {
 				void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 			},
+			pendingMessageQueue: this.config.pendingMessageRepo,
 			getSpaceAutonomyLevel: async (sid) => {
 				const s = await this.config.spaceManager.getSpace(sid);
 				return s?.autonomyLevel ?? 1;
