@@ -68,6 +68,23 @@ describe('parseThreadRow', () => {
 		expect((parsed.message as Record<string, unknown>)?.timestamp).toBe(1_710_000_999_000);
 	});
 
+	it('injects DB origin from the row into the parsed message', () => {
+		const row = makeRow({
+			id: 'system-row',
+			origin: 'system',
+			content: JSON.stringify({
+				type: 'user',
+				uuid: 'u-system',
+				session_id: 'session-1',
+				message: { content: 'runtime notification' },
+			}),
+		});
+
+		const parsed = parseThreadRow(row);
+
+		expect((parsed.message as Record<string, unknown>)?.origin).toBe('system');
+	});
+
 	it('returns fallbackText when content is not valid JSON', () => {
 		const invalidContent = 'not json {{{';
 		const row = makeRow({ id: 'bad', content: invalidContent });
