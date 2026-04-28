@@ -1207,7 +1207,11 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 				type: string;
 				display_name: string;
 				max_input_tokens?: number;
+				context_window?: number;
+				max_context_window?: number;
 				model_context_window?: number;
+				auto_compact_token_limit?: number;
+				model_auto_compact_token_limit?: number;
 			}>;
 			has_more: boolean;
 			first_id: string;
@@ -1228,9 +1232,21 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 		expect(ids).toContain('gpt-5.5');
 		expect(ids).toContain('gpt-5.4-mini');
 		expect(ids).toContain('gpt-5.1-codex-mini');
-		const gpt55 = body.data.find((m) => m.id === 'gpt-5.5');
-		expect(gpt55?.max_input_tokens).toBe(200000);
-		expect(gpt55?.model_context_window).toBe(200000);
+		const expectContextWindow = (id: string, contextWindow: number) => {
+			const model = body.data.find((m) => m.id === id);
+			const autoCompactTokenLimit = Math.floor(contextWindow * 0.9);
+			expect(model?.max_input_tokens).toBe(contextWindow);
+			expect(model?.context_window).toBe(contextWindow);
+			expect(model?.max_context_window).toBe(contextWindow);
+			expect(model?.model_context_window).toBe(contextWindow);
+			expect(model?.auto_compact_token_limit).toBe(autoCompactTokenLimit);
+			expect(model?.model_auto_compact_token_limit).toBe(autoCompactTokenLimit);
+		};
+		expectContextWindow('gpt-5.3-codex', 272000);
+		expectContextWindow('gpt-5.4', 272000);
+		expectContextWindow('gpt-5.5', 272000);
+		expectContextWindow('gpt-5.4-mini', 128000);
+		expectContextWindow('gpt-5.1-codex-mini', 128000);
 		expect(body.first_id).toBe(ids[0]);
 		expect(body.last_id).toBe(ids[ids.length - 1]);
 	});
