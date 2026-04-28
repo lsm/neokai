@@ -601,7 +601,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			// Attempt direct injection when the execution already has a live session.
 			if (resolved.agentSessionId) {
 				try {
-					await taskAgentManager.injectSubSessionMessage(resolved.agentSessionId, args.message);
+					await taskAgentManager.injectSubSessionMessage(
+						resolved.agentSessionId,
+						args.message,
+						true
+					);
 					return jsonResult({
 						success: true,
 						task_id: task.id,
@@ -638,7 +642,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			const sessionIdAfter = refreshedExecution?.agentSessionId ?? null;
 			if (sessionIdAfter) {
 				try {
-					await taskAgentManager.injectSubSessionMessage(sessionIdAfter, args.message);
+					await taskAgentManager.injectSubSessionMessage(sessionIdAfter, args.message, true);
 					return jsonResult({
 						success: true,
 						task_id: task.id,

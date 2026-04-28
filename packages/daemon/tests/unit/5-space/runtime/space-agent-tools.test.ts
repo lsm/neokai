@@ -1520,7 +1520,7 @@ interface FakeTaskAgentManager {
 	manager: TaskAgentManager;
 	ensureCalls: string[];
 	taskAgentInjects: Array<{ taskId: string; message: string }>;
-	subSessionInjects: Array<{ sessionId: string; message: string }>;
+	subSessionInjects: Array<{ sessionId: string; message: string; isSyntheticMessage?: boolean }>;
 	/** Session IDs that should throw `Sub-session not found` on inject. */
 	deadSessionIds: Set<string>;
 	/** Hook invoked before ensureTaskAgentSession resolves. Allows simulating
@@ -1553,11 +1553,15 @@ function makeFakeTaskAgentManager(ctx: TestCtx): FakeTaskAgentManager {
 		async injectTaskAgentMessage(taskId: string, message: string): Promise<void> {
 			state.taskAgentInjects.push({ taskId, message });
 		},
-		async injectSubSessionMessage(sessionId: string, message: string): Promise<void> {
+		async injectSubSessionMessage(
+			sessionId: string,
+			message: string,
+			isSyntheticMessage?: boolean
+		): Promise<void> {
 			if (state.deadSessionIds.has(sessionId)) {
 				throw new Error(`Sub-session not found: ${sessionId}`);
 			}
-			state.subSessionInjects.push({ sessionId, message });
+			state.subSessionInjects.push({ sessionId, message, isSyntheticMessage });
 		},
 	} as unknown as TaskAgentManager;
 	return { manager, ...state };
@@ -1793,7 +1797,11 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		// Direct-injection path must skip activateNode.
 		expect(activateCalls).toHaveLength(0);
 		expect(tam.subSessionInjects).toEqual([
-			{ sessionId: 'coder-session-live', message: 'refactor the parser' },
+			{
+				sessionId: 'coder-session-live',
+				message: 'refactor the parser',
+				isSyntheticMessage: true,
+			},
 		]);
 		// The Task Agent path was not touched.
 		expect(tam.ensureCalls).toHaveLength(0);
@@ -1833,7 +1841,11 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.node_execution_id).toBe(reviewerB.id);
 		expect(tam.subSessionInjects).toEqual([
-			{ sessionId: 'reviewer-b-session', message: 'please re-review' },
+			{
+				sessionId: 'reviewer-b-session',
+				message: 'please re-review',
+				isSyntheticMessage: true,
+			},
 		]);
 		// Ensure the other reviewer was never touched.
 		expect(tam.subSessionInjects.some((r) => r.sessionId === reviewerA.agentSessionId)).toBe(false);
@@ -1879,6 +1891,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 			{
 				sessionId: 'reviewer-session-newly-restored',
 				message: 'please re-review',
+				isSyntheticMessage: true,
 			},
 		]);
 	});
@@ -2033,7 +2046,11 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.node_execution_id).toBe(exec.id);
 		expect(tam.subSessionInjects).toEqual([
-			{ sessionId: 'reviewer-session-1', message: 'please look again' },
+			{
+				sessionId: 'reviewer-session-1',
+				message: 'please look again',
+				isSyntheticMessage: true,
+			},
 		]);
 	});
 
@@ -2090,7 +2107,9 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.activated).toBe(true);
 		expect(activateCalls).toEqual([[run.id, wf.startNodeId]]);
-		expect(tam.subSessionInjects).toEqual([{ sessionId: 'coder-new', message: 'retry' }]);
+		expect(tam.subSessionInjects).toEqual([
+			{ sessionId: 'coder-new', message: 'retry', isSyntheticMessage: true },
+		]);
 	});
 
 	test('returns an error when the target task belongs to a different space', async () => {

@@ -1633,6 +1633,64 @@ describe('TaskAgentManager', () => {
 
 			expect(subSession._enqueuedMessages.length).toBeGreaterThan(before);
 		});
+
+		test('defaults sub-session injections to synthetic agent-originated messages', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:synthetic-default`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			const savedMessages: unknown[] = [];
+			const originalSave = ctx.mockDb.saveUserMessage;
+			ctx.mockDb.saveUserMessage = (
+				_sid: string,
+				msg: unknown,
+				status: string
+			): ReturnType<typeof ctx.mockDb.saveUserMessage> => {
+				savedMessages.push(msg);
+				return originalSave.call(ctx.mockDb, _sid, msg, status);
+			};
+
+			await ctx.manager.injectSubSessionMessage(subSessionId, 'agent handoff');
+
+			ctx.mockDb.saveUserMessage = originalSave;
+
+			const lastSaved = savedMessages.at(-1) as { isSynthetic?: boolean } | undefined;
+			expect(lastSaved?.isSynthetic).toBe(true);
+		});
+
+		test('can mark sub-session injections as human-originated', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:human-injection`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			const savedMessages: unknown[] = [];
+			const originalSave = ctx.mockDb.saveUserMessage;
+			ctx.mockDb.saveUserMessage = (
+				_sid: string,
+				msg: unknown,
+				status: string
+			): ReturnType<typeof ctx.mockDb.saveUserMessage> => {
+				savedMessages.push(msg);
+				return originalSave.call(ctx.mockDb, _sid, msg, status);
+			};
+
+			await ctx.manager.injectSubSessionMessage(subSessionId, 'human directed message', false);
+
+			ctx.mockDb.saveUserMessage = originalSave;
+
+			const lastSaved = savedMessages.at(-1) as { isSynthetic?: boolean } | undefined;
+			expect(lastSaved?.isSynthetic).toBe(false);
+		});
 	});
 
 	// -----------------------------------------------------------------------

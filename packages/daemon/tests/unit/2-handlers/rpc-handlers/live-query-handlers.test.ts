@@ -466,6 +466,17 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				return entry.mapRow ? rows.map(entry.mapRow) : rows;
 			}
 
+			test('includes DB message origin in compact rows', () => {
+				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+				insertSdkMessageAt('system-origin', sessionId, now + 1000);
+
+				const rows = queryCompact(taskId);
+
+				expect(rows).toHaveLength(1);
+				expect(rows[0].origin).toBe('system');
+			});
+
 			test('keeps last 5 non-terminal rows per turn and always keeps terminal rows', () => {
 				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
 				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');

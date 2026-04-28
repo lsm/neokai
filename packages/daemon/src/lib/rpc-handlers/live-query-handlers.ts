@@ -167,6 +167,7 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 	const rawId = row.id;
 	const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `row-${createdAt}`;
 	const parentToolUseId = typeof row.parentToolUseId === 'string' ? row.parentToolUseId : null;
+	const origin = typeof row.origin === 'string' ? row.origin : null;
 	// Optional backward-compat field from older compact-query variants.
 	// Current compact SQL no longer emits this, but keep tolerant parsing so
 	// historical rows/tests and alternate query variants remain safe.
@@ -218,6 +219,7 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 		messageType,
 		content,
 		createdAt,
+		origin,
 		parentToolUseId,
 	};
 	if (sessionMessageCount !== undefined) {
@@ -879,6 +881,7 @@ joined AS (
     ase.task_title AS taskTitle,
     sm.message_type AS messageType,
     sm.sdk_message AS content,
+    sm.origin AS origin,
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
     CAST(COALESCE(json_extract(sm.sdk_message, '$._taskMeta.iteration'), 0) AS INTEGER) AS iteration,
     json_extract(sm.sdk_message, '$.parent_tool_use_id') AS parentToolUseId
@@ -904,6 +907,7 @@ SELECT
   taskTitle,
   messageType,
   content,
+  origin,
   createdAt,
   iteration,
   parentToolUseId
@@ -1070,6 +1074,7 @@ SELECT
   taskTitle,
   messageType,
   content,
+  origin,
   createdAt,
   turnIndex,
   CASE
