@@ -1,7 +1,7 @@
 # Space Autonomy & Human-in-the-Loop Gap Analysis
 
 Date: 2026-04-12
-Last updated: 2026-04-20
+Last updated: 2026-04-27
 
 ## Architecture Summary
 
@@ -10,27 +10,27 @@ The space/task/workflow system has three orthogonal control layers:
 | Layer | Scope | Mechanism | Key File |
 |-------|-------|-----------|----------|
 | **Gates** | Per-channel in workflow | Field checks + scripts block message delivery | `runtime/gate-evaluator.ts` |
-| **Autonomy Level** | Per-space | Controls task terminal status (`review` vs `done`) and gates completion-action execution | `runtime/space-runtime.ts` → `resolveCompletionWithActions` |
-| **Task Status Machine** | Per-task | `open -> in_progress -> review -> done` | `managers/space-task-manager.ts` |
+| **Autonomy Level** | Per-space | Controls task terminal status and post-approval routing | `runtime/space-runtime.ts` → `PostApprovalRouter` |
+| **Post-Approval Routing** | Per-workflow end-node | After human approval, dispatches sub-session (e.g. merge PR) | `runtime/post-approval-router.ts` |
+| **Task Status Machine** | Per-task | `open -> in_progress -> review -> approved -> done` | `managers/space-task-manager.ts` |
 
 ### How Autonomy Works Today
 
 Autonomy has multiple enforcement surfaces across the runtime:
 
-1. **`resolveCompletionWithActions`** in `space-runtime.ts` — invoked from two completion paths (the single-task and multi-node-run branches of the tick loop). Levels (1–5) decide both the terminal task status and which completion actions auto-execute:
-   ```
-   level 1:          workflow completes -> task status = 'review' (human must approve)
-   level >= 2:       workflow completes -> task status = 'done' if autonomy >= every action's requiredLevel
-                                          else 'review' paused at first action whose requiredLevel exceeds autonomy
-   ```
+1. **Task completion resolution** in `space-runtime.ts` — when a workflow's end node calls `report_result`, the runtime checks `space.autonomyLevel >= workflow.completionAutonomyLevel`:
+   - Below threshold → task status = `review` (human must approve)
+   - At/above threshold → task auto-transitions through `approved` to `done`
 
-2. **Gate auto-approval** in `channel-router.ts` — gates with `requiredLevel` auto-approve when `space.autonomyLevel >= requiredLevel` during inter-node routing (not just at completion time).
+2. **Post-approval routing** in `post-approval-router.ts` — after human approval (or auto-approval at high autonomy), the router dispatches a post-approval sub-session to a target agent defined by the workflow's `postApproval` route (e.g., reviewer merges the PR). The agent calls `mark_complete` when done.
 
-3. **Agent prompt gating** in `task-agent-manager.ts` — end-node agents receive `approve_task()` tool only when `spaceLevel >= workflow.completionAutonomyLevel`; otherwise they get `submit_for_approval()` instead.
+3. **Gate auto-approval** in `channel-router.ts` — gates with `requiredLevel` auto-approve when `space.autonomyLevel >= requiredLevel` during inter-node routing.
 
-4. **Three completion-action types** in `completion-action-executors.ts` — `script` (bash), `instruction` (verification agent), and `mcp_call` (tool invocation + `expect` assertions) — each with its own `requiredLevel`.
+4. **Agent prompt gating** in `task-agent-manager.ts` — end-node agents receive `approve_task()` tool only when `spaceLevel >= workflow.completionAutonomyLevel`; otherwise they get `submit_for_approval()` instead.
 
-Shared logic lives in `packages/shared/src/space/workflow-autonomy.ts` (`isWorkflowAutonomousAtLevel()`, `countAutonomousWorkflows()`, `EMPTY_ACTIONS_AUTONOMY_THRESHOLD = 2`).
+5. **`approved` transient status** — new task status between `review` and `done`. Tasks enter `approved` when a human approves (or the runtime auto-approves at sufficient autonomy). The post-approval sub-session executes while the task is `approved`, then transitions to `done` via `mark_complete`.
+
+Shared logic lives in `packages/shared/src/space/workflow-autonomy.ts` (`isWorkflowAutoClosingAtLevel()` — single pure function checking `level >= (wf.completionAutonomyLevel ?? 5)`).
 
 ---
 
@@ -75,20 +75,22 @@ that must guide every implementation decision in this gap list.
 
 ### 1. PR Auto-Merge for Semi-Autonomous ✅
 
-**Status:** Implemented (completion actions + workflow templates)
+**Status:** Implemented (post-approval routing + workflow templates)
 
-PR merge is handled via two complementary mechanisms:
-- **Short workflows** (Coding, Research): `MERGE_PR_COMPLETION_ACTION` on the end node's `completionActions[]` — a script completion action (`requiredLevel: 4`) that squash-merges via `gh pr merge --squash` and syncs the worktree
-- **QA-gated workflows** (Coding with QA): QA node is the end node with a `verify-pr-merged` completion action (`mcp_call` type, `requiredLevel: 2`) that double-checks the merge happened
-- **Decomposition workflow** (Plan & Decompose): End node dispatches standalone tasks via `create_standalone_task`; a `verify-tasks-created` completion action (`requiredLevel: 1`) confirms at least one task was created
-- **Completion action execution loop** in `SpaceRuntime.resolveCompletionWithActions()` — iterates actions in order, auto-executes when `space.autonomyLevel >= action.requiredLevel`, pauses task at `review` with `pendingActionIndex` otherwise
-- **Resume path** via `resumeCompletionActions()` — when a human approves a paused completion action, execution continues from `pendingActionIndex`
+PR merge is handled via post-approval routing. When a task completes and the workflow defines a `postApproval` route, the `PostApprovalRouter` dispatches a sub-session to a target agent (typically the reviewer) with instructions to merge the PR. The agent calls `mark_complete` when done.
+
+- **PR-producing workflows** (Coding, Research, Coding with QA): `postApproval` targets the reviewer agent with merge instructions via `post-approval-merge-template.ts`
+- **Decomposition workflow** (Plan & Decompose): End node dispatches standalone tasks via `create_standalone_task`; no post-approval route needed
+- **Autonomy gating**: at `space.autonomyLevel >= workflow.completionAutonomyLevel`, the runtime auto-approves (skips `review`, goes straight to `approved` → post-approval sub-session → `done`). Below threshold, the human approves first.
 - **Gate auto-approval** via `requiredLevel` on gates — `plan-approval-gate` uses `requiredLevel: 3`
+- **Task status flow**: `in_progress` → `review` (if human needed) → `approved` → post-approval sub-session → `done`
+
+Previous implementation used `CompletionAction` types (`script`/`instruction`/`mcp_call`) with `requiredLevel` — deleted in PRs #1620–#1628 (April 24). Replaced by the simpler `PostApprovalRouter` + `mark_complete` model.
 
 Remaining:
 - No gate script template for "wait for N approvals + CI green" (separate from merge logic)
 
-**Impact:** High  
+**Impact:** High
 **Effort:** Medium
 
 ---
@@ -156,12 +158,13 @@ Gates support `writers: ['human']` and `spaceWorkflowRun.approveGate` RPC exists
 ~~Semi-autonomous is identical to supervised during execution.~~ Significantly addressed:
 
 **Implemented:**
-- ✅ Gate auto-approval: gates with `requiredLevel` auto-approve when `space.autonomyLevel >= requiredLevel` (channel-router, fires during inter-node routing not just at completion)
-- ✅ Completion actions: end-node actions auto-execute or pause based on `requiredLevel` vs space level; three action types (`script`, `instruction`, `mcp_call`) each with own `requiredLevel`
+- ✅ Task completion resolution: `space.autonomyLevel >= workflow.completionAutonomyLevel` determines whether task auto-closes or pauses at `review`
+- ✅ Post-approval routing: `PostApprovalRouter` dispatches post-approval sub-session (e.g. merge PR) after approval; auto-approves at sufficient autonomy
+- ✅ Gate auto-approval: gates with `requiredLevel` auto-approve when `space.autonomyLevel >= requiredLevel` (channel-router, fires during inter-node routing)
 - ✅ Agent prompt gating: end-node agents receive `approve_task()` only when `spaceLevel >= workflow.completionAutonomyLevel`; otherwise get `submit_for_approval()` (task-agent-manager)
 - ✅ Agent prompt differentiation: level ≥ 3 grants autonomous retry/reassign (space-chat-agent)
-- ✅ Notification context: `SessionNotificationSink` includes `autonomyLevel` in every notification so Space Agent knows its autonomy
-- ✅ Shared autonomy logic: `workflow-autonomy.ts` provides `isWorkflowAutonomousAtLevel()`, `countAutonomousWorkflows()` used by both runtime and UI
+- ✅ Notification context: `SessionNotificationSink` includes `autonomyLevel` in every notification
+- ✅ Shared autonomy logic: `workflow-autonomy.ts` provides `isWorkflowAutoClosingAtLevel()` used by both runtime and UI
 
 **Still missing:**
 - Autonomy-aware retry behavior (semi-autonomous retries more aggressively) — fixed retry constants regardless of level
@@ -369,23 +372,20 @@ Missing:
 
 **Status:** Implemented
 
-PR validation in spaces is handled via two mechanisms in the built-in workflow templates:
+PR validation happens at two layers:
 
-1. **End node instructions** — Reviewer/QA prompts now include explicit PR verification steps
+1. **End node instructions** — Reviewer/QA prompts include explicit PR verification steps
    before calling `report_result()`. The agent can react if the PR isn't in the expected state
    (e.g. resolve conflicts, re-push).
 
-2. **Completion action failure blocks task** — `executeCompletionAction()` now returns
-   success/failure. If a completion action script (e.g. `merge_pr`) fails, the task transitions
-   to `blocked` instead of silently completing as `done`. This is a framework-level fix that
-   applies to all completion actions, not just PR merge.
+2. **Post-approval routing** — `PostApprovalRouter` dispatches a post-approval sub-session targeting the reviewer with merge instructions. If the merge fails, the task transitions to `approved` with `postApprovalBlockedReason` set, surfaced via `PendingPostApprovalBanner`. The reviewer can retry or a human can mark done.
 
 Unlike Room's `lifecycle-hooks.ts` approach (400+ lines of imperative checks baked into the
-runtime), Space uses its existing gate/channel/completion-action primitives. PR validation is
-workflow template data, not framework code — users can customize or remove it.
+runtime), Space uses post-approval routing + gate/channel primitives. PR validation is
+workflow template data, not framework code.
 
-**Impact:** High — tasks no longer complete without verifying work was integrated  
-**Effort:** Low (workflow data + one runtime behavior change)
+**Impact:** High — tasks no longer complete without verifying work was integrated
+**Effort:** Low (workflow data + post-approval routing)
 
 ---
 
@@ -412,7 +412,7 @@ For users managing multiple spaces, there is no single view of all pending appro
 
 **Status:** Known limitation (comment in code)
 
-`TaskBlockedBanner.tsx:111` has a TODO comment:
+`TaskBlockedBanner.tsx:80` has a TODO comment:
 > "in multi-gate workflows this may not be the gate that actually blocked the task.
 > A future improvement would store `blockingGateId` on SpaceTask to remove ambiguity."
 
@@ -576,35 +576,28 @@ Gap 12 (Autonomy UI Toggle) — standalone, no dependencies
 |----|--------|---------------|
 | #1464 | Replace `done`/`report_done`/`write_gate` with `idle`/`save`/auto-gate-write | #2b (gate flow) |
 | #1496 | Workflow run artifacts — typed node outputs replacing task-level PR fields | #1 (PR auto-merge prerequisite) |
-| #1505 | Completion-semantics rewrite: canonical task status as sole completion signal, `report_result` append-only, completion action resume path | #13 (prerequisite), #14 (failure blocks task) |
+| #1505 | Completion-semantics rewrite: canonical task status as sole completion signal | #13 (prerequisite) |
 | #1516 | Autonomy-gated agent approvals: per-field writers-vs-autonomy two-path model | #4 (execution autonomy) |
 | #1517 | Workflow template drift detection + sync from template | Infrastructure |
 | #1533 | `report_result` result-only; completion pipeline sole status arbiter | #13 (prerequisite) |
 | #1537 | "X of Y workflows autonomous" on autonomy selector (`AutonomyWorkflowSummary`) | #12 (autonomy UI) |
-| #1538 | Delete orphan built-in workflows + surface template-drift duplicates | Infrastructure |
 | #1539 | Plan & Decompose workflow replaces Full-Cycle | #1 (workflow templates) |
 | #1541 | Allow communication until task is archived (node session reachability) | Infrastructure |
-| #1543 | Replace /context parsing with native SDK `getContextUsage()` | Infrastructure |
 | #1547 | `send_message_to_task` targets any workflow node (auto-spawn + activate) | Infrastructure |
 | #1551 | Background job queue + cache for artifact git ops | Infrastructure |
 | #1552 | Split `report_result` into audit/approve/submit — end reviewer-loop premature completion | #3 (audit trail), #4 (execution autonomy) |
+| #1620–#1628 | Delete completion-action pipeline; replace with `PostApprovalRouter` + `approved` status + `mark_complete` tool | #1, #4, #14 |
+| #1645 | Treat tasks in `review`/`approved` as at-rest in `recoverSingleRun` (daemon restart recovery) | Infrastructure |
+| #1677 | Fix post-approval workflow prompts (reviewer instructions) | #1 |
+| #1678 | Fix Space runtime MCP rehydration across daemon restart | Infrastructure |
 
-### New Files (April 16–20)
+### Architectural Evolution
 
-| File | Purpose | Related Gap |
-|------|---------|-------------|
-| `shared/src/space/workflow-autonomy.ts` | Pure functions: `isWorkflowAutonomousAtLevel()`, `countAutonomousWorkflows()`, `EMPTY_ACTIONS_AUTONOMY_THRESHOLD` | #4, #12 |
-| `runtime/completion-action-executors.ts` | Three action types: `script` (bash), `instruction` (verification agent), `mcp_call` (tool + `expect` assertions) | #1, #4 |
-| `runtime/pending-action.ts` | Read-path enrichment: resolves `pendingAction` from workflow definition for paused tasks | #2b |
-| `tools/end-node-handlers.ts` | Design v2 end-node contract: `report_result` (audit) + `approve_task` (self-close) + `submit_for_approval` (human sign-off) | #3, #4 |
-| `runtime/session-notification-sink.ts` | Notification formatting with `autonomyLevel` context per message | #4 |
-| `space/artifact-git-ops.ts` | Centralized async git subprocess wrappers (diff, numstat, commit log) with TTL memoization | Infrastructure |
-| `storage/workflow-run-artifact-cache-repository.ts` | SQLite cache for git subprocess results keyed by `(run_id, task_id, cache_key)` | Infrastructure |
-| `storage/space-task-report-result-repository.ts` | Append-only audit log for `report_result` calls (summary, evidence, agent_name, node_id) | #3 |
-| `job-handlers/space-workflow-run-artifact.handler.ts` | Background jobs: `syncGateArtifacts`, `syncCommits`, `syncFileDiff` | Infrastructure |
-| `web/AutonomyWorkflowSummary.tsx` | "X of Y workflows autonomous" below autonomy selector | #12 |
-| `web/PendingCompletionActionBanner.tsx` | Approve/reject UI for tasks paused at completion-action checkpoint | #2b |
-| `web/PendingTaskCompletionBanner.tsx` | Approve/send-back UI for tasks paused at task-completion checkpoint | #2b |
+| Phase | Period | Key Mechanism | Status |
+|-------|--------|---------------|--------|
+| **v1: Binary autonomy** | Pre-April 2026 | `supervised` / `semi_autonomous` → task status `review` / `done` | Superseded |
+| **v2: Completion actions** | April 15–24 | 5-level autonomy + `CompletionAction` types (`script`/`instruction`/`mcp_call`) with `requiredLevel` | Deleted (#1620–#1628) |
+| **v3: Post-approval routing** | April 24+ | 5-level autonomy + `PostApprovalRouter` + `postApproval` workflow routes + `approved` transient status + `mark_complete` tool | **Current** |
 
 ## Key Files Reference
 
@@ -613,11 +606,11 @@ Gap 12 (Autonomy UI Toggle) — standalone, no dependencies
 | Space types | `packages/shared/src/types/space.ts` |
 | Shared autonomy logic | `packages/shared/src/space/workflow-autonomy.ts` |
 | Space runtime | `packages/daemon/src/lib/space/runtime/space-runtime.ts` |
-| Completion action executors | `packages/daemon/src/lib/space/runtime/completion-action-executors.ts` |
+| Post-approval router | `packages/daemon/src/lib/space/runtime/post-approval-router.ts` |
+| Post-approval merge template | `packages/daemon/src/lib/space/workflows/post-approval-merge-template.ts` |
 | Completion detector | `packages/daemon/src/lib/space/runtime/completion-detector.ts` |
 | Gate evaluator | `packages/daemon/src/lib/space/runtime/gate-evaluator.ts` |
 | Channel router | `packages/daemon/src/lib/space/runtime/channel-router.ts` |
-| Pending action enrichment | `packages/daemon/src/lib/space/runtime/pending-action.ts` |
 | Session notification sink | `packages/daemon/src/lib/space/runtime/session-notification-sink.ts` |
 | Task manager | `packages/daemon/src/lib/space/managers/space-task-manager.ts` |
 | End-node handlers | `packages/daemon/src/lib/space/tools/end-node-handlers.ts` |
@@ -633,9 +626,11 @@ Gap 12 (Autonomy UI Toggle) — standalone, no dependencies
 | Workflow run artifacts repo | `packages/daemon/src/storage/repositories/workflow-run-artifact-repository.ts` |
 | Artifact job handler | `packages/daemon/src/lib/job-handlers/space-workflow-run-artifact.handler.ts` |
 | Space RPC handlers | `packages/daemon/src/lib/rpc-handlers/space-*.ts` |
-| Autonomy workflow summary (UI) | `packages/web/src/components/space/AutonomyWorkflowSummary.tsx` |
-| Pending completion action banner | `packages/web/src/components/space/PendingCompletionActionBanner.tsx` |
+| Task banner precedence | `packages/web/src/lib/task-banner.ts` |
+| Inline status banner (shared) | `packages/web/src/components/space/InlineStatusBanner.tsx` |
+| Pending post-approval banner | `packages/web/src/components/space/PendingPostApprovalBanner.tsx` |
 | Pending task completion banner | `packages/web/src/components/space/PendingTaskCompletionBanner.tsx` |
+| Autonomy workflow summary (UI) | `packages/web/src/components/space/AutonomyWorkflowSummary.tsx` |
 | Task blocked banner (UI) | `packages/web/src/components/space/TaskBlockedBanner.tsx` |
 | Task status actions (UI) | `packages/web/src/components/space/TaskStatusActions.tsx` |
 | Space tasks list (UI) | `packages/web/src/components/space/SpaceTasks.tsx` |
