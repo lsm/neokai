@@ -223,6 +223,20 @@ describe('startEmbeddedServer', () => {
 		expect(data[0]['max_input_tokens']).toBe(160000);
 	});
 
+	it('models endpoint falls back to static GPT-5.4 and GPT-5.5 metadata', async () => {
+		(client as unknown as { listModels: () => Promise<unknown[]> }).listModels = async () => {
+			throw new Error('listModels unavailable');
+		};
+		const resp = await fetch(`${serverUrl}/v1/models`);
+		expect(resp.status).toBe(200);
+		const body = (await resp.json()) as Record<string, unknown>;
+		const data = body['data'] as Array<Record<string, unknown>>;
+
+		expect(data.find((m) => m['id'] === 'gpt-5.3-codex')?.['max_input_tokens']).toBe(272000);
+		expect(data.find((m) => m['id'] === 'gpt-5.4')?.['max_input_tokens']).toBe(272000);
+		expect(data.find((m) => m['id'] === 'gpt-5.5')?.['max_input_tokens']).toBe(272000);
+	});
+
 	it('count_tokens returns non-zero values that grow with system, messages, tools, and tool results', async () => {
 		const base = await postCountTokens(serverUrl, {
 			model: 'gpt-5-mini',
