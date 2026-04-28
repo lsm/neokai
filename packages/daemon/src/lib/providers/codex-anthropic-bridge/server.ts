@@ -34,6 +34,7 @@ import {
 	messageStopSSE,
 	errorSSE,
 } from './translator.js';
+import { estimateAnthropicInputTokens } from './token-estimator.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('codex-bridge-server');
@@ -54,6 +55,11 @@ const BRIDGE_MODELS = [
 		display_name: 'GPT-5.3 Codex',
 		created_at: '2025-12-01T00:00:00Z',
 		max_input_tokens: 200000,
+		context_window: 200000,
+		max_context_window: 200000,
+		model_context_window: 200000,
+		auto_compact_token_limit: 180000,
+		model_auto_compact_token_limit: 180000,
 		max_tokens: 16384,
 	},
 	{
@@ -61,6 +67,11 @@ const BRIDGE_MODELS = [
 		display_name: 'GPT-5.4',
 		created_at: '2026-01-01T00:00:00Z',
 		max_input_tokens: 200000,
+		context_window: 200000,
+		max_context_window: 200000,
+		model_context_window: 200000,
+		auto_compact_token_limit: 180000,
+		model_auto_compact_token_limit: 180000,
 		max_tokens: 16384,
 	},
 	{
@@ -68,6 +79,11 @@ const BRIDGE_MODELS = [
 		display_name: 'GPT-5.5',
 		created_at: '2026-04-01T00:00:00Z',
 		max_input_tokens: 200000,
+		context_window: 200000,
+		max_context_window: 200000,
+		model_context_window: 200000,
+		auto_compact_token_limit: 180000,
+		model_auto_compact_token_limit: 180000,
 		max_tokens: 16384,
 	},
 	{
@@ -75,6 +91,11 @@ const BRIDGE_MODELS = [
 		display_name: 'GPT-5.4 Mini',
 		created_at: '2026-01-01T00:00:00Z',
 		max_input_tokens: 128000,
+		context_window: 128000,
+		max_context_window: 128000,
+		model_context_window: 128000,
+		auto_compact_token_limit: 115200,
+		model_auto_compact_token_limit: 115200,
 		max_tokens: 16384,
 	},
 	{
@@ -82,6 +103,11 @@ const BRIDGE_MODELS = [
 		display_name: 'GPT-5.1 Codex Mini',
 		created_at: '2026-01-01T00:00:00Z',
 		max_input_tokens: 128000,
+		context_window: 128000,
+		max_context_window: 128000,
+		model_context_window: 128000,
+		auto_compact_token_limit: 115200,
+		model_auto_compact_token_limit: 115200,
 		max_tokens: 16384,
 	},
 ] as const;
@@ -209,7 +235,8 @@ export async function drainToSSE(
 	ttlMs: number,
 	sessionId: string,
 	onTurnDone: () => void,
-	onError?: () => void
+	onError?: () => void,
+	initialInputTokens = 0
 ): Promise<void> {
 	const enc = new TextEncoder();
 	const send = (s: string) => controller.enqueue(enc.encode(s));
@@ -221,11 +248,7 @@ export async function drainToSSE(
 
 	try {
 		const msgId = generateMsgId();
-		// TODO: input_tokens is hard-coded to 0 here because thread/tokenUsage/updated
-		// arrives after streaming starts and message_start is already sent by then.
-		// To surface real input token counts, drainToSSE would need to either buffer
-		// events until turn_done is available or emit a corrected usage event afterward.
-		send(messageStartSSE(msgId, model, 0));
+		send(messageStartSSE(msgId, model, initialInputTokens));
 		send(pingSSE());
 
 		// Use gen.next() manually instead of for-await-of.  The for-await-of
@@ -259,8 +282,8 @@ export async function drainToSSE(
 				send(inputJsonDeltaSSE(blockIndex, JSON.stringify(event.toolInput)));
 				send(contentBlockStopSSE(blockIndex));
 				// At tool_call time, thread/tokenUsage/updated has not yet fired (the model
-				// hasn't finished the turn yet), so always use the heuristic count here.
-				send(messageDeltaSSE('tool_use', { outputTokens, inputTokens: 0 }));
+				// hasn't finished the turn yet), so use the request-side estimate here.
+				send(messageDeltaSSE('tool_use', { outputTokens, inputTokens: initialInputTokens }));
 				send(messageStopSSE());
 
 				// Store the session so the next HTTP request can resume it.
@@ -295,10 +318,13 @@ export async function drainToSSE(
 				// event.outputTokens is populated from thread/tokenUsage/updated (v2 protocol)
 				// or from legacy inline usage. Fall back to heuristic count if both are 0.
 				const endOutputTokens = event.outputTokens > 0 ? event.outputTokens : outputTokens;
+				const endInputTokens = event.inputTokens > 0 ? event.inputTokens : initialInputTokens;
 				send(
 					messageDeltaSSE('end_turn', {
 						outputTokens: endOutputTokens,
-						inputTokens: event.inputTokens || 0,
+						inputTokens: endInputTokens,
+						cacheCreationInputTokens: event.cacheCreationInputTokens,
+						cacheReadInputTokens: event.cacheReadInputTokens,
 					})
 				);
 				send(messageStopSSE());
@@ -325,7 +351,9 @@ export async function drainToSSE(
 		if (textBlockOpen) {
 			send(contentBlockStopSSE(blockIndex));
 		}
-		send(messageDeltaSSE('end_turn', { outputTokens: outputTokens, inputTokens: 0 }));
+		send(
+			messageDeltaSSE('end_turn', { outputTokens: outputTokens, inputTokens: initialInputTokens })
+		);
 		send(messageStopSSE());
 		session.kill();
 		onError?.();
@@ -415,13 +443,21 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				});
 			}
 
-			// Token counting stub — the SDK calls this for context/token
-			// estimation.  It already catches errors, but returning a proper
-			// response avoids unnecessary error noise.
+			// Token counting — the SDK calls this for context usage. Codex
+			// app-server does not expose a count endpoint, so use the bridge-local
+			// deterministic estimator and let real app-server usage win at turn end.
 			if (url.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
-				return new Response(JSON.stringify({ input_tokens: 0 }), {
-					headers: { 'Content-Type': 'application/json' },
-				});
+				try {
+					const body = (await req.json()) as AnthropicRequest;
+					return new Response(
+						JSON.stringify({ input_tokens: estimateAnthropicInputTokens(body) }),
+						{
+							headers: { 'Content-Type': 'application/json' },
+						}
+					);
+				} catch {
+					return createAnthropicError(400, 'invalid_request_error', 'Bad Request');
+				}
 			}
 
 			// Catch-all: return 501 instead of 404.  The SDK specifically maps
@@ -511,6 +547,7 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				}
 
 				const { gen, session, model: sessionModel, sessionId: tsSessionId } = primaryStored;
+				const estimatedInputTokens = estimateAnthropicInputTokens(body);
 				const toolContinuationPs = persistentSessions.get(tsSessionId);
 				const onTurnDone = toolContinuationPs
 					? () => {
@@ -539,7 +576,8 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 									toolContinuationPs.session.kill();
 									persistentSessions.delete(tsSessionId);
 								}
-							}
+							},
+							estimatedInputTokens
 						);
 					},
 				});
@@ -622,6 +660,7 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				? buildConversationText(body.messages, system)
 				: extractLastUserMessage(body.messages);
 			ps.isFirstTurn = false;
+			const estimatedInputTokens = estimateAnthropicInputTokens(body);
 
 			const gen = bridgeSession.startTurn(userText);
 
@@ -650,7 +689,8 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 							clearTimeout(capturedPs.idleTimer);
 							capturedPs.session.kill();
 							persistentSessions.delete(capturedSessionId);
-						}
+						},
+						estimatedInputTokens
 					);
 				},
 			});
