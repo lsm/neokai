@@ -69,6 +69,12 @@ export class AnthropicStreamWriter {
 		this.inputTokens = inputTokens;
 	}
 
+	updateInputTokens(inputTokens: number): void {
+		if (Number.isFinite(inputTokens) && inputTokens > 0) {
+			this.inputTokens = Math.round(inputTokens);
+		}
+	}
+
 	hasStarted(): boolean {
 		return this.streamStarted;
 	}
@@ -113,7 +119,7 @@ export class AnthropicStreamWriter {
 			delta: { stop_reason: stopReason, stop_sequence: null },
 			usage: {
 				output_tokens: estimateTokens(this.outputCharCount),
-				input_tokens: 0,
+				input_tokens: this.inputTokens,
 				cache_read_input_tokens: 0,
 				cache_creation_input_tokens: 0,
 			},
