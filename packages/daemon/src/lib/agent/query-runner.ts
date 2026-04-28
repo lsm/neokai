@@ -25,6 +25,7 @@ import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryOptionsBuilder } from './query-options-builder';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
 import type { OriginalEnvVars } from '../provider-service';
+import { extractCompactionSummary, getSDKSessionFilePath } from '../sdk-session-file-manager';
 // Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
 
@@ -601,11 +602,17 @@ export class QueryRunner {
 				// Clear both the rewind pointer and SDK transcript identity so the retry
 				// starts with a fresh context instead of looping on stale JSONL state.
 				const oldResumeSessionAt = session.metadata.resumeSessionAt;
+				const compactionSummary = this.extractCompactionSummaryFromCurrentSdkSession();
 				logger.error(
 					`No message found for resumeSessionAt (${oldResumeSessionAt ?? 'unknown'}). ` +
 						'Clearing resumeSessionAt, sdkSessionId, and sdkOriginPath before retry.'
 				);
 				delete session.metadata.resumeSessionAt;
+				if (compactionSummary) {
+					session.metadata.compactionSummary = compactionSummary;
+				} else {
+					delete session.metadata.compactionSummary;
+				}
 				session.sdkSessionId = undefined;
 				session.sdkOriginPath = undefined;
 				this.ctx.db.updateSession(session.id, {
@@ -618,8 +625,10 @@ export class QueryRunner {
 					await this.displayErrorAsAssistantMessage(
 						'⚠️ **Conversation context was reset.**\n\n' +
 							'The previous rewind point is no longer present in the Claude SDK transcript. ' +
-							'This can happen after SDK compaction. Your conversation history in NeoKai is ' +
-							'preserved; only the AI context window has been reset.\n\n' +
+							'This can happen after SDK compaction. Your conversation history in NeoKai is preserved; ' +
+							(compactionSummary
+								? 'a compacted summary from the previous SDK transcript will be carried into the fresh AI session.\n\n'
+								: 'only the AI context window has been reset.\n\n') +
 							'Retrying your message with a fresh AI session.',
 						{ markAsError: false }
 					);
@@ -871,6 +880,29 @@ export class QueryRunner {
 		}
 	}
 
+	private extractCompactionSummaryFromCurrentSdkSession(): string | null {
+		const { session, logger } = this.ctx;
+		if (!session.sdkSessionId) {
+			return null;
+		}
+
+		const workspacePath = session.sdkOriginPath ?? session.workspacePath;
+		if (!workspacePath) {
+			return null;
+		}
+
+		try {
+			const filePath = getSDKSessionFilePath(workspacePath, session.sdkSessionId);
+			return extractCompactionSummary(filePath);
+		} catch (error) {
+			logger.warn(
+				`Failed to extract SDK compaction summary for session ${session.id}: ` +
+					`${error instanceof Error ? error.message : String(error)}`
+			);
+			return null;
+		}
+	}
+
 	private getLiveSdkMcpServerNames(queryOptions: Pick<Options, 'mcpServers'>): string[] {
 		return Object.entries(queryOptions.mcpServers ?? {})
 			.filter(([, config]) => {
@@ -909,6 +941,24 @@ export class QueryRunner {
 		// Delegate to callback
 		await this.ctx.onSDKMessage(message);
 		await this.ctx.onMarkApiSuccess();
+		await this.clearCompactionSummaryAfterCarry();
+	}
+
+	private async clearCompactionSummaryAfterCarry(): Promise<void> {
+		const { session, db, logger } = this.ctx;
+		if (!session.metadata.compactionSummary || this.ctx.isCleaningUp()) {
+			return;
+		}
+
+		delete session.metadata.compactionSummary;
+		try {
+			db.updateSession(session.id, { metadata: session.metadata });
+		} catch (error) {
+			logger.warn(
+				`Failed to clear carried compaction summary for session ${session.id}: ` +
+					`${error instanceof Error ? error.message : String(error)}`
+			);
+		}
 	}
 
 	/**

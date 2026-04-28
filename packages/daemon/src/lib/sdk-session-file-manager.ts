@@ -1139,6 +1139,104 @@ export function truncateSessionFileAtMessage(
 	}
 }
 
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function extractTextFromContent(content: unknown): string {
+	if (typeof content === 'string') {
+		return content.trim();
+	}
+
+	if (!Array.isArray(content)) {
+		return '';
+	}
+
+	return content
+		.map((block) => {
+			if (!isJsonRecord(block)) {
+				return '';
+			}
+			const text = block.text;
+			return typeof text === 'string' ? text.trim() : '';
+		})
+		.filter(Boolean)
+		.join('\n\n')
+		.trim();
+}
+
+function extractMessageText(entry: Record<string, unknown>): string {
+	const message = entry.message;
+	if (isJsonRecord(message)) {
+		return extractTextFromContent(message.content);
+	}
+	return extractTextFromContent(entry.content);
+}
+
+/**
+ * Extract the SDK compaction summary from a JSONL session transcript.
+ *
+ * After SDK compaction, the transcript contains a system compact_boundary row
+ * followed by the compacted conversation summary as normal message content.
+ * The most recent boundary is authoritative when a transcript was compacted
+ * multiple times.
+ *
+ * @param filePath - Absolute path to the SDK JSONL transcript
+ * @returns Summary text when found, otherwise null
+ */
+export function extractCompactionSummary(filePath: string): string | null {
+	if (!existsSync(filePath)) {
+		return null;
+	}
+
+	try {
+		const lines = readFileSync(filePath, 'utf-8')
+			.split('\n')
+			.map((line) => line.trim())
+			.filter(Boolean);
+
+		const entries: Record<string, unknown>[] = [];
+		for (const line of lines) {
+			try {
+				const parsed = JSON.parse(line);
+				if (isJsonRecord(parsed)) {
+					entries.push(parsed);
+				}
+			} catch {
+				// Skip unparseable lines. Transcript repair helpers use the same best-effort pattern.
+			}
+		}
+
+		let compactBoundaryIndex = -1;
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i];
+			if (entry.type === 'system' && entry.subtype === 'compact_boundary') {
+				compactBoundaryIndex = i;
+			}
+		}
+
+		if (compactBoundaryIndex === -1) {
+			return null;
+		}
+
+		for (let i = compactBoundaryIndex + 1; i < entries.length; i++) {
+			const entry = entries[i];
+			if (entry.type !== 'assistant' && entry.type !== 'user') {
+				continue;
+			}
+
+			const text = extractMessageText(entry);
+			if (text) {
+				return text;
+			}
+		}
+	} catch {
+		return null;
+	}
+
+	return null;
+}
+
 /**
  * Check whether a message UUID still exists in the SDK session JSONL file.
  *

@@ -21,6 +21,7 @@ import {
 	removeToolResultFromSessionFile,
 	truncateSessionFileAtMessage,
 	messageUuidExistsInSessionFile,
+	extractCompactionSummary,
 	findSDKSessionFileGlobally,
 	migrateSDKSessionFile,
 } from '../../../../src/lib/sdk-session-file-manager';
@@ -893,6 +894,88 @@ describe('SDK Session File Manager', () => {
 			const sdkIds = orphaned.map((o) => o.sdkSessionId);
 			expect(sdkIds).toContain('orphan');
 			expect(sdkIds).toContain('unknown');
+		});
+	});
+
+	describe('extractCompactionSummary', () => {
+		test('should return null when file does not exist', () => {
+			const summary = extractCompactionSummary(join(testSessionDir, 'missing.jsonl'));
+
+			expect(summary).toBeNull();
+		});
+
+		test('should return null when transcript has no compact boundary', () => {
+			writeFileSync(
+				testSessionFile,
+				JSON.stringify({
+					type: 'assistant',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'No compaction yet' }] },
+				}) + '\n',
+				'utf-8'
+			);
+
+			const summary = extractCompactionSummary(testSessionFile);
+
+			expect(summary).toBeNull();
+		});
+
+		test('should extract first assistant text after the latest compact boundary', () => {
+			const messages = [
+				JSON.stringify({
+					type: 'system',
+					subtype: 'compact_boundary',
+					compact_metadata: { trigger: 'auto', pre_tokens: 1000 },
+				}),
+				JSON.stringify({
+					type: 'assistant',
+					message: {
+						role: 'assistant',
+						content: [{ type: 'text', text: 'Old compacted summary' }],
+					},
+				}),
+				JSON.stringify({
+					type: 'system',
+					subtype: 'compact_boundary',
+					compact_metadata: { trigger: 'auto', pre_tokens: 2000 },
+				}),
+				JSON.stringify({
+					type: 'assistant',
+					message: {
+						role: 'assistant',
+						content: [
+							{ type: 'text', text: 'Latest compacted summary' },
+							{ type: 'text', text: 'with continuation' },
+						],
+					},
+				}),
+			];
+			writeFileSync(testSessionFile, `${messages.join('\n')}\n`, 'utf-8');
+
+			const summary = extractCompactionSummary(testSessionFile);
+
+			expect(summary).toBe('Latest compacted summary\n\nwith continuation');
+		});
+
+		test('should extract summary text from user message after compact boundary', () => {
+			const messages = [
+				JSON.stringify({
+					type: 'system',
+					subtype: 'compact_boundary',
+					compact_metadata: { trigger: 'auto', pre_tokens: 1000 },
+				}),
+				JSON.stringify({
+					type: 'user',
+					message: {
+						role: 'user',
+						content: 'Previous conversation summary lives here',
+					},
+				}),
+			];
+			writeFileSync(testSessionFile, `${messages.join('\n')}\n`, 'utf-8');
+
+			const summary = extractCompactionSummary(testSessionFile);
+
+			expect(summary).toBe('Previous conversation summary lives here');
 		});
 	});
 
