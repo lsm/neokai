@@ -137,6 +137,15 @@ export interface AgentSessionInit {
 	/** Custom sub-agent definitions (merged with built-in specialists in coordinator mode) */
 	agents?: Record<string, import('@neokai/shared').AgentDefinition>;
 
+	/** SDK tool selection for this session */
+	sdkToolsPreset?: import('@neokai/shared').ToolsPresetConfig;
+
+	/** Tools to auto-allow without permission prompts */
+	allowedTools?: string[];
+
+	/** Tools to disable entirely */
+	disallowedTools?: string[];
+
 	/**
 	 * Room-level skill overrides applied on top of the global skills registry.
 	 * Skills with enabled=false in this list are excluded from injection even if
@@ -568,6 +577,9 @@ export class AgentSession
 			coordinatorMode: init.coordinatorMode,
 			agent: init.agent,
 			agents: init.agents,
+			sdkToolsPreset: init.sdkToolsPreset,
+			allowedTools: init.allowedTools,
+			disallowedTools: init.disallowedTools,
 		};
 
 		const metadata: SessionMetadata = {
