@@ -170,21 +170,13 @@ class LobbyStore {
 
 			// Subscribe to room archive events
 			const unsubRoomArchived = hub.onEvent<{ roomId: string }>('room.archived', (data) => {
-				const idx = this.rooms.value.findIndex((r) => r.id === data.roomId);
-				if (idx >= 0) {
-					const updatedRoom = { ...this.rooms.value[idx], status: 'archived' as const };
-					this.rooms.value = [
-						...this.rooms.value.slice(0, idx),
-						updatedRoom,
-						...this.rooms.value.slice(idx + 1),
-					];
-				}
+				this.markRoomArchived(data.roomId);
 			});
 			this.cleanupFunctions.push(unsubRoomArchived);
 
 			// Subscribe to room delete events
 			const unsubRoomDeleted = hub.onEvent<{ roomId: string }>('room.deleted', (data) => {
-				this.rooms.value = this.rooms.value.filter((r) => r.id !== data.roomId);
+				this.removeRoom(data.roomId);
 			});
 			this.cleanupFunctions.push(unsubRoomDeleted);
 		} catch (err) {
@@ -233,6 +225,33 @@ class LobbyStore {
 			toast.error(err instanceof Error ? err.message : 'Failed to create room');
 			return null;
 		}
+	}
+
+	/**
+	 * Apply a local room archive update.
+	 *
+	 * Used both by WebSocket events and by room-scoped actions for deterministic
+	 * UI updates when the event arrives late or the lobby subscription is not active.
+	 */
+	markRoomArchived(roomId: string): void {
+		const idx = this.rooms.value.findIndex((r) => r.id === roomId);
+		if (idx < 0) return;
+		const updatedRoom = { ...this.rooms.value[idx], status: 'archived' as const };
+		this.rooms.value = [
+			...this.rooms.value.slice(0, idx),
+			updatedRoom,
+			...this.rooms.value.slice(idx + 1),
+		];
+	}
+
+	/**
+	 * Remove a room from the local lobby list.
+	 *
+	 * Idempotent so it is safe to call after `room.delete` even if the
+	 * `room.deleted` event already applied the same update.
+	 */
+	removeRoom(roomId: string): void {
+		this.rooms.value = this.rooms.value.filter((r) => r.id !== roomId);
 	}
 
 	/**

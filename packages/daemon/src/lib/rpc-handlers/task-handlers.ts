@@ -20,6 +20,7 @@
  */
 
 import type { MessageHub, TaskPriority, TaskStatus, TaskSummary } from '@neokai/shared';
+import type { AgentType, NeoTask, TaskRuntimeDiagnostic, TaskType } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { ReactiveDatabase } from '../../storage/reactive-database';
@@ -36,6 +37,88 @@ import { SDKMessageRepository } from '../../storage/repositories/sdk-message-rep
 import { Logger } from '../logger';
 
 const log = new Logger('task-handlers');
+const WORKTREE_CREATION_FAILED_MESSAGE = 'Failed to create isolated worktree for task';
+
+function taskRequiresGitWorkspace(task: NeoTask): boolean {
+	if (task.workspaceMode === 'git_worktree') return true;
+	if (task.workspaceMode === 'temporary_workspace' || task.workspaceMode === 'none') return false;
+	const taskType = task.taskType ?? 'coding';
+	return taskType === 'coding' || taskType === 'planning';
+}
+
+function getDefaultAssignedAgent(taskType: TaskType): AgentType {
+	if (taskType === 'planning' || taskType === 'goal_review') return 'planner';
+	if (taskType === 'coding') return 'coder';
+	return 'general';
+}
+
+function getEffectiveAssignedAgent(task: NeoTask, taskType: TaskType): AgentType {
+	if ((taskType === 'planning' || taskType === 'goal_review') && task.assignedAgent === 'coder') {
+		return 'planner';
+	}
+	return task.assignedAgent ?? getDefaultAssignedAgent(taskType);
+}
+
+function roomHasWorkspacePath(room: ReturnType<RoomManager['getRoom']>): boolean {
+	return (
+		!!room?.defaultPath?.trim() || (room?.allowedPaths ?? []).some((entry) => !!entry.path.trim())
+	);
+}
+
+function buildTaskRuntimeDiagnostic(
+	task: NeoTask | null,
+	hasActiveGroup: boolean,
+	workspacePath?: string | null
+): TaskRuntimeDiagnostic | null {
+	if (!task) return null;
+	const taskType = task.taskType ?? 'coding';
+	const assignedAgent = getEffectiveAssignedAgent(task, taskType);
+	const requiresGitWorkspace = taskRequiresGitWorkspace(task);
+	const workspaceMode = hasActiveGroup
+		? workspacePath?.includes('neokai-task-')
+			? 'temporary_workspace'
+			: 'git_worktree'
+		: 'none';
+	const diagnostic: TaskRuntimeDiagnostic = {
+		hasActiveGroup,
+		taskType,
+		assignedAgent,
+		workspaceMode,
+		requiresGitWorkspace,
+		recommendedActions: [],
+	};
+
+	if (task.status === 'needs_attention') {
+		if (task.error === WORKTREE_CREATION_FAILED_MESSAGE) {
+			diagnostic.failureCode = 'git_worktree_unavailable';
+			diagnostic.failureStage = 'workspace_creation';
+			diagnostic.message = task.error;
+			diagnostic.recommendedActions = requiresGitWorkspace
+				? ['link_git_workspace', 'convert_to_research_task', 'retry', 'archive']
+				: ['retry', 'archive'];
+			if (requiresGitWorkspace) {
+				diagnostic.recommendedTaskType = 'research';
+				diagnostic.recommendedAgent = 'general';
+			}
+		} else if (task.error) {
+			diagnostic.failureCode = 'unknown';
+			diagnostic.failureStage = 'runtime';
+			diagnostic.message = task.error;
+			diagnostic.recommendedActions = ['retry', 'archive'];
+		}
+	} else if ((task.status === 'in_progress' || task.status === 'review') && !hasActiveGroup) {
+		diagnostic.failureCode = 'session_group_missing';
+		diagnostic.failureStage = 'runtime';
+		diagnostic.message = 'No active agent group is attached to this task.';
+		diagnostic.recommendedActions = ['retry'];
+	}
+
+	if (task.status === 'completed' || task.status === 'cancelled') {
+		diagnostic.recommendedActions = ['retry', 'archive'];
+	}
+
+	return diagnostic;
+}
 
 export type TaskManagerLike = Pick<
 	TaskManager,
@@ -92,6 +175,9 @@ export function setupTaskHandlers(
 			priority?: TaskPriority;
 			dependsOn?: string[];
 			status?: TaskStatus;
+			taskType?: TaskType;
+			assignedAgent?: AgentType;
+			workspaceMode?: NeoTask['workspaceMode'];
 		};
 
 		if (!params.roomId) {
@@ -108,6 +194,9 @@ export function setupTaskHandlers(
 			priority: params.priority,
 			dependsOn: params.dependsOn,
 			status: params.status,
+			taskType: params.taskType,
+			assignedAgent: params.assignedAgent,
+			workspaceMode: params.workspaceMode,
 		});
 
 		return { task };
@@ -475,10 +564,22 @@ export function setupTaskHandlers(
 		}
 
 		// Apply status change
+		const room = roomManager.getRoom(params.roomId);
+		const shouldSwitchPlanningRetryToTemporaryWorkspace =
+			params.mode === 'manual' &&
+			(params.status === 'pending' || params.status === 'in_progress') &&
+			task.status === 'needs_attention' &&
+			(task.taskType ?? 'coding') === 'planning' &&
+			task.error === WORKTREE_CREATION_FAILED_MESSAGE &&
+			task.workspaceMode !== 'git_worktree' &&
+			!roomHasWorkspacePath(room);
 		const updatedTask = await taskManager.setTaskStatus(taskId, params.status, {
 			result: params.result,
 			error: params.error,
 			mode: params.mode,
+			workspaceMode: shouldSwitchPlanningRetryToTemporaryWorkspace
+				? 'temporary_workspace'
+				: undefined,
 		});
 
 		return { task: updatedTask };
@@ -551,11 +652,16 @@ export function setupTaskHandlers(
 		}
 
 		const taskId = resolveTaskId(params.taskId, params.roomId, makeTaskRepo());
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.getTask(taskId);
 		const groupRepo = makeGroupRepo();
 		const group = groupRepo.getGroupByTaskId(taskId);
 
 		if (!group) {
-			return { group: null };
+			return {
+				group: null,
+				diagnostic: buildTaskRuntimeDiagnostic(task, false),
+			};
 		}
 
 		// Fetch worker and leader session info in parallel and bundle with the group response.
@@ -588,6 +694,7 @@ export function setupTaskHandlers(
 				workerSession,
 				leaderSession,
 			},
+			diagnostic: buildTaskRuntimeDiagnostic(task, true, group.workspacePath),
 		};
 	});
 

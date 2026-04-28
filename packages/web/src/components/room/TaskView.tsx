@@ -34,6 +34,7 @@ import {
 	SetStatusModal,
 } from './task-shared/TaskActionDialogs';
 import { TaskHeader } from './task-shared/TaskHeader';
+import { TaskNoGroupState } from './task-shared/TaskNoGroupState';
 import { TaskReviewBar } from './task-shared/TaskReviewBar';
 
 interface TaskViewProps {
@@ -46,6 +47,7 @@ export function TaskView({ roomId, taskId, viewVersion }: TaskViewProps) {
 	const {
 		task,
 		group,
+		diagnostic,
 		workerSession,
 		leaderSession,
 		isLoading,
@@ -334,30 +336,15 @@ export function TaskView({ roomId, taskId, viewVersion }: TaskViewProps) {
 							onLoadingOlderChange={setIsLoadingOlder}
 						/>
 					) : (
-						<div class="flex-1 flex items-center justify-center text-center p-8">
-							<div>
-								<p class="text-gray-400 mb-1">
-									{task.status === 'review'
-										? 'Loading conversation history…'
-										: 'No active agent group'}
-								</p>
-								<p class="text-sm text-gray-500">
-									{task.status === 'pending'
-										? 'Waiting for the runtime to pick up this task.'
-										: task.status === 'completed'
-											? 'This task has been completed.'
-											: task.status === 'needs_attention'
-												? 'This task needs attention.'
-												: task.status === 'review'
-													? 'If this takes too long, try reloading the page.'
-													: task.status === 'draft'
-														? 'This task is a draft and has not been scheduled yet.'
-														: task.status === 'cancelled'
-															? 'This task was cancelled.'
-															: 'No agent group has been spawned yet.'}
-								</p>
-							</div>
-						</div>
+						<TaskNoGroupState
+							task={task}
+							diagnostic={diagnostic}
+							canReactivate={canReactivate}
+							reactivating={reactivating}
+							onReactivate={reactivateTask}
+							canArchive={canArchive}
+							onArchive={archiveModal.open}
+						/>
 					)}
 					<div ref={messagesEndRef} />
 				</div>

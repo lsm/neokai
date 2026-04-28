@@ -3271,6 +3271,9 @@ export class RoomRuntime {
 
 		if (availableSlots <= 0) return;
 
+		const recoveredDetachedPlanningTask = await this.recoverDetachedPlanningTask(allActiveGroups);
+		if (recoveredDetachedPlanningTask) return;
+
 		// Planning takes priority over execution.
 		// If a goal needs planning (no tasks, or all tasks failed), spawn a planning group first.
 		const planningNeeded = await this.getNextGoalForPlanning();
@@ -3336,6 +3339,25 @@ export class RoomRuntime {
 		for (const task of toSpawn) {
 			await this.spawnGroupForTask(task);
 		}
+	}
+
+	private async recoverDetachedPlanningTask(allActiveGroups: SessionGroup[]): Promise<boolean> {
+		const activeGroupTaskIds = new Set(allActiveGroups.map((group) => group.taskId));
+		const inProgressTasks = await this.taskManager.listTasks({ status: 'in_progress' });
+		const detachedPlanningTasks = inProgressTasks
+			.filter((task) => (task.taskType ?? 'coding') === 'planning')
+			.filter((task) => !activeGroupTaskIds.has(task.id))
+			.sort((a, b) => (a.updatedAt ?? a.createdAt ?? 0) - (b.updatedAt ?? b.createdAt ?? 0));
+
+		const task = detachedPlanningTasks[0];
+		if (!task) return false;
+
+		log.warn(
+			`[recoverDetachedPlanningTask] Task ${task.id} ("${task.title}") is in_progress ` +
+				`without an active group; respawning planner group.`
+		);
+		await this.spawnGroupForTask(task);
+		return true;
 	}
 
 	/**
@@ -3884,6 +3906,20 @@ export class RoomRuntime {
 	): Promise<void> {
 		const isReplan = !!replanContext;
 		const isRecurringExecution = !!executionId;
+		const existingPlanningTask = await this.findActivePlanningTask(goal, executionId);
+		if (existingPlanningTask) {
+			log.info(
+				`Skipping duplicate planning group for goal ${goal.id}; ` +
+					`active planning task already exists: ${existingPlanningTask.id}`
+			);
+			return;
+		}
+		const currentRoom = this.getCurrentRoom();
+		if (!currentRoom) {
+			log.error(`Cannot spawn planning group for goal ${goal.id}: room ${this.roomId} not found`);
+			return;
+		}
+		const planningWorkspaceMode = this.getPlanningWorkspaceMode(currentRoom);
 
 		// Create the planning task itself
 		const planningTask = await this.taskManager.createTask({
@@ -3897,6 +3933,8 @@ export class RoomRuntime {
 							: ' (first execution)')
 					: `Examine the codebase and break down the goal "${goal.title}" into concrete, executable tasks.`,
 			taskType: 'planning',
+			assignedAgent: 'planner',
+			workspaceMode: planningWorkspaceMode,
 			status: 'pending',
 		});
 
@@ -3951,13 +3989,6 @@ export class RoomRuntime {
 			return this.taskManager.removeDraftTask(taskId);
 		};
 
-		// Fetch fresh room for worker/leader init (config may have changed)
-		const currentRoom = this.getCurrentRoom();
-		if (!currentRoom) {
-			await this.taskManager.failTask(planningTask.id, `Room not found: ${this.roomId}`);
-			await this.emitTaskUpdateById(planningTask.id);
-			return;
-		}
 		const plannerModel = this.resolveAgentModel(currentRoom, 'planner');
 		const leaderModel = this.resolveAgentModel(currentRoom, 'leader');
 		const plannerProvider = this.resolveProviderForModel(plannerModel);
@@ -4213,7 +4244,10 @@ export class RoomRuntime {
 		}
 
 		// Determine worker config based on assigned agent type
-		const agentType = task.assignedAgent ?? 'coder';
+		const agentType =
+			task.taskType === 'planning' || task.taskType === 'goal_review'
+				? 'planner'
+				: (task.assignedAgent ?? 'coder');
 		const workerRole =
 			agentType === 'general' ? 'general' : agentType === 'planner' ? 'planner' : 'coder';
 		const workerModel = this.resolveAgentModel(currentRoom, workerRole);
@@ -4575,6 +4609,40 @@ export class RoomRuntime {
 			success: true,
 			message: `Replanning triggered for goal "${goal.title}" (attempt ${attempts + 1}). ${cancelledCount} pending tasks cancelled.`,
 		});
+	}
+
+	private async findActivePlanningTask(
+		goal: RoomGoal,
+		executionId?: string
+	): Promise<NeoTask | null> {
+		const linkedTaskIds =
+			executionId && goal.missionType === 'recurring'
+				? (this.goalManager
+						.listExecutions(goal.id)
+						.find((execution) => execution.id === executionId)?.taskIds ??
+					goal.linkedTaskIds ??
+					[])
+				: (goal.linkedTaskIds ?? []);
+		const linkedTasks = await Promise.all(linkedTaskIds.map((id) => this.taskManager.getTask(id)));
+
+		const activePlanningTasks = linkedTasks
+			.filter((task): task is NeoTask => !!task)
+			.filter(
+				(task) =>
+					task.taskType === 'planning' &&
+					['pending', 'in_progress', 'review', 'rate_limited', 'usage_limited'].includes(
+						task.status
+					)
+			)
+			.sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
+
+		return activePlanningTasks[0] ?? null;
+	}
+
+	private getPlanningWorkspaceMode(room: Room): NeoTask['workspaceMode'] {
+		const hasWorkspacePath =
+			!!room.defaultPath?.trim() || (room.allowedPaths ?? []).some((entry) => !!entry.path.trim());
+		return hasWorkspacePath ? 'auto' : 'temporary_workspace';
 	}
 
 	private scheduleTick(): void {

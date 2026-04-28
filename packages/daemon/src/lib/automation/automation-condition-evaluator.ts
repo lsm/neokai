@@ -8,11 +8,13 @@
 
 import type {
 	AutomationTask,
+	AutomationConditionConfig,
 	GitHubPrStatusAutomationConditionConfig,
 	RoomGoal,
 	RoomGoalHealthAutomationConditionConfig,
 	SpaceTask,
 	SpaceTaskHealthAutomationConditionConfig,
+	WebQueryAutomationConditionConfig,
 } from '@neokai/shared';
 
 export interface AutomationConditionGoalReader {
@@ -30,6 +32,13 @@ export interface AutomationConditionGitHubReader {
 	): Promise<{ state: string; draft: boolean; headSha: string | null }>;
 }
 
+export interface AutomationConditionWebReader {
+	query(
+		url: string,
+		options: { method: 'GET' | 'HEAD' }
+	): Promise<{ status: number; text?: string | null }>;
+}
+
 export interface AutomationConditionEvaluation {
 	passed: boolean;
 	reason: string;
@@ -40,6 +49,7 @@ export interface AutomationConditionEvaluatorConfig {
 	goalManagerFactory?: (roomId: string) => AutomationConditionGoalReader;
 	spaceTaskManagerFactory?: (spaceId: string) => AutomationConditionSpaceTaskReader;
 	gitHubReader?: AutomationConditionGitHubReader;
+	webReader?: AutomationConditionWebReader;
 	now?: () => number;
 }
 
@@ -53,19 +63,83 @@ export class AutomationConditionEvaluator {
 	}
 
 	async evaluate(task: AutomationTask): Promise<AutomationConditionEvaluation> {
-		const condition = task.conditionConfig;
+		return this.evaluateCondition(task, task.conditionConfig);
+	}
+
+	private async evaluateCondition(
+		task: AutomationTask,
+		condition: AutomationConditionConfig | null
+	): Promise<AutomationConditionEvaluation> {
 		if (condition === null || condition.type === 'always') {
 			return { passed: true, reason: 'always' };
 		}
 
 		switch (condition.type) {
+			case 'all':
+				return this.evaluateAll(task, condition.conditions);
+			case 'any':
+				return this.evaluateAny(task, condition.conditions);
+			case 'not':
+				return this.evaluateNot(task, condition.conditions);
 			case 'room_goal_health':
 				return this.evaluateRoomGoalHealth(task, condition);
 			case 'space_task_health':
 				return this.evaluateSpaceTaskHealth(task, condition);
 			case 'github_pr_status':
 				return this.evaluateGitHubPrStatus(condition);
+			case 'web_query':
+				return this.evaluateWebQuery(condition);
 		}
+	}
+
+	private async evaluateAll(
+		task: AutomationTask,
+		conditions: AutomationConditionConfig[]
+	): Promise<AutomationConditionEvaluation> {
+		const results: AutomationConditionEvaluation[] = [];
+		for (const condition of conditions) {
+			const result = await this.evaluateCondition(task, condition);
+			results.push(result);
+			if (!result.passed) {
+				return {
+					passed: false,
+					reason: 'all_condition_failed',
+					metadata: { results },
+				};
+			}
+		}
+		return { passed: true, reason: 'all_conditions_passed', metadata: { results } };
+	}
+
+	private async evaluateAny(
+		task: AutomationTask,
+		conditions: AutomationConditionConfig[]
+	): Promise<AutomationConditionEvaluation> {
+		const results: AutomationConditionEvaluation[] = [];
+		for (const condition of conditions) {
+			const result = await this.evaluateCondition(task, condition);
+			results.push(result);
+			if (result.passed) {
+				return {
+					passed: true,
+					reason: 'any_condition_passed',
+					metadata: { results },
+				};
+			}
+		}
+		return { passed: false, reason: 'any_condition_failed', metadata: { results } };
+	}
+
+	private async evaluateNot(
+		task: AutomationTask,
+		conditions: AutomationConditionConfig[]
+	): Promise<AutomationConditionEvaluation> {
+		const result = await this.evaluateCondition(task, conditions[0] ?? null);
+		return {
+			passed: !result.passed,
+			reason: result.passed ? 'not_condition_failed' : 'not_condition_passed',
+			metadata: { result },
+		};
 	}
 
 	private async evaluateGitHubPrStatus(
@@ -92,6 +166,40 @@ export class AutomationConditionEvaluator {
 				draft: status.draft,
 				headSha: status.headSha,
 				allowedStates,
+			},
+		};
+	}
+
+	private async evaluateWebQuery(
+		condition: WebQueryAutomationConditionConfig
+	): Promise<AutomationConditionEvaluation> {
+		const reader = this.config.webReader;
+		if (!reader) {
+			return {
+				passed: false,
+				reason: 'condition_evaluator_unavailable',
+				metadata: { conditionType: condition.type },
+			};
+		}
+		const response = await reader.query(condition.url, {
+			method: condition.method ?? 'GET',
+		});
+		const statusMatches =
+			condition.expectedStatus === undefined || response.status === condition.expectedStatus;
+		const textMatches =
+			condition.containsText === undefined ||
+			(response.text ?? '').includes(condition.containsText);
+		const passed = statusMatches && textMatches;
+		return {
+			passed,
+			reason: passed ? 'web_query_matched' : 'web_query_not_matched',
+			metadata: {
+				url: condition.url,
+				status: response.status,
+				expectedStatus: condition.expectedStatus ?? null,
+				containsText: condition.containsText ?? null,
+				statusMatches,
+				textMatches,
 			},
 		};
 	}

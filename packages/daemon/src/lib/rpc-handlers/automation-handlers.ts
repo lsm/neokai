@@ -10,6 +10,7 @@ import type {
 	MessageHub,
 	AutomationTaskFilter,
 	AutomationRunFilter,
+	AutomationRunEventFilter,
 	CreateAutomationTaskParams,
 	UpdateAutomationTaskParams,
 } from '@neokai/shared';
@@ -70,6 +71,15 @@ export function setupAutomationHandlers(
 		const filter = (data ?? {}) as AutomationRunFilter;
 		const runs = automationManager.listRuns(filter);
 		return { runs };
+	});
+
+	messageHub.onRequest('automation.listRunEvents', async (data) => {
+		const filter = (data ?? {}) as AutomationRunEventFilter;
+		if (!filter.automationRunId && !filter.automationTaskId) {
+			throw new Error('automationRunId or automationTaskId is required');
+		}
+		const events = automationManager.listRunEvents(filter);
+		return { events };
 	});
 
 	messageHub.onRequest('automation.triggerNow', async (data) => {

@@ -19,6 +19,9 @@ import type { ReactiveDatabase } from '../reactive-database';
 import type { ShortIdAllocator } from '../../lib/short-id-allocator';
 
 export class TaskRepository {
+	private hasSourceLineageColumnsCache: boolean | null = null;
+	private hasWorkspaceModeColumnCache: boolean | null = null;
+
 	constructor(
 		private db: BunDatabase,
 		private reactiveDb: ReactiveDatabase,
@@ -32,13 +35,22 @@ export class TaskRepository {
 		const id = generateUUID();
 		const now = Date.now();
 		const shortId = this.shortIdAllocator?.allocate('task', params.roomId) ?? null;
+		const taskType = params.taskType ?? 'coding';
+		const assignedAgent = params.assignedAgent ?? this.getDefaultAssignedAgent(taskType);
 
-		const stmt = this.db.prepare(
-			`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, task_type, assigned_agent, created_by_task_id, short_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-		);
-
-		stmt.run(
+		const columns = [
+			'id',
+			'room_id',
+			'title',
+			'description',
+			'status',
+			'priority',
+			'depends_on',
+			'task_type',
+			'assigned_agent',
+			'created_by_task_id',
+		];
+		const values: SQLiteValue[] = [
 			id,
 			params.roomId,
 			params.title,
@@ -46,16 +58,58 @@ export class TaskRepository {
 			params.status ?? 'pending',
 			params.priority ?? 'normal',
 			JSON.stringify(params.dependsOn ?? []),
-			params.taskType ?? 'coding',
-			params.assignedAgent ?? 'coder',
+			taskType,
+			assignedAgent,
 			params.createdByTaskId ?? null,
-			shortId,
-			now,
-			now
+		];
+		if (this.hasWorkspaceModeColumn()) {
+			columns.push('workspace_mode');
+			values.push(params.workspaceMode ?? 'auto');
+		}
+		if (this.hasSourceLineageColumns()) {
+			columns.push('source_type', 'source_automation_task_id', 'source_automation_run_id');
+			values.push(
+				params.sourceType ?? null,
+				params.sourceAutomationTaskId ?? null,
+				params.sourceAutomationRunId ?? null
+			);
+		}
+		columns.push('short_id', 'created_at', 'updated_at');
+		values.push(shortId, now, now);
+		const placeholders = columns.map(() => '?').join(', ');
+		const stmt = this.db.prepare(
+			`INSERT INTO tasks (${columns.join(', ')}) VALUES (${placeholders})`
 		);
+
+		stmt.run(...values);
 
 		this.reactiveDb.notifyChange('tasks');
 		return this.getTaskDirect(id)!;
+	}
+
+	private getDefaultAssignedAgent(taskType: NonNullable<CreateTaskParams['taskType']>): string {
+		if (taskType === 'planning' || taskType === 'goal_review') return 'planner';
+		if (taskType === 'coding') return 'coder';
+		return 'general';
+	}
+
+	private hasSourceLineageColumns(): boolean {
+		if (this.hasSourceLineageColumnsCache !== null) return this.hasSourceLineageColumnsCache;
+		const columns = this.db.prepare(`PRAGMA table_info('tasks')`).all() as Array<{ name: string }>;
+		const names = new Set(columns.map((column) => column.name));
+		this.hasSourceLineageColumnsCache =
+			names.has('source_type') &&
+			names.has('source_automation_task_id') &&
+			names.has('source_automation_run_id');
+		return this.hasSourceLineageColumnsCache;
+	}
+
+	private hasWorkspaceModeColumn(): boolean {
+		if (this.hasWorkspaceModeColumnCache !== null) return this.hasWorkspaceModeColumnCache;
+		const columns = this.db.prepare(`PRAGMA table_info('tasks')`).all() as Array<{ name: string }>;
+		const names = new Set(columns.map((column) => column.name));
+		this.hasWorkspaceModeColumnCache = names.has('workspace_mode');
+		return this.hasWorkspaceModeColumnCache;
 	}
 
 	/**
@@ -212,6 +266,10 @@ export class TaskRepository {
 			fields.push('depends_on = ?');
 			values.push(JSON.stringify(params.dependsOn));
 		}
+		if (params.workspaceMode !== undefined && this.hasWorkspaceModeColumn()) {
+			fields.push('workspace_mode = ?');
+			values.push(params.workspaceMode);
+		}
 		if (params.activeSession !== undefined) {
 			fields.push('active_session = ?');
 			values.push(params.activeSession ?? null);
@@ -363,7 +421,11 @@ export class TaskRepository {
 			priority: row.priority as NeoTask['priority'],
 			taskType: ((row.task_type as string | null) ?? 'coding') as NeoTask['taskType'],
 			assignedAgent: ((row.assigned_agent as string | null) ?? 'coder') as NeoTask['assignedAgent'],
+			workspaceMode: ((row.workspace_mode as string | null) ?? 'auto') as NeoTask['workspaceMode'],
 			createdByTaskId: (row.created_by_task_id as string | null) ?? undefined,
+			sourceType: (row.source_type as 'automation' | null) ?? undefined,
+			sourceAutomationTaskId: (row.source_automation_task_id as string | null) ?? undefined,
+			sourceAutomationRunId: (row.source_automation_run_id as string | null) ?? undefined,
 			progress: (row.progress as number | null) ?? undefined,
 			currentStep: (row.current_step as string | null) ?? undefined,
 			result: (row.result as string | null) ?? undefined,

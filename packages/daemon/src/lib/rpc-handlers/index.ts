@@ -460,6 +460,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		goalManagerFactory,
 		spaceTaskManagerFactory,
 		gitHubReader: deps.gitHubService,
+		webReader: {
+			async query(url, options) {
+				const response = await fetch(url, { method: options.method });
+				return {
+					status: response.status,
+					text: options.method === 'HEAD' ? null : await response.text(),
+				};
+			},
+		},
 	});
 	const automationScheduler = new AutomationScheduler(
 		automationManager,

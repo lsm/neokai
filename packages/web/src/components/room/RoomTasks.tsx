@@ -367,6 +367,7 @@ function TaskList({
 						onTaskClick={onTaskClick}
 						onGoalClick={onGoalClick}
 						showAlert
+						collapseRepeats
 					/>
 				)}
 				{rateLimited.length > 0 && (
@@ -447,6 +448,7 @@ function TaskGroup({
 	onReactivate,
 	showAlert = false,
 	showClock = false,
+	collapseRepeats = false,
 }: {
 	title: string;
 	count: number;
@@ -459,6 +461,7 @@ function TaskGroup({
 	onReactivate?: (taskId: string) => void;
 	showAlert?: boolean;
 	showClock?: boolean;
+	collapseRepeats?: boolean;
 }) {
 	const headerStyles: Record<string, string> = {
 		default: '',
@@ -530,17 +533,114 @@ function TaskGroup({
 				</h3>
 			</div>
 			<div class="divide-y divide-dark-700">
-				{tasks.map((task) => (
-					<TaskItem
-						key={task.id}
-						task={task}
-						allTasks={allTasks}
-						goal={goalByTaskId?.get(task.id)}
-						onClick={onTaskClick}
-						onGoalClick={onGoalClick}
-						onReactivate={onReactivate}
-					/>
-				))}
+				{collapseRepeats
+					? groupRepeatedTasks(tasks).map((group) =>
+							group.tasks.length >= 3 ? (
+								<RepeatedTaskGroupItem key={group.key} group={group} onClick={onTaskClick} />
+							) : (
+								group.tasks.map((task) => (
+									<TaskItem
+										key={task.id}
+										task={task}
+										allTasks={allTasks}
+										goal={goalByTaskId?.get(task.id)}
+										onClick={onTaskClick}
+										onGoalClick={onGoalClick}
+										onReactivate={onReactivate}
+									/>
+								))
+							)
+						)
+					: tasks.map((task) => (
+							<TaskItem
+								key={task.id}
+								task={task}
+								allTasks={allTasks}
+								goal={goalByTaskId?.get(task.id)}
+								onClick={onTaskClick}
+								onGoalClick={onGoalClick}
+								onReactivate={onReactivate}
+							/>
+						))}
+			</div>
+		</div>
+	);
+}
+
+interface RepeatedTaskGroup {
+	key: string;
+	tasks: TaskSummary[];
+	latest: TaskSummary;
+}
+
+function repeatedTaskKey(task: TaskSummary): string {
+	return [task.title.trim().toLowerCase(), task.error?.trim().toLowerCase() ?? ''].join('|');
+}
+
+function groupRepeatedTasks(tasks: TaskSummary[]): RepeatedTaskGroup[] {
+	const groups = new Map<string, TaskSummary[]>();
+	const order: string[] = [];
+	for (const task of tasks) {
+		const key = repeatedTaskKey(task);
+		if (!groups.has(key)) {
+			groups.set(key, []);
+			order.push(key);
+		}
+		groups.get(key)!.push(task);
+	}
+	return order.map((key) => {
+		const grouped = groups.get(key)!;
+		return {
+			key,
+			tasks: grouped,
+			latest: grouped[0],
+		};
+	});
+}
+
+function RepeatedTaskGroupItem({
+	group,
+	onClick,
+}: {
+	group: RepeatedTaskGroup;
+	onClick?: (taskId: string) => void;
+}) {
+	const latest = group.latest;
+	const navId = latest.shortId ?? latest.id;
+	const recent = group.tasks.slice(0, 4);
+	return (
+		<div
+			class={`px-4 py-3 border-l-2 border-l-red-500 ${onClick ? 'cursor-pointer hover:bg-dark-800/50 transition-colors' : ''}`}
+			onClick={onClick ? () => onClick(navId) : undefined}
+			data-testid="repeated-task-group"
+		>
+			<div class="flex items-start justify-between gap-4">
+				<div class="min-w-0 flex-1">
+					<div class="flex items-center gap-2 flex-wrap">
+						<h4 class="text-sm font-medium text-gray-100 truncate">{latest.title}</h4>
+						<span class="text-xs font-medium text-red-300 bg-red-950/30 border border-red-900/50 px-1.5 py-0.5 rounded-full">
+							{group.tasks.length} repeated failures
+						</span>
+						{latest.shortId && <ShortIdBadge shortId={latest.shortId} />}
+					</div>
+					{latest.error && (
+						<p class="text-xs text-red-400 mt-1.5 line-clamp-2" title={latest.error}>
+							{latest.error}
+						</p>
+					)}
+					<div class="mt-2 flex items-center gap-1.5 flex-wrap">
+						<span class="text-xs text-gray-500">Recent:</span>
+						{recent.map((task) => (
+							<span
+								key={task.id}
+								class="text-xs font-mono text-gray-400 bg-dark-700 border border-dark-600 px-1.5 py-0.5 rounded"
+							>
+								#{task.shortId ?? task.id.slice(0, 8)}
+							</span>
+						))}
+					</div>
+				</div>
+				{onClick && <span class="text-xs text-gray-600 mt-1">&rarr;</span>}
 			</div>
 		</div>
 	);

@@ -12,7 +12,13 @@
  */
 
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
-import { MessageHub, type NeoTask, type TaskPriority, type TaskStatus } from '@neokai/shared';
+import {
+	MessageHub,
+	type NeoTask,
+	type TaskPriority,
+	type TaskRuntimeDiagnostic,
+	type TaskStatus,
+} from '@neokai/shared';
 import {
 	setupTaskHandlers,
 	type TaskManagerLike,
@@ -464,6 +470,42 @@ describe('Task RPC Handlers', () => {
 			expect(roomManagerData.getRoomOverview).not.toHaveBeenCalled();
 		});
 	});
+
+	describe('task.setStatus', () => {
+		it('switches legacy planning worktree failures to temporary workspace when retrying in a no-workspace room', async () => {
+			mockTaskManager.getTask.mockImplementationOnce(
+				async () =>
+					({
+						id: TASK_UUID,
+						roomId: 'room-123',
+						title: 'Plan: draft OKR',
+						description: '',
+						status: 'needs_attention',
+						priority: 'normal',
+						taskType: 'planning',
+						assignedAgent: 'planner',
+						workspaceMode: 'auto',
+						error: 'Failed to create isolated worktree for task',
+						createdAt: Date.now(),
+						updatedAt: Date.now(),
+					}) as NeoTask
+			);
+			const handler = messageHubData.handlers.get('task.setStatus');
+			expect(handler).toBeDefined();
+
+			await handler!(
+				{ roomId: 'room-123', taskId: TASK_UUID, status: 'in_progress', mode: 'manual' },
+				{}
+			);
+
+			expect(mockTaskManager.setTaskStatus).toHaveBeenCalledWith(TASK_UUID, 'in_progress', {
+				result: undefined,
+				error: undefined,
+				mode: 'manual',
+				workspaceMode: 'temporary_workspace',
+			});
+		});
+	});
 });
 
 describe('task.sendHumanMessage handler', () => {
@@ -862,9 +904,65 @@ describe('task.getGroup', () => {
 
 		const result = (await handler({ roomId: 'room-123', taskId: TASK_UUID }, {})) as {
 			group: null;
+			diagnostic: TaskRuntimeDiagnostic;
 		};
 
 		expect(result.group).toBeNull();
+		expect(result.diagnostic).toMatchObject({
+			hasActiveGroup: false,
+			taskType: 'coding',
+			assignedAgent: 'coder',
+			workspaceMode: 'none',
+			requiresGitWorkspace: true,
+		});
+	});
+
+	it('returns runtime diagnostic for worktree creation failures', async () => {
+		mockTaskManager.getTask.mockImplementationOnce(
+			async () =>
+				({
+					id: TASK_UUID,
+					roomId: 'room-123',
+					title: 'Plan: fetch data',
+					description: '',
+					status: 'needs_attention',
+					priority: 'medium',
+					taskType: 'planning',
+					assignedAgent: 'planner',
+					error: 'Failed to create isolated worktree for task',
+					createdAt: Date.now(),
+					updatedAt: Date.now(),
+				}) as NeoTask
+		);
+		const db = createMockDatabase();
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			{ notifyChange: () => {} } as never,
+			createMockTaskManager
+		);
+
+		const handler = messageHubData.handlers.get('task.getGroup')!;
+		const result = (await handler({ roomId: 'room-123', taskId: TASK_UUID }, {})) as {
+			group: null;
+			diagnostic: TaskRuntimeDiagnostic;
+		};
+
+		expect(result.diagnostic).toMatchObject({
+			hasActiveGroup: false,
+			taskType: 'planning',
+			assignedAgent: 'planner',
+			workspaceMode: 'none',
+			requiresGitWorkspace: true,
+			failureCode: 'git_worktree_unavailable',
+			failureStage: 'workspace_creation',
+			message: 'Failed to create isolated worktree for task',
+			recommendedTaskType: 'research',
+			recommendedAgent: 'general',
+		});
+		expect(result.diagnostic.recommendedActions).toContain('convert_to_research_task');
 	});
 
 	it('returns group with workerSession and leaderSession when sessionManager is provided and sessions exist', async () => {

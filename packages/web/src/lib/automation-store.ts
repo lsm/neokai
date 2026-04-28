@@ -10,6 +10,8 @@ import { computed, signal } from '@preact/signals';
 import type {
 	AutomationOwnerType,
 	AutomationRun,
+	AutomationRunEvent,
+	AutomationRunEventFilter,
 	AutomationRunFilter,
 	AutomationTask,
 	CreateAutomationTaskParams,
@@ -185,6 +187,15 @@ class AutomationStore {
 		const hub = await connectionManager.getHub();
 		const response = await hub.request<{ runs: AutomationRun[] }>('automation.listRuns', filter);
 		return response.runs;
+	}
+
+	async listRunEvents(filter: AutomationRunEventFilter): Promise<AutomationRunEvent[]> {
+		const hub = await connectionManager.getHub();
+		const response = await hub.request<{ events: AutomationRunEvent[] }>(
+			'automation.listRunEvents',
+			filter
+		);
+		return response.events;
 	}
 
 	async setNextRunAt(id: string, nextRunAt: number | null): Promise<AutomationTask> {

@@ -499,6 +499,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Automation definition table and append-only run ledger used by scheduled
 	// and continuous tracking.
 	runMigration105(db);
+
+	// Migration 106: production automation hardening. Adds Room task source
+	// lineage and scheduler failure circuit-breaker state.
+	runMigration106(db);
+
+	// Migration 107: decouple task filesystem workspace from Git worktree isolation.
+	runMigration107(db);
 }
 
 /**
@@ -7354,6 +7361,9 @@ export function runMigration105(db: BunDatabase): void {
 			last_checked_at INTEGER,
 			last_condition_result TEXT,
 			condition_failure_count INTEGER NOT NULL DEFAULT 0,
+			consecutive_failure_count INTEGER NOT NULL DEFAULT 0,
+			last_failure_fingerprint TEXT,
+			paused_reason TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			archived_at INTEGER,
@@ -7370,6 +7380,7 @@ export function runMigration105(db: BunDatabase): void {
 			status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'running', 'succeeded', 'failed', 'timed_out', 'cancelled', 'lost')),
 			trigger_type TEXT NOT NULL CHECK(trigger_type IN ('cron', 'at', 'interval', 'heartbeat', 'event', 'manual')),
 			trigger_reason TEXT,
+			dispatch_key TEXT,
 			job_id TEXT,
 			room_task_id TEXT,
 			room_goal_id TEXT,
@@ -7389,6 +7400,13 @@ export function runMigration105(db: BunDatabase): void {
 		)
 	`);
 
+	if (
+		tableExists(db, 'automation_runs') &&
+		!tableHasColumn(db, 'automation_runs', 'dispatch_key')
+	) {
+		db.exec(`ALTER TABLE automation_runs ADD COLUMN dispatch_key TEXT`);
+	}
+
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_automation_tasks_due ON automation_tasks(status, next_run_at)`
 	);
@@ -7407,6 +7425,9 @@ export function runMigration105(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_automation_runs_status ON automation_runs(status, updated_at DESC)`
 	);
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_automation_runs_dispatch_key ON automation_runs(dispatch_key) WHERE dispatch_key IS NOT NULL`
+	);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_automation_runs_job ON automation_runs(job_id)`);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_automation_runs_room_task ON automation_runs(room_task_id)`
@@ -7414,4 +7435,94 @@ export function runMigration105(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_automation_runs_space_task ON automation_runs(space_task_id)`
 	);
+}
+
+/**
+ * Migration 106 — production automation hardening.
+ *
+ * Adds:
+ * - reverse lineage from Room tasks back to the automation definition/run that
+ *   created them;
+ * - scheduler failure circuit-breaker state so recurring failures can pause
+ *   themselves instead of flooding the review queue.
+ */
+export function runMigration106(db: BunDatabase): void {
+	if (tableExists(db, 'tasks')) {
+		if (!tableHasColumn(db, 'tasks', 'source_type')) {
+			db.exec(`ALTER TABLE tasks ADD COLUMN source_type TEXT`);
+		}
+		if (!tableHasColumn(db, 'tasks', 'source_automation_task_id')) {
+			db.exec(`ALTER TABLE tasks ADD COLUMN source_automation_task_id TEXT`);
+		}
+		if (!tableHasColumn(db, 'tasks', 'source_automation_run_id')) {
+			db.exec(`ALTER TABLE tasks ADD COLUMN source_automation_run_id TEXT`);
+		}
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_tasks_source_automation_run ON tasks(source_automation_run_id)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_tasks_source_automation_task ON tasks(source_automation_task_id)`
+		);
+	}
+
+	if (tableExists(db, 'automation_tasks')) {
+		if (!tableHasColumn(db, 'automation_tasks', 'consecutive_failure_count')) {
+			db.exec(
+				`ALTER TABLE automation_tasks ADD COLUMN consecutive_failure_count INTEGER NOT NULL DEFAULT 0`
+			);
+		}
+		if (!tableHasColumn(db, 'automation_tasks', 'last_failure_fingerprint')) {
+			db.exec(`ALTER TABLE automation_tasks ADD COLUMN last_failure_fingerprint TEXT`);
+		}
+		if (!tableHasColumn(db, 'automation_tasks', 'paused_reason')) {
+			db.exec(`ALTER TABLE automation_tasks ADD COLUMN paused_reason TEXT`);
+		}
+	}
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS automation_run_events (
+			id TEXT PRIMARY KEY,
+			automation_run_id TEXT NOT NULL,
+			automation_task_id TEXT NOT NULL,
+			event_type TEXT NOT NULL,
+			message TEXT,
+			metadata TEXT,
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (automation_run_id) REFERENCES automation_runs(id) ON DELETE CASCADE,
+			FOREIGN KEY (automation_task_id) REFERENCES automation_tasks(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_automation_run_events_run ON automation_run_events(automation_run_id, created_at ASC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_automation_run_events_task ON automation_run_events(automation_task_id, created_at DESC)`
+	);
+
+	if (tableExists(db, 'automation_runs')) {
+		if (!tableHasColumn(db, 'automation_runs', 'dispatch_key')) {
+			db.exec(`ALTER TABLE automation_runs ADD COLUMN dispatch_key TEXT`);
+		}
+		db.exec(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_automation_runs_dispatch_key ON automation_runs(dispatch_key) WHERE dispatch_key IS NOT NULL`
+		);
+	}
+}
+
+/**
+ * Migration 107: add an explicit workspace mode preference to Room tasks.
+ *
+ * `auto` preserves legacy behaviour (coding/planning require Git worktrees).
+ * New non-code tasks can request `temporary_workspace` so every task still gets
+ * a filesystem workspace without requiring an associated Git repository.
+ */
+export function runMigration107(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) return;
+	if (!tableHasColumn(db, 'tasks', 'workspace_mode')) {
+		db.exec(
+			`ALTER TABLE tasks ADD COLUMN workspace_mode TEXT NOT NULL DEFAULT 'auto'
+			 CHECK(workspace_mode IN ('auto', 'git_worktree', 'temporary_workspace', 'none'))`
+		);
+	}
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_workspace_mode ON tasks(workspace_mode)`);
 }

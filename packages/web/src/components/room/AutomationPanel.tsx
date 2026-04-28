@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import type { AutomationRun, AutomationTask, RoomGoal } from '@neokai/shared';
+import type { AutomationRun, AutomationRunEvent, AutomationTask, RoomGoal } from '@neokai/shared';
 import { automationStore } from '../../lib/automation-store';
 import { toast } from '../../lib/toast';
 import { cn } from '../../lib/utils';
@@ -43,12 +43,23 @@ export function AutomationPanel({ roomId, goals }: AutomationPanelProps) {
 	const [intervalMinutes, setIntervalMinutes] = useState(60);
 	const [busyId, setBusyId] = useState<string | null>(null);
 	const [creating, setCreating] = useState(false);
+	const [view, setView] = useState<'queue' | 'runs' | 'attention'>('queue');
 	const [runsByAutomationId, setRunsByAutomationId] = useState<Record<string, AutomationRun[]>>({});
+	const [eventsByRunId, setEventsByRunId] = useState<Record<string, AutomationRunEvent[]>>({});
 
 	const recurringGoals = useMemo(
 		() => goals.filter((goal) => goal.missionType === 'recurring' && goal.status === 'active'),
 		[goals]
 	);
+	const attentionAutomations = automations.filter((automation) => {
+		return automation.pausedReason || automation.consecutiveFailureCount > 0;
+	});
+	const visibleAutomations =
+		view === 'attention'
+			? attentionAutomations
+			: view === 'queue'
+				? automations.filter((automation) => automation.status === 'active')
+				: automations;
 
 	useEffect(() => {
 		void automationStore.subscribeOwner({ ownerType: 'room', ownerId: roomId });
@@ -107,6 +118,16 @@ export function AutomationPanel({ roomId, goals }: AutomationPanelProps) {
 		try {
 			const runs = await automationStore.listRuns({ automationTaskId: automationId, limit: 5 });
 			setRunsByAutomationId((current) => ({ ...current, [automationId]: runs }));
+			const eventEntries = await Promise.all(
+				runs.map(async (run) => [
+					run.id,
+					await automationStore.listRunEvents({ automationRunId: run.id, limit: 8 }),
+				])
+			);
+			setEventsByRunId((current) => ({
+				...current,
+				...Object.fromEntries(eventEntries),
+			}));
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : 'Failed to load automation runs');
 		} finally {
@@ -148,16 +169,40 @@ export function AutomationPanel({ roomId, goals }: AutomationPanelProps) {
 						</div>
 					)}
 				</div>
+				<div class="flex flex-wrap gap-2 border-b border-dark-700 pb-2">
+					{[
+						[
+							'queue',
+							`Work Queue (${automations.filter((item) => item.status === 'active').length})`,
+						],
+						['runs', 'Runs History'],
+						['attention', `Attention (${attentionAutomations.length})`],
+					].map(([id, label]) => (
+						<button
+							key={id}
+							type="button"
+							class={cn(
+								'rounded border px-2 py-1 text-xs',
+								view === id
+									? 'border-blue-500 bg-blue-950/40 text-blue-200'
+									: 'border-dark-600 bg-dark-850 text-gray-400 hover:text-gray-200'
+							)}
+							onClick={() => setView(id as 'queue' | 'runs' | 'attention')}
+						>
+							{label}
+						</button>
+					))}
+				</div>
 
 				{loading ? (
 					<div class="text-xs text-gray-500">Loading automations...</div>
-				) : automations.length === 0 ? (
+				) : visibleAutomations.length === 0 ? (
 					<div class="rounded border border-dark-700 bg-dark-850 px-3 py-3 text-xs text-gray-500">
-						No automations yet.
+						{view === 'attention' ? 'No automations need attention.' : 'No automations yet.'}
 					</div>
 				) : (
 					<div class="grid gap-2">
-						{automations.map((automation) => (
+						{visibleAutomations.map((automation) => (
 							<div key={automation.id} class="rounded border border-dark-700 bg-dark-850 px-3 py-3">
 								<div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 									<div class="min-w-0">
@@ -184,6 +229,9 @@ export function AutomationPanel({ roomId, goals }: AutomationPanelProps) {
 											<p class="mt-1 line-clamp-2 text-xs text-gray-500">
 												{automation.description}
 											</p>
+										)}
+										{automation.pausedReason && (
+											<p class="mt-1 text-xs text-yellow-300">{automation.pausedReason}</p>
 										)}
 									</div>
 									<div class="flex flex-wrap gap-2">
@@ -262,21 +310,36 @@ export function AutomationPanel({ roomId, goals }: AutomationPanelProps) {
 											{runsByAutomationId[automation.id].length === 0 ? (
 												<div class="text-xs text-gray-500">No runs yet.</div>
 											) : (
-												runsByAutomationId[automation.id].map((run) => (
-													<div
-														key={run.id}
-														class="flex flex-wrap items-center gap-2 text-xs text-gray-400"
-													>
-														<span class="rounded border border-dark-600 px-1.5 py-0.5 text-[11px] text-gray-300">
-															{run.status}
-														</span>
-														<span>{run.triggerReason ?? run.triggerType}</span>
-														{run.resultSummary && (
-															<span class="truncate text-gray-500">{run.resultSummary}</span>
-														)}
-														{run.error && <span class="text-red-300">{run.error}</span>}
-													</div>
-												))
+												runsByAutomationId[automation.id].map((run) => {
+													const events = eventsByRunId[run.id] ?? [];
+													return (
+														<div
+															key={run.id}
+															class="rounded border border-dark-700 bg-dark-900/60 p-2"
+														>
+															<div class="flex flex-wrap items-center gap-2 text-xs text-gray-400">
+																<span class="rounded border border-dark-600 px-1.5 py-0.5 text-[11px] text-gray-300">
+																	{run.status}
+																</span>
+																<span>{run.triggerReason ?? run.triggerType}</span>
+																{run.resultSummary && (
+																	<span class="truncate text-gray-500">{run.resultSummary}</span>
+																)}
+																{run.error && <span class="text-red-300">{run.error}</span>}
+															</div>
+															{events.length > 0 && (
+																<div class="mt-2 grid gap-1 border-l border-dark-600 pl-2">
+																	{events.map((event) => (
+																		<div key={event.id} class="text-[11px] text-gray-500">
+																			<span class="text-gray-300">{event.eventType}</span>
+																			{event.message ? ` · ${event.message}` : ''}
+																		</div>
+																	))}
+																</div>
+															)}
+														</div>
+													);
+												})
 											)}
 										</div>
 									</div>

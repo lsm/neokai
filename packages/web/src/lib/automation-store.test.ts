@@ -82,6 +82,9 @@ function makeAutomation(id: string, overrides: Partial<AutomationTask> = {}): Au
 		lastCheckedAt: null,
 		lastConditionResult: null,
 		conditionFailureCount: 0,
+		consecutiveFailureCount: 0,
+		lastFailureFingerprint: null,
+		pausedReason: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		archivedAt: null,
@@ -189,6 +192,28 @@ describe('AutomationStore', () => {
 				titleTemplate: 'Check',
 				descriptionTemplate: 'Check progress.',
 			},
+		});
+	});
+
+	it('loads automation run events by run id', async () => {
+		const events = [
+			{
+				id: 'event-1',
+				automationRunId: 'run-1',
+				automationTaskId: 'auto-1',
+				eventType: 'target_launch_started',
+				message: 'Launching target',
+				metadata: null,
+				createdAt: Date.now(),
+			},
+		];
+		vi.mocked(mockHub.request).mockResolvedValueOnce({ events });
+
+		const loaded = await automationStore.listRunEvents({ automationRunId: 'run-1' });
+
+		expect(loaded).toBe(events);
+		expect(mockHub.request).toHaveBeenCalledWith('automation.listRunEvents', {
+			automationRunId: 'run-1',
 		});
 	});
 });

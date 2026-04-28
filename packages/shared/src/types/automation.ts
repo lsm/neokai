@@ -32,6 +32,22 @@ export type AutomationRunStatus =
 	| 'cancelled'
 	| 'lost';
 
+export type AutomationRunEventType =
+	| 'run_created'
+	| 'condition_evaluated'
+	| 'concurrency_skipped'
+	| 'concurrency_queued'
+	| 'concurrency_cancelled_previous'
+	| 'target_launch_started'
+	| 'target_launch_succeeded'
+	| 'target_launch_failed'
+	| 'linked_run_synced'
+	| 'retry_scheduled'
+	| 'timed_out'
+	| 'circuit_breaker_paused'
+	| 'schedule_advanced'
+	| 'run_recovered';
+
 export interface CronAutomationTriggerConfig {
 	expression: string;
 	timezone: string;
@@ -70,11 +86,24 @@ export interface AlwaysAutomationConditionConfig {
 	type: 'always';
 }
 
+export interface CompositeAutomationConditionConfig {
+	type: 'all' | 'any' | 'not';
+	conditions: AutomationConditionConfig[];
+}
+
 export interface GitHubPrStatusAutomationConditionConfig {
 	type: 'github_pr_status';
 	repository: string;
 	prNumber: number;
 	states?: string[];
+}
+
+export interface WebQueryAutomationConditionConfig {
+	type: 'web_query';
+	url: string;
+	method?: 'GET' | 'HEAD';
+	expectedStatus?: number;
+	containsText?: string;
 }
 
 export interface RoomGoalHealthAutomationConditionConfig {
@@ -92,7 +121,9 @@ export interface SpaceTaskHealthAutomationConditionConfig {
 
 export type AutomationConditionConfig =
 	| AlwaysAutomationConditionConfig
+	| CompositeAutomationConditionConfig
 	| GitHubPrStatusAutomationConditionConfig
+	| WebQueryAutomationConditionConfig
 	| RoomGoalHealthAutomationConditionConfig
 	| SpaceTaskHealthAutomationConditionConfig;
 
@@ -167,6 +198,9 @@ export interface AutomationTask {
 	lastCheckedAt: number | null;
 	lastConditionResult: Record<string, unknown> | null;
 	conditionFailureCount: number;
+	consecutiveFailureCount: number;
+	lastFailureFingerprint: string | null;
+	pausedReason: string | null;
 	createdAt: number;
 	updatedAt: number;
 	archivedAt: number | null;
@@ -208,6 +242,9 @@ export interface UpdateAutomationTaskParams {
 	lastCheckedAt?: number | null;
 	lastConditionResult?: Record<string, unknown> | null;
 	conditionFailureCount?: number;
+	consecutiveFailureCount?: number;
+	lastFailureFingerprint?: string | null;
+	pausedReason?: string | null;
 	archivedAt?: number | null;
 }
 
@@ -219,6 +256,7 @@ export interface AutomationRun {
 	status: AutomationRunStatus;
 	triggerType: AutomationTriggerType;
 	triggerReason: string | null;
+	dispatchKey: string | null;
 	jobId: string | null;
 	roomTaskId: string | null;
 	roomGoalId: string | null;
@@ -236,6 +274,16 @@ export interface AutomationRun {
 	updatedAt: number;
 }
 
+export interface AutomationRunEvent {
+	id: string;
+	automationRunId: string;
+	automationTaskId: string;
+	eventType: AutomationRunEventType;
+	message: string | null;
+	metadata: Record<string, unknown> | null;
+	createdAt: number;
+}
+
 export interface CreateAutomationRunParams {
 	automationTaskId: string;
 	ownerType: AutomationOwnerType;
@@ -243,6 +291,7 @@ export interface CreateAutomationRunParams {
 	status?: AutomationRunStatus;
 	triggerType: AutomationTriggerType;
 	triggerReason?: string | null;
+	dispatchKey?: string | null;
 	jobId?: string | null;
 	attempt?: number;
 	metadata?: Record<string, unknown> | null;
@@ -250,6 +299,7 @@ export interface CreateAutomationRunParams {
 
 export interface UpdateAutomationRunParams {
 	status?: AutomationRunStatus;
+	dispatchKey?: string | null;
 	jobId?: string | null;
 	roomTaskId?: string | null;
 	roomGoalId?: string | null;
@@ -261,6 +311,14 @@ export interface UpdateAutomationRunParams {
 	completedAt?: number | null;
 	resultSummary?: string | null;
 	error?: string | null;
+	metadata?: Record<string, unknown> | null;
+}
+
+export interface CreateAutomationRunEventParams {
+	automationRunId: string;
+	automationTaskId: string;
+	eventType: AutomationRunEventType;
+	message?: string | null;
 	metadata?: Record<string, unknown> | null;
 }
 
@@ -278,5 +336,12 @@ export interface AutomationRunFilter {
 	ownerType?: AutomationOwnerType;
 	ownerId?: string | null;
 	status?: AutomationRunStatus | AutomationRunStatus[];
+	dispatchKey?: string;
+	limit?: number;
+}
+
+export interface AutomationRunEventFilter {
+	automationRunId?: string;
+	automationTaskId?: string;
 	limit?: number;
 }

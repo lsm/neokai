@@ -189,6 +189,61 @@ describe('RoomTasks', () => {
 			expect(container.textContent).toContain('Attention task');
 		});
 
+		it('should collapse repeated needs_attention failures into one row', () => {
+			const tasks = [
+				createTask('t1', 'needs_attention', {
+					title: 'Plan: fetch hot list',
+					error: 'Failed to create isolated worktree for task',
+					shortId: 't-92',
+				}),
+				createTask('t2', 'needs_attention', {
+					title: 'Plan: fetch hot list',
+					error: 'Failed to create isolated worktree for task',
+					shortId: 't-90',
+				}),
+				createTask('t3', 'needs_attention', {
+					title: 'Plan: fetch hot list',
+					error: 'Failed to create isolated worktree for task',
+					shortId: 't-88',
+				}),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.querySelectorAll('[data-testid="repeated-task-group"]')).toHaveLength(1);
+			expect(container.textContent).toContain('3 repeated failures');
+			expect(container.textContent).toContain('#t-92');
+			expect(container.textContent).toContain('#t-90');
+			expect(container.textContent).toContain('#t-88');
+		});
+
+		it('should navigate to the latest task when repeated failure group is clicked', () => {
+			const onTaskClick = vi.fn();
+			const tasks = [
+				createTask('t1', 'needs_attention', {
+					title: 'Plan: fetch hot list',
+					error: 'Failed to create isolated worktree for task',
+					shortId: 't-92',
+				}),
+				createTask('t2', 'needs_attention', {
+					title: 'Plan: fetch hot list',
+					error: 'Failed to create isolated worktree for task',
+					shortId: 't-90',
+				}),
+				createTask('t3', 'needs_attention', {
+					title: 'Plan: fetch hot list',
+					error: 'Failed to create isolated worktree for task',
+					shortId: 't-88',
+				}),
+			];
+
+			const { getByTestId } = render(<RoomTasks tasks={tasks} onTaskClick={onTaskClick} />);
+
+			fireEvent.click(getByTestId('repeated-task-group'));
+
+			expect(onTaskClick).toHaveBeenCalledWith('t-92');
+		});
+
 		it('should show rate_limited tasks under Review tab with orange styling', () => {
 			const tasks = [createTask('t1', 'rate_limited', { title: 'Rate limited task' })];
 

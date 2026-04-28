@@ -673,6 +673,52 @@ describe('MissionDetail', () => {
 		expect(getByText('First task')).toBeTruthy();
 	});
 
+	it('collapses repeated planning attempts into history', () => {
+		const linkedTasks = [
+			{
+				id: 'task-active',
+				roomId: 'room-1',
+				title: 'Plan: Ship mission',
+				status: 'in_progress' as const,
+				shortId: 't-010',
+				taskType: 'planning' as const,
+				createdAt: 1700000000000,
+				updatedAt: 1700000003000,
+			},
+			{
+				id: 'task-failed',
+				roomId: 'room-1',
+				title: 'Plan: Ship mission',
+				status: 'needs_attention' as const,
+				shortId: 't-011',
+				taskType: 'planning' as const,
+				createdAt: 1700000001000,
+				updatedAt: 1700000004000,
+			},
+			{
+				id: 'task-work',
+				roomId: 'room-1',
+				title: 'Implement the mission',
+				status: 'pending' as const,
+				shortId: 't-012',
+				taskType: 'coding' as const,
+				createdAt: 1700000002000,
+				updatedAt: 1700000002000,
+			},
+		];
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ linkedTasks }));
+		const { getByTestId, queryByTestId, getByText } = render(
+			<MissionDetail roomId="room-1" goalId="goal-uuid-1" />
+		);
+
+		expect(getByTestId('linked-task-task-active')).toBeTruthy();
+		expect(getByTestId('linked-task-task-work')).toBeTruthy();
+		expect(queryByTestId('linked-task-task-failed')).toBeNull();
+		expect(getByTestId('previous-planning-attempts')).toBeTruthy();
+		expect(getByTestId('previous-planning-attempt-task-failed')).toBeTruthy();
+		expect(getByText('Previous planning attempts (1)')).toBeTruthy();
+	});
+
 	it('clicking a linked task card calls navigateToRoomTask with correct ids', () => {
 		const linkedTasks = [
 			{

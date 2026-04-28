@@ -60,6 +60,7 @@ interface CreateGoalParams {
 
 import { Logger } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
+import { lobbyStore } from './lobby-store';
 import { navigateToRoom } from './router';
 import { currentRoomSessionIdSignal } from './signals';
 import { toast } from './toast';
@@ -1357,6 +1358,7 @@ class RoomStore {
 
 		try {
 			await hub.request('room.archive', { roomId });
+			lobbyStore.markRoomArchived(roomId);
 			// Clear the current room selection
 			this.roomId.value = null;
 			this.room.value = null;
@@ -1382,6 +1384,7 @@ class RoomStore {
 
 		try {
 			await hub.request('room.delete', { roomId });
+			lobbyStore.removeRoom(roomId);
 			// Clear the current room selection
 			this.roomId.value = null;
 			this.room.value = null;

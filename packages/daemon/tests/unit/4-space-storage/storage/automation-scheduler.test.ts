@@ -9,7 +9,7 @@ import { AutomationConditionEvaluator } from '../../../../src/lib/automation/aut
 import { AUTOMATION_DISPATCH } from '../../../../src/lib/job-queue-constants';
 import { AutomationRepository } from '../../../../src/storage/repositories/automation-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
-import { runMigration105 } from '../../../../src/storage/schema/migrations';
+import { runMigration105, runMigration106 } from '../../../../src/storage/schema/migrations';
 import type { AutomationRun, AutomationTask } from '@neokai/shared';
 
 class FakeLauncher implements AutomationTargetLauncher {
@@ -65,6 +65,7 @@ describe('AutomationScheduler', () => {
 		db = new Database(':memory:');
 		db.exec('PRAGMA foreign_keys = ON');
 		runMigration105(db as never);
+		runMigration106(db as never);
 		createJobQueueSchema(db);
 		manager = new AutomationManager(new AutomationRepository(db as never));
 		jobQueue = new JobQueueRepository(db as never);
@@ -95,6 +96,7 @@ describe('AutomationScheduler', () => {
 		expect(jobs).toHaveLength(1);
 		expect(jobs[0].payload).toEqual({
 			automationId: automation.id,
+			dispatchKey: `${automation.id}:scheduled:${nextRunAt}`,
 			triggerReason: 'scheduled',
 		});
 		expect(jobs[0].runAt).toBe(nextRunAt);
@@ -134,6 +136,11 @@ describe('AutomationScheduler', () => {
 		expect(run.triggerType).toBe('manual');
 		expect(run.sessionId).toBe('session-1');
 		expect(run.metadata).toEqual({ fake: true });
+		expect(
+			manager.listRunEvents({ automationRunId: run.id }).map((event) => event.eventType)
+		).toEqual(
+			expect.arrayContaining(['run_created', 'target_launch_started', 'target_launch_succeeded'])
+		);
 		expect(launcher.launched).toHaveLength(1);
 	});
 
@@ -154,6 +161,29 @@ describe('AutomationScheduler', () => {
 		const updated = manager.getTask(automation.id);
 		expect(typeof updated?.lastRunAt).toBe('number');
 		expect(updated?.nextRunAt).toBe(nextRunAt);
+	});
+
+	it('reuses an existing run when dispatch key is repeated', async () => {
+		const nextRunAt = Date.now() - 1;
+		const automation = manager.createTask({
+			ownerType: 'global',
+			title: 'Idempotent scheduled check',
+			triggerType: 'interval',
+			triggerConfig: { intervalMs: 60_000 },
+			targetType: 'job_handler',
+			targetConfig: { queue: 'test.queue' },
+			nextRunAt,
+		});
+		const dispatchKey = `${automation.id}:scheduled:${nextRunAt}`;
+
+		const first = await scheduler.dispatch(automation.id, { dispatchKey });
+		const second = await scheduler.dispatch(automation.id, {
+			dispatchKey,
+			ignoreDueTime: true,
+		});
+
+		expect(second.id).toBe(first.id);
+		expect(launcher.launched).toHaveLength(1);
 	});
 
 	it('skip concurrency policy records a skipped run without launching target', async () => {
@@ -274,6 +304,45 @@ describe('AutomationScheduler', () => {
 		expect(launcher.launched).toHaveLength(1);
 	});
 
+	it('evaluates composite and web query conditions', async () => {
+		const evaluator = new AutomationConditionEvaluator({
+			webReader: {
+				async query() {
+					return { status: 200, text: 'healthy' };
+				},
+			},
+		});
+		scheduler = new AutomationScheduler(manager, jobQueue, evaluator);
+		launcher = new FakeLauncher();
+		scheduler.registerLauncher('job_handler', launcher);
+		const automation = manager.createTask({
+			ownerType: 'global',
+			title: 'Composite condition check',
+			triggerType: 'manual',
+			targetType: 'job_handler',
+			targetConfig: { queue: 'test.queue' },
+			conditionConfig: {
+				type: 'all',
+				conditions: [
+					{ type: 'always' },
+					{
+						type: 'web_query',
+						url: 'https://example.test/health',
+						expectedStatus: 200,
+						containsText: 'healthy',
+					},
+				],
+			},
+		});
+
+		const run = await scheduler.triggerNow(automation.id);
+
+		expect(run.status).toBe('running');
+		expect(manager.getTask(automation.id)?.lastConditionResult?.reason).toBe(
+			'all_conditions_passed'
+		);
+	});
+
 	it('dispatches event-triggered automations that match payload filters', async () => {
 		const matching = manager.createTask({
 			ownerType: 'global',
@@ -356,6 +425,36 @@ describe('AutomationScheduler', () => {
 		).toBe(true);
 	});
 
+	it('recovers old running runs that never linked a target', () => {
+		const automation = manager.createTask({
+			ownerType: 'global',
+			title: 'Orphan recovery check',
+			triggerType: 'manual',
+			targetType: 'job_handler',
+			targetConfig: { queue: 'test.queue' },
+			maxRetries: 1,
+		});
+		const run = manager.createRun({
+			automationTaskId: automation.id,
+			ownerType: automation.ownerType,
+			ownerId: automation.ownerId,
+			status: 'running',
+			triggerType: 'manual',
+		});
+		manager.updateRun(run.id, { startedAt: Date.now() - 10_000 });
+
+		const count = scheduler.recoverOrphanedRuns(1);
+		const updated = manager.getRun(run.id);
+
+		expect(count).toBe(1);
+		expect(updated?.status).toBe('lost');
+		expect(
+			manager.listRunEvents({ automationRunId: run.id }).some((event) => {
+				return event.eventType === 'run_recovered';
+			})
+		).toBe(true);
+	});
+
 	it('syncs linked room task completion back to automation runs', async () => {
 		scheduler = new AutomationScheduler(manager, jobQueue, undefined, {
 			async getRoomTaskStatus() {
@@ -372,6 +471,8 @@ describe('AutomationScheduler', () => {
 				roomId: 'room-1',
 				titleTemplate: 'Check',
 				descriptionTemplate: 'Check progress.',
+				taskType: 'research',
+				assignedAgent: 'general',
 			},
 		});
 		const run = manager.createRun({
@@ -388,6 +489,34 @@ describe('AutomationScheduler', () => {
 		expect(updated).toBe(1);
 		expect(manager.getRun(run.id)?.status).toBe('succeeded');
 		expect(manager.getRun(run.id)?.resultSummary).toBe('Task completed');
+	});
+
+	it('pauses automations after repeated identical failures', async () => {
+		scheduler.registerLauncher('job_handler', new FailingLauncher());
+		const automation = manager.createTask({
+			ownerType: 'global',
+			title: 'Circuit breaker check',
+			triggerType: 'manual',
+			targetType: 'job_handler',
+			targetConfig: { queue: 'test.queue' },
+			maxRetries: 0,
+		});
+
+		await scheduler.triggerNow(automation.id);
+		await scheduler.triggerNow(automation.id);
+		const failed = await scheduler.triggerNow(automation.id);
+		const updated = manager.getTask(automation.id);
+
+		expect(failed.status).toBe('failed');
+		expect(updated?.status).toBe('paused');
+		expect(updated?.consecutiveFailureCount).toBe(3);
+		expect(updated?.lastFailureFingerprint).toContain('launch failed');
+		expect(updated?.pausedReason).toContain('Paused after 3 consecutive automation failures');
+		expect(
+			manager.listRunEvents({ automationRunId: failed.id }).some((event) => {
+				return event.eventType === 'circuit_breaker_paused';
+			})
+		).toBe(true);
 	});
 
 	it('dispatch job rejects paused automations', async () => {

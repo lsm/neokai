@@ -290,6 +290,36 @@ export type TaskType = 'planning' | 'coding' | 'research' | 'design' | 'goal_rev
  */
 export type AgentType = 'coder' | 'general' | 'planner';
 
+export type TaskWorkspaceMode = 'git_worktree' | 'temporary_workspace' | 'none';
+export type TaskWorkspacePreference = 'auto' | TaskWorkspaceMode;
+
+export type TaskRuntimeFailureCode =
+	| 'git_worktree_unavailable'
+	| 'session_group_missing'
+	| 'unknown';
+
+export type TaskRuntimeFailureStage = 'workspace_creation' | 'session_start' | 'runtime';
+
+export type TaskRuntimeRecommendedAction =
+	| 'link_git_workspace'
+	| 'convert_to_research_task'
+	| 'retry'
+	| 'archive';
+
+export interface TaskRuntimeDiagnostic {
+	hasActiveGroup: boolean;
+	taskType: TaskType;
+	assignedAgent: AgentType;
+	workspaceMode: TaskWorkspaceMode;
+	requiresGitWorkspace: boolean;
+	failureCode?: TaskRuntimeFailureCode;
+	failureStage?: TaskRuntimeFailureStage;
+	message?: string;
+	recommendedTaskType?: TaskType;
+	recommendedAgent?: AgentType;
+	recommendedActions: TaskRuntimeRecommendedAction[];
+}
+
 /**
  * A task managed within a room
  */
@@ -312,8 +342,16 @@ export interface NeoTask {
 	taskType?: TaskType;
 	/** Which agent type should execute this task (default: 'coder') */
 	assignedAgent?: AgentType;
+	/** Requested workspace mode. 'auto' preserves legacy task-type based routing. */
+	workspaceMode?: TaskWorkspacePreference;
 	/** ID of the planning task that created this task (for draft→pending promotion) */
 	createdByTaskId?: string;
+	/** Source system that created this task, when it was not directly created by a user/planner */
+	sourceType?: 'automation';
+	/** Automation definition that created this task */
+	sourceAutomationTaskId?: string;
+	/** Automation run that created this task */
+	sourceAutomationRunId?: string;
 	/** Progress percentage (0-100) */
 	progress?: number | null;
 	/** Description of current step */
@@ -378,10 +416,15 @@ export interface CreateTaskParams {
 	taskType?: TaskType;
 	/** Which agent type should execute this task (default: 'coder') */
 	assignedAgent?: AgentType;
+	/** Requested workspace mode. Defaults to 'auto'. */
+	workspaceMode?: TaskWorkspacePreference;
 	/** Initial status — defaults to 'pending'. Use 'draft' for planning-created tasks. */
 	status?: TaskStatus;
 	/** ID of planning task that created this task (for draft→pending promotion) */
 	createdByTaskId?: string;
+	sourceType?: 'automation';
+	sourceAutomationTaskId?: string;
+	sourceAutomationRunId?: string;
 }
 
 /**
@@ -397,6 +440,8 @@ export interface UpdateTaskParams {
 	result?: string | null;
 	error?: string | null;
 	dependsOn?: string[];
+	/** Requested workspace mode. */
+	workspaceMode?: TaskWorkspacePreference;
 	/** Which session is actively generating output. null clears the indicator. */
 	activeSession?: 'worker' | 'leader' | null;
 	prUrl?: string | null;

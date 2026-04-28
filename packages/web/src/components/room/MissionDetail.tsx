@@ -11,7 +11,7 @@
  * - Status sidebar: priority/type/autonomy badges, quick actions, timestamps
  */
 
-import { useState } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import type { NeoTask, RoomGoal } from '@neokai/shared';
 import { cn } from '../../lib/utils';
 import { navigateToRoomTab, navigateToRoomTask } from '../../lib/router';
@@ -38,6 +38,76 @@ import type { CreateGoalFormData } from './GoalsEditor';
 
 // ─── Main Content ──────────────────────────────────────────────────────────────
 
+const ACTIVE_TASK_STATUSES = new Set<NeoTask['status']>([
+	'pending',
+	'in_progress',
+	'review',
+	'rate_limited',
+	'usage_limited',
+]);
+
+function isPlanningAttempt(task: NeoTask): boolean {
+	return (
+		task.taskType === 'planning' ||
+		task.title.startsWith('Plan: ') ||
+		task.title.startsWith('Replan: ')
+	);
+}
+
+function planningAttemptKey(task: NeoTask): string {
+	return task.title
+		.replace(/^(Replan|Plan):\s*/, '')
+		.trim()
+		.toLowerCase();
+}
+
+function taskRank(task: NeoTask): number {
+	if (ACTIVE_TASK_STATUSES.has(task.status)) return 0;
+	if (task.status === 'needs_attention') return 1;
+	if (task.status === 'draft') return 2;
+	if (task.status === 'completed') return 3;
+	if (task.status === 'cancelled') return 4;
+	return 5;
+}
+
+function compareTasksForMission(a: NeoTask, b: NeoTask): number {
+	const rankDiff = taskRank(a) - taskRank(b);
+	if (rankDiff !== 0) return rankDiff;
+	return (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0);
+}
+
+function splitLinkedTasks(linkedTasks: NeoTask[]): {
+	currentTasks: NeoTask[];
+	previousPlanningAttempts: NeoTask[];
+} {
+	const currentTasks: NeoTask[] = [];
+	const previousPlanningAttempts: NeoTask[] = [];
+	const planningGroups = new Map<string, NeoTask[]>();
+
+	for (const task of linkedTasks) {
+		if (!isPlanningAttempt(task)) {
+			currentTasks.push(task);
+			continue;
+		}
+		const key = planningAttemptKey(task);
+		const group = planningGroups.get(key) ?? [];
+		group.push(task);
+		planningGroups.set(key, group);
+	}
+
+	for (const group of planningGroups.values()) {
+		const sorted = [...group].sort(compareTasksForMission);
+		const current = sorted[0];
+		if (current) currentTasks.push(current);
+		previousPlanningAttempts.push(...sorted.slice(1));
+	}
+
+	return {
+		currentTasks: currentTasks.sort(compareTasksForMission),
+		previousPlanningAttempts: previousPlanningAttempts.sort(compareTasksForMission),
+	};
+}
+
 interface MainContentProps {
 	goal: RoomGoal;
 	roomId: string;
@@ -59,6 +129,10 @@ function MainContent({
 	const [isLinking, setIsLinking] = useState(false);
 
 	const missionType = goal.missionType ?? 'one_shot';
+	const { currentTasks, previousPlanningAttempts } = useMemo(
+		() => splitLinkedTasks(linkedTasks),
+		[linkedTasks]
+	);
 
 	const handleLinkTask = async () => {
 		const trimmed = linkTaskInput.trim();
@@ -139,7 +213,7 @@ function MainContent({
 					<p class="text-sm text-gray-500 italic mb-3">No tasks linked</p>
 				) : (
 					<div class="space-y-1.5 mb-3" data-testid="linked-tasks-list">
-						{linkedTasks.map((task) => (
+						{currentTasks.map((task) => (
 							<button
 								key={task.id}
 								type="button"
@@ -154,6 +228,37 @@ function MainContent({
 								)}
 							</button>
 						))}
+						{previousPlanningAttempts.length > 0 && (
+							<details
+								class="mt-2 rounded-lg border border-dark-700 bg-dark-900/40 px-3 py-2"
+								data-testid="previous-planning-attempts"
+							>
+								<summary class="cursor-pointer text-xs font-medium text-gray-400 hover:text-gray-300">
+									Previous planning attempts ({previousPlanningAttempts.length})
+								</summary>
+								<div class="mt-2 space-y-1.5">
+									{previousPlanningAttempts.map((task) => (
+										<button
+											key={task.id}
+											type="button"
+											class="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left hover:bg-dark-700/70 transition-colors"
+											onClick={() => navigateToRoomTask(roomId, task.id)}
+											data-testid={`previous-planning-attempt-${task.id}`}
+										>
+											<span class="flex-1 min-w-0 text-xs text-gray-400 truncate">
+												{task.title}
+											</span>
+											<TaskStatusBadge status={task.status} />
+											{task.shortId && (
+												<span class="text-[11px] font-mono text-gray-600 flex-shrink-0">
+													#{task.shortId}
+												</span>
+											)}
+										</button>
+									))}
+								</div>
+							</details>
+						)}
 					</div>
 				)}
 				{/* Link Task input */}

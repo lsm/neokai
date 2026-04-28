@@ -11,12 +11,15 @@ import type {
 	AutomationRun,
 	AutomationStatus,
 	AutomationRunStatus,
+	AutomationRunEvent,
 	CreateAutomationTaskParams,
 	UpdateAutomationTaskParams,
 	CreateAutomationRunParams,
 	UpdateAutomationRunParams,
+	CreateAutomationRunEventParams,
 	AutomationTaskFilter,
 	AutomationRunFilter,
+	AutomationRunEventFilter,
 	AutomationTriggerConfig,
 	AutomationTargetConfig,
 	AutomationConditionConfig,
@@ -59,9 +62,10 @@ export class AutomationRepository {
 					trigger_type, trigger_config, target_type, target_config, condition_config,
 					concurrency_policy, notify_policy, max_retries, timeout_ms,
 					next_run_at, last_run_at, last_checked_at, last_condition_result,
-					condition_failure_count, created_at, updated_at, archived_at
+					condition_failure_count, consecutive_failure_count, last_failure_fingerprint,
+					paused_reason, created_at, updated_at, archived_at
 				)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				id,
@@ -86,6 +90,9 @@ export class AutomationRepository {
 				null,
 				null,
 				0,
+				0,
+				null,
+				null,
 				now,
 				now,
 				null
@@ -225,6 +232,18 @@ export class AutomationRepository {
 			fields.push('condition_failure_count = ?');
 			values.push(params.conditionFailureCount);
 		}
+		if (params.consecutiveFailureCount !== undefined) {
+			fields.push('consecutive_failure_count = ?');
+			values.push(params.consecutiveFailureCount);
+		}
+		if (params.lastFailureFingerprint !== undefined) {
+			fields.push('last_failure_fingerprint = ?');
+			values.push(params.lastFailureFingerprint);
+		}
+		if (params.pausedReason !== undefined) {
+			fields.push('paused_reason = ?');
+			values.push(params.pausedReason);
+		}
 		if (params.archivedAt !== undefined) {
 			fields.push('archived_at = ?');
 			values.push(params.archivedAt);
@@ -254,11 +273,11 @@ export class AutomationRepository {
 			.prepare(
 				`INSERT INTO automation_runs (
 					id, automation_task_id, owner_type, owner_id, status, trigger_type, trigger_reason,
-					job_id, room_task_id, room_goal_id, mission_execution_id, space_task_id,
+					dispatch_key, job_id, room_task_id, room_goal_id, mission_execution_id, space_task_id,
 					space_workflow_run_id, session_id, attempt, started_at, completed_at,
 					result_summary, error, metadata, created_at, updated_at
 				)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				id,
@@ -268,6 +287,7 @@ export class AutomationRepository {
 				status,
 				params.triggerType,
 				params.triggerReason ?? null,
+				params.dispatchKey ?? null,
 				params.jobId ?? null,
 				null,
 				null,
@@ -317,12 +337,23 @@ export class AutomationRepository {
 				values.push(filter.ownerId);
 			}
 		}
+		if (filter.dispatchKey !== undefined) {
+			query += ` AND dispatch_key = ?`;
+			values.push(filter.dispatchKey);
+		}
 		query += statusClause('status', filter.status, values);
 		query += ` ORDER BY created_at DESC, id DESC LIMIT ?`;
 		values.push(filter.limit ?? 100);
 
 		const rows = this.db.prepare(query).all(...values) as Record<string, unknown>[];
 		return rows.map((row) => this.rowToRun(row));
+	}
+
+	getRunByDispatchKey(dispatchKey: string): AutomationRun | null {
+		const row = this.db
+			.prepare(`SELECT * FROM automation_runs WHERE dispatch_key = ?`)
+			.get(dispatchKey) as Record<string, unknown> | undefined;
+		return row ? this.rowToRun(row) : null;
 	}
 
 	listActiveRuns(automationTaskId: string): AutomationRun[] {
@@ -368,6 +399,7 @@ export class AutomationRepository {
 			}
 		}
 		const nullableTextFields = [
+			['dispatchKey', 'dispatch_key'],
 			['jobId', 'job_id'],
 			['roomTaskId', 'room_task_id'],
 			['roomGoalId', 'room_goal_id'],
@@ -407,6 +439,55 @@ export class AutomationRepository {
 		if (result.changes === 0) return null;
 		this.reactiveDb?.notifyChange('automation_runs');
 		return this.getRun(id);
+	}
+
+	createRunEvent(params: CreateAutomationRunEventParams): AutomationRunEvent {
+		const id = generateUUID();
+		const now = Date.now();
+		this.db
+			.prepare(
+				`INSERT INTO automation_run_events (
+					id, automation_run_id, automation_task_id, event_type, message, metadata, created_at
+				)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`
+			)
+			.run(
+				id,
+				params.automationRunId,
+				params.automationTaskId,
+				params.eventType,
+				params.message ?? null,
+				params.metadata !== undefined && params.metadata !== null
+					? JSON.stringify(params.metadata)
+					: null,
+				now
+			);
+		this.reactiveDb?.notifyChange('automation_run_events');
+		return this.getRunEvent(id)!;
+	}
+
+	getRunEvent(id: string): AutomationRunEvent | null {
+		const row = this.db.prepare(`SELECT * FROM automation_run_events WHERE id = ?`).get(id) as
+			| Record<string, unknown>
+			| undefined;
+		return row ? this.rowToRunEvent(row) : null;
+	}
+
+	listRunEvents(filter: AutomationRunEventFilter = {}): AutomationRunEvent[] {
+		const values: SQLiteValue[] = [];
+		let query = `SELECT * FROM automation_run_events WHERE 1 = 1`;
+		if (filter.automationRunId !== undefined) {
+			query += ` AND automation_run_id = ?`;
+			values.push(filter.automationRunId);
+		}
+		if (filter.automationTaskId !== undefined) {
+			query += ` AND automation_task_id = ?`;
+			values.push(filter.automationTaskId);
+		}
+		query += ` ORDER BY created_at ASC, id ASC LIMIT ?`;
+		values.push(filter.limit ?? 200);
+		const rows = this.db.prepare(query).all(...values) as Record<string, unknown>[];
+		return rows.map((row) => this.rowToRunEvent(row));
 	}
 
 	private validateOwner(ownerType: string, ownerId: string | null): void {
@@ -451,6 +532,9 @@ export class AutomationRepository {
 				parseJsonOptional<Record<string, unknown>>(row.last_condition_result as string | null) ??
 				null,
 			conditionFailureCount: (row.condition_failure_count as number | null) ?? 0,
+			consecutiveFailureCount: (row.consecutive_failure_count as number | null) ?? 0,
+			lastFailureFingerprint: (row.last_failure_fingerprint as string | null) ?? null,
+			pausedReason: (row.paused_reason as string | null) ?? null,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
 			archivedAt: (row.archived_at as number | null) ?? null,
@@ -466,6 +550,7 @@ export class AutomationRepository {
 			status: row.status as AutomationRunStatus,
 			triggerType: row.trigger_type as AutomationRun['triggerType'],
 			triggerReason: (row.trigger_reason as string | null) ?? null,
+			dispatchKey: (row.dispatch_key as string | null) ?? null,
 			jobId: (row.job_id as string | null) ?? null,
 			roomTaskId: (row.room_task_id as string | null) ?? null,
 			roomGoalId: (row.room_goal_id as string | null) ?? null,
@@ -481,6 +566,18 @@ export class AutomationRepository {
 			metadata: parseJsonOptional<Record<string, unknown>>(row.metadata as string | null) ?? null,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
+		};
+	}
+
+	private rowToRunEvent(row: Record<string, unknown>): AutomationRunEvent {
+		return {
+			id: row.id as string,
+			automationRunId: row.automation_run_id as string,
+			automationTaskId: row.automation_task_id as string,
+			eventType: row.event_type as AutomationRunEvent['eventType'],
+			message: (row.message as string | null) ?? null,
+			metadata: parseJsonOptional<Record<string, unknown>>(row.metadata as string | null) ?? null,
+			createdAt: row.created_at as number,
 		};
 	}
 }

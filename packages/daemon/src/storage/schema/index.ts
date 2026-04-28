@@ -65,6 +65,10 @@ export { runMigration100 } from './migrations';
 export { runMigration101 } from './migrations';
 // knip-ignore-next-line
 export { runMigration105 } from './migrations';
+// knip-ignore-next-line
+export { runMigration106 } from './migrations';
+// knip-ignore-next-line
+export { runMigration107 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -206,7 +210,11 @@ export function createTables(db: BunDatabase): void {
         completed_at INTEGER,
         task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
         assigned_agent TEXT DEFAULT 'coder' CHECK(assigned_agent IN ('coder', 'general', 'planner')),
+        workspace_mode TEXT DEFAULT 'auto' CHECK(workspace_mode IN ('auto', 'git_worktree', 'temporary_workspace', 'none')),
         created_by_task_id TEXT,
+        source_type TEXT CHECK(source_type IS NULL OR source_type IN ('automation')),
+        source_automation_task_id TEXT,
+        source_automation_run_id TEXT,
         archived_at INTEGER,
         active_session TEXT,
         pr_url TEXT,
@@ -517,6 +525,9 @@ export function createTables(db: BunDatabase): void {
         last_checked_at INTEGER,
         last_condition_result TEXT,
         condition_failure_count INTEGER NOT NULL DEFAULT 0,
+        consecutive_failure_count INTEGER NOT NULL DEFAULT 0,
+        last_failure_fingerprint TEXT,
+        paused_reason TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         archived_at INTEGER,
@@ -533,6 +544,7 @@ export function createTables(db: BunDatabase): void {
         status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'running', 'succeeded', 'failed', 'timed_out', 'cancelled', 'lost')),
         trigger_type TEXT NOT NULL CHECK(trigger_type IN ('cron', 'at', 'interval', 'heartbeat', 'event', 'manual')),
         trigger_reason TEXT,
+        dispatch_key TEXT,
         job_id TEXT,
         room_task_id TEXT,
         room_goal_id TEXT,
@@ -548,6 +560,20 @@ export function createTables(db: BunDatabase): void {
         metadata TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
+        FOREIGN KEY (automation_task_id) REFERENCES automation_tasks(id) ON DELETE CASCADE
+      )
+    `);
+
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS automation_run_events (
+        id TEXT PRIMARY KEY,
+        automation_run_id TEXT NOT NULL,
+        automation_task_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        message TEXT,
+        metadata TEXT,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (automation_run_id) REFERENCES automation_runs(id) ON DELETE CASCADE,
         FOREIGN KEY (automation_task_id) REFERENCES automation_tasks(id) ON DELETE CASCADE
       )
     `);
@@ -635,12 +661,21 @@ function createIndexes(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_automation_runs_status ON automation_runs(status, updated_at DESC)`
 	);
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_automation_runs_dispatch_key ON automation_runs(dispatch_key) WHERE dispatch_key IS NOT NULL`
+	);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_automation_runs_job ON automation_runs(job_id)`);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_automation_runs_room_task ON automation_runs(room_task_id)`
 	);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_automation_runs_space_task ON automation_runs(space_task_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_automation_run_events_run ON automation_run_events(automation_run_id, created_at ASC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_automation_run_events_task ON automation_run_events(automation_task_id, created_at DESC)`
 	);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_neo_activity_log_created_at ON neo_activity_log(created_at)`

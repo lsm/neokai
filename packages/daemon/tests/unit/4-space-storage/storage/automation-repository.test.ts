@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { AutomationRepository } from '../../../../src/storage/repositories/automation-repository';
-import { runMigration105 } from '../../../../src/storage/schema/migrations';
+import { runMigration105, runMigration106 } from '../../../../src/storage/schema/migrations';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { AutomationManager } from '../../../../src/lib/automation/automation-manager';
 
@@ -14,6 +14,7 @@ describe('AutomationRepository', () => {
 		db = new Database(':memory:');
 		db.exec('PRAGMA foreign_keys = ON');
 		runMigration105(db as never);
+		runMigration106(db as never);
 		changedTables = [];
 		const reactiveDb = {
 			notifyChange(table: string) {
@@ -116,6 +117,32 @@ describe('AutomationRepository', () => {
 		expect(changedTables).toContain('automation_runs');
 	});
 
+	it('creates and lists run event ledger rows', () => {
+		const automation = repository.createTask({
+			ownerType: 'global',
+			title: 'Event ledger check',
+			triggerType: 'manual',
+			targetType: 'job_handler',
+		});
+		const run = repository.createRun({
+			automationTaskId: automation.id,
+			ownerType: automation.ownerType,
+			triggerType: 'manual',
+		});
+
+		const event = repository.createRunEvent({
+			automationRunId: run.id,
+			automationTaskId: automation.id,
+			eventType: 'target_launch_started',
+			message: 'Launching target',
+			metadata: { targetType: 'job_handler' },
+		});
+
+		expect(event.metadata).toEqual({ targetType: 'job_handler' });
+		expect(repository.listRunEvents({ automationRunId: run.id })).toEqual([event]);
+		expect(changedTables).toContain('automation_run_events');
+	});
+
 	it('tracks active runs and stamps terminal completion time', () => {
 		const automation = repository.createTask({
 			ownerType: 'global',
@@ -175,6 +202,8 @@ describe('AutomationRepository', () => {
 					roomId: 'room-1',
 					titleTemplate: 'Check OKR',
 					descriptionTemplate: 'Check the OKR.',
+					taskType: 'research',
+					assignedAgent: 'general',
 				},
 				conditionConfig: {
 					type: 'room_goal_health',
@@ -197,6 +226,8 @@ describe('AutomationRepository', () => {
 				roomId: 'room-1',
 				titleTemplate: 'Check OKR',
 				descriptionTemplate: 'Check the OKR.',
+				taskType: 'research',
+				assignedAgent: 'general',
 			},
 			conditionConfig: {
 				type: 'room_goal_health',
@@ -235,6 +266,8 @@ describe('AutomationRepository', () => {
 				roomId: 'room-1',
 				titleTemplate: 'Check OKR',
 				descriptionTemplate: 'Review current key results and propose next action.',
+				taskType: 'research',
+				assignedAgent: 'general',
 			},
 			conditionConfig: { type: 'always' },
 		});

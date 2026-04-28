@@ -9,12 +9,15 @@
 import type {
 	AutomationTask,
 	AutomationRun,
+	AutomationRunEvent,
 	AutomationTaskFilter,
 	AutomationRunFilter,
+	AutomationRunEventFilter,
 	CreateAutomationTaskParams,
 	UpdateAutomationTaskParams,
 	CreateAutomationRunParams,
 	UpdateAutomationRunParams,
+	CreateAutomationRunEventParams,
 	AutomationOwnerType,
 	AutomationTargetType,
 	AutomationTriggerType,
@@ -77,6 +80,10 @@ export class AutomationManager {
 		return this.repo.listRuns(filter);
 	}
 
+	getRunByDispatchKey(dispatchKey: string): AutomationRun | null {
+		return this.repo.getRunByDispatchKey(dispatchKey);
+	}
+
 	listActiveRuns(automationTaskId: string): AutomationRun[] {
 		return this.repo.listActiveRuns(automationTaskId);
 	}
@@ -93,6 +100,14 @@ export class AutomationManager {
 		return updated;
 	}
 
+	createRunEvent(params: CreateAutomationRunEventParams): AutomationRunEvent {
+		return this.repo.createRunEvent(params);
+	}
+
+	listRunEvents(filter?: AutomationRunEventFilter): AutomationRunEvent[] {
+		return this.repo.listRunEvents(filter);
+	}
+
 	private validateTaskInput(params: CreateAutomationTaskParams): void {
 		if (!params.title.trim()) {
 			throw new Error('Automation title is required');
@@ -105,7 +120,8 @@ export class AutomationManager {
 			params.ownerType,
 			params.ownerId ?? null,
 			params.targetType,
-			params.targetConfig ?? {}
+			params.targetConfig ?? {},
+			{ requireRoomTaskRuntimeConfig: true }
 		);
 		this.validateConditionConfig(
 			params.ownerType,
@@ -125,11 +141,14 @@ export class AutomationManager {
 		const triggerConfig = patch.triggerConfig ?? existing.triggerConfig;
 		const targetType = patch.targetType ?? existing.targetType;
 		const targetConfig = patch.targetConfig ?? existing.targetConfig;
+		const targetConfigChanged = patch.targetType !== undefined || patch.targetConfig !== undefined;
 		const conditionConfig =
 			'conditionConfig' in patch ? patch.conditionConfig : existing.conditionConfig;
 
 		this.validateTriggerConfig(triggerType, triggerConfig);
-		this.validateTargetConfig(existing.ownerType, existing.ownerId, targetType, targetConfig);
+		this.validateTargetConfig(existing.ownerType, existing.ownerId, targetType, targetConfig, {
+			requireRoomTaskRuntimeConfig: targetConfigChanged,
+		});
 		this.validateConditionConfig(existing.ownerType, existing.ownerId, conditionConfig ?? null);
 		if (patch.maxRetries !== undefined && patch.maxRetries < 0) {
 			throw new Error('maxRetries must be greater than or equal to 0');
@@ -173,13 +192,23 @@ export class AutomationManager {
 		ownerType: AutomationOwnerType,
 		ownerId: string | null,
 		targetType: AutomationTargetType,
-		config: AutomationTargetConfig | object
+		config: AutomationTargetConfig | object,
+		options: { requireRoomTaskRuntimeConfig?: boolean } = {}
 	): void {
 		switch (targetType) {
 			case 'room_task':
 				this.requireOwnerTarget(ownerType, ownerId, 'room', this.requireString(config, 'roomId'));
 				this.requireString(config, 'titleTemplate', 'room_task target');
 				this.requireString(config, 'descriptionTemplate', 'room_task target');
+				if (options.requireRoomTaskRuntimeConfig) {
+					this.requireOneOf(
+						config,
+						'taskType',
+						['coding', 'research', 'design'],
+						'room_task target'
+					);
+					this.requireOneOf(config, 'assignedAgent', ['coder', 'general'], 'room_task target');
+				}
 				break;
 			case 'room_mission':
 				this.requireOwnerTarget(ownerType, ownerId, 'room', this.requireString(config, 'roomId'));
@@ -221,10 +250,44 @@ export class AutomationManager {
 		switch (type) {
 			case 'always':
 				return;
+			case 'all':
+			case 'any': {
+				const conditions = (config as { conditions?: unknown }).conditions;
+				if (!Array.isArray(conditions) || conditions.length === 0) {
+					throw new Error(`${type} condition requires non-empty conditions`);
+				}
+				for (const child of conditions) {
+					this.validateConditionConfig(ownerType, ownerId, child as AutomationConditionConfig);
+				}
+				return;
+			}
+			case 'not': {
+				const conditions = (config as { conditions?: unknown }).conditions;
+				if (!Array.isArray(conditions) || conditions.length !== 1) {
+					throw new Error('not condition requires exactly one condition');
+				}
+				this.validateConditionConfig(
+					ownerType,
+					ownerId,
+					conditions[0] as AutomationConditionConfig
+				);
+				return;
+			}
 			case 'github_pr_status':
 				this.requireString(config, 'repository', 'github_pr_status condition');
 				this.requirePositiveNumber(config, 'prNumber', 'github_pr_status condition');
 				return;
+			case 'web_query': {
+				this.requireString(config, 'url', 'web_query condition');
+				const expectedStatus = this.getNumber(config, 'expectedStatus');
+				if (
+					expectedStatus !== undefined &&
+					(!Number.isInteger(expectedStatus) || expectedStatus < 100 || expectedStatus > 599)
+				) {
+					throw new Error('web_query condition expectedStatus must be an HTTP status code');
+				}
+				return;
+			}
 			case 'room_goal_health':
 				this.requireOwnerTarget(
 					ownerType,

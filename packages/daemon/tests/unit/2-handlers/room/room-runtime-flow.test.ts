@@ -56,6 +56,57 @@ describe('RoomRuntime flow', () => {
 			expect(group.workerRole).toBe('planner');
 		});
 
+		it('recovers in-progress planning task with no active group', async () => {
+			const goal = await ctx.goalManager.createGoal({
+				title: 'Recover detached planning',
+				description: 'Planning task lost its group during startup',
+			});
+			const task = await ctx.taskManager.createTask({
+				title: 'Plan: Recover detached planning',
+				description: 'Detached planner task',
+				taskType: 'planning',
+				assignedAgent: 'planner',
+			});
+			await ctx.goalManager.linkTaskToGoal(goal.id, task.id);
+			await ctx.taskManager.startTask(task.id);
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			expect(groups).toHaveLength(1);
+			expect(groups[0].taskId).toBe(task.id);
+			expect(groups[0].workerRole).toBe('planner');
+			expect((await ctx.taskManager.getTask(task.id))!.status).toBe('in_progress');
+		});
+
+		it('uses temporary workspace for mission planning when the room has no code workspace', async () => {
+			ctx.runtime.stop();
+			ctx.db.close();
+			ctx = createRuntimeTestContext({
+				room: makeRoom({
+					allowedPaths: [],
+					defaultPath: undefined,
+				}),
+			});
+
+			await ctx.goalManager.createGoal({
+				title: 'Draft an OKR',
+				description: 'No repository is associated with this room',
+			});
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const planningTasks = await ctx.taskManager.listTasks({ status: 'in_progress' });
+			expect(planningTasks).toHaveLength(1);
+			expect(planningTasks[0].workspaceMode).toBe('temporary_workspace');
+
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+			expect(group.workerRole).toBe('planner');
+			expect(group.workspacePath).toContain('/neokai-task-');
+		});
+
 		it('should use role-specific worker model for coder and general tasks', async () => {
 			ctx.runtime.stop();
 			ctx.db.close();

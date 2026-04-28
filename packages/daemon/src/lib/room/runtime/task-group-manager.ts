@@ -58,6 +58,8 @@ function taskTitleToBranchName(title: string): string | undefined {
 }
 
 function taskRequiresGitWorkspace(task: NeoTask): boolean {
+	if (task.workspaceMode === 'git_worktree') return true;
+	if (task.workspaceMode === 'temporary_workspace' || task.workspaceMode === 'none') return false;
 	const metadata = (task as NeoTask & TaskGitMetadata).metadata;
 	if (metadata?.requiresGit === true || metadata?.requiresGitWorkspace === true) {
 		return true;
@@ -284,16 +286,16 @@ export class TaskGroupManager {
 		const workerSessionId = `${workerConfig.role}:${room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
 		const leaderSessionId = `leader:${room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
 
-		// Create an isolated worktree for ALL tasks so each group works in its own branch.
-		// Worker and leader sessions share the same worktree for the task.
+		// Create an isolated worktree when the task requests Git isolation. Non-code tasks can
+		// explicitly request a temporary workspace and skip Git entirely.
+		// Worker and leader sessions share the same workspace for the task.
 		// Colons in session IDs are invalid in git branch names, so sanitize the fallback.
 		const branchName =
 			taskTitleToBranchName(task.title) ?? `task/${workerSessionId.replace(/:/g, '-')}`;
-		let groupWorkspacePath = await this.sessionFactory.createWorktree(
-			this.workspacePath,
-			workerSessionId,
-			branchName
-		);
+		let groupWorkspacePath =
+			task.workspaceMode === 'temporary_workspace'
+				? null
+				: await this.sessionFactory.createWorktree(this.workspacePath, workerSessionId, branchName);
 		if (!groupWorkspacePath && taskRequiresGitWorkspace(task)) {
 			await this.taskManager.failTask(task.id, 'Failed to create isolated worktree for task');
 			throw new Error('Worktree creation failed — task requires isolation');

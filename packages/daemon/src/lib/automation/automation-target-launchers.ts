@@ -1,4 +1,9 @@
-import type { AutomationRun, AutomationTask, RoomGoal } from '@neokai/shared';
+import type {
+	AutomationRun,
+	AutomationTask,
+	RoomGoal,
+	RoomTaskAutomationTargetConfig,
+} from '@neokai/shared';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { GoalManager } from '../room/managers/goal-manager';
 import type { TaskManager } from '../room/managers/task-manager';
@@ -34,16 +39,21 @@ export class RoomTaskAutomationLauncher implements AutomationTargetLauncher {
 		private jobQueue: JobQueueRepository
 	) {}
 
-	async launch(task: AutomationTask): Promise<AutomationLaunchResult> {
+	async launch(task: AutomationTask, run: AutomationRun): Promise<AutomationLaunchResult> {
 		const config = assertRoomTaskTargetConfig(task.targetType, task.targetConfig);
+		const runtimeConfig = this.resolveRuntimeConfig(config);
 		const taskManager = this.taskManagerFactory(config.roomId);
 		const created = await taskManager.createTask({
 			title: this.renderTemplate(config.titleTemplate, task),
 			description: this.renderTemplate(config.descriptionTemplate, task),
 			priority: config.priority,
-			taskType: config.taskType ?? 'coding',
-			assignedAgent: config.assignedAgent ?? 'coder',
+			taskType: runtimeConfig.taskType,
+			assignedAgent: runtimeConfig.assignedAgent,
+			workspaceMode: runtimeConfig.workspaceMode,
 			status: 'pending',
+			sourceType: 'automation',
+			sourceAutomationTaskId: task.id,
+			sourceAutomationRunId: run.id,
 		});
 
 		if (config.goalId) {
@@ -56,6 +66,39 @@ export class RoomTaskAutomationLauncher implements AutomationTargetLauncher {
 			roomTaskId: created.id,
 			roomGoalId: config.goalId,
 			resultSummary: `Created Room task "${created.title}"`,
+			metadata: {
+				source: {
+					type: 'automation',
+					automationTaskId: task.id,
+					automationRunId: run.id,
+				},
+				legacyTargetDefaultsApplied: runtimeConfig.legacyDefaultsApplied,
+				taskType: runtimeConfig.taskType,
+				assignedAgent: runtimeConfig.assignedAgent,
+				workspaceMode: runtimeConfig.workspaceMode,
+			},
+		};
+	}
+
+	private resolveRuntimeConfig(config: RoomTaskAutomationTargetConfig): {
+		taskType: 'coding' | 'research' | 'design';
+		assignedAgent: 'coder' | 'general';
+		workspaceMode: 'git_worktree' | 'temporary_workspace';
+		legacyDefaultsApplied: boolean;
+	} {
+		if (config.taskType && config.assignedAgent) {
+			return {
+				taskType: config.taskType,
+				assignedAgent: config.assignedAgent,
+				workspaceMode: config.taskType === 'coding' ? 'git_worktree' : 'temporary_workspace',
+				legacyDefaultsApplied: false,
+			};
+		}
+		return {
+			taskType: config.taskType ?? 'research',
+			assignedAgent: config.assignedAgent ?? 'general',
+			workspaceMode: config.taskType === 'coding' ? 'git_worktree' : 'temporary_workspace',
+			legacyDefaultsApplied: true,
 		};
 	}
 

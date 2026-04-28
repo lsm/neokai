@@ -6,7 +6,13 @@
  * same logic without duplicating code.
  */
 
-import type { NeoTask, RoomGoal, SessionInfo, TaskStatus } from '@neokai/shared';
+import type {
+	NeoTask,
+	RoomGoal,
+	SessionInfo,
+	TaskRuntimeDiagnostic,
+	TaskStatus,
+} from '@neokai/shared';
 import { useComputed } from '@preact/signals';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useMessageHub } from './useMessageHub';
@@ -34,6 +40,7 @@ export interface TaskGroupInfo {
 export interface UseTaskViewDataResult {
 	task: NeoTask | null;
 	group: TaskGroupInfo | null;
+	diagnostic: TaskRuntimeDiagnostic | null;
 	workerSession: SessionInfo | null;
 	leaderSession: SessionInfo | null;
 	isLoading: boolean;
@@ -78,6 +85,7 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 		() => roomStore.tasks.value.find((t) => t.id === taskId || t.shortId === taskId) ?? null
 	);
 	const [group, setGroup] = useState<TaskGroupInfo | null>(null);
+	const [diagnostic, setDiagnostic] = useState<TaskRuntimeDiagnostic | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [conversationKey, setConversationKey] = useState(0);
@@ -111,9 +119,15 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 		const fetchGroup = async () => {
 			const seq = ++fetchGroupSeq;
 
-			const tryFetch = async (): Promise<{ group: TaskGroupInfo | null } | null> => {
+			const tryFetch = async (): Promise<{
+				group: TaskGroupInfo | null;
+				diagnostic?: TaskRuntimeDiagnostic | null;
+			} | null> => {
 				try {
-					return await request<{ group: TaskGroupInfo | null }>('task.getGroup', {
+					return await request<{
+						group: TaskGroupInfo | null;
+						diagnostic?: TaskRuntimeDiagnostic | null;
+					}>('task.getGroup', {
 						roomId,
 						taskId,
 					});
@@ -134,6 +148,7 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 			if (res !== null && !cancelled && seq === fetchGroupSeq) {
 				const grp = res.group;
 				setGroup(grp);
+				setDiagnostic(res.diagnostic ?? null);
 				// Session info is bundled into task.getGroup response by the daemon,
 				// so no extra session.get round-trips are needed.
 				setWorkerSession(grp?.workerSession ?? null);
@@ -202,7 +217,9 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 			task.value.status === 'review'
 		: false;
 	const canReactivate = task.value
-		? task.value.status === 'completed' || task.value.status === 'cancelled'
+		? task.value.status === 'completed' ||
+			task.value.status === 'cancelled' ||
+			task.value.status === 'needs_attention'
 		: false;
 	const canArchive = task.value
 		? task.value.status === 'completed' ||
@@ -321,6 +338,7 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 	return {
 		task: task.value,
 		group,
+		diagnostic,
 		workerSession,
 		leaderSession,
 		isLoading,

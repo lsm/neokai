@@ -305,6 +305,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			depends_on?: string[];
 			task_type?: TaskType;
 			assigned_agent?: AgentType;
+			workspace_mode?: 'auto' | 'git_worktree' | 'temporary_workspace' | 'none';
 		}): Promise<ToolResult> {
 			// 'planning' is reserved for internal use by the runtime's planning phase.
 			// User-created tasks must use 'coding', 'research', 'design', or 'goal_review'.
@@ -327,6 +328,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					dependsOn: args.depends_on,
 					taskType: args.task_type,
 					assignedAgent: effectiveAgent,
+					workspaceMode: args.workspace_mode,
 				});
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
@@ -1339,6 +1341,12 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 					.enum(['coder', 'general', 'planner'])
 					.optional()
 					.describe('Agent type to execute this task (default: coder)'),
+				workspace_mode: z
+					.enum(['auto', 'git_worktree', 'temporary_workspace', 'none'])
+					.optional()
+					.describe(
+						"Workspace mode. Use 'temporary_workspace' for web/API/data/OKR work that does not need Git; use 'git_worktree' for code changes."
+					),
 			},
 			(args) => handlers.create_task(args)
 		),
@@ -1690,6 +1698,12 @@ export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
 					.enum(['coder', 'general', 'planner'])
 					.optional()
 					.describe('Agent type to execute this task (default: coder)'),
+				workspace_mode: z
+					.enum(['auto', 'git_worktree', 'temporary_workspace', 'none'])
+					.optional()
+					.describe(
+						"Workspace mode. Use 'temporary_workspace' for web/API/data/OKR work that does not need Git; use 'git_worktree' for code changes."
+					),
 			},
 			(args) => handlers.create_task(args)
 		),

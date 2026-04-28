@@ -28,6 +28,8 @@ import type { Job, JobQueueRepository } from '../../storage/repositories/job-que
 import { AUTOMATION_DISPATCH } from '../job-queue-constants';
 import { getNextRunAt } from '../room/runtime/cron-utils';
 
+const FAILURE_CIRCUIT_BREAKER_THRESHOLD = 3;
+
 export interface AutomationLaunchResult {
 	roomTaskId?: string;
 	roomGoalId?: string;
@@ -97,7 +99,12 @@ export class AutomationScheduler {
 	}
 
 	resume(id: string): AutomationTask {
-		const task = this.manager.updateTask(id, { status: 'active' });
+		const task = this.manager.updateTask(id, {
+			status: 'active',
+			consecutiveFailureCount: 0,
+			lastFailureFingerprint: null,
+			pausedReason: null,
+		});
 		this.scheduleTask(task);
 		return task;
 	}
@@ -157,16 +164,19 @@ export class AutomationScheduler {
 			automationId?: string;
 			triggerReason?: string;
 			attempt?: number;
+			dispatchKey?: string;
 		};
 		if (!payload.automationId) {
 			throw new Error('automation.dispatch payload missing automationId');
 		}
 		this.sweepTimedOutRuns();
+		this.recoverOrphanedRuns();
 		await this.syncLinkedRuns();
 		const run = await this.dispatch(payload.automationId, {
 			triggerReason: payload.triggerReason ?? 'scheduled',
 			jobId: job.id,
 			attempt: payload.attempt,
+			dispatchKey: payload.dispatchKey,
 		});
 		return { automationId: payload.automationId, runId: run.id, status: run.status };
 	}
@@ -178,6 +188,7 @@ export class AutomationScheduler {
 			triggerReason?: string;
 			jobId?: string;
 			attempt?: number;
+			dispatchKey?: string;
 			ignoreDueTime?: boolean;
 			consumeSchedule?: boolean;
 		}
@@ -193,6 +204,14 @@ export class AutomationScheduler {
 		if (!options?.ignoreDueTime && task.nextRunAt !== null && task.nextRunAt > now) {
 			throw new Error(`Automation ${automationId} is not due yet`);
 		}
+		const dispatchKey = options?.dispatchKey ?? this.buildDispatchKey(task, options);
+		const existingRun = dispatchKey ? this.manager.getRunByDispatchKey(dispatchKey) : null;
+		if (existingRun) {
+			this.recordRunEvent(existingRun, 'run_recovered', 'Dispatch key reused existing run', {
+				dispatchKey,
+			});
+			return existingRun;
+		}
 
 		const condition = await this.evaluateCondition(task);
 		if (!condition.passed) {
@@ -203,12 +222,17 @@ export class AutomationScheduler {
 				status: 'succeeded',
 				triggerType: options?.triggerType ?? task.triggerType,
 				triggerReason: options?.triggerReason ?? 'condition_not_met',
+				dispatchKey,
 				jobId: options?.jobId,
 				metadata: {
 					skippedTarget: true,
 					reason: 'condition_not_met',
 					condition,
 				},
+			});
+			this.recordRunEvent(skipped, 'condition_evaluated', condition.reason, {
+				passed: false,
+				condition,
 			});
 			this.finishDispatchSchedule(task, options?.consumeSchedule ?? true);
 			return skipped;
@@ -225,12 +249,16 @@ export class AutomationScheduler {
 				status: 'succeeded',
 				triggerType: options?.triggerType ?? task.triggerType,
 				triggerReason: options?.triggerReason ?? 'skipped_overlap',
+				dispatchKey,
 				jobId: options?.jobId,
 				metadata: {
 					skippedTarget: true,
 					reason: 'active_run_exists',
 					activeRunIds: runningRuns.map((run) => run.id),
 				},
+			});
+			this.recordRunEvent(skipped, 'concurrency_skipped', 'Skipped because an active run exists', {
+				activeRunIds: runningRuns.map((run) => run.id),
 			});
 			this.finishDispatchSchedule(task, options?.consumeSchedule ?? true);
 			return skipped;
@@ -243,12 +271,16 @@ export class AutomationScheduler {
 				status: 'queued',
 				triggerType: options?.triggerType ?? task.triggerType,
 				triggerReason: options?.triggerReason ?? 'queued_overlap',
+				dispatchKey,
 				jobId: options?.jobId,
 				attempt: options?.attempt ?? 1,
 				metadata: {
 					reason: 'active_run_exists',
 					activeRunIds: runningRuns.map((run) => run.id),
 				},
+			});
+			this.recordRunEvent(queued, 'concurrency_queued', 'Queued behind an active run', {
+				activeRunIds: runningRuns.map((run) => run.id),
 			});
 			this.enqueueQueuedDrain(task.id);
 			this.finishDispatchSchedule(task, options?.consumeSchedule ?? true);
@@ -260,6 +292,11 @@ export class AutomationScheduler {
 					status: 'cancelled',
 					error: 'Cancelled by newer automation dispatch',
 				});
+				this.recordRunEvent(
+					{ ...activeRun, status: 'cancelled', error: 'Cancelled by newer automation dispatch' },
+					'concurrency_cancelled_previous',
+					'Cancelled by newer automation dispatch'
+				);
 			}
 		}
 		if (
@@ -275,6 +312,7 @@ export class AutomationScheduler {
 				? this.manager.updateRun(queuedRuns[queuedRuns.length - 1].id, {
 						status: 'running',
 						jobId: options?.jobId ?? null,
+						dispatchKey,
 					})
 				: this.manager.createRun({
 						automationTaskId: task.id,
@@ -283,15 +321,23 @@ export class AutomationScheduler {
 						status: 'running',
 						triggerType: options?.triggerType ?? task.triggerType,
 						triggerReason: options?.triggerReason ?? null,
+						dispatchKey,
 						jobId: options?.jobId,
 						attempt: options?.attempt ?? 1,
 					});
+		this.recordRunEvent(run, 'run_created', 'Automation run started', {
+			triggerReason: run.triggerReason,
+			attempt: run.attempt,
+		});
 
 		try {
 			const launcher = this.launchers.get(task.targetType);
 			if (!launcher) {
 				throw new Error(`Automation target is not implemented: ${task.targetType}`);
 			}
+			this.recordRunEvent(run, 'target_launch_started', `Launching ${task.targetType} target`, {
+				targetType: task.targetType,
+			});
 			const result = await launcher.launch(task, run);
 			const updated = this.manager.updateRun(run.id, {
 				status: result.status ?? 'running',
@@ -304,6 +350,13 @@ export class AutomationScheduler {
 				resultSummary: result.resultSummary ?? null,
 				metadata: result.metadata ?? null,
 			});
+			this.recordRunEvent(updated, 'target_launch_succeeded', result.resultSummary ?? null, {
+				targetType: task.targetType,
+				roomTaskId: result.roomTaskId ?? null,
+				spaceTaskId: result.spaceTaskId ?? null,
+				sessionId: result.sessionId ?? null,
+			});
+			this.recordRunOutcome(task, updated);
 			this.finishDispatchSchedule(task, options?.consumeSchedule ?? true);
 			return updated;
 		} catch (error) {
@@ -311,7 +364,13 @@ export class AutomationScheduler {
 				status: 'failed',
 				error: error instanceof Error ? error.message : String(error),
 			});
-			this.enqueueRetryIfAllowed(task, failed);
+			this.recordRunEvent(failed, 'target_launch_failed', failed.error, {
+				targetType: task.targetType,
+			});
+			this.recordRunOutcome(task, failed);
+			if (!this.isCircuitBreakerPaused(task.id)) {
+				this.enqueueRetryIfAllowed(task, failed);
+			}
 			this.finishDispatchSchedule(task, options?.consumeSchedule ?? true);
 			return failed;
 		}
@@ -330,10 +389,57 @@ export class AutomationScheduler {
 				status: 'timed_out',
 				error: `Automation run timed out after ${task.timeoutMs}ms`,
 			});
-			this.enqueueRetryIfAllowed(task, { ...run, status: 'timed_out' });
+			const timedOutRun = {
+				...run,
+				status: 'timed_out' as const,
+				error: `Automation run timed out after ${task.timeoutMs}ms`,
+			};
+			this.recordRunEvent(timedOutRun, 'timed_out', timedOutRun.error, {
+				timeoutMs: task.timeoutMs,
+			});
+			this.recordRunOutcome(task, timedOutRun);
+			if (!this.isCircuitBreakerPaused(task.id)) {
+				this.enqueueRetryIfAllowed(task, timedOutRun);
+			}
 			timedOut++;
 		}
 		return timedOut;
+	}
+
+	recoverOrphanedRuns(maxAgeMs = 5 * 60_000, limit = 100): number {
+		const runningRuns = this.manager.listRuns({ status: 'running', limit });
+		let recovered = 0;
+		for (const run of runningRuns) {
+			const startedAt = run.startedAt ?? run.createdAt;
+			if (Date.now() - startedAt < maxAgeMs) continue;
+			if (
+				run.roomTaskId ||
+				run.spaceTaskId ||
+				run.spaceWorkflowRunId ||
+				run.missionExecutionId ||
+				run.sessionId
+			) {
+				continue;
+			}
+			const updated = this.manager.updateRun(run.id, {
+				status: 'lost',
+				error: 'Automation run lost before a target was linked',
+			});
+			this.recordRunEvent(
+				updated,
+				'run_recovered',
+				'Marked lost because no target was linked after startup recovery'
+			);
+			const task = this.manager.getTask(run.automationTaskId);
+			if (task) {
+				this.recordRunOutcome(task, updated);
+				if (!this.isCircuitBreakerPaused(task.id)) {
+					this.enqueueRetryIfAllowed(task, updated);
+				}
+			}
+			recovered++;
+		}
+		return recovered;
 	}
 
 	async syncLinkedRuns(limit = 100): Promise<number> {
@@ -344,14 +450,20 @@ export class AutomationScheduler {
 			if (!task) continue;
 			const outcome = await this.readLinkedRunOutcome(task, run);
 			if (!outcome) continue;
-			this.manager.updateRun(run.id, {
+			const updatedRun = this.manager.updateRun(run.id, {
 				status: outcome.status,
 				resultSummary: outcome.resultSummary ?? null,
 				error: outcome.error ?? null,
 			});
 			updatedCount++;
+			this.recordRunEvent(updatedRun, 'linked_run_synced', outcome.error ?? outcome.resultSummary, {
+				status: outcome.status,
+			});
+			this.recordRunOutcome(task, updatedRun);
 			if (outcome.status === 'failed') {
-				this.enqueueRetryIfAllowed(task, { ...run, status: outcome.status });
+				if (!this.isCircuitBreakerPaused(task.id)) {
+					this.enqueueRetryIfAllowed(task, { ...run, status: outcome.status });
+				}
 			}
 			if (task.concurrencyPolicy === 'queue') {
 				this.enqueueQueuedDrain(task.id);
@@ -387,11 +499,13 @@ export class AutomationScheduler {
 	}
 
 	private finishDispatchSchedule(task: AutomationTask, consumeSchedule: boolean): void {
+		const latest = this.manager.getTask(task.id);
+		if (latest?.status !== 'active') return;
 		if (consumeSchedule) {
-			this.advanceSchedule(task);
+			this.advanceSchedule(latest);
 			return;
 		}
-		this.manager.updateTask(task.id, {
+		this.manager.updateTask(latest.id, {
 			lastRunAt: Date.now(),
 		});
 	}
@@ -405,10 +519,92 @@ export class AutomationScheduler {
 				automationId: task.id,
 				triggerReason: 'retry',
 				attempt: run.attempt + 1,
+				dispatchKey: `${run.dispatchKey ?? run.id}:retry:${run.attempt + 1}`,
 			},
 			runAt: Date.now() + delayMs,
 			maxRetries: 0,
 		});
+		this.manager.createRunEvent({
+			automationRunId: run.id,
+			automationTaskId: task.id,
+			eventType: 'retry_scheduled',
+			message: `Retry ${run.attempt + 1} scheduled`,
+			metadata: {
+				attempt: run.attempt + 1,
+				delayMs,
+			},
+		});
+	}
+
+	private recordRunEvent(
+		run: AutomationRun,
+		eventType: Parameters<AutomationManager['createRunEvent']>[0]['eventType'],
+		message?: string | null,
+		metadata?: Record<string, unknown> | null
+	): void {
+		this.manager.createRunEvent({
+			automationRunId: run.id,
+			automationTaskId: run.automationTaskId,
+			eventType,
+			message: message ?? null,
+			metadata: metadata ?? null,
+		});
+	}
+
+	private recordRunOutcome(task: AutomationTask, run: AutomationRun): void {
+		if (run.status === 'succeeded' || run.status === 'cancelled') {
+			this.manager.updateTask(task.id, {
+				consecutiveFailureCount: 0,
+				lastFailureFingerprint: null,
+				pausedReason: null,
+			});
+			return;
+		}
+		if (run.status !== 'failed' && run.status !== 'timed_out' && run.status !== 'lost') {
+			return;
+		}
+
+		const latest = this.manager.getTask(task.id) ?? task;
+		const fingerprint = this.buildFailureFingerprint(latest, run);
+		const consecutiveFailureCount =
+			latest.lastFailureFingerprint === fingerprint ? latest.consecutiveFailureCount + 1 : 1;
+		if (consecutiveFailureCount >= FAILURE_CIRCUIT_BREAKER_THRESHOLD) {
+			this.manager.updateTask(task.id, {
+				status: 'paused',
+				nextRunAt: null,
+				consecutiveFailureCount,
+				lastFailureFingerprint: fingerprint,
+				pausedReason: `Paused after ${consecutiveFailureCount} consecutive automation failures with the same fingerprint.`,
+			});
+			this.manager.createRunEvent({
+				automationRunId: run.id,
+				automationTaskId: task.id,
+				eventType: 'circuit_breaker_paused',
+				message: `Paused after ${consecutiveFailureCount} consecutive automation failures`,
+				metadata: {
+					consecutiveFailureCount,
+					fingerprint,
+				},
+			});
+			this.cancelPendingDispatchJobs(task.id);
+			return;
+		}
+
+		this.manager.updateTask(task.id, {
+			consecutiveFailureCount,
+			lastFailureFingerprint: fingerprint,
+			pausedReason: null,
+		});
+	}
+
+	private buildFailureFingerprint(task: AutomationTask, run: AutomationRun): string {
+		const error = run.error ?? run.resultSummary ?? run.status;
+		return [task.targetType, task.ownerType, task.ownerId ?? 'global', error].join(':');
+	}
+
+	private isCircuitBreakerPaused(automationId: string): boolean {
+		const task = this.manager.getTask(automationId);
+		return task?.status === 'paused' && task.pausedReason !== null;
 	}
 
 	private async readLinkedRunOutcome(
@@ -568,7 +764,11 @@ export class AutomationScheduler {
 
 		this.jobQueue.enqueue({
 			queue: AUTOMATION_DISPATCH,
-			payload: { automationId, triggerReason: 'scheduled' },
+			payload: {
+				automationId,
+				triggerReason: 'scheduled',
+				dispatchKey: `${automationId}:scheduled:${runAt}`,
+			},
 			runAt,
 			maxRetries: 0,
 		});
@@ -589,6 +789,26 @@ export class AutomationScheduler {
 				this.jobQueue.deleteJob(job.id);
 			}
 		}
+	}
+
+	private buildDispatchKey(
+		task: AutomationTask,
+		options?: {
+			triggerType?: AutomationTriggerType;
+			triggerReason?: string;
+			jobId?: string;
+			attempt?: number;
+			dispatchKey?: string;
+			ignoreDueTime?: boolean;
+			consumeSchedule?: boolean;
+		}
+	): string | null {
+		if (options?.triggerType === 'manual') return null;
+		if (task.triggerType === 'manual') return null;
+		if (options?.jobId) return `job:${options.jobId}`;
+		if (task.nextRunAt !== null)
+			return `${task.id}:${options?.triggerReason ?? 'scheduled'}:${task.nextRunAt}`;
+		return `${task.id}:${options?.triggerReason ?? task.triggerType}:${Date.now()}`;
 	}
 }
 

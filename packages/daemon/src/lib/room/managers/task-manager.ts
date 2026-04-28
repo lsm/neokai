@@ -95,6 +95,7 @@ export class TaskManager {
 			dependsOn: params.dependsOn,
 			taskType: params.taskType,
 			assignedAgent: params.assignedAgent,
+			workspaceMode: params.workspaceMode,
 			status: params.status,
 			createdByTaskId: params.createdByTaskId,
 		});
@@ -199,7 +200,12 @@ export class TaskManager {
 	async setTaskStatus(
 		taskId: string,
 		newStatus: TaskStatus,
-		options?: { result?: string; error?: string; mode?: 'runtime' | 'manual' }
+		options?: {
+			result?: string;
+			error?: string;
+			mode?: 'runtime' | 'manual';
+			workspaceMode?: NeoTask['workspaceMode'];
+		}
 	): Promise<NeoTask> {
 		const task = await this.getTask(taskId);
 		if (!task) {
@@ -228,6 +234,9 @@ export class TaskManager {
 			if (options?.error) {
 				updates.error = options.error;
 			}
+		}
+		if (options?.workspaceMode !== undefined) {
+			updates.workspaceMode = options.workspaceMode;
 		}
 
 		// Clear error/result/progress when restarting from a terminal/failed state.

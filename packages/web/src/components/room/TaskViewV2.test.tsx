@@ -344,6 +344,15 @@ function makeDefaultTaskViewData(
 	return {
 		task,
 		group,
+		diagnostic: {
+			hasActiveGroup: group !== null,
+			taskType: task?.taskType ?? 'coding',
+			assignedAgent: task?.assignedAgent ?? 'coder',
+			workspaceMode: group ? 'git_worktree' : 'none',
+			requiresGitWorkspace: (task?.taskType ?? 'coding') === 'coding',
+			message: task?.error ?? undefined,
+			recommendedActions: [],
+		},
 		workerSession: null,
 		leaderSession: null,
 		isLoading: false,
@@ -522,6 +531,74 @@ describe('TaskViewV2', () => {
 		mockTaskViewData = makeDefaultTaskViewData(makeTask({ status: 'pending' }), null);
 		const { container } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
 		expect(container.textContent).toContain('Waiting for the runtime to pick up this task');
+	});
+
+	it('shows actionable diagnostics for needs_attention tasks without a group', () => {
+		mockTaskViewData = {
+			...makeDefaultTaskViewData(
+				makeTask({
+					status: 'needs_attention',
+					taskType: 'planning',
+					assignedAgent: 'planner',
+					error: 'Failed to create isolated worktree for task',
+				}),
+				null
+			),
+			diagnostic: {
+				hasActiveGroup: false,
+				taskType: 'planning',
+				assignedAgent: 'planner',
+				workspaceMode: 'none',
+				requiresGitWorkspace: true,
+				failureCode: 'git_worktree_unavailable',
+				failureStage: 'workspace_creation',
+				message: 'Failed to create isolated worktree for task',
+				recommendedTaskType: 'research',
+				recommendedAgent: 'general',
+				recommendedActions: ['link_git_workspace', 'convert_to_research_task', 'retry', 'archive'],
+			},
+			canReactivate: true,
+			canArchive: true,
+		} as typeof mockTaskViewData;
+
+		const { getByTestId, container } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+
+		expect(getByTestId('task-no-group-state')).toBeTruthy();
+		expect(getByTestId('task-no-group-error').textContent).toContain(
+			'Failed to create isolated worktree for task'
+		);
+		expect(container.textContent).toContain('Git worktree required');
+		expect(container.textContent).toContain('Retry task');
+		expect(container.textContent).toContain('Archive');
+	});
+
+	it('normalizes legacy planning tasks that were stored with coder agent', () => {
+		mockTaskViewData = {
+			...makeDefaultTaskViewData(
+				makeTask({
+					status: 'in_progress',
+					taskType: 'planning',
+					assignedAgent: 'coder',
+					error: 'No active agent group is attached to this task.',
+				}),
+				null
+			),
+			diagnostic: {
+				hasActiveGroup: false,
+				taskType: 'planning',
+				assignedAgent: 'coder',
+				workspaceMode: 'none',
+				requiresGitWorkspace: true,
+				message: 'No active agent group is attached to this task.',
+				recommendedActions: ['retry', 'archive'],
+			},
+		} as typeof mockTaskViewData;
+
+		const { container } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+
+		expect(container.textContent).toContain('Runtime attachment missing');
+		expect(container.textContent).toContain('planner');
+		expect(container.textContent).not.toContain('coder');
 	});
 
 	// --- Slide-out panel ---
