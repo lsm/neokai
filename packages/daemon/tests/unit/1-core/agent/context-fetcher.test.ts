@@ -90,6 +90,7 @@ describe('ContextFetcher.toContextInfo', () => {
 		const response = baseResponse({
 			totalTokens: 0,
 			maxTokens: 0,
+			rawMaxTokens: 0,
 			percentage: 0,
 			categories: [{ name: 'System prompt', tokens: 0, color: 'gray' }],
 		});
@@ -144,6 +145,38 @@ describe('ContextFetcher.toContextInfo', () => {
 
 		expect(info.autoCompactThreshold).toBe(160000);
 		expect(info.isAutoCompactEnabled).toBe(true);
+	});
+
+	it('uses rawMaxTokens and recomputes percentage when SDK percentage is inconsistent', () => {
+		const response = baseResponse({
+			totalTokens: 210000,
+			maxTokens: 200000,
+			rawMaxTokens: 272000,
+			percentage: 140,
+			autoCompactThreshold: 180000,
+			isAutoCompactEnabled: true,
+			categories: [{ name: 'Messages', tokens: 210000, color: 'blue' }],
+		});
+
+		const info = ContextFetcher.toContextInfo(response);
+
+		expect(info.totalCapacity).toBe(272000);
+		expect(info.percentUsed).toBe(77);
+		expect(info.breakdown.Messages).toEqual({ tokens: 210000, percent: 77.2 });
+		expect(info.autoCompactThreshold).toBe(244800);
+	});
+
+	it('caps recomputed percentUsed at 100 when usage exceeds capacity', () => {
+		const response = baseResponse({
+			totalTokens: 300000,
+			maxTokens: 200000,
+			rawMaxTokens: 272000,
+			percentage: 150,
+		});
+
+		const info = ContextFetcher.toContextInfo(response);
+
+		expect(info.percentUsed).toBe(100);
 	});
 
 	it('passes through messageBreakdown when present', () => {

@@ -88,6 +88,8 @@ export interface RawModelEntry {
 	description: string;
 	alias?: string;
 	provider?: string;
+	contextWindow?: number;
+	context_window?: number;
 }
 
 /**
@@ -120,7 +122,7 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
 			alias: m.alias || m.id,
 			family,
 			provider: m.provider || 'anthropic',
-			contextWindow: 200000,
+			contextWindow: m.contextWindow ?? m.context_window ?? 200000,
 			description: m.description || '',
 			releaseDate: '',
 			available: true,
