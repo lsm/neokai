@@ -8,7 +8,7 @@
  *
  * ## What is tested
  *
- * 1. The daemon seeds a default `web-search-mcp` skill at startup.
+ * 1. The daemon seeds default MCP-backed skills at startup.
  * 2. When a globally-enabled `mcp_server` skill exists, a task agent session can be
  *    spawned without errors — meaning skillsManager and appMcpServerRepo were properly
  *    threaded through and did not cause a TypeError when QueryOptionsBuilder accessed them.

@@ -974,4 +974,13 @@ export class SpaceRuntimeService {
 		log.info(`dispatchPostApproval: spaceId=${spaceId} taskId=${taskId} source=${approvalSource}`);
 		await this.runtime.dispatchPostApproval(taskId, approvalSource, contextExtras ?? {});
 	}
+
+	async recoverWorkflowBackedTask(
+		spaceId: string,
+		taskId: string,
+		targetStatus: 'open' | 'in_progress'
+	): Promise<SpaceTask> {
+		const recovered = await this.runtime.recoverWorkflowBackedTask(spaceId, taskId, targetStatus);
+		return recovered.task;
+	}
 }

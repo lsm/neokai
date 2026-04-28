@@ -7,6 +7,7 @@ import { parseThreadRow } from './thread/space-task-thread-events';
 interface SpaceTaskUnifiedThreadProps {
 	taskId: string;
 	bottomInsetClass?: string;
+	bottomScrollPaddingClass?: string;
 	/**
 	 * Top padding applied to the scroll container so the first message clears
 	 * any floating overlay (e.g. SpaceTaskPane's tab pill) at scroll-top. Older
@@ -31,6 +32,7 @@ interface SpaceTaskUnifiedThreadProps {
 export function SpaceTaskUnifiedThread({
 	taskId,
 	bottomInsetClass = 'pb-3',
+	bottomScrollPaddingClass = 'scroll-pb-3',
 	topInsetClass = '',
 	activeAgentLabels,
 	autoScrollEnabled = true,
@@ -99,7 +101,10 @@ export function SpaceTaskUnifiedThread({
 
 	return (
 		<div class="h-full min-h-0 flex flex-col relative" data-testid="space-task-unified-thread">
-			<div ref={containerRef} class={`flex-1 overflow-y-auto ${topInsetClass} ${bottomInsetClass}`}>
+			<div
+				ref={containerRef}
+				class={`flex-1 overflow-y-auto ${topInsetClass} ${bottomInsetClass} ${bottomScrollPaddingClass}`}
+			>
 				<div class="min-h-[calc(100%+1px)]">
 					<MinimalThreadFeed
 						parsedRows={parsedRows}

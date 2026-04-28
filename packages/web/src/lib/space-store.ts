@@ -1572,6 +1572,20 @@ class SpaceStore {
 		return task;
 	}
 
+	async recoverWorkflowTask(taskId: string, status: 'open' | 'in_progress'): Promise<SpaceTask> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		return hub.request<SpaceTask>('spaceTask.recoverWorkflow', {
+			taskId,
+			spaceId,
+			status,
+		});
+	}
+
 	/**
 	 * Submit a task for human review (UI counterpart to the agent
 	 * `submit_for_approval` tool). Routes to the `spaceTask.submitForReview` RPC
