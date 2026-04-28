@@ -638,7 +638,7 @@ export class TaskAgentManager {
 				nodeExecutionRepo: this.config.nodeExecutionRepo,
 				taskManager,
 				messageInjector: (subSessionId, message) =>
-					this.injectSubSessionMessage(subSessionId, message),
+					this.injectSubSessionMessage(subSessionId, message, true),
 				daemonHub: this.config.daemonHub,
 				gateDataRepo: this.config.gateDataRepo,
 				workflowRunRepo: this.config.workflowRunRepo,
@@ -1571,8 +1571,9 @@ export class TaskAgentManager {
 
 		for (const row of pending) {
 			const prefixed = `[Message from ${row.sourceAgentName}]: ${row.message}`;
+			const isSyntheticMessage = row.sourceAgentName !== 'human';
 			try {
-				await this.injectSubSessionMessage(sessionId, prefixed);
+				await this.injectSubSessionMessage(sessionId, prefixed, isSyntheticMessage);
 				repo.markDelivered(row.id, sessionId);
 				this.emitPendingDelivered(row.id, sessionId, row);
 			} catch (err) {
@@ -2909,7 +2910,7 @@ export class TaskAgentManager {
 			nodeExecutionRepo: this.config.nodeExecutionRepo,
 			taskManager,
 			messageInjector: (subSessionId, message) =>
-				this.injectSubSessionMessage(subSessionId, message),
+				this.injectSubSessionMessage(subSessionId, message, true),
 			daemonHub: this.config.daemonHub,
 			gateDataRepo: this.config.gateDataRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
@@ -3873,7 +3874,7 @@ export class TaskAgentManager {
 			workflowRunId,
 			workflowChannels: channels,
 			messageInjector: (targetSessionId, message) =>
-				this.injectSubSessionMessage(targetSessionId, message),
+				this.injectSubSessionMessage(targetSessionId, message, true),
 			channelRouter: nodeAgentChannelRouter,
 			nodeGroups,
 			taskAgentRouter: async (message) => {

@@ -108,10 +108,14 @@ export interface TaskAgentToolsConfig {
 	/** Task manager for validated status transitions. */
 	taskManager: SpaceTaskManager;
 	/**
-	 * Injects a message into an existing sub-session as a user turn.
-	 * Used by send_message to deliver messages to node agents.
+	 * Injects a message into an existing sub-session as an SDK user turn.
+	 * Used by send_message to deliver synthetic agent-originated messages to node agents.
 	 */
-	messageInjector: (sessionId: string, message: string) => Promise<void>;
+	messageInjector: (
+		sessionId: string,
+		message: string,
+		isSyntheticMessage?: boolean
+	) => Promise<void>;
 	/**
 	 * DaemonHub instance for emitting task completion/failure events.
 	 * Optional — if omitted, no events are emitted (e.g. in unit tests that don't need them).
@@ -807,7 +811,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				// Deliver directly to the live session. injectSubSessionMessage calls
 				// ensureQueryStarted() so an idle session is automatically restarted.
 				try {
-					await messageInjector(liveSession.session.id, prefixedMessage);
+					await messageInjector(liveSession.session.id, prefixedMessage, true);
 					delivered.push({ agentName: targetAgentName, sessionId: liveSession.session.id });
 				} catch (err) {
 					const errMsg = err instanceof Error ? err.message : String(err);

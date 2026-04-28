@@ -669,7 +669,11 @@ describe('setupSpaceTaskMessageHandlers', () => {
 
 			expect(result).toMatchObject({ ok: true, routedTo: ['Coder'] });
 			expect(injectSubSession).toHaveBeenCalledTimes(1);
-			expect(injectSubSession).toHaveBeenCalledWith('session-coder-1', '@Coder please fix the bug');
+			expect(injectSubSession).toHaveBeenCalledWith(
+				'session-coder-1',
+				'@Coder please fix the bug',
+				false
+			);
 			// Should NOT have routed to Task Agent
 			expect(taskAgentManager.injectTaskAgentMessage).not.toHaveBeenCalled();
 		});
@@ -734,8 +738,16 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(result).toMatchObject({ ok: true, routedTo: ['Coder'] });
 			// Should have injected into both Coder sessions
 			expect(injectSubSession).toHaveBeenCalledTimes(2);
-			expect(injectSubSession).toHaveBeenCalledWith('session-coder-1', '@Coder please check both');
-			expect(injectSubSession).toHaveBeenCalledWith('session-coder-2', '@Coder please check both');
+			expect(injectSubSession).toHaveBeenCalledWith(
+				'session-coder-1',
+				'@Coder please check both',
+				false
+			);
+			expect(injectSubSession).toHaveBeenCalledWith(
+				'session-coder-2',
+				'@Coder please check both',
+				false
+			);
 		});
 
 		it('partial routing: valid mentions route, invalid mentions listed in notFound', async () => {
@@ -767,7 +779,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			});
 
 			expect(result).toMatchObject({ ok: true, routedTo: ['coder'] });
-			expect(injectSubSession).toHaveBeenCalledWith('session-coder-1', '@coder please fix');
+			expect(injectSubSession).toHaveBeenCalledWith('session-coder-1', '@coder please fix', false);
 		});
 
 		it('message without @mentions falls back to Task Agent routing', async () => {
@@ -818,7 +830,11 @@ describe('setupSpaceTaskMessageHandlers', () => {
 
 			expect(result).toMatchObject({ ok: true, routedTo: ['Reviewer'] });
 			expect(injectSubSession).toHaveBeenCalledTimes(1);
-			expect(injectSubSession).toHaveBeenCalledWith('session-reviewer-1', 'Please review this');
+			expect(injectSubSession).toHaveBeenCalledWith(
+				'session-reviewer-1',
+				'Please review this',
+				false
+			);
 			expect(taskAgentManager.injectTaskAgentMessage).not.toHaveBeenCalled();
 		});
 
@@ -858,7 +874,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(result).toMatchObject({ ok: true, routedTo: ['Reviewer'] });
 			expect(injectSubSession).toHaveBeenCalledWith(
 				'session-reviewer-idle',
-				'@Reviewer please review'
+				'@Reviewer please review',
+				false
 			);
 		});
 
@@ -883,11 +900,24 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(injectSubSession).toHaveBeenCalledTimes(3); // idle + blocked + in_progress
 			expect(injectSubSession).not.toHaveBeenCalledWith(
 				'session-coder-cancelled',
-				expect.anything()
+				expect.anything(),
+				false
 			);
-			expect(injectSubSession).toHaveBeenCalledWith('session-coder-idle', '@Coder please check');
-			expect(injectSubSession).toHaveBeenCalledWith('session-coder-blocked', '@Coder please check');
-			expect(injectSubSession).toHaveBeenCalledWith('session-coder-active', '@Coder please check');
+			expect(injectSubSession).toHaveBeenCalledWith(
+				'session-coder-idle',
+				'@Coder please check',
+				false
+			);
+			expect(injectSubSession).toHaveBeenCalledWith(
+				'session-coder-blocked',
+				'@Coder please check',
+				false
+			);
+			expect(injectSubSession).toHaveBeenCalledWith(
+				'session-coder-active',
+				'@Coder please check',
+				false
+			);
 		});
 
 		it('@mention throws when all matching agents are cancelled', async () => {
@@ -1085,8 +1115,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
 
 			expect(result).toMatchObject({ ok: true, routedTo: ['Coder'] });
 			expect(injectSubSession).toHaveBeenCalledTimes(2);
-			expect(injectSubSession).toHaveBeenCalledWith('session-coder-a', 'Please check both');
-			expect(injectSubSession).toHaveBeenCalledWith('session-coder-b', 'Please check both');
+			expect(injectSubSession).toHaveBeenCalledWith('session-coder-a', 'Please check both', false);
+			expect(injectSubSession).toHaveBeenCalledWith('session-coder-b', 'Please check both', false);
 		});
 
 		it('activateNode invoked once per unique missing workflowNodeId (deduped)', async () => {
@@ -1195,7 +1225,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 
 			expect(activateCalls).toEqual(['node-rev']);
 			expect(injectSub).toHaveBeenCalledTimes(1);
-			expect(injectSub).toHaveBeenCalledWith('session-reviewer-live', 'Please review');
+			expect(injectSub).toHaveBeenCalledWith('session-reviewer-live', 'Please review', false);
 			expect(result).toMatchObject({
 				ok: true,
 				routedTo: ['Reviewer'],

@@ -294,7 +294,11 @@ function makeConfig(
 	taskId: string,
 	workflowRunId: string,
 	options?: {
-		messageInjector?: (sessionId: string, message: string) => Promise<void>;
+		messageInjector?: (
+			sessionId: string,
+			message: string,
+			isSyntheticMessage?: boolean
+		) => Promise<void>;
 	}
 ): TaskAgentToolsConfig {
 	return {
@@ -1431,11 +1435,15 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 			ensureWorkflowNodeActivationForAgent: async () => false,
 		} as unknown as TaskAgentToolsConfig['taskAgentManager'];
 
-		const delivered: Array<{ sessionId: string; message: string }> = [];
+		const delivered: Array<{
+			sessionId: string;
+			message: string;
+			isSyntheticMessage?: boolean;
+		}> = [];
 		const config: TaskAgentToolsConfig = {
 			...makeConfig(ctx, mainTask.id, run.id, {
-				messageInjector: async (sessionId, message) => {
-					delivered.push({ sessionId, message });
+				messageInjector: async (sessionId, message, isSyntheticMessage) => {
+					delivered.push({ sessionId, message, isSyntheticMessage });
 				},
 			}),
 			pendingMessageRepo: pendingRepo,
@@ -1458,6 +1466,7 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 		// The coder got the message right away.
 		expect(delivered).toHaveLength(1);
 		expect(delivered[0].message).toBe('[Message from task-agent]: hi all');
+		expect(delivered[0].isSyntheticMessage).toBe(true);
 
 		// The reviewer message is queued.
 		const pending = pendingRepo.listPendingForTarget(run.id, 'reviewer');

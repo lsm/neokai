@@ -22,6 +22,7 @@ function makeRow(opts: {
 	createdAt: number;
 	message: unknown;
 	sessionId?: string;
+	origin?: string | null;
 }) {
 	return parseThreadRow({
 		id: opts.id,
@@ -34,6 +35,7 @@ function makeRow(opts: {
 		messageType: 'assistant',
 		content: JSON.stringify(opts.message),
 		createdAt: opts.createdAt,
+		origin: opts.origin,
 	});
 }
 
@@ -551,6 +553,27 @@ describe('MinimalThreadFeed', () => {
 		expect(messageTurn.dataset.fromLabel).toBe('Neo');
 		expect(messageTurn.dataset.toLabel).toBe('Task Agent');
 		// Synthetic badge replaces the older "handoff" wording.
+		expect(messageTurn.textContent?.toLowerCase()).toContain('synthetic');
+	});
+
+	it('uses row origin to classify runtime user messages when content has no origin', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'u1',
+				label: 'Task Agent',
+				createdAt: t,
+				message: humanUserMessage('u1', 'runtime handoff'),
+				origin: 'system',
+			}),
+		];
+
+		render(<MinimalThreadFeed parsedRows={rows} />);
+		const messageTurn = screen.getByTestId('minimal-thread-turn');
+		expect(messageTurn.dataset.turnState).toBe('message');
+		expect(messageTurn.dataset.fromLabel).toBe('System');
+		expect(messageTurn.dataset.toLabel).toBe('Task Agent');
+		expect(messageTurn.dataset.messageKind).toBe('synthetic');
 		expect(messageTurn.textContent?.toLowerCase()).toContain('synthetic');
 	});
 
