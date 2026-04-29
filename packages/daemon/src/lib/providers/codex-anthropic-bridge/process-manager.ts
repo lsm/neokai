@@ -37,6 +37,41 @@ export type BridgeEvent =
 	  }
 	| { type: 'error'; message: string };
 
+export type McpElicitationAction = 'accept' | 'decline' | 'cancel';
+
+export type McpElicitationResponse = {
+	action: McpElicitationAction;
+	content?: Record<string, unknown>;
+};
+
+const MCP_ELICITATION_REQUEST_METHOD = 'mcpServer/elicitation/request';
+const MCP_ELICITATION_ACTIONS = new Set<McpElicitationAction>(['accept', 'decline', 'cancel']);
+
+export function parseMcpElicitationResponse(
+	value: unknown,
+	context = 'MCP elicitation response'
+): McpElicitationResponse {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		throw new Error(`${context} must be an object with action`);
+	}
+
+	const response = value as Record<string, unknown>;
+	const action = response.action;
+	if (typeof action !== 'string' || !MCP_ELICITATION_ACTIONS.has(action as McpElicitationAction)) {
+		throw new Error(`${context} action must be one of: accept, decline, cancel`);
+	}
+
+	const content = response.content;
+	if (content !== undefined) {
+		if (!content || typeof content !== 'object' || Array.isArray(content)) {
+			throw new Error(`${context} content must be an object when provided`);
+		}
+		return { action: action as McpElicitationAction, content: content as Record<string, unknown> };
+	}
+
+	return { action: action as McpElicitationAction };
+}
+
 // ---------------------------------------------------------------------------
 // AsyncQueue — decouples the push-based read loop from the pull-based generator
 // ---------------------------------------------------------------------------
@@ -250,7 +285,13 @@ export class AppServerConn {
 			logger.debug(`AppServerConn: server request method=${req.method}`);
 			const handler = this.serverRequestHandlers.get(req.method);
 			try {
-				const result = handler ? await handler(req.params) : {};
+				if (!handler) {
+					const message = `Unsupported Codex app-server request method: ${req.method}`;
+					logger.warn(`AppServerConn: ${message}`);
+					this.write({ id: req.id, error: { code: -32601, message } });
+					return;
+				}
+				const result = await handler(req.params);
 				this.write({ id: req.id, result: result ?? {} });
 			} catch (err) {
 				this.write({ id: req.id, error: { code: -32603, message: String(err) } });
@@ -575,6 +616,25 @@ export class BridgeSession {
 		this.conn.onServerRequest('item/commandExecution/requestApproval', autoAccept);
 		this.conn.onServerRequest('item/fileChange/requestApproval', autoAccept);
 		this.conn.onServerRequest('item/permissions/requestApproval', autoAccept);
+
+		this.conn.onServerRequest(MCP_ELICITATION_REQUEST_METHOD, async (rawParams) => {
+			const params = rawParams as {
+				serverName?: string;
+				server_name?: string;
+				elicitationId?: string;
+				elicitation_id?: string;
+				message?: string;
+			};
+			const serverName = params?.serverName ?? params?.server_name ?? 'unknown';
+			const elicitationId = params?.elicitationId ?? params?.elicitation_id ?? 'unknown';
+			logger.warn(
+				`BridgeSession: declining unsupported MCP elicitation request server=${serverName} elicitationId=${elicitationId}`
+			);
+			return parseMcpElicitationResponse(
+				{ action: 'decline' },
+				`Default response for ${MCP_ELICITATION_REQUEST_METHOD}`
+			);
+		});
 	}
 
 	/** Start a new turn and return an async generator of BridgeEvents. */

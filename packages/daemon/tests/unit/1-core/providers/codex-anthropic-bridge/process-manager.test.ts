@@ -8,6 +8,7 @@ import { describe, expect, it } from 'bun:test';
 import {
 	BridgeSession,
 	AppServerConn,
+	parseMcpElicitationResponse,
 } from '../../../../../src/lib/providers/codex-anthropic-bridge/process-manager';
 
 // ---------------------------------------------------------------------------
@@ -81,8 +82,93 @@ function makeEventableStubConn() {
 		fireNotification: (method: string, params: unknown) => {
 			notificationHandlers.get(method)?.(params);
 		},
+		callServerRequest: async (method: string, params: unknown) => {
+			const handler = serverRequestHandlers.get(method);
+			if (!handler) throw new Error(`No server request handler registered for ${method}`);
+			return handler(params);
+		},
 	};
 }
+
+// ---------------------------------------------------------------------------
+// mcpServer/elicitation/request — response schema regression guard
+// ---------------------------------------------------------------------------
+
+describe('BridgeSession mcpServer/elicitation/request', () => {
+	it('returns an action-bearing decline response for Codex MCP elicitation requests', async () => {
+		const { conn, callServerRequest } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		const response = await callServerRequest('mcpServer/elicitation/request', {
+			serverName: 'node-agent',
+			elicitationId: 'elicit-1',
+			message: 'Need input',
+		});
+
+		expect(response).toEqual({ action: 'decline' });
+	});
+
+	it('accepts valid MCP elicitation response payloads', () => {
+		expect(
+			parseMcpElicitationResponse({
+				action: 'accept',
+				content: { choice: 'yes' },
+			})
+		).toEqual({
+			action: 'accept',
+			content: { choice: 'yes' },
+		});
+	});
+
+	it('rejects malformed MCP elicitation responses with actionable diagnostics', () => {
+		expect(() => parseMcpElicitationResponse({ content: {} })).toThrow(
+			'action must be one of: accept, decline, cancel'
+		);
+		expect(() => parseMcpElicitationResponse({ action: 'accept', content: [] })).toThrow(
+			'content must be an object when provided'
+		);
+	});
+});
+
+describe('AppServerConn server request dispatch', () => {
+	it('returns JSON-RPC method-not-found instead of malformed empty success for unhandled requests', async () => {
+		const written: string[] = [];
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(
+					new TextEncoder().encode(
+						JSON.stringify({ id: 'srv-req-1', method: 'unknown/request', params: {} }) + '\n'
+					)
+				);
+				controller.close();
+			},
+		});
+		const proc = {
+			stdout: stream,
+			kill: () => {},
+			stdin: {
+				write: (data: string) => written.push(data),
+				flush: () => {},
+			},
+		};
+		const TestableConn = AppServerConn as unknown as new (proc: typeof proc) => AppServerConn;
+		const conn = new TestableConn(proc);
+
+		await conn.closed;
+
+		expect(written).toHaveLength(1);
+		const response = JSON.parse(written[0].trim()) as {
+			id: string;
+			error?: { code?: number; message?: string };
+			result?: unknown;
+		};
+		expect(response.id).toBe('srv-req-1');
+		expect(response.result).toBeUndefined();
+		expect(response.error?.code).toBe(-32601);
+		expect(response.error?.message).toContain('Unsupported Codex app-server request method');
+	});
+});
 
 describe('BridgeSession item/agentMessage/delta', () => {
 	it('emits text_delta BridgeEvent for codex 0.114+ plain-string delta format', async () => {
