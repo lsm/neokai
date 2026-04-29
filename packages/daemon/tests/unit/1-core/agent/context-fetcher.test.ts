@@ -166,14 +166,38 @@ describe('ContextFetcher.toContextInfo', () => {
 		expect(info.autoCompactThreshold).toBe(244800);
 	});
 
-	it('prefers resolved model metadata over SDK fallback capacity and threshold', () => {
+	it('prefers SDK capacity over session metadata for fallback model usage', () => {
+		const response = baseResponse({
+			totalTokens: 64000,
+			maxTokens: 128000,
+			rawMaxTokens: 128000,
+			percentage: 50,
+			model: 'gpt-5.4-mini',
+			autoCompactThreshold: 115200,
+			isAutoCompactEnabled: true,
+			categories: [{ name: 'Messages', tokens: 64000, color: 'blue' }],
+		});
+
+		const info = ContextFetcher.toContextInfo(response, {
+			id: 'gpt-5.5',
+			provider: 'anthropic-codex',
+			contextWindow: 272000,
+		});
+
+		expect(info.totalCapacity).toBe(128000);
+		expect(info.percentUsed).toBe(50);
+		expect(info.breakdown.Messages).toEqual({ tokens: 64000, percent: 50 });
+		expect(info.autoCompactThreshold).toBe(115200);
+	});
+
+	it('uses session metadata when SDK capacity is unavailable', () => {
 		const response = baseResponse({
 			totalTokens: 136000,
-			maxTokens: 200000,
-			rawMaxTokens: 200000,
+			maxTokens: 0,
+			rawMaxTokens: 0,
 			percentage: 68,
 			model: 'gpt-5.5',
-			autoCompactThreshold: 180000,
+			autoCompactThreshold: 0,
 			isAutoCompactEnabled: true,
 			categories: [{ name: 'Messages', tokens: 136000, color: 'blue' }],
 		});
@@ -187,7 +211,7 @@ describe('ContextFetcher.toContextInfo', () => {
 		expect(info.totalCapacity).toBe(272000);
 		expect(info.percentUsed).toBe(50);
 		expect(info.breakdown.Messages).toEqual({ tokens: 136000, percent: 50 });
-		expect(info.autoCompactThreshold).toBe(244800);
+		expect(info.autoCompactThreshold).toBe(0);
 	});
 
 	it('caps recomputed percentUsed at 100 when usage exceeds capacity', () => {
@@ -274,13 +298,13 @@ describe('ContextFetcher.fetch', () => {
 		expect(info?.source).toBe('sdk-get-context-usage');
 	});
 
-	it('applies model metadata while fetching context usage', async () => {
+	it('uses model metadata while fetching context usage when SDK capacity is unavailable', async () => {
 		const sdkResponse = baseResponse({
 			totalTokens: 136000,
-			maxTokens: 200000,
-			rawMaxTokens: 200000,
+			maxTokens: 0,
+			rawMaxTokens: 0,
 			model: 'gpt-5.5',
-			autoCompactThreshold: 180000,
+			autoCompactThreshold: 0,
 			isAutoCompactEnabled: true,
 		});
 		const getContextUsage = mock(async () => sdkResponse);
@@ -294,7 +318,7 @@ describe('ContextFetcher.fetch', () => {
 		});
 
 		expect(info?.totalCapacity).toBe(272000);
-		expect(info?.autoCompactThreshold).toBe(244800);
+		expect(info?.autoCompactThreshold).toBe(0);
 	});
 
 	it('returns null (does not throw) when the SDK call rejects', async () => {

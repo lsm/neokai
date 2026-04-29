@@ -80,7 +80,7 @@ export class ContextFetcher {
 		const metadataCapacity = positiveInteger(modelMetadata?.contextWindow);
 		const sdkRawCapacity = positiveInteger(response.rawMaxTokens);
 		const sdkCapacity = positiveInteger(response.maxTokens);
-		const capacity = metadataCapacity ?? sdkRawCapacity ?? sdkCapacity ?? 0;
+		const capacity = sdkRawCapacity ?? sdkCapacity ?? metadataCapacity ?? 0;
 		for (const category of response.categories ?? []) {
 			// Compute percent relative to capacity (SDK response doesn't carry it).
 			// Round to 1 decimal place to match the display the UI already expects.
