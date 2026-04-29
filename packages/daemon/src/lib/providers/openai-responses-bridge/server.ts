@@ -859,7 +859,9 @@ export function createOpenAIResponsesBridgeServer(
 
 			const model = resolveModelId(body.model, config.modelAliases);
 			const sessionId = extractSessionId(req);
-			const resolvedContinuation = resolveContinuation(sessionId, body.messages, continuations);
+			const resolvedContinuation = isChatgptOAuth
+				? undefined
+				: resolveContinuation(sessionId, body.messages, continuations);
 			let continuation = resolvedContinuation;
 			const requestBody = buildResponsesRequest(body, model, continuation, buildOpts);
 			const upstreamUrl = `${baseUrl.replace(/\/$/, '')}/responses`;
