@@ -7,8 +7,8 @@
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import {
-	CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
 	QueryOptionsBuilder,
+	CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
 	buildProviderSettings,
 	type QueryOptionsBuilderContext,
 } from '../../../../src/lib/agent/query-options-builder';
@@ -168,10 +168,22 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('provider settings', () => {
-		it('should disable SDK auto-compaction for Codex bridge provider sessions', () => {
-			expect(buildProviderSettings('anthropic-codex')).toEqual({
+		it('should keep SDK auto-compaction disabled after validating Codex model metadata', () => {
+			expect(buildProviderSettings('anthropic-codex', 'gpt-5.5')).toEqual({
 				autoCompactWindow: CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
 			});
+		});
+
+		it('should resolve Codex aliases before applying SDK auto-compaction settings', () => {
+			expect(buildProviderSettings('anthropic-codex', 'codex-latest')).toEqual({
+				autoCompactWindow: CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
+			});
+		});
+
+		it('should fail explicitly when Codex model metadata is unknown', () => {
+			expect(() => buildProviderSettings('anthropic-codex', 'gpt-unknown')).toThrow(
+				'Unknown Codex model auto-compact window: gpt-unknown'
+			);
 		});
 
 		it('should not override SDK auto-compaction settings for other providers', () => {

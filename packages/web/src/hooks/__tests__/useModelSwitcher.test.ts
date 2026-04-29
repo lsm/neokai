@@ -1107,6 +1107,14 @@ describe('mapRawModelsToModelInfos', () => {
 		expect(result[0].contextWindow).toBe(272000);
 	});
 
+	it('does not invent a 200k context window when models.list omits metadata', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'gpt-5.5', display_name: 'GPT-5.5', description: '', provider: 'anthropic-codex' },
+		]);
+
+		expect(result[0].contextWindow).toBe(0);
+	});
+
 	it('sorts by PROVIDER_ORDER: anthropic before copilot before codex', () => {
 		const result = mapRawModelsToModelInfos([
 			{ id: 'codex-sonnet', display_name: 'Codex', description: '', provider: 'anthropic-codex' },
