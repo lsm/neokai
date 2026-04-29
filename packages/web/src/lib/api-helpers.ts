@@ -36,9 +36,6 @@ import type {
 	McpRegistryUpdateResponse,
 	McpRegistryDeleteResponse,
 	McpRegistrySetEnabledResponse,
-	McpRoomGetEnabledResponse,
-	McpRoomSetEnabledResponse,
-	McpRoomResetToGlobalResponse,
 	WorkspaceHistoryEntry,
 	WorkspaceHistoryResponse,
 	WorkspaceAddResponse,
@@ -283,34 +280,6 @@ export async function setAppMcpServerEnabled(
 		id,
 		enabled,
 	});
-}
-
-// ==================== Per-Room MCP Enablement Operations ====================
-
-/** Get MCP servers explicitly enabled for a room (returns IDs with per-room overrides) */
-export async function getRoomMcpEnabled(roomId: string): Promise<McpRoomGetEnabledResponse> {
-	const hub = getHubOrThrow();
-	return await hub.request<McpRoomGetEnabledResponse>('mcp.room.getEnabled', { roomId });
-}
-
-/** Enable or disable a specific MCP server for a room */
-export async function setRoomMcpEnabled(
-	roomId: string,
-	serverId: string,
-	enabled: boolean
-): Promise<McpRoomSetEnabledResponse> {
-	const hub = getHubOrThrow();
-	return await hub.request<McpRoomSetEnabledResponse>('mcp.room.setEnabled', {
-		roomId,
-		serverId,
-		enabled,
-	});
-}
-
-/** Reset room MCP settings to global defaults (removes all per-room overrides) */
-export async function resetRoomMcpToGlobal(roomId: string): Promise<McpRoomResetToGlobalResponse> {
-	const hub = getHubOrThrow();
-	return await hub.request<McpRoomResetToGlobalResponse>('mcp.room.resetToGlobal', { roomId });
 }
 
 // ==================== Workspace History Operations ====================

@@ -2,7 +2,6 @@ import { navSectionSignal, type NavSection } from '../lib/signals.ts';
 import {
 	navigateToSessions,
 	navigateToSettings,
-	navigateToRooms,
 	navigateToInbox,
 	navigateToSpaces,
 } from '../lib/router.ts';
@@ -22,9 +21,6 @@ export function NavRail() {
 		switch (section) {
 			case 'chats':
 				navigateToSessions();
-				break;
-			case 'rooms':
-				navigateToRooms();
 				break;
 			case 'inbox':
 				navigateToInbox();

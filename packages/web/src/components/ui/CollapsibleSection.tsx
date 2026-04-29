@@ -1,15 +1,3 @@
-/**
- * CollapsibleSection Component
- *
- * A reusable collapsible section with header, count badge, and expand/collapse toggle.
- * Used for Goals, Tasks, and Sessions sections in the RoomContextPanel sidebar.
- *
- * Note: This does not compose ui/Collapsible because that component renders a fixed
- * SVG chevron and applies border/animation styles unsuited to the compact sidebar layout.
- * This component uses conditional rendering (no height animation) and a triangle indicator
- * to match the sidebar's information-dense design.
- */
-
 import { useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 
@@ -21,7 +9,6 @@ export interface CollapsibleSectionProps {
 	children: ComponentChildren;
 }
 
-// @public - Library export
 export function CollapsibleSection({
 	title,
 	count,
