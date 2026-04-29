@@ -210,10 +210,17 @@ export type SessionStatus = 'active' | 'pending_worktree_choice' | 'paused' | 'e
  * - 'anthropic': Default Claude API provider
  * - 'glm': GLM (智谱AI) via Anthropic-compatible API
  * - 'minimax': MiniMax via Anthropic-compatible API
+ * - 'openrouter': OpenRouter Anthropic-compatible API gateway
  * - 'anthropic-copilot': GitHub Copilot backend via Anthropic-compatible embedded server
  * - 'anthropic-codex': Anthropic-compatible HTTP bridge backed by Codex app-server
  */
-export type Provider = 'anthropic' | 'glm' | 'minimax' | 'anthropic-copilot' | 'anthropic-codex';
+export type Provider =
+	| 'anthropic'
+	| 'glm'
+	| 'minimax'
+	| 'openrouter'
+	| 'anthropic-copilot'
+	| 'anthropic-codex';
 
 /**
  * Provider-specific configuration

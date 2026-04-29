@@ -48,6 +48,7 @@ export const MODEL_FAMILY_ICONS: Record<string, string> = {
 	haiku: '⚡',
 	glm: '🌐',
 	minimax: '🔥',
+	openrouter: '🧭',
 	gpt: '🔮',
 	gemini: '✨',
 	// Default icon for unknown families
@@ -66,8 +67,9 @@ export const PROVIDER_ORDER: Record<string, number> = {
 	anthropic: 0,
 	'anthropic-copilot': 1,
 	'anthropic-codex': 2,
-	glm: 3,
-	minimax: 4,
+	openrouter: 3,
+	glm: 4,
+	minimax: 5,
 };
 
 /** Model family sort order (exported for shared use) */
@@ -77,8 +79,9 @@ export const FAMILY_ORDER: Record<string, number> = {
 	haiku: 2,
 	glm: 3,
 	minimax: 4,
-	gpt: 5,
-	gemini: 6,
+	openrouter: 5,
+	gpt: 6,
+	gemini: 7,
 };
 
 /** Raw model shape returned by the `models.list` RPC */
@@ -111,10 +114,14 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
 			family = 'glm';
 		} else if (mid.startsWith('minimax-')) {
 			family = 'minimax';
-		} else if (mid.startsWith('gpt-')) {
+		} else if (mid === 'openrouter/auto') {
+			family = 'openrouter';
+		} else if (mid.startsWith('gpt-') || mid.includes('/gpt')) {
 			family = 'gpt';
-		} else if (mid.startsWith('gemini-')) {
+		} else if (mid.startsWith('gemini-') || mid.includes('/gemini')) {
 			family = 'gemini';
+		} else if (mid.includes('/')) {
+			family = 'openrouter';
 		}
 		return {
 			id: m.id,
@@ -166,6 +173,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
 	anthropic: 'Anthropic',
 	glm: 'GLM',
 	minimax: 'MiniMax',
+	openrouter: 'OpenRouter',
 	'anthropic-copilot': 'Copilot',
 	'anthropic-codex': 'Codex',
 	// Note: keep in sync with PROVIDER_ORDER above
