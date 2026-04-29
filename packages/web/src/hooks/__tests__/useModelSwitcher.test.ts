@@ -411,6 +411,12 @@ describe('useModelSwitcher', () => {
 								description: '',
 								provider: 'openrouter',
 							},
+							{
+								id: 'deepseek/deepseek-r1',
+								display_name: 'DeepSeek R1',
+								description: '',
+								provider: 'openrouter',
+							},
 						],
 					}),
 			};
@@ -427,10 +433,12 @@ describe('useModelSwitcher', () => {
 			const gemini = result.current.availableModels.find(
 				(m) => m.id === 'google/gemini-3-pro-preview'
 			);
+			const deepseek = result.current.availableModels.find((m) => m.id === 'deepseek/deepseek-r1');
 			expect(auto?.provider).toBe('openrouter');
 			expect(auto?.family).toBe('openrouter');
 			expect(gpt?.family).toBe('gpt');
 			expect(gemini?.family).toBe('gemini');
+			expect(deepseek?.family).toBe('openrouter');
 		});
 
 		it('should sort models by family order', async () => {

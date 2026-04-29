@@ -120,6 +120,8 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
 			family = 'gpt';
 		} else if (mid.startsWith('gemini-') || mid.includes('/gemini')) {
 			family = 'gemini';
+		} else if (mid.includes('/')) {
+			family = 'openrouter';
 		}
 		return {
 			id: m.id,

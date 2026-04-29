@@ -485,6 +485,7 @@ describe('inferProviderForModel', () => {
 		expect(inferProviderForModel('openrouter/auto')).toBe('openrouter');
 		expect(inferProviderForModel('anthropic/claude-sonnet-4.6')).toBe('openrouter');
 		expect(inferProviderForModel('openai/gpt-5.4')).toBe('openrouter');
+		expect(inferProviderForModel('deepseek/deepseek-r1')).toBe('openrouter');
 	});
 
 	it('maps gpt- prefix to anthropic-codex', () => {
@@ -495,6 +496,7 @@ describe('inferProviderForModel', () => {
 	it('defaults claude- models to anthropic', () => {
 		expect(inferProviderForModel('claude-sonnet-4-5-20250929')).toBe('anthropic');
 		expect(inferProviderForModel('claude-opus-4-6')).toBe('anthropic');
+		expect(inferProviderForModel('claude-sonnet-4.6/preview')).toBe('anthropic');
 	});
 
 	it('defaults unknown models to anthropic', () => {

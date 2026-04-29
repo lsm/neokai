@@ -264,7 +264,8 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
 	// Static fallback when registry is empty
 	if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
 	if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
-	if (modelId === 'openrouter/auto' || modelId.includes('/')) return 'openrouter';
+	if (modelId === 'openrouter/auto' || (modelId.includes('/') && !modelId.startsWith('claude-')))
+		return 'openrouter';
 	if (modelId.startsWith('gpt-')) return 'anthropic-codex';
 	return 'anthropic';
 }
