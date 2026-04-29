@@ -80,11 +80,15 @@ export class ContextFetcher {
 		const sdkRawCapacity = positiveInteger(response.rawMaxTokens);
 		const sdkCapacity = positiveInteger(response.maxTokens);
 		const responseModel = response.model || undefined;
+		const isCodexBridgeModel = modelMetadata?.provider === 'anthropic-codex';
 		const metadataCapacity =
 			!responseModel || modelMetadata?.id === responseModel
 				? positiveInteger(modelMetadata?.contextWindow)
 				: undefined;
-		const capacity = sdkRawCapacity ?? sdkCapacity ?? metadataCapacity ?? 0;
+		const capacity =
+			isCodexBridgeModel && metadataCapacity
+				? metadataCapacity
+				: (sdkRawCapacity ?? sdkCapacity ?? metadataCapacity ?? 0);
 		for (const category of response.categories ?? []) {
 			// Compute percent relative to capacity (SDK response doesn't carry it).
 			// Round to 1 decimal place to match the display the UI already expects.

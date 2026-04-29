@@ -166,6 +166,30 @@ describe('ContextFetcher.toContextInfo', () => {
 		expect(info.autoCompactThreshold).toBe(244800);
 	});
 
+	it('uses Codex model metadata when SDK reports the generic 200k capacity', () => {
+		const response = baseResponse({
+			totalTokens: 136000,
+			maxTokens: 200000,
+			rawMaxTokens: 200000,
+			percentage: 68,
+			model: 'gpt-5.5',
+			autoCompactThreshold: 180000,
+			isAutoCompactEnabled: true,
+			categories: [{ name: 'Messages', tokens: 136000, color: 'blue' }],
+		});
+
+		const info = ContextFetcher.toContextInfo(response, {
+			id: 'gpt-5.5',
+			provider: 'anthropic-codex',
+			contextWindow: 272000,
+		});
+
+		expect(info.totalCapacity).toBe(272000);
+		expect(info.percentUsed).toBe(50);
+		expect(info.breakdown.Messages).toEqual({ tokens: 136000, percent: 50 });
+		expect(info.autoCompactThreshold).toBe(244800);
+	});
+
 	it('prefers SDK capacity over session metadata for fallback model usage', () => {
 		const response = baseResponse({
 			totalTokens: 64000,
