@@ -125,9 +125,11 @@ function createMockAgentSession(overrides: Partial<AgentSession> = {}): {
 		getCurrentModel: ReturnType<typeof mock>;
 		handleModelSwitch: ReturnType<typeof mock>;
 		getQueryObject: ReturnType<typeof mock>;
+		isQueryActiveOrStarting: ReturnType<typeof mock>;
 		resetQuery: ReturnType<typeof mock>;
 		restart: ReturnType<typeof mock>;
 		handleQueryTrigger: ReturnType<typeof mock>;
+		replayPendingMessagesForImmediateMode: ReturnType<typeof mock>;
 		setMaxThinkingTokens: ReturnType<typeof mock>;
 		setPermissionMode: ReturnType<typeof mock>;
 		updateConfig: ReturnType<typeof mock>;
@@ -160,9 +162,11 @@ function createMockAgentSession(overrides: Partial<AgentSession> = {}): {
 		getCurrentModel: mock(() => ({ id: 'claude-sonnet-4-20250514' })),
 		handleModelSwitch: mock(async () => ({ success: true, model: 'claude-opus-4-6' })),
 		getQueryObject: mock(() => null),
+		isQueryActiveOrStarting: mock(() => false),
 		resetQuery: mock(async () => ({ success: true })),
 		restart: mock(async () => {}),
 		handleQueryTrigger: mock(async () => ({ triggered: true, count: 1 })),
+		replayPendingMessagesForImmediateMode: mock(async () => {}),
 		setMaxThinkingTokens: mock(async () => ({ success: true })),
 		setPermissionMode: mock(async () => ({ success: true })),
 		updateConfig: mock(async () => {}),
@@ -218,6 +222,8 @@ function createMockSessionManager(): {
 		markOutputRemoved: mock(async () => {}),
 		getDatabase: mock(() => ({
 			getMessageCountByStatus: mock(() => 0),
+			updateSession: mock(() => {}),
+			updateNeokaiActionMessageByUuid: mock(() => {}),
 		})),
 		getSessionLifecycle: mock(() => ({
 			completeWorktreeChoice: mock(async () => ({
@@ -1150,7 +1156,7 @@ describe('Session RPC Handlers', () => {
 
 			expect(result).toHaveProperty('success');
 			expect(result).toHaveProperty('coordinatorMode', true);
-			expect(mocks.getQueryObject).toHaveBeenCalled();
+			expect(mocks.isQueryActiveOrStarting).toHaveBeenCalled();
 			expect(mocks.resetQuery).not.toHaveBeenCalled();
 		});
 
@@ -1168,7 +1174,7 @@ describe('Session RPC Handlers', () => {
 			const result = await handler!({ sessionId: 'session-123', coordinatorMode: false }, {});
 
 			expect(result).toHaveProperty('success');
-			expect(mocks.getQueryObject).toHaveBeenCalled();
+			expect(mocks.isQueryActiveOrStarting).toHaveBeenCalled();
 			expect(mocks.resetQuery).not.toHaveBeenCalled();
 		});
 
@@ -1177,7 +1183,22 @@ describe('Session RPC Handlers', () => {
 			expect(handler).toBeDefined();
 
 			const { agentSession, mocks } = createMockAgentSession();
-			mocks.getQueryObject.mockReturnValue({ id: 'query-1' });
+			mocks.isQueryActiveOrStarting.mockReturnValue(true);
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			const result = await handler!({ sessionId: 'session-123', coordinatorMode: true }, {});
+
+			expect(result).toEqual({ success: true, coordinatorMode: true, error: undefined });
+			expect(mocks.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
+		});
+
+		it('resets coordinator query when startup is in flight before query object exists', async () => {
+			const handler = messageHubData.handlers.get('session.coordinator.switch');
+			expect(handler).toBeDefined();
+
+			const { agentSession, mocks } = createMockAgentSession();
+			mocks.getQueryObject.mockReturnValue(null);
+			mocks.isQueryActiveOrStarting.mockReturnValue(true);
 			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
 
 			const result = await handler!({ sessionId: 'session-123', coordinatorMode: true }, {});
@@ -1224,7 +1245,7 @@ describe('Session RPC Handlers', () => {
 
 			expect(result).toHaveProperty('success');
 			expect(result).toHaveProperty('sandboxEnabled', true);
-			expect(agentSession.getQueryObject).toHaveBeenCalled();
+			expect(agentSession.isQueryActiveOrStarting).toHaveBeenCalled();
 			expect(agentSession.resetQuery).not.toHaveBeenCalled();
 		});
 
@@ -1238,7 +1259,7 @@ describe('Session RPC Handlers', () => {
 			const result = await handler!({ sessionId: 'session-123', sandboxEnabled: false }, {});
 
 			expect(result).toHaveProperty('success');
-			expect(mocks.getQueryObject).toHaveBeenCalled();
+			expect(mocks.isQueryActiveOrStarting).toHaveBeenCalled();
 			expect(mocks.resetQuery).not.toHaveBeenCalled();
 		});
 
@@ -1247,7 +1268,22 @@ describe('Session RPC Handlers', () => {
 			expect(handler).toBeDefined();
 
 			const { agentSession, mocks } = createMockAgentSession();
-			mocks.getQueryObject.mockReturnValue({ id: 'query-1' });
+			mocks.isQueryActiveOrStarting.mockReturnValue(true);
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			const result = await handler!({ sessionId: 'session-123', sandboxEnabled: false }, {});
+
+			expect(result).toEqual({ success: true, sandboxEnabled: false, error: undefined });
+			expect(mocks.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
+		});
+
+		it('resets sandbox query when startup is in flight before query object exists', async () => {
+			const handler = messageHubData.handlers.get('session.sandbox.switch');
+			expect(handler).toBeDefined();
+
+			const { agentSession, mocks } = createMockAgentSession();
+			mocks.getQueryObject.mockReturnValue(null);
+			mocks.isQueryActiveOrStarting.mockReturnValue(true);
 			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
 
 			const result = await handler!({ sessionId: 'session-123', sandboxEnabled: false }, {});
@@ -1581,6 +1617,55 @@ describe('Session RPC Handlers', () => {
 			await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
 				'Session not found'
 			);
+		});
+	});
+
+	describe('session.sdkResumeChoice', () => {
+		it('restarts and replays persisted enqueued messages after a resume choice', async () => {
+			const handler = messageHubData.handlers.get('session.sdkResumeChoice');
+			expect(handler).toBeDefined();
+
+			const { agentSession, mocks } = createMockAgentSession();
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			const result = await handler!(
+				{
+					sessionId: 'session-123',
+					choice: 'leave_as_is',
+					messageUuid: 'action-message-1',
+				},
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			expect(mocks.restart).toHaveBeenCalled();
+			expect(mocks.replayPendingMessagesForImmediateMode).toHaveBeenCalled();
+		});
+
+		it('does not auto-replay deferred manual-mode messages after a resume choice', async () => {
+			const handler = messageHubData.handlers.get('session.sdkResumeChoice');
+			expect(handler).toBeDefined();
+
+			const { agentSession, mocks } = createMockAgentSession({
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					provider: 'anthropic',
+					queryMode: 'manual',
+				},
+			} as Partial<AgentSession>);
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			await handler!(
+				{
+					sessionId: 'session-123',
+					choice: 'leave_as_is',
+					messageUuid: 'action-message-1',
+				},
+				{}
+			);
+
+			expect(mocks.restart).toHaveBeenCalled();
+			expect(mocks.replayPendingMessagesForImmediateMode).not.toHaveBeenCalled();
 		});
 	});
 

@@ -33,6 +33,7 @@ import { isValidModel, resolveModelAlias, getModelInfo } from '../model-service'
 import { getProviderRegistry } from '../providers/factory.js';
 import { stripThinkingBlocksFromSessionFile } from '../sdk-session-file-manager';
 import type { ContextTracker } from './context-tracker';
+import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 
@@ -53,6 +54,8 @@ export interface ModelSwitchHandlerContext {
 
 	// SDK state
 	readonly queryObject: Query | null;
+	readonly queryPromise: Promise<void> | null;
+	readonly messageQueue: MessageQueue;
 }
 
 /**
@@ -118,6 +121,12 @@ export class ModelSwitchHandler {
 		};
 	}
 
+	private isQueryActiveOrStarting(): boolean {
+		return Boolean(
+			this.ctx.queryObject || this.ctx.queryPromise || this.ctx.messageQueue.isRunning()
+		);
+	}
+
 	/**
 	 * Switch to a different model mid-session.
 	 *
@@ -139,7 +148,6 @@ export class ModelSwitchHandler {
 			errorManager,
 			logger,
 			lifecycleManager,
-			queryObject,
 		} = this.ctx;
 
 		try {
@@ -214,7 +222,7 @@ export class ModelSwitchHandler {
 				return { success: false, model: session.config.model, error: errMsg };
 			}
 
-			if (!queryObject) {
+			if (!this.isQueryActiveOrStarting()) {
 				// Query hasn't been created yet OR query was already completed/interrupted.
 				// Persist the new model/provider only. The next user message will start a
 				// fresh SDK query with this config; starting an empty query here creates a

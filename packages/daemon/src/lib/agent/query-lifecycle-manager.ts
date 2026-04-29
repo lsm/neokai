@@ -37,6 +37,8 @@ import {
 const DEFAULT_TERMINATION_TIMEOUT_MS = 5000;
 const RESET_TERMINATION_TIMEOUT_MS = 3000;
 
+export type EnsureQueryStartedResult = 'started' | 'already-running' | 'blocked';
+
 /**
  * Context interface - what QueryLifecycleManager needs from AgentSession
  * Using interface instead of importing AgentSession to avoid circular deps
@@ -506,7 +508,7 @@ export class QueryLifecycleManager {
 	 * query ended (race between SDK query completion and finally block cleanup).
 	 * In this case, force-stop the queue and restart.
 	 */
-	async ensureQueryStarted(): Promise<void> {
+	async ensureQueryStarted(): Promise<EnsureQueryStartedResult> {
 		const { session, messageQueue, interruptHandler } = this.ctx;
 
 		// Wait for any pending interrupt
@@ -541,7 +543,7 @@ export class QueryLifecycleManager {
 				this.logger.debug(
 					`ensureQueryStarted: session ${session.id} already running, skipping start`
 				);
-				return;
+				return 'already-running';
 			}
 		} else {
 			this.logger.debug(`ensureQueryStarted: session ${session.id} not running, starting query`);
@@ -559,7 +561,7 @@ export class QueryLifecycleManager {
 						'Emitting sdk_resume_choice action message for user.'
 				);
 				await this.emitSdkResumeChoiceMessage();
-				return;
+				return 'blocked';
 			}
 		}
 
@@ -568,6 +570,7 @@ export class QueryLifecycleManager {
 		await this.ctx.clearModelsCache();
 
 		await this.ctx.startStreamingQuery();
+		return 'started';
 	}
 
 	/**
@@ -582,7 +585,15 @@ export class QueryLifecycleManager {
 	): Promise<void> {
 		const { session, messageQueue, stateManager, daemonHub } = this.ctx;
 
-		await this.ensureQueryStarted();
+		const queryStartResult = await this.ensureQueryStarted();
+		if (queryStartResult === 'blocked') {
+			await stateManager.setQueued(messageId);
+			this.logger.debug(
+				`startQueryAndEnqueue: session ${session.id} is blocked on sdk_resume_choice; ` +
+					`leaving message ${messageId} persisted as enqueued for replay after the choice.`
+			);
+			return;
+		}
 		if (!messageQueue.isRunning() || !this.ctx.queryPromise) {
 			throw new Error('Agent query did not start; message remains queued for retry.');
 		}

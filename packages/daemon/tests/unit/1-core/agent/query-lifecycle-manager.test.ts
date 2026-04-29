@@ -864,6 +864,28 @@ describe('QueryLifecycleManager', () => {
 			expect(enqueueSpy).toHaveBeenCalledWith('msg-123', content);
 		});
 
+		test('keeps message queued when SDK resume choice blocks query startup', async () => {
+			const tmpTestDir = mkdtempSync(join(tmpdir(), 'kai-test-'));
+			try {
+				process.env.TEST_SDK_SESSION_DIR = tmpTestDir;
+				mockContext = createMockContext();
+				mockContext.session.sdkSessionId = 'missing-sdk-session';
+				manager = new QueryLifecycleManager(mockContext);
+				const enqueueSpy = spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-123');
+
+				await expect(manager.startQueryAndEnqueue('msg-123', 'Hello')).resolves.toBeUndefined();
+
+				expect(startStreamingCalled).toBe(false);
+				expect(saveNeokaiActionMessageSpy).toHaveBeenCalled();
+				expect(setQueuedSpy).toHaveBeenCalledWith('msg-123');
+				expect(enqueueSpy).not.toHaveBeenCalled();
+				expect(emitSpy).not.toHaveBeenCalledWith('message.sent', { sessionId: 'test-session' });
+			} finally {
+				delete process.env.TEST_SDK_SESSION_DIR;
+				rmSync(tmpTestDir, { recursive: true, force: true });
+			}
+		});
+
 		test('ignores interrupted by user error', async () => {
 			const interruptedError = new Error('Interrupted by user');
 			spyOn(messageQueue, 'enqueueWithId').mockRejectedValue(interruptedError);

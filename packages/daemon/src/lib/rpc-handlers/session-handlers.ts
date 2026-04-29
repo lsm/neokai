@@ -606,7 +606,7 @@ export function setupSessionHandlers(
 
 		// Restart only when a query is already live. For pre-turn sessions, the
 		// next user message starts a fresh query with the updated config.
-		const result = agentSession.getQueryObject()
+		const result = agentSession.isQueryActiveOrStarting()
 			? await agentSession.resetQuery({ restartQuery: true })
 			: { success: true as const };
 
@@ -652,7 +652,7 @@ export function setupSessionHandlers(
 
 		// Restart only when a query is already live. For pre-turn sessions, the
 		// next user message starts a fresh query with the updated sandbox config.
-		const result = agentSession.getQueryObject()
+		const result = agentSession.isQueryActiveOrStarting()
 			? await agentSession.resetQuery({ restartQuery: true })
 			: { success: true as const };
 
@@ -1073,6 +1073,9 @@ export function setupSessionHandlers(
 		// Now start (or restart) the query so the user's pending message is processed.
 		try {
 			await agentSession.restart();
+			if (agentSession.getSessionData().config.queryMode !== 'manual') {
+				await agentSession.replayPendingMessagesForImmediateMode();
+			}
 		} catch (err) {
 			log.warn(`session.sdkResumeChoice: restart after choice failed: ${err}`);
 		}

@@ -18,6 +18,7 @@ import type { Database } from '../../../../src/storage/database';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
+import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { Logger } from '../../../../src/lib/logger';
@@ -226,6 +227,8 @@ describe('ModelSwitchHandler', () => {
 			logger: mockLogger,
 			lifecycleManager: mockLifecycleManager,
 			queryObject: { setModel: setModelSpy } as unknown as Query,
+			queryPromise: null,
+			messageQueue: { isRunning: mock(() => false) } as unknown as MessageQueue,
 			firstMessageReceived: true,
 			...overrides,
 		};
@@ -404,6 +407,20 @@ describe('ModelSwitchHandler', () => {
 				expect(result.success).toBe(true);
 				expect(updateSessionSpy).toHaveBeenCalled();
 				expect(restartSpy).not.toHaveBeenCalled();
+			});
+
+			it('should restart when query startup is in flight before queryObject exists', async () => {
+				handler = createHandler({
+					queryObject: null,
+					queryPromise: new Promise(() => {}),
+					firstMessageReceived: false,
+				});
+
+				const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+				expect(result.success).toBe(true);
+				expect(updateSessionSpy).toHaveBeenCalled();
+				expect(restartSpy).toHaveBeenCalled();
 			});
 		});
 
