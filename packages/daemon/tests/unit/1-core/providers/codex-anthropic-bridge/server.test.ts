@@ -1737,6 +1737,106 @@ describe('tool_choice warning — codex bridge', () => {
 		expect(startTurnSpy).toHaveBeenCalledTimes(2);
 	});
 
+	it('does not reset a healthy persistent session for a duplicate unmatched tool continuation', async () => {
+		let turn = 0;
+		startTurnSpy.mockImplementation(
+			// eslint-disable-next-line @typescript-eslint/require-await
+			async function* (): AsyncGenerator<BridgeEvent> {
+				turn++;
+				if (turn === 1) {
+					yield {
+						type: 'tool_call',
+						callId: 'call_consumed',
+						toolName: 'test_tool',
+						toolInput: { value: true },
+						provideResult: () => {},
+					};
+					yield { type: 'turn_done', inputTokens: 1, outputTokens: 1 };
+					return;
+				}
+				yield { type: 'turn_done', inputTokens: 1, outputTokens: 1 };
+			}
+		);
+
+		const headers = {
+			'Content-Type': 'application/json',
+			Authorization: 'Bearer codex-bridge-duplicate-tool-result',
+		};
+		const continuationBody = {
+			model: 'codex-1',
+			messages: [
+				{
+					role: 'assistant',
+					content: [
+						{
+							type: 'tool_use',
+							id: 'call_consumed',
+							name: 'test_tool',
+							input: { value: true },
+						},
+					],
+				},
+				{
+					role: 'user',
+					content: [
+						{
+							type: 'tool_result',
+							tool_use_id: 'call_consumed',
+							content: 'tool output',
+						},
+					],
+				},
+			],
+			stream: true,
+		};
+
+		const firstResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'call a tool' }],
+				tools: [{ name: 'test_tool', input_schema: { type: 'object' } }],
+				stream: true,
+			}),
+		});
+		expect(firstResp.ok).toBe(true);
+		await readSSEEvents(firstResp.body);
+
+		const continuationResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify(continuationBody),
+		});
+		expect(continuationResp.ok).toBe(true);
+		await readSSEEvents(continuationResp.body);
+		expect(connCreateSpy).toHaveBeenCalledTimes(1);
+
+		const duplicateResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify(continuationBody),
+		});
+		expect(duplicateResp.status).toBe(409);
+		expect(connCreateSpy).toHaveBeenCalledTimes(1);
+
+		const nextResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'continue on same session' }],
+				tools: [{ name: 'test_tool', input_schema: { type: 'object' } }],
+				stream: true,
+			}),
+		});
+
+		expect(nextResp.ok).toBe(true);
+		await readSSEEvents(nextResp.body);
+		expect(connCreateSpy).toHaveBeenCalledTimes(1);
+		expect(startTurnSpy).toHaveBeenCalledTimes(2);
+	});
+
 	it('retries a new turn once when the subprocess crashes before output', async () => {
 		const warnSpy = spyOn(Logger.prototype, 'warn');
 		let attempt = 0;

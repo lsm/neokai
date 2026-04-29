@@ -17,6 +17,7 @@ export type { AppServerAuth } from './process-manager.js';
 import {
 	type AnthropicRequest,
 	type AnthropicErrorType,
+	type ToolResult,
 	buildDynamicTools,
 	buildConversationText,
 	extractSystemText,
@@ -224,6 +225,8 @@ type PersistentSession = {
 	isFirstTurn: boolean;
 	/** True while a turn is in progress — prevents concurrent turns on same session. */
 	turnInProgress: boolean;
+	/** Tool call IDs this persistent session is currently suspended on. */
+	suspendedToolCallIds: Set<string>;
 	/** Idle TTL timer — fires when no activity for IDLE_SESSION_TTL_MS. */
 	idleTimer?: ReturnType<typeof setTimeout>;
 };
@@ -475,15 +478,27 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 		return timer;
 	}
 
-	/** Retire a persistent session after its suspended tool call can no longer resume. */
+	/** Retire a persistent session after its own suspended tool call can no longer resume. */
 	function cleanupPersistentSession(sessionId: string, reason: string): void {
 		const ps = persistentSessions.get(sessionId);
 		if (!ps) return;
 		logger.warn(`codex-bridge: cleaning up persistent session ${sessionId}: ${reason}`);
 		ps.turnInProgress = false;
+		ps.suspendedToolCallIds.clear();
 		clearTimeout(ps.idleTimer);
 		ps.session.kill();
 		persistentSessions.delete(sessionId);
+	}
+
+	function shouldCleanupOrphanedContinuation(
+		sessionId: string,
+		toolResults: ToolResult[]
+	): boolean {
+		const ps = persistentSessions.get(sessionId);
+		if (!ps?.turnInProgress || ps.suspendedToolCallIds.size === 0) {
+			return false;
+		}
+		return toolResults.some((tr) => ps.suspendedToolCallIds.has(tr.toolUseId));
 	}
 
 	const server = Bun.serve({
@@ -612,7 +627,9 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 						`codex-bridge: no active sessions found for any tool_use_id in this continuation`
 					);
 					const sessionId = extractSessionId(req);
-					cleanupPersistentSession(sessionId, 'orphaned tool_result continuation');
+					if (shouldCleanupOrphanedContinuation(sessionId, toolResults)) {
+						cleanupPersistentSession(sessionId, 'orphaned tool_result continuation');
+					}
 					return createAnthropicError(
 						409,
 						'api_error',
@@ -721,6 +738,7 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 					toolsKey: currentToolsKey,
 					isFirstTurn: true,
 					turnInProgress: false,
+					suspendedToolCallIds: new Set(),
 					idleTimer: undefined,
 				};
 				persistentSessions.set(neokaiSessionId, ps);
@@ -748,11 +766,13 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			const capturedSessionId = neokaiSessionId;
 			const onTurnDone = () => {
 				capturedPs.turnInProgress = false;
+				capturedPs.suspendedToolCallIds.clear();
 				capturedPs.idleTimer = scheduleIdle(capturedSessionId);
 			};
 			const onError = () => {
 				// Error: clean up persistent session
 				capturedPs.turnInProgress = false;
+				capturedPs.suspendedToolCallIds.clear();
 				clearTimeout(capturedPs.idleTimer);
 				capturedPs.session.kill();
 				persistentSessions.delete(capturedSessionId);
@@ -798,6 +818,9 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 							);
 
 							if (result.type === 'completed' || result.type === 'tool_call_suspended') {
+								if (result.type === 'tool_call_suspended') {
+									capturedPs.suspendedToolCallIds.add(result.callId);
+								}
 								return;
 							}
 
