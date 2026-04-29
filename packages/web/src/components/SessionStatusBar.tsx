@@ -212,7 +212,7 @@ export default function SessionStatusBar({
 	currentAction,
 	streamingPhase,
 	contextUsage,
-	maxContextTokens = 200000,
+	maxContextTokens,
 	features = DEFAULT_WORKER_FEATURES,
 	currentModel: _currentModel,
 	currentModelInfo,

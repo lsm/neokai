@@ -53,23 +53,30 @@ import {
 	getSDKSessionFilePath,
 	messageUuidExistsInSessionFile,
 } from '../sdk-session-file-manager';
+import { requireModelContextWindow } from '../providers/codex-anthropic-bridge/model-context-windows';
 
 export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
 
 /**
  * Provider-specific SDK settings overrides.
  */
-export function buildProviderSettings(providerId: string): Options['settings'] {
+export function buildProviderSettings(providerId: string, modelId?: string): Options['settings'] {
 	if (providerId !== 'anthropic-codex') {
 		return undefined;
 	}
 
-	// The Claude Agent SDK can auto-compact by starting a second /v1/messages
-	// request while the original turn is still streaming. The Codex bridge
-	// fronts one Codex subprocess per session and intentionally rejects that
-	// concurrent turn with 409, so raise the SDK threshold above every Codex
-	// bridge context window and let Codex manage its own context.
+	if (!modelId) {
+		throw new Error(`Unknown Codex model auto-compact window: ${modelId ?? 'missing model'}`);
+	}
+	try {
+		requireModelContextWindow(modelId);
+	} catch {
+		throw new Error(`Unknown Codex model auto-compact window: ${modelId}`);
+	}
+
 	return {
+		// Keep SDK-driven compaction disabled for the Codex bridge. The bridge uses
+		// a single persistent Codex turn per session and rejects overlapping turns.
 		autoCompactWindow: CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
 	};
 }
@@ -273,7 +280,7 @@ export class QueryOptionsBuilder {
 			// or other settings from on-disk files. NeoKai is the sole arbiter of
 			// what reaches the SDK. See M5 of `unify-mcp-config-model`.
 			settingSources: [],
-			settings: buildProviderSettings(providerId),
+			settings: buildProviderSettings(providerId, config.model),
 
 			// ============ Streaming ============
 			includePartialMessages: config.includePartialMessages,
