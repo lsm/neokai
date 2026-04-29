@@ -65,11 +65,22 @@ function writeCodexAuth(
 	dir: string,
 	data: {
 		OPENAI_API_KEY?: string | null;
-		tokens?: { access_token?: string; refresh_token?: string; account_id?: string };
+		tokens?: {
+			access_token?: string;
+			refresh_token?: string;
+			account_id?: string;
+			id_token?: string | Record<string, unknown>;
+		};
 	}
 ): void {
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(path.join(dir, 'auth.json'), JSON.stringify(data), { mode: 0o600 });
+}
+
+function makeJwt(payload: Record<string, unknown>): string {
+	const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+	const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+	return `${header}.${body}.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -446,6 +457,65 @@ describe('AnthropicToCodexBridgeProvider', () => {
 				expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 				p.stopAllBridgeServers();
 			} finally {
+				rmSync(tmpDir, { recursive: true, force: true });
+			}
+		});
+
+		it('passes FedRAMP OAuth routing through the Responses bridge auth', async () => {
+			const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'neokai-build-cfg-fedramp-'));
+			const originalFetch = globalThis.fetch;
+			let fetchSpy: ReturnType<typeof spyOn> | undefined;
+			try {
+				const accessToken = makeJwt({
+					'https://api.openai.com/auth': {
+						chatgpt_account_id: 'acct_fed',
+						chatgpt_plan_type: 'enterprise',
+						is_fedramp_account: true,
+					},
+				});
+				const neokaiDir = path.join(tmpDir, 'neokai');
+				writeNeokaiAuth(neokaiDir, {
+					type: 'oauth',
+					access: accessToken,
+					refresh: 'oauth-refresh-token',
+				});
+				const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'), fakeCodexFound);
+				await p.getApiKey();
+
+				let capturedHeaders: Headers | undefined;
+				fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(
+					(input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+						const url = String(input);
+						if (url.startsWith('http://127.0.0.1:')) {
+							return originalFetch(input, init);
+						}
+						capturedHeaders = new Headers(init?.headers);
+						return Promise.resolve(
+							new Response(
+								'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":0},"output":[]}}\n\n',
+								{ headers: { 'Content-Type': 'text/event-stream' } }
+							)
+						);
+					}
+				);
+				const cfg = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/fedramp-ws' });
+
+				const resp = await originalFetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						model: 'gpt-5.3-codex',
+						max_tokens: 128,
+						messages: [{ role: 'user', content: 'hi' }],
+					}),
+				});
+				await resp.text();
+
+				expect(capturedHeaders?.get('chatgpt-account-id')).toBe('acct_fed');
+				expect(capturedHeaders?.get('x-openai-fedramp')).toBe('true');
+				p.stopAllBridgeServers();
+			} finally {
+				fetchSpy?.mockRestore();
 				rmSync(tmpDir, { recursive: true, force: true });
 			}
 		});

@@ -292,32 +292,33 @@ describe('openai-responses-bridge server', () => {
 		});
 		await readSSEEvents(first.body);
 
+		const continuationBody = JSON.stringify({
+			model: 'gpt-5.3-codex',
+			max_tokens: 128,
+			messages: [
+				{ role: 'user', content: 'Use the tool.' },
+				{
+					role: 'assistant',
+					content: [
+						{
+							type: 'tool_use',
+							id: 'call_abc',
+							name: 'lookup',
+							input: { q: 'weather' },
+						},
+					],
+				},
+				{
+					role: 'user',
+					content: [{ type: 'tool_result', tool_use_id: 'call_abc', content: 'found' }],
+				},
+			],
+			tools: [{ name: 'lookup', input_schema: { type: 'object' } }],
+		});
 		const second = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				model: 'gpt-5.3-codex',
-				max_tokens: 128,
-				messages: [
-					{ role: 'user', content: 'Use the tool.' },
-					{
-						role: 'assistant',
-						content: [
-							{
-								type: 'tool_use',
-								id: 'call_abc',
-								name: 'lookup',
-								input: { q: 'weather' },
-							},
-						],
-					},
-					{
-						role: 'user',
-						content: [{ type: 'tool_result', tool_use_id: 'call_abc', content: 'found' }],
-					},
-				],
-				tools: [{ name: 'lookup', input_schema: { type: 'object' } }],
-			}),
+			body: continuationBody,
 		});
 		const events = await readSSEEvents(second.body);
 
@@ -328,13 +329,154 @@ describe('openai-responses-bridge server', () => {
 			previous_response_id: 'resp_tool',
 			input: [{ type: 'function_call_output', call_id: 'call_abc', output: 'found' }],
 		});
+
+		const third = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: continuationBody,
+		});
+		await readSSEEvents(third.body);
+
+		expect(capturedBodies[2]?.previous_response_id).toBeUndefined();
+	});
+
+	it('evicts stale tool_result continuations after the TTL', async () => {
+		const capturedBodies: Record<string, unknown>[] = [];
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			continuationTtlMs: 10,
+			fetchImpl: async (_url, init) => {
+				capturedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+				if (capturedBodies.length === 1) {
+					return sse([
+						{
+							event: 'response.function_call_arguments.done',
+							data: {
+								type: 'response.function_call_arguments.done',
+								call_id: 'call_expired',
+								name: 'lookup',
+								arguments: '{}',
+							},
+						},
+						{
+							event: 'response.completed',
+							data: {
+								type: 'response.completed',
+								response: {
+									id: 'resp_expired',
+									usage: { input_tokens: 10, output_tokens: 4 },
+									output: [],
+								},
+							},
+						},
+					]);
+				}
+				return sse([
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: {
+								id: 'resp_done',
+								usage: { input_tokens: 2, output_tokens: 0 },
+								output: [],
+							},
+						},
+					},
+				]);
+			},
+		});
+
+		const first = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'Use the tool.' }],
+				tools: [{ name: 'lookup', input_schema: { type: 'object' } }],
+			}),
+		});
+		await readSSEEvents(first.body);
+		await new Promise((resolve) => setTimeout(resolve, 25));
+
+		const second = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [
+					{ role: 'user', content: 'Use the tool.' },
+					{
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: 'call_expired', name: 'lookup', input: {} }],
+					},
+					{
+						role: 'user',
+						content: [{ type: 'tool_result', tool_use_id: 'call_expired', content: 'found' }],
+					},
+				],
+				tools: [{ name: 'lookup', input_schema: { type: 'object' } }],
+			}),
+		});
+		await readSSEEvents(second.body);
+
+		expect(capturedBodies[1]?.previous_response_id).toBeUndefined();
+		const fallbackInput = capturedBodies[1]?.input as Array<Record<string, unknown>>;
+		expect(fallbackInput.some((item) => item.type === 'function_call')).toBe(true);
+		expect(fallbackInput.some((item) => item.type === 'function_call_output')).toBe(true);
+	});
+
+	it('maps OpenAI incomplete responses to Anthropic max_tokens stop reason', async () => {
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async () =>
+				sse([
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: 'partial' },
+					},
+					{
+						event: 'response.incomplete',
+						data: {
+							type: 'response.incomplete',
+							response: { usage: { input_tokens: 3, output_tokens: 1 } },
+						},
+					},
+				]),
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 1,
+				messages: [{ role: 'user', content: 'Say something.' }],
+			}),
+		});
+
+		const events = await readSSEEvents(resp.body);
+		expect(textDeltaEvents(events).join('')).toBe('partial');
+		expect(events.at(-2)?.data).toMatchObject({
+			type: 'message_delta',
+			delta: { stop_reason: 'max_tokens' },
+		});
 	});
 
 	it('uses Codex ChatGPT OAuth endpoint and account header for OAuth auth', async () => {
 		let capturedUrl = '';
 		let capturedHeaders: Headers | undefined;
 		server = createOpenAIResponsesBridgeServer({
-			auth: { source: 'chatgpt_oauth', apiKey: 'oauth-token', accountId: 'acct_123' },
+			auth: {
+				source: 'chatgpt_oauth',
+				apiKey: 'oauth-token',
+				accountId: 'acct_123',
+				isFedrampAccount: true,
+			},
 			models,
 			fetchImpl: async (url, init) => {
 				capturedUrl = String(url);
@@ -364,6 +506,7 @@ describe('openai-responses-bridge server', () => {
 		expect(capturedUrl).toBe('https://chatgpt.com/backend-api/codex/responses');
 		expect(capturedHeaders?.get('authorization')).toBe('Bearer oauth-token');
 		expect(capturedHeaders?.get('chatgpt-account-id')).toBe('acct_123');
+		expect(capturedHeaders?.get('x-openai-fedramp')).toBe('true');
 	});
 
 	it('refreshes ChatGPT OAuth auth once after an upstream 401', async () => {

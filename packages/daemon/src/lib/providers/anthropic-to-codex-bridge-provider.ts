@@ -87,6 +87,7 @@ interface StoredCredentials {
 	expires?: number; // Unix timestamp in ms
 	accountId?: string;
 	planType?: string;
+	isFedrampAccount?: boolean;
 }
 
 /** Raw OAuth token response from auth.openai.com. */
@@ -143,6 +144,7 @@ interface CodexAuthFile {
 		access_token?: string;
 		refresh_token?: string;
 		account_id?: string;
+		id_token?: string | Record<string, unknown>;
 	};
 	last_refresh?: string;
 }
@@ -348,6 +350,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			accessToken: credentials.access,
 			chatgptAccountId,
 			chatgptPlanType: credentials.planType ?? this.extractPlanType(credentials.access),
+			isFedrampAccount:
+				credentials.isFedrampAccount ?? this.extractIsFedrampAccount(credentials.access),
 			refreshAuthTokens: async () => {
 				const refreshed = await this.refreshStoredOauthCredentials();
 				if (!refreshed?.access) return null;
@@ -357,6 +361,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 					accessToken: refreshed.access,
 					chatgptAccountId: refreshedAccountId,
 					chatgptPlanType: refreshed.planType ?? this.extractPlanType(refreshed.access),
+					isFedrampAccount:
+						refreshed.isFedrampAccount ?? this.extractIsFedrampAccount(refreshed.access),
 				};
 			},
 		};
@@ -386,6 +392,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			source: 'chatgpt_oauth',
 			apiKey: auth.accessToken,
 			accountId: auth.chatgptAccountId,
+			isFedrampAccount: auth.isFedrampAccount,
 			refreshAuthTokens: auth.refreshAuthTokens
 				? async () => {
 						const refreshed = await auth.refreshAuthTokens?.();
@@ -393,6 +400,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 						return {
 							accessToken: refreshed.accessToken,
 							accountId: refreshed.chatgptAccountId,
+							isFedrampAccount: refreshed.isFedrampAccount,
 						};
 					}
 				: undefined,
@@ -436,6 +444,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			expires: Date.now() + tokens.expires_in * 1000,
 			accountId: this.extractAccountId(tokens.access_token) ?? credentials.accountId,
 			planType: this.extractPlanType(tokens.access_token) ?? credentials.planType,
+			isFedrampAccount:
+				this.extractIsFedrampAccount(tokens.id_token ?? tokens.access_token) ??
+				credentials.isFedrampAccount,
 		};
 
 		await this.saveCredentials(newCreds);
@@ -719,6 +730,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 							expires: Date.now() + tokens.expires_in * 1000,
 							accountId: this.extractAccountId(tokens.access_token),
 							planType: this.extractPlanType(tokens.access_token),
+							isFedrampAccount: this.extractIsFedrampAccount(
+								tokens.id_token ?? tokens.access_token
+							),
 						};
 						return this.saveCredentials(credentials).then(() => {
 							this.cachedCredentials = credentials;
@@ -924,6 +938,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			expires,
 			accountId: this.extractAccountId(accessToken) ?? codexData.tokens.account_id,
 			planType: this.extractPlanType(accessToken),
+			isFedrampAccount:
+				this.extractIsFedrampAccount(codexData.tokens.id_token) ??
+				this.extractIsFedrampAccount(accessToken),
 		};
 		await this.saveCredentials(creds);
 		this.cachedCredentials = creds;
@@ -983,5 +1000,37 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		if (!payload) return undefined;
 		const auth = payload['https://api.openai.com/auth'] as Record<string, string> | undefined;
 		return auth?.chatgpt_plan_type;
+	}
+
+	private booleanClaim(value: unknown): boolean | undefined {
+		if (typeof value === 'boolean') return value;
+		if (typeof value !== 'string') return undefined;
+		const normalized = value.trim().toLowerCase();
+		if (normalized === 'true') return true;
+		if (normalized === 'false') return false;
+		return undefined;
+	}
+
+	private extractIsFedrampAccount(
+		tokenOrPayload: string | Record<string, unknown> | undefined
+	): boolean | undefined {
+		const payload =
+			typeof tokenOrPayload === 'string' ? this.parseTokenPayload(tokenOrPayload) : tokenOrPayload;
+		if (!payload) return undefined;
+
+		const auth = payload['https://api.openai.com/auth'];
+		const authRecord =
+			auth && typeof auth === 'object' && !Array.isArray(auth)
+				? (auth as Record<string, unknown>)
+				: undefined;
+
+		return (
+			this.booleanClaim(authRecord?.is_fedramp_account) ??
+			this.booleanClaim(authRecord?.isFedrampAccount) ??
+			this.booleanClaim(authRecord?.fedramp) ??
+			this.booleanClaim(payload.is_fedramp_account) ??
+			this.booleanClaim(payload.isFedrampAccount) ??
+			this.booleanClaim(payload.fedramp)
+		);
 	}
 }

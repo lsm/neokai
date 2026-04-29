@@ -33,6 +33,7 @@ const logger = new Logger('openai-responses-bridge-server');
 
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_CHATGPT_CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex';
+const DEFAULT_RESPONSE_CONTINUATION_TTL_MS = 5 * 60 * 1000;
 
 export type OpenAIResponsesBridgeAuth = {
 	apiKey: string;
@@ -64,6 +65,7 @@ export type OpenAIResponsesBridgeConfig = {
 	models: OpenAIResponsesBridgeModel[];
 	modelAliases?: Record<string, string>;
 	openAIBaseUrl?: string;
+	continuationTtlMs?: number;
 	fetchImpl?: typeof fetch;
 };
 
@@ -129,6 +131,7 @@ type ResolvedResponsesAuth = {
 
 type ResponseContinuation = {
 	responseId: string;
+	cleanupTimer: ReturnType<typeof setTimeout>;
 };
 
 function generateMsgId(): string {
@@ -252,15 +255,17 @@ function latestToolResultItems(messages: AnthropicRequest['messages']): Response
 function resolveContinuation(
 	messages: AnthropicRequest['messages'],
 	continuations: Map<string, ResponseContinuation>
-): { previousResponseId: string; input: ResponsesInputItem[] } | undefined {
+): { previousResponseId: string; input: ResponsesInputItem[]; callIds: string[] } | undefined {
 	const input = latestToolResultItems(messages);
 	if (input.length === 0) return undefined;
 
 	let previousResponseId: string | undefined;
+	const callIds: string[] = [];
 	for (const item of input) {
 		if (item.type !== 'function_call_output') continue;
 		const continuation = continuations.get(item.call_id);
 		if (!continuation) return undefined;
+		callIds.push(item.call_id);
 		if (!previousResponseId) {
 			previousResponseId = continuation.responseId;
 			continue;
@@ -268,7 +273,7 @@ function resolveContinuation(
 		if (previousResponseId !== continuation.responseId) return undefined;
 	}
 
-	return previousResponseId ? { previousResponseId, input } : undefined;
+	return previousResponseId ? { previousResponseId, input, callIds } : undefined;
 }
 
 export function anthropicMessagesToResponsesInput(
@@ -509,6 +514,7 @@ async function streamResponsesToAnthropic({
 	let blockIndex = 0;
 	let heuristicOutputTokens = 0;
 	let completedUsage: { inputTokens?: number | null; outputTokens: number } | null = null;
+	let incomplete = false;
 	const emittedFunctionCalls = new Set<string>();
 
 	const ensureStarted = () => {
@@ -591,6 +597,12 @@ async function streamResponsesToAnthropic({
 				continue;
 			}
 
+			if (event.type === 'response.incomplete') {
+				incomplete = true;
+				completedUsage = responseUsage(event.response);
+				continue;
+			}
+
 			if (event.type === 'response.failed' || event.type === 'error') {
 				ensureStarted();
 				closeTextBlock();
@@ -603,7 +615,8 @@ async function streamResponsesToAnthropic({
 
 		ensureStarted();
 		closeTextBlock();
-		const stopReason = emittedFunctionCalls.size > 0 ? 'tool_use' : 'end_turn';
+		const stopReason =
+			emittedFunctionCalls.size > 0 ? 'tool_use' : incomplete ? 'max_tokens' : 'end_turn';
 		send(
 			messageDeltaSSE(stopReason, {
 				inputTokens: completedUsage?.inputTokens ?? estimatedInputTokens,
@@ -661,7 +674,34 @@ export function createOpenAIResponsesBridgeServer(
 	const fetchImpl = config.fetchImpl ?? fetch;
 	const baseUrl = config.openAIBaseUrl ?? defaultBaseUrlForAuth(config.auth);
 	const modelsResponse = modelsListResponse(config.models);
+	const continuationTtlMs = config.continuationTtlMs ?? DEFAULT_RESPONSE_CONTINUATION_TTL_MS;
 	const continuations = new Map<string, ResponseContinuation>();
+
+	const deleteContinuation = (callId: string): void => {
+		const continuation = continuations.get(callId);
+		if (!continuation) return;
+		clearTimeout(continuation.cleanupTimer);
+		continuations.delete(callId);
+	};
+
+	const storeContinuation = (callId: string, responseId: string): void => {
+		deleteContinuation(callId);
+		const cleanupTimer = setTimeout(() => {
+			logger.warn(`openai-responses: continuation TTL expired callId=${callId}`);
+			continuations.delete(callId);
+		}, continuationTtlMs);
+		continuations.set(callId, { responseId, cleanupTimer });
+	};
+
+	const consumeContinuation = (
+		continuation:
+			| { previousResponseId: string; input: ResponsesInputItem[]; callIds: string[] }
+			| undefined
+	): void => {
+		for (const callId of continuation?.callIds ?? []) {
+			deleteContinuation(callId);
+		}
+	};
 
 	const server = Bun.serve({
 		port: 0,
@@ -757,6 +797,7 @@ export function createOpenAIResponsesBridgeServer(
 					parseOpenAIError(openAIResponse.status, text)
 				);
 			}
+			consumeContinuation(continuation);
 
 			const estimatedInputTokens = estimateAnthropicInputTokens(body);
 			const stream = new ReadableStream<Uint8Array>({
@@ -767,7 +808,7 @@ export function createOpenAIResponsesBridgeServer(
 						model,
 						estimatedInputTokens,
 						onFunctionCallResponse(callId, responseId) {
-							continuations.set(callId, { responseId });
+							storeContinuation(callId, responseId);
 						},
 					});
 				},
@@ -790,6 +831,12 @@ export function createOpenAIResponsesBridgeServer(
 	logger.info(`openai-responses: HTTP server listening on port ${port}`);
 	return {
 		port,
-		stop: () => server.stop(true),
+		stop: () => {
+			for (const continuation of continuations.values()) {
+				clearTimeout(continuation.cleanupTimer);
+			}
+			continuations.clear();
+			server.stop(true);
+		},
 	};
 }

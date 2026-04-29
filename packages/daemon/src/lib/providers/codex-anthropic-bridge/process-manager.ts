@@ -149,10 +149,12 @@ export type AppServerAuth =
 			accessToken: string;
 			chatgptAccountId: string;
 			chatgptPlanType?: string;
+			isFedrampAccount?: boolean;
 			refreshAuthTokens?: () => Promise<{
 				accessToken: string;
 				chatgptAccountId: string;
 				chatgptPlanType?: string;
+				isFedrampAccount?: boolean;
 			} | null>;
 	  };
 
