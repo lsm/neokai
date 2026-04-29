@@ -78,34 +78,34 @@ describe('NeoActivityView', () => {
 	});
 
 	it('does not show empty state when entries exist', () => {
-		neoStore.activity.value = [makeEntry({ id: '1', toolName: 'create_room' })];
+		neoStore.activity.value = [makeEntry({ id: '1', toolName: 'create_space' })];
 		const { queryByTestId } = render(<NeoActivityView />);
 		expect(queryByTestId('neo-activity-empty')).toBeNull();
 	});
 
 	it('renders activity entries', () => {
 		neoStore.activity.value = [
-			makeEntry({ id: '1', toolName: 'create_room' }),
-			makeEntry({ id: '2', toolName: 'delete_room', status: 'error' }),
+			makeEntry({ id: '1', toolName: 'create_space' }),
+			makeEntry({ id: '2', toolName: 'delete_space', status: 'error' }),
 		];
 		const { getAllByTestId } = render(<NeoActivityView />);
 		expect(getAllByTestId('activity-entry')).toHaveLength(2);
 	});
 
 	it('formats tool_name to title case', () => {
-		neoStore.activity.value = [makeEntry({ id: '1', toolName: 'create_room' })];
+		neoStore.activity.value = [makeEntry({ id: '1', toolName: 'create_space' })];
 		const { getByText } = render(<NeoActivityView />);
-		expect(getByText('Create Room')).toBeTruthy();
+		expect(getByText('Create Space')).toBeTruthy();
 	});
 
 	it('shows success badge for successful entry', () => {
-		neoStore.activity.value = [makeEntry({ id: '1', toolName: 'create_room', status: 'success' })];
+		neoStore.activity.value = [makeEntry({ id: '1', toolName: 'create_space', status: 'success' })];
 		const { getByTestId } = render(<NeoActivityView />);
 		expect(getByTestId('activity-status-success')).toBeTruthy();
 	});
 
 	it('shows error badge for failed entry', () => {
-		neoStore.activity.value = [makeEntry({ id: '1', toolName: 'delete_room', status: 'error' })];
+		neoStore.activity.value = [makeEntry({ id: '1', toolName: 'delete_space', status: 'error' })];
 		const { getByTestId } = render(<NeoActivityView />);
 		expect(getByTestId('activity-status-error')).toBeTruthy();
 	});
@@ -122,7 +122,7 @@ describe('NeoActivityView', () => {
 		neoStore.activity.value = [
 			makeEntry({
 				id: '1',
-				toolName: 'create_room',
+				toolName: 'create_space',
 				input: JSON.stringify({ name: 'my-room' }),
 				output: JSON.stringify({ id: 'room-123' }),
 			}),
@@ -137,7 +137,7 @@ describe('NeoActivityView', () => {
 	});
 
 	it('collapses details on second click', () => {
-		neoStore.activity.value = [makeEntry({ id: '1', toolName: 'create_room' })];
+		neoStore.activity.value = [makeEntry({ id: '1', toolName: 'create_space' })];
 		const { getByTestId, queryByTestId } = render(<NeoActivityView />);
 		const btn = getByTestId('activity-entry').querySelector('button')!;
 
@@ -156,7 +156,7 @@ describe('NeoActivityView', () => {
 		neoStore.activity.value = [
 			makeEntry({
 				id: '1',
-				toolName: 'get_room_status',
+				toolName: 'get_space_status',
 				targetType: 'room',
 				targetId: 'prod-api',
 			}),
@@ -169,13 +169,13 @@ describe('NeoActivityView', () => {
 		neoStore.activity.value = [
 			makeEntry({
 				id: '1',
-				toolName: 'delete_room',
+				toolName: 'delete_space',
 				status: 'error',
-				error: 'Room has active sessions',
+				error: 'Space has active sessions',
 			}),
 		];
 		const { getByText } = render(<NeoActivityView />);
-		expect(getByText('Room has active sessions')).toBeTruthy();
+		expect(getByText('Space has active sessions')).toBeTruthy();
 	});
 
 	it('shows all entries when multiple provided', () => {

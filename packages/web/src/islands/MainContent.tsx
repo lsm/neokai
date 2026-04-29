@@ -1,10 +1,6 @@
 import { lazy, Suspense } from 'preact/compat';
 import {
 	currentSessionIdSignal,
-	currentRoomIdSignal,
-	currentRoomSessionIdSignal,
-	currentRoomTaskIdSignal,
-	currentRoomGoalIdSignal,
 	currentSpaceIdSignal,
 	currentSpaceSessionIdSignal,
 	currentSpaceTaskIdSignal,
@@ -13,13 +9,11 @@ import {
 	settingsSectionSignal,
 } from '../lib/signals.ts';
 import { sessions } from '../lib/state.ts';
-import Lobby from './Lobby.tsx';
 import { BottomTabBar } from './BottomTabBar.tsx';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 
 // Lazy-loaded route components — reduces initial module count in dev mode
 const ChatContainer = lazy(() => import('./ChatContainer.tsx'));
-const Room = lazy(() => import('./Room.tsx'));
 const SpaceIsland = lazy(() => import('./SpaceIsland.tsx'));
 const SessionsPage = lazy(() =>
 	import('./SessionsPage.tsx').then((m) => ({ default: m.SessionsPage }))
@@ -72,10 +66,6 @@ export default function MainContent() {
 	// IMPORTANT: Access .value directly in component body to enable Preact Signals auto-tracking
 	// The @preact/preset-vite plugin will transform this to create proper subscriptions
 	const sessionId = currentSessionIdSignal.value;
-	const roomId = currentRoomIdSignal.value;
-	const roomSessionId = currentRoomSessionIdSignal.value;
-	const roomTaskId = currentRoomTaskIdSignal.value;
-	const roomGoalId = currentRoomGoalIdSignal.value;
 	const spaceId = currentSpaceIdSignal.value;
 	const spaceSessionViewId = currentSpaceSessionIdSignal.value;
 	const spaceTaskViewId = currentSpaceTaskIdSignal.value;
@@ -95,8 +85,6 @@ export default function MainContent() {
 		contentKey = `space-${spaceId}-${spaceViewMode}`;
 	} else if (navSection === 'spaces') {
 		contentKey = 'spaces';
-	} else if (roomId) {
-		contentKey = `room-${roomId}`;
 	} else if (sessionExists) {
 		contentKey = `chat-${sessionId}`;
 	} else if (navSection === 'chats') {
@@ -130,21 +118,6 @@ export default function MainContent() {
 			return (
 				<Suspense fallback={lazyFallback}>
 					<SpacesPage />
-				</Suspense>
-			);
-		}
-
-		// Room route
-		if (roomId) {
-			return (
-				<Suspense fallback={lazyFallback}>
-					<Room
-						key={roomId}
-						roomId={roomId}
-						sessionViewId={roomSessionId}
-						taskViewId={roomTaskId}
-						missionViewId={roomGoalId}
-					/>
 				</Suspense>
 			);
 		}
@@ -205,8 +178,12 @@ export default function MainContent() {
 			);
 		}
 
-		// Default: Show Lobby (home page)
-		return <Lobby />;
+		// Default: Space-first landing surface
+		return (
+			<Suspense fallback={lazyFallback}>
+				<SpacesPage />
+			</Suspense>
+		);
 	}
 
 	// Wrap content in a keyed div so Preact remounts it (and replays animate-fadeIn-200)

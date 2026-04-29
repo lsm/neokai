@@ -56,8 +56,6 @@ export function replaceActiveAtQuery(content: string, type: string, id: string):
 
 function getPlaceholderForSessionType(sessionType?: SessionType): string {
 	switch (sessionType) {
-		case 'room_chat':
-			return 'Chat with the room coordinator...';
 		case 'worker':
 		default:
 			return 'Ask or make anything...';

@@ -99,8 +99,8 @@ export interface RawModelEntry {
  * Map raw `models.list` RPC entries to `ModelInfo` objects and sort them
  * by provider (PROVIDER_ORDER) then family (FAMILY_ORDER).
  *
- * This is the canonical mapping used by both `useModelSwitcher` and
- * `NewSessionModal` so that family detection and sort order stay in sync.
+ * This is the canonical mapping used by model selection surfaces so that
+ * family detection and sort order stay in sync.
  */
 export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
 	const modelInfos = models.map((m) => {

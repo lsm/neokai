@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
-import { CollapsibleSection } from '../components/room/CollapsibleSection';
+import { CollapsibleSection } from '../components/ui/CollapsibleSection';
 import { createSession } from '../lib/api-helpers';
 import { spaceStore } from '../lib/space-store';
 import {
