@@ -581,42 +581,6 @@ describe('MCP API helpers types', () => {
 		expect(result.success).toBe(true);
 	});
 
-	it('getRoomMcpEnabled accepts roomId and returns serverIds array', async () => {
-		const mockResponse = { serverIds: ['srv-1', 'srv-2'] };
-
-		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
-			request: vi.fn().mockResolvedValue(mockResponse),
-		} as never);
-
-		const { getRoomMcpEnabled } = await import('../api-helpers.js');
-		const result = await getRoomMcpEnabled('room-1');
-		expect(result.serverIds).toEqual(['srv-1', 'srv-2']);
-	});
-
-	it('setRoomMcpEnabled accepts roomId, serverId, enabled', async () => {
-		const mockResponse = { ok: true };
-
-		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
-			request: vi.fn().mockResolvedValue(mockResponse),
-		} as never);
-
-		const { setRoomMcpEnabled } = await import('../api-helpers.js');
-		const result = await setRoomMcpEnabled('room-1', 'srv-1', true);
-		expect(result.ok).toBe(true);
-	});
-
-	it('resetRoomMcpToGlobal accepts roomId and returns ok', async () => {
-		const mockResponse = { ok: true };
-
-		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
-			request: vi.fn().mockResolvedValue(mockResponse),
-		} as never);
-
-		const { resetRoomMcpToGlobal } = await import('../api-helpers.js');
-		const result = await resetRoomMcpToGlobal('room-1');
-		expect(result.ok).toBe(true);
-	});
-
 	it('throws ConnectionNotReadyError when not connected', async () => {
 		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null as never);
 

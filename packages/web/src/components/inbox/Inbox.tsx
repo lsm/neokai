@@ -2,7 +2,6 @@ import { useEffect, useState } from 'preact/hooks';
 import { inboxStore, type InboxTask } from '../../lib/inbox-store.ts';
 import { Spinner } from '../ui/Spinner.tsx';
 import { toast } from '../../lib/toast.ts';
-import { navigateToRoomTask } from '../../lib/router.ts';
 
 function InboxTaskCard({
 	item,
@@ -19,10 +18,6 @@ function InboxTaskCard({
 	const [feedback, setFeedback] = useState('');
 	const isApproving = approvingId === item.task.id;
 	const anyApproving = approvingId !== null;
-
-	const handleView = () => {
-		navigateToRoomTask(item.roomId, item.task.id);
-	};
 
 	const handleApprove = async () => {
 		onStartApprove(item.task.id);
@@ -71,13 +66,6 @@ function InboxTaskCard({
 						class="border border-red-600 text-red-400 hover:bg-red-900/20 text-xs px-3 py-1 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
 					>
 						Reject
-					</button>
-					<button
-						type="button"
-						onClick={handleView}
-						class="text-gray-400 hover:text-gray-200 hover:bg-dark-700 text-xs px-3 py-1 rounded-lg transition-colors"
-					>
-						View
 					</button>
 				</div>
 			</div>

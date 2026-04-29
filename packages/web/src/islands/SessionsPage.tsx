@@ -178,7 +178,7 @@ export function SessionsPage() {
 					<div class="flex flex-col items-center justify-center h-full text-center">
 						<div class="text-5xl mb-4">💬</div>
 						<h3 class="text-lg font-semibold text-gray-100 mb-2">No sessions yet</h3>
-						<p class="text-sm text-gray-400 mb-6">Sessions created outside of Rooms appear here</p>
+						<p class="text-sm text-gray-400 mb-6">Start a new session to begin</p>
 						<Button onClick={handleNewSession} loading={creating} disabled={!canCreate}>
 							New Session
 						</Button>
