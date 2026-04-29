@@ -198,7 +198,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			expect(result.error).toBeTruthy();
 		});
 
-		it('returns isAuthenticated=false with binary-not-found error when NeoKai OAuth stored but codex missing', async () => {
+		it('returns isAuthenticated=true with NeoKai OAuth credentials even when codex is missing in Responses adapter mode', async () => {
 			const neokaiDir = path.join(emptyDir, 'neokai');
 			const codexDir = path.join(emptyDir, 'codex');
 			writeNeokaiAuth(neokaiDir, {
@@ -208,6 +208,26 @@ describe('AnthropicToCodexBridgeProvider', () => {
 				expires: Date.now() + 3600_000,
 			});
 			provider = makeProvider({}, neokaiDir, codexDir, fakeCodexMissing);
+			const result = await provider.getAuthStatus();
+			expect(result.isAuthenticated).toBe(true);
+			expect(result.method).toBe('oauth');
+		});
+
+		it('returns isAuthenticated=false with binary-not-found error when Codex adapter is explicitly selected', async () => {
+			const neokaiDir = path.join(emptyDir, 'neokai');
+			const codexDir = path.join(emptyDir, 'codex');
+			writeNeokaiAuth(neokaiDir, {
+				type: 'oauth',
+				access: 'oauth-access-token',
+				refresh: 'oauth-refresh-token',
+				expires: Date.now() + 3600_000,
+			});
+			provider = makeProvider(
+				{ NEOKAI_OPENAI_BRIDGE_ADAPTER: 'codex' },
+				neokaiDir,
+				codexDir,
+				fakeCodexMissing
+			);
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(false);
 			expect(result.error).toContain('codex binary not found');
