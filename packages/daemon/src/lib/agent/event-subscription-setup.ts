@@ -35,7 +35,10 @@ export interface EventSubscriptionSetupContext {
 	readonly queryModeHandler: QueryModeHandler;
 
 	// Methods for event handling
-	resetQuery(options?: { restartQuery?: boolean }): Promise<{ success: boolean; error?: string }>;
+	resetQuery(options?: {
+		restartQuery?: boolean;
+		hardReset?: boolean;
+	}): Promise<{ success: boolean; error?: string }>;
 	startQueryAndEnqueue(messageId: string, messageContent: string | MessageContent[]): Promise<void>;
 }
 
@@ -94,7 +97,10 @@ export class EventSubscriptionSetup {
 		const unsubReset = daemonHub.on(
 			'agent.resetRequest',
 			async ({ sessionId: sid, restartQuery }) => {
-				const result = await this.ctx.resetQuery({ restartQuery: restartQuery ?? true });
+				const result = await this.ctx.resetQuery({
+					restartQuery: restartQuery ?? true,
+					hardReset: true,
+				});
 
 				await daemonHub.emit('agent.reset', {
 					sessionId: sid,

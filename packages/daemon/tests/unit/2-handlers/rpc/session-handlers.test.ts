@@ -1415,19 +1415,31 @@ describe('Session RPC Handlers', () => {
 		it('resets query with restart', async () => {
 			const handler = messageHubData.handlers.get('session.resetQuery');
 			expect(handler).toBeDefined();
+			const { agentSession, mocks } = createMockAgentSession();
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
 
 			const result = await handler!({ sessionId: 'session-123', restartQuery: true }, {});
 
 			expect(result).toHaveProperty('success');
+			expect(mocks.resetQuery).toHaveBeenCalledWith({
+				restartQuery: true,
+				hardReset: true,
+			});
 		});
 
 		it('resets query without restart', async () => {
 			const handler = messageHubData.handlers.get('session.resetQuery');
 			expect(handler).toBeDefined();
+			const { agentSession, mocks } = createMockAgentSession();
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
 
 			const result = await handler!({ sessionId: 'session-123', restartQuery: false }, {});
 
 			expect(result).toHaveProperty('success');
+			expect(mocks.resetQuery).toHaveBeenCalledWith({
+				restartQuery: false,
+				hardReset: true,
+			});
 		});
 
 		it('defaults restartQuery to true', async () => {
@@ -1440,7 +1452,10 @@ describe('Session RPC Handlers', () => {
 
 			await handler!({ sessionId: 'session-123' }, {});
 
-			expect(mocks.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
+			expect(mocks.resetQuery).toHaveBeenCalledWith({
+				restartQuery: true,
+				hardReset: true,
+			});
 		});
 
 		it('throws error when session not found', async () => {
