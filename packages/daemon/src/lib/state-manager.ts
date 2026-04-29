@@ -222,13 +222,6 @@ export class StateManager {
 			});
 		});
 
-		// Runtime state changes (running/paused/stopped)
-		this.eventBus.on('room.runtime.stateChanged', (data) => {
-			this.messageHub.event('room.runtime.stateChanged', data, {
-				channel: data.sessionId, // 'room:${roomId}'
-			});
-		});
-
 		// Goal lifecycle events
 		this.eventBus.on('goal.created', (data) => {
 			this.messageHub.event('goal.created', data, {
@@ -608,10 +601,10 @@ export class StateManager {
 		// Get all session state in one place
 		const sessionData = agentSession.getSessionData();
 		// Prefer event-sourced processingStateCache over the session's in-memory state.
-		// Room leader/worker sessions are live in RoomRuntimeService.agentSessions but are
-		// loaded separately into SessionCache (as "ghosts") when state.session is fetched.
-		// The ghost's in-memory processingState becomes stale once the live session changes
-		// state. processingStateCache is always up-to-date via session.updated DaemonHub events.
+		// Some runtime-owned sessions can be loaded separately into SessionCache
+		// when state.session is fetched. That instance's in-memory processingState
+		// can become stale once the live session changes state; processingStateCache
+		// stays up-to-date via session.updated DaemonHub events.
 		const agentState =
 			this.processingStateCache.get(sessionId) ?? agentSession.getProcessingState();
 		const commands = await agentSession.getSlashCommands();
