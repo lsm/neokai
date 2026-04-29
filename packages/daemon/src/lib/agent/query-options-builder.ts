@@ -46,6 +46,12 @@ import {
 } from './builtin-skill-plugin-wrapper';
 import { homedir } from 'os';
 import { join } from 'path';
+import type { Database } from '../../storage/database';
+import {
+	extractCompactionSummary,
+	getSDKSessionFilePath,
+	messageUuidExistsInSessionFile,
+} from '../sdk-session-file-manager';
 
 export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
 
@@ -74,6 +80,7 @@ export function buildProviderSettings(providerId: string): Options['settings'] {
 export interface QueryOptionsBuilderContext {
 	readonly session: Session;
 	readonly settingsManager: SettingsManager;
+	readonly db?: Database;
 	/** Skills manager for injecting plugin/MCP server skills into SDK options. Optional for backwards compatibility. */
 	readonly skillsManager?: SkillsManager;
 	/** App MCP server repo for resolving mcp_server skill configs. Optional for backwards compatibility. */
@@ -480,10 +487,19 @@ export class QueryOptionsBuilder {
 			result.resume = this.ctx.session.sdkSessionId;
 		}
 
-		// Add resumeSessionAt for conversation rewind
-		// When set, only messages up to and including this UUID are resumed
+		// Add resumeSessionAt for conversation rewind.
+		// When set, only messages up to and including this UUID are resumed.
+		// Validate it immediately before handing options to the SDK: SDK compaction
+		// can remove old UUIDs after NeoKai persisted a rewind pointer, and passing a
+		// stale value makes Claude Code fail startup with "No message found".
 		if (this.ctx.session.metadata?.resumeSessionAt) {
-			result.resumeSessionAt = this.ctx.session.metadata.resumeSessionAt;
+			const resumeSessionAt = this.ctx.session.metadata.resumeSessionAt;
+			if (this.isResumeSessionAtValid(resumeSessionAt)) {
+				result.resumeSessionAt = resumeSessionAt;
+			} else {
+				this.clearStaleResumeSessionAt();
+				delete result.resume;
+			}
 		}
 
 		// Add thinking configuration based on thinkingLevel config
@@ -491,6 +507,49 @@ export class QueryOptionsBuilder {
 		result.thinking = this.thinkingLevelToThinkingConfig(thinkingLevel);
 
 		return result as Options;
+	}
+
+	private isResumeSessionAtValid(messageUuid: string): boolean {
+		const { session } = this.ctx;
+		const sdkWorkspacePath = this.getCwd();
+		if (!sdkWorkspacePath || !session.sdkSessionId) {
+			return false;
+		}
+
+		return messageUuidExistsInSessionFile(
+			sdkWorkspacePath,
+			session.sdkSessionId,
+			session.id,
+			messageUuid
+		);
+	}
+
+	private clearStaleResumeSessionAt(): void {
+		const { session, db } = this.ctx;
+		const previousSdkSessionId = session.sdkSessionId;
+		const workspacePath = session.sdkOriginPath ?? this.getCwd();
+
+		delete session.metadata.resumeSessionAt;
+
+		if (workspacePath && previousSdkSessionId) {
+			const compactionSummary = extractCompactionSummary(
+				getSDKSessionFilePath(workspacePath, previousSdkSessionId)
+			);
+			if (compactionSummary) {
+				session.metadata.compactionSummary = compactionSummary;
+			} else {
+				delete session.metadata.compactionSummary;
+			}
+		}
+
+		session.sdkSessionId = undefined;
+		session.sdkOriginPath = undefined;
+
+		db?.updateSession(session.id, {
+			metadata: session.metadata,
+			sdkSessionId: undefined,
+			sdkOriginPath: undefined,
+		});
 	}
 
 	/**

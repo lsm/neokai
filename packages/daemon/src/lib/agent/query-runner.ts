@@ -461,10 +461,10 @@ export class QueryRunner {
 			}, STARTUP_TIMEOUT_MS);
 			this.ctx.startupTimeoutTimer = startupTimer;
 
-			// Fetch slash commands and models in background
-			this.ctx.onSlashCommandsFetched().catch((e) => {
-				logger.warn('Background fetch of slash commands failed:', e);
-			});
+			// Models can be fetched from the live query object. Slash commands are
+			// captured from the SDK system:init message by SDKMessageHandler; probing
+			// supportedCommands() here races startup recovery and can duplicate stale
+			// resumeSessionAt errors from an about-to-be-retried query.
 			this.ctx.onModelsFetched().catch((e) => {
 				logger.warn('Background fetch of models failed:', e);
 			});

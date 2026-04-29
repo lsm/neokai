@@ -15,18 +15,22 @@ import {
 import type { Session } from '@neokai/shared';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { generateUUID } from '@neokai/shared';
-import { homedir } from 'os';
+import { homedir, tmpdir } from 'os';
+import { dirname, join } from 'node:path';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createTables } from '../../../../src/storage/schema';
 import { SkillRepository } from '../../../../src/storage/repositories/skill-repository';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import { SkillsManager } from '../../../../src/lib/skills-manager';
 import { noOpReactiveDb } from '../../../helpers/reactive-database';
+import { getSDKSessionFilePath } from '../../../../src/lib/sdk-session-file-manager';
 
 describe('QueryOptionsBuilder', () => {
 	let builder: QueryOptionsBuilder;
 	let mockSession: Session;
 	let mockSettingsManager: SettingsManager;
 	let mockContext: QueryOptionsBuilderContext;
+	let updateSessionSpy: ReturnType<typeof mock>;
 
 	beforeEach(() => {
 		mockSession = {
@@ -57,9 +61,14 @@ describe('QueryOptionsBuilder', () => {
 			prepareSDKOptions: mock(async () => ({})),
 		} as unknown as SettingsManager;
 
+		updateSessionSpy = mock(() => {});
+
 		mockContext = {
 			session: mockSession,
 			settingsManager: mockSettingsManager,
+			db: {
+				updateSession: updateSessionSpy,
+			} as QueryOptionsBuilderContext['db'],
 		};
 
 		builder = new QueryOptionsBuilder(mockContext);
@@ -205,6 +214,102 @@ describe('QueryOptionsBuilder', () => {
 			const result = builder.addSessionStateOptions(options);
 
 			expect(result.resume).toBe('sdk-session-123');
+		});
+
+		it('should add resumeSessionAt when the message still exists in the SDK transcript', async () => {
+			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
+			const testSdkDir = join(
+				tmpdir(),
+				`query-options-resume-valid-${Date.now()}-${Math.random().toString(36).slice(2)}`
+			);
+			try {
+				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
+				mockSession.sdkSessionId = 'sdk-session-valid';
+				mockSession.metadata.resumeSessionAt = 'resumable-message-uuid';
+				const sessionFilePath = getSDKSessionFilePath(
+					mockSession.workspacePath!,
+					mockSession.sdkSessionId
+				);
+				mkdirSync(dirname(sessionFilePath), { recursive: true });
+				writeFileSync(
+					sessionFilePath,
+					`${JSON.stringify({ type: 'user', uuid: 'resumable-message-uuid' })}\n`,
+					'utf-8'
+				);
+
+				const options = await builder.build();
+				const result = builder.addSessionStateOptions(options);
+
+				expect(result.resume).toBe('sdk-session-valid');
+				expect(result.resumeSessionAt).toBe('resumable-message-uuid');
+				expect(updateSessionSpy).not.toHaveBeenCalled();
+			} finally {
+				rmSync(testSdkDir, { recursive: true, force: true });
+				if (originalTestSdkSessionDir !== undefined) {
+					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
+				} else {
+					delete process.env.TEST_SDK_SESSION_DIR;
+				}
+			}
+		});
+
+		it('should clear stale resumeSessionAt before passing options to the SDK', async () => {
+			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
+			const testSdkDir = join(
+				tmpdir(),
+				`query-options-resume-stale-${Date.now()}-${Math.random().toString(36).slice(2)}`
+			);
+			try {
+				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
+				mockSession.sdkSessionId = 'sdk-session-stale';
+				mockSession.sdkOriginPath = mockSession.workspacePath;
+				mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
+				const sessionFilePath = getSDKSessionFilePath(
+					mockSession.workspacePath!,
+					mockSession.sdkSessionId
+				);
+				mkdirSync(dirname(sessionFilePath), { recursive: true });
+				writeFileSync(
+					sessionFilePath,
+					[
+						JSON.stringify({
+							type: 'system',
+							subtype: 'compact_boundary',
+							compact_metadata: { trigger: 'auto' },
+						}),
+						JSON.stringify({
+							type: 'assistant',
+							message: {
+								role: 'assistant',
+								content: [{ type: 'text', text: 'Compacted context summary' }],
+							},
+						}),
+					].join('\n') + '\n',
+					'utf-8'
+				);
+
+				const options = await builder.build();
+				const result = builder.addSessionStateOptions(options);
+
+				expect(result.resume).toBeUndefined();
+				expect(result.resumeSessionAt).toBeUndefined();
+				expect(mockSession.metadata.resumeSessionAt).toBeUndefined();
+				expect(mockSession.metadata.compactionSummary).toBe('Compacted context summary');
+				expect(mockSession.sdkSessionId).toBeUndefined();
+				expect(mockSession.sdkOriginPath).toBeUndefined();
+				expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
+					metadata: mockSession.metadata,
+					sdkSessionId: undefined,
+					sdkOriginPath: undefined,
+				});
+			} finally {
+				rmSync(testSdkDir, { recursive: true, force: true });
+				if (originalTestSdkSessionDir !== undefined) {
+					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
+				} else {
+					delete process.env.TEST_SDK_SESSION_DIR;
+				}
+			}
 		});
 
 		it('should not add resume when no SDK session ID', async () => {
