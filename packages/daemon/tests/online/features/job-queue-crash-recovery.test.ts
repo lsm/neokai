@@ -360,7 +360,7 @@ describe('Job queue crash/restart recovery (online)', () => {
 
 	// =========================================================================
 
-	test('room tick recovery: stale tick job is reclaimed and completes gracefully on restart', async () => {
+	test('legacy room tick recovery: stale tick job is reclaimed but not executed', async () => {
 		// ------------------------------------------------------------------
 		// Phase 1 — daemon1: create a room, simulate crash with stale tick job
 		// ------------------------------------------------------------------
@@ -388,23 +388,19 @@ describe('Job queue crash/restart recovery (online)', () => {
 		}
 
 		// ------------------------------------------------------------------
-		// Phase 2 — daemon2: same DB, stale tick job is reclaimed, handler runs.
+		// Phase 2 — daemon2: same DB, stale tick job is reclaimed.
 		//
-		// Note on expected behavior: the room was created via RoomManager directly
-		// (not through RoomRuntimeService), so daemon1 never started a runtime for
-		// it. On daemon2, initializeExistingRooms() does pick up the room and starts
-		// a runtime, but the handler's `runtime.getState() === 'running'` check may
-		// return false if the room has no active goal (it returns {skipped:true}).
-		// Either outcome — the handler ticking the runtime OR returning skipped — is
-		// a valid crash-recovery result: the critical invariant is that the stale job
-		// is NOT stuck in 'processing' and DOES complete after restart.
+		// Room runtime scheduling is dormant now: room.tick handlers are not
+		// registered and old tick jobs are not executed. The compatibility invariant
+		// is narrower than the former active runtime behavior: old databases can open
+		// and stale processing rows are reclaimed out of 'processing' instead of
+		// blocking the job queue forever.
 		// ------------------------------------------------------------------
 		daemon2 = await startDaemon(dbPath, workspaceRoot);
 
-		// Verify the stale tick job is reclaimed and eventually completes
-		const processedTick = await waitForJobById(daemon2, staleTickId!, ['completed']);
-		expect(processedTick).toBeDefined();
-		expect(processedTick!.status).toBe('completed');
+		const reclaimedTick = await waitForJobById(daemon2, staleTickId!, ['pending']);
+		expect(reclaimedTick).toBeDefined();
+		expect(reclaimedTick!.status).toBe('pending');
 	}, 30_000);
 
 	// =========================================================================

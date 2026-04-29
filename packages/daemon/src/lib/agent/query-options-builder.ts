@@ -32,11 +32,11 @@ import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
 import type { PermissionMode } from '@neokai/shared/types/settings';
 import type { McpServerConfig } from '@neokai/shared/types/sdk-config';
 import type { AppMcpServerSourceType } from '@neokai/shared';
+import type { SkillEnablementOverride } from '@neokai/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { SkillsManager } from '../skills-manager';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository';
-import type { RoomSkillOverride } from '@neokai/shared';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
 import { getProviderContextManager } from '../providers/factory.js';
 import { resolveSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.js';
@@ -102,10 +102,10 @@ export interface QueryOptionsBuilderContext {
 	 */
 	readonly mcpEnablementRepo?: McpEnablementRepository;
 	/**
-	 * Room-level skill overrides. When provided, a skill with `enabled: false` in this list
+	 * Runtime skill overrides. When provided, a skill with `enabled: false` in this list
 	 * is excluded from injection even if it is globally enabled in the skills registry.
 	 */
-	readonly roomSkillOverrides?: RoomSkillOverride[];
+	readonly skillOverrides?: SkillEnablementOverride[];
 }
 
 export class QueryOptionsBuilder {
@@ -123,7 +123,7 @@ export class QueryOptionsBuilder {
 
 	/**
 	 * Return MCP servers contributed by enabled skills for this session.
-	 * Skips skills that are room-disabled and AppMcpServer entries that are disabled.
+	 * Skips skills disabled by runtime overrides and AppMcpServer entries that are disabled.
 	 * Useful for inspecting effective skill injection without running a full build.
 	 */
 	getSkillMcpServers(): Record<string, McpServerConfig> {
@@ -1016,21 +1016,20 @@ CRITICAL RULES:
 	}
 
 	/**
-	 * Returns the set of skill IDs disabled by room-level overrides.
+	 * Returns the set of skill IDs disabled by runtime-specific overrides.
 	 * A skill in this set must be excluded even if globally enabled.
 	 */
-	private getRoomDisabledSkillIds(): Set<string> {
-		if (!this.ctx.roomSkillOverrides?.length) return new Set();
-		return new Set(this.ctx.roomSkillOverrides.filter((o) => !o.enabled).map((o) => o.skillId));
+	private getOverrideDisabledSkillIds(): Set<string> {
+		if (!this.ctx.skillOverrides?.length) return new Set();
+		return new Set(this.ctx.skillOverrides.filter((o) => !o.enabled).map((o) => o.skillId));
 	}
 
 	/**
 	 * Returns the set of skill IDs disabled at the session scope.
 	 *
 	 * Session-level overrides come from `session.config.tools.disabledSkills`,
-	 * managed by the session Tools modal. They are additive on top of room
-	 * overrides and the global `enabled` flag — see `ToolsConfig.disabledSkills`
-	 * for the full precedence rule.
+	 * managed by the session Tools modal. They are additive on top of
+	 * runtime-specific overrides and the global `enabled` flag.
 	 */
 	private getSessionDisabledSkillIds(): Set<string> {
 		const disabled = this.ctx.session.config.tools?.disabledSkills;
@@ -1039,34 +1038,33 @@ CRITICAL RULES:
 	}
 
 	/**
-	 * Returns true when the skill is disabled at room or session scope. Either
-	 * level is sufficient to exclude a skill that is globally enabled — there is
-	 * no "session re-enables a room-disabled skill" path because the session
-	 * modal cannot promote skills above their inherited state.
+	 * Returns true when the skill is disabled by runtime or session scope.
+	 * Either level is sufficient to exclude a skill that is globally enabled;
+	 * the session modal cannot promote skills above their inherited state.
 	 */
 	private isSkillScopeDisabled(
 		skillId: string,
-		roomDisabled: Set<string>,
+		overrideDisabled: Set<string>,
 		sessionDisabled: Set<string>
 	): boolean {
-		return roomDisabled.has(skillId) || sessionDisabled.has(skillId);
+		return overrideDisabled.has(skillId) || sessionDisabled.has(skillId);
 	}
 
 	/**
 	 * Build plugin entries from enabled skills with sourceType === 'plugin'.
-	 * Room overrides with enabled=false exclude the skill even if globally enabled.
+	 * Runtime overrides with enabled=false exclude the skill even if globally enabled.
 	 * Returns an array of SdkPluginConfig objects for injection into options.plugins.
 	 */
 	private buildPluginsFromSkills(): Array<{ type: 'local'; path: string }> {
 		if (!this.ctx.skillsManager) return [];
 
 		const skills = this.ctx.skillsManager.getEnabledSkills();
-		const roomDisabled = this.getRoomDisabledSkillIds();
+		const overrideDisabled = this.getOverrideDisabledSkillIds();
 		const sessionDisabled = this.getSessionDisabledSkillIds();
 		const plugins: Array<{ type: 'local'; path: string }> = [];
 
 		for (const skill of skills) {
-			if (this.isSkillScopeDisabled(skill.id, roomDisabled, sessionDisabled)) continue;
+			if (this.isSkillScopeDisabled(skill.id, overrideDisabled, sessionDisabled)) continue;
 			if (skill.sourceType === 'plugin' && skill.config.type === 'plugin') {
 				plugins.push({ type: 'local', path: skill.config.pluginPath });
 			}
@@ -1092,19 +1090,19 @@ CRITICAL RULES:
 	 * `~/.neokai/skills/<commandName>/` was the source of the
 	 * "Unknown command: /playwright" bug.
 	 *
-	 * Room overrides with enabled=false exclude the skill even if globally enabled.
+	 * Runtime overrides with enabled=false exclude the skill even if globally enabled.
 	 */
 	private buildPluginsFromBuiltinSkills(): Array<{ type: 'local'; path: string }> {
 		if (!this.ctx.skillsManager) return [];
 
 		const skills = this.ctx.skillsManager.getEnabledSkills();
-		const roomDisabled = this.getRoomDisabledSkillIds();
+		const overrideDisabled = this.getOverrideDisabledSkillIds();
 		const sessionDisabled = this.getSessionDisabledSkillIds();
 		const plugins: Array<{ type: 'local'; path: string }> = [];
 		const wrappersRoot = defaultBuiltinSkillPluginRoot();
 
 		for (const skill of skills) {
-			if (this.isSkillScopeDisabled(skill.id, roomDisabled, sessionDisabled)) continue;
+			if (this.isSkillScopeDisabled(skill.id, overrideDisabled, sessionDisabled)) continue;
 			if (skill.sourceType === 'builtin' && skill.config.type === 'builtin') {
 				const wrapperDir = builtinSkillPluginPath(wrappersRoot, skill.config.commandName);
 				plugins.push({ type: 'local', path: wrapperDir });
@@ -1116,7 +1114,7 @@ CRITICAL RULES:
 
 	/**
 	 * Build MCP server entries from enabled skills with sourceType === 'mcp_server'.
-	 * Room overrides with enabled=false exclude the skill even if globally enabled.
+	 * Runtime overrides with enabled=false exclude the skill even if globally enabled.
 	 * Resolves each skill's appMcpServerId to an AppMcpServer entry and maps it
 	 * to an McpServerConfig keyed by skill.name.
 	 *
@@ -1134,13 +1132,13 @@ CRITICAL RULES:
 		if (!this.ctx.skillsManager || !this.ctx.appMcpServerRepo) return {};
 
 		const skills = this.ctx.skillsManager.getEnabledSkills();
-		const roomDisabled = this.getRoomDisabledSkillIds();
+		const overrideDisabled = this.getOverrideDisabledSkillIds();
 		const sessionDisabled = this.getSessionDisabledSkillIds();
 		const effectivelyEnabled = this.getEffectivelyEnabledAppServerIds();
 		const servers: Record<string, McpServerConfig> = {};
 
 		for (const skill of skills) {
-			if (this.isSkillScopeDisabled(skill.id, roomDisabled, sessionDisabled)) continue;
+			if (this.isSkillScopeDisabled(skill.id, overrideDisabled, sessionDisabled)) continue;
 			if (skill.sourceType !== 'mcp_server' || skill.config.type !== 'mcp_server') continue;
 
 			const appServer = this.ctx.appMcpServerRepo.get(skill.config.appMcpServerId);

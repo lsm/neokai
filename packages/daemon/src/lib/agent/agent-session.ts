@@ -84,9 +84,8 @@ import type {
 	SystemPromptConfig,
 	McpServerConfig,
 	Provider,
-	RoomSkillOverride,
 } from '@neokai/shared';
-import type { ChatMessage, MessageOrigin } from '@neokai/shared';
+import type { ChatMessage, MessageOrigin, SkillEnablementOverride } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { Database } from '../../storage/database';
 import { ErrorManager } from '../error-manager';
@@ -147,11 +146,11 @@ export interface AgentSessionInit {
 	disallowedTools?: string[];
 
 	/**
-	 * Room-level skill overrides applied on top of the global skills registry.
+	 * Runtime skill overrides applied on top of the global skills registry.
 	 * Skills with enabled=false in this list are excluded from injection even if
-	 * globally enabled. Populated by the room runtime when spawning sessions.
+	 * globally enabled.
 	 */
-	roomSkillOverrides?: RoomSkillOverride[];
+	skillOverrides?: SkillEnablementOverride[];
 }
 
 export interface AgentSessionRuntimeOptions {
@@ -301,7 +300,7 @@ export class AgentSession
 		private getApiKey: () => Promise<string | null>,
 		readonly skillsManager?: import('../skills-manager').SkillsManager,
 		readonly appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
-		readonly roomSkillOverrides?: RoomSkillOverride[],
+		readonly skillOverrides?: SkillEnablementOverride[],
 		private readonly runtimeOptions: AgentSessionRuntimeOptions = {}
 	) {
 		this.errorManager = new ErrorManager(this.messageHub, this.daemonHub);
@@ -519,7 +518,7 @@ export class AgentSession
 			getApiKey,
 			skillsManager,
 			appMcpServerRepo,
-			init.roomSkillOverrides
+			init.skillOverrides
 		);
 		return agentSession;
 	}

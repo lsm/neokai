@@ -15,14 +15,10 @@
  *    Note: mcp.registry.listErrors is registered in mcp-handlers.ts (requires
  *    the concrete AppMcpLifecycleManager).
  *
- * 2. Per-Room MCP Enablement RPC Handlers (setupAppMcpHandlers)
- *    Provides RPC methods for managing per-room MCP enablement overrides:
- *    - mcp.room.getEnabled    — list server IDs enabled for a room
- *    - mcp.room.setEnabled    — upsert an enablement override for one server
- *    - mcp.room.resetToGlobal — remove all per-room overrides for a room
- *
- *    Each mutating handler emits `mcp.registry.changed` so that daemon-internal
- *    components (e.g., the lifecycle manager) can hot-reload configuration.
+ * 2. Scope-aware MCP enablement RPC handlers (setupAppMcpHandlers)
+ *    Provides the active `mcp.enablement.*` and `session.mcp.*` methods.
+ *    Legacy room-scope rows remain in `mcp_enablement` for old DB compatibility,
+ *    but the historical `mcp.room.*` public API is no longer registered.
  */
 
 import type { MessageHub } from '@neokai/shared';
@@ -48,12 +44,6 @@ import type {
 	McpEnablementListResponse,
 	McpEnablementSetOverrideRequest,
 	McpEnablementSetOverrideResponse,
-	McpRoomGetEnabledRequest,
-	McpRoomGetEnabledResponse,
-	McpRoomSetEnabledRequest,
-	McpRoomSetEnabledResponse,
-	McpRoomResetToGlobalRequest,
-	McpRoomResetToGlobalResponse,
 } from '@neokai/shared';
 import { scopeChainForSession } from '../mcp/resolve-mcp-servers';
 import { Logger } from '../logger';
@@ -189,7 +179,7 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
 }
 
 // ---------------------------------------------------------------------------
-// Per-room enablement handler registration
+// Scope-aware enablement handler registration
 // ---------------------------------------------------------------------------
 
 export function setupAppMcpHandlers(
@@ -197,62 +187,12 @@ export function setupAppMcpHandlers(
 	daemonHub: DaemonHub,
 	db: Database
 ): void {
-	/**
-	 * Get the IDs of all MCP servers that are explicitly enabled for a room.
-	 * Only returns servers with an explicit override row; servers with no override
-	 * are not included (consumers should treat them as following global defaults).
-	 */
-	messageHub.onRequest('mcp.room.getEnabled', (data) => {
-		const { roomId } = data as McpRoomGetEnabledRequest;
-		const serverIds = db.roomMcpEnablement.getEnabledServerIds(roomId);
-		return { serverIds } satisfies McpRoomGetEnabledResponse;
-	});
-
-	/**
-	 * Upsert an enablement override for a single MCP server in a room.
-	 * Emits `mcp.registry.changed` after writing.
-	 */
-	messageHub.onRequest('mcp.room.setEnabled', (data) => {
-		const { roomId, serverId, enabled } = data as McpRoomSetEnabledRequest;
-
-		// Validate that the server exists
-		const server = db.appMcpServers.get(serverId);
-		if (!server) {
-			throw new Error(`MCP server not found: ${serverId}`);
-		}
-
-		db.roomMcpEnablement.setEnabled(roomId, serverId, enabled);
-
-		daemonHub
-			.emit('mcp.registry.changed', { sessionId: 'global' })
-			.catch((err) => log.warn('Failed to emit mcp.registry.changed:', err));
-
-		return { ok: true } satisfies McpRoomSetEnabledResponse;
-	});
-
-	/**
-	 * Remove all per-room enablement overrides for a room, reverting to global defaults.
-	 * Emits `mcp.registry.changed` after writing.
-	 */
-	messageHub.onRequest('mcp.room.resetToGlobal', (data) => {
-		const { roomId } = data as McpRoomResetToGlobalRequest;
-
-		db.roomMcpEnablement.resetToGlobal(roomId);
-
-		daemonHub
-			.emit('mcp.registry.changed', { sessionId: 'global' })
-			.catch((err) => log.warn('Failed to emit mcp.registry.changed:', err));
-
-		return { ok: true } satisfies McpRoomResetToGlobalResponse;
-	});
-
 	// -------------------------------------------------------------------------
 	// Scope-aware enablement handlers (M3+)
 	//
-	// These operate on the unified `mcp_enablement` table and support all three
-	// scope types (space / room / session). The older `mcp.room.*` handlers
-	// above still target the legacy `room_mcp_enablement` table and will be
-	// removed in M5.
+	// These operate on the unified `mcp_enablement` table. `scopeType='room'`
+	// rows are preserved for old DB compatibility, but no active UI/API path
+	// writes them.
 	// -------------------------------------------------------------------------
 
 	/** `mcp.enablement.list` — every override at a given scope. */

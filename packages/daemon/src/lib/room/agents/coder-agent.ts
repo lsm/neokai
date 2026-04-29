@@ -14,14 +14,8 @@
  */
 
 import type { AgentSessionInit } from '../../agent/agent-session';
-import type {
-	Room,
-	RoomGoal,
-	NeoTask,
-	SessionFeatures,
-	AgentDefinition,
-	SubagentConfig,
-} from '@neokai/shared';
+import type { AgentDefinition, SessionFeatures } from '@neokai/shared';
+import type { NeoTask, Room, RoomGoal, SubagentConfig } from '@neokai/shared/types/neo';
 
 const DEFAULT_CODER_MODEL = 'claude-sonnet-4-6';
 

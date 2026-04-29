@@ -12,7 +12,8 @@
  */
 
 import { generateUUID } from '@neokai/shared';
-import type { Room, RoomGoal, NeoTask, MessageDeliveryMode, MessageOrigin } from '@neokai/shared';
+import type { MessageDeliveryMode, MessageOrigin } from '@neokai/shared';
+import type { Room, RoomGoal, NeoTask } from '@neokai/shared/types/neo';
 import type { AgentSessionInit } from '../../agent/agent-session';
 import { Logger } from '../../logger';
 import type {

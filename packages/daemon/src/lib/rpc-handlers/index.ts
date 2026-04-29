@@ -30,17 +30,8 @@ import { setupConfigHandlers } from './config-handlers';
 import { setupTestHandlers } from './test-handlers';
 import { setupRewindHandlers } from './rewind-handlers';
 import { RoomManager } from '../room';
-// New split handlers for Neo functionality
-import { setupRoomHandlers, setupRoomRuntimeHandlers } from './room-handlers';
-import { setupTaskHandlers } from './task-handlers';
 import { setupGitHubHandlers } from './github-handlers';
 import type { GitHubService } from '../github/github-service';
-// New handlers for goals
-import {
-	setupGoalHandlers,
-	type GoalManagerFactory,
-	type TaskManagerFactory as GoalTaskManagerFactory,
-} from './goal-handlers';
 import { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { Logger } from '../logger';
 import { GoalManager } from '../room/managers/goal-manager';
@@ -82,7 +73,6 @@ import { SpaceWorkflowRepository } from '../../storage/repositories/space-workfl
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
-import { enqueueRoomTick } from '../job-handlers/room-tick.handler';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers';
 import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers';
@@ -100,6 +90,7 @@ import type { SkillsManager } from '../skills-manager';
 import { setupNeoHandlers } from './neo-handlers';
 import type { NeoAgentManager } from '../neo/neo-agent-manager';
 import { setupWorkspaceHandlers } from './workspace-handlers';
+import { setupLegacyInboxCompatHandlers } from './legacy-inbox-compat-handlers';
 import { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository';
 import { NeoActivityLogger } from '../neo/activity-logger';
 import { PendingActionStore } from '../neo/security-tier';
@@ -174,30 +165,9 @@ export interface RPCHandlerSetupResult {
  * Returns a result with cleanup function and exposed services
  */
 export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
-	// Room handlers (create roomManager first as session handlers depend on it)
+	// Legacy Room manager is retained for old DB compatibility reads only.
+	// Public Room RPC handlers and runtime scheduling are intentionally not registered.
 	const roomManager = new RoomManager(deps.db.getDatabase(), deps.reactiveDb);
-
-	// Create factory function for per-room goal managers
-	const goalManagerFactory: GoalManagerFactory = (roomId: string) => {
-		return new GoalManager(
-			deps.db.getDatabase(),
-			roomId,
-			deps.reactiveDb,
-			deps.db.getShortIdAllocator()
-		);
-	};
-
-	// Create factory function for per-room task managers (used by goal review handlers)
-	const goalTaskManagerFactory: GoalTaskManagerFactory = (roomId: string) => {
-		const taskManager = new TaskManager(
-			deps.db.getDatabase(),
-			roomId,
-			deps.reactiveDb,
-			deps.db.getShortIdAllocator()
-		);
-		const taskRepo = new TaskRepository(deps.db.getDatabase(), deps.reactiveDb);
-		return { taskManager, taskRepo };
-	};
 
 	// setupSessionHandlers is registered below, after spaceRuntimeService is
 	// constructed, so session.create can synchronously attach space-agent-tools
@@ -207,10 +177,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	setupFileHandlers(deps.messageHub, deps.sessionManager);
 	setupSystemHandlers(deps.messageHub, deps.sessionManager, deps.authManager, deps.config);
 	setupAuthHandlers(deps.messageHub, deps.authManager);
-	// Note: setupQuestionHandlers is called after roomRuntimeService is created below
-	// so that it can receive a runtime session lookup function. Room worker/leader
-	// sessions live in RoomRuntimeService.agentSessions (separate from SessionManager),
-	// so the handler needs to check the runtime pool first.
+	// Question handlers are registered after the dormant Room compatibility runtime
+	// is constructed below so old in-memory runtime sessions can still be resolved
+	// during a controlled migration window.
 	registerMcpHandlers(deps.messageHub, deps.sessionManager, deps.appMcpManager);
 	registerSettingsHandlers(
 		deps.messageHub,
@@ -224,8 +193,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	setupTestHandlers(deps.messageHub, deps.reactiveDb.db);
 	setupRewindHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 
-	// Room Runtime Service (must be created before task/goal handlers — messaging + task approval need it)
-	// Also created before setupRoomHandlers so the hasActiveTaskGroups callback can reference it.
+	// Dormant Room runtime compatibility shell. It is not started and no room.tick
+	// jobs are seeded, so Room is not an active runtime surface. The instance is
+	// retained only for old internal call sites that still type against the service
+	// while the legacy schema/repositories remain readable.
 	const roomRuntimeService = new RoomRuntimeService({
 		// Use reactiveDb.db (proxied Database facade) so sdk_messages writes from
 		// room worker/leader sessions trigger LiveQuery invalidation immediately.
@@ -250,43 +221,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		disableGoalProcessing: deps.config.disableGoalProcessing,
 	});
 
-	// Seed an initial room.tick job for every room after startup, and for each
-	// newly created room. The handler's finally block keeps the loop going; this
-	// is the only bootstrap call needed.
-	const seedRoomTick = (roomId: string) => enqueueRoomTick(roomId, deps.jobQueue);
-
-	roomRuntimeService
-		.start()
-		.then(() => {
-			for (const room of roomManager.listRooms()) {
-				seedRoomTick(room.id);
-			}
-		})
-		.catch((error) => {
-			log.error('Failed to start RoomRuntimeService:', error);
-		});
-
-	// Seed a tick for rooms created after startup.
-	const unsubRoomCreated = deps.daemonHub.on(
-		'room.created',
-		(event) => {
-			seedRoomTick(event.room.id);
-		},
-		{ sessionId: 'global' }
-	);
-
-	// Room handlers — registered after roomRuntimeService so hasActiveTaskGroups callback
-	// can reference the service (which queries the DB for active groups, not in-memory state).
-	setupRoomHandlers(
-		deps.messageHub,
-		roomManager,
-		deps.daemonHub,
-		deps.sessionManager,
-		deps.jobQueue,
-		deps.db,
-		{ hasActiveTaskGroups: (roomId) => roomRuntimeService.hasActiveTaskGroups(roomId) }
-	);
-
 	// Wire question handlers now that roomRuntimeService is available.
 	// Pass its session lookup so question.respond reaches the correct live AgentSession
 	// (room worker/leader sessions are stored in RoomRuntimeService.agentSessions,
@@ -295,24 +229,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		roomRuntimeService.getAgentSession(sessionId)
 	);
 
-	setupRoomRuntimeHandlers(deps.messageHub, deps.daemonHub, roomRuntimeService, deps.jobQueue);
-	setupTaskHandlers(
+	// Do not register legacy room.*, broader task.*, goal.*, or room.runtime.* RPC APIs.
+	// The active web Inbox still calls these three legacy task review methods,
+	// so keep only this narrow compatibility shim until the UI is migrated.
+	setupLegacyInboxCompatHandlers(
 		deps.messageHub,
 		roomManager,
-		deps.daemonHub,
 		deps.db,
 		deps.reactiveDb,
-		undefined,
-		roomRuntimeService,
-		deps.sessionManager
-	);
-
-	// Goal handlers (after runtime service — task.approve/task.reject need runtimeService)
-	setupGoalHandlers(
-		deps.messageHub,
-		deps.daemonHub,
-		goalManagerFactory,
-		goalTaskManagerFactory,
 		roomRuntimeService
 	);
 
@@ -789,10 +713,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Return result with cleanup function and exposed services
 	return {
 		cleanup: async () => {
-			unsubRoomCreated();
 			unsubLiveQuery();
-			// roomRuntimeService.stop() is synchronous today. If it becomes
-			// async in the future, add await here to prevent silent promise discard.
+			// Stops only the dormant compatibility shell if any legacy runtime
+			// sessions were attached during migration.
 			roomRuntimeService.stop();
 			await spaceRuntimeService.stop();
 			fileIndex.dispose();

@@ -11,9 +11,8 @@ import type {
 	ReferenceType,
 	ReferenceSearchResult,
 	ResolvedReference,
-	NeoTask,
-	RoomGoal,
 } from '@neokai/shared';
+import type { NeoTask, RoomGoal } from '@neokai/shared/types/neo';
 import type { SessionManager } from '../session-manager';
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { ReactiveDatabase } from '../../storage/reactive-database';

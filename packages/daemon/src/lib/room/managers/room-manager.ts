@@ -17,7 +17,12 @@ import { TaskRepository } from '../../../storage/repositories/task-repository';
 import { SessionRepository } from '../../../storage/repositories/session-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { isWorkerSessionId } from '../session-utils';
-import type { Room, CreateRoomParams, UpdateRoomParams, RoomOverview } from '@neokai/shared';
+import type {
+	CreateRoomParams,
+	Room,
+	RoomOverview,
+	UpdateRoomParams,
+} from '@neokai/shared/types/neo';
 
 export class RoomManager {
 	private db: BunDatabase;

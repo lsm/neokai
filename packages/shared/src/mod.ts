@@ -14,7 +14,6 @@ export * from './state-types.ts';
 export * from './models.ts';
 export * from './types/settings.ts';
 export * from './types/rewind.ts';
-export * from './types/neo.ts';
 export * from './types/github.ts';
 export * from './types/space.ts';
 export * from './types/space-utils.ts';

@@ -10,7 +10,7 @@
  * 1. The module imports and resolves correctly in the live daemon context
  * 2. Built-in sub-agents are always present regardless of room config
  * 3. Room-configured helpers are additive (built-ins never absent)
- * 4. The daemon is responsive and RPC roundtrips work (dev-proxy active)
+ * 4. The daemon is responsive via active non-Room RPCs (dev-proxy active)
  *
  * Uses dev proxy (mock_sdk: true) so no real API calls are made.
  *
@@ -25,8 +25,7 @@ import {
 	createCoderAgentInit,
 	type CoderAgentConfig,
 } from '../../../src/lib/room/agents/coder-agent';
-import { createRoom } from './room-test-helpers';
-import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
+import type { Room, RoomGoal, NeoTask } from '@neokai/shared/types/neo';
 
 // ─── Fixture helpers ──────────────────────────────────────────────────────────
 
@@ -171,24 +170,21 @@ describe('Coder Agent — Built-in Sub-Agents (Online)', () => {
 
 	describe('daemon integration smoke tests', () => {
 		test('daemon is responsive (dev-proxy mode active)', async () => {
-			const result = (await daemon.messageHub.request('room.list', {})) as {
-				rooms: Array<{ id: string }>;
+			const result = (await daemon.messageHub.request('session.list', {})) as {
+				sessions: Array<{ id: string }>;
 			};
-			expect(result.rooms).toBeDefined();
-			expect(Array.isArray(result.rooms)).toBe(true);
+			expect(result.sessions).toBeDefined();
+			expect(Array.isArray(result.sessions)).toBe(true);
 		});
 
-		test('room RPC roundtrip: create and retrieve', async () => {
-			const roomId = await createRoom(daemon, `Coder Sub-Agent Smoke ${Date.now()}`);
-			try {
-				const result = (await daemon.messageHub.request('room.get', { roomId })) as {
-					room: { id: string; name: string };
-				};
-				expect(result.room).toBeDefined();
-				expect(result.room.id).toBe(roomId);
-			} finally {
-				await daemon.messageHub.request('room.delete', { roomId });
-			}
+		test('legacy room RPC surface is not registered', async () => {
+			await expect(daemon.messageHub.request('room.list', {})).rejects.toThrow();
+			await expect(
+				daemon.messageHub.request('room.create', {
+					name: `Coder Sub-Agent Smoke ${Date.now()}`,
+					workspacePath: '/tmp',
+				})
+			).rejects.toThrow();
 		});
 	});
 });
