@@ -27,8 +27,8 @@ import type { AskUserQuestionHandler } from './ask-user-question-handler';
 import type { OriginalEnvVars } from '../provider-service';
 import {
 	extractCompactionSummary,
+	findBestEffortResumeSessionAt,
 	getSDKSessionFilePath,
-	messageUuidExistsInSessionFile,
 } from '../sdk-session-file-manager';
 // Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
@@ -68,7 +68,6 @@ function defaultSpawn(opts: SpawnOptions): SpawnedProcess {
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 /** Max time to wait for subprocess exit before retrying after startup timeout. */
 const RETRY_EXIT_TIMEOUT_MS = 5000;
-const BEST_EFFORT_RESUME_MESSAGE_LIMIT = 10_000;
 
 function getStartupTimeoutMs(): number {
 	const raw = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
@@ -605,7 +604,12 @@ export class QueryRunner {
 				// The SDK found the transcript but could not find resumeSessionAt inside it.
 				// This commonly happens after SDK compaction removes old message UUIDs.
 				const oldResumeSessionAt = session.metadata.resumeSessionAt;
-				const bestEffortResumeSessionAt = this.findBestEffortResumeSessionAt();
+				const bestEffortResumeSessionAt = findBestEffortResumeSessionAt(
+					session.sdkOriginPath ?? session.worktree?.worktreePath ?? session.workspacePath,
+					session.sdkSessionId,
+					session.id,
+					this.ctx.db
+				);
 
 				if (bestEffortResumeSessionAt) {
 					logger.warn(
@@ -919,39 +923,6 @@ export class QueryRunner {
 			);
 			return null;
 		}
-	}
-
-	private findBestEffortResumeSessionAt(): string | undefined {
-		const { session } = this.ctx;
-		const workspacePath =
-			session.sdkOriginPath ?? session.worktree?.worktreePath ?? session.workspacePath;
-		if (!workspacePath || !session.sdkSessionId) {
-			return undefined;
-		}
-
-		const { messages } = this.ctx.db.getSDKMessages(session.id, BEST_EFFORT_RESUME_MESSAGE_LIMIT);
-		const candidates = messages
-			.map((message) => ({
-				uuid: typeof message.uuid === 'string' ? message.uuid : undefined,
-				timestamp: message.timestamp,
-			}))
-			.filter((message): message is { uuid: string; timestamp: number } => Boolean(message.uuid))
-			.sort((a, b) => b.timestamp - a.timestamp);
-
-		for (const candidate of candidates) {
-			if (
-				messageUuidExistsInSessionFile(
-					workspacePath,
-					session.sdkSessionId,
-					session.id,
-					candidate.uuid
-				)
-			) {
-				return candidate.uuid;
-			}
-		}
-
-		return undefined;
 	}
 
 	private getLiveSdkMcpServerNames(queryOptions: Pick<Options, 'mcpServers'>): string[] {

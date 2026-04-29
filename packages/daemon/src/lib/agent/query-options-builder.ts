@@ -49,12 +49,12 @@ import { join } from 'path';
 import type { Database } from '../../storage/database';
 import {
 	extractCompactionSummary,
+	findBestEffortResumeSessionAt,
 	getSDKSessionFilePath,
 	messageUuidExistsInSessionFile,
 } from '../sdk-session-file-manager';
 
 export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
-const BEST_EFFORT_RESUME_MESSAGE_LIMIT = 10_000;
 
 /**
  * Provider-specific SDK settings overrides.
@@ -498,7 +498,14 @@ export class QueryOptionsBuilder {
 			if (this.isResumeSessionAtValid(resumeSessionAt)) {
 				result.resumeSessionAt = resumeSessionAt;
 			} else {
-				const bestEffortResumeSessionAt = this.findBestEffortResumeSessionAt();
+				const bestEffortResumeSessionAt = this.ctx.db
+					? findBestEffortResumeSessionAt(
+							this.getSdkResumeWorkspacePath(),
+							this.ctx.session.sdkSessionId,
+							this.ctx.session.id,
+							this.ctx.db
+						)
+					: undefined;
 				if (bestEffortResumeSessionAt) {
 					this.replaceStaleResumeSessionAt(bestEffortResumeSessionAt);
 					result.resumeSessionAt = bestEffortResumeSessionAt;
@@ -518,7 +525,7 @@ export class QueryOptionsBuilder {
 
 	private isResumeSessionAtValid(messageUuid: string): boolean {
 		const { session } = this.ctx;
-		const sdkWorkspacePath = this.getCwd();
+		const sdkWorkspacePath = this.getSdkResumeWorkspacePath();
 		if (!sdkWorkspacePath || !session.sdkSessionId) {
 			return false;
 		}
@@ -529,30 +536,6 @@ export class QueryOptionsBuilder {
 			session.id,
 			messageUuid
 		);
-	}
-
-	private findBestEffortResumeSessionAt(): string | undefined {
-		const { session, db } = this.ctx;
-		if (!db) {
-			return undefined;
-		}
-
-		const { messages } = db.getSDKMessages(session.id, BEST_EFFORT_RESUME_MESSAGE_LIMIT);
-		const candidates = messages
-			.map((message) => ({
-				uuid: typeof message.uuid === 'string' ? message.uuid : undefined,
-				timestamp: message.timestamp,
-			}))
-			.filter((message): message is { uuid: string; timestamp: number } => Boolean(message.uuid))
-			.sort((a, b) => b.timestamp - a.timestamp);
-
-		for (const candidate of candidates) {
-			if (this.isResumeSessionAtValid(candidate.uuid)) {
-				return candidate.uuid;
-			}
-		}
-
-		return undefined;
 	}
 
 	private replaceStaleResumeSessionAt(resumeSessionAt: string): void {
@@ -566,7 +549,7 @@ export class QueryOptionsBuilder {
 	private clearStaleResumeSessionAt(): void {
 		const { session, db } = this.ctx;
 		const previousSdkSessionId = session.sdkSessionId;
-		const workspacePath = session.sdkOriginPath ?? this.getCwd();
+		const workspacePath = this.getSdkResumeWorkspacePath();
 
 		delete session.metadata.resumeSessionAt;
 
@@ -589,6 +572,10 @@ export class QueryOptionsBuilder {
 			sdkSessionId: undefined,
 			sdkOriginPath: undefined,
 		});
+	}
+
+	private getSdkResumeWorkspacePath(): string | undefined {
+		return this.ctx.session.sdkOriginPath ?? this.getCwd();
 	}
 
 	/**
