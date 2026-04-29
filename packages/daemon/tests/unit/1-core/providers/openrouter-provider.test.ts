@@ -118,6 +118,42 @@ describe('OpenRouterProvider', () => {
 		expect(models[1].family).toBe('gpt');
 	});
 
+	it('caps API-loaded models to a curated set of known provider families', async () => {
+		process.env.OPENROUTER_API_KEY = 'sk-or-test';
+		const data = [
+			...Array.from({ length: 35 }, (_, index) => ({
+				id: `anthropic/claude-test-${index}`,
+				name: `Claude Test ${index}`,
+			})),
+			{ id: 'random-lab/experimental-1', name: 'Experimental 1' },
+			{ id: 'small-provider/experimental-2', name: 'Experimental 2' },
+		];
+		const fetchMock = mock(async () => new Response(JSON.stringify({ data }), { status: 200 }));
+		const provider = new OpenRouterProvider(process.env, fetchMock as unknown as typeof fetch);
+
+		const models = await provider.getModels();
+
+		expect(models).toHaveLength(OpenRouterProvider.MAX_API_MODELS);
+		expect(models.every((model) => model.id.startsWith('anthropic/'))).toBe(true);
+		expect(models.at(-1)?.id).toBe('anthropic/claude-test-29');
+	});
+
+	it('falls back to the first API models when no curated families are present', async () => {
+		process.env.OPENROUTER_API_KEY = 'sk-or-test';
+		const data = Array.from({ length: 35 }, (_, index) => ({
+			id: `community/model-${index}`,
+			name: `Community Model ${index}`,
+		}));
+		const fetchMock = mock(async () => new Response(JSON.stringify({ data }), { status: 200 }));
+		const provider = new OpenRouterProvider(process.env, fetchMock as unknown as typeof fetch);
+
+		const models = await provider.getModels();
+
+		expect(models).toHaveLength(OpenRouterProvider.MAX_API_MODELS);
+		expect(models[0].id).toBe('community/model-0');
+		expect(models.at(-1)?.id).toBe('community/model-29');
+	});
+
 	it('surfaces rejected API keys through auth status and hides models', async () => {
 		process.env.OPENROUTER_API_KEY = 'sk-or-test';
 		const fetchMock = mock(async () => new Response('Unauthorized', { status: 401 }));

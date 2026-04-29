@@ -27,7 +27,7 @@ import {
 	getModelFamilyIcon,
 	getProviderLabel,
 	groupModelsByProvider,
-	filterModelsForPicker,
+	useFilteredModelsForPicker,
 	useMessageHub,
 } from '../hooks';
 import { Spinner } from './ui/Spinner.tsx';
@@ -245,6 +245,7 @@ export default function SessionStatusBar({
 	const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, ProviderAuthStatus>>(
 		new Map()
 	);
+	const [modelSearchQuery, setModelSearchQuery] = useState('');
 
 	useEffect(() => {
 		let cancelled = false;
@@ -280,6 +281,7 @@ export default function SessionStatusBar({
 			modelDropdown.close();
 		} else {
 			thinkingDropdown.close();
+			setModelSearchQuery('');
 			modelDropdown.open();
 		}
 	}, [modelDropdown, thinkingDropdown]);
@@ -320,10 +322,17 @@ export default function SessionStatusBar({
 	const handleModelSwitch = useCallback(
 		async (model: ModelInfo) => {
 			await onModelSwitch(model);
+			setModelSearchQuery('');
 			modelDropdown.close();
 		},
 		[onModelSwitch, modelDropdown]
 	);
+
+	useEffect(() => {
+		if (!modelDropdown.isOpen) {
+			setModelSearchQuery('');
+		}
+	}, [modelDropdown.isOpen]);
 
 	// Thinking level change handler with persistence
 	const handleThinkingLevelChange = useCallback(
@@ -342,6 +351,13 @@ export default function SessionStatusBar({
 
 	// Get current model icon
 	const currentModelIcon = currentModelInfo ? getModelFamilyIcon(currentModelInfo.family) : '💎';
+	const filteredModels = useFilteredModelsForPicker(
+		availableModels,
+		providerAuthStatuses,
+		currentModelInfo?.provider,
+		modelSearchQuery
+	);
+	const groupedFilteredModels = groupModelsByProvider(filteredModels);
 	const glassControlButtonBaseClass =
 		'control-btn w-8 h-8 flex items-center justify-center rounded-full bg-transparent backdrop-blur-sm hover:bg-dark-800/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed';
 
@@ -453,74 +469,85 @@ export default function SessionStatusBar({
 						{modelDropdown.isOpen && (
 							<div
 								data-testid="model-dropdown"
-								class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-52 py-1 z-50 animate-slideIn max-h-[60vh] overflow-y-auto`}
+								class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-72 py-1 z-50 animate-slideIn max-h-[60vh] flex flex-col`}
 							>
 								<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Select Model</div>
-								{Array.from(
-									groupModelsByProvider(
-										filterModelsForPicker(
-											availableModels,
-											providerAuthStatuses,
-											currentModelInfo?.provider
-										)
-									).entries()
-								).map(([provider, models], groupIndex) => {
-									const authStatus = providerAuthStatuses.get(provider);
-									const isAuthenticated = authStatus?.isAuthenticated;
-									const needsRefresh = authStatus?.needsRefresh ?? false;
-									// Dot: gray = unknown, green = ok, yellow = expiring, red = unauthenticated (only current shown)
-									const dotClass =
-										isAuthenticated === undefined
-											? 'bg-gray-500'
-											: !isAuthenticated
-												? 'bg-red-500'
-												: needsRefresh
-													? 'bg-yellow-500'
-													: 'bg-green-500';
-									return (
-										<div key={provider} data-testid="provider-section">
-											{groupIndex > 0 && <div class="mx-2 my-1 border-t border-gray-700" />}
-											<div class="px-3 py-1 flex items-center gap-1.5">
-												<span class={`w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`} />
-												<span
-													data-testid="provider-group-header"
-													class="text-[10px] font-semibold text-gray-400 uppercase tracking-wide"
-												>
-													{getProviderLabel(provider)}
-												</span>
-												{needsRefresh && (
-													<span class="text-yellow-400 text-[10px]" title="Token expiring soon">
-														⚠
-													</span>
-												)}
-											</div>
-											{models.map((model) => {
-												const isCurrent =
-													model.id === currentModelInfo?.id &&
-													model.provider === currentModelInfo?.provider;
-												return (
-													<button
-														key={`${model.provider}:${model.id}`}
-														class={`w-full text-left px-3 py-1.5 hover:bg-dark-700 text-xs flex items-center gap-2 ${
-															isCurrent ? 'text-blue-400' : 'text-gray-200'
-														}`}
-														onClick={() => handleModelSwitch(model)}
-														disabled={modelSwitching}
-													>
-														<span class="text-base">{getModelFamilyIcon(model.family)}</span>
-														<span class="flex-1 truncate">{model.name}</span>
-														{isCurrent && <span class="text-blue-400 text-[10px]">✓</span>}
+								<div class="px-2 pb-2">
+									<input
+										type="search"
+										value={modelSearchQuery}
+										onInput={(e) => setModelSearchQuery(e.currentTarget.value)}
+										placeholder="Search models..."
+										aria-label="Search models"
+										class="w-full bg-dark-900 border border-dark-600 rounded px-2 py-1.5 text-xs text-gray-100 placeholder:text-gray-500 focus:outline-none focus:border-blue-500"
+									/>
+								</div>
+								<div class="overflow-y-auto">
+									{Array.from(groupedFilteredModels.entries()).map(
+										([provider, models], groupIndex) => {
+											const authStatus = providerAuthStatuses.get(provider);
+											const isAuthenticated = authStatus?.isAuthenticated;
+											const needsRefresh = authStatus?.needsRefresh ?? false;
+											// Dot: gray = unknown, green = ok, yellow = expiring, red = unauthenticated (only current shown)
+											const dotClass =
+												isAuthenticated === undefined
+													? 'bg-gray-500'
+													: !isAuthenticated
+														? 'bg-red-500'
+														: needsRefresh
+															? 'bg-yellow-500'
+															: 'bg-green-500';
+											return (
+												<div key={provider} data-testid="provider-section">
+													{groupIndex > 0 && <div class="mx-2 my-1 border-t border-gray-700" />}
+													<div class="px-3 py-1 flex items-center gap-1.5">
+														<span class={`w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`} />
+														<span
+															data-testid="provider-group-header"
+															class="text-[10px] font-semibold text-gray-400 uppercase tracking-wide"
+														>
+															{getProviderLabel(provider)}
+														</span>
 														{needsRefresh && (
-															<span class="text-yellow-400 text-[10px]" title="Token expiring">
+															<span class="text-yellow-400 text-[10px]" title="Token expiring soon">
 																⚠
 															</span>
 														)}
-													</button>
-												);
-											})}
+													</div>
+													{models.map((model) => {
+														const isCurrent =
+															model.id === currentModelInfo?.id &&
+															model.provider === currentModelInfo?.provider;
+														return (
+															<button
+																key={`${model.provider}:${model.id}`}
+																class={`w-full text-left px-3 py-1.5 hover:bg-dark-700 text-xs flex items-center gap-2 ${
+																	isCurrent ? 'text-blue-400' : 'text-gray-200'
+																}`}
+																onClick={() => handleModelSwitch(model)}
+																disabled={modelSwitching}
+															>
+																<span class="text-base">{getModelFamilyIcon(model.family)}</span>
+																<span class="flex-1 truncate">{model.name}</span>
+																{isCurrent && <span class="text-blue-400 text-[10px]">✓</span>}
+																{needsRefresh && (
+																	<span class="text-yellow-400 text-[10px]" title="Token expiring">
+																		⚠
+																	</span>
+																)}
+															</button>
+														);
+													})}
+												</div>
+											);
+										}
+									)}
+									{filteredModels.length === 0 && (
+										<div class="px-3 py-4 text-xs text-gray-500 text-center">
+											No matching models
 										</div>
-									);
-								})}
+									)}
+								</div>
 							</div>
 						)}
 					</div>

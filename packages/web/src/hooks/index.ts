@@ -20,6 +20,8 @@ export {
 	getProviderLabel,
 	groupModelsByProvider,
 	filterModelsForPicker,
+	filterModelsBySearch,
+	useFilteredModelsForPicker,
 } from './useModelSwitcher';
 export {
 	useMessageHub,
