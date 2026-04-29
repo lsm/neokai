@@ -618,6 +618,26 @@ describe('AgentSession', () => {
 			expect(result).toEqual({ success: true });
 		});
 
+		it('resetQuery should use hard reset runtime hook when provided', async () => {
+			const hardResetSpy = mock(async () => ({ success: true }));
+			const sessionWithHardReset = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey,
+				undefined,
+				undefined,
+				undefined,
+				{ hardReset: hardResetSpy }
+			);
+
+			const result = await sessionWithHardReset.resetQuery({ restartQuery: true });
+
+			expect(hardResetSpy).toHaveBeenCalledWith(sessionWithHardReset, { restartQuery: true });
+			expect(result).toEqual({ success: true });
+		});
+
 		it('updateConfig should delegate to sessionConfigHandler', async () => {
 			const updateConfigSpy = mock(async () => {});
 			// biome-ignore lint: test mock access
