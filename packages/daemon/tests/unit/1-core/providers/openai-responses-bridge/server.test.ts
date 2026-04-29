@@ -310,7 +310,10 @@ describe('openai-responses-bridge server', () => {
 				},
 				{
 					role: 'user',
-					content: [{ type: 'tool_result', tool_use_id: 'call_abc', content: 'found' }],
+					content: [
+						{ type: 'tool_result', tool_use_id: 'call_abc', content: 'found' },
+						{ type: 'text', text: 'Summarize this briefly.' },
+					],
 				},
 			],
 			tools: [{ name: 'lookup', input_schema: { type: 'object' } }],
@@ -334,10 +337,15 @@ describe('openai-responses-bridge server', () => {
 		expect(events.find((event) => event.event === 'content_block_delta')?.data).toMatchObject({
 			delta: { text: 'done' },
 		});
-		expect(capturedBodies[1]).toMatchObject({
-			previous_response_id: 'resp_tool',
-			input: [{ type: 'function_call_output', call_id: 'call_abc', output: 'found' }],
-		});
+		expect(capturedBodies[1]?.previous_response_id).toBe('resp_tool');
+		expect(capturedBodies[1]?.input).toEqual([
+			{ type: 'function_call_output', call_id: 'call_abc', output: 'found' },
+			{
+				type: 'message',
+				role: 'user',
+				content: [{ type: 'input_text', text: 'Summarize this briefly.' }],
+			},
+		]);
 
 		const third = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
 			method: 'POST',

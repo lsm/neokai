@@ -263,20 +263,15 @@ function appendAssistantBlocks(items: ResponsesInputItem[], blocks: AnthropicCon
 	appendAssistantMessage(items, textParts);
 }
 
-function latestToolResultItems(messages: AnthropicRequest['messages']): ResponsesInputItem[] {
+function latestContinuationInputItems(
+	messages: AnthropicRequest['messages']
+): ResponsesInputItem[] {
 	const last = messages.at(-1);
 	if (!last || last.role !== 'user' || typeof last.content === 'string') return [];
+	if (!last.content.some((block) => block.type === 'tool_result')) return [];
+
 	const items: ResponsesInputItem[] = [];
-	for (const block of last.content) {
-		if (block.type !== 'tool_result') continue;
-		const result = block as AnthropicContentBlockToolResult & { is_error?: boolean };
-		const output = toolResultText(result.content);
-		items.push({
-			type: 'function_call_output',
-			call_id: result.tool_use_id,
-			output: result.is_error ? `[Tool error]\n${output}` : output,
-		});
-	}
+	appendUserBlocks(items, last.content);
 	return items;
 }
 
@@ -284,7 +279,7 @@ function resolveContinuation(
 	messages: AnthropicRequest['messages'],
 	continuations: Map<string, ResponseContinuation>
 ): { previousResponseId: string; input: ResponsesInputItem[]; callIds: string[] } | undefined {
-	const input = latestToolResultItems(messages);
+	const input = latestContinuationInputItems(messages);
 	if (input.length === 0) return undefined;
 
 	let previousResponseId: string | undefined;
