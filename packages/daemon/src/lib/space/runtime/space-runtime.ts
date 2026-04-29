@@ -2177,8 +2177,8 @@ export class SpaceRuntime {
 		}
 
 		for (const state of recoveryStates) {
-			const { execution, data, recoveryData, retryCount, pendingInbox } = state;
-			if (pendingInbox.length === 0 || retryCount >= 1) {
+			const { execution, data, recoveryData, retryCount, pendingInbox, hasLiveSession } = state;
+			if (hasLiveSession || pendingInbox.length === 0 || retryCount >= 1) {
 				continue;
 			}
 

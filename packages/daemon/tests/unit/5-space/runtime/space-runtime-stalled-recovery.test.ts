@@ -376,6 +376,67 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(notifications.some((event) => event.kind === 'workflow_run_blocked')).toBe(false);
 		});
 
+		test('live waiting_rebind session with queued inbox is not rebound', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Live Rebind Inbox Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Live Rebind Inbox Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'waiting_rebind', {
+				agentSessionId: 'live-session-with-inbox',
+				result: 'waiting for orphaned tool_result recovery',
+			});
+			const recoveryRepo = new ToolContinuationRecoveryRepository(db);
+			recoveryRepo.ensureSchema();
+			recoveryRepo.recordToolUse({
+				toolUseId: 'tool-live-inbox',
+				sessionId: 'live-session-with-inbox',
+				ttlMs: 60_000,
+				owner: { executionId: execution.id, workflowRunId: run.id },
+			});
+			recoveryRepo.queueContinuation({
+				toolUseId: 'tool-live-inbox',
+				sessionId: 'live-session-with-inbox',
+				requestBody: { messages: [{ role: 'user', content: [] }] },
+				reason: 'late continuation while original session is still live',
+				ttlMs: 60_000,
+			});
+
+			const rt = makeRuntime({
+				taskAgentManager: {
+					rehydrate: async () => {},
+					isSessionAlive: (sessionId: string) => sessionId === 'live-session-with-inbox',
+					getAgentSessionById: () => null,
+					isExecutionSpawning: () => false,
+				} as any,
+			});
+			await rt.executeTick();
+
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			expect(updated.status).toBe('waiting_rebind');
+			expect(updated.agentSessionId).toBe('live-session-with-inbox');
+			expect(recoveryRepo.listPendingInboxForExecution(execution.id)).toHaveLength(1);
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+			expect(notifications.filter((event) => event.kind === 'task_retry')).toHaveLength(0);
+			expect(notifications.filter((event) => event.kind === 'workflow_run_blocked')).toHaveLength(
+				0
+			);
+		});
+
 		test('blocking one waiting_rebind execution stops later same-tick rebounds', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Step A', agentId: AGENT },
