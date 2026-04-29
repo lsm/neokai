@@ -9,7 +9,7 @@
  * - sendEnqueuedMessagesOnTurnEnd - auto-defer mode: send enqueued messages after turn
  */
 
-import type { Session } from '@neokai/shared';
+import type { MessageContent, Session } from '@neokai/shared';
 import { isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
@@ -77,12 +77,9 @@ export class QueryModeHandler {
 					continue;
 				}
 
-				const content = msg.message.content;
-				if (content) {
-					const textContent = this.extractTextContent(content);
-					if (textContent) {
-						await messageQueue.enqueueWithId(msg.uuid as string, textContent);
-					}
+				const replayContent = this.toReplayContent(msg.message.content);
+				if (replayContent) {
+					await messageQueue.enqueueWithId(msg.uuid as string, replayContent);
 				}
 			}
 
@@ -117,12 +114,9 @@ export class QueryModeHandler {
 					continue;
 				}
 
-				const content = msg.message.content;
-				if (content) {
-					const textContent = this.extractTextContent(content);
-					if (textContent) {
-						await messageQueue.enqueueWithId(msg.uuid as string, textContent);
-					}
+				const replayContent = this.toReplayContent(msg.message.content);
+				if (replayContent) {
+					await messageQueue.enqueueWithId(msg.uuid as string, replayContent);
 				}
 			}
 		} catch (error) {
@@ -139,21 +133,25 @@ export class QueryModeHandler {
 		await this.handleQueryTrigger();
 	}
 
-	/**
-	 * Extract text content from message content
-	 */
-	private extractTextContent(content: string | Array<{ type: string; text?: string }>): string {
+	private toReplayContent(
+		content: string | Array<{ type: string; text?: string }>
+	): string | MessageContent[] | null {
 		if (typeof content === 'string') {
-			return content;
+			return content || null;
 		}
 
 		if (Array.isArray(content)) {
-			return content
+			if (content.some((block) => block.type !== 'text')) {
+				return content as MessageContent[];
+			}
+
+			const textContent = content
 				.filter((c): c is { type: 'text'; text: string } => c.type === 'text' && !!c.text)
 				.map((c) => c.text)
 				.join('\n');
+			return textContent || null;
 		}
 
-		return '';
+		return null;
 	}
 }
