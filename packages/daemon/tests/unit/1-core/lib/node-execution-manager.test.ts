@@ -3,7 +3,7 @@
  *
  * Covers:
  *   Pure-function layer:
- *   1.  VALID_NODE_EXECUTION_TRANSITIONS — has all 5 statuses as keys
+ *   1.  VALID_NODE_EXECUTION_TRANSITIONS — has all 6 statuses as keys
  *   2.  isValidNodeExecutionTransition: pending → in_progress — valid
  *   3.  isValidNodeExecutionTransition: pending → cancelled — valid
  *   4.  isValidNodeExecutionTransition: in_progress → done — valid
@@ -115,14 +115,15 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('VALID_NODE_EXECUTION_TRANSITIONS', () => {
-	test('1. has all 5 statuses as keys', () => {
+	test('1. has all 6 statuses as keys', () => {
 		const keys = Object.keys(VALID_NODE_EXECUTION_TRANSITIONS);
 		expect(keys).toContain('pending');
 		expect(keys).toContain('in_progress');
 		expect(keys).toContain('idle');
+		expect(keys).toContain('waiting_rebind');
 		expect(keys).toContain('blocked');
 		expect(keys).toContain('cancelled');
-		expect(keys).toHaveLength(5);
+		expect(keys).toHaveLength(6);
 	});
 });
 
@@ -163,6 +164,14 @@ describe('isValidNodeExecutionTransition', () => {
 		expect(isValidNodeExecutionTransition('cancelled', 'in_progress')).toBe(true);
 	});
 
+	test('10b. waiting_rebind → pending is valid (rebind retry)', () => {
+		expect(isValidNodeExecutionTransition('waiting_rebind', 'pending')).toBe(true);
+	});
+
+	test('10c. waiting_rebind → blocked is valid (fail-forward)', () => {
+		expect(isValidNodeExecutionTransition('waiting_rebind', 'blocked')).toBe(true);
+	});
+
 	test('11. pending → done is invalid', () => {
 		expect(isValidNodeExecutionTransition('pending', 'done')).toBe(false);
 	});
@@ -191,6 +200,10 @@ describe('isNodeExecutionTerminal', () => {
 
 	test('17. blocked is not terminal', () => {
 		expect(isNodeExecutionTerminal('blocked')).toBe(false);
+	});
+
+	test('17b. waiting_rebind is not terminal', () => {
+		expect(isNodeExecutionTerminal('waiting_rebind')).toBe(false);
 	});
 
 	test('18. TERMINAL_NODE_EXECUTION_STATUSES size=2', () => {
