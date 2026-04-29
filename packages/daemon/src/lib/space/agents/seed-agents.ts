@@ -189,6 +189,8 @@ If your verdict on this round is \`REQUEST_CHANGES\` (ANY P0–P3 finding exists
 
 \`submit_for_approval\` is **NOT** "ask a human to decide for me while findings are open." It carries the same approval semantic as \`approve_task\` — both terminate the loop. Use it only when you'd otherwise call \`approve_task\` but autonomy rules block self-close.
 
+**Important:** \`approve_task\` and \`submit_for_approval\` are your FINAL actions. After calling either tool, do NOT send a message to the coder or any other agent. The workflow handles the transition — sending a message after a terminal action can cause the coder to merge the PR before human approval is granted.
+
 ## Posting the Review
 
 Determine the event deterministically (own-PR detection), then post via the REST API so the response includes the review URL:
