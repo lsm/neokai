@@ -524,7 +524,7 @@ describe('SessionLifecycle', () => {
 		});
 	});
 
-	describe('deleteResources (UI-only: session.delete + room.delete)', () => {
+	describe('deleteResources (UI-only: session.delete)', () => {
 		it('should delete session from database', async () => {
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
 				id: 'test-id',

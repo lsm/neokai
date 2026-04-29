@@ -43,26 +43,9 @@ RPC_FILES=(
 )
 
 # NOTE: All room/* shards are intentionally commented out in .github/workflows/main.yml
-# due to resource usage. ROOM_FILES below tracks files that exist on disk; CI does not
-# automatically run them. Run them locally or enable per-task in the CI matrix.
-ROOM_FILES=(
-  coder-agent-subagents.test.ts
-  mission-lifecycle.test.ts
-  room-advanced-scenarios.test.ts
-  room-chat-agent-tools.test.ts
-  room-chat-constraints.test.ts
-  room-mcp-enablement.test.ts
-  room-multi-agent-flow.test.ts
-  planner-three-phase.test.ts
-  planner-websearch.test.ts
-  room-planner-two-phase.test.ts
-  room-replan-recovery.test.ts
-  room-reviewer-flow.test.ts
-  room-tick-job.test.ts
-  short-id-flow.test.ts
-  reviewer-leader-subagents.test.ts
-  goal-lifecycle-reset.test.ts
-)
+# due to resource usage. Room online tests were deleted in Task #186 (Room retirement).
+# The 'room' directory no longer exists in tests/online/.
+ROOM_FILES=()
 
 FEATURES_FILES=(
   auto-title.test.ts
@@ -138,7 +121,7 @@ check_split_module() {
 }
 
 check_split_module "rpc" "${RPC_FILES[@]}"
-check_split_module "room" "${ROOM_FILES[@]}"
+check_split_module "room" "${ROOM_FILES[@]:-}"
 check_split_module "features" "${FEATURES_FILES[@]}"
 check_split_module "providers" "${PROVIDERS_FILES[@]}"
 check_split_module "cross-provider" "${CROSS_PROVIDER_FILES[@]}"
@@ -147,7 +130,7 @@ check_split_module "space" "${SPACE_FILES[@]}"
 
 # --- 2. Check for new module directories not in the CI matrix ---
 # These are directories covered by directory-level test_path (auto-discover).
-KNOWN_DIRS="agent components convo coordinator cross-provider features git glm lifecycle mcp neo providers rewind room rpc sandbox sdk space websocket"
+KNOWN_DIRS="agent components convo coordinator cross-provider features git glm lifecycle mcp neo providers rewind rpc sandbox sdk space websocket"
 
 for dir in "$ONLINE_DIR"/*/; do
   [ -d "$dir" ] || continue

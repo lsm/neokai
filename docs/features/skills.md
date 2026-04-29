@@ -10,7 +10,7 @@ In NeoKai, a skill is a configured capability that can be invoked by an agent du
 - **MCP server skills** — [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) servers that provide tools via the MCP standard
 - **Built-in skills** — Capabilities shipped with NeoKai that require no configuration (Web Search MCP, Chrome DevTools MCP, Playwright, and Playwright Interactive)
 
-Skills are configured **globally** at the application level and then selectively **enabled per room**.
+Skills are configured **globally** at the application level and are available to all sessions.
 
 Note: SDK slash commands (e.g., `/merge-session`) are managed by the SDK and are always available — they are not part of the Skills system.
 
@@ -24,7 +24,7 @@ Note: SDK slash commands (e.g., `/merge-session`) are managed by the SDK and are
 4. Fill in the skill details (see Source Types below)
 5. Click **Save**
 
-The skill is now registered in the global skills registry and can be enabled in any room.
+The skill is now registered in the global skills registry and can be enabled in any Space.
 
 ### Source Types
 
@@ -50,27 +50,6 @@ When enabled, all tools exposed by that MCP server become available to the agent
 
 Built-in skills are shipped with NeoKai and cannot be deleted. NeoKai ships with four built-in skills: **Fetch MCP**, **Chrome DevTools (MCP)**, **Playwright**, and **Playwright Interactive**.
 
-## Enabling Skills Per Room
-
-By default, skills are disabled. You must explicitly enable them per room.
-
-1. Open a **Room**
-2. Click the **Room Settings** button (top-right of the room panel)
-3. Scroll to **Skills**
-4. Toggle the skills you want to enable for this room
-
-### Room Override Behavior
-
-When you toggle a skill in room settings, it creates a **room-level override** that takes precedence over the skill's global state for this room only.
-
-The override is one-directional: it can only **disable** a globally-enabled skill, not enable a globally-disabled one.
-
-- **Globally enabled + room disabled** → Skill is OFF in that room
-- **Globally disabled + room enabled** → Skill stays OFF (override cannot enable)
-- **No override** → Skill uses its global enabled state
-
-To remove a room override, click **Reset** next to the skill. The skill returns to its global state.
-
 ## Built-in Skills
 
 ### Chrome DevTools (MCP)
@@ -81,7 +60,7 @@ Provides browser automation and DevTools integration via the Chrome DevTools MCP
 - **Type**: MCP Server (built-in, opt-in — disabled by default)
 - **Command**: `bunx chrome-devtools-mcp@latest --isolated`
 
-This skill is **opt-in**, not automatically enabled. Enable it in the global skills registry and in your room's settings when you need browser automation capabilities.
+This skill is **opt-in**, not automatically enabled. Enable it in the global skills registry when you need browser automation capabilities.
 
 ### Playwright
 

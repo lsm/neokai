@@ -6,8 +6,7 @@
  */
 
 /**
- * Matches both room agent ("Chat with...") and standalone session ("Ask or make...") textareas.
- * Neo panel's "Ask Neo…" is excluded by not using a generic "Ask" match.
+ * Matches the standalone session chat textarea ("Ask or make anything...").
+ * Excludes Neo panel's "Ask Neo…" input via the exact placeholder match.
  */
-export const CHAT_INPUT_SELECTOR =
-	'textarea[placeholder*="room coordinator"], textarea[placeholder="Ask or make anything..."]';
+export const CHAT_INPUT_SELECTOR = 'textarea[placeholder="Ask or make anything..."]';

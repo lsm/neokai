@@ -91,7 +91,7 @@ test.describe('Neo Chat Rendering', () => {
 		await expect(emptyState).toContainText("Hi, I'm Neo");
 
 		// Shows helper prompt text
-		await expect(emptyState).toContainText('Ask me anything about your rooms, sessions, or goals');
+		await expect(emptyState).toContainText('Ask me anything about your spaces, sessions, or tasks');
 
 		// No messages rendered yet
 		await expect(page.getByTestId(NEO_USER_MESSAGE_TESTID)).toHaveCount(0);

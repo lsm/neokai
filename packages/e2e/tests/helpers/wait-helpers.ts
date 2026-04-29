@@ -138,7 +138,7 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
 	);
 
 	// Verify we're in a chat view (message input should be visible).
-	// Uses CHAT_INPUT_SELECTOR to match room coordinator or standalone session textareas.
+	// Uses CHAT_INPUT_SELECTOR to match the standalone session textarea.
 	const messageInput = page.locator(CHAT_INPUT_SELECTOR).first();
 	await expect(messageInput).toBeVisible({ timeout: 15000 });
 	await expect(messageInput).toBeEnabled({ timeout: 5000 });
@@ -231,7 +231,7 @@ export async function waitForAssistantResponse(
 	}
 
 	// Wait for input to be enabled again (processing complete)
-	// Uses CHAT_INPUT_SELECTOR to match room coordinator or standalone session textareas.
+	// Uses CHAT_INPUT_SELECTOR to match the standalone session textarea.
 	const messageInput = page.locator(CHAT_INPUT_SELECTOR).first();
 	await expect(messageInput).toBeEnabled({ timeout: 20000 });
 }
