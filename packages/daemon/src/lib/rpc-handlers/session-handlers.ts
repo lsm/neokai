@@ -479,9 +479,8 @@ export function setupSessionHandlers(
 		// Generate messageId immediately for return
 		const messageId = generateUUID();
 
-		// Persist and deliver to the SDK input queue before acknowledging. This
-		// prevents the UI from accepting a message that is visible but never starts
-		// an agent turn after model/mode restarts.
+		// Persist and start the agent turn before acknowledging; actual SDK queue
+		// delivery is async and recovered by the query lifecycle manager.
 		await sessionManager.sendUserMessage({
 			sessionId: targetSessionId,
 			messageId,

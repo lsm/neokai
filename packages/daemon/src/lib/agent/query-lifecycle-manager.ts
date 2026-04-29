@@ -36,6 +36,7 @@ import {
 
 const DEFAULT_TERMINATION_TIMEOUT_MS = 5000;
 const RESET_TERMINATION_TIMEOUT_MS = 3000;
+const MAX_TIMEOUT_DELIVERY_RETRIES = 1;
 
 export type EnsureQueryStartedResult = 'started' | 'already-running' | 'blocked';
 
@@ -79,6 +80,7 @@ export interface QueryLifecycleManagerContext {
 
 export class QueryLifecycleManager {
 	private logger: Logger;
+	private timeoutDeliveryRetryCounts = new Map<string, number>();
 
 	constructor(private ctx: QueryLifecycleManagerContext) {
 		this.logger = new Logger(`QueryLifecycleManager ${ctx.session.id}`);
@@ -641,9 +643,20 @@ export class QueryLifecycleManager {
 		);
 
 		if (!isTimeoutError) {
+			this.timeoutDeliveryRetryCounts.delete(messageId);
 			await stateManager.setIdle();
 			return;
 		}
+
+		const retryCount = this.timeoutDeliveryRetryCounts.get(messageId) ?? 0;
+		if (retryCount >= MAX_TIMEOUT_DELIVERY_RETRIES) {
+			await stateManager.setIdle();
+			this.logger.warn(
+				`Message ${messageId} timed out after ${MAX_TIMEOUT_DELIVERY_RETRIES} delivery retry.`
+			);
+			return;
+		}
+		this.timeoutDeliveryRetryCounts.set(messageId, retryCount + 1);
 
 		try {
 			const resetResult = await this.reset({ restartAfter: true });
@@ -655,6 +668,7 @@ export class QueryLifecycleManager {
 				throw new Error('Agent query did not restart; message remains queued for retry.');
 			}
 			await messageQueue.enqueueWithId(messageId, messageContent);
+			this.timeoutDeliveryRetryCounts.delete(messageId);
 		} catch (retryError) {
 			await stateManager.setIdle();
 			this.logger.warn('Failed to recover queued message delivery', retryError);

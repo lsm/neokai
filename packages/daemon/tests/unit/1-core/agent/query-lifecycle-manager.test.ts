@@ -977,6 +977,25 @@ describe('QueryLifecycleManager', () => {
 			// Should set idle after retry fails
 			expect(setIdleSpy).toHaveBeenCalled();
 		});
+
+		test('does not reset again after timeout retry limit is reached', async () => {
+			const timeoutError = new Error('Queue timeout');
+			timeoutError.name = 'MessageQueueTimeoutError';
+
+			spyOn(messageQueue, 'enqueueWithId').mockRejectedValue(timeoutError);
+			const resetSpy = spyOn(manager, 'reset');
+
+			await manager.startQueryAndEnqueue('msg-123', 'Hello');
+			await new Promise((r) => setTimeout(r, 200));
+
+			expect(resetSpy).toHaveBeenCalledTimes(1);
+
+			await manager.startQueryAndEnqueue('msg-123', 'Hello');
+			await new Promise((r) => setTimeout(r, 50));
+
+			expect(resetSpy).toHaveBeenCalledTimes(1);
+			expect(setIdleSpy).toHaveBeenCalled();
+		});
 	});
 
 	describe('restartQuery', () => {

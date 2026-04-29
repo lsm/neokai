@@ -156,7 +156,6 @@ describe('SessionManager', () => {
 		});
 
 		it('should setup event subscriptions', () => {
-			expect(mockEventBus.on).toHaveBeenCalledWith('message.sendRequest', expect.any(Function));
 			expect(mockEventBus.on).toHaveBeenCalledWith('message.persisted', expect.any(Function));
 		});
 
@@ -806,33 +805,6 @@ describe('SessionManager', () => {
 	});
 
 	describe('EventBus subscriptions', () => {
-		describe('message.sendRequest handler', () => {
-			it('should handle message send requests', async () => {
-				const handler = eventHandlers.get('message.sendRequest');
-				expect(handler).toBeDefined();
-
-				// Set up session in cache first
-				const mockSession: Session = {
-					id: 'test-id',
-					title: 'Test',
-					workspacePath: '/test',
-					status: 'active',
-					config: {},
-					metadata: {},
-				};
-				(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
-				sessionManager.getSession('test-id');
-
-				// Handler should be callable
-				await handler?.({
-					sessionId: 'test-id',
-					messageId: 'msg-id',
-					content: 'test content',
-					images: [],
-				});
-			});
-		});
-
 		describe('message.persisted handler', () => {
 			it('should handle message persisted events', async () => {
 				const handler = eventHandlers.get('message.persisted');
