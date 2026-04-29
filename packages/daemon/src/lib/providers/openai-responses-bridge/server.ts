@@ -192,6 +192,31 @@ function estimateResponsesInputTokens(items: ResponsesInputItem[]): number {
 	);
 }
 
+function estimateResponsesToolTokens(tool: ResponsesTool): number {
+	const toolOverheadTokens = 8;
+	return (
+		toolOverheadTokens +
+		estimateTextTokens(tool.name) +
+		(tool.description ? estimateTextTokens(tool.description) : 0) +
+		estimateTextTokens(stableStringify(tool.parameters))
+	);
+}
+
+function estimateResponsesPayloadTokens(
+	body: AnthropicRequest,
+	input: ResponsesInputItem[]
+): number {
+	const instructions = extractSystemText(body.system);
+	const tools = toolsToResponsesTools(body.tools);
+	const toolsOverheadTokens = tools && tools.length > 0 ? 4 : 0;
+	return (
+		estimateResponsesInputTokens(input) +
+		(instructions ? estimateTextTokens(instructions) : 0) +
+		toolsOverheadTokens +
+		(tools?.reduce((sum, tool) => sum + estimateResponsesToolTokens(tool), 0) ?? 0)
+	);
+}
+
 function toolResultText(content: AnthropicContentBlockToolResult['content']): string {
 	if (typeof content === 'string') return content;
 	return content.map((block) => block.text).join('\n');
@@ -748,7 +773,7 @@ export function createOpenAIResponsesBridgeServer(
 					const body = (await req.json()) as AnthropicRequest;
 					const continuation = resolveContinuation(body.messages, continuations);
 					const inputTokens = continuation
-						? estimateResponsesInputTokens(continuation.input)
+						? estimateResponsesPayloadTokens(body, continuation.input)
 						: estimateAnthropicInputTokens(body);
 					return new Response(JSON.stringify({ input_tokens: inputTokens }), {
 						headers: { 'Content-Type': 'application/json' },

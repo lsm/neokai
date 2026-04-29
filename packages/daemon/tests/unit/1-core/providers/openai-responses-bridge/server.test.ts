@@ -295,6 +295,7 @@ describe('openai-responses-bridge server', () => {
 		const continuationPayload = {
 			model: 'gpt-5.3-codex',
 			max_tokens: 128,
+			system: 'Follow the system guidance. '.repeat(100),
 			messages: [
 				{ role: 'user', content: 'Use the tool. '.repeat(1000) },
 				{
@@ -316,7 +317,18 @@ describe('openai-responses-bridge server', () => {
 					],
 				},
 			],
-			tools: [{ name: 'lookup', input_schema: { type: 'object' } }],
+			tools: [
+				{
+					name: 'lookup',
+					description: 'Search the local index. '.repeat(50),
+					input_schema: {
+						type: 'object',
+						properties: {
+							q: { type: 'string', description: 'Detailed lookup query. '.repeat(50) },
+						},
+					},
+				},
+			],
 		};
 		const continuationBody = JSON.stringify(continuationPayload);
 		const countResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages/count_tokens`, {
@@ -325,7 +337,8 @@ describe('openai-responses-bridge server', () => {
 			body: continuationBody,
 		});
 		const count = (await countResp.json()) as { input_tokens: number };
-		expect(count.input_tokens).toBeLessThan(100);
+		expect(count.input_tokens).toBeGreaterThan(500);
+		expect(count.input_tokens).toBeLessThan(1500);
 
 		const second = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
 			method: 'POST',
