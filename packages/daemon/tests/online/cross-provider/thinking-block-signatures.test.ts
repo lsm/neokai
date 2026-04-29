@@ -188,6 +188,7 @@ describe('Thinking Block Signatures', () => {
 	 */
 	test('MiniMax (think8k) → Anthropic: resume with thinking block stripping', async () => {
 		const workspacePath = `${TMP_DIR}/test-minimax-think-to-anthropic-${Date.now()}`;
+		mkdirSync(workspacePath, { recursive: true });
 		const { sessionId } = (await daemon.messageHub.request('session.create', {
 			workspacePath,
 			title: 'MiniMax think8k → Anthropic',
@@ -248,6 +249,7 @@ describe('Thinking Block Signatures', () => {
 	 */
 	test('GLM (think8k) → Anthropic: resume with thinking block stripping', async () => {
 		const workspacePath = `${TMP_DIR}/test-glm-think-to-anthropic-${Date.now()}`;
+		mkdirSync(workspacePath, { recursive: true });
 		const { sessionId } = (await daemon.messageHub.request('session.create', {
 			workspacePath,
 			title: 'GLM think8k → Anthropic',

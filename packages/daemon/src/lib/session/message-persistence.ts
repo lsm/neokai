@@ -11,6 +11,7 @@
  */
 
 import type {
+	ImageContent,
 	MessageContent,
 	MessageDeliveryMode,
 	MessageHub,
@@ -33,11 +34,13 @@ import {
 	type ResolutionContext,
 } from './reference-resolver';
 
+type MessageImageInput = MessageImage | ImageContent;
+
 export interface MessagePersistenceData {
 	sessionId: string;
 	messageId: string;
 	content: string;
-	images?: MessageImage[];
+	images?: MessageImageInput[];
 	deliveryMode?: MessageDeliveryMode;
 	origin?: MessageOrigin;
 }
@@ -143,7 +146,7 @@ export class MessagePersistence {
 			if (images && images.length > 0) {
 				const MAX_BASE64_SIZE = 5 * 1024 * 1024; // 5MB
 				for (const image of images) {
-					const base64SizeBytes = image.data.length;
+					const base64SizeBytes = getImageData(image).length;
 					if (base64SizeBytes > MAX_BASE64_SIZE) {
 						const sizeMB = (base64SizeBytes / (1024 * 1024)).toFixed(2);
 						const maxMB = (MAX_BASE64_SIZE / (1024 * 1024)).toFixed(2);
@@ -200,26 +203,25 @@ export class MessagePersistence {
 
 			const effectiveDeliveryMode: MessageDeliveryMode =
 				deliveryMode === 'defer' && isAgentBusy ? 'defer' : 'immediate';
+			const shouldDispatchToQuery = !isManualMode && effectiveDeliveryMode === 'immediate';
 			const sendStatus: 'deferred' | 'enqueued' | 'consumed' = isManualMode
 				? 'deferred'
 				: effectiveDeliveryMode === 'defer'
 					? 'deferred'
-					: isAgentBusy
-						? 'enqueued'
-						: 'consumed';
-			const shouldDispatchToQuery = !isManualMode && effectiveDeliveryMode === 'immediate';
+					: 'enqueued';
 
 			const dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, sendStatus, origin);
 
-			// 6. Publish to UI immediately only when not currently in-flight.
-			// Busy-turn insertions are shown in the input overlay and rendered in chat once consumed.
+			// 6. Publish manual messages immediately. Immediate-mode messages are
+			// rendered when the SDK input generator consumes them and flips their
+			// status to `consumed`, which prevents a "visible but undelivered" turn.
 			//
 			// Note: `origin` is intentionally NOT included in the live-push event payload.
 			// `origin` is a DB-level annotation only — the SDK message blob never carries it.
 			// The frontend reads `origin` from the DB (via getSDKMessages) after page load or
 			// on full re-fetch. This means "via Neo" indicators may not appear on first render
 			// of an injected message; they appear after the client re-fetches the message list.
-			if (isManualMode || !isAgentBusy) {
+			if (isManualMode) {
 				try {
 					this.messageHub.event(
 						'state.sdkMessages.delta',
@@ -239,9 +241,16 @@ export class MessagePersistence {
 				status: sendStatus,
 			});
 
-			// 7. Emit 'message.persisted' event for downstream processing
-			// AgentSession will start query and enqueue message
-			// SessionManager will handle title generation and draft clearing
+			// 7. For immediate delivery, start the query and enqueue before acknowledging
+			// the caller. The message is still rendered only after SDKMessageHandler
+			// flips it to `consumed` at the exact delivery point.
+			if (shouldDispatchToQuery) {
+				await agentSession.startQueryAndEnqueue(messageId, messageContent);
+			}
+
+			// 8. Emit 'message.persisted' for non-critical post-processing.
+			// Query start is handled above synchronously; the event remains for title
+			// generation, draft clearing, and legacy subscribers.
 			if (shouldDispatchToQuery) {
 				await this.eventBus.emit('message.persisted', {
 					sessionId,
@@ -252,6 +261,7 @@ export class MessagePersistence {
 					hasDraftToClear: session.metadata?.inputDraft === content.trim(),
 					sendStatus,
 					deliveryMode: effectiveDeliveryMode,
+					skipQueryStart: true,
 				});
 			}
 		} catch (error) {
@@ -284,22 +294,34 @@ function extractDisplayText(type: string, id: string, data: unknown): string {
  * Build message content from text and optional images
  * Static utility function for building SDK message content
  */
-function buildMessageContent(content: string, images?: MessageImage[]): string | MessageContent[] {
+function buildMessageContent(
+	content: string,
+	images?: MessageImageInput[]
+): string | MessageContent[] {
 	if (!images || images.length === 0) {
 		return content;
 	}
 
 	// Multi-modal message: array of content blocks
 	// Images first, then text (SDK format)
-	return [
-		...images.map((img) => ({
-			type: 'image' as const,
-			source: {
-				type: 'base64' as const,
-				media_type: img.media_type,
-				data: img.data,
-			},
-		})),
-		{ type: 'text' as const, text: content },
-	];
+	return [...images.map(toImageContent), { type: 'text' as const, text: content }];
+}
+
+function getImageData(image: MessageImageInput): string {
+	return 'source' in image ? image.source.data : image.data;
+}
+
+function toImageContent(image: MessageImageInput): ImageContent {
+	if ('source' in image) {
+		return image;
+	}
+
+	return {
+		type: 'image',
+		source: {
+			type: 'base64',
+			media_type: image.media_type,
+			data: image.data,
+		},
+	};
 }

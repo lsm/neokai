@@ -18,6 +18,7 @@ import type { Database } from '../../../../src/storage/database';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
+import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { Logger } from '../../../../src/lib/logger';
@@ -226,6 +227,8 @@ describe('ModelSwitchHandler', () => {
 			logger: mockLogger,
 			lifecycleManager: mockLifecycleManager,
 			queryObject: { setModel: setModelSpy } as unknown as Query,
+			queryPromise: null,
+			messageQueue: { isRunning: mock(() => false) } as unknown as MessageQueue,
 			firstMessageReceived: true,
 			...overrides,
 		};
@@ -300,11 +303,7 @@ describe('ModelSwitchHandler', () => {
 		const VALID_MODEL = 'opus';
 
 		describe('when query not started', () => {
-			it('should update config and restart when query not started', async () => {
-				// FIX: Always call restart() to ensure new model takes effect.
-				// This validates the session file and starts a fresh query with the new model,
-				// even when queryObject is null. This fixes the bug where model switch
-				// wasn't taking effect for tasks in non-active states (review, needs_attention).
+			it('should update config without starting an empty query when query not started', async () => {
 				handler = createHandler({ queryObject: null });
 				const result = await handler.switchModel(VALID_MODEL, 'anthropic');
 
@@ -316,8 +315,7 @@ describe('ModelSwitchHandler', () => {
 					})
 				);
 				expect(setModelTrackerSpy).toHaveBeenCalled();
-				// Restart IS called to ensure the new model takes effect
-				expect(restartSpy).toHaveBeenCalled();
+				expect(restartSpy).not.toHaveBeenCalled();
 			});
 
 			it('should pass only serializable config fields (no closures or cyclic refs)', async () => {
@@ -402,17 +400,26 @@ describe('ModelSwitchHandler', () => {
 				expect(restartSpy).toHaveBeenCalled();
 			});
 
-			it('should restart even when queryObject does not exist (query not started)', async () => {
-				// FIX: Always call restart() to ensure new model takes effect.
-				// This is important for tasks in non-active states (review, needs_attention)
-				// where the query might have been completed/interrupted. Without restart,
-				// the new model would not take effect until the task resumes.
+			it('should not restart when queryObject does not exist (query not started)', async () => {
 				handler = createHandler({ queryObject: null, firstMessageReceived: false });
 				const result = await handler.switchModel(VALID_MODEL, 'anthropic');
 
 				expect(result.success).toBe(true);
 				expect(updateSessionSpy).toHaveBeenCalled();
-				// Restart IS called to ensure the new model takes effect
+				expect(restartSpy).not.toHaveBeenCalled();
+			});
+
+			it('should restart when query startup is in flight before queryObject exists', async () => {
+				handler = createHandler({
+					queryObject: null,
+					queryPromise: new Promise(() => {}),
+					firstMessageReceived: false,
+				});
+
+				const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+				expect(result.success).toBe(true);
+				expect(updateSessionSpy).toHaveBeenCalled();
 				expect(restartSpy).toHaveBeenCalled();
 			});
 		});

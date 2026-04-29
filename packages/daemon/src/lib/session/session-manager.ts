@@ -11,7 +11,14 @@
  * - EventBus subscriptions for async message processing
  */
 
-import type { Session, MessageHub, MessageDeliveryMode, MessageOrigin } from '@neokai/shared';
+import type {
+	Session,
+	ImageContent,
+	MessageHub,
+	MessageDeliveryMode,
+	MessageOrigin,
+	MessageImage,
+} from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
@@ -260,24 +267,8 @@ export class SessionManager {
 
 	/**
 	 * Setup EventBus subscriptions for async message processing
-	 * ARCHITECTURE: EventBus-centric pattern - SessionManager handles message persistence
 	 */
 	private setupEventSubscriptions(): void {
-		// Subscribe to message send requests (from RPC handler)
-		// Handles message persistence: expand commands → build content → save DB → publish UI
-		const unsubMessageSendRequest = this.eventBus.on('message.sendRequest', async (data) => {
-			const { sessionId, messageId, content, images, deliveryMode } = data;
-
-			await this.messagePersistence.persist({
-				sessionId,
-				messageId,
-				content,
-				images,
-				deliveryMode,
-			});
-		});
-		this.eventBusUnsubscribers.push(unsubMessageSendRequest);
-
 		// Subscribe to message persisted events (for title generation + draft clearing)
 		// AgentSession also subscribes to this event for query feeding
 		const unsubMessagePersisted = this.eventBus.on('message.persisted', async (data) => {
@@ -413,6 +404,16 @@ export class SessionManager {
 			deliveryMode: opts?.deliveryMode,
 			origin: opts?.origin,
 		});
+	}
+
+	async sendUserMessage(data: {
+		sessionId: string;
+		messageId: string;
+		content: string;
+		images?: Array<MessageImage | ImageContent>;
+		deliveryMode?: MessageDeliveryMode;
+	}): Promise<void> {
+		await this.messagePersistence.persist(data);
 	}
 
 	listSessions(options?: { status?: string; includeArchived?: boolean }): Session[] {

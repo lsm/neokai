@@ -13,6 +13,9 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';
 
@@ -41,9 +44,8 @@ describe('Message RPC Handlers', () => {
 	}
 
 	async function createSessionWithMessages(): Promise<string> {
-		const sessionId = await createSession(
-			`/test/msg-handler-${Date.now()}-${Math.random().toString(36).slice(2)}`
-		);
+		const workspacePath = mkdtempSync(join(tmpdir(), 'neokai-rpc-message-'));
+		const sessionId = await createSession(workspacePath);
 
 		// Send a message — mock SDK will respond with assistant text + result
 		await sendMessage(daemon, sessionId, 'Hello, world!');

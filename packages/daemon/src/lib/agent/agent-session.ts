@@ -1000,6 +1000,10 @@ export class AgentSession
 		return this.queryObject;
 	}
 
+	isQueryActiveOrStarting(): boolean {
+		return Boolean(this.queryObject || this.queryPromise || this.messageQueue.isRunning());
+	}
+
 	getFirstMessageReceived(): boolean {
 		return this.firstMessageReceived;
 	}

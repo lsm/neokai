@@ -281,10 +281,10 @@ describe('startEmbeddedServer', () => {
 
 	it('keeps Copilot context integration out of daemon and UI context retrieval paths', () => {
 		const files = [
-			'packages/daemon/src/lib/agent/context-fetcher.ts',
-			'packages/daemon/src/lib/agent/context-tracker.ts',
-			'packages/web/src/components/ContextUsageBar.tsx',
-			'packages/web/src/islands/ContextPanel.tsx',
+			`${import.meta.dir}/../../../../../src/lib/agent/context-fetcher.ts`,
+			`${import.meta.dir}/../../../../../src/lib/agent/context-tracker.ts`,
+			`${import.meta.dir}/../../../../../../web/src/components/ContextUsageBar.tsx`,
+			`${import.meta.dir}/../../../../../../web/src/islands/ContextPanel.tsx`,
 		];
 
 		for (const file of files) {

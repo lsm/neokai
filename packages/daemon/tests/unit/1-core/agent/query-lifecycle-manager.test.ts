@@ -108,6 +108,8 @@ describe('QueryLifecycleManager', () => {
 			pendingRestartReason: null,
 			startStreamingQuery: async () => {
 				startStreamingCalled = true;
+				messageQueue.start();
+				mockContext.queryPromise = Promise.resolve();
 			},
 			processExitedPromise: null,
 			startupTimeoutTimer: null,
@@ -862,6 +864,28 @@ describe('QueryLifecycleManager', () => {
 			expect(enqueueSpy).toHaveBeenCalledWith('msg-123', content);
 		});
 
+		test('keeps message queued when SDK resume choice blocks query startup', async () => {
+			const tmpTestDir = mkdtempSync(join(tmpdir(), 'kai-test-'));
+			try {
+				process.env.TEST_SDK_SESSION_DIR = tmpTestDir;
+				mockContext = createMockContext();
+				mockContext.session.sdkSessionId = 'missing-sdk-session';
+				manager = new QueryLifecycleManager(mockContext);
+				const enqueueSpy = spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-123');
+
+				await expect(manager.startQueryAndEnqueue('msg-123', 'Hello')).resolves.toBeUndefined();
+
+				expect(startStreamingCalled).toBe(false);
+				expect(saveNeokaiActionMessageSpy).toHaveBeenCalled();
+				expect(setQueuedSpy).toHaveBeenCalledWith('msg-123');
+				expect(enqueueSpy).not.toHaveBeenCalled();
+				expect(emitSpy).not.toHaveBeenCalledWith('message.sent', { sessionId: 'test-session' });
+			} finally {
+				delete process.env.TEST_SDK_SESSION_DIR;
+				rmSync(tmpTestDir, { recursive: true, force: true });
+			}
+		});
+
 		test('ignores interrupted by user error', async () => {
 			const interruptedError = new Error('Interrupted by user');
 			spyOn(messageQueue, 'enqueueWithId').mockRejectedValue(interruptedError);
@@ -899,13 +923,11 @@ describe('QueryLifecycleManager', () => {
 			expect(callCount).toBe(2);
 		});
 
-		test('handles non-timeout error by setting idle', async () => {
+		test('handles non-timeout delivery error by setting idle asynchronously', async () => {
 			const regularError = new Error('Some error');
 			spyOn(messageQueue, 'enqueueWithId').mockRejectedValue(regularError);
 
 			await manager.startQueryAndEnqueue('msg-123', 'Hello');
-
-			// Give time for the catch handler to execute
 			await new Promise((r) => setTimeout(r, 10));
 
 			// Should have called handleError
@@ -929,13 +951,13 @@ describe('QueryLifecycleManager', () => {
 					if (callCount > 1) {
 						throw new Error('Reset failed');
 					}
+					messageQueue.start();
+					mockContext.queryPromise = Promise.resolve();
 				},
 			});
 			manager = new QueryLifecycleManager(mockContext);
 
 			await manager.startQueryAndEnqueue('msg-123', 'Hello');
-
-			// Give time for the catch handler to execute
 			await new Promise((r) => setTimeout(r, 200));
 
 			// Should set idle after reset failure
@@ -950,11 +972,28 @@ describe('QueryLifecycleManager', () => {
 			spyOn(messageQueue, 'enqueueWithId').mockRejectedValue(timeoutError);
 
 			await manager.startQueryAndEnqueue('msg-123', 'Hello');
-
-			// Give time for the catch handler to execute (reset + retry + catch)
-			await new Promise((r) => setTimeout(r, 300));
+			await new Promise((r) => setTimeout(r, 200));
 
 			// Should set idle after retry fails
+			expect(setIdleSpy).toHaveBeenCalled();
+		});
+
+		test('does not reset again after timeout retry limit is reached', async () => {
+			const timeoutError = new Error('Queue timeout');
+			timeoutError.name = 'MessageQueueTimeoutError';
+
+			spyOn(messageQueue, 'enqueueWithId').mockRejectedValue(timeoutError);
+			const resetSpy = spyOn(manager, 'reset');
+
+			await manager.startQueryAndEnqueue('msg-123', 'Hello');
+			await new Promise((r) => setTimeout(r, 200));
+
+			expect(resetSpy).toHaveBeenCalledTimes(1);
+
+			await manager.startQueryAndEnqueue('msg-123', 'Hello');
+			await new Promise((r) => setTimeout(r, 50));
+
+			expect(resetSpy).toHaveBeenCalledTimes(1);
 			expect(setIdleSpy).toHaveBeenCalled();
 		});
 	});
