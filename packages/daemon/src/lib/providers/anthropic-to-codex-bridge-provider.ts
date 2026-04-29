@@ -231,7 +231,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
 	/** Per-adapter/per-workspace bridge servers. */
 	private readonly bridgeServers = new Map<string, BridgeServer>();
-	private readonly bridgeServersHaveAuth = new Map<string, boolean>();
+	private readonly bridgeServerAuthKeys = new Map<string, string>();
 
 	/** Path to NeoKai's own auth store. */
 	private readonly authPath: string;
@@ -408,6 +408,17 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		};
 	}
 
+	private bridgeAuthCacheKey(auth: AppServerAuth | undefined): string {
+		if (!auth) return 'none';
+		if (auth.type === 'api_key') return `api_key:${auth.apiKey}`;
+		return [
+			'chatgpt',
+			auth.accessToken,
+			auth.chatgptAccountId,
+			auth.isFedrampAccount ? 'fedramp' : 'standard',
+		].join(':');
+	}
+
 	private modelAliases(): Record<string, string> {
 		return Object.fromEntries(
 			ANTHROPIC_CODEX_MODELS.flatMap((model) =>
@@ -555,16 +566,16 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		const auth = envAuth ?? this.cachedBridgeAuth ?? fileAuth ?? undefined;
 		const adapter = this.selectBridgeAdapter();
 		const bridgeKey = `${adapter}:${workspace}`;
+		const authKey = this.bridgeAuthCacheKey(auth);
 		let bridgeServer = this.bridgeServers.get(bridgeKey);
 		if (
 			adapter === 'responses' &&
 			bridgeServer &&
-			auth &&
-			!this.bridgeServersHaveAuth.get(bridgeKey)
+			this.bridgeServerAuthKeys.get(bridgeKey) !== authKey
 		) {
 			bridgeServer.stop();
 			this.bridgeServers.delete(bridgeKey);
-			this.bridgeServersHaveAuth.delete(bridgeKey);
+			this.bridgeServerAuthKeys.delete(bridgeKey);
 			bridgeServer = undefined;
 		}
 		// Resolve alias (e.g. 'codex' → 'gpt-5.3-codex') so ANTHROPIC_DEFAULT_*_MODEL
@@ -597,7 +608,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 				});
 			}
 			this.bridgeServers.set(bridgeKey, bridgeServer);
-			this.bridgeServersHaveAuth.set(bridgeKey, !!auth);
+			this.bridgeServerAuthKeys.set(bridgeKey, authKey);
 			logger.info(
 				`AnthropicToCodexBridgeProvider: ${adapter} bridge server started on port ${bridgeServer.port} for workspace=${workspace}`
 			);
@@ -630,7 +641,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			server.stop();
 		}
 		this.bridgeServers.clear();
-		this.bridgeServersHaveAuth.clear();
+		this.bridgeServerAuthKeys.clear();
 		// Reset cached auth so a new provider instance starts with a clean slate.
 		// Without this, cachedBridgeAuth=null from a previous run would cause
 		// isAvailable() to return false even when valid credentials are present.

@@ -438,6 +438,101 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			}
 		});
 
+		it('recreates a Responses bridge when resolved auth changes', async () => {
+			const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'neokai-build-cfg-auth-change-'));
+			const originalFetch = globalThis.fetch;
+			const env: Record<string, string | undefined> = { OPENAI_API_KEY: 'sk-first' };
+			let fetchSpy: ReturnType<typeof spyOn> | undefined;
+			let p: AnthropicToCodexBridgeProvider | undefined;
+			try {
+				const neokaiDir = path.join(tmpDir, 'neokai');
+				p = makeProvider(env, neokaiDir, path.join(tmpDir, 'codex'), fakeCodexFound);
+				const capturedRequests: Array<{
+					url: string;
+					authorization: string | null;
+					accountId: string | null;
+				}> = [];
+				fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(
+					(input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+						const url = String(input);
+						if (url.startsWith('http://127.0.0.1:')) {
+							return originalFetch(input, init);
+						}
+						const headers = new Headers(init?.headers);
+						capturedRequests.push({
+							url,
+							authorization: headers.get('authorization'),
+							accountId: headers.get('chatgpt-account-id'),
+						});
+						return Promise.resolve(
+							new Response(
+								'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":0},"output":[]}}\n\n',
+								{ headers: { 'Content-Type': 'text/event-stream' } }
+							)
+						);
+					}
+				);
+				const body = JSON.stringify({
+					model: 'gpt-5.3-codex',
+					max_tokens: 128,
+					messages: [{ role: 'user', content: 'hi' }],
+				});
+				const fetchLocal = async (baseUrl: unknown) => {
+					const resp = await originalFetch(`${baseUrl}/v1/messages`, {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body,
+					});
+					await resp.text();
+				};
+
+				const firstCfg = p.buildSdkConfig('gpt-5.3-codex', {
+					workspacePath: '/tmp/workspace-auth-change',
+				});
+				await fetchLocal(firstCfg.envVars.ANTHROPIC_BASE_URL);
+
+				env.OPENAI_API_KEY = 'sk-second';
+				const secondCfg = p.buildSdkConfig('gpt-5.3-codex', {
+					workspacePath: '/tmp/workspace-auth-change',
+				});
+				await fetchLocal(secondCfg.envVars.ANTHROPIC_BASE_URL);
+
+				env.OPENAI_API_KEY = undefined;
+				writeNeokaiAuth(neokaiDir, {
+					type: 'oauth',
+					access: 'oauth-token',
+					accountId: 'acct_new',
+				});
+				await p.getApiKey();
+				const oauthCfg = p.buildSdkConfig('gpt-5.3-codex', {
+					workspacePath: '/tmp/workspace-auth-change',
+				});
+				await fetchLocal(oauthCfg.envVars.ANTHROPIC_BASE_URL);
+
+				expect(capturedRequests).toMatchObject([
+					{
+						url: 'https://api.openai.com/v1/responses',
+						authorization: 'Bearer sk-first',
+						accountId: null,
+					},
+					{
+						url: 'https://api.openai.com/v1/responses',
+						authorization: 'Bearer sk-second',
+						accountId: null,
+					},
+					{
+						url: 'https://chatgpt.com/backend-api/codex/responses',
+						authorization: 'Bearer oauth-token',
+						accountId: 'acct_new',
+					},
+				]);
+			} finally {
+				p?.stopAllBridgeServers();
+				fetchSpy?.mockRestore();
+				rmSync(tmpDir, { recursive: true, force: true });
+			}
+		});
+
 		it('returns isAnthropicCompatible=true and a placeholder API key', () => {
 			const cfg = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-compat' });
 			expect(cfg.isAnthropicCompatible).toBe(true);
