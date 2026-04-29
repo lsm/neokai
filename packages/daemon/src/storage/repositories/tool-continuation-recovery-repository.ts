@@ -182,7 +182,7 @@ export class ToolContinuationRecoveryRepository {
 
 	markWaitingRebind(toolUseId: string, reason: string): ToolContinuationRecord | null {
 		const existing = this.getToolUse(toolUseId);
-		if (!existing || !isRecoverableToolUseStatus(existing.status)) {
+		if (!existing || !canMarkWaitingRebind(existing.status)) {
 			return null;
 		}
 		const updated = this.updateToolUseStatus(toolUseId, 'waiting_rebind', reason);
@@ -458,4 +458,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isRecoverableToolUseStatus(status: ToolContinuationStatus): boolean {
 	return status === 'active' || status === 'waiting_rebind';
+}
+
+function canMarkWaitingRebind(status: ToolContinuationStatus): boolean {
+	return isRecoverableToolUseStatus(status) || status === 'expired';
 }

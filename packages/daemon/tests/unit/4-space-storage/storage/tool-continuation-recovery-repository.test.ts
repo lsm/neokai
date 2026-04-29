@@ -132,4 +132,28 @@ describe('ToolContinuationRecoveryRepository', () => {
 		expect(updated.status).toBe('in_progress');
 		expect(updated.result).toBeNull();
 	});
+
+	it('moves expired mappings to waiting_rebind for TTL cleanup races', () => {
+		const { execution } = seedExecution('session-d');
+		const repo = new ToolContinuationRecoveryRepository(db as any);
+		repo.ensureSchema();
+		repo.recordToolUse({ toolUseId: 'tool-4', sessionId: 'session-d', ttlMs: 1 });
+		repo.markExpired(Date.now() + 60_000);
+
+		const updated = repo.markWaitingRebind(
+			'tool-4',
+			'tool_result did not arrive before bridge TTL; execution moved to waiting_rebind'
+		);
+		const updatedExecution = new NodeExecutionRepository(db as any).getById(execution.id)!;
+
+		expect(updated?.status).toBe('waiting_rebind');
+		expect(updatedExecution.status).toBe('waiting_rebind');
+		expect(updatedExecution.result).toBe(
+			'tool_result did not arrive before bridge TTL; execution moved to waiting_rebind'
+		);
+		expect(updatedExecution.data?.orphanedToolContinuation).toMatchObject({
+			state: 'waiting_rebind',
+			reason: 'tool_result did not arrive before bridge TTL; execution moved to waiting_rebind',
+		});
+	});
 });
