@@ -663,6 +663,8 @@ async function streamResponsesToAnthropic({
 
 		ensureStarted();
 		closeTextBlock();
+		// If the model emitted tool calls before an incomplete event, let the SDK execute
+		// them; the follow-up turn can carry the continuation forward.
 		const stopReason =
 			emittedFunctionCalls.size > 0 ? 'tool_use' : incomplete ? 'max_tokens' : 'end_turn';
 		send(
@@ -850,7 +852,9 @@ export function createOpenAIResponsesBridgeServer(
 			}
 			consumeContinuation(continuation);
 
-			const estimatedInputTokens = estimateAnthropicInputTokens(body);
+			const estimatedInputTokens = continuation
+				? estimateResponsesPayloadTokens(body, continuation.input)
+				: estimateAnthropicInputTokens(body);
 			const stream = new ReadableStream<Uint8Array>({
 				start(controller) {
 					void streamResponsesToAnthropic({

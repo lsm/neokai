@@ -52,6 +52,18 @@ function textDeltaEvents(
 		.filter(Boolean);
 }
 
+function messageStartEvent(
+	events: Array<{ event: string; data: Record<string, unknown> }>
+): Record<string, unknown> | undefined {
+	return events.find((event) => event.event === 'message_start')?.data;
+}
+
+function messageDeltaEvent(
+	events: Array<{ event: string; data: Record<string, unknown> }>
+): Record<string, unknown> | undefined {
+	return events.find((event) => event.event === 'message_delta')?.data;
+}
+
 describe('openai-responses-bridge server', () => {
 	let server: OpenAIResponsesBridgeServer | undefined;
 
@@ -155,7 +167,7 @@ describe('openai-responses-bridge server', () => {
 		]);
 		const events = await readSSEEvents(resp.body);
 		expect(textDeltaEvents(events).join('')).toBe('hello');
-		expect(events.at(-2)?.data).toMatchObject({
+		expect(messageDeltaEvent(events)).toMatchObject({
 			type: 'message_delta',
 			delta: { stop_reason: 'end_turn' },
 		});
@@ -222,7 +234,7 @@ describe('openai-responses-bridge server', () => {
 		expect(delta?.data).toMatchObject({
 			delta: { type: 'input_json_delta', partial_json: '{"q":"weather"}' },
 		});
-		expect(events.at(-2)?.data).toMatchObject({
+		expect(messageDeltaEvent(events)).toMatchObject({
 			type: 'message_delta',
 			delta: { stop_reason: 'tool_use' },
 		});
@@ -350,6 +362,12 @@ describe('openai-responses-bridge server', () => {
 		expect(events.find((event) => event.event === 'content_block_delta')?.data).toMatchObject({
 			delta: { text: 'done' },
 		});
+		const messageStart = messageStartEvent(events);
+		const messageStartMessage = messageStart?.message as
+			| { usage?: { input_tokens?: number } }
+			| undefined;
+		expect(messageStartMessage?.usage?.input_tokens).toBeGreaterThan(500);
+		expect(messageStartMessage?.usage?.input_tokens).toBeLessThan(1500);
 		expect(capturedBodies[1]?.previous_response_id).toBe('resp_tool');
 		expect(capturedBodies[1]?.input).toEqual([
 			{ type: 'function_call_output', call_id: 'call_abc', output: 'found' },
@@ -491,10 +509,98 @@ describe('openai-responses-bridge server', () => {
 
 		const events = await readSSEEvents(resp.body);
 		expect(textDeltaEvents(events).join('')).toBe('partial');
-		expect(events.at(-2)?.data).toMatchObject({
+		expect(messageDeltaEvent(events)).toMatchObject({
 			type: 'message_delta',
 			delta: { stop_reason: 'max_tokens' },
 		});
+	});
+
+	it('returns an Anthropic 502 error when the upstream request fails', async () => {
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async () => {
+				throw new Error('network down');
+			},
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'hi' }],
+			}),
+		});
+
+		const body = (await resp.json()) as { error: { type: string; message: string } };
+		expect(resp.status).toBe(502);
+		expect(body.error.type).toBe('api_error');
+		expect(body.error.message).toBe('network down');
+	});
+
+	it('skips malformed upstream SSE blocks and preserves valid partial trailing data', async () => {
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async () =>
+				new Response(
+					[
+						'event: response.output_text.delta',
+						'data: not-json',
+						'',
+						'event: response.output_text.delta',
+						'data: {"type":"response.output_text.delta","delta":"ok"}',
+					].join('\n'),
+					{ headers: { 'Content-Type': 'text/event-stream' } }
+				),
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'hi' }],
+			}),
+		});
+
+		const events = await readSSEEvents(resp.body);
+		expect(resp.status).toBe(200);
+		expect(textDeltaEvents(events).join('')).toBe('ok');
+		expect(messageDeltaEvent(events)).toMatchObject({
+			type: 'message_delta',
+			delta: { stop_reason: 'end_turn' },
+		});
+	});
+
+	it('maps upstream 429 responses to Anthropic rate_limit_error', async () => {
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async () =>
+				new Response(JSON.stringify({ error: { message: 'slow down' } }), {
+					status: 429,
+					headers: { 'Content-Type': 'application/json' },
+				}),
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'hi' }],
+			}),
+		});
+
+		const body = (await resp.json()) as { error: { type: string; message: string } };
+		expect(resp.status).toBe(429);
+		expect(body.error.type).toBe('rate_limit_error');
+		expect(body.error.message).toBe('slow down');
 	});
 
 	it('uses Codex ChatGPT OAuth endpoint and account header for OAuth auth', async () => {
