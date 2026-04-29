@@ -53,8 +53,6 @@ export {
 	type UseGroupMessagesOptions,
 	type UseGroupMessagesResult,
 } from './useGroupMessages';
-export { useRoomLiveQuery } from './useRoomLiveQuery';
-export { useRoomSkills, type UseRoomSkillsResult } from './useRoomSkills';
 export {
 	useTurnBlocks,
 	type TurnBlock,
@@ -71,8 +69,3 @@ export {
 export { useViewportSafety } from './useViewportSafety';
 export { useClickOutside } from './useClickOutside';
 export { useIsMobileCanvas, MOBILE_CANVAS_MEDIA_QUERY } from './useIsMobileCanvas';
-export {
-	useMissionDetailData,
-	type UseMissionDetailDataResult,
-	type AvailableStatusAction,
-} from './useMissionDetailData';

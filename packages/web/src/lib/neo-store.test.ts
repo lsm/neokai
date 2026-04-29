@@ -105,7 +105,7 @@ function makeMessage(id: string, overrides: Partial<NeoMessage> = {}): NeoMessag
 function makeActivity(id: string, overrides: Partial<NeoActivityEntry> = {}): NeoActivityEntry {
 	return {
 		id,
-		toolName: 'list_rooms',
+		toolName: 'list_spaces',
 		input: null,
 		output: null,
 		status: 'success',

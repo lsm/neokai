@@ -347,7 +347,7 @@ export function NeoChatView() {
 						<div>
 							<p class="text-sm font-medium text-gray-300">Hi, I&apos;m Neo</p>
 							<p class="text-xs text-gray-500 mt-1">
-								Ask me anything about your rooms, sessions, or goals.
+								Ask me anything about your spaces, sessions, or tasks.
 							</p>
 						</div>
 					</div>

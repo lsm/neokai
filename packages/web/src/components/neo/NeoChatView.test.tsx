@@ -214,7 +214,7 @@ describe('NeoChatView', () => {
 	});
 
 	it('renders tool call messages via SDKMessageRenderer', () => {
-		neoStore.messages.value = [makeAssistantMsgWithToolCall('1', 'list_rooms')];
+		neoStore.messages.value = [makeAssistantMsgWithToolCall('1', 'list_spaces')];
 		const { getByTestId } = render(<NeoChatView />);
 		expect(getByTestId('neo-assistant-message')).toBeTruthy();
 		expect(getByTestId('sdk-message-renderer')).toBeTruthy();
@@ -253,11 +253,11 @@ describe('NeoChatView', () => {
 		(neoStore.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
 		const { getByTestId } = render(<NeoChatView />);
 		const input = getByTestId('neo-chat-input') as HTMLTextAreaElement;
-		fireEvent.input(input, { target: { value: 'What rooms do I have?' } });
+		fireEvent.input(input, { target: { value: 'What spaces do I have?' } });
 		await act(async () => {
 			fireEvent.click(getByTestId('neo-send-button'));
 		});
-		expect(neoStore.sendMessage).toHaveBeenCalledWith('What rooms do I have?');
+		expect(neoStore.sendMessage).toHaveBeenCalledWith('What spaces do I have?');
 	});
 
 	it('clears input after send', async () => {
@@ -425,8 +425,8 @@ describe('NeoChatView', () => {
 
 	it('renders multiple messages in order', () => {
 		neoStore.messages.value = [
-			makeUserMsg('1', 'What rooms do I have?'),
-			makeAssistantMsg('2', 'You have 3 rooms: Alpha, Beta, Gamma.'),
+			makeUserMsg('1', 'What spaces do I have?'),
+			makeAssistantMsg('2', 'You have 3 spaces: Alpha, Beta, Gamma.'),
 		];
 		const { getAllByTestId } = render(<NeoChatView />);
 		expect(getAllByTestId('neo-user-message')).toHaveLength(1);

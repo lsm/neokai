@@ -5,22 +5,6 @@ import type { Session } from '@neokai/shared';
 // Refreshing the page will return to recent conversations view
 export const currentSessionIdSignal = signal<string | null>(null);
 
-// Shared signal for the current room ID - always starts as null
-// When set, takes priority over session signal
-export const currentRoomIdSignal = signal<string | null>(null);
-
-// Shared signal for the current room's inner session ID
-// When viewing a room and clicking a session, this shows that session within the room layout
-export const currentRoomSessionIdSignal = signal<string | null>(null);
-
-// Shared signal for the current room's task detail view
-// When set, shows the TaskView (Craft + Lead sessions) for the selected task
-export const currentRoomTaskIdSignal = signal<string | null>(null);
-
-// Shared signal for the current room's mission (goal) detail view
-// When set, shows the MissionDetail page for the selected mission
-export const currentRoomGoalIdSignal = signal<string | null>(null);
-
 // Shared signal for sidebar open/closed state on mobile
 export const sidebarOpenSignal = signal<boolean>(false);
 
@@ -36,8 +20,8 @@ export const sessionsSignal = signal<Session[]>([]);
 export const slashCommandsSignal = signal<string[]>([]);
 
 // Navigation section signal - which nav item is active
-export type NavSection = 'chats' | 'rooms' | 'inbox' | 'projects' | 'spaces' | 'settings';
-export const navSectionSignal = signal<NavSection>('rooms');
+export type NavSection = 'chats' | 'inbox' | 'spaces' | 'settings';
+export const navSectionSignal = signal<NavSection>('spaces');
 
 // Space navigation signals
 export const currentSpaceIdSignal = signal<string | null>(null);
@@ -87,16 +71,6 @@ export const spaceOverlayPendingAgentNameSignal = signal<string | null>(null);
 
 // Mobile drawer signals
 export const contextPanelOpenSignal = signal<boolean>(false);
-
-// Create Room modal open state - shared between ContextPanel and Lobby
-export const createRoomModalSignal = signal<boolean>(false);
-
-// Persistent signal tracking the current room's active tab
-export const currentRoomActiveTabSignal = signal<string | null>(null);
-
-// Whether the room agent chat tab is active (driven by /room/:roomId/agent URL)
-// When true, Room.tsx renders the Chat tab instead of session takeover
-export const currentRoomAgentActiveSignal = signal<boolean>(false);
 
 // Settings section signal - which settings section is active
 export type SettingsSection =

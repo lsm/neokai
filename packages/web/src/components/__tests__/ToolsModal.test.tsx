@@ -180,7 +180,7 @@ describe('computeMcpSkillRuntimeState', () => {
 		const state = computeMcpSkillRuntimeState(skill, entries, true);
 		expect(state.status).toBe('server-off');
 		expect(state.overrideSource).toBe('room');
-		expect(state.label).toMatch(/room/);
+		expect(state.label).toContain('room');
 	});
 
 	it('returns "server-off" with space source when space override disables', () => {

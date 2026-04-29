@@ -2,11 +2,9 @@ import { useState, useEffect } from 'preact/hooks';
 import {
 	navSectionSignal,
 	contextPanelOpenSignal,
-	currentRoomIdSignal,
 	currentSpaceIdSignal,
 	currentSpaceViewModeSignal,
 	settingsSectionSignal,
-	createRoomModalSignal,
 	type NavSection,
 	type SettingsSection,
 } from '../lib/signals.ts';
@@ -17,12 +15,10 @@ import {
 	navigateToSession,
 	navigateToSessions,
 	navigateToSettings,
-	navigateToRooms,
 	navigateToInbox,
 	navigateToSpaces,
 	navigateToSpaceConfigure,
 } from '../lib/router.ts';
-import { roomStore } from '../lib/room-store.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import { cn } from '../lib/utils.ts';
 import { Button } from '../components/ui/Button.tsx';
@@ -30,8 +26,6 @@ import { NavIconButton } from '../components/ui/NavIconButton.tsx';
 import { DaemonStatusIndicator } from '../components/DaemonStatusIndicator.tsx';
 import { MAIN_NAV_ITEMS, SETTINGS_NAV_ITEM } from '../lib/nav-config.tsx';
 import { SessionList } from './SessionList.tsx';
-import { RoomList } from './RoomList.tsx';
-import { RoomContextPanel } from './RoomContextPanel.tsx';
 import { SpaceDetailPanel } from './SpaceDetailPanel.tsx';
 import { spaceStore } from '../lib/space-store.ts';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
@@ -169,15 +163,11 @@ export function ContextPanel() {
 		}
 	}, [navSection]);
 	const activeSettingsSection = settingsSectionSignal.value;
-	const currentRoomId = currentRoomIdSignal.value;
 	const currentSpaceId = currentSpaceIdSignal.value;
 	const currentSpaceViewMode = currentSpaceViewModeSignal.value;
 
 	// Inbox takes full content width — no sidebar needed
 	if (navSection === 'inbox') return null;
-
-	// When a specific room is selected in the rooms section, show room-specific panel
-	const isRoomDetail = navSection === 'rooms' && currentRoomId !== null;
 
 	// When a specific space is selected in the spaces section, show space-specific panel
 	const isSpaceDetail = navSection === 'spaces' && currentSpaceId !== null;
@@ -190,13 +180,6 @@ export function ContextPanel() {
 			emptyTitle: 'No sessions yet',
 			emptyDesc: 'Start a new session to begin',
 			actionLabel: 'New Session',
-		},
-		rooms: {
-			title: 'Rooms',
-			emptyIcon: '🏢',
-			emptyTitle: 'No rooms yet',
-			emptyDesc: 'Create a room to organize work',
-			actionLabel: 'Create Room',
 		},
 		spaces: {
 			title: 'Spaces',
@@ -211,13 +194,6 @@ export function ContextPanel() {
 			emptyDesc: 'Tasks awaiting review will appear here',
 			actionLabel: 'Inbox',
 		},
-		projects: {
-			title: 'Projects',
-			emptyIcon: '📁',
-			emptyTitle: 'Coming Soon',
-			emptyDesc: 'Projects will help organize rooms',
-			actionLabel: 'New Project',
-		},
 		settings: {
 			title: 'Settings',
 			emptyIcon: '⚙️',
@@ -228,11 +204,7 @@ export function ContextPanel() {
 	};
 
 	const config = sectionConfig[navSection];
-	const headerTitle = isRoomDetail
-		? (roomStore.room.value?.name ?? 'Room')
-		: isSpaceDetail
-			? (spaceStore.space.value?.name ?? 'Space')
-			: config.title;
+	const headerTitle = isSpaceDetail ? (spaceStore.space.value?.name ?? 'Space') : config.title;
 
 	const handleCreateSession = async () => {
 		if (connectionState.value !== 'connected') {
@@ -268,9 +240,6 @@ export function ContextPanel() {
 
 	const handleAction = () => {
 		switch (navSection) {
-			case 'rooms':
-				createRoomModalSignal.value = true;
-				break;
 			case 'chats':
 				handleCreateSession();
 				break;
@@ -288,9 +257,6 @@ export function ContextPanel() {
 			case 'chats':
 				navigateToSessions();
 				break;
-			case 'rooms':
-				navigateToRooms();
-				break;
 			case 'inbox':
 				navigateToInbox();
 				break;
@@ -306,7 +272,6 @@ export function ContextPanel() {
 	const isActionDisabled =
 		connectionState.value !== 'connected' ||
 		!authStatus.value?.isAuthenticated ||
-		navSection === 'projects' ||
 		navSection === 'settings';
 
 	const isActionLoading = creatingSession;
@@ -368,12 +333,7 @@ export function ContextPanel() {
 
 				{/* Header */}
 				<div class={`px-4 h-[65px] flex items-center border-b ${borderColors.ui.default}`}>
-					<div
-						class={cn(
-							'flex-1 flex items-center justify-between',
-							!isRoomDetail && !isSpaceDetail && 'mb-3'
-						)}
-					>
+					<div class={cn('flex-1 flex items-center justify-between', !isSpaceDetail && 'mb-3')}>
 						{isSpaceDetail ? (
 							<div class="flex items-center gap-1 min-w-0 flex-1 overflow-hidden pointer-events-none">
 								<button
@@ -440,7 +400,7 @@ export function ContextPanel() {
 						</button>
 					</div>
 
-					{(navSection === 'chats' || (navSection === 'rooms' && !isRoomDetail)) && (
+					{navSection === 'chats' && (
 						<Button
 							onClick={handleAction}
 							loading={isActionLoading}
@@ -464,37 +424,17 @@ export function ContextPanel() {
 
 				{/* Content — key triggers fade-in (animate-fadeIn) on section change */}
 				<div
-					key={
-						navSection + (isRoomDetail ? '-detail' : '') + (isSpaceDetail ? '-space-detail' : '')
-					}
+					key={navSection + (isSpaceDetail ? '-space-detail' : '')}
 					class="flex-1 overflow-hidden flex flex-col animate-fadeIn"
 				>
 					{navSection === 'chats' && (
 						<SessionList onSessionSelect={() => (contextPanelOpenSignal.value = false)} />
-					)}
-					{navSection === 'rooms' && isRoomDetail && (
-						<RoomContextPanel
-							roomId={currentRoomId!}
-							onNavigate={() => (contextPanelOpenSignal.value = false)}
-						/>
-					)}
-					{navSection === 'rooms' && !isRoomDetail && (
-						<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
 					)}
 					{navSection === 'spaces' && isSpaceDetail && (
 						<SpaceDetailPanel
 							spaceId={currentSpaceId!}
 							onNavigate={() => (contextPanelOpenSignal.value = false)}
 						/>
-					)}
-					{navSection === 'projects' && (
-						<div class="flex-1 flex items-center justify-center p-6">
-							<div class="text-center">
-								<div class="text-4xl mb-3">📁</div>
-								<p class="text-sm text-gray-400">Projects coming soon</p>
-								<p class="text-xs text-gray-500 mt-1">Organize rooms into projects</p>
-							</div>
-						</div>
 					)}
 					{navSection === 'settings' && (
 						<div class="flex-1 flex flex-col overflow-hidden">
