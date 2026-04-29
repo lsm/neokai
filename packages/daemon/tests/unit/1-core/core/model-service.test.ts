@@ -269,6 +269,39 @@ describe('Model Service', () => {
 			const isValid = await isValidModel('claude-sonnet-4-5-20250929', 'global', 'anthropic');
 			expect(isValid).toBe(true);
 		});
+
+		it('should not validate Codex static metadata when the provider is unavailable', async () => {
+			clearModelsCache();
+
+			const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+			type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+			const registry = getProviderRegistry();
+			registry.register({
+				id: 'anthropic-codex',
+				getModels: async () => [],
+				isAvailable: async () => false,
+			} as ProviderLike);
+
+			const modelInfo = await getModelInfo('gpt-5.5', 'global', 'anthropic-codex');
+			expect(modelInfo?.contextWindow).toBe(272000);
+			expect(await isValidModel('gpt-5.5', 'global', 'anthropic-codex')).toBe(false);
+		});
+
+		it('should validate Codex static metadata only when the provider is available', async () => {
+			clearModelsCache();
+
+			const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+			type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+			const registry = getProviderRegistry();
+			registry.register({
+				id: 'anthropic-codex',
+				getModels: async () => [],
+				isAvailable: async () => true,
+			} as ProviderLike);
+
+			expect(await isValidModel('gpt-5.5', 'global', 'anthropic-codex')).toBe(true);
+			expect(await isValidModel('gpt-unknown', 'global', 'anthropic-codex')).toBe(false);
+		});
 	});
 
 	describe('resolveModelAlias', () => {

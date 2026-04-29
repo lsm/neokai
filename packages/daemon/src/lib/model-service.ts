@@ -446,8 +446,27 @@ export async function isValidModel(
 	cacheKey: string,
 	providerId: string
 ): Promise<boolean> {
-	const modelInfo = await getModelInfo(idOrAlias, cacheKey, providerId);
-	return modelInfo !== null;
+	const availableModels = getAvailableModels(cacheKey);
+	const providerModels = availableModels.filter((m) => m.provider === providerId);
+	if (findInModels(providerModels, idOrAlias)) {
+		return true;
+	}
+
+	const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
+	if (!findInModels(staticProviderModels, idOrAlias)) {
+		return false;
+	}
+
+	const provider = getProviderRegistry().get(providerId);
+	if (!provider) {
+		return false;
+	}
+
+	try {
+		return await provider.isAvailable();
+	} catch {
+		return false;
+	}
 }
 
 /**
