@@ -17,7 +17,7 @@
  * ```
  */
 
-import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
 import type { ModelInfo } from '@neokai/shared';
 import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import { connectionManager } from '../lib/connection-manager';
@@ -209,6 +209,33 @@ export function filterModelsForPicker(
 		if (m.provider === currentProvider) return true; // always keep active provider
 		return auth.isAuthenticated; // hide unauthenticated (needsRefresh stays visible)
 	});
+}
+
+export function filterModelsBySearch(models: ModelInfo[], searchQuery: string): ModelInfo[] {
+	const terms = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+	if (terms.length === 0) return models;
+
+	return models.filter((model) => {
+		const provider = model.provider || 'anthropic';
+		const searchable = [model.name, model.id, model.alias, getProviderLabel(provider), provider]
+			.filter(Boolean)
+			.join(' ')
+			.toLowerCase();
+
+		return terms.every((term) => searchable.includes(term));
+	});
+}
+
+export function useFilteredModelsForPicker(
+	models: ModelInfo[],
+	providerAuthMap: Map<string, ProviderAuthStatus>,
+	currentProvider: string | undefined,
+	searchQuery: string
+): ModelInfo[] {
+	return useMemo(() => {
+		const authFilteredModels = filterModelsForPicker(models, providerAuthMap, currentProvider);
+		return filterModelsBySearch(authFilteredModels, searchQuery);
+	}, [models, providerAuthMap, currentProvider, searchQuery]);
 }
 
 /**

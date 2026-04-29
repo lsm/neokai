@@ -31,6 +31,20 @@ interface OpenRouterModelsResponse {
 	data?: OpenRouterModel[];
 }
 
+const CURATED_PROVIDER_PREFIXES = [
+	'anthropic/',
+	'openai/',
+	'google/',
+	'deepseek/',
+	'meta-llama/',
+	'mistralai/',
+	'xai/',
+	'cohere/',
+	'qwen/',
+] as const;
+
+const CURATED_MODEL_IDS = ['openrouter/auto'] as const;
+
 function isProbablyOpenRouterKey(apiKey: string): boolean {
 	return apiKey.trim().startsWith('sk-or-');
 }
@@ -72,6 +86,7 @@ export class OpenRouterProvider implements Provider {
 	static readonly BASE_URL = 'https://openrouter.ai/api';
 	static readonly MODELS_URL = 'https://openrouter.ai/api/v1/models?output_modalities=text';
 	static readonly DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
+	static readonly MAX_API_MODELS = 30;
 
 	static readonly FALLBACK_MODELS: ModelInfo[] = [
 		{
@@ -160,9 +175,11 @@ export class OpenRouterProvider implements Provider {
 			}
 
 			const body = (await response.json()) as OpenRouterModelsResponse;
-			const models = (body.data ?? [])
-				.filter((model) => typeof model.id === 'string' && model.id.length > 0)
-				.map((model) => this.toModelInfo(model));
+			const models = OpenRouterProvider.curateApiModels(
+				(body.data ?? [])
+					.filter((model) => typeof model.id === 'string' && model.id.length > 0)
+					.map((model) => this.toModelInfo(model))
+			);
 
 			this.modelCache = models.length > 0 ? models : OpenRouterProvider.FALLBACK_MODELS;
 			this.lastAuthError = undefined;
@@ -266,5 +283,18 @@ export class OpenRouterProvider implements Provider {
 			releaseDate: releaseDateFromCreated(model.created),
 			available: true,
 		};
+	}
+
+	private static curateApiModels(models: ModelInfo[]): ModelInfo[] {
+		const curated = models.filter((model) => {
+			const id = model.id.toLowerCase();
+			return (
+				CURATED_MODEL_IDS.some((modelId) => id === modelId) ||
+				CURATED_PROVIDER_PREFIXES.some((prefix) => id.startsWith(prefix))
+			);
+		});
+
+		const candidates = curated.length > 0 ? curated : models;
+		return candidates.slice(0, OpenRouterProvider.MAX_API_MODELS);
 	}
 }
