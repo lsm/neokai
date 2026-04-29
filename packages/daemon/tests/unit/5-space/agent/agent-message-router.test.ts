@@ -884,6 +884,59 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
 		expect(result.queued![0].agentName).toBe('reviewer');
 	});
 
+	test('activates and queues during pre-session window when the only execution has no session', async () => {
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('coder', 'reviewer'),
+		]);
+
+		// Mirrors the runtime log path: the run has a node_execution row, but no
+		// agentSessionId has been assigned yet.
+		ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId,
+			workflowNodeId: ctx.nodeId,
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+		const activated: Array<{ runId: string; from: string; to: string; message: string }> = [];
+		const injected: Array<{ sessionId: string; message: string }> = [];
+		const router = makeRouter(ctx, workflowRunId, injected, [makeChannel('coder', 'reviewer')], {
+			pendingMessageRepo,
+			spaceId: ctx.spaceId,
+			channelRouter: {
+				deliverMessage: async (runId: string, from: string, to: string, msg: string) => {
+					activated.push({ runId, from, to, message: msg });
+					return {
+						fromRole: from,
+						toRole: to,
+						message: msg,
+						targetNodeId: 'review-node',
+						isFanOut: false,
+						activatedTasks: [{}],
+					};
+				},
+			} as AgentMessageRouterConfig['channelRouter'],
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'reviewer',
+			message: 'code ready',
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.delivered).toHaveLength(0);
+		expect(result.queued).toHaveLength(1);
+		expect(result.queued![0].agentName).toBe('reviewer');
+		expect(injected).toHaveLength(0);
+		expect(activated).toEqual([
+			{ runId: workflowRunId, from: 'coder', to: 'reviewer', message: 'code ready' },
+		]);
+		expect(pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer')).toHaveLength(1);
+	});
+
 	test('delivers to live session if available, queues for inactive declared agents', async () => {
 		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeChannel('coder', 'reviewer'),
