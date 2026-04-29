@@ -326,6 +326,120 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				reason,
 			});
 		});
+
+		test('live waiting_rebind session is not failed forward after tool_use is consumed', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Live Rebind Session Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Live Rebind Session Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'waiting_rebind', {
+				agentSessionId: 'live-session',
+				result: 'waiting for orphaned tool_result recovery',
+			});
+			const recoveryRepo = new ToolContinuationRecoveryRepository(db);
+			recoveryRepo.ensureSchema();
+			recoveryRepo.recordToolUse({
+				toolUseId: 'tool-live-consumed',
+				sessionId: 'live-session',
+				ttlMs: 60_000,
+				owner: { executionId: execution.id, workflowRunId: run.id },
+			});
+			recoveryRepo.markConsumed('tool-live-consumed');
+
+			const rt = makeRuntime({
+				taskAgentManager: {
+					rehydrate: async () => {},
+					isSessionAlive: (sessionId: string) => sessionId === 'live-session',
+					getAgentSessionById: () => null,
+					isExecutionSpawning: () => false,
+				} as any,
+			});
+			await rt.executeTick();
+
+			expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('waiting_rebind');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+			expect(notifications.some((event) => event.kind === 'workflow_run_blocked')).toBe(false);
+		});
+
+		test('blocking one waiting_rebind execution stops later same-tick rebounds', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+				{ id: STEP_B, name: 'Step B', agentId: AGENT },
+			]);
+			db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Multiple Waiting Rebind Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Multiple Waiting Rebind Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const expiredExecution = seedExec(run.id, STEP_A, 'Step A', 'waiting_rebind', {
+				agentSessionId: 'dead-session-a',
+				result: 'waiting for orphaned tool_result recovery',
+			});
+			const reboundCandidate = seedExec(run.id, STEP_B, 'Step B', 'waiting_rebind', {
+				agentSessionId: 'dead-session-b',
+				result: 'waiting for orphaned tool_result recovery',
+			});
+			const recoveryRepo = new ToolContinuationRecoveryRepository(db);
+			recoveryRepo.ensureSchema();
+			recoveryRepo.recordToolUse({
+				toolUseId: 'tool-rebind-after-block',
+				sessionId: 'dead-session-b',
+				ttlMs: 60_000,
+				owner: { executionId: reboundCandidate.id, workflowRunId: run.id },
+			});
+			recoveryRepo.queueContinuation({
+				toolUseId: 'tool-rebind-after-block',
+				sessionId: 'dead-session-b',
+				requestBody: { messages: [{ role: 'user', content: [] }] },
+				reason: 'late continuation for sibling execution',
+				ttlMs: 60_000,
+			});
+
+			const rt = makeRuntime({
+				taskAgentManager: {
+					rehydrate: async () => {},
+					isSessionAlive: () => false,
+					getAgentSessionById: () => null,
+					isExecutionSpawning: () => false,
+				} as any,
+			});
+			await rt.executeTick();
+
+			expect(nodeExecutionRepo.getById(expiredExecution.id)?.status).toBe('blocked');
+			expect(nodeExecutionRepo.getById(reboundCandidate.id)?.status).toBe('waiting_rebind');
+			expect(recoveryRepo.listPendingInboxForExecution(reboundCandidate.id)).toHaveLength(1);
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)?.status).toBe('blocked');
+			expect(notifications.filter((event) => event.kind === 'task_retry')).toHaveLength(0);
+			expect(notifications.filter((event) => event.kind === 'workflow_run_blocked')).toHaveLength(
+				1
+			);
+		});
 	});
 
 	describe('runs with all node executions terminal and no completion signal', () => {

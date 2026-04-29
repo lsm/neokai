@@ -1810,7 +1810,15 @@ export class SpaceRuntime {
 				return;
 			}
 
-			await this.handleWaitingRebindExecutions(runId, run, meta.spaceId, canonicalTask);
+			const stoppedAfterWaitingRebind = await this.handleWaitingRebindExecutions(
+				runId,
+				run,
+				meta.spaceId,
+				canonicalTask
+			);
+			if (stoppedAfterWaitingRebind) {
+				return;
+			}
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
 			// Step 1.5: Auto-complete alive agents that have exceeded their timeout.
@@ -2084,11 +2092,11 @@ export class SpaceRuntime {
 		run: SpaceWorkflowRun,
 		spaceId: string,
 		canonicalTask: SpaceTask
-	): Promise<void> {
+	): Promise<boolean> {
 		const waitingExecutions = this.config.nodeExecutionRepo
 			.listByWorkflowRun(runId)
 			.filter((execution) => execution.status === 'waiting_rebind');
-		if (waitingExecutions.length === 0) return;
+		if (waitingExecutions.length === 0) return false;
 
 		for (const execution of waitingExecutions) {
 			const data = parseNodeExecutionData(execution.data);
@@ -2098,6 +2106,9 @@ export class SpaceRuntime {
 			const retryCount = typeof recoveryData.retryCount === 'number' ? recoveryData.retryCount : 0;
 			const pendingInbox = this.toolContinuationRepo.listPendingInboxForExecution(execution.id);
 			const hasActiveTool = this.toolContinuationRepo.hasActiveToolUseForExecution(execution.id);
+			const hasLiveSession = execution.agentSessionId
+				? (this.config.taskAgentManager?.isSessionAlive(execution.agentSessionId) ?? false)
+				: false;
 
 			if (pendingInbox.length > 0 && retryCount < 1) {
 				const reason =
@@ -2151,7 +2162,7 @@ export class SpaceRuntime {
 				continue;
 			}
 
-			if (hasActiveTool) {
+			if (hasActiveTool || hasLiveSession) {
 				continue;
 			}
 
@@ -2190,7 +2201,9 @@ export class SpaceRuntime {
 			log.warn(
 				`SpaceRuntime: failed orphaned tool_result recovery for execution ${execution.id}: ${reason}`
 			);
+			return true;
 		}
+		return false;
 	}
 
 	/**

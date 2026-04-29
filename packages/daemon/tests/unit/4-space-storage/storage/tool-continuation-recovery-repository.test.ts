@@ -103,4 +103,33 @@ describe('ToolContinuationRecoveryRepository', () => {
 		expect(updated.status).toBe('blocked');
 		expect(updated.result).toBe('circuit breaker tripped');
 	});
+
+	it('does not reopen recovery for consumed tool_use mappings', () => {
+		const { execution } = seedExecution('session-c');
+		const repo = new ToolContinuationRecoveryRepository(db as any);
+		repo.ensureSchema();
+		repo.recordToolUse({ toolUseId: 'tool-3', sessionId: 'session-c', ttlMs: 60_000 });
+		repo.markConsumed('tool-3');
+
+		const queued = repo.queueContinuation({
+			toolUseId: 'tool-3',
+			sessionId: 'session-c',
+			requestBody: { messages: [{ role: 'user', content: [] }] },
+			reason: 'duplicate tool_result retry after success',
+			ttlMs: 60_000,
+		});
+		const incremented = repo.increment409('tool-3', 'duplicate tool_result retry after success');
+		const failed = repo.failToolUse('tool-3', 'should not block consumed mapping');
+		const mapping = repo.getToolUse('tool-3');
+		const updated = new NodeExecutionRepository(db as any).getById(execution.id)!;
+
+		expect(queued.mapping).toBeNull();
+		expect(queued.inbox.executionId).toBeNull();
+		expect(incremented).toBeNull();
+		expect(failed).toBeNull();
+		expect(mapping?.status).toBe('consumed');
+		expect(mapping?.attempts409).toBe(0);
+		expect(updated.status).toBe('in_progress');
+		expect(updated.result).toBeNull();
+	});
 });
