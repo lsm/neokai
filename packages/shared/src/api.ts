@@ -428,34 +428,6 @@ export interface ListRuntimeMcpServersResponse {
 	servers: RuntimeMcpServerEntry[];
 }
 
-// --- Per-Room MCP Enablement ---
-
-export interface McpRoomGetEnabledRequest {
-	roomId: string;
-}
-
-export interface McpRoomGetEnabledResponse {
-	serverIds: string[];
-}
-
-export interface McpRoomSetEnabledRequest {
-	roomId: string;
-	serverId: string;
-	enabled: boolean;
-}
-
-export interface McpRoomSetEnabledResponse {
-	ok: boolean;
-}
-
-export interface McpRoomResetToGlobalRequest {
-	roomId: string;
-}
-
-export interface McpRoomResetToGlobalResponse {
-	ok: boolean;
-}
-
 // --- Per-Space MCP Enablement (M4) ---
 
 /**
@@ -528,35 +500,6 @@ export interface McpImportsRefreshResponse {
 	removed: number;
 	/** Human-readable notes (e.g. files not found, parse errors). */
 	notes: string[];
-}
-
-// --- Per-Room Skill Enablement ---
-
-export interface SkillRoomGetOverridesRequest {
-	roomId: string;
-}
-
-export interface SkillRoomGetOverridesResponse {
-	overrides: Array<{ skillId: string; roomId: string; enabled: boolean }>;
-}
-
-export interface SkillRoomSetOverrideRequest {
-	roomId: string;
-	skillId: string;
-	enabled: boolean;
-}
-
-export interface SkillRoomSetOverrideResponse {
-	success: boolean;
-}
-
-export interface SkillRoomClearOverrideRequest {
-	roomId: string;
-	skillId: string;
-}
-
-export interface SkillRoomClearOverrideResponse {
-	success: boolean;
 }
 
 // --- Output Format ---

@@ -153,7 +153,7 @@ export interface TaskAgentManagerConfig {
 	 * are available. `QueryOptionsBuilder.getMcpServersFromSkills()` uses this to merge enabled
 	 * `mcp_server`-type skills into the SDK query options at session start.
 	 *
-	 * Note: `roomSkillOverrides` is NOT applicable to task agent sessions — task agents have no
+	 * Note: session skill overrides are NOT applicable to task agent sessions — task agents have no
 	 * per-room override concept. Skills are either enabled globally or not.
 	 */
 	skillsManager: SkillsManager;

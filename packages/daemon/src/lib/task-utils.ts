@@ -1,4 +1,4 @@
-import type { NeoTask, TaskSummary } from '@neokai/shared';
+import type { NeoTask, TaskSummary } from '@neokai/shared/types/neo';
 
 /**
  * Convert a full NeoTask to a lightweight TaskSummary for list/overview contexts.

@@ -12,11 +12,11 @@ import type {
 	GlobalSettings,
 	RoomGitHubMapping,
 	InboxItem,
-	RoomGoal,
 	MessageOrigin,
 	NeokaiActionMessage,
 	ChatMessage,
 } from '@neokai/shared';
+import type { GoalStatus, RoomGoal } from '@neokai/shared/types/neo';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { DatabaseCore } from './database-core';
 import { ShortIdAllocator } from '../lib/short-id-allocator';
@@ -409,7 +409,7 @@ export class Database {
 		return this.goalRepo.getGoalByShortId(roomId, shortId);
 	}
 
-	listGoals(roomId: string, status?: import('@neokai/shared').GoalStatus): RoomGoal[] {
+	listGoals(roomId: string, status?: GoalStatus): RoomGoal[] {
 		return this.goalRepo.listGoals(roomId, status);
 	}
 

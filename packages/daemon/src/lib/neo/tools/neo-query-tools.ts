@@ -33,8 +33,6 @@ import { z } from 'zod';
 import type {
 	GlobalSettings,
 	AuthStatus,
-	Room,
-	RoomGoal,
 	AppMcpServer,
 	AppSkill,
 	Space,
@@ -42,9 +40,8 @@ import type {
 	SpaceWorkflow,
 	SpaceWorkflowRun,
 	SpaceTask,
-	NeoTask,
-	MissionExecution,
 } from '@neokai/shared';
+import type { Room, RoomGoal, NeoTask, MissionExecution } from '@neokai/shared/types/neo';
 import { isWorkerSessionId } from '../../room/session-utils';
 import { toTaskSummary } from '../../task-utils';
 

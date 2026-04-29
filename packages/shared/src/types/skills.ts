@@ -100,13 +100,11 @@ export interface UpdateSkillParams {
 }
 
 /**
- * Per-room override for a skill's enabled state.
- * When an override exists for a (skillId, roomId) pair, the `enabled` field
- * takes precedence over the skill's global `enabled` value.
+ * Session-spawn skill override used to disable globally enabled skills for a
+ * specific runtime session.
  */
-export interface RoomSkillOverride {
+export interface SkillEnablementOverride {
 	skillId: string;
-	roomId: string;
 	enabled: boolean;
 }
 

@@ -56,49 +56,6 @@ export interface NamedQuery {
 // ============================================================================
 
 /**
- * Map a raw SQLite row from the `tasks` table (with camelCase AS aliases) to
- * the NeoTask shape expected by the frontend.
- *
- * JSON blob columns: `dependsOn` (stored as `depends_on`).
- * All other snake_case→camelCase conversions are handled by AS aliases in the
- * SQL itself so this mapper only handles post-processing that SQL cannot do.
- */
-function mapTaskRow(row: Record<string, unknown>): Record<string, unknown> {
-	return {
-		...row,
-		dependsOn: JSON.parse((row.dependsOn as string | null) ?? '[]') as string[],
-	};
-}
-
-/**
- * Map a raw SQLite row from the `goals` table (with camelCase AS aliases) to
- * the RoomGoal shape expected by the frontend.
- *
- * JSON blob columns:
- *   - `linkedTaskIds` (stored as `linked_task_ids`)
- *   - `metrics`       (stored as `metrics`)
- *   - `structuredMetrics` (stored as `structured_metrics`) — optional, null-safe
- *   - `schedule`      (stored as `schedule`)               — optional, null-safe
- *
- * Boolean coercion:
- *   - `schedulePaused` — SQLite stores 0/1; convert to JS boolean
- *
- * snake_case exceptions (per TypeScript type):
- *   - `planning_attempts`    — kept as-is (not aliased in SQL, not converted here)
- *   - `goal_review_attempts` — kept as-is (not aliased in SQL, not converted here)
- */
-function mapGoalRow(row: Record<string, unknown>): Record<string, unknown> {
-	return {
-		...row,
-		linkedTaskIds: parseJson<string[]>((row.linkedTaskIds as string | null) ?? '[]', []),
-		metrics: parseJson<Record<string, number>>((row.metrics as string | null) ?? '{}', {}),
-		structuredMetrics: parseJsonOptional(row.structuredMetrics as string | null),
-		schedule: parseJsonOptional(row.schedule as string | null),
-		schedulePaused: row.schedulePaused === 1,
-	};
-}
-
-/**
  * Map canonical task timeline rows into the SessionGroupMessage shape expected by the web client.
  * For SDK rows, inject `_taskMeta` directly into JSON content so TaskConversationRenderer can
  * render role/session context without relying on runtime mirroring.
@@ -238,90 +195,6 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 // SQL definitions
 // ============================================================================
 
-/**
- * Shared column list for task queries — avoids duplicating the SELECT clause.
- */
-const TASKS_SELECT_COLUMNS = `
-  id,
-  room_id             AS roomId,
-  title,
-  description,
-  status,
-  priority,
-  progress,
-  current_step        AS currentStep,
-  result,
-  error,
-  depends_on          AS dependsOn,
-  created_at          AS createdAt,
-  started_at          AS startedAt,
-  completed_at        AS completedAt,
-  task_type           AS taskType,
-  assigned_agent      AS assignedAgent,
-  created_by_task_id  AS createdByTaskId,
-  archived_at         AS archivedAt,
-  active_session      AS activeSession,
-  pr_url              AS prUrl,
-  pr_number           AS prNumber,
-  pr_created_at       AS prCreatedAt,
-  input_draft         AS inputDraft,
-  updated_at          AS updatedAt,
-  short_id            AS shortId`;
-
-/**
- * Default task query: excludes archived tasks.
- * The sidebar and dashboard almost never need archived tasks, so filtering
- * them server-side saves bandwidth and client memory.
- */
-const TASKS_BY_ROOM_SQL = `
-SELECT ${TASKS_SELECT_COLUMNS}
-FROM tasks
-WHERE room_id = ? AND status != 'archived'
-ORDER BY created_at DESC, id DESC
-`.trim();
-
-/**
- * All tasks including archived — used when the client explicitly needs the
- * full task history (e.g., the "Archived" tab in the dashboard).
- */
-const TASKS_BY_ROOM_ALL_SQL = `
-SELECT ${TASKS_SELECT_COLUMNS}
-FROM tasks
-WHERE room_id = ?
-ORDER BY created_at DESC, id DESC
-`.trim();
-
-const GOALS_BY_ROOM_SQL = `
-SELECT
-  id,
-  room_id                   AS roomId,
-  title,
-  description,
-  status,
-  priority,
-  progress,
-  linked_task_ids           AS linkedTaskIds,
-  metrics,
-  created_at                AS createdAt,
-  updated_at                AS updatedAt,
-  completed_at              AS completedAt,
-  planning_attempts,
-  goal_review_attempts,
-  mission_type              AS missionType,
-  autonomy_level            AS autonomyLevel,
-  schedule,
-  schedule_paused           AS schedulePaused,
-  next_run_at               AS nextRunAt,
-  structured_metrics        AS structuredMetrics,
-  max_consecutive_failures  AS maxConsecutiveFailures,
-  max_planning_attempts     AS maxPlanningAttempts,
-  consecutive_failures      AS consecutiveFailures,
-  replan_count              AS replanCount
-FROM goals
-WHERE room_id = ?
-ORDER BY priority DESC, created_at ASC, id ASC
-`.trim();
-
 const MCP_SERVERS_GLOBAL_SQL = `
 SELECT
   id,
@@ -408,26 +281,6 @@ function mapSkillRow(row: Record<string, unknown>): Record<string, unknown> {
 	};
 }
 
-const MCP_ENABLEMENT_BY_ROOM_SQL = `
-SELECT
-  rme.server_id   AS serverId,
-  rme.enabled,
-  ams.name,
-  ams.source_type AS sourceType,
-  ams.description
-FROM room_mcp_enablement rme
-JOIN app_mcp_servers ams ON ams.id = rme.server_id
-WHERE rme.room_id = ?
-ORDER BY ams.id ASC
-`.trim();
-
-function mapMcpEnablementRow(row: Record<string, unknown>): Record<string, unknown> {
-	return {
-		...row,
-		enabled: row.enabled === 1,
-	};
-}
-
 /**
  * SQL for `mcpEnablement.bySpace`. Returns a row per registry entry, with the
  * per-space override (if any) applied. Columns match SpaceMcpEntry so the
@@ -474,34 +327,6 @@ function mapMcpEnablementBySpaceRow(row: Record<string, unknown>): Record<string
 	if (row.description != null) out.description = row.description;
 	if (row.sourcePath != null) out.sourcePath = row.sourcePath;
 	return out;
-}
-
-const SKILLS_BY_ROOM_SQL = `
-SELECT
-  s.id,
-  s.name,
-  s.display_name AS displayName,
-  s.description,
-  s.source_type AS sourceType,
-  s.config,
-  s.built_in AS builtIn,
-  s.validation_status AS validationStatus,
-  s.created_at AS createdAt,
-  CASE WHEN rso.enabled IS NOT NULL THEN rso.enabled ELSE s.enabled END AS enabled,
-  CASE WHEN rso.skill_id IS NOT NULL THEN 1 ELSE 0 END AS overriddenByRoom
-FROM skills s
-LEFT JOIN room_skill_overrides rso ON rso.skill_id = s.id AND rso.room_id = ?
-ORDER BY s.built_in DESC, s.created_at ASC, s.id ASC
-`.trim();
-
-function mapSkillByRoomRow(row: Record<string, unknown>): Record<string, unknown> {
-	return {
-		...row,
-		config: JSON.parse(row.config as string),
-		enabled: row.enabled === 1,
-		builtIn: row.builtIn === 1,
-		overriddenByRoom: row.overriddenByRoom === 1,
-	};
 }
 
 function formatTaskActivityLabel(value: unknown, fallback: string): string {
@@ -1784,30 +1609,6 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
 
 export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 	[
-		'tasks.byRoom',
-		{
-			sql: TASKS_BY_ROOM_SQL,
-			paramCount: 1,
-			mapRow: mapTaskRow,
-		},
-	],
-	[
-		'tasks.byRoom.all',
-		{
-			sql: TASKS_BY_ROOM_ALL_SQL,
-			paramCount: 1,
-			mapRow: mapTaskRow,
-		},
-	],
-	[
-		'goals.byRoom',
-		{
-			sql: GOALS_BY_ROOM_SQL,
-			paramCount: 1,
-			mapRow: mapGoalRow,
-		},
-	],
-	[
 		'sessionGroupMessages.byGroup',
 		{
 			sql: SESSION_GROUP_MESSAGES_BY_GROUP_SQL,
@@ -1856,27 +1657,11 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		},
 	],
 	[
-		'mcpEnablement.byRoom',
-		{
-			sql: MCP_ENABLEMENT_BY_ROOM_SQL,
-			paramCount: 1,
-			mapRow: mapMcpEnablementRow,
-		},
-	],
-	[
 		'mcpEnablement.bySpace',
 		{
 			sql: MCP_ENABLEMENT_BY_SPACE_SQL,
 			paramCount: 1,
 			mapRow: mapMcpEnablementBySpaceRow,
-		},
-	],
-	[
-		'skills.byRoom',
-		{
-			sql: SKILLS_BY_ROOM_SQL,
-			paramCount: 1,
-			mapRow: mapSkillByRoomRow,
 		},
 	],
 	[
@@ -2067,18 +1852,7 @@ export function setupLiveQueryHandlers(
 		}
 
 		// 4. Authorization checks
-		if (
-			queryName === 'tasks.byRoom' ||
-			queryName === 'tasks.byRoom.all' ||
-			queryName === 'goals.byRoom' ||
-			queryName === 'mcpEnablement.byRoom' ||
-			queryName === 'skills.byRoom'
-		) {
-			const roomId = params[0] as string;
-			if (!stmtRoom.get(roomId)) {
-				throw new Error(`Unauthorized: room "${roomId}" not found`);
-			}
-		} else if (queryName === 'sessionGroupMessages.byGroup') {
+		if (queryName === 'sessionGroupMessages.byGroup') {
 			const groupId = params[0] as string;
 			const group = stmtGroup.get(groupId) as { ref_id: string; group_type: string } | null;
 			if (!group) {

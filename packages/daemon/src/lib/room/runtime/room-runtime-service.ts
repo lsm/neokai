@@ -8,13 +8,8 @@
  * Follows the LobbyAgentService pattern.
  */
 
-import type {
-	Room,
-	McpServerConfig,
-	RuntimeState,
-	GlobalSettings,
-	RoomSkillOverride,
-} from '@neokai/shared';
+import type { GlobalSettings, McpServerConfig, SkillEnablementOverride } from '@neokai/shared';
+import type { Room, RuntimeState } from '@neokai/shared/types/neo';
 import type { SettingsManager } from '../../settings-manager';
 import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
@@ -22,7 +17,8 @@ import type { JobQueueProcessor } from '../../../storage/job-queue-processor';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { ROOM_TICK } from '../../job-queue-constants';
 import { createRoomTickHandler } from '../../job-handlers/room-tick.handler';
-import { generateUUID, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
+import { MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from '@neokai/shared/types/neo';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../../storage/database';
@@ -414,19 +410,19 @@ export class RoomRuntimeService {
 
 		return {
 			createAndStartSession: async (init, role) => {
-				// Resolve room-level skill overrides for this session.
+				// Resolve legacy room-level skill overrides for this session.
 				// The override list is merged with the global skills registry in
 				// QueryOptionsBuilder so that room-disabled skills are excluded.
-				let roomSkillOverrides: RoomSkillOverride[] | undefined;
+				let skillOverrides: SkillEnablementOverride[] | undefined;
 				if (ctx.roomSkillOverrideRepo) {
 					const roomId = RoomRuntimeService.extractRoomId(init.sessionId);
 					if (roomId) {
-						roomSkillOverrides = ctx.roomSkillOverrideRepo.getOverrides(roomId);
+						skillOverrides = ctx.roomSkillOverrideRepo.getOverrides(roomId);
 					}
 				}
 
 				const session = AgentSession.fromInit(
-					{ ...init, roomSkillOverrides },
+					{ ...init, skillOverrides },
 					ctx.db,
 					ctx.messageHub,
 					ctx.daemonHub,

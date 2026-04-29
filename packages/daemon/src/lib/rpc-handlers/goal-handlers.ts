@@ -1,5 +1,8 @@
 /**
- * Goal RPC Handlers
+ * Legacy Room Goal RPC Handlers
+ *
+ * Preserved for old room/goal database compatibility and direct legacy tests
+ * only. `setupRPCHandlers` no longer registers this public goal.* surface.
  *
  * RPC handlers for goal operations:
  * - goal.create - Create a new goal
@@ -18,8 +21,8 @@
  * - task.approve - Human approves a task PR (resumes worker for phase 2)
  */
 
+import type { MessageHub } from '@neokai/shared';
 import type {
-	MessageHub,
 	RoomGoal,
 	GoalStatus,
 	GoalPriority,
@@ -27,7 +30,7 @@ import type {
 	AutonomyLevel,
 	MissionMetric,
 	CronSchedule,
-} from '@neokai/shared';
+} from '@neokai/shared/types/neo';
 import type { DaemonHub } from '../daemon-hub';
 import type { GoalManager } from '../room/managers/goal-manager';
 import type { TaskManager } from '../room/managers/task-manager';
