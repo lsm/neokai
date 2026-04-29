@@ -522,7 +522,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'pr_url',
 					type: 'string',
-					writers: ['coder'],
+					writers: ['Coding'],
 					check: { op: 'exists' },
 				},
 			],
@@ -545,7 +545,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'review_url',
 					type: 'string',
-					writers: ['reviewer'],
+					writers: ['Review'],
 					check: { op: 'exists' },
 				},
 			],
@@ -977,7 +977,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'approvals',
 					type: 'map',
-					writers: ['reviewer'],
+					writers: ['Plan Review'],
 					check: { op: 'count', match: 'approved', min: 4 },
 				},
 			],

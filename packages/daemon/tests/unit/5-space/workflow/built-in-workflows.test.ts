@@ -150,11 +150,11 @@ describe('CODING_WORKFLOW template', () => {
 		}
 	});
 
-	test('review-posted-gate has review_url field writable only by reviewer', () => {
+	test('review-posted-gate has review_url field writable only by Review node', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
 		const field = gate.fields.find((f) => f.name === 'review_url')!;
 		expect(field.type).toBe('string');
-		expect(field.writers).toEqual(['reviewer']);
+		expect(field.writers).toEqual(['Review']);
 		expect(field.check.op).toBe('exists');
 	});
 
@@ -196,11 +196,11 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('code-ready-gate has pr_url field writable by coder', () => {
+	test('code-ready-gate has pr_url field writable by Coding node', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
 		const prField = gate.fields.find((f) => f.name === 'pr_url')!;
 		expect(prField.type).toBe('string');
-		expect(prField.writers).toEqual(['coder']);
+		expect(prField.writers).toEqual(['Coding']);
 		expect(prField.check.op).toBe('exists');
 	});
 
@@ -557,7 +557,7 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
 		expect(gate.fields[0].name).toBe('approvals');
 		expect(gate.fields[0].type).toBe('map');
 		expect(gate.fields[0].check).toMatchObject({ op: 'count', match: 'approved', min: 4 });
-		expect(gate.fields[0].writers).toContain('reviewer');
+		expect(gate.fields[0].writers).toEqual(['Plan Review']);
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
@@ -1630,7 +1630,7 @@ describe('seedBuiltInWorkflows()', () => {
 		const gate = PLAN_AND_DECOMPOSE_WORKFLOW.gates!.find((g) => g.id === 'plan-approval-gate')!;
 		const approvalsField = gate.fields.find((f) => f.name === 'approvals')!;
 		expect(approvalsField.type).toBe('map');
-		expect(approvalsField.writers).toContain('reviewer');
+		expect(approvalsField.writers).toEqual(['Plan Review']);
 		expect(approvalsField.check).toMatchObject({ op: 'count', match: 'approved', min: 4 });
 	});
 
@@ -1642,7 +1642,7 @@ describe('seedBuiltInWorkflows()', () => {
 		const gate = wf.gates!.find((g) => g.id === 'plan-approval-gate')!;
 		const approvalsField = gate.fields.find((f) => f.name === 'approvals')!;
 		expect(approvalsField.type).toBe('map');
-		expect(approvalsField.writers).toContain('reviewer');
+		expect(approvalsField.writers).toEqual(['Plan Review']);
 		expect(approvalsField.check).toMatchObject({ op: 'count', match: 'approved', min: 4 });
 	});
 
