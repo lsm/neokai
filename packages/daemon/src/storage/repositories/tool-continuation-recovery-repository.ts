@@ -181,6 +181,10 @@ export class ToolContinuationRecoveryRepository {
 	}
 
 	markWaitingRebind(toolUseId: string, reason: string): ToolContinuationRecord | null {
+		const existing = this.getToolUse(toolUseId);
+		if (!existing || !canMarkWaitingRebind(existing.status)) {
+			return null;
+		}
 		const updated = this.updateToolUseStatus(toolUseId, 'waiting_rebind', reason);
 		if (updated?.executionId) {
 			this.markExecutionWaitingRebind(updated.executionId, reason);
@@ -197,8 +201,10 @@ export class ToolContinuationRecoveryRepository {
 	}): { inbox: ContinuationInboxRecord; mapping: ToolContinuationRecord | null } {
 		const now = Date.now();
 		let mapping = this.getToolUse(params.toolUseId);
-		if (mapping) {
+		if (mapping && isRecoverableToolUseStatus(mapping.status)) {
 			mapping = this.markWaitingRebind(params.toolUseId, params.reason);
+		} else {
+			mapping = null;
 		}
 		const owner =
 			mapping ??
@@ -232,19 +238,26 @@ export class ToolContinuationRecoveryRepository {
 
 	increment409(toolUseId: string, reason: string): ToolContinuationRecord | null {
 		const now = Date.now();
-		this.db
+		const result = this.db
 			.prepare(
 				`UPDATE tool_continuation_recovery
 				 SET attempts_409 = attempts_409 + 1,
 				     recovery_reason = ?,
 				     updated_at = ?
-				 WHERE tool_use_id = ?`
+				 WHERE tool_use_id = ?
+				   AND status IN ('active', 'waiting_rebind')
+				   AND expires_at >= ?`
 			)
-			.run(reason, now, toolUseId);
+			.run(reason, now, toolUseId, now);
+		if (result.changes === 0) return null;
 		return this.getToolUse(toolUseId);
 	}
 
 	failToolUse(toolUseId: string, reason: string): ToolContinuationRecord | null {
+		const existing = this.getToolUse(toolUseId);
+		if (!existing || !isRecoverableToolUseStatus(existing.status)) {
+			return null;
+		}
 		const updated = this.updateToolUseStatus(toolUseId, 'failed', reason);
 		if (updated?.executionId) {
 			this.markExecutionBlocked(updated.executionId, reason);
@@ -441,4 +454,12 @@ function parseExecutionData(raw: string | null | undefined): Record<string, unkn
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isRecoverableToolUseStatus(status: ToolContinuationStatus): boolean {
+	return status === 'active' || status === 'waiting_rebind';
+}
+
+function canMarkWaitingRebind(status: ToolContinuationStatus): boolean {
+	return isRecoverableToolUseStatus(status) || status === 'expired';
 }
