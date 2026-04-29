@@ -2266,36 +2266,50 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				)
 		),
 
-		tool(
-			'approve_task',
-			'Approve a task PR that is currently in review status. Medium risk — requires confirmation in balanced mode.',
-			{
-				room_id: z.string().describe('ID of the room containing the task'),
-				task_id: z.string().describe('ID of the task to approve'),
-			},
-			// Non-undoable: task review decision may have triggered agent actions.
-			(args) =>
-				logged('approve_task', args as Record<string, unknown>, () => handlers.approve_task(args), {
-					targetType: 'task',
-					getTargetId: (a) => (a.task_id as string) ?? null,
-				})
-		),
+		...(config.runtimeService
+			? [
+					tool(
+						'approve_task',
+						'Approve a task PR that is currently in review status. Medium risk — requires confirmation in balanced mode.',
+						{
+							room_id: z.string().describe('ID of the room containing the task'),
+							task_id: z.string().describe('ID of the task to approve'),
+						},
+						// Non-undoable: task review decision may have triggered agent actions.
+						(args) =>
+							logged(
+								'approve_task',
+								args as Record<string, unknown>,
+								() => handlers.approve_task(args),
+								{
+									targetType: 'task',
+									getTargetId: (a) => (a.task_id as string) ?? null,
+								}
+							)
+					),
 
-		tool(
-			'reject_task',
-			'Reject a task PR that is currently in review status, providing feedback for revision. Medium risk — requires confirmation in balanced mode.',
-			{
-				room_id: z.string().describe('ID of the room containing the task'),
-				task_id: z.string().describe('ID of the task to reject'),
-				feedback: z.string().describe('Feedback explaining why the task was rejected'),
-			},
-			// Non-undoable: task review decision may have triggered agent actions.
-			(args) =>
-				logged('reject_task', args as Record<string, unknown>, () => handlers.reject_task(args), {
-					targetType: 'task',
-					getTargetId: (a) => (a.task_id as string) ?? null,
-				})
-		),
+					tool(
+						'reject_task',
+						'Reject a task PR that is currently in review status, providing feedback for revision. Medium risk — requires confirmation in balanced mode.',
+						{
+							room_id: z.string().describe('ID of the room containing the task'),
+							task_id: z.string().describe('ID of the task to reject'),
+							feedback: z.string().describe('Feedback explaining why the task was rejected'),
+						},
+						// Non-undoable: task review decision may have triggered agent actions.
+						(args) =>
+							logged(
+								'reject_task',
+								args as Record<string, unknown>,
+								() => handlers.reject_task(args),
+								{
+									targetType: 'task',
+									getTargetId: (a) => (a.task_id as string) ?? null,
+								}
+							)
+					),
+				]
+			: []),
 
 		// ── Space ─────────────────────────────────────────────────────────────
 		tool(
@@ -2736,20 +2750,29 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				)
 		),
 
-		tool(
-			'stop_session',
-			'Interrupt the running agent session for a task. Only works for in_progress or review tasks. Medium risk — requires confirmation in balanced mode.',
-			{
-				room_id: z.string().describe('ID of the room containing the task'),
-				task_id: z.string().describe('ID of the task whose session to stop'),
-			},
-			// Non-undoable: session interruption may have cascading side effects.
-			(args) =>
-				logged('stop_session', args as Record<string, unknown>, () => handlers.stop_session(args), {
-					targetType: 'task',
-					getTargetId: (a) => (a.task_id as string) ?? null,
-				})
-		),
+		...(config.runtimeService
+			? [
+					tool(
+						'stop_session',
+						'Interrupt the running agent session for a task. Only works for in_progress or review tasks. Medium risk — requires confirmation in balanced mode.',
+						{
+							room_id: z.string().describe('ID of the room containing the task'),
+							task_id: z.string().describe('ID of the task whose session to stop'),
+						},
+						// Non-undoable: session interruption may have cascading side effects.
+						(args) =>
+							logged(
+								'stop_session',
+								args as Record<string, unknown>,
+								() => handlers.stop_session(args),
+								{
+									targetType: 'task',
+									getTargetId: (a) => (a.task_id as string) ?? null,
+								}
+							)
+					),
+				]
+			: []),
 
 		tool(
 			'pause_schedule',
