@@ -238,6 +238,7 @@ describe('ProviderService', () => {
 			CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
 			GLM_API_KEY: process.env.GLM_API_KEY,
 			ZHIPU_API_KEY: process.env.ZHIPU_API_KEY,
+			OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
 			API_TIMEOUT_MS: process.env.API_TIMEOUT_MS,
 			CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:
 				process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
@@ -257,6 +258,7 @@ describe('ProviderService', () => {
 		delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
 		delete process.env.GLM_API_KEY;
 		delete process.env.ZHIPU_API_KEY;
+		delete process.env.OPENROUTER_API_KEY;
 		delete process.env.API_TIMEOUT_MS;
 		delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
 		delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
@@ -326,6 +328,13 @@ describe('ProviderService', () => {
 			process.env.ZHIPU_API_KEY = 'test-zhipu-key';
 			const key = service.getProviderApiKey('glm');
 			expect(key).toBe('test-zhipu-key');
+		});
+
+		it('should return OPENROUTER_API_KEY for openrouter provider', () => {
+			registry.register(new MockProvider('openrouter', 'OpenRouter', true, 'openrouter/'));
+			process.env.OPENROUTER_API_KEY = 'sk-or-test';
+			const key = service.getProviderApiKey('openrouter');
+			expect(key).toBe('sk-or-test');
 		});
 
 		it('should return undefined for unknown provider', () => {
@@ -770,7 +779,7 @@ describe('ProviderService', () => {
 			service.restoreEnvVars(original);
 		});
 
-		it('deletes ANTHROPIC_API_KEY when provider returns empty-string sentinel, restores on restoreEnvVars', () => {
+		it('blanks ANTHROPIC_API_KEY when provider returns empty-string sentinel, restores on restoreEnvVars', () => {
 			// Mirrors what AnthropicToCopilotBridgeProvider does: returning ANTHROPIC_API_KEY: ''
 			// prevents the SDK subprocess from calling api.anthropic.com with the real key.
 			registry.register(new CopilotMockProvider());
@@ -778,8 +787,8 @@ describe('ProviderService', () => {
 
 			const original = service.applyEnvVarsToProcess('claude-opus-4.6', 'anthropic-copilot');
 
-			// Key must be deleted so SDK subprocess cannot call Anthropic directly.
-			expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
+			// Key must be explicitly blank so SDK subprocess cannot call Anthropic directly.
+			expect(process.env.ANTHROPIC_API_KEY).toBe('');
 			// Original value must be saved for restoration.
 			expect(original.ANTHROPIC_API_KEY).toBe('real-key');
 

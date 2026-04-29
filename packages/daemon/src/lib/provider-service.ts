@@ -175,6 +175,9 @@ export class ProviderService {
 		if (providerId === 'minimax') {
 			return process.env.MINIMAX_API_KEY;
 		}
+		if (providerId === 'openrouter') {
+			return process.env.OPENROUTER_API_KEY;
+		}
 
 		return undefined;
 	}
@@ -501,12 +504,12 @@ export class ProviderService {
 		}
 		if (envVars.ANTHROPIC_API_KEY !== undefined) {
 			if (envVars.ANTHROPIC_API_KEY === '') {
-				// Empty string means "clear the key" — used by providers that set
-				// ANTHROPIC_BASE_URL to a local proxy (e.g. AnthropicToCopilotBridgeProvider)
-				// to prevent the SDK subprocess from calling Anthropic directly with
-				// the user's real API key.
+				// Empty string means "blank the key" — used by Anthropic-compatible
+				// providers to prevent the SDK subprocess from falling back to a real
+				// Anthropic API key while still satisfying integrations that require
+				// ANTHROPIC_API_KEY to be explicitly empty.
 				original.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-				delete process.env.ANTHROPIC_API_KEY;
+				process.env.ANTHROPIC_API_KEY = '';
 			} else {
 				// Non-empty: map API key value to ANTHROPIC_AUTH_TOKEN (legacy behaviour)
 				original.ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_AUTH_TOKEN;

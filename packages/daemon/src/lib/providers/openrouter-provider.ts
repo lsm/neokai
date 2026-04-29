@@ -1,0 +1,270 @@
+/**
+ * OpenRouter Provider
+ *
+ * OpenRouter exposes an Anthropic-compatible "skin" for Claude Code at
+ * https://openrouter.ai/api and an OpenAI-compatible metadata API at
+ * https://openrouter.ai/api/v1.
+ */
+
+import type {
+	Provider,
+	ProviderAuthStatusInfo,
+	ProviderCapabilities,
+	ProviderSdkConfig,
+	ProviderSessionConfig,
+	ModelTier,
+} from '@neokai/shared/provider';
+import type { ModelInfo } from '@neokai/shared';
+
+interface OpenRouterModel {
+	id: string;
+	name?: string;
+	description?: string;
+	context_length?: number;
+	created?: number;
+	top_provider?: {
+		context_length?: number;
+	};
+}
+
+interface OpenRouterModelsResponse {
+	data?: OpenRouterModel[];
+}
+
+function isProbablyOpenRouterKey(apiKey: string): boolean {
+	return apiKey.trim().startsWith('sk-or-');
+}
+
+function providerModelAlias(modelId: string): string {
+	if (modelId === 'openrouter/auto') return 'openrouter-auto';
+	return modelId.split('/').at(-1) || modelId;
+}
+
+function familyFromModelId(modelId: string): string {
+	const id = modelId.toLowerCase();
+	if (id.includes('opus')) return 'opus';
+	if (id.includes('sonnet')) return 'sonnet';
+	if (id.includes('haiku')) return 'haiku';
+	if (id.includes('gpt')) return 'gpt';
+	if (id.includes('gemini')) return 'gemini';
+	if (id.includes('glm')) return 'glm';
+	if (id.includes('minimax')) return 'minimax';
+	return 'openrouter';
+}
+
+function releaseDateFromCreated(created?: number): string {
+	if (!created) return '';
+	return new Date(created * 1000).toISOString().slice(0, 10);
+}
+
+export class OpenRouterProvider implements Provider {
+	readonly id = 'openrouter';
+	readonly displayName = 'OpenRouter';
+
+	readonly capabilities: ProviderCapabilities = {
+		streaming: true,
+		extendedThinking: true,
+		maxContextWindow: 200000,
+		functionCalling: true,
+		vision: true,
+	};
+
+	static readonly BASE_URL = 'https://openrouter.ai/api';
+	static readonly MODELS_URL = 'https://openrouter.ai/api/v1/models?output_modalities=text';
+	static readonly DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
+
+	static readonly FALLBACK_MODELS: ModelInfo[] = [
+		{
+			id: 'openrouter/auto',
+			name: 'OpenRouter Auto',
+			alias: 'openrouter-auto',
+			family: 'openrouter',
+			provider: 'openrouter',
+			contextWindow: 200000,
+			description: 'OpenRouter automatic model routing',
+			releaseDate: '',
+			available: true,
+		},
+		{
+			id: 'anthropic/claude-sonnet-4.6',
+			name: 'Claude Sonnet 4.6 (OpenRouter)',
+			alias: 'openrouter-sonnet',
+			family: 'sonnet',
+			provider: 'openrouter',
+			contextWindow: 200000,
+			description: 'Claude Sonnet through OpenRouter',
+			releaseDate: '',
+			available: true,
+		},
+		{
+			id: 'anthropic/claude-opus-4.7',
+			name: 'Claude Opus 4.7 (OpenRouter)',
+			alias: 'openrouter-opus',
+			family: 'opus',
+			provider: 'openrouter',
+			contextWindow: 200000,
+			description: 'Claude Opus through OpenRouter',
+			releaseDate: '',
+			available: true,
+		},
+		{
+			id: 'anthropic/claude-haiku-4.5',
+			name: 'Claude Haiku 4.5 (OpenRouter)',
+			alias: 'openrouter-haiku',
+			family: 'haiku',
+			provider: 'openrouter',
+			contextWindow: 200000,
+			description: 'Claude Haiku through OpenRouter',
+			releaseDate: '',
+			available: true,
+		},
+	];
+
+	private modelCache: ModelInfo[] | null = null;
+	private lastAuthError: string | undefined;
+
+	constructor(
+		private readonly env: NodeJS.ProcessEnv = process.env,
+		private readonly fetchImpl: typeof fetch = fetch
+	) {}
+
+	isAvailable(): boolean {
+		const apiKey = this.getApiKey();
+		return !!apiKey && isProbablyOpenRouterKey(apiKey);
+	}
+
+	getApiKey(): string | undefined {
+		const apiKey = this.env.OPENROUTER_API_KEY?.trim();
+		return apiKey || undefined;
+	}
+
+	async getModels(): Promise<ModelInfo[]> {
+		if (!this.isAvailable()) return [];
+		if (this.modelCache) return this.modelCache;
+
+		try {
+			const response = await this.fetchImpl(OpenRouterProvider.MODELS_URL, {
+				headers: {
+					Authorization: `Bearer ${this.getApiKey()}`,
+				},
+			});
+
+			if (response.status === 401 || response.status === 403) {
+				this.lastAuthError =
+					'OPENROUTER_API_KEY was rejected by OpenRouter. Check the key value and account credits.';
+				return [];
+			}
+
+			if (!response.ok) {
+				return OpenRouterProvider.FALLBACK_MODELS;
+			}
+
+			const body = (await response.json()) as OpenRouterModelsResponse;
+			const models = (body.data ?? [])
+				.filter((model) => typeof model.id === 'string' && model.id.length > 0)
+				.map((model) => this.toModelInfo(model));
+
+			this.modelCache = models.length > 0 ? models : OpenRouterProvider.FALLBACK_MODELS;
+			this.lastAuthError = undefined;
+			return this.modelCache;
+		} catch {
+			return OpenRouterProvider.FALLBACK_MODELS;
+		}
+	}
+
+	ownsModel(modelId: string): boolean {
+		return (
+			modelId === 'openrouter/auto' ||
+			/^[a-z0-9][a-z0-9._-]+\/[a-z0-9][a-z0-9._:-]+$/i.test(modelId)
+		);
+	}
+
+	getModelForTier(tier: ModelTier): string | undefined {
+		switch (tier) {
+			case 'opus':
+				return 'anthropic/claude-opus-4.7';
+			case 'haiku':
+				return 'anthropic/claude-haiku-4.5';
+			case 'sonnet':
+			case 'default':
+				return OpenRouterProvider.DEFAULT_MODEL;
+		}
+	}
+
+	buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
+		const apiKey = sessionConfig?.apiKey || this.getApiKey();
+		if (!apiKey) {
+			throw new Error('OpenRouter API key not configured. Set OPENROUTER_API_KEY.');
+		}
+		if (!isProbablyOpenRouterKey(apiKey)) {
+			throw new Error(
+				'OPENROUTER_API_KEY does not look like an OpenRouter key (expected sk-or-...).'
+			);
+		}
+
+		const baseUrl = sessionConfig?.baseUrl || OpenRouterProvider.BASE_URL;
+		const routingModelId = this.ownsModel(modelId) ? modelId : OpenRouterProvider.DEFAULT_MODEL;
+
+		return {
+			envVars: {
+				ANTHROPIC_BASE_URL: baseUrl,
+				ANTHROPIC_AUTH_TOKEN: apiKey,
+				ANTHROPIC_API_KEY: '',
+				API_TIMEOUT_MS: '3000000',
+				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+				ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
+				ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,
+				ANTHROPIC_DEFAULT_OPUS_MODEL: routingModelId,
+			},
+			isAnthropicCompatible: true,
+			apiVersion: 'v1',
+		};
+	}
+
+	translateModelIdForSdk(_modelId: string): string {
+		return 'default';
+	}
+
+	async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
+		const apiKey = this.getApiKey();
+		if (!apiKey) {
+			return {
+				isAuthenticated: false,
+				method: 'api_key',
+				error: 'Set OPENROUTER_API_KEY to enable OpenRouter models.',
+			};
+		}
+		if (!isProbablyOpenRouterKey(apiKey)) {
+			return {
+				isAuthenticated: false,
+				method: 'api_key',
+				error: 'OPENROUTER_API_KEY does not look like an OpenRouter key (expected sk-or-...).',
+			};
+		}
+
+		return {
+			isAuthenticated: this.lastAuthError === undefined,
+			method: 'api_key',
+			error: this.lastAuthError,
+		};
+	}
+
+	private toModelInfo(model: OpenRouterModel): ModelInfo {
+		const contextWindow =
+			model.context_length ??
+			model.top_provider?.context_length ??
+			this.capabilities.maxContextWindow;
+
+		return {
+			id: model.id,
+			name: model.name || model.id,
+			alias: providerModelAlias(model.id),
+			family: familyFromModelId(model.id),
+			provider: 'openrouter',
+			contextWindow,
+			description: model.description || model.name || model.id,
+			releaseDate: releaseDateFromCreated(model.created),
+			available: true,
+		};
+	}
+}

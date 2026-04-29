@@ -317,10 +317,10 @@ describe('ProviderRegistry', () => {
 		});
 	});
 
-	describe('initializeProviders — all five providers registered', () => {
+	describe('initializeProviders — all six providers registered', () => {
 		// Outer beforeEach already resets registry+factory; no per-test resets needed.
 
-		it('should register exactly five built-in providers', () => {
+		it('should register exactly six built-in providers', () => {
 			const reg = initializeProviders();
 
 			const ids = reg
@@ -328,7 +328,7 @@ describe('ProviderRegistry', () => {
 				.map((p) => p.id)
 				.sort();
 			expect(ids).toEqual(
-				['anthropic', 'anthropic-codex', 'anthropic-copilot', 'glm', 'minimax'].sort()
+				['anthropic', 'anthropic-codex', 'anthropic-copilot', 'glm', 'minimax', 'openrouter'].sort()
 			);
 		});
 
@@ -347,6 +347,11 @@ describe('ProviderRegistry', () => {
 			expect(reg.has('minimax')).toBe(true);
 		});
 
+		it('should include openrouter provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('openrouter')).toBe(true);
+		});
+
 		it('should include anthropic-codex provider', () => {
 			const reg = initializeProviders();
 			expect(reg.has('anthropic-codex')).toBe(true);
@@ -362,13 +367,13 @@ describe('ProviderRegistry', () => {
 			const reg2 = initializeProviders();
 			// The global singleton must be the same reference — not a new instance
 			expect(reg1).toBe(reg2);
-			expect(reg2.size).toBe(5);
+			expect(reg2.size).toBe(6);
 		});
 
 		it('should use the global registry singleton', () => {
 			initializeProviders();
 			const globalReg = getProviderRegistry();
-			expect(globalReg.size).toBe(5);
+			expect(globalReg.size).toBe(6);
 		});
 	});
 
@@ -474,6 +479,12 @@ describe('inferProviderForModel', () => {
 
 	it('maps bare minimax to minimax', () => {
 		expect(inferProviderForModel('minimax')).toBe('minimax');
+	});
+
+	it('maps OpenRouter provider/model refs to openrouter', () => {
+		expect(inferProviderForModel('openrouter/auto')).toBe('openrouter');
+		expect(inferProviderForModel('anthropic/claude-sonnet-4.6')).toBe('openrouter');
+		expect(inferProviderForModel('openai/gpt-5.4')).toBe('openrouter');
 	});
 
 	it('maps gpt- prefix to anthropic-codex', () => {
