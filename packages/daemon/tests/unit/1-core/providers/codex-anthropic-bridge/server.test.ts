@@ -1510,7 +1510,7 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 		expect(body.error.type).toBe('invalid_request_error');
 	});
 
-	it('returns 404 JSON envelope when tool_use_id has no active session', async () => {
+	it('returns non-404 JSON envelope when tool_use_id has no active session', async () => {
 		const resp = await fetch(`http://127.0.0.1:${realServer.port}/v1/messages`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -1524,11 +1524,12 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 				],
 			}),
 		});
-		expect(resp.status).toBe(404);
+		expect(resp.status).toBe(409);
 		expect(resp.headers.get('content-type')).toContain('application/json');
 		const body = (await resp.json()) as { type: string; error: { type: string; message: string } };
 		expect(body.type).toBe('error');
-		expect(body.error.type).toBe('not_found_error');
+		expect(body.error.type).toBe('api_error');
+		expect(body.error.message).toContain('Tool continuation expired');
 	});
 
 	it('returns 500 JSON envelope when BridgeSession fails to initialize', async () => {
@@ -1631,6 +1632,109 @@ describe('tool_choice warning — codex bridge', () => {
 		const events = await readSSEEvents(resp.body);
 		const types = events.map((e) => e.event);
 		expect(types).toContain('message_stop');
+	});
+
+	it('returns a non-404 error and resets the persistent session for orphaned tool continuations', async () => {
+		server.stop();
+		server = createBridgeServer({
+			codexBinaryPath: '/fake/codex',
+			cwd: '/tmp',
+			toolSessionTtlMs: 10,
+		}) as BridgeServer & { port: number };
+
+		let turn = 0;
+		startTurnSpy.mockImplementation(
+			// eslint-disable-next-line @typescript-eslint/require-await
+			async function* (): AsyncGenerator<BridgeEvent> {
+				turn++;
+				if (turn === 1) {
+					yield {
+						type: 'tool_call',
+						callId: 'call_orphaned',
+						toolName: 'test_tool',
+						toolInput: { value: true },
+						provideResult: () => {},
+					};
+					return;
+				}
+				yield { type: 'turn_done', inputTokens: 1, outputTokens: 1 };
+			}
+		);
+
+		const headers = {
+			'Content-Type': 'application/json',
+			Authorization: 'Bearer codex-bridge-orphan-recovery',
+		};
+
+		const firstResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'call a tool' }],
+				tools: [{ name: 'test_tool', input_schema: { type: 'object' } }],
+				stream: true,
+			}),
+		});
+		expect(firstResp.ok).toBe(true);
+		const firstEvents = await readSSEEvents(firstResp.body);
+		expect(firstEvents.map((e) => e.event)).toContain('content_block_start');
+
+		await new Promise((resolve) => setTimeout(resolve, 30));
+
+		const orphanResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [
+					{
+						role: 'assistant',
+						content: [
+							{
+								type: 'tool_use',
+								id: 'call_orphaned',
+								name: 'test_tool',
+								input: { value: true },
+							},
+						],
+					},
+					{
+						role: 'user',
+						content: [
+							{
+								type: 'tool_result',
+								tool_use_id: 'call_orphaned',
+								content: 'tool output',
+							},
+						],
+					},
+				],
+				stream: true,
+			}),
+		});
+
+		expect(orphanResp.status).toBe(409);
+		const orphanBody = (await orphanResp.json()) as {
+			error?: { type?: string; message?: string };
+		};
+		expect(orphanBody.error?.type).toBe('api_error');
+		expect(orphanBody.error?.message).toContain('Tool continuation expired');
+
+		const recoveryResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'continue after reset' }],
+				stream: true,
+			}),
+		});
+
+		expect(recoveryResp.ok).toBe(true);
+		const recoveryEvents = await readSSEEvents(recoveryResp.body);
+		expect(recoveryEvents.map((e) => e.event)).toContain('message_stop');
+		expect(startTurnSpy).toHaveBeenCalledTimes(2);
 	});
 
 	it('retries a new turn once when the subprocess crashes before output', async () => {

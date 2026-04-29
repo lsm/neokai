@@ -475,6 +475,17 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 		return timer;
 	}
 
+	/** Retire a persistent session after its suspended tool call can no longer resume. */
+	function cleanupPersistentSession(sessionId: string, reason: string): void {
+		const ps = persistentSessions.get(sessionId);
+		if (!ps) return;
+		logger.warn(`codex-bridge: cleaning up persistent session ${sessionId}: ${reason}`);
+		ps.turnInProgress = false;
+		clearTimeout(ps.idleTimer);
+		ps.session.kill();
+		persistentSessions.delete(sessionId);
+	}
+
 	const server = Bun.serve({
 		port: 0, // random available port
 		idleTimeout: 0, // disable idle timeout — bridge server handles long-running SSE streams
@@ -600,10 +611,12 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 					logger.error(
 						`codex-bridge: no active sessions found for any tool_use_id in this continuation`
 					);
+					const sessionId = extractSessionId(req);
+					cleanupPersistentSession(sessionId, 'orphaned tool_result continuation');
 					return createAnthropicError(
-						404,
-						'not_found_error',
-						'Session not found for all tool_use_ids in this continuation'
+						409,
+						'api_error',
+						'Tool continuation expired or was already consumed. The Codex turn was reset; resend your message to continue.'
 					);
 				}
 
