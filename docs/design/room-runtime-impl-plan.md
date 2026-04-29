@@ -1,5 +1,7 @@
 # Room Runtime Implementation Plan
 
+> ⚠️ **Retired feature**: Room is no longer an active product surface. The Room Runtime is not started and no Room RPC APIs are registered. This document is preserved for historical reference only.
+>
 > Historical note (outdated state model):
 > This implementation plan references older orchestration states (`awaiting_craft`, `awaiting_lead`, `hibernated`) and `escalated` task status, which are not current.
 > For current behavior, use:

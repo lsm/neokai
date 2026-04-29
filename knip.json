@@ -31,7 +31,13 @@
 		"packages/daemon/src/lib/room/task-message-queue.ts",
 		"packages/daemon/src/lib/job-queue-constants.ts",
 		"packages/daemon/dump-context.ts",
-		".claude/**"
+		".claude/**",
+		"packages/daemon/src/lib/room/agents/cli-agent-registry.ts",
+		"packages/daemon/src/lib/rpc-handlers/goal-handlers.ts",
+		"packages/daemon/src/lib/rpc-handlers/room-handlers.ts",
+		"packages/daemon/src/lib/room/runtime/error-classifier.ts",
+		"packages/daemon/src/lib/room/runtime/message-routing.ts",
+		"packages/daemon/src/lib/room/runtime/rate-limit-utils.ts"
 	],
 	"ignoreDependencies": [
 		"@openai/codex",

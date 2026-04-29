@@ -1,5 +1,7 @@
 # Plan: Complete Room Human-in-a-Loop Features
 
+> ⚠️ **Retired feature**: Room is no longer an active product surface. This plan is preserved for historical reference only.
+>
 > Historical plan note:
 > This plan captures an earlier design iteration and includes stale routing/group-state assumptions.
 > For current implementation behavior, use:

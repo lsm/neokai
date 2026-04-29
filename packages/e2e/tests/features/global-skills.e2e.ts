@@ -45,7 +45,7 @@ async function navigateToSkillsSection(page: Page): Promise<void> {
 
 	// Wait for the Skills content area to appear
 	await page
-		.locator('text=Application-level skills are available to any room or session')
+		.locator('text=Application-level skills are available to any space or session')
 		.first()
 		.waitFor({ state: 'visible', timeout: 5000 });
 }
