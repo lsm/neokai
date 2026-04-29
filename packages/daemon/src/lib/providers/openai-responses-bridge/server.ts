@@ -138,6 +138,22 @@ function generateMsgId(): string {
 	return `msg_${Math.random().toString(36).slice(2, 14)}`;
 }
 
+function extractSessionId(req: Request): string {
+	const auth =
+		req.headers.get('Authorization') ??
+		req.headers.get('authorization') ??
+		req.headers.get('x-api-key') ??
+		'';
+	const token = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7) : auth;
+	if (token.startsWith('codex-bridge-')) return token.slice('codex-bridge-'.length);
+	logger.warn('openai-responses: no session ID in bridge auth header, using default');
+	return 'default';
+}
+
+function continuationKey(sessionId: string, callId: string): string {
+	return `${sessionId}\u0000${callId}`;
+}
+
 function sendJsonError(status: number, type: AnthropicErrorType, message: string): Response {
 	return new Response(createAnthropicErrorBody(type, message), {
 		status,
@@ -301,6 +317,7 @@ function latestContinuationInputItems(
 }
 
 function resolveContinuation(
+	sessionId: string,
 	messages: AnthropicRequest['messages'],
 	continuations: Map<string, ResponseContinuation>
 ): { previousResponseId: string; input: ResponsesInputItem[]; callIds: string[] } | undefined {
@@ -311,7 +328,7 @@ function resolveContinuation(
 	const callIds: string[] = [];
 	for (const item of input) {
 		if (item.type !== 'function_call_output') continue;
-		const continuation = continuations.get(item.call_id);
+		const continuation = continuations.get(continuationKey(sessionId, item.call_id));
 		if (!continuation) return undefined;
 		callIds.push(item.call_id);
 		if (!previousResponseId) {
@@ -728,29 +745,34 @@ export function createOpenAIResponsesBridgeServer(
 	const continuations = new Map<string, ResponseContinuation>();
 	let resolvedAuth: ResolvedResponsesAuth | undefined;
 
-	const deleteContinuation = (callId: string): void => {
-		const continuation = continuations.get(callId);
+	const deleteContinuation = (sessionId: string, callId: string): void => {
+		const key = continuationKey(sessionId, callId);
+		const continuation = continuations.get(key);
 		if (!continuation) return;
 		clearTimeout(continuation.cleanupTimer);
-		continuations.delete(callId);
+		continuations.delete(key);
 	};
 
-	const storeContinuation = (callId: string, responseId: string): void => {
-		deleteContinuation(callId);
+	const storeContinuation = (sessionId: string, callId: string, responseId: string): void => {
+		deleteContinuation(sessionId, callId);
+		const key = continuationKey(sessionId, callId);
 		const cleanupTimer = setTimeout(() => {
-			logger.warn(`openai-responses: continuation TTL expired callId=${callId}`);
-			continuations.delete(callId);
+			logger.warn(
+				`openai-responses: continuation TTL expired sessionId=${sessionId} callId=${callId}`
+			);
+			continuations.delete(key);
 		}, continuationTtlMs);
-		continuations.set(callId, { responseId, cleanupTimer });
+		continuations.set(key, { responseId, cleanupTimer });
 	};
 
 	const consumeContinuation = (
+		sessionId: string,
 		continuation:
 			| { previousResponseId: string; input: ResponsesInputItem[]; callIds: string[] }
 			| undefined
 	): void => {
 		for (const callId of continuation?.callIds ?? []) {
-			deleteContinuation(callId);
+			deleteContinuation(sessionId, callId);
 		}
 	};
 
@@ -773,7 +795,8 @@ export function createOpenAIResponsesBridgeServer(
 			if (url.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
 				try {
 					const body = (await req.json()) as AnthropicRequest;
-					const continuation = resolveContinuation(body.messages, continuations);
+					const sessionId = extractSessionId(req);
+					const continuation = resolveContinuation(sessionId, body.messages, continuations);
 					const inputTokens = continuation
 						? estimateResponsesPayloadTokens(body, continuation.input)
 						: estimateAnthropicInputTokens(body);
@@ -812,7 +835,8 @@ export function createOpenAIResponsesBridgeServer(
 			}
 
 			const model = resolveModelId(body.model, config.modelAliases);
-			const continuation = resolveContinuation(body.messages, continuations);
+			const sessionId = extractSessionId(req);
+			const continuation = resolveContinuation(sessionId, body.messages, continuations);
 			const requestBody = buildResponsesRequest(body, model, continuation);
 			const upstreamUrl = `${baseUrl.replace(/\/$/, '')}/responses`;
 			let openAIResponse: Response;
@@ -850,7 +874,7 @@ export function createOpenAIResponsesBridgeServer(
 					parseOpenAIError(openAIResponse.status, text)
 				);
 			}
-			consumeContinuation(continuation);
+			consumeContinuation(sessionId, continuation);
 
 			const estimatedInputTokens = continuation
 				? estimateResponsesPayloadTokens(body, continuation.input)
@@ -863,7 +887,7 @@ export function createOpenAIResponsesBridgeServer(
 						model,
 						estimatedInputTokens,
 						onFunctionCallResponse(callId, responseId) {
-							storeContinuation(callId, responseId);
+							storeContinuation(sessionId, callId, responseId);
 						},
 					});
 				},

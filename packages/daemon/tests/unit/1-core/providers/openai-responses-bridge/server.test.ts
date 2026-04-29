@@ -388,6 +388,119 @@ describe('openai-responses-bridge server', () => {
 		expect(capturedBodies[2]?.previous_response_id).toBeUndefined();
 	});
 
+	it('keeps continuation mappings isolated by bridge session', async () => {
+		const capturedBodies: Record<string, unknown>[] = [];
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async (_url, init) => {
+				const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+				capturedBodies.push(body);
+				if (capturedBodies.length === 1) {
+					return sse([
+						{
+							event: 'response.function_call_arguments.done',
+							data: {
+								type: 'response.function_call_arguments.done',
+								call_id: 'call_shared',
+								name: 'lookup',
+								arguments: '{"q":"weather"}',
+							},
+						},
+						{
+							event: 'response.completed',
+							data: {
+								type: 'response.completed',
+								response: {
+									id: 'resp_session_a',
+									usage: { input_tokens: 10, output_tokens: 4 },
+									output: [],
+								},
+							},
+						},
+					]);
+				}
+				return sse([
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: {
+								id: 'resp_done',
+								usage: { input_tokens: 2, output_tokens: 0 },
+								output: [],
+							},
+						},
+					},
+				]);
+			},
+		});
+
+		const first = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: 'Bearer codex-bridge-session-a',
+			},
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'Use the tool.' }],
+				tools: [{ name: 'lookup', input_schema: { type: 'object' } }],
+			}),
+		});
+		await readSSEEvents(first.body);
+
+		const continuationBody = JSON.stringify({
+			model: 'gpt-5.3-codex',
+			max_tokens: 128,
+			messages: [
+				{ role: 'user', content: 'Use the tool.' },
+				{
+					role: 'assistant',
+					content: [
+						{
+							type: 'tool_use',
+							id: 'call_shared',
+							name: 'lookup',
+							input: { q: 'weather' },
+						},
+					],
+				},
+				{
+					role: 'user',
+					content: [{ type: 'tool_result', tool_use_id: 'call_shared', content: 'found' }],
+				},
+			],
+			tools: [{ name: 'lookup', input_schema: { type: 'object' } }],
+		});
+		const second = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: 'Bearer codex-bridge-session-b',
+			},
+			body: continuationBody,
+		});
+		await readSSEEvents(second.body);
+
+		const third = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: 'Bearer codex-bridge-session-a',
+			},
+			body: continuationBody,
+		});
+		await readSSEEvents(third.body);
+
+		expect(capturedBodies[1]?.previous_response_id).toBeUndefined();
+		const fallbackInput = capturedBodies[1]?.input as Array<Record<string, unknown>>;
+		expect(fallbackInput.some((item) => item.type === 'function_call')).toBe(true);
+		expect(fallbackInput.some((item) => item.type === 'function_call_output')).toBe(true);
+		expect(capturedBodies[2]?.previous_response_id).toBe('resp_session_a');
+	});
+
 	it('evicts stale tool_result continuations after the TTL', async () => {
 		const capturedBodies: Record<string, unknown>[] = [];
 		server = createOpenAIResponsesBridgeServer({
