@@ -17,7 +17,7 @@
  * ```
  */
 
-import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
 import type { ModelInfo } from '@neokai/shared';
 import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import { connectionManager } from '../lib/connection-manager';
@@ -48,6 +48,7 @@ export const MODEL_FAMILY_ICONS: Record<string, string> = {
 	haiku: '⚡',
 	glm: '🌐',
 	minimax: '🔥',
+	openrouter: '🧭',
 	gpt: '🔮',
 	gemini: '✨',
 	// Default icon for unknown families
@@ -66,8 +67,9 @@ export const PROVIDER_ORDER: Record<string, number> = {
 	anthropic: 0,
 	'anthropic-copilot': 1,
 	'anthropic-codex': 2,
-	glm: 3,
-	minimax: 4,
+	openrouter: 3,
+	glm: 4,
+	minimax: 5,
 };
 
 /** Model family sort order (exported for shared use) */
@@ -77,8 +79,9 @@ export const FAMILY_ORDER: Record<string, number> = {
 	haiku: 2,
 	glm: 3,
 	minimax: 4,
-	gpt: 5,
-	gemini: 6,
+	openrouter: 5,
+	gpt: 6,
+	gemini: 7,
 };
 
 /** Raw model shape returned by the `models.list` RPC */
@@ -111,18 +114,23 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
 			family = 'glm';
 		} else if (mid.startsWith('minimax-')) {
 			family = 'minimax';
-		} else if (mid.startsWith('gpt-')) {
+		} else if (mid === 'openrouter/auto') {
+			family = 'openrouter';
+		} else if (mid.startsWith('gpt-') || mid.includes('/gpt')) {
 			family = 'gpt';
-		} else if (mid.startsWith('gemini-')) {
+		} else if (mid.startsWith('gemini-') || mid.includes('/gemini')) {
 			family = 'gemini';
+		} else if (mid.includes('/')) {
+			family = 'openrouter';
 		}
+		const contextWindow = m.contextWindow ?? m.context_window;
 		return {
 			id: m.id,
 			name: m.display_name,
 			alias: m.alias || m.id,
 			family,
 			provider: m.provider || 'anthropic',
-			contextWindow: m.contextWindow ?? m.context_window ?? 200000,
+			contextWindow: typeof contextWindow === 'number' && contextWindow > 0 ? contextWindow : 0,
 			description: m.description || '',
 			releaseDate: '',
 			available: true,
@@ -166,6 +174,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
 	anthropic: 'Anthropic',
 	glm: 'GLM',
 	minimax: 'MiniMax',
+	openrouter: 'OpenRouter',
 	'anthropic-copilot': 'Copilot',
 	'anthropic-codex': 'Codex',
 	// Note: keep in sync with PROVIDER_ORDER above
@@ -200,6 +209,33 @@ export function filterModelsForPicker(
 		if (m.provider === currentProvider) return true; // always keep active provider
 		return auth.isAuthenticated; // hide unauthenticated (needsRefresh stays visible)
 	});
+}
+
+export function filterModelsBySearch(models: ModelInfo[], searchQuery: string): ModelInfo[] {
+	const terms = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+	if (terms.length === 0) return models;
+
+	return models.filter((model) => {
+		const provider = model.provider || 'anthropic';
+		const searchable = [model.name, model.id, model.alias, getProviderLabel(provider), provider]
+			.filter(Boolean)
+			.join(' ')
+			.toLowerCase();
+
+		return terms.every((term) => searchable.includes(term));
+	});
+}
+
+export function useFilteredModelsForPicker(
+	models: ModelInfo[],
+	providerAuthMap: Map<string, ProviderAuthStatus>,
+	currentProvider: string | undefined,
+	searchQuery: string
+): ModelInfo[] {
+	return useMemo(() => {
+		const authFilteredModels = filterModelsForPicker(models, providerAuthMap, currentProvider);
+		return filterModelsBySearch(authFilteredModels, searchQuery);
+	}, [models, providerAuthMap, currentProvider, searchQuery]);
 }
 
 /**

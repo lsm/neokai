@@ -29,10 +29,7 @@ const AUTOCOMPACT_BUFFER_TOOLTIP =
 	'Autocompact buffer — reserved for context compression. Not available for conversation.';
 const AUTOCOMPACT_THRESHOLD_TOOLTIP = 'Autocompact threshold';
 
-export default function ContextUsageBar({
-	contextUsage,
-	maxContextTokens = 200000, // Default to Sonnet 4.5's 200k context window
-}: ContextUsageBarProps) {
+export default function ContextUsageBar({ contextUsage, maxContextTokens }: ContextUsageBarProps) {
 	const [showContextDetails, setShowContextDetails] = useState(false);
 	const [dropdownBottom, setDropdownBottom] = useState(96); // Default 24*4px = 96px
 	const indicatorRef = useRef<HTMLDivElement>(null);
@@ -105,7 +102,12 @@ export default function ContextUsageBar({
 
 	// Only show context info when accurate data is available
 	const totalTokens = contextUsage?.totalUsed || 0;
-	const contextCapacity = contextUsage?.totalCapacity || maxContextTokens;
+	const contextCapacity =
+		contextUsage?.totalCapacity && contextUsage.totalCapacity > 0
+			? contextUsage.totalCapacity
+			: maxContextTokens && maxContextTokens > 0
+				? maxContextTokens
+				: 0;
 	const contextPercentage = contextUsage?.percentUsed || 0;
 	const hasContextData = totalTokens > 0;
 
@@ -384,7 +386,9 @@ export default function ContextUsageBar({
 														const percentage =
 															data.percent !== null
 																? data.percent
-																: (data.tokens / contextCapacity) * 100;
+																: contextCapacity > 0
+																	? (data.tokens / contextCapacity) * 100
+																	: 0;
 														return (
 															<div key={category} class="flex items-center gap-2 text-xs">
 																{/* Colored square icon */}
