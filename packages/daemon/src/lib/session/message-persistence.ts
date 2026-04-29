@@ -200,26 +200,25 @@ export class MessagePersistence {
 
 			const effectiveDeliveryMode: MessageDeliveryMode =
 				deliveryMode === 'defer' && isAgentBusy ? 'defer' : 'immediate';
+			const shouldDispatchToQuery = !isManualMode && effectiveDeliveryMode === 'immediate';
 			const sendStatus: 'deferred' | 'enqueued' | 'consumed' = isManualMode
 				? 'deferred'
 				: effectiveDeliveryMode === 'defer'
 					? 'deferred'
-					: isAgentBusy
-						? 'enqueued'
-						: 'consumed';
-			const shouldDispatchToQuery = !isManualMode && effectiveDeliveryMode === 'immediate';
+					: 'enqueued';
 
 			const dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, sendStatus, origin);
 
-			// 6. Publish to UI immediately only when not currently in-flight.
-			// Busy-turn insertions are shown in the input overlay and rendered in chat once consumed.
+			// 6. Publish manual messages immediately. Immediate-mode messages are
+			// rendered when the SDK input generator consumes them and flips their
+			// status to `consumed`, which prevents a "visible but undelivered" turn.
 			//
 			// Note: `origin` is intentionally NOT included in the live-push event payload.
 			// `origin` is a DB-level annotation only — the SDK message blob never carries it.
 			// The frontend reads `origin` from the DB (via getSDKMessages) after page load or
 			// on full re-fetch. This means "via Neo" indicators may not appear on first render
 			// of an injected message; they appear after the client re-fetches the message list.
-			if (isManualMode || !isAgentBusy) {
+			if (isManualMode) {
 				try {
 					this.messageHub.event(
 						'state.sdkMessages.delta',
@@ -239,9 +238,17 @@ export class MessagePersistence {
 				status: sendStatus,
 			});
 
-			// 7. Emit 'message.persisted' event for downstream processing
-			// AgentSession will start query and enqueue message
-			// SessionManager will handle title generation and draft clearing
+			// 7. For immediate delivery, start the query and wait until the SDK input
+			// queue consumes the message before acknowledging the caller. This is the
+			// durable boundary: saved as `enqueued`, then flipped to `consumed` by
+			// SDKMessageHandler.onMessageYielded at the exact delivery point.
+			if (shouldDispatchToQuery) {
+				await agentSession.startQueryAndEnqueue(messageId, messageContent);
+			}
+
+			// 8. Emit 'message.persisted' for non-critical post-processing.
+			// Query start is handled above synchronously; the event remains for title
+			// generation, draft clearing, and legacy subscribers.
 			if (shouldDispatchToQuery) {
 				await this.eventBus.emit('message.persisted', {
 					sessionId,
@@ -252,6 +259,7 @@ export class MessagePersistence {
 					hasDraftToClear: session.metadata?.inputDraft === content.trim(),
 					sendStatus,
 					deliveryMode: effectiveDeliveryMode,
+					skipQueryStart: true,
 				});
 			}
 		} catch (error) {

@@ -108,6 +108,8 @@ describe('QueryLifecycleManager', () => {
 			pendingRestartReason: null,
 			startStreamingQuery: async () => {
 				startStreamingCalled = true;
+				messageQueue.start();
+				mockContext.queryPromise = Promise.resolve();
 			},
 			processExitedPromise: null,
 			startupTimeoutTimer: null,
@@ -903,10 +905,7 @@ describe('QueryLifecycleManager', () => {
 			const regularError = new Error('Some error');
 			spyOn(messageQueue, 'enqueueWithId').mockRejectedValue(regularError);
 
-			await manager.startQueryAndEnqueue('msg-123', 'Hello');
-
-			// Give time for the catch handler to execute
-			await new Promise((r) => setTimeout(r, 10));
+			await expect(manager.startQueryAndEnqueue('msg-123', 'Hello')).rejects.toThrow('Some error');
 
 			// Should have called handleError
 			expect(handleErrorSpy).toHaveBeenCalled();
@@ -929,14 +928,15 @@ describe('QueryLifecycleManager', () => {
 					if (callCount > 1) {
 						throw new Error('Reset failed');
 					}
+					messageQueue.start();
+					mockContext.queryPromise = Promise.resolve();
 				},
 			});
 			manager = new QueryLifecycleManager(mockContext);
 
-			await manager.startQueryAndEnqueue('msg-123', 'Hello');
-
-			// Give time for the catch handler to execute
-			await new Promise((r) => setTimeout(r, 200));
+			await expect(manager.startQueryAndEnqueue('msg-123', 'Hello')).rejects.toThrow(
+				'Reset failed'
+			);
 
 			// Should set idle after reset failure
 			expect(setIdleSpy).toHaveBeenCalled();
@@ -949,10 +949,9 @@ describe('QueryLifecycleManager', () => {
 			// Always throw timeout error
 			spyOn(messageQueue, 'enqueueWithId').mockRejectedValue(timeoutError);
 
-			await manager.startQueryAndEnqueue('msg-123', 'Hello');
-
-			// Give time for the catch handler to execute (reset + retry + catch)
-			await new Promise((r) => setTimeout(r, 300));
+			await expect(manager.startQueryAndEnqueue('msg-123', 'Hello')).rejects.toThrow(
+				'Queue timeout'
+			);
 
 			// Should set idle after retry fails
 			expect(setIdleSpy).toHaveBeenCalled();

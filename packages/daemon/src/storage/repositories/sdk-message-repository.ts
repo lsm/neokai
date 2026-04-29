@@ -267,7 +267,8 @@ export class SDKMessageRepository {
 	 * Save a user message with explicit send status
 	 *
 	 * Used by query modes to track message lifecycle:
-	 * - Immediate mode: saves with status 'consumed' (after yielding to SDK)
+	 * - Immediate mode: saves with status 'enqueued', then flips to 'consumed'
+	 *   when the SDK input generator yields the message
 	 * - Auto-queue mode: saves with status 'enqueued' (pending SDK consumption)
 	 * - Manual mode: saves with status 'deferred' (until user triggers send)
 	 *

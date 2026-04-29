@@ -19,6 +19,7 @@ describe('MessagePersistence', () => {
 	let mockAgentSession: {
 		getSessionData: ReturnType<typeof mock>;
 		getProcessingState: ReturnType<typeof mock>;
+		startQueryAndEnqueue: ReturnType<typeof mock>;
 	};
 
 	let saveUserMessageSpy: ReturnType<typeof mock>;
@@ -55,6 +56,7 @@ describe('MessagePersistence', () => {
 		mockAgentSession = {
 			getSessionData: mock(() => mockSession),
 			getProcessingState: processingStateSpy,
+			startQueryAndEnqueue: mock(async () => {}),
 		};
 
 		mockSessionCache = {
@@ -82,7 +84,7 @@ describe('MessagePersistence', () => {
 		persistence = new MessagePersistence(mockSessionCache, mockDb, mockMessageHub, mockEventBus);
 	});
 
-	it('persists idle immediate as consumed and still dispatches to query', async () => {
+	it('persists idle immediate as enqueued and waits for SDK queue consumption', async () => {
 		await persistence.persist({
 			sessionId: 'test-session-id',
 			messageId: 'msg-1',
@@ -92,26 +94,24 @@ describe('MessagePersistence', () => {
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
 			expect.objectContaining({ uuid: 'msg-1', type: 'user' }),
-			'consumed',
+			'enqueued',
 			undefined
 		);
-		expect(messageHubEventSpy).toHaveBeenCalledWith(
-			'state.sdkMessages.delta',
-			expect.objectContaining({ added: expect.any(Array), timestamp: expect.any(Number) }),
-			{ channel: 'session:test-session-id' }
-		);
+		expect(messageHubEventSpy).not.toHaveBeenCalled();
+		expect(mockAgentSession.startQueryAndEnqueue).toHaveBeenCalledWith('msg-1', 'hello idle');
 		expect(eventBusEmitSpy).toHaveBeenCalledWith('messages.statusChanged', {
 			sessionId: 'test-session-id',
 			messageIds: ['db-msg-1'],
-			status: 'consumed',
+			status: 'enqueued',
 		});
 		expect(eventBusEmitSpy).toHaveBeenCalledWith(
 			'message.persisted',
 			expect.objectContaining({
 				sessionId: 'test-session-id',
 				messageId: 'msg-1',
-				sendStatus: 'consumed',
+				sendStatus: 'enqueued',
 				deliveryMode: 'immediate',
+				skipQueryStart: true,
 			})
 		);
 	});
@@ -132,12 +132,14 @@ describe('MessagePersistence', () => {
 			undefined
 		);
 		expect(messageHubEventSpy).not.toHaveBeenCalled();
+		expect(mockAgentSession.startQueryAndEnqueue).toHaveBeenCalledWith('msg-2', 'hello busy');
 		expect(eventBusEmitSpy).toHaveBeenCalledWith(
 			'message.persisted',
 			expect.objectContaining({
 				messageId: 'msg-2',
 				sendStatus: 'enqueued',
 				deliveryMode: 'immediate',
+				skipQueryStart: true,
 			})
 		);
 	});
@@ -162,9 +164,10 @@ describe('MessagePersistence', () => {
 			'message.persisted',
 			expect.objectContaining({ messageId: 'msg-3' })
 		);
+		expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
 	});
 
-	it('falls back idle defer to consumed immediate and dispatches', async () => {
+	it('falls back idle defer to enqueued immediate and dispatches', async () => {
 		processingStateSpy.mockReturnValue({ status: 'idle' });
 
 		await persistence.persist({
@@ -177,15 +180,20 @@ describe('MessagePersistence', () => {
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
 			expect.objectContaining({ uuid: 'msg-4', type: 'user' }),
-			'consumed',
+			'enqueued',
 			undefined
+		);
+		expect(mockAgentSession.startQueryAndEnqueue).toHaveBeenCalledWith(
+			'msg-4',
+			'next turn while idle'
 		);
 		expect(eventBusEmitSpy).toHaveBeenCalledWith(
 			'message.persisted',
 			expect.objectContaining({
 				messageId: 'msg-4',
-				sendStatus: 'consumed',
+				sendStatus: 'enqueued',
 				deliveryMode: 'immediate',
+				skipQueryStart: true,
 			})
 		);
 	});

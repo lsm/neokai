@@ -250,6 +250,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 	let mockAgentSession: {
 		getSessionData: ReturnType<typeof mock>;
 		getProcessingState: ReturnType<typeof mock>;
+		startQueryAndEnqueue: ReturnType<typeof mock>;
 	};
 	let saveUserMessageSpy: ReturnType<typeof mock>;
 	let eventBusEmitSpy: ReturnType<typeof mock>;
@@ -262,6 +263,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 		mockAgentSession = {
 			getSessionData: mock(() => mockSession),
 			getProcessingState: mock(() => ({ status: 'idle' })),
+			startQueryAndEnqueue: mock(async () => {}),
 		};
 
 		mockSessionCache = {
@@ -303,7 +305,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
 			expect.not.objectContaining({ referenceMetadata: expect.anything() }),
-			'consumed',
+			'enqueued',
 			undefined
 		);
 	});
@@ -337,7 +339,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
 			expect.not.objectContaining({ referenceMetadata: expect.anything() }),
-			'consumed',
+			'enqueued',
 			undefined
 		);
 	});
@@ -390,7 +392,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 					'@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Task one' },
 				},
 			}),
-			'consumed',
+			'enqueued',
 			undefined
 		);
 	});
@@ -433,7 +435,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 					},
 				},
 			}),
-			'consumed',
+			'enqueued',
 			undefined
 		);
 	});
@@ -473,7 +475,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
 			expect.objectContaining({ uuid: 'msg-5', type: 'user' }),
-			'consumed',
+			'enqueued',
 			undefined
 		);
 	});
@@ -533,7 +535,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 					},
 				},
 			}),
-			'consumed',
+			'enqueued',
 			undefined
 		);
 	});

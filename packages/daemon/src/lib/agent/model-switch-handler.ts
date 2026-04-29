@@ -216,10 +216,10 @@ export class ModelSwitchHandler {
 
 			if (!queryObject) {
 				// Query hasn't been created yet OR query was already completed/interrupted.
-				// In both cases, we must call restart() to ensure the new model takes effect:
-				// - restart() validates the SDK session file before starting a new query
-				// - Without this, a stale session file could cause the new query to use old state
-				// - Even if no query is running, restart() ensures clean state for the next query
+				// Persist the new model/provider only. The next user message will start a
+				// fresh SDK query with this config; starting an empty query here creates a
+				// race where the first real message can be accepted before the agent turn
+				// is ready to consume it.
 				session.config.model = resolvedModel;
 				// newProviderInstance is guaranteed non-null here (we returned early above).
 				session.config.provider = newProviderInstance.id as Provider;
@@ -245,10 +245,6 @@ export class ModelSwitchHandler {
 
 				// Strip thinking blocks from JSONL if switching to Anthropic from another provider
 				this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
-
-				// Always restart to ensure new model takes effect, even when queryObject is null.
-				// This validates the session file and starts a fresh query with the new model.
-				await lifecycleManager.restart();
 			} else {
 				// Query exists - always restart to apply the new model/provider.
 				// We must restart even if firstMessageReceived is false because the SDK

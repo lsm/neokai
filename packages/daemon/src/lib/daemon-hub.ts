@@ -184,6 +184,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		hasDraftToClear: boolean;
 		sendStatus: 'deferred' | 'enqueued' | 'consumed';
 		deliveryMode: MessageDeliveryMode;
+		skipQueryStart?: boolean;
 	};
 
 	// Query mode events

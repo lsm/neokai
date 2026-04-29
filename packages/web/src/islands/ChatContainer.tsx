@@ -705,7 +705,7 @@ export default function ChatContainer({
 					const hub = connectionManager.getHubIfConnected();
 					if (!hub) {
 						toast.error('Connection lost.');
-						return;
+						return false;
 					}
 					await hub.request('session.setWorktreeMode', {
 						sessionId,
@@ -714,11 +714,11 @@ export default function ChatContainer({
 					// UI will auto-hide via session status update
 				} catch {
 					toast.error('Failed to set workspace mode');
-					return; // Don't send message if worktree setup failed
+					return false; // Don't send message if worktree setup failed
 				}
 			}
 
-			await sendMessage(content, images, deliveryMode);
+			return await sendMessage(content, images, deliveryMode);
 		},
 		[sendMessage, session, showWorktreeChoice, pendingWorktreeMode, sessionId]
 	);

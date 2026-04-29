@@ -173,7 +173,13 @@ export function ChatComposer({
 							sessionId={sessionId}
 							sessionType={sessionType}
 							onSend={onSend}
-							disabled={isWaitingForInput || !isConnected}
+							disabled={
+								isWaitingForInput ||
+								!isConnected ||
+								modelSwitching ||
+								coordinatorSwitching ||
+								sandboxSwitching
+							}
 							autoScroll={autoScroll}
 							onAutoScrollChange={onAutoScrollChange}
 							onOpenTools={onOpenTools}

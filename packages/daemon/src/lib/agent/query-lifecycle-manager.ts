@@ -583,9 +583,14 @@ export class QueryLifecycleManager {
 		const { session, messageQueue, stateManager, errorManager, daemonHub } = this.ctx;
 
 		await this.ensureQueryStarted();
+		if (!messageQueue.isRunning() || !this.ctx.queryPromise) {
+			throw new Error('Agent query did not start; message remains queued for retry.');
+		}
 		await stateManager.setQueued(messageId);
 
-		messageQueue.enqueueWithId(messageId, messageContent).catch(async (error) => {
+		try {
+			await messageQueue.enqueueWithId(messageId, messageContent);
+		} catch (error) {
 			if (error instanceof Error && error.message === 'Interrupted by user') {
 				return;
 			}
@@ -604,18 +609,24 @@ export class QueryLifecycleManager {
 
 			if (isTimeoutError) {
 				try {
-					await this.reset({ restartAfter: true });
+					const resetResult = await this.reset({ restartAfter: true });
+					if (!resetResult.success) {
+						throw new Error(resetResult.error || 'Agent query reset failed.');
+					}
 					await stateManager.setQueued(messageId);
-					messageQueue.enqueueWithId(messageId, messageContent).catch(async () => {
-						await stateManager.setIdle();
-					});
-				} catch {
+					if (!messageQueue.isRunning() || !this.ctx.queryPromise) {
+						throw new Error('Agent query did not restart; message remains queued for retry.');
+					}
+					await messageQueue.enqueueWithId(messageId, messageContent);
+				} catch (retryError) {
 					await stateManager.setIdle();
+					throw retryError;
 				}
 			} else {
 				await stateManager.setIdle();
+				throw error;
 			}
-		});
+		}
 
 		daemonHub.emit('message.sent', { sessionId: session.id }).catch((error) => {
 			this.logger.warn('Failed to emit message.sent event', error);

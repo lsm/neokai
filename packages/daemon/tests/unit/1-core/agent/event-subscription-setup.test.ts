@@ -235,6 +235,20 @@ describe('EventSubscriptionSetup', () => {
 				// Note: User messages in the DB serve as rewind points - no separate checkpoint tracking needed
 				expect(mockContext.startQueryAndEnqueue).toHaveBeenCalledWith('msg-123', 'Hello');
 			});
+
+			it('should skip query start when persistence already delivered synchronously', async () => {
+				setup.setup();
+
+				const callback = registeredCallbacks.get('message.persisted')!;
+				await callback({
+					sessionId: 'test-session-id',
+					messageId: 'msg-123',
+					messageContent: 'Hello',
+					skipQueryStart: true,
+				});
+
+				expect(mockContext.startQueryAndEnqueue).not.toHaveBeenCalled();
+			});
 		});
 
 		describe('query.trigger handler', () => {

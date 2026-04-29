@@ -123,6 +123,7 @@ function createMockAgentSession(overrides: Partial<AgentSession> = {}): {
 		getProcessingState: ReturnType<typeof mock>;
 		getCurrentModel: ReturnType<typeof mock>;
 		handleModelSwitch: ReturnType<typeof mock>;
+		getQueryObject: ReturnType<typeof mock>;
 		resetQuery: ReturnType<typeof mock>;
 		restart: ReturnType<typeof mock>;
 		handleQueryTrigger: ReturnType<typeof mock>;
@@ -157,6 +158,7 @@ function createMockAgentSession(overrides: Partial<AgentSession> = {}): {
 		getProcessingState: mock(() => ({ status: 'idle', phase: 'ready' })),
 		getCurrentModel: mock(() => ({ id: 'claude-sonnet-4-20250514' })),
 		handleModelSwitch: mock(async () => ({ success: true, model: 'claude-opus-4-6' })),
+		getQueryObject: mock(() => null),
 		resetQuery: mock(async () => ({ success: true })),
 		restart: mock(async () => {}),
 		handleQueryTrigger: mock(async () => ({ triggered: true, count: 1 })),
@@ -186,6 +188,7 @@ function createMockSessionManager(): {
 		getSessionFromDB: ReturnType<typeof mock>;
 		listSessions: ReturnType<typeof mock>;
 		updateSession: ReturnType<typeof mock>;
+		sendUserMessage: ReturnType<typeof mock>;
 		archiveSessionResources: ReturnType<typeof mock>;
 		deleteSessionResources: ReturnType<typeof mock>;
 		interruptInMemorySession: ReturnType<typeof mock>;
@@ -206,6 +209,7 @@ function createMockSessionManager(): {
 		getSessionFromDB: mock(() => null),
 		listSessions: mock(() => []),
 		updateSession: mock(async () => {}),
+		sendUserMessage: mock(async () => {}),
 		archiveSessionResources: mock(async () => {}),
 		deleteSessionResources: mock(async () => {}),
 		interruptInMemorySession: mock(async () => {}),
@@ -926,8 +930,7 @@ describe('Session RPC Handlers', () => {
 			const result = await handler!(params, {});
 
 			expect(result).toHaveProperty('messageId');
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'message.sendRequest',
+			expect(sessionManagerData.mocks.sendUserMessage).toHaveBeenCalledWith(
 				expect.objectContaining({
 					sessionId: 'session-123',
 					content: 'Hello, world!',
@@ -950,7 +953,7 @@ describe('Session RPC Handlers', () => {
 			expect(result).toHaveProperty('messageId');
 		});
 
-		it('passes deliveryMode to message.sendRequest', async () => {
+		it('passes deliveryMode to sendUserMessage', async () => {
 			const handler = messageHubData.handlers.get('message.send');
 			expect(handler).toBeDefined();
 
@@ -963,13 +966,22 @@ describe('Session RPC Handlers', () => {
 				{}
 			);
 
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'message.sendRequest',
+			expect(sessionManagerData.mocks.sendUserMessage).toHaveBeenCalledWith(
 				expect.objectContaining({
 					sessionId: 'session-123',
 					content: 'Queue this',
 					deliveryMode: 'defer',
 				})
+			);
+		});
+
+		it('propagates send failures without returning a messageId', async () => {
+			const handler = messageHubData.handlers.get('message.send');
+			expect(handler).toBeDefined();
+			sessionManagerData.mocks.sendUserMessage.mockRejectedValueOnce(new Error('query failed'));
+
+			await expect(handler!({ sessionId: 'session-123', content: 'test' }, {})).rejects.toThrow(
+				'query failed'
 			);
 		});
 
@@ -1124,6 +1136,8 @@ describe('Session RPC Handlers', () => {
 		it('enables coordinator mode', async () => {
 			const handler = messageHubData.handlers.get('session.coordinator.switch');
 			expect(handler).toBeDefined();
+			const { agentSession, mocks } = createMockAgentSession();
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
 
 			const params = {
 				sessionId: 'session-123',
@@ -1134,13 +1148,15 @@ describe('Session RPC Handlers', () => {
 
 			expect(result).toHaveProperty('success');
 			expect(result).toHaveProperty('coordinatorMode', true);
+			expect(mocks.getQueryObject).toHaveBeenCalled();
+			expect(mocks.resetQuery).not.toHaveBeenCalled();
 		});
 
 		it('disables coordinator mode', async () => {
 			const handler = messageHubData.handlers.get('session.coordinator.switch');
 			expect(handler).toBeDefined();
 
-			const { agentSession } = createMockAgentSession();
+			const { agentSession, mocks } = createMockAgentSession();
 			(agentSession.getSessionData as ReturnType<typeof mock>).mockReturnValue({
 				id: 'session-123',
 				config: { coordinatorMode: true },
@@ -1150,6 +1166,22 @@ describe('Session RPC Handlers', () => {
 			const result = await handler!({ sessionId: 'session-123', coordinatorMode: false }, {});
 
 			expect(result).toHaveProperty('success');
+			expect(mocks.getQueryObject).toHaveBeenCalled();
+			expect(mocks.resetQuery).not.toHaveBeenCalled();
+		});
+
+		it('resets coordinator query when a query is already live', async () => {
+			const handler = messageHubData.handlers.get('session.coordinator.switch');
+			expect(handler).toBeDefined();
+
+			const { agentSession, mocks } = createMockAgentSession();
+			mocks.getQueryObject.mockReturnValue({ id: 'query-1' });
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			const result = await handler!({ sessionId: 'session-123', coordinatorMode: true }, {});
+
+			expect(result).toEqual({ success: true, coordinatorMode: true, error: undefined });
+			expect(mocks.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
 		});
 
 		it('returns early if mode unchanged', async () => {
@@ -1190,16 +1222,36 @@ describe('Session RPC Handlers', () => {
 
 			expect(result).toHaveProperty('success');
 			expect(result).toHaveProperty('sandboxEnabled', true);
+			expect(agentSession.getQueryObject).toHaveBeenCalled();
+			expect(agentSession.resetQuery).not.toHaveBeenCalled();
 		});
 
 		it('disables sandbox mode', async () => {
 			const handler = messageHubData.handlers.get('session.sandbox.switch');
 			expect(handler).toBeDefined();
+			const { agentSession, mocks } = createMockAgentSession();
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
 
 			// Default has sandbox.enabled: true
 			const result = await handler!({ sessionId: 'session-123', sandboxEnabled: false }, {});
 
 			expect(result).toHaveProperty('success');
+			expect(mocks.getQueryObject).toHaveBeenCalled();
+			expect(mocks.resetQuery).not.toHaveBeenCalled();
+		});
+
+		it('resets sandbox query when a query is already live', async () => {
+			const handler = messageHubData.handlers.get('session.sandbox.switch');
+			expect(handler).toBeDefined();
+
+			const { agentSession, mocks } = createMockAgentSession();
+			mocks.getQueryObject.mockReturnValue({ id: 'query-1' });
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			const result = await handler!({ sessionId: 'session-123', sandboxEnabled: false }, {});
+
+			expect(result).toEqual({ success: true, sandboxEnabled: false, error: undefined });
+			expect(mocks.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
 		});
 
 		it('throws error when session not found', async () => {

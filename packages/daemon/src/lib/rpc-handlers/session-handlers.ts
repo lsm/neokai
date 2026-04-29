@@ -478,8 +478,10 @@ export function setupSessionHandlers(
 		// Generate messageId immediately for return
 		const messageId = generateUUID();
 
-		// Persist-before-ack for durable queue semantics
-		await daemonHub.emit('message.sendRequest', {
+		// Persist and deliver to the SDK input queue before acknowledging. This
+		// prevents the UI from accepting a message that is visible but never starts
+		// an agent turn after model/mode restarts.
+		await sessionManager.sendUserMessage({
 			sessionId: targetSessionId,
 			messageId,
 			content,
@@ -601,8 +603,11 @@ export function setupSessionHandlers(
 			config: { ...session.config, coordinatorMode },
 		});
 
-		// Restart query to apply new agent/tools configuration
-		const result = await agentSession.resetQuery({ restartQuery: true });
+		// Restart only when a query is already live. For pre-turn sessions, the
+		// next user message starts a fresh query with the updated config.
+		const result = agentSession.getQueryObject()
+			? await agentSession.resetQuery({ restartQuery: true })
+			: { success: true as const };
 
 		// Broadcast update for UI
 		messageHub.event(
@@ -644,8 +649,11 @@ export function setupSessionHandlers(
 			config: { ...session.config, sandbox: updatedSandbox },
 		});
 
-		// Restart query to apply new sandbox configuration
-		const result = await agentSession.resetQuery({ restartQuery: true });
+		// Restart only when a query is already live. For pre-turn sessions, the
+		// next user message starts a fresh query with the updated sandbox config.
+		const result = agentSession.getQueryObject()
+			? await agentSession.resetQuery({ restartQuery: true })
+			: { success: true as const };
 
 		// Broadcast update for UI
 		messageHub.event(
