@@ -143,7 +143,7 @@ Initialization order matters: Router → MessageHub, then Transport → MessageH
 
 ### Skills System
 
-The Skills system extends agent capabilities with slash commands, plugins, and MCP servers. Skills are configured globally at the application level and can be selectively overridden per Space. Room-scoped overrides are retained for legacy database compatibility but are no longer actively created by the UI.
+The Skills system extends agent capabilities with slash commands, plugins, and MCP servers. Skills are configured globally at the application level and are available to all sessions. Room-scoped skill override tables are retained in the schema for legacy database compatibility.
 
 **Data flow:**
 ```
