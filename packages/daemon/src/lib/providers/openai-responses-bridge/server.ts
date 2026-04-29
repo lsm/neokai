@@ -164,6 +164,34 @@ function stableStringify(value: unknown): string {
 	}
 }
 
+function estimateTextTokens(text: string): number {
+	if (text.length === 0) return 0;
+
+	const characterEstimate = Math.ceil(text.length / 4);
+	const lexicalPieces = text.match(/[\p{L}\p{N}_]+|[^\s\p{L}\p{N}_]/gu)?.length ?? 0;
+
+	return Math.max(1, Math.ceil((characterEstimate + lexicalPieces) / 2));
+}
+
+function estimateResponsesContentTokens(item: ResponsesInputItem): number {
+	if (item.type === 'function_call_output') {
+		return estimateTextTokens(item.output);
+	}
+	if (item.type === 'function_call') {
+		return estimateTextTokens(item.name) + estimateTextTokens(item.arguments);
+	}
+	return item.content.reduce((sum, block) => sum + estimateTextTokens(block.text), 0);
+}
+
+function estimateResponsesInputTokens(items: ResponsesInputItem[]): number {
+	const requestOverheadTokens = 3;
+	const itemOverheadTokens = 4;
+	return (
+		requestOverheadTokens +
+		items.reduce((sum, item) => sum + itemOverheadTokens + estimateResponsesContentTokens(item), 0)
+	);
+}
+
 function toolResultText(content: AnthropicContentBlockToolResult['content']): string {
 	if (typeof content === 'string') return content;
 	return content.map((block) => block.text).join('\n');
@@ -722,10 +750,13 @@ export function createOpenAIResponsesBridgeServer(
 			if (url.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
 				try {
 					const body = (await req.json()) as AnthropicRequest;
-					return new Response(
-						JSON.stringify({ input_tokens: estimateAnthropicInputTokens(body) }),
-						{ headers: { 'Content-Type': 'application/json' } }
-					);
+					const continuation = resolveContinuation(body.messages, continuations);
+					const inputTokens = continuation
+						? estimateResponsesInputTokens(continuation.input)
+						: estimateAnthropicInputTokens(body);
+					return new Response(JSON.stringify({ input_tokens: inputTokens }), {
+						headers: { 'Content-Type': 'application/json' },
+					});
 				} catch {
 					return sendJsonError(400, 'invalid_request_error', 'Bad Request');
 				}

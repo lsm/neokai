@@ -292,11 +292,11 @@ describe('openai-responses-bridge server', () => {
 		});
 		await readSSEEvents(first.body);
 
-		const continuationBody = JSON.stringify({
+		const continuationPayload = {
 			model: 'gpt-5.3-codex',
 			max_tokens: 128,
 			messages: [
-				{ role: 'user', content: 'Use the tool.' },
+				{ role: 'user', content: 'Use the tool. '.repeat(1000) },
 				{
 					role: 'assistant',
 					content: [
@@ -314,7 +314,16 @@ describe('openai-responses-bridge server', () => {
 				},
 			],
 			tools: [{ name: 'lookup', input_schema: { type: 'object' } }],
+		};
+		const continuationBody = JSON.stringify(continuationPayload);
+		const countResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages/count_tokens`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: continuationBody,
 		});
+		const count = (await countResp.json()) as { input_tokens: number };
+		expect(count.input_tokens).toBeLessThan(100);
+
 		const second = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
