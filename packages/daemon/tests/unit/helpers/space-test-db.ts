@@ -172,9 +172,9 @@ export function createSpaceTables(db: BunDatabase): void {
 			workflow_node_id TEXT NOT NULL,
 			agent_name TEXT NOT NULL,
 			agent_id TEXT,
-			agent_session_id TEXT,
-			status TEXT NOT NULL DEFAULT 'pending'
-				CHECK(status IN ('pending', 'in_progress', 'idle', 'done', 'blocked', 'cancelled')),
+				agent_session_id TEXT,
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('pending', 'in_progress', 'idle', 'done', 'waiting_rebind', 'blocked', 'cancelled')),
 			result TEXT,
 			data TEXT,
 			created_at INTEGER NOT NULL,

@@ -39,6 +39,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repositories/tool-continuation-recovery-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -197,6 +198,71 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 	// -------------------------------------------------------------------------
 	// 1. Stalled with no completion signal → blocked
 	// -------------------------------------------------------------------------
+
+	describe('orphaned tool_result waiting_rebind recovery', () => {
+		test('queued continuation resets waiting_rebind execution to pending for one deterministic retry', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Orphan Recovery Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Orphan Recovery Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'waiting_rebind', {
+				agentSessionId: 'dead-session',
+				result: 'waiting for orphaned tool_result recovery',
+			});
+			const recoveryRepo = new ToolContinuationRecoveryRepository(db);
+			recoveryRepo.ensureSchema();
+			recoveryRepo.recordToolUse({
+				toolUseId: 'tool-rebind-1',
+				sessionId: 'dead-session',
+				ttlMs: 60_000,
+				owner: { executionId: execution.id, workflowRunId: run.id },
+			});
+			recoveryRepo.queueContinuation({
+				toolUseId: 'tool-rebind-1',
+				sessionId: 'dead-session',
+				requestBody: { messages: [{ role: 'user', content: [] }] },
+				reason: 'late continuation arrived after session timeout',
+				ttlMs: 60_000,
+			});
+
+			const rt = makeRuntime({
+				taskAgentManager: {
+					rehydrate: async () => {},
+					isSessionAlive: () => false,
+					getAgentSessionById: () => null,
+					isExecutionSpawning: () => false,
+				} as any,
+			});
+			await rt.executeTick();
+
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			const inbox = recoveryRepo.listPendingInboxForExecution(execution.id);
+			expect(updated.status).toBe('pending');
+			expect(updated.agentSessionId).toBeNull();
+			expect(updated.data?.orphanedToolContinuation).toMatchObject({
+				state: 'rebound',
+				retryCount: 1,
+				queuedContinuations: 1,
+			});
+			expect(inbox).toHaveLength(0);
+			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+			expect(notifications.some((event) => event.kind === 'task_retry')).toBe(true);
+		});
+	});
 
 	describe('runs with all node executions terminal and no completion signal', () => {
 		test('single-node run with idle execution → run blocked, task blocked, notifications emitted', async () => {
