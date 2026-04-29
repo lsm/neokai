@@ -2098,7 +2098,7 @@ export class SpaceRuntime {
 			.filter((execution) => execution.status === 'waiting_rebind');
 		if (waitingExecutions.length === 0) return false;
 
-		for (const execution of waitingExecutions) {
+		const recoveryStates = waitingExecutions.map((execution) => {
 			const data = parseNodeExecutionData(execution.data);
 			const recoveryData = isRecord(data.orphanedToolContinuation)
 				? data.orphanedToolContinuation
@@ -2109,60 +2109,32 @@ export class SpaceRuntime {
 			const hasLiveSession = execution.agentSessionId
 				? (this.config.taskAgentManager?.isSessionAlive(execution.agentSessionId) ?? false)
 				: false;
+			return {
+				execution,
+				data,
+				recoveryData,
+				retryCount,
+				pendingInbox,
+				hasActiveTool,
+				hasLiveSession,
+			};
+		});
 
-			if (pendingInbox.length > 0 && retryCount < 1) {
-				const reason =
-					pendingInbox[0]?.recoveryReason ??
-					'orphaned tool_result continuation queued for deterministic retry';
-				data.orphanedToolContinuation = {
-					...recoveryData,
-					state: 'rebound',
-					retryCount: retryCount + 1,
-					reason,
-					queuedContinuations: pendingInbox.length,
-					updatedAt: Date.now(),
-				};
-				this.toolContinuationRepo.markInboxReboundForExecution(
-					execution.id,
-					'queued orphaned tool_result rebound by restarting workflow node execution'
-				);
-				this.config.nodeExecutionRepo.update(execution.id, {
-					status: 'pending',
-					agentSessionId: null,
-					result: null,
-					data,
-					startedAt: null,
-					completedAt: null,
-				});
-				if (run.status !== 'in_progress') {
-					await this.transitionRunStatusAndEmit(run.id, 'in_progress');
-				}
-				if (canonicalTask.status === 'blocked' || canonicalTask.status === 'open') {
-					await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
-						status: 'in_progress',
-						completedAt: null,
-						result: null,
-						blockReason: null,
-					});
-				}
-				await this.safeNotify({
-					kind: 'task_retry',
-					spaceId,
-					taskId: canonicalTask.id,
-					runId,
-					originalReason: reason,
-					attemptNumber: retryCount + 1,
-					maxAttempts: 1,
-					timestamp: new Date().toISOString(),
-				});
-				log.info(
-					`SpaceRuntime: rebound orphaned tool_result continuation for execution ${execution.id}; ` +
-						`reset to pending for retry ${retryCount + 1}/1`
-				);
+		for (const state of recoveryStates) {
+			const {
+				execution,
+				data,
+				recoveryData,
+				retryCount,
+				pendingInbox,
+				hasActiveTool,
+				hasLiveSession,
+			} = state;
+			if (hasActiveTool || hasLiveSession) {
 				continue;
 			}
 
-			if (hasActiveTool || hasLiveSession) {
+			if (pendingInbox.length > 0 && retryCount < 1) {
 				continue;
 			}
 
@@ -2202,6 +2174,62 @@ export class SpaceRuntime {
 				`SpaceRuntime: failed orphaned tool_result recovery for execution ${execution.id}: ${reason}`
 			);
 			return true;
+		}
+
+		for (const state of recoveryStates) {
+			const { execution, data, recoveryData, retryCount, pendingInbox } = state;
+			if (pendingInbox.length === 0 || retryCount >= 1) {
+				continue;
+			}
+
+			const reason =
+				pendingInbox[0]?.recoveryReason ??
+				'orphaned tool_result continuation queued for deterministic retry';
+			data.orphanedToolContinuation = {
+				...recoveryData,
+				state: 'rebound',
+				retryCount: retryCount + 1,
+				reason,
+				queuedContinuations: pendingInbox.length,
+				updatedAt: Date.now(),
+			};
+			this.toolContinuationRepo.markInboxReboundForExecution(
+				execution.id,
+				'queued orphaned tool_result rebound by restarting workflow node execution'
+			);
+			this.config.nodeExecutionRepo.update(execution.id, {
+				status: 'pending',
+				agentSessionId: null,
+				result: null,
+				data,
+				startedAt: null,
+				completedAt: null,
+			});
+			if (run.status !== 'in_progress') {
+				await this.transitionRunStatusAndEmit(run.id, 'in_progress');
+			}
+			if (canonicalTask.status === 'blocked' || canonicalTask.status === 'open') {
+				await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+					status: 'in_progress',
+					completedAt: null,
+					result: null,
+					blockReason: null,
+				});
+			}
+			await this.safeNotify({
+				kind: 'task_retry',
+				spaceId,
+				taskId: canonicalTask.id,
+				runId,
+				originalReason: reason,
+				attemptNumber: retryCount + 1,
+				maxAttempts: 1,
+				timestamp: new Date().toISOString(),
+			});
+			log.info(
+				`SpaceRuntime: rebound orphaned tool_result continuation for execution ${execution.id}; ` +
+					`reset to pending for retry ${retryCount + 1}/1`
+			);
 		}
 		return false;
 	}
