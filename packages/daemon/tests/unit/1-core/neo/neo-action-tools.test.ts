@@ -38,7 +38,7 @@
  * - stop_session: happy path, wrong status, runtime unavailable, task not found
  * - pause_schedule: happy path, non-recurring goal, goal not found, already paused (idempotent)
  * - resume_schedule: happy path, no schedule, non-recurring goal, already active (idempotent)
- * - MCP server: runtime-dependent tools are registered only when runtimeService exists
+ * - MCP server: all 33 tools are registered
  */
 
 import { mock } from 'bun:test';
@@ -2881,7 +2881,7 @@ describe('createNeoActionMcpServer', () => {
 	let server: ReturnType<typeof createNeoActionMcpServer>;
 
 	beforeEach(() => {
-		server = createNeoActionMcpServer(makeConfig({ runtimeService: makeRuntimeService() }));
+		server = createNeoActionMcpServer(makeConfig());
 	});
 
 	it('names the MCP server "neo-action"', () => {
@@ -3018,13 +3018,5 @@ describe('createNeoActionMcpServer', () => {
 
 	it('registers exactly 33 tools', () => {
 		expect(Object.keys(server.instance._registeredTools)).toHaveLength(33);
-	});
-
-	it('omits runtime-dependent tools when runtimeService is unavailable', () => {
-		const serverWithoutRuntime = createNeoActionMcpServer(makeConfig());
-		expect(serverWithoutRuntime.instance._registeredTools).not.toHaveProperty('approve_task');
-		expect(serverWithoutRuntime.instance._registeredTools).not.toHaveProperty('reject_task');
-		expect(serverWithoutRuntime.instance._registeredTools).not.toHaveProperty('stop_session');
-		expect(Object.keys(serverWithoutRuntime.instance._registeredTools)).toHaveLength(30);
 	});
 });

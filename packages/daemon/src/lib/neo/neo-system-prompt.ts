@@ -14,21 +14,8 @@ export type { NeoSecurityMode };
  *
  * @param securityMode - Active security tier that shapes confirmation behavior.
  */
-export interface NeoSystemPromptOptions {
-	roomRuntimeToolsAvailable?: boolean;
-}
-
-export function buildNeoSystemPrompt(
-	securityMode: NeoSecurityMode = 'balanced',
-	options: NeoSystemPromptOptions = {}
-): string {
-	const roomRuntimeToolsAvailable = options.roomRuntimeToolsAvailable ?? true;
-	const securitySection = buildSecuritySection(securityMode, {
-		roomRuntimeToolsAvailable,
-	});
-	const roomRuntimeMediumRiskTools = roomRuntimeToolsAvailable
-		? '- `send_message_to_room`, `stop_session`\n- `approve_task`, `reject_task`'
-		: '- `send_message_to_room`';
+export function buildNeoSystemPrompt(securityMode: NeoSecurityMode = 'balanced'): string {
+	const securitySection = buildSecuritySection(securityMode);
 
 	return `# Neo — Chief-of-Staff for NeoKai
 
@@ -65,7 +52,8 @@ You have access to tools organized into the following categories. Use the most a
 
 **Medium risk (confirm in balanced mode):**
 - \`delete_room\` (without active tasks)
-${roomRuntimeMediumRiskTools}
+- \`send_message_to_room\`, \`stop_session\`
+- \`approve_task\`, \`reject_task\`
 
 **High risk (require explicit phrasing):**
 - \`delete_room\` when the room has active tasks or sessions
@@ -130,10 +118,7 @@ If you encounter an error during a tool call, report it clearly to the user. Do 
 /**
  * Build the security-tier section of the system prompt based on the active mode.
  */
-function buildSecuritySection(
-	mode: NeoSecurityMode,
-	options: Required<NeoSystemPromptOptions>
-): string {
+function buildSecuritySection(mode: NeoSecurityMode): string {
 	if (mode === 'conservative') {
 		return `## Security Mode: Conservative
 
@@ -151,10 +136,6 @@ Use this mode responsibly — irreversible actions (e.g., deleting a room with a
 	}
 
 	// balanced (default)
-	const runtimeConfirmActions = options.roomRuntimeToolsAvailable
-		? '- Cancel a running session\n'
-		: '';
-
 	return `## Security Mode: Balanced (default)
 
 Apply a three-tier confirmation model based on action risk:
@@ -166,9 +147,9 @@ Apply a three-tier confirmation model based on action risk:
 
 **Confirm before executing (show confirmation card):**
 - Delete a space or room (when no active tasks are present)
-${runtimeConfirmActions}- Cancel a running workflow
+- Cancel a running session or workflow
 - Send a message to a room agent
-- Approve or reject workflow gates
+- Approve or reject task gates
 - Add or remove MCP servers
 
 **Require explicit user phrasing before proceeding:**

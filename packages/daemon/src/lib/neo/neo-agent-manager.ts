@@ -404,9 +404,7 @@ export class NeoAgentManager {
 		if (!this.session) return;
 
 		const securityMode = this.getSecurityMode();
-		const systemPromptText = buildNeoSystemPrompt(securityMode, {
-			roomRuntimeToolsAvailable: Boolean(this.actionToolsConfig?.runtimeService),
-		});
+		const systemPromptText = buildNeoSystemPrompt(securityMode);
 		this.session.setRuntimeSystemPrompt(systemPromptText);
 
 		const model = this.getModel();

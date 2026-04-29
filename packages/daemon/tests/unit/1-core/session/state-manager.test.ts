@@ -588,7 +588,7 @@ describe('StateManager', () => {
 			it('should register room event handlers on initialization', () => {
 				expect(eventHandlers.has('room.task.update')).toBe(true);
 				expect(eventHandlers.has('room.overview')).toBe(true);
-				expect(eventHandlers.has('room.runtime.stateChanged')).toBe(false);
+				expect(eventHandlers.has('room.runtime.stateChanged')).toBe(true);
 				expect(eventHandlers.has('goal.created')).toBe(true);
 				// goal.updated was removed in PR #695 (emitGoalUpdated dropped from goal handlers)
 				expect(eventHandlers.has('goal.updated')).toBe(false);
@@ -646,6 +646,25 @@ describe('StateManager', () => {
 					handler!(data);
 
 					expect(mockMessageHub.event).toHaveBeenCalledWith('room.overview', data, {
+						channel: 'room:room-123',
+					});
+				});
+			});
+
+			describe('room.runtime.stateChanged', () => {
+				it('should forward runtime state change to room channel', () => {
+					(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+
+					const handler = eventHandlers.get('room.runtime.stateChanged');
+					const data = {
+						sessionId: 'room:room-123',
+						roomId: 'room-123',
+						state: 'running',
+					};
+
+					handler!(data);
+
+					expect(mockMessageHub.event).toHaveBeenCalledWith('room.runtime.stateChanged', data, {
 						channel: 'room:room-123',
 					});
 				});
