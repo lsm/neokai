@@ -108,6 +108,7 @@ type ResponsesRequest = {
 	tools?: ResponsesTool[];
 	tool_choice?: 'auto' | 'none' | 'required' | { type: 'function'; name: string };
 	max_output_tokens?: number;
+	store: false;
 	stream: true;
 	parallel_tool_calls: false;
 };
@@ -387,11 +388,13 @@ function toolChoiceToResponsesToolChoice(
 function buildResponsesRequest(
 	body: AnthropicRequest,
 	model: string,
-	continuation?: { previousResponseId: string; input: ResponsesInputItem[] }
+	continuation?: { previousResponseId: string; input: ResponsesInputItem[] },
+	options: { includeMaxOutputTokens?: boolean } = {}
 ): ResponsesRequest {
 	const instructions = extractSystemText(body.system) || undefined;
 	const tools = toolsToResponsesTools(body.tools);
 	const tool_choice = toolChoiceToResponsesToolChoice(body.tool_choice);
+	const includeMaxOutputTokens = options.includeMaxOutputTokens ?? true;
 	return {
 		model,
 		...(instructions ? { instructions } : {}),
@@ -399,7 +402,10 @@ function buildResponsesRequest(
 		...(continuation ? { previous_response_id: continuation.previousResponseId } : {}),
 		...(tools ? { tools } : {}),
 		...(tool_choice ? { tool_choice } : {}),
-		...(typeof body.max_tokens === 'number' ? { max_output_tokens: body.max_tokens } : {}),
+		...(includeMaxOutputTokens && typeof body.max_tokens === 'number'
+			? { max_output_tokens: body.max_tokens }
+			: {}),
+		store: false,
 		stream: true,
 		parallel_tool_calls: false,
 	};
@@ -847,7 +853,9 @@ export function createOpenAIResponsesBridgeServer(
 			const model = resolveModelId(body.model, config.modelAliases);
 			const sessionId = extractSessionId(req);
 			const continuation = resolveContinuation(sessionId, body.messages, continuations);
-			const requestBody = buildResponsesRequest(body, model, continuation);
+			const requestBody = buildResponsesRequest(body, model, continuation, {
+				includeMaxOutputTokens: config.auth.source !== 'chatgpt_oauth',
+			});
 			const upstreamUrl = `${baseUrl.replace(/\/$/, '')}/responses`;
 			let openAIResponse: Response;
 			try {

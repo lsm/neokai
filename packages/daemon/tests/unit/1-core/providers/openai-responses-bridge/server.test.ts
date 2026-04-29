@@ -156,6 +156,8 @@ describe('openai-responses-bridge server', () => {
 		expect(resp.status).toBe(200);
 		expect(capturedBody?.model).toBe('gpt-5.3-codex');
 		expect(capturedBody?.instructions).toBe('Be concise.');
+		expect(capturedBody?.max_output_tokens).toBe(128);
+		expect(capturedBody?.store).toBe(false);
 		expect(capturedBody?.stream).toBe(true);
 		expect(capturedBody?.tools).toEqual([
 			{
@@ -368,6 +370,8 @@ describe('openai-responses-bridge server', () => {
 			| undefined;
 		expect(messageStartMessage?.usage?.input_tokens).toBeGreaterThan(500);
 		expect(messageStartMessage?.usage?.input_tokens).toBeLessThan(1500);
+		expect(capturedBodies[0]?.store).toBe(false);
+		expect(capturedBodies[1]?.store).toBe(false);
 		expect(capturedBodies[1]?.previous_response_id).toBe('resp_tool');
 		expect(capturedBodies[1]?.input).toEqual([
 			{ type: 'function_call_output', call_id: 'call_abc', output: 'found' },
@@ -799,6 +803,7 @@ describe('openai-responses-bridge server', () => {
 	it('uses Codex ChatGPT OAuth endpoint and account header for OAuth auth', async () => {
 		let capturedUrl = '';
 		let capturedHeaders: Headers | undefined;
+		let capturedBody: Record<string, unknown> | undefined;
 		server = createOpenAIResponsesBridgeServer({
 			auth: {
 				source: 'chatgpt_oauth',
@@ -810,6 +815,7 @@ describe('openai-responses-bridge server', () => {
 			fetchImpl: async (url, init) => {
 				capturedUrl = String(url);
 				capturedHeaders = new Headers(init?.headers);
+				capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
 				return sse([
 					{
 						event: 'response.completed',
@@ -836,6 +842,8 @@ describe('openai-responses-bridge server', () => {
 		expect(capturedHeaders?.get('authorization')).toBe('Bearer oauth-token');
 		expect(capturedHeaders?.get('chatgpt-account-id')).toBe('acct_123');
 		expect(capturedHeaders?.get('x-openai-fedramp')).toBe('true');
+		expect(capturedBody?.store).toBe(false);
+		expect(capturedBody?.max_output_tokens).toBeUndefined();
 	});
 
 	it('refreshes ChatGPT OAuth auth once after an upstream 401 and reuses it', async () => {
