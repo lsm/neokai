@@ -32,7 +32,6 @@ import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
 import { appState, connectionState } from './state';
 import { globalStore } from './global-store';
 import { sessionStore } from './session-store';
-import { roomStore } from './room-store';
 import { spaceStore } from './space-store';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
@@ -509,10 +508,6 @@ export class ConnectionManager {
 				// Safari may pause WebSocket without closing it, causing server-side
 				// channel memberships to expire while client thinks it's still connected.
 				await this.messageHub.joinChannel('global');
-				const activeRoomId = roomStore.roomId.value;
-				if (activeRoomId) {
-					await this.messageHub.joinChannel(`room:${activeRoomId}`);
-				}
 				const activeSpaceId = spaceStore.spaceId.value;
 				if (activeSpaceId) {
 					await this.messageHub.joinChannel(`space:${activeSpaceId}`);
@@ -526,7 +521,6 @@ export class ConnectionManager {
 					sessionStore.refresh(),
 					appState.refreshAll(),
 					globalStore.refresh(),
-					roomStore.refresh(),
 					spaceStore.refresh(),
 				]);
 			} catch {

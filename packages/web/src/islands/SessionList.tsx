@@ -16,7 +16,7 @@ interface SessionListProps {
 export function SessionList({ onSessionSelect }: SessionListProps) {
 	const [visibleCount, setVisibleCount] = useState(SESSIONS_PER_PAGE);
 
-	// Only show user-created sessions (not internal Room Runtime agents)
+	// Only show user-created sessions (not internal orchestration agents)
 	const sessionsList = sessions.value.filter(isUserSession);
 	const showArchived = globalSettings.value?.showArchived ?? false;
 
@@ -80,7 +80,7 @@ export function SessionList({ onSessionSelect }: SessionListProps) {
 					<div class="p-6 text-center">
 						<div class="text-4xl mb-3">💬</div>
 						<p class="text-sm text-gray-400">No sessions yet.</p>
-						<p class="text-xs text-gray-500 mt-1">Sessions created outside of Rooms appear here.</p>
+						<p class="text-xs text-gray-500 mt-1">Start a new session to begin.</p>
 					</div>
 				)}
 
