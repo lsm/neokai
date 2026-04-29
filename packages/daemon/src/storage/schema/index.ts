@@ -63,6 +63,8 @@ export { runMigration99 } from './migrations';
 export { runMigration100 } from './migrations';
 // knip-ignore-next-line
 export { runMigration101 } from './migrations';
+// knip-ignore-next-line
+export { runMigration109 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -501,7 +503,42 @@ export function createTables(db: BunDatabase): void {
         last_used_at INTEGER NOT NULL,
         use_count INTEGER NOT NULL DEFAULT 1
       )
-    `);
+	    `);
+
+	// Durable Codex tool continuation recovery state. The full space schema is
+	// migration-owned, so these tables avoid foreign keys here and are also
+	// created by migration 109 for existing databases.
+	db.exec(`
+	      CREATE TABLE IF NOT EXISTS tool_continuation_recovery (
+	        tool_use_id TEXT PRIMARY KEY,
+	        session_id TEXT NOT NULL,
+	        execution_id TEXT,
+	        workflow_run_id TEXT,
+	        status TEXT NOT NULL DEFAULT 'active'
+	          CHECK(status IN ('active', 'waiting_rebind', 'rebound', 'failed', 'expired', 'consumed')),
+	        attempts_409 INTEGER NOT NULL DEFAULT 0,
+	        recovery_reason TEXT,
+	        created_at INTEGER NOT NULL,
+	        updated_at INTEGER NOT NULL,
+	        expires_at INTEGER NOT NULL
+	      )
+	    `);
+	db.exec(`
+	      CREATE TABLE IF NOT EXISTS tool_continuation_inbox (
+	        id TEXT PRIMARY KEY,
+	        tool_use_id TEXT NOT NULL,
+	        session_id TEXT NOT NULL,
+	        execution_id TEXT,
+	        workflow_run_id TEXT,
+	        status TEXT NOT NULL DEFAULT 'pending'
+	          CHECK(status IN ('pending', 'rebound', 'failed', 'expired')),
+	        request_json TEXT NOT NULL,
+	        recovery_reason TEXT,
+	        created_at INTEGER NOT NULL,
+	        updated_at INTEGER NOT NULL,
+	        expires_at INTEGER NOT NULL
+	      )
+	    `);
 
 	// Create indexes
 	createIndexes(db);
@@ -564,5 +601,21 @@ function createIndexes(db: BunDatabase): void {
 	// Workspace history index — supports ORDER BY last_used_at DESC in list()
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_workspace_history_last_used_at ON workspace_history(last_used_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_tool_continuation_recovery_session
+		 ON tool_continuation_recovery(session_id, status, expires_at)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_tool_continuation_recovery_execution
+		 ON tool_continuation_recovery(execution_id, status, expires_at)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_tool_continuation_inbox_execution
+		 ON tool_continuation_inbox(execution_id, status, expires_at)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_tool_continuation_inbox_tool
+		 ON tool_continuation_inbox(tool_use_id, status, expires_at)`
 	);
 }
