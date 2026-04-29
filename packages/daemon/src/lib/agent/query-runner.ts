@@ -25,7 +25,11 @@ import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryOptionsBuilder } from './query-options-builder';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
 import type { OriginalEnvVars } from '../provider-service';
-import { extractCompactionSummary, getSDKSessionFilePath } from '../sdk-session-file-manager';
+import {
+	extractCompactionSummary,
+	getSDKSessionFilePath,
+	messageUuidExistsInSessionFile,
+} from '../sdk-session-file-manager';
 // Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
 
@@ -64,6 +68,7 @@ function defaultSpawn(opts: SpawnOptions): SpawnedProcess {
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 /** Max time to wait for subprocess exit before retrying after startup timeout. */
 const RETRY_EXIT_TIMEOUT_MS = 5000;
+const BEST_EFFORT_RESUME_MESSAGE_LIMIT = 10_000;
 
 function getStartupTimeoutMs(): number {
 	const raw = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
@@ -599,41 +604,54 @@ export class QueryRunner {
 			if (isMessageNotFound) {
 				// The SDK found the transcript but could not find resumeSessionAt inside it.
 				// This commonly happens after SDK compaction removes old message UUIDs.
-				// Clear both the rewind pointer and SDK transcript identity so the retry
-				// starts with a fresh context instead of looping on stale JSONL state.
 				const oldResumeSessionAt = session.metadata.resumeSessionAt;
-				const compactionSummary = this.extractCompactionSummaryFromCurrentSdkSession();
-				logger.error(
-					`No message found for resumeSessionAt (${oldResumeSessionAt ?? 'unknown'}). ` +
-						'Clearing resumeSessionAt, sdkSessionId, and sdkOriginPath before retry.'
-				);
-				delete session.metadata.resumeSessionAt;
-				if (compactionSummary) {
-					session.metadata.compactionSummary = compactionSummary;
-				} else {
-					delete session.metadata.compactionSummary;
-				}
-				session.sdkSessionId = undefined;
-				session.sdkOriginPath = undefined;
-				this.ctx.db.updateSession(session.id, {
-					metadata: session.metadata,
-					sdkSessionId: undefined,
-					sdkOriginPath: undefined,
-				});
+				const bestEffortResumeSessionAt = this.findBestEffortResumeSessionAt();
 
-				try {
-					await this.displayErrorAsAssistantMessage(
-						'⚠️ **Conversation context was reset.**\n\n' +
-							'The previous rewind point is no longer present in the Claude SDK transcript. ' +
-							'This can happen after SDK compaction. Your conversation history in NeoKai is preserved; ' +
-							(compactionSummary
-								? 'a compacted summary from the previous SDK transcript will be carried into the fresh AI session.\n\n'
-								: 'only the AI context window has been reset.\n\n') +
-							'Retrying your message with a fresh AI session.',
-						{ markAsError: false }
+				if (bestEffortResumeSessionAt) {
+					logger.warn(
+						`No message found for resumeSessionAt (${oldResumeSessionAt ?? 'unknown'}). ` +
+							`Retrying from nearest available message UUID (${bestEffortResumeSessionAt}).`
 					);
-				} catch {
-					// Best-effort — don't let message emission block cleanup
+					session.metadata.resumeSessionAt = bestEffortResumeSessionAt;
+					this.ctx.db.updateSession(session.id, {
+						metadata: session.metadata,
+					});
+				} else {
+					// Clear both the rewind pointer and SDK transcript identity so the retry
+					// starts with a fresh context instead of looping on stale JSONL state.
+					const compactionSummary = this.extractCompactionSummaryFromCurrentSdkSession();
+					logger.error(
+						`No message found for resumeSessionAt (${oldResumeSessionAt ?? 'unknown'}). ` +
+							'No fallback message UUID was available; clearing resumeSessionAt, sdkSessionId, and sdkOriginPath before retry.'
+					);
+					delete session.metadata.resumeSessionAt;
+					if (compactionSummary) {
+						session.metadata.compactionSummary = compactionSummary;
+					} else {
+						delete session.metadata.compactionSummary;
+					}
+					session.sdkSessionId = undefined;
+					session.sdkOriginPath = undefined;
+					this.ctx.db.updateSession(session.id, {
+						metadata: session.metadata,
+						sdkSessionId: undefined,
+						sdkOriginPath: undefined,
+					});
+
+					try {
+						await this.displayErrorAsAssistantMessage(
+							'⚠️ **Conversation context was reset.**\n\n' +
+								'The previous rewind point is no longer present in the Claude SDK transcript. ' +
+								'This can happen after SDK compaction. Your conversation history in NeoKai is preserved; ' +
+								(compactionSummary
+									? 'a compacted summary from the previous SDK transcript will be carried into the fresh AI session.\n\n'
+									: 'only the AI context window has been reset.\n\n') +
+								'Retrying your message with a fresh AI session.',
+							{ markAsError: false }
+						);
+					} catch {
+						// Best-effort — don't let message emission block cleanup
+					}
 				}
 			}
 
@@ -901,6 +919,39 @@ export class QueryRunner {
 			);
 			return null;
 		}
+	}
+
+	private findBestEffortResumeSessionAt(): string | undefined {
+		const { session } = this.ctx;
+		const workspacePath =
+			session.sdkOriginPath ?? session.worktree?.worktreePath ?? session.workspacePath;
+		if (!workspacePath || !session.sdkSessionId) {
+			return undefined;
+		}
+
+		const { messages } = this.ctx.db.getSDKMessages(session.id, BEST_EFFORT_RESUME_MESSAGE_LIMIT);
+		const candidates = messages
+			.map((message) => ({
+				uuid: typeof message.uuid === 'string' ? message.uuid : undefined,
+				timestamp: message.timestamp,
+			}))
+			.filter((message): message is { uuid: string; timestamp: number } => Boolean(message.uuid))
+			.sort((a, b) => b.timestamp - a.timestamp);
+
+		for (const candidate of candidates) {
+			if (
+				messageUuidExistsInSessionFile(
+					workspacePath,
+					session.sdkSessionId,
+					session.id,
+					candidate.uuid
+				)
+			) {
+				return candidate.uuid;
+			}
+		}
+
+		return undefined;
 	}
 
 	private getLiveSdkMcpServerNames(queryOptions: Pick<Options, 'mcpServers'>): string[] {

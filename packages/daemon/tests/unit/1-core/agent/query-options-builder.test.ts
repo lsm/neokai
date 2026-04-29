@@ -31,6 +31,7 @@ describe('QueryOptionsBuilder', () => {
 	let mockSettingsManager: SettingsManager;
 	let mockContext: QueryOptionsBuilderContext;
 	let updateSessionSpy: ReturnType<typeof mock>;
+	let getSDKMessagesSpy: ReturnType<typeof mock>;
 
 	beforeEach(() => {
 		mockSession = {
@@ -62,12 +63,14 @@ describe('QueryOptionsBuilder', () => {
 		} as unknown as SettingsManager;
 
 		updateSessionSpy = mock(() => {});
+		getSDKMessagesSpy = mock(() => ({ messages: [], hasMore: false }));
 
 		mockContext = {
 			session: mockSession,
 			settingsManager: mockSettingsManager,
 			db: {
 				updateSession: updateSessionSpy,
+				getSDKMessages: getSDKMessagesSpy,
 			} as QueryOptionsBuilderContext['db'],
 		};
 
@@ -243,6 +246,70 @@ describe('QueryOptionsBuilder', () => {
 				expect(result.resume).toBe('sdk-session-valid');
 				expect(result.resumeSessionAt).toBe('resumable-message-uuid');
 				expect(updateSessionSpy).not.toHaveBeenCalled();
+			} finally {
+				rmSync(testSdkDir, { recursive: true, force: true });
+				if (originalTestSdkSessionDir !== undefined) {
+					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
+				} else {
+					delete process.env.TEST_SDK_SESSION_DIR;
+				}
+			}
+		});
+
+		it('should replace stale resumeSessionAt with the newest remaining message UUID that still exists in the SDK transcript', async () => {
+			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
+			const testSdkDir = join(
+				tmpdir(),
+				`query-options-resume-fallback-${Date.now()}-${Math.random().toString(36).slice(2)}`
+			);
+			try {
+				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
+				mockSession.sdkSessionId = 'sdk-session-fallback';
+				mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
+				const sessionFilePath = getSDKSessionFilePath(
+					mockSession.workspacePath!,
+					mockSession.sdkSessionId
+				);
+				mkdirSync(dirname(sessionFilePath), { recursive: true });
+				writeFileSync(
+					sessionFilePath,
+					[
+						JSON.stringify({ type: 'user', uuid: 'older-existing-message-uuid' }),
+						JSON.stringify({ type: 'assistant', uuid: 'newer-existing-message-uuid' }),
+					].join('\n') + '\n',
+					'utf-8'
+				);
+				getSDKMessagesSpy.mockImplementation(() => ({
+					messages: [
+						{
+							type: 'user',
+							uuid: 'older-existing-message-uuid',
+							timestamp: 1000,
+						},
+						{
+							type: 'assistant',
+							uuid: 'newer-existing-message-uuid',
+							timestamp: 2000,
+						},
+						{
+							type: 'assistant',
+							uuid: 'newer-missing-message-uuid',
+							timestamp: 3000,
+						},
+					],
+					hasMore: false,
+				}));
+
+				const options = await builder.build();
+				const result = builder.addSessionStateOptions(options);
+
+				expect(result.resume).toBe('sdk-session-fallback');
+				expect(result.resumeSessionAt).toBe('newer-existing-message-uuid');
+				expect(mockSession.metadata.resumeSessionAt).toBe('newer-existing-message-uuid');
+				expect(mockSession.sdkSessionId).toBe('sdk-session-fallback');
+				expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
+					metadata: mockSession.metadata,
+				});
 			} finally {
 				rmSync(testSdkDir, { recursive: true, force: true });
 				if (originalTestSdkSessionDir !== undefined) {

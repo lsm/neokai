@@ -54,6 +54,7 @@ import {
 } from '../sdk-session-file-manager';
 
 export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
+const BEST_EFFORT_RESUME_MESSAGE_LIMIT = 10_000;
 
 /**
  * Provider-specific SDK settings overrides.
@@ -497,8 +498,14 @@ export class QueryOptionsBuilder {
 			if (this.isResumeSessionAtValid(resumeSessionAt)) {
 				result.resumeSessionAt = resumeSessionAt;
 			} else {
-				this.clearStaleResumeSessionAt();
-				delete result.resume;
+				const bestEffortResumeSessionAt = this.findBestEffortResumeSessionAt();
+				if (bestEffortResumeSessionAt) {
+					this.replaceStaleResumeSessionAt(bestEffortResumeSessionAt);
+					result.resumeSessionAt = bestEffortResumeSessionAt;
+				} else {
+					this.clearStaleResumeSessionAt();
+					delete result.resume;
+				}
 			}
 		}
 
@@ -522,6 +529,38 @@ export class QueryOptionsBuilder {
 			session.id,
 			messageUuid
 		);
+	}
+
+	private findBestEffortResumeSessionAt(): string | undefined {
+		const { session, db } = this.ctx;
+		if (!db) {
+			return undefined;
+		}
+
+		const { messages } = db.getSDKMessages(session.id, BEST_EFFORT_RESUME_MESSAGE_LIMIT);
+		const candidates = messages
+			.map((message) => ({
+				uuid: typeof message.uuid === 'string' ? message.uuid : undefined,
+				timestamp: message.timestamp,
+			}))
+			.filter((message): message is { uuid: string; timestamp: number } => Boolean(message.uuid))
+			.sort((a, b) => b.timestamp - a.timestamp);
+
+		for (const candidate of candidates) {
+			if (this.isResumeSessionAtValid(candidate.uuid)) {
+				return candidate.uuid;
+			}
+		}
+
+		return undefined;
+	}
+
+	private replaceStaleResumeSessionAt(resumeSessionAt: string): void {
+		const { session, db } = this.ctx;
+		session.metadata.resumeSessionAt = resumeSessionAt;
+		db?.updateSession(session.id, {
+			metadata: session.metadata,
+		});
 	}
 
 	private clearStaleResumeSessionAt(): void {
