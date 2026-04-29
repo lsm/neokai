@@ -650,6 +650,8 @@ export class QueryLifecycleManager {
 
 		const retryCount = this.timeoutDeliveryRetryCounts.get(messageId) ?? 0;
 		if (retryCount >= MAX_TIMEOUT_DELIVERY_RETRIES) {
+			this.timeoutDeliveryRetryCounts.delete(messageId);
+			await this.markEnqueuedMessageFailed(messageId);
 			await stateManager.setIdle();
 			this.logger.warn(
 				`Message ${messageId} timed out after ${MAX_TIMEOUT_DELIVERY_RETRIES} delivery retry.`
@@ -670,8 +672,31 @@ export class QueryLifecycleManager {
 			await messageQueue.enqueueWithId(messageId, messageContent);
 			this.timeoutDeliveryRetryCounts.delete(messageId);
 		} catch (retryError) {
+			this.timeoutDeliveryRetryCounts.delete(messageId);
+			await this.markEnqueuedMessageFailed(messageId);
 			await stateManager.setIdle();
 			this.logger.warn('Failed to recover queued message delivery', retryError);
+		}
+	}
+
+	private async markEnqueuedMessageFailed(messageId: string): Promise<void> {
+		const { session, db, daemonHub } = this.ctx;
+		const enqueuedMessage = db
+			.getMessagesByStatus(session.id, 'enqueued')
+			.find((message) => message.uuid === messageId);
+		if (!enqueuedMessage) {
+			return;
+		}
+
+		db.updateMessageStatus([enqueuedMessage.dbId], 'failed');
+		try {
+			await daemonHub.emit('messages.statusChanged', {
+				sessionId: session.id,
+				messageIds: [enqueuedMessage.dbId],
+				status: 'failed',
+			});
+		} catch (error) {
+			this.logger.warn('Failed to emit failed message status update', error);
 		}
 	}
 

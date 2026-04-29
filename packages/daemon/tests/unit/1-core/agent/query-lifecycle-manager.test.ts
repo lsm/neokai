@@ -34,6 +34,8 @@ describe('QueryLifecycleManager', () => {
 
 	// Mock spies
 	let updateSessionSpy: ReturnType<typeof mock>;
+	let updateMessageStatusSpy: ReturnType<typeof mock>;
+	let getMessagesByStatusSpy: ReturnType<typeof mock>;
 	let saveNeokaiActionMessageSpy: ReturnType<typeof mock>;
 	let emitSpy: ReturnType<typeof mock>;
 	let publishSpy: ReturnType<typeof mock>;
@@ -60,6 +62,23 @@ describe('QueryLifecycleManager', () => {
 		};
 
 		updateSessionSpy = mock(() => {});
+		updateMessageStatusSpy = mock(() => {});
+		getMessagesByStatusSpy = mock((_sessionId: string, status: string) => {
+			if (status !== 'enqueued') {
+				return [];
+			}
+			return [
+				{
+					dbId: 'db-msg-123',
+					type: 'user',
+					uuid: 'msg-123',
+					session_id: 'test-session',
+					parent_tool_use_id: null,
+					message: { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+					timestamp: Date.now(),
+				},
+			];
+		});
 		saveNeokaiActionMessageSpy = mock(() => 'row-id-mock');
 		emitSpy = mock(async () => {});
 		publishSpy = mock(async () => {});
@@ -77,6 +96,8 @@ describe('QueryLifecycleManager', () => {
 			messageQueue,
 			db: {
 				updateSession: updateSessionSpy,
+				updateMessageStatus: updateMessageStatusSpy,
+				getMessagesByStatus: getMessagesByStatusSpy,
 				saveNeokaiActionMessage: saveNeokaiActionMessageSpy,
 			} as unknown as Database,
 			messageHub: {
@@ -978,7 +999,7 @@ describe('QueryLifecycleManager', () => {
 			expect(setIdleSpy).toHaveBeenCalled();
 		});
 
-		test('does not reset again after timeout retry limit is reached', async () => {
+		test('marks enqueued message failed when timeout retry fails', async () => {
 			const timeoutError = new Error('Queue timeout');
 			timeoutError.name = 'MessageQueueTimeoutError';
 
@@ -989,11 +1010,12 @@ describe('QueryLifecycleManager', () => {
 			await new Promise((r) => setTimeout(r, 200));
 
 			expect(resetSpy).toHaveBeenCalledTimes(1);
-
-			await manager.startQueryAndEnqueue('msg-123', 'Hello');
-			await new Promise((r) => setTimeout(r, 50));
-
-			expect(resetSpy).toHaveBeenCalledTimes(1);
+			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-123'], 'failed');
+			expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
+				sessionId: 'test-session',
+				messageIds: ['db-msg-123'],
+				status: 'failed',
+			});
 			expect(setIdleSpy).toHaveBeenCalled();
 		});
 	});
