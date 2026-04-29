@@ -859,7 +859,8 @@ export function createOpenAIResponsesBridgeServer(
 
 			const model = resolveModelId(body.model, config.modelAliases);
 			const sessionId = extractSessionId(req);
-			let continuation = resolveContinuation(sessionId, body.messages, continuations);
+			const resolvedContinuation = resolveContinuation(sessionId, body.messages, continuations);
+			let continuation = resolvedContinuation;
 			const requestBody = buildResponsesRequest(body, model, continuation, buildOpts);
 			const upstreamUrl = `${baseUrl.replace(/\/$/, '')}/responses`;
 			let openAIResponse: Response;
@@ -917,7 +918,7 @@ export function createOpenAIResponsesBridgeServer(
 					parseOpenAIError(openAIResponse.status, text)
 				);
 			}
-			consumeContinuation(sessionId, continuation);
+			consumeContinuation(sessionId, resolvedContinuation);
 
 			const estimatedInputTokens = continuation
 				? estimateResponsesPayloadTokens(body, continuation.input)
