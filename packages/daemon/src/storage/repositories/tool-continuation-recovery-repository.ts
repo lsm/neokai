@@ -284,6 +284,18 @@ export class ToolContinuationRecoveryRepository {
 		return rows.map((row) => this.rowToInbox(row));
 	}
 
+	listPendingInboxForSession(sessionId: string): ContinuationInboxRecord[] {
+		const now = Date.now();
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM tool_continuation_inbox
+				 WHERE session_id = ? AND status = 'pending' AND expires_at >= ?
+				 ORDER BY created_at ASC, id ASC`
+			)
+			.all(sessionId, now) as Record<string, unknown>[];
+		return rows.map((row) => this.rowToInbox(row));
+	}
+
 	hasActiveToolUseForExecution(executionId: string, graceMs = 0): boolean {
 		const now = Date.now();
 		const row = this.db
