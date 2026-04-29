@@ -48,6 +48,9 @@ Set one of these environment variables before starting:
 |----------|-------------|
 | `ANTHROPIC_API_KEY` | Anthropic API key (recommended) |
 | `CLAUDE_CODE_OAUTH_TOKEN` | OAuth token from Claude Code |
+| `OPENROUTER_API_KEY` | OpenRouter API key for OpenRouter models |
+
+OpenRouter models use `provider/model` IDs such as `anthropic/claude-sonnet-4.6` and `openrouter/auto`. See [OpenRouter setup](docs/providers/openrouter-setup.md) for provider details and compatibility notes.
 
 ## Usage
 

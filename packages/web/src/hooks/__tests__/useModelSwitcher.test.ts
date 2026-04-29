@@ -135,6 +135,11 @@ describe('useModelSwitcher', () => {
 			expect(MODEL_FAMILY_ICONS.gemini).toBeDefined();
 			expect(typeof MODEL_FAMILY_ICONS.gemini).toBe('string');
 		});
+
+		it('should have openrouter icon for OpenRouter automatic routing', () => {
+			expect(MODEL_FAMILY_ICONS.openrouter).toBeDefined();
+			expect(typeof MODEL_FAMILY_ICONS.openrouter).toBe('string');
+		});
 	});
 
 	describe('getModelFamilyIcon', () => {
@@ -143,6 +148,7 @@ describe('useModelSwitcher', () => {
 			expect(getModelFamilyIcon('sonnet')).toBe(MODEL_FAMILY_ICONS.sonnet);
 			expect(getModelFamilyIcon('haiku')).toBe(MODEL_FAMILY_ICONS.haiku);
 			expect(getModelFamilyIcon('glm')).toBe(MODEL_FAMILY_ICONS.glm);
+			expect(getModelFamilyIcon('openrouter')).toBe(MODEL_FAMILY_ICONS.openrouter);
 			expect(getModelFamilyIcon('gpt')).toBe(MODEL_FAMILY_ICONS.gpt);
 			expect(getModelFamilyIcon('gemini')).toBe(MODEL_FAMILY_ICONS.gemini);
 		});
@@ -158,6 +164,7 @@ describe('useModelSwitcher', () => {
 			expect(getProviderLabel('anthropic')).toBe('Anthropic');
 			expect(getProviderLabel('glm')).toBe('GLM');
 			expect(getProviderLabel('minimax')).toBe('MiniMax');
+			expect(getProviderLabel('openrouter')).toBe('OpenRouter');
 			expect(getProviderLabel('anthropic-copilot')).toBe('Copilot');
 			expect(getProviderLabel('anthropic-codex')).toBe('Codex');
 		});
@@ -374,6 +381,64 @@ describe('useModelSwitcher', () => {
 			const claudeModel = result.current.availableModels.find((m) => m.id === 'claude-opus-4.6');
 			expect(claudeModel?.provider).toBe('anthropic-copilot');
 			expect(claudeModel?.family).toBe('opus');
+		});
+
+		it('should map OpenRouter models to OpenRouter provider and slash-based families', async () => {
+			const mockHub = {
+				request: vi
+					.fn()
+					.mockResolvedValueOnce({
+						currentModel: 'openrouter/auto',
+						modelInfo: null,
+					})
+					.mockResolvedValueOnce({
+						models: [
+							{
+								id: 'openrouter/auto',
+								display_name: 'OpenRouter Auto',
+								description: '',
+								provider: 'openrouter',
+							},
+							{
+								id: 'openai/gpt-5.4',
+								display_name: 'GPT-5.4',
+								description: '',
+								provider: 'openrouter',
+							},
+							{
+								id: 'google/gemini-3-pro-preview',
+								display_name: 'Gemini 3 Pro',
+								description: '',
+								provider: 'openrouter',
+							},
+							{
+								id: 'deepseek/deepseek-r1',
+								display_name: 'DeepSeek R1',
+								description: '',
+								provider: 'openrouter',
+							},
+						],
+					}),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+
+			const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+			await waitFor(() => {
+				expect(result.current.loading).toBe(false);
+			});
+
+			const auto = result.current.availableModels.find((m) => m.id === 'openrouter/auto');
+			const gpt = result.current.availableModels.find((m) => m.id === 'openai/gpt-5.4');
+			const gemini = result.current.availableModels.find(
+				(m) => m.id === 'google/gemini-3-pro-preview'
+			);
+			const deepseek = result.current.availableModels.find((m) => m.id === 'deepseek/deepseek-r1');
+			expect(auto?.provider).toBe('openrouter');
+			expect(auto?.family).toBe('openrouter');
+			expect(gpt?.family).toBe('gpt');
+			expect(gemini?.family).toBe('gemini');
+			expect(deepseek?.family).toBe('openrouter');
 		});
 
 		it('should sort models by family order', async () => {

@@ -222,6 +222,8 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
 				'*.openai.com',
 				'anthropic.com',
 				'*.anthropic.com',
+				'openrouter.ai',
+				'*.openrouter.ai',
 				// Google AI & Cloud services
 				'*.google.dev',
 				'*.google.com',
