@@ -424,6 +424,22 @@ describe('SessionStatusBar', () => {
 			expect(container.textContent).toContain('Haiku 4.5');
 		});
 
+		it('should filter model dropdown options by search query', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
+			fireEvent.click(modelButton);
+
+			const searchInput = container.querySelector('input[aria-label="Search models"]')!;
+			fireEvent.input(searchInput, { target: { value: 'opus' } });
+
+			expect(container.textContent).toContain('Opus 4.5');
+			expect(container.textContent).not.toContain('Sonnet 4.5');
+			expect(container.textContent).not.toContain('Haiku 4.5');
+		});
+
 		it('should show current model indicator', () => {
 			const { container } = render(<SessionStatusBar {...defaultProps} />);
 

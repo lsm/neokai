@@ -15,6 +15,8 @@ import {
 	groupModelsByProvider,
 	mapRawModelsToModelInfos,
 	filterModelsForPicker,
+	filterModelsBySearch,
+	useFilteredModelsForPicker,
 } from '../useModelSwitcher.ts';
 
 // Mock the connection manager
@@ -1222,5 +1224,77 @@ describe('filterModelsForPicker', () => {
 		]);
 		const result = filterModelsForPicker([anthropicModel, copilotModel], authMap);
 		expect(result).toHaveLength(2);
+	});
+});
+
+describe('filterModelsBySearch', () => {
+	const anthropicModel = {
+		...makeModel('claude-sonnet-4.6', 'anthropic'),
+		name: 'Claude Sonnet 4.6',
+		alias: 'sonnet-latest',
+	};
+	const openRouterModel = {
+		...makeModel('openai/gpt-5.4', 'openrouter'),
+		name: 'GPT-5.4',
+	};
+	const glmModel = {
+		...makeModel('glm-4-plus', 'glm'),
+		name: 'GLM 4 Plus',
+	};
+
+	it('returns all models for an empty search query', () => {
+		const models = [anthropicModel, openRouterModel, glmModel];
+		expect(filterModelsBySearch(models, '   ')).toBe(models);
+	});
+
+	it('filters by model name, id, alias, and provider label', () => {
+		const models = [anthropicModel, openRouterModel, glmModel];
+
+		expect(filterModelsBySearch(models, 'sonnet').map((m) => m.id)).toEqual(['claude-sonnet-4.6']);
+		expect(filterModelsBySearch(models, 'openai').map((m) => m.id)).toEqual(['openai/gpt-5.4']);
+		expect(filterModelsBySearch(models, 'latest').map((m) => m.id)).toEqual(['claude-sonnet-4.6']);
+		expect(filterModelsBySearch(models, 'OpenRouter').map((m) => m.id)).toEqual(['openai/gpt-5.4']);
+	});
+
+	it('matches all search terms across searchable fields', () => {
+		const models = [anthropicModel, openRouterModel, glmModel];
+
+		expect(filterModelsBySearch(models, 'openrouter gpt').map((m) => m.id)).toEqual([
+			'openai/gpt-5.4',
+		]);
+		expect(filterModelsBySearch(models, 'openrouter sonnet')).toEqual([]);
+	});
+});
+
+describe('useFilteredModelsForPicker', () => {
+	it('applies auth filtering before search filtering', () => {
+		const anthropicModel = {
+			...makeModel('claude-sonnet', 'anthropic'),
+			name: 'Claude Sonnet',
+		};
+		const copilotModel = {
+			...makeModel('copilot-sonnet', 'anthropic-copilot'),
+			name: 'Copilot Sonnet',
+		};
+		const codexModel = {
+			...makeModel('gpt-codex', 'anthropic-codex'),
+			name: 'Codex GPT',
+		};
+		const authMap = new Map([
+			['anthropic', makeAuth('anthropic', true)],
+			['anthropic-copilot', makeAuth('anthropic-copilot', false)],
+			['anthropic-codex', makeAuth('anthropic-codex', true)],
+		]);
+
+		const { result } = renderHook(() =>
+			useFilteredModelsForPicker(
+				[anthropicModel, copilotModel, codexModel],
+				authMap,
+				undefined,
+				'sonnet'
+			)
+		);
+
+		expect(result.current.map((model) => model.id)).toEqual(['claude-sonnet']);
 	});
 });

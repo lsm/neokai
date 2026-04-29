@@ -19,6 +19,7 @@ import { connectionManager } from '../../lib/connection-manager';
 import {
 	groupModelsByProvider,
 	filterModelsForPicker,
+	filterModelsBySearch,
 	getModelFamilyIcon,
 	mapRawModelsToModelInfos,
 	PROVIDER_LABELS,
@@ -112,10 +113,16 @@ function ModelPickerModal({
 	onSelect,
 	onClose,
 }: ModelPickerModalProps) {
+	const [searchQuery, setSearchQuery] = useState('');
 	const allModels = Array.from(groupedModels.values()).flat();
-	const remaining = allModels.filter(
+	const searchFilteredModels = filterModelsBySearch(allModels, searchQuery);
+	const remaining = searchFilteredModels.filter(
 		(m) => !excludeModels.some((e) => e.model === m.id && e.provider === m.provider)
 	);
+	const hasUnselectedModels = allModels.some(
+		(m) => !excludeModels.some((e) => e.model === m.id && e.provider === m.provider)
+	);
+	const visibleGroupedModels = groupModelsByProvider(remaining);
 
 	return (
 		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -127,8 +134,19 @@ function ModelPickerModal({
 					</button>
 				</div>
 
+				<div class="px-3 py-3 border-b border-dark-700">
+					<input
+						type="search"
+						value={searchQuery}
+						onInput={(e) => setSearchQuery(e.currentTarget.value)}
+						placeholder="Search models..."
+						aria-label="Search models"
+						class="w-full bg-dark-900 border border-dark-600 rounded px-2 py-1.5 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:border-blue-500"
+					/>
+				</div>
+
 				<div class="flex-1 overflow-y-auto py-2">
-					{Array.from(groupedModels.entries()).map(([provider, models]) => {
+					{Array.from(visibleGroupedModels.entries()).map(([provider, models]) => {
 						const authStatus = providerAuthStatuses.get(provider);
 						const isAuthenticated = authStatus?.isAuthenticated ?? false;
 
@@ -139,10 +157,6 @@ function ModelPickerModal({
 									{!isAuthenticated && <span class="text-gray-600 ml-1">(not authenticated)</span>}
 								</div>
 								{models.map((model) => {
-									if (
-										excludeModels.some((e) => e.model === model.id && e.provider === model.provider)
-									)
-										return null;
 									return (
 										<button
 											key={`${model.provider}:${model.id}`}
@@ -160,7 +174,9 @@ function ModelPickerModal({
 
 					{remaining.length === 0 && (
 						<div class="px-4 py-4 text-sm text-gray-500 text-center">
-							All available models are already selected
+							{searchQuery.trim() && hasUnselectedModels
+								? 'No matching models'
+								: 'All available models are already selected'}
 						</div>
 					)}
 				</div>
