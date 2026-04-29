@@ -116,13 +116,14 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
 		} else if (mid.startsWith('gemini-')) {
 			family = 'gemini';
 		}
+		const contextWindow = m.contextWindow ?? m.context_window;
 		return {
 			id: m.id,
 			name: m.display_name,
 			alias: m.alias || m.id,
 			family,
 			provider: m.provider || 'anthropic',
-			contextWindow: m.contextWindow ?? m.context_window ?? 200000,
+			contextWindow: typeof contextWindow === 'number' && contextWindow > 0 ? contextWindow : 0,
 			description: m.description || '',
 			releaseDate: '',
 			available: true,

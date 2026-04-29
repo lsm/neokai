@@ -35,7 +35,13 @@ import {
 	errorSSE,
 } from './translator.js';
 import { estimateAnthropicInputTokens } from './token-estimator.js';
-import { getModelContextWindow, type CodexBridgeModelId } from './model-context-windows.js';
+import {
+	getCodexBridgeModelInfos,
+	getModelAutoCompactTokenLimit,
+	getModelContextWindow,
+	requireModelContextWindow,
+	resolveCodexBridgeModelId,
+} from './model-context-windows.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('codex-bridge-server');
@@ -50,21 +56,13 @@ const logger = new Logger('codex-bridge-server');
 // a minimal Anthropic-compatible model listing that covers the models offered
 // by the parent AnthropicToCodexBridgeProvider.
 
-function bridgeModel({
-	id,
-	display_name,
-	created_at,
-}: {
-	id: CodexBridgeModelId;
-	display_name: string;
-	created_at: string;
-}) {
-	const contextWindow = getModelContextWindow(id)!;
-	const autoCompactTokenLimit = Math.floor(contextWindow * 0.9);
+function bridgeModel(model: ReturnType<typeof getCodexBridgeModelInfos>[number]) {
+	const contextWindow = requireModelContextWindow(model.id);
+	const autoCompactTokenLimit = getModelAutoCompactTokenLimit(model.id)!;
 	return {
-		id,
-		display_name,
-		created_at,
+		id: model.id,
+		display_name: model.name,
+		created_at: `${model.releaseDate}T00:00:00Z`,
 		max_input_tokens: contextWindow,
 		context_window: contextWindow,
 		max_context_window: contextWindow,
@@ -75,33 +73,7 @@ function bridgeModel({
 	};
 }
 
-const BRIDGE_MODELS = [
-	bridgeModel({
-		id: 'gpt-5.3-codex',
-		display_name: 'GPT-5.3 Codex',
-		created_at: '2025-12-01T00:00:00Z',
-	}),
-	bridgeModel({
-		id: 'gpt-5.4',
-		display_name: 'GPT-5.4',
-		created_at: '2026-01-01T00:00:00Z',
-	}),
-	bridgeModel({
-		id: 'gpt-5.5',
-		display_name: 'GPT-5.5',
-		created_at: '2026-04-01T00:00:00Z',
-	}),
-	bridgeModel({
-		id: 'gpt-5.4-mini',
-		display_name: 'GPT-5.4 Mini',
-		created_at: '2026-01-01T00:00:00Z',
-	}),
-	bridgeModel({
-		id: 'gpt-5.1-codex-mini',
-		display_name: 'GPT-5.1 Codex Mini',
-		created_at: '2026-01-01T00:00:00Z',
-	}),
-] as const;
+const BRIDGE_MODELS = getCodexBridgeModelInfos().map(bridgeModel);
 
 const MODELS_LIST_RESPONSE = {
 	data: BRIDGE_MODELS.map((m) => ({ ...m, type: 'model' as const })),
@@ -110,16 +82,8 @@ const MODELS_LIST_RESPONSE = {
 	last_id: BRIDGE_MODELS[BRIDGE_MODELS.length - 1].id,
 };
 
-const BRIDGE_MODEL_ALIASES = new Map<string, string>([
-	['codex', 'gpt-5.3-codex'],
-	['codex-5.4', 'gpt-5.4'],
-	['codex-latest', 'gpt-5.5'],
-	['codex-mini', 'gpt-5.4-mini'],
-	['codex-5.1-mini', 'gpt-5.1-codex-mini'],
-]);
-
 function resolveBridgeModelId(model: string): string {
-	return BRIDGE_MODEL_ALIASES.get(model) ?? model;
+	return resolveCodexBridgeModelId(model) ?? model;
 }
 
 function isClosedControllerError(error: unknown): boolean {

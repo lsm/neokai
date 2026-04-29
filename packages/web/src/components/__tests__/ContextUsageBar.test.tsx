@@ -274,11 +274,11 @@ describe('ContextUsageBar', () => {
 		});
 	});
 
-	describe('Default Max Context', () => {
-		it('should use 200000 as default max context', () => {
+	describe('Max Context Fallback', () => {
+		it('should use explicit max context when SDK capacity is unavailable', () => {
 			const usageWithoutCapacity: ContextInfo = {
 				totalUsed: 50000,
-				totalCapacity: 0, // Will use default
+				totalCapacity: 0,
 				percentUsed: 25,
 			};
 			const { container } = render(
@@ -287,6 +287,21 @@ describe('ContextUsageBar', () => {
 
 			const svgText = container.querySelector('svg text');
 			expect(svgText?.textContent).toBe('25');
+		});
+
+		it('should not invent a 200k capacity when no max context is provided', () => {
+			const usageWithoutCapacity: ContextInfo = {
+				totalUsed: 50000,
+				totalCapacity: 0,
+				percentUsed: 25,
+			};
+			const { container } = render(<ContextUsageBar contextUsage={usageWithoutCapacity} />);
+
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
+
+			expect(container.textContent).toContain('50,000 / 0');
+			expect(container.textContent).not.toContain('200,000');
 		});
 
 		it('should use custom max context when provided', () => {

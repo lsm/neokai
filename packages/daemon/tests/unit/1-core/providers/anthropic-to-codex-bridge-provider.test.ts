@@ -363,8 +363,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		});
 
 		it('starts separate bridge servers for different workspace paths', () => {
-			const cfgA = provider.buildSdkConfig('codex-1', { workspacePath: '/tmp/workspace-a' });
-			const cfgB = provider.buildSdkConfig('codex-1', { workspacePath: '/tmp/workspace-b' });
+			const cfgA = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/workspace-a' });
+			const cfgB = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/workspace-b' });
 
 			const urlA = cfgA.envVars.ANTHROPIC_BASE_URL as string;
 			const urlB = cfgB.envVars.ANTHROPIC_BASE_URL as string;
@@ -373,17 +373,17 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		});
 
 		it('reuses the same bridge server for the same workspace path', () => {
-			const cfg1 = provider.buildSdkConfig('codex-1', {
+			const cfg1 = provider.buildSdkConfig('gpt-5.3-codex', {
 				workspacePath: '/tmp/workspace-reuse',
 			});
-			const cfg2 = provider.buildSdkConfig('codex-1', {
+			const cfg2 = provider.buildSdkConfig('gpt-5.3-codex', {
 				workspacePath: '/tmp/workspace-reuse',
 			});
 			expect(cfg1.envVars.ANTHROPIC_BASE_URL).toBe(cfg2.envVars.ANTHROPIC_BASE_URL);
 		});
 
 		it('returns isAnthropicCompatible=true and a placeholder API key', () => {
-			const cfg = provider.buildSdkConfig('codex-1', { workspacePath: '/tmp/ws-compat' });
+			const cfg = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-compat' });
 			expect(cfg.isAnthropicCompatible).toBe(true);
 			expect(cfg.envVars.ANTHROPIC_API_KEY).toBe('codex-bridge-default');
 			expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
@@ -399,7 +399,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 				// Warm the cache as isAvailable() / getAuthStatus() would in QueryRunner
 				await p.getApiKey();
 				// buildSdkConfig() is synchronous but should use the cached key
-				const cfg = p.buildSdkConfig('codex-1', { workspacePath: '/tmp/file-auth-ws' });
+				const cfg = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/file-auth-ws' });
 				expect(cfg.isAnthropicCompatible).toBe(true);
 				expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 				p.stopAllBridgeServers();
@@ -421,7 +421,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 					fakeCodexFound
 				);
 				await p.getApiKey(); // populates cachedApiKey
-				const cfg = p.buildSdkConfig('codex-1', { workspacePath: '/tmp/empty-env-ws' });
+				const cfg = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/empty-env-ws' });
 				expect(cfg.isAnthropicCompatible).toBe(true);
 				expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 				p.stopAllBridgeServers();
@@ -468,9 +468,10 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.4');
 		});
 
-		it('falls back to gpt-5.3-codex for unknown model IDs', () => {
-			const cfg = provider.buildSdkConfig('unknown-model', { workspacePath: '/tmp/ws-unk' });
-			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.3-codex');
+		it('throws for unknown model IDs instead of silently falling back', () => {
+			expect(() =>
+				provider.buildSdkConfig('unknown-model', { workspacePath: '/tmp/ws-unk' })
+			).toThrow('Unknown Codex model: unknown-model');
 		});
 
 		it('no claude-* model name leaks through ANTHROPIC_DEFAULT_*_MODEL env vars', () => {

@@ -34,7 +34,7 @@ import {
 	type BridgeServer,
 	createBridgeServer,
 } from './codex-anthropic-bridge/server.js';
-import { getModelContextWindow } from './codex-anthropic-bridge/model-context-windows.js';
+import { getCodexBridgeModelInfos } from './codex-anthropic-bridge/model-context-windows.js';
 import { Logger } from '../logger.js';
 import * as fs from 'fs/promises';
 import { existsSync } from 'node:fs';
@@ -49,63 +49,7 @@ const logger = new Logger('anthropic-to-codex-bridge-provider');
 // Model catalogue
 // ---------------------------------------------------------------------------
 
-const ANTHROPIC_CODEX_MODELS: ModelInfo[] = [
-	{
-		id: 'gpt-5.3-codex',
-		name: 'GPT-5.3 Codex',
-		alias: 'codex',
-		family: 'gpt',
-		provider: 'anthropic-codex',
-		contextWindow: getModelContextWindow('gpt-5.3-codex')!,
-		description: 'GPT-5.3 Codex · Best for coding and complex reasoning',
-		releaseDate: '2025-12-01',
-		available: true,
-	},
-	{
-		id: 'gpt-5.4',
-		name: 'GPT-5.4',
-		alias: 'codex-5.4',
-		family: 'gpt',
-		provider: 'anthropic-codex',
-		contextWindow: getModelContextWindow('gpt-5.4')!,
-		description: 'GPT-5.4 · Frontier agentic coding model',
-		releaseDate: '2026-01-01',
-		available: true,
-	},
-	{
-		id: 'gpt-5.5',
-		name: 'GPT-5.5',
-		alias: 'codex-latest',
-		family: 'gpt',
-		provider: 'anthropic-codex',
-		contextWindow: getModelContextWindow('gpt-5.5')!,
-		description: 'GPT-5.5 · Latest frontier agentic coding model',
-		releaseDate: '2026-04-01',
-		available: true,
-	},
-	{
-		id: 'gpt-5.4-mini',
-		name: 'GPT-5.4 Mini',
-		alias: 'codex-mini',
-		family: 'gpt',
-		provider: 'anthropic-codex',
-		contextWindow: getModelContextWindow('gpt-5.4-mini')!,
-		description: 'GPT-5.4 Mini · Fast and efficient for simpler tasks',
-		releaseDate: '2026-01-01',
-		available: true,
-	},
-	{
-		id: 'gpt-5.1-codex-mini',
-		name: 'GPT-5.1 Codex Mini',
-		alias: 'codex-5.1-mini',
-		family: 'gpt',
-		provider: 'anthropic-codex',
-		contextWindow: getModelContextWindow('gpt-5.1-codex-mini')!,
-		description: 'GPT-5.1 Codex Mini · Fast and efficient for simpler tasks',
-		releaseDate: '2026-01-01',
-		available: true,
-	},
-];
+const ANTHROPIC_CODEX_MODELS = getCodexBridgeModelInfos();
 
 // ---------------------------------------------------------------------------
 // OAuth configuration (ChatGPT Plus / Pro)
@@ -523,6 +467,13 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
 		const workspace = sessionConfig?.workspacePath ?? process.cwd();
 		const sessionId = sessionConfig?.sessionId ?? 'default';
+		// Resolve alias (e.g. 'codex' → 'gpt-5.3-codex') so ANTHROPIC_DEFAULT_*_MODEL
+		// receives real Codex model IDs that the bridge can forward to the app-server.
+		const entry = ANTHROPIC_CODEX_MODELS.find((m) => m.alias === modelId || m.id === modelId);
+		if (!entry) {
+			throw new Error(`Unknown Codex model: ${modelId}`);
+		}
+		const resolvedId = entry.id;
 		let bridgeServer = this.bridgeServers.get(workspace);
 
 		if (!bridgeServer) {
@@ -544,11 +495,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 				`AnthropicToCodexBridgeProvider: bridge server started on port ${bridgeServer.port} for workspace=${workspace}`
 			);
 		}
-
-		// Resolve alias (e.g. 'codex' → 'gpt-5.3-codex') so ANTHROPIC_DEFAULT_*_MODEL
-		// receives real Codex model IDs that the bridge can forward to the app-server.
-		const entry = ANTHROPIC_CODEX_MODELS.find((m) => m.alias === modelId || m.id === modelId);
-		const resolvedId = entry?.id ?? 'gpt-5.3-codex';
 
 		return {
 			envVars: {

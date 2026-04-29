@@ -18,6 +18,7 @@ import {
 	setModelsCache,
 	getSupportedModelsFromQuery,
 	initializeModels,
+	getSessionModelInfo,
 } from '../../../../src/lib/model-service';
 import type { ModelInfo } from '@neokai/shared';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
@@ -184,6 +185,34 @@ describe('Model Service', () => {
 
 		it('should return null for unknown model', async () => {
 			const model = await getModelInfo('unknown-model', 'global', 'anthropic');
+			expect(model).toBeNull();
+		});
+
+		it('should resolve Codex static metadata when provider cache is unavailable', async () => {
+			clearModelsCache();
+
+			const model = await getModelInfo('gpt-5.5', 'global', 'anthropic-codex');
+
+			expect(model).not.toBeNull();
+			expect(model?.provider).toBe('anthropic-codex');
+			expect(model?.contextWindow).toBe(272000);
+		});
+
+		it('should resolve Codex aliases from static metadata', async () => {
+			clearModelsCache();
+
+			const model = await getModelInfo('codex-latest', 'global', 'anthropic-codex');
+
+			expect(model).not.toBeNull();
+			expect(model?.id).toBe('gpt-5.5');
+			expect(model?.contextWindow).toBe(272000);
+		});
+
+		it('should not resolve unknown Codex models to fallback metadata', async () => {
+			clearModelsCache();
+
+			const model = await getModelInfo('gpt-unknown', 'global', 'anthropic-codex');
+
 			expect(model).toBeNull();
 		});
 
@@ -602,6 +631,32 @@ describe('Model Service', () => {
 			const model = await getModelInfo('default', 'global', 'anthropic');
 			expect(model).not.toBeNull();
 			expect(model?.id).toBe('sonnet');
+		});
+	});
+
+	describe('getSessionModelInfo', () => {
+		it('should resolve model metadata using the session provider', async () => {
+			clearModelsCache();
+
+			const model = await getSessionModelInfo({
+				config: {
+					model: 'gpt-5.5',
+					provider: 'anthropic-codex',
+				},
+			} as any);
+
+			expect(model?.id).toBe('gpt-5.5');
+			expect(model?.contextWindow).toBe(272000);
+		});
+
+		it('should return null when the session provider is missing', async () => {
+			const model = await getSessionModelInfo({
+				config: {
+					model: 'gpt-5.5',
+				},
+			} as any);
+
+			expect(model).toBeNull();
 		});
 	});
 

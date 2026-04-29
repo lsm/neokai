@@ -19,6 +19,7 @@ import type { Logger } from '../logger';
 import type { SettingsManager } from '../settings-manager';
 import type { ContextTracker } from './context-tracker';
 import { ContextFetcher } from './context-fetcher';
+import { getSessionModelInfo } from '../model-service';
 
 /**
  * Context interface - what SDKRuntimeConfig needs from AgentSession
@@ -214,7 +215,8 @@ export class SDKRuntimeConfig {
 
 		try {
 			const fetcher = new ContextFetcher(session.id);
-			const contextInfo = await fetcher.fetch(queryObject);
+			const modelInfo = await getSessionModelInfo(session);
+			const contextInfo = await fetcher.fetch(queryObject, modelInfo);
 			if (!contextInfo) return;
 			contextTracker.updateWithDetailedBreakdown(contextInfo);
 			await daemonHub.emit('context.updated', {

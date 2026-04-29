@@ -10,11 +10,12 @@
  * This file now acts as a facade over the provider registry.
  */
 
-import type { ModelInfo } from '@neokai/shared';
+import type { ModelInfo, Session } from '@neokai/shared';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import { initializeProviders } from './providers/factory.js';
 import { getProviderRegistry } from './providers/registry.js';
 import type { Provider } from '@neokai/shared/provider';
+import { getCodexBridgeModelInfos } from './providers/codex-anthropic-bridge/model-context-windows.js';
 
 /**
  * Legacy model ID mappings to SDK model IDs
@@ -96,6 +97,15 @@ const FALLBACK_MODELS: ModelInfo[] = [
 		available: true,
 	},
 ];
+
+/**
+ * Static metadata for providers whose model catalog is known locally.
+ *
+ * This is used only for deterministic metadata lookup (current model display,
+ * context-window resolution) when live provider loading is unavailable. It does
+ * not make those providers available for use.
+ */
+const STATIC_MODEL_METADATA: ModelInfo[] = [...FALLBACK_MODELS, ...getCodexBridgeModelInfos()];
 
 /**
  * Merge provider-loaded models with FALLBACK_MODELS.
@@ -386,7 +396,20 @@ export async function getModelInfo(
 ): Promise<ModelInfo | null> {
 	const availableModels = getAvailableModels(cacheKey);
 	const providerModels = availableModels.filter((m) => m.provider === providerId);
-	return findInModels(providerModels, idOrAlias) ?? null;
+	const fromCache = findInModels(providerModels, idOrAlias);
+	if (fromCache) return fromCache;
+
+	const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
+	return findInModels(staticProviderModels, idOrAlias) ?? null;
+}
+
+export async function getSessionModelInfo(
+	session: Pick<Session, 'config'>,
+	cacheKey: string = 'global'
+): Promise<ModelInfo | null> {
+	const providerId = session.config.provider;
+	if (!providerId) return null;
+	return getModelInfo(session.config.model, cacheKey, providerId);
 }
 
 /**
