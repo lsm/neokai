@@ -98,7 +98,7 @@ export async function goToHomePage(page: Page): Promise<void> {
 	await page.goto('/');
 	await waitForWebSocketConnected(page);
 
-	// Click Chats in NavRail to show session list (Lobby shows RoomList by default)
+	// Click Chats in NavRail to show session list
 	const chatsButton = page.getByRole('button', { name: 'Chats', exact: true });
 	if (await chatsButton.isVisible().catch(() => false)) {
 		await chatsButton.click();
@@ -125,9 +125,8 @@ export async function showArchivedSessions(page: Page): Promise<void> {
  */
 export async function selectSessionInSidebar(page: Page, sessionId: string): Promise<void> {
 	// Navigate home to get into a known state with the Chats panel open.
-	// After archiving, the app redirects to Lobby (Rooms nav). If we try to click
-	// the Chats button while still on the archived session URL, the routing can
-	// reset navSection back to 'rooms'. Navigating home first avoids this race.
+	// After archiving, the app redirects to the home page. Navigating home first
+	// ensures the Chats panel is in a clean state before selecting the session.
 	await goToHomePage(page);
 
 	// Check if session is visible (archived sessions are hidden when showArchived=false)

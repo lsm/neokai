@@ -1,6 +1,8 @@
 # Room Runtime Spec (Current Model)
 
-Status: Active
+> ⚠️ **Retired feature**: Room is no longer an active product surface. The Room Runtime is not started and no Room RPC APIs are registered. This document is preserved for historical reference only.
+
+Status: Historical (retired 2026-04)
 Date: 2026-03-09
 
 ## Purpose

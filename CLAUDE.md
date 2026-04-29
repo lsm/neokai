@@ -143,7 +143,7 @@ Initialization order matters: Router → MessageHub, then Transport → MessageH
 
 ### Skills System
 
-The Skills system extends agent capabilities with slash commands, plugins, and MCP servers. Skills are configured globally at the application level and can be selectively enabled per room via room-level overrides.
+The Skills system extends agent capabilities with slash commands, plugins, and MCP servers. Skills are configured globally at the application level and are available to all sessions. Room-scoped skill override tables are retained in the schema for legacy database compatibility.
 
 **Data flow:**
 ```
@@ -160,8 +160,8 @@ All three sourceTypes are actively injected by `QueryOptionsBuilder`: `plugin` a
 - `packages/shared/src/types/skills.ts` — `AppSkill`, discriminated union configs (`BuiltinSkillConfig` / `PluginSkillConfig` / `McpServerSkillConfig`), `SkillValidationStatus`
 - `packages/daemon/src/lib/skills-manager.ts` — `SkillsManager`: CRUD, validation, built-in initialization (seeds `chrome-devtools-mcp`, `playwright`, `playwright-interactive` on startup)
 - `packages/daemon/src/lib/rpc-handlers/skill-handlers.ts` — RPC handlers: `skill.list`, `skill.get`, `skill.create`, `skill.update`, `skill.delete`, `skill.setEnabled`
-- `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts` — `skills.list` and `skills.byRoom` named queries for reactive frontend sync
-- `packages/daemon/src/lib/agent/query-options-builder.ts` — `buildPluginsFromSkills()`, `getMcpServersFromSkills()`, `getRoomDisabledSkillIds()` methods; room overrides only disable globally-enabled skills (cannot enable globally-disabled)
+- `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts` — `skills.list` named query for reactive frontend sync
+- `packages/daemon/src/lib/agent/query-options-builder.ts` — `buildPluginsFromSkills()`, `getMcpServersFromSkills()`, `getSpaceDisabledSkillIds()` methods; Space overrides only disable globally-enabled skills (cannot enable globally-disabled)
 - `packages/web/src/lib/skills-store.ts` — `SkillsStore`: signal-based frontend store with LiveQuery subscription (`skills.list`)
 
 See [`docs/features/skills.md`](docs/features/skills.md) for user-facing documentation.
@@ -295,7 +295,7 @@ E2E tests are **pure browser-based Playwright tests** simulating real end-user i
 
 **Allowed exceptions (infrastructure only):**
 - Session cleanup in `afterEach`/teardown via `hub.request('session.delete', ...)` — reliability matters for cleanup
-- Room create/delete in `beforeEach`/`afterEach` via `hub.request('room.create', ...)` / `hub.request('room.delete', ...)` — accepted infrastructure pattern for test isolation
+- Space setup/teardown in `beforeEach`/`afterEach` via `hub.request('space.create', ...)` / `hub.request('space.delete', ...)` — accepted infrastructure pattern for Space test isolation
 - Session ID extraction in `waitForSessionCreated()` helper — reads signals as fallback for URL-based extraction
 - `waitForWebSocketConnected()` — may check hub state as fallback alongside UI indicator
 - Global teardown (`global-teardown.ts`) — RPC-based session/worktree cleanup
@@ -314,7 +314,7 @@ make run-e2e                                        # run all tests
 
 **If using `make self` (port 9983) and want to run against that server:**
 ```bash
-make self-test TEST=tests/core/navigation-3-column.e2e.ts
+make self-test TEST=tests/features/space-navigation.e2e.ts
 ```
 
 **How the lock file works:**
@@ -330,9 +330,9 @@ make self-test TEST=tests/core/navigation-3-column.e2e.ts
 
 ### Space tool surface
 
-Every session whose `session.context.spaceId` is set — **not just** the Space chat agent — is attached to the `space-agent-tools` MCP server at startup. This means worker sessions, coder sessions, room_chat sessions opened in a Space, and any ad-hoc sessions created with a Space as their context can all query Space state, read/write gate data, signal tasks, etc.
+Every session whose `session.context.spaceId` is set — **not just** the Space chat agent — is attached to the `space-agent-tools` MCP server at startup. This means worker sessions, coder sessions, and any ad-hoc sessions created with a Space as their context can all query Space state, read/write gate data, signal tasks, etc.
 
-- **Wiring:** `SpaceRuntimeService.attachSpaceToolsToMemberSession(session)` runs for each member session (from `session.created` event + startup backfill). It uses `AgentSession.mergeRuntimeMcpServers({ 'space-agent-tools': … })` so other runtime-attached MCP servers (room tools, db-query, task-agent glue) are preserved.
+- **Wiring:** `SpaceRuntimeService.attachSpaceToolsToMemberSession(session)` runs for each member session (from `session.created` event + startup backfill). It uses `AgentSession.mergeRuntimeMcpServers({ 'space-agent-tools': … })` so other runtime-attached MCP servers (db-query, task-agent glue) are preserved.
 - **Not re-attached here:** `space_chat` sessions (`setupSpaceAgentSession` already attaches) and `space_task_agent` sessions (TaskAgentManager attaches them during config build — attaching again afterwards would race with its `setRuntimeMcpServers`).
 - **Permissions:** All gating (writer auth, autonomy level) happens inside the tool handlers themselves, so widening the surface is safe.
 - **No `myAgentName` for ordinary members:** gate writer-authorization for member sessions falls through to the autonomy path, matching the existing contract.
@@ -345,7 +345,9 @@ SDK messages for a session are published as a LiveQuery under the name `messages
 
 ## Mission System
 
-The Mission System (Goal V2) extends the room's goal tracking with structured, automated workflows. Use the following terminology consistently across code, tests, and documentation.
+The Mission System (Goal V2) extends Space task management with structured, automated workflows. Use the following terminology consistently across code, tests, and documentation.
+
+> **Legacy compatibility:** The Mission System implementation (GoalManager, goal handlers, cron utilities) remains in `packages/daemon/src/lib/room/` for schema continuity with existing databases. The `goals` and `mission_executions` tables are retained for legacy Room data compatibility.
 
 ### Mission Types
 
@@ -372,12 +374,12 @@ The Mission System (Goal V2) extends the room's goal tracking with structured, a
 
 ### Key Files
 
-- `packages/daemon/src/lib/room/managers/goal-manager.ts` — Core `GoalManager`: CRUD, metric recording, execution management, scheduler tick.
-- `packages/daemon/src/storage/repositories/goal-repository.ts` — SQLite persistence for goals and V2 columns.
-- `packages/daemon/src/lib/room/runtime/cron-utils.ts` — Cron parsing, next-run computation, and catch-up detection.
-- `packages/daemon/src/lib/rpc-handlers/goal-handlers.ts` — RPC handlers: `goal.create`, `goal.list`, `goal.update`, `goal.delete`, `goal.listExecutions`, etc.
-- `packages/web/src/components/room/GoalsEditor.tsx` — Mission list UI, create/edit form with type-specific fields, metric progress bars, execution history.
-- `packages/web/src/lib/room-store.ts` — `RoomStore.listExecutions()` — fetches execution history via `goal.listExecutions` RPC.
+- `packages/daemon/src/lib/room/managers/goal-manager.ts` — Core `GoalManager`: CRUD, metric recording, execution management, scheduler tick. Retained for legacy database compatibility.
+- `packages/daemon/src/storage/repositories/goal-repository.ts` — SQLite persistence for goals and V2 columns. Actively used by Mission creation/updates.
+- `packages/daemon/src/lib/room/runtime/cron-utils.ts` — Cron parsing, next-run computation, and catch-up detection. Retained for legacy database compatibility.
+- `packages/daemon/src/lib/rpc-handlers/goal-handlers.ts` — RPC handlers: `goal.create`, `goal.list`, `goal.update`, `goal.delete`, `goal.listExecutions`, etc. Retained for legacy inbox compatibility.
+- `packages/web/src/components/room/GoalsEditor.tsx` — Mission list UI, create/edit form with type-specific fields, metric progress bars, execution history. Part of the legacy Inbox compatibility UI.
+- `packages/web/src/lib/room-store.ts` — `RoomStore.listExecutions()` — fetches execution history via `goal.listExecutions` RPC. Part of the legacy Inbox compatibility UI.
 
 ### DB Tables
 

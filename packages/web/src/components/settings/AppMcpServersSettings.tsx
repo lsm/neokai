@@ -339,7 +339,7 @@ export function AppMcpServersSettings() {
 			<SettingsSection title="MCP Servers">
 				<div class="mb-4">
 					<p class="text-xs text-gray-500 mb-3">
-						MCP servers are available to any room or session. Configure external MCP servers here.
+						MCP servers are available to any space or session. Configure external MCP servers here.
 						For API keys and secrets, set them in your system environment (e.g.,{' '}
 						<code class="text-xs bg-dark-800 px-1 py-0.5 rounded">export MY_API_KEY=...</code>) and
 						reference them by name in the env vars field below. Values stored here are saved in
