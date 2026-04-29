@@ -14,7 +14,7 @@ export { GoalManager } from './managers/goal-manager';
 export { RoomRuntimeService } from './runtime/room-runtime-service';
 export type { RoomRuntimeServiceConfig } from './runtime/room-runtime-service';
 
-// Types - re-exported from @neokai/shared for convenience
+// Legacy Room compatibility types. Keep these off the active shared root export.
 export type {
 	Room,
 	RoomStatus,
@@ -35,4 +35,4 @@ export type {
 	RoomGoal,
 	GoalStatus,
 	GoalPriority,
-} from '@neokai/shared';
+} from '@neokai/shared/types/neo';

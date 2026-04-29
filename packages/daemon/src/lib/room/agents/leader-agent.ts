@@ -16,15 +16,8 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { AgentSessionInit } from '../../agent/agent-session';
-import type {
-	Room,
-	RoomGoal,
-	NeoTask,
-	SessionFeatures,
-	McpServerConfig,
-	AgentDefinition,
-	SubagentConfig,
-} from '@neokai/shared';
+import type { AgentDefinition, McpServerConfig, SessionFeatures } from '@neokai/shared';
+import type { NeoTask, Room, RoomGoal, SubagentConfig } from '@neokai/shared/types/neo';
 import type { GoalManager } from '../managers/goal-manager';
 import type { TaskManager } from '../managers/task-manager';
 import type { SessionGroupRepository } from '../state/session-group-repository';

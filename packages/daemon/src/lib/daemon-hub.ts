@@ -27,7 +27,7 @@ import type {
 	RewindResult,
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
-import type { Room, NeoTask } from '@neokai/shared';
+import type { NeoTask, Room, RoomGoal, RuntimeState } from '@neokai/shared/types/neo';
 
 /**
  * Compaction trigger type
@@ -226,7 +226,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	'room.runtime.stateChanged': {
 		sessionId: string; // 'room:${roomId}' for channel routing
 		roomId: string;
-		state: import('@neokai/shared').RuntimeState;
+		state: RuntimeState;
 	};
 	'room.task.update': {
 		sessionId: string; // 'room:${roomId}' for channel routing
@@ -364,7 +364,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		sessionId: string;
 		roomId: string;
 		goalId: string;
-		goal: import('@neokai/shared').RoomGoal;
+		goal: RoomGoal;
 	};
 	/** Emitted when a coder/general task completes without human review (semi-autonomous or no-pr mode) */
 	'goal.task.auto_completed': {
@@ -380,7 +380,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		sessionId: string;
 		roomId: string;
 		goalId: string;
-		goal?: Partial<import('@neokai/shared').RoomGoal>;
+		goal?: Partial<RoomGoal>;
 	};
 	'goal.progressUpdated': {
 		sessionId: string;
@@ -392,7 +392,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		sessionId: string;
 		roomId: string;
 		goalId: string;
-		goal: import('@neokai/shared').RoomGoal;
+		goal: RoomGoal;
 	};
 
 	// Lobby Agent events (for external message processing)

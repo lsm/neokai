@@ -1,5 +1,8 @@
 /**
- * Room RPC Handlers
+ * Legacy Room RPC Handlers
+ *
+ * Preserved for old database/schema compatibility and direct legacy tests only.
+ * `setupRPCHandlers` no longer registers this public Room API surface.
  *
  * RPC handlers for room operations:
  * - room.create - Create a room
@@ -13,7 +16,8 @@
  * - agents.cli.list - List detected CLI agents
  */
 
-import type { MessageHub, WorkspacePath, CreateRoomParams } from '@neokai/shared';
+import type { MessageHub } from '@neokai/shared';
+import type { WorkspacePath, CreateRoomParams } from '@neokai/shared/types/neo';
 import type { DaemonHub } from '../daemon-hub';
 import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';

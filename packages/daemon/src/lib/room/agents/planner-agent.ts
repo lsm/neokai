@@ -22,16 +22,8 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { AgentSessionInit } from '../../agent/agent-session';
-import type {
-	Room,
-	RoomGoal,
-	NeoTask,
-	SessionFeatures,
-	McpServerConfig,
-	TaskPriority,
-	AgentType,
-	AgentDefinition,
-} from '@neokai/shared';
+import type { AgentDefinition, McpServerConfig, SessionFeatures } from '@neokai/shared';
+import type { AgentType, NeoTask, Room, RoomGoal, TaskPriority } from '@neokai/shared/types/neo';
 
 const DEFAULT_PLANNER_MODEL = 'claude-sonnet-4-6';
 

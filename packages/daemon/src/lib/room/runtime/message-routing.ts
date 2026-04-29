@@ -6,7 +6,7 @@
  */
 
 import type { TerminalStateKind } from '../state/session-observer';
-import type { NeoTask } from '@neokai/shared';
+import type { NeoTask } from '@neokai/shared/types/neo';
 
 export interface WorkerOutputEnvelopeParams {
 	/** Current feedback iteration number */

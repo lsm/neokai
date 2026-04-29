@@ -13,7 +13,7 @@ import type {
 	CreateTaskParams,
 	UpdateTaskParams,
 	TaskRestriction,
-} from '@neokai/shared';
+} from '@neokai/shared/types/neo';
 import type { SQLiteValue } from '../types';
 import type { ReactiveDatabase } from '../reactive-database';
 import type { ShortIdAllocator } from '../../lib/short-id-allocator';

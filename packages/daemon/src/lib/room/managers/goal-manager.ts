@@ -19,13 +19,13 @@ import { TaskRepository } from '../../../storage/repositories/task-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { ShortIdAllocator } from '../../short-id-allocator';
 import type {
-	RoomGoal,
-	GoalStatus,
 	GoalPriority,
+	GoalStatus,
+	MetricHistoryEntry,
 	MissionExecution,
 	MissionMetric,
-	MetricHistoryEntry,
-} from '@neokai/shared';
+	RoomGoal,
+} from '@neokai/shared/types/neo';
 import { getNextRunAt, getSystemTimezone, isValidCronExpression } from '../runtime/cron-utils';
 
 export interface MetricTargetResult {

@@ -14,20 +14,17 @@
  * All handlers are idempotent. Tick mutex prevents concurrent execution.
  */
 
-import {
-	type Room,
-	type NeoTask,
-	type RoomGoal,
-	type MessageHub,
-	type TaskPriority,
-	type AgentType,
-	type RuntimeState,
-	type GlobalSettings,
-	type FallbackModelEntry,
-	type TaskRestriction,
-	MAX_CONCURRENT_GROUPS_LIMIT,
-	MAX_REVIEW_ROUNDS_LIMIT,
-} from '@neokai/shared';
+import { type MessageHub, type GlobalSettings, type FallbackModelEntry } from '@neokai/shared';
+import { MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from '@neokai/shared/types/neo';
+import type {
+	AgentType,
+	NeoTask,
+	Room,
+	RoomGoal,
+	RuntimeState,
+	TaskPriority,
+	TaskRestriction,
+} from '@neokai/shared/types/neo';
 import type {
 	SessionGroupRepository,
 	SessionGroup,
@@ -95,7 +92,7 @@ const DEFAULT_MAX_PLANNING_RETRIES = 0;
  */
 const STALE_TASK_STATUSES = new Set<string>(['completed', 'cancelled', 'archived']);
 
-export type { RuntimeState } from '@neokai/shared';
+export type { RuntimeState } from '@neokai/shared/types/neo';
 
 export interface WorkerMessage {
 	/** DB row ID in sdk_messages — used to track last_forwarded_message_id */

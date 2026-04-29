@@ -2,7 +2,7 @@
  * Tests for InboxStore
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { TaskSummary } from '@neokai/shared';
+import type { TaskSummary } from '@neokai/shared/types/neo';
 import type { InboxTask } from './inbox-store.ts';
 
 const { mockGetHub, mockToastError } = vi.hoisted(() => ({

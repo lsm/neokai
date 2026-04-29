@@ -13,13 +13,13 @@ import { TaskRepository } from '../../../storage/repositories/task-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { ShortIdAllocator } from '../../short-id-allocator';
 import type {
-	NeoTask,
-	TaskStatus,
-	TaskPriority,
-	TaskFilter,
-	CreateTaskParams,
 	AgentType,
-} from '@neokai/shared';
+	CreateTaskParams,
+	NeoTask,
+	TaskFilter,
+	TaskPriority,
+	TaskStatus,
+} from '@neokai/shared/types/neo';
 
 /**
  * Valid task status transitions
