@@ -369,6 +369,9 @@ const EXCLUDED_TABLE_NAMES: string[] = [
 	'task_group_events',
 	// Node execution tracking — transient per-run agent state, not useful for ad-hoc queries
 	'node_executions',
+	// Tool continuation recovery — internal bridge/runtime recovery state for orphaned tool_result chunks
+	'tool_continuation_recovery',
+	'tool_continuation_inbox',
 	// Pending agent messages — internal queue-until-active infrastructure for Task Agent
 	// send_message delivery; flushed by TaskAgentManager when target sessions activate.
 	'pending_agent_messages',

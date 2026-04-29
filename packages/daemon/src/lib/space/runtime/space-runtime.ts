@@ -276,7 +276,9 @@ export class SpaceRuntime {
 		this.completionDetector = config.completionDetector ?? new CompletionDetector(config.taskRepo);
 		this.sdkMessageRepo = config.sdkMessageRepo ?? null;
 		this.toolContinuationRepo = new ToolContinuationRecoveryRepository(config.db);
-		this.toolContinuationRepo.ensureSchema();
+		if (hasSqlExec(config.db)) {
+			this.toolContinuationRepo.ensureSchema();
+		}
 	}
 
 	/**
@@ -2730,4 +2732,8 @@ function parseNodeExecutionData(value: unknown): Record<string, unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasSqlExec(value: unknown): value is { exec: (sql: string) => void } {
+	return isRecord(value) && typeof value.exec === 'function';
 }
