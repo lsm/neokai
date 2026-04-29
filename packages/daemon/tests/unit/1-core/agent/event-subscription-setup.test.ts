@@ -185,7 +185,10 @@ describe('EventSubscriptionSetup', () => {
 				const callback = registeredCallbacks.get('agent.resetRequest')!;
 				await callback({ sessionId: 'test-session-id', restartQuery: false });
 
-				expect(mockContext.resetQuery).toHaveBeenCalledWith({ restartQuery: false });
+				expect(mockContext.resetQuery).toHaveBeenCalledWith({
+					restartQuery: false,
+					hardReset: true,
+				});
 				expect(emitSpy).toHaveBeenCalledWith('agent.reset', {
 					sessionId: 'test-session-id',
 					success: true,
@@ -199,7 +202,10 @@ describe('EventSubscriptionSetup', () => {
 				const callback = registeredCallbacks.get('agent.resetRequest')!;
 				await callback({ sessionId: 'test-session-id' });
 
-				expect(mockContext.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
+				expect(mockContext.resetQuery).toHaveBeenCalledWith({
+					restartQuery: true,
+					hardReset: true,
+				});
 			});
 
 			it('should handle reset errors', async () => {
