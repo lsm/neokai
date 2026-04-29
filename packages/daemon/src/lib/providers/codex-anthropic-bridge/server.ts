@@ -14,6 +14,7 @@
 import { BridgeSession, AppServerConn, type AppServerAuth } from './process-manager.js';
 
 export type { AppServerAuth } from './process-manager.js';
+import { Database as BunDatabase } from 'bun:sqlite';
 import {
 	type AnthropicRequest,
 	type AnthropicErrorType,
@@ -43,6 +44,7 @@ import {
 	resolveCodexBridgeModelId,
 } from './model-context-windows.js';
 import { Logger } from '../../logger.js';
+import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.js';
 
 const logger = new Logger('codex-bridge-server');
 
@@ -120,6 +122,7 @@ export function createAnthropicError(
 /** Default TTL before an unresolved tool-call session is abandoned (5 min). */
 export const DEFAULT_TOOL_SESSION_TTL_MS = 5 * 60 * 1000;
 const MAX_SUBPROCESS_RETRIES = 1;
+const MAX_ORPHANED_TOOL_RESULT_409_RETRIES = 3;
 
 // ---------------------------------------------------------------------------
 // Session state for tool-call round-trips
@@ -213,7 +216,8 @@ export async function drainToSSE(
 	onTurnDone: () => void,
 	onError?: () => void,
 	initialInputTokens = 0,
-	returnUncommittedSubprocessCrash = true
+	returnUncommittedSubprocessCrash = true,
+	recoveryRepo?: ToolContinuationRecoveryRepository
 ): Promise<DrainResult> {
 	const enc = new TextEncoder();
 	const send = (s: string) => controller.enqueue(enc.encode(s));
@@ -298,6 +302,10 @@ export async function drainToSSE(
 				const callId = event.callId;
 				const cleanupTimer = setTimeout(() => {
 					logger.warn(`codex-bridge: TTL expired, killing abandoned session callId=${callId}`);
+					recoveryRepo?.markWaitingRebind(
+						callId,
+						'tool_result did not arrive before bridge TTL; execution moved to waiting_rebind'
+					);
 					session.kill();
 					toolSessions.delete(callId);
 				}, ttlMs);
@@ -310,6 +318,14 @@ export async function drainToSSE(
 					sessionId,
 					cleanupTimer,
 				});
+				try {
+					recoveryRepo?.recordToolUse({ toolUseId: callId, sessionId, ttlMs });
+				} catch (err) {
+					logger.warn(
+						`codex-bridge: failed to persist tool_use recovery mapping callId=${callId}:`,
+						err
+					);
+				}
 				suspendedCallId = callId;
 
 				logger.debug(`codex-bridge: tool_call suspended callId=${callId}`);
@@ -414,6 +430,8 @@ export type BridgeServerConfig = {
 	cwd: string;
 	/** Milliseconds before an unresolved tool-call session is abandoned (default 5 min). */
 	toolSessionTtlMs?: number;
+	/** SQLite DB path for durable tool continuation recovery. Defaults to DB_PATH. */
+	dbPath?: string;
 };
 
 export type BridgeServer = {
@@ -427,6 +445,16 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 	/** Persistent Codex sessions across multiple conversation turns. */
 	const persistentSessions = new Map<string, PersistentSession>();
 	const ttlMs = config.toolSessionTtlMs ?? DEFAULT_TOOL_SESSION_TTL_MS;
+	const recoveryDbPath = config.dbPath ?? process.env.DB_PATH;
+	const recoveryDb = recoveryDbPath ? new BunDatabase(recoveryDbPath) : null;
+	const recoveryRepo = recoveryDb ? new ToolContinuationRecoveryRepository(recoveryDb) : null;
+	if (recoveryRepo) {
+		try {
+			recoveryRepo.ensureSchema();
+		} catch (err) {
+			logger.warn('codex-bridge: failed to initialize tool continuation recovery store:', err);
+		}
+	}
 
 	/** Helper: schedule idle cleanup for a persistent session. */
 	function scheduleIdle(sessionId: string): ReturnType<typeof setTimeout> {
@@ -579,6 +607,7 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 					toolSessions.delete(tr.toolUseId);
 					// Cancel the TTL timer — session is being resumed normally
 					clearTimeout(stored.cleanupTimer);
+					recoveryRepo?.markConsumed(tr.toolUseId);
 					// Provide the tool result — this unblocks the Codex read loop for this call
 					stored.provideResult(tr.text);
 					if (!primaryStored) {
@@ -594,10 +623,49 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 					if (shouldCleanupOrphanedContinuation(sessionId, toolResults)) {
 						cleanupPersistentSession(sessionId, 'orphaned tool_result continuation');
 					}
+					let recoveryMessage =
+						'Tool continuation expired or was already consumed. The Codex turn was reset; resend your message to continue.';
+					let recoveryAction = 'unmapped';
+					for (const tr of toolResults) {
+						try {
+							const mappingBefore = recoveryRepo?.getToolUse(tr.toolUseId) ?? null;
+							const reason = mappingBefore
+								? 'orphaned tool_result queued for deterministic recovery'
+								: 'orphaned tool_result has no durable mapping';
+							recoveryRepo?.queueContinuation({
+								toolUseId: tr.toolUseId,
+								sessionId,
+								requestBody: body,
+								reason,
+								ttlMs,
+							});
+							const mappingAfter = recoveryRepo?.increment409(tr.toolUseId, reason) ?? null;
+							if (mappingAfter && Date.now() <= mappingAfter.expiresAt) {
+								if (mappingAfter.attempts409 >= MAX_ORPHANED_TOOL_RESULT_409_RETRIES) {
+									const failReason =
+										`orphaned tool_result circuit breaker tripped after ` +
+										`${mappingAfter.attempts409} HTTP 409 retries`;
+									recoveryRepo?.failToolUse(tr.toolUseId, failReason);
+									recoveryAction = 'fail_forward';
+									recoveryMessage = failReason;
+								} else {
+									recoveryAction = 'waiting_rebind';
+									recoveryMessage =
+										`Tool continuation queued for recovery: execution=${mappingAfter.executionId ?? 'unknown'} ` +
+										`attempt=${mappingAfter.attempts409}/${MAX_ORPHANED_TOOL_RESULT_409_RETRIES}`;
+								}
+							}
+						} catch (err) {
+							logger.warn(
+								`codex-bridge: failed to queue orphaned tool_result tool_use_id=${tr.toolUseId}:`,
+								err
+							);
+						}
+					}
 					return createAnthropicError(
 						409,
 						'api_error',
-						'Tool continuation expired or was already consumed. The Codex turn was reset; resend your message to continue.'
+						`${recoveryMessage} [recovery_action=${recoveryAction}]`
 					);
 				}
 
@@ -633,7 +701,8 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 								}
 							},
 							estimatedInputTokens,
-							false
+							false,
+							recoveryRepo ?? undefined
 						);
 					},
 				});
@@ -778,7 +847,9 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 								capturedSessionId,
 								onTurnDone,
 								onError,
-								estimatedInputTokens
+								estimatedInputTokens,
+								true,
+								recoveryRepo ?? undefined
 							);
 
 							if (result.type === 'completed' || result.type === 'tool_call_suspended') {
@@ -844,6 +915,10 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			// and kill the underlying codex app-server subprocess.
 			for (const [callId, stored] of toolSessions) {
 				clearTimeout(stored.cleanupTimer);
+				recoveryRepo?.markWaitingRebind(
+					callId,
+					'bridge server stopped while tool_result was in-flight'
+				);
 				stored.session.kill();
 				toolSessions.delete(callId);
 				logger.debug(`codex-bridge: cleaned up suspended session callId=${callId} on stop`);
@@ -855,6 +930,7 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				persistentSessions.delete(sessionId);
 				logger.debug(`codex-bridge: cleaned up persistent session ${sessionId} on stop`);
 			}
+			recoveryDb?.close();
 			server.stop();
 		},
 	};

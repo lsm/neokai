@@ -24,7 +24,8 @@ import type { NodeExecution, NodeExecutionStatus, UpdateNodeExecutionParams } fr
  *
  * Lifecycle:
  *   pending     → in_progress, cancelled
- *   in_progress → idle, blocked, cancelled
+ *   in_progress → idle, waiting_rebind, blocked, cancelled
+ *   waiting_rebind → pending, in_progress, blocked, cancelled
  *   idle        → in_progress (reactivation)
  *   blocked     → in_progress (retry), cancelled
  *   cancelled   → in_progress (retry)
@@ -32,7 +33,8 @@ import type { NodeExecution, NodeExecutionStatus, UpdateNodeExecutionParams } fr
 export const VALID_NODE_EXECUTION_TRANSITIONS: Record<NodeExecutionStatus, NodeExecutionStatus[]> =
 	{
 		pending: ['in_progress', 'cancelled'],
-		in_progress: ['idle', 'blocked', 'cancelled'],
+		in_progress: ['idle', 'waiting_rebind', 'blocked', 'cancelled'],
+		waiting_rebind: ['pending', 'in_progress', 'blocked', 'cancelled'],
 		idle: ['in_progress'], // Reactivation — allows re-running a completed node
 		blocked: ['in_progress', 'cancelled'],
 		cancelled: ['in_progress'], // Retry

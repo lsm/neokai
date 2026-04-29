@@ -43,6 +43,7 @@ import { selectWorkflow } from './workflow-selector';
 import { Logger } from '../../logger';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
+import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
 import { CompletionDetector } from './completion-detector';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
@@ -268,11 +269,16 @@ export class SpaceRuntime {
 
 	/** In-memory store of resolved channels per run ID. Replaces run.config._resolvedChannels. */
 	private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
+	private readonly toolContinuationRepo: ToolContinuationRecoveryRepository;
 
 	constructor(private config: SpaceRuntimeConfig) {
 		this.notificationSink = config.notificationSink ?? new NullNotificationSink();
 		this.completionDetector = config.completionDetector ?? new CompletionDetector(config.taskRepo);
 		this.sdkMessageRepo = config.sdkMessageRepo ?? null;
+		this.toolContinuationRepo = new ToolContinuationRecoveryRepository(config.db);
+		if (hasSqlExec(config.db)) {
+			this.toolContinuationRepo.ensureSchema();
+		}
 	}
 
 	/**
@@ -910,6 +916,10 @@ export class SpaceRuntime {
 		if (this.tickInFlight) return;
 		this.tickInFlight = true;
 		try {
+			if (hasSqlExec(this.config.db)) {
+				this.toolContinuationRepo.markExpired();
+			}
+
 			if (!this.rehydrated) {
 				await this.rehydrateExecutors();
 				// Run a stalled-run recovery pass right after rehydrate so the
@@ -1401,7 +1411,11 @@ export class SpaceRuntime {
 		// alone. Recovery only intervenes when the runtime has nothing it
 		// can act on (every execution is `idle` or `cancelled`).
 		const hasDriveableExecution = executions.some(
-			(ex) => ex.status === 'pending' || ex.status === 'in_progress' || ex.status === 'blocked'
+			(ex) =>
+				ex.status === 'pending' ||
+				ex.status === 'in_progress' ||
+				ex.status === 'waiting_rebind' ||
+				ex.status === 'blocked'
 		);
 		if (hasDriveableExecution) return 'skipped';
 
@@ -1796,6 +1810,9 @@ export class SpaceRuntime {
 				return;
 			}
 
+			await this.handleWaitingRebindExecutions(runId, run, meta.spaceId, canonicalTask);
+			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+
 			// Step 1.5: Auto-complete alive agents that have exceeded their timeout.
 			// Transitions to 'idle' — the same state as a naturally completing session.
 			//
@@ -1816,6 +1833,14 @@ export class SpaceRuntime {
 				const referenceTime = execution.startedAt ?? execution.createdAt;
 				const elapsedMs = now - referenceTime;
 				if (elapsedMs <= timeoutMs) continue;
+				const toolGraceMs = Math.min(timeoutMs, 60_000);
+				if (this.toolContinuationRepo.hasActiveToolUseForExecution(execution.id, toolGraceMs)) {
+					const reason =
+						`Agent exceeded timeout with an in-flight tool call; moved to waiting_rebind ` +
+						`for ${Math.round(toolGraceMs / 1000)}s continuation recovery grace`;
+					this.toolContinuationRepo.markExecutionWaitingRebind(execution.id, reason);
+					continue;
+				}
 
 				// Part D guard: spare sessions waiting for user input. The agent is
 				// not stuck — a human is.
@@ -2051,6 +2076,120 @@ export class SpaceRuntime {
 			// Agents drive workflow progression via send_message and
 			// `task.reportedStatus`.
 			return;
+		}
+	}
+
+	private async handleWaitingRebindExecutions(
+		runId: string,
+		run: SpaceWorkflowRun,
+		spaceId: string,
+		canonicalTask: SpaceTask
+	): Promise<void> {
+		const waitingExecutions = this.config.nodeExecutionRepo
+			.listByWorkflowRun(runId)
+			.filter((execution) => execution.status === 'waiting_rebind');
+		if (waitingExecutions.length === 0) return;
+
+		for (const execution of waitingExecutions) {
+			const data = parseNodeExecutionData(execution.data);
+			const recoveryData = isRecord(data.orphanedToolContinuation)
+				? data.orphanedToolContinuation
+				: {};
+			const retryCount = typeof recoveryData.retryCount === 'number' ? recoveryData.retryCount : 0;
+			const pendingInbox = this.toolContinuationRepo.listPendingInboxForExecution(execution.id);
+			const hasActiveTool = this.toolContinuationRepo.hasActiveToolUseForExecution(execution.id);
+
+			if (pendingInbox.length > 0 && retryCount < 1) {
+				const reason =
+					pendingInbox[0]?.recoveryReason ??
+					'orphaned tool_result continuation queued for deterministic retry';
+				data.orphanedToolContinuation = {
+					...recoveryData,
+					state: 'rebound',
+					retryCount: retryCount + 1,
+					reason,
+					queuedContinuations: pendingInbox.length,
+					updatedAt: Date.now(),
+				};
+				this.toolContinuationRepo.markInboxReboundForExecution(
+					execution.id,
+					'queued orphaned tool_result rebound by restarting workflow node execution'
+				);
+				this.config.nodeExecutionRepo.update(execution.id, {
+					status: 'pending',
+					agentSessionId: null,
+					result: null,
+					data,
+					startedAt: null,
+					completedAt: null,
+				});
+				if (run.status !== 'in_progress') {
+					await this.transitionRunStatusAndEmit(run.id, 'in_progress');
+				}
+				if (canonicalTask.status === 'blocked' || canonicalTask.status === 'open') {
+					await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+						status: 'in_progress',
+						completedAt: null,
+						result: null,
+						blockReason: null,
+					});
+				}
+				await this.safeNotify({
+					kind: 'task_retry',
+					spaceId,
+					taskId: canonicalTask.id,
+					runId,
+					originalReason: reason,
+					attemptNumber: retryCount + 1,
+					maxAttempts: 1,
+					timestamp: new Date().toISOString(),
+				});
+				log.info(
+					`SpaceRuntime: rebound orphaned tool_result continuation for execution ${execution.id}; ` +
+						`reset to pending for retry ${retryCount + 1}/1`
+				);
+				continue;
+			}
+
+			if (hasActiveTool) {
+				continue;
+			}
+
+			const reason =
+				retryCount >= 1
+					? 'orphaned tool_result recovery exhausted its single automatic retry'
+					: 'orphaned tool_result recovery expired before a continuation arrived';
+			data.orphanedToolContinuation = {
+				...recoveryData,
+				state: 'failed',
+				retryCount,
+				reason,
+				updatedAt: Date.now(),
+			};
+			this.config.nodeExecutionRepo.update(execution.id, {
+				status: 'blocked',
+				agentSessionId: null,
+				result: reason,
+				data,
+				completedAt: Date.now(),
+			});
+			await this.transitionRunStatusAndEmit(run.id, 'blocked');
+			await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+				status: 'blocked',
+				result: reason,
+				blockReason: 'execution_failed',
+				completedAt: null,
+			});
+			await this.safeNotify({
+				kind: 'workflow_run_blocked',
+				spaceId,
+				runId,
+				reason,
+				timestamp: new Date().toISOString(),
+			});
+			log.warn(
+				`SpaceRuntime: failed orphaned tool_result recovery for execution ${execution.id}: ${reason}`
+			);
 		}
 	}
 
@@ -2581,4 +2720,24 @@ export class SpaceRuntime {
 		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
 		return workflow?.channels ?? [];
 	}
+}
+
+function parseNodeExecutionData(value: unknown): Record<string, unknown> {
+	if (!value) return {};
+	if (isRecord(value)) return { ...value };
+	if (typeof value !== 'string') return {};
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		return isRecord(parsed) ? parsed : {};
+	} catch {
+		return {};
+	}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasSqlExec(value: unknown): value is { exec: (sql: string) => void } {
+	return isRecord(value) && typeof value.exec === 'function';
 }
