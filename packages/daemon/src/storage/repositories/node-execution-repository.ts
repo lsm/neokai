@@ -262,12 +262,13 @@ export class NodeExecutionRepository {
 				`SELECT * FROM node_executions
 				 WHERE agent_session_id = ?
 				 ORDER BY
-				   CASE status
-				     WHEN 'in_progress' THEN 0
-				     WHEN 'blocked' THEN 1
-				     WHEN 'pending' THEN 2
-				     ELSE 3
-				   END,
+					   CASE status
+					     WHEN 'in_progress' THEN 0
+					     WHEN 'waiting_rebind' THEN 1
+					     WHEN 'blocked' THEN 2
+					     WHEN 'pending' THEN 3
+					     ELSE 4
+					   END,
 				   updated_at DESC,
 				   created_at DESC,
 				   id DESC`

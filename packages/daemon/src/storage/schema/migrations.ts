@@ -523,6 +523,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   app_mcp_servers, skills, and enablement override tables. Delete those
 	//   legacy rows so settings surfaces no longer display them.
 	runMigration108(db);
+
+	// Migration 109: Durable Codex tool continuation recovery. Adds
+	//   `waiting_rebind` to node_executions and creates persistent tool_use →
+	//   execution mapping plus a per-execution continuation inbox.
+	runMigration109(db);
 }
 
 /**
@@ -7561,4 +7566,123 @@ export function runMigration108(db: BunDatabase): void {
 			}
 		}
 	}
+}
+
+/**
+ * Migration 109: Durable Codex tool continuation recovery.
+ *
+ * Adds a recoverable `waiting_rebind` node execution state and creates durable
+ * bridge tables used to map `tool_use_id` values back to workflow executions
+ * after session timeout/restart races.
+ */
+export function runMigration109(db: BunDatabase): void {
+	if (
+		tableExists(db, 'node_executions') &&
+		!statusCheckContains(db, 'node_executions', 'waiting_rebind')
+	) {
+		db.exec('PRAGMA foreign_keys = OFF');
+		db.exec('BEGIN');
+		try {
+			db.exec(`
+				CREATE TABLE node_executions_m109_new (
+					id TEXT PRIMARY KEY,
+					workflow_run_id TEXT NOT NULL,
+					workflow_node_id TEXT NOT NULL,
+					agent_name TEXT NOT NULL,
+					agent_id TEXT,
+					agent_session_id TEXT,
+					status TEXT NOT NULL DEFAULT 'pending'
+						CHECK(status IN ('pending', 'in_progress', 'idle', 'done', 'waiting_rebind', 'blocked', 'cancelled')),
+					result TEXT,
+					data TEXT,
+					created_at INTEGER NOT NULL,
+					started_at INTEGER,
+					completed_at INTEGER,
+					updated_at INTEGER NOT NULL,
+					FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE,
+					FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE SET NULL
+				)
+			`);
+
+			db.exec(`
+				INSERT INTO node_executions_m109_new
+				  (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+				   agent_session_id, status, result, data, created_at, started_at,
+				   completed_at, updated_at)
+				SELECT
+				  id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+				  agent_session_id, status, result,
+				  ${tableHasColumn(db, 'node_executions', 'data') ? 'data' : 'NULL'},
+				  created_at, started_at, completed_at, updated_at
+				FROM node_executions
+			`);
+
+			db.exec(`DROP TABLE node_executions`);
+			db.exec(`ALTER TABLE node_executions_m109_new RENAME TO node_executions`);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_node_executions_run ON node_executions(workflow_run_id)`
+			);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_node_executions_node ON node_executions(workflow_run_id, workflow_node_id)`
+			);
+			db.exec(
+				`CREATE UNIQUE INDEX IF NOT EXISTS idx_node_executions_unique_slot
+				 ON node_executions(workflow_run_id, workflow_node_id, agent_name)`
+			);
+			db.exec('COMMIT');
+		} catch (err) {
+			db.exec('ROLLBACK');
+			throw err;
+		} finally {
+			db.exec('PRAGMA foreign_keys = ON');
+		}
+	}
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS tool_continuation_recovery (
+			tool_use_id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			execution_id TEXT,
+			workflow_run_id TEXT,
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'waiting_rebind', 'rebound', 'failed', 'expired', 'consumed')),
+			attempts_409 INTEGER NOT NULL DEFAULT 0,
+			recovery_reason TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		)
+	`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS tool_continuation_inbox (
+			id TEXT PRIMARY KEY,
+			tool_use_id TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			execution_id TEXT,
+			workflow_run_id TEXT,
+			status TEXT NOT NULL DEFAULT 'pending'
+				CHECK(status IN ('pending', 'rebound', 'failed', 'expired')),
+			request_json TEXT NOT NULL,
+			recovery_reason TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_tool_continuation_recovery_session
+		 ON tool_continuation_recovery(session_id, status, expires_at)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_tool_continuation_recovery_execution
+		 ON tool_continuation_recovery(execution_id, status, expires_at)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_tool_continuation_inbox_execution
+		 ON tool_continuation_inbox(execution_id, status, expires_at)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_tool_continuation_inbox_tool
+		 ON tool_continuation_inbox(tool_use_id, status, expires_at)`
+	);
 }

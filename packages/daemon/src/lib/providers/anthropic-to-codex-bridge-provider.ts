@@ -538,7 +538,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 				? this.toBridgeAuth(this.cachedCredentials)
 				: undefined;
 			const auth = envAuth ?? this.cachedBridgeAuth ?? fileAuth ?? undefined;
-			bridgeServer = createBridgeServer({ codexBinaryPath, auth, cwd: workspace });
+			bridgeServer = createBridgeServer({
+				codexBinaryPath,
+				auth,
+				cwd: workspace,
+				dbPath: this.env.DB_PATH,
+			});
 			this.bridgeServers.set(workspace, bridgeServer);
 			logger.info(
 				`AnthropicToCodexBridgeProvider: bridge server started on port ${bridgeServer.port} for workspace=${workspace}`

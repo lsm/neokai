@@ -506,10 +506,17 @@ export interface UpdateSpaceTaskParams {
  * - `pending`     — slot has been created but the agent has not started yet
  * - `in_progress` — agent session is actively running
  * - `idle`        — agent session finished naturally (detected via session idle event)
+ * - `waiting_rebind` — execution is paused while orphaned tool_result recovery rebinds/retries
  * - `blocked`     — execution requires human intervention or a gate has not passed
  * - `cancelled`   — execution was cancelled (workflow run cancelled or error path)
  */
-export type NodeExecutionStatus = 'pending' | 'in_progress' | 'idle' | 'blocked' | 'cancelled';
+export type NodeExecutionStatus =
+	| 'pending'
+	| 'in_progress'
+	| 'idle'
+	| 'waiting_rebind'
+	| 'blocked'
+	| 'cancelled';
 
 /**
  * Records the execution of a single agent slot within a workflow run's node.
