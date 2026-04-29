@@ -25,7 +25,11 @@ import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryOptionsBuilder } from './query-options-builder';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
 import type { OriginalEnvVars } from '../provider-service';
-import { extractCompactionSummary, getSDKSessionFilePath } from '../sdk-session-file-manager';
+import {
+	extractCompactionSummary,
+	findBestEffortResumeSessionAt,
+	getSDKSessionFilePath,
+} from '../sdk-session-file-manager';
 // Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
 
@@ -461,10 +465,10 @@ export class QueryRunner {
 			}, STARTUP_TIMEOUT_MS);
 			this.ctx.startupTimeoutTimer = startupTimer;
 
-			// Fetch slash commands and models in background
-			this.ctx.onSlashCommandsFetched().catch((e) => {
-				logger.warn('Background fetch of slash commands failed:', e);
-			});
+			// Models can be fetched from the live query object. Slash commands are
+			// captured from the SDK system:init message by SDKMessageHandler; probing
+			// supportedCommands() here races startup recovery and can duplicate stale
+			// resumeSessionAt errors from an about-to-be-retried query.
 			this.ctx.onModelsFetched().catch((e) => {
 				logger.warn('Background fetch of models failed:', e);
 			});
@@ -599,41 +603,59 @@ export class QueryRunner {
 			if (isMessageNotFound) {
 				// The SDK found the transcript but could not find resumeSessionAt inside it.
 				// This commonly happens after SDK compaction removes old message UUIDs.
-				// Clear both the rewind pointer and SDK transcript identity so the retry
-				// starts with a fresh context instead of looping on stale JSONL state.
 				const oldResumeSessionAt = session.metadata.resumeSessionAt;
-				const compactionSummary = this.extractCompactionSummaryFromCurrentSdkSession();
-				logger.error(
-					`No message found for resumeSessionAt (${oldResumeSessionAt ?? 'unknown'}). ` +
-						'Clearing resumeSessionAt, sdkSessionId, and sdkOriginPath before retry.'
+				const bestEffortResumeSessionAt = findBestEffortResumeSessionAt(
+					session.sdkOriginPath ?? session.worktree?.worktreePath ?? session.workspacePath,
+					session.sdkSessionId,
+					session.id,
+					this.ctx.db
 				);
-				delete session.metadata.resumeSessionAt;
-				if (compactionSummary) {
-					session.metadata.compactionSummary = compactionSummary;
-				} else {
-					delete session.metadata.compactionSummary;
-				}
-				session.sdkSessionId = undefined;
-				session.sdkOriginPath = undefined;
-				this.ctx.db.updateSession(session.id, {
-					metadata: session.metadata,
-					sdkSessionId: undefined,
-					sdkOriginPath: undefined,
-				});
 
-				try {
-					await this.displayErrorAsAssistantMessage(
-						'⚠️ **Conversation context was reset.**\n\n' +
-							'The previous rewind point is no longer present in the Claude SDK transcript. ' +
-							'This can happen after SDK compaction. Your conversation history in NeoKai is preserved; ' +
-							(compactionSummary
-								? 'a compacted summary from the previous SDK transcript will be carried into the fresh AI session.\n\n'
-								: 'only the AI context window has been reset.\n\n') +
-							'Retrying your message with a fresh AI session.',
-						{ markAsError: false }
+				if (bestEffortResumeSessionAt) {
+					logger.warn(
+						`No message found for resumeSessionAt (${oldResumeSessionAt ?? 'unknown'}). ` +
+							`Retrying from nearest available message UUID (${bestEffortResumeSessionAt}).`
 					);
-				} catch {
-					// Best-effort — don't let message emission block cleanup
+					session.metadata.resumeSessionAt = bestEffortResumeSessionAt;
+					this.ctx.db.updateSession(session.id, {
+						metadata: session.metadata,
+					});
+				} else {
+					// Clear both the rewind pointer and SDK transcript identity so the retry
+					// starts with a fresh context instead of looping on stale JSONL state.
+					const compactionSummary = this.extractCompactionSummaryFromCurrentSdkSession();
+					logger.error(
+						`No message found for resumeSessionAt (${oldResumeSessionAt ?? 'unknown'}). ` +
+							'No fallback message UUID was available; clearing resumeSessionAt, sdkSessionId, and sdkOriginPath before retry.'
+					);
+					delete session.metadata.resumeSessionAt;
+					if (compactionSummary) {
+						session.metadata.compactionSummary = compactionSummary;
+					} else {
+						delete session.metadata.compactionSummary;
+					}
+					session.sdkSessionId = undefined;
+					session.sdkOriginPath = undefined;
+					this.ctx.db.updateSession(session.id, {
+						metadata: session.metadata,
+						sdkSessionId: undefined,
+						sdkOriginPath: undefined,
+					});
+
+					try {
+						await this.displayErrorAsAssistantMessage(
+							'⚠️ **Conversation context was reset.**\n\n' +
+								'The previous rewind point is no longer present in the Claude SDK transcript. ' +
+								'This can happen after SDK compaction. Your conversation history in NeoKai is preserved; ' +
+								(compactionSummary
+									? 'a compacted summary from the previous SDK transcript will be carried into the fresh AI session.\n\n'
+									: 'only the AI context window has been reset.\n\n') +
+								'Retrying your message with a fresh AI session.',
+							{ markAsError: false }
+						);
+					} catch {
+						// Best-effort — don't let message emission block cleanup
+					}
 				}
 			}
 
