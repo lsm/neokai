@@ -43,6 +43,7 @@ import { ContextFetcher } from './context-fetcher';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
 import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
+import { getSessionModelInfo } from '../model-service';
 
 /**
  * Number of SDK stream events between automatic context-usage refreshes.
@@ -828,7 +829,11 @@ export class SDKMessageHandler {
 
 		const promise = (async () => {
 			try {
-				const contextInfo: ContextInfo | null = await this.contextFetcher.fetch(queryObject);
+				const modelInfo = await getSessionModelInfo(session);
+				const contextInfo: ContextInfo | null = await this.contextFetcher.fetch(
+					queryObject,
+					modelInfo
+				);
 				if (!contextInfo) return;
 				contextTracker.updateWithDetailedBreakdown(contextInfo);
 				await daemonHub.emit('context.updated', {
