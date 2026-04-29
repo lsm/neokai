@@ -186,7 +186,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	'messages.statusChanged': {
 		sessionId: string;
 		messageIds: string[];
-		status: 'deferred' | 'enqueued' | 'consumed';
+		status: 'deferred' | 'enqueued' | 'consumed' | 'failed';
 	};
 	// Send enqueued messages on turn end (auto-defer mode)
 	'query.sendEnqueuedOnTurnEnd': { sessionId: string };
