@@ -24,6 +24,13 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { Database } from '../storage/database';
 
+export const BEST_EFFORT_RESUME_MESSAGE_LIMIT = 10_000;
+
+interface ResumeMessageCandidate {
+	uuid?: unknown;
+	timestamp: number;
+}
+
 /**
  * Get the SDK project directory for a workspace path
  * SDK replaces both / and . with - (e.g., /.neokai/ -> --neokai-)
@@ -1256,6 +1263,79 @@ export function messageUuidExistsInSessionFile(
 	kaiSessionId: string,
 	messageUuid: string
 ): boolean {
+	const messageUuids = readMessageUuidsFromSessionFile(workspacePath, sdkSessionId, kaiSessionId);
+	return messageUuids?.has(messageUuid) ?? false;
+}
+
+/**
+ * Find the newest remaining NeoKai message UUID that still exists in the SDK transcript.
+ *
+ * This is used when a persisted resumeSessionAt checkpoint is stale. The fallback
+ * stays bounded by NeoKai's remaining DB messages while reading the SDK JSONL once,
+ * avoiding an O(candidates × file-size) scan.
+ */
+export function findBestEffortResumeSessionAt(
+	workspacePath: string | null | undefined,
+	sdkSessionId: string | null | undefined,
+	kaiSessionId: string,
+	db: Pick<Database, 'getSDKMessages'>,
+	limit = BEST_EFFORT_RESUME_MESSAGE_LIMIT
+): string | undefined {
+	if (!workspacePath || !sdkSessionId) {
+		return undefined;
+	}
+
+	const messageUuids = readMessageUuidsFromSessionFile(workspacePath, sdkSessionId, kaiSessionId);
+	if (!messageUuids || messageUuids.size === 0) {
+		return undefined;
+	}
+
+	const { messages } = db.getSDKMessages(kaiSessionId, limit);
+	const candidates = newestMessageUuidCandidates(messages);
+	for (const candidate of candidates) {
+		if (messageUuids.has(candidate.uuid)) {
+			return candidate.uuid;
+		}
+	}
+
+	return undefined;
+}
+
+function newestMessageUuidCandidates(
+	messages: ResumeMessageCandidate[]
+): Array<{ uuid: string; timestamp: number }> {
+	return messages
+		.map((message) => ({
+			uuid: typeof message.uuid === 'string' ? message.uuid : undefined,
+			timestamp: message.timestamp,
+		}))
+		.filter((message): message is { uuid: string; timestamp: number } => Boolean(message.uuid))
+		.sort((a, b) => b.timestamp - a.timestamp);
+}
+
+function readMessageUuidsFromSessionFile(
+	workspacePath: string,
+	sdkSessionId: string | null | undefined,
+	kaiSessionId: string
+): Set<string> | null {
+	const filePath = resolveSDKSessionFilePath(workspacePath, sdkSessionId, kaiSessionId);
+	if (!filePath) {
+		return null;
+	}
+
+	try {
+		const content = readFileSync(filePath, 'utf-8');
+		return extractMessageUuids(content);
+	} catch {
+		return null;
+	}
+}
+
+function resolveSDKSessionFilePath(
+	workspacePath: string,
+	sdkSessionId: string | null | undefined,
+	kaiSessionId: string
+): string | null {
 	let filePath: string | null = null;
 	if (sdkSessionId) {
 		const candidatePath = getSDKSessionFilePath(workspacePath, sdkSessionId);
@@ -1267,21 +1347,31 @@ export function messageUuidExistsInSessionFile(
 		filePath = findSDKSessionFile(workspacePath, kaiSessionId);
 	}
 	if (!filePath || !existsSync(filePath)) {
-		return false;
+		return null;
 	}
 
-	try {
-		const content = readFileSync(filePath, 'utf-8');
-		const lines = content.split('\n');
+	return filePath;
+}
 
-		for (const line of lines) {
-			if (line.includes(`"uuid":"${messageUuid}"`) || line.includes(`"uuid": "${messageUuid}"`)) {
-				return true;
+function extractMessageUuids(content: string): Set<string> {
+	const messageUuids = new Set<string>();
+	for (const line of content.split('\n')) {
+		if (!line.trim()) {
+			continue;
+		}
+		try {
+			const parsed = JSON.parse(line) as { uuid?: unknown };
+			if (typeof parsed.uuid === 'string') {
+				messageUuids.add(parsed.uuid);
+				continue;
 			}
+		} catch {
+			// Fall through to a light regex fallback for partially malformed lines.
 		}
 
-		return lines.some((line) => line.includes(messageUuid));
-	} catch {
-		return false;
+		for (const match of line.matchAll(/"uuid"\s*:\s*"([^"]+)"/g)) {
+			messageUuids.add(match[1]);
+		}
 	}
+	return messageUuids;
 }

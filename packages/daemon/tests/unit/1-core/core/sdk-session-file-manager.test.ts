@@ -21,6 +21,7 @@ import {
 	removeToolResultFromSessionFile,
 	truncateSessionFileAtMessage,
 	messageUuidExistsInSessionFile,
+	findBestEffortResumeSessionAt,
 	extractCompactionSummary,
 	findSDKSessionFileGlobally,
 	migrateSDKSessionFile,
@@ -1231,6 +1232,64 @@ describe('SDK Session File Manager', () => {
 			);
 
 			expect(exists).toBe(true);
+		});
+	});
+
+	describe('findBestEffortResumeSessionAt', () => {
+		test('should return the newest DB message UUID that exists in the SDK session file', () => {
+			writeFileSync(
+				testSessionFile,
+				[
+					JSON.stringify({ type: 'user', uuid: 'older-existing-message-uuid' }),
+					JSON.stringify({ type: 'assistant', uuid: 'newer-existing-message-uuid' }),
+				].join('\n') + '\n',
+				'utf-8'
+			);
+			const db = {
+				getSDKMessages: () => ({
+					messages: [
+						{ type: 'user', uuid: 'older-existing-message-uuid', timestamp: 1000 },
+						{ type: 'assistant', uuid: 'newer-existing-message-uuid', timestamp: 2000 },
+						{ type: 'assistant', uuid: 'newer-missing-message-uuid', timestamp: 3000 },
+					],
+					hasMore: false,
+				}),
+			} as unknown as Pick<Database, 'getSDKMessages'>;
+
+			const resumeSessionAt = findBestEffortResumeSessionAt(
+				testWorkspacePath,
+				testSdkSessionId,
+				'kai-session-id',
+				db
+			);
+
+			expect(resumeSessionAt).toBe('newer-existing-message-uuid');
+		});
+
+		test('should return undefined when none of the DB message UUIDs exist in the SDK session file', () => {
+			writeFileSync(
+				testSessionFile,
+				JSON.stringify({ type: 'system', subtype: 'compact_boundary' }) + '\n',
+				'utf-8'
+			);
+			const db = {
+				getSDKMessages: () => ({
+					messages: [
+						{ type: 'user', uuid: 'missing-user-message-uuid', timestamp: 1000 },
+						{ type: 'assistant', uuid: 'missing-assistant-message-uuid', timestamp: 2000 },
+					],
+					hasMore: false,
+				}),
+			} as unknown as Pick<Database, 'getSDKMessages'>;
+
+			const resumeSessionAt = findBestEffortResumeSessionAt(
+				testWorkspacePath,
+				testSdkSessionId,
+				'kai-session-id',
+				db
+			);
+
+			expect(resumeSessionAt).toBeUndefined();
 		});
 	});
 
