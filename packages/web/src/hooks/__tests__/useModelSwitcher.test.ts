@@ -16,6 +16,7 @@ import {
 	mapRawModelsToModelInfos,
 	filterModelsForPicker,
 	filterModelsBySearch,
+	useFilteredModelsForPicker,
 } from '../useModelSwitcher.ts';
 
 // Mock the connection manager
@@ -1262,5 +1263,38 @@ describe('filterModelsBySearch', () => {
 			'openai/gpt-5.4',
 		]);
 		expect(filterModelsBySearch(models, 'openrouter sonnet')).toEqual([]);
+	});
+});
+
+describe('useFilteredModelsForPicker', () => {
+	it('applies auth filtering before search filtering', () => {
+		const anthropicModel = {
+			...makeModel('claude-sonnet', 'anthropic'),
+			name: 'Claude Sonnet',
+		};
+		const copilotModel = {
+			...makeModel('copilot-sonnet', 'anthropic-copilot'),
+			name: 'Copilot Sonnet',
+		};
+		const codexModel = {
+			...makeModel('gpt-codex', 'anthropic-codex'),
+			name: 'Codex GPT',
+		};
+		const authMap = new Map([
+			['anthropic', makeAuth('anthropic', true)],
+			['anthropic-copilot', makeAuth('anthropic-copilot', false)],
+			['anthropic-codex', makeAuth('anthropic-codex', true)],
+		]);
+
+		const { result } = renderHook(() =>
+			useFilteredModelsForPicker(
+				[anthropicModel, copilotModel, codexModel],
+				authMap,
+				undefined,
+				'sonnet'
+			)
+		);
+
+		expect(result.current.map((model) => model.id)).toEqual(['claude-sonnet']);
 	});
 });

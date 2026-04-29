@@ -482,7 +482,7 @@ export default function SessionStatusBar({
 										class="w-full bg-dark-900 border border-dark-600 rounded px-2 py-1.5 text-xs text-gray-100 placeholder:text-gray-500 focus:outline-none focus:border-blue-500"
 									/>
 								</div>
-								<div class="overflow-y-auto">
+								<div class="flex-1 min-h-0 overflow-y-auto">
 									{Array.from(groupedFilteredModels.entries()).map(
 										([provider, models], groupIndex) => {
 											const authStatus = providerAuthStatuses.get(provider);

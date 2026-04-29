@@ -38,7 +38,12 @@ const CURATED_PROVIDER_PREFIXES = [
 	'deepseek/',
 	'meta-llama/',
 	'mistralai/',
+	'xai/',
+	'cohere/',
+	'qwen/',
 ] as const;
+
+const CURATED_MODEL_IDS = ['openrouter/auto'] as const;
 
 function isProbablyOpenRouterKey(apiKey: string): boolean {
 	return apiKey.trim().startsWith('sk-or-');
@@ -283,7 +288,10 @@ export class OpenRouterProvider implements Provider {
 	private static curateApiModels(models: ModelInfo[]): ModelInfo[] {
 		const curated = models.filter((model) => {
 			const id = model.id.toLowerCase();
-			return CURATED_PROVIDER_PREFIXES.some((prefix) => id.startsWith(prefix));
+			return (
+				CURATED_MODEL_IDS.some((modelId) => id === modelId) ||
+				CURATED_PROVIDER_PREFIXES.some((prefix) => id.startsWith(prefix))
+			);
 		});
 
 		const candidates = curated.length > 0 ? curated : models;
