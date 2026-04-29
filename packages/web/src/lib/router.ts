@@ -265,10 +265,6 @@ export function navigateToSessions(replace = false): void {
 	}
 }
 
-export function navigateToChats(): void {
-	navigateToSessions();
-}
-
 export function navigateToInbox(replace = false): void {
 	if (routerState.isNavigating) return;
 
