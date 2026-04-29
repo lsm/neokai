@@ -516,6 +516,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   all removed). Runs after every previous migration that may still
 	//   reference the table.
 	runMigration107(db);
+
+	// Migration 108: Remove stale persisted Brave Search MCP rows from older
+	//   databases. The built-in registry no longer seeds this MCP server or its
+	//   wrapper skill, but users who ran older builds can still have rows in
+	//   app_mcp_servers, skills, and enablement override tables. Delete those
+	//   legacy rows so settings surfaces no longer display them.
+	runMigration108(db);
 }
 
 /**
@@ -1492,6 +1499,191 @@ function tableCreateSql(db: BunDatabase, tableName: string): string | null {
 		.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`)
 		.get(tableName) as { sql?: string } | undefined;
 	return row?.sql ?? null;
+}
+
+function quoteSqlIdent(identifier: string): string {
+	return `"${identifier.replaceAll('"', '""')}"`;
+}
+
+function quoteSqlString(value: string): string {
+	return `'${value.replaceAll("'", "''")}'`;
+}
+
+function tableColumnNames(db: BunDatabase, tableName: string): string[] {
+	return (
+		db.prepare(`PRAGMA table_info(${quoteSqlString(tableName)})`).all() as Array<{ name: string }>
+	).map((r) => r.name);
+}
+
+function replaceCreateTableName(createSql: string, newTableName: string): string {
+	const replaced = createSql.replace(
+		/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|\S+)/i,
+		`CREATE TABLE ${quoteSqlIdent(newTableName)}`
+	);
+	if (replaced === createSql) {
+		throw new Error('Unable to rewrite CREATE TABLE statement');
+	}
+	return replaced;
+}
+
+function widenSpaceTasksApprovedStatusCheck(createSql: string): string {
+	let matched = false;
+	const widened = createSql.replace(
+		/CHECK\s*\(\s*status\s+IN\s*\(([^)]*)\)\s*\)/i,
+		(match, values: string) => {
+			matched = true;
+			if (values.includes("'approved'")) {
+				return match;
+			}
+			return `CHECK(status IN (${values.trim()}, 'approved'))`;
+		}
+	);
+	if (!matched) {
+		throw new Error('Unable to widen space_tasks.status CHECK constraint');
+	}
+	return widened;
+}
+
+function matchingParenIndex(sql: string, openIndex: number): number {
+	let depth = 0;
+	let quote: "'" | '"' | '`' | ']' | null = null;
+	for (let i = openIndex; i < sql.length; i++) {
+		const ch = sql[i];
+		if (quote) {
+			if (quote === "'" && ch === "'" && sql[i + 1] === "'") {
+				i++;
+				continue;
+			}
+			if (quote === ']' ? ch === ']' : ch === quote) {
+				quote = null;
+			}
+			continue;
+		}
+		if (ch === "'" || ch === '"' || ch === '`') {
+			quote = ch;
+			continue;
+		}
+		if (ch === '[') {
+			quote = ']';
+			continue;
+		}
+		if (ch === '(') {
+			depth++;
+		} else if (ch === ')') {
+			depth--;
+			if (depth === 0) {
+				return i;
+			}
+		}
+	}
+	throw new Error('Unable to find closing parenthesis in CREATE TABLE statement');
+}
+
+function splitTopLevelSqlList(sql: string): string[] {
+	const parts: string[] = [];
+	let start = 0;
+	let depth = 0;
+	let quote: "'" | '"' | '`' | ']' | null = null;
+	for (let i = 0; i < sql.length; i++) {
+		const ch = sql[i];
+		if (quote) {
+			if (quote === "'" && ch === "'" && sql[i + 1] === "'") {
+				i++;
+				continue;
+			}
+			if (quote === ']' ? ch === ']' : ch === quote) {
+				quote = null;
+			}
+			continue;
+		}
+		if (ch === "'" || ch === '"' || ch === '`') {
+			quote = ch;
+			continue;
+		}
+		if (ch === '[') {
+			quote = ']';
+			continue;
+		}
+		if (ch === '(') {
+			depth++;
+		} else if (ch === ')') {
+			depth--;
+		} else if (ch === ',' && depth === 0) {
+			parts.push(sql.slice(start, i));
+			start = i + 1;
+		}
+	}
+	parts.push(sql.slice(start));
+	return parts;
+}
+
+function createTableSqlWithoutColumn(createSql: string, columnName: string): string {
+	const open = createSql.indexOf('(');
+	if (open < 0) {
+		throw new Error('Unable to parse CREATE TABLE statement');
+	}
+	const close = matchingParenIndex(createSql, open);
+	const prefix = createSql.slice(0, open + 1);
+	const body = createSql.slice(open + 1, close);
+	const suffix = createSql.slice(close);
+	const columnPattern = new RegExp(
+		`^\\s*(?:"${columnName.replaceAll('"', '""')}"|\\[${columnName.replaceAll(']', ']]')}\\]|\\\`${columnName.replaceAll('`', '``')}\\\`|${columnName})\\b`,
+		'i'
+	);
+	const parts = splitTopLevelSqlList(body).filter((part) => !columnPattern.test(part.trimStart()));
+	return `${prefix}${parts.join(',')}${suffix}`;
+}
+
+function tightenPendingCheckpointTypeCheck(createSql: string): string {
+	return createSql.replace(
+		/CHECK\s*\(\s*pending_checkpoint_type\s+IN\s*\([^)]*\)\s*\)/i,
+		"CHECK(pending_checkpoint_type IN ('gate', 'task_completion'))"
+	);
+}
+
+function capturedIndexDdl(
+	db: BunDatabase,
+	tableName: string
+): Array<{ sql: string; columns: string[] }> {
+	const rows = db
+		.prepare(
+			`SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL`
+		)
+		.all(tableName) as Array<{ name: string; sql: string }>;
+	return rows.map((row) => {
+		const indexColumns = db
+			.prepare(`PRAGMA index_info(${quoteSqlString(row.name)})`)
+			.all() as Array<{ name: string | null }>;
+		return {
+			sql: row.sql,
+			columns: indexColumns.map((col) => col.name).filter((name): name is string => !!name),
+		};
+	});
+}
+
+function recreateCompatibleIndexes(
+	db: BunDatabase,
+	tableName: string,
+	indexes: Array<{ sql: string; columns: string[] }>
+): void {
+	const columns = new Set(tableColumnNames(db, tableName));
+	for (const index of indexes) {
+		if (index.columns.some((column) => !columns.has(column))) {
+			continue;
+		}
+		const normalized = index.sql.replace(
+			/^CREATE (UNIQUE )?INDEX /i,
+			(_m, unique) => `CREATE ${unique ?? ''}INDEX IF NOT EXISTS `
+		);
+		try {
+			db.exec(normalized);
+		} catch (err) {
+			if (err instanceof Error && /\bno such column\b/i.test(err.message)) {
+				continue;
+			}
+			throw err;
+		}
+	}
 }
 
 function statusCheckContains(db: BunDatabase, tableName: string, status: string): boolean {
@@ -6976,121 +7168,27 @@ export function runMigration103(db: BunDatabase): void {
 		currentSql.includes('status IN (') && /status\s+IN\s*\([^)]*'approved'/.test(currentSql);
 
 	if (currentSql && !hasApprovedInCheck) {
-		// Copy every column that exists on the current schema — the intersection
-		// of the post-M99 baseline and any extra columns added by later
-		// migrations. This keeps the rebuild safe when the running DB has a
-		// slightly different shape than the one used in tests.
-		const baseColumns = [
-			'id',
-			'space_id',
-			'task_number',
-			'title',
-			'description',
-			'status',
-			'priority',
-			'labels',
-			'workflow_run_id',
-			'preferred_workflow_id',
-			'created_by_task_id',
-			'result',
-			'depends_on',
-			'active_session',
-			'task_agent_session_id',
-			'approval_source',
-			'approval_reason',
-			'approved_at',
-			'block_reason',
-			'archived_at',
-			'created_at',
-			'started_at',
-			'completed_at',
-			'updated_at',
-			'pending_action_index',
-			'pending_checkpoint_type',
-			'reported_status',
-			'reported_summary',
-			'pending_completion_submitted_by_node_id',
-			'pending_completion_submitted_at',
-			'pending_completion_reason',
-		];
-		const existingColumns = new Set(
-			(db.prepare(`PRAGMA table_info('space_tasks')`).all() as Array<{ name: string }>).map(
-				(r) => r.name
-			)
+		// Rebuild from the live schema, changing only the status CHECK. Some
+		// upgraded databases can already contain columns from later migrations
+		// such as custom_agent_id, goal_id, or slot_role, and their indexes must
+		// keep working after this rebuild.
+		const newTableSql = widenSpaceTasksApprovedStatusCheck(
+			replaceCreateTableName(currentSql, 'space_tasks_m103_new')
 		);
-		const copyColumns = baseColumns.filter((c) => existingColumns.has(c));
-		const copyColsSql = copyColumns.join(', ');
-
-		// Preserve the indexes that exist on the current table so the rebuild
-		// doesn't silently drop them. Mirrors the M99 rebuild.
-		const existingIndexDdl = (
-			db
-				.prepare(
-					`SELECT sql FROM sqlite_master
-					 WHERE type='index' AND tbl_name='space_tasks' AND sql IS NOT NULL`
-				)
-				.all() as Array<{ sql: string }>
-		)
-			.map((r) => r.sql)
-			.filter((sql) => !!sql);
+		const copyColumns = tableColumnNames(db, 'space_tasks');
+		const copyColsSql = copyColumns.map(quoteSqlIdent).join(', ');
+		const existingIndexDdl = capturedIndexDdl(db, 'space_tasks');
 
 		db.exec('PRAGMA foreign_keys = OFF');
 		db.exec('BEGIN');
 		try {
-			db.exec(`
-				CREATE TABLE space_tasks_m103_new (
-					id TEXT PRIMARY KEY,
-					space_id TEXT NOT NULL,
-					task_number INTEGER NOT NULL,
-					title TEXT NOT NULL,
-					description TEXT NOT NULL DEFAULT '',
-					status TEXT NOT NULL DEFAULT 'open'
-						CHECK(status IN ('open', 'in_progress', 'review', 'approved', 'done', 'blocked', 'cancelled', 'archived')),
-					priority TEXT NOT NULL DEFAULT 'normal'
-						CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
-					labels TEXT NOT NULL DEFAULT '[]',
-					workflow_run_id TEXT,
-					preferred_workflow_id TEXT,
-					created_by_task_id TEXT,
-					result TEXT,
-					depends_on TEXT NOT NULL DEFAULT '[]',
-					active_session TEXT
-						CHECK(active_session IN ('worker', 'leader')),
-					task_agent_session_id TEXT,
-					approval_source TEXT,
-					approval_reason TEXT,
-					approved_at INTEGER,
-					block_reason TEXT,
-					archived_at INTEGER,
-					created_at INTEGER NOT NULL,
-					started_at INTEGER,
-					completed_at INTEGER,
-					updated_at INTEGER NOT NULL,
-					pending_action_index INTEGER DEFAULT NULL,
-					pending_checkpoint_type TEXT DEFAULT NULL
-						CHECK(pending_checkpoint_type IN ('completion_action', 'gate', 'task_completion')),
-					reported_status TEXT DEFAULT NULL
-						CHECK(reported_status IS NULL OR reported_status IN ('done', 'blocked', 'cancelled')),
-					reported_summary TEXT DEFAULT NULL,
-					pending_completion_submitted_by_node_id TEXT DEFAULT NULL,
-					pending_completion_submitted_at INTEGER DEFAULT NULL,
-					pending_completion_reason TEXT DEFAULT NULL,
-					FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-					FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL
-				)
-			`);
+			db.exec(newTableSql);
 			db.exec(
 				`INSERT INTO space_tasks_m103_new (${copyColsSql}) SELECT ${copyColsSql} FROM space_tasks`
 			);
 			db.exec(`DROP TABLE space_tasks`);
 			db.exec(`ALTER TABLE space_tasks_m103_new RENAME TO space_tasks`);
-			for (const ddl of existingIndexDdl) {
-				const normalized = ddl.replace(
-					/^CREATE (UNIQUE )?INDEX /i,
-					(_m, unique) => `CREATE ${unique ?? ''}INDEX IF NOT EXISTS `
-				);
-				db.exec(normalized);
-			}
+			recreateCompatibleIndexes(db, 'space_tasks', existingIndexDdl);
 			db.exec('COMMIT');
 		} catch (err) {
 			db.exec('ROLLBACK');
@@ -7192,122 +7290,31 @@ export function runMigration104(db: BunDatabase): void {
 		const needsRebuild = !!currentSql && (hasLegacyCheckpointCheck || hasActionIndexCol);
 
 		if (needsRebuild) {
-			// Copy every column the new schema expects, intersected with what the
-			// current row actually has — same defensive approach as M103.
-			const baseColumns = [
-				'id',
-				'space_id',
-				'task_number',
-				'title',
-				'description',
-				'status',
-				'priority',
-				'labels',
-				'workflow_run_id',
-				'preferred_workflow_id',
-				'created_by_task_id',
-				'result',
-				'depends_on',
-				'active_session',
-				'task_agent_session_id',
-				'approval_source',
-				'approval_reason',
-				'approved_at',
-				'block_reason',
-				'archived_at',
-				'created_at',
-				'started_at',
-				'completed_at',
-				'updated_at',
-				'pending_checkpoint_type',
-				'reported_status',
-				'reported_summary',
-				'pending_completion_submitted_by_node_id',
-				'pending_completion_submitted_at',
-				'pending_completion_reason',
-				'post_approval_session_id',
-				'post_approval_started_at',
-				'post_approval_blocked_reason',
-			];
-			const existingColumns = new Set(
-				(db.prepare(`PRAGMA table_info('space_tasks')`).all() as Array<{ name: string }>).map(
-					(r) => r.name
+			// Rebuild from the live schema, dropping only pending_action_index
+			// and tightening pending_checkpoint_type. This preserves optional
+			// columns that may exist on real upgraded databases.
+			const newTableSql = tightenPendingCheckpointTypeCheck(
+				createTableSqlWithoutColumn(
+					replaceCreateTableName(currentSql, 'space_tasks_m104_new'),
+					'pending_action_index'
 				)
 			);
-			const copyColumns = baseColumns.filter((c) => existingColumns.has(c));
-			const copyColsSql = copyColumns.join(', ');
-
-			// Preserve indexes — same approach as M103.
-			const existingIndexDdl = (
-				db
-					.prepare(
-						`SELECT sql FROM sqlite_master
-						 WHERE type='index' AND tbl_name='space_tasks' AND sql IS NOT NULL`
-					)
-					.all() as Array<{ sql: string }>
-			)
-				.map((r) => r.sql)
-				.filter((sql) => !!sql);
+			const copyColumns = tableColumnNames(db, 'space_tasks').filter(
+				(c) => c !== 'pending_action_index'
+			);
+			const copyColsSql = copyColumns.map(quoteSqlIdent).join(', ');
+			const existingIndexDdl = capturedIndexDdl(db, 'space_tasks');
 
 			db.exec('PRAGMA foreign_keys = OFF');
 			db.exec('BEGIN');
 			try {
-				db.exec(`
-					CREATE TABLE space_tasks_m104_new (
-						id TEXT PRIMARY KEY,
-						space_id TEXT NOT NULL,
-						task_number INTEGER NOT NULL,
-						title TEXT NOT NULL,
-						description TEXT NOT NULL DEFAULT '',
-						status TEXT NOT NULL DEFAULT 'open'
-							CHECK(status IN ('open', 'in_progress', 'review', 'approved', 'done', 'blocked', 'cancelled', 'archived')),
-						priority TEXT NOT NULL DEFAULT 'normal'
-							CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
-						labels TEXT NOT NULL DEFAULT '[]',
-						workflow_run_id TEXT,
-						preferred_workflow_id TEXT,
-						created_by_task_id TEXT,
-						result TEXT,
-						depends_on TEXT NOT NULL DEFAULT '[]',
-						active_session TEXT
-							CHECK(active_session IN ('worker', 'leader')),
-						task_agent_session_id TEXT,
-						approval_source TEXT,
-						approval_reason TEXT,
-						approved_at INTEGER,
-						block_reason TEXT,
-						archived_at INTEGER,
-						created_at INTEGER NOT NULL,
-						started_at INTEGER,
-						completed_at INTEGER,
-						updated_at INTEGER NOT NULL,
-						pending_checkpoint_type TEXT DEFAULT NULL
-							CHECK(pending_checkpoint_type IN ('gate', 'task_completion')),
-						reported_status TEXT DEFAULT NULL
-							CHECK(reported_status IS NULL OR reported_status IN ('done', 'blocked', 'cancelled')),
-						reported_summary TEXT DEFAULT NULL,
-						pending_completion_submitted_by_node_id TEXT DEFAULT NULL,
-						pending_completion_submitted_at INTEGER DEFAULT NULL,
-						pending_completion_reason TEXT DEFAULT NULL,
-						post_approval_session_id TEXT DEFAULT NULL,
-						post_approval_started_at INTEGER DEFAULT NULL,
-						post_approval_blocked_reason TEXT DEFAULT NULL,
-						FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-						FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL
-					)
-				`);
+				db.exec(newTableSql);
 				db.exec(
 					`INSERT INTO space_tasks_m104_new (${copyColsSql}) SELECT ${copyColsSql} FROM space_tasks`
 				);
 				db.exec(`DROP TABLE space_tasks`);
 				db.exec(`ALTER TABLE space_tasks_m104_new RENAME TO space_tasks`);
-				for (const ddl of existingIndexDdl) {
-					const normalized = ddl.replace(
-						/^CREATE (UNIQUE )?INDEX /i,
-						(_m, unique) => `CREATE ${unique ?? ''}INDEX IF NOT EXISTS `
-					);
-					db.exec(normalized);
-				}
+				recreateCompatibleIndexes(db, 'space_tasks', existingIndexDdl);
 				db.exec('COMMIT');
 			} catch (err) {
 				db.exec('ROLLBACK');
@@ -7383,4 +7390,175 @@ export function runMigration107(db: BunDatabase): void {
 	db.exec(`DROP INDEX IF EXISTS idx_space_task_report_results_task`);
 	db.exec(`DROP INDEX IF EXISTS idx_space_task_report_results_space`);
 	db.exec(`DROP TABLE IF EXISTS space_task_report_results`);
+}
+
+/**
+ * Migration 108: Remove stale Brave Search MCP registry data.
+ *
+ * Earlier builds seeded an application MCP server and a built-in skill for a
+ * Brave-backed web search integration. Those seed definitions have been
+ * removed, but existing SQLite databases can still contain the rows and their
+ * per-room/space/session overrides. This migration removes only the known
+ * legacy identifiers and rows whose MCP command/config explicitly points at
+ * the removed package/API key, while leaving unrelated user-created MCP
+ * servers intact.
+ */
+export function runMigration108(db: BunDatabase): void {
+	const legacyServerNames = ['brave-search', 'web-search-brave'];
+	const legacySkillNames = ['web-search-mcp', 'builtin-web-search-mcp'];
+
+	const legacyServerIds = new Set<string>();
+	if (tableExists(db, 'app_mcp_servers')) {
+		const rows = db
+			.prepare(
+				`SELECT id, name, description, command, args, env
+				   FROM app_mcp_servers`
+			)
+			.all() as Array<{
+			id: string;
+			name: string;
+			description: string | null;
+			command: string | null;
+			args: string | null;
+			env: string | null;
+		}>;
+
+		for (const row of rows) {
+			const searchable = [
+				row.name,
+				row.description ?? '',
+				row.command ?? '',
+				row.args ?? '',
+				row.env ?? '',
+			]
+				.join('\n')
+				.toLowerCase();
+			if (
+				legacyServerNames.includes(row.name.toLowerCase()) ||
+				searchable.includes('server-brave-search') ||
+				searchable.includes('brave_api_key') ||
+				searchable.includes('brave search')
+			) {
+				legacyServerIds.add(row.id);
+			}
+		}
+	}
+
+	const legacySkillIds = new Set<string>();
+	if (tableExists(db, 'skills')) {
+		const rows = db
+			.prepare(`SELECT id, name, display_name, description, config FROM skills`)
+			.all() as Array<{
+			id: string;
+			name: string;
+			display_name: string;
+			description: string;
+			config: string;
+		}>;
+
+		for (const row of rows) {
+			const lowerName = row.name.toLowerCase();
+			const searchable = [row.name, row.display_name, row.description, row.config]
+				.join('\n')
+				.toLowerCase();
+			const referencesLegacyServer = [...legacyServerIds].some((id) => row.config.includes(id));
+			if (
+				legacySkillNames.includes(lowerName) ||
+				row.display_name.toLowerCase() === 'web search (mcp)' ||
+				searchable.includes('brave search') ||
+				searchable.includes('brave_api_key') ||
+				referencesLegacyServer
+			) {
+				legacySkillIds.add(row.id);
+			}
+		}
+	}
+
+	if (legacySkillIds.size > 0) {
+		if (tableExists(db, 'room_skill_overrides')) {
+			const deleteOverride = db.prepare(`DELETE FROM room_skill_overrides WHERE skill_id = ?`);
+			for (const id of legacySkillIds) deleteOverride.run(id);
+		}
+		const deleteSkill = db.prepare(`DELETE FROM skills WHERE id = ?`);
+		for (const id of legacySkillIds) deleteSkill.run(id);
+	}
+
+	if (legacyServerIds.size > 0) {
+		if (tableExists(db, 'mcp_enablement')) {
+			const deleteEnablement = db.prepare(`DELETE FROM mcp_enablement WHERE server_id = ?`);
+			for (const id of legacyServerIds) deleteEnablement.run(id);
+		}
+		if (tableExists(db, 'room_mcp_enablement')) {
+			const deleteRoomEnablement = db.prepare(
+				`DELETE FROM room_mcp_enablement WHERE server_id = ?`
+			);
+			for (const id of legacyServerIds) deleteRoomEnablement.run(id);
+		}
+		const deleteServer = db.prepare(`DELETE FROM app_mcp_servers WHERE id = ?`);
+		for (const id of legacyServerIds) deleteServer.run(id);
+	}
+
+	const legacyNames = new Set([...legacyServerNames, ...legacySkillNames]);
+	if (tableExists(db, 'global_settings')) {
+		try {
+			const row = db.prepare(`SELECT settings FROM global_settings WHERE id = 1`).get() as
+				| { settings: string }
+				| undefined;
+			if (row) {
+				const settings = JSON.parse(row.settings) as Record<string, unknown>;
+				let mutated = false;
+				for (const key of ['disabledMcpServers', 'enabledMcpServers'] as const) {
+					const value = settings[key];
+					if (!Array.isArray(value)) continue;
+					const filtered = value.filter((name) => {
+						return typeof name !== 'string' || !legacyNames.has(name.toLowerCase());
+					});
+					if (filtered.length !== value.length) {
+						settings[key] = filtered;
+						mutated = true;
+					}
+				}
+				if (mutated) {
+					db.prepare(
+						`UPDATE global_settings SET settings = ?, updated_at = datetime('now') WHERE id = 1`
+					).run(JSON.stringify(settings));
+				}
+			}
+		} catch {
+			// Malformed settings should not block startup; the registry rows above
+			// are the authoritative availability surface.
+		}
+	}
+
+	if (tableExists(db, 'sessions')) {
+		const rows = db.prepare(`SELECT id, config FROM sessions`).all() as Array<{
+			id: string;
+			config: string | null;
+		}>;
+		const update = db.prepare(`UPDATE sessions SET config = ? WHERE id = ?`);
+		for (const row of rows) {
+			try {
+				const config = JSON.parse(row.config ?? '{}') as Record<string, unknown> & {
+					tools?: Record<string, unknown>;
+				};
+				let mutated = false;
+				for (const holder of [config, config.tools].filter(Boolean) as Array<
+					Record<string, unknown>
+				>) {
+					const value = holder.disabledMcpServers;
+					if (!Array.isArray(value)) continue;
+					const filtered = value.filter((name) => {
+						return typeof name !== 'string' || !legacyNames.has(name.toLowerCase());
+					});
+					if (filtered.length !== value.length) {
+						holder.disabledMcpServers = filtered;
+						mutated = true;
+					}
+				}
+				if (mutated) update.run(JSON.stringify(config), row.id);
+			} catch {
+				continue;
+			}
+		}
+	}
 }

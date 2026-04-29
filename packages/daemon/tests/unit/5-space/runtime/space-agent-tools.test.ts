@@ -98,6 +98,7 @@ interface TestCtx {
 	agentManager: SpaceAgentManager;
 	runtime: SpaceRuntime;
 	nodeExecutionRepo: NodeExecutionRepository;
+	spaceManager: SpaceManager;
 }
 
 function makeCtx(): TestCtx {
@@ -144,6 +145,7 @@ function makeCtx(): TestCtx {
 		agentManager,
 		runtime,
 		nodeExecutionRepo,
+		spaceManager,
 	};
 }
 
@@ -157,6 +159,7 @@ function makeHandlers(ctx: TestCtx) {
 		taskManager: ctx.taskManager,
 		spaceAgentManager: ctx.agentManager,
 		nodeExecutionRepo: ctx.nodeExecutionRepo,
+		spaceManager: ctx.spaceManager,
 	});
 }
 
@@ -1489,7 +1492,8 @@ describe('createSpaceAgentToolHandlers — approve_task plain path', () => {
 		ctx.db.close();
 	});
 
-	test('allows plain review→done approvals (no pending checkpoint)', async () => {
+	test('allows plain review→done approvals with sufficient autonomy', async () => {
+		await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
 		const createResult = await makeHandlers(ctx).create_standalone_task({
 			title: 'plain review task',
 			description: 'no pending action',
@@ -1516,7 +1520,7 @@ interface FakeTaskAgentManager {
 	manager: TaskAgentManager;
 	ensureCalls: string[];
 	taskAgentInjects: Array<{ taskId: string; message: string }>;
-	subSessionInjects: Array<{ sessionId: string; message: string }>;
+	subSessionInjects: Array<{ sessionId: string; message: string; isSyntheticMessage?: boolean }>;
 	/** Session IDs that should throw `Sub-session not found` on inject. */
 	deadSessionIds: Set<string>;
 	/** Hook invoked before ensureTaskAgentSession resolves. Allows simulating
@@ -1549,11 +1553,15 @@ function makeFakeTaskAgentManager(ctx: TestCtx): FakeTaskAgentManager {
 		async injectTaskAgentMessage(taskId: string, message: string): Promise<void> {
 			state.taskAgentInjects.push({ taskId, message });
 		},
-		async injectSubSessionMessage(sessionId: string, message: string): Promise<void> {
+		async injectSubSessionMessage(
+			sessionId: string,
+			message: string,
+			isSyntheticMessage?: boolean
+		): Promise<void> {
 			if (state.deadSessionIds.has(sessionId)) {
 				throw new Error(`Sub-session not found: ${sessionId}`);
 			}
-			state.subSessionInjects.push({ sessionId, message });
+			state.subSessionInjects.push({ sessionId, message, isSyntheticMessage });
 		},
 	} as unknown as TaskAgentManager;
 	return { manager, ...state };
@@ -1577,10 +1585,31 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		return created;
 	}
 
+	interface FakePendingMessageQueue {
+		enqueued: Array<{
+			workflowRunId: string;
+			spaceId: string;
+			taskId?: string | null;
+			sourceAgentName?: string;
+			targetKind: 'node_agent' | 'space_agent';
+			targetAgentName: string;
+			message: string;
+			idempotencyKey?: string | null;
+		}>;
+	}
+
+	function makeFakePendingMessageQueue(): FakePendingMessageQueue {
+		return { enqueued: [] };
+	}
+
 	function makeHandlersWith(
 		tam: FakeTaskAgentManager,
-		opts: { activateNode?: (runId: string, nodeId: string) => Promise<void> } = {}
+		opts: {
+			activateNode?: (runId: string, nodeId: string) => Promise<void>;
+			pendingMessageQueue?: FakePendingMessageQueue;
+		} = {}
 	) {
+		const fakeQueue = opts.pendingMessageQueue;
 		return createSpaceAgentToolHandlers({
 			spaceId: ctx.spaceId,
 			runtime: ctx.runtime,
@@ -1592,6 +1621,18 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 			nodeExecutionRepo: ctx.nodeExecutionRepo,
 			taskAgentManager: tam.manager,
 			activateNode: opts.activateNode,
+			pendingMessageQueue: fakeQueue
+				? {
+						enqueue(input) {
+							const index = fakeQueue.enqueued.length;
+							fakeQueue.enqueued.push(input);
+							return {
+								record: { id: `pending-message-${index}` },
+								deduped: false,
+							};
+						},
+					}
+				: undefined,
 		});
 	}
 
@@ -1756,7 +1797,11 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		// Direct-injection path must skip activateNode.
 		expect(activateCalls).toHaveLength(0);
 		expect(tam.subSessionInjects).toEqual([
-			{ sessionId: 'coder-session-live', message: 'refactor the parser' },
+			{
+				sessionId: 'coder-session-live',
+				message: 'refactor the parser',
+				isSyntheticMessage: true,
+			},
 		]);
 		// The Task Agent path was not touched.
 		expect(tam.ensureCalls).toHaveLength(0);
@@ -1796,7 +1841,11 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.node_execution_id).toBe(reviewerB.id);
 		expect(tam.subSessionInjects).toEqual([
-			{ sessionId: 'reviewer-b-session', message: 'please re-review' },
+			{
+				sessionId: 'reviewer-b-session',
+				message: 'please re-review',
+				isSyntheticMessage: true,
+			},
 		]);
 		// Ensure the other reviewer was never touched.
 		expect(tam.subSessionInjects.some((r) => r.sessionId === reviewerA.agentSessionId)).toBe(false);
@@ -1842,6 +1891,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 			{
 				sessionId: 'reviewer-session-newly-restored',
 				message: 'please re-review',
+				isSyntheticMessage: true,
 			},
 		]);
 	});
@@ -1880,8 +1930,58 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.activated).toBe(true);
 		expect(parsed.delivered).toBe(false);
+		expect(parsed.queued).toBe(false);
+		expect(parsed.queuedMessageId).toBeUndefined();
 		expect(parsed.node_execution_id).toBe(exec.id);
 		expect(tam.subSessionInjects).toHaveLength(0);
+	});
+
+	test('queues the message when activation creates no live session and a pending queue is configured', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Queued');
+		const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Queued');
+		const task = tasks[0];
+		const exec = ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: run.id,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const fakeQueue = makeFakePendingMessageQueue();
+		const handlers = makeHandlersWith(tam, {
+			activateNode: async () => {
+				// Activation succeeded but the tick loop has not spawned the session yet.
+			},
+			pendingMessageQueue: fakeQueue,
+		});
+
+		const result = await handlers.send_message_to_task({
+			task_id: task.id,
+			node_id: 'reviewer',
+			message: 'please review this PR',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.activated).toBe(true);
+		expect(parsed.delivered).toBe(false);
+		expect(parsed.queued).toBe(true);
+		expect(parsed.queuedMessageId).toBe('pending-message-0');
+		expect(parsed.node_execution_id).toBe(exec.id);
+		expect(tam.subSessionInjects).toHaveLength(0);
+
+		expect(fakeQueue.enqueued).toEqual([
+			{
+				workflowRunId: run.id,
+				spaceId: ctx.spaceId,
+				taskId: task.id,
+				sourceAgentName: undefined,
+				targetKind: 'node_agent',
+				targetAgentName: 'reviewer',
+				message: 'please review this PR',
+			},
+		]);
 	});
 
 	test('returns an error when node_id does not match any execution', async () => {
@@ -1946,7 +2046,11 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.node_execution_id).toBe(exec.id);
 		expect(tam.subSessionInjects).toEqual([
-			{ sessionId: 'reviewer-session-1', message: 'please look again' },
+			{
+				sessionId: 'reviewer-session-1',
+				message: 'please look again',
+				isSyntheticMessage: true,
+			},
 		]);
 	});
 
@@ -2003,7 +2107,9 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.activated).toBe(true);
 		expect(activateCalls).toEqual([[run.id, wf.startNodeId]]);
-		expect(tam.subSessionInjects).toEqual([{ sessionId: 'coder-new', message: 'retry' }]);
+		expect(tam.subSessionInjects).toEqual([
+			{ sessionId: 'coder-new', message: 'retry', isSyntheticMessage: true },
+		]);
 	});
 
 	test('returns an error when the target task belongs to a different space', async () => {

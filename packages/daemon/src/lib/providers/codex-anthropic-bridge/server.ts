@@ -23,7 +23,6 @@ import {
 	extractLastUserMessage,
 	isToolResultContinuation,
 	extractToolResults,
-	pingSSE,
 	messageStartSSE,
 	contentBlockStartTextSSE,
 	contentBlockStartToolUseSSE,
@@ -34,6 +33,8 @@ import {
 	messageStopSSE,
 	errorSSE,
 } from './translator.js';
+import { estimateAnthropicInputTokens } from './token-estimator.js';
+import { getModelContextWindow, type CodexBridgeModelId } from './model-context-windows.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('codex-bridge-server');
@@ -48,28 +49,57 @@ const logger = new Logger('codex-bridge-server');
 // a minimal Anthropic-compatible model listing that covers the models offered
 // by the parent AnthropicToCodexBridgeProvider.
 
+function bridgeModel({
+	id,
+	display_name,
+	created_at,
+}: {
+	id: CodexBridgeModelId;
+	display_name: string;
+	created_at: string;
+}) {
+	const contextWindow = getModelContextWindow(id)!;
+	const autoCompactTokenLimit = Math.floor(contextWindow * 0.9);
+	return {
+		id,
+		display_name,
+		created_at,
+		max_input_tokens: contextWindow,
+		context_window: contextWindow,
+		max_context_window: contextWindow,
+		model_context_window: contextWindow,
+		auto_compact_token_limit: autoCompactTokenLimit,
+		model_auto_compact_token_limit: autoCompactTokenLimit,
+		max_tokens: 16384,
+	};
+}
+
 const BRIDGE_MODELS = [
-	{
+	bridgeModel({
 		id: 'gpt-5.3-codex',
 		display_name: 'GPT-5.3 Codex',
 		created_at: '2025-12-01T00:00:00Z',
-		max_input_tokens: 200000,
-		max_tokens: 16384,
-	},
-	{
+	}),
+	bridgeModel({
 		id: 'gpt-5.4',
 		display_name: 'GPT-5.4',
 		created_at: '2026-01-01T00:00:00Z',
-		max_input_tokens: 200000,
-		max_tokens: 16384,
-	},
-	{
+	}),
+	bridgeModel({
+		id: 'gpt-5.5',
+		display_name: 'GPT-5.5',
+		created_at: '2026-04-01T00:00:00Z',
+	}),
+	bridgeModel({
+		id: 'gpt-5.4-mini',
+		display_name: 'GPT-5.4 Mini',
+		created_at: '2026-01-01T00:00:00Z',
+	}),
+	bridgeModel({
 		id: 'gpt-5.1-codex-mini',
 		display_name: 'GPT-5.1 Codex Mini',
 		created_at: '2026-01-01T00:00:00Z',
-		max_input_tokens: 128000,
-		max_tokens: 16384,
-	},
+	}),
 ] as const;
 
 const MODELS_LIST_RESPONSE = {
@@ -78,6 +108,18 @@ const MODELS_LIST_RESPONSE = {
 	first_id: BRIDGE_MODELS[0].id,
 	last_id: BRIDGE_MODELS[BRIDGE_MODELS.length - 1].id,
 };
+
+const BRIDGE_MODEL_ALIASES = new Map<string, string>([
+	['codex', 'gpt-5.3-codex'],
+	['codex-5.4', 'gpt-5.4'],
+	['codex-latest', 'gpt-5.5'],
+	['codex-mini', 'gpt-5.4-mini'],
+	['codex-5.1-mini', 'gpt-5.1-codex-mini'],
+]);
+
+function resolveBridgeModelId(model: string): string {
+	return BRIDGE_MODEL_ALIASES.get(model) ?? model;
+}
 
 function isClosedControllerError(error: unknown): boolean {
 	if (!(error instanceof Error)) {
@@ -112,6 +154,7 @@ export function createAnthropicError(
 
 /** Default TTL before an unresolved tool-call session is abandoned (5 min). */
 export const DEFAULT_TOOL_SESSION_TTL_MS = 5 * 60 * 1000;
+const MAX_SUBPROCESS_RETRIES = 1;
 
 // ---------------------------------------------------------------------------
 // Session state for tool-call round-trips
@@ -132,6 +175,11 @@ export type ToolSession = {
 	cleanupTimer: ReturnType<typeof setTimeout>;
 };
 
+export type DrainResult =
+	| { type: 'completed' }
+	| { type: 'tool_call_suspended'; callId: string }
+	| { type: 'error'; message: string; isSubprocessCrash: boolean };
+
 function generateMsgId(): string {
 	return `msg_${Math.random().toString(36).slice(2, 14)}`;
 }
@@ -151,6 +199,19 @@ function toolsKey(anthropicTools: { name: string }[]): string {
 		.map((t) => t.name)
 		.sort()
 		.join(',');
+}
+
+function estimateLastMessageInputTokens(body: AnthropicRequest): number {
+	const last = body.messages.at(-1);
+	if (!last) return 0;
+	return estimateAnthropicInputTokens({
+		model: body.model,
+		messages: [last],
+	});
+}
+
+function isSubprocessCrashMessage(message: string): boolean {
+	return message.toLowerCase().includes('subprocess closed');
 }
 
 /** Persistent Codex session across multiple conversation turns. */
@@ -183,8 +244,10 @@ export async function drainToSSE(
 	ttlMs: number,
 	sessionId: string,
 	onTurnDone: () => void,
-	onError?: () => void
-): Promise<void> {
+	onError?: () => void,
+	initialInputTokens = 0,
+	returnUncommittedSubprocessCrash = true
+): Promise<DrainResult> {
 	const enc = new TextEncoder();
 	const send = (s: string) => controller.enqueue(enc.encode(s));
 
@@ -192,16 +255,33 @@ export async function drainToSSE(
 	let blockIndex = 0;
 	let outputTokens = 0;
 	let suspendedCallId: string | null = null;
+	let modelContextWindow = getModelContextWindow(model);
+	let messageCommitted = false;
+
+	const commitMessage = () => {
+		if (messageCommitted) return;
+		const msgId = generateMsgId();
+		send(messageStartSSE(msgId, model, initialInputTokens, modelContextWindow));
+		messageCommitted = true;
+	};
+
+	const sendErrorAndClose = (message: string): DrainResult => {
+		logger.error('codex-bridge: BridgeSession error:', message);
+		if (!messageCommitted) {
+			commitMessage();
+		}
+		if (textBlockOpen) {
+			send(contentBlockStopSSE(blockIndex));
+			textBlockOpen = false;
+		}
+		send(errorSSE('api_error', message));
+		session.kill();
+		onError?.();
+		controller.close();
+		return { type: 'error', message, isSubprocessCrash: false };
+	};
 
 	try {
-		const msgId = generateMsgId();
-		// TODO: input_tokens is hard-coded to 0 here because thread/tokenUsage/updated
-		// arrives after streaming starts and message_start is already sent by then.
-		// To surface real input token counts, drainToSSE would need to either buffer
-		// events until turn_done is available or emit a corrected usage event afterward.
-		send(messageStartSSE(msgId, model, 0));
-		send(pingSSE());
-
 		// Use gen.next() manually instead of for-await-of.  The for-await-of
 		// construct calls gen.return() on early exit (break / return), which
 		// permanently closes the generator — preventing the next HTTP request
@@ -215,6 +295,7 @@ export async function drainToSSE(
 			);
 
 			if (event.type === 'text_delta') {
+				commitMessage();
 				if (!textBlockOpen) {
 					send(contentBlockStartTextSSE(blockIndex));
 					textBlockOpen = true;
@@ -222,6 +303,7 @@ export async function drainToSSE(
 				send(textDeltaSSE(blockIndex, event.text));
 				outputTokens += Math.ceil(event.text.length / 4);
 			} else if (event.type === 'tool_call') {
+				commitMessage();
 				// Close any open text block first
 				if (textBlockOpen) {
 					send(contentBlockStopSSE(blockIndex));
@@ -233,8 +315,14 @@ export async function drainToSSE(
 				send(inputJsonDeltaSSE(blockIndex, JSON.stringify(event.toolInput)));
 				send(contentBlockStopSSE(blockIndex));
 				// At tool_call time, thread/tokenUsage/updated has not yet fired (the model
-				// hasn't finished the turn yet), so always use the heuristic count here.
-				send(messageDeltaSSE('tool_use', { outputTokens, inputTokens: 0 }));
+				// hasn't finished the turn yet), so use the request-side estimate here.
+				send(
+					messageDeltaSSE('tool_use', {
+						outputTokens,
+						inputTokens: initialInputTokens,
+						modelContextWindow,
+					})
+				);
 				send(messageStopSSE());
 
 				// Store the session so the next HTTP request can resume it.
@@ -260,8 +348,9 @@ export async function drainToSSE(
 				logger.debug(`codex-bridge: tool_call suspended callId=${callId}`);
 				// End this HTTP response without closing the generator
 				controller.close();
-				return;
+				return { type: 'tool_call_suspended', callId };
 			} else if (event.type === 'turn_done') {
+				commitMessage();
 				if (textBlockOpen) {
 					send(contentBlockStopSSE(blockIndex));
 					textBlockOpen = false;
@@ -269,41 +358,53 @@ export async function drainToSSE(
 				// event.outputTokens is populated from thread/tokenUsage/updated (v2 protocol)
 				// or from legacy inline usage. Fall back to heuristic count if both are 0.
 				const endOutputTokens = event.outputTokens > 0 ? event.outputTokens : outputTokens;
+				const endInputTokens = event.inputTokens > 0 ? event.inputTokens : initialInputTokens;
+				modelContextWindow = event.modelContextWindow ?? modelContextWindow;
 				send(
 					messageDeltaSSE('end_turn', {
 						outputTokens: endOutputTokens,
-						inputTokens: event.inputTokens || 0,
+						inputTokens: endInputTokens,
+						cacheCreationInputTokens: event.cacheCreationInputTokens,
+						cacheReadInputTokens: event.cacheReadInputTokens,
+						modelContextWindow,
 					})
 				);
 				send(messageStopSSE());
 				onTurnDone();
 				controller.close();
-				return;
+				return { type: 'completed' };
 			} else if (event.type === 'error') {
-				logger.error('codex-bridge: BridgeSession error:', event.message);
-				// Close any open text block before emitting the error event
-				if (textBlockOpen) {
-					send(contentBlockStopSSE(blockIndex));
-					textBlockOpen = false;
+				if (
+					returnUncommittedSubprocessCrash &&
+					!messageCommitted &&
+					isSubprocessCrashMessage(event.message)
+				) {
+					logger.error('codex-bridge: BridgeSession error:', event.message);
+					session.kill();
+					onError?.();
+					return { type: 'error', message: event.message, isSubprocessCrash: true };
 				}
-				// Emit an Anthropic-format error SSE event then close the stream
-				send(errorSSE('api_error', event.message));
-				session.kill();
-				onError?.();
-				controller.close();
-				return;
+				return sendErrorAndClose(event.message);
 			}
 		}
 
 		// Generator exhausted without turn_done — close gracefully
+		commitMessage();
 		if (textBlockOpen) {
 			send(contentBlockStopSSE(blockIndex));
 		}
-		send(messageDeltaSSE('end_turn', { outputTokens: outputTokens, inputTokens: 0 }));
+		send(
+			messageDeltaSSE('end_turn', {
+				outputTokens: outputTokens,
+				inputTokens: initialInputTokens,
+				modelContextWindow,
+			})
+		);
 		send(messageStopSSE());
 		session.kill();
 		onError?.();
 		controller.close();
+		return { type: 'completed' };
 	} catch (error) {
 		if (isClosedControllerError(error)) {
 			logger.debug('codex-bridge: SSE controller already closed, ending stream drain');
@@ -316,15 +417,20 @@ export async function drainToSSE(
 			}
 			onError?.();
 			session.kill();
-			return;
+			return { type: 'error', message: String(error), isSubprocessCrash: false };
 		}
-		// Ensure cleanup runs for any error that escapes the drain loop.
-		// This is critical when startTurn throws due to subprocess crash —
-		// without calling onError, turnInProgress stays true and the session
-		// is never deleted, causing subsequent requests to get 409 conflicts.
-		onError?.();
-		session.kill();
-		throw error;
+		const message = error instanceof Error ? error.message : String(error);
+		if (
+			returnUncommittedSubprocessCrash &&
+			!messageCommitted &&
+			isSubprocessCrashMessage(message)
+		) {
+			logger.error('codex-bridge: BridgeSession error:', message);
+			onError?.();
+			session.kill();
+			return { type: 'error', message, isSubprocessCrash: true };
+		}
+		return sendErrorAndClose(message);
 	}
 }
 
@@ -389,13 +495,30 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				});
 			}
 
-			// Token counting stub — the SDK calls this for context/token
-			// estimation.  It already catches errors, but returning a proper
-			// response avoids unnecessary error noise.
+			// Token counting — the SDK calls this for context usage. Codex
+			// app-server does not expose a count endpoint, so use the bridge-local
+			// deterministic estimator and let real app-server usage win at turn end.
 			if (url.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
-				return new Response(JSON.stringify({ input_tokens: 0 }), {
-					headers: { 'Content-Type': 'application/json' },
-				});
+				try {
+					const body = (await req.json()) as AnthropicRequest;
+					const sessionId = extractSessionId(req);
+					const ps = persistentSessions.get(sessionId);
+					const resolvedModel = resolveBridgeModelId(body.model);
+					const currentToolsKey = toolsKey(body.tools ?? []);
+					const shouldCountOnlyCurrentTurn =
+						ps !== undefined &&
+						!ps.isFirstTurn &&
+						ps.model === resolvedModel &&
+						ps.toolsKey === currentToolsKey;
+					const inputTokens = shouldCountOnlyCurrentTurn
+						? estimateLastMessageInputTokens(body)
+						: estimateAnthropicInputTokens(body);
+					return new Response(JSON.stringify({ input_tokens: inputTokens }), {
+						headers: { 'Content-Type': 'application/json' },
+					});
+				} catch {
+					return createAnthropicError(400, 'invalid_request_error', 'Bad Request');
+				}
 			}
 
 			// Catch-all: return 501 instead of 404.  The SDK specifically maps
@@ -485,6 +608,7 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				}
 
 				const { gen, session, model: sessionModel, sessionId: tsSessionId } = primaryStored;
+				const estimatedInputTokens = estimateLastMessageInputTokens(body);
 				const toolContinuationPs = persistentSessions.get(tsSessionId);
 				const onTurnDone = toolContinuationPs
 					? () => {
@@ -513,7 +637,9 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 									toolContinuationPs.session.kill();
 									persistentSessions.delete(tsSessionId);
 								}
-							}
+							},
+							estimatedInputTokens,
+							false
 						);
 					},
 				});
@@ -524,12 +650,25 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			// New conversation turn: look up or create a persistent session
 			// ------------------------------------------------------------------
 			const neokaiSessionId = extractSessionId(req);
-			const model = body.model;
+			const model = resolveBridgeModelId(body.model);
 			const system = extractSystemText(body.system);
 			const anthropicTools = body.tools ?? [];
 			const dynamicTools = buildDynamicTools(anthropicTools);
 			const originalToolNames = anthropicTools.map((t) => t.name);
 			const currentToolsKey = toolsKey(anthropicTools);
+			const createInitializedSession = async (): Promise<BridgeSession> => {
+				const conn = AppServerConn.create(config.codexBinaryPath, config.cwd, config.auth);
+				const session = new BridgeSession(
+					conn,
+					model,
+					dynamicTools,
+					config.cwd,
+					config.auth,
+					originalToolNames
+				);
+				await session.initialize();
+				return session;
+			};
 
 			// Look up or create a persistent session
 			let ps = persistentSessions.get(neokaiSessionId);
@@ -557,18 +696,8 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				bridgeSession = ps.session;
 			} else {
 				// First turn for this NeoKai session — spin up a new Codex subprocess
-				let conn: AppServerConn;
 				try {
-					conn = AppServerConn.create(config.codexBinaryPath, config.cwd, config.auth);
-					bridgeSession = new BridgeSession(
-						conn,
-						model,
-						dynamicTools,
-						config.cwd,
-						config.auth,
-						originalToolNames
-					);
-					await bridgeSession.initialize();
+					bridgeSession = await createInitializedSession();
 				} catch (err) {
 					logger.error('codex-bridge: failed to start BridgeSession:', err);
 					return createAnthropicError(500, 'api_error', `Internal Server Error: ${String(err)}`);
@@ -592,12 +721,14 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			// has context from any messages that pre-date the persistent session.
 			// Subsequent turns: Codex already has the thread history — send only the new
 			// user message to avoid duplicating context.
-			const userText = ps.isFirstTurn
+			const isFirstTurn = ps.isFirstTurn;
+			let userText = isFirstTurn
 				? buildConversationText(body.messages, system)
 				: extractLastUserMessage(body.messages);
 			ps.isFirstTurn = false;
-
-			const gen = bridgeSession.startTurn(userText);
+			let estimatedInputTokens = isFirstTurn
+				? estimateAnthropicInputTokens(body)
+				: estimateLastMessageInputTokens(body);
 
 			// Schedule idle timer on turn completion
 			const capturedPs = ps!;
@@ -606,26 +737,96 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				capturedPs.turnInProgress = false;
 				capturedPs.idleTimer = scheduleIdle(capturedSessionId);
 			};
+			const onError = () => {
+				// Error: clean up persistent session
+				capturedPs.turnInProgress = false;
+				clearTimeout(capturedPs.idleTimer);
+				capturedPs.session.kill();
+				persistentSessions.delete(capturedSessionId);
+			};
+			const sendUncommittedError = (
+				controller: ReadableStreamDefaultController<Uint8Array>,
+				message: string
+			) => {
+				const enc = new TextEncoder();
+				const send = (s: string) => controller.enqueue(enc.encode(s));
+				send(
+					messageStartSSE(
+						generateMsgId(),
+						model,
+						estimatedInputTokens,
+						getModelContextWindow(model)
+					)
+				);
+				send(errorSSE('api_error', message));
+				send(messageStopSSE());
+				controller.close();
+			};
 
 			const stream = new ReadableStream<Uint8Array>({
 				start(controller) {
-					void drainToSSE(
-						gen,
-						bridgeSession,
-						model,
-						toolSessions,
-						controller,
-						ttlMs,
-						capturedSessionId,
-						onTurnDone,
-						() => {
-							// Error: clean up persistent session
-							capturedPs.turnInProgress = false;
+					void (async () => {
+						let currentSession = bridgeSession;
+						let retriesLeft = MAX_SUBPROCESS_RETRIES;
+
+						while (true) {
+							const gen = currentSession.startTurn(userText);
+							const result = await drainToSSE(
+								gen,
+								currentSession,
+								model,
+								toolSessions,
+								controller,
+								ttlMs,
+								capturedSessionId,
+								onTurnDone,
+								onError,
+								estimatedInputTokens
+							);
+
+							if (result.type === 'completed' || result.type === 'tool_call_suspended') {
+								return;
+							}
+
+							if (!result.isSubprocessCrash) {
+								return;
+							}
+
+							if (retriesLeft <= 0) {
+								sendUncommittedError(controller, result.message);
+								return;
+							}
+
+							retriesLeft--;
+							logger.warn(
+								'codex-bridge: subprocess crashed before output, retrying turn with a fresh session'
+							);
+
+							capturedPs.turnInProgress = true;
 							clearTimeout(capturedPs.idleTimer);
-							capturedPs.session.kill();
-							persistentSessions.delete(capturedSessionId);
+							persistentSessions.set(capturedSessionId, capturedPs);
+
+							try {
+								const newSession = await createInitializedSession();
+								capturedPs.session = newSession;
+								capturedPs.isFirstTurn = false;
+								currentSession = newSession;
+								userText = buildConversationText(body.messages, system);
+								estimatedInputTokens = estimateAnthropicInputTokens(body);
+							} catch (err) {
+								logger.error('codex-bridge: failed to restart BridgeSession:', err);
+								capturedPs.turnInProgress = false;
+								clearTimeout(capturedPs.idleTimer);
+								capturedPs.session.kill();
+								persistentSessions.delete(capturedSessionId);
+								sendUncommittedError(
+									controller,
+									`Internal Server Error: ${err instanceof Error ? err.message : String(err)}`
+								);
+								return;
+							}
 						}
-					);
+					})();
 				},
 			});
 			return new Response(stream, { headers: sseHeaders });

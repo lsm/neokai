@@ -32,8 +32,10 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
+import type { SpaceManager } from '../managers/space-manager';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import type { DaemonHub } from '../../daemon-hub';
+import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import { canTransition } from '../runtime/workflow-run-status-machine';
@@ -81,6 +83,8 @@ export interface SpaceAgentToolsConfig {
 	runtime: SpaceRuntime;
 	/** Workflow manager for listing available workflows. */
 	workflowManager: SpaceWorkflowManager;
+	/** Space manager for approve_task autonomy checks. */
+	spaceManager?: Pick<SpaceManager, 'getSpace'>;
 	/** Task repository for read queries (list/filter). */
 	taskRepo: SpaceTaskRepository;
 	/** Node execution repository for workflow run node execution queries. */
@@ -115,6 +119,11 @@ export interface SpaceAgentToolsConfig {
 	 */
 	activateNode?: (runId: string, nodeId: string) => Promise<void>;
 	/**
+	 * Pending message queue for messages addressed to workflow node agents that
+	 * have been activated but do not have a live session yet.
+	 */
+	pendingMessageQueue?: PendingAgentMessageQueue;
+	/**
 	 * Resolves the space's current autonomy level.
 	 * Required for approve_gate autonomy enforcement: agent approvals are rejected
 	 * when space autonomy < gate.requiredLevel (default 5 if gate has no requiredLevel).
@@ -139,8 +148,7 @@ export interface SpaceAgentToolsConfig {
 	 * even if the `node-agent` MCP server is missing — breaking the namespace paradox
 	 * where the self-heal tool lived in the same namespace as the server it repairs.
 	 *
-	 * Wired by TaskAgentManager when building space-agent-tools for workflow sub-sessions.
-	 * Not set for task-agent or space-chat sessions (they have no node-agent to restore).
+	 * Only set for specialised sessions that intentionally mirror this restore hook.
 	 */
 	onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
 }
@@ -168,6 +176,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		daemonHub,
 		onGateChanged,
 		activateNode,
+		pendingMessageQueue,
 		getSpaceAutonomyLevel,
 		myAgentName,
 		myAgentNameAliases,
@@ -592,7 +601,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			// Attempt direct injection when the execution already has a live session.
 			if (resolved.agentSessionId) {
 				try {
-					await taskAgentManager.injectSubSessionMessage(resolved.agentSessionId, args.message);
+					await taskAgentManager.injectSubSessionMessage(
+						resolved.agentSessionId,
+						args.message,
+						true
+					);
 					return jsonResult({
 						success: true,
 						task_id: task.id,
@@ -629,7 +642,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			const sessionIdAfter = refreshedExecution?.agentSessionId ?? null;
 			if (sessionIdAfter) {
 				try {
-					await taskAgentManager.injectSubSessionMessage(sessionIdAfter, args.message);
+					await taskAgentManager.injectSubSessionMessage(sessionIdAfter, args.message, true);
 					return jsonResult({
 						success: true,
 						task_id: task.id,
@@ -647,8 +660,22 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				}
 			}
 
-			// No live session yet — the tick loop will spawn one. Surface that state so
-			// the caller knows activation succeeded but delivery is deferred.
+			let queuedMessageId: string | null = null;
+			if (pendingMessageQueue) {
+				const { record } = pendingMessageQueue.enqueue({
+					workflowRunId: task.workflowRunId,
+					spaceId,
+					taskId: task.id,
+					sourceAgentName: myAgentName,
+					targetKind: 'node_agent',
+					targetAgentName: resolved.agentName,
+					message: args.message,
+				});
+				queuedMessageId = record.id;
+			}
+
+			// No live session yet — the tick loop will spawn one. When a queue is
+			// available, the queued row will be flushed into that session on activation.
 			return jsonResult({
 				success: true,
 				task_id: task.id,
@@ -657,9 +684,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				agent_name: resolved.agentName,
 				activated: true,
 				delivered: false,
+				queued: queuedMessageId !== null,
+				...(queuedMessageId !== null ? { queuedMessageId } : {}),
 				message:
-					`Node "${resolved.agentName}" was activated but does not yet have a live session; ` +
-					`the message was not injected. Retry after the node starts.`,
+					queuedMessageId !== null
+						? `Node "${resolved.agentName}" was activated and the message was queued; it will be delivered once the session spawns.`
+						: `Node "${resolved.agentName}" was activated but does not yet have a live session; ` +
+							`the message was not queued because no pending message queue is configured. Retry after the node starts.`,
 			});
 		},
 
@@ -878,6 +909,28 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					error: `Task ${args.task_id} does not belong to this space.`,
 				});
 			}
+
+			const space = config.spaceManager ? await config.spaceManager.getSpace(spaceId) : null;
+			const currentLevel =
+				space?.autonomyLevel ?? (getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 1);
+			let completionAutonomyLevel = 5;
+			if (task.workflowRunId) {
+				const run = workflowRunRepo.getRun(task.workflowRunId);
+				if (run?.workflowId) {
+					const workflow = workflowManager.getWorkflow(run.workflowId);
+					if (workflow?.completionAutonomyLevel !== undefined) {
+						completionAutonomyLevel = workflow.completionAutonomyLevel;
+					}
+				}
+			}
+
+			if (currentLevel < completionAutonomyLevel) {
+				return jsonResult({
+					success: false,
+					error: `approve_task not permitted: space autonomy level ${currentLevel} < workflow completionAutonomyLevel ${completionAutonomyLevel}. Use submit_for_approval to request human review.`,
+				});
+			}
+
 			if (task.status !== 'review') {
 				return jsonResult({
 					success: false,
@@ -1155,12 +1208,8 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 	];
 
-	// P3-8: expose restore_node_agent in the space-agent-tools namespace so it remains
-	// callable even when the node-agent MCP server is missing. The node-agent namespace
-	// has a self-referential paradox: if node-agent is gone, restore_node_agent (which
-	// lives inside that namespace) is also gone and cannot be called. Placing a copy here
-	// breaks the dependency — space-agent-tools is always present for workflow sub-sessions
-	// (attached both at spawn and rehydrate, independent of node-agent health).
+	// Optional legacy restore mirror. Workflow node sessions should use the
+	// node-agent namespace directly; space-agent-tools is no longer attached there.
 	if (config.onRestoreNodeAgent) {
 		const restoreCallback = config.onRestoreNodeAgent;
 		tools.push(

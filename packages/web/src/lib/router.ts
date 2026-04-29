@@ -2204,7 +2204,7 @@ export function pushOverlayHistoryForPendingAgent(taskId: string, agentName: str
  * Replace the current overlay history entry instead of pushing a new one.
  *
  * Use this for "handoff" transitions where a pending-agent entry is being
- * replaced by the live session entry (e.g. `PendingAgentOverlay` →
+ * replaced by the live session entry (e.g. pending-agent overlay →
  * `AgentOverlayChat`). Using `replaceState` avoids pushing a second history
  * entry, so pressing Back from the live session overlay closes it cleanly
  * instead of restoring a stale `pending:…` ghost state.
@@ -2225,6 +2225,13 @@ export function replaceOverlayHistory(
 	spaceOverlayHighlightMessageIdSignal.value = highlightMessageId ?? null;
 	spaceOverlayPendingTaskIdSignal.value = null;
 	spaceOverlayPendingAgentNameSignal.value = null;
+}
+
+/**
+ * Clear the one-shot overlay message highlight after the target row anchors.
+ */
+export function clearOverlayHighlightMessageId(): void {
+	spaceOverlayHighlightMessageIdSignal.value = null;
 }
 
 /**

@@ -19,12 +19,24 @@ import type {
 	WorkflowChannel,
 	WorkflowNode,
 } from '@neokai/shared';
+import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { inferProviderForModel } from '../../providers/registry';
 import { Logger } from '../../logger';
 import { SUB_SESSION_FEATURES } from './seed-agents';
 
 const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
+
+const CLAUDE_CODE_BUILTIN_TOOLS = [
+	...KNOWN_TOOLS,
+	'NotebookEdit',
+	'TodoWrite',
+	'AskUserQuestion',
+	'EnterPlanMode',
+	'ExitPlanMode',
+	'Skill',
+	'ToolSearch',
+] as const;
 
 /**
  * Soft size budget for the initial user message. When exceeded, a warning is
@@ -343,6 +355,13 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 
 	const customTools =
 		customAgent.tools && customAgent.tools.length > 0 ? customAgent.tools : undefined;
+	const customToolPermissions = customTools
+		? {
+				sdkToolsPreset: customTools,
+				allowedTools: customTools,
+				disallowedTools: CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool)),
+			}
+		: {};
 	const model =
 		slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
 	const provider = inferProviderForModel(model);
@@ -383,6 +402,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 			provider,
 			agent: agentKey,
 			agents: { [agentKey]: agentDef },
+			...customToolPermissions,
 			roomSkillOverrides,
 			mcpServers: extraMcpServers,
 		};
@@ -401,6 +421,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		type: 'worker',
 		model,
 		provider,
+		...customToolPermissions,
 		roomSkillOverrides,
 		mcpServers: extraMcpServers,
 	};

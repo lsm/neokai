@@ -27,6 +27,7 @@ import type {
 	WorkflowChannel,
 	Gate,
 	SpaceAutonomyLevel,
+	PostApprovalRoute,
 } from '@neokai/shared';
 import { generateUUID, TASK_AGENT_NODE_ID, isChannelCyclic } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
@@ -69,7 +70,8 @@ function buildTemplateCanvasSignature(
 	channels: WorkflowChannel[],
 	startNodeId: string,
 	gates: Gate[],
-	endNodeId: string | undefined
+	endNodeId: string | undefined,
+	postApproval: PostApprovalRoute | undefined
 ): string {
 	const regularNodes = nodes
 		.filter(
@@ -134,7 +136,20 @@ function buildTemplateCanvasSignature(
 		startNodeId,
 		endNodeId,
 		gates: normalizedGates,
+		postApproval: postApproval ? { ...postApproval } : null,
 	});
+}
+
+function getPostApprovalTargetOptions(nodes: VisualNode[]): string[] {
+	const targets = new Set<string>(['task-agent']);
+	for (const node of nodes) {
+		if (node.step.id === TASK_AGENT_NODE_ID || node.step.localId === TASK_AGENT_NODE_ID) continue;
+		for (const agent of node.step.agents ?? []) {
+			const name = agent.name?.trim();
+			if (name) targets.add(name);
+		}
+	}
+	return Array.from(targets);
 }
 
 function resolveChannelTargetNodeIds(
@@ -235,6 +250,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				workflow?.completionAutonomyLevel ??
 				3) as SpaceAutonomyLevel
 	);
+	const [postApproval, setPostApproval] = useState<PostApprovalRoute | undefined>(() =>
+		initState?.postApproval ? { ...initState.postApproval } : undefined
+	);
 	const [viewportState, setViewportState] = useState<ViewportState>({
 		offsetX: 0,
 		offsetY: 0,
@@ -271,9 +289,26 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			),
 		[nodes]
 	);
+	const postApprovalTargetOptions = useMemo(() => {
+		const options = getPostApprovalTargetOptions(nodes);
+		const currentTarget = postApproval?.targetAgent?.trim();
+		if (currentTarget && !options.includes(currentTarget)) {
+			options.push(currentTarget);
+		}
+		return options;
+	}, [nodes, postApproval?.targetAgent]);
 	const currentTemplateCanvasSignature = useMemo(
-		() => buildTemplateCanvasSignature(nodes, edges, channels, startNodeId, gates, endNodeId),
-		[nodes, edges, channels, startNodeId, gates, endNodeId]
+		() =>
+			buildTemplateCanvasSignature(
+				nodes,
+				edges,
+				channels,
+				startNodeId,
+				gates,
+				endNodeId,
+				postApproval
+			),
+		[nodes, edges, channels, startNodeId, gates, endNodeId, postApproval]
 	);
 	const [templateBaselineSignature, setTemplateBaselineSignature] = useState(() =>
 		buildTemplateCanvasSignature(
@@ -292,7 +327,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			initState?.channels ?? [],
 			initState?.startNodeId ?? '',
 			initState?.gates ?? [],
-			initState?.endNodeId
+			initState?.endNodeId,
+			initState?.postApproval
 		)
 	);
 
@@ -1001,6 +1037,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		setEdges(newEdges);
 		setChannels(nextChannels);
 		setGates(nextGates);
+		setPostApproval(template.postApproval ? { ...template.postApproval } : undefined);
 		if (template.tags) {
 			setTags([...template.tags]);
 		}
@@ -1017,7 +1054,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				nextChannels,
 				resolvedStartLocalId,
 				nextGates,
-				resolvedEndLocalId
+				resolvedEndLocalId,
+				template.postApproval
 			)
 		);
 		if (!name) setName(template.label);
@@ -1083,6 +1121,16 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				return;
 			}
 		}
+		if (postApproval) {
+			if (!postApproval.targetAgent.trim()) {
+				setError('Post-approval target is required.');
+				return;
+			}
+			if (!postApproval.instructions.trim()) {
+				setError('Post-approval instructions are required.');
+				return;
+			}
+		}
 
 		const visualState: VisualEditorState = {
 			nodes,
@@ -1093,6 +1141,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			channels,
 			gates,
 			completionAutonomyLevel,
+			postApproval,
 		};
 
 		setSaving(true);
@@ -1221,6 +1270,68 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 						{label}
 					</button>
 				))}
+			</div>
+
+			{/* ---- Post-approval route ---- */}
+			<div class="px-4 py-2 border-b border-dark-700 flex-shrink-0">
+				<div class="flex items-start gap-3">
+					<label class="flex items-center gap-2 pt-1 text-xs text-gray-400">
+						<input
+							type="checkbox"
+							checked={!!postApproval}
+							data-testid="post-approval-enabled-checkbox"
+							onChange={(e) => {
+								const enabled = (e.currentTarget as HTMLInputElement).checked;
+								if (!enabled) {
+									setPostApproval(undefined);
+									return;
+								}
+								const targetAgent =
+									postApproval?.targetAgent || postApprovalTargetOptions[0] || 'task-agent';
+								setPostApproval({
+									targetAgent,
+									instructions: postApproval?.instructions ?? '',
+								});
+							}}
+							class="w-3 h-3 rounded accent-blue-500"
+						/>
+						<span class="font-medium">Post-Approval</span>
+					</label>
+					{postApproval && (
+						<div class="flex-1 grid grid-cols-[12rem_1fr] gap-2 min-w-0">
+							<select
+								value={postApproval.targetAgent}
+								data-testid="post-approval-target-select"
+								onChange={(e) =>
+									setPostApproval({
+										...postApproval,
+										targetAgent: (e.currentTarget as HTMLSelectElement).value,
+									})
+								}
+								class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
+							>
+								{postApprovalTargetOptions.map((target) => (
+									<option key={target} value={target}>
+										{target}
+									</option>
+								))}
+							</select>
+							<textarea
+								value={postApproval.instructions}
+								data-testid="post-approval-instructions-textarea"
+								onInput={(e) =>
+									setPostApproval({
+										...postApproval,
+										instructions: (e.currentTarget as HTMLTextAreaElement).value,
+									})
+								}
+								placeholder="Workflow-specific post-approval instructions…"
+								rows={3}
+								class="w-full resize-y min-h-[4.75rem] max-h-40 text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-600"
+							/>
+						</div>
+					)}
+				</div>
 			</div>
 
 			{/* ---- Error banner ---- */}

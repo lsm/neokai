@@ -6,7 +6,10 @@
 
 import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { QueryRunner, type QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
+import { getSDKSessionFilePath } from '../../../../src/lib/sdk-session-file-manager';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
@@ -42,6 +45,7 @@ describe('QueryRunner', () => {
 	let handleErrorSpy: ReturnType<typeof mock>;
 	let publishSpy: ReturnType<typeof mock>;
 	let saveSDKMessageSpy: ReturnType<typeof mock>;
+	let updateSessionSpy: ReturnType<typeof mock>;
 	let getMessagesByStatusSpy: ReturnType<typeof mock>;
 	let updateMessageStatusSpy: ReturnType<typeof mock>;
 	let buildSpy: ReturnType<typeof mock>;
@@ -90,10 +94,12 @@ describe('QueryRunner', () => {
 
 		// Database spies
 		saveSDKMessageSpy = mock(() => {});
+		updateSessionSpy = mock(() => {});
 		getMessagesByStatusSpy = mock(() => []);
 		updateMessageStatusSpy = mock(() => {});
 		mockDb = {
 			saveSDKMessage: saveSDKMessageSpy,
+			updateSession: updateSessionSpy,
 			getMessagesByStatus: getMessagesByStatusSpy,
 			updateMessageStatus: updateMessageStatusSpy,
 		} as unknown as Database;
@@ -248,6 +254,61 @@ describe('QueryRunner', () => {
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			expect(ctx.firstMessageReceived).toBe(false);
+		});
+
+		it('rebuilds query options after workflow MCP self-heal before SDK query creation', async () => {
+			const savedApiKey = process.env.ANTHROPIC_API_KEY;
+			process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+			try {
+				mockSession.id = 'space:s1:task:t1:exec:e1';
+				mockSession.workspacePath = tmpdir();
+				mockSession.type = 'worker';
+				mockSession.context = { spaceId: 's1', taskId: 't1' };
+				mockSession.config.mcpServers = {};
+
+				const repairedServers = {
+					'node-agent': {
+						type: 'sdk',
+						name: 'node-agent',
+						instance: {},
+					},
+				};
+				buildSpy
+					.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
+					.mockResolvedValueOnce({
+						model: 'claude-sonnet-4-20250514',
+						mcpServers: repairedServers,
+					});
+				let addOptionsCalls = 0;
+				addSessionStateOptionsSpy.mockImplementation((options: unknown) => {
+					addOptionsCalls++;
+					if (addOptionsCalls === 2) {
+						throw new Error('stop after rebuilt options');
+					}
+					return options;
+				});
+				const onMissingWorkflowMcpServers = mock(async () => {
+					mockSession.config.mcpServers =
+						repairedServers as unknown as Session['config']['mcpServers'];
+				});
+
+				const ctx = createContext({ onMissingWorkflowMcpServers });
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				expect(onMissingWorkflowMcpServers).toHaveBeenCalledWith('space:s1:task:t1:exec:e1', [
+					'node-agent',
+				]);
+				expect(buildSpy).toHaveBeenCalledTimes(2);
+				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(2);
+			} finally {
+				if (savedApiKey === undefined) {
+					delete process.env.ANTHROPIC_API_KEY;
+				} else {
+					process.env.ANTHROPIC_API_KEY = savedApiKey;
+				}
+			}
 		});
 	});
 
@@ -495,6 +556,25 @@ describe('QueryRunner', () => {
 			await runner.handleSDKMessage(message as unknown as SDKMessage);
 
 			expect(onMarkApiSuccessSpy).toHaveBeenCalled();
+		});
+
+		it('should clear carried compaction summary after the first handled SDK message', async () => {
+			mockSession.metadata.compactionSummary = 'Temporary compacted context';
+			runner = createRunner();
+
+			const message = {
+				type: 'system',
+				subtype: 'init',
+				uuid: 'init-uuid',
+				session_id: 'sdk-session-123',
+			};
+
+			await runner.handleSDKMessage(message as unknown as SDKMessage);
+
+			expect(mockSession.metadata.compactionSummary).toBeUndefined();
+			expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
+				metadata: mockSession.metadata,
+			});
 		});
 	});
 
@@ -815,6 +895,84 @@ describe('QueryRunner', () => {
 			expect(userMessage).not.toContain('attempt(s)');
 		});
 
+		it('should carry compacted summary while clearing stale resumeSessionAt and SDK state before retrying no-message-found', async () => {
+			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
+			const testSdkDir = join(
+				tmpdir(),
+				`query-runner-compaction-${Date.now()}-${Math.random().toString(36).slice(2)}`
+			);
+			try {
+				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
+				mockSession.sdkSessionId = 'sdk-session-id';
+				mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
+				const sessionFilePath = getSDKSessionFilePath(
+					mockSession.workspacePath!,
+					mockSession.sdkSessionId
+				);
+				mkdirSync(dirname(sessionFilePath), { recursive: true });
+				writeFileSync(
+					sessionFilePath,
+					[
+						JSON.stringify({
+							type: 'system',
+							subtype: 'compact_boundary',
+							compact_metadata: { trigger: 'auto', pre_tokens: 150000 },
+						}),
+						JSON.stringify({
+							type: 'assistant',
+							message: {
+								role: 'assistant',
+								content: [{ type: 'text', text: 'Recovered compacted context' }],
+							},
+						}),
+					].join('\n') + '\n',
+					'utf-8'
+				);
+
+				buildSpy
+					.mockRejectedValueOnce(
+						new Error('No message found with message.uuid of: missing-message-uuid')
+					)
+					.mockRejectedValueOnce(new Error('stop after retry'));
+
+				const ctx = createContext();
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				expect(buildSpy).toHaveBeenCalledTimes(2);
+				expect(mockSession.metadata.resumeSessionAt).toBeUndefined();
+				expect(mockSession.metadata.compactionSummary).toBe('Recovered compacted context');
+				expect(mockSession.sdkSessionId).toBeUndefined();
+				expect(mockSession.sdkOriginPath).toBeUndefined();
+				expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
+					metadata: mockSession.metadata,
+					sdkSessionId: undefined,
+					sdkOriginPath: undefined,
+				});
+				expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+					'test-session-id',
+					expect.objectContaining({
+						type: 'assistant',
+						message: expect.objectContaining({
+							content: expect.arrayContaining([
+								expect.objectContaining({
+									text: expect.stringContaining('compacted summary'),
+								}),
+							]),
+						}),
+					})
+				);
+			} finally {
+				rmSync(testSdkDir, { recursive: true, force: true });
+				if (originalTestSdkSessionDir !== undefined) {
+					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
+				} else {
+					delete process.env.TEST_SDK_SESSION_DIR;
+				}
+			}
+		});
+
 		it('should call stateManager.setIdle after handling startup timeout error', async () => {
 			const ctx = createContext();
 			runner = new QueryRunner(ctx);
@@ -1047,7 +1205,7 @@ describe('QueryRunner API validation error parsing', () => {
 	it('should parse 400 status code errors', () => {
 		const errorMessage =
 			'400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long"}}';
-		const match = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
 		expect(match).not.toBeNull();
 		expect(match![1]).toBe('400');
@@ -1060,7 +1218,7 @@ describe('QueryRunner API validation error parsing', () => {
 	it('should parse 401 status code errors', () => {
 		const errorMessage =
 			'401 {"type":"error","error":{"type":"authentication_error","message":"invalid api key"}}';
-		const match = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
 		expect(match).not.toBeNull();
 		expect(match![1]).toBe('401');
@@ -1069,29 +1227,41 @@ describe('QueryRunner API validation error parsing', () => {
 	it('should parse 429 status code errors', () => {
 		const errorMessage =
 			'429 {"type":"error","error":{"type":"rate_limit_error","message":"rate limit exceeded"}}';
-		const match = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
 		expect(match).not.toBeNull();
 		expect(match![1]).toBe('429');
 	});
 
+	it('should parse Claude SDK API Error-prefixed JSON errors', () => {
+		const errorMessage =
+			'API Error: 402 {"type":"error","error":{"type":"rate_limit_error","message":"402 You have no quota"}}';
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
+
+		expect(match).not.toBeNull();
+		expect(match![1]).toBe('402');
+		const body = JSON.parse(match![2]);
+		expect(body.error.type).toBe('rate_limit_error');
+		expect(body.error.message).toBe('402 You have no quota');
+	});
+
 	it('should not match 5xx errors', () => {
 		const errorMessage = '500 {"error":"internal server error"}';
-		const match = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
 		expect(match).toBeNull();
 	});
 
 	it('should not match non-JSON errors', () => {
 		const errorMessage = 'Connection refused';
-		const match = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
 		expect(match).toBeNull();
 	});
 
 	it('should handle malformed JSON gracefully', () => {
 		const errorMessage = '400 {invalid json}';
-		const match = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
 		// Match exists but JSON parsing will fail
 		expect(match).not.toBeNull();
@@ -1101,7 +1271,7 @@ describe('QueryRunner API validation error parsing', () => {
 	it('should extract error message from body', () => {
 		const errorMessage =
 			'400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt exceeds limit"}}';
-		const match = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
 		const body = JSON.parse(match![2]);
 		const apiErrorMessage = body.error?.message || errorMessage;
@@ -1111,7 +1281,7 @@ describe('QueryRunner API validation error parsing', () => {
 	it('should extract error type from body', () => {
 		const errorMessage =
 			'400 {"type":"error","error":{"type":"invalid_request_error","message":"test"}}';
-		const match = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+		const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
 		const body = JSON.parse(match![2]);
 		const apiErrorType = body.error?.type || 'api_error';

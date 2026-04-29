@@ -47,6 +47,26 @@ import {
 import { homedir } from 'os';
 import { join } from 'path';
 
+export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
+
+/**
+ * Provider-specific SDK settings overrides.
+ */
+export function buildProviderSettings(providerId: string): Options['settings'] {
+	if (providerId !== 'anthropic-codex') {
+		return undefined;
+	}
+
+	// The Claude Agent SDK can auto-compact by starting a second /v1/messages
+	// request while the original turn is still streaming. The Codex bridge
+	// fronts one Codex subprocess per session and intentionally rejects that
+	// concurrent turn with 409, so raise the SDK threshold above every Codex
+	// bridge context window and let Codex manage its own context.
+	return {
+		autoCompactWindow: CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
+	};
+}
+
 /**
  * Context interface - what QueryOptionsBuilder needs from AgentSession
  * Using interface instead of importing AgentSession to avoid circular deps
@@ -96,6 +116,23 @@ export class QueryOptionsBuilder {
 	}
 
 	/**
+	 * Return the effective MCP server map for dynamic SDK updates.
+	 *
+	 * This mirrors the `build()` merge path without rebuilding the full SDK
+	 * options object. Runtime MCP attachment can happen after a streaming query
+	 * already exists; callers use this method before `queryObject.setMcpServers()`
+	 * so dynamic updates preserve skill-contributed MCP servers instead of
+	 * replacing the live query with only `session.config.mcpServers`.
+	 */
+	getEffectiveMcpServers(): Record<string, McpServerConfig> | undefined {
+		const mcpServers = this.getMcpServers();
+		const mcpServersFromSkills = this.getMcpServersFromSkills();
+		return this.mergeMcpServers(mcpServers, mcpServersFromSkills) as
+			| Record<string, McpServerConfig>
+			| undefined;
+	}
+
+	/**
 	 * Build complete SDK query options
 	 *
 	 * Maps all SessionConfig (which extends SDKConfig) options to SDK Options
@@ -115,6 +152,7 @@ export class QueryOptionsBuilder {
 		// (default, haiku, opus) since the SDK only knows Anthropic model IDs
 		const contextManager = getProviderContextManager();
 		const providerContext = contextManager.createContext(this.ctx.session);
+		const providerId = providerContext.provider.id;
 		const sdkModelId = providerContext.getSdkModelId();
 		let sdkFallbackModel: string | undefined;
 		if (config.fallbackModel) {
@@ -227,6 +265,7 @@ export class QueryOptionsBuilder {
 			// or other settings from on-disk files. NeoKai is the sole arbiter of
 			// what reaches the SDK. See M5 of `unify-mcp-config-model`.
 			settingSources: [],
+			settings: buildProviderSettings(providerId),
 
 			// ============ Streaming ============
 			includePartialMessages: config.includePartialMessages,
@@ -475,6 +514,7 @@ export class QueryOptionsBuilder {
 	 */
 	private buildSystemPrompt(): Options['systemPrompt'] {
 		const config = this.ctx.session.config;
+		const compactionSummaryText = this.getCompactionSummaryAppendText();
 
 		// Priority 1: Check if SDKConfig systemPrompt is explicitly set
 		if (config.systemPrompt !== undefined) {
@@ -491,9 +531,12 @@ export class QueryOptionsBuilder {
 				preset: 'claude_code',
 			};
 
-			// Append worktree isolation instructions if session uses a worktree
-			if (this.ctx.session.worktree) {
-				presetConfig.append = this.getWorktreeIsolationText();
+			const append = this.joinSystemPromptAppendParts([
+				compactionSummaryText,
+				this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
+			]);
+			if (append) {
+				presetConfig.append = append;
 			}
 
 			return presetConfig;
@@ -502,7 +545,14 @@ export class QueryOptionsBuilder {
 		// No Claude Code preset - use minimal system prompt or undefined
 		// When worktree is used, still append isolation instructions
 		if (this.ctx.session.worktree) {
-			return this.getMinimalWorktreePrompt();
+			return this.joinSystemPromptAppendParts([
+				compactionSummaryText,
+				this.getMinimalWorktreePrompt(),
+			]);
+		}
+
+		if (compactionSummaryText) {
+			return compactionSummaryText;
 		}
 
 		// If no worktree, systemPromptConfig remains undefined (SDK default behavior)
@@ -515,13 +565,15 @@ export class QueryOptionsBuilder {
 	 * Handles both custom string prompts and Claude Code preset configuration
 	 */
 	private buildCustomSystemPrompt(systemPrompt: SystemPromptConfig): Options['systemPrompt'] {
+		const compactionSummaryText = this.getCompactionSummaryAppendText();
+
 		// Custom string prompt
 		if (typeof systemPrompt === 'string') {
-			// Append worktree isolation if needed
-			if (this.ctx.session.worktree) {
-				return systemPrompt + '\n\n' + this.getWorktreeIsolationText();
-			}
-			return systemPrompt;
+			return this.joinSystemPromptAppendParts([
+				systemPrompt,
+				compactionSummaryText,
+				this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
+			]);
 		}
 
 		// Claude Code preset configuration
@@ -531,15 +583,11 @@ export class QueryOptionsBuilder {
 				preset: 'claude_code',
 			};
 
-			// Combine existing append with worktree isolation
-			let append = systemPrompt.append || '';
-			if (this.ctx.session.worktree) {
-				if (append) {
-					append += '\n\n';
-				}
-				append += this.getWorktreeIsolationText();
-			}
-
+			const append = this.joinSystemPromptAppendParts([
+				systemPrompt.append,
+				compactionSummaryText,
+				this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
+			]);
 			if (append) {
 				presetConfig.append = append;
 			}
@@ -549,6 +597,22 @@ export class QueryOptionsBuilder {
 
 		// Unknown format - return as-is
 		return undefined;
+	}
+
+	private getCompactionSummaryAppendText(): string | undefined {
+		const summary = this.ctx.session.metadata.compactionSummary?.trim();
+		if (!summary) {
+			return undefined;
+		}
+
+		return `[Previous conversation summary - context was reset due to SDK compaction]\n${summary}`;
+	}
+
+	private joinSystemPromptAppendParts(parts: Array<string | undefined>): string {
+		return parts
+			.map((part) => part?.trim())
+			.filter((part): part is string => !!part)
+			.join('\n\n');
 	}
 
 	/**

@@ -20,6 +20,8 @@ import {
 	identifyOrphanedSDKFiles,
 	removeToolResultFromSessionFile,
 	truncateSessionFileAtMessage,
+	messageUuidExistsInSessionFile,
+	extractCompactionSummary,
 	findSDKSessionFileGlobally,
 	migrateSDKSessionFile,
 } from '../../../../src/lib/sdk-session-file-manager';
@@ -895,6 +897,88 @@ describe('SDK Session File Manager', () => {
 		});
 	});
 
+	describe('extractCompactionSummary', () => {
+		test('should return null when file does not exist', () => {
+			const summary = extractCompactionSummary(join(testSessionDir, 'missing.jsonl'));
+
+			expect(summary).toBeNull();
+		});
+
+		test('should return null when transcript has no compact boundary', () => {
+			writeFileSync(
+				testSessionFile,
+				JSON.stringify({
+					type: 'assistant',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'No compaction yet' }] },
+				}) + '\n',
+				'utf-8'
+			);
+
+			const summary = extractCompactionSummary(testSessionFile);
+
+			expect(summary).toBeNull();
+		});
+
+		test('should extract first assistant text after the latest compact boundary', () => {
+			const messages = [
+				JSON.stringify({
+					type: 'system',
+					subtype: 'compact_boundary',
+					compact_metadata: { trigger: 'auto', pre_tokens: 1000 },
+				}),
+				JSON.stringify({
+					type: 'assistant',
+					message: {
+						role: 'assistant',
+						content: [{ type: 'text', text: 'Old compacted summary' }],
+					},
+				}),
+				JSON.stringify({
+					type: 'system',
+					subtype: 'compact_boundary',
+					compact_metadata: { trigger: 'auto', pre_tokens: 2000 },
+				}),
+				JSON.stringify({
+					type: 'assistant',
+					message: {
+						role: 'assistant',
+						content: [
+							{ type: 'text', text: 'Latest compacted summary' },
+							{ type: 'text', text: 'with continuation' },
+						],
+					},
+				}),
+			];
+			writeFileSync(testSessionFile, `${messages.join('\n')}\n`, 'utf-8');
+
+			const summary = extractCompactionSummary(testSessionFile);
+
+			expect(summary).toBe('Latest compacted summary\n\nwith continuation');
+		});
+
+		test('should extract summary text from user message after compact boundary', () => {
+			const messages = [
+				JSON.stringify({
+					type: 'system',
+					subtype: 'compact_boundary',
+					compact_metadata: { trigger: 'auto', pre_tokens: 1000 },
+				}),
+				JSON.stringify({
+					type: 'user',
+					message: {
+						role: 'user',
+						content: 'Previous conversation summary lives here',
+					},
+				}),
+			];
+			writeFileSync(testSessionFile, `${messages.join('\n')}\n`, 'utf-8');
+
+			const summary = extractCompactionSummary(testSessionFile);
+
+			expect(summary).toBe('Previous conversation summary lives here');
+		});
+	});
+
 	// ============================================================================
 	// removeToolResultFromSessionFile Tests
 	// ============================================================================
@@ -1091,6 +1175,62 @@ describe('SDK Session File Manager', () => {
 
 			expect(userMessage.message.content[0].content[0].text).toContain('Output removed by user');
 			expect(userMessage.message.content[1].content[0].text).toContain('Output removed by user');
+		});
+	});
+
+	describe('messageUuidExistsInSessionFile', () => {
+		test('should return true when UUID exists in direct session file', () => {
+			const messages = [
+				JSON.stringify({ type: 'user', uuid: 'message-uuid-1' }),
+				JSON.stringify({ type: 'assistant', uuid: 'message-uuid-2' }),
+			];
+			writeFileSync(testSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			const exists = messageUuidExistsInSessionFile(
+				testWorkspacePath,
+				testSdkSessionId,
+				'kai-session-id',
+				'message-uuid-2'
+			);
+
+			expect(exists).toBe(true);
+		});
+
+		test('should return false when UUID is absent from direct session file', () => {
+			writeFileSync(
+				testSessionFile,
+				JSON.stringify({ type: 'user', uuid: 'message-uuid-1' }) + '\n',
+				'utf-8'
+			);
+
+			const exists = messageUuidExistsInSessionFile(
+				testWorkspacePath,
+				testSdkSessionId,
+				'kai-session-id',
+				'missing-message-uuid'
+			);
+
+			expect(exists).toBe(false);
+		});
+
+		test('should fall back to Kai session ID lookup when sdkSessionId is unavailable', () => {
+			writeFileSync(
+				testSessionFile,
+				[
+					JSON.stringify({ type: 'system', sessionId: 'kai-session-fallback' }),
+					JSON.stringify({ type: 'user', uuid: 'fallback-message-uuid' }),
+				].join('\n') + '\n',
+				'utf-8'
+			);
+
+			const exists = messageUuidExistsInSessionFile(
+				testWorkspacePath,
+				undefined,
+				'kai-session-fallback',
+				'fallback-message-uuid'
+			);
+
+			expect(exists).toBe(true);
 		});
 	});
 

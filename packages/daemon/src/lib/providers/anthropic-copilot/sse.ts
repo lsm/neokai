@@ -55,11 +55,35 @@ export function sendEvent(res: ServerResponse, type: string, data: object): void
  */
 export class AnthropicStreamWriter {
 	private textBlockStarted = false;
+	private streamStarted = false;
+	private model = 'unknown';
+	private inputTokens = 0;
 	private nextBlockIndex = 0;
 	private textBlockIndex = 0;
 	/** Accumulated output character count, used for heuristic output_tokens estimate. */
 	private outputCharCount = 0;
 	readonly messageId = `msg_${randomUUID()}`;
+
+	configure(model: string, inputTokens = 0): void {
+		this.model = model;
+		this.inputTokens = inputTokens;
+	}
+
+	updateInputTokens(inputTokens: number): void {
+		if (Number.isFinite(inputTokens) && inputTokens > 0) {
+			this.inputTokens = Math.round(inputTokens);
+		}
+	}
+
+	hasStarted(): boolean {
+		return this.streamStarted;
+	}
+
+	private ensureStarted(res: ServerResponse): void {
+		if (!this.streamStarted) {
+			this.start(res, this.model, this.inputTokens);
+		}
+	}
 
 	private closeTextBlock(res: ServerResponse): void {
 		if (this.textBlockStarted) {
@@ -95,7 +119,7 @@ export class AnthropicStreamWriter {
 			delta: { stop_reason: stopReason, stop_sequence: null },
 			usage: {
 				output_tokens: estimateTokens(this.outputCharCount),
-				input_tokens: 0,
+				input_tokens: this.inputTokens,
 				cache_read_input_tokens: 0,
 				cache_creation_input_tokens: 0,
 			},
@@ -110,6 +134,10 @@ export class AnthropicStreamWriter {
 	 *   `estimateTokens(inputText.length)`.  NOT actual model-reported values.
 	 */
 	start(res: ServerResponse, model: string, inputTokens = 0): void {
+		this.model = model;
+		this.inputTokens = inputTokens;
+		if (this.streamStarted) return;
+		this.streamStarted = true;
 		res.writeHead(200, SSE_HEADERS);
 		sendEvent(res, 'message_start', {
 			type: 'message_start',
@@ -139,6 +167,7 @@ export class AnthropicStreamWriter {
 	/** Flush accumulated text deltas to the stream. */
 	flushDeltas(res: ServerResponse, deltas: string[]): void {
 		if (deltas.length === 0) return;
+		this.ensureStarted(res);
 		this.ensureTextBlock(res);
 		for (const text of deltas) {
 			this.outputCharCount += text.length;
@@ -165,6 +194,7 @@ export class AnthropicStreamWriter {
 		toolName: string,
 		toolInput: unknown
 	): void {
+		this.ensureStarted(res);
 		this.closeTextBlock(res);
 		const blockIndex = this.nextBlockIndex++;
 		sendEvent(res, 'content_block_start', {
@@ -210,6 +240,7 @@ export class AnthropicStreamWriter {
 	 * responses have an empty `content` array which is valid per the spec.
 	 */
 	sendCompleted(res: ServerResponse): void {
+		this.ensureStarted(res);
 		this.closeTextBlock(res);
 		this.sendEpilogue(res, 'end_turn');
 	}

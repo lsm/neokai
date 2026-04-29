@@ -13,7 +13,7 @@
  *   - postApprovalSessionId already set + live → already-routed (no spawn).
  *   - postApprovalSessionId set but dead → re-spawn.
  *   - Empty instructions on inline / spawn path → skipped.
- *   - buildTaskApprovedEvent: contains task id, title, targetAgent, mode.
+ *   - Inline Task Agent routes carry an explicit escalation reason.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -22,11 +22,11 @@ import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import {
 	PostApprovalRouter,
-	buildTaskApprovedEvent,
 	buildPostApprovalInstructionsEvent,
 	isPostApprovalRoutingEnabled,
 	POST_APPROVAL_ROUTING_FLAG_ENV,
 } from '../../../../src/lib/space/runtime/post-approval-router.ts';
+import { RUNTIME_ESCALATION_REASONS } from '../../../../src/lib/space/runtime/escalation-reasons.ts';
 import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
 
 const SPACE_ID = 'space-par-test';
@@ -216,6 +216,9 @@ describe('PostApprovalRouter.route', () => {
 		});
 
 		expect(result.mode).toBe('inline');
+		if (result.mode === 'inline') {
+			expect(result.escalationReason).toBe(RUNTIME_ESCALATION_REASONS.HUMAN_APPROVAL);
+		}
 		expect(delegates.injected).toHaveLength(1);
 		expect(delegates.injected[0].taskId).toBe(task.id);
 		expect(delegates.injected[0].message).toContain('[POST_APPROVAL_INSTRUCTIONS]');
@@ -252,6 +255,8 @@ describe('PostApprovalRouter.route', () => {
 		expect(delegates.spawned).toHaveLength(1);
 		expect(delegates.spawned[0].targetAgent).toBe('deployer');
 		expect(delegates.spawned[0].kickoffMessage).toContain(task.title ?? '');
+		expect(delegates.spawned[0].kickoffMessage).toContain('mark_complete');
+		expect(delegates.spawned[0].kickoffMessage).toContain('Do NOT call approve_task');
 		expect(delegates.injected).toHaveLength(0);
 
 		const final = taskRepo.getTask(task.id);
@@ -371,53 +376,6 @@ describe('PostApprovalRouter.route', () => {
 		});
 		const result = await router.route(task, stubWorkflow(), { approvalSource: 'agent' });
 		expect(result.mode).toBe('skipped');
-	});
-});
-
-describe('buildTaskApprovedEvent', () => {
-	test('contains task id, title, workflow name, target agent, mode', () => {
-		const db = makeDb();
-		try {
-			const taskRepo = new SpaceTaskRepository(db);
-			const task = makeApprovedTask(taskRepo);
-			const workflow = stubWorkflow({
-				name: 'Release WF',
-				postApproval: { targetAgent: 'task-agent', instructions: 'do it' },
-			});
-			const body = buildTaskApprovedEvent({
-				task,
-				workflow,
-				approvalSource: 'human',
-				mode: 'self',
-			});
-			expect(body).toContain('[TASK_APPROVED]');
-			expect(body).toContain(task.id);
-			expect(body).toContain(task.title ?? '');
-			expect(body).toContain('Release WF');
-			expect(body).toContain('task-agent');
-			expect(body).toContain('human');
-			expect(body).toContain('self');
-		} finally {
-			db.close();
-		}
-	});
-
-	test('marks mode=none when no postApproval route', () => {
-		const db = makeDb();
-		try {
-			const taskRepo = new SpaceTaskRepository(db);
-			const task = makeApprovedTask(taskRepo);
-			const body = buildTaskApprovedEvent({
-				task,
-				workflow: stubWorkflow(),
-				approvalSource: 'agent',
-				mode: 'none',
-			});
-			expect(body).toContain('target_agent: none');
-			expect(body).toContain('session_status: none');
-		} finally {
-			db.close();
-		}
 	});
 });
 

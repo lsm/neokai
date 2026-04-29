@@ -30,6 +30,14 @@ describe('Built-ins registry — BUILTIN_MCP_SERVERS', () => {
 			expect(s.description.trim().length).toBeGreaterThan(0);
 		}
 	});
+
+	test('does not include the removed Brave Search MCP server', () => {
+		const serialized = JSON.stringify(BUILTIN_MCP_SERVERS).toLowerCase();
+
+		expect(serialized).not.toContain('brave');
+		expect(serialized).not.toContain('server-brave-search');
+		expect(BUILTIN_MCP_SERVERS.map((s) => s.name)).not.toContain('brave-search');
+	});
 });
 
 describe('Built-ins registry — BUILTIN_SKILLS', () => {
@@ -61,5 +69,13 @@ describe('Built-ins registry — BUILTIN_SKILLS', () => {
 			expect(skill.displayName.trim().length).toBeGreaterThan(0);
 			expect(skill.description.trim().length).toBeGreaterThan(0);
 		}
+	});
+
+	test('does not include the removed Brave Search MCP skill', () => {
+		const serialized = JSON.stringify(BUILTIN_SKILLS).toLowerCase();
+		const names = BUILTIN_SKILLS.map((s) => s.name);
+
+		expect(serialized).not.toContain('brave');
+		expect(names).not.toContain('web-search-mcp');
 	});
 });

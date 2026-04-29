@@ -1112,8 +1112,9 @@ export interface WorkflowNodeInput {
  * signal to a downstream executor that continues work **after** the task is
  * approved (e.g. merging a PR, publishing a release, running a verification
  * script). The route is declarative and lives on the workflow definition; the
- * runtime routes the structured signal to `targetAgent` with an `instructions`
- * string that supports `{{identifier}}` template interpolation.
+ * runtime routes the structured signal to `targetAgent` with a workflow-specific
+ * `instructions` string that supports `{{identifier}}` template interpolation.
+ * The runtime appends the universal `mark_complete` instruction separately.
  *
  * Added in PR 1 of the task-agent-as-post-approval-executor refactor. No
  * runtime consumer reads this field yet — PR 2 wires the
@@ -1134,10 +1135,12 @@ export interface PostApprovalRoute {
 	 */
 	targetAgent: string;
 	/**
-	 * Instruction template delivered to `targetAgent` when the end node signals
-	 * approval. Supports `{{identifier}}` single-pass substitution against the
-	 * runtime context assembled by the PostApprovalRouter. See
-	 * `post-approval-template.ts` for the template grammar.
+	 * Workflow-specific instruction template delivered to `targetAgent` when the
+	 * end node signals approval. Supports `{{identifier}}` single-pass substitution
+	 * against the runtime context assembled by the PostApprovalRouter. See
+	 * `post-approval-template.ts` for the template grammar. Do not include the
+	 * final `mark_complete` instruction here; the runtime appends that for every
+	 * post-approval route.
 	 */
 	instructions: string;
 }
@@ -1229,9 +1232,8 @@ export interface SpaceWorkflow {
 	templateHash?: string;
 	/**
 	 * Optional post-approval route — describes which agent should act on the
-	 * end-node's approval signal, with an instruction template. See
-	 * {@link PostApprovalRoute}. Added in PR 1 of the post-approval refactor;
-	 * no runtime consumer yet (PR 2 wires it up).
+	 * end-node's approval signal, with a workflow-specific instruction template.
+	 * See {@link PostApprovalRoute}.
 	 */
 	postApproval?: PostApprovalRoute;
 }
@@ -1287,7 +1289,6 @@ export interface CreateSpaceWorkflowParams {
 	templateHash?: string;
 	/**
 	 * Optional post-approval route. See {@link PostApprovalRoute}.
-	 * Schema only in PR 1 of the post-approval refactor; no runtime consumer yet.
 	 */
 	postApproval?: PostApprovalRoute;
 }
@@ -1343,7 +1344,6 @@ export interface UpdateSpaceWorkflowParams {
 	templateHash?: string | null;
 	/**
 	 * Update the workflow's post-approval route. Pass `null` to clear.
-	 * Schema only in PR 1 of the post-approval refactor; no runtime consumer yet.
 	 */
 	postApproval?: PostApprovalRoute | null;
 }

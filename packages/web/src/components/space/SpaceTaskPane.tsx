@@ -1,8 +1,9 @@
-import type {
-	SpaceTaskActivityMember,
-	SpaceTaskActivityState,
-	SpaceTaskPriority,
-	SpaceTaskStatus,
+import {
+	isWorkflowRecoveryTransition,
+	type SpaceTaskActivityMember,
+	type SpaceTaskActivityState,
+	type SpaceTaskPriority,
+	type SpaceTaskStatus,
 } from '@neokai/shared';
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -84,6 +85,20 @@ const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
 	high: 'border-orange-500/30 bg-orange-500/10 text-orange-300',
 	urgent: 'border-red-500/30 bg-red-500/10 text-red-300',
 };
+
+function getTaskActionLabel(
+	task: { status: SpaceTaskStatus; workflowRunId?: string | null },
+	target: SpaceTaskStatus,
+	label: string
+): string {
+	if (!task.workflowRunId || !isWorkflowRecoveryTransition(task.status, target)) {
+		return label;
+	}
+	if (label.toLowerCase().includes('reopen')) {
+		return 'Reopen workflow';
+	}
+	return target === 'in_progress' ? 'Resume workflow' : 'Reopen workflow';
+}
 
 function formatAgentSlotLabel(name: string): string {
 	return name
@@ -531,7 +546,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		try {
 			setStatusTransitioning(true);
 			setThreadSendError(null);
-			await spaceStore.updateTask(task.id, { status: newStatus });
+			if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, newStatus)) {
+				await spaceStore.recoverWorkflowTask(task.id, newStatus);
+			} else {
+				await spaceStore.updateTask(task.id, { status: newStatus });
+			}
 		} catch (err) {
 			setThreadSendError(formatTaskThreadError(err));
 		} finally {
@@ -625,7 +644,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		}
 		taskActionItems.push(
 			...filteredTransitionActions.map(({ target, label }) => ({
-				label,
+				label: getTaskActionLabel(task, target, label),
 				onClick: () => {
 					handleStatusTransition(target);
 				},
@@ -660,9 +679,14 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						</button>
 					)}
 					<div class="min-w-0 flex-1 sm:flex sm:items-center sm:gap-3">
-						<h2 class="text-sm sm:text-base font-semibold text-gray-100 min-w-0 leading-5 sm:flex-1 overflow-hidden break-words [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]">
-							{task.title}
-						</h2>
+						<div class="flex items-center gap-2 min-w-0 sm:flex-1">
+							<h2 class="text-sm sm:text-base font-semibold text-gray-100 min-w-0 leading-5 flex-1 overflow-hidden break-words [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]">
+								{task.title}
+							</h2>
+							<span class="inline-flex items-center text-xs font-mono font-medium text-gray-400 bg-dark-700 border border-dark-600 px-1.5 py-0.5 rounded flex-shrink-0">
+								#{task.taskNumber}
+							</span>
+						</div>
 						<div class="mt-1 flex items-center gap-1.5 overflow-hidden sm:mt-0 sm:flex-shrink-0">
 							{showHeaderStatusBadge && (
 								<TaskMetaBadge class={cn(STATUS_BADGE_CLASSES[task.status])}>
@@ -842,6 +866,13 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 												? 'pb-52 sm:pb-44'
 												: 'pb-44 sm:pb-36'
 											: 'pb-3'
+									}
+									bottomScrollPaddingClass={
+										showInlineComposer
+											? threadSendError
+												? 'scroll-pb-52 sm:scroll-pb-44'
+												: 'scroll-pb-44 sm:scroll-pb-36'
+											: 'scroll-pb-3'
 									}
 									activeAgentLabels={activeAgentLabels}
 									autoScrollEnabled={autoScrollEnabled}

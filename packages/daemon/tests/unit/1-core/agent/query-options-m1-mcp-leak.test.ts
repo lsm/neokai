@@ -24,7 +24,8 @@ import { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-bui
 import { createTaskAgentInit } from '../../../../src/lib/space/agents/task-agent';
 import { createCustomAgentInit } from '../../../../src/lib/space/agents/custom-agent';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
-import type { AgentSessionInit, Session, Space, SpaceAgent, SpaceTask } from '@neokai/shared';
+import type { Session, Space, SpaceAgent, SpaceTask } from '@neokai/shared';
+import type { AgentSessionInit } from '../../../../src/lib/agent/agent-session';
 
 function mockSettingsManager(): SettingsManager {
 	return {
@@ -99,6 +100,9 @@ function sessionFromInit(init: AgentSessionInit): Session {
 			provider: (init.provider as Session['config']['provider']) ?? 'anthropic',
 			systemPrompt: init.systemPrompt,
 			mcpServers: init.mcpServers,
+			sdkToolsPreset: init.sdkToolsPreset,
+			allowedTools: init.allowedTools,
+			disallowedTools: init.disallowedTools,
 			maxTokens: 8192,
 			temperature: 1,
 		},
@@ -194,6 +198,33 @@ describe('MCP leak regression: strictMcpConfig + empty settingSources per spawn 
 			// factory. Without that runtime merge, no ambient `.mcp.json` servers
 			// must appear here either.
 			expect(options.mcpServers).toBeUndefined();
+		});
+
+		it('carries SpaceAgent tool restrictions into workflow node SDK options', async () => {
+			const init = createCustomAgentInit({
+				customAgent: makeCustomAgent({ tools: ['Read', 'Bash'] }),
+				task: makeTask(),
+				workflowRun: null,
+				workflow: null,
+				space: makeSpace(),
+				sessionId: 'space:space-m1:task:task-m1:exec:e1',
+				workspacePath: '/workspace/task',
+			});
+
+			const session = sessionFromInit(init);
+			const builder = new QueryOptionsBuilder({
+				session,
+				settingsManager: mockSettingsManager(),
+			});
+			const options = await builder.build();
+
+			expect(options.tools).toEqual(['Read', 'Bash']);
+			expect(options.allowedTools).toEqual(['Read', 'Bash']);
+			expect(options.disallowedTools).toEqual(
+				expect.arrayContaining(['Write', 'Edit', 'Task', 'NotebookEdit', 'TodoWrite', 'Skill'])
+			);
+			expect(options.disallowedTools).not.toContain('Read');
+			expect(options.disallowedTools).not.toContain('Bash');
 		});
 
 		it('ignores NEOKAI_LEGACY_MCP_AUTOLOAD — kill switch was removed in M5', async () => {

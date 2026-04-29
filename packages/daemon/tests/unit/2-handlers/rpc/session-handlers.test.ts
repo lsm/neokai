@@ -36,7 +36,8 @@ import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { RoomManager } from '../../../../src/lib/room/managers/room-manager';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
-import type { Session } from '@neokai/shared';
+import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service';
+import type { ModelInfo, Session } from '@neokai/shared';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -260,6 +261,7 @@ describe('Session RPC Handlers', () => {
 	});
 
 	afterEach(() => {
+		clearModelsCache();
 		mock.restore();
 	});
 
@@ -1335,6 +1337,31 @@ describe('Session RPC Handlers', () => {
 			expect(result).toHaveProperty('cached');
 		});
 
+		it('includes model context window metadata', async () => {
+			const gpt55Model: ModelInfo = {
+				id: 'gpt-5.5',
+				name: 'GPT-5.5',
+				alias: 'codex-latest',
+				family: 'gpt',
+				provider: 'anthropic-codex',
+				contextWindow: 272000,
+				description: 'Latest Codex model',
+				releaseDate: '2026-04-01',
+				available: true,
+			};
+			setModelsCache(new Map([['global', [gpt55Model]]]));
+			const handler = messageHubData.handlers.get('models.list');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({}, {})) as {
+				models: Array<{ id: string; contextWindow?: number; context_window?: number }>;
+			};
+
+			const model = result.models.find((entry) => entry.id === 'gpt-5.5');
+			expect(model?.contextWindow).toBe(272000);
+			expect(model?.context_window).toBe(272000);
+		});
+
 		it('accepts forceRefresh parameter', async () => {
 			const handler = messageHubData.handlers.get('models.list');
 			expect(handler).toBeDefined();
@@ -1440,19 +1467,31 @@ describe('Session RPC Handlers', () => {
 		it('resets query with restart', async () => {
 			const handler = messageHubData.handlers.get('session.resetQuery');
 			expect(handler).toBeDefined();
+			const { agentSession, mocks } = createMockAgentSession();
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
 
 			const result = await handler!({ sessionId: 'session-123', restartQuery: true }, {});
 
 			expect(result).toHaveProperty('success');
+			expect(mocks.resetQuery).toHaveBeenCalledWith({
+				restartQuery: true,
+				hardReset: true,
+			});
 		});
 
 		it('resets query without restart', async () => {
 			const handler = messageHubData.handlers.get('session.resetQuery');
 			expect(handler).toBeDefined();
+			const { agentSession, mocks } = createMockAgentSession();
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
 
 			const result = await handler!({ sessionId: 'session-123', restartQuery: false }, {});
 
 			expect(result).toHaveProperty('success');
+			expect(mocks.resetQuery).toHaveBeenCalledWith({
+				restartQuery: false,
+				hardReset: true,
+			});
 		});
 
 		it('defaults restartQuery to true', async () => {
@@ -1465,7 +1504,10 @@ describe('Session RPC Handlers', () => {
 
 			await handler!({ sessionId: 'session-123' }, {});
 
-			expect(mocks.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
+			expect(mocks.resetQuery).toHaveBeenCalledWith({
+				restartQuery: true,
+				hardReset: true,
+			});
 		});
 
 		it('throws error when session not found', async () => {

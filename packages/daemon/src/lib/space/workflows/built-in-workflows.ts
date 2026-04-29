@@ -349,11 +349,10 @@ const FULLSTACK_QA_PROMPT =
 	'- `save_artifact({ type: "result", append: true, summary, ...data? })` — append-only audit. Records what you observed ' +
 	'during this cycle. Does NOT close the task.\n' +
 	'- `approve_task()` — closes this task as done. Only call after QA passes and the ' +
-	'post-approval handoff to the Task Agent has been sent.\n' +
+	'post-approval result artifact has been saved for runtime dispatch.\n' +
 	'- `submit_for_approval({ reason? })` — request human sign-off instead of self-closing. ' +
 	'Use when autonomy blocks self-close (and only when QA passes — see pre-conditions above).\n\n' +
-	'If everything passes, signal the Task Agent that a merge is the post-approval action, ' +
-	'then `save_artifact({ type: "result", append: true, summary: "QA passed." })` and ' +
+	'If everything passes, `save_artifact({ type: "result", append: true, summary: "QA passed.", data: { prUrl: "<url>" } })` and ' +
 	'`approve_task`. Do NOT merge the PR yourself — a post-approval reviewer session runs ' +
 	'the merge after the task transitions to `approved`. If issues are found, send a detailed ' +
 	'fix list to Coding and record a `save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` ' +
@@ -482,20 +481,14 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'   a. Post an approval review: `gh pr review <pr-url> --approve ' +
 							'--body-file <file>`.\n' +
 							'   b. Verify the PR is still open and mergeable.\n' +
-							'   c. Signal the Task Agent that the PR is ready for post-approval:\n' +
-							'      send_message(\n' +
-							'         target: "task-agent",\n' +
-							'         message: "Reviewer approved. PR ready for post-approval.",\n' +
-							'         data: { pr_url: "<url>" }\n' +
-							'      )\n' +
-							'   d. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>" } })` ' +
+							'   c. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>" } })` ' +
 							'to record the audit entry. The `prUrl` inside `data` is what ' +
 							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
 							'merge template — top-level keys outside `data` are silently stripped by ' +
 							'the tool schema, so nest it correctly.\n' +
-							'   e. Call `approve_task()` to close the task. If autonomy blocks ' +
+							'   d. Call `approve_task()` to close the task. If autonomy blocks ' +
 							'self-close, call `submit_for_approval({ reason: "..." })` instead — ' +
-							'the Task Agent will still route post-approval once the human approves. ' +
+							'the runtime will still route post-approval once the human approves. ' +
 							'Do NOT attempt to merge the PR yourself; a post-approval reviewer session ' +
 							'runs the merge after the task transitions to `approved`.',
 					},
@@ -657,19 +650,13 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'--body-file <file>`. A visible GitHub review is required — an internal ' +
 							'summary is not enough.\n' +
 							'   b. Verify the PR is still open and mergeable.\n' +
-							'   c. Signal the Task Agent that the PR is ready for post-approval:\n' +
-							'      send_message(\n' +
-							'         target: "task-agent",\n' +
-							'         message: "Reviewer approved. PR ready for post-approval.",\n' +
-							'         data: { pr_url: "<url>" }\n' +
-							'      )\n' +
-							'   d. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>" } })` ' +
+							'   c. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>" } })` ' +
 							'to record the final audit entry. The `prUrl` inside `data` is what ' +
 							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
 							'merge template — top-level keys outside `data` are silently stripped by ' +
 							'the tool schema, so nest it correctly.\n' +
-							'   e. Call `approve_task()` to close the task. If autonomy blocks self-close, ' +
-							'call `submit_for_approval({ reason: "..." })` instead — the Task Agent will ' +
+							'   d. Call `approve_task()` to close the task. If autonomy blocks self-close, ' +
+							'call `submit_for_approval({ reason: "..." })` instead — the runtime will ' +
 							'still route post-approval once the human approves. Do NOT attempt to merge ' +
 							'the PR yourself; a post-approval reviewer session runs the merge after the ' +
 							'task transitions to `approved`.',
@@ -1098,7 +1085,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							FULLSTACK_QA_PROMPT +
 							'\n\n' +
 							'Expected inputs: Reviewer-approved PR.\n' +
-							'Expected outputs: QA pass signalled and post-approval handoff sent, or QA ' +
+							'Expected outputs: QA pass recorded for runtime post-approval dispatch, or QA ' +
 							'feedback to Coding.\n\n' +
 							'Steps:\n' +
 							'1. Run backend and frontend test suites\n' +
@@ -1110,19 +1097,13 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'carry the same approval semantic. Leave the workflow open for the next ' +
 							'Coding cycle.\n' +
 							'5. If all green:\n' +
-							'   a. Signal the Task Agent that the PR is ready for post-approval:\n' +
-							'      send_message(\n' +
-							'         target: "task-agent",\n' +
-							'         message: "QA passed. PR ready for post-approval.",\n' +
-							'         data: { pr_url: "<url>" }\n' +
-							'      )\n' +
-							'   b. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>", testOutput: "<output>" } })` ' +
+							'   a. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>", testOutput: "<output>" } })` ' +
 							'to record the audit entry. The `prUrl` inside `data` is what ' +
 							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
 							'merge template — top-level keys outside `data` are silently stripped by ' +
 							'the tool schema, so nest it correctly.\n' +
-							'   c. Call `approve_task()` as your final action. If autonomy blocks self-close, ' +
-							'call `submit_for_approval({ reason: "..." })` instead — the Task Agent will ' +
+							'   b. Call `approve_task()` as your final action. If autonomy blocks self-close, ' +
+							'call `submit_for_approval({ reason: "..." })` instead — the runtime will ' +
 							'still route post-approval once the human approves. Do NOT run `gh pr merge` ' +
 							'yourself; a post-approval reviewer session handles the merge and worktree ' +
 							'sync after the task transitions to `approved`.',
@@ -1138,9 +1119,8 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 	updatedAt: 0,
 	// QA no longer merges the PR — the post-approval reviewer session does that.
 	// Aligned with Coding's autonomy tier (3) since QA-approve is now a plain
-	// "work is good" signal, orthogonal to auto-merge. Auto-merge remains an
-	// autonomy-gated decision enforced by the merge-template's `autonomy_level`
-	// conditional at the post-approval session layer.
+	// "work is good" signal. Post-approval runs only after that approval has
+	// already happened.
 	completionAutonomyLevel: 3,
 	// Post-approval routing (PR 3/5): after QA approves, spawn a fresh
 	// `reviewer` session that runs the PR merge + worktree sync.

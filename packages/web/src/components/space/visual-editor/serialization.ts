@@ -30,6 +30,7 @@ import type {
 	WorkflowChannel,
 	Gate,
 	SpaceAutonomyLevel,
+	PostApprovalRoute,
 } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import type { Point, WorkflowCondition } from './types';
@@ -95,6 +96,8 @@ export interface VisualEditorState {
 	 * human approval at each completion gate. Defaults to 3 when not set.
 	 */
 	completionAutonomyLevel?: SpaceAutonomyLevel;
+	/** Optional post-approval route configured on the workflow. */
+	postApproval?: PostApprovalRoute;
 }
 
 // ============================================================================
@@ -178,6 +181,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 		})),
 		gates: workflow.gates ?? [],
 		completionAutonomyLevel: workflow.completionAutonomyLevel ?? (3 as SpaceAutonomyLevel),
+		postApproval: workflow.postApproval ? { ...workflow.postApproval } : undefined,
 	};
 }
 
@@ -373,6 +377,7 @@ export function visualStateToCreateParams(
 		channels: fields.channels && fields.channels.length > 0 ? fields.channels : undefined,
 		gates: fields.gates && fields.gates.length > 0 ? fields.gates : undefined,
 		completionAutonomyLevel: state.completionAutonomyLevel,
+		postApproval: state.postApproval,
 	};
 }
 
@@ -398,5 +403,6 @@ export function visualStateToUpdateParams(
 		channels: fields.channels && fields.channels.length > 0 ? fields.channels : null,
 		gates: fields.gates && fields.gates.length > 0 ? fields.gates : null,
 		completionAutonomyLevel: state.completionAutonomyLevel,
+		postApproval: state.postApproval ?? null,
 	};
 }

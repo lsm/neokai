@@ -45,6 +45,10 @@ async function readSSEEvents(
 		if (done) break;
 		raw += decoder.decode(value, { stream: true });
 	}
+	return parseSSEEvents(raw);
+}
+
+function parseSSEEvents(raw: string): Array<{ event: string; data: unknown }> {
 	const events: Array<{ event: string; data: unknown }> = [];
 	const blocks = raw.split('\n\n').filter((b) => b.trim());
 	for (const block of blocks) {
@@ -59,6 +63,32 @@ async function readSSEEvents(
 		}
 	}
 	return events;
+}
+
+function createCapturingController(): {
+	controller: ReadableStreamDefaultController<Uint8Array>;
+	events: () => Array<{ event: string; data: unknown }>;
+	chunks: string[];
+	isClosed: () => boolean;
+} {
+	const decoder = new TextDecoder();
+	const chunks: string[] = [];
+	let closed = false;
+	const controller = {
+		enqueue: (chunk: Uint8Array) => {
+			chunks.push(decoder.decode(chunk, { stream: true }));
+		},
+		close: () => {
+			closed = true;
+		},
+	} as unknown as ReadableStreamDefaultController<Uint8Array>;
+
+	return {
+		controller,
+		chunks,
+		events: () => parseSSEEvents(chunks.join('')),
+		isClosed: () => closed,
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -836,6 +866,121 @@ describe('Bridge HTTP server', () => {
 	// Streaming error — drainToSSE emits Anthropic error SSE event (tests real code path)
 	// -------------------------------------------------------------------------
 
+	it('drainToSSE waits to send message_start until the first content event', async () => {
+		let releaseFirstEvent!: () => void;
+		const firstEventReady = new Promise<void>((resolve) => {
+			releaseFirstEvent = resolve;
+		});
+		async function* delayedGen(): AsyncGenerator<BridgeEvent> {
+			await firstEventReady;
+			yield { type: 'text_delta', text: 'hello' };
+			yield { type: 'turn_done', inputTokens: 0, outputTokens: 2 };
+		}
+
+		const mockSession = { kill: () => {} } as unknown as BridgeSession;
+		const { controller, events, chunks } = createCapturingController();
+		const drainPromise = drainToSSE(
+			delayedGen(),
+			mockSession,
+			'test-model',
+			new Map(),
+			controller,
+			5000,
+			'test-session',
+			() => {}
+		);
+
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect(chunks).toHaveLength(0);
+
+		releaseFirstEvent();
+		await expect(drainPromise).resolves.toEqual({ type: 'completed' });
+
+		const parsed = events();
+		const messageStartIndex = parsed.findIndex((e) => e.event === 'message_start');
+		const contentStartIndex = parsed.findIndex((e) => e.event === 'content_block_start');
+		expect(messageStartIndex).toBeGreaterThanOrEqual(0);
+		expect(contentStartIndex).toBe(messageStartIndex + 1);
+	});
+
+	it('drainToSSE returns a subprocess crash result before content is committed', async () => {
+		async function* errorGen(): AsyncGenerator<BridgeEvent> {
+			yield { type: 'error', message: 'codex app-server subprocess closed unexpectedly' };
+		}
+
+		let killCalled = false;
+		let onErrorCalled = false;
+		const mockSession = {
+			kill: () => {
+				killCalled = true;
+			},
+		} as unknown as BridgeSession;
+		const { controller, chunks, isClosed } = createCapturingController();
+
+		const result = await drainToSSE(
+			errorGen(),
+			mockSession,
+			'test-model',
+			new Map(),
+			controller,
+			5000,
+			'test-session',
+			() => {},
+			() => {
+				onErrorCalled = true;
+			}
+		);
+
+		expect(result).toEqual({
+			type: 'error',
+			message: 'codex app-server subprocess closed unexpectedly',
+			isSubprocessCrash: true,
+		});
+		expect(chunks).toHaveLength(0);
+		expect(isClosed()).toBe(false);
+		expect(killCalled).toBe(true);
+		expect(onErrorCalled).toBe(true);
+	});
+
+	it('drainToSSE sends error SSE normally when subprocess crashes after content', async () => {
+		async function* errorGen(): AsyncGenerator<BridgeEvent> {
+			yield { type: 'text_delta', text: 'partial' };
+			yield { type: 'error', message: 'codex app-server subprocess closed unexpectedly' };
+		}
+
+		let killCalled = false;
+		const mockSession = {
+			kill: () => {
+				killCalled = true;
+			},
+		} as unknown as BridgeSession;
+		const { controller, events, isClosed } = createCapturingController();
+
+		const result = await drainToSSE(
+			errorGen(),
+			mockSession,
+			'test-model',
+			new Map(),
+			controller,
+			5000,
+			'test-session',
+			() => {}
+		);
+
+		expect(result).toEqual({
+			type: 'error',
+			message: 'codex app-server subprocess closed unexpectedly',
+			isSubprocessCrash: false,
+		});
+		expect(killCalled).toBe(true);
+		expect(isClosed()).toBe(true);
+
+		const errorEvents = events().filter((e) => e.event === 'error');
+		expect(errorEvents).toHaveLength(1);
+		const data = errorEvents[0].data as { error: { message: string } };
+		expect(data.error.message).toBe('codex app-server subprocess closed unexpectedly');
+	});
+
 	it('drainToSSE emits an Anthropic error SSE event on BridgeSession error', async () => {
 		async function* errorGen(): AsyncGenerator<BridgeEvent> {
 			yield { type: 'text_delta', text: 'partial' };
@@ -966,6 +1111,92 @@ describe('Bridge HTTP server', () => {
 		expect(usageOutputTokens).toBe(55);
 	});
 
+	it('drainToSSE sends estimated input_tokens at start and real Codex usage at turn end', async () => {
+		async function* usageGen(): AsyncGenerator<BridgeEvent> {
+			yield { type: 'text_delta', text: 'Hi' };
+			yield {
+				type: 'turn_done',
+				inputTokens: 120,
+				outputTokens: 55,
+				modelContextWindow: 272000,
+			};
+		}
+
+		const mockSession = { kill: () => {} } as unknown as BridgeSession;
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				void drainToSSE(
+					usageGen(),
+					mockSession,
+					'gpt-5.5',
+					new Map(),
+					controller,
+					5000,
+					'test-session',
+					() => {},
+					undefined,
+					33
+				);
+			},
+		});
+
+		const events = await readSSEEvents(stream);
+		const msgStart = events.find((e) => e.event === 'message_start');
+		const startUsage = (
+			msgStart?.data as {
+				message?: { usage?: { input_tokens?: number; model_context_window?: number } };
+			}
+		)?.message?.usage;
+		expect(startUsage?.input_tokens).toBe(33);
+		expect(startUsage?.model_context_window).toBe(272000);
+
+		const msgDelta = events.find((e) => e.event === 'message_delta');
+		const deltaUsage = (
+			msgDelta?.data as {
+				usage?: {
+					input_tokens?: number;
+					output_tokens?: number;
+					model_context_window?: number;
+				};
+			}
+		)?.usage;
+		expect(deltaUsage?.input_tokens).toBe(120);
+		expect(deltaUsage?.output_tokens).toBe(55);
+		expect(deltaUsage?.model_context_window).toBe(272000);
+	});
+
+	it('drainToSSE falls back to estimated input_tokens when Codex usage is unavailable', async () => {
+		async function* usageGen(): AsyncGenerator<BridgeEvent> {
+			yield { type: 'text_delta', text: 'fallback' };
+			yield { type: 'turn_done', inputTokens: 0, outputTokens: 0 };
+		}
+
+		const mockSession = { kill: () => {} } as unknown as BridgeSession;
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				void drainToSSE(
+					usageGen(),
+					mockSession,
+					'test-model',
+					new Map(),
+					controller,
+					5000,
+					'test-session',
+					() => {},
+					undefined,
+					44
+				);
+			},
+		});
+
+		const events = await readSSEEvents(stream);
+		const msgDelta = events.find((e) => e.event === 'message_delta');
+		const usage = (msgDelta?.data as { usage?: { input_tokens?: number; output_tokens?: number } })
+			?.usage;
+		expect(usage?.input_tokens).toBe(44);
+		expect(usage?.output_tokens).toBeGreaterThan(0);
+	});
+
 	it('message_delta falls back to heuristic outputTokens when turn_done has 0 tokens', async () => {
 		// Simulate no thread/tokenUsage/updated notification — turn_done carries 0 tokens
 		mockSessionFactory = () =>
@@ -1038,7 +1269,7 @@ describe('drainToSSE controller lifecycle handling', () => {
 				'test-session',
 				() => {}
 			)
-		).resolves.toBeUndefined();
+		).resolves.toMatchObject({ type: 'error', isSubprocessCrash: false });
 		expect(killCalled).toBe(true);
 	});
 });
@@ -1074,6 +1305,23 @@ describe('createAnthropicError', () => {
 		expect(body.type).toBe('error');
 		expect(body.error.type).toBe('api_error');
 		expect(body.error.message).toBe('something exploded');
+	});
+});
+
+describe('daemon context path guard', () => {
+	it('keeps Codex-specific context fallback logic out of provider-agnostic daemon paths', async () => {
+		const guardedFiles = [
+			`${import.meta.dir}/../../../../../src/lib/agent/context-fetcher.ts`,
+			`${import.meta.dir}/../../../../../src/lib/agent/sdk-message-handler.ts`,
+			`${import.meta.dir}/../../../../../src/lib/agent/context-tracker.ts`,
+			`${import.meta.dir}/../../../../../src/lib/agent/sdk-runtime-config.ts`,
+		];
+
+		const contents = await Promise.all(guardedFiles.map((file) => Bun.file(file).text()));
+		for (const content of contents) {
+			expect(content).not.toContain('anthropic-codex');
+			expect(content).not.toContain('codex-anthropic-bridge');
+		}
 	});
 });
 
@@ -1115,7 +1363,17 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 		expect(resp.ok).toBe(true);
 		expect(resp.headers.get('content-type')).toContain('application/json');
 		const body = (await resp.json()) as {
-			data: Array<{ id: string; type: string; display_name: string }>;
+			data: Array<{
+				id: string;
+				type: string;
+				display_name: string;
+				max_input_tokens?: number;
+				context_window?: number;
+				max_context_window?: number;
+				model_context_window?: number;
+				auto_compact_token_limit?: number;
+				model_auto_compact_token_limit?: number;
+			}>;
 			has_more: boolean;
 			first_id: string;
 			last_id: string;
@@ -1132,17 +1390,35 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 		const ids = body.data.map((m) => m.id);
 		expect(ids).toContain('gpt-5.3-codex');
 		expect(ids).toContain('gpt-5.4');
+		expect(ids).toContain('gpt-5.5');
+		expect(ids).toContain('gpt-5.4-mini');
 		expect(ids).toContain('gpt-5.1-codex-mini');
+		const expectContextWindow = (id: string, contextWindow: number) => {
+			const model = body.data.find((m) => m.id === id);
+			const autoCompactTokenLimit = Math.floor(contextWindow * 0.9);
+			expect(model?.max_input_tokens).toBe(contextWindow);
+			expect(model?.context_window).toBe(contextWindow);
+			expect(model?.max_context_window).toBe(contextWindow);
+			expect(model?.model_context_window).toBe(contextWindow);
+			expect(model?.auto_compact_token_limit).toBe(autoCompactTokenLimit);
+			expect(model?.model_auto_compact_token_limit).toBe(autoCompactTokenLimit);
+		};
+		expectContextWindow('gpt-5.3-codex', 272000);
+		expectContextWindow('gpt-5.4', 272000);
+		expectContextWindow('gpt-5.5', 272000);
+		expectContextWindow('gpt-5.4-mini', 128000);
+		expectContextWindow('gpt-5.1-codex-mini', 128000);
 		expect(body.first_id).toBe(ids[0]);
 		expect(body.last_id).toBe(ids[ids.length - 1]);
 	});
 
-	it('returns dummy token count for POST /v1/messages/count_tokens', async () => {
+	it('returns a meaningful non-zero token count for POST /v1/messages/count_tokens', async () => {
 		const resp = await fetch(`http://127.0.0.1:${realServer.port}/v1/messages/count_tokens`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				model: 'gpt-5.3-codex',
+				system: 'You are a concise coding assistant.',
 				messages: [{ role: 'user', content: 'hello' }],
 			}),
 		});
@@ -1150,9 +1426,60 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 		expect(resp.headers.get('content-type')).toContain('application/json');
 		const body = (await resp.json()) as { input_tokens: number };
 		expect(typeof body.input_tokens).toBe('number');
+		expect(body.input_tokens).toBeGreaterThan(0);
 	});
 
-	it('returns dummy token count for POST /v1/messages/count_tokens?beta=true', async () => {
+	it('returns a larger token count as messages, tool schemas, and tool results grow', async () => {
+		const count = async (requestBody: unknown) => {
+			const resp = await fetch(`http://127.0.0.1:${realServer.port}/v1/messages/count_tokens`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(requestBody),
+			});
+			expect(resp.ok).toBe(true);
+			return ((await resp.json()) as { input_tokens: number }).input_tokens;
+		};
+
+		const small = await count({
+			model: 'gpt-5.3-codex',
+			messages: [{ role: 'user', content: 'hello' }],
+		});
+		const large = await count({
+			model: 'gpt-5.3-codex',
+			system: [{ type: 'text', text: 'Follow the repository conventions and explain failures.' }],
+			messages: [
+				{ role: 'user', content: 'hello' },
+				{ role: 'assistant', content: 'I can help with that.' },
+				{
+					role: 'user',
+					content: [
+						{ type: 'text', text: 'Run the formatter and summarize the output.' },
+						{
+							type: 'tool_result',
+							tool_use_id: 'toolu_1',
+							content: 'Formatted 24 files and left 2 files unchanged.',
+						},
+					],
+				},
+			],
+			tools: [
+				{
+					name: 'bash',
+					description: 'Run a shell command in the workspace',
+					input_schema: {
+						type: 'object',
+						properties: { command: { type: 'string' }, timeout_ms: { type: 'number' } },
+						required: ['command'],
+					},
+				},
+			],
+		});
+
+		expect(small).toBeGreaterThan(0);
+		expect(large).toBeGreaterThan(small);
+	});
+
+	it('returns token count for POST /v1/messages/count_tokens?beta=true', async () => {
 		const resp = await fetch(
 			`http://127.0.0.1:${realServer.port}/v1/messages/count_tokens?beta=true`,
 			{
@@ -1167,6 +1494,7 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 		expect(resp.ok).toBe(true);
 		const body = (await resp.json()) as { input_tokens: number };
 		expect(typeof body.input_tokens).toBe('number');
+		expect(body.input_tokens).toBeGreaterThan(0);
 	});
 
 	it('returns 400 JSON envelope for invalid JSON body', async () => {
@@ -1303,6 +1631,270 @@ describe('tool_choice warning — codex bridge', () => {
 		const events = await readSSEEvents(resp.body);
 		const types = events.map((e) => e.event);
 		expect(types).toContain('message_stop');
+	});
+
+	it('retries a new turn once when the subprocess crashes before output', async () => {
+		const warnSpy = spyOn(Logger.prototype, 'warn');
+		let attempt = 0;
+		startTurnSpy.mockImplementation(
+			// eslint-disable-next-line @typescript-eslint/require-await
+			async function* (text: string): AsyncGenerator<BridgeEvent> {
+				attempt++;
+				if (attempt === 1) {
+					yield { type: 'error', message: 'codex app-server subprocess closed unexpectedly' };
+					return;
+				}
+				yield { type: 'text_delta', text: `recovered:${text.includes('Retry me')}` };
+				yield { type: 'turn_done', inputTokens: 8, outputTokens: 3 };
+			}
+		);
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: 'Bearer codex-bridge-retry-success',
+			},
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'Retry me' }],
+				stream: true,
+			}),
+		});
+
+		expect(resp.ok).toBe(true);
+		const events = await readSSEEvents(resp.body);
+		const types = events.map((e) => e.event);
+		expect(types.filter((type) => type === 'message_start')).toHaveLength(1);
+		expect(types).not.toContain('error');
+		expect(startTurnSpy).toHaveBeenCalledTimes(2);
+		expect(connCreateSpy).toHaveBeenCalledTimes(2);
+		expect(initializeSpy).toHaveBeenCalledTimes(2);
+
+		const text = events
+			.filter((e) => e.event === 'content_block_delta')
+			.map((e) => (e.data as { delta?: { text?: string } }).delta?.text ?? '')
+			.join('');
+		expect(text).toBe('recovered:true');
+
+		const warnMessages = warnSpy.mock.calls.map((args) => args.map(String).join(' '));
+		expect(warnMessages.some((m) => m.includes('retrying turn with a fresh session'))).toBe(true);
+		warnSpy.mockRestore();
+	});
+
+	it('keeps the persistent session reserved while the retry session initializes', async () => {
+		let markRetryInitializeStarted!: () => void;
+		let resolveRetryInitialize!: () => void;
+		const retryInitializeStarted = new Promise<void>((resolve) => {
+			markRetryInitializeStarted = resolve;
+		});
+		const retryInitializeRelease = new Promise<void>((resolve) => {
+			resolveRetryInitialize = resolve;
+		});
+
+		let initializeCalls = 0;
+		initializeSpy.mockImplementation(() => {
+			initializeCalls++;
+			if (initializeCalls === 2) {
+				markRetryInitializeStarted();
+				return retryInitializeRelease;
+			}
+			return Promise.resolve();
+		});
+
+		let attempt = 0;
+		startTurnSpy.mockImplementation(
+			// eslint-disable-next-line @typescript-eslint/require-await
+			async function* (): AsyncGenerator<BridgeEvent> {
+				attempt++;
+				if (attempt === 1) {
+					yield { type: 'error', message: 'codex app-server subprocess closed unexpectedly' };
+					return;
+				}
+				yield { type: 'text_delta', text: 'recovered' };
+				yield { type: 'turn_done', inputTokens: 4, outputTokens: 1 };
+			}
+		);
+
+		const headers = {
+			'Content-Type': 'application/json',
+			Authorization: 'Bearer codex-bridge-retry-reserved',
+		};
+		const body = JSON.stringify({
+			model: 'codex-1',
+			messages: [{ role: 'user', content: 'Retry while busy' }],
+			stream: true,
+		});
+
+		const respPromise = fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body,
+		});
+
+		await retryInitializeStarted;
+
+		const concurrentResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body,
+		});
+		expect(concurrentResp.status).toBe(409);
+		const concurrentBody = (await concurrentResp.json()) as {
+			error?: { message?: string };
+		};
+		expect(concurrentBody.error?.message).toBe('A turn is already in progress for this session');
+		expect(connCreateSpy).toHaveBeenCalledTimes(2);
+		expect(initializeSpy).toHaveBeenCalledTimes(2);
+
+		resolveRetryInitialize();
+		const resp = await respPromise;
+		expect(resp.ok).toBe(true);
+		const eventsPromise = readSSEEvents(resp.body);
+		const events = await eventsPromise;
+		const text = events
+			.filter((e) => e.event === 'content_block_delta')
+			.map((e) => (e.data as { delta?: { text?: string } }).delta?.text ?? '')
+			.join('');
+		expect(text).toBe('recovered');
+	});
+
+	it('sends an error SSE after the one subprocess crash retry is exhausted', async () => {
+		startTurnSpy.mockImplementation(
+			// eslint-disable-next-line @typescript-eslint/require-await
+			async function* (): AsyncGenerator<BridgeEvent> {
+				yield { type: 'error', message: 'codex app-server subprocess closed unexpectedly' };
+			}
+		);
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: 'Bearer codex-bridge-retry-exhausted',
+			},
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'Retry once' }],
+				stream: true,
+			}),
+		});
+
+		expect(resp.ok).toBe(true);
+		const events = await readSSEEvents(resp.body);
+		const types = events.map((e) => e.event);
+		expect(startTurnSpy).toHaveBeenCalledTimes(2);
+		expect(connCreateSpy).toHaveBeenCalledTimes(2);
+		expect(types.filter((type) => type === 'message_start')).toHaveLength(1);
+		expect(types.filter((type) => type === 'error')).toHaveLength(1);
+		expect(types.at(-1)).toBe('message_stop');
+
+		const errorEvent = events.find((e) => e.event === 'error');
+		const data = errorEvent?.data as { error?: { message?: string } };
+		expect(data.error?.message).toBe('codex app-server subprocess closed unexpectedly');
+	});
+
+	it('resolves bridge model aliases to canonical Codex model IDs', async () => {
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-latest',
+				messages: [{ role: 'user', content: 'hello' }],
+				stream: true,
+			}),
+		});
+
+		expect(resp.ok).toBe(true);
+		const events = await readSSEEvents(resp.body);
+		const messageStart = events.find((e) => e.event === 'message_start');
+		expect(
+			(messageStart?.data as { message?: { model?: string } } | undefined)?.message?.model
+		).toBe('gpt-5.5');
+	});
+
+	it('estimates later persistent turns from the sent user message, not full history', async () => {
+		const headers = {
+			'Content-Type': 'application/json',
+			Authorization: 'Bearer codex-bridge-usage-estimate',
+		};
+
+		const firstResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'Start' }],
+				stream: true,
+			}),
+		});
+		expect(firstResp.ok).toBe(true);
+		await readSSEEvents(firstResp.body);
+
+		const secondResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [
+					{ role: 'user', content: 'x '.repeat(20_000) },
+					{ role: 'assistant', content: 'ok' },
+					{ role: 'user', content: 'Hey' },
+				],
+				stream: true,
+			}),
+		});
+
+		expect(secondResp.ok).toBe(true);
+		const events = await readSSEEvents(secondResp.body);
+		expect(startTurnSpy.mock.calls[1]?.[0]).toBe('Hey');
+
+		const msgStart = events.find((e) => e.event === 'message_start');
+		const startUsage = (msgStart?.data as { message?: { usage?: { input_tokens?: number } } })
+			?.message?.usage;
+		expect(startUsage?.input_tokens).toBeGreaterThan(0);
+		expect(startUsage?.input_tokens).toBeLessThan(50);
+
+		const msgDelta = events.find((e) => e.event === 'message_delta');
+		const deltaUsage = (msgDelta?.data as { usage?: { input_tokens?: number } })?.usage;
+		expect(deltaUsage?.input_tokens).toBe(startUsage?.input_tokens);
+	});
+
+	it('counts later persistent Codex turns from the sent user message, not replayed history', async () => {
+		const headers = {
+			'Content-Type': 'application/json',
+			Authorization: 'Bearer codex-bridge-count-estimate',
+		};
+
+		const firstResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				model: 'gpt-5.5',
+				messages: [{ role: 'user', content: 'Start' }],
+				stream: true,
+			}),
+		});
+		expect(firstResp.ok).toBe(true);
+		await readSSEEvents(firstResp.body);
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages/count_tokens`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				model: 'gpt-5.5',
+				messages: [
+					{ role: 'user', content: 'x '.repeat(20_000) },
+					{ role: 'assistant', content: 'ok' },
+					{ role: 'user', content: 'Hey' },
+				],
+			}),
+		});
+
+		expect(resp.ok).toBe(true);
+		const body = (await resp.json()) as { input_tokens: number };
+		expect(body.input_tokens).toBeGreaterThan(0);
+		expect(body.input_tokens).toBeLessThan(50);
 	});
 
 	it('does NOT log a tool_choice warning when tool_choice is absent', async () => {

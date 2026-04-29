@@ -32,11 +32,17 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { isAbsolute, normalize } from 'node:path';
-import type { CopilotClient, SessionConfig } from '@github/copilot-sdk';
-import { isAnthropicRequest, type AnthropicRequest } from './types.js';
+import {
+	approveAll,
+	type CopilotClient,
+	type ModelInfo,
+	type SessionConfig,
+} from '@github/copilot-sdk';
+import { isAnthropicRequest, type AnthropicMessage, type AnthropicRequest } from './types.js';
 import { formatAnthropicPrompt, extractSystemText, extractToolResultIds } from './prompt.js';
 import { ConversationManager } from './conversation.js';
 import { runSessionStreaming, resumeSessionStreaming } from './streaming.js';
+import { ContextUsageStore, countTokensResponse, estimateRequestUsage } from './context-usage.js';
 import { Logger } from '../../logger.js';
 import { type AnthropicErrorType, createAnthropicErrorBody } from '../shared/error-envelope.js';
 
@@ -44,6 +50,29 @@ const logger = new Logger('anthropic-copilot-server');
 
 /** Maximum request body size (10 MB). */
 const MAX_BODY_BYTES = 10 * 1024 * 1024;
+
+const FALLBACK_MODELS = [
+	{ id: 'claude-opus-4.6', display_name: 'Claude Opus 4.6', max_input_tokens: 200000 },
+	{ id: 'claude-sonnet-4.6', display_name: 'Claude Sonnet 4.6', max_input_tokens: 200000 },
+	{ id: 'gpt-5.3-codex', display_name: 'GPT-5.3 Codex', max_input_tokens: 272000 },
+	{ id: 'gpt-5.4', display_name: 'GPT-5.4', max_input_tokens: 272000 },
+	{ id: 'gpt-5.5', display_name: 'GPT-5.5', max_input_tokens: 272000 },
+	{ id: 'gpt-5-mini', display_name: 'GPT-5 Mini', max_input_tokens: 128000 },
+	{
+		id: 'gemini-3.1-pro-preview',
+		display_name: 'Gemini 3.1 Pro Preview',
+		max_input_tokens: 128000,
+	},
+] as const;
+
+interface CountTokensRequest {
+	model: string;
+	messages: AnthropicMessage[];
+	max_tokens?: number;
+	system?: AnthropicRequest['system'];
+	tools?: AnthropicRequest['tools'];
+	tool_choice?: AnthropicRequest['tool_choice'];
+}
 
 // ---------------------------------------------------------------------------
 // HTTP helpers
@@ -81,6 +110,42 @@ function sendJsonError(
 ): void {
 	res.writeHead(status, { 'Content-Type': 'application/json' });
 	res.end(createAnthropicErrorBody(type, message));
+}
+
+function sendJson(res: ServerResponse, status: number, body: object): void {
+	res.writeHead(status, { 'Content-Type': 'application/json' });
+	res.end(JSON.stringify(body));
+}
+
+function requestUsageKey(req: IncomingMessage, cwd: string, model: string): string {
+	return `${resolveRequestCwd(req, cwd)}:${model}`;
+}
+
+function isCountTokensRequest(body: unknown): body is CountTokensRequest {
+	if (typeof body !== 'object' || body === null) return false;
+	const b = body as Record<string, unknown>;
+	return typeof b['model'] === 'string' && Array.isArray(b['messages']);
+}
+
+function toAnthropicModel(model: ModelInfo): object {
+	return {
+		id: model.id,
+		type: 'model',
+		display_name: model.name,
+		created_at: '2026-01-01T00:00:00Z',
+		max_input_tokens: model.capabilities?.limits?.max_context_window_tokens ?? 128000,
+		max_tokens: model.capabilities?.limits?.max_prompt_tokens ?? 16384,
+	};
+}
+
+function modelsListResponse(models: object[]): object {
+	const data = models.length > 0 ? models : FALLBACK_MODELS.map((m) => ({ ...m, type: 'model' }));
+	return {
+		data,
+		has_more: false,
+		first_id: (data[0] as { id: string }).id,
+		last_id: (data[data.length - 1] as { id: string }).id,
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +194,7 @@ function buildPlainSessionConfig(
 		...(systemMessage
 			? { systemMessage: { mode: 'replace' as const, content: systemMessage } }
 			: {}),
-		onPermissionRequest: () => Promise.resolve({ kind: 'approve-once' as const }),
+		onPermissionRequest: approveAll,
 		onUserInputRequest: () =>
 			Promise.resolve({
 				answer: 'User input is not available. Ask your question in your response instead.',
@@ -171,6 +236,7 @@ async function handleMessages(
 	res: ServerResponse,
 	client: CopilotClient,
 	manager: ConversationManager,
+	contextUsageStore: ContextUsageStore,
 	cwd: string
 ): Promise<void> {
 	// 1. Read and parse body.
@@ -227,6 +293,7 @@ async function handleMessages(
 		const continuation = manager.findContinuation(body.messages);
 		if (continuation) {
 			const { conv, toolResults } = continuation;
+			const usageKey = requestUsageKey(req, cwd, body.model);
 			// Remove routing entries and cancel the TTL timer before resuming.
 			// Actual Promise resolution happens inside resumeSessionStreaming.
 			manager.acknowledgeContinuation(
@@ -253,7 +320,12 @@ async function handleMessages(
 					// Heuristic input_tokens for the continuation turn: the full
 					// conversation history (system + all messages including tool results)
 					// is re-serialised on every request, so we use that as the input text.
-					(extractSystemText(body.system) ?? '') + formatAnthropicPrompt(body.messages)
+					(extractSystemText(body.system) ?? '') + formatAnthropicPrompt(body.messages),
+					{
+						store: contextUsageStore,
+						requestKey: usageKey,
+						outputTokenLimit: body.max_tokens,
+					}
 				);
 				if (outcome.kind === 'completed') {
 					// streamSession already called session.disconnect() — use
@@ -302,12 +374,22 @@ async function handleMessages(
 			body,
 			client,
 			manager,
+			contextUsageStore,
 			systemMessage,
 			prompt,
 			requestCwd
 		);
 	} else {
-		await handlePlainRequest(req, res, body, client, systemMessage, prompt, requestCwd);
+		await handlePlainRequest(
+			req,
+			res,
+			body,
+			client,
+			contextUsageStore,
+			systemMessage,
+			prompt,
+			requestCwd
+		);
 	}
 }
 
@@ -321,6 +403,7 @@ async function handleNewToolConversation(
 	body: AnthropicRequest,
 	client: CopilotClient,
 	manager: ConversationManager,
+	contextUsageStore: ContextUsageStore,
 	systemMessage: string | undefined,
 	prompt: string,
 	cwd: string
@@ -348,7 +431,12 @@ async function handleNewToolConversation(
 			res,
 			conv.registry,
 			() => {},
-			(systemMessage ?? '') + prompt
+			(systemMessage ?? '') + prompt,
+			{
+				store: contextUsageStore,
+				requestKey: requestUsageKey(req, cwd, body.model),
+				outputTokenLimit: body.max_tokens,
+			}
 		);
 		if (outcome.kind === 'completed') {
 			// streamSession already called session.disconnect() — use
@@ -376,6 +464,7 @@ async function handlePlainRequest(
 	res: ServerResponse,
 	body: AnthropicRequest,
 	client: CopilotClient,
+	contextUsageStore: ContextUsageStore,
 	systemMessage: string | undefined,
 	prompt: string,
 	cwd: string
@@ -405,7 +494,12 @@ async function handlePlainRequest(
 			res,
 			undefined,
 			() => {},
-			(systemMessage ?? '') + prompt
+			(systemMessage ?? '') + prompt,
+			{
+				store: contextUsageStore,
+				requestKey: requestUsageKey(req, cwd, body.model),
+				outputTokenLimit: body.max_tokens,
+			}
 		);
 	} catch (err) {
 		logger.error('Streaming failed:', err);
@@ -415,6 +509,66 @@ async function handlePlainRequest(
 		if (!res.headersSent) {
 			sendJsonError(res, 500, 'api_error', err instanceof Error ? err.message : 'Internal error');
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Anthropic compatibility endpoints used by Claude Agent SDK context retrieval
+// ---------------------------------------------------------------------------
+
+async function handleCountTokens(
+	req: IncomingMessage,
+	res: ServerResponse,
+	contextUsageStore: ContextUsageStore,
+	cwd: string
+): Promise<void> {
+	let bodyText: string;
+	try {
+		bodyText = await readBody(req);
+	} catch (err) {
+		const status = (err as { code?: number }).code === 413 ? 413 : 400;
+		sendJsonError(
+			res,
+			status,
+			status === 413 ? 'request_too_large' : 'invalid_request_error',
+			status === 413 ? 'Request body exceeds 10 MB limit' : 'Failed to read request body'
+		);
+		return;
+	}
+
+	let body: unknown;
+	try {
+		body = JSON.parse(bodyText);
+	} catch {
+		sendJsonError(res, 400, 'invalid_request_error', 'Request body must be valid JSON');
+		return;
+	}
+
+	if (!isCountTokensRequest(body)) {
+		sendJsonError(res, 400, 'invalid_request_error', 'Missing required fields: model, messages');
+		return;
+	}
+
+	const usageKey = requestUsageKey(req, cwd, body.model);
+	const estimated = estimateRequestUsage({
+		model: body.model,
+		max_tokens: body.max_tokens ?? 0,
+		messages: body.messages,
+		system: body.system,
+		tools: body.tools,
+		tool_choice: body.tool_choice,
+	});
+	const latest = contextUsageStore.getForRequestKey(usageKey);
+	sendJson(res, 200, countTokensResponse(estimated, latest ?? estimated));
+}
+
+async function handleModels(res: ServerResponse, client: CopilotClient): Promise<void> {
+	try {
+		const models = await client.listModels();
+		sendJson(res, 200, modelsListResponse(models.map(toAnthropicModel)));
+	} catch (err) {
+		logger.warn('Failed to list Copilot models for /v1/models; using fallback metadata:', err);
+		sendJson(res, 200, modelsListResponse([]));
 	}
 }
 
@@ -444,14 +598,38 @@ export function startEmbeddedServer(
 	cwd = process.cwd()
 ): Promise<EmbeddedServer> {
 	const manager = new ConversationManager();
+	const contextUsageStore = new ContextUsageStore();
 
 	const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
 		const url = req.url ?? '';
 		const method = req.method ?? '';
 
 		if (method === 'POST' && (url === '/v1/messages' || url.startsWith('/v1/messages?'))) {
-			handleMessages(req, res, client, manager, cwd).catch((err: unknown) => {
+			handleMessages(req, res, client, manager, contextUsageStore, cwd).catch((err: unknown) => {
 				logger.error('Unhandled error in handleMessages:', err);
+				if (!res.headersSent) {
+					sendJsonError(res, 500, 'api_error', 'Internal server error');
+				}
+			});
+			return;
+		}
+
+		if (
+			method === 'POST' &&
+			(url === '/v1/messages/count_tokens' || url.startsWith('/v1/messages/count_tokens?'))
+		) {
+			handleCountTokens(req, res, contextUsageStore, cwd).catch((err: unknown) => {
+				logger.error('Unhandled error in handleCountTokens:', err);
+				if (!res.headersSent) {
+					sendJsonError(res, 500, 'api_error', 'Internal server error');
+				}
+			});
+			return;
+		}
+
+		if (method === 'GET' && (url === '/v1/models' || url.startsWith('/v1/models?'))) {
+			handleModels(res, client).catch((err: unknown) => {
+				logger.error('Unhandled error in handleModels:', err);
 				if (!res.headersSent) {
 					sendJsonError(res, 500, 'api_error', 'Internal server error');
 				}

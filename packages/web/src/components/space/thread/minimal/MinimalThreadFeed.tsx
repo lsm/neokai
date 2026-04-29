@@ -46,13 +46,9 @@ import { SpaceTaskThreadMessageActions } from '../SpaceTaskThreadMessageActions'
 import { getAgentColor } from '../space-task-thread-agent-colors';
 import type { ParsedThreadRow } from '../space-task-thread-events';
 import { pushOverlayHistory } from '../../../../lib/router';
-import {
-	agentInitial,
-	formatClock,
-	formatDuration,
-	getToolDarkColor,
-	shortAgentName,
-} from './minimal-mock-data';
+import { agentInitial, formatClock, formatDuration, shortAgentName } from './minimal-mock-data';
+import { ToolIcon } from '../../../sdk/tools/ToolIcon';
+import { getToolColors, getToolDisplayName } from '../../../sdk/tools/tool-utils';
 
 interface MinimalThreadFeedProps {
 	parsedRows: ParsedThreadRow[];
@@ -737,38 +733,56 @@ function StatusPill({ color, status }: { color: string; status: string }) {
 	);
 }
 
+function rosterToolLabel(toolName: string): string {
+	if (toolName.startsWith('mcp__')) {
+		const parts = toolName.split('__');
+		const serverName = parts[1] || 'unknown';
+		const toolShortName = parts.slice(2).join('__') || toolName;
+		return `${serverName} ${toolShortName}`;
+	}
+	return getToolDisplayName(toolName);
+}
+
 function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: boolean }) {
 	const fadeClass = isLatest ? 'minimal-thread-roster-fade-in' : '';
 	const bodyClass = `truncate ${isLatest ? 'text-gray-100' : 'text-gray-400'}`;
 
 	if (entry.kind === 'tool') {
-		const toolColor = getToolDarkColor(entry.tool);
+		const toolColor = getToolColors(entry.tool).iconColor;
+		const toolLabel = rosterToolLabel(entry.tool);
+		const preview = entry.preview.trim();
 		return (
 			<div
-				class={`flex items-baseline gap-2 font-mono text-xs leading-5 ${fadeClass}`}
+				class={`flex items-start gap-2 font-mono text-xs leading-5 ${fadeClass}`}
 				data-testid="minimal-thread-roster-entry"
 				data-roster-kind="tool"
 			>
-				<span class={`${toolColor} font-semibold shrink-0`}>{entry.tool}:</span>
-				<span class={bodyClass}>{entry.preview}</span>
+				<span class="mt-1 shrink-0" aria-hidden="true">
+					<ToolIcon toolName={entry.tool} size="xs" />
+				</span>
+				<span class="min-w-0 truncate">
+					<span class={`${toolColor} font-semibold`}>{toolLabel}</span>
+					{preview ? (
+						<>
+							<span class="text-gray-600">: </span>
+							<span class={bodyClass}>{preview}</span>
+						</>
+					) : null}
+				</span>
 			</div>
 		);
 	}
 
 	if (entry.kind === 'thinking') {
-		// Thinking block — sparkle glyph + dim italic preview. Visually
-		// closer to "the model is reasoning" than "the model said this", so
-		// the body is one shade dimmer than the message branch even when
-		// it's the latest entry.
-		const thinkBody = `truncate italic ${isLatest ? 'text-gray-300' : 'text-gray-500'}`;
+		const thinkBody = `line-clamp-3 whitespace-pre-wrap italic ${isLatest ? 'text-amber-100' : 'text-amber-300/70'}`;
 		return (
 			<div
-				class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
+				class={`flex items-start gap-2 text-xs leading-5 ${fadeClass}`}
 				data-testid="minimal-thread-roster-entry"
 				data-roster-kind="thinking"
 			>
-				<span class="shrink-0 text-gray-500" aria-hidden="true">
-					✦
+				<span class="mt-1 shrink-0" aria-hidden="true">
+					<ToolIcon toolName="Thinking" size="xs" />
 				</span>
 				<span class={thinkBody}>{entry.preview}</span>
 			</div>

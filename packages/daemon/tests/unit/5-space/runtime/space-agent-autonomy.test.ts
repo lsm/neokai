@@ -20,6 +20,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
@@ -66,7 +67,9 @@ interface TestCtx {
 	taskRepo: SpaceTaskRepository;
 	taskManager: SpaceTaskManager;
 	agentManager: SpaceAgentManager;
+	spaceManager: SpaceManager;
 	runtime: SpaceRuntime;
+	nodeExecutionRepo: NodeExecutionRepository;
 }
 
 function makeCtx(): TestCtx {
@@ -88,6 +91,7 @@ function makeCtx(): TestCtx {
 	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
 	const taskRepo = new SpaceTaskRepository(db);
 	const spaceManager = new SpaceManager(db);
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
 
 	const runtime = new SpaceRuntime({
 		db,
@@ -96,6 +100,7 @@ function makeCtx(): TestCtx {
 		spaceWorkflowManager: workflowManager,
 		workflowRunRepo,
 		taskRepo,
+		nodeExecutionRepo,
 	});
 
 	const taskManager = new SpaceTaskManager(db, spaceId);
@@ -109,7 +114,9 @@ function makeCtx(): TestCtx {
 		taskRepo,
 		taskManager,
 		agentManager,
+		spaceManager,
 		runtime,
+		nodeExecutionRepo,
 	};
 }
 
@@ -118,7 +125,9 @@ function makeHandlers(ctx: TestCtx) {
 		spaceId: ctx.spaceId,
 		runtime: ctx.runtime,
 		workflowManager: ctx.workflowManager,
+		spaceManager: ctx.spaceManager,
 		taskRepo: ctx.taskRepo,
+		nodeExecutionRepo: ctx.nodeExecutionRepo,
 		workflowRunRepo: ctx.workflowRunRepo,
 		taskManager: ctx.taskManager,
 		spaceAgentManager: ctx.agentManager,
@@ -454,7 +463,76 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
 });
 
 // ---------------------------------------------------------------------------
-// 6. Prompt structure — both levels include Event Handling and Escalation
+// 6. space-agent-tools approve_task — autonomy-gated
+// ---------------------------------------------------------------------------
+
+describe('space-agent-tools approve_task — completion autonomy', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	function createReviewTaskWithWorkflow(requiredLevel: SpaceAutonomyLevel) {
+		const nodeId = `node-${Math.random().toString(36).slice(2)}`;
+		const workflow = ctx.workflowManager.createWorkflow({
+			spaceId: ctx.spaceId,
+			name: `Approval gated workflow ${requiredLevel}`,
+			description: '',
+			nodes: [{ id: nodeId, name: 'Review', agentId: ctx.agentId }],
+			transitions: [],
+			startNodeId: nodeId,
+			endNodeId: nodeId,
+			rules: [],
+			completionAutonomyLevel: requiredLevel,
+		});
+		const run = ctx.workflowRunRepo.createRun({
+			spaceId: ctx.spaceId,
+			workflowId: workflow.id,
+			title: 'Approval gated run',
+			description: '',
+		});
+		return ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Review task',
+			description: '',
+			status: 'review',
+			workflowRunId: run.id,
+		});
+	}
+
+	test('rejects approve_task when space autonomy is below workflow completionAutonomyLevel', async () => {
+		await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 3 });
+		const task = createReviewTaskWithWorkflow(5);
+
+		const result = await makeHandlers(ctx).approve_task({ task_id: task.id });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('approve_task not permitted');
+		expect(parsed.error).toContain('space autonomy level 3 < workflow completionAutonomyLevel 5');
+		expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
+	});
+
+	test('allows approve_task when space autonomy meets workflow completionAutonomyLevel', async () => {
+		await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+		const task = createReviewTaskWithWorkflow(5);
+
+		const result = await makeHandlers(ctx).approve_task({ task_id: task.id, reason: 'looks good' });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('done');
+		expect(parsed.task.approvalSource).toBe('agent');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 7. Prompt structure — both levels include Event Handling and Escalation
 // ---------------------------------------------------------------------------
 
 describe('buildSpaceChatSystemPrompt — sections always present regardless of autonomy level', () => {

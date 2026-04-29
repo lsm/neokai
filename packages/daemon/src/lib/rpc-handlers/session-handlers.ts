@@ -730,6 +730,8 @@ export function setupSessionHandlers(
 					description: m.description,
 					alias: m.alias,
 					provider: m.provider,
+					contextWindow: m.contextWindow,
+					context_window: m.contextWindow,
 					type: 'model' as const,
 				})),
 				// If forceRefresh is true, indicate that this is a fresh fetch
@@ -875,7 +877,7 @@ export function setupSessionHandlers(
 
 		// Call resetQuery directly and return the result
 		// This allows the client to get immediate feedback on success/failure
-		const result = await agentSession.resetQuery({ restartQuery });
+		const result = await agentSession.resetQuery({ restartQuery, hardReset: true });
 
 		// Also emit event for StateManager to update clients
 		await daemonHub.emit('agent.reset', {

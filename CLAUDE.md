@@ -63,6 +63,11 @@ cd packages/daemon && bun test tests/unit/some-test.test.ts
 cd packages/web && bunx vitest run src/some-test.test.ts
 make run-e2e TEST=tests/features/some-test.e2e.ts
 
+# E2E coverage
+# Do not add or update e2e tests for ordinary code changes unless the task
+# explicitly asks for e2e coverage. Prefer focused unit/component tests for
+# scoped UI behavior changes.
+
 # Quality checks
 bun run check             # All checks: lint + typecheck + knip
 bun run lint              # Oxlint

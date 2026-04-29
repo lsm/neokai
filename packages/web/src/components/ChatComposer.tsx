@@ -124,7 +124,7 @@ export function ChatComposer({
 					currentAction={currentAction}
 					streamingPhase={streamingPhase}
 					contextUsage={contextUsage}
-					maxContextTokens={200000}
+					maxContextTokens={currentModelInfo?.contextWindow ?? 200000}
 					features={features}
 					currentModel={currentModel}
 					currentModelInfo={currentModelInfo}

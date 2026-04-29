@@ -140,6 +140,16 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		fsSpies.forEach((spy) => spy.mockRestore());
 	});
 
+	describe('capabilities', () => {
+		beforeEach(() => {
+			provider = makeProvider({}, undefined, undefined, fakeCodexFound);
+		});
+
+		it('reports the maximum Codex context window', () => {
+			expect(provider.capabilities.maxContextWindow).toBe(272000);
+		});
+	});
+
 	describe('getAuthStatus()', () => {
 		let emptyDir: string;
 
@@ -426,8 +436,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			// the Codex bridge does not recognise, producing "model does not exist" errors.
 			const cfg = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-model' });
 			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.3-codex');
-			expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-5.1-codex-mini');
-			expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-5.4');
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-5.4-mini');
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-5.5');
 		});
 
 		it('resolves model alias to canonical ID in ANTHROPIC_DEFAULT_SONNET_MODEL', () => {
@@ -438,13 +448,23 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
 		it('resolves codex-mini alias correctly', () => {
 			const cfg = provider.buildSdkConfig('codex-mini', { workspacePath: '/tmp/ws-mini' });
-			// 'codex-mini' is an alias for 'gpt-5.1-codex-mini'
+			// 'codex-mini' is an alias for the latest mini model.
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.4-mini');
+		});
+
+		it('resolves gpt-5.1 mini alias correctly', () => {
+			const cfg = provider.buildSdkConfig('codex-5.1-mini', { workspacePath: '/tmp/ws-51-mini' });
 			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.1-codex-mini');
 		});
 
 		it('resolves codex-latest alias correctly', () => {
 			const cfg = provider.buildSdkConfig('codex-latest', { workspacePath: '/tmp/ws-latest' });
-			// 'codex-latest' is an alias for 'gpt-5.4'
+			// 'codex-latest' is an alias for 'gpt-5.5'
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.5');
+		});
+
+		it('resolves gpt-5.4 alias correctly', () => {
+			const cfg = provider.buildSdkConfig('codex-5.4', { workspacePath: '/tmp/ws-54' });
 			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.4');
 		});
 
@@ -480,10 +500,14 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('owns models explicitly listed in the catalogue', () => {
 			expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
 			expect(provider.ownsModel('gpt-5.4')).toBe(true);
+			expect(provider.ownsModel('gpt-5.5')).toBe(true);
+			expect(provider.ownsModel('gpt-5.4-mini')).toBe(true);
 			expect(provider.ownsModel('gpt-5.1-codex-mini')).toBe(true);
 			// Aliases also owned
 			expect(provider.ownsModel('codex')).toBe(true);
+			expect(provider.ownsModel('codex-5.4')).toBe(true);
 			expect(provider.ownsModel('codex-mini')).toBe(true);
+			expect(provider.ownsModel('codex-5.1-mini')).toBe(true);
 			expect(provider.ownsModel('codex-latest')).toBe(true);
 		});
 
@@ -498,6 +522,14 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			expect(provider.ownsModel('gpt-4o')).toBe(false);
 			expect(provider.ownsModel('gpt-4')).toBe(false);
 			expect(provider.ownsModel('gpt-3.5-turbo')).toBe(false);
+		});
+
+		it('translates aliases to canonical model IDs before SDK query creation', () => {
+			expect(provider.translateModelIdForSdk('codex-latest')).toBe('gpt-5.5');
+			expect(provider.translateModelIdForSdk('codex-mini')).toBe('gpt-5.4-mini');
+			expect(provider.translateModelIdForSdk('codex-5.1-mini')).toBe('gpt-5.1-codex-mini');
+			expect(provider.translateModelIdForSdk('gpt-5.5')).toBe('gpt-5.5');
+			expect(provider.translateModelIdForSdk('unknown-model')).toBe('unknown-model');
 		});
 
 		it('does not own claude- models', () => {
@@ -530,6 +562,18 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fakeCodexFound);
 			const models = await provider.getModels();
 			expect(models.length).toBeGreaterThan(0);
+		});
+
+		it('reports correct context windows for Codex catalogue models', async () => {
+			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fakeCodexFound);
+			const models = await provider.getModels();
+			const contextWindows = new Map(models.map((model) => [model.id, model.contextWindow]));
+
+			expect(contextWindows.get('gpt-5.3-codex')).toBe(272000);
+			expect(contextWindows.get('gpt-5.4')).toBe(272000);
+			expect(contextWindows.get('gpt-5.5')).toBe(272000);
+			expect(contextWindows.get('gpt-5.4-mini')).toBe(128000);
+			expect(contextWindows.get('gpt-5.1-codex-mini')).toBe(128000);
 		});
 
 		it('returns models when NeoKai OAuth credentials are in auth.json', async () => {

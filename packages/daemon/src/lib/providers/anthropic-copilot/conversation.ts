@@ -24,7 +24,7 @@
  * contamination when a NeoKai chat session makes many independent calls).
  */
 
-import type { CopilotClient, CopilotSession } from '@github/copilot-sdk';
+import { approveAll, type CopilotClient, type CopilotSession } from '@github/copilot-sdk';
 import type { AnthropicMessage, AnthropicTool } from './types.js';
 import {
 	extractToolResultIds,
@@ -168,7 +168,7 @@ export class ConversationManager {
 			...(systemMessage
 				? { systemMessage: { mode: 'replace' as const, content: systemMessage } }
 				: {}),
-			onPermissionRequest: () => Promise.resolve({ kind: 'approve-once' as const }),
+			onPermissionRequest: approveAll,
 			onUserInputRequest: () =>
 				Promise.resolve({ answer: 'User input is not available in API mode.', wasFreeform: true }),
 			hooks: {

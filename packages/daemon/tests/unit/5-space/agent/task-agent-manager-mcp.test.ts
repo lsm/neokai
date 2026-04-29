@@ -188,6 +188,7 @@ function buildManager(opts: {
 	bunDb: BunDatabase;
 	taskRepo: SpaceTaskRepository;
 	taskManager: SpaceTaskManager;
+	nodeExecutionRepo: NodeExecutionRepository;
 	space: Space;
 	mockSkillsManager: object;
 	mockAppMcpServerRepo: object;
@@ -313,6 +314,7 @@ function buildManager(opts: {
 		bunDb,
 		taskRepo,
 		taskManager,
+		nodeExecutionRepo,
 		space,
 		mockSkillsManager,
 		mockAppMcpServerRepo,
@@ -1041,22 +1043,21 @@ describe('TaskAgentManager.rehydrate — skills injection (G3)', () => {
 // for workflow sub-sessions — Task #37)
 // ---------------------------------------------------------------------------
 
-describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session invariant (Tasks #37, #99)', () => {
+describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session invariant (Task #37)', () => {
 	const spies: Array<{ mockRestore: () => void }> = [];
 
 	afterEach(() => {
 		for (const spy of spies.splice(0)) spy.mockRestore();
 	});
 
-	test('does nothing when both required MCP servers are already present', async () => {
+	test('does nothing when node-agent is already present', async () => {
 		const { manager, fromInitSpy } = buildManager({});
 		spies.push(fromInitSpy);
 
 		const session = makeMockSession('sub-session-ok');
-		// Pre-populate both required servers — invariant already holds.
+		// Pre-populate the required server — invariant already holds.
 		session.session.config.mcpServers = {
 			'node-agent': { name: 'node-agent' },
-			'space-agent-tools': { name: 'space-agent-tools' },
 		};
 
 		// Fail loudly if either reinject primitive is called — they must not be.
@@ -1098,7 +1099,6 @@ describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session inva
 		expect(reinjectSpaceCalled).toBe(false);
 		// Server map untouched.
 		expect(session.session.config.mcpServers!['node-agent']).toBeDefined();
-		expect(session.session.config.mcpServers!['space-agent-tools']).toBeDefined();
 	});
 
 	test('self-heals by re-injecting node-agent when only node-agent is missing', async () => {
@@ -1106,9 +1106,8 @@ describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session inva
 		spies.push(fromInitSpy);
 
 		const session = makeMockSession('sub-session-broken');
-		// node-agent is missing; space-agent-tools is present.
+		// node-agent is missing; unrelated registry servers are present.
 		session.session.config.mcpServers = {
-			'space-agent-tools': { name: 'space-agent-tools' },
 			'registry-mcp': { name: 'registry' },
 		};
 
@@ -1152,20 +1151,18 @@ describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session inva
 		}
 
 		expect(reinjectNodeCallCount).toBe(1);
-		// space-agent-tools was already present, so its reinject must NOT fire.
 		expect(reinjectSpaceCallCount).toBe(0);
 		expect(session.session.config.mcpServers!['node-agent']).toBeDefined();
 		// Pre-existing servers must be preserved during self-heal.
-		expect(session.session.config.mcpServers!['space-agent-tools']).toBeDefined();
 		expect(session.session.config.mcpServers!['registry-mcp']).toBeDefined();
 	});
 
-	test('self-heals by re-injecting space-agent-tools when only space-agent-tools is missing (Task #99)', async () => {
+	test('does not re-inject space-agent-tools when only space-agent-tools is missing', async () => {
 		const { manager, fromInitSpy } = buildManager({});
 		spies.push(fromInitSpy);
 
 		const session = makeMockSession('sub-session-no-space-tools');
-		// space-agent-tools is missing; node-agent is present.
+		// space-agent-tools is intentionally absent; node-agent is present.
 		session.session.config.mcpServers = {
 			'node-agent': { name: 'node-agent' },
 			'registry-mcp': { name: 'registry' },
@@ -1178,10 +1175,9 @@ describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session inva
 		};
 		const originalReinjectNode = mgr.reinjectNodeAgentMcpServer.bind(manager);
 		const originalReinjectSpace = mgr.reinjectSpaceAgentToolsMcpServer.bind(manager);
-		let reinjectNodeCallCount = 0;
 		let reinjectSpaceCallCount = 0;
 		mgr.reinjectNodeAgentMcpServer = (_s, _ctx) => {
-			reinjectNodeCallCount++;
+			throw new Error('node-agent reinject should not be called');
 		};
 		mgr.reinjectSpaceAgentToolsMcpServer = (s, _ctx) => {
 			reinjectSpaceCallCount++;
@@ -1207,21 +1203,19 @@ describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session inva
 			mgr.reinjectSpaceAgentToolsMcpServer = originalReinjectSpace;
 		}
 
-		// node-agent was already present, so its reinject must NOT fire.
-		expect(reinjectNodeCallCount).toBe(0);
-		expect(reinjectSpaceCallCount).toBe(1);
-		expect(session.session.config.mcpServers!['space-agent-tools']).toBeDefined();
+		expect(reinjectSpaceCallCount).toBe(0);
+		expect(session.session.config.mcpServers!['space-agent-tools']).toBeUndefined();
 		// Pre-existing servers must be preserved during self-heal.
 		expect(session.session.config.mcpServers!['node-agent']).toBeDefined();
 		expect(session.session.config.mcpServers!['registry-mcp']).toBeDefined();
 	});
 
-	test('self-heals by re-injecting BOTH when both required servers are missing (Task #99)', async () => {
+	test('self-heals by re-injecting node-agent when it is missing from registry-only state', async () => {
 		const { manager, fromInitSpy } = buildManager({});
 		spies.push(fromInitSpy);
 
 		const session = makeMockSession('sub-session-both-missing');
-		// Both required servers missing; registry-only state.
+		// Required node-agent is missing; registry-only state.
 		session.session.config.mcpServers = { 'registry-mcp': { name: 'registry' } };
 
 		const mgr = manager as unknown as {
@@ -1263,9 +1257,8 @@ describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session inva
 		}
 
 		expect(reinjectNodeCallCount).toBe(1);
-		expect(reinjectSpaceCallCount).toBe(1);
+		expect(reinjectSpaceCallCount).toBe(0);
 		expect(session.session.config.mcpServers!['node-agent']).toBeDefined();
-		expect(session.session.config.mcpServers!['space-agent-tools']).toBeDefined();
 		// Pre-existing registry server must be preserved.
 		expect(session.session.config.mcpServers!['registry-mcp']).toBeDefined();
 	});
@@ -1275,9 +1268,8 @@ describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session inva
 		spies.push(fromInitSpy);
 
 		const session = makeMockSession('sub-session-broken');
-		// Start with space-agent-tools present so only node-agent is missing; the
-		// broken reinject will be routed to node-agent and fail to produce it.
-		session.session.config.mcpServers = { 'space-agent-tools': { name: 'space-agent-tools' } };
+		// Start without node-agent; the broken reinject will fail to produce it.
+		session.session.config.mcpServers = { 'registry-mcp': { name: 'registry' } };
 
 		const mgr = manager as unknown as {
 			ensureNodeAgentAttached: (s: unknown, c: unknown) => Promise<void>;
@@ -1307,12 +1299,12 @@ describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session inva
 		}
 	});
 
-	test('throws when space-agent-tools re-injection fails to add the server (Task #99)', async () => {
+	test('ignores missing space-agent-tools even if its reinject primitive is broken', async () => {
 		const { manager, fromInitSpy } = buildManager({});
 		spies.push(fromInitSpy);
 
 		const session = makeMockSession('sub-session-broken-space-tools');
-		// Only space-agent-tools is missing; the broken reinject fails.
+		// Only space-agent-tools is missing; node-agent satisfies the invariant.
 		session.session.config.mcpServers = { 'node-agent': { name: 'node-agent' } };
 
 		const mgr = manager as unknown as {
@@ -1336,7 +1328,7 @@ describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session inva
 					workflowNodeId: 'node-1',
 					phase: 'spawn',
 				})
-			).rejects.toThrow(/failed to re-attach required MCP servers.*space-agent-tools/);
+			).resolves.toBeUndefined();
 		} finally {
 			mgr.reinjectSpaceAgentToolsMcpServer = originalReinject;
 		}
@@ -1349,14 +1341,13 @@ describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session inva
 		const session = makeMockSession('sub-session-alias');
 		session.session.config.mcpServers = {
 			'node-agent': { name: 'node-agent' },
-			'space-agent-tools': { name: 'space-agent-tools' },
 		};
 
 		const mgr = manager as unknown as {
 			ensureRequiredMcpServersAttached: (s: unknown, c: unknown) => Promise<void>;
 		};
 
-		// Both required servers present — alias is a no-op and must not throw.
+		// Required server present — alias is a no-op and must not throw.
 		await mgr.ensureRequiredMcpServersAttached(session, {
 			taskId: 'task-1',
 			subSessionId: 'sub-session-alias',
@@ -1370,7 +1361,67 @@ describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session inva
 
 		// Servers untouched.
 		expect(session.session.config.mcpServers!['node-agent']).toBeDefined();
-		expect(session.session.config.mcpServers!['space-agent-tools']).toBeDefined();
+	});
+
+	test('mcpSelfHeal repairs missing node execution session id from embedded exec id', async () => {
+		const { manager, fromInitSpy, bunDb, taskManager, nodeExecutionRepo, space } = buildManager({});
+		spies.push(fromInitSpy);
+
+		const workflow = new SpaceWorkflowRepository(bunDb).createWorkflow({
+			spaceId: space.id,
+			name: 'MCP self-heal workflow',
+			description: '',
+			nodes: [],
+			transitions: [],
+			startNodeId: 'coding',
+			rules: [],
+			completionAutonomyLevel: 3,
+		});
+		const workflowRun = new SpaceWorkflowRunRepository(bunDb).createRun({
+			spaceId: space.id,
+			workflowId: workflow.id,
+			title: 'MCP self-heal run',
+		});
+		const task = await taskManager.createTask({
+			title: 'MCP self-heal task',
+			description: 'desc',
+			taskType: 'coding',
+			status: 'in_progress',
+			workflowRunId: workflowRun.id,
+			taskAgentSessionId: `space:${space.id}:task:task-agent`,
+		});
+		const execution = nodeExecutionRepo.create({
+			workflowRunId: workflowRun.id,
+			workflowNodeId: 'coding',
+			agentName: 'coder',
+			status: 'in_progress',
+		});
+		const subSessionId = `space:${space.id}:task:${task.id}:exec:${execution.id}`;
+		const session = makeMockSession(subSessionId);
+		session.session.config.mcpServers = { 'registry-mcp': { name: 'registry' } };
+
+		const mgr = manager as unknown as {
+			agentSessionIndex: Map<string, MockAgentSession>;
+			mcpSelfHeal: (sessionId: string, missing: string[]) => Promise<void>;
+			reinjectNodeAgentMcpServer: (s: unknown, c: unknown) => void;
+		};
+		mgr.agentSessionIndex.set(subSessionId, session);
+		const originalReinject = mgr.reinjectNodeAgentMcpServer.bind(manager);
+		mgr.reinjectNodeAgentMcpServer = (s) => {
+			(s as MockAgentSession).mergeRuntimeMcpServers({
+				'node-agent': { name: 'node-agent', _stub: true },
+			});
+		};
+
+		try {
+			await mgr.mcpSelfHeal(subSessionId, ['node-agent']);
+		} finally {
+			mgr.reinjectNodeAgentMcpServer = originalReinject;
+		}
+
+		expect(nodeExecutionRepo.getById(execution.id)?.agentSessionId).toBe(subSessionId);
+		expect(session.session.config.mcpServers!['node-agent']).toBeDefined();
+		expect(session.session.config.mcpServers!['registry-mcp']).toBeDefined();
 	});
 });
 
@@ -1612,6 +1663,55 @@ describe('TaskAgentManager.buildNodeAgentMcpServerForSession — onRestoreNodeAg
 
 		// Use taskManager to keep linter happy — exposes the seeded test space wiring.
 		expect(taskManager).toBeDefined();
+	});
+
+	test('passes an onCreateStandaloneTask callback into createNodeAgentMcpServer', async () => {
+		const { manager, fromInitSpy, space } = buildManager({});
+		spies.push(fromInitSpy);
+
+		let capturedConfig: Record<string, unknown> | null = null;
+		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
+			(config) => {
+				capturedConfig = config as unknown as Record<string, unknown>;
+				return { name: 'node-agent', _stub: true } as unknown as ReturnType<
+					typeof nodeAgentToolsModule.createNodeAgentMcpServer
+				>;
+			}
+		);
+		spies.push(mcpServerSpy);
+
+		const mgr = manager as unknown as {
+			buildNodeAgentMcpServerForSession(
+				taskId: string,
+				subSessionId: string,
+				agentName: string,
+				spaceId: string,
+				workflowRunId: string,
+				workspacePath: string,
+				workflowNodeIdHint?: string
+			): unknown;
+		};
+		mgr.buildNodeAgentMcpServerForSession(
+			'task-1',
+			'sub-session-create-task',
+			'coder',
+			space.id,
+			'',
+			space.workspacePath,
+			'node-1'
+		);
+
+		expect(capturedConfig).not.toBeNull();
+		expect(typeof capturedConfig!['onCreateStandaloneTask']).toBe('function');
+
+		const callback = capturedConfig!['onCreateStandaloneTask'] as (args: {
+			title: string;
+			description: string;
+		}) => Promise<{ content: Array<{ text: string }> }>;
+		const result = await callback({ title: 'Follow-up', description: 'desc' });
+		const parsed = JSON.parse(result.content[0]!.text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.title).toBe('Follow-up');
 	});
 
 	test('onRestoreNodeAgent callback re-injects node-agent on a live sub-session', async () => {

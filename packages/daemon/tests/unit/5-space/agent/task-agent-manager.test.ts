@@ -1067,8 +1067,11 @@ describe('TaskAgentManager', () => {
 			// The stale callback registered between the two createSubSession calls should
 			// have been cleared by the second createSubSession, so it must NOT have fired.
 			expect(staleCallbackFired).toBe(false);
-			// The new callback (handleSubSessionComplete) should have fired — injecting NODE_COMPLETE
-			expect(taskAgentSession._enqueuedMessages.length).toBeGreaterThan(msgsBefore);
+			// The new callback (handleSubSessionComplete) should have fired and
+			// moved the execution to idle, but normal completion no longer relays
+			// a Task Agent message.
+			expect(ctx.nodeExecutionRepo.getById(exec.id)?.status).toBe('idle');
+			expect(taskAgentSession._enqueuedMessages.length).toBe(msgsBefore);
 		});
 
 		test('preserves init mcpServers when app MCP registry servers are injected', async () => {
@@ -1292,12 +1295,12 @@ describe('TaskAgentManager', () => {
 
 			await callHandleSubSessionComplete(ctx.manager, parentTask.id, stepId, subSessionId);
 
-			// Step status remains runtime-driven; handleSubSessionComplete only notifies.
+			// Step status remains runtime-driven; normal completion does not notify Task Agent.
 			const updated = ctx.taskRepo.getTask(stepTask.id);
 			expect(updated?.status).toBe('in_progress');
 		});
 
-		test('injects [NODE_COMPLETE] notification into Task Agent session', async () => {
+		test('does not inject [NODE_COMPLETE] into Task Agent session on normal completion', async () => {
 			const stepId = 'step-notify-1';
 			const parentTask = await ctx.taskManager.createTask({
 				title: 'Parent task',
@@ -1322,12 +1325,7 @@ describe('TaskAgentManager', () => {
 				`space:${ctx.spaceId}:task:${parentTask.id}:step:${stepId}`
 			);
 
-			// Task Agent should have received a [NODE_COMPLETE] message
-			expect(taskAgentSession._enqueuedMessages.length).toBeGreaterThan(msgsBefore);
-			const lastMsg =
-				taskAgentSession._enqueuedMessages[taskAgentSession._enqueuedMessages.length - 1];
-			expect(lastMsg.msg).toContain('[NODE_COMPLETE]');
-			expect(lastMsg.msg).toContain(stepId);
+			expect(taskAgentSession._enqueuedMessages.length).toBe(msgsBefore);
 		});
 
 		test('does not throw when no matching step task exists', async () => {
@@ -1634,6 +1632,64 @@ describe('TaskAgentManager', () => {
 			await ctx.manager.injectSubSessionMessage(subSessionId, 'Work on it!');
 
 			expect(subSession._enqueuedMessages.length).toBeGreaterThan(before);
+		});
+
+		test('defaults sub-session injections to synthetic agent-originated messages', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:synthetic-default`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			const savedMessages: unknown[] = [];
+			const originalSave = ctx.mockDb.saveUserMessage;
+			ctx.mockDb.saveUserMessage = (
+				_sid: string,
+				msg: unknown,
+				status: string
+			): ReturnType<typeof ctx.mockDb.saveUserMessage> => {
+				savedMessages.push(msg);
+				return originalSave.call(ctx.mockDb, _sid, msg, status);
+			};
+
+			await ctx.manager.injectSubSessionMessage(subSessionId, 'agent handoff');
+
+			ctx.mockDb.saveUserMessage = originalSave;
+
+			const lastSaved = savedMessages.at(-1) as { isSynthetic?: boolean } | undefined;
+			expect(lastSaved?.isSynthetic).toBe(true);
+		});
+
+		test('can mark sub-session injections as human-originated', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:human-injection`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			const savedMessages: unknown[] = [];
+			const originalSave = ctx.mockDb.saveUserMessage;
+			ctx.mockDb.saveUserMessage = (
+				_sid: string,
+				msg: unknown,
+				status: string
+			): ReturnType<typeof ctx.mockDb.saveUserMessage> => {
+				savedMessages.push(msg);
+				return originalSave.call(ctx.mockDb, _sid, msg, status);
+			};
+
+			await ctx.manager.injectSubSessionMessage(subSessionId, 'human directed message', false);
+
+			ctx.mockDb.saveUserMessage = originalSave;
+
+			const lastSaved = savedMessages.at(-1) as { isSynthetic?: boolean } | undefined;
+			expect(lastSaved?.isSynthetic).toBe(false);
 		});
 	});
 

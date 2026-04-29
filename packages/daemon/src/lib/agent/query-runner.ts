@@ -11,7 +11,7 @@
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Query, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, Query, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
 import { spawn as nodeSpawn } from 'node:child_process';
 import type { UUID } from 'crypto';
 import type { Session, MessageHub } from '@neokai/shared';
@@ -25,6 +25,7 @@ import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryOptionsBuilder } from './query-options-builder';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
 import type { OriginalEnvVars } from '../provider-service';
+import { extractCompactionSummary, getSDKSessionFilePath } from '../sdk-session-file-manager';
 // Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
 
@@ -111,6 +112,20 @@ export interface QueryRunnerContext {
 	onSlashCommandsFetched(): Promise<void>;
 	onModelsFetched(): Promise<void>;
 	onMarkApiSuccess(): Promise<void>;
+
+	/**
+	 * Self-heal hook: called when `QueryRunner.start()` detects that a workflow
+	 * sub-session is missing required MCP servers (`node-agent`).
+	 *
+	 * The callback receives the session so the caller (TaskAgentManager) can
+	 * re-attach the missing server before the first turn runs. This is the
+	 * final backstop — even if spawn/rehydrate/ensureRequiredMcpServersAttached
+	 * all failed silently, this fires at the moment of detection and can recover.
+	 *
+	 * Undefined for generic sessions (chat, worker, etc.) where this hook is
+	 * not applicable.
+	 */
+	onMissingWorkflowMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
 }
 
 /**
@@ -275,39 +290,101 @@ export class QueryRunner {
 					(isWorkflowSubSession ? ' (workflow sub-session)' : '') +
 					` ${JSON.stringify(snapshotPayload)}`
 			);
-			// P2-6: Structured metric — detect missing required MCP servers for workflow sub-sessions.
-			// Required servers: node-agent (peer comms) and space-agent-tools (space tool surface).
-			// Emit a structured error log with joinable fields (sessionId, spaceId, context) so
-			// production monitoring can detect and alert on MCP injection failures without requiring
-			// grep-based log analysis.
+			// P2-6 / P1-5: Self-heal — detect a missing required MCP server for
+			// workflow sub-sessions and recover via the registered callback.
+			// Required server:
+			//   - node-agent: peer comms, artifact writes, and node-safe task actions
+			//
+			// Only enters this block when servers are actually missing. The callback
+			// (TaskAgentManager.mcpSelfHeal) calls ensureRequiredMcpServersAttached which
+			// already verifies post-injection — no separate functional check needed here.
+			// No health check on healthy starts — the outer condition is strictly
+			// `missingServers.length > 0` to avoid false-positive throws.
 			if (isWorkflowSubSession) {
-				const requiredServers = ['node-agent', 'space-agent-tools'];
+				const requiredServers = ['node-agent'] as const;
 				const missingServers = requiredServers.filter((name) => !mcpServerNames.includes(name));
+
 				if (missingServers.length > 0) {
 					const diagnosticPayload = {
 						event: 'workflow.mcp.missing',
 						sessionId: session.id,
 						spaceId: session.context?.spaceId,
 						sessionType: session.type,
+						requiredServers,
 						missingServers,
 						presentServers: mcpServerNames,
+						liveSdkServers: this.getLiveSdkMcpServerNames(queryOptions),
+						selfHealAttempted: !!this.ctx.onMissingWorkflowMcpServers,
 					};
+
 					logger.error(
 						`QueryRunner.start(): workflow sub-session ${session.id} is MISSING required MCP servers. ` +
 							`Missing: [${missingServers.join(', ')}]. ` +
 							`Present: [${mcpServerNames.join(', ')}]. ` +
-							`The agent will not be able to call the corresponding tools. ` +
-							`This is a runtime injection failure — see TaskAgentManager.spawnWorkflowNodeAgentForExecution, createSubSession, and rehydrateSubSession. ` +
-							`Diagnostic: ${JSON.stringify(diagnosticPayload)}`
+							`Live SDK servers: [${diagnosticPayload.liveSdkServers.join(', ')}]. ` +
+							`Self-heal attempted: ${diagnosticPayload.selfHealAttempted}. ` +
+							`Attempting self-heal via onMissingWorkflowMcpServers callback... ` +
+							`${JSON.stringify(diagnosticPayload)}`
 					);
-					// P2-7: Debug-build invariant assertion — throws in test/dev environments
-					// to surface injection regressions immediately rather than letting them
-					// silently produce "No such tool available" failures at runtime.
-					if (process.env.NODE_ENV === 'test' || process.env.NEOKAI_DEBUG_MCP_INVARIANTS === '1') {
+
+					// ── Self-heal: call the registered callback to re-inject servers ─────
+					if (this.ctx.onMissingWorkflowMcpServers) {
+						try {
+							await this.ctx.onMissingWorkflowMcpServers(session.id, missingServers);
+							logger.info(
+								`QueryRunner.start(): self-heal callback completed for session ${session.id}. ` +
+									`${JSON.stringify(diagnosticPayload)}`
+							);
+						} catch (err) {
+							logger.error(
+								`QueryRunner.start(): self-heal callback FAILED for session ${session.id}: ` +
+									`${err instanceof Error ? err.message : String(err)}. ` +
+									`The session will start without required MCP servers — expect "No such tool available" failures at runtime.`
+							);
+						}
+					}
+
+					// Belt-and-suspenders: re-read the live map and throw if still missing.
+					// The callback may have thrown, in which case we never reach here.
+					// If it succeeded without throwing but servers are still absent (should not
+					// happen with ensureRequiredMcpServersAttached), catch it here.
+					const currentMcpServers =
+						(session.config?.mcpServers as Record<string, unknown> | undefined) ?? {};
+					const currentServerNames = Object.keys(currentMcpServers);
+					const stillMissing = requiredServers.filter((name) => !currentServerNames.includes(name));
+					if (stillMissing.length > 0) {
+						logger.error(
+							`QueryRunner.start(): workflow sub-session ${session.id} servers still missing after self-heal. ` +
+								`Still absent: [${stillMissing.join(', ')}]. ` +
+								`Present: [${currentServerNames.join(', ')}]. ` +
+								`Live SDK servers: [${this.getLiveSdkMcpServerNames({ mcpServers: currentMcpServers } as Options).join(', ')}]. ` +
+								`Refusing to start.`
+						);
 						throw new Error(
-							`[MCP invariant] Workflow sub-session ${session.id} is missing required MCP servers: [${missingServers.join(', ')}]`
+							`[MCP invariant] Workflow sub-session ${session.id} still missing required ` +
+								`MCP servers after self-heal: [${stillMissing.join(', ')}]. ` +
+								`Refusing to start — fix the injection logic.`
 						);
 					}
+
+					// The self-heal callback mutates session.config.mcpServers. The
+					// queryOptions object was built before that mutation, so rebuild it
+					// now or the SDK will still start with the stale server map.
+					queryOptions = await optionsBuilder.build();
+					queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
+					const repairedServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
+					logger.info(
+						`QueryRunner.start(): rebuilt query options after MCP self-heal for session ${session.id}. ` +
+							`Present: [${repairedServerNames.join(', ')}]. ` +
+							`${JSON.stringify({
+								event: 'workflow.mcp.self_heal.rebuilt_query_options',
+								sessionId: session.id,
+								sessionType: session.type,
+								requiredServers,
+								presentServers: repairedServerNames,
+								liveSdkServers: this.getLiveSdkMcpServerNames(queryOptions),
+							})}`
+					);
 				}
 			}
 
@@ -317,7 +394,14 @@ export class QueryRunner {
 				const providerService = getProviderService();
 				// Use the resolved provider ID (falls back to 'anthropic' for legacy sessions)
 				const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
-				const originalEnvVars = providerService.applyEnvVarsToProcess(modelId, resolvedProviderId);
+				const originalEnvVars = providerService.applyEnvVarsToProcessForSession({
+					...session,
+					config: {
+						...session.config,
+						model: modelId,
+						provider: resolvedProviderId as Session['config']['provider'],
+					},
+				});
 				this.ctx.originalEnvVars = originalEnvVars;
 			}
 
@@ -463,6 +547,7 @@ export class QueryRunner {
 			const isAbortError = error instanceof Error && error.name === 'AbortError';
 			const isStartupTimeout = errorMessage.includes('SDK startup timeout');
 			const isConversationNotFound = errorMessage.includes('No conversation found');
+			const isMessageNotFound = errorMessage.includes('No message found');
 
 			// Startup timeout is transient — always keep sdkSessionId so resume works.
 			// Never clear sdkSessionId on timeout: the session file is valid and the
@@ -511,6 +596,46 @@ export class QueryRunner {
 					// Best-effort — don't let message emission block cleanup
 				}
 			}
+			if (isMessageNotFound) {
+				// The SDK found the transcript but could not find resumeSessionAt inside it.
+				// This commonly happens after SDK compaction removes old message UUIDs.
+				// Clear both the rewind pointer and SDK transcript identity so the retry
+				// starts with a fresh context instead of looping on stale JSONL state.
+				const oldResumeSessionAt = session.metadata.resumeSessionAt;
+				const compactionSummary = this.extractCompactionSummaryFromCurrentSdkSession();
+				logger.error(
+					`No message found for resumeSessionAt (${oldResumeSessionAt ?? 'unknown'}). ` +
+						'Clearing resumeSessionAt, sdkSessionId, and sdkOriginPath before retry.'
+				);
+				delete session.metadata.resumeSessionAt;
+				if (compactionSummary) {
+					session.metadata.compactionSummary = compactionSummary;
+				} else {
+					delete session.metadata.compactionSummary;
+				}
+				session.sdkSessionId = undefined;
+				session.sdkOriginPath = undefined;
+				this.ctx.db.updateSession(session.id, {
+					metadata: session.metadata,
+					sdkSessionId: undefined,
+					sdkOriginPath: undefined,
+				});
+
+				try {
+					await this.displayErrorAsAssistantMessage(
+						'⚠️ **Conversation context was reset.**\n\n' +
+							'The previous rewind point is no longer present in the Claude SDK transcript. ' +
+							'This can happen after SDK compaction. Your conversation history in NeoKai is preserved; ' +
+							(compactionSummary
+								? 'a compacted summary from the previous SDK transcript will be carried into the fresh AI session.\n\n'
+								: 'only the AI context window has been reset.\n\n') +
+							'Retrying your message with a fresh AI session.',
+						{ markAsError: false }
+					);
+				} catch {
+					// Best-effort — don't let message emission block cleanup
+				}
+			}
 
 			// Auto-retry once on startup timeout — the user shouldn't have to resend.
 			// This handles transient SDK startup failures (e.g., after a model switch)
@@ -548,6 +673,30 @@ export class QueryRunner {
 				// Use `return await` so this call's finally{} runs only after the retry
 				// completes. Otherwise finally{} would race the retry and can tear down
 				// shared state (queue/controller/queryObject) while it is still running.
+				return await this.runQuery(queryGeneration, true);
+			}
+			if (isMessageNotFound && !isRetry && !this.ctx.isCleaningUp()) {
+				logger.warn('Auto-retrying query after clearing stale resumeSessionAt.');
+				await stateManager.setIdle();
+
+				if (this.ctx.queryObject) {
+					try {
+						this.ctx.queryObject.close();
+					} catch {
+						// Ignore close errors — transport may already be in a broken state
+					}
+					this.ctx.queryObject = null;
+				}
+
+				const exitPromise = this.ctx.processExitedPromise;
+				if (exitPromise) {
+					await Promise.race([
+						exitPromise,
+						new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+					]);
+					this.ctx.processExitedPromise = null;
+				}
+
 				return await this.runQuery(queryGeneration, true);
 			}
 
@@ -619,7 +768,7 @@ export class QueryRunner {
 
 					const processingState = stateManager.getState();
 
-					// For startup timeouts / conversation-not-found, provide actionable recovery hints.
+					// For startup timeouts / resume failures, provide actionable recovery hints.
 					// Keep the hints distinct: NEOKAI_SDK_STARTUP_TIMEOUT_MS is irrelevant to a
 					// missing/corrupt session file — the session ID was already cleared above,
 					// so the next message will automatically start a fresh session.
@@ -636,7 +785,13 @@ export class QueryRunner {
 								`workspace path change, or if the ~/.claude/projects/ directory was cleaned up. ` +
 								`Your message history in NeoKai is preserved; only the AI context window is reset. ` +
 								`Please resend your message — a fresh session starts automatically.`
-							: undefined;
+							: isMessageNotFound
+								? `The AI session could not resume from the previous rewind point ` +
+									`(workspace: ${session.workspacePath ?? 'unbound'}). The Claude SDK transcript no longer ` +
+									`contains that message UUID, likely after SDK compaction. Your message history in NeoKai ` +
+									`is preserved; only the AI context window is reset. Please resend your message — a fresh ` +
+									`session starts automatically.`
+								: undefined;
 
 					await errorManager.handleError(
 						session.id,
@@ -725,6 +880,39 @@ export class QueryRunner {
 		}
 	}
 
+	private extractCompactionSummaryFromCurrentSdkSession(): string | null {
+		const { session, logger } = this.ctx;
+		if (!session.sdkSessionId) {
+			return null;
+		}
+
+		const workspacePath = session.sdkOriginPath ?? session.workspacePath;
+		if (!workspacePath) {
+			return null;
+		}
+
+		try {
+			const filePath = getSDKSessionFilePath(workspacePath, session.sdkSessionId);
+			return extractCompactionSummary(filePath);
+		} catch (error) {
+			logger.warn(
+				`Failed to extract SDK compaction summary for session ${session.id}: ` +
+					`${error instanceof Error ? error.message : String(error)}`
+			);
+			return null;
+		}
+	}
+
+	private getLiveSdkMcpServerNames(queryOptions: Pick<Options, 'mcpServers'>): string[] {
+		return Object.entries(queryOptions.mcpServers ?? {})
+			.filter(([, config]) => {
+				const maybeSdk = config as { type?: unknown; instance?: unknown };
+				return maybeSdk.type === 'sdk' && !!maybeSdk.instance;
+			})
+			.map(([name]) => name)
+			.sort();
+	}
+
 	/**
 	 * Create wrapper for MessageQueue's AsyncGenerator
 	 * Public for testing
@@ -753,6 +941,24 @@ export class QueryRunner {
 		// Delegate to callback
 		await this.ctx.onSDKMessage(message);
 		await this.ctx.onMarkApiSuccess();
+		await this.clearCompactionSummaryAfterCarry();
+	}
+
+	private async clearCompactionSummaryAfterCarry(): Promise<void> {
+		const { session, db, logger } = this.ctx;
+		if (!session.metadata.compactionSummary || this.ctx.isCleaningUp()) {
+			return;
+		}
+
+		delete session.metadata.compactionSummary;
+		try {
+			db.updateSession(session.id, { metadata: session.metadata });
+		} catch (error) {
+			logger.warn(
+				`Failed to clear carried compaction summary for session ${session.id}: ` +
+					`${error instanceof Error ? error.message : String(error)}`
+			);
+		}
 	}
 
 	/**
@@ -824,8 +1030,9 @@ export class QueryRunner {
 		try {
 			const errorMessage = error instanceof Error ? error.message : String(error);
 
-			// JSON-body 4xx (standard Anthropic API errors: "402 {...}")
-			const apiErrorMatch = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+			// JSON-body 4xx. Depending on where the Claude SDK raises it,
+			// this can arrive as either `402 {...}` or `API Error: 402 {...}`.
+			const apiErrorMatch = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 			if (apiErrorMatch) {
 				const [, statusCode, jsonBody] = apiErrorMatch;
 
@@ -848,7 +1055,7 @@ export class QueryRunner {
 			}
 
 			// Plain-text 4xx (e.g. Copilot returns "402 You have no quota (Request ID: ...)")
-			const plainErrorMatch = errorMessage.match(/^(4\d{2})\s+(.+)$/s);
+			const plainErrorMatch = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(.+)$/s);
 			if (plainErrorMatch) {
 				const [, statusCode, plainMessage] = plainErrorMatch;
 				await this.displayErrorAsAssistantMessage(

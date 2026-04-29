@@ -237,7 +237,12 @@ export function pingSSE(): string {
 	return sseEvent('ping', { type: 'ping' });
 }
 
-export function messageStartSSE(messageId: string, model: string, inputTokens: number): string {
+export function messageStartSSE(
+	messageId: string,
+	model: string,
+	inputTokens: number,
+	modelContextWindow?: number | null
+): string {
 	return sseEvent('message_start', {
 		type: 'message_start',
 		message: {
@@ -253,6 +258,7 @@ export function messageStartSSE(messageId: string, model: string, inputTokens: n
 				output_tokens: 1,
 				cache_creation_input_tokens: 0,
 				cache_read_input_tokens: 0,
+				model_context_window: modelContextWindow ?? null,
 			},
 		},
 	});
@@ -315,6 +321,8 @@ export type MessageDeltaUsage = {
 	cacheCreationInputTokens?: number | null;
 	/** Cache read input token count (from Codex usage events when available). */
 	cacheReadInputTokens?: number | null;
+	/** Model context window (from Codex usage events when available). */
+	modelContextWindow?: number | null;
 };
 
 export function messageDeltaSSE(
@@ -329,6 +337,7 @@ export function messageDeltaSSE(
 			output_tokens: usage.outputTokens,
 			cache_creation_input_tokens: usage.cacheCreationInputTokens ?? null,
 			cache_read_input_tokens: usage.cacheReadInputTokens ?? null,
+			model_context_window: usage.modelContextWindow ?? null,
 		},
 	});
 }

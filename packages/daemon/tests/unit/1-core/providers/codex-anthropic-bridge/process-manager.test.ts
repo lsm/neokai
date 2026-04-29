@@ -287,6 +287,9 @@ describe('BridgeSession thread/tokenUsage/updated', () => {
 		expect((session as unknown as SessionInternals).latestUsage).toEqual({
 			inputTokens: 150,
 			outputTokens: 75,
+			cacheCreationInputTokens: 0,
+			cacheReadInputTokens: 0,
+			modelContextWindow: undefined,
 		});
 	});
 
@@ -316,7 +319,153 @@ describe('BridgeSession thread/tokenUsage/updated', () => {
 		expect((session as unknown as SessionInternals).latestUsage).toEqual({
 			inputTokens: 200,
 			outputTokens: 100,
+			cacheCreationInputTokens: 0,
+			cacheReadInputTokens: 0,
+			modelContextWindow: undefined,
 		});
+	});
+
+	it('captures token usage from snake_case tokenUsage shape with cache counters', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		setTimeout(() => {
+			fireNotification('thread/tokenUsage/updated', {
+				threadId: 'thread-1',
+				tokenUsage: {
+					input_tokens: 240,
+					cached_input_tokens: 40,
+					output_tokens: 80,
+				},
+			});
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+			});
+		}, 5);
+
+		const gen = session.startTurn('test');
+		const events: import('../../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeEvent[] =
+			[];
+		for await (const event of gen) {
+			events.push(event);
+		}
+
+		const done = events.find((e) => e.type === 'turn_done') as
+			| {
+					type: 'turn_done';
+					inputTokens: number;
+					outputTokens: number;
+					cacheReadInputTokens?: number;
+			  }
+			| undefined;
+		expect(done?.inputTokens).toBe(240);
+		expect(done?.outputTokens).toBe(80);
+		expect(done?.cacheReadInputTokens).toBe(40);
+	});
+
+	it('captures token usage from upstream Codex v2 tokenUsage.last shape', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		setTimeout(() => {
+			fireNotification('thread/tokenUsage/updated', {
+				threadId: 'thread-1',
+				turnId: 'turn-1',
+				tokenUsage: {
+					total: {
+						totalTokens: 1500,
+						inputTokens: 1100,
+						cachedInputTokens: 100,
+						outputTokens: 200,
+						reasoningOutputTokens: 50,
+					},
+					last: {
+						totalTokens: 700,
+						inputTokens: 540,
+						cachedInputTokens: 40,
+						outputTokens: 80,
+						reasoningOutputTokens: 20,
+					},
+					modelContextWindow: 272000,
+				},
+			});
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+			});
+		}, 5);
+
+		const gen = session.startTurn('test');
+		const events: import('../../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeEvent[] =
+			[];
+		for await (const event of gen) {
+			events.push(event);
+		}
+
+		const done = events.find((e) => e.type === 'turn_done') as
+			| {
+					type: 'turn_done';
+					inputTokens: number;
+					outputTokens: number;
+					cacheReadInputTokens?: number;
+					modelContextWindow?: number;
+			  }
+			| undefined;
+		expect(done?.inputTokens).toBe(540);
+		expect(done?.outputTokens).toBe(80);
+		expect(done?.cacheReadInputTokens).toBe(40);
+		expect(done?.modelContextWindow).toBe(272000);
+	});
+
+	it('falls back to upstream Codex v2 tokenUsage.total when last usage is absent', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		setTimeout(() => {
+			fireNotification('thread/tokenUsage/updated', {
+				threadId: 'thread-1',
+				turnId: 'turn-1',
+				tokenUsage: {
+					total: {
+						totalTokens: 900,
+						inputTokens: 760,
+						cachedInputTokens: 60,
+						outputTokens: 100,
+						reasoningOutputTokens: 40,
+					},
+					modelContextWindow: 272000,
+				},
+			});
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+			});
+		}, 5);
+
+		const gen = session.startTurn('test');
+		const events: import('../../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeEvent[] =
+			[];
+		for await (const event of gen) {
+			events.push(event);
+		}
+
+		const done = events.find((e) => e.type === 'turn_done') as
+			| {
+					type: 'turn_done';
+					inputTokens: number;
+					outputTokens: number;
+					cacheReadInputTokens?: number;
+					modelContextWindow?: number;
+			  }
+			| undefined;
+		expect(done?.inputTokens).toBe(760);
+		expect(done?.outputTokens).toBe(100);
+		expect(done?.cacheReadInputTokens).toBe(60);
+		expect(done?.modelContextWindow).toBe(272000);
 	});
 
 	it('populates turn_done with actual token counts from thread/tokenUsage/updated', async () => {

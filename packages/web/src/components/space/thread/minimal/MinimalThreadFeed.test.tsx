@@ -22,6 +22,7 @@ function makeRow(opts: {
 	createdAt: number;
 	message: unknown;
 	sessionId?: string;
+	origin?: string | null;
 }) {
 	return parseThreadRow({
 		id: opts.id,
@@ -34,6 +35,7 @@ function makeRow(opts: {
 		messageType: 'assistant',
 		content: JSON.stringify(opts.message),
 		createdAt: opts.createdAt,
+		origin: opts.origin,
 	});
 }
 
@@ -551,6 +553,27 @@ describe('MinimalThreadFeed', () => {
 		expect(messageTurn.dataset.fromLabel).toBe('Neo');
 		expect(messageTurn.dataset.toLabel).toBe('Task Agent');
 		// Synthetic badge replaces the older "handoff" wording.
+		expect(messageTurn.textContent?.toLowerCase()).toContain('synthetic');
+	});
+
+	it('uses row origin to classify runtime user messages when content has no origin', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'u1',
+				label: 'Task Agent',
+				createdAt: t,
+				message: humanUserMessage('u1', 'runtime handoff'),
+				origin: 'system',
+			}),
+		];
+
+		render(<MinimalThreadFeed parsedRows={rows} />);
+		const messageTurn = screen.getByTestId('minimal-thread-turn');
+		expect(messageTurn.dataset.turnState).toBe('message');
+		expect(messageTurn.dataset.fromLabel).toBe('System');
+		expect(messageTurn.dataset.toLabel).toBe('Task Agent');
+		expect(messageTurn.dataset.messageKind).toBe('synthetic');
 		expect(messageTurn.textContent?.toLowerCase()).toContain('synthetic');
 	});
 
@@ -1173,7 +1196,84 @@ describe('MinimalThreadFeed', () => {
 		expect(entries.length).toBe(2);
 		expect(entries[0].dataset.rosterKind).toBe('thinking');
 		expect(entries[0].textContent).toContain('Considering the edge case');
+		expect(entries[0].querySelector('svg')).not.toBeNull();
+		expect(entries[0].querySelector('.line-clamp-3')).not.toBeNull();
 		expect(entries[1].dataset.rosterKind).toBe('tool');
+	});
+
+	it('renders tool roster entries with SDK labels, icons, and compact summaries', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: assistantToolUse('a1', [
+					{ name: 'mcp__node-agent__send_message', input: { message: 'raw payload' } },
+				]),
+			}),
+		];
+
+		const summary: ActiveTurnSummary = {
+			sessionId: 'space:s:task:t',
+			turnIndex: 1,
+			entries: [
+				{
+					kind: 'tool_use',
+					toolName: 'mcp__node-agent__send_message',
+					preview: '',
+					ts: t,
+					uuid: 'mcp',
+				},
+				{
+					kind: 'tool_use',
+					toolName: 'TodoWrite',
+					preview: 'Running: Running validation',
+					ts: t + 1,
+					uuid: 'todo',
+				},
+				{
+					kind: 'tool_use',
+					toolName: 'AskUserQuestion',
+					preview: 'Which validation path should run?',
+					ts: t + 2,
+					uuid: 'question',
+				},
+				{
+					kind: 'tool_use',
+					toolName: 'MultiEdit',
+					preview: 'MinimalThreadFeed.tsx',
+					ts: t + 3,
+					uuid: 'multi-edit',
+				},
+			],
+		};
+
+		render(
+			<MinimalThreadFeed
+				parsedRows={rows}
+				activeAgentLabels={new Set(['Coder Agent'])}
+				activeTurnSummaries={[summary]}
+			/>
+		);
+
+		const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+		expect(entries.map((entry) => entry.dataset.rosterKind)).toEqual([
+			'tool',
+			'tool',
+			'tool',
+			'tool',
+		]);
+		expect(entries[0].textContent).toContain('node-agent send_message');
+		expect(entries[0].textContent).not.toContain('mcp__node-agent__send_message');
+		expect(entries[0].querySelector('svg')).not.toBeNull();
+		expect(entries[1].textContent).toContain('Todo');
+		expect(entries[1].textContent).toContain('Running: Running validation');
+		expect(entries[1].querySelector('svg')).not.toBeNull();
+		expect(entries[2].textContent).toContain('AskUserQuestion');
+		expect(entries[2].textContent).toContain('Which validation path should run?');
+		expect(entries[3].textContent).toContain('Multi Edit');
+		expect(entries[3].textContent).toContain('MinimalThreadFeed.tsx');
 	});
 
 	it('renders synthetic agent-handoff entries distinctly from real human messages', () => {

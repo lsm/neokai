@@ -239,8 +239,8 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	);
 	sections.push(`Follow this event-driven loop until all agents have completed:\n`);
 	sections.push(
-		`1. **Wait for events** — Stop polling and wait for inbound messages ` +
-			`(for example \`[NODE_COMPLETE]\` or \`[NODE_FAILED]\`) from node-agent activity.\n` +
+		`1. **Wait for escalation events** — Stop polling and wait for inbound messages ` +
+			`from node-agent activity. Normal node completion is handled by runtime and may not message you.\n` +
 			`2. **React to events** — When an inbound event arrives, call \`list_group_members\` to refresh state.\n` +
 			`3. **Agents drive their own progression** — When a node agent sends a message to another ` +
 			`agent via \`send_message\` (using an agent name for DM or a node name for fan-out), ` +
@@ -251,7 +251,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`If a node agent reports that a message was blocked by a gate, surface the gate to the user.\n` +
 			`5. **Automatic workflow completion** — When the end node agent's session completes, the ` +
 			`system automatically marks the workflow run and main task as completed. You do not need to ` +
-			`call any completion tool — just wait for the \`[NODE_COMPLETE]\` event from the end node. ` +
+			`call any completion tool or wait for a normal completion message. ` +
 			`Use \`list_group_members\` to verify all agents have reached idle status if needed. ` +
 			`Only call \`save_artifact\` + \`approve_task\`/\`submit_for_approval\` if you need to cancel or signal an unrecoverable error.\n` +
 			`6. **Handle errors** — If a node agent errors, call \`save_artifact({ type: "result", append: true, summary: "..." })\` ` +
@@ -276,11 +276,9 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	sections.push(`\n## Post-Approval\n`);
 	sections.push(
 		`When a task reaches the \`approved\` status (either via end-node \`approve_task\` or ` +
-			`human approval of a \`submit_for_approval\` request), the runtime emits a ` +
-			`\`[TASK_APPROVED]\` awareness event into your session. This event is informational — ` +
-			`it tells you that the task has cleared approval but is **not yet done**.\n` +
+			`human approval of a \`submit_for_approval\` request), the runtime owns the next transition.\n` +
 			`\n` +
-			`Depending on the workflow's \`postApproval\` configuration, one of three things happens next:\n` +
+			`Depending on the workflow's \`postApproval\` configuration, one of three things happens:\n` +
 			`1. **No post-approval declared** — the runtime auto-transitions the task \`approved → done\`. ` +
 			`You do nothing.\n` +
 			`2. **\`targetAgent: 'task-agent'\`** — the runtime injects a \`[POST_APPROVAL_INSTRUCTIONS]\` ` +
@@ -298,8 +296,8 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`error. If you want to move an approved task to done, call \`mark_complete\`.\n` +
 			`- \`[POST_APPROVAL_INSTRUCTIONS]\` arrive as a user-turn message. Treat them as authoritative ` +
 			`work to execute; do not ask for human approval before starting.\n` +
-			`- If the post-approval work fails, call \`submit_for_approval\` (or surface the error via ` +
-			`\`request_human_input\`) rather than swallowing it.`
+			`- If the post-approval work fails or needs a human decision, surface the issue with ` +
+			`\`request_human_input\` rather than swallowing it.`
 	);
 
 	// ---- Behavioral rules ---------------------------------------------------

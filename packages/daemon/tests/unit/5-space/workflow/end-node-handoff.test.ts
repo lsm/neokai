@@ -4,9 +4,8 @@
  * Verifies that every built-in workflow's end-node `customPrompt` agrees with
  * the post-approval routing contract:
  *
- *   - Coding / Research / QA end nodes each signal the Task Agent with
- *     `send_message(task-agent, data:{ pr_url })` BEFORE calling
- *     `approve_task`. These three workflows MUST also declare a
+ *   - Coding / Research / QA end nodes each save a result artifact carrying
+ *     `data.prUrl` BEFORE calling `approve_task`. These three workflows MUST also declare a
  *     `postApproval: { targetAgent: 'reviewer', instructions: <merge template> }`
  *     route so the runtime dispatches the merge. PR 5/5 removed the legacy
  *     `post_approval_action: "merge_pr"` discriminator from the data payload —
@@ -25,7 +24,7 @@
  *     (verify-tasks-created) and has no `postApproval` route.
  *
  * These tests protect against silent regressions where someone edits an end-
- * node prompt and accidentally removes the Task Agent handoff, or adds a
+ * node prompt and accidentally removes the runtime-owned post-approval handoff, or adds a
  * `gh pr merge` back into QA, or drops one of the `postApproval` routes.
  */
 
@@ -90,8 +89,8 @@ describe('End-node post-approval declarations', () => {
 		test(`${label} declares postApproval targeting the reviewer role`, () => {
 			expect(wf.postApproval).toBeDefined();
 			expect(wf.postApproval!.targetAgent).toBe('reviewer');
-			// Uses the canonical shared merge template — not a bespoke string.
-			// Any edit to the template reaches all three workflows atomically.
+			// Uses the workflow-level merge prompt. The runtime appends the
+			// shared mark_complete instruction separately.
 			expect(wf.postApproval!.instructions).toBe(PR_MERGE_POST_APPROVAL_INSTRUCTIONS);
 		});
 
@@ -111,21 +110,19 @@ describe('End-node post-approval declarations', () => {
 });
 
 // ---------------------------------------------------------------------------
-// End-node prompt — task-agent handoff signalling
+// End-node prompt — runtime-owned post-approval data handoff
 // ---------------------------------------------------------------------------
 
-describe('End-node prompts signal the Task Agent before approve_task', () => {
+describe('End-node prompts save runtime post-approval data before approve_task', () => {
 	for (const [label, wf] of MERGE_ROUTED_WORKFLOWS) {
-		test(`${label} end-node prompt includes send_message(task-agent, data:{ pr_url })`, () => {
+		test(`${label} end-node prompt includes save_artifact data.prUrl and no task-agent relay`, () => {
 			const prompt = endNodePrompt(wf);
-			// Every merge-routed workflow must instruct its end-node agent to
-			// signal the Task Agent with a structured handoff carrying the
-			// PR URL. `dispatchPostApproval` reads `pr_url` from the task's
-			// result artifact when interpolating `{{pr_url}}` into the merge
-			// template.
-			expect(prompt).toContain('send_message');
-			expect(prompt).toContain('target: "task-agent"');
-			expect(prompt).toContain('pr_url');
+			// Every merge-routed workflow must instruct its end-node agent to save
+			// a result artifact carrying the PR URL. `dispatchPostApproval` reads
+			// that artifact when interpolating `{{pr_url}}` into the merge template.
+			expect(prompt).toContain('save_artifact');
+			expect(prompt).toContain('prUrl');
+			expect(prompt).not.toContain('target: "task-agent"');
 			// PR 5/5: the legacy `post_approval_action: "merge_pr"`
 			// discriminator was removed — post-approval routing is fully
 			// declarative on `postApproval`. Guard against accidental
@@ -133,12 +130,11 @@ describe('End-node prompts signal the Task Agent before approve_task', () => {
 			expect(prompt).not.toContain('post_approval_action');
 		});
 
-		test(`${label} end-node prompt places the task-agent signal BEFORE the final approve_task call`, () => {
+		test(`${label} end-node prompt places result artifact BEFORE the final approve_task call`, () => {
 			const prompt = endNodePrompt(wf);
-			// Anchor on the `send_message(` call itself — the unique shape of
-			// the handoff. The earlier anchor `post_approval_action: "merge_pr"`
-			// was removed in PR 5/5.
-			const signalIdx = prompt.indexOf('send_message(');
+			// Anchor on the final `save_artifact(` instruction — the runtime reads
+			// its `data.prUrl` before dispatching the post-approval route.
+			const signalIdx = prompt.lastIndexOf('save_artifact(');
 			// Use lastIndexOf: the first `approve_task()` occurrence in every
 			// prompt lives in the "TOOL CONTRACT" block at the top, which is a
 			// description of the tool — not the operational instruction. The
@@ -147,10 +143,10 @@ describe('End-node prompts signal the Task Agent before approve_task', () => {
 			const approveIdx = prompt.lastIndexOf('approve_task()');
 			expect(signalIdx).toBeGreaterThan(-1);
 			expect(approveIdx).toBeGreaterThan(-1);
-			// Signal must appear BEFORE the operational approve_task — ordering
+			// Artifact must appear BEFORE the operational approve_task — ordering
 			// matters because approve_task is the trigger that fires
-			// PostApprovalRouter.route, which reads the pr_url the end node
-			// just stashed via send_message.
+			// PostApprovalRouter.route, which reads the PR URL the end node
+			// just stashed via save_artifact.
 			expect(signalIdx).toBeLessThan(approveIdx);
 		});
 
@@ -271,31 +267,22 @@ describe('Shared merge template canonical content', () => {
 		// sub-session. A follow-up PR will thread the approving agent's slot
 		// name through and restore the token.
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('{{pr_url}}');
-		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('{{autonomy_level}}');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('{{approval_source}}');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('{{autonomy_level}}');
 		// Locked: `{{reviewer_name}}` must NOT appear — swap to static label.
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('{{reviewer_name}}');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('[end-node reviewer]');
 	});
 
-	test('template instructs mark_complete (NOT approve_task) for the final step', () => {
-		// Post-approval closes the `approved → done` transition via
-		// `mark_complete`. Using `approve_task` here would be a double-fire
-		// and the MCP tool rejects it anyway, but the prompt must use the
-		// correct verb so the session calls the right tool.
-		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('mark_complete()');
-		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('DO NOT call approve_task');
+	test('merge template does not include the runtime-owned completion step', () => {
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('mark_complete');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('approve_task');
 	});
 
-	test('template gates auto-merge behind approval_source != "human" AND autonomy_level < 4', () => {
-		// Section 2 of the template body is the human-approval fallback for
-		// non-human approvals (auto_policy, agent) at autonomy < 4. When
-		// approval_source is "human", step 2 is skipped to avoid redundant
-		// double-approval. Uses != to cover both SpaceApprovalSource
-		// variants ("auto_policy" and "agent").
-		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('approval_source != "human"');
-		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('autonomy_level < 4');
-		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('request_human_input');
+	test('merge template does not ask for redundant approval after task approval', () => {
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('Approve merging PR');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('approval_source != "human"');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('autonomy_level < 4');
 	});
 
 	test('template contains the squash-merge command and conflict guard', () => {

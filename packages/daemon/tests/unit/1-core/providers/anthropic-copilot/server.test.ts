@@ -11,6 +11,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
 import type { CopilotClient, CopilotSession } from '@github/copilot-sdk';
 import {
 	startEmbeddedServer,
@@ -111,6 +112,18 @@ function makeMockClient(
 			mock.lastSession = s;
 			return s as unknown as CopilotSession;
 		},
+		async listModels() {
+			return [
+				{
+					id: 'gpt-5-mini',
+					name: 'GPT-5 Mini',
+					capabilities: {
+						supports: { vision: false, reasoningEffort: true },
+						limits: { max_context_window_tokens: 160000, max_prompt_tokens: 32000 },
+					},
+				},
+			];
+		},
 	};
 	return mock as unknown as CopilotClient & { lastSession?: MockCopilotSession };
 }
@@ -149,6 +162,21 @@ async function postMessages(
 	return { status: resp.status, events };
 }
 
+async function postCountTokens(
+	url: string,
+	body: object
+): Promise<{
+	status: number;
+	body: Record<string, unknown>;
+}> {
+	const resp = await fetch(`${url}/v1/messages/count_tokens`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body),
+	});
+	return { status: resp.status, body: (await resp.json()) as Record<string, unknown> };
+}
+
 // ---------------------------------------------------------------------------
 // startEmbeddedServer — integration tests
 // ---------------------------------------------------------------------------
@@ -183,6 +211,87 @@ describe('startEmbeddedServer', () => {
 		const resp = await fetch(`${serverUrl}/health`);
 		expect(resp.status).toBe(200);
 		expect(((await resp.json()) as Record<string, unknown>)['ok']).toBe(true);
+	});
+
+	it('models endpoint returns Anthropic-compatible model metadata', async () => {
+		const resp = await fetch(`${serverUrl}/v1/models`);
+		expect(resp.status).toBe(200);
+		const body = (await resp.json()) as Record<string, unknown>;
+		const data = body['data'] as Array<Record<string, unknown>>;
+		expect(data[0]['id']).toBe('gpt-5-mini');
+		expect(data[0]['type']).toBe('model');
+		expect(data[0]['max_input_tokens']).toBe(160000);
+	});
+
+	it('models endpoint falls back to static GPT-5.4 and GPT-5.5 metadata', async () => {
+		(client as unknown as { listModels: () => Promise<unknown[]> }).listModels = async () => {
+			throw new Error('listModels unavailable');
+		};
+		const resp = await fetch(`${serverUrl}/v1/models`);
+		expect(resp.status).toBe(200);
+		const body = (await resp.json()) as Record<string, unknown>;
+		const data = body['data'] as Array<Record<string, unknown>>;
+
+		expect(data.find((m) => m['id'] === 'gpt-5.3-codex')?.['max_input_tokens']).toBe(272000);
+		expect(data.find((m) => m['id'] === 'gpt-5.4')?.['max_input_tokens']).toBe(272000);
+		expect(data.find((m) => m['id'] === 'gpt-5.5')?.['max_input_tokens']).toBe(272000);
+	});
+
+	it('count_tokens returns non-zero values that grow with system, messages, tools, and tool results', async () => {
+		const base = await postCountTokens(serverUrl, {
+			model: 'gpt-5-mini',
+			messages: [{ role: 'user', content: 'hi' }],
+		});
+		const richer = await postCountTokens(serverUrl, {
+			model: 'gpt-5-mini',
+			system: 'Use concise answers and inspect tool output carefully.',
+			messages: [
+				{ role: 'user', content: 'hi' },
+				{
+					role: 'user',
+					content: [
+						{
+							type: 'tool_result',
+							tool_use_id: 'tu_1',
+							content: 'a fairly long tool result that should increase token estimates',
+						},
+					],
+				},
+			],
+			tools: [
+				{
+					name: 'bash',
+					description: 'Run shell commands',
+					input_schema: { type: 'object', properties: { command: { type: 'string' } } },
+				},
+			],
+		});
+
+		expect(base.status).toBe(200);
+		expect(richer.status).toBe(200);
+		expect(base.body['input_tokens']).toBeGreaterThan(0);
+		expect(richer.body['input_tokens']).toBeGreaterThan(base.body['input_tokens'] as number);
+		const context = richer.body['context'] as Record<string, unknown>;
+		expect(context['systemTokens']).toBeGreaterThan(0);
+		expect(context['toolDefinitionsTokens']).toBeGreaterThan(0);
+		expect(context['conversationTokens']).toBeGreaterThan(0);
+		expect(context['freeSpaceTokens']).toBeGreaterThan(0);
+		expect(context['bufferTokens']).toBeGreaterThan(0);
+	});
+
+	it('keeps Copilot context integration out of daemon and UI context retrieval paths', () => {
+		const files = [
+			'packages/daemon/src/lib/agent/context-fetcher.ts',
+			'packages/daemon/src/lib/agent/context-tracker.ts',
+			'packages/web/src/components/ContextUsageBar.tsx',
+			'packages/web/src/islands/ContextPanel.tsx',
+		];
+
+		for (const file of files) {
+			const source = readFileSync(file, 'utf8');
+			expect(source).not.toContain('anthropic-copilot');
+			expect(source.toLowerCase()).not.toContain('copilot');
+		}
 	});
 
 	it('returns 404 for unknown paths', async () => {
@@ -359,6 +468,46 @@ describe('startEmbeddedServer', () => {
 		expect(msg['model']).toBe('claude-sonnet-4.6');
 	});
 
+	it('surfaces SDK usage_info through final SSE usage and later count_tokens responses', async () => {
+		session.send = async function (opts) {
+			this.capturedPrompt = opts.prompt;
+			Promise.resolve().then(() => {
+				this.emit('session.usage_info', {
+					currentTokens: 18000,
+					tokenLimit: 160000,
+					messagesLength: 4,
+					systemTokens: 2500,
+					toolDefinitionsTokens: 1500,
+					conversationTokens: 14000,
+				});
+				this.emit('assistant.message_delta', { deltaContent: 'Done' });
+				this.emit('assistant.message', { content: 'Done' });
+				this.emit('session.idle', {});
+			});
+			return 'send-result';
+		};
+
+		const request = {
+			model: 'gpt-5-mini',
+			max_tokens: 100,
+			messages: [{ role: 'user', content: 'hello' }],
+		};
+		const r = await postMessages(serverUrl, request);
+		const msgDelta = r.events.find((e) => e.type === 'message_delta');
+		const usage = (msgDelta!.data as Record<string, unknown>)['usage'] as Record<string, unknown>;
+		expect(usage['input_tokens']).toBe(18000);
+
+		const counted = await postCountTokens(serverUrl, request);
+		expect(counted.body['input_tokens']).toBeGreaterThan(0);
+		expect(counted.body['input_tokens']).toBeLessThan(18000);
+		const context = counted.body['context'] as Record<string, unknown>;
+		expect(context['totalTokens']).toBe(18000);
+		expect(context['systemTokens']).toBe(2500);
+		expect(context['toolDefinitionsTokens']).toBe(1500);
+		expect(context['conversationTokens']).toBe(14000);
+		expect(context['promptTokenLimit']).toBe(160000);
+	});
+
 	it('extracts string system message and passes to session config', async () => {
 		let captured: unknown;
 		const cap = makeMockClient(() => session);
@@ -481,39 +630,36 @@ describe('startEmbeddedServer', () => {
 		}
 	});
 
-	it('emits Anthropic error SSE event on session error', async () => {
+	it('returns Anthropic JSON error when session errors before streaming output', async () => {
 		session.shouldError = true;
 		const r = await postMessages(serverUrl, {
 			model: 'x',
 			max_tokens: 100,
 			messages: [{ role: 'user', content: 'err' }],
 		});
-		expect(r.status).toBe(200);
-		// Must emit an `error` SSE event (Anthropic streaming error format)
-		const errorEvent = r.events.find((e) => e.type === 'error');
-		expect(errorEvent).toBeDefined();
-		const data = errorEvent!.data as Record<string, unknown>;
+		expect(r.status).toBe(500);
+		expect(r.events).toEqual([]);
+		const data = JSON.parse(r.rawBody ?? '{}') as Record<string, unknown>;
 		expect(data['type']).toBe('error');
 		const err = data['error'] as Record<string, unknown>;
 		expect(err['type']).toBe('api_error');
-		expect(typeof err['message']).toBe('string');
+		expect(err['message']).toBe('mock error');
 	});
 
-	it('emits Anthropic error SSE event when session.send() rejects', async () => {
+	it('returns Anthropic JSON error when session.send() rejects before streaming output', async () => {
 		session.shouldRejectSend = true;
 		const r = await postMessages(serverUrl, {
 			model: 'x',
 			max_tokens: 100,
 			messages: [{ role: 'user', content: 'err' }],
 		});
-		expect(r.status).toBe(200);
-		// Must emit an `error` SSE event (Anthropic streaming error format)
-		const errorEvent = r.events.find((e) => e.type === 'error');
-		expect(errorEvent).toBeDefined();
-		const data = errorEvent!.data as Record<string, unknown>;
+		expect(r.status).toBe(500);
+		expect(r.events).toEqual([]);
+		const data = JSON.parse(r.rawBody ?? '{}') as Record<string, unknown>;
 		expect(data['type']).toBe('error');
 		const err = data['error'] as Record<string, unknown>;
 		expect(err['type']).toBe('api_error');
+		expect(err['message']).toBe('Internal streaming error');
 	});
 
 	// -------------------------------------------------------------------------

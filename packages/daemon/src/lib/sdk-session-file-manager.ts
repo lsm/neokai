@@ -1138,3 +1138,150 @@ export function truncateSessionFileAtMessage(
 		return { truncated: false, linesRemoved: 0 };
 	}
 }
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function extractTextFromContent(content: unknown): string {
+	if (typeof content === 'string') {
+		return content.trim();
+	}
+
+	if (!Array.isArray(content)) {
+		return '';
+	}
+
+	return content
+		.map((block) => {
+			if (!isJsonRecord(block)) {
+				return '';
+			}
+			const text = block.text;
+			return typeof text === 'string' ? text.trim() : '';
+		})
+		.filter(Boolean)
+		.join('\n\n')
+		.trim();
+}
+
+function extractMessageText(entry: Record<string, unknown>): string {
+	const message = entry.message;
+	if (isJsonRecord(message)) {
+		return extractTextFromContent(message.content);
+	}
+	return extractTextFromContent(entry.content);
+}
+
+/**
+ * Extract the SDK compaction summary from a JSONL session transcript.
+ *
+ * After SDK compaction, the transcript contains a system compact_boundary row
+ * followed by the compacted conversation summary as normal message content.
+ * The most recent boundary is authoritative when a transcript was compacted
+ * multiple times.
+ *
+ * @param filePath - Absolute path to the SDK JSONL transcript
+ * @returns Summary text when found, otherwise null
+ */
+export function extractCompactionSummary(filePath: string): string | null {
+	if (!existsSync(filePath)) {
+		return null;
+	}
+
+	try {
+		const lines = readFileSync(filePath, 'utf-8')
+			.split('\n')
+			.map((line) => line.trim())
+			.filter(Boolean);
+
+		const entries: Record<string, unknown>[] = [];
+		for (const line of lines) {
+			try {
+				const parsed = JSON.parse(line);
+				if (isJsonRecord(parsed)) {
+					entries.push(parsed);
+				}
+			} catch {
+				// Skip unparseable lines. Transcript repair helpers use the same best-effort pattern.
+			}
+		}
+
+		let compactBoundaryIndex = -1;
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i];
+			if (entry.type === 'system' && entry.subtype === 'compact_boundary') {
+				compactBoundaryIndex = i;
+			}
+		}
+
+		if (compactBoundaryIndex === -1) {
+			return null;
+		}
+
+		for (let i = compactBoundaryIndex + 1; i < entries.length; i++) {
+			const entry = entries[i];
+			if (entry.type !== 'assistant' && entry.type !== 'user') {
+				continue;
+			}
+
+			const text = extractMessageText(entry);
+			if (text) {
+				return text;
+			}
+		}
+	} catch {
+		return null;
+	}
+
+	return null;
+}
+
+/**
+ * Check whether a message UUID still exists in the SDK session JSONL file.
+ *
+ * This is used before passing resumeSessionAt back to the SDK. Auto-compaction
+ * can replace older transcript entries with a summary, so a UUID that remains
+ * in NeoKai's DB may no longer be resumable from the SDK transcript.
+ *
+ * @param workspacePath - The session's workspace path
+ * @param sdkSessionId - The SDK session ID (for direct file path lookup)
+ * @param kaiSessionId - The NeoKai session ID (fallback for file search)
+ * @param messageUuid - The UUID of the message to find
+ * @returns true when the UUID exists in the JSONL transcript
+ */
+export function messageUuidExistsInSessionFile(
+	workspacePath: string,
+	sdkSessionId: string | null | undefined,
+	kaiSessionId: string,
+	messageUuid: string
+): boolean {
+	let filePath: string | null = null;
+	if (sdkSessionId) {
+		const candidatePath = getSDKSessionFilePath(workspacePath, sdkSessionId);
+		if (existsSync(candidatePath)) {
+			filePath = candidatePath;
+		}
+	}
+	if (!filePath) {
+		filePath = findSDKSessionFile(workspacePath, kaiSessionId);
+	}
+	if (!filePath || !existsSync(filePath)) {
+		return false;
+	}
+
+	try {
+		const content = readFileSync(filePath, 'utf-8');
+		const lines = content.split('\n');
+
+		for (const line of lines) {
+			if (line.includes(`"uuid":"${messageUuid}"`) || line.includes(`"uuid": "${messageUuid}"`)) {
+				return true;
+			}
+		}
+
+		return lines.some((line) => line.includes(messageUuid));
+	} catch {
+		return false;
+	}
+}

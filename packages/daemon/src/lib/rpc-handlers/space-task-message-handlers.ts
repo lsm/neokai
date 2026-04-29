@@ -80,7 +80,11 @@ export interface TaskAgentManagerInterface {
 	 * Optional: inject a message directly into a node agent sub-session by its session ID.
 	 * Required for @mention routing to specific agents.
 	 */
-	injectSubSessionMessage?(subSessionId: string, message: string): Promise<void>;
+	injectSubSessionMessage?(
+		subSessionId: string,
+		message: string,
+		isSyntheticMessage?: boolean
+	): Promise<void>;
 	/**
 	 * Optional: lazy-activate a workflow-declared node agent for a given task.
 	 *
@@ -266,7 +270,7 @@ export function setupSpaceTaskMessageHandlers(
 		if (deliverable.length > 0) {
 			await Promise.all(
 				deliverable.map((exec) =>
-					taskAgentManager.injectSubSessionMessage!(exec.agentSessionId!, message)
+					taskAgentManager.injectSubSessionMessage!(exec.agentSessionId!, message, false)
 				)
 			);
 			return {
@@ -422,7 +426,7 @@ export function setupSpaceTaskMessageHandlers(
 					// Inject into all matching sessions in parallel (independent operations)
 					await Promise.all(
 						matches.map((exec) =>
-							taskAgentManager.injectSubSessionMessage!(exec.agentSessionId!, params.message)
+							taskAgentManager.injectSubSessionMessage!(exec.agentSessionId!, params.message, false)
 						)
 					);
 					routedTo.push(mention);
@@ -559,7 +563,7 @@ export function setupSpaceTaskMessageHandlers(
 
 		if (liveSession && params.message && taskAgentManager.injectSubSessionMessage) {
 			const prefixed = `[Message from human]: ${params.message}`;
-			await taskAgentManager.injectSubSessionMessage(liveSession.session.id, prefixed);
+			await taskAgentManager.injectSubSessionMessage(liveSession.session.id, prefixed, false);
 			log.info(
 				`space.task.activateNodeAgent: delivered message to live session ${liveSession.session.id} ` +
 					`(agent=${params.agentName}, task=${params.taskId})`
