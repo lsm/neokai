@@ -10,6 +10,7 @@
 import { AnthropicProvider } from './anthropic-provider.js';
 import { GlmProvider } from './glm-provider.js';
 import { MinimaxProvider } from './minimax-provider.js';
+import { OpenRouterProvider } from './openrouter-provider.js';
 import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-provider.js';
 import { AnthropicToCopilotBridgeProvider } from './anthropic-copilot/index.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
@@ -51,6 +52,9 @@ export function initializeProviders(): ProviderRegistry {
 
 	// Register MiniMax provider (will be available if MINIMAX_API_KEY is set)
 	registry.register(new MinimaxProvider());
+
+	// Register OpenRouter provider (will be available if OPENROUTER_API_KEY is set)
+	registry.register(new OpenRouterProvider());
 
 	// Register Anthropic-to-Codex bridge provider for OpenAI/Codex-backed models.
 	// Discovers credentials from env (OPENAI_API_KEY/CODEX_API_KEY),

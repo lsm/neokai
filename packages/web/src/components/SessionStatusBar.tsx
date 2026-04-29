@@ -43,6 +43,7 @@ const PROVIDER_DOT_COLORS: Record<string, { color: string; ring?: boolean }> = {
 	anthropic: { color: '#D97757' }, // Anthropic brand orange
 	'anthropic-copilot': { color: '#8957E5' }, // GitHub Copilot purple
 	'anthropic-codex': { color: '#FFFFFF', ring: true }, // OpenAI white (ring for visibility)
+	openrouter: { color: '#007CF0' }, // OpenRouter blue
 	glm: { color: '#7DD3FC' }, // ChatGLM light blue
 	minimax: { color: '#FCA5A5' }, // MiniMax light red
 };
