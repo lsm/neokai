@@ -1682,6 +1682,83 @@ describe('tool_choice warning — codex bridge', () => {
 		warnSpy.mockRestore();
 	});
 
+	it('keeps the persistent session reserved while the retry session initializes', async () => {
+		let markRetryInitializeStarted!: () => void;
+		let resolveRetryInitialize!: () => void;
+		const retryInitializeStarted = new Promise<void>((resolve) => {
+			markRetryInitializeStarted = resolve;
+		});
+		const retryInitializeRelease = new Promise<void>((resolve) => {
+			resolveRetryInitialize = resolve;
+		});
+
+		let initializeCalls = 0;
+		initializeSpy.mockImplementation(() => {
+			initializeCalls++;
+			if (initializeCalls === 2) {
+				markRetryInitializeStarted();
+				return retryInitializeRelease;
+			}
+			return Promise.resolve();
+		});
+
+		let attempt = 0;
+		startTurnSpy.mockImplementation(
+			// eslint-disable-next-line @typescript-eslint/require-await
+			async function* (): AsyncGenerator<BridgeEvent> {
+				attempt++;
+				if (attempt === 1) {
+					yield { type: 'error', message: 'codex app-server subprocess closed unexpectedly' };
+					return;
+				}
+				yield { type: 'text_delta', text: 'recovered' };
+				yield { type: 'turn_done', inputTokens: 4, outputTokens: 1 };
+			}
+		);
+
+		const headers = {
+			'Content-Type': 'application/json',
+			Authorization: 'Bearer codex-bridge-retry-reserved',
+		};
+		const body = JSON.stringify({
+			model: 'codex-1',
+			messages: [{ role: 'user', content: 'Retry while busy' }],
+			stream: true,
+		});
+
+		const respPromise = fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body,
+		});
+
+		await retryInitializeStarted;
+
+		const concurrentResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body,
+		});
+		expect(concurrentResp.status).toBe(409);
+		const concurrentBody = (await concurrentResp.json()) as {
+			error?: { message?: string };
+		};
+		expect(concurrentBody.error?.message).toBe('A turn is already in progress for this session');
+		expect(connCreateSpy).toHaveBeenCalledTimes(2);
+		expect(initializeSpy).toHaveBeenCalledTimes(2);
+
+		resolveRetryInitialize();
+		const resp = await respPromise;
+		expect(resp.ok).toBe(true);
+		const eventsPromise = readSSEEvents(resp.body);
+		const events = await eventsPromise;
+		const text = events
+			.filter((e) => e.event === 'content_block_delta')
+			.map((e) => (e.data as { delta?: { text?: string } }).delta?.text ?? '')
+			.join('');
+		expect(text).toBe('recovered');
+	});
+
 	it('sends an error SSE after the one subprocess crash retry is exhausted', async () => {
 		startTurnSpy.mockImplementation(
 			// eslint-disable-next-line @typescript-eslint/require-await

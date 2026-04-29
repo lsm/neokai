@@ -802,17 +802,23 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 								'codex-bridge: subprocess crashed before output, retrying turn with a fresh session'
 							);
 
+							capturedPs.turnInProgress = true;
+							clearTimeout(capturedPs.idleTimer);
+							persistentSessions.set(capturedSessionId, capturedPs);
+
 							try {
 								const newSession = await createInitializedSession();
 								capturedPs.session = newSession;
-								capturedPs.turnInProgress = true;
 								capturedPs.isFirstTurn = false;
-								persistentSessions.set(capturedSessionId, capturedPs);
 								currentSession = newSession;
 								userText = buildConversationText(body.messages, system);
 								estimatedInputTokens = estimateAnthropicInputTokens(body);
 							} catch (err) {
 								logger.error('codex-bridge: failed to restart BridgeSession:', err);
+								capturedPs.turnInProgress = false;
+								clearTimeout(capturedPs.idleTimer);
+								capturedPs.session.kill();
+								persistentSessions.delete(capturedSessionId);
 								sendUncommittedError(
 									controller,
 									`Internal Server Error: ${err instanceof Error ? err.message : String(err)}`
