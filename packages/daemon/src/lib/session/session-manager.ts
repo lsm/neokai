@@ -15,7 +15,7 @@ import type { Session, MessageHub, MessageDeliveryMode, MessageOrigin } from '@n
 import { generateUUID } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
-import { AgentSession } from '../agent/agent-session';
+import { AgentSession, type AgentSessionRuntimeOptions } from '../agent/agent-session';
 import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
 import { WorktreeManager } from '../worktree-manager';
@@ -64,6 +64,7 @@ export class SessionManager {
 
 	// Cleanup state machine - prevents race conditions during shutdown
 	private cleanupState: CleanupState = CleanupState.IDLE;
+	private hardResetInFlight = new Map<string, Promise<{ success: boolean; error?: string }>>();
 
 	// Extracted modules
 	private sessionCache: SessionCache;
@@ -90,21 +91,8 @@ export class SessionManager {
 		this.toolsConfigManager = new ToolsConfigManager(db);
 
 		// Factory function for creating AgentSession instances
-		const createAgentSession = (session: Session): AgentSession => {
-			return new AgentSession(
-				session,
-				db,
-				messageHub,
-				eventBus,
-				() => this.authManager.getCurrentApiKey(),
-				this.skillsManager,
-				this.appMcpServerRepo,
-				undefined,
-				{
-					autoReplayPendingMessages: !this.needsSpaceRuntimeProvisioning(session),
-				}
-			);
-		};
+		const createAgentSession = (session: Session): AgentSession =>
+			this.createAgentSessionFromSession(session);
 
 		// Initialize session cache with factory and loader
 		this.sessionCache = new SessionCache(createAgentSession, (sessionId: string) =>
@@ -144,6 +132,115 @@ export class SessionManager {
 		if (session.type === 'space_chat') return true;
 		if (session.type === 'space_task_agent') return true;
 		return typeof session.context?.spaceId === 'string';
+	}
+
+	private createAgentSessionFromSession(
+		session: Session,
+		runtimeOptions: AgentSessionRuntimeOptions = {}
+	): AgentSession {
+		return new AgentSession(
+			session,
+			this.db,
+			this.messageHub,
+			this.eventBus,
+			() => this.authManager.getCurrentApiKey(),
+			this.skillsManager,
+			this.appMcpServerRepo,
+			undefined,
+			{
+				autoReplayPendingMessages: !this.needsSpaceRuntimeProvisioning(session),
+				...runtimeOptions,
+				hardReset: (agentSession, options) => this.hardResetAgentSession(agentSession, options),
+			}
+		);
+	}
+
+	private preserveResetCostBaseline(
+		agentSession: AgentSession,
+		persistedSession: Session
+	): Session {
+		const currentSession = agentSession.getSessionData();
+		const currentMetadata = currentSession.metadata ?? {};
+		const lastSdkCost = currentMetadata.lastSdkCost || 0;
+		if (lastSdkCost <= 0) return persistedSession;
+
+		const costBaseline = currentMetadata.costBaseline || 0;
+		const metadata = {
+			...currentMetadata,
+			costBaseline: costBaseline + lastSdkCost,
+			lastSdkCost: 0,
+		};
+		this.db.updateSession(currentSession.id, { metadata });
+		return { ...persistedSession, metadata };
+	}
+
+	private hardResetAgentSession(
+		agentSession: AgentSession,
+		options: { restartQuery: boolean }
+	): Promise<{ success: boolean; error?: string }> {
+		const sessionId = agentSession.getSessionData().id;
+		const existingReset = this.hardResetInFlight.get(sessionId);
+		if (existingReset) {
+			return existingReset;
+		}
+
+		const resetPromise = this.performHardResetAgentSession(agentSession, options).finally(() => {
+			if (this.hardResetInFlight.get(sessionId) === resetPromise) {
+				this.hardResetInFlight.delete(sessionId);
+			}
+		});
+		this.hardResetInFlight.set(sessionId, resetPromise);
+
+		return resetPromise;
+	}
+
+	private async performHardResetAgentSession(
+		agentSession: AgentSession,
+		options: { restartQuery: boolean }
+	): Promise<{ success: boolean; error?: string }> {
+		const sessionId = agentSession.getSessionData().id;
+		try {
+			const persistedSession = this.db.getSession(sessionId);
+			if (!persistedSession) {
+				throw new Error(`Session not found: ${sessionId}`);
+			}
+			const sessionForFreshInstance = this.preserveResetCostBaseline(
+				agentSession,
+				persistedSession
+			);
+
+			await this.eventBus.emit('session.errorClear', { sessionId });
+
+			const freshSession = this.createAgentSessionFromSession(sessionForFreshInstance, {
+				autoReplayPendingMessages: false,
+			});
+			this.sessionCache.set(sessionId, freshSession);
+
+			try {
+				await agentSession.cleanup();
+			} catch (error) {
+				this.logger.error(
+					`[SessionManager] hardResetAgentSession: cleanup failed for ${sessionId}:`,
+					error
+				);
+			}
+
+			if (options.restartQuery) {
+				await freshSession.replayPendingMessagesForImmediateMode();
+			}
+
+			this.messageHub.event(
+				'session.reset',
+				{ message: 'Agent has been reset and is ready for new messages' },
+				{ channel: `session:${sessionId}` }
+			);
+
+			return { success: true };
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			this.logger.error(`[SessionManager] hardResetAgentSession failed for ${sessionId}:`, error);
+			return { success: false, error: errorMessage };
+		}
 	}
 
 	/**
@@ -474,6 +571,7 @@ export class SessionManager {
 
 			// Clear session cache
 			this.sessionCache.clear();
+			this.hardResetInFlight.clear();
 
 			// Transition to CLEANED state
 			this.cleanupState = CleanupState.CLEANED;

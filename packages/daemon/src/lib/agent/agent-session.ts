@@ -164,6 +164,17 @@ export interface AgentSessionRuntimeOptions {
 	 * replayPendingMessagesForImmediateMode() after runtime provisioning.
 	 */
 	autoReplayPendingMessages?: boolean;
+
+	/**
+	 * Optional owner-provided hard reset primitive.
+	 *
+	 * SessionManager uses this to replace the cached in-memory AgentSession with
+	 * a fresh instance while preserving the persisted session row.
+	 */
+	hardReset?: (
+		session: AgentSession,
+		options: { restartQuery: boolean }
+	) => Promise<{ success: boolean; error?: string }>;
 }
 
 // Extracted components
@@ -689,8 +700,14 @@ export class AgentSession
 
 	async resetQuery(options?: {
 		restartQuery?: boolean;
+		hardReset?: boolean;
 	}): Promise<{ success: boolean; error?: string }> {
-		return await this.lifecycleManager.reset({ restartAfter: options?.restartQuery });
+		const restartQuery = options?.restartQuery ?? true;
+		if (options?.hardReset && this.runtimeOptions.hardReset) {
+			return await this.runtimeOptions.hardReset(this, { restartQuery });
+		}
+
+		return await this.lifecycleManager.reset({ restartAfter: restartQuery });
 	}
 
 	// ============================================================================
