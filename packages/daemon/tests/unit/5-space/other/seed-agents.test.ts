@@ -283,7 +283,7 @@ describe('seedPresetAgents', () => {
 		expect(reviewer?.customPrompt).toMatch(/Do NOT call `submit_for_approval`/);
 		expect(reviewer?.customPrompt).toMatch(/same approval semantic/i);
 		expect(reviewer?.customPrompt).toMatch(/FINAL actions/);
-		expect(reviewer?.customPrompt).toMatch(/do NOT send a message to the coder/i);
+		expect(reviewer?.customPrompt).toMatch(/do NOT send a message to any agent/i);
 		expect(reviewer?.customPrompt).toMatch(/before human approval is granted/i);
 	});
 
