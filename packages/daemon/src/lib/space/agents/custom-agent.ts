@@ -10,7 +10,6 @@ import type { AgentSessionInit } from '../../agent/agent-session';
 import type {
 	AgentDefinition,
 	McpServerConfig,
-	RoomSkillOverride,
 	Space,
 	SpaceAgent,
 	SpaceTask,
@@ -19,6 +18,7 @@ import type {
 	WorkflowChannel,
 	WorkflowNode,
 } from '@neokai/shared';
+import type { SkillEnablementOverride } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { inferProviderForModel } from '../../providers/registry';
@@ -368,9 +368,9 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 
 	const visiblePrompt = buildCustomAgentSystemPrompt(customAgent, slotOverrides);
 
-	const roomSkillOverrides: RoomSkillOverride[] | undefined = slotOverrides?.disabledSkillIds
+	const skillOverrides: SkillEnablementOverride[] | undefined = slotOverrides?.disabledSkillIds
 		?.length
-		? slotOverrides.disabledSkillIds.map((id) => ({ skillId: id, roomId: '', enabled: false }))
+		? slotOverrides.disabledSkillIds.map((id) => ({ skillId: id, enabled: false }))
 		: undefined;
 
 	const extraMcpServers = slotOverrides?.extraMcpServers;
@@ -403,7 +403,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 			agent: agentKey,
 			agents: { [agentKey]: agentDef },
 			...customToolPermissions,
-			roomSkillOverrides,
+			skillOverrides,
 			mcpServers: extraMcpServers,
 		};
 	}
@@ -422,7 +422,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		model,
 		provider,
 		...customToolPermissions,
-		roomSkillOverrides,
+		skillOverrides,
 		mcpServers: extraMcpServers,
 	};
 }

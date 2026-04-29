@@ -6,7 +6,12 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
-import type { Room, CreateRoomParams, UpdateRoomParams, WorkspacePath } from '@neokai/shared';
+import type {
+	Room,
+	CreateRoomParams,
+	UpdateRoomParams,
+	WorkspacePath,
+} from '@neokai/shared/types/neo';
 import type { SQLiteValue } from '../types';
 
 export class RoomRepository {

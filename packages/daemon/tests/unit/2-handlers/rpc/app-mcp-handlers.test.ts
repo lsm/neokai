@@ -17,9 +17,9 @@
  * - mcp.registry.changed event is emitted on write operations
  * - Validation errors are thrown for bad input
  *
- * Part 2: Per-Room MCP Enablement RPC Handlers (setupAppMcpHandlers)
- * Tests for mcp.room.getEnabled, mcp.room.setEnabled, and mcp.room.resetToGlobal
- * using an in-memory SQLite database and mock MessageHub / DaemonHub.
+ * Part 2: App MCP runtime handlers (setupAppMcpHandlers)
+ * Verifies the active registry/session/unified enablement APIs and confirms the
+ * historical mcp.room.* API surface is no longer registered.
  */
 
 import { describe, expect, it, test, beforeEach, afterEach, mock } from 'bun:test';
@@ -490,106 +490,23 @@ describe('setupAppMcpHandlers', () => {
 		bunDb.close();
 	});
 
-	// Helper
-	function createServer(name: string) {
-		return appMcpRepo.create({ name, sourceType: 'stdio', command: 'npx' });
-	}
-
-	// ---------------------------------------------------------------------------
-	// mcp.room.getEnabled
-	// ---------------------------------------------------------------------------
-
-	describe('mcp.room.getEnabled', () => {
-		test('returns empty serverIds when no overrides exist', () => {
-			const handler = handlers.get('mcp.room.getEnabled')!;
-			const result = handler({ roomId: ROOM_ID }) as { serverIds: string[] };
-			expect(result.serverIds).toEqual([]);
+	describe('legacy mcp.room API surface', () => {
+		test('does not register historical room-scoped MCP RPC handlers', () => {
+			expect(handlers.has('mcp.room.getEnabled')).toBe(false);
+			expect(handlers.has('mcp.room.setEnabled')).toBe(false);
+			expect(handlers.has('mcp.room.resetToGlobal')).toBe(false);
 		});
 
-		test('returns IDs of enabled servers', () => {
-			const srv1 = createServer('srv-get-1');
-			const srv2 = createServer('srv-get-2');
-			roomMcpRepo.setEnabled(ROOM_ID, srv1.id, true);
-			roomMcpRepo.setEnabled(ROOM_ID, srv2.id, false);
+		test('preserves existing room enablement rows for compatibility reads', () => {
+			const srv = appMcpRepo.create({
+				name: 'legacy-room-row',
+				sourceType: 'stdio',
+				command: 'npx',
+			});
+			roomMcpRepo.setEnabled(ROOM_ID, srv.id, true);
 
-			const handler = handlers.get('mcp.room.getEnabled')!;
-			const result = handler({ roomId: ROOM_ID }) as { serverIds: string[] };
-			expect(result.serverIds).toContain(srv1.id);
-			expect(result.serverIds).not.toContain(srv2.id);
-		});
-	});
-
-	// ---------------------------------------------------------------------------
-	// mcp.room.setEnabled
-	// ---------------------------------------------------------------------------
-
-	describe('mcp.room.setEnabled', () => {
-		test('enables a server and returns ok:true', () => {
-			const srv = createServer('set-enabled');
-			const handler = handlers.get('mcp.room.setEnabled')!;
-			const result = handler({ roomId: ROOM_ID, serverId: srv.id, enabled: true }) as {
-				ok: boolean;
-			};
-			expect(result.ok).toBe(true);
-			expect(roomMcpRepo.getEnabledServerIds(ROOM_ID)).toContain(srv.id);
-		});
-
-		test('disables a server', () => {
-			const srv = createServer('set-disabled');
-			const handler = handlers.get('mcp.room.setEnabled')!;
-			handler({ roomId: ROOM_ID, serverId: srv.id, enabled: false });
-			expect(roomMcpRepo.getEnabledServerIds(ROOM_ID)).not.toContain(srv.id);
-		});
-
-		test('emits mcp.registry.changed after write', async () => {
-			const srv = createServer('emit-test');
-			const handler = handlers.get('mcp.room.setEnabled')!;
-			emitSpy.mockClear();
-			handler({ roomId: ROOM_ID, serverId: srv.id, enabled: true });
-
-			// Wait for the async emit to resolve
-			await new Promise<void>((resolve) => setTimeout(resolve, 10));
-			expect(emitSpy).toHaveBeenCalledWith('mcp.registry.changed', { sessionId: 'global' });
-		});
-
-		test('throws when server does not exist', () => {
-			const handler = handlers.get('mcp.room.setEnabled')!;
-			expect(() => handler({ roomId: ROOM_ID, serverId: 'nonexistent-id', enabled: true })).toThrow(
-				'MCP server not found'
-			);
-		});
-	});
-
-	// ---------------------------------------------------------------------------
-	// mcp.room.resetToGlobal
-	// ---------------------------------------------------------------------------
-
-	describe('mcp.room.resetToGlobal', () => {
-		test('removes all overrides and returns ok:true', () => {
-			const srv1 = createServer('reset-srv1');
-			const srv2 = createServer('reset-srv2');
-			roomMcpRepo.setEnabled(ROOM_ID, srv1.id, true);
-			roomMcpRepo.setEnabled(ROOM_ID, srv2.id, true);
-
-			const handler = handlers.get('mcp.room.resetToGlobal')!;
-			const result = handler({ roomId: ROOM_ID }) as { ok: boolean };
-			expect(result.ok).toBe(true);
-			expect(roomMcpRepo.getEnabledServerIds(ROOM_ID)).toEqual([]);
-		});
-
-		test('emits mcp.registry.changed after write', async () => {
-			const handler = handlers.get('mcp.room.resetToGlobal')!;
-			emitSpy.mockClear();
-			handler({ roomId: ROOM_ID });
-
-			await new Promise<void>((resolve) => setTimeout(resolve, 10));
-			expect(emitSpy).toHaveBeenCalledWith('mcp.registry.changed', { sessionId: 'global' });
-		});
-
-		test('no-op for a room with no overrides — still returns ok:true', () => {
-			const handler = handlers.get('mcp.room.resetToGlobal')!;
-			const result = handler({ roomId: 'empty-room' }) as { ok: boolean };
-			expect(result.ok).toBe(true);
+			expect(roomMcpRepo.getEnabledServerIds(ROOM_ID)).toEqual([srv.id]);
+			expect(handlers.has('mcp.room.getEnabled')).toBe(false);
 		});
 	});
 

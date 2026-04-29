@@ -7,7 +7,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { RoomSkillOverride } from '@neokai/shared';
+import type { RoomSkillOverride } from '@neokai/shared/types/neo';
 import type { ReactiveDatabase } from '../reactive-database';
 
 // ---------------------------------------------------------------------------

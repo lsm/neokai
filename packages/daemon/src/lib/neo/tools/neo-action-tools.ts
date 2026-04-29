@@ -67,24 +67,26 @@ import { z } from 'zod';
 import { Logger } from '../../logger';
 import type { NeoActivityLogger } from '../activity-logger';
 import type {
-	Room,
-	RoomGoal,
-	NeoTask,
-	GoalStatus,
-	TaskStatus,
-	GoalPriority,
-	TaskPriority,
-	MissionType,
-	AutonomyLevel,
-	WorkspacePath,
-	SpaceAutonomyLevel,
 	AppMcpServer,
 	AppMcpServerSourceType,
 	AppSkill,
 	AppSkillConfig,
-	SkillSourceType,
 	GlobalSettings,
+	SkillSourceType,
+	SpaceAutonomyLevel,
 } from '@neokai/shared';
+import type {
+	AutonomyLevel,
+	GoalPriority,
+	GoalStatus,
+	MissionType,
+	NeoTask,
+	Room,
+	RoomGoal,
+	TaskPriority,
+	TaskStatus,
+	WorkspacePath,
+} from '@neokai/shared/types/neo';
 import {
 	ActionClassification,
 	shouldAutoExecute,

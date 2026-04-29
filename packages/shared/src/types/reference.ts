@@ -6,7 +6,6 @@
  * in chat inputs using @ref{type:id} syntax.
  */
 
-import type { NeoTask, RoomGoal } from './neo.ts';
 import type { SpaceTask } from './space.ts';
 
 /**
@@ -53,13 +52,14 @@ export interface ResolvedReference {
 
 export interface ResolvedTaskReference extends ResolvedReference {
 	type: 'task';
-	/** Room tasks (t- prefix) carry NeoTask; space tasks (st- prefix) carry SpaceTask */
-	data: NeoTask | SpaceTask;
+	/** Space task payloads are typed; legacy room task payloads are preserved as opaque data. */
+	data: SpaceTask | object;
 }
 
 export interface ResolvedGoalReference extends ResolvedReference {
 	type: 'goal';
-	data: RoomGoal;
+	/** Legacy room goal payloads are preserved as opaque compatibility data. */
+	data: object;
 }
 
 /**

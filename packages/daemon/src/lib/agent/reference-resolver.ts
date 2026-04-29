@@ -39,10 +39,9 @@ import type {
 	ResolvedTaskReference,
 	ResolvedGoalReference,
 	ReferenceType,
-	NeoTask,
-	RoomGoal,
 	SpaceTask,
 } from '@neokai/shared';
+import type { NeoTask, RoomGoal } from '@neokai/shared/types/neo';
 import { REFERENCE_PATTERN } from '@neokai/shared';
 import { Logger } from '../logger.ts';
 

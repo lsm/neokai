@@ -14,13 +14,13 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type {
-	TaskStatus,
-	TaskType,
 	AgentType,
-	MissionType,
 	AutonomyLevel,
 	MissionMetric,
-} from '@neokai/shared';
+	MissionType,
+	TaskStatus,
+	TaskType,
+} from '@neokai/shared/types/neo';
 import type { GoalManager } from '../managers/goal-manager';
 import type { TaskManager } from '../managers/task-manager';
 import type { SessionGroupRepository } from '../state/session-group-repository';

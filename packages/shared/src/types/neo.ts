@@ -1,8 +1,9 @@
 /**
- * Neo Self-Aware Architecture Types
+ * Legacy Room compatibility types
  *
- * Types for rooms, goals, tasks, and summaries.
- * Prepared for Room Runtime v0.19.
+ * These shapes are retained so the daemon can open and read old databases that
+ * still contain Room-era rows. They are intentionally not exported from the
+ * shared package root; active product surfaces should use Space contracts.
  */
 
 // ============================================================================
@@ -513,4 +514,14 @@ export interface NeoStatus {
 export interface GlobalStatus {
 	rooms: NeoStatus[];
 	totalActiveTasks: number;
+}
+
+/**
+ * Legacy per-room override for a skill's enabled state.
+ * Preserved only for old `room_skill_overrides` rows.
+ */
+export interface RoomSkillOverride {
+	skillId: string;
+	roomId: string;
+	enabled: boolean;
 }

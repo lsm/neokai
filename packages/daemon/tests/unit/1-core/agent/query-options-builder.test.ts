@@ -1726,12 +1726,12 @@ describe('QueryOptionsBuilder', () => {
 		});
 	});
 
-	describe('room skill overrides', () => {
+	describe('skill enablement overrides', () => {
 		const pluginSkill = {
 			id: 'skill-plugin-room-1',
 			name: 'room-plugin',
 			displayName: 'Room Plugin',
-			description: 'Plugin skill used in room override tests',
+			description: 'Plugin skill used in skill override tests',
 			sourceType: 'plugin' as const,
 			config: { type: 'plugin' as const, pluginPath: '/plugins/room-plugin' },
 			enabled: true,
@@ -1744,7 +1744,7 @@ describe('QueryOptionsBuilder', () => {
 			id: 'skill-mcp-room-1',
 			name: 'room-mcp',
 			displayName: 'Room MCP',
-			description: 'MCP skill used in room override tests',
+			description: 'MCP skill used in skill override tests',
 			sourceType: 'mcp_server' as const,
 			config: { type: 'mcp_server' as const, appMcpServerId: 'mcp-room-uuid' },
 			enabled: true,
@@ -1762,7 +1762,7 @@ describe('QueryOptionsBuilder', () => {
 			enabled: true,
 		};
 
-		it('should exclude a plugin skill disabled by a room override', async () => {
+		it('should exclude a plugin skill disabled by a skill override', async () => {
 			const mockSkillsManager = {
 				getEnabledSkills: mock(() => [pluginSkill]),
 			};
@@ -1771,16 +1771,16 @@ describe('QueryOptionsBuilder', () => {
 				settingsManager: mockSettingsManager,
 				skillsManager:
 					mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
-				roomSkillOverrides: [{ skillId: pluginSkill.id, roomId: 'room-1', enabled: false }],
+				skillOverrides: [{ skillId: pluginSkill.id, enabled: false }],
 			};
 			const builder = new QueryOptionsBuilder(context);
 			const options = await builder.build();
 
-			// Room override disables the skill — must not appear in plugins
+			// Skill override disables the skill — must not appear in plugins
 			expect(options.plugins).toBeUndefined();
 		});
 
-		it('should exclude an MCP server skill disabled by a room override', async () => {
+		it('should exclude an MCP server skill disabled by a skill override', async () => {
 			const mockAppMcpServerRepo = {
 				get: mock(() => mockRoomMcpServer),
 			};
@@ -1794,16 +1794,16 @@ describe('QueryOptionsBuilder', () => {
 					mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
 				appMcpServerRepo:
 					mockAppMcpServerRepo as unknown as import('../../../../src/storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
-				roomSkillOverrides: [{ skillId: mcpSkill.id, roomId: 'room-1', enabled: false }],
+				skillOverrides: [{ skillId: mcpSkill.id, enabled: false }],
 			};
 			const builder = new QueryOptionsBuilder(context);
 			const options = await builder.build();
 
-			// Room override disables the MCP skill — must not appear in mcpServers
+			// Skill override disables the MCP skill — must not appear in mcpServers
 			expect(options.mcpServers).toBeUndefined();
 		});
 
-		it('should still include a plugin skill when room override has enabled=true', async () => {
+		it('should still include a plugin skill when skill override has enabled=true', async () => {
 			const mockSkillsManager = {
 				getEnabledSkills: mock(() => [pluginSkill]),
 			};
@@ -1812,7 +1812,7 @@ describe('QueryOptionsBuilder', () => {
 				settingsManager: mockSettingsManager,
 				skillsManager:
 					mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
-				roomSkillOverrides: [{ skillId: pluginSkill.id, roomId: 'room-1', enabled: true }],
+				skillOverrides: [{ skillId: pluginSkill.id, enabled: true }],
 			};
 			const builder = new QueryOptionsBuilder(context);
 			const options = await builder.build();
@@ -1820,7 +1820,7 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.plugins).toEqual([{ type: 'local', path: '/plugins/room-plugin' }]);
 		});
 
-		it('should apply room override only to the matching skill ID', async () => {
+		it('should apply skill override only to the matching skill ID', async () => {
 			const anotherPlugin = {
 				id: 'skill-plugin-other',
 				name: 'other-plugin',
@@ -1842,7 +1842,7 @@ describe('QueryOptionsBuilder', () => {
 				skillsManager:
 					mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
 				// Disable only pluginSkill; anotherPlugin should still appear
-				roomSkillOverrides: [{ skillId: pluginSkill.id, roomId: 'room-1', enabled: false }],
+				skillOverrides: [{ skillId: pluginSkill.id, enabled: false }],
 			};
 			const builder = new QueryOptionsBuilder(context);
 			const options = await builder.build();
@@ -1850,7 +1850,7 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.plugins).toEqual([{ type: 'local', path: '/plugins/other-plugin' }]);
 		});
 
-		it('should include all skills when roomSkillOverrides is empty', async () => {
+		it('should include all skills when skillOverrides is empty', async () => {
 			const mockSkillsManager = {
 				getEnabledSkills: mock(() => [pluginSkill]),
 			};
@@ -1859,7 +1859,7 @@ describe('QueryOptionsBuilder', () => {
 				settingsManager: mockSettingsManager,
 				skillsManager:
 					mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
-				roomSkillOverrides: [],
+				skillOverrides: [],
 			};
 			const builder = new QueryOptionsBuilder(context);
 			const options = await builder.build();
@@ -1867,7 +1867,7 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.plugins).toEqual([{ type: 'local', path: '/plugins/room-plugin' }]);
 		});
 
-		it('should include all skills when roomSkillOverrides is not provided', async () => {
+		it('should include all skills when skillOverrides is not provided', async () => {
 			const mockSkillsManager = {
 				getEnabledSkills: mock(() => [pluginSkill]),
 			};
@@ -1888,7 +1888,7 @@ describe('QueryOptionsBuilder', () => {
 	//
 	// `ToolsConfig.disabledSkills` lets the session Tools modal opt out of
 	// individual skills without mutating the global registry. The filter is
-	// additive on top of room overrides — see `getSessionDisabledSkillIds()` in
+	// additive on top of explicit skill overrides — see `getSessionDisabledSkillIds()` in
 	// `query-options-builder.ts` — and applies to both plugin and mcp_server
 	// skills, so the SDK build never sees the disabled entries.
 	describe('session disabledSkills override', () => {
@@ -2028,9 +2028,9 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.plugins).toEqual([{ type: 'local', path: '/plugins/other-session-plugin' }]);
 		});
 
-		it('is additive with room overrides (room-disable wins even when session list is empty)', async () => {
+		it('is additive with skill overrides (explicit disable wins even when session list is empty)', async () => {
 			// Regression guard: a session with `disabledSkills: []` must still
-			// honour a room-level override that says enabled=false. The two scopes
+			// honour an explicit skill override that says enabled=false. The two scopes
 			// are independent disable lists.
 			mockSession.config.tools = { disabledSkills: [] };
 			const mockSkillsManager = {
@@ -2041,7 +2041,7 @@ describe('QueryOptionsBuilder', () => {
 				settingsManager: mockSettingsManager,
 				skillsManager:
 					mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
-				roomSkillOverrides: [{ skillId: pluginSkill.id, roomId: 'room-x', enabled: false }],
+				skillOverrides: [{ skillId: pluginSkill.id, enabled: false }],
 			};
 			const builder = new QueryOptionsBuilder(context);
 			const options = await builder.build();

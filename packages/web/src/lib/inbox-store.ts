@@ -7,7 +7,7 @@
  */
 
 import { signal, computed } from '@preact/signals';
-import type { TaskSummary } from '@neokai/shared';
+import type { TaskSummary } from '@neokai/shared/types/neo';
 import { connectionManager } from './connection-manager';
 import { toast } from './toast';
 

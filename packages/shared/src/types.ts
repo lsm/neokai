@@ -57,11 +57,7 @@ export type {
 /**
  * Session type for unified session architecture
  * - 'worker': Standard coding session with full Claude Code system prompt
- * - 'room_chat': User-facing room chat interface (room:chat:${roomId})
- * - 'planner': Planner agent session (Room Runtime)
- * - 'coder': Coder agent session (Room Runtime)
- * - 'leader': Leader agent session (Room Runtime)
- * - 'general': General-purpose agent session (Room Runtime)
+ * - 'room_chat', 'planner', 'coder', 'leader', 'general': legacy Room session rows
  * - 'lobby': Instance-level agent session
  * - 'space_task_agent': Task Agent session that orchestrates a single SpaceTask's workflow
  * - 'space_chat': Per-space coordinator session (space:chat:${spaceId}) — the human-facing interface for a Space
@@ -79,7 +75,7 @@ export type SessionType =
 	| 'neo';
 
 /**
- * Context for room/lobby/space sessions
+ * Context for lobby/space sessions. `roomId` is legacy DB compatibility only.
  */
 export interface SessionContext {
 	roomId?: string;
@@ -122,9 +118,7 @@ export const DEFAULT_WORKER_FEATURES: SessionFeatures = {
 };
 
 /**
- * Default features for room chat sessions (all disabled).
- * Room chat sessions do NOT use Claude Code system prompt - they are for user interaction.
- * @public
+ * Legacy default features for old room chat session rows.
  */
 export const DEFAULT_ROOM_CHAT_FEATURES: SessionFeatures = {
 	rewind: false,
@@ -200,6 +194,9 @@ export interface WorktreeCommitStatus {
 }
 
 export type SessionStatus = 'active' | 'pending_worktree_choice' | 'paused' | 'ended' | 'archived';
+
+/** Runtime state shared by active Space runtimes and legacy persisted rows. */
+export type RuntimeState = 'running' | 'paused' | 'stopped';
 
 // ============================================================================
 // Provider Types

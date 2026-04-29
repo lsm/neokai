@@ -1,5 +1,8 @@
 /**
- * Task RPC Handlers
+ * Legacy Room Task RPC Handlers
+ *
+ * Preserved for old room/task database compatibility and direct legacy tests
+ * only. `setupRPCHandlers` no longer registers this public task.* surface.
  *
  * RPC handlers for Neo task operations:
  * - task.create - Create task in room
@@ -19,7 +22,8 @@
  * - inbox.reviewTasks - Get all review-status tasks across all active rooms
  */
 
-import type { MessageHub, TaskPriority, TaskStatus, TaskSummary } from '@neokai/shared';
+import type { MessageHub } from '@neokai/shared';
+import type { TaskPriority, TaskStatus, TaskSummary } from '@neokai/shared/types/neo';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { ReactiveDatabase } from '../../storage/reactive-database';
