@@ -33,6 +33,9 @@ export interface WorkspacePath {
 /**
  * A conceptual workspace for organizing work
  * Rooms are long-running work dimensions that can span multiple sessions and workspaces
+ *
+ * @deprecated Legacy Room compatibility type retained for preserved database rows.
+ * Use Space contracts for active product code.
  */
 export interface Room {
 	/** Unique identifier */
@@ -143,6 +146,9 @@ export interface MissionExecution {
 /**
  * A structured objective for a room
  * Goals track progress via linked tasks
+ *
+ * @deprecated Legacy Room compatibility type retained for preserved database rows.
+ * Use Space task/workflow contracts for active product code.
  */
 export interface RoomGoal {
 	/** Unique identifier */
@@ -205,6 +211,9 @@ export type Mission = RoomGoal;
 
 /**
  * Parameters for creating a new room
+ *
+ * @deprecated Legacy Room compatibility type retained for preserved database rows.
+ * New code must not create Room records.
  */
 export interface CreateRoomParams {
 	name: string;
@@ -222,6 +231,9 @@ export interface CreateRoomParams {
 
 /**
  * Parameters for updating a room
+ *
+ * @deprecated Legacy Room compatibility type retained for preserved database rows.
+ * New code must not update Room records.
  */
 export interface UpdateRoomParams {
 	name?: string;
@@ -293,6 +305,9 @@ export type AgentType = 'coder' | 'general' | 'planner';
 
 /**
  * A task managed within a room
+ *
+ * @deprecated Legacy Room compatibility type retained for preserved database rows.
+ * Use SpaceTask for active product code.
  */
 export interface NeoTask {
 	/** Unique identifier */
@@ -519,6 +534,9 @@ export interface GlobalStatus {
 /**
  * Legacy per-room override for a skill's enabled state.
  * Preserved only for old `room_skill_overrides` rows.
+ *
+ * @deprecated Legacy Room compatibility type retained for preserved database rows.
+ * Use SkillEnablementOverride for active runtime code.
  */
 export interface RoomSkillOverride {
 	skillId: string;

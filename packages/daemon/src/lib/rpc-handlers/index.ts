@@ -90,6 +90,7 @@ import type { SkillsManager } from '../skills-manager';
 import { setupNeoHandlers } from './neo-handlers';
 import type { NeoAgentManager } from '../neo/neo-agent-manager';
 import { setupWorkspaceHandlers } from './workspace-handlers';
+import { setupLegacyInboxCompatHandlers } from './legacy-inbox-compat-handlers';
 import { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository';
 import { NeoActivityLogger } from '../neo/activity-logger';
 import { PendingActionStore } from '../neo/security-tier';
@@ -228,7 +229,16 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		roomRuntimeService.getAgentSession(sessionId)
 	);
 
-	// Do not register legacy room.*, task.*, goal.*, or room.runtime.* RPC APIs.
+	// Do not register legacy room.*, broader task.*, goal.*, or room.runtime.* RPC APIs.
+	// The active web Inbox still calls these three legacy task review methods,
+	// so keep only this narrow compatibility shim until the UI is migrated.
+	setupLegacyInboxCompatHandlers(
+		deps.messageHub,
+		roomManager,
+		deps.db,
+		deps.reactiveDb,
+		roomRuntimeService
+	);
 
 	// GitHub handlers
 	setupGitHubHandlers(

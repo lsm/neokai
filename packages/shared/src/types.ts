@@ -194,9 +194,7 @@ export interface WorktreeCommitStatus {
 }
 
 export type SessionStatus = 'active' | 'pending_worktree_choice' | 'paused' | 'ended' | 'archived';
-
-/** Runtime state shared by active Space runtimes and legacy persisted rows. */
-export type RuntimeState = 'running' | 'paused' | 'stopped';
+export type { RuntimeState } from './types/neo';
 
 // ============================================================================
 // Provider Types
