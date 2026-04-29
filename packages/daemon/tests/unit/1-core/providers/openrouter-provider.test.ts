@@ -1,0 +1,133 @@
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { OpenRouterProvider } from '../../../../src/lib/providers/openrouter-provider';
+
+describe('OpenRouterProvider', () => {
+	let originalEnv: NodeJS.ProcessEnv;
+
+	beforeEach(() => {
+		originalEnv = { ...process.env };
+		delete process.env.OPENROUTER_API_KEY;
+	});
+
+	afterEach(() => {
+		process.env = originalEnv;
+	});
+
+	it('has expected identity and capabilities', () => {
+		const provider = new OpenRouterProvider();
+
+		expect(provider.id).toBe('openrouter');
+		expect(provider.displayName).toBe('OpenRouter');
+		expect(provider.capabilities.streaming).toBe(true);
+		expect(provider.capabilities.functionCalling).toBe(true);
+		expect(OpenRouterProvider.BASE_URL).toBe('https://openrouter.ai/api');
+	});
+
+	it('requires OPENROUTER_API_KEY with OpenRouter key shape', async () => {
+		const provider = new OpenRouterProvider();
+
+		expect(provider.isAvailable()).toBe(false);
+		expect(() => provider.buildSdkConfig('anthropic/claude-sonnet-4.6')).toThrow(
+			'OpenRouter API key not configured'
+		);
+
+		process.env.OPENROUTER_API_KEY = 'not-openrouter';
+		expect(provider.isAvailable()).toBe(false);
+		expect((await provider.getAuthStatus()).error).toContain('expected sk-or-');
+	});
+
+	it('builds Claude Code Anthropic-compatible routing env vars', () => {
+		process.env.OPENROUTER_API_KEY = 'sk-or-test';
+		const provider = new OpenRouterProvider();
+
+		const config = provider.buildSdkConfig('anthropic/claude-sonnet-4.6');
+
+		expect(config.envVars).toEqual({
+			ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+			ANTHROPIC_AUTH_TOKEN: 'sk-or-test',
+			ANTHROPIC_API_KEY: '',
+			API_TIMEOUT_MS: '3000000',
+			CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+			ANTHROPIC_DEFAULT_HAIKU_MODEL: 'anthropic/claude-sonnet-4.6',
+			ANTHROPIC_DEFAULT_SONNET_MODEL: 'anthropic/claude-sonnet-4.6',
+			ANTHROPIC_DEFAULT_OPUS_MODEL: 'anthropic/claude-sonnet-4.6',
+		});
+		expect(config.isAnthropicCompatible).toBe(true);
+		expect(provider.translateModelIdForSdk('anthropic/claude-sonnet-4.6')).toBe('default');
+	});
+
+	it('uses session config overrides for key and base URL', () => {
+		process.env.OPENROUTER_API_KEY = 'sk-or-env';
+		const provider = new OpenRouterProvider();
+
+		const config = provider.buildSdkConfig('openrouter/auto', {
+			apiKey: 'sk-or-session',
+			baseUrl: 'https://example.test/api',
+		});
+
+		expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('sk-or-session');
+		expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://example.test/api');
+		expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('openrouter/auto');
+	});
+
+	it('maps tiers to OpenRouter Claude model names', () => {
+		const provider = new OpenRouterProvider();
+
+		expect(provider.getModelForTier('default')).toBe('anthropic/claude-sonnet-4.6');
+		expect(provider.getModelForTier('sonnet')).toBe('anthropic/claude-sonnet-4.6');
+		expect(provider.getModelForTier('opus')).toBe('anthropic/claude-opus-4.7');
+		expect(provider.getModelForTier('haiku')).toBe('anthropic/claude-haiku-4.5');
+	});
+
+	it('loads and maps models from OpenRouter model listing API', async () => {
+		process.env.OPENROUTER_API_KEY = 'sk-or-test';
+		const fetchMock = mock(async () => {
+			return new Response(
+				JSON.stringify({
+					data: [
+						{
+							id: 'anthropic/claude-sonnet-4.6',
+							name: 'Claude Sonnet 4.6',
+							description: 'A Claude model',
+							context_length: 200000,
+							created: 1770000000,
+						},
+						{
+							id: 'openai/gpt-5.4',
+							name: 'GPT-5.4',
+							context_length: 400000,
+						},
+					],
+				}),
+				{ status: 200 }
+			);
+		});
+		const provider = new OpenRouterProvider(process.env, fetchMock as unknown as typeof fetch);
+
+		const models = await provider.getModels();
+
+		expect(fetchMock).toHaveBeenCalledWith(OpenRouterProvider.MODELS_URL, {
+			headers: { Authorization: 'Bearer sk-or-test' },
+		});
+		expect(models.map((model) => model.id)).toEqual([
+			'anthropic/claude-sonnet-4.6',
+			'openai/gpt-5.4',
+		]);
+		expect(models[0].provider).toBe('openrouter');
+		expect(models[0].family).toBe('sonnet');
+		expect(models[1].family).toBe('gpt');
+	});
+
+	it('surfaces rejected API keys through auth status and hides models', async () => {
+		process.env.OPENROUTER_API_KEY = 'sk-or-test';
+		const fetchMock = mock(async () => new Response('Unauthorized', { status: 401 }));
+		const provider = new OpenRouterProvider(process.env, fetchMock as unknown as typeof fetch);
+
+		const models = await provider.getModels();
+		const authStatus = await provider.getAuthStatus();
+
+		expect(models).toEqual([]);
+		expect(authStatus.isAuthenticated).toBe(false);
+		expect(authStatus.error).toContain('rejected by OpenRouter');
+	});
+});
