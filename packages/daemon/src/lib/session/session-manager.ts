@@ -64,6 +64,7 @@ export class SessionManager {
 
 	// Cleanup state machine - prevents race conditions during shutdown
 	private cleanupState: CleanupState = CleanupState.IDLE;
+	private hardResetInFlight = new Map<string, Promise<{ success: boolean; error?: string }>>();
 
 	// Extracted modules
 	private sessionCache: SessionCache;
@@ -154,37 +155,63 @@ export class SessionManager {
 		);
 	}
 
-	private preserveResetCostBaseline(agentSession: AgentSession): void {
-		const session = agentSession.getSessionData();
-		const lastSdkCost = session.metadata?.lastSdkCost || 0;
-		if (lastSdkCost <= 0) return;
+	private preserveResetCostBaseline(
+		agentSession: AgentSession,
+		persistedSession: Session
+	): Session {
+		const currentSession = agentSession.getSessionData();
+		const currentMetadata = currentSession.metadata ?? {};
+		const lastSdkCost = currentMetadata.lastSdkCost || 0;
+		if (lastSdkCost <= 0) return persistedSession;
 
-		const costBaseline = session.metadata?.costBaseline || 0;
-		session.metadata = {
-			...session.metadata,
+		const costBaseline = currentMetadata.costBaseline || 0;
+		const metadata = {
+			...currentMetadata,
 			costBaseline: costBaseline + lastSdkCost,
 			lastSdkCost: 0,
 		};
-		this.db.updateSession(session.id, { metadata: session.metadata });
+		this.db.updateSession(currentSession.id, { metadata });
+		return { ...persistedSession, metadata };
 	}
 
-	private async hardResetAgentSession(
+	private hardResetAgentSession(
 		agentSession: AgentSession,
 		options: { restartQuery: boolean }
 	): Promise<{ success: boolean; error?: string }> {
 		const sessionId = agentSession.getSessionData().id;
+		const existingReset = this.hardResetInFlight.get(sessionId);
+		if (existingReset) {
+			return existingReset;
+		}
 
+		const resetPromise = this.performHardResetAgentSession(agentSession, options).finally(() => {
+			if (this.hardResetInFlight.get(sessionId) === resetPromise) {
+				this.hardResetInFlight.delete(sessionId);
+			}
+		});
+		this.hardResetInFlight.set(sessionId, resetPromise);
+
+		return resetPromise;
+	}
+
+	private async performHardResetAgentSession(
+		agentSession: AgentSession,
+		options: { restartQuery: boolean }
+	): Promise<{ success: boolean; error?: string }> {
+		const sessionId = agentSession.getSessionData().id;
 		try {
-			this.preserveResetCostBaseline(agentSession);
-
 			const persistedSession = this.db.getSession(sessionId);
 			if (!persistedSession) {
 				throw new Error(`Session not found: ${sessionId}`);
 			}
+			const sessionForFreshInstance = this.preserveResetCostBaseline(
+				agentSession,
+				persistedSession
+			);
 
 			await this.eventBus.emit('session.errorClear', { sessionId });
 
-			const freshSession = this.createAgentSessionFromSession(persistedSession, {
+			const freshSession = this.createAgentSessionFromSession(sessionForFreshInstance, {
 				autoReplayPendingMessages: false,
 			});
 			this.sessionCache.set(sessionId, freshSession);
@@ -544,6 +571,7 @@ export class SessionManager {
 
 			// Clear session cache
 			this.sessionCache.clear();
+			this.hardResetInFlight.clear();
 
 			// Transition to CLEANED state
 			this.cleanupState = CleanupState.CLEANED;

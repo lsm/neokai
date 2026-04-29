@@ -597,6 +597,28 @@ describe('SessionManager', () => {
 			} as Session;
 		}
 
+		it('keeps normal resetQuery behavior unless hardReset is explicitly requested', async () => {
+			const persistedSession = makePersistedSession();
+			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);
+
+			const oldSession = sessionManager.getSession('test-id');
+			expect(oldSession).toBeInstanceOf(AgentSession);
+			const lifecycleResetSpy = mock(async () => ({ success: true }));
+			// biome-ignore lint: test mock access
+			(oldSession as unknown as Record<string, unknown>).lifecycleManager = {
+				reset: lifecycleResetSpy,
+				cleanup: mock(async () => {}),
+			};
+
+			const result = await oldSession!.resetQuery({ restartQuery: true });
+
+			expect(result).toEqual({ success: true });
+			expect(lifecycleResetSpy).toHaveBeenCalledWith({ restartAfter: true });
+			expect(sessionManager.getSession('test-id')).toBe(oldSession);
+
+			await sessionManager.interruptInMemorySession('test-id');
+		});
+
 		it('replaces the cached AgentSession instance without recreating the DB row', async () => {
 			const persistedSession = makePersistedSession();
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);
@@ -605,7 +627,7 @@ describe('SessionManager', () => {
 			expect(oldSession).toBeInstanceOf(AgentSession);
 			const cleanupSpy = spyOn(oldSession!, 'cleanup');
 
-			const result = await oldSession!.resetQuery({ restartQuery: false });
+			const result = await oldSession!.resetQuery({ restartQuery: false, hardReset: true });
 			const freshSession = sessionManager.getSession('test-id');
 
 			expect(result).toEqual({ success: true });
@@ -618,6 +640,14 @@ describe('SessionManager', () => {
 			expect(mockDb.deleteMessagesAfter).not.toHaveBeenCalled();
 			expect(mockDb.deleteMessagesAtAndAfter).not.toHaveBeenCalled();
 			expect(cleanupSpy).toHaveBeenCalled();
+			expect(mockEventBus.emit).toHaveBeenCalledWith('session.errorClear', {
+				sessionId: 'test-id',
+			});
+			expect(mockMessageHub.event).toHaveBeenCalledWith(
+				'session.reset',
+				{ message: 'Agent has been reset and is ready for new messages' },
+				{ channel: 'session:test-id' }
+			);
 
 			await sessionManager.interruptInMemorySession('test-id');
 		});
@@ -632,12 +662,24 @@ describe('SessionManager', () => {
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);
 
 			const oldSession = sessionManager.getSession('test-id');
-			await oldSession!.resetQuery({ restartQuery: false });
+			await oldSession!.resetQuery({ restartQuery: false, hardReset: true });
 
-			expect(mockDb.updateSession).toHaveBeenCalled();
-			expect(persistedSession.metadata.costBaseline).toBeCloseTo(0.15, 10);
-			expect(persistedSession.metadata.lastSdkCost).toBe(0);
+			expect(mockDb.updateSession).toHaveBeenCalledWith(
+				'test-id',
+				expect.objectContaining({
+					metadata: expect.objectContaining({
+						lastSdkCost: 0,
+					}),
+				})
+			);
+			const updateSessionCalls = (mockDb.updateSession as ReturnType<typeof mock>).mock.calls;
+			expect(updateSessionCalls[0][1].metadata.costBaseline).toBeCloseTo(0.15, 10);
+			expect(persistedSession.metadata.costBaseline).toBe(0.1);
+			expect(persistedSession.metadata.lastSdkCost).toBe(0.05);
 			expect(persistedSession.sdkSessionId).toBe('sdk-session-123');
+			expect(
+				sessionManager.getSession('test-id')!.getSessionData().metadata.costBaseline
+			).toBeCloseTo(0.15, 10);
 
 			await sessionManager.interruptInMemorySession('test-id');
 		});
@@ -656,13 +698,52 @@ describe('SessionManager', () => {
 			});
 
 			try {
-				const result = await oldSession!.resetQuery({ restartQuery: true });
+				const result = await oldSession!.resetQuery({ restartQuery: true, hardReset: true });
 				const freshSession = sessionManager.getSession('test-id');
 
 				expect(result).toEqual({ success: true });
 				expect(freshSession).not.toBe(oldSession);
 				expect(replaySpy).toHaveBeenCalledTimes(1);
 				expect(replayedSession).toBe(freshSession);
+			} finally {
+				replaySpy.mockRestore();
+				await sessionManager.interruptInMemorySession('test-id');
+			}
+		});
+
+		it('coalesces concurrent hard resets for the same session', async () => {
+			const persistedSession = makePersistedSession();
+			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);
+
+			const oldSession = sessionManager.getSession('test-id');
+			expect(oldSession).toBeInstanceOf(AgentSession);
+			(mockDb.getSession as ReturnType<typeof mock>).mockClear();
+			const replaySpy = spyOn(
+				AgentSession.prototype,
+				'replayPendingMessagesForImmediateMode'
+			).mockImplementation(async () => {});
+
+			let releaseCleanup: () => void = () => {};
+			const cleanupPromise = new Promise<void>((resolve) => {
+				releaseCleanup = resolve;
+			});
+			const cleanupSpy = spyOn(oldSession!, 'cleanup').mockImplementation(async () => {
+				await cleanupPromise;
+			});
+
+			try {
+				const firstReset = oldSession!.resetQuery({ restartQuery: true, hardReset: true });
+				await Promise.resolve();
+				const secondReset = oldSession!.resetQuery({ restartQuery: true, hardReset: true });
+
+				releaseCleanup();
+				const [firstResult, secondResult] = await Promise.all([firstReset, secondReset]);
+
+				expect(firstResult).toEqual({ success: true });
+				expect(secondResult).toEqual({ success: true });
+				expect(cleanupSpy).toHaveBeenCalledTimes(1);
+				expect(replaySpy).toHaveBeenCalledTimes(1);
+				expect(sessionManager.getSession('test-id')).not.toBe(oldSession);
 			} finally {
 				replaySpy.mockRestore();
 				await sessionManager.interruptInMemorySession('test-id');

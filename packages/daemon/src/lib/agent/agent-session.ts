@@ -700,9 +700,10 @@ export class AgentSession
 
 	async resetQuery(options?: {
 		restartQuery?: boolean;
+		hardReset?: boolean;
 	}): Promise<{ success: boolean; error?: string }> {
 		const restartQuery = options?.restartQuery ?? true;
-		if (this.runtimeOptions.hardReset) {
+		if (options?.hardReset && this.runtimeOptions.hardReset) {
 			return await this.runtimeOptions.hardReset(this, { restartQuery });
 		}
 

@@ -618,7 +618,33 @@ describe('AgentSession', () => {
 			expect(result).toEqual({ success: true });
 		});
 
-		it('resetQuery should use hard reset runtime hook when provided', async () => {
+		it('resetQuery should keep lifecycle reset behavior unless hardReset is requested', async () => {
+			const resetSpy = mock(async () => ({ success: true }));
+			const hardResetSpy = mock(async () => ({ success: true }));
+			const sessionWithHardReset = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey,
+				undefined,
+				undefined,
+				undefined,
+				{ hardReset: hardResetSpy }
+			);
+			// biome-ignore lint: test mock access
+			(sessionWithHardReset as unknown as Record<string, unknown>).lifecycleManager = {
+				reset: resetSpy,
+			};
+
+			const result = await sessionWithHardReset.resetQuery({ restartQuery: true });
+
+			expect(hardResetSpy).not.toHaveBeenCalled();
+			expect(resetSpy).toHaveBeenCalledWith({ restartAfter: true });
+			expect(result).toEqual({ success: true });
+		});
+
+		it('resetQuery should use hard reset runtime hook when explicitly requested', async () => {
 			const hardResetSpy = mock(async () => ({ success: true }));
 			const sessionWithHardReset = new AgentSession(
 				mockSession,
@@ -632,7 +658,10 @@ describe('AgentSession', () => {
 				{ hardReset: hardResetSpy }
 			);
 
-			const result = await sessionWithHardReset.resetQuery({ restartQuery: true });
+			const result = await sessionWithHardReset.resetQuery({
+				restartQuery: true,
+				hardReset: true,
+			});
 
 			expect(hardResetSpy).toHaveBeenCalledWith(sessionWithHardReset, { restartQuery: true });
 			expect(result).toEqual({ success: true });
