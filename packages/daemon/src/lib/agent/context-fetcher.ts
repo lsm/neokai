@@ -77,9 +77,13 @@ export class ContextFetcher {
 		modelMetadata?: ContextMetadata
 	): ContextInfo {
 		const breakdown: Record<string, ContextCategoryBreakdown> = {};
-		const metadataCapacity = positiveInteger(modelMetadata?.contextWindow);
 		const sdkRawCapacity = positiveInteger(response.rawMaxTokens);
 		const sdkCapacity = positiveInteger(response.maxTokens);
+		const responseModel = response.model || undefined;
+		const metadataCapacity =
+			!responseModel || modelMetadata?.id === responseModel
+				? positiveInteger(modelMetadata?.contextWindow)
+				: undefined;
 		const capacity = sdkRawCapacity ?? sdkCapacity ?? metadataCapacity ?? 0;
 		for (const category of response.categories ?? []) {
 			// Compute percent relative to capacity (SDK response doesn't carry it).
