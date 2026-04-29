@@ -19,8 +19,17 @@ import type {
 	ContextCategoryBreakdown,
 	ContextMessageBreakdown,
 	ContextAPIUsage,
+	ModelInfo,
 } from '@neokai/shared';
 import { Logger } from '../logger';
+
+type ContextMetadata = Pick<ModelInfo, 'id' | 'provider' | 'contextWindow'> | null | undefined;
+
+function positiveInteger(value: unknown): number | undefined {
+	return typeof value === 'number' && Number.isFinite(value) && value > 0
+		? Math.floor(value)
+		: undefined;
+}
 
 export class ContextFetcher {
 	private logger: Logger;
@@ -37,12 +46,12 @@ export class ContextFetcher {
 	 * a best-effort side effect of turn handling and should never cause a turn
 	 * to fail.
 	 */
-	async fetch(query: Query | null): Promise<ContextInfo | null> {
+	async fetch(query: Query | null, modelMetadata?: ContextMetadata): Promise<ContextInfo | null> {
 		if (!query) return null;
 
 		try {
 			const response = await query.getContextUsage();
-			return ContextFetcher.toContextInfo(response);
+			return ContextFetcher.toContextInfo(response, modelMetadata);
 		} catch (error) {
 			this.logger.warn('query.getContextUsage() failed:', error);
 			return null;
@@ -63,14 +72,19 @@ export class ContextFetcher {
 	 * - `autoCompactThreshold`, `isAutoCompactEnabled`, and `messageBreakdown`
 	 *   pass through as optional fields.
 	 */
-	static toContextInfo(response: SDKControlGetContextUsageResponse): ContextInfo {
+	static toContextInfo(
+		response: SDKControlGetContextUsageResponse,
+		modelMetadata?: ContextMetadata
+	): ContextInfo {
 		const breakdown: Record<string, ContextCategoryBreakdown> = {};
-		const capacity =
-			response.rawMaxTokens > 0
-				? response.rawMaxTokens
-				: response.maxTokens > 0
-					? response.maxTokens
-					: 0;
+		const sdkRawCapacity = positiveInteger(response.rawMaxTokens);
+		const sdkCapacity = positiveInteger(response.maxTokens);
+		const responseModel = response.model || undefined;
+		const metadataCapacity =
+			!responseModel || modelMetadata?.id === responseModel
+				? positiveInteger(modelMetadata?.contextWindow)
+				: undefined;
+		const capacity = sdkRawCapacity ?? sdkCapacity ?? metadataCapacity ?? 0;
 		for (const category of response.categories ?? []) {
 			// Compute percent relative to capacity (SDK response doesn't carry it).
 			// Round to 1 decimal place to match the display the UI already expects.

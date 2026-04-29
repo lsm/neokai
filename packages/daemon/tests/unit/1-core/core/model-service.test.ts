@@ -18,6 +18,7 @@ import {
 	setModelsCache,
 	getSupportedModelsFromQuery,
 	initializeModels,
+	getSessionModelInfo,
 } from '../../../../src/lib/model-service';
 import type { ModelInfo } from '@neokai/shared';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
@@ -187,6 +188,34 @@ describe('Model Service', () => {
 			expect(model).toBeNull();
 		});
 
+		it('should resolve Codex static metadata when provider cache is unavailable', async () => {
+			clearModelsCache();
+
+			const model = await getModelInfo('gpt-5.5', 'global', 'anthropic-codex');
+
+			expect(model).not.toBeNull();
+			expect(model?.provider).toBe('anthropic-codex');
+			expect(model?.contextWindow).toBe(272000);
+		});
+
+		it('should resolve Codex aliases from static metadata', async () => {
+			clearModelsCache();
+
+			const model = await getModelInfo('codex-latest', 'global', 'anthropic-codex');
+
+			expect(model).not.toBeNull();
+			expect(model?.id).toBe('gpt-5.5');
+			expect(model?.contextWindow).toBe(272000);
+		});
+
+		it('should not resolve unknown Codex models to fallback metadata', async () => {
+			clearModelsCache();
+
+			const model = await getModelInfo('gpt-unknown', 'global', 'anthropic-codex');
+
+			expect(model).toBeNull();
+		});
+
 		it('should handle legacy model IDs', async () => {
 			// Legacy full model IDs should map to SDK short IDs
 			// Note: 'claude-sonnet-4-5-20250929' maps to 'sonnet' via LEGACY_MODEL_MAPPINGS
@@ -239,6 +268,39 @@ describe('Model Service', () => {
 		it('should return true for legacy model IDs', async () => {
 			const isValid = await isValidModel('claude-sonnet-4-5-20250929', 'global', 'anthropic');
 			expect(isValid).toBe(true);
+		});
+
+		it('should not validate Codex static metadata when the provider is unavailable', async () => {
+			clearModelsCache();
+
+			const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+			type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+			const registry = getProviderRegistry();
+			registry.register({
+				id: 'anthropic-codex',
+				getModels: async () => [],
+				isAvailable: async () => false,
+			} as ProviderLike);
+
+			const modelInfo = await getModelInfo('gpt-5.5', 'global', 'anthropic-codex');
+			expect(modelInfo?.contextWindow).toBe(272000);
+			expect(await isValidModel('gpt-5.5', 'global', 'anthropic-codex')).toBe(false);
+		});
+
+		it('should validate Codex static metadata only when the provider is available', async () => {
+			clearModelsCache();
+
+			const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+			type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+			const registry = getProviderRegistry();
+			registry.register({
+				id: 'anthropic-codex',
+				getModels: async () => [],
+				isAvailable: async () => true,
+			} as ProviderLike);
+
+			expect(await isValidModel('gpt-5.5', 'global', 'anthropic-codex')).toBe(true);
+			expect(await isValidModel('gpt-unknown', 'global', 'anthropic-codex')).toBe(false);
 		});
 	});
 
@@ -602,6 +664,32 @@ describe('Model Service', () => {
 			const model = await getModelInfo('default', 'global', 'anthropic');
 			expect(model).not.toBeNull();
 			expect(model?.id).toBe('sonnet');
+		});
+	});
+
+	describe('getSessionModelInfo', () => {
+		it('should resolve model metadata using the session provider', async () => {
+			clearModelsCache();
+
+			const model = await getSessionModelInfo({
+				config: {
+					model: 'gpt-5.5',
+					provider: 'anthropic-codex',
+				},
+			} as any);
+
+			expect(model?.id).toBe('gpt-5.5');
+			expect(model?.contextWindow).toBe(272000);
+		});
+
+		it('should return null when the session provider is missing', async () => {
+			const model = await getSessionModelInfo({
+				config: {
+					model: 'gpt-5.5',
+				},
+			} as any);
+
+			expect(model).toBeNull();
 		});
 	});
 
