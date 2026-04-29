@@ -262,6 +262,70 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
 			expect(notifications.some((event) => event.kind === 'task_retry')).toBe(true);
 		});
+
+		test('empty inbox with no active tool_use fails waiting_rebind execution forward to blocked', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Expired Orphan Recovery Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Expired Orphan Recovery Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'waiting_rebind', {
+				agentSessionId: 'dead-session',
+				result: 'waiting for orphaned tool_result recovery',
+			});
+			const recoveryRepo = new ToolContinuationRecoveryRepository(db);
+			recoveryRepo.ensureSchema();
+
+			const rt = makeRuntime({
+				taskAgentManager: {
+					rehydrate: async () => {},
+					isSessionAlive: () => false,
+					getAgentSessionById: () => null,
+					isExecutionSpawning: () => false,
+				} as any,
+			});
+			await rt.executeTick();
+
+			const reason = 'orphaned tool_result recovery expired before a continuation arrived';
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			const updatedRun = workflowRunRepo.getRun(run.id)!;
+			const updatedTask = taskRepo.getTask(task.id)!;
+			const runBlockedEvents = notifications.filter(
+				(event) => event.kind === 'workflow_run_blocked'
+			);
+			expect(updated.status).toBe('blocked');
+			expect(updated.result).toBe(reason);
+			expect(updated.data?.orphanedToolContinuation).toMatchObject({
+				state: 'failed',
+				retryCount: 0,
+				reason,
+			});
+			expect(updatedRun.status).toBe('blocked');
+			expect(updatedTask.status).toBe('blocked');
+			expect(updatedTask.blockReason).toBe('execution_failed');
+			expect(updatedTask.result).toBe(reason);
+			expect(recoveryRepo.listPendingInboxForExecution(execution.id)).toHaveLength(0);
+			expect(runBlockedEvents).toHaveLength(1);
+			expect(runBlockedEvents[0]).toMatchObject({
+				kind: 'workflow_run_blocked',
+				spaceId: SPACE_ID,
+				runId: run.id,
+				reason,
+			});
+		});
 	});
 
 	describe('runs with all node executions terminal and no completion signal', () => {

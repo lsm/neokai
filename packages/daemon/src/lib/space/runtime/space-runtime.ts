@@ -916,6 +916,10 @@ export class SpaceRuntime {
 		if (this.tickInFlight) return;
 		this.tickInFlight = true;
 		try {
+			if (hasSqlExec(this.config.db)) {
+				this.toolContinuationRepo.markExpired();
+			}
+
 			if (!this.rehydrated) {
 				await this.rehydrateExecutors();
 				// Run a stalled-run recovery pass right after rehydrate so the
