@@ -390,10 +390,11 @@ describe('SessionManager', () => {
 				workspacePath: '/test',
 			});
 
-			// Task #85: `deleteSession(sessionId)` has been removed. The two
-			// UI RPC handlers (`session.delete` and `room.delete`) now call
+			// Task #85: `deleteSession(sessionId)` has been removed. The
+			// `session.delete` RPC handler calls
 			// `deleteSessionResources(sessionId, trigger)`, which is the only
 			// path permitted to remove the sessions DB row + sdk_messages.
+			// Note: `room.delete` RPC is retired and not registered.
 			await sessionManager.deleteSessionResources('test-id', 'ui_session_delete');
 
 			expect(mockDb.deleteSession).toHaveBeenCalledWith('test-id');

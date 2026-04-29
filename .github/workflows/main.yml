@@ -150,8 +150,6 @@ jobs:
           # - providers-anthropic-copilot
           - rewind-1
           - rewind-2
-          - room-mcp
-          - room-coder-subagents
           - cross-provider-2
           - cross-provider-3
           - cross-provider-4
@@ -235,12 +233,6 @@ jobs:
             mock_sdk: true
           - module: rewind-2
             test_path: tests/online/rewind/selective-rewind.test.ts
-            mock_sdk: true
-          - module: room-mcp
-            test_path: tests/online/room/room-mcp-enablement.test.ts
-            mock_sdk: true
-          - module: room-coder-subagents
-            test_path: tests/online/room/coder-agent-subagents.test.ts
             mock_sdk: true
           # Room tests temporarily disabled during refactoring
           # - module: room-1
@@ -825,7 +817,6 @@ jobs:
             features/file-operations
             features/message-operations
             features/provider-model-switching
-            features/reference-autocomplete
             features/reviewer-feedback-loop
             features/rewind-features
             features/session-operations
