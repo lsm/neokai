@@ -45,6 +45,10 @@ async function readSSEEvents(
 		if (done) break;
 		raw += decoder.decode(value, { stream: true });
 	}
+	return parseSSEEvents(raw);
+}
+
+function parseSSEEvents(raw: string): Array<{ event: string; data: unknown }> {
 	const events: Array<{ event: string; data: unknown }> = [];
 	const blocks = raw.split('\n\n').filter((b) => b.trim());
 	for (const block of blocks) {
@@ -59,6 +63,32 @@ async function readSSEEvents(
 		}
 	}
 	return events;
+}
+
+function createCapturingController(): {
+	controller: ReadableStreamDefaultController<Uint8Array>;
+	events: () => Array<{ event: string; data: unknown }>;
+	chunks: string[];
+	isClosed: () => boolean;
+} {
+	const decoder = new TextDecoder();
+	const chunks: string[] = [];
+	let closed = false;
+	const controller = {
+		enqueue: (chunk: Uint8Array) => {
+			chunks.push(decoder.decode(chunk, { stream: true }));
+		},
+		close: () => {
+			closed = true;
+		},
+	} as unknown as ReadableStreamDefaultController<Uint8Array>;
+
+	return {
+		controller,
+		chunks,
+		events: () => parseSSEEvents(chunks.join('')),
+		isClosed: () => closed,
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -836,6 +866,121 @@ describe('Bridge HTTP server', () => {
 	// Streaming error — drainToSSE emits Anthropic error SSE event (tests real code path)
 	// -------------------------------------------------------------------------
 
+	it('drainToSSE waits to send message_start until the first content event', async () => {
+		let releaseFirstEvent!: () => void;
+		const firstEventReady = new Promise<void>((resolve) => {
+			releaseFirstEvent = resolve;
+		});
+		async function* delayedGen(): AsyncGenerator<BridgeEvent> {
+			await firstEventReady;
+			yield { type: 'text_delta', text: 'hello' };
+			yield { type: 'turn_done', inputTokens: 0, outputTokens: 2 };
+		}
+
+		const mockSession = { kill: () => {} } as unknown as BridgeSession;
+		const { controller, events, chunks } = createCapturingController();
+		const drainPromise = drainToSSE(
+			delayedGen(),
+			mockSession,
+			'test-model',
+			new Map(),
+			controller,
+			5000,
+			'test-session',
+			() => {}
+		);
+
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect(chunks).toHaveLength(0);
+
+		releaseFirstEvent();
+		await expect(drainPromise).resolves.toEqual({ type: 'completed' });
+
+		const parsed = events();
+		const messageStartIndex = parsed.findIndex((e) => e.event === 'message_start');
+		const contentStartIndex = parsed.findIndex((e) => e.event === 'content_block_start');
+		expect(messageStartIndex).toBeGreaterThanOrEqual(0);
+		expect(contentStartIndex).toBe(messageStartIndex + 1);
+	});
+
+	it('drainToSSE returns a subprocess crash result before content is committed', async () => {
+		async function* errorGen(): AsyncGenerator<BridgeEvent> {
+			yield { type: 'error', message: 'codex app-server subprocess closed unexpectedly' };
+		}
+
+		let killCalled = false;
+		let onErrorCalled = false;
+		const mockSession = {
+			kill: () => {
+				killCalled = true;
+			},
+		} as unknown as BridgeSession;
+		const { controller, chunks, isClosed } = createCapturingController();
+
+		const result = await drainToSSE(
+			errorGen(),
+			mockSession,
+			'test-model',
+			new Map(),
+			controller,
+			5000,
+			'test-session',
+			() => {},
+			() => {
+				onErrorCalled = true;
+			}
+		);
+
+		expect(result).toEqual({
+			type: 'error',
+			message: 'codex app-server subprocess closed unexpectedly',
+			isSubprocessCrash: true,
+		});
+		expect(chunks).toHaveLength(0);
+		expect(isClosed()).toBe(false);
+		expect(killCalled).toBe(true);
+		expect(onErrorCalled).toBe(true);
+	});
+
+	it('drainToSSE sends error SSE normally when subprocess crashes after content', async () => {
+		async function* errorGen(): AsyncGenerator<BridgeEvent> {
+			yield { type: 'text_delta', text: 'partial' };
+			yield { type: 'error', message: 'codex app-server subprocess closed unexpectedly' };
+		}
+
+		let killCalled = false;
+		const mockSession = {
+			kill: () => {
+				killCalled = true;
+			},
+		} as unknown as BridgeSession;
+		const { controller, events, isClosed } = createCapturingController();
+
+		const result = await drainToSSE(
+			errorGen(),
+			mockSession,
+			'test-model',
+			new Map(),
+			controller,
+			5000,
+			'test-session',
+			() => {}
+		);
+
+		expect(result).toEqual({
+			type: 'error',
+			message: 'codex app-server subprocess closed unexpectedly',
+			isSubprocessCrash: false,
+		});
+		expect(killCalled).toBe(true);
+		expect(isClosed()).toBe(true);
+
+		const errorEvents = events().filter((e) => e.event === 'error');
+		expect(errorEvents).toHaveLength(1);
+		const data = errorEvents[0].data as { error: { message: string } };
+		expect(data.error.message).toBe('codex app-server subprocess closed unexpectedly');
+	});
+
 	it('drainToSSE emits an Anthropic error SSE event on BridgeSession error', async () => {
 		async function* errorGen(): AsyncGenerator<BridgeEvent> {
 			yield { type: 'text_delta', text: 'partial' };
@@ -1124,7 +1269,7 @@ describe('drainToSSE controller lifecycle handling', () => {
 				'test-session',
 				() => {}
 			)
-		).resolves.toBeUndefined();
+		).resolves.toMatchObject({ type: 'error', isSubprocessCrash: false });
 		expect(killCalled).toBe(true);
 	});
 });
@@ -1486,6 +1631,167 @@ describe('tool_choice warning — codex bridge', () => {
 		const events = await readSSEEvents(resp.body);
 		const types = events.map((e) => e.event);
 		expect(types).toContain('message_stop');
+	});
+
+	it('retries a new turn once when the subprocess crashes before output', async () => {
+		const warnSpy = spyOn(Logger.prototype, 'warn');
+		let attempt = 0;
+		startTurnSpy.mockImplementation(
+			// eslint-disable-next-line @typescript-eslint/require-await
+			async function* (text: string): AsyncGenerator<BridgeEvent> {
+				attempt++;
+				if (attempt === 1) {
+					yield { type: 'error', message: 'codex app-server subprocess closed unexpectedly' };
+					return;
+				}
+				yield { type: 'text_delta', text: `recovered:${text.includes('Retry me')}` };
+				yield { type: 'turn_done', inputTokens: 8, outputTokens: 3 };
+			}
+		);
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: 'Bearer codex-bridge-retry-success',
+			},
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'Retry me' }],
+				stream: true,
+			}),
+		});
+
+		expect(resp.ok).toBe(true);
+		const events = await readSSEEvents(resp.body);
+		const types = events.map((e) => e.event);
+		expect(types.filter((type) => type === 'message_start')).toHaveLength(1);
+		expect(types).not.toContain('error');
+		expect(startTurnSpy).toHaveBeenCalledTimes(2);
+		expect(connCreateSpy).toHaveBeenCalledTimes(2);
+		expect(initializeSpy).toHaveBeenCalledTimes(2);
+
+		const text = events
+			.filter((e) => e.event === 'content_block_delta')
+			.map((e) => (e.data as { delta?: { text?: string } }).delta?.text ?? '')
+			.join('');
+		expect(text).toBe('recovered:true');
+
+		const warnMessages = warnSpy.mock.calls.map((args) => args.map(String).join(' '));
+		expect(warnMessages.some((m) => m.includes('retrying turn with a fresh session'))).toBe(true);
+		warnSpy.mockRestore();
+	});
+
+	it('keeps the persistent session reserved while the retry session initializes', async () => {
+		let markRetryInitializeStarted!: () => void;
+		let resolveRetryInitialize!: () => void;
+		const retryInitializeStarted = new Promise<void>((resolve) => {
+			markRetryInitializeStarted = resolve;
+		});
+		const retryInitializeRelease = new Promise<void>((resolve) => {
+			resolveRetryInitialize = resolve;
+		});
+
+		let initializeCalls = 0;
+		initializeSpy.mockImplementation(() => {
+			initializeCalls++;
+			if (initializeCalls === 2) {
+				markRetryInitializeStarted();
+				return retryInitializeRelease;
+			}
+			return Promise.resolve();
+		});
+
+		let attempt = 0;
+		startTurnSpy.mockImplementation(
+			// eslint-disable-next-line @typescript-eslint/require-await
+			async function* (): AsyncGenerator<BridgeEvent> {
+				attempt++;
+				if (attempt === 1) {
+					yield { type: 'error', message: 'codex app-server subprocess closed unexpectedly' };
+					return;
+				}
+				yield { type: 'text_delta', text: 'recovered' };
+				yield { type: 'turn_done', inputTokens: 4, outputTokens: 1 };
+			}
+		);
+
+		const headers = {
+			'Content-Type': 'application/json',
+			Authorization: 'Bearer codex-bridge-retry-reserved',
+		};
+		const body = JSON.stringify({
+			model: 'codex-1',
+			messages: [{ role: 'user', content: 'Retry while busy' }],
+			stream: true,
+		});
+
+		const respPromise = fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body,
+		});
+
+		await retryInitializeStarted;
+
+		const concurrentResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body,
+		});
+		expect(concurrentResp.status).toBe(409);
+		const concurrentBody = (await concurrentResp.json()) as {
+			error?: { message?: string };
+		};
+		expect(concurrentBody.error?.message).toBe('A turn is already in progress for this session');
+		expect(connCreateSpy).toHaveBeenCalledTimes(2);
+		expect(initializeSpy).toHaveBeenCalledTimes(2);
+
+		resolveRetryInitialize();
+		const resp = await respPromise;
+		expect(resp.ok).toBe(true);
+		const eventsPromise = readSSEEvents(resp.body);
+		const events = await eventsPromise;
+		const text = events
+			.filter((e) => e.event === 'content_block_delta')
+			.map((e) => (e.data as { delta?: { text?: string } }).delta?.text ?? '')
+			.join('');
+		expect(text).toBe('recovered');
+	});
+
+	it('sends an error SSE after the one subprocess crash retry is exhausted', async () => {
+		startTurnSpy.mockImplementation(
+			// eslint-disable-next-line @typescript-eslint/require-await
+			async function* (): AsyncGenerator<BridgeEvent> {
+				yield { type: 'error', message: 'codex app-server subprocess closed unexpectedly' };
+			}
+		);
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: 'Bearer codex-bridge-retry-exhausted',
+			},
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'Retry once' }],
+				stream: true,
+			}),
+		});
+
+		expect(resp.ok).toBe(true);
+		const events = await readSSEEvents(resp.body);
+		const types = events.map((e) => e.event);
+		expect(startTurnSpy).toHaveBeenCalledTimes(2);
+		expect(connCreateSpy).toHaveBeenCalledTimes(2);
+		expect(types.filter((type) => type === 'message_start')).toHaveLength(1);
+		expect(types.filter((type) => type === 'error')).toHaveLength(1);
+		expect(types.at(-1)).toBe('message_stop');
+
+		const errorEvent = events.find((e) => e.event === 'error');
+		const data = errorEvent?.data as { error?: { message?: string } };
+		expect(data.error?.message).toBe('codex app-server subprocess closed unexpectedly');
 	});
 
 	it('resolves bridge model aliases to canonical Codex model IDs', async () => {
