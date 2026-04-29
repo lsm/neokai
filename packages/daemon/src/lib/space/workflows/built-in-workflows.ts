@@ -48,6 +48,7 @@ const FULLSTACK_QA_NODE = 'tpl-fullstack-qa';
 const PR_READY_BASH_SCRIPT = [
 	'# Prefer explicit PR URL from gate data JSON when available; fallback to current branch.',
 	'PR_TARGET=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+	'# When pr_url is supplied, validate that exact PR rather than rediscovering via branch filters.',
 	'if [ -n "$PR_TARGET" ]; then',
 	'  PR_VIEW_SCOPE="$PR_TARGET"',
 	'  if ! PR_JSON=$(gh pr view "$PR_TARGET" --json url,state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
@@ -521,7 +522,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'pr_url',
 					type: 'string',
-					writers: ['Coding'],
+					writers: ['coder'],
 					check: { op: 'exists' },
 				},
 			],
