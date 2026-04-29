@@ -12,11 +12,6 @@ import { connectionManager } from './lib/connection-manager.ts';
 import { initializeApplicationState } from './lib/state.ts';
 import {
 	currentSessionIdSignal,
-	currentRoomIdSignal,
-	currentRoomSessionIdSignal,
-	currentRoomTaskIdSignal,
-	currentRoomGoalIdSignal,
-	currentRoomAgentActiveSignal,
 	currentSpaceIdSignal,
 	currentSpaceSessionIdSignal,
 	currentSpaceTaskIdSignal,
@@ -32,12 +27,8 @@ import { sessionStore } from './lib/session-store.ts';
 import {
 	initializeRouter,
 	navigateToSession,
-	navigateToRoom,
-	navigateToRoomAgent,
-	navigateToRoomSession,
-	navigateToRoomTask,
-	navigateToRoomMission,
 	navigateToHome,
+	navigateToSessions,
 	navigateToSpacesPage,
 	navigateToSpace,
 	navigateToSpaceConfigure,
@@ -46,13 +37,9 @@ import {
 	navigateToSpaceAgent,
 	navigateToSpaceSession,
 	navigateToSpaceTask,
+	navigateToInbox,
 	navigateToSettings,
 	createSessionPath,
-	createRoomPath,
-	createRoomAgentPath,
-	createRoomSessionPath,
-	createRoomTaskPath,
-	createRoomMissionPath,
 	createSpacePath,
 	createSpaceConfigurePath,
 	createSpaceSessionsPath,
@@ -115,15 +102,11 @@ export function App() {
 
 		init();
 
-		// STEP 4: Sync URL when session/room/space changes from external sources
+		// STEP 4: Sync URL when session/space changes from external sources
 		// (e.g., session created/deleted in another tab)
 		// This effect watches for signal changes and updates the URL
 		return effect(() => {
 			const sessionId = currentSessionIdSignal.value;
-			const roomId = currentRoomIdSignal.value;
-			const roomSessionId = currentRoomSessionIdSignal.value;
-			const roomTaskId = currentRoomTaskIdSignal.value;
-			const roomGoalId = currentRoomGoalIdSignal.value;
 			const spaceId = currentSpaceIdSignal.value;
 			const spaceSessionId = currentSpaceSessionIdSignal.value;
 			const spaceTaskId = currentSpaceTaskIdSignal.value;
@@ -133,11 +116,6 @@ export function App() {
 			const spaceTaskViewTab = currentSpaceTaskViewTabSignal.value;
 			const navSection = navSectionSignal.value;
 			const currentPath = window.location.pathname;
-			// Detect agent routes: new signal-based detection, with legacy session ID fallback
-			const isAgentActive = currentRoomAgentActiveSignal.value;
-			const isAgentRoute =
-				!!(roomId && isAgentActive) ||
-				!!(roomSessionId && roomId && roomSessionId === `room:chat:${roomId}`);
 			const isSpaceAgentRoute = !!(
 				spaceSessionId &&
 				spaceId &&
@@ -169,23 +147,13 @@ export function App() {
 											)
 										: spaceId
 											? createSpacePath(spaceId)
-											: roomTaskId && roomId
-												? createRoomTaskPath(roomId, roomTaskId)
-												: isAgentRoute
-													? createRoomAgentPath(roomId)
-													: roomSessionId && roomId
-														? createRoomSessionPath(roomId, roomSessionId)
-														: roomGoalId && roomId
-															? createRoomMissionPath(roomId, roomGoalId)
-															: roomId
-																? createRoomPath(roomId)
-																: navSection === 'spaces'
-																	? '/spaces'
-																	: navSection === 'chats'
-																		? '/sessions'
-																		: navSection === 'settings'
-																			? '/settings'
-																			: '/';
+											: navSection === 'chats'
+												? '/sessions'
+												: navSection === 'settings'
+													? '/settings'
+													: navSection === 'inbox'
+														? '/inbox'
+														: '/spaces';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
@@ -193,7 +161,12 @@ export function App() {
 				if (sessionId) {
 					navigateToSession(sessionId, true); // replace=true to avoid polluting history
 				} else if (spaceTaskId && spaceId) {
-					navigateToSpaceTask(spaceId, spaceTaskId, undefined, true);
+					navigateToSpaceTask(
+						spaceId,
+						spaceTaskId,
+						spaceTaskViewTab !== 'thread' ? spaceTaskViewTab : undefined,
+						true
+					);
 				} else if (isSpaceAgentRoute) {
 					navigateToSpaceAgent(spaceId, true);
 				} else if (spaceSessionId && spaceId) {
@@ -206,22 +179,14 @@ export function App() {
 					navigateToSpaceConfigure(spaceId, undefined, true);
 				} else if (spaceId) {
 					navigateToSpace(spaceId, true);
-				} else if (roomTaskId && roomId) {
-					navigateToRoomTask(roomId, roomTaskId, true);
-				} else if (isAgentRoute) {
-					navigateToRoomAgent(roomId, true);
-				} else if (roomSessionId && roomId) {
-					navigateToRoomSession(roomId, roomSessionId, true);
-				} else if (roomGoalId && roomId) {
-					navigateToRoomMission(roomId, roomGoalId, true);
-				} else if (roomId) {
-					navigateToRoom(roomId, true);
 				} else if (navSection === 'spaces') {
 					navigateToSpacesPage(true);
 				} else if (navSection === 'chats') {
-					// Already at /sessions or no navigation needed
+					navigateToSessions(true);
 				} else if (navSection === 'settings') {
 					navigateToSettings(true);
+				} else if (navSection === 'inbox') {
+					navigateToInbox(true);
 				} else {
 					navigateToHome(true);
 				}

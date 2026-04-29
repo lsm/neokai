@@ -7,9 +7,8 @@
  *
  * Signal: `entries` — Map<serverId, SpaceMcpEntry>
  *
- * Mirrors `RoomMcpStore` but resolves the effective enabled state server-side
- * (the SQL's COALESCE) so the UI can render straight from the Map without
- * re-computing overrides + globals.
+ * Resolves the effective enabled state server-side (the SQL's COALESCE) so the
+ * UI can render straight from the Map without re-computing overrides + globals.
  */
 
 import { signal } from '@preact/signals';

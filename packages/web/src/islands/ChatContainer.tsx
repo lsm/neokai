@@ -23,18 +23,13 @@ import type {
 	ResolvedQuestion,
 	SessionFeatures,
 } from '@neokai/shared';
-import {
-	DEFAULT_LOBBY_FEATURES,
-	DEFAULT_ROOM_CHAT_FEATURES,
-	DEFAULT_WORKER_FEATURES,
-} from '@neokai/shared';
+import { DEFAULT_LOBBY_FEATURES, DEFAULT_WORKER_FEATURES } from '@neokai/shared';
 import type { SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useSignalEffect } from '@preact/signals';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 // Components
 import { ChatComposer } from '../components/ChatComposer.tsx';
-import type { RoomContext } from '../components/ChatHeader.tsx';
 import { ChatHeader } from '../components/ChatHeader.tsx';
 import type { ErrorBannerAction } from '../components/ErrorBanner.tsx';
 import { ErrorBanner } from '../components/ErrorBanner.tsx';
@@ -62,7 +57,6 @@ import { updateSession } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager';
 import { borderColors } from '../lib/design-tokens';
 import { MIN_MESSAGES_BOTTOM_PADDING_PX } from '../lib/layout-metrics.ts';
-import { lobbyStore } from '../lib/lobby-store.ts';
 import {
 	clearOverlayHighlightMessageId,
 	navigateToSettings,
@@ -80,8 +74,6 @@ import { ErrorCategory } from '../types/error.ts';
 interface ChatContainerProps {
 	sessionId: string;
 	readonly?: boolean;
-	/** When true, suppress the room breadcrumb in ChatHeader (used when embedded in Room tab) */
-	hideRoomBreadcrumb?: boolean;
 	/**
 	 * When provided, the header's left slot renders a back-arrow button that
 	 * invokes this callback instead of the default mobile-menu button. Used
@@ -113,7 +105,6 @@ interface ChatContainerProps {
 export default function ChatContainer({
 	sessionId,
 	readonly = false,
-	hideRoomBreadcrumb = false,
 	onBack,
 	highlightMessageId,
 	pendingAgent,
@@ -425,9 +416,6 @@ export default function ChatContainer({
 			return session.config.features;
 		}
 		// Determine default features based on session ID format
-		if (sessionId.startsWith('room:chat:')) {
-			return DEFAULT_ROOM_CHAT_FEATURES;
-		}
 		if (sessionId.startsWith('space:chat:')) {
 			// Space agent sessions — no archive/delete (managed by space lifecycle)
 			return { ...DEFAULT_WORKER_FEATURES, archive: false };
@@ -437,17 +425,6 @@ export default function ChatContainer({
 		}
 		return DEFAULT_WORKER_FEATURES;
 	}, [session?.config?.features, sessionId]);
-
-	// Compute room context breadcrumb for sessions inside a room
-	// Suppressed when embedded in Room Chat tab (hideRoomBreadcrumb=true)
-	const roomContext: RoomContext | undefined = useMemo(() => {
-		if (hideRoomBreadcrumb) return undefined;
-		const roomId = session?.context?.roomId;
-		if (!roomId) return undefined;
-		const room = lobbyStore.rooms.value.find((r) => r.id === roomId);
-		if (!room) return undefined;
-		return { roomName: room.name, roomId: room.id };
-	}, [session?.context?.roomId, hideRoomBreadcrumb]);
 
 	// Sync context from sessionStore
 	useSignalEffect(() => {
@@ -683,7 +660,7 @@ export default function ChatContainer({
 
 	// Select session on mount or when sessionId changes
 	// This is needed when ChatContainer is used outside the main navigation flow
-	// (e.g., in Room.tsx for room chat with sessionId="room:{roomId}")
+	// (e.g., space agent overlays).
 	// Skip when in pending-agent mode — no real session exists yet.
 	useEffect(() => {
 		if (pendingAgent) return;
@@ -1122,7 +1099,6 @@ export default function ChatContainer({
 				session={session}
 				displayStats={displayStats}
 				features={features}
-				roomContext={roomContext}
 				onToolsClick={toolsModal.open}
 				onInfoClick={infoModal.open}
 				onExportClick={sessionActions.handleExportChat}
