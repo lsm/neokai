@@ -463,6 +463,16 @@ function responseUsage(response: Record<string, unknown> | undefined): {
 	};
 }
 
+function streamErrorMessage(event: OpenAIStreamEvent): string {
+	if (typeof event.error?.message === 'string') return event.error.message;
+	const responseError = event.response?.error;
+	if (responseError && typeof responseError === 'object' && !Array.isArray(responseError)) {
+		const message = (responseError as Record<string, unknown>).message;
+		if (typeof message === 'string') return message;
+	}
+	return 'OpenAI Responses API error';
+}
+
 function parseJsonObject(text: string): Record<string, unknown> | undefined {
 	try {
 		const parsed = JSON.parse(text) as unknown;
@@ -671,7 +681,7 @@ async function streamResponsesToAnthropic({
 			if (event.type === 'response.failed' || event.type === 'error') {
 				ensureStarted();
 				closeTextBlock();
-				send(errorSSE('api_error', event.error?.message ?? 'OpenAI Responses API error'));
+				send(errorSSE('api_error', streamErrorMessage(event)));
 				send(messageStopSSE());
 				controller.close();
 				return;

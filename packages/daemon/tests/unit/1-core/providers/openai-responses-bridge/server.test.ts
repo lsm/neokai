@@ -689,6 +689,86 @@ describe('openai-responses-bridge server', () => {
 		});
 	});
 
+	it('maps upstream streaming failures to Anthropic SSE errors', async () => {
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async () =>
+				sse([
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: 'partial' },
+					},
+					{
+						event: 'response.failed',
+						data: {
+							type: 'response.failed',
+							response: {
+								id: 'resp_failed',
+								error: { message: 'stream failed upstream' },
+							},
+						},
+					},
+				]),
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'hi' }],
+			}),
+		});
+
+		const events = await readSSEEvents(resp.body);
+		expect(resp.status).toBe(200);
+		expect(textDeltaEvents(events).join('')).toBe('partial');
+		expect(events.find((event) => event.event === 'error')?.data).toMatchObject({
+			type: 'error',
+			error: { type: 'api_error', message: 'stream failed upstream' },
+		});
+		expect(events.at(-1)?.event).toBe('message_stop');
+		expect(messageDeltaEvent(events)).toBeUndefined();
+	});
+
+	it('maps upstream streaming error events to Anthropic SSE errors', async () => {
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async () =>
+				sse([
+					{
+						event: 'error',
+						data: {
+							type: 'error',
+							error: { message: 'invalid stream request' },
+						},
+					},
+				]),
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'hi' }],
+			}),
+		});
+
+		const events = await readSSEEvents(resp.body);
+		expect(resp.status).toBe(200);
+		expect(events.find((event) => event.event === 'error')?.data).toMatchObject({
+			type: 'error',
+			error: { type: 'api_error', message: 'invalid stream request' },
+		});
+		expect(events.at(-1)?.event).toBe('message_stop');
+		expect(messageDeltaEvent(events)).toBeUndefined();
+	});
+
 	it('maps upstream 429 responses to Anthropic rate_limit_error', async () => {
 		server = createOpenAIResponsesBridgeServer({
 			auth: { source: 'api_key', apiKey: 'sk-test' },
@@ -817,5 +897,42 @@ describe('openai-responses-bridge server', () => {
 			'Bearer fresh-token:acct_new',
 			'Bearer fresh-token:acct_new',
 		]);
+	});
+
+	it('propagates the original 401 when ChatGPT OAuth refresh is unavailable', async () => {
+		let refreshAttempts = 0;
+		server = createOpenAIResponsesBridgeServer({
+			auth: {
+				source: 'chatgpt_oauth',
+				apiKey: 'expired-token',
+				accountId: 'acct_old',
+				refreshAuthTokens: async () => {
+					refreshAttempts += 1;
+					return null;
+				},
+			},
+			models,
+			fetchImpl: async () =>
+				new Response(JSON.stringify({ error: { message: 'expired' } }), {
+					status: 401,
+					headers: { 'Content-Type': 'application/json' },
+				}),
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'hi' }],
+			}),
+		});
+
+		const body = (await resp.json()) as { error: { type: string; message: string } };
+		expect(refreshAttempts).toBe(1);
+		expect(resp.status).toBe(401);
+		expect(body.error.type).toBe('authentication_error');
+		expect(body.error.message).toBe('expired');
 	});
 });
