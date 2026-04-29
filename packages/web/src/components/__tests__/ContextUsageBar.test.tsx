@@ -574,6 +574,25 @@ describe('ContextUsageBar', () => {
 			// Should calculate 20000/200000 * 100 = 10%
 			expect(container.textContent).toContain('10.0%');
 		});
+
+		it('should avoid non-finite percentages when percent and capacity are unavailable', () => {
+			const usageWithUnknownCapacity: ContextInfo = {
+				totalUsed: 50000,
+				totalCapacity: 0,
+				percentUsed: 25,
+				breakdown: {
+					Messages: { tokens: 20000, percent: null as unknown as number },
+				},
+			};
+			const { container } = render(<ContextUsageBar contextUsage={usageWithUnknownCapacity} />);
+
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
+
+			expect(container.textContent).toContain('0.0%');
+			expect(container.textContent).not.toContain('Infinity');
+			expect(container.textContent).not.toContain('NaN');
+		});
 	});
 
 	describe('Autocompact Buffer Zone', () => {

@@ -386,7 +386,9 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
 														const percentage =
 															data.percent !== null
 																? data.percent
-																: (data.tokens / contextCapacity) * 100;
+																: contextCapacity > 0
+																	? (data.tokens / contextCapacity) * 100
+																	: 0;
 														return (
 															<div key={category} class="flex items-center gap-2 text-xs">
 																{/* Colored square icon */}

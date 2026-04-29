@@ -53,7 +53,9 @@ import {
 	getSDKSessionFilePath,
 	messageUuidExistsInSessionFile,
 } from '../sdk-session-file-manager';
-import { getModelAutoCompactTokenLimit } from '../providers/codex-anthropic-bridge/model-context-windows';
+import { requireModelContextWindow } from '../providers/codex-anthropic-bridge/model-context-windows';
+
+export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
 
 /**
  * Provider-specific SDK settings overrides.
@@ -63,13 +65,19 @@ export function buildProviderSettings(providerId: string, modelId?: string): Opt
 		return undefined;
 	}
 
-	const autoCompactWindow = modelId ? getModelAutoCompactTokenLimit(modelId) : undefined;
-	if (!autoCompactWindow) {
+	if (!modelId) {
 		throw new Error(`Unknown Codex model auto-compact window: ${modelId ?? 'missing model'}`);
+	}
+	try {
+		requireModelContextWindow(modelId);
+	} catch {
+		throw new Error(`Unknown Codex model auto-compact window: ${modelId}`);
 	}
 
 	return {
-		autoCompactWindow,
+		// Keep SDK-driven compaction disabled for the Codex bridge. The bridge uses
+		// a single persistent Codex turn per session and rejects overlapping turns.
+		autoCompactWindow: CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
 	};
 }
 
