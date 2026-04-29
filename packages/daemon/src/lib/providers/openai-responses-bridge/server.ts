@@ -110,7 +110,7 @@ type ResponsesRequest = {
 	max_output_tokens?: number;
 	store: false;
 	stream: true;
-	parallel_tool_calls: false;
+	parallel_tool_calls?: false;
 };
 
 type OpenAIStreamEvent = {
@@ -389,12 +389,13 @@ function buildResponsesRequest(
 	body: AnthropicRequest,
 	model: string,
 	continuation?: { previousResponseId: string; input: ResponsesInputItem[] },
-	options: { includeMaxOutputTokens?: boolean } = {}
+	options: { includeMaxOutputTokens?: boolean; includeParallelToolCalls?: boolean } = {}
 ): ResponsesRequest {
 	const instructions = extractSystemText(body.system) || undefined;
 	const tools = toolsToResponsesTools(body.tools);
 	const tool_choice = toolChoiceToResponsesToolChoice(body.tool_choice);
 	const includeMaxOutputTokens = options.includeMaxOutputTokens ?? true;
+	const includeParallelToolCalls = options.includeParallelToolCalls ?? true;
 	return {
 		model,
 		...(instructions ? { instructions } : {}),
@@ -407,7 +408,7 @@ function buildResponsesRequest(
 			: {}),
 		store: false,
 		stream: true,
-		parallel_tool_calls: false,
+		...(includeParallelToolCalls ? { parallel_tool_calls: false } : {}),
 	};
 }
 
@@ -760,6 +761,12 @@ export function createOpenAIResponsesBridgeServer(
 	const continuationTtlMs = config.continuationTtlMs ?? DEFAULT_RESPONSE_CONTINUATION_TTL_MS;
 	const continuations = new Map<string, ResponseContinuation>();
 	let resolvedAuth: ResolvedResponsesAuth | undefined;
+	// ChatGPT Codex endpoint rejects max_output_tokens and parallel_tool_calls.
+	const isChatgptOAuth = config.auth.source === 'chatgpt_oauth' && !config.openAIBaseUrl;
+	const buildOpts = {
+		includeMaxOutputTokens: !isChatgptOAuth,
+		includeParallelToolCalls: !isChatgptOAuth,
+	};
 
 	const deleteContinuation = (sessionId: string, callId: string): void => {
 		const key = continuationKey(sessionId, callId);
@@ -852,10 +859,9 @@ export function createOpenAIResponsesBridgeServer(
 
 			const model = resolveModelId(body.model, config.modelAliases);
 			const sessionId = extractSessionId(req);
-			const continuation = resolveContinuation(sessionId, body.messages, continuations);
-			const requestBody = buildResponsesRequest(body, model, continuation, {
-				includeMaxOutputTokens: config.auth.source !== 'chatgpt_oauth',
-			});
+			const resolvedContinuation = resolveContinuation(sessionId, body.messages, continuations);
+			let continuation = resolvedContinuation;
+			const requestBody = buildResponsesRequest(body, model, continuation, buildOpts);
 			const upstreamUrl = `${baseUrl.replace(/\/$/, '')}/responses`;
 			let openAIResponse: Response;
 			try {
@@ -875,6 +881,26 @@ export function createOpenAIResponsesBridgeServer(
 						});
 					}
 				}
+				if (continuation && !openAIResponse.ok && openAIResponse.status === 400) {
+					const errorText = await openAIResponse.text();
+					if (errorText.includes('previous_response_id')) {
+						logger.warn(
+							'openai-responses: endpoint rejects previous_response_id, retrying with full history'
+						);
+						openAIResponse = await fetchImpl(upstreamUrl, {
+							method: 'POST',
+							headers: buildOpenAIHeaders(config.auth, resolvedAuth),
+							body: JSON.stringify(buildResponsesRequest(body, model, undefined, buildOpts)),
+						});
+						continuation = undefined;
+					} else {
+						return sendJsonError(
+							openAIResponse.status,
+							mapOpenAIStatusToAnthropicError(openAIResponse.status),
+							parseOpenAIError(openAIResponse.status, errorText)
+						);
+					}
+				}
 			} catch (err) {
 				logger.warn('openai-responses: upstream request failed:', err);
 				return sendJsonError(
@@ -892,7 +918,7 @@ export function createOpenAIResponsesBridgeServer(
 					parseOpenAIError(openAIResponse.status, text)
 				);
 			}
-			consumeContinuation(sessionId, continuation);
+			consumeContinuation(sessionId, resolvedContinuation);
 
 			const estimatedInputTokens = continuation
 				? estimateResponsesPayloadTokens(body, continuation.input)
