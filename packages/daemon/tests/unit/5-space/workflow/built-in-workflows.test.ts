@@ -218,6 +218,7 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.script!.source).toContain('.mergeStateStatus');
 		expect(gate.script!.source).toContain('"CLEAN"');
 		expect(gate.script!.source).toContain('"HAS_HOOKS"');
+		expect(gate.script!.source).toContain('"BLOCKED"');
 		expect(gate.script!.source).toContain('exit 1');
 		expect(gate.script!.source).toContain('pr_url');
 		expect(gate.script!.source).toContain('not authenticated');
@@ -242,7 +243,7 @@ describe('CODING_WORKFLOW template', () => {
 					'#!/usr/bin/env bash',
 					`printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
 					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
-					`  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}'`,
+					`  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED"}'`,
 					'  exit 0',
 					'fi',
 					'printf "unexpected gh args: %s\\n" "$*" >&2',

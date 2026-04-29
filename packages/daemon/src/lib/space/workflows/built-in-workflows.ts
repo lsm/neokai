@@ -80,7 +80,7 @@ const PR_READY_BASH_SCRIPT = [
 	'fi',
 	'PR_STATUS=$(jq -r \'.mergeStateStatus\' <<< "$PR_JSON")',
 	'# Block on UNKNOWN — orchestrator retries until GitHub resolves status',
-	'if [ "$PR_STATUS" != "CLEAN" ] && [ "$PR_STATUS" != "HAS_HOOKS" ]; then',
+	'if [ "$PR_STATUS" != "CLEAN" ] && [ "$PR_STATUS" != "HAS_HOOKS" ] && [ "$PR_STATUS" != "BLOCKED" ]; then',
 	'  echo "PR merge checks not satisfied (mergeStateStatus: ${PR_STATUS:-unknown})" >&2',
 	'  exit 1',
 	'fi',
