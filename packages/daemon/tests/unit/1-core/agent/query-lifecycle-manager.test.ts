@@ -901,11 +901,12 @@ describe('QueryLifecycleManager', () => {
 			expect(callCount).toBe(2);
 		});
 
-		test('handles non-timeout error by setting idle', async () => {
+		test('handles non-timeout delivery error by setting idle asynchronously', async () => {
 			const regularError = new Error('Some error');
 			spyOn(messageQueue, 'enqueueWithId').mockRejectedValue(regularError);
 
-			await expect(manager.startQueryAndEnqueue('msg-123', 'Hello')).rejects.toThrow('Some error');
+			await manager.startQueryAndEnqueue('msg-123', 'Hello');
+			await new Promise((r) => setTimeout(r, 10));
 
 			// Should have called handleError
 			expect(handleErrorSpy).toHaveBeenCalled();
@@ -934,9 +935,8 @@ describe('QueryLifecycleManager', () => {
 			});
 			manager = new QueryLifecycleManager(mockContext);
 
-			await expect(manager.startQueryAndEnqueue('msg-123', 'Hello')).rejects.toThrow(
-				'Reset failed'
-			);
+			await manager.startQueryAndEnqueue('msg-123', 'Hello');
+			await new Promise((r) => setTimeout(r, 200));
 
 			// Should set idle after reset failure
 			expect(setIdleSpy).toHaveBeenCalled();
@@ -949,9 +949,8 @@ describe('QueryLifecycleManager', () => {
 			// Always throw timeout error
 			spyOn(messageQueue, 'enqueueWithId').mockRejectedValue(timeoutError);
 
-			await expect(manager.startQueryAndEnqueue('msg-123', 'Hello')).rejects.toThrow(
-				'Queue timeout'
-			);
+			await manager.startQueryAndEnqueue('msg-123', 'Hello');
+			await new Promise((r) => setTimeout(r, 200));
 
 			// Should set idle after retry fails
 			expect(setIdleSpy).toHaveBeenCalled();

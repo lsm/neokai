@@ -13,6 +13,7 @@
 
 import type {
 	Session,
+	ImageContent,
 	MessageHub,
 	MessageDeliveryMode,
 	MessageOrigin,
@@ -318,7 +319,7 @@ export class SessionManager {
 		sessionId: string;
 		messageId: string;
 		content: string;
-		images?: MessageImage[];
+		images?: Array<MessageImage | ImageContent>;
 		deliveryMode?: MessageDeliveryMode;
 	}): Promise<void> {
 		await this.messagePersistence.persist(data);

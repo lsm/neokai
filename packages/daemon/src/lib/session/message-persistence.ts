@@ -11,6 +11,7 @@
  */
 
 import type {
+	ImageContent,
 	MessageContent,
 	MessageDeliveryMode,
 	MessageHub,
@@ -33,11 +34,13 @@ import {
 	type ResolutionContext,
 } from './reference-resolver';
 
+type MessageImageInput = MessageImage | ImageContent;
+
 export interface MessagePersistenceData {
 	sessionId: string;
 	messageId: string;
 	content: string;
-	images?: MessageImage[];
+	images?: MessageImageInput[];
 	deliveryMode?: MessageDeliveryMode;
 	origin?: MessageOrigin;
 }
@@ -143,7 +146,7 @@ export class MessagePersistence {
 			if (images && images.length > 0) {
 				const MAX_BASE64_SIZE = 5 * 1024 * 1024; // 5MB
 				for (const image of images) {
-					const base64SizeBytes = image.data.length;
+					const base64SizeBytes = getImageData(image).length;
 					if (base64SizeBytes > MAX_BASE64_SIZE) {
 						const sizeMB = (base64SizeBytes / (1024 * 1024)).toFixed(2);
 						const maxMB = (MAX_BASE64_SIZE / (1024 * 1024)).toFixed(2);
@@ -238,10 +241,9 @@ export class MessagePersistence {
 				status: sendStatus,
 			});
 
-			// 7. For immediate delivery, start the query and wait until the SDK input
-			// queue consumes the message before acknowledging the caller. This is the
-			// durable boundary: saved as `enqueued`, then flipped to `consumed` by
-			// SDKMessageHandler.onMessageYielded at the exact delivery point.
+			// 7. For immediate delivery, start the query and enqueue before acknowledging
+			// the caller. The message is still rendered only after SDKMessageHandler
+			// flips it to `consumed` at the exact delivery point.
 			if (shouldDispatchToQuery) {
 				await agentSession.startQueryAndEnqueue(messageId, messageContent);
 			}
@@ -292,22 +294,34 @@ function extractDisplayText(type: string, id: string, data: unknown): string {
  * Build message content from text and optional images
  * Static utility function for building SDK message content
  */
-function buildMessageContent(content: string, images?: MessageImage[]): string | MessageContent[] {
+function buildMessageContent(
+	content: string,
+	images?: MessageImageInput[]
+): string | MessageContent[] {
 	if (!images || images.length === 0) {
 		return content;
 	}
 
 	// Multi-modal message: array of content blocks
 	// Images first, then text (SDK format)
-	return [
-		...images.map((img) => ({
-			type: 'image' as const,
-			source: {
-				type: 'base64' as const,
-				media_type: img.media_type,
-				data: img.data,
-			},
-		})),
-		{ type: 'text' as const, text: content },
-	];
+	return [...images.map(toImageContent), { type: 'text' as const, text: content }];
+}
+
+function getImageData(image: MessageImageInput): string {
+	return 'source' in image ? image.source.data : image.data;
+}
+
+function toImageContent(image: MessageImageInput): ImageContent {
+	if ('source' in image) {
+		return image;
+	}
+
+	return {
+		type: 'image',
+		source: {
+			type: 'base64',
+			media_type: image.media_type,
+			data: image.data,
+		},
+	};
 }

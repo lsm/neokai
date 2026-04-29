@@ -84,7 +84,7 @@ describe('MessagePersistence', () => {
 		persistence = new MessagePersistence(mockSessionCache, mockDb, mockMessageHub, mockEventBus);
 	});
 
-	it('persists idle immediate as enqueued and waits for SDK queue consumption', async () => {
+	it('persists idle immediate as enqueued and waits for queue insertion', async () => {
 		await persistence.persist({
 			sessionId: 'test-session-id',
 			messageId: 'msg-1',

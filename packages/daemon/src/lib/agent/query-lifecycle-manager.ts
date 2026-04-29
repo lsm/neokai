@@ -574,13 +574,13 @@ export class QueryLifecycleManager {
 	 * Start query and enqueue message
 	 *
 	 * Ensures query is started, sets queued state, and enqueues the message.
-	 * Handles errors with automatic retry for timeout errors.
+	 * Handles async delivery errors with automatic retry for timeout errors.
 	 */
 	async startQueryAndEnqueue(
 		messageId: string,
 		messageContent: string | MessageContent[]
 	): Promise<void> {
-		const { session, messageQueue, stateManager, errorManager, daemonHub } = this.ctx;
+		const { session, messageQueue, stateManager, daemonHub } = this.ctx;
 
 		await this.ensureQueryStarted();
 		if (!messageQueue.isRunning() || !this.ctx.queryPromise) {
@@ -589,48 +589,65 @@ export class QueryLifecycleManager {
 		await stateManager.setQueued(messageId);
 
 		try {
-			await messageQueue.enqueueWithId(messageId, messageContent);
+			void messageQueue
+				.enqueueWithId(messageId, messageContent)
+				.catch((error) => this.handleQueuedMessageFailure(messageId, messageContent, error))
+				.catch((handlerError) => {
+					this.logger.warn('Failed to handle queued message delivery error', handlerError);
+				});
 		} catch (error) {
-			if (error instanceof Error && error.message === 'Interrupted by user') {
-				return;
-			}
-
-			const isTimeoutError = error instanceof Error && error.name === 'MessageQueueTimeoutError';
-			await errorManager.handleError(
-				session.id,
-				error as Error,
-				isTimeoutError ? ErrorCategory.TIMEOUT : ErrorCategory.MESSAGE,
-				isTimeoutError
-					? 'The SDK is not responding. Click "Reset Agent" to recover.'
-					: 'Failed to process message. Please try again.',
-				stateManager.getState(),
-				{ messageId }
-			);
-
-			if (isTimeoutError) {
-				try {
-					const resetResult = await this.reset({ restartAfter: true });
-					if (!resetResult.success) {
-						throw new Error(resetResult.error || 'Agent query reset failed.');
-					}
-					await stateManager.setQueued(messageId);
-					if (!messageQueue.isRunning() || !this.ctx.queryPromise) {
-						throw new Error('Agent query did not restart; message remains queued for retry.');
-					}
-					await messageQueue.enqueueWithId(messageId, messageContent);
-				} catch (retryError) {
-					await stateManager.setIdle();
-					throw retryError;
-				}
-			} else {
-				await stateManager.setIdle();
-				throw error;
-			}
+			await this.handleQueuedMessageFailure(messageId, messageContent, error);
+			throw error;
 		}
 
 		daemonHub.emit('message.sent', { sessionId: session.id }).catch((error) => {
 			this.logger.warn('Failed to emit message.sent event', error);
 		});
+	}
+
+	private async handleQueuedMessageFailure(
+		messageId: string,
+		messageContent: string | MessageContent[],
+		error: unknown
+	): Promise<void> {
+		const { session, messageQueue, stateManager, errorManager } = this.ctx;
+
+		if (error instanceof Error && error.message === 'Interrupted by user') {
+			return;
+		}
+
+		const normalizedError = error instanceof Error ? error : new Error(String(error));
+		const isTimeoutError = normalizedError.name === 'MessageQueueTimeoutError';
+		await errorManager.handleError(
+			session.id,
+			normalizedError,
+			isTimeoutError ? ErrorCategory.TIMEOUT : ErrorCategory.MESSAGE,
+			isTimeoutError
+				? 'The SDK is not responding. Click "Reset Agent" to recover.'
+				: 'Failed to process message. Please try again.',
+			stateManager.getState(),
+			{ messageId }
+		);
+
+		if (!isTimeoutError) {
+			await stateManager.setIdle();
+			return;
+		}
+
+		try {
+			const resetResult = await this.reset({ restartAfter: true });
+			if (!resetResult.success) {
+				throw new Error(resetResult.error || 'Agent query reset failed.');
+			}
+			await stateManager.setQueued(messageId);
+			if (!messageQueue.isRunning() || !this.ctx.queryPromise) {
+				throw new Error('Agent query did not restart; message remains queued for retry.');
+			}
+			await messageQueue.enqueueWithId(messageId, messageContent);
+		} catch (retryError) {
+			await stateManager.setIdle();
+			this.logger.warn('Failed to recover queued message delivery', retryError);
+		}
 	}
 
 	/**

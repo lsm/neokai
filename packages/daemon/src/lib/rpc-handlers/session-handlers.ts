@@ -8,6 +8,7 @@
  */
 
 import type {
+	ImageContent,
 	ListRuntimeMcpServersRequest,
 	ListRuntimeMcpServersResponse,
 	MessageDeliveryMode,
@@ -461,7 +462,7 @@ export function setupSessionHandlers(
 		} = data as {
 			sessionId: string;
 			content: string;
-			images?: MessageImage[];
+			images?: Array<MessageImage | ImageContent>;
 			deliveryMode?: MessageDeliveryMode;
 		};
 
