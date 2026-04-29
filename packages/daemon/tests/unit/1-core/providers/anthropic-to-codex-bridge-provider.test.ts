@@ -413,6 +413,31 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			expect(cfg1.envVars.ANTHROPIC_BASE_URL).toBe(cfg2.envVars.ANTHROPIC_BASE_URL);
 		});
 
+		it('recreates a Responses bridge that was started before auth was available', async () => {
+			const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'neokai-build-cfg-auth-late-'));
+			const neokaiDir = path.join(tmpDir, 'neokai');
+			const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'), fakeCodexFound);
+			try {
+				const cfgWithoutAuth = p.buildSdkConfig('gpt-5.3-codex', {
+					workspacePath: '/tmp/workspace-auth-late',
+				});
+
+				writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'file-token-now-available' });
+				await p.getApiKey();
+
+				const cfgWithAuth = p.buildSdkConfig('gpt-5.3-codex', {
+					workspacePath: '/tmp/workspace-auth-late',
+				});
+
+				expect(cfgWithAuth.envVars.ANTHROPIC_BASE_URL).not.toBe(
+					cfgWithoutAuth.envVars.ANTHROPIC_BASE_URL
+				);
+			} finally {
+				p.stopAllBridgeServers();
+				rmSync(tmpDir, { recursive: true, force: true });
+			}
+		});
+
 		it('returns isAnthropicCompatible=true and a placeholder API key', () => {
 			const cfg = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-compat' });
 			expect(cfg.isAnthropicCompatible).toBe(true);

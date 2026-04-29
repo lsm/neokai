@@ -231,6 +231,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
 	/** Per-adapter/per-workspace bridge servers. */
 	private readonly bridgeServers = new Map<string, BridgeServer>();
+	private readonly bridgeServersHaveAuth = new Map<string, boolean>();
 
 	/** Path to NeoKai's own auth store. */
 	private readonly authPath: string;
@@ -555,6 +556,17 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		const adapter = this.selectBridgeAdapter();
 		const bridgeKey = `${adapter}:${workspace}`;
 		let bridgeServer = this.bridgeServers.get(bridgeKey);
+		if (
+			adapter === 'responses' &&
+			bridgeServer &&
+			auth &&
+			!this.bridgeServersHaveAuth.get(bridgeKey)
+		) {
+			bridgeServer.stop();
+			this.bridgeServers.delete(bridgeKey);
+			this.bridgeServersHaveAuth.delete(bridgeKey);
+			bridgeServer = undefined;
+		}
 		// Resolve alias (e.g. 'codex' → 'gpt-5.3-codex') so ANTHROPIC_DEFAULT_*_MODEL
 		// receives real OpenAI model IDs that the bridge can forward upstream.
 		const entry = ANTHROPIC_CODEX_MODELS.find((m) => m.alias === modelId || m.id === modelId);
@@ -585,6 +597,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 				});
 			}
 			this.bridgeServers.set(bridgeKey, bridgeServer);
+			this.bridgeServersHaveAuth.set(bridgeKey, !!auth);
 			logger.info(
 				`AnthropicToCodexBridgeProvider: ${adapter} bridge server started on port ${bridgeServer.port} for workspace=${workspace}`
 			);
@@ -617,6 +630,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			server.stop();
 		}
 		this.bridgeServers.clear();
+		this.bridgeServersHaveAuth.clear();
 		// Reset cached auth so a new provider instance starts with a clean slate.
 		// Without this, cachedBridgeAuth=null from a previous run would cause
 		// isAvailable() to return false even when valid credentials are present.

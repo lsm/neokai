@@ -699,6 +699,7 @@ export function createOpenAIResponsesBridgeServer(
 	const modelsResponse = modelsListResponse(config.models);
 	const continuationTtlMs = config.continuationTtlMs ?? DEFAULT_RESPONSE_CONTINUATION_TTL_MS;
 	const continuations = new Map<string, ResponseContinuation>();
+	let resolvedAuth: ResolvedResponsesAuth | undefined;
 
 	const deleteContinuation = (callId: string): void => {
 		const continuation = continuations.get(callId);
@@ -787,12 +788,11 @@ export function createOpenAIResponsesBridgeServer(
 			const continuation = resolveContinuation(body.messages, continuations);
 			const requestBody = buildResponsesRequest(body, model, continuation);
 			const upstreamUrl = `${baseUrl.replace(/\/$/, '')}/responses`;
-			let resolvedAuth: ResolvedResponsesAuth | undefined;
 			let openAIResponse: Response;
 			try {
 				openAIResponse = await fetchImpl(upstreamUrl, {
 					method: 'POST',
-					headers: buildOpenAIHeaders(config.auth),
+					headers: buildOpenAIHeaders(config.auth, resolvedAuth),
 					body: JSON.stringify(requestBody),
 				});
 				if (openAIResponse.status === 401) {

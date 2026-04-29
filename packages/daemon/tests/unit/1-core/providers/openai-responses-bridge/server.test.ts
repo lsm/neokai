@@ -526,7 +526,7 @@ describe('openai-responses-bridge server', () => {
 		expect(capturedHeaders?.get('x-openai-fedramp')).toBe('true');
 	});
 
-	it('refreshes ChatGPT OAuth auth once after an upstream 401', async () => {
+	it('refreshes ChatGPT OAuth auth once after an upstream 401 and reuses it', async () => {
 		const seenAuthHeaders: string[] = [];
 		server = createOpenAIResponsesBridgeServer({
 			auth: {
@@ -562,19 +562,27 @@ describe('openai-responses-bridge server', () => {
 			},
 		});
 
+		const body = JSON.stringify({
+			model: 'gpt-5.3-codex',
+			max_tokens: 128,
+			messages: [{ role: 'user', content: 'hi' }],
+		});
 		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				model: 'gpt-5.3-codex',
-				max_tokens: 128,
-				messages: [{ role: 'user', content: 'hi' }],
-			}),
+			body,
+		});
+		const secondResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body,
 		});
 
 		expect(resp.status).toBe(200);
+		expect(secondResp.status).toBe(200);
 		expect(seenAuthHeaders).toEqual([
 			'Bearer expired-token:acct_old',
+			'Bearer fresh-token:acct_new',
 			'Bearer fresh-token:acct_new',
 		]);
 	});
