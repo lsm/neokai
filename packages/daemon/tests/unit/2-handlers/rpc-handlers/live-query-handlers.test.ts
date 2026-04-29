@@ -3,13 +3,10 @@
  *
  * These tests verify that:
  *  1. The registry is exported and contains the expected named queries.
- *  2. Row shapes returned by executing the SQL (with the mapRow transform applied)
- *     match the TypeScript types used by the frontend (NeoTask, RoomGoal).
- *  3. JSON blob columns (`dependsOn`, `metrics`, `linkedTaskIds`, etc.) are parsed
- *     to JS values before delivery.
- *  4. snake_case exceptions for RoomGoal (`planning_attempts`, `goal_review_attempts`)
- *     are preserved as-is.
- *  5. All queries have deterministic ORDER BY with tiebreakers.
+ *  2. Active row shapes returned by executing SQL match the frontend contracts.
+ *  3. JSON blob columns are parsed to JS values before delivery.
+ *  4. Retired Room-scoped query names are absent from the active registry.
+ *  5. All active queries have deterministic ORDER BY with tiebreakers.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -46,36 +43,40 @@ describe('NAMED_QUERY_REGISTRY', () => {
 	// -------------------------------------------------------------------------
 
 	test('registry contains all expected query names', () => {
-		expect(NAMED_QUERY_REGISTRY.has('tasks.byRoom')).toBe(true);
-		expect(NAMED_QUERY_REGISTRY.has('tasks.byRoom.all')).toBe(true);
-		expect(NAMED_QUERY_REGISTRY.has('goals.byRoom')).toBe(true);
+		expect(NAMED_QUERY_REGISTRY.has('tasks.byRoom')).toBe(false);
+		expect(NAMED_QUERY_REGISTRY.has('tasks.byRoom.all')).toBe(false);
+		expect(NAMED_QUERY_REGISTRY.has('goals.byRoom')).toBe(false);
 		expect(NAMED_QUERY_REGISTRY.has('sessionGroupMessages.byGroup')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('spaceTaskActivity.byTask')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('spaceTaskMessages.byTask')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('spaceTaskMessages.byTask.compact')).toBe(true);
-		expect(NAMED_QUERY_REGISTRY.has('skills.byRoom')).toBe(true);
+		expect(NAMED_QUERY_REGISTRY.has('skills.byRoom')).toBe(false);
 		expect(NAMED_QUERY_REGISTRY.has('neo.messages')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('neo.activity')).toBe(true);
 	});
 
 	test('all registry entries have correct paramCount', () => {
-		expect(NAMED_QUERY_REGISTRY.get('tasks.byRoom')!.paramCount).toBe(1);
-		expect(NAMED_QUERY_REGISTRY.get('tasks.byRoom.all')!.paramCount).toBe(1);
-		expect(NAMED_QUERY_REGISTRY.get('goals.byRoom')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('spaceTaskActivity.byTask')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!.paramCount).toBe(1);
-		expect(NAMED_QUERY_REGISTRY.get('skills.byRoom')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('neo.messages')!.paramCount).toBe(2);
 		expect(NAMED_QUERY_REGISTRY.get('neo.activity')!.paramCount).toBe(2);
+	});
+
+	test('retired Room-scoped query names are not active contracts', () => {
+		expect([...NAMED_QUERY_REGISTRY.keys()]).not.toContain('tasks.byRoom');
+		expect([...NAMED_QUERY_REGISTRY.keys()]).not.toContain('tasks.byRoom.all');
+		expect([...NAMED_QUERY_REGISTRY.keys()]).not.toContain('goals.byRoom');
+		expect([...NAMED_QUERY_REGISTRY.keys()]).not.toContain('mcpEnablement.byRoom');
+		expect([...NAMED_QUERY_REGISTRY.keys()]).not.toContain('skills.byRoom');
 	});
 
 	// -------------------------------------------------------------------------
 	// tasks.byRoom — column aliasing and JSON parsing
 	// -------------------------------------------------------------------------
 
-	describe('tasks.byRoom', () => {
+	describe.skip('legacy tasks.byRoom registry shape (retired public query)', () => {
 		function insertTask(overrides: Record<string, unknown> = {}): string {
 			const id = `task-${Date.now()}-${Math.random()}`;
 			const status = (overrides.status as string) ?? 'pending';
@@ -1260,7 +1261,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 	// goals.byRoom — column aliasing, JSON parsing, snake_case exceptions
 	// -------------------------------------------------------------------------
 
-	describe('goals.byRoom', () => {
+	describe.skip('legacy goals.byRoom registry shape (retired public query)', () => {
 		function insertGoal(overrides: Record<string, unknown> = {}): string {
 			const id = `goal-${Date.now()}-${Math.random()}`;
 			const linkedTaskIds = JSON.stringify(overrides.linkedTaskIds ?? []);
@@ -1552,7 +1553,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 	// skills.byRoom — global skills with per-room override via LEFT JOIN
 	// -------------------------------------------------------------------------
 
-	describe('skills.byRoom', () => {
+	describe.skip('legacy skills.byRoom registry shape (retired public query)', () => {
 		function insertSkill(
 			id: string,
 			name: string,
