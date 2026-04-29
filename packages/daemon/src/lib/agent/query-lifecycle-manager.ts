@@ -36,6 +36,9 @@ import {
 
 const DEFAULT_TERMINATION_TIMEOUT_MS = 5000;
 const RESET_TERMINATION_TIMEOUT_MS = 3000;
+const MAX_TIMEOUT_DELIVERY_RETRIES = 1;
+
+export type EnsureQueryStartedResult = 'started' | 'already-running' | 'blocked';
 
 /**
  * Context interface - what QueryLifecycleManager needs from AgentSession
@@ -77,6 +80,7 @@ export interface QueryLifecycleManagerContext {
 
 export class QueryLifecycleManager {
 	private logger: Logger;
+	private timeoutDeliveryRetryCounts = new Map<string, number>();
 
 	constructor(private ctx: QueryLifecycleManagerContext) {
 		this.logger = new Logger(`QueryLifecycleManager ${ctx.session.id}`);
@@ -506,7 +510,7 @@ export class QueryLifecycleManager {
 	 * query ended (race between SDK query completion and finally block cleanup).
 	 * In this case, force-stop the queue and restart.
 	 */
-	async ensureQueryStarted(): Promise<void> {
+	async ensureQueryStarted(): Promise<EnsureQueryStartedResult> {
 		const { session, messageQueue, interruptHandler } = this.ctx;
 
 		// Wait for any pending interrupt
@@ -541,7 +545,7 @@ export class QueryLifecycleManager {
 				this.logger.debug(
 					`ensureQueryStarted: session ${session.id} already running, skipping start`
 				);
-				return;
+				return 'already-running';
 			}
 		} else {
 			this.logger.debug(`ensureQueryStarted: session ${session.id} not running, starting query`);
@@ -559,7 +563,7 @@ export class QueryLifecycleManager {
 						'Emitting sdk_resume_choice action message for user.'
 				);
 				await this.emitSdkResumeChoiceMessage();
-				return;
+				return 'blocked';
 			}
 		}
 
@@ -568,58 +572,107 @@ export class QueryLifecycleManager {
 		await this.ctx.clearModelsCache();
 
 		await this.ctx.startStreamingQuery();
+		return 'started';
 	}
 
 	/**
 	 * Start query and enqueue message
 	 *
 	 * Ensures query is started, sets queued state, and enqueues the message.
-	 * Handles errors with automatic retry for timeout errors.
+	 * Handles async delivery errors with automatic retry for timeout errors.
 	 */
 	async startQueryAndEnqueue(
 		messageId: string,
 		messageContent: string | MessageContent[]
 	): Promise<void> {
-		const { session, messageQueue, stateManager, errorManager, daemonHub } = this.ctx;
+		const { session, messageQueue, stateManager, daemonHub } = this.ctx;
 
-		await this.ensureQueryStarted();
+		const queryStartResult = await this.ensureQueryStarted();
+		if (queryStartResult === 'blocked') {
+			await stateManager.setQueued(messageId);
+			this.logger.debug(
+				`startQueryAndEnqueue: session ${session.id} is blocked on sdk_resume_choice; ` +
+					`leaving message ${messageId} persisted as enqueued for replay after the choice.`
+			);
+			return;
+		}
+		if (!messageQueue.isRunning() || !this.ctx.queryPromise) {
+			throw new Error('Agent query did not start; message remains queued for retry.');
+		}
 		await stateManager.setQueued(messageId);
 
-		messageQueue.enqueueWithId(messageId, messageContent).catch(async (error) => {
-			if (error instanceof Error && error.message === 'Interrupted by user') {
-				return;
-			}
-
-			const isTimeoutError = error instanceof Error && error.name === 'MessageQueueTimeoutError';
-			await errorManager.handleError(
-				session.id,
-				error as Error,
-				isTimeoutError ? ErrorCategory.TIMEOUT : ErrorCategory.MESSAGE,
-				isTimeoutError
-					? 'The SDK is not responding. Click "Reset Agent" to recover.'
-					: 'Failed to process message. Please try again.',
-				stateManager.getState(),
-				{ messageId }
-			);
-
-			if (isTimeoutError) {
-				try {
-					await this.reset({ restartAfter: true });
-					await stateManager.setQueued(messageId);
-					messageQueue.enqueueWithId(messageId, messageContent).catch(async () => {
-						await stateManager.setIdle();
-					});
-				} catch {
-					await stateManager.setIdle();
-				}
-			} else {
-				await stateManager.setIdle();
-			}
-		});
+		try {
+			void messageQueue
+				.enqueueWithId(messageId, messageContent)
+				.catch((error) => this.handleQueuedMessageFailure(messageId, messageContent, error))
+				.catch((handlerError) => {
+					this.logger.warn('Failed to handle queued message delivery error', handlerError);
+				});
+		} catch (error) {
+			await this.handleQueuedMessageFailure(messageId, messageContent, error);
+			throw error;
+		}
 
 		daemonHub.emit('message.sent', { sessionId: session.id }).catch((error) => {
 			this.logger.warn('Failed to emit message.sent event', error);
 		});
+	}
+
+	private async handleQueuedMessageFailure(
+		messageId: string,
+		messageContent: string | MessageContent[],
+		error: unknown
+	): Promise<void> {
+		const { session, messageQueue, stateManager, errorManager } = this.ctx;
+
+		if (error instanceof Error && error.message === 'Interrupted by user') {
+			return;
+		}
+
+		const normalizedError = error instanceof Error ? error : new Error(String(error));
+		const isTimeoutError = normalizedError.name === 'MessageQueueTimeoutError';
+		await errorManager.handleError(
+			session.id,
+			normalizedError,
+			isTimeoutError ? ErrorCategory.TIMEOUT : ErrorCategory.MESSAGE,
+			isTimeoutError
+				? 'The SDK is not responding. Click "Reset Agent" to recover.'
+				: 'Failed to process message. Please try again.',
+			stateManager.getState(),
+			{ messageId }
+		);
+
+		if (!isTimeoutError) {
+			this.timeoutDeliveryRetryCounts.delete(messageId);
+			await stateManager.setIdle();
+			return;
+		}
+
+		const retryCount = this.timeoutDeliveryRetryCounts.get(messageId) ?? 0;
+		if (retryCount >= MAX_TIMEOUT_DELIVERY_RETRIES) {
+			await stateManager.setIdle();
+			this.logger.warn(
+				`Message ${messageId} timed out after ${MAX_TIMEOUT_DELIVERY_RETRIES} delivery retry.`
+			);
+			return;
+		}
+		this.timeoutDeliveryRetryCounts.set(messageId, retryCount + 1);
+
+		try {
+			const resetResult = await this.reset({ restartAfter: true });
+			if (!resetResult.success) {
+				throw new Error(resetResult.error || 'Agent query reset failed.');
+			}
+			await stateManager.setQueued(messageId);
+			if (!messageQueue.isRunning() || !this.ctx.queryPromise) {
+				throw new Error('Agent query did not restart; message remains queued for retry.');
+			}
+			await messageQueue.enqueueWithId(messageId, messageContent);
+			this.timeoutDeliveryRetryCounts.delete(messageId);
+		} catch (retryError) {
+			await stateManager.setIdle();
+			this.logger.warn('Failed to recover queued message delivery', retryError);
+		}
 	}
 
 	/**

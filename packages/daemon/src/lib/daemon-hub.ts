@@ -167,14 +167,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	'agent.reset': { sessionId: string; success: boolean; error?: string };
 	'agent.restart': { sessionId: string; success: boolean; error?: string };
 
-	// Message sending events
-	'message.sendRequest': {
-		sessionId: string;
-		messageId: string;
-		content: string;
-		images?: MessageImage[];
-		deliveryMode?: MessageDeliveryMode;
-	};
 	'message.persisted': {
 		sessionId: string;
 		messageId: string;
@@ -184,6 +176,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		hasDraftToClear: boolean;
 		sendStatus: 'deferred' | 'enqueued' | 'consumed';
 		deliveryMode: MessageDeliveryMode;
+		skipQueryStart?: boolean;
 	};
 
 	// Query mode events

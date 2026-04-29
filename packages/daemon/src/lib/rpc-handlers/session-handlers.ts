@@ -8,6 +8,7 @@
  */
 
 import type {
+	ImageContent,
 	ListRuntimeMcpServersRequest,
 	ListRuntimeMcpServersResponse,
 	MessageDeliveryMode,
@@ -461,7 +462,7 @@ export function setupSessionHandlers(
 		} = data as {
 			sessionId: string;
 			content: string;
-			images?: MessageImage[];
+			images?: Array<MessageImage | ImageContent>;
 			deliveryMode?: MessageDeliveryMode;
 		};
 
@@ -478,8 +479,9 @@ export function setupSessionHandlers(
 		// Generate messageId immediately for return
 		const messageId = generateUUID();
 
-		// Persist-before-ack for durable queue semantics
-		await daemonHub.emit('message.sendRequest', {
+		// Persist and start the agent turn before acknowledging; actual SDK queue
+		// delivery is async and recovered by the query lifecycle manager.
+		await sessionManager.sendUserMessage({
 			sessionId: targetSessionId,
 			messageId,
 			content,
@@ -601,8 +603,11 @@ export function setupSessionHandlers(
 			config: { ...session.config, coordinatorMode },
 		});
 
-		// Restart query to apply new agent/tools configuration
-		const result = await agentSession.resetQuery({ restartQuery: true });
+		// Restart only when a query is already live. For pre-turn sessions, the
+		// next user message starts a fresh query with the updated config.
+		const result = agentSession.isQueryActiveOrStarting()
+			? await agentSession.resetQuery({ restartQuery: true })
+			: { success: true as const };
 
 		// Broadcast update for UI
 		messageHub.event(
@@ -644,8 +649,11 @@ export function setupSessionHandlers(
 			config: { ...session.config, sandbox: updatedSandbox },
 		});
 
-		// Restart query to apply new sandbox configuration
-		const result = await agentSession.resetQuery({ restartQuery: true });
+		// Restart only when a query is already live. For pre-turn sessions, the
+		// next user message starts a fresh query with the updated sandbox config.
+		const result = agentSession.isQueryActiveOrStarting()
+			? await agentSession.resetQuery({ restartQuery: true })
+			: { success: true as const };
 
 		// Broadcast update for UI
 		messageHub.event(
@@ -1064,6 +1072,9 @@ export function setupSessionHandlers(
 		// Now start (or restart) the query so the user's pending message is processed.
 		try {
 			await agentSession.restart();
+			if (agentSession.getSessionData().config.queryMode !== 'manual') {
+				await agentSession.replayPendingMessagesForImmediateMode();
+			}
 		} catch (err) {
 			log.warn(`session.sdkResumeChoice: restart after choice failed: ${err}`);
 		}

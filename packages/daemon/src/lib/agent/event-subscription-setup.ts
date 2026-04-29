@@ -116,6 +116,7 @@ export class EventSubscriptionSetup {
 		const unsubMessagePersisted = daemonHub.on(
 			'message.persisted',
 			async (data) => {
+				if (data.skipQueryStart) return;
 				// Start query and enqueue message
 				// Note: User messages in the DB serve as rewind points - no separate checkpoint tracking needed
 				await this.ctx.startQueryAndEnqueue(

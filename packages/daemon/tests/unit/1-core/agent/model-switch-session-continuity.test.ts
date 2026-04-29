@@ -212,6 +212,8 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
 			logger: mockLogger,
 			lifecycleManager: mockLifecycleManager,
 			queryObject: { setModel: setModelSpy } as unknown as Query,
+			queryPromise: null,
+			messageQueue: { isRunning: mock(() => false) } as unknown as MessageQueue,
 			firstMessageReceived: true,
 			...overrides,
 		};

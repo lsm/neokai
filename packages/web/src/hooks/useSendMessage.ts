@@ -27,7 +27,7 @@ export interface UseSendMessageResult {
 		content: string,
 		images?: MessageImage[],
 		deliveryMode?: MessageDeliveryMode
-	) => Promise<void>;
+	) => Promise<boolean>;
 	clearSendTimeout: () => void;
 }
 
@@ -61,17 +61,17 @@ export function useSendMessage({
 			images?: MessageImage[],
 			deliveryMode: MessageDeliveryMode = 'immediate'
 		) => {
-			if (!content.trim() || (isSending && !allowQueueWhileProcessing)) return;
+			if (!content.trim() || (isSending && !allowQueueWhileProcessing)) return false;
 
 			if (session?.status === 'archived') {
 				toast.error('Cannot send messages to archived sessions');
-				return;
+				return false;
 			}
 
 			const isConnected = connectionState.value === 'connected';
 			if (!isConnected) {
 				toast.error('Connection lost. Please refresh the page.');
-				return;
+				return false;
 			}
 
 			try {
@@ -88,7 +88,7 @@ export function useSendMessage({
 					toast.error('Connection lost.');
 					onSendComplete();
 					clearSendTimeout();
-					return;
+					return false;
 				}
 
 				const requestPayload: {
@@ -109,12 +109,14 @@ export function useSendMessage({
 
 				// Clear timeout on successful send
 				clearSendTimeout();
+				return true;
 			} catch (err) {
 				const message = err instanceof Error ? err.message : 'Failed to send message';
 				onError(message);
 				toast.error(message);
 				onSendComplete();
 				clearSendTimeout();
+				return false;
 			}
 		},
 		[

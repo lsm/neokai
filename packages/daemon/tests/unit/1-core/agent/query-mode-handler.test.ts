@@ -208,6 +208,30 @@ describe('QueryModeHandler', () => {
 			expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-1', 'Line 1\nLine 2');
 		});
 
+		it('should preserve image blocks when enqueueing deferred multimodal messages', async () => {
+			const content = [
+				{
+					type: 'image' as const,
+					source: { type: 'base64' as const, media_type: 'image/png' as const, data: 'abc' },
+				},
+				{ type: 'text' as const, text: 'Describe this' },
+			];
+			const savedMessages: SDKMessage[] = [
+				{
+					dbId: 'db-1',
+					uuid: 'uuid-1',
+					type: 'user',
+					message: { role: 'user', content },
+				} as unknown as SDKMessage,
+			];
+			getMessagesByStatusSpy.mockReturnValue(savedMessages);
+			handler = createHandler();
+
+			await handler.handleQueryTrigger();
+
+			expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-1', content);
+		});
+
 		it('should skip non-user messages', async () => {
 			const savedMessages: SDKMessage[] = [
 				{
@@ -351,6 +375,30 @@ describe('QueryModeHandler', () => {
 			expect(enqueueWithIdSpy).toHaveBeenCalledTimes(2);
 			expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-1', 'First');
 			expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-2', 'Second');
+		});
+
+		it('should preserve image blocks when replaying enqueued messages', async () => {
+			const content = [
+				{
+					type: 'image' as const,
+					source: { type: 'base64' as const, media_type: 'image/png' as const, data: 'abc' },
+				},
+				{ type: 'text' as const, text: 'Describe this' },
+			];
+			const queuedMessages: SDKMessage[] = [
+				{
+					dbId: 'db-1',
+					uuid: 'uuid-1',
+					type: 'user',
+					message: { role: 'user', content },
+				} as unknown as SDKMessage,
+			];
+			getMessagesByStatusSpy.mockReturnValue(queuedMessages);
+			handler = createHandler();
+
+			await handler.sendEnqueuedMessagesOnTurnEnd();
+
+			expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-1', content);
 		});
 	});
 
