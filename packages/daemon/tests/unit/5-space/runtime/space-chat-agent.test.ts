@@ -208,6 +208,13 @@ describe('buildSpaceChatSystemPrompt — workflow vs task guidance', () => {
 		expect(prompt).toContain('get_workflow_detail');
 	});
 
+	test('warns not to silently continue when Space MCP tools are missing', () => {
+		const prompt = buildSpaceChatSystemPrompt(makeContext());
+		expect(prompt).toContain('must be available every turn');
+		expect(prompt).toContain('context compaction');
+		expect(prompt).toContain('space-coordination');
+	});
+
 	test('includes guidance not to create tasks immediately', () => {
 		const prompt = buildSpaceChatSystemPrompt(makeContext());
 		expect(prompt).toContain('Never create tasks immediately');

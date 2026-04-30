@@ -723,6 +723,12 @@ export class SpaceRuntimeService {
 		// MCP servers on this space_chat session. `mergeRuntimeMcpServers` is the
 		// additive variant already used by `attachSpaceToolsToMemberSession`.
 		session.mergeRuntimeMcpServers(mcpServers);
+		session.onMissingSpaceChatMcpServers = async (_sessionId, missing) => {
+			log.warn(
+				`Space chat session ${spaceChatSessionId} missing MCP servers [${missing.join(', ')}]; re-attaching space-agent-tools before query start`
+			);
+			await this.setupSpaceAgentSession(space);
+		};
 
 		session.setRuntimeSystemPrompt(
 			buildSpaceChatSystemPrompt({

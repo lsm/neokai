@@ -146,4 +146,13 @@ export const BUILTIN_SKILLS: readonly BuiltinSkill[] = [
 		commandName: 'playwright-interactive',
 		enabled: true,
 	},
+	{
+		kind: 'builtin-command',
+		name: 'space-coordination',
+		displayName: 'Space Coordination (POC)',
+		description:
+			'POC fallback for Space task/workflow coordination through local runtime APIs instead of MCP.',
+		commandName: 'space-coordination',
+		enabled: true,
+	},
 ] as const;

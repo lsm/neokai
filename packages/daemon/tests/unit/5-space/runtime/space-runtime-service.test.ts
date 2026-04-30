@@ -470,6 +470,7 @@ describe('SpaceRuntimeService', () => {
 				session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
 			).mock.calls[0];
 			expect(mcpArg).toHaveProperty('space-agent-tools');
+			expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
 
 			expect(session.setRuntimeSystemPrompt).toHaveBeenCalledTimes(1);
 			const [promptArg] = (
