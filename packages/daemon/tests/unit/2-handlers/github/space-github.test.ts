@@ -362,14 +362,14 @@ describe('Space GitHub integration', () => {
 		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 2 });
 	});
 
-	test('polling ignores issue comments and pages without advancing past unprocessed rows', async () => {
+	test('polling ignores issue comments and keeps watermark stable while draining pages', async () => {
 		const db = setupDb();
 		seedTask(db);
 		const service = new SpaceGitHubService(db, undefined, undefined, 'token');
 		service.repo.upsertWatchedRepo({
 			spaceId: 'space-1',
-			owner: 'acme',
-			repo: 'widgets',
+			owner: 'Acme',
+			repo: 'Widgets',
 			pollingEnabled: true,
 		});
 		const calls: string[] = [];
@@ -392,15 +392,19 @@ describe('Space GitHub integration', () => {
 				);
 			}
 			if (urlText.includes('/pulls?')) {
+				const page = new URL(urlText).searchParams.get('page');
 				return new Response(
 					JSON.stringify(
-						Array.from({ length: 100 }, (_unused, idx) => ({
-							id: 700 + idx,
+						Array.from({ length: page === '1' ? 100 : 1 }, (_unused, idx) => ({
+							id: page === '1' ? 700 + idx : 900,
 							number: 7,
 							title: `PR update ${idx}`,
 							html_url: 'https://github.com/acme/widgets/pull/7',
 							user: { login: 'dev', type: 'User' },
-							updated_at: `2026-01-01T00:${String(idx % 60).padStart(2, '0')}:00Z`,
+							updated_at:
+								page === '1'
+									? `2026-01-01T00:${String(idx % 60).padStart(2, '0')}:00Z`
+									: '2026-01-01T00:59:59Z',
 						}))
 					),
 					{ status: 200 }
@@ -413,14 +417,37 @@ describe('Space GitHub integration', () => {
 
 		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 100 });
 		expect(calls.some((url) => url.includes('per_page=100'))).toBe(true);
+		let cursor = JSON.parse(
+			(
+				db.prepare('SELECT poll_cursor FROM space_github_watched_repos').get() as {
+					poll_cursor: string;
+				}
+			).poll_cursor
+		);
+		expect(cursor.processedPages.pulls).toBe(2);
+		expect(cursor.lastSeenAt).toBe(0);
+		expect(cursor.pendingLastSeenAt).toBeGreaterThan(0);
+
+		await service.pollOnce(fakeFetch as typeof fetch);
+
+		expect(calls.some((url) => url.includes('page=2') && !url.includes('since='))).toBe(true);
+		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 101 });
+		cursor = JSON.parse(
+			(
+				db.prepare('SELECT poll_cursor FROM space_github_watched_repos').get() as {
+					poll_cursor: string;
+				}
+			).poll_cursor
+		);
+		expect(cursor.processedPages.pulls).toBe(1);
+		expect(cursor.pendingLastSeenAt).toBeUndefined();
+		expect(cursor.lastSeenAt).toBeGreaterThan(0);
 		expect(
-			JSON.parse(
-				(
-					db.prepare('SELECT poll_cursor FROM space_github_watched_repos').get() as {
-						poll_cursor: string;
-					}
-				).poll_cursor
-			).processedPages.pulls
-		).toBe(2);
+			(
+				db.prepare('SELECT dedupe_key FROM space_github_events LIMIT 1').get() as {
+					dedupe_key: string;
+				}
+			).dedupe_key.startsWith('acme/widgets:')
+		).toBe(true);
 	});
 });

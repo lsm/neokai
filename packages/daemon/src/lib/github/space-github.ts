@@ -23,6 +23,7 @@ export type SpaceGitHubEventState =
 
 export interface PollCursor {
 	lastSeenAt?: number;
+	pendingLastSeenAt?: number;
 	etags?: Record<string, string>;
 	processedPages?: Record<string, number>;
 }
@@ -199,9 +200,11 @@ export function normalizeSpaceGitHubWebhook(
 		title = `PR #${prNumber} ${action}`;
 	}
 	if (!repo.owner || !repo.repo || !prNumber) return null;
+	const canonicalOwner = repo.owner.toLowerCase();
+	const canonicalRepo = repo.repo.toLowerCase();
 	return {
 		deliveryId,
-		dedupeKey: `${repo.owner}/${repo.repo}:${externalId}`,
+		dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
 		source: 'webhook',
 		eventType,
 		action,
@@ -625,10 +628,11 @@ export class SpaceGitHubService {
 			const cursor = watched.pollCursor ?? {};
 			const etags = cursor.etags ?? {};
 			const processedPages = cursor.processedPages ?? {};
-			const since =
-				cursor.lastSeenAt || watched.lastPollAt
-					? new Date(cursor.lastSeenAt ?? watched.lastPollAt ?? 0).toISOString()
-					: undefined;
+			const watermarks = {
+				committed: cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
+				pending: cursor.pendingLastSeenAt ?? cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
+			};
+			const since = watermarks.committed ? new Date(watermarks.committed).toISOString() : undefined;
 			// Poll issue comments, review comments, and PR metadata; all feed the same ingest path.
 			const base = `https://api.github.com/repos/${watched.owner}/${watched.repo}`;
 			const endpoints = [
@@ -636,7 +640,6 @@ export class SpaceGitHubService {
 				{ key: 'review_comments', path: '/pulls/comments' },
 				{ key: 'pulls', path: '/pulls', extra: 'state=all&sort=updated&direction=desc' },
 			];
-			let lastSeenAt = cursor.lastSeenAt ?? watched.lastPollAt ?? 0;
 			for (const endpoint of endpoints) {
 				const page = processedPages[endpoint.key] ?? 1;
 				const query = new URLSearchParams();
@@ -668,13 +671,19 @@ export class SpaceGitHubService {
 					if (event) {
 						event.source = 'polling';
 						await this.ingest(watched.spaceId, event);
-						lastSeenAt = Math.max(lastSeenAt, event.occurredAt);
+						watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
 						count++;
 					}
 				}
 				processedPages[endpoint.key] = rows.length >= 100 ? page + 1 : 1;
 			}
-			const cursorPayload: PollCursor = { lastSeenAt, etags, processedPages };
+			const hasBacklog = Object.values(processedPages).some((page) => page > 1);
+			const cursorPayload: PollCursor = {
+				lastSeenAt: hasBacklog ? watermarks.committed : watermarks.pending,
+				pendingLastSeenAt: hasBacklog ? watermarks.pending : undefined,
+				etags,
+				processedPages,
+			};
 			this.db
 				.prepare(
 					`UPDATE space_github_watched_repos SET last_poll_at = ?, poll_cursor = ?, updated_at = ? WHERE id = ?`
@@ -714,9 +723,11 @@ export class SpaceGitHubService {
 		const dedupeVersion =
 			endpointKey === 'pulls' ? String(updatedAt) : getString(obj.updated_at ?? obj.created_at);
 		const dedupeSuffix = dedupeVersion ? `:${dedupeVersion}` : '';
+		const canonicalOwner = watched.owner.toLowerCase();
+		const canonicalRepo = watched.repo.toLowerCase();
 		return {
 			deliveryId: `poll:${eventType}:${id}${dedupeSuffix}`,
-			dedupeKey: `${watched.owner}/${watched.repo}:${eventType}:${id}${dedupeSuffix}`,
+			dedupeKey: `${canonicalOwner}/${canonicalRepo}:${eventType}:${id}${dedupeSuffix}`,
 			source: 'polling',
 			eventType,
 			action: 'polled',
