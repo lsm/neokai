@@ -59,6 +59,21 @@ describe('Migration 112', () => {
 		expect(() => runMigration112(db)).not.toThrow();
 
 		expect(db.prepare(`SELECT COUNT(*) AS c FROM space_github_events`).get()).toEqual({ c: 1 });
+		expect(db.prepare(`SELECT id, dedupe_key FROM space_github_events`).get()).toEqual({
+			id: 'event-new',
+			dedupe_key: 'myorg/myrepo:pull_request:77:synchronize:delivery-1',
+		});
+	});
+
+	test('dedupes mixed-case rows even without a lowercase counterpart', () => {
+		const db = new BunDatabase(':memory:');
+		runMigration111(db);
+		insertGitHubEvent(db, 'event-old-1', 'MyOrg/MyRepo:pull_request:77:synchronize:delivery-1');
+		insertGitHubEvent(db, 'event-old-2', 'myorg/MyRepo:pull_request:77:synchronize:delivery-1');
+
+		expect(() => runMigration112(db)).not.toThrow();
+
+		expect(db.prepare(`SELECT COUNT(*) AS c FROM space_github_events`).get()).toEqual({ c: 1 });
 		expect(db.prepare(`SELECT dedupe_key FROM space_github_events`).get()).toEqual({
 			dedupe_key: 'myorg/myrepo:pull_request:77:synchronize:delivery-1',
 		});
