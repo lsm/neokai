@@ -685,7 +685,7 @@ describe('node-agent-tools: send_message', () => {
 
 		expect(data.success).toBe(false);
 		expect(data.error).toContain('Could not deliver message to target agent(s): tester');
-		expect(data.error).toContain('declared but has no active session');
+		expect(data.error).toContain('no live session received the message');
 	});
 
 	test('returns unknown-target when role is not in topology or any execution', async () => {
@@ -3068,12 +3068,12 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
 		});
 		const data = JSON.parse(result.content[0].text);
 
-		// Message should be queued, not failed
-		expect(data.success).toBe(true);
+		// Message should be queued as a backstop, but not reported as delivered.
+		expect(data.success).toBe(false);
 		expect(data.queued).toBeDefined();
 		expect(data.queued).toHaveLength(1);
 		expect(data.queued[0].agentName).toBe('reviewer');
-		expect(data.delivered).toHaveLength(0);
+		expect(data.delivered ?? []).toHaveLength(0);
 
 		// Verify the message is in the queue
 		const pending = pendingMessageRepo.listPendingForTarget(isolatedRunId, 'reviewer');
@@ -3118,7 +3118,7 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
 		});
 		const data = JSON.parse(result.content[0].text);
 
-		expect(data.success).toBe(true);
+		expect(data.success).toBe(false);
 		expect(data.queued).toHaveLength(1);
 
 		// Queued message should include the structured data appendix
