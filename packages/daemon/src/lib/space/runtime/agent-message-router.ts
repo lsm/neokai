@@ -64,11 +64,17 @@ export interface AgentMessageRouterConfig {
 	 */
 	taskId?: string;
 	/**
+	 * Ensures a workflow-node target has a live session before message delivery.
+	 * This is intentionally separate from gate evaluation: gates may hold message
+	 * content, but they must never prevent the receiving agent from being activated.
+	 */
+	activateTargetSession?: (
+		agentName: string
+	) => Promise<Array<{ agentName: string; sessionId: string }>>;
+	/**
 	 * Optional callback fired after a message is persisted to `pendingMessageRepo`
-	 * for a declared-but-inactive target. Callers can use this to immediately
-	 * attempt to resume the target session if one is known (e.g. a session from a
-	 * previous execution that is currently idle/completed), so the queued message
-	 * is delivered without waiting for the next external activation trigger.
+	 * for a declared-but-inactive target. This is now only a diagnostic/backstop
+	 * path; successful send_message results must reflect live delivery, not queueing.
 	 *
 	 * Fires only for non-deduped enqueues (deduped = message already in queue).
 	 */
@@ -157,6 +163,7 @@ export class AgentMessageRouter {
 			pendingMessageRepo,
 			spaceId,
 			taskId,
+			activateTargetSession,
 			onMessageQueued,
 		} = this.config;
 
@@ -206,7 +213,7 @@ export class AgentMessageRouter {
 					`but none have an agentSessionId yet — will attempt activation/queuing.`
 			);
 		}
-		const peers: Array<{ sessionId: string; agentName: string }> = execWithSession.map((e) => ({
+		let peers: Array<{ sessionId: string; agentName: string }> = execWithSession.map((e) => ({
 			sessionId: e.agentSessionId!,
 			agentName: e.agentName,
 		}));
@@ -367,6 +374,30 @@ export class AgentMessageRouter {
 			}
 		}
 
+		// --- Ensure target sessions are live before content delivery ---
+		// ChannelRouter activation above may only create pending node_execution rows.
+		// The runtime callback is responsible for spawning/resuming the actual session;
+		// send_message must not report success until that session can receive content.
+		if (activateTargetSession) {
+			const refreshed = new Map(peers.map((peer) => [`${peer.agentName}:${peer.sessionId}`, peer]));
+			for (const agentName of targetAgentNames) {
+				if (agentName === 'task-agent') continue;
+				if (peers.some((peer) => peer.agentName === agentName)) continue;
+				try {
+					const activatedSessions = await activateTargetSession(agentName);
+					for (const session of activatedSessions) {
+						refreshed.set(`${session.agentName}:${session.sessionId}`, session);
+					}
+				} catch (err) {
+					const errMsg = err instanceof Error ? err.message : String(err);
+					log.warn(
+						`[AgentMessageRouter] failed to activate target session for agent "${agentName}": ${errMsg}`
+					);
+				}
+			}
+			peers = [...refreshed.values()].filter((peer) => peer.sessionId !== fromSessionId);
+		}
+
 		// --- Build the message content (with optional structured-data appendix) ---
 		const dataAppendix =
 			data && Object.keys(data).length > 0
@@ -398,7 +429,9 @@ export class AgentMessageRouter {
 
 			const agentSessions = peers.filter((m) => m.agentName === agentName);
 			if (agentSessions.length === 0) {
-				// No live session for this target. Determine whether to queue or fail.
+				// No live session for this target. This is not a successful delivery:
+				// `delivered: true` requires a live session that received the message.
+				// Keep the legacy queue as a recovery backstop only.
 				// Queue when:
 				//   (a) channelRouter just activated the target node (activatedTargets), OR
 				//   (b) the target is already declared in node_executions (pending spawn), OR
@@ -441,6 +474,7 @@ export class AgentMessageRouter {
 							message: rawMessage,
 						});
 						queued.push({ agentName, messageId: record.id });
+						notFound.push(agentName);
 						log.info(
 							`[AgentMessageRouter] queued message ${record.id} for agent "${agentName}" ` +
 								`(run=${workflowRunId}, from=${fromAgentName})`
@@ -483,28 +517,18 @@ export class AgentMessageRouter {
 			}
 		}
 
-		// All outcomes failed (nothing delivered, queued, or in-flight).
-		// `notFound` here means: target was resolved (it's declared in topology or
-		// node_executions) but no live session existed AND no pendingMessageRepo was
-		// configured for queuing — so the message could not be persisted for later
-		// delivery. We surface a different, less misleading message than the original
-		// "no active sessions / use list_peers" wording, which conflated this case
-		// with the genuinely-unknown-agent case (which now returns earlier with a
-		// "Unknown target" reason).
-		if (
-			notFound.length > 0 &&
-			delivered.length === 0 &&
-			queued.length === 0 &&
-			failed.length === 0
-		) {
+		// All outcomes failed (nothing delivered to a live session). A queued row is
+		// a recovery artifact, not delivery, so success must stay false when the only
+		// outcome was queueing.
+		if (notFound.length > 0 && delivered.length === 0 && failed.length === 0) {
 			return {
 				success: false,
 				delivered: [],
 				failed: [],
 				reason:
 					`Could not deliver message to target agent(s): ${notFound.join(', ')}. ` +
-					`The target is declared but has no active session, and no pending-message ` +
-					`queue is configured for this run.`,
+					`The target is declared but no live session received the message.`,
+				queued: queued.length > 0 ? queued : undefined,
 				notFoundAgentNames: notFound,
 			};
 		}
