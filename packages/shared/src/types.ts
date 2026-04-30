@@ -563,6 +563,17 @@ export interface SessionMetadata {
 	};
 	/** Runtime init fingerprint for non-worker sessions (used to invalidate stale SDK resume state) */
 	runtimeInitFingerprint?: string;
+	/** Non-secret provenance for the configured system prompt used when a session was spawned. */
+	promptProvenance?: {
+		source: string;
+		hash: string;
+		agentId?: string;
+		agentName?: string;
+		workflowRunId?: string;
+		workflowId?: string;
+		nodeId?: string;
+		nodeName?: string;
+	};
 }
 
 // Message content types for streaming input (supports images and tool results)

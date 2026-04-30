@@ -6,7 +6,7 @@
  * behavior comes only from visible prompt fields on the agent or workflow node.
  */
 
-import type { AgentSessionInit } from '../../agent/agent-session';
+import type { AgentSessionInit, PromptProvenanceInit } from '../../agent/agent-session';
 import type {
 	AgentDefinition,
 	McpServerConfig,
@@ -55,6 +55,23 @@ const log = new Logger('custom-agent');
  *   It cannot replace the base prompt — the NeoKai contract sections remain intact.
  * - absent (undefined) — uses the agent's base value unchanged.
  */
+export type PromptSource = 'workflow_node_custom_prompt' | 'space_agent_custom_prompt' | 'empty';
+
+export interface ResolvedAgentPrompt {
+	value: string;
+	source: PromptSource;
+	hash: string;
+}
+
+export interface SlotResolutionContext {
+	agentId?: string;
+	agentName?: string;
+	workflowRunId?: string;
+	workflowId?: string;
+	nodeId?: string;
+	nodeName?: string;
+}
+
 export interface SlotOverrides {
 	/** Override the agent's default model for this slot */
 	model?: string;
@@ -64,6 +81,8 @@ export interface SlotOverrides {
 	disabledSkillIds?: string[];
 	/** Extra MCP servers to add for this slot */
 	extraMcpServers?: Record<string, McpServerConfig>;
+	/** Runtime metadata used to make prompt provenance observable without prompt content. */
+	resolutionContext?: SlotResolutionContext;
 }
 
 /**
@@ -144,7 +163,46 @@ export function buildCustomAgentSystemPrompt(
 	customAgent: SpaceAgent,
 	slotOverrides?: SlotOverrides
 ): string {
-	return expandPrompt(customAgent.customPrompt, slotOverrides?.customPrompt);
+	return resolveCustomAgentPrompt(customAgent, slotOverrides).value;
+}
+
+export function resolveCustomAgentPrompt(
+	customAgent: SpaceAgent,
+	slotOverrides?: SlotOverrides
+): ResolvedAgentPrompt {
+	const basePrompt = customAgent.customPrompt?.trim() ?? '';
+	const slotPrompt = slotOverrides?.customPrompt?.trim() ?? '';
+	const value = expandPrompt(basePrompt, slotPrompt);
+	const source: PromptSource = slotPrompt
+		? 'workflow_node_custom_prompt'
+		: basePrompt
+			? 'space_agent_custom_prompt'
+			: 'empty';
+	return { value, source, hash: hashPrompt(value) };
+}
+
+function buildPromptProvenance(
+	resolved: ResolvedAgentPrompt,
+	customAgent: SpaceAgent,
+	slotOverrides?: SlotOverrides
+): PromptProvenanceInit {
+	const ctx = slotOverrides?.resolutionContext;
+	return {
+		source: resolved.source,
+		hash: resolved.hash,
+		agentId: ctx?.agentId ?? customAgent.id,
+		agentName: ctx?.agentName ?? customAgent.name,
+		workflowRunId: ctx?.workflowRunId,
+		workflowId: ctx?.workflowId,
+		nodeId: ctx?.nodeId,
+		nodeName: ctx?.nodeName,
+	};
+}
+
+function hashPrompt(prompt: string): string {
+	const hasher = new Bun.CryptoHasher('sha256');
+	hasher.update(prompt);
+	return hasher.digest('hex');
 }
 
 /**
@@ -366,7 +424,10 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
 	const provider = inferProviderForModel(model);
 
-	const visiblePrompt = buildCustomAgentSystemPrompt(customAgent, slotOverrides);
+	const resolvedPrompt = resolveCustomAgentPrompt(customAgent, slotOverrides);
+	const visiblePrompt = resolvedPrompt.value;
+	const promptProvenance = buildPromptProvenance(resolvedPrompt, customAgent, slotOverrides);
+	emitPromptProvenance('createCustomAgentInit', promptProvenance);
 
 	const skillOverrides: SkillEnablementOverride[] | undefined = slotOverrides?.disabledSkillIds
 		?.length
@@ -398,6 +459,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 			// See `AgentSession.fromInit` for the preservation guard.
 			context: { spaceId: space.id, taskId: task.id },
 			type: 'worker',
+			promptProvenance,
 			model,
 			provider,
 			agent: agentKey,
@@ -417,8 +479,9 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 			append: visiblePrompt,
 		},
 		features: SUB_SESSION_FEATURES,
-		context: { spaceId: space.id },
+		context: { spaceId: space.id, taskId: task.id },
 		type: 'worker',
+		promptProvenance,
 		model,
 		provider,
 		...customToolPermissions,
@@ -486,6 +549,15 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
 		previousTaskSummaries,
 		slotOverrides,
 	});
+}
+
+function emitPromptProvenance(event: string, provenance: PromptProvenanceInit): void {
+	log.info(
+		`${event}: prompt source=${provenance.source} hash=${provenance.hash} ` +
+			`agentId=${provenance.agentId ?? 'unknown'} agentName=${provenance.agentName ?? 'unknown'} ` +
+			`workflowRunId=${provenance.workflowRunId ?? 'none'} nodeId=${provenance.nodeId ?? 'none'} ` +
+			`nodeName=${provenance.nodeName ?? 'none'}`
+	);
 }
 
 function sanitizeAgentKey(name: string): string {
