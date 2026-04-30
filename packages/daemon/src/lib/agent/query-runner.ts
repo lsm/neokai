@@ -988,7 +988,19 @@ export class QueryRunner {
 		if (this.ctx.onMissingSpaceChatMcpServers) {
 			await this.ctx.onMissingSpaceChatMcpServers(session.id, missingServers);
 			const rebuilt = await this.ctx.optionsBuilder.build();
-			return this.ctx.optionsBuilder.addSessionStateOptions(rebuilt);
+			const repairedOptions = this.ctx.optionsBuilder.addSessionStateOptions(rebuilt);
+			const repairedServerNames = Object.keys(repairedOptions.mcpServers ?? {});
+			const stillMissing = REQUIRED_SPACE_CHAT_MCP_SERVERS.filter(
+				(name) => !repairedServerNames.includes(name)
+			);
+			if (stillMissing.length > 0) {
+				throw new Error(
+					`[MCP invariant] Space chat session ${session.id} still missing required MCP servers ` +
+						`after self-heal: [${stillMissing.join(', ')}]. Refusing to start a degraded ` +
+						`Space Agent turn.`
+				);
+			}
+			return repairedOptions;
 		}
 
 		throw new Error(

@@ -540,7 +540,11 @@ export class SkillsManager {
 			displayName: def.displayName,
 			description: def.description,
 			sourceType: 'builtin',
-			config: { type: 'builtin', commandName: def.commandName },
+			config: {
+				type: 'builtin',
+				commandName: def.commandName,
+				...(def.spaceOnly ? { spaceOnly: true } : {}),
+			},
 			enabled: def.enabled,
 			builtIn: true,
 			validationStatus: 'valid',
@@ -624,11 +628,20 @@ export class SkillsManager {
 
 		const destDir = join(skillsRoot, commandName);
 		await mkdir(destDir, { recursive: true });
-		await cp(sourceDir, destDir, {
-			recursive: true,
-			force: false,
-			errorOnExist: false,
-		});
+		try {
+			// Preserve local edits and avoid surprising users by overwriting an already
+			// installed bundled skill. This means daemon upgrades do not update an
+			// existing SKILL.md in place; productionising this POC should add a version
+			// stamp/checksum path for intentional migrations.
+			await cp(sourceDir, destDir, {
+				recursive: true,
+				force: false,
+				errorOnExist: false,
+			});
+		} catch {
+			// Keep wrapper generation best-effort per skill: a missing/corrupt bundled
+			// asset must not prevent unrelated built-in skills from registering.
+		}
 	}
 
 	/**

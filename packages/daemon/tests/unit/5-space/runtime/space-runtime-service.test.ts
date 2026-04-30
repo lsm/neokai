@@ -480,6 +480,25 @@ describe('SpaceRuntimeService', () => {
 			expect(promptArg.length).toBeGreaterThan(0);
 		});
 
+		test('missing Space chat MCP callback re-runs setup and re-attaches tools', async () => {
+			const session = makeSession();
+			const sessionManager = makeSessionManager(session);
+			const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
+
+			await svc.setupSpaceAgentSession(mockSpace);
+			expect(session.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
+			expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
+
+			await session.onMissingSpaceChatMcpServers?.('space:chat:space-1', ['space-agent-tools']);
+
+			expect(sessionManager.getSessionAsync).toHaveBeenCalledTimes(2);
+			expect(session.mergeRuntimeMcpServers).toHaveBeenCalledTimes(2);
+			const [repairedMcpArg] = (
+				session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
+			).mock.calls[1];
+			expect(repairedMcpArg).toHaveProperty('space-agent-tools');
+		});
+
 		test('no-op when session does not exist in DB', async () => {
 			const sessionManager = makeSessionManager(null); // session not found
 			const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));

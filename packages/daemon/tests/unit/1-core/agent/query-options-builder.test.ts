@@ -1444,6 +1444,40 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.mcpServers).toBeUndefined();
 		});
 
+		it('should inject space-only builtin skills only for sessions scoped to a Space', async () => {
+			const spaceSkill = {
+				id: 'skill-builtin-space-1',
+				name: 'space-coordination',
+				displayName: 'Space Coordination',
+				description: 'Space-only coordination fallback',
+				sourceType: 'builtin' as const,
+				config: { type: 'builtin' as const, commandName: 'space-coordination', spaceOnly: true },
+				enabled: true,
+				builtIn: true,
+				validationStatus: 'valid' as const,
+				createdAt: Date.now(),
+			};
+			const mockSkillsManager = {
+				getEnabledSkills: mock(() => [spaceSkill]),
+			};
+			const context: QueryOptionsBuilderContext = {
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+				skillsManager:
+					mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
+			};
+
+			let options = await new QueryOptionsBuilder(context).build();
+			expect(options.plugins).toBeUndefined();
+
+			mockSession.context = { spaceId: 'space-1' };
+			options = await new QueryOptionsBuilder(context).build();
+			expect(options.plugins).toBeDefined();
+			expect(options.plugins).toHaveLength(1);
+			const pluginPath = (options.plugins![0] as { type: string; path: string }).path;
+			expect(pluginPath).toContain('.neokai/skill-plugins/space-coordination');
+		});
+
 		it('should not inject a disabled builtin skill', async () => {
 			const builtinSkill = {
 				id: 'skill-builtin-2',

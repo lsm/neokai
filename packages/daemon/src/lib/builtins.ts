@@ -76,6 +76,8 @@ export type BuiltinSkill =
 			description: string;
 			commandName: string;
 			enabled: boolean;
+			/** Restrict this built-in skill to sessions with Space context. */
+			spaceOnly?: boolean;
 	  };
 
 /**
@@ -154,5 +156,6 @@ export const BUILTIN_SKILLS: readonly BuiltinSkill[] = [
 			'POC fallback for Space task/workflow coordination through local runtime APIs instead of MCP.',
 		commandName: 'space-coordination',
 		enabled: true,
+		spaceOnly: true,
 	},
 ] as const;
