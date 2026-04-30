@@ -922,7 +922,11 @@ export class TaskAgentManager {
 				}
 			}
 
-			const slotOverrides = this.buildSlotOverrides(slot);
+			const slotOverrides = this.buildSlotOverrides(slot, {
+				node,
+				workflow,
+				workflowRun,
+			});
 
 			let init = resolveAgentInit({
 				task,
@@ -1110,27 +1114,12 @@ export class TaskAgentManager {
 				const baseSessionId = `space:${spaceId}:task:${taskId}:agent:${this.sanitizeAgentNameForId(agentName)}`;
 				const sessionId = this.resolveSessionId(baseSessionId);
 
-				// Resolve slot overrides (same shape as spawnWorkflowNodeAgentForExecution).
-				let slotCustomPrompt: string | undefined = slot.customPrompt?.value;
-				if (!slotCustomPrompt) {
-					const legacySlot = slot as {
-						systemPrompt?: { value: string };
-						instructions?: { value: string };
-					};
-					const legacySp = legacySlot.systemPrompt?.value?.trim() ?? '';
-					const legacyInstr = legacySlot.instructions?.value?.trim() ?? '';
-					if (legacySp && legacyInstr) {
-						slotCustomPrompt = `${legacySp}\n\n${legacyInstr}`;
-					} else {
-						slotCustomPrompt = legacySp || legacyInstr || undefined;
-					}
-				}
-				const slotOverrides: SlotOverrides = {
-					model: slot.model,
-					customPrompt: slotCustomPrompt,
-					disabledSkillIds: slot.disabledSkillIds,
-					extraMcpServers: slot.extraMcpServers,
-				};
+				const node = workflow.nodes.find((candidate) => candidate.id === nodeId);
+				const slotOverrides = this.buildSlotOverrides(slot, {
+					node,
+					workflow,
+					workflowRun,
+				});
 
 				let init = resolveAgentInit({
 					task,
@@ -3386,7 +3375,14 @@ export class TaskAgentManager {
 		return agentSession;
 	}
 
-	private buildSlotOverrides(slot: WorkflowNodeAgent): SlotOverrides {
+	private buildSlotOverrides(
+		slot: WorkflowNodeAgent,
+		context?: {
+			node?: { id: string; name: string };
+			workflow?: { id: string };
+			workflowRun?: { id: string };
+		}
+	): SlotOverrides {
 		// Resolve customPrompt from the slot. Support legacy JSON blobs that may still
 		// have the old `systemPrompt`/`instructions` shape from before migration 79.
 		let slotCustomPrompt: string | undefined = slot.customPrompt?.value;
@@ -3409,6 +3405,14 @@ export class TaskAgentManager {
 			customPrompt: slotCustomPrompt,
 			disabledSkillIds: slot.disabledSkillIds,
 			extraMcpServers: slot.extraMcpServers,
+			resolutionContext: {
+				agentId: slot.agentId,
+				agentName: slot.name,
+				workflowRunId: context?.workflowRun?.id,
+				workflowId: context?.workflow?.id,
+				nodeId: context?.node?.id,
+				nodeName: context?.node?.name,
+			},
 		};
 	}
 
@@ -3452,7 +3456,11 @@ export class TaskAgentManager {
 			workspacePath,
 			workflowRun,
 			workflow,
-			slotOverrides: this.buildSlotOverrides(slot),
+			slotOverrides: this.buildSlotOverrides(slot, {
+				node,
+				workflow: workflow ?? undefined,
+				workflowRun: workflowRun ?? undefined,
+			}),
 			agentId: slot.agentId,
 		});
 	}
@@ -4394,27 +4402,12 @@ export class TaskAgentManager {
 
 		const workspacePath = this.taskWorktreePaths.get(taskId) ?? space.workspacePath;
 
-		// Build slot overrides + init in the same shape as spawnWorkflowNodeAgentForExecution.
-		let slotCustomPrompt: string | undefined = matchedSlot.customPrompt?.value;
-		if (!slotCustomPrompt) {
-			const legacySlot = matchedSlot as {
-				systemPrompt?: { value: string };
-				instructions?: { value: string };
-			};
-			const legacySp = legacySlot.systemPrompt?.value?.trim() ?? '';
-			const legacyInstr = legacySlot.instructions?.value?.trim() ?? '';
-			if (legacySp && legacyInstr) {
-				slotCustomPrompt = `${legacySp}\n\n${legacyInstr}`;
-			} else {
-				slotCustomPrompt = legacySp || legacyInstr || undefined;
-			}
-		}
-		const slotOverrides: SlotOverrides = {
-			model: matchedSlot.model,
-			customPrompt: slotCustomPrompt,
-			disabledSkillIds: matchedSlot.disabledSkillIds,
-			extraMcpServers: matchedSlot.extraMcpServers,
-		};
+		const matchedNode = workflow.nodes.find((node) => node.id === matchedNodeId);
+		const slotOverrides = this.buildSlotOverrides(matchedSlot, {
+			node: matchedNode,
+			workflow,
+			workflowRun: workflowRun ?? undefined,
+		});
 
 		const baseSessionId = `space:${spaceId}:task:${taskId}:post-approval:${this.sanitizeAgentNameForId(matchedSlot.name)}`;
 		const sessionId = this.resolveSessionId(baseSessionId);

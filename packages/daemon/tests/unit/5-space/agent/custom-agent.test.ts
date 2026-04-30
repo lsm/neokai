@@ -7,6 +7,7 @@ import {
 	expandPrompt,
 	createCustomAgentInit,
 	resolveAgentInit,
+	resolveCustomAgentPrompt,
 	type CustomAgentConfig,
 	type SlotOverrides,
 } from '../../../../src/lib/space/agents/custom-agent';
@@ -166,6 +167,28 @@ describe('buildCustomAgentSystemPrompt', () => {
 
 	it('returns empty string when no prompt is configured', () => {
 		expect(buildCustomAgentSystemPrompt(makeAgent({ customPrompt: null }))).toBe('');
+	});
+});
+
+describe('resolveCustomAgentPrompt', () => {
+	it('resolves workflow node overrides before the persisted agent prompt', () => {
+		const resolved = resolveCustomAgentPrompt(makeAgent({ customPrompt: 'Base prompt' }), {
+			customPrompt: 'Node override',
+		});
+
+		expect(resolved.value).toBe('Base prompt\n\nNode override');
+		expect(resolved.source).toBe('workflow_node_custom_prompt');
+		expect(resolved.hash).toMatch(/^[a-f0-9]{64}$/);
+	});
+
+	it('does not substitute the generic reviewer prompt when no prompt is configured', () => {
+		const resolved = resolveCustomAgentPrompt(makeAgent({ name: 'Reviewer', customPrompt: null }));
+
+		expect(resolved.value).toBe('');
+		expect(resolved.source).toBe('empty');
+		expect(resolved.value).not.toContain(
+			'You are an expert code reviewer. You review pull requests'
+		);
 	});
 });
 
@@ -449,6 +472,66 @@ describe('createCustomAgentInit', () => {
 		);
 
 		expect(init.systemPrompt?.append).toBe('Agent base prompt');
+	});
+
+	it('records workflow-node prompt provenance for sentinel prompts', () => {
+		const init = createCustomAgentInit(
+			makeConfig({
+				customAgent: makeAgent({
+					id: 'reviewer-agent-id',
+					name: 'Reviewer',
+					customPrompt: 'Base reviewer prompt',
+				}),
+				workflowRun: makeWorkflowRun({ id: 'run-review' }),
+				workflow: makeWorkflow({ id: 'workflow-review' }),
+				slotOverrides: {
+					customPrompt: 'SENTINEL REVIEW NODE PROMPT',
+					resolutionContext: {
+						agentId: 'reviewer-agent-id',
+						agentName: 'reviewer',
+						workflowRunId: 'run-review',
+						workflowId: 'workflow-review',
+						nodeId: 'review-node',
+						nodeName: 'Review',
+					},
+				},
+			})
+		);
+
+		expect(init.systemPrompt?.append).toContain('SENTINEL REVIEW NODE PROMPT');
+		expect(init.systemPrompt?.append).not.toContain(
+			'You are an expert code reviewer. You review pull requests'
+		);
+		expect(init.promptProvenance).toMatchObject({
+			source: 'workflow_node_custom_prompt',
+			agentId: 'reviewer-agent-id',
+			agentName: 'reviewer',
+			workflowRunId: 'run-review',
+			workflowId: 'workflow-review',
+			nodeId: 'review-node',
+			nodeName: 'Review',
+		});
+		expect(init.promptProvenance?.hash).toMatch(/^[a-f0-9]{64}$/);
+	});
+
+	it('records agent prompt provenance for non-reviewer agents without node overrides', () => {
+		const init = createCustomAgentInit(
+			makeConfig({
+				customAgent: makeAgent({
+					id: 'qa-agent-id',
+					name: 'QA',
+					customPrompt: 'SENTINEL QA PROMPT',
+				}),
+				workflowRun: makeWorkflowRun({ id: 'run-qa' }),
+			})
+		);
+
+		expect(init.systemPrompt?.append).toBe('SENTINEL QA PROMPT');
+		expect(init.promptProvenance).toMatchObject({
+			source: 'space_agent_custom_prompt',
+			agentId: 'qa-agent-id',
+			agentName: 'QA',
+		});
 	});
 
 	it('uses tool-restricted agent mode when tools are configured', () => {
