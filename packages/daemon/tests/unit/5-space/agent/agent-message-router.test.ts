@@ -1393,6 +1393,48 @@ describe('AgentMessageRouter: onMessageQueued callback fires for non-deduped enq
 		expect(resumedAgents).toHaveLength(0);
 	});
 
+	test('dedupes repeated queued handoff sends with a stable idempotency key', async () => {
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('coder', 'reviewer'),
+		]);
+
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId,
+			workflowNodeId: ctx.nodeId,
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+		const resumedAgents: string[] = [];
+		const router = new AgentMessageRouter({
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunId,
+			workflowChannels: [makeChannel('coder', 'reviewer')],
+			messageInjector: async () => {},
+			pendingMessageRepo,
+			spaceId: ctx.spaceId,
+			taskId: null,
+			onMessageQueued: (agentName) => resumedAgents.push(agentName),
+		});
+
+		for (let i = 0; i < 2; i++) {
+			await router.deliverMessage({
+				fromAgentName: 'coder',
+				fromSessionId: ctx.coderSessionId,
+				target: 'reviewer',
+				message: 'same handoff',
+			});
+		}
+
+		const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
+		expect(pending).toHaveLength(1);
+		expect(pending[0].maxAttempts).toBe(3);
+		expect(pending[0].expiresAt - pending[0].createdAt).toBeLessThanOrEqual(60_000);
+		expect(resumedAgents).toEqual(['reviewer']);
+	});
+
 	test('does NOT call onMessageQueued when message is delivered directly (live session)', async () => {
 		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeChannel('coder', 'reviewer'),

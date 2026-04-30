@@ -254,6 +254,21 @@ export class PendingAgentMessageRepository {
 		return this.getById(id);
 	}
 
+	/** Mark a pending row as failed without consuming additional retry ticks. */
+	markFailed(id: string, error: string): PendingAgentMessageRecord | null {
+		const now = Date.now();
+		this.db
+			.prepare(
+				`UPDATE pending_agent_messages
+				 SET status = 'failed',
+				     last_attempt_at = ?,
+				     last_error = ?
+				 WHERE id = ? AND status = 'pending'`
+			)
+			.run(now, error, id);
+		return this.getById(id);
+	}
+
 	/**
 	 * Sweep expired rows in a run — any pending row with `expires_at <= now`
 	 * is moved to `status = 'expired'`. Returns the number of rows updated.
