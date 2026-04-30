@@ -76,6 +76,8 @@ export type BuiltinSkill =
 			description: string;
 			commandName: string;
 			enabled: boolean;
+			/** Restrict this built-in skill to sessions with Space context. */
+			spaceOnly?: boolean;
 	  };
 
 /**
@@ -145,5 +147,15 @@ export const BUILTIN_SKILLS: readonly BuiltinSkill[] = [
 		description: 'Interactive browser automation via Playwright with step-by-step control.',
 		commandName: 'playwright-interactive',
 		enabled: true,
+	},
+	{
+		kind: 'builtin-command',
+		name: 'space-coordination',
+		displayName: 'Space Coordination (POC)',
+		description:
+			'POC fallback for Space task/workflow coordination through local runtime APIs instead of MCP.',
+		commandName: 'space-coordination',
+		enabled: true,
+		spaceOnly: true,
 	},
 ] as const;

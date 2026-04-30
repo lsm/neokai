@@ -1104,6 +1104,7 @@ CRITICAL RULES:
 		for (const skill of skills) {
 			if (this.isSkillScopeDisabled(skill.id, overrideDisabled, sessionDisabled)) continue;
 			if (skill.sourceType === 'builtin' && skill.config.type === 'builtin') {
+				if (skill.config.spaceOnly === true && !this.ctx.session.context?.spaceId) continue;
 				const wrapperDir = builtinSkillPluginPath(wrappersRoot, skill.config.commandName);
 				plugins.push({ type: 'local', path: wrapperDir });
 			}

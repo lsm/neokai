@@ -50,6 +50,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		processingState?: AgentProcessingState;
 	};
 	'session.deleted': { sessionId: string };
+	'session.reset': { sessionId: string; session: Session; restartQuery: boolean };
 
 	// SDK events — message may carry a neokai-injected `timestamp` from the DB layer.
 	// The SDK defines timestamp?: string (ISO 8601) on user messages; the daemon overrides it
