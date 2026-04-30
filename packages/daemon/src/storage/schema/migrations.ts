@@ -529,8 +529,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   execution mapping plus a per-execution continuation inbox.
 	runMigration109(db);
 
-	// Migration 110: Space-level GitHub watched repositories and normalized PR events.
+	// Migration 110: Limit pending-agent-message idempotency to live pending rows.
+	//   Historical delivered/failed/expired rows must not suppress legitimate resends.
 	runMigration110(db);
+
+	// Migration 111: Space-level GitHub watched repositories and normalized PR events.
+	runMigration111(db);
 }
 
 /**
@@ -7690,7 +7694,26 @@ export function runMigration109(db: BunDatabase): void {
 	);
 }
 
+/**
+ * Migration 110: Limit pending-agent-message idempotency to live pending rows.
+ *
+ * The original M92 unique index covered every historical row with an
+ * idempotency key, including delivered/failed/expired messages. Runtime retry
+ * dedupe only needs to collapse currently pending rows; terminal history must
+ * not suppress a legitimate later resend with the same message text.
+ */
 export function runMigration110(db: BunDatabase): void {
+	if (!tableExists(db, 'pending_agent_messages')) return;
+
+	db.exec('DROP INDEX IF EXISTS idx_pending_agent_messages_idem');
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_agent_messages_idem_pending
+		 ON pending_agent_messages(workflow_run_id, target_agent_name, idempotency_key)
+		 WHERE idempotency_key IS NOT NULL AND status = 'pending'`
+	);
+}
+
+export function runMigration111(db: BunDatabase): void {
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_github_watched_repos (
 			id TEXT PRIMARY KEY,

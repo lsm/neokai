@@ -8,8 +8,8 @@
  *
  * Design goals:
  *   - Ordered delivery per `(workflow_run_id, target_agent_name)` via `created_at`
- *   - Idempotency: `(workflow_run_id, target_agent_name, idempotency_key)` is unique
- *     when `idempotency_key` is set; re-enqueueing returns the existing row
+ *   - Idempotency: pending `(workflow_run_id, target_agent_name, idempotency_key)`
+ *     rows are de-duped; terminal historical rows do not suppress later resends
  *   - Bounded retries: each failed delivery increments `attempts` and records
  *     `last_error`; once `attempts >= max_attempts`, the row is moved to
  *     `status = 'failed'` and no longer drained
@@ -86,9 +86,10 @@ export class PendingAgentMessageRepository {
 	constructor(private db: BunDatabase) {}
 
 	/**
-	 * Insert a new pending message, or return the existing row if the
+	 * Insert a new pending message, or return the existing pending row if the
 	 * `(workflowRunId, targetAgentName, idempotencyKey)` tuple already exists
-	 * (when `idempotencyKey` is set).
+	 * (when `idempotencyKey` is set). Delivered/failed/expired rows are historical
+	 * and do not suppress legitimate later resends with the same message text.
 	 */
 	enqueue(input: EnqueuePendingMessageInput): EnqueueResult {
 		const idempotencyKey = input.idempotencyKey ?? null;
@@ -152,7 +153,7 @@ export class PendingAgentMessageRepository {
 		return row ? rowToRecord(row) : null;
 	}
 
-	/** Find a row by its idempotency tuple. Returns null if none matches or if `idempotencyKey` is empty. */
+	/** Find a pending row by its idempotency tuple. Returns null if none matches or if `idempotencyKey` is empty. */
 	findByIdempotencyKey(
 		workflowRunId: string,
 		targetAgentName: string,
@@ -162,7 +163,8 @@ export class PendingAgentMessageRepository {
 		const row = this.db
 			.prepare(
 				`SELECT * FROM pending_agent_messages
-				 WHERE workflow_run_id = ? AND target_agent_name = ? AND idempotency_key = ?
+				 WHERE workflow_run_id = ? AND target_agent_name = ? AND idempotency_key = ? AND status = 'pending'
+				 ORDER BY created_at ASC, rowid ASC
 				 LIMIT 1`
 			)
 			.get(workflowRunId, targetAgentName, idempotencyKey) as PendingMessageRow | null;
@@ -197,6 +199,21 @@ export class PendingAgentMessageRepository {
 				 ORDER BY created_at ASC, rowid ASC`
 			)
 			.all(workflowRunId) as PendingMessageRow[];
+		return rows.map(rowToRecord);
+	}
+
+	/** List rows for a run by status, oldest first. Used by repair/escalation paths. */
+	listByRunAndStatus(
+		workflowRunId: string,
+		status: PendingMessageStatus
+	): PendingAgentMessageRecord[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM pending_agent_messages
+				 WHERE workflow_run_id = ? AND status = ?
+				 ORDER BY created_at ASC, rowid ASC`
+			)
+			.all(workflowRunId, status) as PendingMessageRow[];
 		return rows.map(rowToRecord);
 	}
 
@@ -248,6 +265,21 @@ export class PendingAgentMessageRepository {
 				       WHEN attempts + 1 >= max_attempts THEN 'failed'
 				       ELSE status
 				     END
+				 WHERE id = ? AND status = 'pending'`
+			)
+			.run(now, error, id);
+		return this.getById(id);
+	}
+
+	/** Mark a pending row as failed without consuming additional retry ticks. */
+	markFailed(id: string, error: string): PendingAgentMessageRecord | null {
+		const now = Date.now();
+		this.db
+			.prepare(
+				`UPDATE pending_agent_messages
+				 SET status = 'failed',
+				     last_attempt_at = ?,
+				     last_error = ?
 				 WHERE id = ? AND status = 'pending'`
 			)
 			.run(now, error, id);
