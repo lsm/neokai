@@ -1137,6 +1137,70 @@ describe('SpaceRuntime', () => {
 			expect(tam._spawnedExecutionIds).toHaveLength(1);
 		});
 
+		test('resolved handoffs do not bind to a different live slot on the same node', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Exact Slot Handoff Repair ${Date.now()}-${Math.random()}`,
+				description: 'Test queued handoff repair exact slot matching',
+				nodes: [
+					{
+						id: 'coding-node',
+						name: 'Coder',
+						agents: [
+							{ name: 'coder-slot', agentId: AGENT_CODER },
+							{ name: 'helper-slot', agentId: AGENT_GENERAL },
+						],
+					},
+					{ id: 'review-node', name: 'Review', agentId: AGENT_GENERAL },
+				],
+				transitions: [],
+				channels: [{ id: 'review-to-coding', from: 'Review', to: 'Coder' }],
+				startNodeId: 'coding-node',
+				endNodeId: 'review-node',
+				rules: [],
+				completionAutonomyLevel: 3,
+			});
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Queued handoff'
+			);
+			const task = tasks[0];
+			taskRepo.updateTask(task.id, { status: 'in_progress' });
+			const coderExec = nodeExecutionRepo
+				.listByWorkflowRun(run.id)
+				.find((execution) => execution.agentName === 'coder-slot')!;
+			nodeExecutionRepo.update(coderExec.id, {
+				status: 'pending',
+				agentSessionId: null,
+				completedAt: null,
+			});
+			const helperExec = nodeExecutionRepo
+				.listByWorkflowRun(run.id)
+				.find((execution) => execution.agentName === 'helper-slot')!;
+			nodeExecutionRepo.update(helperExec.id, {
+				status: 'pending',
+				agentSessionId: 'session:helper-slot',
+				completedAt: null,
+			});
+			const pendingRepo = new PendingAgentMessageRepository(db);
+			pendingRepo.enqueue({
+				workflowRunId: run.id,
+				spaceId: SPACE_ID,
+				taskId: task.id,
+				sourceAgentName: 'reviewer',
+				targetKind: 'node_agent',
+				targetAgentName: 'Coder',
+				message: 'please revise',
+				ttlMs: 60_000,
+				maxAttempts: 3,
+			});
+			const tam = makeRepairTam({ liveSessions: new Set(['session:helper-slot']) });
+			await buildRepairRuntime(tam, pendingRepo).executeTick();
+			expect(tam._spawnedExecutionIds).toEqual([coderExec.id]);
+			expect(nodeExecutionRepo.getById(helperExec.id)!.agentSessionId).toBe('session:helper-slot');
+		});
+
 		test('skips repair while target execution is waiting for rebind recovery', async () => {
 			const { run, pendingRepo } = await setupQueuedHandoff();
 			const targetExec = nodeExecutionRepo
@@ -1170,6 +1234,26 @@ describe('SpaceRuntime', () => {
 			await buildRepairRuntime(tam, pendingRepo).executeTick();
 			expect(tam._spawnedExecutionIds).toHaveLength(0);
 			expect(pendingRepo.listPendingForTarget(run.id, 'Coder')).toHaveLength(1);
+		});
+
+		test('missing space retries and eventually blocks the queued handoff run', async () => {
+			const { run, task, pendingRepo } = await setupQueuedHandoff({ maxAttempts: 1 });
+			await buildRepairRuntime(makeRepairTam(), pendingRepo)['repairQueuedWorkflowNodeHandoffs'](
+				run.id,
+				run,
+				{
+					workflow: workflowManager.getWorkflow(run.workflowId)!,
+					spaceId: 'missing-space',
+					workspacePath: WORKSPACE,
+				},
+				task,
+				null
+			);
+			const row = pendingRepo.listAllForRun(run.id)[0];
+			expect(row.status).toBe('failed');
+			expect(row.lastError).toContain('space missing-space not found');
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)!.status).toBe('blocked');
 		});
 
 		test('activation failures are retried and eventually block the run', async () => {

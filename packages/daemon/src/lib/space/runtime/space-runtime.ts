@@ -2039,6 +2039,12 @@ export class SpaceRuntime {
 			// still runs so in-flight agents are monitored, but no new agents are started.
 			if (space?.paused || space?.stopped) return;
 
+			const hasQueuedNodeHandoff =
+				this.config.pendingMessageRepo
+					?.listPendingForRun(runId)
+					.some((row) => row.targetKind === 'node_agent') ?? false;
+			if (!space && !hasQueuedNodeHandoff) return;
+
 			const stoppedAfterQueuedHandoffRepair = await this.repairQueuedWorkflowNodeHandoffs(
 				runId,
 				run,
@@ -2173,11 +2179,22 @@ export class SpaceRuntime {
 		if (pending.length === 0) return false;
 
 		if (!space) {
+			let blockedReason: string | null = null;
+			const reason = `Cannot activate queued handoff target: space ${meta.spaceId} not found`;
 			for (const row of pending) {
-				repo.markAttemptFailed(
-					row.id,
-					`Cannot activate queued handoff target: space ${meta.spaceId} not found`
+				const updated = repo.markAttemptFailed(row.id, reason);
+				if (updated?.status === 'failed') {
+					blockedReason = `Queued workflow handoff to ${updated.targetAgentName} failed after ${updated.attempts} attempt(s): ${reason}`;
+				}
+			}
+			if (blockedReason) {
+				await this.blockRunForQueuedHandoffFailure(
+					runId,
+					meta.spaceId,
+					canonicalTask,
+					blockedReason
 				);
+				return true;
 			}
 			return false;
 		}
@@ -2305,9 +2322,7 @@ export class SpaceRuntime {
 		if (resolved) {
 			const nodeExecution = this.config.nodeExecutionRepo
 				.listByNode(runId, resolved.nodeId)
-				.filter(
-					(candidate) => candidate.agentName === resolved.agentName || !!candidate.agentSessionId
-				)
+				.filter((candidate) => candidate.agentName === resolved.agentName)
 				.at(-1);
 			if (nodeExecution) return nodeExecution;
 		}
