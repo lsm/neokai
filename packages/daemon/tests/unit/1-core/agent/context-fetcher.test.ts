@@ -180,8 +180,8 @@ describe('ContextFetcher.toContextInfo', () => {
 
 		const info = ContextFetcher.toContextInfo(response, {
 			id: 'gpt-5.5',
-			provider: 'anthropic-codex',
 			contextWindow: 272000,
+			preferContextWindowMetadata: true,
 		});
 
 		expect(info.totalCapacity).toBe(272000);
@@ -204,8 +204,8 @@ describe('ContextFetcher.toContextInfo', () => {
 
 		const info = ContextFetcher.toContextInfo(response, {
 			id: 'gpt-5.5',
-			provider: 'anthropic-codex',
 			contextWindow: 272000,
+			preferContextWindowMetadata: true,
 		});
 
 		expect(info.totalCapacity).toBe(128000);
@@ -228,7 +228,6 @@ describe('ContextFetcher.toContextInfo', () => {
 
 		const info = ContextFetcher.toContextInfo(response, {
 			id: 'gpt-5.5',
-			provider: 'anthropic-codex',
 			contextWindow: 272000,
 		});
 
@@ -252,7 +251,6 @@ describe('ContextFetcher.toContextInfo', () => {
 
 		const info = ContextFetcher.toContextInfo(response, {
 			id: 'gpt-5.5',
-			provider: 'anthropic-codex',
 			contextWindow: 272000,
 		});
 
@@ -361,7 +359,6 @@ describe('ContextFetcher.fetch', () => {
 		const fetcher = new ContextFetcher('test-session');
 		const info = await fetcher.fetch(query, {
 			id: 'gpt-5.5',
-			provider: 'anthropic-codex',
 			contextWindow: 272000,
 		});
 

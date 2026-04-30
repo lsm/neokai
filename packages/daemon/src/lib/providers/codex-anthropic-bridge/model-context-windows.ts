@@ -91,6 +91,7 @@ export function getCodexBridgeModelInfos(): ModelInfo[] {
 			family: 'gpt',
 			provider: 'anthropic-codex',
 			contextWindow: MODEL_CONTEXT_WINDOWS[id],
+			preferContextWindowMetadata: true,
 			description: details.description,
 			releaseDate: details.releaseDate,
 			available: true,

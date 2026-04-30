@@ -27,6 +27,8 @@ export interface ModelInfo {
 	provider: string;
 	/** Context window size in tokens */
 	contextWindow: number;
+	/** Prefer this metadata value over SDK-reported context capacity for matching models */
+	preferContextWindowMetadata?: boolean;
 	/** Brief description of the model */
 	description: string;
 	/** Release date */

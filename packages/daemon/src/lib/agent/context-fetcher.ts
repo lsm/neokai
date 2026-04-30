@@ -23,7 +23,10 @@ import type {
 } from '@neokai/shared';
 import { Logger } from '../logger';
 
-type ContextMetadata = Pick<ModelInfo, 'id' | 'provider' | 'contextWindow'> | null | undefined;
+type ContextMetadata =
+	| Pick<ModelInfo, 'id' | 'contextWindow' | 'preferContextWindowMetadata'>
+	| null
+	| undefined;
 
 function positiveInteger(value: unknown): number | undefined {
 	return typeof value === 'number' && Number.isFinite(value) && value > 0
@@ -80,13 +83,12 @@ export class ContextFetcher {
 		const sdkRawCapacity = positiveInteger(response.rawMaxTokens);
 		const sdkCapacity = positiveInteger(response.maxTokens);
 		const responseModel = response.model || undefined;
-		const isCodexBridgeModel = modelMetadata?.provider === 'anthropic-codex';
 		const metadataCapacity =
 			!responseModel || modelMetadata?.id === responseModel
 				? positiveInteger(modelMetadata?.contextWindow)
 				: undefined;
 		const capacity =
-			isCodexBridgeModel && metadataCapacity
+			modelMetadata?.preferContextWindowMetadata && metadataCapacity
 				? metadataCapacity
 				: (sdkRawCapacity ?? sdkCapacity ?? metadataCapacity ?? 0);
 		for (const category of response.categories ?? []) {
