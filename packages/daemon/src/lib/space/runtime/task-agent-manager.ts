@@ -1855,8 +1855,14 @@ export class TaskAgentManager {
 			.listByWorkflowRun(workflowRunId)
 			.filter((execution) => execution.agentName === agentName && execution.agentSessionId)
 			.at(-1);
-		if (existing?.agentSessionId && this.isSessionAlive(existing.agentSessionId)) {
-			return [{ agentName, sessionId: existing.agentSessionId }];
+		if (existing?.agentSessionId) {
+			if (this.isSessionAlive(existing.agentSessionId)) {
+				return [{ agentName, sessionId: existing.agentSessionId }];
+			}
+			this.config.nodeExecutionRepo.update(existing.id, {
+				agentSessionId: null,
+				status: 'pending',
+			});
 		}
 
 		await this.ensureWorkflowNodeActivationForAgent(taskId, agentName, options);

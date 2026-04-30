@@ -2547,6 +2547,47 @@ describe('TaskAgentManager', () => {
 			}
 		});
 
+		test('resets stale execution session before spawning target session', async () => {
+			const { wfRunId, reviewNodeId, taskId } = await seedRunWithTwoNodes();
+			const staleSessionId = 'stale-reviewer-session';
+			const staleExec = ctx.nodeExecutionRepo.create({
+				workflowRunId: wfRunId,
+				workflowNodeId: reviewNodeId,
+				agentName: 'reviewer',
+				agentId: ctx.agentId,
+				agentSessionId: staleSessionId,
+				status: 'in_progress',
+			});
+			const staleSession = makeMockSession(staleSessionId);
+			staleSession._processingState = { status: 'error' } as AgentProcessingState;
+			ctx.manager['agentSessionIndex'].set(staleSessionId, staleSession as unknown as AgentSession);
+			const spawnSpy = spyOn(ctx.manager, 'spawnWorkflowNodeAgentForExecution').mockImplementation(
+				async (_task, _space, _workflow, _run, execution) => {
+					expect(execution.id).toBe(staleExec.id);
+					expect(execution.agentSessionId).toBeNull();
+					expect(execution.status).toBe('pending');
+					return 'fresh-reviewer-session';
+				}
+			);
+
+			try {
+				const sessions = await ctx.manager.activateTargetSessionsForMessage(
+					taskId,
+					wfRunId,
+					'reviewer'
+				);
+
+				expect(sessions).toEqual([{ agentName: 'reviewer', sessionId: 'fresh-reviewer-session' }]);
+				expect(spawnSpy).toHaveBeenCalledTimes(1);
+				const updated = ctx.nodeExecutionRepo.getById(staleExec.id);
+				expect(updated?.agentSessionId).toBeNull();
+				expect(updated?.status).toBe('pending');
+			} finally {
+				spawnSpy.mockRestore();
+				ctx.manager['agentSessionIndex'].delete(staleSessionId);
+			}
+		});
+
 		test('returns false and skips activateNode when agentName is not in any workflow node', async () => {
 			const { taskId } = await seedRunWithTwoNodes();
 
