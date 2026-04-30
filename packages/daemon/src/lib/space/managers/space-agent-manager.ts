@@ -133,7 +133,6 @@ export class SpaceAgentManager {
 	 * List all agents for a space.
 	 */
 	listBySpaceId(spaceId: string): SpaceAgent[] {
-		this.reconcileEquivalentLegacyPresetRows(spaceId);
 		return this.repo.getBySpaceId(spaceId);
 	}
 
@@ -227,15 +226,12 @@ export class SpaceAgentManager {
 	// ---------------------------------------------------------------------------
 
 	/**
-	 * Validate that a model is recognized.
-	 * Skips validation entirely when the models cache is empty (not yet loaded).
-	 * When a provider is known, uses the provider-aware isValidModel() API so
-	 * that e.g. a GLM model cannot be validated as an Anthropic model.
-	 * Falls back to getModelInfoUnfiltered() when no provider is given — this
-	 * path includes legacy model ID mappings (e.g. 'claude-3-5-sonnet-20241022'
-	 * → 'sonnet') consistent with how the rest of the codebase resolves models.
+	 * One-shot startup reconciliation for preset rows that were correctly seeded
+	 * from the old coordinator Reviewer prompt before the full Reviewer template
+	 * existed. Returns updated rows so callers can emit subscription events.
 	 */
-	private reconcileEquivalentLegacyPresetRows(spaceId: string): void {
+	reconcileEquivalentLegacyPresetRows(spaceId: string): SpaceAgent[] {
+		const updated: SpaceAgent[] = [];
 		const presetByName = new Map(getPresetAgentTemplates().map((p) => [p.name.toLowerCase(), p]));
 		for (const agent of this.repo.getBySpaceId(spaceId)) {
 			if (!agent.templateName) continue;
@@ -244,11 +240,13 @@ export class SpaceAgentManager {
 			const currentHash = computeAgentTemplateHash(preset);
 			if (agent.templateHash === currentHash) continue;
 			if (!this.isEquivalentLegacyPresetRow(agent, preset)) continue;
-			this.repo.update(agent.id, {
+			const reconciled = this.repo.update(agent.id, {
 				customPrompt: preset.customPrompt,
 				templateHash: currentHash,
 			});
+			if (reconciled) updated.push(reconciled);
 		}
+		return updated;
 	}
 
 	private isEquivalentLegacyPresetRow(
@@ -269,6 +267,15 @@ export class SpaceAgentManager {
 		return true;
 	}
 
+	/**
+	 * Validate that a model is recognized.
+	 * Skips validation entirely when the models cache is empty (not yet loaded).
+	 * When a provider is known, uses the provider-aware isValidModel() API so
+	 * that e.g. a GLM model cannot be validated as an Anthropic model.
+	 * Falls back to getModelInfoUnfiltered() when no provider is given — this
+	 * path includes legacy model ID mappings (e.g. 'claude-3-5-sonnet-20241022'
+	 * → 'sonnet') consistent with how the rest of the codebase resolves models.
+	 */
 	private async validateModel(model: string, provider?: string | null): Promise<string | null> {
 		// Skip all validation if the models cache is not yet populated
 		const available = getAvailableModels('global');
