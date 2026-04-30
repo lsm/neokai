@@ -643,6 +643,11 @@ describe('SessionManager', () => {
 			expect(mockEventBus.emit).toHaveBeenCalledWith('session.errorClear', {
 				sessionId: 'test-id',
 			});
+			expect(mockEventBus.emit).toHaveBeenCalledWith('session.reset', {
+				sessionId: 'test-id',
+				session: expect.objectContaining({ id: 'test-id' }),
+				restartQuery: false,
+			});
 			expect(mockMessageHub.event).toHaveBeenCalledWith(
 				'session.reset',
 				{ message: 'Agent has been reset and is ready for new messages' },
@@ -703,6 +708,11 @@ describe('SessionManager', () => {
 
 				expect(result).toEqual({ success: true });
 				expect(freshSession).not.toBe(oldSession);
+				expect(mockEventBus.emit).toHaveBeenCalledWith('session.reset', {
+					sessionId: 'test-id',
+					session: expect.objectContaining({ id: 'test-id' }),
+					restartQuery: true,
+				});
 				expect(replaySpy).toHaveBeenCalledTimes(1);
 				expect(replayedSession).toBe(freshSession);
 			} finally {
