@@ -4,14 +4,14 @@
 #
 # | Trigger                              | Tests Run                                                    | Rationale                               |
 # |--------------------------------------|--------------------------------------------------------------|-----------------------------------------|
-# | PR to dev                            | check + unit + online + web                                  | Fast feedback for PRs                   |
-# | Push to dev                          | check + unit + online + web                                  | Same checks as PR for merge safety      |
-# | workflow_dispatch (default)          | all tests including E2E                                      | Manual full run including E2E           |
-# | workflow_dispatch (run_e2e_only=true) | discover + build + e2e only                                 | Selective E2E on any branch             |
+# | PR to dev                            | check + unit + mocked online + web                           | Fast feedback without real secrets      |
+# | Push to dev                          | check + unit + mocked online + web                           | Merge safety without real secrets       |
+# | workflow_dispatch (default)          | mocked CI + no-LLM E2E                                       | Manual mocked run on any branch         |
+# | workflow_dispatch (run_e2e_only=true) | discover + build + no-LLM E2E only                          | Selective no-LLM E2E on any branch      |
 #
-# NOTE: E2E tests are NOT run on any automatic trigger (push / PR). They are
-# manual-only via workflow_dispatch on any branch. This keeps the release
-# pipeline and PR feedback loop unblocked by flaky or long-running E2E suites.
+# NOTE: E2E tests are NOT run on any automatic trigger (push / PR). No-LLM E2E
+# remains manual-only here via workflow_dispatch on any branch. Real-API daemon
+# shards and LLM E2E are manual-only in real-api-tests.yml.
 #
 # Release is handled separately in release.yml (triggered by version tags).
 # Test coverage (unit, online, web) is uploaded to Coveralls.
@@ -120,8 +120,9 @@ jobs:
           exit 1
 
   # ============================================
-  # DAEMON ONLINE TESTS (Require API credentials)
-  # Run on: PR to dev, push to dev
+  # DAEMON ONLINE TESTS (Mocked credentials only)
+  # Run on: PR to dev, push to dev, workflow_dispatch
+  # Real-key shards are manual-only in real-api-tests.yml.
   # ============================================
 
   test-daemon-online:
@@ -150,9 +151,6 @@ jobs:
           # - providers-anthropic-copilot
           - rewind-1
           - rewind-2
-          - cross-provider-2
-          - cross-provider-3
-          - cross-provider-4
           # Room tests temporarily disabled during refactoring
           # - room-1
           # - room-multi-agent
@@ -209,7 +207,7 @@ jobs:
           - module: git
             test_path: tests/online/git
             timeout: 10
-            default_provider: minimax
+            mock_sdk: true
           - module: lifecycle
             test_path: tests/online/lifecycle
             mock_sdk: true
@@ -314,22 +312,7 @@ jobs:
           - module: websocket
             test_path: tests/online/websocket
             mock_sdk: true
-          # Cross-provider model switching tests - requires real MiniMax and GLM credentials
-          - module: cross-provider-2
-            test_path: tests/online/cross-provider/cross-provider-model-switch.test.ts
-            mock_sdk: false
-            default_provider: minimax
-            timeout: 10
-          - module: cross-provider-3
-            test_path: tests/online/cross-provider/glm-to-anthropic-resume.test.ts
-            mock_sdk: false
-            default_provider: glm
-            timeout: 10
-          - module: cross-provider-4
-            test_path: tests/online/cross-provider/thinking-block-signatures.test.ts
-            mock_sdk: false
-            default_provider: glm
-            timeout: 10
+          # Real-key cross-provider shards are manual-only in real-api-tests.yml.
 
     steps:
       - uses: actions/checkout@v6
@@ -379,20 +362,15 @@ jobs:
           NEOKAI_TEST_DISABLE_SANDBOX: '1'
           ANTHROPIC_BASE_URL: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
           # For Dev Proxy tests, never pass real Anthropic credentials.
-          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'cross-provider-3' || matrix.module == 'cross-provider-4') && secrets.ANTHROPIC_API_KEY || '') }}
+          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || '' }}
           ANTHROPIC_AUTH_TOKEN: ""
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'cross-provider-3' || matrix.module == 'cross-provider-4') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ""
           OPENAI_API_KEY: ""
-          # Requires a PAT with the `copilot_requests` scope stored as COPILOT_GITHUB_TOKEN.
-          # secrets.GITHUB_TOKEN is a repo-scoped installation token and cannot authenticate Copilot API calls.
-          # If the secret is absent the env var is empty and the test FAILS (hard-fail, not skip — by design).
-          COPILOT_GITHUB_TOKEN: ${{ matrix.module == 'providers-anthropic-copilot' && secrets.COPILOT_GITHUB_TOKEN || '' }}
-          GLM_API_KEY: ${{ matrix.mock_sdk != true && secrets.GLM_API_KEY || '' }}
-          MINIMAX_API_KEY: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY || '' }}
-          # Prefer MiniMax for online tests when available; fallback to GLM.
-          DEFAULT_PROVIDER: ${{ matrix.mock_sdk != true && (matrix.default_provider || (secrets.MINIMAX_API_KEY != '' && 'minimax' || 'glm')) || '' }}
-          # Prefer MiniMax highspeed as the default model when using MiniMax.
-          DEFAULT_MODEL: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY != '' && 'MiniMax-M2.7-highspeed' || '' }}
+          COPILOT_GITHUB_TOKEN: ""
+          GLM_API_KEY: ""
+          MINIMAX_API_KEY: ""
+          DEFAULT_PROVIDER: ""
+          DEFAULT_MODEL: ""
 
       - name: Stop Dev Proxy
         if: always() && matrix.mock_sdk == true
@@ -986,10 +964,10 @@ jobs:
           # Set a dummy API key so provider availability check passes.
           # No-LLM tests don't need real API calls; the key just satisfies isAvailable().
           ANTHROPIC_API_KEY: "sk-devproxy-test-key"
-          # Clear other auth tokens to avoid credential conflicts
+          # Clear real auth tokens to avoid credential conflicts.
           ANTHROPIC_AUTH_TOKEN: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
-          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          GLM_API_KEY: ""
           DEFAULT_MODEL: sonnet
           # Signal that the LLM will not respond in this environment.
           # neo.isProvisioned checks this flag so AI-dependent tests are skipped
@@ -1002,151 +980,6 @@ jobs:
         if: failure()
         with:
           name: e2e-no-llm-results-${{ matrix.test.name }}
-          path: |
-            packages/e2e/test-results/
-            packages/e2e/playwright-report/
-          retention-days: 7
-
-  # ============================================
-  # E2E TESTS - LLM Required (Matrix, max 4 parallel)
-  # Tests that send messages and wait for LLM responses
-  # Run on: workflow_dispatch only (E2E is manual-only on any branch)
-  # ============================================
-
-  e2e-llm:
-    name: E2E LLM (${{ matrix.test.name }})
-    runs-on: ubuntu-latest
-    needs: [build, discover]
-    # Manual-only: E2E must be explicitly triggered via workflow_dispatch.
-    if: >-
-      always() &&
-      github.event_name == 'workflow_dispatch' &&
-      needs.build.result == 'success' &&
-      needs.discover.result == 'success'
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      max-parallel: 8
-      matrix:
-        test: ${{ fromJson(needs.discover.outputs.tests_llm) }}
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.3.13
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-
-      - name: Install sandbox dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap socat ripgrep
-
-      - name: Setup Dev Proxy
-        if: runner.os == 'Linux'
-        uses: ./.github/actions/setup-devproxy
-
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: |
-          echo "Starting bun install at $(date)"
-          timeout 180 bun install --frozen-lockfile --verbose 2>&1 || {
-            echo "bun install timed out or failed (lockfile may be stale — run 'bun install' locally and commit the updated bun.lock)"
-            exit 1
-          }
-          echo "Finished bun install at $(date)"
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('packages/e2e/package.json') }}
-          restore-keys: |
-            playwright-chromium-${{ runner.os }}-
-
-      - name: Install Playwright browsers
-        run: cd packages/e2e && bunx playwright install chromium
-
-      - name: Download binary
-        uses: actions/download-artifact@v8
-        with:
-          name: kai-linux-x64-e2e
-          path: dist/bin/
-
-      - name: Run E2E LLM test (${{ matrix.test.name }})
-        run: |
-          chmod +x dist/bin/kai-linux-x64
-          WORKSPACE=$(mktemp -d)
-
-          # Get a free port via a short-lived Python socket with SO_REUSEADDR.
-          # SO_REUSEADDR shrinks the reuse window on Linux so the binary can
-          # re-bind quickly even if the port is briefly in TIME_WAIT state.
-          PORT=$(python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("",0)); print(s.getsockname()[1])')
-          echo "Reserved port $PORT for binary"
-
-          NEOKAI_WORKSPACE_ROOT="$WORKSPACE" ./dist/bin/kai-linux-x64 --port "$PORT" &
-          BINARY_PID=$!
-          trap 'kill $BINARY_PID 2>/dev/null; rm -rf "$WORKSPACE"' EXIT
-
-          for i in $(seq 1 60); do
-            if curl -s "http://localhost:$PORT/" > /dev/null 2>&1; then
-              echo "Server ready on port $PORT (PID $BINARY_PID)"
-              break
-            fi
-            if ! kill -0 $BINARY_PID 2>/dev/null; then
-              echo "Binary process died unexpectedly"
-              exit 1
-            fi
-            sleep 0.5
-          done
-
-          if ! curl -s "http://localhost:$PORT/" > /dev/null 2>&1; then
-            echo "Server failed to start within 30s"
-            exit 1
-          fi
-
-          export PLAYWRIGHT_BASE_URL="http://localhost:$PORT"
-          cd packages/e2e
-          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
-            bunx playwright test "tests/${{ matrix.test.path }}.e2e.ts"
-        env:
-          NEOKAI_USE_DEV_PROXY: "1"
-          ANTHROPIC_BASE_URL: "http://127.0.0.1:8000"
-          ANTHROPIC_API_KEY: "sk-devproxy-test-key"
-          ANTHROPIC_AUTH_TOKEN: ""
-          CLAUDE_CODE_OAUTH_TOKEN: ""
-          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-          CI: true
-
-      - name: Stop Dev Proxy
-        if: always()
-        run: |
-          if [ -n "$DEVPROXY_PID" ]; then
-            kill $DEVPROXY_PID 2>/dev/null || true
-          fi
-
-      - name: Upload test results
-        uses: actions/upload-artifact@v7
-        if: failure()
-        with:
-          name: e2e-results-llm-${{ matrix.test.name }}
           path: |
             packages/e2e/test-results/
             packages/e2e/playwright-report/
@@ -1171,7 +1004,6 @@ jobs:
       - build
       - discover
       - e2e-no-llm
-      - e2e-llm
 
     steps:
       - name: Check all jobs passed
@@ -1232,12 +1064,6 @@ jobs:
             FAILED=1
           fi
 
-          # e2e-llm: workflow_dispatch only (E2E is manual-only)
-          if [[ "${{ needs.e2e-llm.result }}" == "failure" ]]; then
-            echo "❌ e2e-llm failed"
-            FAILED=1
-          fi
-
           if [ $FAILED -eq 1 ]; then
             echo ""
             echo "One or more required jobs failed:"
@@ -1250,7 +1076,6 @@ jobs:
             echo "  build: ${{ needs.build.result }}"
             echo "  discover: ${{ needs.discover.result }}"
             echo "  e2e-no-llm: ${{ needs.e2e-no-llm.result }}"
-            echo "  e2e-llm: ${{ needs.e2e-llm.result }}"
             exit 1
           fi
           echo "All tests passed!"
