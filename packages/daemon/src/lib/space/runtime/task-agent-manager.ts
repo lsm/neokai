@@ -47,6 +47,7 @@ import type {
 	MessageHub,
 	McpServerConfig,
 	MessageOrigin,
+	WorkflowNodeAgent,
 } from '@neokai/shared';
 import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
 import type { SkillsManager } from '../../skills-manager';
@@ -921,29 +922,7 @@ export class TaskAgentManager {
 				}
 			}
 
-			// Resolve customPrompt from the slot. Support legacy JSON blobs that may still
-			// have the old `systemPrompt`/`instructions` shape from before migration 79.
-			let slotCustomPrompt: string | undefined = slot.customPrompt?.value;
-			if (!slotCustomPrompt) {
-				// Backward compat: combine legacy systemPrompt + instructions into a single string.
-				const legacySlot = slot as {
-					systemPrompt?: { value: string };
-					instructions?: { value: string };
-				};
-				const legacySp = legacySlot.systemPrompt?.value?.trim() ?? '';
-				const legacyInstr = legacySlot.instructions?.value?.trim() ?? '';
-				if (legacySp && legacyInstr) {
-					slotCustomPrompt = `${legacySp}\n\n${legacyInstr}`;
-				} else {
-					slotCustomPrompt = legacySp || legacyInstr || undefined;
-				}
-			}
-			const slotOverrides: SlotOverrides = {
-				model: slot.model,
-				customPrompt: slotCustomPrompt,
-				disabledSkillIds: slot.disabledSkillIds,
-				extraMcpServers: slot.extraMcpServers,
-			};
+			const slotOverrides = this.buildSlotOverrides(slot);
 
 			let init = resolveAgentInit({
 				task,
@@ -3232,6 +3211,26 @@ export class TaskAgentManager {
 		// --- Determine workspace path
 		const workspacePath = this.taskWorktreePaths.get(taskId) ?? space.workspacePath;
 
+		// --- Resolve the current workflow-slot prompt before restarting the SDK.
+		// AgentSession.restore() intentionally keeps persisted DB config as-is; without
+		// re-applying the current workflow/agent prompt here, a node agent that already
+		// existed before a daemon restart would resume with stale instructions. This
+		// shows up most visibly for Reviewer agents after built-in workflow prompt
+		// updates: the spawn path uses the new slot prompt, while the rehydrate path
+		// used to keep the old persisted prompt until the session was recreated.
+		const currentInit = this.resolveCurrentNodeAgentInitForExecution({
+			task: parentTask,
+			space,
+			workflow,
+			workflowRun,
+			execution,
+			sessionId: subSessionId,
+			workspacePath,
+		});
+		if (currentInit?.systemPrompt) {
+			agentSession.setRuntimeSystemPrompt(currentInit.systemPrompt);
+		}
+
 		// --- Re-build and attach node-agent MCP server (runtime-only, not persisted)
 		const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
 			taskId,
@@ -3327,8 +3326,78 @@ export class TaskAgentManager {
 			`TaskAgentManager.rehydrateSubSession: rehydrated sub-session ${subSessionId} for task ${taskId} (node ${execution.workflowNodeId})`
 		);
 
-		void workflow; // Loaded for context but not needed directly; suppresses unused-var lint.
 		return agentSession;
+	}
+
+	private buildSlotOverrides(slot: WorkflowNodeAgent): SlotOverrides {
+		// Resolve customPrompt from the slot. Support legacy JSON blobs that may still
+		// have the old `systemPrompt`/`instructions` shape from before migration 79.
+		let slotCustomPrompt: string | undefined = slot.customPrompt?.value;
+		if (!slotCustomPrompt) {
+			// Backward compat: combine legacy systemPrompt + instructions into a single string.
+			const legacySlot = slot as {
+				systemPrompt?: { value: string };
+				instructions?: { value: string };
+			};
+			const legacySp = legacySlot.systemPrompt?.value?.trim() ?? '';
+			const legacyInstr = legacySlot.instructions?.value?.trim() ?? '';
+			if (legacySp && legacyInstr) {
+				slotCustomPrompt = `${legacySp}\n\n${legacyInstr}`;
+			} else {
+				slotCustomPrompt = legacySp || legacyInstr || undefined;
+			}
+		}
+		return {
+			model: slot.model,
+			customPrompt: slotCustomPrompt,
+			disabledSkillIds: slot.disabledSkillIds,
+			extraMcpServers: slot.extraMcpServers,
+		};
+	}
+
+	private resolveCurrentNodeAgentInitForExecution(args: {
+		task: SpaceTask;
+		space: Space;
+		workflow: SpaceWorkflow | null;
+		workflowRun: SpaceWorkflowRun | null;
+		execution: NodeExecution;
+		sessionId: string;
+		workspacePath: string;
+	}): AgentSessionInit | null {
+		const { task, space, workflow, workflowRun, execution, sessionId, workspacePath } = args;
+		const node = workflow?.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
+		if (!node) {
+			log.warn(
+				`TaskAgentManager.rehydrateSubSession: workflow node ${execution.workflowNodeId} ` +
+					`not found for session ${sessionId}; keeping persisted system prompt`
+			);
+			return null;
+		}
+
+		const nodeAgents = resolveNodeAgents(node);
+		const slot =
+			nodeAgents.length === 1
+				? nodeAgents[0]
+				: nodeAgents.find((agentSlot) => agentSlot.name === execution.agentName);
+		if (!slot?.agentId) {
+			log.warn(
+				`TaskAgentManager.rehydrateSubSession: no agent slot found for agent ${execution.agentName} ` +
+					`in node ${execution.workflowNodeId}; keeping persisted system prompt`
+			);
+			return null;
+		}
+
+		return resolveAgentInit({
+			task,
+			space,
+			agentManager: this.config.spaceAgentManager,
+			sessionId,
+			workspacePath,
+			workflowRun,
+			workflow,
+			slotOverrides: this.buildSlotOverrides(slot),
+			agentId: slot.agentId,
+		});
 	}
 
 	/**
