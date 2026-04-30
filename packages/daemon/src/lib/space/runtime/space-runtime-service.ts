@@ -425,11 +425,16 @@ export class SpaceRuntimeService {
 		// Hard resets replace the cached AgentSession with a fresh instance built
 		// only from persisted DB state, so runtime-only MCP servers, Space prompts,
 		// and self-heal callbacks must be re-attached before replay restarts a query.
-		const unsubSessionReset = daemonHub.on('session.reset', async (event) => {
-			await this.reprovisionResetSession(event.session).catch((err) => {
-				log.error(`Failed to re-provision reset session ${event.sessionId}:`, err);
-			});
-		});
+		const unsubSessionReset =
+			typeof sessionManager.registerSessionResetSubscriber === 'function'
+				? sessionManager.registerSessionResetSubscriber(async (event) => {
+						await this.reprovisionResetSession(event.session, {
+							replayPendingMessages: event.restartQuery,
+						}).catch((err) => {
+							log.error(`Failed to re-provision reset session ${event.sessionId}:`, err);
+						});
+					})
+				: () => {};
 		this.unsubscribers.push(unsubSessionReset);
 	}
 
@@ -439,7 +444,10 @@ export class SpaceRuntimeService {
 	 * `space-agent-tools` server and the QueryRunner invariant would hard-fail
 	 * before its self-heal callback could exist.
 	 */
-	private async reprovisionResetSession(session: Session): Promise<void> {
+	private async reprovisionResetSession(
+		session: Session,
+		options: { replayPendingMessages: boolean }
+	): Promise<void> {
 		if (session.type === 'space_chat') {
 			const spaceId = session.context?.spaceId ?? session.id.match(/^space:chat:(.+)$/)?.[1];
 			if (!spaceId) return;
@@ -448,11 +456,11 @@ export class SpaceRuntimeService {
 				log.warn(`reprovisionResetSession: space "${spaceId}" not found (session ${session.id})`);
 				return;
 			}
-			await this.setupSpaceAgentSession(space);
+			await this.setupSpaceAgentSession(space, options);
 			return;
 		}
 
-		await this.attachSpaceToolsToMemberSession(session);
+		await this.attachSpaceToolsToMemberSession(session, options);
 	}
 
 	/**
@@ -577,7 +585,10 @@ export class SpaceRuntimeService {
 	 * the session (e.g., room tools) are preserved. The session's system
 	 * prompt is **not** touched.
 	 */
-	async attachSpaceToolsToMemberSession(session: Session): Promise<void> {
+	async attachSpaceToolsToMemberSession(
+		session: Session,
+		options: { replayPendingMessages?: boolean } = {}
+	): Promise<void> {
 		const { sessionManager } = this.config;
 		if (!sessionManager) return;
 		const spaceId = session.context?.spaceId;
@@ -660,7 +671,9 @@ export class SpaceRuntimeService {
 		// Merge rather than replace — other subsystems (e.g., room tools) may
 		// have already attached their own MCP servers on this session.
 		agentSession.mergeRuntimeMcpServers(additional);
-		await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+		if (options.replayPendingMessages !== false) {
+			await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+		}
 
 		log.info(
 			`Attached space-agent-tools to member session ${session.id} (space ${space.id}, type ${session.type ?? 'worker'})`
@@ -676,7 +689,10 @@ export class SpaceRuntimeService {
 	 *
 	 * No-op when sessionManager is absent.
 	 */
-	async setupSpaceAgentSession(space: Space): Promise<void> {
+	async setupSpaceAgentSession(
+		space: Space,
+		options: { replayPendingMessages?: boolean } = {}
+	): Promise<void> {
 		const {
 			sessionManager,
 			db,
@@ -784,7 +800,9 @@ export class SpaceRuntimeService {
 		);
 
 		log.info(`Space chat session provisioned for space ${space.id}`);
-		await this.replayPendingMessagesAfterRuntimeProvisioning(session);
+		if (options.replayPendingMessages !== false) {
+			await this.replayPendingMessagesAfterRuntimeProvisioning(session);
+		}
 
 		// Flush any Task Agent → Space Agent messages that were queued before
 		// this session was provisioned (handles the daemon-restart activation race).

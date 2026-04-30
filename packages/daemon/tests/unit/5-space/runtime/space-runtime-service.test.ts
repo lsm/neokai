@@ -422,6 +422,7 @@ describe('SpaceRuntimeService', () => {
 				// member-session sweep. Default to empty — tests that care
 				// override this mock.
 				listSessions: mock(() => [] as Session[]),
+				registerSessionResetSubscriber: mock(() => () => {}),
 			} as unknown as SessionManager;
 		}
 
@@ -594,19 +595,21 @@ describe('SpaceRuntimeService', () => {
 			const session = makeSession();
 			const sessionManager = makeSessionManager(session);
 			let resetHandler:
-				| ((event: { sessionId: string; session: Session }) => Promise<void>)
+				| ((event: { sessionId: string; session: Session; restartQuery: boolean }) => Promise<void>)
 				| undefined;
-			const daemonHub: DaemonHub = {
-				on: mock((event: string, handler: unknown) => {
-					if (event === 'session.reset') {
-						resetHandler = handler as typeof resetHandler;
-					}
+			const sessionManagerWithSubscriber = {
+				...sessionManager,
+				registerSessionResetSubscriber: mock((handler: typeof resetHandler) => {
+					resetHandler = handler;
 					return () => {};
 				}),
+			} as unknown as SessionManager;
+			const daemonHub: DaemonHub = {
+				on: mock(() => () => {}),
 				emit: mock(async () => {}),
 			} as unknown as DaemonHub;
 			const config: SpaceRuntimeServiceConfig = {
-				...buildConfigWithSession(sessionManager),
+				...buildConfigWithSession(sessionManagerWithSubscriber),
 				daemonHub,
 			};
 			const svc = new SpaceRuntimeService(config);
@@ -621,6 +624,7 @@ describe('SpaceRuntimeService', () => {
 					type: 'space_chat',
 					context: { spaceId: 'space-1' },
 				} as Session,
+				restartQuery: true,
 			});
 
 			expect(sessionManager.getSessionAsync).toHaveBeenCalledWith('space:chat:space-1');
@@ -652,10 +656,11 @@ describe('SpaceRuntimeService', () => {
 			svc.start();
 			await svc.stop();
 
-			// Four subscriptions are registered: space.created, session.created,
-			// session.deleted (which releases per-session db-query servers), and
-			// session.reset (which re-provisions hard-reset Space sessions).
-			expect(unsubFn).toHaveBeenCalledTimes(4);
+			// Three DaemonHub subscriptions are registered: space.created,
+			// session.created, and session.deleted (which releases per-session db-query
+			// servers). Hard-reset reprovisioning uses SessionManager's awaited
+			// in-process subscriber instead of DaemonHub.
+			expect(unsubFn).toHaveBeenCalledTimes(3);
 		});
 	});
 

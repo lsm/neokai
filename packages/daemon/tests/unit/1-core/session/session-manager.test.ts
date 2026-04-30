@@ -694,11 +694,18 @@ describe('SessionManager', () => {
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);
 
 			const oldSession = sessionManager.getSession('test-id');
+			const order: string[] = [];
+			const unregister = sessionManager.registerSessionResetSubscriber(async () => {
+				order.push('subscriber:start');
+				await Promise.resolve();
+				order.push('subscriber:end');
+			});
 			let replayedSession: AgentSession | null = null;
 			const replaySpy = spyOn(
 				AgentSession.prototype,
 				'replayPendingMessagesForImmediateMode'
 			).mockImplementation(async function (this: AgentSession) {
+				order.push('replay');
 				replayedSession = this;
 			});
 
@@ -715,7 +722,9 @@ describe('SessionManager', () => {
 				});
 				expect(replaySpy).toHaveBeenCalledTimes(1);
 				expect(replayedSession).toBe(freshSession);
+				expect(order).toEqual(['subscriber:start', 'subscriber:end', 'replay']);
 			} finally {
+				unregister();
 				replaySpy.mockRestore();
 				await sessionManager.interruptInMemorySession('test-id');
 			}

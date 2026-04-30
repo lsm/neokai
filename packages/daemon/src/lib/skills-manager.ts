@@ -627,8 +627,8 @@ export class SkillsManager {
 		if (!sourceDir) return;
 
 		const destDir = join(skillsRoot, commandName);
-		await mkdir(destDir, { recursive: true });
 		try {
+			await mkdir(destDir, { recursive: true });
 			// Preserve local edits and avoid surprising users by overwriting an already
 			// installed bundled skill. This means daemon upgrades do not update an
 			// existing SKILL.md in place; productionising this POC should add a version
@@ -640,7 +640,7 @@ export class SkillsManager {
 			});
 		} catch {
 			// Keep wrapper generation best-effort per skill: a missing/corrupt bundled
-			// asset must not prevent unrelated built-in skills from registering.
+			// asset path must not prevent unrelated built-in skills from registering.
 		}
 	}
 

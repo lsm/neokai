@@ -1021,6 +1021,30 @@ describe('SkillsManager', () => {
 		}
 	});
 
+	test('ensureBuiltinPluginWrappers survives bundled asset directory setup failures', async () => {
+		const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+		const { tmpdir } = await import('node:os');
+		const tmpRoot = await mkdtemp(join(tmpdir(), 'kai-skills-mgr-bad-asset-'));
+		try {
+			const wrappersRoot = join(tmpRoot, 'skill-plugins');
+			const skillsRoot = join(tmpRoot, 'skills');
+
+			mgr.initializeBuiltins();
+			await writeFile(skillsRoot, 'not a directory');
+
+			const result = await mgr.ensureBuiltinPluginWrappers(wrappersRoot, skillsRoot);
+
+			// The bundled space-coordination asset cannot create its destination under
+			// a file-valued skillsRoot, but wrapper generation remains best-effort and
+			// still materialises unrelated builtin command wrappers.
+			expect(result.has('playwright')).toBe(true);
+			expect(result.has('playwright-interactive')).toBe(true);
+			expect(result.has('space-coordination')).toBe(true);
+		} finally {
+			await rm(tmpRoot, { recursive: true, force: true });
+		}
+	});
+
 	test('ensureBuiltinPluginWrappers is safe when no builtin skills are registered', async () => {
 		const { mkdtemp, rm } = await import('node:fs/promises');
 		const { tmpdir } = await import('node:os');

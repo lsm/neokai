@@ -67,6 +67,9 @@ export class SessionManager {
 	private logger: Logger;
 	private worktreeManager: WorktreeManager;
 	private eventBusUnsubscribers: Array<() => void> = [];
+	private sessionResetSubscribers: Array<
+		(event: { sessionId: string; session: Session; restartQuery: boolean }) => Promise<void> | void
+	> = [];
 	private started = false;
 
 	// Cleanup state machine - prevents race conditions during shutdown
@@ -201,6 +204,33 @@ export class SessionManager {
 		return resetPromise;
 	}
 
+	registerSessionResetSubscriber(
+		subscriber: (event: {
+			sessionId: string;
+			session: Session;
+			restartQuery: boolean;
+		}) => Promise<void> | void
+	): () => void {
+		this.sessionResetSubscribers.push(subscriber);
+		return () => {
+			const index = this.sessionResetSubscribers.indexOf(subscriber);
+			if (index !== -1) {
+				this.sessionResetSubscribers.splice(index, 1);
+			}
+		};
+	}
+
+	private async emitSessionReset(event: {
+		sessionId: string;
+		session: Session;
+		restartQuery: boolean;
+	}): Promise<void> {
+		await this.eventBus.emit('session.reset', event);
+		for (const subscriber of this.sessionResetSubscribers) {
+			await subscriber(event);
+		}
+	}
+
 	private async performHardResetAgentSession(
 		agentSession: AgentSession,
 		options: { restartQuery: boolean }
@@ -223,7 +253,7 @@ export class SessionManager {
 			});
 			this.sessionCache.set(sessionId, freshSession);
 
-			await this.eventBus.emit('session.reset', {
+			await this.emitSessionReset({
 				sessionId,
 				session: sessionForFreshInstance,
 				restartQuery: options.restartQuery,
@@ -560,6 +590,7 @@ export class SessionManager {
 				}
 			}
 			this.eventBusUnsubscribers = [];
+			this.sessionResetSubscribers = [];
 
 			// PHASE 2: Cleanup all in-memory sessions in parallel
 			// CRITICAL: Each AgentSession.cleanup() now properly stops SDK queries
