@@ -20,9 +20,8 @@ import type {
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
 import { isValidModel, getAvailableModels, getModelInfoUnfiltered } from '../../model-service';
-import { getPresetAgentTemplates } from '../agents/seed-agents';
+import { getPresetAgentTemplates, LEGACY_REVIEWER_PROMPT } from '../agents/seed-agents';
 import { computeAgentTemplateHash, agentTemplatesMatch } from '../agents/agent-template-hash';
-import { reviewerAgent } from '../../agent/coordinator/reviewer';
 
 const KNOWN_TOOLS_SET = new Set<string>(KNOWN_TOOLS);
 
@@ -258,7 +257,7 @@ export class SpaceAgentManager {
 		if ((agent.description ?? '') !== preset.description) return false;
 		if (
 			!agentTemplatesMatch(
-				{ ...preset, customPrompt: reviewerAgent.prompt },
+				{ ...preset, customPrompt: LEGACY_REVIEWER_PROMPT },
 				agentTemplateInput(agent)
 			)
 		) {

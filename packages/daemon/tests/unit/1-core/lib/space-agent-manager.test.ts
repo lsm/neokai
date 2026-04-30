@@ -457,10 +457,9 @@ describe('SpaceAgentManager', () => {
 		});
 
 		it('treats legacy coordinator Reviewer prompt as equivalent to the current preset', async () => {
-			const { getPresetAgentTemplates } = await import(
+			const { getPresetAgentTemplates, LEGACY_REVIEWER_PROMPT } = await import(
 				'../../../../src/lib/space/agents/seed-agents'
 			);
-			const { reviewerAgent } = await import('../../../../src/lib/agent/coordinator/reviewer');
 			const { computeAgentTemplateHash } = await import(
 				'../../../../src/lib/space/agents/agent-template-hash'
 			);
@@ -468,7 +467,7 @@ describe('SpaceAgentManager', () => {
 			if (!reviewer) throw new Error('Reviewer preset missing');
 			const legacyHash = computeAgentTemplateHash({
 				...reviewer,
-				customPrompt: reviewerAgent.prompt,
+				customPrompt: LEGACY_REVIEWER_PROMPT,
 			});
 
 			await manager.create({
@@ -476,7 +475,7 @@ describe('SpaceAgentManager', () => {
 				name: 'Reviewer',
 				description: reviewer.description,
 				tools: reviewer.tools,
-				customPrompt: reviewerAgent.prompt,
+				customPrompt: LEGACY_REVIEWER_PROMPT,
 				templateName: 'Reviewer',
 				templateHash: legacyHash,
 			});
@@ -489,16 +488,15 @@ describe('SpaceAgentManager', () => {
 		});
 
 		it('reports user-edited legacy Reviewer prompts as drifted', async () => {
-			const { getPresetAgentTemplates } = await import(
+			const { getPresetAgentTemplates, LEGACY_REVIEWER_PROMPT } = await import(
 				'../../../../src/lib/space/agents/seed-agents'
 			);
-			const { reviewerAgent } = await import('../../../../src/lib/agent/coordinator/reviewer');
 			const { computeAgentTemplateHash } = await import(
 				'../../../../src/lib/space/agents/agent-template-hash'
 			);
 			const reviewer = getPresetAgentTemplates().find((p) => p.name === 'Reviewer');
 			if (!reviewer) throw new Error('Reviewer preset missing');
-			const editedPrompt = `${reviewerAgent.prompt}\n\nUser customization`;
+			const editedPrompt = `${LEGACY_REVIEWER_PROMPT}\n\nUser customization`;
 			const editedLegacyHash = computeAgentTemplateHash({
 				...reviewer,
 				customPrompt: editedPrompt,
@@ -548,10 +546,9 @@ describe('SpaceAgentManager', () => {
 
 	describe('reconcileEquivalentLegacyPresetRows', () => {
 		it('reconciles legacy coordinator Reviewer prompts to the current preset prompt', async () => {
-			const { getPresetAgentTemplates } = await import(
+			const { getPresetAgentTemplates, LEGACY_REVIEWER_PROMPT } = await import(
 				'../../../../src/lib/space/agents/seed-agents'
 			);
-			const { reviewerAgent } = await import('../../../../src/lib/agent/coordinator/reviewer');
 			const { computeAgentTemplateHash } = await import(
 				'../../../../src/lib/space/agents/agent-template-hash'
 			);
@@ -559,7 +556,7 @@ describe('SpaceAgentManager', () => {
 			if (!reviewer) throw new Error('Reviewer preset missing');
 			const legacyHash = computeAgentTemplateHash({
 				...reviewer,
-				customPrompt: reviewerAgent.prompt,
+				customPrompt: LEGACY_REVIEWER_PROMPT,
 			});
 
 			const created = await manager.create({
@@ -567,7 +564,7 @@ describe('SpaceAgentManager', () => {
 				name: 'Reviewer',
 				description: reviewer.description,
 				tools: reviewer.tools,
-				customPrompt: reviewerAgent.prompt,
+				customPrompt: LEGACY_REVIEWER_PROMPT,
 				templateName: 'Reviewer',
 				templateHash: legacyHash,
 			});
