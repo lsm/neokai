@@ -21,6 +21,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
+	NodeExecution,
 	Space,
 	SpaceTask,
 	SpaceWorkflow,
@@ -2197,10 +2198,7 @@ export class SpaceRuntime {
 		for (const targetAgentName of targets) {
 			const rowsForTarget = pending.filter((row) => row.targetAgentName === targetAgentName);
 			try {
-				let execution = this.config.nodeExecutionRepo
-					.listByWorkflowRun(runId)
-					.filter((candidate) => candidate.agentName === targetAgentName)
-					.at(-1);
+				let execution = this.resolveQueuedHandoffExecution(runId, meta.workflow, targetAgentName);
 
 				if (!execution) {
 					const resolved = this.resolveQueuedHandoffTarget(meta.workflow, targetAgentName);
@@ -2222,7 +2220,7 @@ export class SpaceRuntime {
 					continue;
 				}
 
-				await tam.tryResumeNodeAgentSession(runId, targetAgentName);
+				await tam.tryResumeNodeAgentSession(runId, execution.agentName);
 				execution = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
 				if (execution.status === 'waiting_rebind') {
 					continue;
@@ -2298,6 +2296,28 @@ export class SpaceRuntime {
 		return false;
 	}
 
+	private resolveQueuedHandoffExecution(
+		runId: string,
+		workflow: SpaceWorkflow,
+		targetAgentName: string
+	): NodeExecution | undefined {
+		const resolved = this.resolveQueuedHandoffTarget(workflow, targetAgentName);
+		if (resolved) {
+			const nodeExecution = this.config.nodeExecutionRepo
+				.listByNode(runId, resolved.nodeId)
+				.filter(
+					(candidate) => candidate.agentName === resolved.agentName || !!candidate.agentSessionId
+				)
+				.at(-1);
+			if (nodeExecution) return nodeExecution;
+		}
+
+		return this.config.nodeExecutionRepo
+			.listByWorkflowRun(runId)
+			.filter((candidate) => candidate.agentName === targetAgentName)
+			.at(-1);
+	}
+
 	private resolveQueuedHandoffTarget(
 		workflow: SpaceWorkflow,
 		targetAgentName: string
@@ -2312,6 +2332,9 @@ export class SpaceRuntime {
 				return { nodeId: node.id, agentName: direct.name, agentId: direct.agentId ?? null };
 			if (nodeNameMatch && slots[0]) {
 				return { nodeId: node.id, agentName: slots[0].name, agentId: slots[0].agentId ?? null };
+			}
+			if (nodeNameMatch) {
+				return { nodeId: node.id, agentName: targetAgentName, agentId: null };
 			}
 		}
 		return null;
