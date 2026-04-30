@@ -2,6 +2,42 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.17.0] - 2026-04-29
+
+A major release adding the OpenAI Responses bridge and OpenRouter provider, retiring the Room feature, and hardening Codex bridge reliability and Space workflow resilience. 46 commits since v0.16.0.
+
+### Added
+
+- **OpenAI Responses bridge**: Full streaming Responses API support with continuation tracking, ChatGPT Codex endpoint compatibility, and per-session isolation
+- **OpenRouter provider**: Anthropic-compatible provider with environment-based credentials, model discovery, and searchable model picker
+- **Codex searchable model picker**: UI for browsing and selecting Codex models
+- **Task numbers in space task headers**: Display task sequence numbers in the task view
+
+### Changed
+
+- **Runtime owns deterministic workflow routing**: Normal completion and post-approval dispatch moved to runtime; Task Agent contact reserved for escalation only
+- **Workflow task recovery**: Reopen and resume actions route through runtime recovery so task, run, and node execution state move together
+- **Restrict node agent MCP tools**: Remove space-agent-tools from workflow node sessions; mirror safe task creation through node-agent-tools
+- **Enforce Space agent tool permissions**: Persist custom tool allow/deny lists into workflow node worker sessions
+
+### Removed
+
+- **Room feature retirement**: Deleted all Room E2E specs, unit tests, daemon online tests (~55k lines); retired active Room shared contracts, web surfaces, and runtime wiring; legacy schema preserved for DB compatibility
+- **Brave Search MCP integration**: Removed entirely
+
+### Fixed
+
+- **Codex bridge**: Subprocess crash retry with session reservation; orphan tool continuation recovery with fail-forward; context window metadata for GPT-5.3/5.4/5.5 (272k); context usage normalization; MCP elicitation responses; ChatGPT Codex endpoint compatibility (store, max_output_tokens, previous_response_id); stale resume recovery with checkpoint fallback; first message after model switch
+- **Space task thread scroll**: Mirror composer bottom inset into scroll padding so newest messages stay visible
+- **Agent activation**: Activate node-agent sessions before message delivery; reset stale session references before spawn
+- **Reviewer prompts**: Fix preset prompt reconciliation after daemon restart; rehydrate node-agent prompts on session restore
+- **Workflow**: PR ready gate handoff validation with protected-branch support; reviewer follow-up after terminal action; hard reset agent sessions on reset
+- **MCP**: Repair missing agent_session_id from sub-session id; ghost tool continuation rehydrate race
+- **Message routing**: Fix type misclassification in unified thread view; mark timed-out queued messages as failed
+- **Context windows**: Fix model context windows for Codex and Copilot; fix Codex context capacity display
+- **Responses bridge**: Guard SSE controller lifecycle against aborted clients
+- **SDK**: Disable Codex bridge SDK auto-compaction; fix stale SDK rewind resume recovery
+
 ## [0.16.0] - 2026-04-27
 
 A release improving context usage reporting for Copilot/Codex bridges and fixing Space session rehydration and workflow prompt handling. 5 commits since v0.15.0.
