@@ -2131,6 +2131,26 @@ export class SpaceRuntime {
 		if (!repo || !tam) return false;
 
 		repo.expireStale(runId);
+		const pending = repo.listPendingForRun(runId).filter((row) => row.targetKind === 'node_agent');
+		const isTerminalTask =
+			canonicalTask.status === 'done' ||
+			canonicalTask.status === 'cancelled' ||
+			canonicalTask.status === 'archived';
+
+		if (isTerminalTask) {
+			const expiredNodeHandoffs = repo
+				.listByRunAndStatus(runId, 'expired')
+				.filter((row) => row.targetKind === 'node_agent');
+			const reason = `Queued workflow handoff cannot be delivered because task ${canonicalTask.id} is terminal (${canonicalTask.status})`;
+			for (const row of pending) repo.markFailed(row.id, reason);
+			if (pending.length > 0 || expiredNodeHandoffs.length > 0) {
+				log.warn(
+					`SpaceRuntime: ignored ${pending.length + expiredNodeHandoffs.length} queued handoff(s) for terminal task: ${reason}`
+				);
+			}
+			return false;
+		}
+
 		const expiredNodeHandoffs = repo
 			.listByRunAndStatus(runId, 'expired')
 			.filter((row) => row.targetKind === 'node_agent');
@@ -2141,21 +2161,7 @@ export class SpaceRuntime {
 			return true;
 		}
 
-		const pending = repo.listPendingForRun(runId).filter((row) => row.targetKind === 'node_agent');
 		if (pending.length === 0) return false;
-
-		if (
-			canonicalTask.status === 'done' ||
-			canonicalTask.status === 'cancelled' ||
-			canonicalTask.status === 'archived'
-		) {
-			const reason = `Queued workflow handoff cannot be delivered because task ${canonicalTask.id} is terminal (${canonicalTask.status})`;
-			for (const row of pending) repo.markFailed(row.id, reason);
-			log.warn(
-				`SpaceRuntime: failed ${pending.length} queued handoff(s) for terminal task: ${reason}`
-			);
-			return false;
-		}
 
 		if (!space) {
 			for (const row of pending) {

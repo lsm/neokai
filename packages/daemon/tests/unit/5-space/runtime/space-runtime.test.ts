@@ -1109,6 +1109,18 @@ describe('SpaceRuntime', () => {
 			expect(tam._spawnedExecutionIds).toHaveLength(0);
 		});
 
+		test('expired handoff for a terminal task does not overwrite completion', async () => {
+			const { run, task, pendingRepo } = await setupQueuedHandoff({
+				taskStatus: 'done',
+				ttlMs: -1,
+			});
+			await buildRepairRuntime(makeRepairTam(), pendingRepo).executeTick();
+			expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('expired');
+			expect(taskRepo.getTask(task.id)!.status).toBe('done');
+			expect(taskRepo.getTask(task.id)!.completedAt).not.toBeNull();
+			expect(workflowRunRepo.getRun(run.id)!.status).not.toBe('blocked');
+		});
+
 		test('repairs generic Review→Coding and QA→Coding handoffs', async () => {
 			const { run, pendingRepo } = await setupQueuedHandoff({ message: 'review feedback' });
 			pendingRepo.enqueue({
