@@ -69,7 +69,7 @@ interface MockAgentSession {
 	session: {
 		id: string;
 		context?: Record<string, unknown>;
-		config: { mcpServers?: Record<string, unknown> };
+		config: { mcpServers?: Record<string, unknown>; systemPrompt?: unknown };
 	};
 	getProcessingState: () => AgentProcessingState;
 	getSDKMessageCount: () => number;
@@ -135,7 +135,9 @@ function makeMockSession(sessionId: string): MockAgentSession {
 			this.session.config = { ...this.session.config, mcpServers: updatedCfg };
 		},
 		async restartQuery() {},
-		setRuntimeSystemPrompt(_sp: unknown) {},
+		setRuntimeSystemPrompt(sp: unknown) {
+			this.session.config = { ...this.session.config, systemPrompt: sp };
+		},
 		async startStreamingQuery() {
 			this._startCalled = true;
 		},
@@ -474,6 +476,61 @@ describe('TaskAgentManager.rehydrateSubSession (lazy rehydration)', () => {
 		expect(rehydratedSession._enqueuedMessages.length).toBeGreaterThan(0);
 		const lastMsg = rehydratedSession._enqueuedMessages.at(-1);
 		expect(lastMsg?.msg).toBe('pick up where you left off');
+	});
+
+	test('rehydrated sub-session refreshes workflow slot prompt before restart', async () => {
+		const wfRunId = 'run-prompt-refresh-1';
+		const wfId = 'wf-prompt-refresh-1';
+		const nodeId = 'node-prompt-refresh-1';
+		seedWorkflowRun(ctx, wfRunId, wfId, nodeId);
+
+		const workflow = ctx.workflowManager.listWorkflows(ctx.spaceId)[0];
+		expect(workflow).toBeDefined();
+		ctx.workflowManager.updateWorkflow(workflow.id, {
+			nodes: [
+				{
+					...workflow.nodes[0],
+					agents: [
+						{
+							agentId: ctx.agentId,
+							name: 'reviewer',
+							customPrompt: { value: 'current reviewer prompt after template update' },
+						},
+					],
+				},
+			],
+		});
+
+		const parentTask = await ctx.taskManager.createTask({
+			title: 'Parent task for prompt refresh',
+			description: '',
+			taskType: 'coding',
+			status: 'in_progress',
+			workflowRunId: wfRunId,
+		});
+		const taskAgentSessionId = `space:${ctx.spaceId}:task:${parentTask.id}`;
+		ctx.taskRepo.updateTask(parentTask.id, { taskAgentSessionId, status: 'in_progress' });
+		ctx.mockDb.createSession({ id: taskAgentSessionId, type: 'space_task_agent' });
+
+		const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:ghost-exec-prompt`;
+		const execution = ctx.nodeExecutionRepo.create({
+			workflowRunId: wfRunId,
+			workflowNodeId: nodeId,
+			agentName: 'reviewer',
+			agentId: null,
+			status: 'in_progress',
+		});
+		ctx.nodeExecutionRepo.updateSessionId(execution.id, subSessionId);
+		ctx.mockDb.createSession({ id: subSessionId, type: 'worker' });
+
+		await ctx.manager.injectSubSessionMessage(subSessionId, 'resume review');
+
+		const session = ctx.createdSessions.get(subSessionId)!;
+		expect(session.session.config.systemPrompt).toMatchObject({
+			type: 'preset',
+			preset: 'claude_code',
+			append: 'current reviewer prompt after template update',
+		});
 	});
 
 	test('rehydrated sub-session has node-agent MCP server attached', async () => {
