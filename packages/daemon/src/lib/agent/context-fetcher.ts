@@ -23,7 +23,10 @@ import type {
 } from '@neokai/shared';
 import { Logger } from '../logger';
 
-type ContextMetadata = Pick<ModelInfo, 'id' | 'provider' | 'contextWindow'> | null | undefined;
+type ContextMetadata =
+	| Pick<ModelInfo, 'id' | 'contextWindow' | 'preferContextWindowMetadata'>
+	| null
+	| undefined;
 
 function positiveInteger(value: unknown): number | undefined {
 	return typeof value === 'number' && Number.isFinite(value) && value > 0
@@ -84,7 +87,10 @@ export class ContextFetcher {
 			!responseModel || modelMetadata?.id === responseModel
 				? positiveInteger(modelMetadata?.contextWindow)
 				: undefined;
-		const capacity = sdkRawCapacity ?? sdkCapacity ?? metadataCapacity ?? 0;
+		const capacity =
+			modelMetadata?.preferContextWindowMetadata && metadataCapacity
+				? metadataCapacity
+				: (sdkRawCapacity ?? sdkCapacity ?? metadataCapacity ?? 0);
 		for (const category of response.categories ?? []) {
 			// Compute percent relative to capacity (SDK response doesn't carry it).
 			// Round to 1 decimal place to match the display the UI already expects.

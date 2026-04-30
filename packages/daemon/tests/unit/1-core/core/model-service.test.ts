@@ -196,6 +196,7 @@ describe('Model Service', () => {
 			expect(model).not.toBeNull();
 			expect(model?.provider).toBe('anthropic-codex');
 			expect(model?.contextWindow).toBe(272000);
+			expect(model?.preferContextWindowMetadata).toBe(true);
 		});
 
 		it('should resolve Codex aliases from static metadata', async () => {
