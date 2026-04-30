@@ -133,6 +133,32 @@ describe('ToolContinuationRecoveryRepository', () => {
 		expect(updated.result).toBeNull();
 	});
 
+	it('lists pending continuations by session during ghost sub-session rehydrate', () => {
+		const { execution } = seedExecution('session-rehydrate');
+		const repo = new ToolContinuationRecoveryRepository(db as any);
+		repo.ensureSchema();
+		repo.recordToolUse({
+			toolUseId: 'tool-rehydrate',
+			sessionId: 'session-rehydrate',
+			ttlMs: 60_000,
+		});
+		repo.queueContinuation({
+			toolUseId: 'tool-rehydrate',
+			sessionId: 'session-rehydrate',
+			requestBody: { messages: [{ role: 'user', content: [] }] },
+			reason: 'continuation arrived while sub-session was rehydrating',
+			ttlMs: 60_000,
+		});
+
+		const bySession = repo.listPendingInboxForSession('session-rehydrate');
+		const byExecution = repo.listPendingInboxForExecution(execution.id);
+
+		expect(bySession).toHaveLength(1);
+		expect(bySession[0].toolUseId).toBe('tool-rehydrate');
+		expect(bySession[0].executionId).toBe(execution.id);
+		expect(bySession[0].id).toBe(byExecution[0].id);
+	});
+
 	it('moves expired mappings to waiting_rebind for TTL cleanup races', () => {
 		const { execution } = seedExecution('session-d');
 		const repo = new ToolContinuationRecoveryRepository(db as any);
