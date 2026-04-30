@@ -535,6 +535,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 111: Space-level GitHub watched repositories and normalized PR events.
 	runMigration111(db);
+
+	// Migration 112: Normalize Space GitHub dedupe keys after canonical repo casing change.
+	runMigration112(db);
 }
 
 /**
@@ -7772,4 +7775,10 @@ export function runMigration111(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_github_events_repo ON space_github_events(space_id, repo_owner, repo_name, pr_number)`
 	);
+}
+
+export function runMigration112(db: BunDatabase): void {
+	if (!tableExists(db, 'space_github_events')) return;
+
+	db.exec(`UPDATE space_github_events SET dedupe_key = lower(dedupe_key)`);
 }
