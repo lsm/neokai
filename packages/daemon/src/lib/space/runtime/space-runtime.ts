@@ -2048,7 +2048,6 @@ export class SpaceRuntime {
 			if (stoppedAfterQueuedHandoffRepair) {
 				return;
 			}
-			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 			const pendingExecutions = nodeExecutions.filter(
