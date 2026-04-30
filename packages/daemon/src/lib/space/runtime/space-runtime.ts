@@ -372,6 +372,7 @@ export class SpaceRuntime {
 	 */
 	setTaskAgentManager(manager: TaskAgentManager): void {
 		this.config.taskAgentManager = manager;
+		manager.attachToolContinuationRepo?.(this.toolContinuationRepo);
 	}
 
 	/**

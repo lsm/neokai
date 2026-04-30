@@ -69,6 +69,7 @@ import type { GateDataRepository } from '../../../storage/repositories/gate-data
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
+import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import type { SubSessionMemberInfo } from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
@@ -176,6 +177,8 @@ export interface TaskAgentManagerConfig {
 	 * enqueue instead of failing when the target is declared but not yet active.
 	 */
 	pendingMessageRepo?: PendingAgentMessageRepository;
+	/** Durable recovery store for pending Codex tool_result continuations. */
+	toolContinuationRepo?: ToolContinuationRecoveryRepository;
 	/**
 	 * Callback to inject a message into the Space Agent chat session for a space.
 	 * Used for Task Agent → Space Agent escalation via `send_message`.
@@ -203,6 +206,10 @@ interface SpawnTaskAgentOptions {
 // ---------------------------------------------------------------------------
 
 export class TaskAgentManager {
+	attachToolContinuationRepo(repo: ToolContinuationRecoveryRepository): void {
+		this.config.toolContinuationRepo = repo;
+	}
+
 	/**
 	 * Maps taskId → AgentSession for active Task Agent sessions.
 	 * One entry per task while the Task Agent is running.
@@ -3325,6 +3332,22 @@ export class TaskAgentManager {
 		agentSession.onMissingWorkflowMcpServers = async (cbSessionId: string, missing: string[]) => {
 			await this.mcpSelfHeal(cbSessionId, missing);
 		};
+
+		// Rehydration must publish the AgentSession in every runtime map before any
+		// continuation replay can run. Starting the SDK query is intentionally last:
+		// a pending Anthropic tool_result retry may arrive while this method is still
+		// restoring MCP/runtime state, and the Codex bridge now waits for the live
+		// tool_use correlation map instead of treating that transient window as an
+		// unrecoverable orphan.
+		const pendingToolContinuations =
+			this.config.toolContinuationRepo?.listPendingInboxForSession(subSessionId) ?? [];
+		if (pendingToolContinuations.length > 0) {
+			log.warn(
+				`TaskAgentManager.rehydrateSubSession: session ${subSessionId} has ` +
+					`${pendingToolContinuations.length} queued tool_result continuation(s); ` +
+					`starting query only after runtime provisioning is complete`
+			);
+		}
 
 		// --- Restart the streaming query (idempotent if already running)
 		await agentSession.startStreamingQuery();

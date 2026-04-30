@@ -15,6 +15,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
 	createBridgeServer,
 	createAnthropicError,
@@ -28,6 +32,7 @@ import {
 	type BridgeEvent,
 } from '../../../../../src/lib/providers/codex-anthropic-bridge/process-manager';
 import { Logger } from '../../../../../src/lib/logger';
+import { ToolContinuationRecoveryRepository } from '../../../../../src/storage/repositories/tool-continuation-recovery-repository';
 
 // ---------------------------------------------------------------------------
 // Helper: parse SSE response body into an array of events
@@ -1835,6 +1840,118 @@ describe('tool_choice warning — codex bridge', () => {
 		await readSSEEvents(nextResp.body);
 		expect(connCreateSpy).toHaveBeenCalledTimes(1);
 		expect(startTurnSpy).toHaveBeenCalledTimes(2);
+	});
+
+	it('waits for delayed tool_use map restore before accepting a continuation', async () => {
+		server.stop();
+		const tempDir = mkdtempSync(join(tmpdir(), 'neokai-bridge-rehydrate-'));
+		const dbPath = join(tempDir, 'bridge.sqlite');
+		const db = new Database(dbPath);
+		try {
+			db.exec(`
+				CREATE TABLE node_executions (
+					id TEXT PRIMARY KEY,
+					workflow_run_id TEXT NOT NULL,
+					agent_session_id TEXT,
+					status TEXT NOT NULL,
+					updated_at INTEGER NOT NULL,
+					created_at INTEGER NOT NULL
+				)
+			`);
+			db.prepare(
+				`INSERT INTO node_executions
+				 (id, workflow_run_id, agent_session_id, status, updated_at, created_at)
+				 VALUES ('exec-delayed-map', 'run-delayed-map', 'delayed-map', 'in_progress', ?, ?)`
+			).run(Date.now(), Date.now());
+			const repo = new ToolContinuationRecoveryRepository(db as never);
+			repo.ensureSchema();
+			repo.recordToolUse({
+				toolUseId: 'call_delayed_restore',
+				sessionId: 'delayed-map',
+				ttlMs: 60_000,
+			});
+		} finally {
+			db.close();
+		}
+
+		let releaseToolCall!: () => void;
+		const toolCallRelease = new Promise<void>((resolve) => {
+			releaseToolCall = resolve;
+		});
+		let provideResultText: string | null = null;
+		startTurnSpy.mockImplementation(async function* (): AsyncGenerator<BridgeEvent> {
+			await toolCallRelease;
+			yield {
+				type: 'tool_call',
+				callId: 'call_delayed_restore',
+				toolName: 'test_tool',
+				toolInput: { value: true },
+				provideResult: (text: string) => {
+					provideResultText = text;
+				},
+			};
+			yield { type: 'turn_done', inputTokens: 1, outputTokens: 1 };
+		});
+
+		server = createBridgeServer({
+			codexBinaryPath: '/fake/codex',
+			cwd: '/tmp',
+			dbPath,
+		}) as BridgeServer & { port: number };
+
+		const headers = {
+			'Content-Type': 'application/json',
+			Authorization: 'Bearer codex-bridge-delayed-map',
+		};
+		const firstRespPromise = fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'call a tool' }],
+				tools: [{ name: 'test_tool', input_schema: { type: 'object' } }],
+				stream: true,
+			}),
+		});
+
+		const continuationPromise = fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [
+					{
+						role: 'assistant',
+						content: [
+							{ type: 'tool_use', id: 'call_delayed_restore', name: 'test_tool', input: {} },
+						],
+					},
+					{
+						role: 'user',
+						content: [
+							{
+								type: 'tool_result',
+								tool_use_id: 'call_delayed_restore',
+								content: 'delayed output',
+							},
+						],
+					},
+				],
+				stream: true,
+			}),
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		releaseToolCall();
+		const firstResp = await firstRespPromise;
+		expect(firstResp.ok).toBe(true);
+		await readSSEEvents(firstResp.body);
+
+		const continuationResp = await continuationPromise;
+		expect(continuationResp.ok).toBe(true);
+		await readSSEEvents(continuationResp.body);
+		expect(provideResultText).toBe('delayed output');
+		rmSync(tempDir, { recursive: true, force: true });
 	});
 
 	it('retries a new turn once when the subprocess crashes before output', async () => {

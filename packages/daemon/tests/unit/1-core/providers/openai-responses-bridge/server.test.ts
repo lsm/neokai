@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import {
+	_openAIResponsesBridgeServerTesting,
 	anthropicMessagesToResponsesInput,
 	createOpenAIResponsesBridgeServer,
 	type OpenAIResponsesBridgeServer,
@@ -905,6 +906,120 @@ describe('openai-responses-bridge server', () => {
 			'Bearer fresh-token:acct_new',
 			'Bearer fresh-token:acct_new',
 		]);
+	});
+
+	it('uses a fresh stream controller for SDK retry requests', async () => {
+		let upstreamRequests = 0;
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async () => {
+				upstreamRequests += 1;
+				return sse([
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: `try-${upstreamRequests}` },
+					},
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: { usage: { input_tokens: 1, output_tokens: 1 }, output: [] },
+						},
+					},
+				]);
+			},
+		});
+
+		const request = {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'hi' }],
+			}),
+		};
+
+		const firstResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, request);
+		const firstReader = firstResp.body?.getReader();
+		expect(firstReader).toBeDefined();
+		await firstReader?.read();
+		await firstReader?.cancel('simulate startup timeout abort before SDK retry');
+
+		const retryResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, request);
+		const retryEvents = await readSSEEvents(retryResp.body);
+
+		expect(firstResp.status).toBe(200);
+		expect(retryResp.status).toBe(200);
+		expect(upstreamRequests).toBe(2);
+		expect(textDeltaEvents(retryEvents).join('')).toBe('try-2');
+		expect(messageDeltaEvent(retryEvents)).toMatchObject({
+			type: 'message_delta',
+			delta: { stop_reason: 'end_turn' },
+		});
+	});
+
+	it('does not throw when the SSE stream controller is already closed', async () => {
+		let capturedController: ReadableStreamDefaultController<Uint8Array> | undefined;
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				capturedController = controller;
+				controller.close();
+			},
+		});
+		await new Response(stream).arrayBuffer();
+		expect(capturedController).toBeDefined();
+
+		await expect(
+			_openAIResponsesBridgeServerTesting.streamResponsesToAnthropic({
+				openAIResponse: sse([
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: 'late' },
+					},
+				]),
+				controller: capturedController as ReadableStreamDefaultController<Uint8Array>,
+				model: 'gpt-5.3-codex',
+				estimatedInputTokens: 1,
+			})
+		).resolves.toBeUndefined();
+	});
+
+	it('closes cleanly when the OpenAI stream errors after starting', async () => {
+		const openAIStream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				const encoder = new TextEncoder();
+				controller.enqueue(
+					encoder.encode(
+						`event: response.output_text.delta\ndata: ${JSON.stringify({
+							type: 'response.output_text.delta',
+							delta: 'hello',
+						})}\n\n`
+					)
+				);
+				setTimeout(() => controller.error(new Error('upstream exploded')), 0);
+			},
+		});
+		const anthropicStream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				void _openAIResponsesBridgeServerTesting.streamResponsesToAnthropic({
+					openAIResponse: new Response(openAIStream),
+					controller,
+					model: 'gpt-5.3-codex',
+					estimatedInputTokens: 1,
+				});
+			},
+		});
+
+		const events = await readSSEEvents(anthropicStream);
+
+		expect(textDeltaEvents(events).join('')).toBe('hello');
+		expect(events.find((event) => event.event === 'error')?.data).toMatchObject({
+			type: 'error',
+			error: { type: 'api_error' },
+		});
+		expect(events.at(-1)?.event).toBe('message_stop');
 	});
 
 	it('propagates the original 401 when ChatGPT OAuth refresh is unavailable', async () => {

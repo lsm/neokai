@@ -123,6 +123,8 @@ export function createAnthropicError(
 export const DEFAULT_TOOL_SESSION_TTL_MS = 5 * 60 * 1000;
 const MAX_SUBPROCESS_RETRIES = 1;
 const MAX_ORPHANED_TOOL_RESULT_409_RETRIES = 3;
+const TOOL_SESSION_REATTACH_WAIT_MS = 2_000;
+const TOOL_SESSION_REATTACH_POLL_MS = 25;
 
 // ---------------------------------------------------------------------------
 // Session state for tool-call round-trips
@@ -176,6 +178,59 @@ function estimateLastMessageInputTokens(body: AnthropicRequest): number {
 		model: body.model,
 		messages: [last],
 	});
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function hasAnyToolSession(
+	toolSessions: Map<string, ToolSession>,
+	toolResults: ToolResult[]
+): boolean {
+	return toolResults.some((tr) => toolSessions.has(tr.toolUseId));
+}
+
+function hasRecoverableToolMapping(
+	recoveryRepo: ToolContinuationRecoveryRepository | null,
+	toolResults: ToolResult[],
+	sessionId: string
+): boolean {
+	if (!recoveryRepo) return false;
+	const now = Date.now();
+	return toolResults.some((tr) => {
+		const mapping = recoveryRepo.getToolUse(tr.toolUseId);
+		return (
+			!!mapping &&
+			mapping.sessionId === sessionId &&
+			(mapping.status === 'active' || mapping.status === 'waiting_rebind') &&
+			mapping.expiresAt >= now
+		);
+	});
+}
+
+async function waitForToolSessionReattach(params: {
+	toolSessions: Map<string, ToolSession>;
+	toolResults: ToolResult[];
+	recoveryRepo: ToolContinuationRecoveryRepository | null;
+	sessionId: string;
+	waitMs?: number;
+	pollMs?: number;
+}): Promise<boolean> {
+	if (hasAnyToolSession(params.toolSessions, params.toolResults)) return true;
+	if (!hasRecoverableToolMapping(params.recoveryRepo, params.toolResults, params.sessionId)) {
+		return false;
+	}
+
+	const deadline = Date.now() + (params.waitMs ?? TOOL_SESSION_REATTACH_WAIT_MS);
+	while (Date.now() < deadline) {
+		await delay(params.pollMs ?? TOOL_SESSION_REATTACH_POLL_MS);
+		if (hasAnyToolSession(params.toolSessions, params.toolResults)) return true;
+		if (!hasRecoverableToolMapping(params.recoveryRepo, params.toolResults, params.sessionId)) {
+			return false;
+		}
+	}
+	return hasAnyToolSession(params.toolSessions, params.toolResults);
 }
 
 function isSubprocessCrashMessage(message: string): boolean {
@@ -595,6 +650,19 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				// All matched sessions have their Deferreds resolved. Unmatched tool_use_ids
 				// produce a warning and are skipped (not silently dropped).
 				let primaryStored: ToolSession | null = null;
+				const sessionId = extractSessionId(req);
+				const reattached = await waitForToolSessionReattach({
+					toolSessions,
+					toolResults,
+					recoveryRepo,
+					sessionId,
+				});
+				if (reattached) {
+					logger.info(
+						`codex-bridge: recovered delayed tool_use correlation for continuation ` +
+							`tool_use_ids=${toolResults.map((tr) => tr.toolUseId).join(',')}`
+					);
+				}
 
 				for (const tr of toolResults) {
 					const stored = toolSessions.get(tr.toolUseId);
@@ -619,7 +687,6 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 					logger.error(
 						`codex-bridge: no active sessions found for any tool_use_id in this continuation`
 					);
-					const sessionId = extractSessionId(req);
 					if (shouldCleanupOrphanedContinuation(sessionId, toolResults)) {
 						cleanupPersistentSession(sessionId, 'orphaned tool_result continuation');
 					}
