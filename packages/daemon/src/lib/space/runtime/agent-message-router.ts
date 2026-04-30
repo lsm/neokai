@@ -472,6 +472,9 @@ export class AgentMessageRouter {
 							targetKind: 'node_agent',
 							targetAgentName: agentName,
 							message: rawMessage,
+							idempotencyKey: JSON.stringify([fromSessionId, agentName, rawMessage]),
+							ttlMs: 60_000,
+							maxAttempts: 3,
 						});
 						queued.push({ agentName, messageId: record.id });
 						notFound.push(agentName);

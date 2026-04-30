@@ -21,6 +21,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
+	NodeExecution,
 	Space,
 	SpaceTask,
 	SpaceWorkflow,
@@ -44,6 +45,7 @@ import { Logger } from '../../logger';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
 import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
 import { CompletionDetector } from './completion-detector';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
@@ -127,6 +129,12 @@ export interface SpaceRuntimeConfig {
 	 * provided — tests can inject a stub to assert emissions.
 	 */
 	sdkMessageRepo?: SDKMessageRepository;
+	/**
+	 * Persistent queue for workflow agent handoff messages. SpaceRuntime sweeps
+	 * this queue every tick so queued node-to-node handoffs are retried and either
+	 * delivered or escalated instead of waiting indefinitely for a Task Agent wakeup.
+	 */
+	pendingMessageRepo?: PendingAgentMessageRepository;
 	/**
 	 * Optional callback emitted when runtime mutates a SpaceTask internally.
 	 * Used to fan out `space.task.updated` events for UI synchronization.
@@ -1418,7 +1426,11 @@ export class SpaceRuntime {
 				ex.status === 'waiting_rebind' ||
 				ex.status === 'blocked'
 		);
-		if (hasDriveableExecution) return 'skipped';
+		const hasQueuedNodeHandoff =
+			this.config.pendingMessageRepo
+				?.listPendingForRun(run.id)
+				.some((row) => row.targetKind === 'node_agent') ?? false;
+		if (hasDriveableExecution || hasQueuedNodeHandoff) return 'skipped';
 
 		// Every execution is `idle` or `cancelled` (true terminal at the
 		// node level — no agent is going to drive further state). Branch on
@@ -1906,6 +1918,23 @@ export class SpaceRuntime {
 
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
+			if (
+				canonicalTask.status === 'done' ||
+				canonicalTask.status === 'cancelled' ||
+				canonicalTask.status === 'archived'
+			) {
+				const stoppedAfterTerminalHandoffCleanup = await this.repairQueuedWorkflowNodeHandoffs(
+					runId,
+					run,
+					meta,
+					canonicalTask,
+					space ?? null
+				);
+				if (stoppedAfterTerminalHandoffCleanup) {
+					return;
+				}
+			}
+
 			// Step 1.6: Completion detection.
 			//
 			// Reuses the `runIsComplete` snapshot from above — neither `task.status`
@@ -2010,6 +2039,23 @@ export class SpaceRuntime {
 			// still runs so in-flight agents are monitored, but no new agents are started.
 			if (space?.paused || space?.stopped) return;
 
+			const hasQueuedNodeHandoff =
+				this.config.pendingMessageRepo
+					?.listPendingForRun(runId)
+					.some((row) => row.targetKind === 'node_agent') ?? false;
+			if (!space && !hasQueuedNodeHandoff) return;
+
+			const stoppedAfterQueuedHandoffRepair = await this.repairQueuedWorkflowNodeHandoffs(
+				runId,
+				run,
+				meta,
+				canonicalTask,
+				space ?? null
+			);
+			if (stoppedAfterQueuedHandoffRepair) {
+				return;
+			}
+
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 			const pendingExecutions = nodeExecutions.filter(
 				(execution) => execution.status === 'pending' && !execution.agentSessionId
@@ -2086,6 +2132,249 @@ export class SpaceRuntime {
 			// `task.reportedStatus`.
 			return;
 		}
+	}
+
+	private async repairQueuedWorkflowNodeHandoffs(
+		runId: string,
+		run: SpaceWorkflowRun,
+		meta: ExecutorMeta,
+		canonicalTask: SpaceTask,
+		space: Space | null
+	): Promise<boolean> {
+		const repo = this.config.pendingMessageRepo;
+		const tam = this.config.taskAgentManager;
+		if (!repo || !tam) return false;
+
+		repo.expireStale(runId);
+		const pending = repo.listPendingForRun(runId).filter((row) => row.targetKind === 'node_agent');
+		const isTerminalTask =
+			canonicalTask.status === 'done' ||
+			canonicalTask.status === 'cancelled' ||
+			canonicalTask.status === 'archived';
+
+		if (isTerminalTask) {
+			const expiredNodeHandoffs = repo
+				.listByRunAndStatus(runId, 'expired')
+				.filter((row) => row.targetKind === 'node_agent');
+			const reason = `Queued workflow handoff cannot be delivered because task ${canonicalTask.id} is terminal (${canonicalTask.status})`;
+			for (const row of pending) repo.markFailed(row.id, reason);
+			if (pending.length > 0 || expiredNodeHandoffs.length > 0) {
+				log.warn(
+					`SpaceRuntime: ignored ${pending.length + expiredNodeHandoffs.length} queued handoff(s) for terminal task: ${reason}`
+				);
+			}
+			return false;
+		}
+
+		const expiredNodeHandoffs = repo
+			.listByRunAndStatus(runId, 'expired')
+			.filter((row) => row.targetKind === 'node_agent');
+		if (expiredNodeHandoffs.length > 0) {
+			const first = expiredNodeHandoffs[0];
+			const reason = `Queued workflow handoff to ${first.targetAgentName} expired before delivery after ${first.attempts} attempt(s)`;
+			await this.blockRunForQueuedHandoffFailure(runId, meta.spaceId, canonicalTask, reason);
+			return true;
+		}
+
+		if (pending.length === 0) return false;
+
+		if (!space) {
+			let blockedReason: string | null = null;
+			const reason = `Cannot activate queued handoff target: space ${meta.spaceId} not found`;
+			for (const row of pending) {
+				const updated = repo.markAttemptFailed(row.id, reason);
+				if (updated?.status === 'failed') {
+					blockedReason = `Queued workflow handoff to ${updated.targetAgentName} failed after ${updated.attempts} attempt(s): ${reason}`;
+				}
+			}
+			if (blockedReason) {
+				await this.blockRunForQueuedHandoffFailure(
+					runId,
+					meta.spaceId,
+					canonicalTask,
+					blockedReason
+				);
+				return true;
+			}
+			return false;
+		}
+
+		let blockedReason: string | null = null;
+		const targets = [...new Set(pending.map((row) => row.targetAgentName))];
+		const recordBlockedFlushFailure = (
+			targetAgentName: string,
+			rowsForCurrentAttempt: typeof pending
+		): void => {
+			const first = rowsForCurrentAttempt
+				.map((row) => repo.getById(row.id))
+				.find((row) => row?.status === 'failed');
+			if (!first) return;
+			blockedReason = `Queued workflow handoff to ${targetAgentName} failed after ${first.attempts} attempt(s): ${first.lastError ?? 'delivery failed'}`;
+		};
+
+		for (const targetAgentName of targets) {
+			const rowsForTarget = pending.filter((row) => row.targetAgentName === targetAgentName);
+			try {
+				let execution = this.resolveQueuedHandoffExecution(runId, meta.workflow, targetAgentName);
+
+				if (!execution) {
+					const resolved = this.resolveQueuedHandoffTarget(meta.workflow, targetAgentName);
+					if (!resolved) {
+						throw new Error(
+							`Queued workflow handoff target "${targetAgentName}" is not declared in workflow "${meta.workflow.id}"`
+						);
+					}
+					execution = this.config.nodeExecutionRepo.createOrIgnore({
+						workflowRunId: runId,
+						workflowNodeId: resolved.nodeId,
+						agentName: resolved.agentName,
+						agentId: resolved.agentId,
+						status: 'pending',
+					});
+				}
+
+				if (execution.status === 'waiting_rebind') {
+					continue;
+				}
+
+				await tam.tryResumeNodeAgentSession(runId, execution.agentName);
+				execution = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
+				if (execution.status === 'waiting_rebind') {
+					continue;
+				}
+
+				if (execution.agentSessionId && tam.isSessionAlive(execution.agentSessionId)) {
+					await tam.flushPendingMessagesForTarget(
+						runId,
+						execution.agentName,
+						execution.agentSessionId
+					);
+					recordBlockedFlushFailure(targetAgentName, rowsForTarget);
+					continue;
+				}
+
+				if (execution.agentSessionId && !tam.isSessionAlive(execution.agentSessionId)) {
+					this.config.nodeExecutionRepo.update(execution.id, {
+						agentSessionId: null,
+						status: 'pending',
+						result: null,
+						completedAt: null,
+					});
+					execution = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
+				}
+
+				if (execution.status === 'blocked' || execution.status === 'cancelled') {
+					this.config.nodeExecutionRepo.update(execution.id, {
+						status: 'pending',
+						agentSessionId: null,
+						result: null,
+						completedAt: null,
+					});
+					execution = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
+				}
+
+				if (tam.isExecutionSpawning(execution.id)) {
+					continue;
+				}
+
+				const sessionId = await tam.spawnWorkflowNodeAgentForExecution(
+					canonicalTask,
+					space,
+					meta.workflow,
+					run,
+					execution,
+					{ kickoff: true }
+				);
+				this.config.nodeExecutionRepo.update(execution.id, {
+					status: 'in_progress',
+					agentSessionId: sessionId,
+				});
+				await tam.flushPendingMessagesForTarget(runId, execution.agentName, sessionId);
+				recordBlockedFlushFailure(targetAgentName, rowsForTarget);
+			} catch (err) {
+				const errMsg = err instanceof Error ? err.message : String(err);
+				log.warn(
+					`SpaceRuntime: queued workflow handoff repair failed for target ${targetAgentName}: ${errMsg}`
+				);
+				for (const row of rowsForTarget) {
+					const updated = repo.markAttemptFailed(row.id, errMsg);
+					if (updated?.status === 'failed') {
+						blockedReason = `Queued workflow handoff to ${targetAgentName} failed after ${updated.attempts} attempt(s): ${errMsg}`;
+					}
+				}
+			}
+		}
+
+		if (blockedReason) {
+			await this.blockRunForQueuedHandoffFailure(runId, meta.spaceId, canonicalTask, blockedReason);
+			return true;
+		}
+
+		return false;
+	}
+
+	private resolveQueuedHandoffExecution(
+		runId: string,
+		workflow: SpaceWorkflow,
+		targetAgentName: string
+	): NodeExecution | undefined {
+		const resolved = this.resolveQueuedHandoffTarget(workflow, targetAgentName);
+		if (resolved) {
+			const nodeExecution = this.config.nodeExecutionRepo
+				.listByNode(runId, resolved.nodeId)
+				.filter((candidate) => candidate.agentName === resolved.agentName)
+				.at(-1);
+			if (nodeExecution) return nodeExecution;
+		}
+
+		return this.config.nodeExecutionRepo
+			.listByWorkflowRun(runId)
+			.filter((candidate) => candidate.agentName === targetAgentName)
+			.at(-1);
+	}
+
+	private resolveQueuedHandoffTarget(
+		workflow: SpaceWorkflow,
+		targetAgentName: string
+	): { nodeId: string; agentName: string; agentId: string | null } | null {
+		for (const node of workflow.nodes) {
+			const slots = resolveNodeAgents(node);
+			const nodeNameMatch = node.name === targetAgentName || node.id === targetAgentName;
+			const direct = slots.find(
+				(slot) => slot.name === targetAgentName || (nodeNameMatch && slot.name === node.name)
+			);
+			if (direct)
+				return { nodeId: node.id, agentName: direct.name, agentId: direct.agentId ?? null };
+			if (nodeNameMatch && slots[0]) {
+				return { nodeId: node.id, agentName: slots[0].name, agentId: slots[0].agentId ?? null };
+			}
+			if (nodeNameMatch) {
+				return { nodeId: node.id, agentName: targetAgentName, agentId: null };
+			}
+		}
+		return null;
+	}
+
+	private async blockRunForQueuedHandoffFailure(
+		runId: string,
+		spaceId: string,
+		canonicalTask: SpaceTask,
+		reason: string
+	): Promise<void> {
+		await this.transitionRunStatusAndEmit(runId, 'blocked');
+		await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+			status: 'blocked',
+			result: reason,
+			blockReason: 'execution_failed',
+			completedAt: null,
+		});
+		await this.safeNotify({
+			kind: 'workflow_run_blocked',
+			spaceId,
+			runId,
+			reason,
+			timestamp: new Date().toISOString(),
+		});
 	}
 
 	private async handleWaitingRebindExecutions(
