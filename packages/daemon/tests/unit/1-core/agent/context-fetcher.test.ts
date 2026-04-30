@@ -166,6 +166,30 @@ describe('ContextFetcher.toContextInfo', () => {
 		expect(info.autoCompactThreshold).toBe(244800);
 	});
 
+	it('derives the threshold from reserved autocompact breakdown tokens', () => {
+		const response = baseResponse({
+			totalTokens: 226963,
+			maxTokens: 200000,
+			rawMaxTokens: 272000,
+			percentage: 113.5,
+			autoCompactThreshold: 180000,
+			isAutoCompactEnabled: true,
+			categories: [
+				{ name: 'Messages', tokens: 193926, color: 'blue' },
+				{ name: 'Reserved for Autocompact', tokens: 33037, color: 'gray' },
+			],
+		});
+
+		const info = ContextFetcher.toContextInfo(response);
+
+		expect(info.totalCapacity).toBe(272000);
+		expect(info.breakdown['Reserved for Autocompact']).toEqual({
+			tokens: 33037,
+			percent: 12.1,
+		});
+		expect(info.autoCompactThreshold).toBe(238963);
+	});
+
 	it('uses Codex model metadata when SDK reports the generic 200k capacity', () => {
 		const response = baseResponse({
 			totalTokens: 136000,
