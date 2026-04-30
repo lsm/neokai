@@ -355,6 +355,22 @@ function latestActivityTimestamp(
 	return lastEntry?.ts ?? rows[rows.length - 1]?.createdAt ?? Date.now();
 }
 
+function latestTurnIndex(rows: ParsedThreadRow[]): number | undefined {
+	for (let i = rows.length - 1; i >= 0; i--) {
+		if (typeof rows[i].turnIndex === 'number') return rows[i].turnIndex;
+	}
+	return undefined;
+}
+
+function summaryMatchesTurn(
+	summary: ActiveTurnSummary | undefined,
+	rows: ParsedThreadRow[]
+): ActiveTurnSummary | undefined {
+	if (!summary) return undefined;
+	const turnIndex = latestTurnIndex(rows);
+	return turnIndex !== undefined && summary.turnIndex === turnIndex ? summary : undefined;
+}
+
 function latestSessionId(rows: ParsedThreadRow[]): string | null {
 	for (let i = rows.length - 1; i >= 0; i--) {
 		if (rows[i].sessionId) return rows[i].sessionId;
@@ -682,7 +698,10 @@ function buildFeedTurns(
 			if (pendingAgentRows.length === 0) return;
 			const turnId = `${block.id}:${String(pendingAgentRows[0].id)}`;
 			const sessionId = latestSessionId(pendingAgentRows);
-			const transitionSummary = sessionId ? summariesBySession.get(sessionId) : undefined;
+			const transitionSummary = summaryMatchesTurn(
+				sessionId ? summariesBySession.get(sessionId) : undefined,
+				pendingAgentRows
+			);
 			turns.push(
 				buildCompletedTurn(block, pendingAgentRows, turnId, blockResult, transitionSummary)
 			);
