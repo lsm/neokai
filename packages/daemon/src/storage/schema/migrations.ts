@@ -7780,5 +7780,14 @@ export function runMigration111(db: BunDatabase): void {
 export function runMigration112(db: BunDatabase): void {
 	if (!tableExists(db, 'space_github_events')) return;
 
+	db.exec(`
+		DELETE FROM space_github_events
+		WHERE dedupe_key != lower(dedupe_key)
+		  AND EXISTS (
+			SELECT 1 FROM space_github_events t2
+			WHERE t2.space_id = space_github_events.space_id
+			  AND t2.dedupe_key = lower(space_github_events.dedupe_key)
+		  )
+	`);
 	db.exec(`UPDATE space_github_events SET dedupe_key = lower(dedupe_key)`);
 }
