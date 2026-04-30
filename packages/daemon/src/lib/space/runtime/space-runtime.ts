@@ -2219,6 +2219,10 @@ export class SpaceRuntime {
 					});
 				}
 
+				if (execution.status === 'waiting_rebind') {
+					continue;
+				}
+
 				if (execution.agentSessionId && tam.isSessionAlive(execution.agentSessionId)) {
 					await tam.flushPendingMessagesForTarget(
 						runId,

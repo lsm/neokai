@@ -1078,6 +1078,24 @@ describe('SpaceRuntime', () => {
 			expect(pendingRepo.listPendingForTarget(run.id, 'Coder')).toHaveLength(1);
 		});
 
+		test('skips repair while target execution is waiting for rebind recovery', async () => {
+			const { run, pendingRepo } = await setupQueuedHandoff();
+			const targetExec = nodeExecutionRepo
+				.listByWorkflowRun(run.id)
+				.find((execution) => execution.agentName === 'Coder')!;
+			const waitingSessionId = 'session:waiting-rebind';
+			nodeExecutionRepo.update(targetExec.id, {
+				status: 'waiting_rebind',
+				agentSessionId: waitingSessionId,
+				lastHeartbeatAt: Date.now(),
+			});
+			const tam = makeRepairTam({ liveSessions: new Set([waitingSessionId]) });
+			await buildRepairRuntime(tam, pendingRepo).executeTick();
+			expect(tam._spawnedExecutionIds).toHaveLength(0);
+			expect(pendingRepo.listPendingForTarget(run.id, 'Coder')).toHaveLength(1);
+			expect(nodeExecutionRepo.getById(targetExec.id)!.status).toBe('waiting_rebind');
+		});
+
 		test('does not repair queued handoffs while the space is paused', async () => {
 			const { run, pendingRepo } = await setupQueuedHandoff();
 			await spaceManager.pauseSpace(SPACE_ID);
