@@ -217,11 +217,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const eventBus = createDaemonHub('daemon');
 	await eventBus.initialize();
 
-	// One-shot startup reconciliation for legacy preset agent rows. This must run
-	// before RPC handlers can serve the configure UI so persisted agent prompts
-	// match the current template seed immediately after daemon restart.
-	await reconcileLegacyPresetAgentsOnStartup(spaceManager, spaceAgentManager, eventBus, logInfo);
-
 	// Initialize application-level MCP and Skills managers before SessionManager
 	// so AgentSession can inject skills into SDK query options.
 	const appMcpManager = new AppMcpLifecycleManager(db);
@@ -699,28 +694,4 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		fileIndex,
 		cleanup,
 	};
-}
-
-async function reconcileLegacyPresetAgentsOnStartup(
-	spaceManager: SpaceManager,
-	spaceAgentManager: SpaceAgentManager,
-	eventBus: ReturnType<typeof createDaemonHub>,
-	logInfo: (message: string) => void
-): Promise<void> {
-	const spaces = await spaceManager.listSpaces(false);
-	let reconciledCount = 0;
-	for (const space of spaces) {
-		const reconciledAgents = spaceAgentManager.reconcileEquivalentLegacyPresetRows(space.id);
-		for (const agent of reconciledAgents) {
-			reconciledCount++;
-			await eventBus.emit('spaceAgent.updated', {
-				sessionId: `space:${agent.spaceId}`,
-				spaceId: agent.spaceId,
-				agent,
-			});
-		}
-	}
-	if (reconciledCount > 0) {
-		logInfo(`[Daemon] Reconciled ${reconciledCount} legacy preset agent prompt(s)`);
-	}
 }

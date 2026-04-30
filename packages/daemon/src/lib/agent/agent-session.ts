@@ -99,6 +99,17 @@ import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@neokai/shared';
  * Used by RoomAgentService and LobbyAgentService to create sessions
  * with custom system prompts, MCP servers, and feature flags.
  */
+export interface PromptProvenanceInit {
+	source: string;
+	hash: string;
+	agentId?: string;
+	agentName?: string;
+	workflowRunId?: string;
+	workflowId?: string;
+	nodeId?: string;
+	nodeName?: string;
+}
+
 export interface AgentSessionInit {
 	/** Session ID (e.g., 'room:abc123', 'lobby:default', or UUID for worker) */
 	sessionId: string;
@@ -108,6 +119,9 @@ export interface AgentSessionInit {
 
 	/** System prompt configuration - provided by caller */
 	systemPrompt?: SystemPromptConfig;
+
+	/** Non-secret prompt provenance for observability; never contains full prompt text. */
+	promptProvenance?: PromptProvenanceInit;
 
 	/** MCP servers configuration - provided by caller (merged with user config) */
 	mcpServers?: Record<string, McpServerConfig>;
@@ -460,6 +474,20 @@ export class AgentSession
 			}
 
 			if (
+				init.promptProvenance &&
+				JSON.stringify(session.metadata.promptProvenance ?? null) !==
+					JSON.stringify(init.promptProvenance)
+			) {
+				const nextMetadata: SessionMetadata = {
+					...session.metadata,
+					promptProvenance: init.promptProvenance,
+				};
+				updates.metadata = nextMetadata;
+				session = { ...session, metadata: nextMetadata };
+				hasUpdates = true;
+			}
+
+			if (
 				runtimeInitFingerprint &&
 				session.metadata.runtimeInitFingerprint !== runtimeInitFingerprint
 			) {
@@ -608,6 +636,7 @@ export class AgentSession
 			totalCost: 0,
 			toolCallCount: 0,
 			...(runtimeInitFingerprint ? { runtimeInitFingerprint } : {}),
+			...(init.promptProvenance ? { promptProvenance: init.promptProvenance } : {}),
 		};
 
 		return {
