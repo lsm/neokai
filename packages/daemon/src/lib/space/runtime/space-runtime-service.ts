@@ -421,6 +421,38 @@ export class SpaceRuntimeService {
 			this.releaseMemberSessionDbQuery(event.sessionId);
 		});
 		this.unsubscribers.push(unsubSessionDeleted);
+
+		// Hard resets replace the cached AgentSession with a fresh instance built
+		// only from persisted DB state, so runtime-only MCP servers, Space prompts,
+		// and self-heal callbacks must be re-attached before replay restarts a query.
+		const unsubSessionReset = daemonHub.on('session.reset', async (event) => {
+			await this.reprovisionResetSession(event.session).catch((err) => {
+				log.error(`Failed to re-provision reset session ${event.sessionId}:`, err);
+			});
+		});
+		this.unsubscribers.push(unsubSessionReset);
+	}
+
+	/**
+	 * Re-attach runtime-only Space configuration after SessionManager hard resets
+	 * a cached AgentSession. Without this hook, reset Space chats would lose their
+	 * `space-agent-tools` server and the QueryRunner invariant would hard-fail
+	 * before its self-heal callback could exist.
+	 */
+	private async reprovisionResetSession(session: Session): Promise<void> {
+		if (session.type === 'space_chat') {
+			const spaceId = session.context?.spaceId ?? session.id.match(/^space:chat:(.+)$/)?.[1];
+			if (!spaceId) return;
+			const space = await this.config.spaceManager.getSpace(spaceId);
+			if (!space) {
+				log.warn(`reprovisionResetSession: space "${spaceId}" not found (session ${session.id})`);
+				return;
+			}
+			await this.setupSpaceAgentSession(space);
+			return;
+		}
+
+		await this.attachSpaceToolsToMemberSession(session);
 	}
 
 	/**

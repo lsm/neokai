@@ -590,6 +590,51 @@ describe('SpaceRuntimeService', () => {
 			await svc.stop();
 		});
 
+		test('session.reset re-provisions reset Space chats before query replay', async () => {
+			const session = makeSession();
+			const sessionManager = makeSessionManager(session);
+			let resetHandler:
+				| ((event: { sessionId: string; session: Session }) => Promise<void>)
+				| undefined;
+			const daemonHub: DaemonHub = {
+				on: mock((event: string, handler: unknown) => {
+					if (event === 'session.reset') {
+						resetHandler = handler as typeof resetHandler;
+					}
+					return () => {};
+				}),
+				emit: mock(async () => {}),
+			} as unknown as DaemonHub;
+			const config: SpaceRuntimeServiceConfig = {
+				...buildConfigWithSession(sessionManager),
+				daemonHub,
+			};
+			const svc = new SpaceRuntimeService(config);
+
+			svc.start();
+			expect(resetHandler).toBeDefined();
+
+			await resetHandler?.({
+				sessionId: 'space:chat:space-1',
+				session: {
+					id: 'space:chat:space-1',
+					type: 'space_chat',
+					context: { spaceId: 'space-1' },
+				} as Session,
+			});
+
+			expect(sessionManager.getSessionAsync).toHaveBeenCalledWith('space:chat:space-1');
+			expect(session.mergeRuntimeMcpServers).toHaveBeenCalled();
+			const [mcpArg] = (
+				session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
+			).mock.calls.at(-1)!;
+			expect(mcpArg).toHaveProperty('space-agent-tools');
+			expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
+			expect(session.setRuntimeSystemPrompt).toHaveBeenCalled();
+
+			await svc.stop();
+		});
+
 		test('stop() unsubscribes from space.created events', async () => {
 			const unsubFn = mock(() => {});
 			const session = makeSession();
@@ -607,9 +652,10 @@ describe('SpaceRuntimeService', () => {
 			svc.start();
 			await svc.stop();
 
-			// Three subscriptions are registered: space.created, session.created,
-			// and session.deleted (which releases per-session db-query servers).
-			expect(unsubFn).toHaveBeenCalledTimes(3);
+			// Four subscriptions are registered: space.created, session.created,
+			// session.deleted (which releases per-session db-query servers), and
+			// session.reset (which re-provisions hard-reset Space sessions).
+			expect(unsubFn).toHaveBeenCalledTimes(4);
 		});
 	});
 

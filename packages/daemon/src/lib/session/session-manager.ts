@@ -223,6 +223,12 @@ export class SessionManager {
 			});
 			this.sessionCache.set(sessionId, freshSession);
 
+			await this.eventBus.emit('session.reset', {
+				sessionId,
+				session: sessionForFreshInstance,
+				restartQuery: options.restartQuery,
+			});
+
 			try {
 				await agentSession.cleanup();
 			} catch (error) {
