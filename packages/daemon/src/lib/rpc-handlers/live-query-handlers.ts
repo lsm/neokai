@@ -115,7 +115,8 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 	const sessionId = typeof row.sessionId === 'string' ? row.sessionId : null;
 	const role = String(row.role ?? 'system');
 	const label = String(row.label ?? 'Agent');
-	const kind = row.kind === 'task_agent' ? 'task_agent' : 'node_agent';
+	const kind =
+		row.kind === 'github' ? 'github' : row.kind === 'task_agent' ? 'task_agent' : 'node_agent';
 	const taskId = String(row.taskId ?? '');
 	const taskTitle = String(row.taskTitle ?? '');
 	const messageType = String(row.messageType ?? 'status');
@@ -339,15 +340,21 @@ function formatTaskActivityLabel(value: unknown, fallback: string): string {
 }
 
 function mapSpaceTaskActivityRow(row: Record<string, unknown>): Record<string, unknown> {
-	const kind = row.kind === 'task_agent' ? 'task_agent' : 'node_agent';
+	const kind =
+		row.kind === 'github' ? 'github' : row.kind === 'task_agent' ? 'task_agent' : 'node_agent';
 	const rawRole =
-		typeof row.role === 'string' ? row.role : kind === 'task_agent' ? 'task-agent' : 'agent';
+		typeof row.role === 'string' ? row.role : kind === 'task_agent' ? 'task-agent' : kind;
 	const rawLabel = typeof row.label === 'string' ? row.label : rawRole;
 
 	return {
 		...row,
 		kind,
-		label: kind === 'task_agent' ? 'Task Agent' : formatTaskActivityLabel(rawLabel, 'Agent'),
+		label:
+			kind === 'task_agent'
+				? 'Task Agent'
+				: kind === 'github'
+					? 'GitHub'
+					: formatTaskActivityLabel(rawLabel, 'Agent'),
 		role: rawRole,
 		messageCount: Number(row.messageCount ?? 0),
 	};
@@ -695,7 +702,35 @@ all_sessions AS (
   UNION ALL
   SELECT * FROM node_agents
 ),
+github_events AS (
+  SELECT
+    ge.id AS id,
+    NULL AS sessionId,
+    'github' AS kind,
+    'github' AS role,
+    'GitHub' AS label,
+    tt.id AS taskId,
+    tt.title AS taskTitle,
+    'github_pr_activity' AS messageType,
+    json_object(
+      'type', 'user',
+      'uuid', ge.id,
+      'message', json_object(
+        'role', 'user',
+        'content', json_array(json_object('type', 'text', 'text', '[GitHub] ' || ge.summary || char(10) || ge.external_url))
+      )
+    ) AS content,
+    'system' AS origin,
+    ge.occurred_at AS createdAt,
+    0 AS iteration,
+    NULL AS parentToolUseId
+  FROM target_task tt
+  JOIN space_github_events ge ON ge.task_id = tt.id
+  WHERE ge.state IN ('routed', 'delivered')
+),
 joined AS (
+  SELECT * FROM github_events
+  UNION ALL
   SELECT
     sm.id AS id,
     sm.session_id AS sessionId,
