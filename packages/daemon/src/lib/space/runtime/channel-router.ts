@@ -520,37 +520,15 @@ export class ChannelRouter {
 			throw new ActivationError(`Workflow not found: ${run.workflowId}`);
 		}
 
-		// ── 2. Gate evaluation and per-channel cycle cap ────────────────────────
 		const match = this.findMatchingWorkflowChannel(workflow, fromRole, toTarget);
 		const channel = match?.channel;
 		const channelIndex = match?.index ?? -1;
 		const channelIsCyclic = match ? this.isChannelCyclicByIndex(channelIndex, workflow) : false;
 
-		if (channel) {
-			// Enforce per-channel cycle cap for cyclic channels
-			if (channelIsCyclic) {
-				const maxCycles = channel.maxCycles ?? 5;
-				if (this.isCycleCapReached(runId, channelIndex, maxCycles)) {
-					throw new ActivationError(
-						`Cyclic channel from "${fromRole}" to "${toTarget}" has reached the maximum cycle count (${maxCycles}). Increase maxCycles to allow more cycles.`
-					);
-				}
-			}
-
-			// Gate evaluation via separated Gate entity
-			if (channel.gateId) {
-				const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
-				if (!gateResult.open) {
-					throw new ChannelGateBlockedError(
-						gateResult.reason ??
-							`Gate "${channel.gateId}" blocked delivery from "${fromRole}" to "${toTarget}"`,
-						channel.gateId
-					);
-				}
-			}
-		}
-
-		// ── 3. Target resolution: agent name → DM, node name → fan-out ────────
+		// ── 2. Target resolution: agent name → DM, node name → fan-out ────────
+		// Activation is intentionally resolved before gate evaluation below. Gates may
+		// block delivery of the message content, but they must not block spawning or
+		// resuming the target agent session that needs to receive/react to the handoff.
 		let targetNode = this.findNodeByAgentName(workflow, toTarget);
 		let isFanOut = false;
 
@@ -567,7 +545,7 @@ export class ChannelRouter {
 			}
 		}
 
-		// ── 4. Lazy activation ─────────────────────────────────────────────────
+		// ── 3. Lazy activation ─────────────────────────────────────────────────
 		const activeTasks = this.getActiveTasksForNode(runId, targetNode.id);
 		let activatedTasks: SpaceTask[] | undefined;
 
@@ -576,6 +554,29 @@ export class ChannelRouter {
 				reopenBy: `agent:${fromRole}`,
 				reopenReason: `peer send_message from "${fromRole}" to "${toTarget}"`,
 			});
+		}
+
+		// ── 4. Gate evaluation and per-channel cycle cap ─────────────────────
+		if (channel) {
+			if (channelIsCyclic) {
+				const maxCycles = channel.maxCycles ?? 5;
+				if (this.isCycleCapReached(runId, channelIndex, maxCycles)) {
+					throw new ActivationError(
+						`Cyclic channel from "${fromRole}" to "${toTarget}" has reached the maximum cycle count (${maxCycles}). Increase maxCycles to allow more cycles.`
+					);
+				}
+			}
+
+			if (channel.gateId) {
+				const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
+				if (!gateResult.open) {
+					throw new ChannelGateBlockedError(
+						gateResult.reason ??
+							`Gate "${channel.gateId}" blocked delivery from "${fromRole}" to "${toTarget}"`,
+						channel.gateId
+					);
+				}
+			}
 		}
 
 		// ── 5. Increment per-channel cycle count and reset cyclic gates ──────

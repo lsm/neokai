@@ -1150,6 +1150,70 @@ describe('Error cases — non-existent targets and injection failures', () => {
 		expect((result.error as string).toLowerCase()).toContain('ghost');
 	});
 
+	test('send_message activates a missing target session before delivery', async () => {
+		ctx = makeStepCtx([{ sessionId: 'sess-coder', agentName: 'coder' }]);
+		const activated: string[] = [];
+		const channels = [ch('coder', 'reviewer')];
+		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
+			channelResolver: new ChannelResolver(channels),
+			agentMessageRouter: new AgentMessageRouter({
+				nodeExecutionRepo: ctx.nodeExecutionRepo,
+				workflowRunId: ctx.workflowRunId,
+				workflowChannels: channels,
+				messageInjector: async (sessionId, message) => {
+					cfg.injectedMessages.push({ sessionId, message });
+				},
+				activateTargetSession: async (agentName) => {
+					activated.push(agentName);
+					return [{ agentName, sessionId: 'sess-reviewer-activated' }];
+				},
+			}),
+		});
+		const handlers = createNodeAgentToolHandlers(cfg);
+
+		const result = parse(
+			await handlers.send_message({ target: 'reviewer', message: 'Please review' })
+		);
+		expect(result.success).toBe(true);
+		expect(activated).toEqual(['reviewer']);
+		expect(cfg.injectedMessages).toHaveLength(1);
+		expect(cfg.injectedMessages[0].sessionId).toBe('sess-reviewer-activated');
+	});
+
+	test('send_message queues as backstop but reports failure when activation does not produce a live session', async () => {
+		ctx = makeStepCtx([{ sessionId: 'sess-coder', agentName: 'coder' }]);
+		const queued: Array<{ agentName: string; messageId: string }> = [];
+		const pendingMessageRepo = {
+			enqueue: (input: { targetAgentName: string }) => {
+				const record = { id: `msg-${input.targetAgentName}` };
+				queued.push({ agentName: input.targetAgentName, messageId: record.id });
+				return { record, deduped: false };
+			},
+		} as unknown as import('../../../../src/storage/repositories/pending-agent-message-repository.ts').PendingAgentMessageRepository;
+		const channels = [ch('coder', 'reviewer')];
+		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
+			channelResolver: new ChannelResolver(channels),
+			agentMessageRouter: new AgentMessageRouter({
+				nodeExecutionRepo: ctx.nodeExecutionRepo,
+				workflowRunId: ctx.workflowRunId,
+				workflowChannels: channels,
+				messageInjector: async () => {},
+				activateTargetSession: async () => [],
+				pendingMessageRepo,
+				spaceId: ctx.spaceId,
+			}),
+		});
+		const handlers = createNodeAgentToolHandlers(cfg);
+
+		const result = parse(
+			await handlers.send_message({ target: 'reviewer', message: 'Please review' })
+		);
+		expect(result.success).toBe(false);
+		expect((result.error as string).toLowerCase()).toContain('no live session received');
+		expect(result.queued).toEqual(queued);
+		expect(cfg.injectedMessages).toHaveLength(0);
+	});
+
 	test('send_message injection failure returns all-failed error', async () => {
 		ctx = makeStepCtx([
 			{ sessionId: 'sess-coder', agentName: 'coder' },

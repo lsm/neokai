@@ -1858,6 +1858,46 @@ export class TaskAgentManager {
 	 * Returns `false` when the agent is not declared in the workflow, or when
 	 * any required dependency is missing (best-effort — never throws).
 	 */
+	async activateTargetSessionsForMessage(
+		taskId: string,
+		workflowRunId: string,
+		agentName: string,
+		options?: { reopenReason?: string; reopenBy?: string }
+	): Promise<Array<{ agentName: string; sessionId: string }>> {
+		await this.tryResumeNodeAgentSession(workflowRunId, agentName);
+		const existing = this.config.nodeExecutionRepo
+			.listByWorkflowRun(workflowRunId)
+			.filter((execution) => execution.agentName === agentName && execution.agentSessionId)
+			.at(-1);
+		if (existing?.agentSessionId && this.isSessionAlive(existing.agentSessionId)) {
+			return [{ agentName, sessionId: existing.agentSessionId }];
+		}
+
+		await this.ensureWorkflowNodeActivationForAgent(taskId, agentName, options);
+
+		const task = this.config.taskRepo.getTask(taskId);
+		const run = this.config.workflowRunRepo.getRun(workflowRunId);
+		const workflow = run?.workflowId
+			? this.config.spaceWorkflowManager.getWorkflow(run.workflowId)
+			: null;
+		const space = task ? await this.config.spaceManager.getSpace(task.spaceId) : null;
+		if (!task || !run || !workflow || !space) return [];
+
+		const execution = this.config.nodeExecutionRepo
+			.listByWorkflowRun(workflowRunId)
+			.find((candidate) => candidate.agentName === agentName);
+		if (!execution) return [];
+
+		const sessionId = await this.spawnWorkflowNodeAgentForExecution(
+			task,
+			space,
+			workflow,
+			run,
+			execution
+		);
+		return [{ agentName, sessionId }];
+	}
+
 	async ensureWorkflowNodeActivationForAgent(
 		taskId: string,
 		agentName: string,
@@ -3947,6 +3987,11 @@ export class TaskAgentManager {
 			workflowChannels: channels,
 			messageInjector: (targetSessionId, message) =>
 				this.injectSubSessionMessage(targetSessionId, message, true),
+			activateTargetSession: (targetAgentName) =>
+				this.activateTargetSessionsForMessage(taskId, workflowRunId, targetAgentName, {
+					reopenReason: `node-agent send_message to activate "${targetAgentName}"`,
+					reopenBy: `agent:${agentName}`,
+				}),
 			channelRouter: nodeAgentChannelRouter,
 			nodeGroups,
 			taskAgentRouter: async (message) => {

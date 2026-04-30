@@ -1097,7 +1097,7 @@ describe('ChannelRouter', () => {
 		// Gated channels — check condition
 		// -----------------------------------------------------------------------
 
-		test('gated channel (check): blocks delivery when condition not satisfied', async () => {
+		test('gated channel (check): activates target before blocking content when condition not satisfied', async () => {
 			const gate: Gate = {
 				id: 'plan-gate',
 				fields: [{ name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } }],
@@ -1129,10 +1129,15 @@ describe('ChannelRouter', () => {
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-			// No gate data written → field does not exist → gate is closed
+			// No gate data written → field does not exist → gate is closed.
+			// The target agent is still activated first; the gate only blocks message content.
 			await expect(router.deliverMessage(run.id, 'planner', 'coder', 'msg')).rejects.toBeInstanceOf(
 				ChannelGateBlockedError
 			);
+			const executions = new NodeExecutionRepository(db).listByNode(run.id, NODE_B);
+			expect(executions).toHaveLength(1);
+			expect(executions[0].agentName).toBe('coder');
+			expect(executions[0].status).toBe('pending');
 		});
 
 		test('gated channel (check): allows delivery when condition satisfied', async () => {

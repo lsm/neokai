@@ -660,6 +660,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					error: result.reason ?? 'Message delivery failed.',
 					delivered: result.delivered.length > 0 ? result.delivered : undefined,
 					failed: result.failed.length > 0 ? result.failed : undefined,
+					queued: result.queued,
 					unauthorizedAgentNames: result.unauthorizedAgentNames,
 					permittedTargets: result.permittedTargets,
 					notFoundAgentNames: result.notFoundAgentNames,
