@@ -48,6 +48,7 @@ const FULLSTACK_QA_NODE = 'tpl-fullstack-qa';
 const PR_READY_BASH_SCRIPT = [
 	'# Prefer explicit PR URL from gate data JSON when available; fallback to current branch.',
 	'PR_TARGET=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+	'# When pr_url is supplied, validate that exact PR rather than rediscovering via branch filters.',
 	'if [ -n "$PR_TARGET" ]; then',
 	'  PR_VIEW_SCOPE="$PR_TARGET"',
 	'  if ! PR_JSON=$(gh pr view "$PR_TARGET" --json url,state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
@@ -79,7 +80,7 @@ const PR_READY_BASH_SCRIPT = [
 	'fi',
 	'PR_STATUS=$(jq -r \'.mergeStateStatus\' <<< "$PR_JSON")',
 	'# Block on UNKNOWN — orchestrator retries until GitHub resolves status',
-	'if [ "$PR_STATUS" != "CLEAN" ] && [ "$PR_STATUS" != "HAS_HOOKS" ]; then',
+	'if [ "$PR_STATUS" != "CLEAN" ] && [ "$PR_STATUS" != "HAS_HOOKS" ] && [ "$PR_STATUS" != "BLOCKED" ]; then',
 	'  echo "PR merge checks not satisfied (mergeStateStatus: ${PR_STATUS:-unknown})" >&2',
 	'  exit 1',
 	'fi',
@@ -544,7 +545,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'review_url',
 					type: 'string',
-					writers: ['reviewer'],
+					writers: ['Review'],
 					check: { op: 'exists' },
 				},
 			],
@@ -976,7 +977,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'approvals',
 					type: 'map',
-					writers: ['reviewer'],
+					writers: ['Plan Review'],
 					check: { op: 'count', match: 'approved', min: 4 },
 				},
 			],
