@@ -578,32 +578,6 @@ node_agents AS (
   LEFT JOIN space_agents sa ON sa.id = ne.agent_id
   WHERE ne.agent_session_id IS NOT NULL
 ),
-github_events AS (
-  SELECT
-    ge.id AS id,
-    NULL AS sessionId,
-    'github' AS kind,
-    'github' AS role,
-    'GitHub' AS label,
-    tt.id AS taskId,
-    tt.title AS taskTitle,
-    'github_pr_activity' AS messageType,
-    json_object(
-      'type', 'user',
-      'uuid', ge.id,
-      'message', json_object(
-        'role', 'user',
-        'content', json_array(json_object('type', 'text', 'text', '[GitHub] ' || ge.summary || char(10) || ge.external_url))
-      )
-    ) AS content,
-    'system' AS origin,
-    ge.occurred_at AS createdAt,
-    0 AS iteration,
-    NULL AS parentToolUseId
-  FROM target_task tt
-  JOIN space_github_events ge ON ge.task_id = tt.id
-  WHERE ge.state IN ('routed', 'delivered', 'ambiguous')
-),
 -- Union both legs
 all_sessions AS (
   SELECT * FROM orchestration
