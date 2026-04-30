@@ -132,7 +132,20 @@ export class ContextFetcher {
 				? Math.min(100, Math.max(0, Math.round((response.totalTokens / capacity) * 100)))
 				: Math.max(0, Math.round(response.percentage));
 		let autoCompactThreshold = response.autoCompactThreshold;
+		const autoCompactReservedTokens = (response.categories ?? []).find((category) =>
+			category.name.toLowerCase().includes('autocompact')
+		)?.tokens;
 		if (
+			typeof autoCompactReservedTokens === 'number' &&
+			autoCompactReservedTokens > 0 &&
+			capacity > 0 &&
+			autoCompactReservedTokens < capacity
+		) {
+			// The SDK breakdown reports the autocompact row as reserved/free buffer
+			// tokens. Convert that to the used-token threshold so the bar and the
+			// breakdown share the same capacity denominator and visual percentage.
+			autoCompactThreshold = capacity - autoCompactReservedTokens;
+		} else if (
 			typeof autoCompactThreshold === 'number' &&
 			capacity > 0 &&
 			response.maxTokens > 0 &&
