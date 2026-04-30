@@ -3227,7 +3227,7 @@ export class TaskAgentManager {
 			sessionId: subSessionId,
 			workspacePath,
 		});
-		if (currentInit.systemPrompt) {
+		if (currentInit?.systemPrompt) {
 			agentSession.setRuntimeSystemPrompt(currentInit.systemPrompt);
 		}
 
@@ -3363,13 +3363,15 @@ export class TaskAgentManager {
 		execution: NodeExecution;
 		sessionId: string;
 		workspacePath: string;
-	}): AgentSessionInit {
+	}): AgentSessionInit | null {
 		const { task, space, workflow, workflowRun, execution, sessionId, workspacePath } = args;
 		const node = workflow?.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
 		if (!node) {
-			throw new Error(
-				`Workflow node "${execution.workflowNodeId}" not found while rehydrating agent session "${sessionId}"`
+			log.warn(
+				`TaskAgentManager.rehydrateSubSession: workflow node ${execution.workflowNodeId} ` +
+					`not found for session ${sessionId}; keeping persisted system prompt`
 			);
+			return null;
 		}
 
 		const nodeAgents = resolveNodeAgents(node);
@@ -3378,9 +3380,11 @@ export class TaskAgentManager {
 				? nodeAgents[0]
 				: nodeAgents.find((agentSlot) => agentSlot.name === execution.agentName);
 		if (!slot?.agentId) {
-			throw new Error(
-				`No agent slot found for agent name "${execution.agentName}" in node "${execution.workflowNodeId}"`
+			log.warn(
+				`TaskAgentManager.rehydrateSubSession: no agent slot found for agent ${execution.agentName} ` +
+					`in node ${execution.workflowNodeId}; keeping persisted system prompt`
 			);
+			return null;
 		}
 
 		return resolveAgentInit({

@@ -410,10 +410,16 @@ describe('TaskAgentManager.rehydrateSubSession (lazy rehydration)', () => {
 		ctx = makeCtx();
 		// Mock AgentSession.restore to return a mock session for any known DB session
 		restoreSpy = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
-			if (!ctx.mockDb.getSession(sessionId)) return null;
+			const row = ctx.mockDb.getSession(sessionId) as {
+				config?: { systemPrompt?: unknown };
+			} | null;
+			if (!row) return null;
 			const existing = ctx.createdSessions.get(sessionId);
 			if (existing) return existing as unknown as AgentSession;
 			const mockSession = makeMockSession(sessionId);
+			if (row.config?.systemPrompt) {
+				mockSession.session.config.systemPrompt = row.config.systemPrompt;
+			}
 			ctx.createdSessions.set(sessionId, mockSession);
 			return mockSession as unknown as AgentSession;
 		});
@@ -530,6 +536,54 @@ describe('TaskAgentManager.rehydrateSubSession (lazy rehydration)', () => {
 			type: 'preset',
 			preset: 'claude_code',
 			append: 'current reviewer prompt after template update',
+		});
+	});
+
+	test('rehydrated sub-session keeps persisted prompt when workflow metadata is unavailable', async () => {
+		const wfRunId = 'run-prompt-missing-workflow-1';
+		const wfId = 'wf-prompt-missing-workflow-1';
+		const nodeId = 'node-prompt-missing-workflow-1';
+		seedWorkflowRun(ctx, wfRunId, wfId, nodeId);
+
+		const parentTask = await ctx.taskManager.createTask({
+			title: 'Parent task for missing workflow prompt fallback',
+			description: '',
+			taskType: 'coding',
+			status: 'in_progress',
+			workflowRunId: wfRunId,
+		});
+		const taskAgentSessionId = `space:${ctx.spaceId}:task:${parentTask.id}`;
+		ctx.taskRepo.updateTask(parentTask.id, { taskAgentSessionId, status: 'in_progress' });
+		ctx.mockDb.createSession({ id: taskAgentSessionId, type: 'space_task_agent' });
+
+		const workflow = ctx.workflowManager.listWorkflows(ctx.spaceId)[0];
+		expect(workflow).toBeDefined();
+		ctx.workflowManager.deleteWorkflow(workflow.id);
+
+		const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:ghost-exec-missing-workflow`;
+		const execution = ctx.nodeExecutionRepo.create({
+			workflowRunId: wfRunId,
+			workflowNodeId: nodeId,
+			agentName: 'reviewer',
+			agentId: null,
+			status: 'in_progress',
+		});
+		ctx.nodeExecutionRepo.updateSessionId(execution.id, subSessionId);
+		ctx.mockDb.createSession({
+			id: subSessionId,
+			type: 'worker',
+			config: { systemPrompt: { type: 'preset', preset: 'claude_code', append: 'persisted' } },
+		});
+
+		await ctx.manager.injectSubSessionMessage(subSessionId, 'resume review');
+
+		const session = ctx.createdSessions.get(subSessionId)!;
+		expect(session._startCalled).toBe(true);
+		expect(session._enqueuedMessages.at(-1)?.msg).toBe('resume review');
+		expect(session.session.config.systemPrompt).toMatchObject({
+			type: 'preset',
+			preset: 'claude_code',
+			append: 'persisted',
 		});
 	});
 
