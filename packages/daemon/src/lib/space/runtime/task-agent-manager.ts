@@ -1895,13 +1895,24 @@ export class TaskAgentManager {
 			.find((candidate) => candidate.agentName === agentName);
 		if (!execution) return [];
 
-		const sessionId = await this.spawnWorkflowNodeAgentForExecution(
+		const spawnPromise = this.spawnWorkflowNodeAgentForExecution(
 			task,
 			space,
 			workflow,
 			run,
 			execution
 		);
+		const timeoutMs = 30_000;
+		const timeoutPromise = new Promise<null>((resolve) => {
+			setTimeout(() => resolve(null), timeoutMs);
+		});
+		const sessionId = await Promise.race([spawnPromise, timeoutPromise]);
+		if (!sessionId) {
+			log.warn(
+				`TaskAgentManager.activateTargetSessionsForMessage: timed out after ${timeoutMs}ms activating agent "${agentName}" for run ${workflowRunId}`
+			);
+			return [];
+		}
 		return [{ agentName, sessionId }];
 	}
 

@@ -727,7 +727,7 @@ describe('AgentMessageRouter: fromNodeName resolution edge cases', () => {
 
 		// With nodeGroups, the topology resolves correctly → isTopologyDeclared = true
 		// No session exists → message queued (not "unknown target")
-		expect(result.success).toBe(true);
+		expect(result.success).toBe(false);
 		expect(result.queued).toHaveLength(1);
 		expect(result.queued?.[0].agentName).toBe('Review');
 	});
@@ -828,7 +828,7 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
 		});
 
 		// Message should be queued, not failed
-		expect(result.success).toBe(true);
+		expect(result.success).toBe(false);
 		expect(result.queued).toBeDefined();
 		expect(result.queued).toHaveLength(1);
 		expect(result.queued![0].agentName).toBe('reviewer');
@@ -879,7 +879,7 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
 		});
 
 		// Should succeed by queuing, not fail with "Unknown target" or "No active sessions"
-		expect(result.success).toBe(true);
+		expect(result.success).toBe(false);
 		expect(result.queued).toBeDefined();
 		expect(result.queued![0].agentName).toBe('reviewer');
 	});
@@ -926,7 +926,7 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
 			message: 'code ready',
 		});
 
-		expect(result.success).toBe(true);
+		expect(result.success).toBe(false);
 		expect(result.delivered).toHaveLength(0);
 		expect(result.queued).toHaveLength(1);
 		expect(result.queued![0].agentName).toBe('reviewer');
@@ -1015,7 +1015,7 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
 		// Reworded in Task #133: distinguishes "declared but no session" from
 		// "unknown agent". Both pre-pendingRepo paths converge on this message.
 		expect(result.reason).toContain('Could not deliver message to target agent(s): reviewer');
-		expect(result.reason).toContain('declared but has no active session');
+		expect(result.reason).toContain('no live session received the message');
 	});
 });
 
@@ -1138,7 +1138,7 @@ describe('AgentMessageRouter: queue enqueue failure graceful degradation', () =>
 		// Reworded in Task #133: distinguishes "declared but no session" from
 		// "unknown agent". Both pre-pendingRepo paths converge on this message.
 		expect(result.reason).toContain('Could not deliver message to target agent(s): reviewer');
-		expect(result.reason).toContain('declared but has no active session');
+		expect(result.reason).toContain('no live session received the message');
 		expect(result.notFoundAgentNames).toContain('reviewer');
 	});
 });
@@ -1186,13 +1186,13 @@ describe('AgentMessageRouter: workflow-declared (via nodeGroups) slot target wit
 			message: 'lazy activation please',
 		});
 
-		expect(result.success).toBe(true);
+		expect(result.success).toBe(false);
 		expect(result.queued).toHaveLength(1);
 		expect(result.queued![0].agentName).toBe('reviewer');
 		expect(result.delivered).toHaveLength(0);
-		// The hard-error path was NOT taken — no notFoundAgentNames and no
-		// "Unknown target" reason.
-		expect(result.notFoundAgentNames).toBeUndefined();
+		// The hard-error path was NOT taken — no "Unknown target" reason.
+		// The missing live session is still surfaced for delivery accuracy.
+		expect(result.notFoundAgentNames).toContain('reviewer');
 
 		const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
 		expect(pending).toHaveLength(1);
@@ -1266,7 +1266,7 @@ describe('AgentMessageRouter: pure topology target (no execution, no nodeGroups)
 			message: 'activate and review',
 		});
 
-		expect(result.success).toBe(true);
+		expect(result.success).toBe(false);
 		expect(result.queued).toHaveLength(1);
 		expect(result.queued![0].agentName).toBe('reviewer');
 		expect(result.delivered).toHaveLength(0);

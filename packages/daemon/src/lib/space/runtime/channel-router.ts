@@ -545,6 +545,17 @@ export class ChannelRouter {
 			}
 		}
 
+		// Cycle caps reject the send itself, so they are enforced before activation.
+		// Gates are evaluated later because they only block message content.
+		if (channelIsCyclic && channel) {
+			const maxCycles = channel.maxCycles ?? 5;
+			if (this.isCycleCapReached(runId, channelIndex, maxCycles)) {
+				throw new ActivationError(
+					`Cyclic channel from "${fromRole}" to "${toTarget}" has reached the maximum cycle count (${maxCycles}). Increase maxCycles to allow more cycles.`
+				);
+			}
+		}
+
 		// ── 3. Lazy activation ─────────────────────────────────────────────────
 		const activeTasks = this.getActiveTasksForNode(runId, targetNode.id);
 		let activatedTasks: SpaceTask[] | undefined;
@@ -556,17 +567,8 @@ export class ChannelRouter {
 			});
 		}
 
-		// ── 4. Gate evaluation and per-channel cycle cap ─────────────────────
+		// ── 4. Gate evaluation ───────────────────────────────────────────────
 		if (channel) {
-			if (channelIsCyclic) {
-				const maxCycles = channel.maxCycles ?? 5;
-				if (this.isCycleCapReached(runId, channelIndex, maxCycles)) {
-					throw new ActivationError(
-						`Cyclic channel from "${fromRole}" to "${toTarget}" has reached the maximum cycle count (${maxCycles}). Increase maxCycles to allow more cycles.`
-					);
-				}
-			}
-
 			if (channel.gateId) {
 				const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
 				if (!gateResult.open) {
