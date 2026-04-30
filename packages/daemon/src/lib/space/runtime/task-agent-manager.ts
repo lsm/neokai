@@ -2747,6 +2747,12 @@ export class TaskAgentManager {
 		const node = workflow.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
 		if (!node) return [...aliases];
 
+		if (node.name) {
+			for (const variant of this.agentNameVariants(node.name)) {
+				aliases.add(variant);
+			}
+		}
+
 		const nodeAgents = resolveNodeAgents(node);
 		const slot =
 			nodeAgents.find((agent) => agent.name === execution.agentName) ??

@@ -932,9 +932,13 @@ export function createOpenAIResponsesBridgeServer(
 						controller,
 						model,
 						estimatedInputTokens,
-						onFunctionCallResponse(callId, responseId) {
-							storeContinuation(sessionId, callId, responseId);
-						},
+						...(isChatgptOAuth
+							? {}
+							: {
+									onFunctionCallResponse(callId: string, responseId: string) {
+										storeContinuation(sessionId, callId, responseId);
+									},
+								}),
 					});
 				},
 			});
