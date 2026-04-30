@@ -226,6 +226,20 @@ describe('QueryRunner', () => {
 	});
 
 	describe('start', () => {
+		async function withAnthropicApiKey(fn: () => Promise<void>): Promise<void> {
+			const savedApiKey = process.env.ANTHROPIC_API_KEY;
+			process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+			try {
+				await fn();
+			} finally {
+				if (savedApiKey === undefined) {
+					delete process.env.ANTHROPIC_API_KEY;
+				} else {
+					process.env.ANTHROPIC_API_KEY = savedApiKey;
+				}
+			}
+		}
+
 		it('should skip start if query already running', async () => {
 			isRunningSpy.mockReturnValue(true);
 			runner = createRunner();
@@ -259,10 +273,19 @@ describe('QueryRunner', () => {
 			expect(ctx.firstMessageReceived).toBe(false);
 		});
 
+		function stopAfterRebuiltOptions() {
+			let addOptionsCalls = 0;
+			addSessionStateOptionsSpy.mockImplementation((options: unknown) => {
+				addOptionsCalls++;
+				if (addOptionsCalls === 2) {
+					throw new Error('stop after rebuilt options');
+				}
+				return options;
+			});
+		}
+
 		it('rebuilds query options after workflow MCP self-heal before SDK query creation', async () => {
-			const savedApiKey = process.env.ANTHROPIC_API_KEY;
-			process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-			try {
+			await withAnthropicApiKey(async () => {
 				mockSession.id = 'space:s1:task:t1:exec:e1';
 				mockSession.workspacePath = tmpdir();
 				mockSession.type = 'worker';
@@ -282,14 +305,7 @@ describe('QueryRunner', () => {
 						model: 'claude-sonnet-4-20250514',
 						mcpServers: repairedServers,
 					});
-				let addOptionsCalls = 0;
-				addSessionStateOptionsSpy.mockImplementation((options: unknown) => {
-					addOptionsCalls++;
-					if (addOptionsCalls === 2) {
-						throw new Error('stop after rebuilt options');
-					}
-					return options;
-				});
+				stopAfterRebuiltOptions();
 				const onMissingWorkflowMcpServers = mock(async () => {
 					mockSession.config.mcpServers =
 						repairedServers as unknown as Session['config']['mcpServers'];
@@ -305,13 +321,101 @@ describe('QueryRunner', () => {
 				]);
 				expect(buildSpy).toHaveBeenCalledTimes(2);
 				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(2);
-			} finally {
-				if (savedApiKey === undefined) {
-					delete process.env.ANTHROPIC_API_KEY;
-				} else {
-					process.env.ANTHROPIC_API_KEY = savedApiKey;
-				}
-			}
+			});
+		});
+
+		it('rebuilds query options after Space chat MCP self-heal before SDK query creation', async () => {
+			await withAnthropicApiKey(async () => {
+				mockSession.id = 'space:chat:s1';
+				mockSession.workspacePath = tmpdir();
+				mockSession.type = 'space_chat';
+				mockSession.context = { spaceId: 's1' };
+				mockSession.config.mcpServers = {};
+
+				const repairedServers = {
+					'space-agent-tools': {
+						type: 'sdk',
+						name: 'space-agent-tools',
+						instance: {},
+					},
+				};
+				buildSpy
+					.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
+					.mockResolvedValueOnce({
+						model: 'claude-sonnet-4-20250514',
+						mcpServers: repairedServers,
+					});
+				stopAfterRebuiltOptions();
+				const onMissingSpaceChatMcpServers = mock(async () => {
+					mockSession.config.mcpServers =
+						repairedServers as unknown as Session['config']['mcpServers'];
+				});
+
+				const ctx = createContext({ onMissingSpaceChatMcpServers });
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				expect(onMissingSpaceChatMcpServers).toHaveBeenCalledWith('space:chat:s1', [
+					'space-agent-tools',
+				]);
+				expect(buildSpy).toHaveBeenCalledTimes(2);
+				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(2);
+			});
+		});
+
+		it('throws when a Space chat MCP invariant is missing and no self-heal callback exists', async () => {
+			await withAnthropicApiKey(async () => {
+				mockSession.id = 'space:chat:s1';
+				mockSession.workspacePath = tmpdir();
+				mockSession.type = 'space_chat';
+				mockSession.context = { spaceId: 's1' };
+				mockSession.config.mcpServers = {};
+				buildSpy.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} });
+
+				const ctx = createContext();
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				expect(buildSpy).toHaveBeenCalledTimes(1);
+				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(1);
+				expect(handleErrorSpy).toHaveBeenCalled();
+				const error = handleErrorSpy.mock.calls[0][1] as Error;
+				expect(error.message).toContain('[MCP invariant]');
+				expect(error.message).toContain('space-agent-tools');
+			});
+		});
+
+		it('does not self-heal when a Space chat already has its required MCP server', async () => {
+			await withAnthropicApiKey(async () => {
+				mockSession.id = 'space:chat:s1';
+				mockSession.workspacePath = tmpdir();
+				mockSession.type = 'space_chat';
+				mockSession.context = { spaceId: 's1' };
+				const servers = {
+					'space-agent-tools': {
+						type: 'sdk',
+						name: 'space-agent-tools',
+						instance: {},
+					},
+				};
+				mockSession.config.mcpServers = servers as unknown as Session['config']['mcpServers'];
+				buildSpy.mockResolvedValueOnce({
+					model: 'claude-sonnet-4-20250514',
+					mcpServers: servers,
+				});
+				const onMissingSpaceChatMcpServers = mock(async () => {});
+
+				const ctx = createContext({ onMissingSpaceChatMcpServers });
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				expect(onMissingSpaceChatMcpServers).not.toHaveBeenCalled();
+				expect(buildSpy).toHaveBeenCalledTimes(1);
+				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(1);
+			});
 		});
 	});
 

@@ -6,8 +6,9 @@
  */
 
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { access, mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { access, cp, mkdir, writeFile } from 'node:fs/promises';
 import { generateUUID, isBuiltinSkillConfig } from '@neokai/shared';
 import type {
 	AppSkill,
@@ -142,6 +143,15 @@ const SKILL_FETCH_MAX_DEPTH = 5;
 
 /** Maximum total number of files written by a single fetchGitHubDirectory call tree. */
 const SKILL_FETCH_MAX_FILES = 100;
+
+const BUILTIN_SKILL_ASSET_DIRS: Record<string, string> = {
+	'space-coordination': join(
+		dirname(fileURLToPath(import.meta.url)),
+		'space',
+		'skills',
+		'space-coordination'
+	),
+};
 
 /**
  * Validate that a name is safe to use as a single filesystem path component
@@ -530,7 +540,11 @@ export class SkillsManager {
 			displayName: def.displayName,
 			description: def.description,
 			sourceType: 'builtin',
-			config: { type: 'builtin', commandName: def.commandName },
+			config: {
+				type: 'builtin',
+				commandName: def.commandName,
+				...(def.spaceOnly ? { spaceOnly: true } : {}),
+			},
 			enabled: def.enabled,
 			builtIn: true,
 			validationStatus: 'valid',
@@ -592,6 +606,7 @@ export class SkillsManager {
 		for (const skill of this.repo.findAll()) {
 			if (skill.sourceType !== 'builtin') continue;
 			if (!isBuiltinSkillConfig(skill.config)) continue;
+			await this.ensureBundledBuiltinSkillAssets(skill.config.commandName, skillsRoot);
 			entries.push({
 				commandName: skill.config.commandName,
 				description: skill.description,
@@ -603,6 +618,31 @@ export class SkillsManager {
 	// ---------------------------------------------------------------------------
 	// Private helpers
 	// ---------------------------------------------------------------------------
+
+	private async ensureBundledBuiltinSkillAssets(
+		commandName: string,
+		skillsRoot: string
+	): Promise<void> {
+		const sourceDir = BUILTIN_SKILL_ASSET_DIRS[commandName];
+		if (!sourceDir) return;
+
+		const destDir = join(skillsRoot, commandName);
+		try {
+			await mkdir(destDir, { recursive: true });
+			// Preserve local edits and avoid surprising users by overwriting an already
+			// installed bundled skill. This means daemon upgrades do not update an
+			// existing SKILL.md in place; productionising this POC should add a version
+			// stamp/checksum path for intentional migrations.
+			await cp(sourceDir, destDir, {
+				recursive: true,
+				force: false,
+				errorOnExist: false,
+			});
+		} catch {
+			// Keep wrapper generation best-effort per skill: a missing/corrupt bundled
+			// asset path must not prevent unrelated built-in skills from registering.
+		}
+	}
 
 	/**
 	 * Enqueue an async validation job for a skill.

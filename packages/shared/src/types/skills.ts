@@ -22,6 +22,8 @@ export interface BuiltinSkillConfig {
 	type: 'builtin';
 	/** The slash-command name (e.g. "update-config", "claude-api"). */
 	commandName: string;
+	/** Restrict this built-in skill to sessions scoped to a Space. */
+	spaceOnly?: boolean;
 }
 
 /**

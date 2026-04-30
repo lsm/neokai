@@ -283,6 +283,16 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 
 	// Coordination tools section
 	sections.push(`\n## Coordination Tools\n`);
+	sections.push(
+		`Critical invariant: the \`space-agent-tools\` MCP server must be available every turn, ` +
+			`including after context compaction or session resume. If coordination MCP tools such as ` +
+			`\`create_standalone_task\`, \`get_task_detail\`, \`retry_task\`, \`cancel_task\`, ` +
+			`\`reassign_task\`, \`list_workflows\`, \`suggest_workflow\`, or ` +
+			`\`get_workflow_detail\` are missing, do not silently continue. Tell the user ` +
+			`the Space MCP surface is unavailable and use the \`space-coordination\` skill POC ` +
+			`as a fallback only when direct coordination is still required.`
+	);
+	sections.push('');
 	sections.push(`Use these tools to manage tasks and respond to events:`);
 	sections.push('');
 	sections.push(

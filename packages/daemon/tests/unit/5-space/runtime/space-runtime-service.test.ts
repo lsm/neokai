@@ -422,6 +422,7 @@ describe('SpaceRuntimeService', () => {
 				// member-session sweep. Default to empty — tests that care
 				// override this mock.
 				listSessions: mock(() => [] as Session[]),
+				registerSessionResetSubscriber: mock(() => () => {}),
 			} as unknown as SessionManager;
 		}
 
@@ -470,6 +471,7 @@ describe('SpaceRuntimeService', () => {
 				session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
 			).mock.calls[0];
 			expect(mcpArg).toHaveProperty('space-agent-tools');
+			expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
 
 			expect(session.setRuntimeSystemPrompt).toHaveBeenCalledTimes(1);
 			const [promptArg] = (
@@ -477,6 +479,25 @@ describe('SpaceRuntimeService', () => {
 			).mock.calls[0];
 			expect(typeof promptArg).toBe('string');
 			expect(promptArg.length).toBeGreaterThan(0);
+		});
+
+		test('missing Space chat MCP callback re-runs setup and re-attaches tools', async () => {
+			const session = makeSession();
+			const sessionManager = makeSessionManager(session);
+			const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
+
+			await svc.setupSpaceAgentSession(mockSpace);
+			expect(session.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
+			expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
+
+			await session.onMissingSpaceChatMcpServers?.('space:chat:space-1', ['space-agent-tools']);
+
+			expect(sessionManager.getSessionAsync).toHaveBeenCalledTimes(2);
+			expect(session.mergeRuntimeMcpServers).toHaveBeenCalledTimes(2);
+			const [repairedMcpArg] = (
+				session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
+			).mock.calls[1];
+			expect(repairedMcpArg).toHaveProperty('space-agent-tools');
 		});
 
 		test('no-op when session does not exist in DB', async () => {
@@ -570,6 +591,54 @@ describe('SpaceRuntimeService', () => {
 			await svc.stop();
 		});
 
+		test('session.reset re-provisions reset Space chats before query replay', async () => {
+			const session = makeSession();
+			const sessionManager = makeSessionManager(session);
+			let resetHandler:
+				| ((event: { sessionId: string; session: Session; restartQuery: boolean }) => Promise<void>)
+				| undefined;
+			const sessionManagerWithSubscriber = {
+				...sessionManager,
+				registerSessionResetSubscriber: mock((handler: typeof resetHandler) => {
+					resetHandler = handler;
+					return () => {};
+				}),
+			} as unknown as SessionManager;
+			const daemonHub: DaemonHub = {
+				on: mock(() => () => {}),
+				emit: mock(async () => {}),
+			} as unknown as DaemonHub;
+			const config: SpaceRuntimeServiceConfig = {
+				...buildConfigWithSession(sessionManagerWithSubscriber),
+				daemonHub,
+			};
+			const svc = new SpaceRuntimeService(config);
+
+			svc.start();
+			expect(resetHandler).toBeDefined();
+
+			await resetHandler?.({
+				sessionId: 'space:chat:space-1',
+				session: {
+					id: 'space:chat:space-1',
+					type: 'space_chat',
+					context: { spaceId: 'space-1' },
+				} as Session,
+				restartQuery: true,
+			});
+
+			expect(sessionManager.getSessionAsync).toHaveBeenCalledWith('space:chat:space-1');
+			expect(session.mergeRuntimeMcpServers).toHaveBeenCalled();
+			const [mcpArg] = (
+				session.mergeRuntimeMcpServers as Mock<typeof session.mergeRuntimeMcpServers>
+			).mock.calls.at(-1)!;
+			expect(mcpArg).toHaveProperty('space-agent-tools');
+			expect(typeof session.onMissingSpaceChatMcpServers).toBe('function');
+			expect(session.setRuntimeSystemPrompt).toHaveBeenCalled();
+
+			await svc.stop();
+		});
+
 		test('stop() unsubscribes from space.created events', async () => {
 			const unsubFn = mock(() => {});
 			const session = makeSession();
@@ -587,8 +656,10 @@ describe('SpaceRuntimeService', () => {
 			svc.start();
 			await svc.stop();
 
-			// Three subscriptions are registered: space.created, session.created,
-			// and session.deleted (which releases per-session db-query servers).
+			// Three DaemonHub subscriptions are registered: space.created,
+			// session.created, and session.deleted (which releases per-session db-query
+			// servers). Hard-reset reprovisioning uses SessionManager's awaited
+			// in-process subscriber instead of DaemonHub.
 			expect(unsubFn).toHaveBeenCalledTimes(3);
 		});
 	});
