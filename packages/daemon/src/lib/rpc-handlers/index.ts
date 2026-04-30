@@ -55,6 +55,7 @@ import { SpaceTaskManager } from '../space/managers/space-task-manager';
 import { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceAgentLookup } from '../space/managers/space-workflow-manager';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
+import { SpaceGitHubService } from '../github/space-github';
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
@@ -192,6 +193,40 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Use reactiveDb.db so test-injected sdk_messages rows also invalidate LiveQuery.
 	setupTestHandlers(deps.messageHub, deps.reactiveDb.db);
 	setupRewindHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
+
+	const spaceGithubRpc = new SpaceGitHubService(deps.db.getDatabase(), deps.daemonHub);
+	deps.messageHub.onRequest('space.github.watchRepo', async (data) => {
+		const params = data as {
+			spaceId: string;
+			owner: string;
+			repo: string;
+			webhookSecret?: string;
+			webhookEnabled?: boolean;
+			pollingEnabled?: boolean;
+			enabled?: boolean;
+		};
+		if (!params.spaceId || !params.owner || !params.repo) {
+			throw new Error('spaceId, owner and repo are required');
+		}
+		const watchedRepo = spaceGithubRpc.repo.upsertWatchedRepo({
+			spaceId: params.spaceId,
+			owner: params.owner,
+			repo: params.repo,
+			webhookSecret: params.webhookSecret,
+			webhookEnabled: params.webhookEnabled,
+			pollingEnabled: params.pollingEnabled,
+			enabled: params.enabled,
+		});
+		deps.reactiveDb.notifyChange('space_github_watched_repos');
+		return { watchedRepo, webhookUrl: '/webhook/github/space' };
+	});
+	deps.messageHub.onRequest('space.github.listWatchedRepos', async (data) => {
+		const params = data as { spaceId?: string };
+		return { repositories: spaceGithubRpc.repo.listWatchedRepos(params.spaceId) };
+	});
+	deps.messageHub.onRequest('space.github.pollOnce', async () => ({
+		count: await spaceGithubRpc.pollOnce(),
+	}));
 
 	// Dormant Room runtime compatibility shell. It is not started and no room.tick
 	// jobs are seeded, so Room is not an active runtime surface. The instance is

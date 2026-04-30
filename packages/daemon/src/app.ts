@@ -13,6 +13,7 @@ import { setupRPCHandlers } from './lib/rpc-handlers';
 import { WebSocketServerTransport } from './lib/websocket-server-transport';
 import { createWebSocketHandlers } from './routes/setup-websocket';
 import { createGitHubService, type GitHubService } from './lib/github/github-service';
+import { SpaceGitHubService } from './lib/github/space-github';
 import { getProviderRegistry } from './lib/providers/registry.js';
 import { createReactiveDatabase } from './storage/reactive-database';
 import { LiveQueryEngine } from './storage/live-query';
@@ -303,6 +304,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Initialize GitHub service if configured
 	let gitHubService: GitHubService | null = null;
+	let spaceGitHubService: SpaceGitHubService | null = null;
 	const shouldEnableGitHub =
 		config.githubWebhookSecret ||
 		(config.githubPollingInterval && config.githubPollingInterval > 0);
@@ -364,6 +366,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		neoAgentManager,
 		mcpImportService,
 	});
+
+	spaceGitHubService = new SpaceGitHubService(db.getDatabase(), eventBus, (taskId, message) =>
+		taskAgentManager.injectTaskAgentMessage(taskId, message)
+	);
 
 	// Wait for SpaceRuntimeService startup provisioning to complete before we
 	// bind the WebSocket/HTTP server. `start()` inside `setupRPCHandlers` kicks
@@ -432,7 +438,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				);
 			}
 
-			// GitHub webhook endpoint
+			// Space-level public-safe GitHub webhook endpoint.
+			if (url.pathname === '/webhook/github/space' && req.method === 'POST') {
+				if (spaceGitHubService) {
+					return spaceGitHubService.handleWebhook(req);
+				}
+				return Response.json({ error: 'Space GitHub webhook not configured' }, { status: 404 });
+			}
+
+			// Legacy room GitHub webhook endpoint (kept as a compatibility alias only).
 			if (url.pathname === '/webhook/github' && req.method === 'POST') {
 				if (gitHubService?.hasWebhookHandler()) {
 					return gitHubService.handleWebhook(req);

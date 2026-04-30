@@ -321,6 +321,39 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 				{/* MCP Servers — per-space overrides for the application MCP registry. */}
 				<SpaceMcpSettings spaceId={space.id} disabled={saving} />
 
+				<section class="space-y-3 border border-dark-700 rounded-lg p-4 bg-dark-900/40">
+					<h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+						GitHub watched repositories
+					</h3>
+					<p class="text-xs text-gray-500">
+						Configure owner/repo watches for this Space via the{' '}
+						<span class="font-mono">space.github.*</span> RPCs. Webhooks should point to{' '}
+						<span class="font-mono">/webhook/github/space</span> and include events:{' '}
+						<span class="font-mono">
+							issue_comment, pull_request_review, pull_request_review_comment, pull_request
+						</span>
+						. For local iMac development, expose the daemon with Tailscale Funnel or an equivalent
+						public HTTPS tunnel; GitHub cannot deliver webhooks to private Tailnet-only 100.x
+						addresses.
+					</p>
+					<div class="rounded bg-dark-800 border border-dark-700 p-3 text-xs text-gray-400 space-y-1">
+						<div>
+							Webhook URL:{' '}
+							<span class="font-mono text-gray-300">
+								https://&lt;public-host&gt;/webhook/github/space
+							</span>
+						</div>
+						<div>
+							Local example: <span class="font-mono text-gray-300">tailscale funnel 8383</span>{' '}
+							forwarding to the daemon webhook endpoint.
+						</div>
+						<div>
+							Security: signatures use per-repo webhook secrets and unwatched repos are rejected
+							before routing.
+						</div>
+					</div>
+				</section>
+
 				{/* Export section */}
 				<section class="space-y-3">
 					<h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Export</h3>
