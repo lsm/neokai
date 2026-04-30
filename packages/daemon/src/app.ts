@@ -217,10 +217,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const eventBus = createDaemonHub('daemon');
 	await eventBus.initialize();
 
-	// One-shot startup reconciliation for legacy preset agent rows. This must run
-	// before RPC handlers can serve the configure UI so persisted agent prompts
-	// match the current template seed immediately after daemon restart.
-
 	// Initialize application-level MCP and Skills managers before SessionManager
 	// so AgentSession can inject skills into SDK query options.
 	const appMcpManager = new AppMcpLifecycleManager(db);

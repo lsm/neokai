@@ -1114,21 +1114,6 @@ export class TaskAgentManager {
 				const baseSessionId = `space:${spaceId}:task:${taskId}:agent:${this.sanitizeAgentNameForId(agentName)}`;
 				const sessionId = this.resolveSessionId(baseSessionId);
 
-				// Resolve slot overrides (same shape as spawnWorkflowNodeAgentForExecution).
-				let slotCustomPrompt: string | undefined = slot.customPrompt?.value;
-				if (!slotCustomPrompt) {
-					const legacySlot = slot as {
-						systemPrompt?: { value: string };
-						instructions?: { value: string };
-					};
-					const legacySp = legacySlot.systemPrompt?.value?.trim() ?? '';
-					const legacyInstr = legacySlot.instructions?.value?.trim() ?? '';
-					if (legacySp && legacyInstr) {
-						slotCustomPrompt = `${legacySp}\n\n${legacyInstr}`;
-					} else {
-						slotCustomPrompt = legacySp || legacyInstr || undefined;
-					}
-				}
 				const node = workflow.nodes.find((candidate) => candidate.id === nodeId);
 				const slotOverrides = this.buildSlotOverrides(slot, {
 					node,
