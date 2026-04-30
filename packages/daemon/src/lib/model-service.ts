@@ -390,7 +390,13 @@ function overlayCodexStaticMetadata(model: ModelInfo): ModelInfo {
 	const staticModel = resolvedCodexId
 		? findInModels(CODEX_STATIC_MODEL_METADATA, resolvedCodexId)
 		: undefined;
-	return staticModel ? { ...model, ...staticModel, available: model.available } : model;
+	return staticModel
+		? {
+				...model,
+				contextWindow: staticModel.contextWindow,
+				preferContextWindowMetadata: staticModel.preferContextWindowMetadata,
+			}
+		: model;
 }
 
 /**

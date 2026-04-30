@@ -247,7 +247,7 @@ describe('Model Service', () => {
 
 			expect(full?.contextWindow).toBe(272000);
 			expect(full?.preferContextWindowMetadata).toBe(true);
-			expect(mini?.id).toBe('gpt-5.1-codex-mini');
+			expect(mini?.id).toBe('gpt-5.1-mini');
 			expect(mini?.contextWindow).toBe(128000);
 			expect(mini?.preferContextWindowMetadata).toBe(true);
 		});
