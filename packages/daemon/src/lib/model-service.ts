@@ -15,7 +15,10 @@ import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import { initializeProviders } from './providers/factory.js';
 import { getProviderRegistry } from './providers/registry.js';
 import type { Provider } from '@neokai/shared/provider';
-import { getCodexBridgeModelInfos } from './providers/codex-anthropic-bridge/model-context-windows.js';
+import {
+	getCodexBridgeModelInfos,
+	resolveCodexBridgeModelId,
+} from './providers/codex-anthropic-bridge/model-context-windows.js';
 
 /**
  * Legacy model ID mappings to SDK model IDs
@@ -106,6 +109,7 @@ const FALLBACK_MODELS: ModelInfo[] = [
  * not make those providers available for use.
  */
 const STATIC_MODEL_METADATA: ModelInfo[] = [...FALLBACK_MODELS, ...getCodexBridgeModelInfos()];
+const CODEX_STATIC_MODEL_METADATA = getCodexBridgeModelInfos();
 
 /**
  * Merge provider-loaded models with FALLBACK_MODELS.
@@ -380,6 +384,21 @@ function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undef
 	return found;
 }
 
+function overlayCodexStaticMetadata(model: ModelInfo): ModelInfo {
+	const resolvedCodexId =
+		resolveCodexBridgeModelId(model.id) ?? resolveCodexBridgeModelId(model.alias);
+	const staticModel = resolvedCodexId
+		? findInModels(CODEX_STATIC_MODEL_METADATA, resolvedCodexId)
+		: undefined;
+	return staticModel
+		? {
+				...model,
+				contextWindow: staticModel.contextWindow,
+				preferContextWindowMetadata: staticModel.preferContextWindowMetadata,
+			}
+		: model;
+}
+
 /**
  * Get model info by ID or alias, filtered to the specified provider.
  * All three parameters are required — no fallback to unfiltered search.
@@ -397,7 +416,9 @@ export async function getModelInfo(
 	const availableModels = getAvailableModels(cacheKey);
 	const providerModels = availableModels.filter((m) => m.provider === providerId);
 	const fromCache = findInModels(providerModels, idOrAlias);
-	if (fromCache) return fromCache;
+	if (fromCache) {
+		return providerId === 'anthropic-copilot' ? overlayCodexStaticMetadata(fromCache) : fromCache;
+	}
 
 	const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
 	return findInModels(staticProviderModels, idOrAlias) ?? null;

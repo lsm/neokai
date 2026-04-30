@@ -304,13 +304,35 @@ describe('ContextUsageBar', () => {
 			expect(container.textContent).not.toContain('200,000');
 		});
 
-		it('should use custom max context when provided', () => {
+		it('should use SDK capacity over model metadata fallback when SDK capacity is available', () => {
 			const { container } = render(
 				<ContextUsageBar contextUsage={mockContextUsage} maxContextTokens={100000} />
 			);
 
-			const svgText = container.querySelector('svg text');
-			expect(svgText?.textContent).toBe('25');
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
+
+			expect(container.textContent).toContain('50,000 / 200,000');
+			expect(container.textContent).not.toContain('100,000');
+		});
+
+		it('should show Codex metadata capacity when context info has corrected capacity', () => {
+			const codexUsage: ContextInfo = {
+				...mockContextUsage,
+				totalUsed: 64000,
+				totalCapacity: 128000,
+				percentUsed: 50,
+				model: 'gpt-5.1-mini',
+			};
+			const { container } = render(
+				<ContextUsageBar contextUsage={codexUsage} maxContextTokens={200000} />
+			);
+
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
+
+			expect(container.textContent).toContain('64,000 / 128,000');
+			expect(container.textContent).not.toContain('200,000');
 		});
 	});
 

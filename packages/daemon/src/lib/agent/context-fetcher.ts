@@ -24,7 +24,7 @@ import type {
 import { Logger } from '../logger';
 
 type ContextMetadata =
-	| Pick<ModelInfo, 'id' | 'contextWindow' | 'preferContextWindowMetadata'>
+	| Pick<ModelInfo, 'id' | 'alias' | 'contextWindow' | 'preferContextWindowMetadata'>
 	| null
 	| undefined;
 
@@ -83,10 +83,13 @@ export class ContextFetcher {
 		const sdkRawCapacity = positiveInteger(response.rawMaxTokens);
 		const sdkCapacity = positiveInteger(response.maxTokens);
 		const responseModel = response.model || undefined;
-		const metadataCapacity =
-			!responseModel || modelMetadata?.id === responseModel
-				? positiveInteger(modelMetadata?.contextWindow)
-				: undefined;
+		const metadataMatchesResponse =
+			!responseModel ||
+			modelMetadata?.id === responseModel ||
+			modelMetadata?.alias === responseModel;
+		const metadataCapacity = metadataMatchesResponse
+			? positiveInteger(modelMetadata?.contextWindow)
+			: undefined;
 		const capacity =
 			modelMetadata?.preferContextWindowMetadata && metadataCapacity
 				? metadataCapacity

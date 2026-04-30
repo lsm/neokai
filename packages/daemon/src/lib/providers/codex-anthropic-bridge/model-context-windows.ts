@@ -15,6 +15,7 @@ const CODEX_MODEL_ALIASES = {
 	'codex-5.4': 'gpt-5.4',
 	'codex-latest': 'gpt-5.5',
 	'codex-mini': 'gpt-5.4-mini',
+	'gpt-5.1-mini': 'gpt-5.1-codex-mini',
 	'codex-5.1-mini': 'gpt-5.1-codex-mini',
 } as const satisfies Record<string, CodexBridgeModelId>;
 
