@@ -371,6 +371,13 @@ function summaryMatchesTurn(
 	return turnIndex !== undefined && summary.turnIndex === turnIndex ? summary : undefined;
 }
 
+function rowsContainResult(
+	rows: ParsedThreadRow[],
+	resultInfo: ResultMessage | undefined
+): boolean {
+	return resultInfo !== undefined && rows.some((row) => row.message === resultInfo);
+}
+
 function latestSessionId(rows: ParsedThreadRow[]): string | null {
 	for (let i = rows.length - 1; i >= 0; i--) {
 		if (rows[i].sessionId) return rows[i].sessionId;
@@ -698,10 +705,12 @@ function buildFeedTurns(
 			if (pendingAgentRows.length === 0) return;
 			const turnId = `${block.id}:${String(pendingAgentRows[0].id)}`;
 			const sessionId = latestSessionId(pendingAgentRows);
-			const transitionSummary = summaryMatchesTurn(
-				sessionId ? summariesBySession.get(sessionId) : undefined,
-				pendingAgentRows
-			);
+			const transitionSummary = rowsContainResult(pendingAgentRows, blockResult)
+				? summaryMatchesTurn(
+						sessionId ? summariesBySession.get(sessionId) : undefined,
+						pendingAgentRows
+					)
+				: undefined;
 			turns.push(
 				buildCompletedTurn(block, pendingAgentRows, turnId, blockResult, transitionSummary)
 			);

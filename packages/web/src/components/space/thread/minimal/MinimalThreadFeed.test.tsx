@@ -1512,4 +1512,65 @@ describe('MinimalThreadFeed', () => {
 		expect(completedMeta.textContent).not.toContain('3 tool calls');
 		expect(screen.getByTestId('minimal-thread-active-meta').textContent).toContain('⚙ 3');
 	});
+
+	it('only applies summary-derived completed counts to the final result slice', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'early only' } }]),
+				sessionId: 'space:s:task:t',
+				turnIndex: 1,
+			}),
+			makeRow({
+				id: 'a1-text',
+				label: 'Coder Agent',
+				createdAt: t + 500,
+				message: assistantText('a1-text', 'paused before handoff'),
+				sessionId: 'space:s:task:t',
+				turnIndex: 1,
+			}),
+			makeRow({
+				id: 'handoff',
+				label: 'Coder Agent',
+				createdAt: t + 1000,
+				message: replayUserMessage('handoff', 'please continue'),
+				sessionId: 'space:s:task:t',
+				turnIndex: 1,
+			}),
+			makeRow({
+				id: 'a2',
+				label: 'Coder Agent',
+				createdAt: t + 2000,
+				message: assistantText('a2', 'finished after handoff'),
+				sessionId: 'space:s:task:t',
+				turnIndex: 1,
+			}),
+			makeRow({
+				id: 'r1',
+				label: 'Coder Agent',
+				createdAt: t + 3000,
+				message: resultMessage('r1', 'finished after handoff'),
+				sessionId: 'space:s:task:t',
+				turnIndex: 1,
+			}),
+		];
+		const summary: ActiveTurnSummary = {
+			sessionId: 'space:s:task:t',
+			turnIndex: 1,
+			entries: [
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'one', ts: t, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'two', ts: t + 1, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'three', ts: t + 2, uuid: 'a1' },
+			],
+		};
+
+		render(<MinimalThreadFeed parsedRows={rows} activeTurnSummaries={[summary]} />);
+		const metas = screen.getAllByTestId('minimal-thread-agent-meta');
+		expect(metas[0].textContent).toContain('1 tool call');
+		expect(metas[0].textContent).not.toContain('3 tool calls');
+		expect(metas[1].textContent).toContain('3 tool calls');
+	});
 });
