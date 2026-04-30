@@ -24,6 +24,7 @@ export type SpaceGitHubEventState =
 export interface PollCursor {
 	lastSeenAt?: number;
 	etags?: Record<string, string>;
+	processedPages?: Record<string, number>;
 }
 
 export interface WatchedRepo {
@@ -157,7 +158,7 @@ export function normalizeSpaceGitHubWebhook(
 		actor = userFrom(comment.user ?? root.sender);
 		prNumber = getNumber(issue.number);
 		body = getString(comment.body);
-		externalId = `issue_comment:${getNumber(comment.id) || deliveryId}`;
+		externalId = `issue_comment:${getNumber(comment.id) || deliveryId}:${action}`;
 		externalUrl = getString(comment.html_url, prUrl(repo.owner, repo.repo, prNumber));
 		occurredAt = parseTs(comment.updated_at ?? comment.created_at);
 		title = `PR #${prNumber} comment`;
@@ -167,7 +168,7 @@ export function normalizeSpaceGitHubWebhook(
 		actor = userFrom(review.user ?? root.sender);
 		prNumber = getNumber(pr.number);
 		body = getString(review.body);
-		externalId = `review:${getNumber(review.id) || deliveryId}`;
+		externalId = `review:${getNumber(review.id) || deliveryId}:${action}`;
 		externalUrl = getString(
 			review.html_url,
 			getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber))
@@ -180,7 +181,7 @@ export function normalizeSpaceGitHubWebhook(
 		actor = userFrom(comment.user ?? root.sender);
 		prNumber = getNumber(pr.number);
 		body = getString(comment.body);
-		externalId = `review_comment:${getNumber(comment.id) || deliveryId}`;
+		externalId = `review_comment:${getNumber(comment.id) || deliveryId}:${action}`;
 		externalUrl = getString(
 			comment.html_url,
 			getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber))
@@ -192,7 +193,7 @@ export function normalizeSpaceGitHubWebhook(
 		actor = userFrom(pr.user ?? root.sender);
 		prNumber = getNumber(pr.number);
 		body = getString(pr.body);
-		externalId = `pull_request:${getNumber(pr.id) || prNumber}:${action}`;
+		externalId = `pull_request:${getNumber(pr.id) || prNumber}:${action}:${deliveryId}`;
 		externalUrl = getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber));
 		occurredAt = parseTs(pr.updated_at ?? pr.created_at);
 		title = `PR #${prNumber} ${action}`;
@@ -327,13 +328,11 @@ export class SpaceGitHubRepository {
 		event: StoredSpaceGitHubEvent;
 		duplicate: boolean;
 	} {
-		const existing = this.getEventByDedupe(params.spaceId, params.event.dedupeKey);
-		if (existing) return { event: existing, duplicate: true };
 		const id = generateUUID();
 		const now = Date.now();
-		this.db
+		const result = this.db
 			.prepare(
-				`INSERT INTO space_github_events
+				`INSERT OR IGNORE INTO space_github_events
 				 (id, space_id, source, delivery_id, event_type, action, repo_owner, repo_name, pr_number, pr_url,
 				  actor, actor_type, body, summary, external_url, external_id, occurred_at, dedupe_key, raw_payload, state, created_at, updated_at)
 				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', ?, ?)`
@@ -361,6 +360,12 @@ export class SpaceGitHubRepository {
 				now,
 				now
 			);
+		if (result.changes === 0) {
+			return {
+				event: this.getEventByDedupe(params.spaceId, params.event.dedupeKey)!,
+				duplicate: true,
+			};
+		}
 		return { event: this.getEvent(id)!, duplicate: false };
 	}
 
@@ -619,6 +624,7 @@ export class SpaceGitHubService {
 			.filter((r) => r.enabled && r.pollingEnabled)) {
 			const cursor = watched.pollCursor ?? {};
 			const etags = cursor.etags ?? {};
+			const processedPages = cursor.processedPages ?? {};
 			const since =
 				cursor.lastSeenAt || watched.lastPollAt
 					? new Date(cursor.lastSeenAt ?? watched.lastPollAt ?? 0).toISOString()
@@ -626,35 +632,38 @@ export class SpaceGitHubService {
 			// Poll issue comments, review comments, and PR metadata; all feed the same ingest path.
 			const base = `https://api.github.com/repos/${watched.owner}/${watched.repo}`;
 			const endpoints = [
-				{
-					key: 'issue_comments',
-					url: `${base}/issues/comments${since ? `?since=${encodeURIComponent(since)}` : ''}`,
-				},
-				{
-					key: 'review_comments',
-					url: `${base}/pulls/comments${since ? `?since=${encodeURIComponent(since)}` : ''}`,
-				},
-				{
-					key: 'pulls',
-					url: `${base}/pulls?state=all&sort=updated&direction=desc${since ? `&since=${encodeURIComponent(since)}` : ''}`,
-				},
+				{ key: 'issue_comments', path: '/issues/comments' },
+				{ key: 'review_comments', path: '/pulls/comments' },
+				{ key: 'pulls', path: '/pulls', extra: 'state=all&sort=updated&direction=desc' },
 			];
 			let lastSeenAt = cursor.lastSeenAt ?? watched.lastPollAt ?? 0;
 			for (const endpoint of endpoints) {
+				const page = processedPages[endpoint.key] ?? 1;
+				const query = new URLSearchParams();
+				if (endpoint.extra) {
+					for (const part of endpoint.extra.split('&')) {
+						const [key, value = ''] = part.split('=');
+						query.set(key, value);
+					}
+				}
+				if (since) query.set('since', since);
+				query.set('per_page', '100');
+				query.set('page', String(page));
+				const url = `${base}${endpoint.path}?${query.toString()}`;
 				const headers: Record<string, string> = {
 					Accept: 'application/vnd.github+json',
 					'User-Agent': 'NeoKai-Space-GitHub/1.0',
 					'X-GitHub-Api-Version': '2022-11-28',
 				};
 				if (this.githubToken) headers.Authorization = `Bearer ${this.githubToken}`;
-				if (etags[endpoint.key]) headers['If-None-Match'] = etags[endpoint.key];
-				const response = await fetchImpl(endpoint.url, { headers });
+				if (page === 1 && etags[endpoint.key]) headers['If-None-Match'] = etags[endpoint.key];
+				const response = await fetchImpl(url, { headers });
 				if (response.status === 304) continue;
 				if (!response.ok) continue;
 				const etag = response.headers.get('ETag');
-				if (etag) etags[endpoint.key] = etag;
+				if (etag && page === 1) etags[endpoint.key] = etag;
 				const rows = (await response.json()) as unknown[];
-				for (const row of rows.slice(0, 30)) {
+				for (const row of rows) {
 					const event = this.normalizePollingRow(watched, row, endpoint.key);
 					if (event) {
 						event.source = 'polling';
@@ -663,12 +672,14 @@ export class SpaceGitHubService {
 						count++;
 					}
 				}
+				processedPages[endpoint.key] = rows.length >= 100 ? page + 1 : 1;
 			}
+			const cursorPayload: PollCursor = { lastSeenAt, etags, processedPages };
 			this.db
 				.prepare(
 					`UPDATE space_github_watched_repos SET last_poll_at = ?, poll_cursor = ?, updated_at = ? WHERE id = ?`
 				)
-				.run(Date.now(), JSON.stringify({ lastSeenAt, etags }), Date.now(), watched.id);
+				.run(Date.now(), JSON.stringify(cursorPayload), Date.now(), watched.id);
 		}
 		return count;
 	}
@@ -681,20 +692,31 @@ export class SpaceGitHubService {
 		const obj = asObject(row);
 		const apiUrl = getString(obj.url);
 		const htmlUrl = getString(obj.html_url);
-		const prMatch =
-			htmlUrl.match(/\/pull\/(\d+)/) ??
-			apiUrl.match(/\/pulls\/(\d+)/) ??
-			getString(obj.issue_url).match(/\/issues\/(\d+)/);
-		const prNumber = prMatch ? Number(prMatch[1]) : getNumber(obj.number);
+		let prNumber = 0;
+		if (endpointKey === 'issue_comments') {
+			const issue = asObject(obj.issue);
+			const issuePullRequest = asObject(issue.pull_request);
+			const issueUrl = getString(obj.issue_url);
+			if (!issuePullRequest.url && !htmlUrl.includes('/pull/')) return null;
+			const issueMatch = issueUrl.match(/\/issues\/(\d+)/);
+			prNumber = getNumber(issue.number, issueMatch ? Number(issueMatch[1]) : 0);
+		} else {
+			const prMatch = htmlUrl.match(/\/pull\/(\d+)/) ?? apiUrl.match(/\/pulls\/(\d+)/);
+			prNumber = prMatch ? Number(prMatch[1]) : getNumber(obj.number);
+		}
 		if (!prNumber) return null;
 		const user = userFrom(obj.user);
 		let eventType: SpaceGitHubEventKind = 'pull_request';
 		if (endpointKey === 'issue_comments') eventType = 'issue_comment';
 		if (endpointKey === 'review_comments') eventType = 'pull_request_review_comment';
 		const id = getNumber(obj.id) || prNumber;
+		const updatedAt = parseTs(obj.updated_at ?? obj.created_at);
+		const dedupeVersion =
+			endpointKey === 'pulls' ? String(updatedAt) : getString(obj.updated_at ?? obj.created_at);
+		const dedupeSuffix = dedupeVersion ? `:${dedupeVersion}` : '';
 		return {
-			deliveryId: `poll:${eventType}:${id}`,
-			dedupeKey: `${watched.owner}/${watched.repo}:${eventType}:${id}`,
+			deliveryId: `poll:${eventType}:${id}${dedupeSuffix}`,
+			dedupeKey: `${watched.owner}/${watched.repo}:${eventType}:${id}${dedupeSuffix}`,
 			source: 'polling',
 			eventType,
 			action: 'polled',
@@ -707,8 +729,8 @@ export class SpaceGitHubService {
 			body: getString(obj.body),
 			summary: `PR #${prNumber} ${eventType} by ${user.login}: ${truncateBody(getString(obj.body, getString(obj.title)))}`,
 			externalUrl: htmlUrl || prUrl(watched.owner, watched.repo, prNumber),
-			externalId: `${eventType}:${id}`,
-			occurredAt: parseTs(obj.updated_at ?? obj.created_at),
+			externalId: `${eventType}:${id}${dedupeSuffix}`,
+			occurredAt: updatedAt,
 			rawPayload: row,
 		};
 	}

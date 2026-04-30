@@ -309,7 +309,7 @@ describe('Space GitHub integration', () => {
 							id: 101,
 							body: 'looks good',
 							html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-101',
-							issue_url: 'https://api.github.com/repos/acme/widgets/issues/7',
+							issue: { number: 7, pull_request: { url: 'api' } },
 							user: { login: 'bot', type: 'Bot' },
 							updated_at: '2026-01-01T00:00:00Z',
 						},
@@ -323,5 +323,104 @@ describe('Space GitHub integration', () => {
 		await service.pollOnce(fakeFetch as typeof fetch);
 		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 1 });
 		expect((calls[3].headers as Record<string, string>)['If-None-Match']).toBe('etag-1');
+	});
+
+	test('dedupe keys preserve repeated webhook actions and polling PR updates', async () => {
+		const first = normalizeSpaceGitHubWebhook(
+			'pull_request',
+			'delivery-a',
+			payloadFor('pull_request')
+		)!;
+		const second = normalizeSpaceGitHubWebhook(
+			'pull_request',
+			'delivery-b',
+			payloadFor('pull_request')
+		)!;
+		expect(first.dedupeKey).not.toBe(second.dedupeKey);
+
+		const commentCreated = normalizeSpaceGitHubWebhook(
+			'issue_comment',
+			'delivery-c',
+			payloadFor('issue_comment')
+		)!;
+		const editedPayload = {
+			...(payloadFor('issue_comment') as Record<string, unknown>),
+			action: 'edited',
+		};
+		const commentEdited = normalizeSpaceGitHubWebhook(
+			'issue_comment',
+			'delivery-d',
+			editedPayload
+		)!;
+		expect(commentCreated.dedupeKey).not.toBe(commentEdited.dedupeKey);
+
+		const db = setupDb();
+		seedTask(db);
+		const service = new SpaceGitHubService(db);
+		await service.ingest('space-1', first);
+		await service.ingest('space-1', second);
+		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 2 });
+	});
+
+	test('polling ignores issue comments and pages without advancing past unprocessed rows', async () => {
+		const db = setupDb();
+		seedTask(db);
+		const service = new SpaceGitHubService(db, undefined, undefined, 'token');
+		service.repo.upsertWatchedRepo({
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+			pollingEnabled: true,
+		});
+		const calls: string[] = [];
+		const fakeFetch = async (url: string | URL | Request) => {
+			const urlText = String(url);
+			calls.push(urlText);
+			if (urlText.includes('/issues/comments')) {
+				return new Response(
+					JSON.stringify([
+						{
+							id: 501,
+							body: 'regular issue comment',
+							html_url: 'https://github.com/acme/widgets/issues/99#issuecomment-501',
+							issue: { number: 99 },
+							user: { login: 'human', type: 'User' },
+							updated_at: '2026-01-01T00:00:00Z',
+						},
+					]),
+					{ status: 200 }
+				);
+			}
+			if (urlText.includes('/pulls?')) {
+				return new Response(
+					JSON.stringify(
+						Array.from({ length: 100 }, (_unused, idx) => ({
+							id: 700 + idx,
+							number: 7,
+							title: `PR update ${idx}`,
+							html_url: 'https://github.com/acme/widgets/pull/7',
+							user: { login: 'dev', type: 'User' },
+							updated_at: `2026-01-01T00:${String(idx % 60).padStart(2, '0')}:00Z`,
+						}))
+					),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify([]), { status: 200 });
+		};
+
+		await service.pollOnce(fakeFetch as typeof fetch);
+
+		expect(db.prepare('SELECT COUNT(*) AS c FROM space_github_events').get()).toEqual({ c: 100 });
+		expect(calls.some((url) => url.includes('per_page=100'))).toBe(true);
+		expect(
+			JSON.parse(
+				(
+					db.prepare('SELECT poll_cursor FROM space_github_watched_repos').get() as {
+						poll_cursor: string;
+					}
+				).poll_cursor
+			).processedPages.pulls
+		).toBe(2);
 	});
 });

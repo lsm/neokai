@@ -223,7 +223,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	});
 	deps.messageHub.onRequest('space.github.listWatchedRepos', async (data) => {
 		const params = data as { spaceId?: string };
-		return { repositories: spaceGithubRpc.repo.listWatchedRepos(params.spaceId) };
+		if (!params.spaceId) {
+			throw new Error('spaceId is required');
+		}
+		return {
+			repositories: spaceGithubRpc.repo.listWatchedRepos(params.spaceId).map((repo) => ({
+				...repo,
+				webhookSecret: repo.webhookSecret ? 'configured' : null,
+			})),
+		};
 	});
 	deps.messageHub.onRequest('space.github.pollOnce', async () => ({
 		count: await spaceGithubRpc.pollOnce(),
