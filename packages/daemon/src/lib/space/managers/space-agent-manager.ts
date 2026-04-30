@@ -20,8 +20,8 @@ import type {
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
 import { isValidModel, getAvailableModels, getModelInfoUnfiltered } from '../../model-service';
-import { getPresetAgentTemplates } from '../agents/seed-agents';
-import { computeAgentTemplateHash } from '../agents/agent-template-hash';
+import { getPresetAgentTemplates, LEGACY_REVIEWER_PROMPT } from '../agents/seed-agents';
+import { computeAgentTemplateHash, agentTemplatesMatch } from '../agents/agent-template-hash';
 
 const KNOWN_TOOLS_SET = new Set<string>(KNOWN_TOOLS);
 
@@ -166,13 +166,15 @@ export class SpaceAgentManager {
 
 			const currentHash = computeAgentTemplateHash(preset);
 			const storedHash = agent.templateHash ?? null;
+			const drifted =
+				storedHash !== currentHash && !this.isEquivalentLegacyPresetRow(agent, preset);
 			entries.push({
 				agentId: agent.id,
 				agentName: agent.name,
 				templateName: agent.templateName,
 				storedHash,
 				currentHash,
-				drifted: storedHash !== currentHash,
+				drifted,
 			});
 		}
 
@@ -223,6 +225,48 @@ export class SpaceAgentManager {
 	// ---------------------------------------------------------------------------
 
 	/**
+	 * One-shot startup reconciliation for preset rows that were correctly seeded
+	 * from the old coordinator Reviewer prompt before the full Reviewer template
+	 * existed. Returns updated rows so callers can emit subscription events.
+	 */
+	reconcileEquivalentLegacyPresetRows(spaceId: string): SpaceAgent[] {
+		const updated: SpaceAgent[] = [];
+		const presetByName = new Map(getPresetAgentTemplates().map((p) => [p.name.toLowerCase(), p]));
+		for (const agent of this.repo.getBySpaceId(spaceId)) {
+			if (!agent.templateName) continue;
+			const preset = presetByName.get(agent.templateName.toLowerCase());
+			if (!preset) continue;
+			const currentHash = computeAgentTemplateHash(preset);
+			if (agent.templateHash === currentHash) continue;
+			if (!this.isEquivalentLegacyPresetRow(agent, preset)) continue;
+			const reconciled = this.repo.update(agent.id, {
+				customPrompt: preset.customPrompt,
+				templateHash: currentHash,
+			});
+			if (reconciled) updated.push(reconciled);
+		}
+		return updated;
+	}
+
+	private isEquivalentLegacyPresetRow(
+		agent: SpaceAgent,
+		preset: ReturnType<typeof getPresetAgentTemplates>[number]
+	): boolean {
+		if (preset.name !== 'Reviewer') return false;
+		if (agent.name.trim().toLowerCase() !== preset.name.toLowerCase()) return false;
+		if ((agent.description ?? '') !== preset.description) return false;
+		if (
+			!agentTemplatesMatch(
+				{ ...preset, customPrompt: LEGACY_REVIEWER_PROMPT },
+				agentTemplateInput(agent)
+			)
+		) {
+			return false;
+		}
+		return true;
+	}
+
+	/**
 	 * Validate that a model is recognized.
 	 * Skips validation entirely when the models cache is empty (not yet loaded).
 	 * When a provider is known, uses the provider-aware isValidModel() API so
@@ -256,6 +300,15 @@ export class SpaceAgentManager {
  * Validate that all tool names in the array are in KNOWN_TOOLS.
  * Returns a descriptive error string on failure, or null if all names are valid.
  */
+function agentTemplateInput(agent: SpaceAgent) {
+	return {
+		name: agent.templateName ?? agent.name,
+		description: agent.description ?? '',
+		tools: agent.tools ?? [],
+		customPrompt: agent.customPrompt ?? '',
+	};
+}
+
 function validateTools(tools: string[]): string | null {
 	const invalid = tools.filter((t) => !KNOWN_TOOLS_SET.has(t));
 	if (invalid.length === 0) return null;
