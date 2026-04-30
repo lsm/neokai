@@ -1844,6 +1844,63 @@ export class TaskAgentManager {
 	 * Returns `false` when the agent is not declared in the workflow, or when
 	 * any required dependency is missing (best-effort — never throws).
 	 */
+	async activateTargetSessionsForMessage(
+		taskId: string,
+		workflowRunId: string,
+		agentName: string,
+		options?: { reopenReason?: string; reopenBy?: string }
+	): Promise<Array<{ agentName: string; sessionId: string }>> {
+		await this.tryResumeNodeAgentSession(workflowRunId, agentName);
+		const existing = this.config.nodeExecutionRepo
+			.listByWorkflowRun(workflowRunId)
+			.filter((execution) => execution.agentName === agentName && execution.agentSessionId)
+			.at(-1);
+		if (existing?.agentSessionId) {
+			if (this.isSessionAlive(existing.agentSessionId)) {
+				return [{ agentName, sessionId: existing.agentSessionId }];
+			}
+			this.config.nodeExecutionRepo.update(existing.id, {
+				agentSessionId: null,
+				status: 'pending',
+			});
+		}
+
+		await this.ensureWorkflowNodeActivationForAgent(taskId, agentName, options);
+
+		const task = this.config.taskRepo.getTask(taskId);
+		const run = this.config.workflowRunRepo.getRun(workflowRunId);
+		const workflow = run?.workflowId
+			? this.config.spaceWorkflowManager.getWorkflow(run.workflowId)
+			: null;
+		const space = task ? await this.config.spaceManager.getSpace(task.spaceId) : null;
+		if (!task || !run || !workflow || !space) return [];
+
+		const execution = this.config.nodeExecutionRepo
+			.listByWorkflowRun(workflowRunId)
+			.find((candidate) => candidate.agentName === agentName);
+		if (!execution) return [];
+
+		const spawnPromise = this.spawnWorkflowNodeAgentForExecution(
+			task,
+			space,
+			workflow,
+			run,
+			execution
+		);
+		const timeoutMs = 30_000;
+		const timeoutPromise = new Promise<null>((resolve) => {
+			setTimeout(() => resolve(null), timeoutMs);
+		});
+		const sessionId = await Promise.race([spawnPromise, timeoutPromise]);
+		if (!sessionId) {
+			log.warn(
+				`TaskAgentManager.activateTargetSessionsForMessage: timed out after ${timeoutMs}ms activating agent "${agentName}" for run ${workflowRunId}`
+			);
+			return [];
+		}
+		return [{ agentName, sessionId }];
+	}
+
 	async ensureWorkflowNodeActivationForAgent(
 		taskId: string,
 		agentName: string,
@@ -4039,6 +4096,11 @@ export class TaskAgentManager {
 			workflowChannels: channels,
 			messageInjector: (targetSessionId, message) =>
 				this.injectSubSessionMessage(targetSessionId, message, true),
+			activateTargetSession: (targetAgentName) =>
+				this.activateTargetSessionsForMessage(taskId, workflowRunId, targetAgentName, {
+					reopenReason: `node-agent send_message to activate "${targetAgentName}"`,
+					reopenBy: `agent:${agentName}`,
+				}),
 			channelRouter: nodeAgentChannelRouter,
 			nodeGroups,
 			taskAgentRouter: async (message) => {
