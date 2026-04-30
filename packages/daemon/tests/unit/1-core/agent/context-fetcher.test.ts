@@ -204,8 +204,8 @@ describe('ContextFetcher.toContextInfo', () => {
 		});
 
 		const info = ContextFetcher.toContextInfo(response, {
-			id: 'gpt-5.1-codex-mini',
-			alias: 'codex-5.1-mini',
+			id: 'gpt-5.1-mini',
+			alias: 'copilot-gpt-5-1-mini',
 			contextWindow: 128000,
 			preferContextWindowMetadata: true,
 		});

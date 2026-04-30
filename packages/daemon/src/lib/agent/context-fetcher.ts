@@ -21,7 +21,6 @@ import type {
 	ContextAPIUsage,
 	ModelInfo,
 } from '@neokai/shared';
-import { resolveCodexBridgeModelId } from '../providers/codex-anthropic-bridge/model-context-windows';
 import { Logger } from '../logger';
 
 type ContextMetadata =
@@ -84,16 +83,10 @@ export class ContextFetcher {
 		const sdkRawCapacity = positiveInteger(response.rawMaxTokens);
 		const sdkCapacity = positiveInteger(response.maxTokens);
 		const responseModel = response.model || undefined;
-		const responseCodexModel = responseModel ? resolveCodexBridgeModelId(responseModel) : undefined;
-		const metadataCodexModel = modelMetadata?.id
-			? (resolveCodexBridgeModelId(modelMetadata.id) ??
-				(modelMetadata.alias ? resolveCodexBridgeModelId(modelMetadata.alias) : undefined))
-			: undefined;
 		const metadataMatchesResponse =
 			!responseModel ||
 			modelMetadata?.id === responseModel ||
-			modelMetadata?.alias === responseModel ||
-			(!!responseCodexModel && responseCodexModel === metadataCodexModel);
+			modelMetadata?.alias === responseModel;
 		const metadataCapacity = metadataMatchesResponse
 			? positiveInteger(modelMetadata?.contextWindow)
 			: undefined;
