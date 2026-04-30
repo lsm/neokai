@@ -200,6 +200,21 @@ export class PendingAgentMessageRepository {
 		return rows.map(rowToRecord);
 	}
 
+	/** List rows for a run by status, oldest first. Used by repair/escalation paths. */
+	listByRunAndStatus(
+		workflowRunId: string,
+		status: PendingMessageStatus
+	): PendingAgentMessageRecord[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM pending_agent_messages
+				 WHERE workflow_run_id = ? AND status = ?
+				 ORDER BY created_at ASC, rowid ASC`
+			)
+			.all(workflowRunId, status) as PendingMessageRow[];
+		return rows.map(rowToRecord);
+	}
+
 	/** List all pending rows across every run, oldest first. Used by the global sweeper. */
 	listAllPending(): PendingAgentMessageRecord[] {
 		const rows = this.db
