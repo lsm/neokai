@@ -1306,8 +1306,19 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 			spaceId: ctx.spaceId,
 			name: 'Test Workflow',
 			description: '',
-			nodes: [],
-			startNodeId: '',
+			nodes: [
+				{
+					id: ctx.nodeId,
+					name: 'Coding',
+					agents: [{ agentId: 'agent-coder', name: 'coder' }],
+				},
+				{
+					id: 'node-review',
+					name: 'Review',
+					agents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
+				},
+			],
+			startNodeId: ctx.nodeId,
 			rules: [],
 			tags: [],
 			channels: [{ id: 'ch-coder-reviewer', from: 'coder', to: 'reviewer', gateId: gate.id }],
@@ -1335,6 +1346,30 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 		expect(data.gateWrite).toBeDefined();
 		expect(data.gateWrite.gateId).toBe('gate-writable');
 		expect(data.gateWrite.gateOpen).toBe(true);
+	});
+
+	test('gate-write authorizes fields whose writers reference the current node name', async () => {
+		const gate: Gate = {
+			id: 'gate-node-writer',
+			fields: [{ name: 'pr_url', type: 'string', writers: ['Coding'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGatedChannel(gate);
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		const config = makeConfig(ctx, { workflow, gateDataRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'ready',
+			data: { pr_url: 'https://github.com/test/repo/pull/42' },
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.gateWrite).toEqual({ gateId: 'gate-node-writer', gateOpen: true });
+		expect(gateDataRepo.get(ctx.workflowRunId, 'gate-node-writer')?.data.pr_url).toBe(
+			'https://github.com/test/repo/pull/42'
+		);
 	});
 
 	test('no gateWrite in response when data not provided', async () => {

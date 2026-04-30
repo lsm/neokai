@@ -250,8 +250,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		getSpaceAutonomyLevel,
 	} = config;
 
+	const myNodeName = workflow
+		? (workflow.nodes.find((node) => node.id === workflowNodeId)?.name ?? myAgentName)
+		: myAgentName;
+
 	const agentNameAliases = new Set(
-		[myAgentName, ...(myAgentNameAliases ?? [])]
+		[myAgentName, myNodeName, ...(myAgentNameAliases ?? [])]
 			.map((value) => normalizeAgentNameToken(value))
 			.filter((value) => value.length > 0)
 	);

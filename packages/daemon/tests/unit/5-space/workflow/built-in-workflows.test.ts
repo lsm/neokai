@@ -17,11 +17,15 @@
 
 import { Database as BunDatabase } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 import {
 	exportWorkflow,
 	validateExportedWorkflow,
 } from '../../../../src/lib/space/export-format.ts';
+import { executeGateScript } from '../../../../src/lib/space/runtime/gate-script-executor.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
 	CODING_WORKFLOW,
@@ -146,11 +150,11 @@ describe('CODING_WORKFLOW template', () => {
 		}
 	});
 
-	test('review-posted-gate has review_url field writable only by reviewer', () => {
+	test('review-posted-gate has review_url field writable only by Review node', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
 		const field = gate.fields.find((f) => f.name === 'review_url')!;
 		expect(field.type).toBe('string');
-		expect(field.writers).toEqual(['reviewer']);
+		expect(field.writers).toEqual(['Review']);
 		expect(field.check.op).toBe('exists');
 	});
 
@@ -192,7 +196,7 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('code-ready-gate has pr_url field writable only by Coding', () => {
+	test('code-ready-gate has pr_url field writable by Coding node', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
 		const prField = gate.fields.find((f) => f.name === 'pr_url')!;
 		expect(prField.type).toBe('string');
@@ -214,9 +218,59 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.script!.source).toContain('.mergeStateStatus');
 		expect(gate.script!.source).toContain('"CLEAN"');
 		expect(gate.script!.source).toContain('"HAS_HOOKS"');
+		expect(gate.script!.source).toContain('"BLOCKED"');
 		expect(gate.script!.source).toContain('exit 1');
 		expect(gate.script!.source).toContain('pr_url');
 		expect(gate.script!.source).toContain('not authenticated');
+		expect(gate.script!.source).not.toContain('gh pr list');
+		expect(gate.script!.source).not.toContain('--base dev');
+		expect(gate.script!.source).toContain('gh pr view "$PR_TARGET"');
+	});
+
+	test('code-ready-gate validates supplied pr_url without branch rediscovery', async () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
+		const workspace = mkdtempSync(join(tmpdir(), 'neokai-pr-ready-gate-'));
+		const binDir = join(workspace, 'bin');
+		const ghPath = join(binDir, 'gh');
+		const logPath = join(workspace, 'gh-args.log');
+		const prUrl = 'https://github.com/test/repo/pull/42';
+
+		try {
+			mkdirSync(binDir);
+			writeFileSync(
+				ghPath,
+				[
+					'#!/usr/bin/env bash',
+					`printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
+					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
+					`  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED"}'`,
+					'  exit 0',
+					'fi',
+					'printf "unexpected gh args: %s\\n" "$*" >&2',
+					'exit 2',
+				].join('\n')
+			);
+			chmodSync(ghPath, 0o755);
+
+			const result = await executeGateScript(
+				gate.script!,
+				{
+					workspacePath: workspace,
+					gateId: 'code-ready-gate',
+					runId: 'run-1',
+					gateData: { pr_url: prUrl },
+				},
+				{ PATH: `${binDir}:${process.env.PATH ?? ''}` }
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual({ pr_url: prUrl });
+			expect(readFileSync(logPath, 'utf8').trim()).toBe(
+				`pr view ${prUrl} --json url,state,mergeable,mergeStateStatus`
+			);
+		} finally {
+			rmSync(workspace, { recursive: true, force: true });
+		}
 	});
 
 	test('code-ready-gate resets on cycle', () => {
@@ -503,7 +557,7 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
 		expect(gate.fields[0].name).toBe('approvals');
 		expect(gate.fields[0].type).toBe('map');
 		expect(gate.fields[0].check).toMatchObject({ op: 'count', match: 'approved', min: 4 });
-		expect(gate.fields[0].writers).toContain('reviewer');
+		expect(gate.fields[0].writers).toEqual(['Plan Review']);
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
@@ -1576,7 +1630,7 @@ describe('seedBuiltInWorkflows()', () => {
 		const gate = PLAN_AND_DECOMPOSE_WORKFLOW.gates!.find((g) => g.id === 'plan-approval-gate')!;
 		const approvalsField = gate.fields.find((f) => f.name === 'approvals')!;
 		expect(approvalsField.type).toBe('map');
-		expect(approvalsField.writers).toContain('reviewer');
+		expect(approvalsField.writers).toEqual(['Plan Review']);
 		expect(approvalsField.check).toMatchObject({ op: 'count', match: 'approved', min: 4 });
 	});
 
@@ -1588,7 +1642,7 @@ describe('seedBuiltInWorkflows()', () => {
 		const gate = wf.gates!.find((g) => g.id === 'plan-approval-gate')!;
 		const approvalsField = gate.fields.find((f) => f.name === 'approvals')!;
 		expect(approvalsField.type).toBe('map');
-		expect(approvalsField.writers).toContain('reviewer');
+		expect(approvalsField.writers).toEqual(['Plan Review']);
 		expect(approvalsField.check).toMatchObject({ op: 'count', match: 'approved', min: 4 });
 	});
 
