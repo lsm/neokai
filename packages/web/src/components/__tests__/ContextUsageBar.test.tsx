@@ -653,6 +653,36 @@ describe('ContextUsageBar', () => {
 			expect(bufferZone?.style.width).toBe('20%');
 		});
 
+		it('should match the reserved autocompact breakdown percentage', () => {
+			const usage: ContextInfo = {
+				totalUsed: 226963,
+				totalCapacity: 272000,
+				percentUsed: 83,
+				model: 'gpt-5.5',
+				breakdown: {
+					Messages: { tokens: 193926, percent: 71.3 },
+					'Reserved for Autocompact': { tokens: 33037, percent: 12.1 },
+				},
+				autoCompactThreshold: 238963,
+				isAutoCompactEnabled: true,
+			};
+			const { container } = render(<ContextUsageBar contextUsage={usage} />);
+
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
+
+			const bufferZone = container.querySelector(
+				'[data-testid="autocompact-buffer-zone"]'
+			) as HTMLElement;
+			const marker = container.querySelector(
+				'[data-testid="autocompact-threshold-marker"]'
+			) as HTMLElement;
+
+			expect(Number.parseFloat(bufferZone?.style.width ?? '')).toBeCloseTo(12.14595588235294, 5);
+			expect(Number.parseFloat(marker?.style.left ?? '')).toBeCloseTo(87.85404411764706, 5);
+			expect(container.textContent).toContain('12.1%');
+		});
+
 		it('should render threshold marker at autoCompactThreshold position', () => {
 			const { container } = render(<ContextUsageBar contextUsage={usageWithAutoCompact} />);
 
