@@ -107,22 +107,27 @@ interface RosterToolEntry {
 	kind: 'tool';
 	tool: string;
 	preview: string;
+	ts: number;
 }
 interface RosterMessageEntry {
 	kind: 'message';
 	text: string;
+	ts: number;
 }
 interface RosterThinkingEntry {
 	kind: 'thinking';
 	preview: string;
+	ts: number;
 }
 interface RosterUserEntry {
 	kind: 'user';
 	text: string;
+	ts: number;
 }
 interface RosterHandoffEntry {
 	kind: 'handoff';
 	text: string;
+	ts: number;
 }
 type ActiveRosterEntry =
 	| RosterToolEntry
@@ -175,6 +180,11 @@ interface ActiveFeedTurn {
 	startedAt: number;
 	status: string;
 	toolCalls: number;
+	messages: number;
+	thinkingEntries: number | null;
+	messageEntries: number | null;
+	toolEntries: number | null;
+	lastEventAt: number;
 	roster: ActiveRosterEntry[];
 	/** Session id for the still-running turn; used by the agent header open affordance. */
 	sessionId: string | null;
@@ -209,7 +219,7 @@ interface MessageFeedTurn {
 
 type FeedTurn = CompletedFeedTurn | ActiveFeedTurn | MessageFeedTurn;
 
-const ROSTER_MAX_ENTRIES = 4;
+const ROSTER_MAX_ENTRIES = 8;
 
 function getToolUseContentBlocks(row: ParsedThreadRow) {
 	if (!row.message || !isSDKAssistantMessage(row.message)) return [];
@@ -263,26 +273,27 @@ function mapActivityEntry(entry: ActivityEntry): ActiveRosterEntry | null {
 				kind: 'tool',
 				tool: typeof entry.toolName === 'string' ? entry.toolName : '',
 				preview: typeof entry.preview === 'string' ? entry.preview : '',
+				ts: entry.ts,
 			};
 		case 'text': {
 			const text = asTrimmedString(entry.text);
 			if (!text) return null;
-			return { kind: 'message', text };
+			return { kind: 'message', text, ts: entry.ts };
 		}
 		case 'thinking': {
 			const preview = asTrimmedString(entry.preview);
 			if (!preview) return null;
-			return { kind: 'thinking', preview };
+			return { kind: 'thinking', preview, ts: entry.ts };
 		}
 		case 'user_message': {
 			const text = asTrimmedString(entry.text);
 			if (!text) return null;
-			return { kind: 'user', text };
+			return { kind: 'user', text, ts: entry.ts };
 		}
 		case 'agent_handoff': {
 			const text = asTrimmedString(entry.text);
 			if (!text) return null;
-			return { kind: 'handoff', text };
+			return { kind: 'handoff', text, ts: entry.ts };
 		}
 		default:
 			return null;
@@ -318,6 +329,53 @@ function countToolCalls(rows: ParsedThreadRow[]): number {
 		n += getToolUseContentBlocks(row).length;
 	}
 	return n;
+}
+
+function countSummaryEntries(
+	summary: ActiveTurnSummary | undefined,
+	kind: ActivityEntry['kind']
+): number | null {
+	if (!summary) return null;
+	let n = 0;
+	for (const entry of summary.entries) {
+		if (entry.kind === kind) n += 1;
+	}
+	return n;
+}
+
+function countMessagesForActive(rows: ParsedThreadRow[]): number {
+	return rows.length;
+}
+
+function latestActivityTimestamp(
+	summary: ActiveTurnSummary | undefined,
+	rows: ParsedThreadRow[]
+): number {
+	const lastEntry = summary?.entries[summary.entries.length - 1];
+	return lastEntry?.ts ?? rows[rows.length - 1]?.createdAt ?? Date.now();
+}
+
+function latestTurnIndex(rows: ParsedThreadRow[]): number | undefined {
+	for (let i = rows.length - 1; i >= 0; i--) {
+		if (typeof rows[i].turnIndex === 'number') return rows[i].turnIndex;
+	}
+	return undefined;
+}
+
+function summaryMatchesTurn(
+	summary: ActiveTurnSummary | undefined,
+	rows: ParsedThreadRow[]
+): ActiveTurnSummary | undefined {
+	if (!summary) return undefined;
+	const turnIndex = latestTurnIndex(rows);
+	return turnIndex !== undefined && summary.turnIndex === turnIndex ? summary : undefined;
+}
+
+function rowsContainResult(
+	rows: ParsedThreadRow[],
+	resultInfo: ResultMessage | undefined
+): boolean {
+	return resultInfo !== undefined && rows.some((row) => row.message === resultInfo);
 }
 
 function latestSessionId(rows: ParsedThreadRow[]): string | null {
@@ -401,11 +459,14 @@ function buildCompletedTurn(
 	block: AgentTurnBlock,
 	rows: ParsedThreadRow[],
 	turnId: string,
-	resultInfo: ResultMessage | undefined
+	resultInfo: ResultMessage | undefined,
+	transitionSummary: ActiveTurnSummary | undefined = undefined
 ): CompletedFeedTurn {
 	const startedAt = rows[0].createdAt;
 	const lastRow = rows[rows.length - 1];
-	const durationMs = Math.max(0, lastRow.createdAt - startedAt);
+	const resultRow = resultInfo ? rows.find((row) => row.message === resultInfo) : undefined;
+	const endedAt = resultRow?.createdAt ?? lastRow.createdAt;
+	const durationMs = Math.max(0, endedAt - startedAt);
 	const durationSec = Math.max(1, Math.round(durationMs / 1000));
 	const { text, fallback, sourceRow } = extractLastAssistantText(rows);
 	const highlightSource = sourceRow ?? lastRow;
@@ -420,7 +481,7 @@ function buildCompletedTurn(
 		agent: block.agentLabel,
 		startedAt,
 		durationSec,
-		toolCalls: countToolCalls(rows),
+		toolCalls: countSummaryEntries(transitionSummary, 'tool_use') ?? countToolCalls(rows),
 		messages: rows.length,
 		lastMessage: text,
 		fallback,
@@ -434,7 +495,8 @@ function buildActiveTurn(
 	block: AgentTurnBlock,
 	rows: ParsedThreadRow[],
 	turnId: string,
-	summary: ActiveTurnSummary | undefined
+	summary: ActiveTurnSummary | undefined,
+	sessionId: string | null
 ): ActiveFeedTurn {
 	return {
 		state: 'active',
@@ -443,8 +505,13 @@ function buildActiveTurn(
 		startedAt: rows[0].createdAt,
 		status: 'Running…',
 		toolCalls: countToolCallsForActive(rows, summary),
+		messages: countMessagesForActive(rows),
+		thinkingEntries: countSummaryEntries(summary, 'thinking'),
+		messageEntries: countSummaryEntries(summary, 'text'),
+		toolEntries: countSummaryEntries(summary, 'tool_use'),
+		lastEventAt: latestActivityTimestamp(summary, rows),
 		roster: rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES),
-		sessionId: latestSessionId(rows),
+		sessionId,
 	};
 }
 
@@ -637,7 +704,16 @@ function buildFeedTurns(
 		const flushAgent = () => {
 			if (pendingAgentRows.length === 0) return;
 			const turnId = `${block.id}:${String(pendingAgentRows[0].id)}`;
-			turns.push(buildCompletedTurn(block, pendingAgentRows, turnId, blockResult));
+			const sessionId = latestSessionId(pendingAgentRows);
+			const transitionSummary = rowsContainResult(pendingAgentRows, blockResult)
+				? summaryMatchesTurn(
+						sessionId ? summariesBySession.get(sessionId) : undefined,
+						pendingAgentRows
+					)
+				: undefined;
+			turns.push(
+				buildCompletedTurn(block, pendingAgentRows, turnId, blockResult, transitionSummary)
+			);
 			perAgentTrailing.set(blockKey, {
 				turnIdx: turns.length - 1,
 				rows: pendingAgentRows,
@@ -676,13 +752,14 @@ function buildFeedTurns(
 			if (!normalisedActive.has(key)) continue;
 			if (trailing.block.isTerminal) continue;
 			const completed = turns[trailing.turnIdx] as CompletedFeedTurn;
-			const sessionId = completed.sessionId;
+			const sessionId = latestSessionId(trailing.rows);
 			const summary = sessionId ? summariesBySession.get(sessionId) : undefined;
 			turns[trailing.turnIdx] = buildActiveTurn(
 				trailing.block,
 				trailing.rows,
 				completed.id,
-				summary
+				summary,
+				sessionId
 			);
 		}
 	}
@@ -906,14 +983,27 @@ function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
 function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
 	useSecondsTick();
 	const elapsedSec = Math.max(0, Math.round((Date.now() - turn.startedAt) / 1000));
+	const lastEventSec = Math.max(0, Math.round((Date.now() - turn.lastEventAt) / 1000));
+	const hasSummaryCounts =
+		turn.thinkingEntries !== null && turn.messageEntries !== null && turn.toolEntries !== null;
 	return (
 		<div
 			class="mt-1.5 pl-3 border-l-2"
 			style={{ borderColor: color }}
 			data-testid="minimal-thread-active-rail"
 		>
-			<div class="text-[11px] text-gray-500 mt-0.5">
-				{turn.toolCalls} {turn.toolCalls === 1 ? 'tool' : 'tools'} · {formatDuration(elapsedSec)}
+			<div class="text-[11px] text-gray-500 mt-0.5" data-testid="minimal-thread-active-meta">
+				{hasSummaryCounts ? (
+					<>
+						✦ {turn.thinkingEntries} · 💬 {turn.messageEntries} · ⚙ {turn.toolEntries} ·{' '}
+						{formatDuration(elapsedSec)}
+					</>
+				) : (
+					<>
+						{turn.toolCalls} {turn.toolCalls === 1 ? 'tool' : 'tools'} ·{' '}
+						{formatDuration(elapsedSec)}
+					</>
+				)}
 			</div>
 			{turn.roster.length > 0 ? (
 				<div class="mt-2 space-y-0.5">
@@ -926,8 +1016,9 @@ function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
 					))}
 				</div>
 			) : null}
-			<div class="mt-1.5">
-				<StatusPill color={color} status={turn.status} />
+			<div class="mt-1.5 text-[11px] text-gray-600" data-testid="minimal-thread-last-event">
+				last event {lastEventSec < 1 ? 'now' : `${formatDuration(lastEventSec)} ago`} ·{' '}
+				{formatClock(turn.lastEventAt)}
 			</div>
 		</div>
 	);
@@ -967,9 +1058,14 @@ function AgentTurnRow({ turn }: { turn: CompletedFeedTurn | ActiveFeedTurn }) {
 				{initial}
 			</div>
 			<div class="flex flex-col gap-0.5 min-w-0">
-				<span class="font-semibold leading-tight" style={{ color }}>
-					{shortAgentName(turn.agent)}
-				</span>
+				<div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0">
+					<span class="font-semibold leading-tight" style={{ color }}>
+						{shortAgentName(turn.agent)}
+					</span>
+					{turn.state === 'active' ? (
+						<span class="text-xs text-gray-500 leading-tight">{formatClock(turn.startedAt)}</span>
+					) : null}
+				</div>
 				{turn.state === 'completed' ? (
 					<div
 						class="text-[11px] text-gray-500 leading-tight"
@@ -979,7 +1075,12 @@ function AgentTurnRow({ turn }: { turn: CompletedFeedTurn | ActiveFeedTurn }) {
 						{turn.messages === 1 ? 'message' : 'messages'} · {formatDuration(turn.durationSec)}
 					</div>
 				) : (
-					<span class="text-xs text-gray-500 leading-tight">{formatClock(turn.startedAt)}</span>
+					<div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+						<StatusPill color={color} status={turn.status} />
+						<span class="text-[11px] text-gray-500 leading-tight">
+							{turn.messages} {turn.messages === 1 ? 'message' : 'messages'}
+						</span>
+					</div>
 				)}
 			</div>
 		</>

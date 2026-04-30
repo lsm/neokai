@@ -23,6 +23,7 @@ function makeRow(opts: {
 	message: unknown;
 	sessionId?: string;
 	origin?: string | null;
+	turnIndex?: number;
 }) {
 	return parseThreadRow({
 		id: opts.id,
@@ -36,6 +37,7 @@ function makeRow(opts: {
 		content: JSON.stringify(opts.message),
 		createdAt: opts.createdAt,
 		origin: opts.origin,
+		turnIndex: opts.turnIndex,
 	});
 }
 
@@ -65,11 +67,12 @@ function assistantToolUse(
 	};
 }
 
-function resultMessage(uuid: string) {
+function resultMessage(uuid: string, result = '') {
 	return {
 		type: 'result',
 		uuid,
 		subtype: 'success',
+		result,
 		usage: { input_tokens: 100, output_tokens: 50 },
 	};
 }
@@ -366,11 +369,16 @@ describe('MinimalThreadFeed', () => {
 		expect(text).toContain('provisionExistingSpaces');
 		expect(text).toContain('git status');
 
-		// Status text comes from the active body.
+		// Status text sits in the active header while the rail shows richer live stats.
 		expect(turn.textContent).toContain('Running');
+		const rail = screen.getByTestId('minimal-thread-active-rail');
+		expect(rail.textContent).not.toContain('Running');
+		expect(screen.getByTestId('minimal-thread-active-meta').textContent).toContain('⚙ 4');
+		expect(turn.textContent).toContain('2 messages');
+		expect(screen.getByTestId('minimal-thread-last-event').textContent).toContain('last event');
 	});
 
-	it('caps the active roster at 4 most-recent tool calls', () => {
+	it('caps the active roster at 8 most-recent tool calls', () => {
 		const t = Date.now();
 		const rows = [
 			makeRow({
@@ -381,7 +389,7 @@ describe('MinimalThreadFeed', () => {
 			}),
 		];
 
-		// 6 tool entries in the active-turn summary — only the last 4 should render.
+		// 10 tool entries in the active-turn summary — only the last 8 should render.
 		const summary: ActiveTurnSummary = {
 			sessionId: 'space:s:task:t',
 			turnIndex: 1,
@@ -392,6 +400,10 @@ describe('MinimalThreadFeed', () => {
 				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 4', ts: t + 4, uuid: 'a1' },
 				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 5', ts: t + 5, uuid: 'a1' },
 				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 6', ts: t + 6, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 7', ts: t + 7, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 8', ts: t + 8, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 9', ts: t + 9, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 10', ts: t + 10, uuid: 'a1' },
 			],
 		};
 
@@ -403,13 +415,12 @@ describe('MinimalThreadFeed', () => {
 			/>
 		);
 		const entries = screen.getAllByTestId('minimal-thread-roster-entry');
-		expect(entries.length).toBe(4);
+		expect(entries.length).toBe(8);
 		expect(entries[0].textContent).toContain('echo 3');
-		expect(entries[3].textContent).toContain('echo 6');
+		expect(entries[7].textContent).toContain('echo 10');
 		// The very oldest two were trimmed.
-		const allText = entries.map((e) => e.textContent).join('\n');
-		expect(allText).not.toContain('echo 1');
-		expect(allText).not.toContain('echo 2');
+		expect(entries[0].textContent).not.toContain('echo 1');
+		expect(entries[0].textContent).not.toContain('echo 2');
 	});
 
 	it('does not show the active rail on completed blocks', () => {
@@ -752,6 +763,10 @@ describe('MinimalThreadFeed', () => {
 		expect(entries[2].textContent).toContain('Now editing the broken assertion');
 		expect(entries[3].dataset.rosterKind).toBe('tool');
 		expect(entries[3].textContent).toContain('Edit');
+		const meta = screen.getByTestId('minimal-thread-active-meta');
+		expect(meta.textContent).toContain('✦ 0');
+		expect(meta.textContent).toContain('💬 2');
+		expect(meta.textContent).toContain('⚙ 2');
 	});
 
 	it('skips empty/whitespace assistant text entries when building the roster', () => {
@@ -939,7 +954,7 @@ describe('MinimalThreadFeed', () => {
 		});
 	});
 
-	it('caps the active roster at 4 most-recent entries even with mixed kinds', () => {
+	it('caps the active roster at 8 most-recent entries even with mixed kinds', () => {
 		const t = Date.now();
 		const rows = [
 			makeRow({
@@ -950,7 +965,7 @@ describe('MinimalThreadFeed', () => {
 			}),
 		];
 
-		// 6 mixed entries — only the last 4 should render.
+		// 10 mixed entries — only the last 8 should render.
 		const summary: ActiveTurnSummary = {
 			sessionId: 'space:s:task:t',
 			turnIndex: 1,
@@ -961,6 +976,10 @@ describe('MinimalThreadFeed', () => {
 				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 2', ts: t + 4, uuid: 'a1' },
 				{ kind: 'text', text: 'msg-3', ts: t + 5, uuid: 'a1' },
 				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 3', ts: t + 6, uuid: 'a1' },
+				{ kind: 'text', text: 'msg-4', ts: t + 7, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 4', ts: t + 8, uuid: 'a1' },
+				{ kind: 'text', text: 'msg-5', ts: t + 9, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'echo 5', ts: t + 10, uuid: 'a1' },
 			],
 		};
 
@@ -972,16 +991,16 @@ describe('MinimalThreadFeed', () => {
 			/>
 		);
 		const entries = screen.getAllByTestId('minimal-thread-roster-entry');
-		expect(entries.length).toBe(4);
+		expect(entries.length).toBe(8);
 		const allText = entries.map((e) => e.textContent).join('\n');
 		// Oldest two trimmed.
 		expect(allText).not.toContain('msg-1');
 		expect(allText).not.toContain('echo 1');
-		// Latest four kept.
+		// Latest eight kept.
 		expect(allText).toContain('msg-2');
 		expect(allText).toContain('echo 2');
-		expect(allText).toContain('msg-3');
-		expect(allText).toContain('echo 3');
+		expect(allText).toContain('msg-5');
+		expect(allText).toContain('echo 5');
 	});
 
 	describe('Per-agent active rail (multi-session)', () => {
@@ -1361,5 +1380,197 @@ describe('MinimalThreadFeed', () => {
 		// Active rail is still present (the block IS active) — it just has
 		// no entries.
 		expect(screen.getByTestId('minimal-thread-active-rail')).toBeTruthy();
+	});
+
+	it('uses the latest session id for active summary lookup and active open affordance', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: assistantText('a1', 'earlier text'),
+				sessionId: 'space:s:old:task:t',
+			}),
+			makeRow({
+				id: 'a2',
+				label: 'Coder Agent',
+				createdAt: t + 1000,
+				message: assistantToolUse('a2', [{ name: 'Bash', input: { command: 'bun test' } }]),
+				sessionId: 'space:s:new:task:t',
+			}),
+		];
+		const summary: ActiveTurnSummary = {
+			sessionId: 'space:s:new:task:t',
+			turnIndex: 1,
+			entries: [
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'bun test', ts: t + 1000, uuid: 'a2' },
+			],
+		};
+
+		render(
+			<MinimalThreadFeed
+				parsedRows={rows}
+				activeAgentLabels={new Set(['Coder Agent'])}
+				activeTurnSummaries={[summary]}
+			/>
+		);
+
+		expect(screen.getByText(/bun test/)).toBeTruthy();
+		fireEvent.click(screen.getByTestId('minimal-thread-agent-open'));
+		expect(mockPushOverlayHistory).toHaveBeenCalledWith(
+			'space:s:new:task:t',
+			'Coder Agent',
+			undefined
+		);
+	});
+
+	it('keeps completed stats aligned with a matching transition summary and result timestamp', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: assistantText('a1', 'visible final text'),
+				sessionId: 'space:s:task:t',
+				turnIndex: 1,
+			}),
+			makeRow({
+				id: 'r1',
+				label: 'Coder Agent',
+				createdAt: t + 2000,
+				message: resultMessage('r1', 'visible final text'),
+				sessionId: 'space:s:task:t',
+				turnIndex: 1,
+			}),
+		];
+		const summary: ActiveTurnSummary = {
+			sessionId: 'space:s:task:t',
+			turnIndex: 1,
+			entries: [
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'one', ts: t, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'two', ts: t + 1, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'three', ts: t + 2, uuid: 'a1' },
+			],
+		};
+
+		render(<MinimalThreadFeed parsedRows={rows} activeTurnSummaries={[summary]} />);
+		const meta = screen.getByTestId('minimal-thread-agent-meta');
+		expect(meta.textContent).toContain('3 tool calls');
+		expect(meta.textContent).toContain('2 messages');
+		expect(meta.textContent).toContain('2s');
+	});
+
+	it('does not apply an active summary to an older completed turn in the same session', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'old-a1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: assistantToolUse('old-a1', [{ name: 'Bash', input: { command: 'old only' } }]),
+				sessionId: 'space:s:task:t',
+				turnIndex: 1,
+			}),
+			makeRow({
+				id: 'old-r1',
+				label: 'Coder Agent',
+				createdAt: t + 1000,
+				message: resultMessage('old-r1', 'old complete'),
+				sessionId: 'space:s:task:t',
+				turnIndex: 1,
+			}),
+			makeRow({
+				id: 'new-a1',
+				label: 'Coder Agent',
+				createdAt: t + 2000,
+				message: assistantText('new-a1', 'new active turn'),
+				sessionId: 'space:s:task:t',
+				turnIndex: 2,
+			}),
+		];
+		const summary: ActiveTurnSummary = {
+			sessionId: 'space:s:task:t',
+			turnIndex: 2,
+			entries: [
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'one', ts: t + 2000, uuid: 'new-a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'two', ts: t + 2001, uuid: 'new-a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'three', ts: t + 2002, uuid: 'new-a1' },
+			],
+		};
+
+		render(
+			<MinimalThreadFeed
+				parsedRows={rows}
+				activeAgentLabels={new Set(['Coder Agent'])}
+				activeTurnSummaries={[summary]}
+			/>
+		);
+		const completedMeta = screen.getByTestId('minimal-thread-agent-meta');
+		expect(completedMeta.textContent).toContain('1 tool call');
+		expect(completedMeta.textContent).not.toContain('3 tool calls');
+		expect(screen.getByTestId('minimal-thread-active-meta').textContent).toContain('⚙ 3');
+	});
+
+	it('only applies summary-derived completed counts to the final result slice', () => {
+		const t = Date.now();
+		const rows = [
+			makeRow({
+				id: 'a1',
+				label: 'Coder Agent',
+				createdAt: t,
+				message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'early only' } }]),
+				sessionId: 'space:s:task:t',
+				turnIndex: 1,
+			}),
+			makeRow({
+				id: 'a1-text',
+				label: 'Coder Agent',
+				createdAt: t + 500,
+				message: assistantText('a1-text', 'paused before handoff'),
+				sessionId: 'space:s:task:t',
+				turnIndex: 1,
+			}),
+			makeRow({
+				id: 'handoff',
+				label: 'Coder Agent',
+				createdAt: t + 1000,
+				message: replayUserMessage('handoff', 'please continue'),
+				sessionId: 'space:s:task:t',
+				turnIndex: 1,
+			}),
+			makeRow({
+				id: 'a2',
+				label: 'Coder Agent',
+				createdAt: t + 2000,
+				message: assistantText('a2', 'finished after handoff'),
+				sessionId: 'space:s:task:t',
+				turnIndex: 1,
+			}),
+			makeRow({
+				id: 'r1',
+				label: 'Coder Agent',
+				createdAt: t + 3000,
+				message: resultMessage('r1', 'finished after handoff'),
+				sessionId: 'space:s:task:t',
+				turnIndex: 1,
+			}),
+		];
+		const summary: ActiveTurnSummary = {
+			sessionId: 'space:s:task:t',
+			turnIndex: 1,
+			entries: [
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'one', ts: t, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'two', ts: t + 1, uuid: 'a1' },
+				{ kind: 'tool_use', toolName: 'Bash', preview: 'three', ts: t + 2, uuid: 'a1' },
+			],
+		};
+
+		render(<MinimalThreadFeed parsedRows={rows} activeTurnSummaries={[summary]} />);
+		const metas = screen.getAllByTestId('minimal-thread-agent-meta');
+		expect(metas[0].textContent).toContain('1 tool call');
+		expect(metas[0].textContent).not.toContain('3 tool calls');
+		expect(metas[1].textContent).toContain('3 tool calls');
 	});
 });
