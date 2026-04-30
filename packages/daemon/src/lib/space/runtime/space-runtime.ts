@@ -1922,7 +1922,16 @@ export class SpaceRuntime {
 				canonicalTask.status === 'cancelled' ||
 				canonicalTask.status === 'archived'
 			) {
-				await this.repairQueuedWorkflowNodeHandoffs(runId, run, meta, canonicalTask, space ?? null);
+				const stoppedAfterTerminalHandoffCleanup = await this.repairQueuedWorkflowNodeHandoffs(
+					runId,
+					run,
+					meta,
+					canonicalTask,
+					space ?? null
+				);
+				if (stoppedAfterTerminalHandoffCleanup) {
+					return;
+				}
 			}
 
 			// Step 1.6: Completion detection.
@@ -2024,6 +2033,11 @@ export class SpaceRuntime {
 				return;
 			}
 
+			// Step 2: Spawn workflow node agents for pending executions without sessions.
+			// Skip spawning for paused or stopped spaces — completion/timeout/crash detection above
+			// still runs so in-flight agents are monitored, but no new agents are started.
+			if (space?.paused || space?.stopped) return;
+
 			const stoppedAfterQueuedHandoffRepair = await this.repairQueuedWorkflowNodeHandoffs(
 				runId,
 				run,
@@ -2035,11 +2049,6 @@ export class SpaceRuntime {
 				return;
 			}
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-
-			// Step 2: Spawn workflow node agents for pending executions without sessions.
-			// Skip spawning for paused or stopped spaces — completion/timeout/crash detection above
-			// still runs so in-flight agents are monitored, but no new agents are started.
-			if (space?.paused || space?.stopped) return;
 
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 			const pendingExecutions = nodeExecutions.filter(
@@ -2175,6 +2184,16 @@ export class SpaceRuntime {
 
 		let blockedReason: string | null = null;
 		const targets = [...new Set(pending.map((row) => row.targetAgentName))];
+		const recordBlockedFlushFailure = (targetAgentName: string): void => {
+			const failedRows = repo
+				.listByRunAndStatus(runId, 'failed')
+				.filter(
+					(row) => row.targetKind === 'node_agent' && row.targetAgentName === targetAgentName
+				);
+			if (failedRows.length === 0) return;
+			const first = failedRows[0];
+			blockedReason = `Queued workflow handoff to ${targetAgentName} failed after ${first.attempts} attempt(s): ${first.lastError ?? 'delivery failed'}`;
+		};
 
 		for (const targetAgentName of targets) {
 			const rowsForTarget = pending.filter((row) => row.targetAgentName === targetAgentName);
@@ -2207,6 +2226,7 @@ export class SpaceRuntime {
 						execution.agentName,
 						execution.agentSessionId
 					);
+					recordBlockedFlushFailure(targetAgentName);
 					continue;
 				}
 
@@ -2247,6 +2267,7 @@ export class SpaceRuntime {
 					agentSessionId: sessionId,
 				});
 				await tam.flushPendingMessagesForTarget(runId, execution.agentName, sessionId);
+				recordBlockedFlushFailure(targetAgentName);
 			} catch (err) {
 				const errMsg = err instanceof Error ? err.message : String(err);
 				log.warn(

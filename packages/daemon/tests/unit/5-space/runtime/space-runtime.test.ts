@@ -925,6 +925,7 @@ describe('SpaceRuntime', () => {
 				spawn?: (executionId: string) => Promise<string>;
 				spawningExecutionIds?: Set<string>;
 				liveSessions?: Set<string>;
+				flush?: (runId: string, agentName: string, sessionId: string) => Promise<void>;
 			} = {}
 		) {
 			const spawnedExecutionIds: string[] = [];
@@ -953,6 +954,10 @@ describe('SpaceRuntime', () => {
 					agentName: string,
 					sessionId: string
 				) => {
+					if (overrides.flush) {
+						await overrides.flush(runId, agentName, sessionId);
+						return;
+					}
 					const repo = new PendingAgentMessageRepository(db);
 					for (const row of repo.listPendingForTarget(runId, agentName))
 						repo.markDelivered(row.id, sessionId);
@@ -1073,6 +1078,15 @@ describe('SpaceRuntime', () => {
 			expect(pendingRepo.listPendingForTarget(run.id, 'Coder')).toHaveLength(1);
 		});
 
+		test('does not repair queued handoffs while the space is paused', async () => {
+			const { run, pendingRepo } = await setupQueuedHandoff();
+			await spaceManager.pauseSpace(SPACE_ID);
+			const tam = makeRepairTam();
+			await buildRepairRuntime(tam, pendingRepo).executeTick();
+			expect(tam._spawnedExecutionIds).toHaveLength(0);
+			expect(pendingRepo.listPendingForTarget(run.id, 'Coder')).toHaveLength(1);
+		});
+
 		test('activation failures are retried and eventually block the run', async () => {
 			const { run, task, pendingRepo } = await setupQueuedHandoff({ maxAttempts: 2 });
 			const tam = makeRepairTam({
@@ -1089,6 +1103,23 @@ describe('SpaceRuntime', () => {
 			expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
 			expect(taskRepo.getTask(task.id)!.status).toBe('blocked');
 			expect(taskRepo.getTask(task.id)!.result).toContain('spawn failed');
+		});
+
+		test('flush failures that exhaust retries block the run', async () => {
+			const { run, task, pendingRepo } = await setupQueuedHandoff({ maxAttempts: 1 });
+			const tam = makeRepairTam({
+				flush: async (runId, agentName) => {
+					const repo = new PendingAgentMessageRepository(db);
+					for (const row of repo.listPendingForTarget(runId, agentName)) {
+						repo.markAttemptFailed(row.id, 'inject failed');
+					}
+				},
+			});
+			await buildRepairRuntime(tam, pendingRepo).executeTick();
+			expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('failed');
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)!.result).toContain('inject failed');
 		});
 
 		test('expired queued handoffs block the run instead of being silently dropped', async () => {

@@ -1433,6 +1433,17 @@ describe('AgentMessageRouter: onMessageQueued callback fires for non-deduped enq
 		expect(pending[0].maxAttempts).toBe(3);
 		expect(pending[0].expiresAt - pending[0].createdAt).toBeLessThanOrEqual(60_000);
 		expect(resumedAgents).toEqual(['reviewer']);
+
+		pendingMessageRepo.markDelivered(pending[0].id, 'session:reviewer:delivered');
+		await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'reviewer',
+			message: 'same handoff',
+		});
+		expect(pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer')).toHaveLength(1);
+		expect(pendingMessageRepo.listAllForRun(workflowRunId)).toHaveLength(2);
+		expect(resumedAgents).toEqual(['reviewer', 'reviewer']);
 	});
 
 	test('does NOT call onMessageQueued when message is delivered directly (live session)', async () => {
