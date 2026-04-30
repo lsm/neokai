@@ -1089,8 +1089,16 @@ describe('SpaceRuntime', () => {
 				agentSessionId: waitingSessionId,
 				lastHeartbeatAt: Date.now(),
 			});
-			const tam = makeRepairTam({ liveSessions: new Set([waitingSessionId]) });
+			let attemptedResume = false;
+			const tam = {
+				...makeRepairTam({ liveSessions: new Set([waitingSessionId]) }),
+				tryResumeNodeAgentSession: async () => {
+					attemptedResume = true;
+					throw new Error('waiting_rebind should skip resume');
+				},
+			};
 			await buildRepairRuntime(tam, pendingRepo).executeTick();
+			expect(attemptedResume).toBe(false);
 			expect(tam._spawnedExecutionIds).toHaveLength(0);
 			expect(pendingRepo.listPendingForTarget(run.id, 'Coder')).toHaveLength(1);
 			expect(nodeExecutionRepo.getById(targetExec.id)!.status).toBe('waiting_rebind');

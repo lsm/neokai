@@ -2197,7 +2197,6 @@ export class SpaceRuntime {
 		for (const targetAgentName of targets) {
 			const rowsForTarget = pending.filter((row) => row.targetAgentName === targetAgentName);
 			try {
-				await tam.tryResumeNodeAgentSession(runId, targetAgentName);
 				let execution = this.config.nodeExecutionRepo
 					.listByWorkflowRun(runId)
 					.filter((candidate) => candidate.agentName === targetAgentName)
@@ -2219,6 +2218,12 @@ export class SpaceRuntime {
 					});
 				}
 
+				if (execution.status === 'waiting_rebind') {
+					continue;
+				}
+
+				await tam.tryResumeNodeAgentSession(runId, targetAgentName);
+				execution = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
 				if (execution.status === 'waiting_rebind') {
 					continue;
 				}
