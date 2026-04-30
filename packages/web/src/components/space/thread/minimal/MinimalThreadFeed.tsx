@@ -343,11 +343,8 @@ function countSummaryEntries(
 	return n;
 }
 
-function countMessagesForActive(
-	rows: ParsedThreadRow[],
-	summary: ActiveTurnSummary | undefined
-): number {
-	return summary ? summary.entries.length : rows.length;
+function countMessagesForActive(rows: ParsedThreadRow[]): number {
+	return rows.length;
 }
 
 function latestActivityTimestamp(
@@ -485,7 +482,7 @@ function buildActiveTurn(
 		startedAt: rows[0].createdAt,
 		status: 'Running…',
 		toolCalls: countToolCallsForActive(rows, summary),
-		messages: countMessagesForActive(rows, summary),
+		messages: countMessagesForActive(rows),
 		thinkingEntries: countSummaryEntries(summary, 'thinking'),
 		messageEntries: countSummaryEntries(summary, 'text'),
 		toolEntries: countSummaryEntries(summary, 'tool_use'),

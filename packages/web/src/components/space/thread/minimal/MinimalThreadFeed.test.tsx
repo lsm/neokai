@@ -372,7 +372,7 @@ describe('MinimalThreadFeed', () => {
 		const rail = screen.getByTestId('minimal-thread-active-rail');
 		expect(rail.textContent).not.toContain('Running');
 		expect(screen.getByTestId('minimal-thread-active-meta').textContent).toContain('⚙ 4');
-		expect(turn.textContent).toContain('4 messages');
+		expect(turn.textContent).toContain('2 messages');
 		expect(screen.getByTestId('minimal-thread-last-event').textContent).toContain('last event');
 	});
 
