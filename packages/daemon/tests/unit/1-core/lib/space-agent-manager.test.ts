@@ -456,6 +456,67 @@ describe('SpaceAgentManager', () => {
 			expect(report.agents[0].currentHash).not.toBe('stale-hash-value');
 		});
 
+		it('treats legacy coordinator Reviewer prompt as equivalent to the current preset', async () => {
+			const { getPresetAgentTemplates, LEGACY_REVIEWER_PROMPT } = await import(
+				'../../../../src/lib/space/agents/seed-agents'
+			);
+			const { computeAgentTemplateHash } = await import(
+				'../../../../src/lib/space/agents/agent-template-hash'
+			);
+			const reviewer = getPresetAgentTemplates().find((p) => p.name === 'Reviewer');
+			if (!reviewer) throw new Error('Reviewer preset missing');
+			const legacyHash = computeAgentTemplateHash({
+				...reviewer,
+				customPrompt: LEGACY_REVIEWER_PROMPT,
+			});
+
+			await manager.create({
+				spaceId: 'space-1',
+				name: 'Reviewer',
+				description: reviewer.description,
+				tools: reviewer.tools,
+				customPrompt: LEGACY_REVIEWER_PROMPT,
+				templateName: 'Reviewer',
+				templateHash: legacyHash,
+			});
+
+			const report = manager.getAgentDriftReport('space-1');
+			expect(report.agents).toHaveLength(1);
+			expect(report.agents[0].drifted).toBe(false);
+			expect(report.agents[0].storedHash).toBe(legacyHash);
+			expect(report.agents[0].currentHash).not.toBe(legacyHash);
+		});
+
+		it('reports user-edited legacy Reviewer prompts as drifted', async () => {
+			const { getPresetAgentTemplates, LEGACY_REVIEWER_PROMPT } = await import(
+				'../../../../src/lib/space/agents/seed-agents'
+			);
+			const { computeAgentTemplateHash } = await import(
+				'../../../../src/lib/space/agents/agent-template-hash'
+			);
+			const reviewer = getPresetAgentTemplates().find((p) => p.name === 'Reviewer');
+			if (!reviewer) throw new Error('Reviewer preset missing');
+			const editedPrompt = `${LEGACY_REVIEWER_PROMPT}\n\nUser customization`;
+			const editedLegacyHash = computeAgentTemplateHash({
+				...reviewer,
+				customPrompt: editedPrompt,
+			});
+
+			await manager.create({
+				spaceId: 'space-1',
+				name: 'Reviewer',
+				description: reviewer.description,
+				tools: reviewer.tools,
+				customPrompt: editedPrompt,
+				templateName: 'Reviewer',
+				templateHash: editedLegacyHash,
+			});
+
+			const report = manager.getAgentDriftReport('space-1');
+			expect(report.agents).toHaveLength(1);
+			expect(report.agents[0].drifted).toBe(true);
+		});
+
 		it('reports drifted=true when storedHash is null (post-backfill unmatchable rows)', async () => {
 			await manager.create({
 				spaceId: 'space-1',
@@ -480,6 +541,40 @@ describe('SpaceAgentManager', () => {
 
 			const report = manager.getAgentDriftReport('space-1');
 			expect(report.agents).toEqual([]);
+		});
+	});
+
+	describe('reconcileEquivalentLegacyPresetRows', () => {
+		it('reconciles legacy coordinator Reviewer prompts to the current preset prompt', async () => {
+			const { getPresetAgentTemplates, LEGACY_REVIEWER_PROMPT } = await import(
+				'../../../../src/lib/space/agents/seed-agents'
+			);
+			const { computeAgentTemplateHash } = await import(
+				'../../../../src/lib/space/agents/agent-template-hash'
+			);
+			const reviewer = getPresetAgentTemplates().find((p) => p.name === 'Reviewer');
+			if (!reviewer) throw new Error('Reviewer preset missing');
+			const legacyHash = computeAgentTemplateHash({
+				...reviewer,
+				customPrompt: LEGACY_REVIEWER_PROMPT,
+			});
+
+			const created = await manager.create({
+				spaceId: 'space-1',
+				name: 'Reviewer',
+				description: reviewer.description,
+				tools: reviewer.tools,
+				customPrompt: LEGACY_REVIEWER_PROMPT,
+				templateName: 'Reviewer',
+				templateHash: legacyHash,
+			});
+			if (!created.ok) throw new Error('create failed');
+
+			const updated = manager.reconcileEquivalentLegacyPresetRows('space-1');
+			expect(updated).toHaveLength(1);
+			expect(updated[0].customPrompt).toBe(reviewer.customPrompt);
+			expect(updated[0].templateHash).toBe(computeAgentTemplateHash(reviewer));
+			expect(manager.getById(created.value.id)?.customPrompt).toBe(reviewer.customPrompt);
 		});
 	});
 
