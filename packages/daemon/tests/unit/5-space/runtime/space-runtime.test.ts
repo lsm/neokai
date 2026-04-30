@@ -19,6 +19,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
+import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -895,6 +896,468 @@ describe('SpaceRuntime', () => {
 	// -------------------------------------------------------------------------
 	// Task Agent integration (taskAgentManager configured)
 	// -------------------------------------------------------------------------
+
+	describe('queued workflow node handoff repair', () => {
+		function makeWorkflowForHandoffRepair() {
+			return workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Handoff Repair ${Date.now()}-${Math.random()}`,
+				description: 'Test queued handoff repair',
+				nodes: [
+					{ id: 'coding-node', name: 'Coder', agentId: AGENT_CODER },
+					{ id: 'review-node', name: 'Review', agentId: AGENT_GENERAL },
+					{ id: 'qa-node', name: 'QA', agentId: AGENT_PLANNER },
+				],
+				transitions: [],
+				channels: [
+					{ id: 'review-to-coding', from: 'Review', to: 'Coder' },
+					{ id: 'qa-to-coding', from: 'QA', to: 'Coder' },
+				],
+				startNodeId: 'coding-node',
+				endNodeId: 'coding-node',
+				rules: [],
+				completionAutonomyLevel: 3,
+			});
+		}
+
+		function makeRepairTam(
+			overrides: {
+				spawn?: (executionId: string) => Promise<string>;
+				spawningExecutionIds?: Set<string>;
+				liveSessions?: Set<string>;
+				resume?: (runId: string, agentName: string) => Promise<void>;
+				flush?: (runId: string, agentName: string, sessionId: string) => Promise<void>;
+			} = {}
+		) {
+			const spawnedExecutionIds: string[] = [];
+			const liveSessions = overrides.liveSessions ?? new Set<string>();
+			return {
+				isExecutionSpawning: (executionId: string) =>
+					overrides.spawningExecutionIds?.has(executionId) ?? false,
+				isSessionAlive: (sessionId: string) => liveSessions.has(sessionId),
+				tryResumeNodeAgentSession: async (runId: string, agentName: string) => {
+					await overrides.resume?.(runId, agentName);
+				},
+				spawnWorkflowNodeAgentForExecution: async (
+					_task: unknown,
+					_space: unknown,
+					_workflow: unknown,
+					_run: unknown,
+					execution: { id: string }
+				) => {
+					spawnedExecutionIds.push(execution.id);
+					const sessionId = overrides.spawn
+						? await overrides.spawn(execution.id)
+						: `session:${execution.id}`;
+					liveSessions.add(sessionId);
+					return sessionId;
+				},
+				flushPendingMessagesForTarget: async (
+					runId: string,
+					agentName: string,
+					sessionId: string
+				) => {
+					if (overrides.flush) {
+						await overrides.flush(runId, agentName, sessionId);
+						return;
+					}
+					const repo = new PendingAgentMessageRepository(db);
+					for (const row of repo.listPendingForTarget(runId, agentName))
+						repo.markDelivered(row.id, sessionId);
+				},
+				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
+				getAgentSessionById: () => null,
+				rehydrate: async () => {},
+				_spawnedExecutionIds: spawnedExecutionIds,
+			};
+		}
+
+		async function setupQueuedHandoff(
+			opts: {
+				ttlMs?: number;
+				maxAttempts?: number;
+				createTargetExecution?: boolean;
+				taskStatus?: 'open' | 'in_progress' | 'done' | 'cancelled' | 'archived';
+				message?: string;
+			} = {}
+		) {
+			const workflow = makeWorkflowForHandoffRepair();
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Queued handoff'
+			);
+			const task = tasks[0];
+			taskRepo.updateTask(task.id, {
+				status: opts.taskStatus ?? 'in_progress',
+				completedAt:
+					opts.taskStatus === 'done' || opts.taskStatus === 'cancelled' ? Date.now() : null,
+			});
+			const existing = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(existing.id, { status: 'idle', agentSessionId: null });
+			if (opts.createTargetExecution ?? true) {
+				nodeExecutionRepo.createOrIgnore({
+					workflowRunId: run.id,
+					workflowNodeId: 'coding-node',
+					agentName: 'Coder',
+					agentId: AGENT_CODER,
+					status: 'pending',
+				});
+			}
+			const pendingRepo = new PendingAgentMessageRepository(db);
+			pendingRepo.enqueue({
+				workflowRunId: run.id,
+				spaceId: SPACE_ID,
+				taskId: task.id,
+				sourceAgentName: 'reviewer',
+				targetKind: 'node_agent',
+				targetAgentName: 'Coder',
+				message: opts.message ?? 'please revise',
+				ttlMs: opts.ttlMs ?? 60_000,
+				maxAttempts: opts.maxAttempts ?? 3,
+			});
+			return { run, task, pendingRepo };
+		}
+
+		function buildRepairRuntime(
+			tam: ReturnType<typeof makeRepairTam>,
+			pendingRepo: PendingAgentMessageRepository
+		) {
+			return new SpaceRuntime({
+				db,
+				spaceManager,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+				nodeExecutionRepo,
+				taskAgentManager: tam as never,
+				pendingMessageRepo: pendingRepo,
+			});
+		}
+
+		test('repairs a queued handoff when target execution has no agentSessionId', async () => {
+			const { run, pendingRepo } = await setupQueuedHandoff();
+			await buildRepairRuntime(makeRepairTam(), pendingRepo).executeTick();
+			const targetExec = nodeExecutionRepo
+				.listByWorkflowRun(run.id)
+				.find((execution) => execution.agentName === 'Coder')!;
+			expect(targetExec.agentSessionId).toBe(`session:${targetExec.id}`);
+			expect(targetExec.status).toBe('in_progress');
+			expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
+		});
+
+		test('recovers a stuck handoff after daemon restart by creating the target execution', async () => {
+			const { run, pendingRepo } = await setupQueuedHandoff({ createTargetExecution: false });
+			await buildRepairRuntime(makeRepairTam(), pendingRepo).executeTick();
+			const targetExec = nodeExecutionRepo
+				.listByWorkflowRun(run.id)
+				.find((execution) => execution.agentName === 'Coder')!;
+			expect(targetExec.workflowNodeId).toBe('coding-node');
+			expect(targetExec.agentSessionId).toBe(`session:${targetExec.id}`);
+			expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
+		});
+
+		test('duplicate repair ticks do not spawn duplicate sessions or messages', async () => {
+			const { run, pendingRepo } = await setupQueuedHandoff();
+			const tam = makeRepairTam();
+			const rt = buildRepairRuntime(tam, pendingRepo);
+			await rt.executeTick();
+			await rt.executeTick();
+			expect(tam._spawnedExecutionIds).toHaveLength(1);
+			expect(pendingRepo.listAllForRun(run.id)).toHaveLength(1);
+			expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
+		});
+
+		test('skips repair spawn while target execution is already spawning', async () => {
+			const { run, pendingRepo } = await setupQueuedHandoff();
+			const targetExec = nodeExecutionRepo
+				.listByWorkflowRun(run.id)
+				.find((execution) => execution.agentName === 'Coder')!;
+			const tam = makeRepairTam({ spawningExecutionIds: new Set([targetExec.id]) });
+			await buildRepairRuntime(tam, pendingRepo).executeTick();
+			expect(tam._spawnedExecutionIds).toHaveLength(0);
+			expect(pendingRepo.listPendingForTarget(run.id, 'Coder')).toHaveLength(1);
+		});
+
+		test('resumes repaired handoffs with the resolved execution agent name', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Multi-slot Handoff Repair ${Date.now()}-${Math.random()}`,
+				description: 'Test queued handoff repair with node-name addressing',
+				nodes: [
+					{
+						id: 'coding-node',
+						name: 'Coder',
+						agents: [{ name: 'coder-slot', agentId: AGENT_CODER }],
+					},
+					{ id: 'review-node', name: 'Review', agentId: AGENT_GENERAL },
+				],
+				transitions: [],
+				channels: [{ id: 'review-to-coding', from: 'Review', to: 'Coder' }],
+				startNodeId: 'coding-node',
+				endNodeId: 'coding-node',
+				rules: [],
+				completionAutonomyLevel: 3,
+			});
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Queued handoff'
+			);
+			const task = tasks[0];
+			taskRepo.updateTask(task.id, { status: 'in_progress' });
+			const existing = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(existing.id, {
+				status: 'pending',
+				agentSessionId: 'session:coder-slot',
+				completedAt: null,
+			});
+			const pendingRepo = new PendingAgentMessageRepository(db);
+			pendingRepo.enqueue({
+				workflowRunId: run.id,
+				spaceId: SPACE_ID,
+				taskId: task.id,
+				sourceAgentName: 'reviewer',
+				targetKind: 'node_agent',
+				targetAgentName: 'Coder',
+				message: 'please revise',
+				ttlMs: 60_000,
+				maxAttempts: 3,
+			});
+			let resumedAgentName: string | null = null;
+			const tam = makeRepairTam({
+				resume: async (_runId, agentName) => {
+					resumedAgentName = agentName;
+				},
+			});
+			await buildRepairRuntime(tam, pendingRepo).executeTick();
+			expect(resumedAgentName).toBe('coder-slot');
+			expect(tam._spawnedExecutionIds).toHaveLength(1);
+		});
+
+		test('resolved handoffs do not bind to a different live slot on the same node', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Exact Slot Handoff Repair ${Date.now()}-${Math.random()}`,
+				description: 'Test queued handoff repair exact slot matching',
+				nodes: [
+					{
+						id: 'coding-node',
+						name: 'Coder',
+						agents: [
+							{ name: 'coder-slot', agentId: AGENT_CODER },
+							{ name: 'helper-slot', agentId: AGENT_GENERAL },
+						],
+					},
+					{ id: 'review-node', name: 'Review', agentId: AGENT_GENERAL },
+				],
+				transitions: [],
+				channels: [{ id: 'review-to-coding', from: 'Review', to: 'Coder' }],
+				startNodeId: 'coding-node',
+				endNodeId: 'review-node',
+				rules: [],
+				completionAutonomyLevel: 3,
+			});
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Queued handoff'
+			);
+			const task = tasks[0];
+			taskRepo.updateTask(task.id, { status: 'in_progress' });
+			const coderExec = nodeExecutionRepo
+				.listByWorkflowRun(run.id)
+				.find((execution) => execution.agentName === 'coder-slot')!;
+			nodeExecutionRepo.update(coderExec.id, {
+				status: 'pending',
+				agentSessionId: null,
+				completedAt: null,
+			});
+			const helperExec = nodeExecutionRepo
+				.listByWorkflowRun(run.id)
+				.find((execution) => execution.agentName === 'helper-slot')!;
+			nodeExecutionRepo.update(helperExec.id, {
+				status: 'pending',
+				agentSessionId: 'session:helper-slot',
+				completedAt: null,
+			});
+			const pendingRepo = new PendingAgentMessageRepository(db);
+			pendingRepo.enqueue({
+				workflowRunId: run.id,
+				spaceId: SPACE_ID,
+				taskId: task.id,
+				sourceAgentName: 'reviewer',
+				targetKind: 'node_agent',
+				targetAgentName: 'Coder',
+				message: 'please revise',
+				ttlMs: 60_000,
+				maxAttempts: 3,
+			});
+			const tam = makeRepairTam({ liveSessions: new Set(['session:helper-slot']) });
+			await buildRepairRuntime(tam, pendingRepo).executeTick();
+			expect(tam._spawnedExecutionIds).toEqual([coderExec.id]);
+			expect(nodeExecutionRepo.getById(helperExec.id)!.agentSessionId).toBe('session:helper-slot');
+		});
+
+		test('skips repair while target execution is waiting for rebind recovery', async () => {
+			const { run, pendingRepo } = await setupQueuedHandoff();
+			const targetExec = nodeExecutionRepo
+				.listByWorkflowRun(run.id)
+				.find((execution) => execution.agentName === 'Coder')!;
+			const waitingSessionId = 'session:waiting-rebind';
+			nodeExecutionRepo.update(targetExec.id, {
+				status: 'waiting_rebind',
+				agentSessionId: waitingSessionId,
+				lastHeartbeatAt: Date.now(),
+			});
+			let attemptedResume = false;
+			const tam = {
+				...makeRepairTam({ liveSessions: new Set([waitingSessionId]) }),
+				tryResumeNodeAgentSession: async () => {
+					attemptedResume = true;
+					throw new Error('waiting_rebind should skip resume');
+				},
+			};
+			await buildRepairRuntime(tam, pendingRepo).executeTick();
+			expect(attemptedResume).toBe(false);
+			expect(tam._spawnedExecutionIds).toHaveLength(0);
+			expect(pendingRepo.listPendingForTarget(run.id, 'Coder')).toHaveLength(1);
+			expect(nodeExecutionRepo.getById(targetExec.id)!.status).toBe('waiting_rebind');
+		});
+
+		test('does not repair queued handoffs while the space is paused', async () => {
+			const { run, pendingRepo } = await setupQueuedHandoff();
+			await spaceManager.pauseSpace(SPACE_ID);
+			const tam = makeRepairTam();
+			await buildRepairRuntime(tam, pendingRepo).executeTick();
+			expect(tam._spawnedExecutionIds).toHaveLength(0);
+			expect(pendingRepo.listPendingForTarget(run.id, 'Coder')).toHaveLength(1);
+		});
+
+		test('missing space retries and eventually blocks the queued handoff run', async () => {
+			const { run, task, pendingRepo } = await setupQueuedHandoff({ maxAttempts: 1 });
+			await buildRepairRuntime(makeRepairTam(), pendingRepo)['repairQueuedWorkflowNodeHandoffs'](
+				run.id,
+				run,
+				{
+					workflow: workflowManager.getWorkflow(run.workflowId)!,
+					spaceId: 'missing-space',
+					workspacePath: WORKSPACE,
+				},
+				task,
+				null
+			);
+			const row = pendingRepo.listAllForRun(run.id)[0];
+			expect(row.status).toBe('failed');
+			expect(row.lastError).toContain('space missing-space not found');
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)!.status).toBe('blocked');
+		});
+
+		test('activation failures are retried and eventually block the run', async () => {
+			const { run, task, pendingRepo } = await setupQueuedHandoff({ maxAttempts: 2 });
+			const tam = makeRepairTam({
+				spawn: async () => {
+					throw new Error('spawn failed');
+				},
+			});
+			const rt = buildRepairRuntime(tam, pendingRepo);
+			await rt.executeTick();
+			expect(pendingRepo.listPendingForTarget(run.id, 'Coder')[0].attempts).toBe(1);
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+			await rt.executeTick();
+			expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('failed');
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)!.result).toContain('spawn failed');
+		});
+
+		test('flush failures that exhaust retries block the run', async () => {
+			const { run, task, pendingRepo } = await setupQueuedHandoff({ maxAttempts: 1 });
+			const tam = makeRepairTam({
+				flush: async (runId, agentName) => {
+					const repo = new PendingAgentMessageRepository(db);
+					for (const row of repo.listPendingForTarget(runId, agentName)) {
+						repo.markAttemptFailed(row.id, 'inject failed');
+					}
+				},
+			});
+			await buildRepairRuntime(tam, pendingRepo).executeTick();
+			expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('failed');
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)!.result).toContain('inject failed');
+		});
+
+		test('historical failed handoffs do not re-block successful later repairs', async () => {
+			const { run, pendingRepo } = await setupQueuedHandoff();
+			const historical = pendingRepo.enqueue({
+				workflowRunId: run.id,
+				spaceId: SPACE_ID,
+				targetKind: 'node_agent',
+				targetAgentName: 'Coder',
+				message: 'old failed handoff',
+				maxAttempts: 1,
+			});
+			pendingRepo.markAttemptFailed(historical.record.id, 'old inject failed');
+
+			await buildRepairRuntime(makeRepairTam(), pendingRepo).executeTick();
+			const rows = pendingRepo.listAllForRun(run.id);
+			expect(rows.find((row) => row.id === historical.record.id)!.status).toBe('failed');
+			expect(rows.find((row) => row.id !== historical.record.id)!.status).toBe('delivered');
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+		});
+
+		test('expired queued handoffs block the run instead of being silently dropped', async () => {
+			const { run, task, pendingRepo } = await setupQueuedHandoff({ ttlMs: -1 });
+			await buildRepairRuntime(makeRepairTam(), pendingRepo).executeTick();
+			expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('expired');
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)!.result).toContain('expired before delivery');
+		});
+
+		test('terminal task with queued handoff marks the handoff failed', async () => {
+			const { run, pendingRepo } = await setupQueuedHandoff({ taskStatus: 'done' });
+			const tam = makeRepairTam();
+			await buildRepairRuntime(tam, pendingRepo).executeTick();
+			const row = pendingRepo.listAllForRun(run.id)[0];
+			expect(row.status).toBe('failed');
+			expect(row.lastError).toContain('terminal (done)');
+			expect(tam._spawnedExecutionIds).toHaveLength(0);
+		});
+
+		test('expired handoff for a terminal task does not overwrite completion', async () => {
+			const { run, task, pendingRepo } = await setupQueuedHandoff({
+				taskStatus: 'done',
+				ttlMs: -1,
+			});
+			await buildRepairRuntime(makeRepairTam(), pendingRepo).executeTick();
+			expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('expired');
+			expect(taskRepo.getTask(task.id)!.status).toBe('done');
+			expect(taskRepo.getTask(task.id)!.completedAt).not.toBeNull();
+			expect(workflowRunRepo.getRun(run.id)!.status).not.toBe('blocked');
+		});
+
+		test('repairs generic Review→Coding and QA→Coding handoffs', async () => {
+			const { run, pendingRepo } = await setupQueuedHandoff({ message: 'review feedback' });
+			pendingRepo.enqueue({
+				workflowRunId: run.id,
+				spaceId: SPACE_ID,
+				sourceAgentName: 'qa',
+				targetKind: 'node_agent',
+				targetAgentName: 'Coder',
+				message: 'qa feedback',
+				idempotencyKey: 'qa-coding',
+			});
+			await buildRepairRuntime(makeRepairTam(), pendingRepo).executeTick();
+			const rows = pendingRepo.listAllForRun(run.id);
+			expect(rows).toHaveLength(2);
+			expect(rows.every((row) => row.status === 'delivered')).toBe(true);
+			expect(rows.map((row) => row.sourceAgentName).sort()).toEqual(['qa', 'reviewer']);
+		});
+	});
 
 	describe('Task Agent integration', () => {
 		/**
