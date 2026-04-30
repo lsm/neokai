@@ -575,6 +575,14 @@ function functionCallFromEvent(event: OpenAIStreamEvent): PendingFunctionCall | 
 	return null;
 }
 
+function isControllerInvalidStateError(err: unknown): boolean {
+	return (
+		err instanceof TypeError &&
+		((err as { code?: string }).code === 'ERR_INVALID_STATE' ||
+			err.message.includes('Controller is already closed'))
+	);
+}
+
 async function streamResponsesToAnthropic({
 	openAIResponse,
 	controller,
@@ -589,7 +597,31 @@ async function streamResponsesToAnthropic({
 	onFunctionCallResponse?: (callId: string, responseId: string) => void;
 }): Promise<void> {
 	const enc = new TextEncoder();
-	const send = (chunk: string) => controller.enqueue(enc.encode(chunk));
+	let closed = false;
+	const send = (chunk: string): boolean => {
+		if (closed) return false;
+		try {
+			controller.enqueue(enc.encode(chunk));
+			return true;
+		} catch (err) {
+			if (isControllerInvalidStateError(err)) {
+				closed = true;
+				logger.warn('openai-responses: SSE controller was already closed while sending');
+				return false;
+			}
+			throw err;
+		}
+	};
+	const closeController = (): void => {
+		if (closed) return;
+		closed = true;
+		try {
+			controller.close();
+		} catch (err) {
+			if (!isControllerInvalidStateError(err)) throw err;
+			logger.warn('openai-responses: SSE controller was already closed while closing');
+		}
+	};
 	const messageId = generateMsgId();
 	let started = false;
 	let textOpen = false;
@@ -599,26 +631,28 @@ async function streamResponsesToAnthropic({
 	let incomplete = false;
 	const emittedFunctionCalls = new Set<string>();
 
-	const ensureStarted = () => {
-		if (started) return;
+	const ensureStarted = (): boolean => {
+		if (started) return !closed;
 		started = true;
-		send(messageStartSSE(messageId, model, estimatedInputTokens, getModelContextWindow(model)));
+		return send(
+			messageStartSSE(messageId, model, estimatedInputTokens, getModelContextWindow(model))
+		);
 	};
 
 	const closeTextBlock = () => {
 		if (!textOpen) return;
-		send(contentBlockStopSSE(blockIndex));
+		if (!send(contentBlockStopSSE(blockIndex))) return;
 		blockIndex++;
 		textOpen = false;
 	};
 
 	const emitFunctionCall = (call: PendingFunctionCall) => {
 		if (emittedFunctionCalls.has(call.callId)) return;
-		ensureStarted();
+		if (!ensureStarted()) return;
 		closeTextBlock();
-		send(contentBlockStartToolUseSSE(blockIndex, call.callId, call.name));
-		send(inputJsonDeltaSSE(blockIndex, call.argumentsText || '{}'));
-		send(contentBlockStopSSE(blockIndex));
+		if (!send(contentBlockStartToolUseSSE(blockIndex, call.callId, call.name))) return;
+		if (!send(inputJsonDeltaSSE(blockIndex, call.argumentsText || '{}'))) return;
+		if (!send(contentBlockStopSSE(blockIndex))) return;
 		blockIndex++;
 		emittedFunctionCalls.add(call.callId);
 	};
@@ -690,7 +724,7 @@ async function streamResponsesToAnthropic({
 				closeTextBlock();
 				send(errorSSE('api_error', streamErrorMessage(event)));
 				send(messageStopSSE());
-				controller.close();
+				closeController();
 				return;
 			}
 		}
@@ -709,8 +743,13 @@ async function streamResponsesToAnthropic({
 			})
 		);
 		send(messageStopSSE());
-		controller.close();
+		closeController();
 	} catch (err) {
+		if (isControllerInvalidStateError(err)) {
+			closed = true;
+			logger.warn('openai-responses: SSE controller closed during streaming');
+			return;
+		}
 		logger.error('openai-responses: streaming failed:', err);
 		try {
 			ensureStarted();
@@ -718,10 +757,14 @@ async function streamResponsesToAnthropic({
 			send(errorSSE('api_error', err instanceof Error ? err.message : 'OpenAI streaming failed'));
 			send(messageStopSSE());
 		} finally {
-			controller.close();
+			closeController();
 		}
 	}
 }
+
+export const _openAIResponsesBridgeServerTesting = {
+	streamResponsesToAnthropic,
+};
 
 function modelsListResponse(models: OpenAIResponsesBridgeModel[]): object {
 	const data = models.map((model) => {
@@ -927,6 +970,8 @@ export function createOpenAIResponsesBridgeServer(
 				: estimateAnthropicInputTokens(body);
 			const stream = new ReadableStream<Uint8Array>({
 				start(controller) {
+					// Each HTTP request creates its own ReadableStream controller. SDK-level retries issue
+					// a new /v1/messages request, so a timed-out request cannot reuse an aborted controller.
 					void streamResponsesToAnthropic({
 						openAIResponse,
 						controller,
