@@ -16,9 +16,15 @@ export type SpaceGitHubEventState =
 	| 'received'
 	| 'processed'
 	| 'ignored'
+	| 'ambiguous'
 	| 'routed'
 	| 'delivered'
 	| 'failed';
+
+export interface PollCursor {
+	lastSeenAt?: number;
+	etags?: Record<string, string>;
+}
 
 export interface WatchedRepo {
 	id: string;
@@ -31,7 +37,7 @@ export interface WatchedRepo {
 	webhookSecret: string | null;
 	lastWebhookAt: number | null;
 	lastPollAt: number | null;
-	pollCursor: Record<string, unknown> | null;
+	pollCursor: PollCursor | null;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -409,9 +415,7 @@ export class SpaceGitHubRepository {
 			webhookSecret: (row.webhook_secret as string | null) ?? null,
 			lastWebhookAt: (row.last_webhook_at as number | null) ?? null,
 			lastPollAt: (row.last_poll_at as number | null) ?? null,
-			pollCursor: row.poll_cursor
-				? (JSON.parse(row.poll_cursor as string) as Record<string, unknown>)
-				: null,
+			pollCursor: row.poll_cursor ? (JSON.parse(row.poll_cursor as string) as PollCursor) : null,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
 		};
@@ -462,6 +466,8 @@ export class SpacePrTaskResolver {
 			candidates.set(taskId, cur);
 		};
 
+		// These LIKE scans intentionally trade indexing for broad discovery across legacy task
+		// text/result fields; repositories with high task volume should add explicit PR tracking rows.
 		const prRows = this.db
 			.prepare(
 				`SELECT id FROM space_tasks WHERE space_id = ? AND (description LIKE ? OR result LIKE ? OR reported_summary LIKE ?)`
@@ -527,7 +533,9 @@ export class SpaceGitHubService {
 	constructor(
 		private readonly db: BunDatabase,
 		private readonly daemonHub?: DaemonHub,
-		private readonly injectTaskAgent?: (taskId: string, message: string) => Promise<void>
+		private readonly injectTaskAgent?: (taskId: string, message: string) => Promise<void>,
+		private readonly githubToken?: string,
+		private readonly onEventsChanged?: () => void
 	) {
 		this.repo = new SpaceGitHubRepository(db);
 		this.resolver = new SpacePrTaskResolver(db);
@@ -541,6 +549,16 @@ export class SpaceGitHubService {
 		if (!eventType || !deliveryId)
 			return Response.json({ error: 'Missing GitHub event headers' }, { status: 400 });
 		const raw = await req.text();
+		const signatureMatchedRepos = this.repo
+			.listWatchedRepos()
+			.filter((r) => r.enabled && r.webhookEnabled && r.webhookSecret);
+		const valid = [] as WatchedRepo[];
+		for (const repo of signatureMatchedRepos) {
+			if (repo.webhookSecret && (await verifySignature(raw, signature, repo.webhookSecret))) {
+				valid.push(repo);
+			}
+		}
+		if (valid.length === 0) return Response.json({ error: 'Invalid signature' }, { status: 401 });
 		let payload: unknown;
 		try {
 			payload = JSON.parse(raw);
@@ -550,18 +568,14 @@ export class SpaceGitHubService {
 		const normalized = normalizeSpaceGitHubWebhook(eventType, deliveryId, payload);
 		if (!normalized)
 			return Response.json({ message: 'Event ignored', deliveryId }, { status: 202 });
-		const watched = this.repo
-			.getEnabledRepos(normalized.repoOwner, normalized.repoName)
-			.filter((r) => r.webhookEnabled);
-		if (watched.length === 0)
+		const validForRepo = valid.filter(
+			(r) =>
+				r.owner.toLowerCase() === normalized.repoOwner.toLowerCase() &&
+				r.repo.toLowerCase() === normalized.repoName.toLowerCase()
+		);
+		if (validForRepo.length === 0)
 			return Response.json({ error: 'Repository is not watched' }, { status: 404 });
-		const valid = [] as WatchedRepo[];
-		for (const repo of watched) {
-			if (repo.webhookSecret && (await verifySignature(raw, signature, repo.webhookSecret)))
-				valid.push(repo);
-		}
-		if (valid.length === 0) return Response.json({ error: 'Invalid signature' }, { status: 401 });
-		for (const repo of valid) {
+		for (const repo of validForRepo) {
 			await this.ingest(repo.spaceId, normalized);
 			this.db
 				.prepare(
@@ -569,7 +583,7 @@ export class SpaceGitHubService {
 				)
 				.run(Date.now(), Date.now(), repo.id);
 		}
-		return Response.json({ message: 'Webhook received', deliveryId, spaces: valid.length });
+		return Response.json({ message: 'Webhook received', deliveryId, spaces: validForRepo.length });
 	}
 
 	async ingest(
@@ -581,7 +595,7 @@ export class SpaceGitHubService {
 		const resolved = this.resolver.resolve(spaceId, event);
 		if (resolved.decision !== 'matched' || !resolved.taskId) {
 			this.repo.updateEventRouting(stored.event.id, {
-				state: resolved.decision === 'ambiguous' ? 'failed' : 'ignored',
+				state: resolved.decision === 'ambiguous' ? 'ambiguous' : 'ignored',
 				routeNote: resolved.note,
 			});
 			return this.repo.getEvent(stored.event.id)!;
@@ -592,6 +606,7 @@ export class SpaceGitHubService {
 			matchedBy: resolved.matchedBy,
 			confidence: resolved.confidence,
 		});
+		this.onEventsChanged?.();
 		this.appendTaskActivity(resolved.taskId, event);
 		this.scheduleTaskNotification(resolved.taskId, stored.event.id);
 		return this.repo.getEvent(stored.event.id)!;
@@ -602,36 +617,58 @@ export class SpaceGitHubService {
 		for (const watched of this.repo
 			.listWatchedRepos()
 			.filter((r) => r.enabled && r.pollingEnabled)) {
-			// Poll issue comments, review comments, reviews, and PR metadata; all feed same ingest path.
+			const cursor = watched.pollCursor ?? {};
+			const etags = cursor.etags ?? {};
+			const since =
+				cursor.lastSeenAt || watched.lastPollAt
+					? new Date(cursor.lastSeenAt ?? watched.lastPollAt ?? 0).toISOString()
+					: undefined;
+			// Poll issue comments, review comments, and PR metadata; all feed the same ingest path.
 			const base = `https://api.github.com/repos/${watched.owner}/${watched.repo}`;
 			const endpoints = [
-				`${base}/issues/comments`,
-				`${base}/pulls/comments`,
-				`${base}/pulls?state=all&sort=updated&direction=desc`,
+				{
+					key: 'issue_comments',
+					url: `${base}/issues/comments${since ? `?since=${encodeURIComponent(since)}` : ''}`,
+				},
+				{
+					key: 'review_comments',
+					url: `${base}/pulls/comments${since ? `?since=${encodeURIComponent(since)}` : ''}`,
+				},
+				{
+					key: 'pulls',
+					url: `${base}/pulls?state=all&sort=updated&direction=desc${since ? `&since=${encodeURIComponent(since)}` : ''}`,
+				},
 			];
-			for (const url of endpoints) {
-				const response = await fetchImpl(url, {
-					headers: {
-						Accept: 'application/vnd.github+json',
-						'User-Agent': 'NeoKai-Space-GitHub/1.0',
-					},
-				});
+			let lastSeenAt = cursor.lastSeenAt ?? watched.lastPollAt ?? 0;
+			for (const endpoint of endpoints) {
+				const headers: Record<string, string> = {
+					Accept: 'application/vnd.github+json',
+					'User-Agent': 'NeoKai-Space-GitHub/1.0',
+					'X-GitHub-Api-Version': '2022-11-28',
+				};
+				if (this.githubToken) headers.Authorization = `Bearer ${this.githubToken}`;
+				if (etags[endpoint.key]) headers['If-None-Match'] = etags[endpoint.key];
+				const response = await fetchImpl(endpoint.url, { headers });
+				if (response.status === 304) continue;
 				if (!response.ok) continue;
+				const etag = response.headers.get('ETag');
+				if (etag) etags[endpoint.key] = etag;
 				const rows = (await response.json()) as unknown[];
 				for (const row of rows.slice(0, 30)) {
-					const event = this.normalizePollingRow(watched, row, url);
+					const event = this.normalizePollingRow(watched, row, endpoint.key);
 					if (event) {
 						event.source = 'polling';
 						await this.ingest(watched.spaceId, event);
+						lastSeenAt = Math.max(lastSeenAt, event.occurredAt);
 						count++;
 					}
 				}
 			}
 			this.db
 				.prepare(
-					`UPDATE space_github_watched_repos SET last_poll_at = ?, updated_at = ? WHERE id = ?`
+					`UPDATE space_github_watched_repos SET last_poll_at = ?, poll_cursor = ?, updated_at = ? WHERE id = ?`
 				)
-				.run(Date.now(), Date.now(), watched.id);
+				.run(Date.now(), JSON.stringify({ lastSeenAt, etags }), Date.now(), watched.id);
 		}
 		return count;
 	}
@@ -639,7 +676,7 @@ export class SpaceGitHubService {
 	private normalizePollingRow(
 		watched: WatchedRepo,
 		row: unknown,
-		url: string
+		endpointKey: string
 	): NormalizedSpaceGitHubEvent | null {
 		const obj = asObject(row);
 		const apiUrl = getString(obj.url);
@@ -652,8 +689,8 @@ export class SpaceGitHubService {
 		if (!prNumber) return null;
 		const user = userFrom(obj.user);
 		let eventType: SpaceGitHubEventKind = 'pull_request';
-		if (url.includes('/issues/comments')) eventType = 'issue_comment';
-		if (url.includes('/pulls/comments')) eventType = 'pull_request_review_comment';
+		if (endpointKey === 'issue_comments') eventType = 'issue_comment';
+		if (endpointKey === 'review_comments') eventType = 'pull_request_review_comment';
 		const id = getNumber(obj.id) || prNumber;
 		return {
 			deliveryId: `poll:${eventType}:${id}`,
@@ -677,21 +714,18 @@ export class SpaceGitHubService {
 	}
 
 	private appendTaskActivity(taskId: string, event: NormalizedSpaceGitHubEvent): void {
-		const row = this.db
-			.prepare(`SELECT workflow_run_id FROM space_tasks WHERE id = ?`)
-			.get(taskId) as { workflow_run_id?: string } | undefined;
-		if (!row?.workflow_run_id) return;
-		this.db
-			.prepare(
-				`INSERT INTO task_group_events (group_id, kind, payload_json, created_at) VALUES (?, 'github_pr_activity', ?, ?)`
-			)
-			.run(
-				row.workflow_run_id,
-				JSON.stringify({ text: `[GitHub] ${event.summary}\n${event.externalUrl}` }),
-				Date.now()
-			);
 		this.daemonHub
-			?.emit('space.githubEvent.routed' as never, { sessionId: 'global', taskId, event } as never)
+			?.emit('space.githubEvent.routed', {
+				sessionId: 'global',
+				taskId,
+				event: {
+					repo: `${event.repoOwner}/${event.repoName}`,
+					prNumber: event.prNumber,
+					eventType: event.eventType,
+					summary: event.summary,
+					externalUrl: event.externalUrl,
+				},
+			})
 			.catch(() => {});
 	}
 
@@ -734,6 +768,7 @@ export class SpaceGitHubService {
 					confidence: event.confidence,
 					routeNote: event.routeNote,
 				});
+			this.onEventsChanged?.();
 		} catch (error) {
 			log.warn('Failed to inject GitHub event into task agent', {
 				taskId,

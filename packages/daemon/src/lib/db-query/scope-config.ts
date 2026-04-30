@@ -367,6 +367,10 @@ const EXCLUDED_TABLE_NAMES: string[] = [
 	// session_groups, session_group_members, and sdk_messages are now in SPACE_SCOPE_TABLES.
 	// task_group_events remains excluded — internal event log, not useful for ad-hoc queries.
 	'task_group_events',
+	// Space GitHub tables are internal webhook/polling state and can include raw PR/comment payloads
+	// plus webhook secret metadata; use Space task activity surfaces instead of ad-hoc DB queries.
+	'space_github_events',
+	'space_github_watched_repos',
 	// Node execution tracking — transient per-run agent state, not useful for ad-hoc queries
 	'node_executions',
 	// Tool continuation recovery — internal bridge/runtime recovery state for orphaned tool_result chunks

@@ -362,7 +362,7 @@ export function createTables(db: BunDatabase): void {
         occurred_at INTEGER NOT NULL,
         dedupe_key TEXT NOT NULL,
         raw_payload TEXT NOT NULL,
-        state TEXT NOT NULL DEFAULT 'received' CHECK(state IN ('received', 'processed', 'ignored', 'routed', 'delivered', 'failed')),
+        state TEXT NOT NULL DEFAULT 'received' CHECK(state IN ('received', 'processed', 'ignored', 'ambiguous', 'routed', 'delivered', 'failed')),
         matched_by TEXT,
         confidence TEXT,
         route_note TEXT,

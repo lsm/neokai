@@ -63,6 +63,8 @@ export interface DaemonAppContext {
 	 * GitHub service instance (null if not configured)
 	 */
 	gitHubService: GitHubService | null;
+	/** Space-level GitHub PR activity ingestion service */
+	spaceGitHubService: SpaceGitHubService;
 	/** Phase 2: Reactive database wrapper for change event emission */
 	reactiveDb: ReturnType<typeof createReactiveDatabase>;
 	/** Phase 2: Live query engine for reactive SQL queries */
@@ -299,7 +301,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Initialize GitHub service if configured
 	let gitHubService: GitHubService | null = null;
-	let spaceGitHubService: SpaceGitHubService | null = null;
 	const shouldEnableGitHub =
 		config.githubWebhookSecret ||
 		(config.githubPollingInterval && config.githubPollingInterval > 0);
@@ -335,6 +336,20 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const fileIndex = new FileIndex(config.workspaceRoot);
 	void fileIndex.init();
 
+	let taskAgentManagerForGithub: TaskAgentManager | null = null;
+	const spaceGitHubService = new SpaceGitHubService(
+		db.getDatabase(),
+		eventBus,
+		(taskId, message) => {
+			if (!taskAgentManagerForGithub) {
+				throw new Error('TaskAgentManager is not ready for Space GitHub notification delivery');
+			}
+			return taskAgentManagerForGithub.injectTaskAgentMessage(taskId, message);
+		},
+		process.env.GITHUB_TOKEN,
+		() => reactiveDb.notifyChange('space_github_events')
+	);
+
 	// Setup RPC handlers (returns cleanup function + exposed services)
 	const {
 		cleanup: rpcHandlerCleanup,
@@ -350,6 +365,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		daemonHub: eventBus,
 		db,
 		gitHubService: gitHubService ?? undefined,
+		spaceGitHubService,
 		spaceManager,
 		spaceAgentManager,
 		jobQueue,
@@ -361,10 +377,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		neoAgentManager,
 		mcpImportService,
 	});
-
-	spaceGitHubService = new SpaceGitHubService(db.getDatabase(), eventBus, (taskId, message) =>
-		taskAgentManager.injectTaskAgentMessage(taskId, message)
-	);
+	taskAgentManagerForGithub = taskAgentManager;
 
 	// Wait for SpaceRuntimeService startup provisioning to complete before we
 	// bind the WebSocket/HTTP server. `start()` inside `setupRPCHandlers` kicks
@@ -435,10 +448,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 			// Space-level public-safe GitHub webhook endpoint.
 			if (url.pathname === '/webhook/github/space' && req.method === 'POST') {
-				if (spaceGitHubService) {
-					return spaceGitHubService.handleWebhook(req);
-				}
-				return Response.json({ error: 'Space GitHub webhook not configured' }, { status: 404 });
+				return spaceGitHubService.handleWebhook(req);
 			}
 
 			// Legacy room GitHub webhook endpoint (kept as a compatibility alias only).
@@ -693,6 +703,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		transport,
 		eventBus,
 		gitHubService,
+		spaceGitHubService,
 		reactiveDb,
 		liveQueries,
 		spaceAgentManager,

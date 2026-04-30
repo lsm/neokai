@@ -107,6 +107,7 @@ export interface RPCHandlerDependencies {
 	daemonHub: DaemonHub;
 	db: Database;
 	gitHubService?: GitHubService;
+	spaceGitHubService: SpaceGitHubService;
 	/** Space manager instance — shared with DaemonAppContext (single source of truth) */
 	spaceManager: SpaceManager;
 	spaceAgentManager: SpaceAgentManager;
@@ -194,7 +195,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	setupTestHandlers(deps.messageHub, deps.reactiveDb.db);
 	setupRewindHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 
-	const spaceGithubRpc = new SpaceGitHubService(deps.db.getDatabase(), deps.daemonHub);
+	const spaceGithubRpc = deps.spaceGitHubService;
 	deps.messageHub.onRequest('space.github.watchRepo', async (data) => {
 		const params = data as {
 			spaceId: string;
