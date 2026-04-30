@@ -52,6 +52,7 @@ jobs:
             default_provider: minimax
             secrets_used: MINIMAX_API_KEY, GLM_API_KEY/ZHIPU_API_KEY
             reason: Cross-provider model switching between MiniMax and GLM requires real provider round-trips.
+          # Currently describe.skip'd in-code; kept here so manual coverage resumes automatically when re-enabled.
           - module: cross-provider-3
             test_path: tests/online/cross-provider/glm-to-anthropic-resume.test.ts
             default_provider: glm

@@ -762,11 +762,9 @@ jobs:
 
   # ============================================
   # DISCOVER TESTS
-  # Auto-discover and categorize E2E test files
-  # Tests are split into two groups:
-  #   - no-llm: UI-only tests (run fully parallel)
-  #   - llm: Tests requiring LLM round-trips (max 4 parallel)
-  # Run on: workflow_dispatch only (E2E is manual-only)
+  # Auto-discover No-LLM E2E test files
+  # LLM tests are excluded here and run from real-api-tests.yml.
+  # Run on: workflow_dispatch only (No-LLM E2E is manual-only)
   # ============================================
 
   discover:
@@ -775,39 +773,14 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     outputs:
       tests_no_llm: ${{ steps.categorize.outputs.tests_no_llm }}
-      tests_llm: ${{ steps.categorize.outputs.tests_llm }}
     steps:
       - uses: actions/checkout@v6
 
       - name: Categorize E2E test files
         id: categorize
         run: |
-          # Tests that require LLM API round-trips (send messages, wait for agent responses)
-          # Format: subdir/name (matching the subdirectory structure under packages/e2e/tests/)
-          # These tests need a real LLM provider (GLM) to process messages
-          LLM_TESTS=(
-            core/message-flow
-            core/interrupt-button
-            core/interrupt-error-bug
-            core/context-features
-            core/model-selection
-            features/archive
-            features/file-operations
-            features/message-operations
-            features/provider-model-switching
-            features/reviewer-feedback-loop
-            features/rewind-features
-            features/session-operations
-            features/slash-cmd
-            features/space-approval-gate-rejection
-            features/space-artifacts-panel
-            features/space-canvas-mode
-            features/space-happy-path-pipeline
-            features/worktree-isolation
-            responsive/mobile
-            responsive/tablet
-            settings/auto-title
-          )
+          # Tests that require LLM API round-trips are excluded here and run in real-api-tests.yml.
+          LLM_TESTS=(core/message-flow core/interrupt-button core/interrupt-error-bug core/context-features core/model-selection features/archive features/file-operations features/message-operations features/provider-model-switching features/reviewer-feedback-loop features/rewind-features features/session-operations features/slash-cmd features/space-approval-gate-rejection features/space-artifacts-panel features/space-canvas-mode features/space-happy-path-pipeline features/worktree-isolation responsive/mobile responsive/tablet settings/auto-title)
 
           # Tests to exclude entirely (disabled, pending stabilization)
           EXCLUDED_TESTS=(
@@ -822,29 +795,25 @@ jobs:
 
           # Find all test files recursively and extract subdir/name paths
           NO_LLM_JSON="[]"
-          LLM_JSON="[]"
           for file in $(find packages/e2e/tests -name "*.e2e.ts" -type f | sed 's|packages/e2e/tests/||; s|\.e2e\.ts$||' | sort); do
             if [[ -n "${EXCLUDED_SET[$file]}" ]]; then
               echo "EXCLUDED: $file"
               continue
             fi
+            if [[ -n "${LLM_SET[$file]}" ]]; then
+              echo "LLM (real-api-tests.yml): $file"
+              continue
+            fi
             # Create JSON object with path (for test runner) and name (for artifact/display)
             safe_name=$(echo "$file" | tr '/' '-')
             entry=$(jq -n -c --arg path "$file" --arg name "$safe_name" '{path: $path, name: $name}')
-            if [[ -n "${LLM_SET[$file]}" ]]; then
-              LLM_JSON=$(echo "$LLM_JSON" | jq -c ". + [$entry]")
-            else
-              NO_LLM_JSON=$(echo "$NO_LLM_JSON" | jq -c ". + [$entry]")
-            fi
+            NO_LLM_JSON=$(echo "$NO_LLM_JSON" | jq -c ". + [$entry]")
           done
 
           no_llm_count=$(echo "$NO_LLM_JSON" | jq length)
-          llm_count=$(echo "$LLM_JSON" | jq length)
           echo "No-LLM tests ($no_llm_count): $NO_LLM_JSON"
-          echo "LLM tests ($llm_count): $LLM_JSON"
 
           echo "tests_no_llm=$NO_LLM_JSON" >> $GITHUB_OUTPUT
-          echo "tests_llm=$LLM_JSON" >> $GITHUB_OUTPUT
 
   # ============================================
   # E2E TESTS - No LLM (Matrix, fully parallel)

@@ -1,9 +1,10 @@
 #!/bin/bash
-# Validates that all daemon online test files are covered by the CI matrix.
+# Validates that all daemon online test files are covered by the CI matrices.
 #
-# The CI matrix in .github/workflows/main.yml splits some modules (rpc, room,
-# features, rewind, space) into shards with explicit file lists. This script catches new test
-# files that were added but not included in any shard.
+# The mocked CI matrix in .github/workflows/main.yml splits some modules (rpc, room,
+# features, rewind, space) into shards with explicit file lists. Real-key shards
+# live in .github/workflows/real-api-tests.yml. This script catches new test
+# files that were added but not included in either matrix.
 #
 # NOTE: providers-anthropic-to-codex-bridge shard is disabled (requires OPENAI_API_KEY).
 #
@@ -16,9 +17,10 @@ cd "$(git rev-parse --show-toplevel)"
 ONLINE_DIR="packages/daemon/tests/online"
 ERRORS=0
 
-# --- 1. Check split modules: every *.test.ts must appear in the matrix ---
+# --- 1. Check split modules: every *.test.ts must appear in a CI matrix ---
 # These arrays must stay in sync with the test_path values in
-# .github/workflows/main.yml  test-daemon-online matrix.
+# .github/workflows/main.yml test-daemon-online matrix and
+# .github/workflows/real-api-tests.yml daemon-real-api matrix.
 
 RPC_FILES=(
   rpc-agent-handlers.test.ts
@@ -60,6 +62,7 @@ PROVIDERS_FILES=(
   anthropic-to-codex-bridge-provider.test.ts  # CI shard disabled — kept here so validator doesn't flag it
 )
 
+# Real-key cross-provider tests must be present in .github/workflows/real-api-tests.yml.
 CROSS_PROVIDER_FILES=(
   cross-provider-model-switch.test.ts
   glm-to-anthropic-resume.test.ts
@@ -82,9 +85,26 @@ SPACE_FILES=(
   task-agent-skills.test.ts
 )
 
+check_workflow_references() {
+  local module_name=$1
+  local workflow=$2
+  shift 2
+  local expected=("$@")
+
+  for f in "${expected[@]}"; do
+    local test_path="tests/online/$module_name/$f"
+    if ! grep -qF "$test_path" "$workflow"; then
+      echo "ERROR: $test_path is not referenced in $workflow"
+      echo "  -> Add it to the appropriate CI matrix in $workflow"
+      ERRORS=$((ERRORS + 1))
+    fi
+  done
+}
+
 check_split_module() {
   local module_name=$1
-  shift
+  local workflow=$2
+  shift 2
   local expected=("$@")
 
   local dir="$ONLINE_DIR/$module_name"
@@ -105,7 +125,7 @@ check_split_module() {
     name=$(basename "$file")
     if ! echo "$expected_list" | grep -qxF "$name"; then
       echo "ERROR: $file is not in any CI matrix shard for '$module_name'"
-      echo "  -> Add it to a '$module_name-*' entry in .github/workflows/main.yml"
+      echo "  -> Add it to the appropriate matrix in $workflow"
       ERRORS=$((ERRORS + 1))
     fi
   done < <(find "$dir" -name "*.test.ts" -type f | sort)
@@ -114,19 +134,24 @@ check_split_module() {
   for f in "${expected[@]}"; do
     if [ ! -f "$dir/$f" ]; then
       echo "ERROR: $dir/$f is listed in matrix but does not exist on disk"
-      echo "  -> Remove it from the matrix in .github/workflows/main.yml"
+      echo "  -> Remove it from the matrix in $workflow"
       ERRORS=$((ERRORS + 1))
     fi
   done
+
+  check_workflow_references "$module_name" "$workflow" "${expected[@]}"
 }
 
-check_split_module "rpc" "${RPC_FILES[@]}"
-check_split_module "room" "${ROOM_FILES[@]:-}"
-check_split_module "features" "${FEATURES_FILES[@]}"
-check_split_module "providers" "${PROVIDERS_FILES[@]}"
-check_split_module "cross-provider" "${CROSS_PROVIDER_FILES[@]}"
-check_split_module "rewind" "${REWIND_FILES[@]}"
-check_split_module "space" "${SPACE_FILES[@]}"
+MAIN_WORKFLOW=".github/workflows/main.yml"
+REAL_API_WORKFLOW=".github/workflows/real-api-tests.yml"
+
+check_split_module "rpc" "$MAIN_WORKFLOW" "${RPC_FILES[@]}"
+check_split_module "room" "$MAIN_WORKFLOW" "${ROOM_FILES[@]:-}"
+check_split_module "features" "$MAIN_WORKFLOW" "${FEATURES_FILES[@]}"
+check_split_module "providers" "$MAIN_WORKFLOW" "${PROVIDERS_FILES[@]}"
+check_split_module "cross-provider" "$REAL_API_WORKFLOW" "${CROSS_PROVIDER_FILES[@]}"
+check_split_module "rewind" "$MAIN_WORKFLOW" "${REWIND_FILES[@]}"
+check_split_module "space" "$MAIN_WORKFLOW" "${SPACE_FILES[@]}"
 
 # --- 2. Check for new module directories not in the CI matrix ---
 # These are directories covered by directory-level test_path (auto-discover).
@@ -150,4 +175,4 @@ if [ "$ERRORS" -gt 0 ]; then
   exit 1
 fi
 
-echo "All online test files are covered by the CI matrix."
+echo "All online test files are covered by the CI matrices."
