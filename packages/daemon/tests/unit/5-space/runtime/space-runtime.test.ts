@@ -1122,6 +1122,25 @@ describe('SpaceRuntime', () => {
 			expect(taskRepo.getTask(task.id)!.result).toContain('inject failed');
 		});
 
+		test('historical failed handoffs do not re-block successful later repairs', async () => {
+			const { run, pendingRepo } = await setupQueuedHandoff();
+			const historical = pendingRepo.enqueue({
+				workflowRunId: run.id,
+				spaceId: SPACE_ID,
+				targetKind: 'node_agent',
+				targetAgentName: 'Coder',
+				message: 'old failed handoff',
+				maxAttempts: 1,
+			});
+			pendingRepo.markAttemptFailed(historical.record.id, 'old inject failed');
+
+			await buildRepairRuntime(makeRepairTam(), pendingRepo).executeTick();
+			const rows = pendingRepo.listAllForRun(run.id);
+			expect(rows.find((row) => row.id === historical.record.id)!.status).toBe('failed');
+			expect(rows.find((row) => row.id !== historical.record.id)!.status).toBe('delivered');
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+		});
+
 		test('expired queued handoffs block the run instead of being silently dropped', async () => {
 			const { run, task, pendingRepo } = await setupQueuedHandoff({ ttlMs: -1 });
 			await buildRepairRuntime(makeRepairTam(), pendingRepo).executeTick();

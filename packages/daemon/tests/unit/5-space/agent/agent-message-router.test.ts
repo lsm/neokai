@@ -1431,6 +1431,9 @@ describe('AgentMessageRouter: onMessageQueued callback fires for non-deduped enq
 		const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
 		expect(pending).toHaveLength(1);
 		expect(pending[0].maxAttempts).toBe(3);
+		expect(pending[0].idempotencyKey).toBe(
+			JSON.stringify([ctx.coderSessionId, 'reviewer', 'same handoff'])
+		);
 		expect(pending[0].expiresAt - pending[0].createdAt).toBeLessThanOrEqual(60_000);
 		expect(resumedAgents).toEqual(['reviewer']);
 
@@ -1444,6 +1447,49 @@ describe('AgentMessageRouter: onMessageQueued callback fires for non-deduped enq
 		expect(pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer')).toHaveLength(1);
 		expect(pendingMessageRepo.listAllForRun(workflowRunId)).toHaveLength(2);
 		expect(resumedAgents).toEqual(['reviewer', 'reviewer']);
+	});
+
+	test('does not dedupe distinct tuples that contain colon separators', async () => {
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('coder', 'reviewer:b'),
+			makeChannel('coder', 'b:msg'),
+		]);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		for (const agentName of ['reviewer:b', 'b:msg']) {
+			ctx.nodeExecutionRepo.createOrIgnore({
+				workflowRunId,
+				workflowNodeId: ctx.nodeId,
+				agentName,
+				status: 'pending',
+			});
+		}
+		const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+		const router = new AgentMessageRouter({
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunId,
+			workflowChannels: [makeChannel('coder', 'reviewer:b'), makeChannel('coder', 'b:msg')],
+			messageInjector: async () => {},
+			pendingMessageRepo,
+			spaceId: ctx.spaceId,
+			taskId: null,
+		});
+
+		await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: 'session:a',
+			target: 'reviewer:b',
+			message: 'msg',
+		});
+		await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: 'session:a:reviewer',
+			target: 'b:msg',
+			message: '',
+		});
+
+		expect(pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer:b')).toHaveLength(1);
+		expect(pendingMessageRepo.listPendingForTarget(workflowRunId, 'b:msg')).toHaveLength(1);
+		expect(pendingMessageRepo.listAllForRun(workflowRunId)).toHaveLength(2);
 	});
 
 	test('does NOT call onMessageQueued when message is delivered directly (live session)', async () => {

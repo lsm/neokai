@@ -2183,14 +2183,14 @@ export class SpaceRuntime {
 
 		let blockedReason: string | null = null;
 		const targets = [...new Set(pending.map((row) => row.targetAgentName))];
-		const recordBlockedFlushFailure = (targetAgentName: string): void => {
-			const failedRows = repo
-				.listByRunAndStatus(runId, 'failed')
-				.filter(
-					(row) => row.targetKind === 'node_agent' && row.targetAgentName === targetAgentName
-				);
-			if (failedRows.length === 0) return;
-			const first = failedRows[0];
+		const recordBlockedFlushFailure = (
+			targetAgentName: string,
+			rowsForCurrentAttempt: typeof pending
+		): void => {
+			const first = rowsForCurrentAttempt
+				.map((row) => repo.getById(row.id))
+				.find((row) => row?.status === 'failed');
+			if (!first) return;
 			blockedReason = `Queued workflow handoff to ${targetAgentName} failed after ${first.attempts} attempt(s): ${first.lastError ?? 'delivery failed'}`;
 		};
 
@@ -2225,7 +2225,7 @@ export class SpaceRuntime {
 						execution.agentName,
 						execution.agentSessionId
 					);
-					recordBlockedFlushFailure(targetAgentName);
+					recordBlockedFlushFailure(targetAgentName, rowsForTarget);
 					continue;
 				}
 
@@ -2266,7 +2266,7 @@ export class SpaceRuntime {
 					agentSessionId: sessionId,
 				});
 				await tam.flushPendingMessagesForTarget(runId, execution.agentName, sessionId);
-				recordBlockedFlushFailure(targetAgentName);
+				recordBlockedFlushFailure(targetAgentName, rowsForTarget);
 			} catch (err) {
 				const errMsg = err instanceof Error ? err.message : String(err);
 				log.warn(
