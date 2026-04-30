@@ -532,6 +532,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 110: Limit pending-agent-message idempotency to live pending rows.
 	//   Historical delivered/failed/expired rows must not suppress legitimate resends.
 	runMigration110(db);
+
+	// Migration 111: Space-level GitHub watched repositories and normalized PR events.
+	runMigration111(db);
 }
 
 /**
@@ -7707,5 +7710,66 @@ export function runMigration110(db: BunDatabase): void {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_agent_messages_idem_pending
 		 ON pending_agent_messages(workflow_run_id, target_agent_name, idempotency_key)
 		 WHERE idempotency_key IS NOT NULL AND status = 'pending'`
+	);
+}
+
+export function runMigration111(db: BunDatabase): void {
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_github_watched_repos (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			owner TEXT NOT NULL,
+			repo TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			webhook_enabled INTEGER NOT NULL DEFAULT 1,
+			polling_enabled INTEGER NOT NULL DEFAULT 0,
+			webhook_secret TEXT,
+			last_webhook_at INTEGER,
+			last_poll_at INTEGER,
+			poll_cursor TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(space_id, owner, repo)
+		)
+	`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_github_events (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			task_id TEXT,
+			source TEXT NOT NULL CHECK(source IN ('webhook', 'polling')),
+			delivery_id TEXT NOT NULL,
+			event_type TEXT NOT NULL,
+			action TEXT NOT NULL,
+			repo_owner TEXT NOT NULL,
+			repo_name TEXT NOT NULL,
+			pr_number INTEGER NOT NULL,
+			pr_url TEXT NOT NULL,
+			actor TEXT NOT NULL,
+			actor_type TEXT NOT NULL,
+			body TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL DEFAULT '',
+			external_url TEXT NOT NULL DEFAULT '',
+			external_id TEXT NOT NULL DEFAULT '',
+			occurred_at INTEGER NOT NULL,
+			dedupe_key TEXT NOT NULL,
+			raw_payload TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT 'received' CHECK(state IN ('received', 'processed', 'ignored', 'ambiguous', 'routed', 'delivered', 'failed')),
+			matched_by TEXT,
+			confidence TEXT,
+			route_note TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(space_id, dedupe_key)
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_github_watched_repo_lookup ON space_github_watched_repos(owner, repo, enabled)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_github_events_task ON space_github_events(task_id, occurred_at)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_github_events_repo ON space_github_events(space_id, repo_owner, repo_name, pr_number)`
 	);
 }
