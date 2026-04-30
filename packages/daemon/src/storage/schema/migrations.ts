@@ -7782,13 +7782,31 @@ export function runMigration112(db: BunDatabase): void {
 
 	db.exec(`
 		DELETE FROM space_github_events
-		WHERE rowid NOT IN (
-			SELECT COALESCE(
-				MIN(CASE WHEN dedupe_key = lower(dedupe_key) THEN rowid END),
-				MIN(rowid)
+		WHERE rowid IN (
+			SELECT rowid
+			FROM (
+				SELECT
+					rowid,
+					ROW_NUMBER() OVER (
+						PARTITION BY space_id, lower(dedupe_key)
+						ORDER BY
+							CASE WHEN task_id IS NOT NULL THEN 0 ELSE 1 END,
+							CASE state
+								WHEN 'delivered' THEN 0
+								WHEN 'routed' THEN 1
+								WHEN 'processed' THEN 2
+								WHEN 'ambiguous' THEN 3
+								WHEN 'failed' THEN 4
+								WHEN 'ignored' THEN 5
+								ELSE 6
+							END,
+							updated_at DESC,
+							occurred_at DESC,
+							rowid ASC
+					) AS rn
+				FROM space_github_events
 			)
-			FROM space_github_events
-			GROUP BY space_id, lower(dedupe_key)
+			WHERE rn > 1
 		)
 	`);
 	db.exec(`UPDATE space_github_events SET dedupe_key = lower(dedupe_key)`);
