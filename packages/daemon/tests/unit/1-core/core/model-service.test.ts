@@ -209,6 +209,49 @@ describe('Model Service', () => {
 			expect(model?.contextWindow).toBe(272000);
 		});
 
+		it('should overlay Codex metadata for matching Copilot OpenAI models', async () => {
+			setModelsCache(
+				new Map([
+					[
+						'global',
+						[
+							{
+								id: 'gpt-5.5',
+								name: 'GPT-5.5 (Copilot API)',
+								alias: 'copilot-gpt-5-5',
+								family: 'gpt',
+								provider: 'anthropic-copilot',
+								contextWindow: 200000,
+								description: 'GPT-5.5 via GitHub Copilot',
+								releaseDate: '2026-04-01',
+								available: true,
+							},
+							{
+								id: 'gpt-5.1-mini',
+								name: 'GPT-5.1 Mini (Copilot API)',
+								alias: 'copilot-gpt-5-1-mini',
+								family: 'gpt',
+								provider: 'anthropic-copilot',
+								contextWindow: 200000,
+								description: 'GPT-5.1 Mini via GitHub Copilot',
+								releaseDate: '2026-01-01',
+								available: true,
+							},
+						],
+					],
+				])
+			);
+
+			const full = await getModelInfo('gpt-5.5', 'global', 'anthropic-copilot');
+			const mini = await getModelInfo('gpt-5.1-mini', 'global', 'anthropic-copilot');
+
+			expect(full?.contextWindow).toBe(272000);
+			expect(full?.preferContextWindowMetadata).toBe(true);
+			expect(mini?.id).toBe('gpt-5.1-codex-mini');
+			expect(mini?.contextWindow).toBe(128000);
+			expect(mini?.preferContextWindowMetadata).toBe(true);
+		});
+
 		it('should not resolve unknown Codex models to fallback metadata', async () => {
 			clearModelsCache();
 

@@ -180,6 +180,7 @@ describe('ContextFetcher.toContextInfo', () => {
 
 		const info = ContextFetcher.toContextInfo(response, {
 			id: 'gpt-5.5',
+			alias: 'codex-latest',
 			contextWindow: 272000,
 			preferContextWindowMetadata: true,
 		});
@@ -188,6 +189,31 @@ describe('ContextFetcher.toContextInfo', () => {
 		expect(info.percentUsed).toBe(50);
 		expect(info.breakdown.Messages).toEqual({ tokens: 136000, percent: 50 });
 		expect(info.autoCompactThreshold).toBe(244800);
+	});
+
+	it('matches GPT-5.1 mini SDK model names to Codex metadata aliases', () => {
+		const response = baseResponse({
+			totalTokens: 64000,
+			maxTokens: 200000,
+			rawMaxTokens: 200000,
+			percentage: 32,
+			model: 'gpt-5.1-mini',
+			autoCompactThreshold: 180000,
+			isAutoCompactEnabled: true,
+			categories: [{ name: 'Messages', tokens: 64000, color: 'blue' }],
+		});
+
+		const info = ContextFetcher.toContextInfo(response, {
+			id: 'gpt-5.1-codex-mini',
+			alias: 'codex-5.1-mini',
+			contextWindow: 128000,
+			preferContextWindowMetadata: true,
+		});
+
+		expect(info.totalCapacity).toBe(128000);
+		expect(info.percentUsed).toBe(50);
+		expect(info.breakdown.Messages).toEqual({ tokens: 64000, percent: 50 });
+		expect(info.autoCompactThreshold).toBe(115200);
 	});
 
 	it('prefers SDK capacity over session metadata for fallback model usage', () => {
