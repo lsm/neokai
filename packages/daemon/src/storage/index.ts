@@ -209,6 +209,14 @@ export class Database {
 		return this.sdkMessageRepo.getMessagesByStatus(sessionId, status);
 	}
 
+	getMessageByStatusAndUuid(
+		sessionId: string,
+		status: SendStatus,
+		uuid: string
+	): (SDKMessage & { dbId: string; timestamp: number }) | null {
+		return this.sdkMessageRepo.getMessageByStatusAndUuid(sessionId, status, uuid);
+	}
+
 	updateMessageStatus(messageIds: string[], newStatus: SendStatus): void {
 		this.sdkMessageRepo.updateMessageStatus(messageIds, newStatus);
 	}
@@ -216,6 +224,10 @@ export class Database {
 	updateMessageTimestamp(messageId: string, timestampMs?: number): void {
 		this.sdkMessageRepo.updateMessageTimestamp(messageId, timestampMs);
 	}
+
+	beginTransaction?(): void;
+	commitTransaction?(): void;
+	abortTransaction?(): void;
 
 	getMessageCountByStatus(sessionId: string, status: SendStatus): number {
 		return this.sdkMessageRepo.getMessageCountByStatus(sessionId, status);

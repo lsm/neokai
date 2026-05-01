@@ -234,6 +234,11 @@ describe('messages.bySession — SQL behavior', () => {
 		expect(plan).not.toContain('SCAN sdk_messages USING');
 	});
 
+	test('uses the parent tool expression index for subagent lookups', () => {
+		const plan = queryPlan(db, 's1', 200);
+		expect(plan).toContain('idx_sdk_messages_parent_tool');
+	});
+
 	test('includes subagent messages whose parent_tool_use_id matches a top-level tool_use', () => {
 		// Top-level assistant row with a tool_use in its content.
 		insertSdkMessage(db, {

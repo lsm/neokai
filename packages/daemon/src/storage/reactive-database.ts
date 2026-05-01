@@ -122,6 +122,10 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 
 	const proxied = new Proxy(db, {
 		get(target, prop, receiver) {
+			if (prop === 'beginTransaction') return reactiveDb.beginTransaction;
+			if (prop === 'commitTransaction') return reactiveDb.commitTransaction;
+			if (prop === 'abortTransaction') return reactiveDb.abortTransaction;
+
 			const value = Reflect.get(target, prop, receiver);
 
 			if (typeof prop !== 'string' || typeof value !== 'function') {

@@ -36,6 +36,7 @@ describe('SDKMessageHandler', () => {
 	let saveSDKMessageSpy: ReturnType<typeof mock>;
 	let updateSessionSpy: ReturnType<typeof mock>;
 	let getMessagesByStatusSpy: ReturnType<typeof mock>;
+	let getMessageByStatusAndUuidSpy: ReturnType<typeof mock>;
 	let updateMessageStatusSpy: ReturnType<typeof mock>;
 	let publishSpy: ReturnType<typeof mock>;
 	let emitSpy: ReturnType<typeof mock>;
@@ -77,13 +78,18 @@ describe('SDKMessageHandler', () => {
 		saveSDKMessageSpy = mock(() => true);
 		updateSessionSpy = mock(() => {});
 		getMessagesByStatusSpy = mock(() => []);
+		getMessageByStatusAndUuidSpy = mock(() => null);
 		updateMessageStatusSpy = mock(() => {});
 		mockDb = {
 			saveSDKMessage: saveSDKMessageSpy,
 			updateSession: updateSessionSpy,
 			getMessagesByStatus: getMessagesByStatusSpy,
+			getMessageByStatusAndUuid: getMessageByStatusAndUuidSpy,
 			updateMessageStatus: updateMessageStatusSpy,
 			updateMessageTimestamp: mock(() => {}),
+			beginTransaction: mock(() => {}),
+			commitTransaction: mock(() => {}),
+			abortTransaction: mock(() => {}),
 		} as unknown as Database;
 
 		// MessageHub spies
@@ -314,8 +320,14 @@ describe('SDKMessageHandler', () => {
 		});
 
 		it('should acknowledge persisted enqueued user messages without duplicate save', async () => {
-			getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) =>
-				status === 'enqueued' ? [{ dbId: 'db-msg-1', uuid: 'test-uuid' }] : []
+			getMessagesByStatusSpy.mockImplementation(() => {
+				throw new Error('bulk status scan should not be used for direct SDK replay ack');
+			});
+			getMessageByStatusAndUuidSpy.mockImplementation(
+				(_sessionId: string, status: string, uuid: string) =>
+					status === 'enqueued' && uuid === 'test-uuid'
+						? { dbId: 'db-msg-1', uuid: 'test-uuid' }
+						: null
 			);
 
 			const message: SDKMessage = {
@@ -349,8 +361,11 @@ describe('SDKMessageHandler', () => {
 		});
 
 		it('should acknowledge persisted deferred user messages and update timestamp', async () => {
-			getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) =>
-				status === 'deferred' ? [{ dbId: 'db-deferred-1', uuid: 'deferred-uuid' }] : []
+			getMessageByStatusAndUuidSpy.mockImplementation(
+				(_sessionId: string, status: string, uuid: string) =>
+					status === 'deferred' && uuid === 'deferred-uuid'
+						? { dbId: 'db-deferred-1', uuid: 'deferred-uuid' }
+						: null
 			);
 
 			const message: SDKMessage = {
@@ -381,8 +396,11 @@ describe('SDKMessageHandler', () => {
 		});
 
 		it('should suppress duplicate SDK replay for already-consumed persisted user message', async () => {
-			getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) =>
-				status === 'consumed' ? [{ dbId: 'db-msg-1', uuid: 'consumed-user-uuid' }] : []
+			getMessageByStatusAndUuidSpy.mockImplementation(
+				(_sessionId: string, status: string, uuid: string) =>
+					status === 'consumed' && uuid === 'consumed-user-uuid'
+						? { dbId: 'db-msg-1', uuid: 'consumed-user-uuid' }
+						: null
 			);
 			const message: SDKMessage = {
 				type: 'user',

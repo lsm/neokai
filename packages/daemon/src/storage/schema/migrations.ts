@@ -539,7 +539,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 112: Normalize Space GitHub dedupe keys after canonical repo casing change.
 	runMigration112(db);
 
-	// Migration 113: Add descending timestamp/id index for large SDK message windows.
+	// Migration 113: Add SDK message indexes for large thread windows and replay lookups.
 	runMigration113(db);
 }
 
@@ -7834,4 +7834,8 @@ export function runMigration113(db: BunDatabase): void {
 	if (!tableExists(db, 'sdk_messages')) return;
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
 		ON sdk_messages(session_id, timestamp DESC, id DESC)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool
+		ON sdk_messages(session_id, json_extract(sdk_message, '$.parent_tool_use_id'))`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_uuid_status
+		ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`);
 }

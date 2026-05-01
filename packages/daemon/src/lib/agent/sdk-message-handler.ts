@@ -77,6 +77,8 @@ export interface SDKMessageHandlerContext {
 	onInitSlashCommands: (commands: string[]) => Promise<void>;
 }
 
+type PersistedUserMessage = SDKMessage & { dbId: string; timestamp: number };
+
 export class SDKMessageHandler {
 	private sdkMessageDeltaVersion: number = 0;
 	private logger: Logger;
@@ -205,6 +207,23 @@ export class SDKMessageHandler {
 		);
 	}
 
+	private withDbChangeBatch<T>(operation: () => T): T {
+		const { db } = this.ctx;
+		if (!db.beginTransaction || !db.commitTransaction || !db.abortTransaction) {
+			return operation();
+		}
+
+		db.beginTransaction();
+		try {
+			const result = operation();
+			db.commitTransaction();
+			return result;
+		} catch (error) {
+			db.abortTransaction();
+			throw error;
+		}
+	}
+
 	/**
 	 * Acknowledge a persisted user message when SDK replays it.
 	 *
@@ -215,88 +234,69 @@ export class SDKMessageHandler {
 	 * 3) avoid inserting a duplicate SDK message row
 	 */
 	private async acknowledgePersistedUserMessage(message: SDKMessage): Promise<boolean> {
-		const { session, db, daemonHub, messageHub } = this.ctx;
+		const { session, db } = this.ctx;
 		if (message.type !== 'user' || !message.uuid) {
 			return false;
 		}
 
-		const enqueuedMessage = db
-			.getMessagesByStatus(session.id, 'enqueued')
-			.find((enqueued) => enqueued.uuid === message.uuid);
+		const enqueuedMessage = db.getMessageByStatusAndUuid(session.id, 'enqueued', message.uuid);
 		if (enqueuedMessage) {
-			db.updateMessageStatus([enqueuedMessage.dbId], 'consumed');
-			// Update DB timestamp to now so the message's position in the DB matches
-			// where the SDK placed it in the conversation (after already-streamed
-			// assistant messages), not when the user originally typed it.
-			db.updateMessageTimestamp(enqueuedMessage.dbId);
-			await daemonHub.emit('messages.statusChanged', {
-				sessionId: session.id,
-				messageIds: [enqueuedMessage.dbId],
-				status: 'consumed',
-			});
-			this.acknowledgedPersistedUserThisTurn = true;
-
-			messageHub.event(
-				'state.sdkMessages.delta',
-				{
-					added: [message],
-					timestamp: Date.now(),
-					version: ++this.sdkMessageDeltaVersion,
-				},
-				{ channel: `session:${session.id}` }
-			);
-
-			// Emit on DaemonHub for server-side listeners (e.g. group message mirroring)
-			// so pre-persisted user messages appear in the group timeline.
-			await daemonHub.emit('sdk.message', {
-				sessionId: session.id,
-				message,
-			});
-
+			await this.consumePersistedUserMessage(enqueuedMessage, message);
 			return true;
 		}
 
-		const deferredMessage = db
-			.getMessagesByStatus(session.id, 'deferred')
-			.find((deferred) => deferred.uuid === message.uuid);
+		const deferredMessage = db.getMessageByStatusAndUuid(session.id, 'deferred', message.uuid);
 		if (deferredMessage) {
-			db.updateMessageStatus([deferredMessage.dbId], 'consumed');
-			db.updateMessageTimestamp(deferredMessage.dbId);
-			await daemonHub.emit('messages.statusChanged', {
-				sessionId: session.id,
-				messageIds: [deferredMessage.dbId],
-				status: 'consumed',
-			});
-			this.acknowledgedPersistedUserThisTurn = true;
-
-			messageHub.event(
-				'state.sdkMessages.delta',
-				{
-					added: [message],
-					timestamp: Date.now(),
-					version: ++this.sdkMessageDeltaVersion,
-				},
-				{ channel: `session:${session.id}` }
-			);
-
-			// Emit on DaemonHub for server-side listeners (e.g. group message mirroring)
-			await daemonHub.emit('sdk.message', {
-				sessionId: session.id,
-				message,
-			});
-
+			await this.consumePersistedUserMessage(deferredMessage, message);
 			return true;
 		}
 
-		const consumedMessage = db
-			.getMessagesByStatus(session.id, 'consumed')
-			.find((consumed) => consumed.uuid === message.uuid);
+		const consumedMessage = db.getMessageByStatusAndUuid(session.id, 'consumed', message.uuid);
 		if (consumedMessage) {
 			this.acknowledgedPersistedUserThisTurn = true;
 			return true;
 		}
 
 		return false;
+	}
+
+	private async consumePersistedUserMessage(
+		persistedMessage: PersistedUserMessage,
+		sdkReplayMessage: SDKMessage
+	): Promise<void> {
+		const { session, db, daemonHub, messageHub } = this.ctx;
+
+		this.withDbChangeBatch(() => {
+			db.updateMessageStatus([persistedMessage.dbId], 'consumed');
+			// Update DB timestamp to now so the message's position in the DB matches
+			// where the SDK placed it in the conversation (after already-streamed
+			// assistant messages), not when the user originally typed it.
+			db.updateMessageTimestamp(persistedMessage.dbId);
+		});
+
+		await daemonHub.emit('messages.statusChanged', {
+			sessionId: session.id,
+			messageIds: [persistedMessage.dbId],
+			status: 'consumed',
+		});
+		this.acknowledgedPersistedUserThisTurn = true;
+
+		messageHub.event(
+			'state.sdkMessages.delta',
+			{
+				added: [sdkReplayMessage],
+				timestamp: Date.now(),
+				version: ++this.sdkMessageDeltaVersion,
+			},
+			{ channel: `session:${session.id}` }
+		);
+
+		// Emit on DaemonHub for server-side listeners (e.g. group message mirroring)
+		// so pre-persisted user messages appear in the group timeline.
+		await daemonHub.emit('sdk.message', {
+			sessionId: session.id,
+			message: sdkReplayMessage,
+		});
 	}
 
 	/**
@@ -314,8 +314,16 @@ export class SDKMessageHandler {
 			.getMessagesByStatus(session.id, 'enqueued')
 			.filter((enqueued) => isSDKUserMessage(enqueued));
 
+		if (enqueuedUsers.length > 0) {
+			this.withDbChangeBatch(() => {
+				db.updateMessageStatus(
+					enqueuedUsers.map((enqueuedUser) => enqueuedUser.dbId),
+					'consumed'
+				);
+			});
+		}
+
 		for (const enqueuedUser of enqueuedUsers) {
-			db.updateMessageStatus([enqueuedUser.dbId], 'consumed');
 			// Don't update timestamp here — keep the original T1 timestamp
 			// since we don't know the exact T_consumed for these edge cases.
 			// The original timestamp (when user consumed it) is a better approximation
@@ -351,21 +359,19 @@ export class SDKMessageHandler {
 	private handleMessageYielded(messageId: string, consumedAt: number): void {
 		const { session, db, daemonHub, messageHub } = this.ctx;
 
-		// Find the enqueued message in DB by UUID
-		const enqueuedMessage = db
-			.getMessagesByStatus(session.id, 'enqueued')
-			.find((enqueued) => enqueued.uuid === messageId);
+		// Find the persisted message in DB by UUID without scanning every queued row.
+		const enqueuedMessage = db.getMessageByStatusAndUuid(session.id, 'enqueued', messageId);
 		if (!enqueuedMessage) {
 			// Could be a 'deferred' message being replayed
-			const deferredMessage = db
-				.getMessagesByStatus(session.id, 'deferred')
-				.find((deferred) => deferred.uuid === messageId);
+			const deferredMessage = db.getMessageByStatusAndUuid(session.id, 'deferred', messageId);
 			if (!deferredMessage) {
 				return; // Not a persisted user message (e.g., already consumed)
 			}
 			// Handle deferred message the same way
-			db.updateMessageStatus([deferredMessage.dbId], 'consumed');
-			db.updateMessageTimestamp(deferredMessage.dbId, consumedAt);
+			this.withDbChangeBatch(() => {
+				db.updateMessageStatus([deferredMessage.dbId], 'consumed');
+				db.updateMessageTimestamp(deferredMessage.dbId, consumedAt);
+			});
 			daemonHub
 				.emit('messages.statusChanged', {
 					sessionId: session.id,
@@ -396,8 +402,10 @@ export class SDKMessageHandler {
 		}
 
 		// Update status and timestamp in DB
-		db.updateMessageStatus([enqueuedMessage.dbId], 'consumed');
-		db.updateMessageTimestamp(enqueuedMessage.dbId, consumedAt);
+		this.withDbChangeBatch(() => {
+			db.updateMessageStatus([enqueuedMessage.dbId], 'consumed');
+			db.updateMessageTimestamp(enqueuedMessage.dbId, consumedAt);
+		});
 
 		// Emit status change event (for queue overlay polling)
 		daemonHub
@@ -509,7 +517,9 @@ export class SDKMessageHandler {
 
 		// Save to DB FIRST before broadcasting to clients
 		// This ensures we only broadcast messages that are successfully persisted
-		const deferredSuccessfully = db.saveSDKMessage(session.id, message);
+		const deferredSuccessfully = this.withDbChangeBatch(() =>
+			db.saveSDKMessage(session.id, message)
+		);
 
 		if (!deferredSuccessfully) {
 			// Log warning but continue - message is already in SDK's memory
