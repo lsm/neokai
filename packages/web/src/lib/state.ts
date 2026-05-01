@@ -444,6 +444,13 @@ export type ConnectionState =
 export const connectionState = signal<ConnectionState>('connecting');
 
 /**
+ * Tracks how many reconnect attempts have been made in the current cycle.
+ * Reset to 0 on successful connection. Used by UI to show progressive
+ * messaging ("Reconnecting…" vs "Connection lost. Retrying…").
+ */
+export const reconnectAttemptCount = signal<number>(0);
+
+/**
  * Initialize application state
  */
 export async function initializeApplicationState(

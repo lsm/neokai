@@ -272,6 +272,13 @@ export class WebSocketClientTransport implements IMessageTransport {
 	}
 
 	/**
+	 * Get current reconnect attempt count (for UI status progression)
+	 */
+	getReconnectAttempts(): number {
+		return this.reconnectAttempts;
+	}
+
+	/**
 	 * Reset reconnection state to allow fresh reconnection attempts
 	 * Used when user manually triggers reconnect or returns from background
 	 */
@@ -301,8 +308,14 @@ export class WebSocketClientTransport implements IMessageTransport {
 		}
 
 		// Trigger handleDisconnect which will start reconnection
-		this.setState('reconnecting');
+		// IMPORTANT: handleDisconnect increments reconnectAttempts before
+		// we emit 'reconnecting' so listeners read the correct count.
 		this.handleDisconnect();
+		// Only set reconnecting if handleDisconnect didn't set 'failed'
+		// (won't happen after resetReconnectState since attempts=0)
+		if (this.state !== 'failed') {
+			this.setState('reconnecting');
+		}
 	}
 
 	/**
