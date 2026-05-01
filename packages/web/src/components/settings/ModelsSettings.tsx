@@ -492,14 +492,6 @@ export function ModelsSettings() {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) return;
 
-		if (forceRefresh) {
-			try {
-				await hub.request('models.clearCache', {});
-			} catch {
-				// Clear failed, proceed with fetch anyway
-			}
-		}
-
 		const [modelsResponse, authResponse] = await Promise.all([
 			hub.request(
 				'models.list',
