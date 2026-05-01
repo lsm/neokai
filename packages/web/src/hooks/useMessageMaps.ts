@@ -95,25 +95,29 @@ export function useMessageMaps(
 	// Map of user message UUIDs to their attached session init info
 	const sessionInfoMap = useMemo(() => {
 		const map = new Map<string, SDKSystemMessage>();
-		for (let i = 0; i < sdkMessages.length; i++) {
-			const msg = sdkMessages[i];
-			if (msg.type === 'system' && msg.subtype === 'init') {
-				// Find the most recent user message before this session init
-				for (let j = i - 1; j >= 0; j--) {
-					if (sdkMessages[j].type === 'user' && sdkMessages[j].uuid) {
-						map.set(sdkMessages[j].uuid!, msg as SDKSystemMessage);
-						break;
-					}
+		let lastUserUuid: string | undefined;
+		const pendingLeadingInits: SDKSystemMessage[] = [];
+
+		for (const msg of sdkMessages) {
+			if (msg.type === 'user' && msg.uuid) {
+				lastUserUuid = msg.uuid;
+				// Preserve the previous fallback semantics for init rows that appear
+				// before the first user message, but do it once when that first user
+				// appears instead of scanning forward from each init row. This keeps
+				// large SDK conversations O(n) instead of O(n²) on every message batch.
+				for (const init of pendingLeadingInits) {
+					map.set(msg.uuid, init);
 				}
-				// If no preceding user message, attach to the first user message after
-				if (msg.uuid && !map.has(msg.uuid)) {
-					for (let j = i + 1; j < sdkMessages.length; j++) {
-						if (sdkMessages[j].type === 'user' && sdkMessages[j].uuid) {
-							map.set(sdkMessages[j].uuid!, msg as SDKSystemMessage);
-							break;
-						}
-					}
-				}
+				pendingLeadingInits.length = 0;
+				continue;
+			}
+
+			if (msg.type !== 'system' || msg.subtype !== 'init') continue;
+			const init = msg as SDKSystemMessage;
+			if (lastUserUuid) {
+				map.set(lastUserUuid, init);
+			} else {
+				pendingLeadingInits.push(init);
 			}
 		}
 		return map;

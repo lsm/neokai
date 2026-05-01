@@ -1582,7 +1582,11 @@ subagent AS (
     sm.origin AS origin
   FROM sdk_messages sm
   WHERE sm.session_id = ?1
-    AND json_extract(sm.sdk_message, '$.parent_tool_use_id') IN (SELECT id FROM tool_use_ids)
+    AND EXISTS (
+      SELECT 1
+      FROM tool_use_ids tui
+      WHERE tui.id = json_extract(sm.sdk_message, '$.parent_tool_use_id')
+    )
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 )
 SELECT

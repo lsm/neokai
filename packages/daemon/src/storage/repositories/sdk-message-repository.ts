@@ -327,12 +327,47 @@ export class SDKMessageRepository {
 			timestamp: string;
 		}>;
 
-		return rows.map((row) => ({
+		return rows.map((row) => this.inflatePersistedMessage(row));
+	}
+
+	/**
+	 * Look up a single persisted user message by UUID and status.
+	 *
+	 * This avoids repeatedly loading and parsing every queued/deferred/consumed
+	 * message during SDK replay acknowledgment, which is on the hot streaming path.
+	 */
+	getMessageByStatusAndUuid(
+		sessionId: string,
+		status: SendStatus,
+		uuid: string
+	): (SDKMessage & { dbId: string; timestamp: number }) | null {
+		const stmt = this.db.prepare(
+			`SELECT id, sdk_message, timestamp FROM sdk_messages
+	       WHERE session_id = ?
+	         AND send_status = ?
+	         AND json_extract(sdk_message, '$.uuid') = ?
+	       ORDER BY timestamp ASC
+	       LIMIT 1`
+		);
+		const row = stmt.get(sessionId, status, uuid) as {
+			id: string;
+			sdk_message: string;
+			timestamp: string;
+		} | null;
+		return row ? this.inflatePersistedMessage(row) : null;
+	}
+
+	private inflatePersistedMessage(row: {
+		id: string;
+		sdk_message: string;
+		timestamp: string;
+	}): SDKMessage & { dbId: string; timestamp: number } {
+		return {
 			...(JSON.parse(row.sdk_message) as SDKMessage),
 			dbId: row.id,
 			// DB timestamp (epoch ms) overrides the SDK's ISO string timestamp for persisted messages
 			timestamp: new Date(row.timestamp).getTime(),
-		})) as Array<SDKMessage & { dbId: string; timestamp: number }>;
+		} as SDKMessage & { dbId: string; timestamp: number };
 	}
 
 	/**
