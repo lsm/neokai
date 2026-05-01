@@ -661,25 +661,6 @@ describe('QueryRunner', () => {
 
 			expect(onMarkApiSuccessSpy).toHaveBeenCalled();
 		});
-
-		it('should clear carried compaction summary after the first handled SDK message', async () => {
-			mockSession.metadata.compactionSummary = 'Temporary compacted context';
-			runner = createRunner();
-
-			const message = {
-				type: 'system',
-				subtype: 'init',
-				uuid: 'init-uuid',
-				session_id: 'sdk-session-123',
-			};
-
-			await runner.handleSDKMessage(message as unknown as SDKMessage);
-
-			expect(mockSession.metadata.compactionSummary).toBeUndefined();
-			expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
-				metadata: mockSession.metadata,
-			});
-		});
 	});
 
 	describe('createAbortableQuery', () => {
@@ -1017,7 +998,6 @@ describe('QueryRunner', () => {
 			expect(buildSpy).toHaveBeenCalledTimes(2);
 			expect(mockSession.sdkSessionId).toBe('sdk-session-id');
 			expect(mockSession.sdkOriginPath).toBe(mockSession.workspacePath);
-			expect(mockSession.metadata.compactionSummary).toBeUndefined();
 			expect(updateSessionSpy).not.toHaveBeenCalledWith(
 				'test-session-id',
 				expect.objectContaining({

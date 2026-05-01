@@ -271,7 +271,6 @@ describe('QueryOptionsBuilder', () => {
 
 			expect(result.resume).toBe('sdk-session-valid');
 			expect(result.resumeSessionAt).toBeUndefined();
-			expect(mockSession.metadata.compactionSummary).toBeUndefined();
 			expect(updateSessionSpy).not.toHaveBeenCalled();
 		});
 
@@ -332,21 +331,6 @@ describe('QueryOptionsBuilder', () => {
 			});
 		});
 
-		it('should append carried compaction summary to Claude Code preset', async () => {
-			mockSession.metadata.compactionSummary = 'The user was debugging rewind recovery.';
-			const options = await builder.build();
-
-			expect(options.systemPrompt).toEqual(
-				expect.objectContaining({
-					type: 'preset',
-					preset: 'claude_code',
-					append: expect.stringContaining(
-						'[Previous conversation summary - context was reset due to SDK compaction]\nThe user was debugging rewind recovery.'
-					),
-				})
-			);
-		});
-
 		it('should append worktree isolation text when worktree exists', async () => {
 			mockSession.worktree = {
 				worktreePath: '/worktree/path',
@@ -373,17 +357,6 @@ describe('QueryOptionsBuilder', () => {
 			const options = await builder.build();
 
 			expect(options.systemPrompt).toBe('Custom system prompt');
-		});
-
-		it('should append carried compaction summary to custom string system prompt', async () => {
-			mockSession.config.systemPrompt = 'Custom system prompt';
-			mockSession.metadata.compactionSummary = 'Compact summary text';
-			const options = await builder.build();
-
-			expect(options.systemPrompt).toContain('Custom system prompt');
-			expect(options.systemPrompt).toContain(
-				'[Previous conversation summary - context was reset due to SDK compaction]\nCompact summary text'
-			);
 		});
 
 		it('should combine custom prompt with worktree isolation', async () => {

@@ -960,24 +960,6 @@ export class QueryRunner {
 		// Delegate to callback
 		await this.ctx.onSDKMessage(message);
 		await this.ctx.onMarkApiSuccess();
-		await this.clearCompactionSummaryAfterCarry();
-	}
-
-	private async clearCompactionSummaryAfterCarry(): Promise<void> {
-		const { session, db, logger } = this.ctx;
-		if (!session.metadata.compactionSummary || this.ctx.isCleaningUp()) {
-			return;
-		}
-
-		delete session.metadata.compactionSummary;
-		try {
-			db.updateSession(session.id, { metadata: session.metadata });
-		} catch (error) {
-			logger.warn(
-				`Failed to clear carried compaction summary for session ${session.id}: ` +
-					`${error instanceof Error ? error.message : String(error)}`
-			);
-		}
 	}
 
 	/**

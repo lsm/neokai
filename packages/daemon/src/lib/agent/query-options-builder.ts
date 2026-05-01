@@ -84,7 +84,6 @@ export interface QueryOptionsBuilderContext {
 	readonly settingsManager: SettingsManager;
 	readonly db?: Database;
 	consumePendingResumeSessionAt?(): string | undefined;
-	readonly logger?: Pick<import('../logger').Logger, 'info' | 'warn'>;
 	/** Skills manager for injecting plugin/MCP server skills into SDK options. Optional for backwards compatibility. */
 	readonly skillsManager?: SkillsManager;
 	/** App MCP server repo for resolving mcp_server skill configs. Optional for backwards compatibility. */
@@ -528,7 +527,6 @@ export class QueryOptionsBuilder {
 	 */
 	private buildSystemPrompt(): Options['systemPrompt'] {
 		const config = this.ctx.session.config;
-		const compactionSummaryText = this.getCompactionSummaryAppendText();
 
 		// Priority 1: Check if SDKConfig systemPrompt is explicitly set
 		if (config.systemPrompt !== undefined) {
@@ -546,7 +544,6 @@ export class QueryOptionsBuilder {
 			};
 
 			const append = this.joinSystemPromptAppendParts([
-				compactionSummaryText,
 				this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
 			]);
 			if (append) {
@@ -559,14 +556,7 @@ export class QueryOptionsBuilder {
 		// No Claude Code preset - use minimal system prompt or undefined
 		// When worktree is used, still append isolation instructions
 		if (this.ctx.session.worktree) {
-			return this.joinSystemPromptAppendParts([
-				compactionSummaryText,
-				this.getMinimalWorktreePrompt(),
-			]);
-		}
-
-		if (compactionSummaryText) {
-			return compactionSummaryText;
+			return this.joinSystemPromptAppendParts([this.getMinimalWorktreePrompt()]);
 		}
 
 		// If no worktree, systemPromptConfig remains undefined (SDK default behavior)
@@ -579,13 +569,10 @@ export class QueryOptionsBuilder {
 	 * Handles both custom string prompts and Claude Code preset configuration
 	 */
 	private buildCustomSystemPrompt(systemPrompt: SystemPromptConfig): Options['systemPrompt'] {
-		const compactionSummaryText = this.getCompactionSummaryAppendText();
-
 		// Custom string prompt
 		if (typeof systemPrompt === 'string') {
 			return this.joinSystemPromptAppendParts([
 				systemPrompt,
-				compactionSummaryText,
 				this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
 			]);
 		}
@@ -599,7 +586,6 @@ export class QueryOptionsBuilder {
 
 			const append = this.joinSystemPromptAppendParts([
 				systemPrompt.append,
-				compactionSummaryText,
 				this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
 			]);
 			if (append) {
@@ -611,15 +597,6 @@ export class QueryOptionsBuilder {
 
 		// Unknown format - return as-is
 		return undefined;
-	}
-
-	private getCompactionSummaryAppendText(): string | undefined {
-		const summary = this.ctx.session.metadata.compactionSummary?.trim();
-		if (!summary) {
-			return undefined;
-		}
-
-		return `[Previous conversation summary - context was reset due to SDK compaction]\n${summary}`;
 	}
 
 	private joinSystemPromptAppendParts(parts: Array<string | undefined>): string {
