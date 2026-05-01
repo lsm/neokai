@@ -78,7 +78,7 @@ export type SettingsSection =
 	| 'providers'
 	| 'app-mcp-servers'
 	| 'skills'
-	| 'fallback-models'
+	| 'models'
 	| 'neo'
 	| 'usage'
 	| 'about';

@@ -703,25 +703,23 @@ export function setupSessionHandlers(
 		return { success: true, thinkingLevel };
 	});
 
-	// Handle listing available models - uses hardcoded model list
+	// Handle listing available models
 	messageHub.onRequest('models.list', async (data) => {
 		try {
-			// Import model service for dynamic models (with static fallback)
-			const { getAvailableModels } = await import('../model-service');
+			const { getAvailableModels, refreshModels } = await import('../model-service');
 
-			// Check if forceRefresh is requested or useCache is disabled
 			const params = data as {
 				forceRefresh?: boolean;
 				useCache?: boolean;
 			};
 			const forceRefresh = params?.forceRefresh ?? params?.useCache === false;
 
-			// Get models from cache (uses 'global' cache key)
-			// This will return dynamic models if they were loaded, otherwise static fallback
-			// NOTE: Returns ALL available models from ALL providers for cross-provider switching
+			if (forceRefresh) {
+				await refreshModels();
+			}
+
 			const availableModels = getAvailableModels('global');
 
-			// Return models in the expected format
 			return {
 				models: availableModels.map((m) => ({
 					id: m.id,
@@ -733,12 +731,10 @@ export function setupSessionHandlers(
 					context_window: m.contextWindow,
 					type: 'model' as const,
 				})),
-				// If forceRefresh is true, indicate that this is a fresh fetch
 				cached: !forceRefresh,
 			};
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
-			// Model listing failed - throw error to caller
 			throw new Error(`Failed to list models: ${errorMessage}`);
 		}
 	});
