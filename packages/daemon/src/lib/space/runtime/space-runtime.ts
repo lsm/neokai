@@ -29,7 +29,7 @@ import type {
 	UpdateSpaceTaskParams,
 	WorkflowChannel,
 } from '@neokai/shared';
-import { computeGateDefaults, resolveNodeAgents } from '@neokai/shared';
+import { computeGateDefaults, isChannelCyclic, resolveNodeAgents } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -46,6 +46,7 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
 import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
+import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
 import { CompletionDetector } from './completion-detector';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
@@ -64,6 +65,7 @@ import { resolveTimeoutForExecution } from './resolve-node-timeout';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import { evaluateGate } from './gate-evaluator';
 import { executeGateScript } from './gate-script-executor';
+import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 
 const log = new Logger('space-runtime');
 
@@ -1554,15 +1556,51 @@ export class SpaceRuntime {
 		if (channels.length === 0) return false;
 
 		const nodeByName = new Map(workflow.nodes.map((node) => [node.name, node]));
+		const idleExecutions = executions.filter((execution) => execution.status === 'idle');
+		const idleNodeIds = new Set(idleExecutions.map((execution) => execution.workflowNodeId));
+		const candidateSourceNodeIds = new Set<string>();
+		for (const execution of idleExecutions) {
+			const node = workflow.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
+			if (!node) continue;
+			for (const channel of channels) {
+				if (channel.from !== '*' && channel.from !== node.name) continue;
+				for (const targetName of this.resolveRestartRecoveryTargetNames(
+					channel,
+					workflow,
+					node.name
+				)) {
+					const targetNode = nodeByName.get(targetName);
+					if (
+						!targetNode ||
+						!idleNodeIds.has(targetNode.id) ||
+						targetNode.id === workflow.endNodeId
+					) {
+						candidateSourceNodeIds.add(node.id);
+					}
+				}
+			}
+		}
+		const sourceExecutions = idleExecutions.filter((execution) =>
+			candidateSourceNodeIds.has(execution.workflowNodeId)
+		);
 		const createdOrReset: string[] = [];
 		const blockedGateReasons: string[] = [];
 
-		for (const sourceExecution of executions) {
-			if (sourceExecution.status !== 'idle') continue;
+		for (const sourceExecution of sourceExecutions) {
 			const sourceNode = workflow.nodes.find((node) => node.id === sourceExecution.workflowNodeId);
 			if (!sourceNode) continue;
-			for (const channel of channels) {
+			for (const [channelIndex, channel] of channels.entries()) {
 				if (channel.from !== '*' && channel.from !== sourceNode.name) continue;
+				const cycleResult = this.evaluateRestartRecoveryCycle(
+					run.id,
+					workflow,
+					channel,
+					channelIndex
+				);
+				if (!cycleResult.open) {
+					blockedGateReasons.push(cycleResult.reason);
+					continue;
+				}
 				const targetNames = this.resolveRestartRecoveryTargetNames(
 					channel,
 					workflow,
@@ -1645,6 +1683,27 @@ export class SpaceRuntime {
 		return false;
 	}
 
+	private evaluateRestartRecoveryCycle(
+		runId: string,
+		workflow: SpaceWorkflow,
+		channel: WorkflowChannel,
+		channelIndex: number
+	): { open: true } | { open: false; reason: string } {
+		if (!isChannelCyclic(channelIndex, workflow.channels ?? [], workflow.nodes)) {
+			return { open: true };
+		}
+		const maxCycles = channel.maxCycles ?? 5;
+		const cycleRepo = new ChannelCycleRepository(this.config.db);
+		const record = cycleRepo.get(runId, channelIndex);
+		if (record && record.count >= maxCycles) {
+			return {
+				open: false,
+				reason: `Cyclic channel "${channel.id ?? channelIndex}" has reached the maximum cycle count (${maxCycles}). Increase maxCycles to allow more cycles.`,
+			};
+		}
+		return { open: true };
+	}
+
 	private resolveRestartRecoveryTargetNames(
 		channel: WorkflowChannel,
 		workflow: SpaceWorkflow,
@@ -1663,24 +1722,29 @@ export class SpaceRuntime {
 		channel: WorkflowChannel
 	): Promise<{ open: boolean; reason?: string }> {
 		if (!channel.gateId) return { open: true };
-		const gate = (workflow.gates ?? []).find((candidate) => candidate.id === channel.gateId);
-		if (!gate) {
+		const storedGate = (workflow.gates ?? []).find((candidate) => candidate.id === channel.gateId);
+		if (!storedGate) {
 			return {
 				open: false,
 				reason: `Gate "${channel.gateId}" not found — channel "${channel.id}" is closed (misconfiguration)`,
 			};
 		}
+		let gate = storedGate;
+		if (workflow.templateName && storedGate.script) {
+			const liveScript = getBuiltInGateScript(workflow.templateName, storedGate.id);
+			if (liveScript) gate = { ...storedGate, script: liveScript };
+		}
 		const gateDataRepo = new GateDataRepository(this.config.db);
 		const runtimeData =
 			gateDataRepo.get(runId, gate.id)?.data ?? computeGateDefaults(gate.fields ?? []);
+		const run = this.config.workflowRunRepo.getRun(runId);
+		const space = await this.config.spaceManager.getSpace(workflow.spaceId);
 		const result = await evaluateGate(gate, runtimeData, executeGateScript, {
-			workspacePath: process.cwd(),
+			workspacePath: space?.workspacePath ?? process.cwd(),
 			gateId: gate.id,
 			runId,
 			gateData: runtimeData,
-			workflowStartIso: this.config.workflowRunRepo.getRun(runId)
-				? new Date(this.config.workflowRunRepo.getRun(runId)!.createdAt).toISOString()
-				: undefined,
+			workflowStartIso: run ? new Date(run.createdAt).toISOString() : undefined,
 		});
 		return { open: result.open, reason: result.reason };
 	}
