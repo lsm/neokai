@@ -2,110 +2,123 @@
 /**
  * Tests for ConnectionOverlay component
  *
- * Verifies that the overlay:
- * - Only shows for 'failed' state (not 'disconnected', 'error', 'connecting', 'reconnecting')
- * - Prevents flashing during auto-reconnect cycles (Safari background tab resume)
+ * Tests the banner visibility logic (getBannerLevel) directly.
+ * The component renders a non-blocking inline banner, not a full-page modal.
+ *
+ * Progression:
+ * - connected/connecting → hidden
+ * - reconnecting (attempts ≤ 2) → "Reconnecting…"
+ * - disconnected/error / reconnecting (attempts > 2) → "Connection lost. Retrying…"
+ * - failed → "Unable to reconnect." + Retry button
  */
 
-import { connectionState } from '../../lib/state';
 import type { ConnectionState } from '@neokai/shared';
 
 /**
- * Helper function that mirrors the ConnectionOverlay logic
- * Tests the shouldShowOverlay condition directly
+ * Mirrors the getBannerLevel logic from ConnectionOverlay.tsx
  */
-function shouldShowOverlay(state: ConnectionState): boolean {
-	return state === 'failed';
+type BannerLevel = 'hidden' | 'reconnecting' | 'lost' | 'failed';
+
+function getBannerLevel(state: ConnectionState, attempts: number): BannerLevel {
+	if (state === 'connected' || state === 'connecting') return 'hidden';
+	if (state === 'reconnecting') return attempts <= 2 ? 'reconnecting' : 'lost';
+	if (state === 'disconnected' || state === 'error') return 'lost';
+	if (state === 'failed') return 'failed';
+	return 'hidden';
 }
 
-describe('ConnectionOverlay - shouldShowOverlay logic', () => {
-	// Store original state value
-	let originalState: ConnectionState;
-
-	beforeEach(() => {
-		originalState = connectionState.value;
-	});
-
-	afterEach(() => {
-		connectionState.value = originalState;
-	});
-
-	describe('States that should NOT show overlay (transient during auto-reconnect)', () => {
-		it('should NOT show overlay for "disconnected" state', () => {
-			// 'disconnected' is a transient state during auto-reconnect
-			expect(shouldShowOverlay('disconnected')).toBe(false);
+describe('ConnectionOverlay - getBannerLevel logic', () => {
+	describe('States that should be hidden', () => {
+		it('should be hidden when connected', () => {
+			expect(getBannerLevel('connected', 0)).toBe('hidden');
 		});
 
-		it('should NOT show overlay for "error" state', () => {
-			// 'error' is a transient state during auto-reconnect
-			expect(shouldShowOverlay('error')).toBe(false);
-		});
-
-		it('should NOT show overlay for "connecting" state', () => {
-			expect(shouldShowOverlay('connecting')).toBe(false);
-		});
-
-		it('should NOT show overlay for "reconnecting" state', () => {
-			expect(shouldShowOverlay('reconnecting')).toBe(false);
-		});
-
-		it('should NOT show overlay for "connected" state', () => {
-			expect(shouldShowOverlay('connected')).toBe(false);
+		it('should be hidden when connecting (initial load)', () => {
+			expect(getBannerLevel('connecting', 0)).toBe('hidden');
 		});
 	});
 
-	describe('States that SHOULD show overlay (permanent failure)', () => {
-		it('should show overlay for "failed" state', () => {
-			// 'failed' means all auto-reconnect attempts exhausted
-			expect(shouldShowOverlay('failed')).toBe(true);
+	describe('Reconnecting progression', () => {
+		it('should show reconnecting level on first attempt', () => {
+			expect(getBannerLevel('reconnecting', 1)).toBe('reconnecting');
+		});
+
+		it('should show reconnecting level on second attempt', () => {
+			expect(getBannerLevel('reconnecting', 2)).toBe('reconnecting');
+		});
+
+		it('should escalate to lost level on third attempt', () => {
+			expect(getBannerLevel('reconnecting', 3)).toBe('lost');
+		});
+
+		it('should escalate to lost level on higher attempts', () => {
+			expect(getBannerLevel('reconnecting', 5)).toBe('lost');
+			expect(getBannerLevel('reconnecting', 10)).toBe('lost');
 		});
 	});
 
-	describe('Safari background tab scenario', () => {
-		it('should not flash overlay during auto-reconnect cycle', () => {
-			// This test simulates the Safari background tab resume scenario
-			// where connection state rapidly cycles through states
+	describe('Connection lost states', () => {
+		it('should show lost level for disconnected', () => {
+			expect(getBannerLevel('disconnected', 0)).toBe('lost');
+		});
 
-			const states: ConnectionState[] = [
-				'disconnected', // Initial disconnect
-				'reconnecting', // Auto-reconnect starts
-				'connecting', // Attempting connection
-				'error', // First attempt fails
-				'reconnecting', // Retry
-				'connecting', // Second attempt
-				'connected', // Success!
+		it('should show lost level for error', () => {
+			expect(getBannerLevel('error', 0)).toBe('lost');
+		});
+	});
+
+	describe('Failed state', () => {
+		it('should show failed level', () => {
+			expect(getBannerLevel('failed', 10)).toBe('failed');
+		});
+	});
+
+	describe('Full state progression', () => {
+		it('should follow: hidden → reconnecting → lost → failed', () => {
+			// 1. Connected
+			expect(getBannerLevel('connected', 0)).toBe('hidden');
+
+			// 2. First reconnect attempt
+			expect(getBannerLevel('reconnecting', 1)).toBe('reconnecting');
+
+			// 3. Multiple failures
+			expect(getBannerLevel('reconnecting', 4)).toBe('lost');
+
+			// 4. Connection temporarily drops to disconnected
+			expect(getBannerLevel('disconnected', 5)).toBe('lost');
+
+			// 5. All retries exhausted
+			expect(getBannerLevel('failed', 10)).toBe('failed');
+
+			// 6. Reconnected!
+			expect(getBannerLevel('connected', 0)).toBe('hidden');
+		});
+	});
+
+	describe('Non-blocking behavior verification', () => {
+		it('should never show "hidden" for non-connected states', () => {
+			const nonConnectedStates: ConnectionState[] = [
+				'disconnected',
+				'error',
+				'reconnecting',
+				'failed',
 			];
 
-			// None of these transient states should show the overlay
-			for (const state of states) {
-				expect(shouldShowOverlay(state)).toBe(false);
+			for (const state of nonConnectedStates) {
+				expect(getBannerLevel(state, 1)).not.toBe('hidden');
 			}
 		});
 
-		it('should show overlay only after all auto-reconnect attempts fail', () => {
-			// Simulate all 10 reconnect attempts failing
-			const states: ConnectionState[] = [
-				'disconnected',
-				'reconnecting',
-				'connecting',
-				'error', // Attempt 1 fails
-				'reconnecting',
-				'connecting',
-				'error', // Attempt 2 fails
-				// ... (attempts 3-9)
-				'reconnecting',
-				'connecting',
-				'error', // Attempt 10 fails
-				'failed', // All attempts exhausted - NOW show overlay
+		it('should never show "failed" for transient states', () => {
+			const transientStates: Array<{ state: ConnectionState; attempts: number }> = [
+				{ state: 'reconnecting', attempts: 1 },
+				{ state: 'reconnecting', attempts: 5 },
+				{ state: 'disconnected', attempts: 0 },
+				{ state: 'error', attempts: 0 },
 			];
 
-			// All states except 'failed' should NOT show overlay
-			for (const state of states) {
-				if (state === 'failed') {
-					expect(shouldShowOverlay(state)).toBe(true);
-				} else {
-					expect(shouldShowOverlay(state)).toBe(false);
-				}
+			for (const { state, attempts } of transientStates) {
+				expect(getBannerLevel(state, attempts)).not.toBe('failed');
 			}
 		});
 	});

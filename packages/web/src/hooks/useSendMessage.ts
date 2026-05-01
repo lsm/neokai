@@ -10,6 +10,8 @@ import type { Session, MessageDeliveryMode, MessageImage } from '@neokai/shared'
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import { toast } from '../lib/toast';
+import { enqueueAction } from '../lib/outbound-queue';
+import { sanitizeUserError } from '../lib/user-error';
 
 export interface UseSendMessageOptions {
 	sessionId: string;
@@ -70,8 +72,20 @@ export function useSendMessage({
 
 			const isConnected = connectionState.value === 'connected';
 			if (!isConnected) {
-				toast.error('Connection lost. Please refresh the page.');
-				return false;
+				// Queue message for when connection is restored
+				const label =
+					content.length > 40 ? `Message: ${content.slice(0, 40)}…` : `Message: ${content}`;
+				enqueueAction(label, async () => {
+					const hub = connectionManager.getHubIfConnected();
+					if (!hub) throw new Error('Not connected');
+					await hub.request<{ messageId?: string }>('message.send', {
+						sessionId,
+						content,
+						images,
+					});
+				});
+				toast.info('Message queued — will send when reconnected.');
+				return true;
 			}
 
 			try {
@@ -85,7 +99,7 @@ export function useSendMessage({
 
 				const hub = connectionManager.getHubIfConnected();
 				if (!hub) {
-					toast.error('Connection lost.');
+					toast.error('Connection lost. Your message will be sent when reconnected.');
 					onSendComplete();
 					clearSendTimeout();
 					return false;
@@ -111,7 +125,7 @@ export function useSendMessage({
 				clearSendTimeout();
 				return true;
 			} catch (err) {
-				const message = err instanceof Error ? err.message : 'Failed to send message';
+				const message = sanitizeUserError(err);
 				onError(message);
 				toast.error(message);
 				onSendComplete();

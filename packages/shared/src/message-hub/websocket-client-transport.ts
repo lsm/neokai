@@ -272,6 +272,13 @@ export class WebSocketClientTransport implements IMessageTransport {
 	}
 
 	/**
+	 * Get current reconnect attempt count (for UI status progression)
+	 */
+	getReconnectAttempts(): number {
+		return this.reconnectAttempts;
+	}
+
+	/**
 	 * Reset reconnection state to allow fresh reconnection attempts
 	 * Used when user manually triggers reconnect or returns from background
 	 */
