@@ -314,16 +314,8 @@ export class SDKMessageHandler {
 			.getMessagesByStatus(session.id, 'enqueued')
 			.filter((enqueued) => isSDKUserMessage(enqueued));
 
-		if (enqueuedUsers.length > 0) {
-			this.withDbChangeBatch(() => {
-				db.updateMessageStatus(
-					enqueuedUsers.map((enqueuedUser) => enqueuedUser.dbId),
-					'consumed'
-				);
-			});
-		}
-
 		for (const enqueuedUser of enqueuedUsers) {
+			db.updateMessageStatus([enqueuedUser.dbId], 'consumed');
 			// Don't update timestamp here — keep the original T1 timestamp
 			// since we don't know the exact T_consumed for these edge cases.
 			// The original timestamp (when user consumed it) is a better approximation
