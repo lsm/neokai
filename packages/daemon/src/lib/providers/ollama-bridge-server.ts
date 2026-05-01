@@ -1,0 +1,342 @@
+import {
+	type AnthropicContentBlockText,
+	type AnthropicContentBlockToolResult,
+	type AnthropicRequest,
+	contentBlockStartTextSSE,
+	contentBlockStopSSE,
+	errorSSE,
+	messageDeltaSSE,
+	messageStartSSE,
+	messageStopSSE,
+	textDeltaSSE,
+} from './codex-anthropic-bridge/translator.js';
+import { createAnthropicErrorBody, type AnthropicErrorType } from './shared/error-envelope.js';
+import { Logger } from '../logger.js';
+
+const logger = new Logger('ollama-bridge-server');
+
+export type OllamaBridgeServer = {
+	port: number;
+	stop(): void;
+};
+
+export type OllamaBridgeConfig = {
+	baseUrl: string;
+	apiKey?: string;
+	fetchImpl?: typeof fetch;
+};
+
+type OllamaChatMessage = {
+	role: 'system' | 'user' | 'assistant' | 'tool';
+	content: string;
+	tool_name?: string;
+};
+
+type OllamaTool = {
+	type: 'function';
+	function: {
+		name: string;
+		description?: string;
+		parameters: Record<string, unknown>;
+	};
+};
+
+type OllamaChatRequest = {
+	model: string;
+	messages: OllamaChatMessage[];
+	tools?: OllamaTool[];
+	stream: true;
+	options?: {
+		num_predict?: number;
+	};
+};
+
+type OllamaChatChunk = {
+	model?: string;
+	created_at?: string;
+	message?: {
+		role?: string;
+		content?: string;
+		tool_calls?: Array<{
+			function?: { name?: string; arguments?: Record<string, unknown> | string };
+		}>;
+	};
+	done?: boolean;
+	done_reason?: string;
+	prompt_eval_count?: number;
+	eval_count?: number;
+	error?: string;
+};
+
+function sendJsonError(status: number, type: AnthropicErrorType, message: string): Response {
+	return new Response(createAnthropicErrorBody(type, message), {
+		status,
+		headers: { 'Content-Type': 'application/json' },
+	});
+}
+
+function mapStatusToAnthropicError(status: number): AnthropicErrorType {
+	if (status === 401 || status === 403) return 'authentication_error';
+	if (status === 404) return 'not_found_error';
+	if (status >= 500) return 'api_error';
+	return 'invalid_request_error';
+}
+
+function estimateTokens(text: string): number {
+	return Math.max(1, Math.ceil(text.length / 4));
+}
+
+function extractText(content: string | AnthropicRequest['messages'][number]['content']): string {
+	if (typeof content === 'string') return content;
+	return content
+		.map((block) => {
+			if (block.type === 'text') return (block as AnthropicContentBlockText).text;
+			if (block.type === 'tool_result') {
+				const toolResult = block as AnthropicContentBlockToolResult;
+				if (typeof toolResult.content === 'string') return toolResult.content;
+				return toolResult.content.map((part) => part.text).join('');
+			}
+			if (block.type === 'tool_use') return JSON.stringify(block.input);
+			return '';
+		})
+		.filter(Boolean)
+		.join('\n');
+}
+
+function extractSystemText(system: AnthropicRequest['system'] | undefined): string {
+	if (!system) return '';
+	if (typeof system === 'string') return system;
+	return system.map((block) => block.text).join('\n');
+}
+
+function buildOllamaRequest(body: AnthropicRequest): OllamaChatRequest {
+	const messages: OllamaChatMessage[] = [];
+	const system = extractSystemText(body.system);
+	if (system) messages.push({ role: 'system', content: system });
+	for (const message of body.messages) {
+		messages.push({ role: message.role, content: extractText(message.content) });
+	}
+
+	const request: OllamaChatRequest = {
+		model: body.model,
+		messages,
+		stream: true,
+	};
+	if (body.max_tokens && body.max_tokens > 0) {
+		request.options = { num_predict: body.max_tokens };
+	}
+	if (body.tools && body.tools.length > 0) {
+		request.tools = body.tools.map((tool) => ({
+			type: 'function',
+			function: {
+				name: tool.name,
+				description: tool.description,
+				parameters: tool.input_schema,
+			},
+		}));
+	}
+	return request;
+}
+
+function parseJsonLine(line: string): OllamaChatChunk | null {
+	const trimmed = line.trim();
+	if (!trimmed) return null;
+	try {
+		return JSON.parse(trimmed) as OllamaChatChunk;
+	} catch {
+		logger.warn(`ollama bridge: ignoring malformed stream line: ${trimmed.slice(0, 120)}`);
+		return null;
+	}
+}
+
+async function streamOllamaToAnthropic(params: {
+	ollamaResponse: Response;
+	controller: ReadableStreamDefaultController<Uint8Array>;
+	model: string;
+	inputTokens: number;
+}): Promise<void> {
+	const { ollamaResponse, controller, model, inputTokens } = params;
+	const encoder = new TextEncoder();
+	const send = (chunk: string) => controller.enqueue(encoder.encode(chunk));
+	let outputText = '';
+	let startedText = false;
+	let finalPromptTokens: number | undefined;
+	let finalOutputTokens: number | undefined;
+
+	try {
+		send(
+			messageStartSSE(`msg_ollama_${Math.random().toString(36).slice(2, 12)}`, model, inputTokens)
+		);
+		const reader = ollamaResponse.body?.getReader();
+		if (!reader) throw new Error('Ollama response did not include a stream body');
+		const decoder = new TextDecoder();
+		let buffer = '';
+
+		while (true) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			buffer += decoder.decode(value, { stream: true });
+			const lines = buffer.split(/\r?\n/);
+			buffer = lines.pop() ?? '';
+			for (const line of lines) {
+				const chunk = parseJsonLine(line);
+				if (!chunk) continue;
+				if (chunk.error) throw new Error(chunk.error);
+				const text = chunk.message?.content ?? '';
+				if (text) {
+					if (!startedText) {
+						send(contentBlockStartTextSSE(0));
+						startedText = true;
+					}
+					outputText += text;
+					send(textDeltaSSE(0, text));
+				}
+				if (chunk.done) {
+					finalPromptTokens = chunk.prompt_eval_count;
+					finalOutputTokens = chunk.eval_count;
+				}
+			}
+		}
+		const tail = parseJsonLine(buffer);
+		if (tail) {
+			if (tail.error) throw new Error(tail.error);
+			const text = tail.message?.content ?? '';
+			if (text) {
+				if (!startedText) {
+					send(contentBlockStartTextSSE(0));
+					startedText = true;
+				}
+				outputText += text;
+				send(textDeltaSSE(0, text));
+			}
+			if (tail.done) {
+				finalPromptTokens = tail.prompt_eval_count;
+				finalOutputTokens = tail.eval_count;
+			}
+		}
+		if (!startedText) send(contentBlockStartTextSSE(0));
+		send(contentBlockStopSSE(0));
+		send(
+			messageDeltaSSE('end_turn', {
+				inputTokens: finalPromptTokens ?? inputTokens,
+				outputTokens: finalOutputTokens ?? estimateTokens(outputText),
+			})
+		);
+		send(messageStopSSE());
+	} catch (error) {
+		send(errorSSE('api_error', error instanceof Error ? error.message : 'Ollama stream failed'));
+	} finally {
+		controller.close();
+	}
+}
+
+export function createOllamaAnthropicBridgeServer(config: OllamaBridgeConfig): OllamaBridgeServer {
+	const fetchImpl = config.fetchImpl ?? fetch;
+	const baseUrl = config.baseUrl.replace(/\/$/, '');
+	const server = Bun.serve({
+		port: 0,
+		idleTimeout: 0,
+		async fetch(req: Request): Promise<Response> {
+			const url = new URL(req.url);
+			if (url.pathname === '/health' || url.pathname === '/v1/health') return new Response('ok');
+			if (url.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
+				try {
+					const body = (await req.json()) as AnthropicRequest;
+					const input = [
+						extractSystemText(body.system),
+						...body.messages.map((m) => extractText(m.content)),
+					]
+						.filter(Boolean)
+						.join('\n');
+					return new Response(JSON.stringify({ input_tokens: estimateTokens(input) }), {
+						headers: { 'Content-Type': 'application/json' },
+					});
+				} catch {
+					return sendJsonError(400, 'invalid_request_error', 'Bad Request');
+				}
+			}
+			if (url.pathname !== '/v1/messages' || req.method !== 'POST') {
+				return sendJsonError(501, 'api_error', 'Not implemented');
+			}
+
+			let body: AnthropicRequest;
+			try {
+				body = (await req.json()) as AnthropicRequest;
+			} catch {
+				return sendJsonError(400, 'invalid_request_error', 'Bad Request: invalid JSON');
+			}
+			if (!body.model || !Array.isArray(body.messages)) {
+				return sendJsonError(
+					400,
+					'invalid_request_error',
+					'Missing required fields: model and messages'
+				);
+			}
+			if (body.stream === false) {
+				return sendJsonError(
+					400,
+					'invalid_request_error',
+					'Only streaming responses are supported'
+				);
+			}
+
+			const requestBody = buildOllamaRequest(body);
+			const inputTokens = estimateTokens(
+				requestBody.messages
+					.map((message) => message.content)
+					.filter(Boolean)
+					.join('\n')
+			);
+			let ollamaResponse: Response;
+			try {
+				ollamaResponse = await fetchImpl(`${baseUrl}/api/chat`, {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+					},
+					body: JSON.stringify(requestBody),
+				});
+			} catch (error) {
+				return sendJsonError(
+					502,
+					'api_error',
+					error instanceof Error ? error.message : 'Ollama API request failed'
+				);
+			}
+			if (!ollamaResponse.ok) {
+				const text = await ollamaResponse.text();
+				return sendJsonError(
+					ollamaResponse.status,
+					mapStatusToAnthropicError(ollamaResponse.status),
+					text || `Ollama API returned HTTP ${ollamaResponse.status}`
+				);
+			}
+
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					void streamOllamaToAnthropic({
+						ollamaResponse,
+						controller,
+						model: body.model,
+						inputTokens,
+					});
+				},
+			});
+			return new Response(stream, {
+				headers: {
+					'Content-Type': 'text/event-stream',
+					'Cache-Control': 'no-cache',
+					Connection: 'keep-alive',
+				},
+			});
+		},
+	});
+	const port = server.port;
+	if (typeof port !== 'number') throw new Error('Ollama bridge server did not bind to a TCP port');
+	logger.info(`ollama bridge: HTTP server listening on port ${port}`);
+	return {
+		port,
+		stop: () => server.stop(true),
+	};
+}

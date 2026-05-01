@@ -1,0 +1,266 @@
+import type {
+	ModelTier,
+	Provider,
+	ProviderAuthStatusInfo,
+	ProviderCapabilities,
+	ProviderSdkConfig,
+	ProviderSessionConfig,
+} from '@neokai/shared/provider';
+import type { ModelInfo } from '@neokai/shared';
+import {
+	createOllamaAnthropicBridgeServer,
+	type OllamaBridgeServer,
+} from './ollama-bridge-server.js';
+
+type OllamaProviderKind = 'local' | 'cloud';
+
+interface OllamaTagsResponse {
+	models?: Array<{
+		name?: string;
+		model?: string;
+		modified_at?: string;
+		size?: number;
+		digest?: string;
+		details?: {
+			family?: string;
+			families?: string[];
+			parameter_size?: string;
+			quantization_level?: string;
+		};
+	}>;
+}
+
+interface OllamaProviderOptions {
+	kind: OllamaProviderKind;
+	env?: NodeJS.ProcessEnv;
+	fetchImpl?: typeof fetch;
+}
+
+function normalizeBaseUrl(url: string): string {
+	return url.trim().replace(/\/$/, '');
+}
+
+function modelAlias(modelId: string): string {
+	return modelId
+		.replace(/:latest$/, '')
+		.replace(/[^a-z0-9._-]+/gi, '-')
+		.toLowerCase();
+}
+
+function familyFromModel(modelId: string, family?: string): string {
+	if (family) return family;
+	const id = modelId.toLowerCase();
+	if (id.includes('llama')) return 'llama';
+	if (id.includes('qwen')) return 'qwen';
+	if (id.includes('mistral')) return 'mistral';
+	if (id.includes('gemma')) return 'gemma';
+	if (id.includes('gpt-oss')) return 'gpt-oss';
+	return 'ollama';
+}
+
+export class OllamaProvider implements Provider {
+	readonly id: 'ollama' | 'ollama-cloud';
+	readonly displayName: string;
+	readonly capabilities: ProviderCapabilities = {
+		streaming: true,
+		extendedThinking: false,
+		maxContextWindow: 128000,
+		functionCalling: true,
+		vision: true,
+	};
+
+	static readonly LOCAL_BASE_URL = 'http://localhost:11434';
+	static readonly CLOUD_BASE_URL = 'https://ollama.com';
+	static readonly DEFAULT_LOCAL_MODEL = 'llama3.2';
+	static readonly DEFAULT_CLOUD_MODEL = 'gpt-oss:120b-cloud';
+
+	private readonly env: NodeJS.ProcessEnv;
+	private readonly fetchImpl: typeof fetch;
+	private readonly kind: OllamaProviderKind;
+	private modelCache: ModelInfo[] | null = null;
+	private lastAuthError: string | undefined;
+	private bridgeServer: OllamaBridgeServer | null = null;
+	private bridgeKey: string | null = null;
+
+	constructor(options: OllamaProviderOptions) {
+		this.kind = options.kind;
+		this.env = options.env ?? process.env;
+		this.fetchImpl = options.fetchImpl ?? fetch;
+		this.id = options.kind === 'cloud' ? 'ollama-cloud' : 'ollama';
+		this.displayName = options.kind === 'cloud' ? 'Ollama Cloud' : 'Ollama (Local)';
+	}
+
+	isAvailable(): boolean {
+		if (this.kind === 'cloud') return !!this.getApiKey();
+		return true;
+	}
+
+	getApiKey(): string | undefined {
+		const apiKey = this.kind === 'cloud' ? this.env.OLLAMA_CLOUD_API_KEY : this.env.OLLAMA_API_KEY;
+		return apiKey?.trim() || undefined;
+	}
+
+	getBaseUrl(): string {
+		const envUrl =
+			this.kind === 'cloud' ? this.env.OLLAMA_CLOUD_BASE_URL : this.env.OLLAMA_BASE_URL;
+		return normalizeBaseUrl(
+			envUrl ||
+				(this.kind === 'cloud' ? OllamaProvider.CLOUD_BASE_URL : OllamaProvider.LOCAL_BASE_URL)
+		);
+	}
+
+	async getModels(): Promise<ModelInfo[]> {
+		if (!this.isAvailable()) return [];
+		if (this.modelCache) return this.modelCache;
+		try {
+			const response = await this.fetchImpl(`${this.getBaseUrl()}/api/tags`, {
+				headers: this.getApiKey() ? { Authorization: `Bearer ${this.getApiKey()}` } : undefined,
+			});
+			if (response.status === 401 || response.status === 403) {
+				this.lastAuthError = 'Ollama API key was rejected. Check OLLAMA_CLOUD_API_KEY.';
+				return [];
+			}
+			if (!response.ok) return this.fallbackModels();
+			const body = (await response.json()) as OllamaTagsResponse;
+			const models = (body.models ?? [])
+				.map((model) => this.toModelInfo(model))
+				.filter((model): model is ModelInfo => model !== null);
+			this.modelCache = models.length > 0 ? models : this.fallbackModels();
+			this.lastAuthError = undefined;
+			return this.modelCache;
+		} catch {
+			return this.fallbackModels();
+		}
+	}
+
+	ownsModel(modelId: string): boolean {
+		if (modelId === 'ollama' || modelId === 'ollama-cloud') return true;
+		const id = modelId.toLowerCase();
+		const knownOllamaPrefixes = ['llama', 'qwen', 'mistral', 'gemma', 'phi', 'gpt-oss'];
+		if (this.kind === 'cloud') {
+			return id.endsWith('-cloud') || id.startsWith('gpt-oss:');
+		}
+		return id.includes(':') || knownOllamaPrefixes.some((prefix) => id.startsWith(prefix));
+	}
+
+	getModelForTier(_tier: ModelTier): string | undefined {
+		return this.kind === 'cloud'
+			? OllamaProvider.DEFAULT_CLOUD_MODEL
+			: OllamaProvider.DEFAULT_LOCAL_MODEL;
+	}
+
+	buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
+		const apiKey = sessionConfig?.apiKey || this.getApiKey();
+		if (this.kind === 'cloud' && !apiKey) {
+			throw new Error('Ollama Cloud API key not configured. Set OLLAMA_CLOUD_API_KEY.');
+		}
+		const upstreamBaseUrl = normalizeBaseUrl(
+			sessionConfig?.baseUrl ||
+				this.getBaseUrl() ||
+				(this.kind === 'cloud' ? OllamaProvider.CLOUD_BASE_URL : OllamaProvider.LOCAL_BASE_URL)
+		);
+		const bridge = this.getOrCreateBridge(upstreamBaseUrl, apiKey);
+		const routingModelId =
+			modelId && modelId !== 'default'
+				? modelId
+				: this.kind === 'cloud'
+					? OllamaProvider.DEFAULT_CLOUD_MODEL
+					: OllamaProvider.DEFAULT_LOCAL_MODEL;
+		return {
+			envVars: {
+				ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridge.port}`,
+				ANTHROPIC_AUTH_TOKEN: 'ollama-bridge',
+				ANTHROPIC_API_KEY: '',
+				API_TIMEOUT_MS: '3000000',
+				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+				ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
+				ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,
+				ANTHROPIC_DEFAULT_OPUS_MODEL: routingModelId,
+			},
+			isAnthropicCompatible: true,
+			apiVersion: 'v1',
+		};
+	}
+
+	translateModelIdForSdk(_modelId: string): string {
+		return 'default';
+	}
+
+	async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
+		if (this.kind === 'cloud') {
+			const apiKey = this.getApiKey();
+			return {
+				isAuthenticated: !!apiKey && this.lastAuthError === undefined,
+				method: 'api_key',
+				error: apiKey ? this.lastAuthError : 'Set OLLAMA_CLOUD_API_KEY to enable Ollama Cloud.',
+			};
+		}
+		return {
+			isAuthenticated: true,
+			method: 'api_key',
+			error: undefined,
+		};
+	}
+
+	async shutdown(): Promise<void> {
+		this.bridgeServer?.stop();
+		this.bridgeServer = null;
+		this.bridgeKey = null;
+	}
+
+	private getOrCreateBridge(baseUrl: string, apiKey?: string): OllamaBridgeServer {
+		const key = `${baseUrl}\u0000${apiKey ?? ''}`;
+		if (this.bridgeServer && this.bridgeKey === key) return this.bridgeServer;
+		this.bridgeServer?.stop();
+		this.bridgeServer = createOllamaAnthropicBridgeServer({
+			baseUrl,
+			apiKey,
+			fetchImpl: this.fetchImpl,
+		});
+		this.bridgeKey = key;
+		return this.bridgeServer;
+	}
+
+	private fallbackModels(): ModelInfo[] {
+		const id =
+			this.kind === 'cloud'
+				? OllamaProvider.DEFAULT_CLOUD_MODEL
+				: OllamaProvider.DEFAULT_LOCAL_MODEL;
+		return [
+			{
+				id,
+				name: id,
+				alias: this.kind === 'cloud' ? 'ollama-cloud' : 'ollama',
+				family: familyFromModel(id),
+				provider: this.id,
+				contextWindow: this.capabilities.maxContextWindow,
+				description:
+					this.kind === 'cloud'
+						? 'Default Ollama Cloud model. Configure OLLAMA_CLOUD_API_KEY to load your model list.'
+						: 'Default local Ollama model. Pull models with `ollama pull` to populate the list.',
+				releaseDate: '',
+				available: true,
+			},
+		];
+	}
+
+	private toModelInfo(model: NonNullable<OllamaTagsResponse['models']>[number]): ModelInfo | null {
+		const id = model.model || model.name;
+		if (!id) return null;
+		const details = model.details;
+		const descriptor = [details?.parameter_size, details?.quantization_level]
+			.filter(Boolean)
+			.join(' ');
+		return {
+			id,
+			name: model.name || id,
+			alias: modelAlias(id),
+			family: familyFromModel(id, details?.family),
+			provider: this.id,
+			contextWindow: this.capabilities.maxContextWindow,
+			description: descriptor ? `Ollama ${descriptor}` : `Ollama model ${id}`,
+			releaseDate: model.modified_at ? model.modified_at.slice(0, 10) : '',
+			available: true,
+		};
+	}
+}

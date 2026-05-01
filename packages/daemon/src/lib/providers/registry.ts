@@ -249,6 +249,7 @@ export function resetProviderRegistry(): void {
  *    or early-startup callers where providers are not yet registered):
  *    - `glm-*` → 'glm'
  *    - `minimax-*` → 'minimax'
+ *    - `gpt-oss:*`, `*:*-cloud`, or bare `ollama` → Ollama providers
  *    - OpenRouter provider/model refs (`provider/model`) → 'openrouter'
  *    - `gpt-*` → 'anthropic-codex'
  *    - everything else → 'anthropic'
@@ -264,6 +265,9 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
 	// Static fallback when registry is empty
 	if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
 	if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
+	if (modelId === 'ollama') return 'ollama';
+	if (modelId === 'ollama-cloud' || modelId.endsWith('-cloud')) return 'ollama-cloud';
+	if (modelId.startsWith('gpt-oss:')) return modelId.endsWith('-cloud') ? 'ollama-cloud' : 'ollama';
 	if (modelId === 'openrouter/auto' || (modelId.includes('/') && !modelId.startsWith('claude-')))
 		return 'openrouter';
 	if (modelId.startsWith('gpt-')) return 'anthropic-codex';
