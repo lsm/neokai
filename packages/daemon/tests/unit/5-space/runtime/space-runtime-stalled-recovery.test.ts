@@ -587,6 +587,38 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(reviewer.agentSessionId).toBeNull();
 			expect(reviewer.result).toBeNull();
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			const pending = new PendingAgentMessageRepository(db).listPendingForTarget(run.id, 'Review');
+			expect(pending[0].message).toContain("Review node's previous session ended");
+		});
+
+		test('coder cancelled and reviewer never created → run blocked', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coding', agentId: AGENT },
+				{ id: STEP_B, name: 'Review', agentId: AGENT },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Do not recover cancelled source',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Do not recover cancelled source',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'cancelled');
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(findExec(run.id, STEP_B)).toBeUndefined();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
 		});
 
 		test('coder idle with queued handoff and reviewer never created → tick repair creates and spawns reviewer', async () => {
@@ -753,6 +785,53 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 
 			expect(findExec(run.id, STEP_B).status).toBe('pending');
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+
+		test('coder idle with closed script gate → run blocked', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Coding', agentId: AGENT },
+					{ id: STEP_B, name: 'Review', agentId: AGENT },
+				],
+				{
+					channels: [
+						{ id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'script-ready' },
+					],
+					gates: [
+						{
+							id: 'script-ready',
+							resetOnCycle: false,
+							fields: [],
+							script: { interpreter: 'bash', source: 'exit 1' },
+						},
+					],
+				}
+			);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Script gate blocked handoff',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Script gate blocked handoff',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'idle');
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(findExec(run.id, STEP_B)).toBeUndefined();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
 		});
 
 		test('single-node run with idle execution → run blocked, task blocked, notifications emitted', async () => {

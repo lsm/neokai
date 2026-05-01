@@ -63,6 +63,7 @@ import {
 import { resolveTimeoutForExecution } from './resolve-node-timeout';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import { evaluateGate } from './gate-evaluator';
+import { executeGateScript } from './gate-script-executor';
 
 const log = new Logger('space-runtime');
 
@@ -1557,6 +1558,7 @@ export class SpaceRuntime {
 		const blockedGateReasons: string[] = [];
 
 		for (const sourceExecution of executions) {
+			if (sourceExecution.status !== 'idle') continue;
 			const sourceNode = workflow.nodes.find((node) => node.id === sourceExecution.workflowNodeId);
 			if (!sourceNode) continue;
 			for (const channel of channels) {
@@ -1584,6 +1586,7 @@ export class SpaceRuntime {
 					}
 
 					let activatedForTarget = false;
+					let resetExistingTarget = false;
 					for (const agentEntry of resolveNodeAgents(targetNode)) {
 						const existing = this.config.nodeExecutionRepo
 							.listByNode(run.id, targetNode.id)
@@ -1598,6 +1601,7 @@ export class SpaceRuntime {
 									completedAt: null,
 								});
 								activatedForTarget = true;
+								resetExistingTarget = true;
 							}
 							continue;
 						}
@@ -1612,7 +1616,12 @@ export class SpaceRuntime {
 					}
 					if (activatedForTarget) {
 						createdOrReset.push(targetNode.name);
-						this.enqueueRestartRecoveryMessage(run, sourceExecution.agentName, targetNode);
+						this.enqueueRestartRecoveryMessage(
+							run,
+							sourceExecution.agentName,
+							targetNode,
+							resetExistingTarget
+						);
 					}
 				}
 			}
@@ -1664,20 +1673,31 @@ export class SpaceRuntime {
 		const gateDataRepo = new GateDataRepository(this.config.db);
 		const runtimeData =
 			gateDataRepo.get(runId, gate.id)?.data ?? computeGateDefaults(gate.fields ?? []);
-		const result = await evaluateGate(gate, runtimeData);
+		const result = await evaluateGate(gate, runtimeData, executeGateScript, {
+			workspacePath: process.cwd(),
+			gateId: gate.id,
+			runId,
+			gateData: runtimeData,
+			workflowStartIso: this.config.workflowRunRepo.getRun(runId)
+				? new Date(this.config.workflowRunRepo.getRun(runId)!.createdAt).toISOString()
+				: undefined,
+		});
 		return { open: result.open, reason: result.reason };
 	}
 
 	private enqueueRestartRecoveryMessage(
 		run: SpaceWorkflowRun,
 		lastAgentName: string,
-		targetNode: SpaceWorkflow['nodes'][number]
+		targetNode: SpaceWorkflow['nodes'][number],
+		resetExistingTarget: boolean
 	): void {
 		const repo = this.config.pendingMessageRepo;
 		if (!repo) return;
 		const tasks = this.config.taskRepo.listByWorkflowRun(run.id);
 		const task = this.pickCanonicalTaskForRun(run, tasks);
-		const message = `[Daemon restart recovery] The previous agent (${lastAgentName}) completed but the handoff message was not delivered. Please check the PR and review status, then continue.`;
+		const message = resetExistingTarget
+			? `[Daemon restart recovery] The ${targetNode.name} node's previous session ended before completing the workflow. Please check the PR and review status, then continue.`
+			: `[Daemon restart recovery] The previous agent (${lastAgentName}) completed but the handoff message was not delivered. Please check the PR and review status, then continue.`;
 		for (const agentEntry of resolveNodeAgents(targetNode)) {
 			repo.enqueue({
 				workflowRunId: run.id,
