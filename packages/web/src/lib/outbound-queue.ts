@@ -60,8 +60,17 @@ export async function enqueueAction(
 		}
 	}
 
-	// Not connected — queue for later
-	return enqueueInternal(label, execute);
+	// Not connected (or forced queue) — queue for later
+	const action = enqueueInternal(label, execute);
+
+	// When connected but forced to queue (executeImmediately: false),
+	// the auto-flush effect won't fire since it only watches connectionState.
+	// Schedule a flush so the action isn't stuck pending indefinitely.
+	if (isConnected) {
+		setTimeout(() => flushQueue(), 500);
+	}
+
+	return action;
 }
 
 function enqueueInternal(label: string, execute: () => Promise<void>): QueuedAction {
