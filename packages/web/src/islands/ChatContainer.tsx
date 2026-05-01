@@ -1284,7 +1284,6 @@ export default function ChatContainer({
 										rewindMode={rewindMode}
 										selectedMessages={selectedMessages}
 										onMessageCheckboxChange={handleMessageCheckboxChange}
-										allMessages={messages}
 										onQuestionResolved={handleQuestionResolved}
 									/>
 								</div>

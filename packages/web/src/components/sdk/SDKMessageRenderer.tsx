@@ -64,7 +64,6 @@ interface Props {
 	rewindMode?: boolean;
 	selectedMessages?: Set<string>;
 	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
-	allMessages?: ChatMessage[];
 	/** When true, renders all message types without skipping (for task conversation timelines) */
 	taskContext?: boolean;
 	/**
@@ -197,7 +196,6 @@ function SDKMessageRendererImpl({
 	rewindMode,
 	selectedMessages,
 	onMessageCheckboxChange,
-	allMessages: _allMessages,
 	taskContext,
 	showSubagentMessages = false,
 	flattenSubagentTools = false,
@@ -265,7 +263,6 @@ function SDKMessageRendererImpl({
 				rewindMode={rewindMode}
 				selectedMessages={selectedMessages}
 				onMessageCheckboxChange={onMessageCheckboxChange}
-				allMessages={_allMessages}
 				showToolResultMessages={showToolResultUserMessages}
 			/>
 		);
@@ -282,7 +279,6 @@ function SDKMessageRendererImpl({
 				rewindMode={rewindMode}
 				selectedMessages={selectedMessages}
 				onMessageCheckboxChange={onMessageCheckboxChange}
-				allMessages={_allMessages}
 				flattenSubagentTools={flattenSubagentTools}
 				isRunning={isRunning}
 			/>
@@ -342,7 +338,6 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
 		prev.rewindMode === next.rewindMode &&
 		prev.selectedMessages === next.selectedMessages &&
 		prev.onMessageCheckboxChange === next.onMessageCheckboxChange &&
-		prev.allMessages === next.allMessages &&
 		prev.taskContext === next.taskContext &&
 		prev.showSubagentMessages === next.showSubagentMessages &&
 		prev.flattenSubagentTools === next.flattenSubagentTools &&
