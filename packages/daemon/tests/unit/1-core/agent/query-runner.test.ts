@@ -6,10 +6,7 @@
 
 import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { tmpdir } from 'node:os';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
 import { QueryRunner, type QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
-import { getSDKSessionFilePath } from '../../../../src/lib/sdk-session-file-manager';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
@@ -1002,240 +999,84 @@ describe('QueryRunner', () => {
 			expect(userMessage).not.toContain('attempt(s)');
 		});
 
-		it('should carry compacted summary while clearing stale resumeSessionAt and SDK state before retrying no-message-found', async () => {
-			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
-			const testSdkDir = join(
-				tmpdir(),
-				`query-runner-compaction-${Date.now()}-${Math.random().toString(36).slice(2)}`
+		it('should clear SDK state and retry fresh when one-shot resumeSessionAt is missing', async () => {
+			mockSession.sdkSessionId = 'sdk-session-id';
+			mockSession.sdkOriginPath = mockSession.workspacePath;
+			(mockSession.metadata as Record<string, unknown>).resumeSessionAt = 'stale-persisted-uuid';
+
+			buildSpy
+				.mockRejectedValueOnce(
+					new Error('No message found with message.uuid of: missing-message-uuid')
+				)
+				.mockRejectedValueOnce(new Error('stop after retry'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(buildSpy).toHaveBeenCalledTimes(2);
+			expect(mockSession.sdkSessionId).toBeUndefined();
+			expect(mockSession.sdkOriginPath).toBeUndefined();
+			expect(mockSession.metadata.compactionSummary).toBeUndefined();
+			expect((mockSession.metadata as Record<string, unknown>).resumeSessionAt).toBe(
+				'stale-persisted-uuid'
 			);
-			try {
-				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
-				mockSession.sdkSessionId = 'sdk-session-id';
-				mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
-				const sessionFilePath = getSDKSessionFilePath(
-					mockSession.workspacePath!,
-					mockSession.sdkSessionId
-				);
-				mkdirSync(dirname(sessionFilePath), { recursive: true });
-				writeFileSync(
-					sessionFilePath,
-					[
-						JSON.stringify({
-							type: 'system',
-							subtype: 'compact_boundary',
-							compact_metadata: { trigger: 'auto', pre_tokens: 150000 },
-						}),
-						JSON.stringify({
-							type: 'assistant',
-							message: {
-								role: 'assistant',
-								content: [{ type: 'text', text: 'Recovered compacted context' }],
-							},
-						}),
-					].join('\n') + '\n',
-					'utf-8'
-				);
+			expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
+				sdkSessionId: undefined,
+				sdkOriginPath: undefined,
+			});
+			expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
+					type: 'assistant',
+					message: expect.objectContaining({
+						content: expect.arrayContaining([
+							expect.objectContaining({
+								text: expect.stringContaining('one-time rewind point'),
+							}),
+						]),
+					}),
+				})
+			);
+		});
 
-				buildSpy
-					.mockRejectedValueOnce(
-						new Error('No message found with message.uuid of: missing-message-uuid')
-					)
-					.mockRejectedValueOnce(new Error('stop after retry'));
+		it('should not fall back to another resume point before retrying no-message-found', async () => {
+			mockSession.sdkSessionId = 'sdk-session-id';
 
-				const ctx = createContext();
-				runner = new QueryRunner(ctx);
-				runner.start();
-				await ctx.queryPromise?.catch(() => {});
-
-				expect(buildSpy).toHaveBeenCalledTimes(2);
-				expect(mockSession.metadata.resumeSessionAt).toBeUndefined();
-				expect(mockSession.metadata.compactionSummary).toBe('Recovered compacted context');
-				expect(mockSession.sdkSessionId).toBeUndefined();
-				expect(mockSession.sdkOriginPath).toBeUndefined();
-				expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
-					metadata: mockSession.metadata,
-					sdkSessionId: undefined,
-					sdkOriginPath: undefined,
-				});
-				expect(saveSDKMessageSpy).toHaveBeenCalledWith(
-					'test-session-id',
-					expect.objectContaining({
+			getSDKMessagesSpy.mockImplementation(() => ({
+				messages: [
+					{
 						type: 'assistant',
-						message: expect.objectContaining({
-							content: expect.arrayContaining([
-								expect.objectContaining({
-									text: expect.stringContaining('compacted summary'),
-								}),
-							]),
-						}),
-					})
-				);
-			} finally {
-				rmSync(testSdkDir, { recursive: true, force: true });
-				if (originalTestSdkSessionDir !== undefined) {
-					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
-				} else {
-					delete process.env.TEST_SDK_SESSION_DIR;
-				}
-			}
-		});
+						uuid: 'newer-existing-message-uuid',
+						timestamp: 2000,
+					},
+				],
+				hasMore: false,
+			}));
+			buildSpy
+				.mockRejectedValueOnce(
+					new Error('No message found with message.uuid of: missing-message-uuid')
+				)
+				.mockRejectedValueOnce(new Error('stop after retry'));
 
-		it('should not carry a compacted summary older than live conversation messages', async () => {
-			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
-			const testSdkDir = join(
-				tmpdir(),
-				`query-runner-stale-compaction-${Date.now()}-${Math.random().toString(36).slice(2)}`
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(buildSpy).toHaveBeenCalledTimes(2);
+			expect(mockSession.sdkSessionId).toBeUndefined();
+			expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
+				sdkSessionId: undefined,
+				sdkOriginPath: undefined,
+			});
+			expect(updateSessionSpy).not.toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
+					metadata: expect.anything(),
+				})
 			);
-			try {
-				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
-				mockSession.sdkSessionId = 'sdk-session-id';
-				mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
-				const sessionFilePath = getSDKSessionFilePath(
-					mockSession.workspacePath!,
-					mockSession.sdkSessionId
-				);
-				mkdirSync(dirname(sessionFilePath), { recursive: true });
-				writeFileSync(
-					sessionFilePath,
-					[
-						JSON.stringify({
-							type: 'system',
-							subtype: 'compact_boundary',
-							timestamp: '2026-04-29T10:00:00.000Z',
-						}),
-						JSON.stringify({
-							type: 'assistant',
-							timestamp: '2026-04-29T10:01:00.000Z',
-							message: {
-								role: 'assistant',
-								content: [{ type: 'text', text: 'Old topic A pending work' }],
-							},
-						}),
-					].join('\n') + '\n',
-					'utf-8'
-				);
-				getSDKMessagesSpy.mockImplementation(() => ({
-					messages: [
-						{
-							type: 'user',
-							uuid: 'live-topic-b-message',
-							timestamp: Date.parse('2026-04-30T10:00:00.000Z'),
-						},
-					],
-					hasMore: false,
-				}));
-				buildSpy
-					.mockRejectedValueOnce(
-						new Error('No message found with message.uuid of: missing-message-uuid')
-					)
-					.mockRejectedValueOnce(new Error('stop after retry'));
-
-				const ctx = createContext();
-				runner = new QueryRunner(ctx);
-				runner.start();
-				await ctx.queryPromise?.catch(() => {});
-
-				expect(buildSpy).toHaveBeenCalledTimes(2);
-				expect(mockSession.metadata.resumeSessionAt).toBeUndefined();
-				expect(mockSession.metadata.compactionSummary).toBeUndefined();
-				expect(saveSDKMessageSpy).toHaveBeenCalledWith(
-					'test-session-id',
-					expect.objectContaining({
-						message: expect.objectContaining({
-							content: expect.arrayContaining([
-								expect.objectContaining({
-									text: expect.stringContaining('only the AI context window'),
-								}),
-							]),
-						}),
-					})
-				);
-			} finally {
-				rmSync(testSdkDir, { recursive: true, force: true });
-				if (originalTestSdkSessionDir !== undefined) {
-					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
-				} else {
-					delete process.env.TEST_SDK_SESSION_DIR;
-				}
-			}
-		});
-
-		it('should retry no-message-found from the newest remaining message UUID before clearing SDK state', async () => {
-			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
-			const testSdkDir = join(
-				tmpdir(),
-				`query-runner-resume-fallback-${Date.now()}-${Math.random().toString(36).slice(2)}`
-			);
-			try {
-				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
-				mockSession.sdkSessionId = 'sdk-session-id';
-				mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
-				const sessionFilePath = getSDKSessionFilePath(
-					mockSession.workspacePath!,
-					mockSession.sdkSessionId
-				);
-				mkdirSync(dirname(sessionFilePath), { recursive: true });
-				writeFileSync(
-					sessionFilePath,
-					[
-						JSON.stringify({ type: 'user', uuid: 'older-existing-message-uuid' }),
-						JSON.stringify({ type: 'assistant', uuid: 'newer-existing-message-uuid' }),
-					].join('\n') + '\n',
-					'utf-8'
-				);
-				getSDKMessagesSpy.mockImplementation(() => ({
-					messages: [
-						{
-							type: 'user',
-							uuid: 'older-existing-message-uuid',
-							timestamp: 1000,
-						},
-						{
-							type: 'assistant',
-							uuid: 'newer-existing-message-uuid',
-							timestamp: 2000,
-						},
-						{
-							type: 'assistant',
-							uuid: 'newer-missing-message-uuid',
-							timestamp: 3000,
-						},
-					],
-					hasMore: false,
-				}));
-
-				buildSpy
-					.mockRejectedValueOnce(
-						new Error('No message found with message.uuid of: missing-message-uuid')
-					)
-					.mockRejectedValueOnce(new Error('stop after retry'));
-
-				const ctx = createContext();
-				runner = new QueryRunner(ctx);
-				runner.start();
-				await ctx.queryPromise?.catch(() => {});
-
-				expect(buildSpy).toHaveBeenCalledTimes(2);
-				expect(mockSession.metadata.resumeSessionAt).toBe('newer-existing-message-uuid');
-				expect(mockSession.sdkSessionId).toBe('sdk-session-id');
-				expect(mockSession.sdkOriginPath).toBeUndefined();
-				expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
-					metadata: mockSession.metadata,
-				});
-				expect(updateSessionSpy).not.toHaveBeenCalledWith(
-					'test-session-id',
-					expect.objectContaining({
-						sdkSessionId: undefined,
-					})
-				);
-			} finally {
-				rmSync(testSdkDir, { recursive: true, force: true });
-				if (originalTestSdkSessionDir !== undefined) {
-					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
-				} else {
-					delete process.env.TEST_SDK_SESSION_DIR;
-				}
-			}
 		});
 
 		it('should call stateManager.setIdle after handling startup timeout error', async () => {

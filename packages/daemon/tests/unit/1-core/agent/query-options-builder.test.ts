@@ -15,15 +15,12 @@ import {
 import type { Session } from '@neokai/shared';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { generateUUID } from '@neokai/shared';
-import { homedir, tmpdir } from 'os';
-import { dirname, join } from 'node:path';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'os';
 import { createTables } from '../../../../src/storage/schema';
 import { SkillRepository } from '../../../../src/storage/repositories/skill-repository';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import { SkillsManager } from '../../../../src/lib/skills-manager';
 import { noOpReactiveDb } from '../../../helpers/reactive-database';
-import { getSDKSessionFilePath } from '../../../../src/lib/sdk-session-file-manager';
 
 describe('QueryOptionsBuilder', () => {
 	let builder: QueryOptionsBuilder;
@@ -231,231 +228,51 @@ describe('QueryOptionsBuilder', () => {
 			expect(result.resume).toBe('sdk-session-123');
 		});
 
-		it('should add resumeSessionAt when the message still exists in the SDK transcript', async () => {
-			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
-			const testSdkDir = join(
-				tmpdir(),
-				`query-options-resume-valid-${Date.now()}-${Math.random().toString(36).slice(2)}`
-			);
-			try {
-				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
-				mockSession.sdkSessionId = 'sdk-session-valid';
-				mockSession.metadata.resumeSessionAt = 'resumable-message-uuid';
-				const sessionFilePath = getSDKSessionFilePath(
-					mockSession.workspacePath!,
-					mockSession.sdkSessionId
-				);
-				mkdirSync(dirname(sessionFilePath), { recursive: true });
-				writeFileSync(
-					sessionFilePath,
-					`${JSON.stringify({ type: 'user', uuid: 'resumable-message-uuid' })}\n`,
-					'utf-8'
-				);
+		it('should add pending one-shot resumeSessionAt and consume it once', async () => {
+			mockSession.sdkSessionId = 'sdk-session-valid';
+			const consumePendingResumeSessionAt = mock(() => 'resumable-message-uuid');
+			builder = new QueryOptionsBuilder({
+				...mockContext,
+				consumePendingResumeSessionAt,
+			});
 
-				const options = await builder.build();
-				const result = builder.addSessionStateOptions(options);
+			const options = await builder.build();
+			const result = builder.addSessionStateOptions(options);
 
-				expect(result.resume).toBe('sdk-session-valid');
-				expect(result.resumeSessionAt).toBe('resumable-message-uuid');
-				expect(updateSessionSpy).not.toHaveBeenCalled();
-			} finally {
-				rmSync(testSdkDir, { recursive: true, force: true });
-				if (originalTestSdkSessionDir !== undefined) {
-					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
-				} else {
-					delete process.env.TEST_SDK_SESSION_DIR;
-				}
-			}
+			expect(result.resume).toBe('sdk-session-valid');
+			expect(result.resumeSessionAt).toBe('resumable-message-uuid');
+			expect(consumePendingResumeSessionAt).toHaveBeenCalledTimes(1);
+			expect(updateSessionSpy).not.toHaveBeenCalled();
 		});
 
-		it('should replace stale resumeSessionAt with the newest remaining message UUID that still exists in the SDK transcript', async () => {
-			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
-			const testSdkDir = join(
-				tmpdir(),
-				`query-options-resume-fallback-${Date.now()}-${Math.random().toString(36).slice(2)}`
-			);
-			try {
-				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
-				mockSession.sdkSessionId = 'sdk-session-fallback';
-				mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
-				const sessionFilePath = getSDKSessionFilePath(
-					mockSession.workspacePath!,
-					mockSession.sdkSessionId
-				);
-				mkdirSync(dirname(sessionFilePath), { recursive: true });
-				writeFileSync(
-					sessionFilePath,
-					[
-						JSON.stringify({ type: 'user', uuid: 'older-existing-message-uuid' }),
-						JSON.stringify({ type: 'assistant', uuid: 'newer-existing-message-uuid' }),
-					].join('\n') + '\n',
-					'utf-8'
-				);
-				getSDKMessagesSpy.mockImplementation(() => ({
-					messages: [
-						{
-							type: 'user',
-							uuid: 'older-existing-message-uuid',
-							timestamp: 1000,
-						},
-						{
-							type: 'assistant',
-							uuid: 'newer-existing-message-uuid',
-							timestamp: 2000,
-						},
-						{
-							type: 'assistant',
-							uuid: 'newer-missing-message-uuid',
-							timestamp: 3000,
-						},
-					],
-					hasMore: false,
-				}));
+		it('should not read persisted metadata resumeSessionAt', async () => {
+			mockSession.sdkSessionId = 'sdk-session-valid';
+			(mockSession.metadata as Record<string, unknown>).resumeSessionAt = 'stale-persisted-uuid';
 
-				const options = await builder.build();
-				const result = builder.addSessionStateOptions(options);
+			const options = await builder.build();
+			const result = builder.addSessionStateOptions(options);
 
-				expect(result.resume).toBe('sdk-session-fallback');
-				expect(result.resumeSessionAt).toBe('newer-existing-message-uuid');
-				expect(mockSession.metadata.resumeSessionAt).toBe('newer-existing-message-uuid');
-				expect(mockSession.sdkSessionId).toBe('sdk-session-fallback');
-				expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
-					metadata: mockSession.metadata,
-				});
-			} finally {
-				rmSync(testSdkDir, { recursive: true, force: true });
-				if (originalTestSdkSessionDir !== undefined) {
-					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
-				} else {
-					delete process.env.TEST_SDK_SESSION_DIR;
-				}
-			}
+			expect(result.resume).toBe('sdk-session-valid');
+			expect(result.resumeSessionAt).toBeUndefined();
+			expect(updateSessionSpy).not.toHaveBeenCalled();
 		});
 
-		it('should carry a compact summary when it is at least as recent as loaded live messages', async () => {
-			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
-			const testSdkDir = join(
-				tmpdir(),
-				`query-options-resume-stale-${Date.now()}-${Math.random().toString(36).slice(2)}`
-			);
-			try {
-				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
-				mockSession.sdkSessionId = 'sdk-session-stale';
-				mockSession.sdkOriginPath = mockSession.workspacePath;
-				mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
-				const sessionFilePath = getSDKSessionFilePath(
-					mockSession.workspacePath!,
-					mockSession.sdkSessionId
-				);
-				mkdirSync(dirname(sessionFilePath), { recursive: true });
-				writeFileSync(
-					sessionFilePath,
-					[
-						JSON.stringify({
-							type: 'system',
-							subtype: 'compact_boundary',
-							compact_metadata: { trigger: 'auto' },
-						}),
-						JSON.stringify({
-							type: 'assistant',
-							message: {
-								role: 'assistant',
-								content: [{ type: 'text', text: 'Compacted context summary' }],
-							},
-						}),
-					].join('\n') + '\n',
-					'utf-8'
-				);
+		it('should not carry compact summaries while building resume options', async () => {
+			mockSession.sdkSessionId = 'sdk-session-valid';
+			mockSession.sdkOriginPath = mockSession.workspacePath;
+			const consumePendingResumeSessionAt = mock(() => undefined);
+			builder = new QueryOptionsBuilder({
+				...mockContext,
+				consumePendingResumeSessionAt,
+			});
 
-				const options = await builder.build();
-				const result = builder.addSessionStateOptions(options);
+			const options = await builder.build();
+			const result = builder.addSessionStateOptions(options);
 
-				expect(result.resume).toBeUndefined();
-				expect(result.resumeSessionAt).toBeUndefined();
-				expect(mockSession.metadata.resumeSessionAt).toBeUndefined();
-				expect(mockSession.metadata.compactionSummary).toBe('Compacted context summary');
-				expect(mockSession.sdkSessionId).toBeUndefined();
-				expect(mockSession.sdkOriginPath).toBeUndefined();
-				expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
-					metadata: mockSession.metadata,
-					sdkSessionId: undefined,
-					sdkOriginPath: undefined,
-				});
-			} finally {
-				rmSync(testSdkDir, { recursive: true, force: true });
-				if (originalTestSdkSessionDir !== undefined) {
-					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
-				} else {
-					delete process.env.TEST_SDK_SESSION_DIR;
-				}
-			}
-		});
-
-		it('should ignore an old compact summary when newer live messages already exist', async () => {
-			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
-			const testSdkDir = join(
-				tmpdir(),
-				`query-options-resume-stale-summary-${Date.now()}-${Math.random().toString(36).slice(2)}`
-			);
-			try {
-				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
-				mockSession.sdkSessionId = 'sdk-session-old-summary';
-				mockSession.sdkOriginPath = mockSession.workspacePath;
-				mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
-				const sessionFilePath = getSDKSessionFilePath(
-					mockSession.workspacePath!,
-					mockSession.sdkSessionId
-				);
-				mkdirSync(dirname(sessionFilePath), { recursive: true });
-				writeFileSync(
-					sessionFilePath,
-					[
-						JSON.stringify({
-							type: 'system',
-							subtype: 'compact_boundary',
-							timestamp: '2026-04-29T10:00:00.000Z',
-						}),
-						JSON.stringify({
-							type: 'assistant',
-							timestamp: '2026-04-29T10:01:00.000Z',
-							message: {
-								role: 'assistant',
-								content: [{ type: 'text', text: 'Old topic A pending work' }],
-							},
-						}),
-					].join('\n') + '\n',
-					'utf-8'
-				);
-				getSDKMessagesSpy.mockImplementation(() => ({
-					messages: [
-						{
-							type: 'user',
-							uuid: 'live-topic-b-message',
-							timestamp: Date.parse('2026-04-30T10:00:00.000Z'),
-						},
-					],
-					hasMore: false,
-				}));
-
-				const options = await builder.build();
-				const result = builder.addSessionStateOptions(options);
-
-				expect(result.resume).toBeUndefined();
-				expect(result.resumeSessionAt).toBeUndefined();
-				expect(mockSession.metadata.compactionSummary).toBeUndefined();
-				expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
-					metadata: mockSession.metadata,
-					sdkSessionId: undefined,
-					sdkOriginPath: undefined,
-				});
-			} finally {
-				rmSync(testSdkDir, { recursive: true, force: true });
-				if (originalTestSdkSessionDir !== undefined) {
-					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
-				} else {
-					delete process.env.TEST_SDK_SESSION_DIR;
-				}
-			}
+			expect(result.resume).toBe('sdk-session-valid');
+			expect(result.resumeSessionAt).toBeUndefined();
+			expect(mockSession.metadata.compactionSummary).toBeUndefined();
+			expect(updateSessionSpy).not.toHaveBeenCalled();
 		});
 
 		it('should not add resume when no SDK session ID', async () => {

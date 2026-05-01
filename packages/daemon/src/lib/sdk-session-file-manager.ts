@@ -1306,9 +1306,9 @@ export function messageUuidExistsInSessionFile(
 /**
  * Find the newest remaining NeoKai message UUID that still exists in the SDK transcript.
  *
- * This is used when a persisted resumeSessionAt checkpoint is stale. The fallback
- * stays bounded by NeoKai's remaining DB messages while reading the SDK JSONL once,
- * avoiding an O(candidates × file-size) scan.
+ * This is used by recovery paths that need a bounded best-effort resume point.
+ * The lookup stays bounded by NeoKai's remaining DB messages while reading the SDK
+ * JSONL once, avoiding an O(candidates × file-size) scan.
  */
 export function findBestEffortResumeSessionAt(
 	workspacePath: string | null | undefined,

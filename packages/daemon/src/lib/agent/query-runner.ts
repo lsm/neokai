@@ -25,11 +25,6 @@ import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryOptionsBuilder } from './query-options-builder';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
 import type { OriginalEnvVars } from '../provider-service';
-import {
-	extractCompactionSummaryInfo,
-	findBestEffortResumeSessionAt,
-	getSDKSessionFilePath,
-} from '../sdk-session-file-manager';
 // Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
 
@@ -622,71 +617,29 @@ export class QueryRunner {
 				}
 			}
 			if (isMessageNotFound) {
-				// The SDK found the transcript but could not find resumeSessionAt inside it.
-				// This commonly happens after SDK compaction removes old message UUIDs.
-				const oldResumeSessionAt = session.metadata.resumeSessionAt;
-				const bestEffortResumeSessionAt = findBestEffortResumeSessionAt(
-					session.sdkOriginPath ?? session.worktree?.worktreePath ?? session.workspacePath,
-					session.sdkSessionId,
-					session.id,
-					this.ctx.db
+				// Runtime-only resumeSessionAt should be one-shot. If the SDK rejects it,
+				// clear SDK resume identity and retry fresh rather than persisting/falling
+				// back to another rewind point that can become stale after restart.
+				logger.error(
+					'No message found for one-shot resumeSessionAt; clearing sdkSessionId and sdkOriginPath before retry.'
 				);
+				session.sdkSessionId = undefined;
+				session.sdkOriginPath = undefined;
+				this.ctx.db.updateSession(session.id, {
+					sdkSessionId: undefined,
+					sdkOriginPath: undefined,
+				});
 
-				if (bestEffortResumeSessionAt) {
-					logger.warn(
-						`No message found for resumeSessionAt (${oldResumeSessionAt ?? 'unknown'}). ` +
-							`Retrying from nearest available message UUID (${bestEffortResumeSessionAt}).`
+				try {
+					await this.displayErrorAsAssistantMessage(
+						'⚠️ **Conversation context was reset.**\n\n' +
+							'The one-time rewind point is no longer present in the Claude SDK transcript. ' +
+							'Your conversation history in NeoKai is preserved; only the AI context window has been reset.\n\n' +
+							'Retrying your message with a fresh AI session.',
+						{ markAsError: false }
 					);
-					session.metadata.resumeSessionAt = bestEffortResumeSessionAt;
-					this.ctx.db.updateSession(session.id, {
-						metadata: session.metadata,
-					});
-				} else {
-					// Clear both the rewind pointer and SDK transcript identity so the retry
-					// starts with a fresh context instead of looping on stale JSONL state.
-					const compactionSummary = this.extractCompactionSummaryFromCurrentSdkSession();
-					logger.error(
-						`No message found for resumeSessionAt (${oldResumeSessionAt ?? 'unknown'}). ` +
-							'No fallback message UUID was available; clearing resumeSessionAt, sdkSessionId, and sdkOriginPath before retry.'
-					);
-					delete session.metadata.resumeSessionAt;
-					if (compactionSummary) {
-						session.metadata.compactionSummary = compactionSummary.summary;
-						logger.info(
-							`context.compaction_summary.selected ${JSON.stringify({
-								event: 'context.compaction_summary.selected',
-								sessionId: session.id,
-								sdkSessionId: session.sdkSessionId,
-								sourceFile: compactionSummary.filePath,
-								summaryTimestamp: compactionSummary.summaryTimestamp,
-								reason: 'sdk_message_not_found_no_live_messages_after_summary',
-							})}`
-						);
-					} else {
-						delete session.metadata.compactionSummary;
-					}
-					session.sdkSessionId = undefined;
-					session.sdkOriginPath = undefined;
-					this.ctx.db.updateSession(session.id, {
-						metadata: session.metadata,
-						sdkSessionId: undefined,
-						sdkOriginPath: undefined,
-					});
-
-					try {
-						await this.displayErrorAsAssistantMessage(
-							'⚠️ **Conversation context was reset.**\n\n' +
-								'The previous rewind point is no longer present in the Claude SDK transcript. ' +
-								'This can happen after SDK compaction. Your conversation history in NeoKai is preserved; ' +
-								(compactionSummary
-									? 'a compacted summary from the previous SDK transcript will be carried into the fresh AI session.\n\n'
-									: 'only the AI context window has been reset.\n\n') +
-								'Retrying your message with a fresh AI session.',
-							{ markAsError: false }
-						);
-					} catch {
-						// Best-effort — don't let message emission block cleanup
-					}
+				} catch {
+					// Best-effort — don't let message emission block cleanup
 				}
 			}
 
@@ -729,7 +682,7 @@ export class QueryRunner {
 				return await this.runQuery(queryGeneration, true);
 			}
 			if (isMessageNotFound && !isRetry && !this.ctx.isCleaningUp()) {
-				logger.warn('Auto-retrying query after clearing stale resumeSessionAt.');
+				logger.warn('Auto-retrying query after clearing one-shot resumeSessionAt.');
 				await stateManager.setIdle();
 
 				if (this.ctx.queryObject) {
@@ -930,56 +883,6 @@ export class QueryRunner {
 				this.ctx.queryPromise = null;
 			}
 			// Stale query: skip all cleanup — new query owns shared state
-		}
-	}
-
-	private extractCompactionSummaryFromCurrentSdkSession(): ReturnType<
-		typeof extractCompactionSummaryInfo
-	> {
-		const { session, logger, db } = this.ctx;
-		if (!session.sdkSessionId) {
-			return null;
-		}
-
-		const workspacePath = session.sdkOriginPath ?? session.workspacePath;
-		if (!workspacePath) {
-			return null;
-		}
-
-		try {
-			const filePath = getSDKSessionFilePath(workspacePath, session.sdkSessionId);
-			const summaryInfo = extractCompactionSummaryInfo(filePath);
-			if (!summaryInfo) return null;
-
-			const latestSummaryTimestamp = summaryInfo.summaryTimestamp ?? summaryInfo.boundaryTimestamp;
-			const { messages } = db.getSDKMessages(session.id, 1);
-			const latestLiveMessageTimestamp = messages[0]?.timestamp;
-			if (
-				typeof latestSummaryTimestamp === 'number' &&
-				typeof latestLiveMessageTimestamp === 'number' &&
-				latestSummaryTimestamp < latestLiveMessageTimestamp
-			) {
-				logger.warn(
-					`context.compaction_summary.skipped ${JSON.stringify({
-						event: 'context.compaction_summary.skipped',
-						sessionId: session.id,
-						sdkSessionId: session.sdkSessionId,
-						sourceFile: summaryInfo.filePath,
-						summaryTimestamp: latestSummaryTimestamp,
-						latestLiveMessageTimestamp,
-						reason: 'live_messages_are_newer_than_summary',
-					})}`
-				);
-				return null;
-			}
-
-			return summaryInfo;
-		} catch (error) {
-			logger.warn(
-				`Failed to extract SDK compaction summary for session ${session.id}: ` +
-					`${error instanceof Error ? error.message : String(error)}`
-			);
-			return null;
 		}
 	}
 

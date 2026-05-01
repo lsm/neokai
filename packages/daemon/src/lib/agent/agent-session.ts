@@ -276,6 +276,7 @@ export class AgentSession
 
 	// Session state
 	private _isCleaningUp = false;
+	private pendingResumeSessionAt: string | undefined;
 	pendingRestartReason: 'settings.local.json' | null = null;
 	private initialPendingReplayScheduled = false;
 
@@ -1191,6 +1192,16 @@ export class AgentSession
 	// ============================================================================
 	// QueryRunnerContext methods
 	// ============================================================================
+
+	setPendingResumeSessionAt(messageUuid: string): void {
+		this.pendingResumeSessionAt = messageUuid;
+	}
+
+	consumePendingResumeSessionAt(): string | undefined {
+		const value = this.pendingResumeSessionAt;
+		this.pendingResumeSessionAt = undefined;
+		return value;
+	}
 
 	incrementQueryGeneration(): number {
 		return ++this._queryGeneration;

@@ -47,12 +47,6 @@ import {
 import { homedir } from 'os';
 import { join } from 'path';
 import type { Database } from '../../storage/database';
-import {
-	extractCompactionSummaryInfo,
-	findBestEffortResumeSessionAt,
-	getSDKSessionFilePath,
-	messageUuidExistsInSessionFile,
-} from '../sdk-session-file-manager';
 import { requireModelContextWindow } from '../providers/codex-anthropic-bridge/model-context-windows';
 
 export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
@@ -89,6 +83,7 @@ export interface QueryOptionsBuilderContext {
 	readonly session: Session;
 	readonly settingsManager: SettingsManager;
 	readonly db?: Database;
+	consumePendingResumeSessionAt?(): string | undefined;
 	readonly logger?: Pick<import('../logger').Logger, 'info' | 'warn'>;
 	/** Skills manager for injecting plugin/MCP server skills into SDK options. Optional for backwards compatibility. */
 	readonly skillsManager?: SkillsManager;
@@ -496,32 +491,9 @@ export class QueryOptionsBuilder {
 			result.resume = this.ctx.session.sdkSessionId;
 		}
 
-		// Add resumeSessionAt for conversation rewind.
-		// When set, only messages up to and including this UUID are resumed.
-		// Validate it immediately before handing options to the SDK: SDK compaction
-		// can remove old UUIDs after NeoKai persisted a rewind pointer, and passing a
-		// stale value makes Claude Code fail startup with "No message found".
-		if (this.ctx.session.metadata?.resumeSessionAt) {
-			const resumeSessionAt = this.ctx.session.metadata.resumeSessionAt;
-			if (this.isResumeSessionAtValid(resumeSessionAt)) {
-				result.resumeSessionAt = resumeSessionAt;
-			} else {
-				const bestEffortResumeSessionAt = this.ctx.db
-					? findBestEffortResumeSessionAt(
-							this.getSdkResumeWorkspacePath(),
-							this.ctx.session.sdkSessionId,
-							this.ctx.session.id,
-							this.ctx.db
-						)
-					: undefined;
-				if (bestEffortResumeSessionAt) {
-					this.replaceStaleResumeSessionAt(bestEffortResumeSessionAt);
-					result.resumeSessionAt = bestEffortResumeSessionAt;
-				} else {
-					this.clearStaleResumeSessionAt();
-					delete result.resume;
-				}
-			}
+		const resumeSessionAt = this.ctx.consumePendingResumeSessionAt?.();
+		if (resumeSessionAt) {
+			result.resumeSessionAt = resumeSessionAt;
 		}
 
 		// Add thinking configuration based on thinkingLevel config
@@ -529,106 +501,6 @@ export class QueryOptionsBuilder {
 		result.thinking = this.thinkingLevelToThinkingConfig(thinkingLevel);
 
 		return result as Options;
-	}
-
-	private isResumeSessionAtValid(messageUuid: string): boolean {
-		const { session } = this.ctx;
-		const sdkWorkspacePath = this.getSdkResumeWorkspacePath();
-		if (!sdkWorkspacePath || !session.sdkSessionId) {
-			return false;
-		}
-
-		return messageUuidExistsInSessionFile(
-			sdkWorkspacePath,
-			session.sdkSessionId,
-			session.id,
-			messageUuid
-		);
-	}
-
-	private replaceStaleResumeSessionAt(resumeSessionAt: string): void {
-		const { session, db } = this.ctx;
-		session.metadata.resumeSessionAt = resumeSessionAt;
-		db?.updateSession(session.id, {
-			metadata: session.metadata,
-		});
-	}
-
-	private clearStaleResumeSessionAt(): void {
-		const { session, db } = this.ctx;
-		const previousSdkSessionId = session.sdkSessionId;
-		const workspacePath = this.getSdkResumeWorkspacePath();
-
-		delete session.metadata.resumeSessionAt;
-
-		if (workspacePath && previousSdkSessionId) {
-			const summaryInfo = extractCompactionSummaryInfo(
-				getSDKSessionFilePath(workspacePath, previousSdkSessionId)
-			);
-			if (summaryInfo && this.isCompactionSummaryEligible(summaryInfo)) {
-				session.metadata.compactionSummary = summaryInfo.summary;
-				this.ctx.logger?.info(
-					`context.compaction_summary.selected ${JSON.stringify({
-						event: 'context.compaction_summary.selected',
-						sessionId: session.id,
-						sdkSessionId: previousSdkSessionId,
-						sourceFile: summaryInfo.filePath,
-						summaryTimestamp: summaryInfo.summaryTimestamp,
-						reason: 'stale_resume_session_at_no_live_messages_after_summary',
-					})}`
-				);
-			} else {
-				delete session.metadata.compactionSummary;
-				this.ctx.logger?.warn(
-					`context.compaction_summary.skipped ${JSON.stringify({
-						event: 'context.compaction_summary.skipped',
-						sessionId: session.id,
-						sdkSessionId: previousSdkSessionId,
-						sourceFile: summaryInfo?.filePath,
-						summaryTimestamp: summaryInfo?.summaryTimestamp,
-						latestLiveMessageTimestamp: this.getLatestLiveMessageTimestamp(),
-						reason: summaryInfo
-							? 'live_messages_are_newer_than_summary'
-							: 'no_compaction_summary_found',
-					})}`
-				);
-			}
-		}
-
-		session.sdkSessionId = undefined;
-		session.sdkOriginPath = undefined;
-
-		db?.updateSession(session.id, {
-			metadata: session.metadata,
-			sdkSessionId: undefined,
-			sdkOriginPath: undefined,
-		});
-	}
-
-	private isCompactionSummaryEligible(summaryInfo: {
-		summaryTimestamp?: number;
-		boundaryTimestamp?: number;
-	}): boolean {
-		const latestSummaryTimestamp = summaryInfo.summaryTimestamp ?? summaryInfo.boundaryTimestamp;
-		const latestLiveMessageTimestamp = this.getLatestLiveMessageTimestamp();
-		if (latestSummaryTimestamp === undefined || latestLiveMessageTimestamp === undefined) {
-			return true;
-		}
-		return latestSummaryTimestamp >= latestLiveMessageTimestamp;
-	}
-
-	private getLatestLiveMessageTimestamp(): number | undefined {
-		const { db, session } = this.ctx;
-		if (!db) return undefined;
-		try {
-			const { messages } = db.getSDKMessages(session.id, 1);
-			const newest = messages[0];
-			return typeof newest?.timestamp === 'number' && Number.isFinite(newest.timestamp)
-				? newest.timestamp
-				: undefined;
-		} catch {
-			return undefined;
-		}
 	}
 
 	private getSdkResumeWorkspacePath(): string | undefined {
