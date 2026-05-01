@@ -26,6 +26,7 @@ import {
 } from '../../hooks/useModelSwitcher.ts';
 import { SettingsSection } from './SettingsSection.tsx';
 import { Spinner } from '../ui/Spinner';
+import { Button } from '../ui/Button';
 import { listProviderAuthStatus } from '../../lib/api-helpers.ts';
 
 interface RawModelEntry {
@@ -453,7 +454,7 @@ function OverrideEditorModal({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export function FallbackModelsSettings() {
+export function ModelsSettings() {
 	const settings = globalSettings.value;
 	const [fallbackModels, setFallbackModels] = useState<FallbackModelEntry[]>(
 		settings?.fallbackModels ?? []
@@ -466,6 +467,7 @@ export function FallbackModelsSettings() {
 		new Map()
 	);
 	const [loading, setLoading] = useState(true);
+	const [refreshing, setRefreshing] = useState(false);
 	const [isUpdating, setIsUpdating] = useState(false);
 
 	// Default list modal
@@ -486,33 +488,51 @@ export function FallbackModelsSettings() {
 	}, [settings]);
 
 	// Fetch available models + auth statuses
+	const fetchModels = async (forceRefresh: boolean) => {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) return;
+
+		const [modelsResponse, authResponse] = await Promise.all([
+			hub.request(
+				'models.list',
+				forceRefresh ? { forceRefresh: true } : { useCache: true }
+			) as Promise<{ models: RawModelEntry[] }>,
+			listProviderAuthStatus().catch(() => ({ providers: [] })),
+		]);
+
+		setAvailableModels(mapRawModelsToModelInfos(modelsResponse.models));
+
+		const authMap = new Map<string, ProviderAuthStatus>();
+		for (const p of authResponse.providers) {
+			authMap.set(p.id, p);
+		}
+		setProviderAuthStatuses(authMap);
+	};
+
+	const handleRefresh = async () => {
+		setRefreshing(true);
+		try {
+			await fetchModels(true);
+		} catch {
+			toast.error('Failed to refresh models');
+		} finally {
+			setRefreshing(false);
+		}
+	};
+
 	useEffect(() => {
-		const fetchData = async () => {
+		const load = async () => {
 			setLoading(true);
 			try {
-				const hub = connectionManager.getHubIfConnected();
-				if (!hub) return;
-
-				const [modelsResponse, authResponse] = await Promise.all([
-					hub.request('models.list', { useCache: true }) as Promise<{ models: RawModelEntry[] }>,
-					listProviderAuthStatus().catch(() => ({ providers: [] })),
-				]);
-
-				setAvailableModels(mapRawModelsToModelInfos(modelsResponse.models));
-
-				const authMap = new Map<string, ProviderAuthStatus>();
-				for (const p of authResponse.providers) {
-					authMap.set(p.id, p);
-				}
-				setProviderAuthStatuses(authMap);
+				await fetchModels(false);
 			} catch {
-				// Error handled silently
+				// Initial load failed — models will remain empty until user refreshes
 			} finally {
 				setLoading(false);
 			}
 		};
-
-		void fetchData();
+		void load();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
 	// ── Default fallback list helpers ──────────────────────────────────────────
@@ -609,7 +629,18 @@ export function FallbackModelsSettings() {
 	const overrideEntries = Object.entries(modelFallbackMap);
 
 	return (
-		<SettingsSection title="Fallback Models">
+		<SettingsSection title="Models">
+			<div class="flex items-center gap-2 mb-4">
+				<Button
+					variant="ghost"
+					size="xs"
+					onClick={handleRefresh}
+					disabled={loading || refreshing}
+					loading={refreshing}
+				>
+					Refresh models
+				</Button>
+			</div>
 			<div class="space-y-6">
 				{/* ── Section 1: Default fallback chain ──────────────────────────────── */}
 				<div class="space-y-3">
