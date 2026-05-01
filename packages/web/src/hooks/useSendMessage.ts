@@ -5,12 +5,12 @@
  * Extracted from ChatContainer.tsx for better separation of concerns.
  */
 
-import { useRef, useCallback } from 'preact/hooks';
-import type { Session, MessageDeliveryMode, MessageImage } from '@neokai/shared';
+import type { MessageDeliveryMode, MessageImage, Session } from '@neokai/shared';
+import { useCallback, useRef } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager';
+import { enqueueAction } from '../lib/outbound-queue';
 import { connectionState } from '../lib/state';
 import { toast } from '../lib/toast';
-import { enqueueAction } from '../lib/outbound-queue';
 import { sanitizeUserError } from '../lib/user-error';
 
 export interface UseSendMessageOptions {
@@ -87,7 +87,8 @@ export function useSendMessage({
 					if (deliveryMode !== 'immediate') {
 						payload.deliveryMode = deliveryMode;
 					}
-					await hub.request<{ messageId?: string }>('message.send', payload);
+					const result = await hub.request<{ messageId?: string }>('message.send', payload);
+					if (result?.messageId) onMessageAccepted?.(result.messageId);
 				});
 				toast.info('Message queued — will send when reconnected.');
 				return true;
@@ -104,10 +105,28 @@ export function useSendMessage({
 
 				const hub = connectionManager.getHubIfConnected();
 				if (!hub) {
-					toast.error('Connection lost. Your message will be sent when reconnected.');
+					// Hub disappeared during send (race during socket teardown) - queue for retry
+					const qLabel =
+						content.length > 40 ? `Message: ${content.slice(0, 40)}…` : `Message: ${content}`;
+					const qPayload: {
+						sessionId: string;
+						content: string;
+						images?: MessageImage[];
+						deliveryMode?: MessageDeliveryMode;
+					} = { sessionId, content, images };
+					if (deliveryMode !== 'immediate') {
+						qPayload.deliveryMode = deliveryMode;
+					}
+					enqueueAction(qLabel, async () => {
+						const h = connectionManager.getHubIfConnected();
+						if (!h) throw new Error('Not connected');
+						const res = await h.request<{ messageId?: string }>('message.send', qPayload);
+						if (res?.messageId) onMessageAccepted?.(res.messageId);
+					});
+					toast.info('Message queued - will send when reconnected.');
 					onSendComplete();
 					clearSendTimeout();
-					return false;
+					return true;
 				}
 
 				const requestPayload: {

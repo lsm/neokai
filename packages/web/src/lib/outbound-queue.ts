@@ -8,10 +8,10 @@
  * network blips — a pattern familiar from chat apps like WhatsApp/Signal.
  */
 
-import { connectionState } from './state';
-import { sanitizeUserError } from './user-error';
-import { toast } from './toast';
 import { effect } from '@preact/signals';
+import { connectionState } from './state';
+import { toast } from './toast';
+import { sanitizeUserError } from './user-error';
 
 export interface QueuedAction {
 	/** Unique ID for this queued action */
@@ -105,6 +105,7 @@ export function clearQueue(): void {
  */
 export async function flushQueue(): Promise<void> {
 	if (flushInProgress) return;
+	if (connectionState.value !== 'connected') return;
 
 	const pending = queue.filter((a) => a.status === 'pending');
 	if (pending.length === 0) return;
@@ -112,10 +113,16 @@ export async function flushQueue(): Promise<void> {
 	flushInProgress = true;
 
 	for (const action of pending) {
+		// Abort flush if connection drops mid-flush — leave remaining actions pending
+		if (connectionState.value !== 'connected') break;
+
 		try {
 			await action.execute();
 			action.status = 'sent';
 		} catch (err) {
+			// If disconnected during execution, stop and leave remaining actions pending
+			if (connectionState.value !== 'connected') break;
+
 			action.status = 'failed';
 			action.error = sanitizeUserError(err);
 		}

@@ -127,6 +127,7 @@ describe('OutboundQueue', () => {
 
 	describe('flushQueue', () => {
 		it('should execute all pending actions', async () => {
+			mockConnectionState.value = 'connected';
 			const executed: string[] = [];
 
 			await enqueueAction('Action 1', async () => {
@@ -142,8 +143,10 @@ describe('OutboundQueue', () => {
 		});
 
 		it('should mark successful actions as sent', async () => {
+			// Queue while disconnected
 			await enqueueAction('Action', async () => {});
-
+			// Connect and flush
+			mockConnectionState.value = 'connected';
 			await flushQueue();
 
 			// Actions are cleaned up after 2s, but status is set immediately
@@ -152,10 +155,12 @@ describe('OutboundQueue', () => {
 		});
 
 		it('should mark failed actions with error', async () => {
+			// Queue while disconnected
 			await enqueueAction('Failing', async () => {
 				throw new Error('Network error');
 			});
-
+			// Connect and flush
+			mockConnectionState.value = 'connected';
 			await flushQueue();
 
 			const actions = getQueuedActions();
@@ -165,6 +170,7 @@ describe('OutboundQueue', () => {
 		});
 
 		it('should process actions sequentially', async () => {
+			mockConnectionState.value = 'connected';
 			const order: number[] = [];
 
 			await enqueueAction('First', async () => {
@@ -177,6 +183,43 @@ describe('OutboundQueue', () => {
 			await flushQueue();
 
 			expect(order).toEqual([1, 2]);
+		});
+
+		it('should not flush when disconnected', async () => {
+			mockConnectionState.value = 'disconnected';
+			const executed = vi.fn();
+
+			await enqueueAction('Action', executed);
+
+			await flushQueue();
+
+			expect(executed).not.toHaveBeenCalled();
+			// Action stays pending for next flush
+			expect(getQueuedActions()[0].status).toBe('pending');
+		});
+
+		it('should leave remaining actions pending if connection drops mid-flush', async () => {
+			let callCount = 0;
+			mockConnectionState.value = 'connected';
+
+			await enqueueAction('Action 1', async () => {
+				callCount++;
+			});
+			await enqueueAction('Action 2', async () => {
+				// Simulate connection dropping during this action
+				mockConnectionState.value = 'disconnected';
+				callCount++;
+			});
+			await enqueueAction('Action 3', async () => {
+				callCount++;
+			});
+
+			await flushQueue();
+
+			// First two actions attempted, third left pending
+			expect(callCount).toBe(2);
+			const actions = getQueuedActions();
+			expect(actions.find((a) => a.label === 'Action 3')?.status).toBe('pending');
 		});
 	});
 });

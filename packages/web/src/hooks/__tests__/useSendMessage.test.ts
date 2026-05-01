@@ -389,7 +389,7 @@ describe('useSendMessage', () => {
 	});
 
 	describe('hub connection handling', () => {
-		it('should handle no hub connection', async () => {
+		it('should queue message when hub disappears during send', async () => {
 			mockGetHubIfConnected.mockReturnValue(null);
 
 			const onSendStart = vi.fn();
@@ -411,9 +411,8 @@ describe('useSendMessage', () => {
 			});
 
 			expect(onSendStart).toHaveBeenCalled();
-			expect(mockToastError).toHaveBeenCalledWith(
-				'Connection lost. Your message will be sent when reconnected.'
-			);
+			// Hub disappeared mid-send - message is queued for retry
+			expect(mockToastInfo).toHaveBeenCalledWith('Message queued - will send when reconnected.');
 			expect(onSendComplete).toHaveBeenCalled();
 		});
 	});
