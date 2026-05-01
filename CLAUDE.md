@@ -52,7 +52,8 @@ make test-daemon       # Daemon tests (all shards in parallel, with coverage)
 make test-web          # Web tests only (vitest run) with coverage
 
 # Daemon test runner (scripts/test-daemon.sh)
-./scripts/test-daemon.sh                # All 7 shards in parallel (fast, no coverage)
+# Do NOT run `bun test packages/daemon/tests/unit`; use this shard runner instead.
+./scripts/test-daemon.sh                # All daemon unit shards in parallel (fast, no coverage)
 ./scripts/test-daemon.sh --coverage     # All shards with coverage
 ./scripts/test-daemon.sh 2-handlers     # Run a single shard
 ./scripts/test-daemon.sh --rerun        # Rerun only previously failing files

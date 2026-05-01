@@ -580,6 +580,9 @@ describe('SpaceAgentManager', () => {
 			const { getPresetAgentTemplates } = await import(
 				'../../../../src/lib/space/agents/seed-agents'
 			);
+			const { computeAgentTemplateHash } = await import(
+				'../../../../src/lib/space/agents/agent-template-hash'
+			);
 			const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
 			if (!coder) throw new Error('Coder preset missing');
 
@@ -601,6 +604,7 @@ describe('SpaceAgentManager', () => {
 			expect(result.value.description).toBe(coder.description);
 			expect(result.value.tools).toEqual(coder.tools);
 			expect(result.value.customPrompt).toBe(coder.customPrompt);
+			expect(result.value.templateHash).toBe(computeAgentTemplateHash(coder));
 		});
 
 		it('preserves id, spaceId, name, model, and provider', async () => {
