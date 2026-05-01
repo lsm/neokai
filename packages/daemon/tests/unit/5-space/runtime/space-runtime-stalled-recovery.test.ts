@@ -40,6 +40,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repositories/tool-continuation-recovery-repository.ts';
+import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -76,7 +77,12 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 function buildLinearWorkflow(
 	spaceId: string,
 	workflowManager: SpaceWorkflowManager,
-	nodes: Array<{ id: string; name: string; agentId: string }>
+	nodes: Array<{ id: string; name: string; agentId: string }>,
+	opts: {
+		channels?: SpaceWorkflow['channels'];
+		gates?: SpaceWorkflow['gates'];
+		endNodeId?: string;
+	} = {}
 ): SpaceWorkflow {
 	const transitions = nodes.slice(0, -1).map((step, i) => ({
 		from: step.id,
@@ -90,7 +96,16 @@ function buildLinearWorkflow(
 		description: 'Test',
 		nodes,
 		transitions,
+		channels:
+			opts.channels ??
+			nodes.slice(0, -1).map((step, i) => ({
+				id: `${step.id}-to-${nodes[i + 1].id}`,
+				from: step.name,
+				to: nodes[i + 1].name,
+			})),
+		gates: opts.gates,
 		startNodeId: nodes[0].id,
+		endNodeId: opts.endNodeId ?? nodes.at(-1)?.id,
 		rules: [],
 		tags: [],
 		completionAutonomyLevel: 3,
@@ -504,6 +519,242 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 	});
 
 	describe('runs with all node executions terminal and no completion signal', () => {
+		test('coder idle and reviewer never created → reviewer is activated pending on daemon restart', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coding', agentId: AGENT },
+				{ id: STEP_B, name: 'Review', agentId: AGENT },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recover missing reviewer',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Recover missing reviewer',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'idle');
+			const pendingRepo = new PendingAgentMessageRepository(db);
+
+			await makeRuntime({ pendingMessageRepo: pendingRepo }).recoverStalledRuns();
+
+			const reviewer = findExec(run.id, STEP_B);
+			expect(reviewer.status).toBe('pending');
+			expect(reviewer.agentSessionId).toBeNull();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+			expect(pendingRepo.listPendingForTarget(run.id, 'Review')[0].message).toContain(
+				'Daemon restart recovery'
+			);
+		});
+
+		test('coder idle and reviewer idle from previous cycle → reviewer resets to pending', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coding', agentId: AGENT },
+				{ id: STEP_B, name: 'Review', agentId: AGENT },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recover idle reviewer',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Recover idle reviewer',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'idle');
+			const previousReviewer = seedExec(run.id, STEP_B, 'Review', 'idle', {
+				agentSessionId: 'dead-review-session',
+				result: 'previous review finished',
+			});
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			const reviewer = nodeExecutionRepo.getById(previousReviewer.id)!;
+			expect(reviewer.status).toBe('pending');
+			expect(reviewer.agentSessionId).toBeNull();
+			expect(reviewer.result).toBeNull();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+
+		test('coder idle with queued handoff and reviewer never created → tick repair creates and spawns reviewer', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coding', agentId: AGENT },
+				{ id: STEP_B, name: 'Review', agentId: AGENT },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Queued handoff repair',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Queued handoff repair',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'idle');
+			const pendingRepo = new PendingAgentMessageRepository(db);
+			pendingRepo.enqueue({
+				workflowRunId: run.id,
+				spaceId: SPACE_ID,
+				taskId: task.id,
+				sourceAgentName: 'Coding',
+				targetKind: 'node_agent',
+				targetAgentName: 'Review',
+				message: 'please review',
+			});
+			const live = new Set<string>();
+			const tam = {
+				rehydrate: async () => {},
+				isSessionAlive: (sessionId: string) => live.has(sessionId),
+				getAgentSessionById: () => null,
+				isExecutionSpawning: () => false,
+				tryResumeNodeAgentSession: async () => {},
+				spawnWorkflowNodeAgentForExecution: async (
+					_task: unknown,
+					_space: unknown,
+					_workflow: unknown,
+					_run: unknown,
+					execution: { id: string }
+				) => {
+					const sessionId = `session:${execution.id}`;
+					live.add(sessionId);
+					return sessionId;
+				},
+				flushPendingMessagesForTarget: async (
+					runId: string,
+					agentName: string,
+					sessionId: string
+				) => {
+					for (const row of pendingRepo.listPendingForTarget(runId, agentName))
+						pendingRepo.markDelivered(row.id, sessionId);
+				},
+				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
+			};
+
+			await makeRuntime({
+				pendingMessageRepo: pendingRepo,
+				taskAgentManager: tam as any,
+			}).executeTick();
+
+			const reviewer = findExec(run.id, STEP_B);
+			expect(reviewer.status).toBe('in_progress');
+			expect(reviewer.agentSessionId).toBe(`session:${reviewer.id}`);
+			expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
+		});
+
+		test('coder idle with blocked coder→reviewer gate → run blocked', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Coding', agentId: AGENT },
+					{ id: STEP_B, name: 'Review', agentId: AGENT },
+				],
+				{
+					channels: [{ id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'ready' }],
+					gates: [
+						{
+							id: 'ready',
+							resetOnCycle: false,
+							fields: [{ name: 'pr_url', type: 'string', check: { op: 'exists' as const } }],
+						},
+					],
+				}
+			);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Gate blocked handoff',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Gate blocked handoff',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'idle');
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(findExec(run.id, STEP_B)).toBeUndefined();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+		});
+
+		test('coder idle with open coder→reviewer gate → reviewer is activated', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Coding', agentId: AGENT },
+					{ id: STEP_B, name: 'Review', agentId: AGENT },
+				],
+				{
+					channels: [{ id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'ready' }],
+					gates: [
+						{
+							id: 'ready',
+							resetOnCycle: false,
+							fields: [{ name: 'pr_url', type: 'string', check: { op: 'exists' as const } }],
+						},
+					],
+				}
+			);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Gate open handoff',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Gate open handoff',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'idle');
+			db.prepare(
+				`INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`
+			).run(
+				run.id,
+				'ready',
+				JSON.stringify({ pr_url: 'https://github.com/acme/repo/pull/1' }),
+				Date.now()
+			);
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(findExec(run.id, STEP_B).status).toBe('pending');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+
 		test('single-node run with idle execution → run blocked, task blocked, notifications emitted', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Step A', agentId: AGENT },

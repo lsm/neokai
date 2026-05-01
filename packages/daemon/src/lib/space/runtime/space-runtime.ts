@@ -29,7 +29,7 @@ import type {
 	UpdateSpaceTaskParams,
 	WorkflowChannel,
 } from '@neokai/shared';
-import { resolveNodeAgents } from '@neokai/shared';
+import { computeGateDefaults, resolveNodeAgents } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -61,6 +61,8 @@ import {
 	MAX_TASK_AGENT_CRASH_RETRIES,
 } from './constants';
 import { resolveTimeoutForExecution } from './resolve-node-timeout';
+import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import { evaluateGate } from './gate-evaluator';
 
 const log = new Logger('space-runtime');
 
@@ -1495,6 +1497,9 @@ export class SpaceRuntime {
 			return 'completion-pending';
 		}
 
+		const activated = await this.activateRestartRecoveryDownstreamNodes(run, executions);
+		if (activated) return 'skipped';
+
 		// Genuinely stalled with no completion signal — flag the run
 		// as blocked so the user-facing task surfaces in the "Needs Attention"
 		// group rather than appearing in_progress forever.
@@ -1536,6 +1541,155 @@ export class SpaceRuntime {
 				`with all node executions idle/cancelled and no completion signal — flagged blocked`
 		);
 		return 'blocked';
+	}
+
+	private async activateRestartRecoveryDownstreamNodes(
+		run: SpaceWorkflowRun,
+		executions: NodeExecution[]
+	): Promise<boolean> {
+		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+		if (!workflow) return false;
+		const channels = workflow.channels ?? [];
+		if (channels.length === 0) return false;
+
+		const nodeByName = new Map(workflow.nodes.map((node) => [node.name, node]));
+		const createdOrReset: string[] = [];
+		const blockedGateReasons: string[] = [];
+
+		for (const sourceExecution of executions) {
+			const sourceNode = workflow.nodes.find((node) => node.id === sourceExecution.workflowNodeId);
+			if (!sourceNode) continue;
+			for (const channel of channels) {
+				if (channel.from !== '*' && channel.from !== sourceNode.name) continue;
+				const targetNames = this.resolveRestartRecoveryTargetNames(
+					channel,
+					workflow,
+					sourceNode.name
+				);
+				for (const targetName of targetNames) {
+					const targetNode = nodeByName.get(targetName);
+					if (!targetNode || targetNode.id === sourceNode.id) continue;
+
+					const gateResult = await this.evaluateRestartRecoveryChannelGate(
+						run.id,
+						workflow,
+						channel
+					);
+					if (!gateResult.open) {
+						blockedGateReasons.push(
+							gateResult.reason ??
+								`Gate ${channel.gateId ?? 'unknown'} blocked channel ${channel.id}`
+						);
+						continue;
+					}
+
+					let activatedForTarget = false;
+					for (const agentEntry of resolveNodeAgents(targetNode)) {
+						const existing = this.config.nodeExecutionRepo
+							.listByNode(run.id, targetNode.id)
+							.find((execution) => execution.agentName === agentEntry.name);
+						if (existing) {
+							if (existing.status === 'idle') {
+								this.config.nodeExecutionRepo.update(existing.id, {
+									status: 'pending',
+									agentSessionId: null,
+									result: null,
+									startedAt: null,
+									completedAt: null,
+								});
+								activatedForTarget = true;
+							}
+							continue;
+						}
+						this.config.nodeExecutionRepo.createOrIgnore({
+							workflowRunId: run.id,
+							workflowNodeId: targetNode.id,
+							agentName: agentEntry.name,
+							agentId: agentEntry.agentId ?? null,
+							status: 'pending',
+						});
+						activatedForTarget = true;
+					}
+					if (activatedForTarget) {
+						createdOrReset.push(targetNode.name);
+						this.enqueueRestartRecoveryMessage(run, sourceExecution.agentName, targetNode);
+					}
+				}
+			}
+		}
+
+		if (createdOrReset.length > 0) {
+			log.warn(
+				`SpaceRuntime.recoverStalledRuns: recovered run ${run.id} by activating downstream node(s): ${[
+					...new Set(createdOrReset),
+				].join(', ')}`
+			);
+			return true;
+		}
+		if (blockedGateReasons.length > 0) {
+			log.warn(
+				`SpaceRuntime.recoverStalledRuns: run ${run.id} has downstream transition(s) but gate(s) are closed: ${[
+					...new Set(blockedGateReasons),
+				].join('; ')}`
+			);
+		}
+		return false;
+	}
+
+	private resolveRestartRecoveryTargetNames(
+		channel: WorkflowChannel,
+		workflow: SpaceWorkflow,
+		sourceNodeName: string
+	): string[] {
+		const rawTargets = Array.isArray(channel.to) ? channel.to : [channel.to];
+		if (rawTargets.includes('*')) {
+			return workflow.nodes.map((node) => node.name).filter((name) => name !== sourceNodeName);
+		}
+		return rawTargets;
+	}
+
+	private async evaluateRestartRecoveryChannelGate(
+		runId: string,
+		workflow: SpaceWorkflow,
+		channel: WorkflowChannel
+	): Promise<{ open: boolean; reason?: string }> {
+		if (!channel.gateId) return { open: true };
+		const gate = (workflow.gates ?? []).find((candidate) => candidate.id === channel.gateId);
+		if (!gate) {
+			return {
+				open: false,
+				reason: `Gate "${channel.gateId}" not found — channel "${channel.id}" is closed (misconfiguration)`,
+			};
+		}
+		const gateDataRepo = new GateDataRepository(this.config.db);
+		const runtimeData =
+			gateDataRepo.get(runId, gate.id)?.data ?? computeGateDefaults(gate.fields ?? []);
+		const result = await evaluateGate(gate, runtimeData);
+		return { open: result.open, reason: result.reason };
+	}
+
+	private enqueueRestartRecoveryMessage(
+		run: SpaceWorkflowRun,
+		lastAgentName: string,
+		targetNode: SpaceWorkflow['nodes'][number]
+	): void {
+		const repo = this.config.pendingMessageRepo;
+		if (!repo) return;
+		const tasks = this.config.taskRepo.listByWorkflowRun(run.id);
+		const task = this.pickCanonicalTaskForRun(run, tasks);
+		const message = `[Daemon restart recovery] The previous agent (${lastAgentName}) completed but the handoff message was not delivered. Please check the PR and review status, then continue.`;
+		for (const agentEntry of resolveNodeAgents(targetNode)) {
+			repo.enqueue({
+				workflowRunId: run.id,
+				spaceId: run.spaceId,
+				taskId: task?.id ?? null,
+				sourceAgentName: lastAgentName,
+				targetKind: 'node_agent',
+				targetAgentName: agentEntry.name,
+				message,
+				idempotencyKey: `daemon-restart-recovery:${targetNode.id}:${agentEntry.name}`,
+			});
+		}
 	}
 
 	// -------------------------------------------------------------------------
