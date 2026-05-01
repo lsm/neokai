@@ -166,6 +166,17 @@ export function stopAutoFlush(): void {
 	}
 }
 
+// HMR cleanup: tear down the old effect subscription before module re-evaluation
+// prevents orphaned subscriptions that fire on every state change
+if (import.meta.hot) {
+	import.meta.hot.dispose(() => {
+		if (cleanupAutoFlush) {
+			cleanupAutoFlush();
+			cleanupAutoFlush = null;
+		}
+	});
+}
+
 // For testing: reset module state
 export function resetQueue(): void {
 	queue = [];
