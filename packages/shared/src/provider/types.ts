@@ -204,6 +204,12 @@ export interface Provider {
 	 * HTTP server). Called during daemon shutdown so the event loop can exit.
 	 */
 	shutdown?(): Promise<void>;
+
+	/**
+	 * Optional: Clear this provider's model cache so the next getModels()
+	 * call re-fetches from the API instead of returning stale cached data.
+	 */
+	clearModelCache?(): void;
 }
 
 /**

@@ -320,7 +320,21 @@ export async function initializeModels(): Promise<void> {
 }
 
 /**
- * Clear the models cache for a specific key or all
+ * Clear per-provider model caches so the next getModels() call re-fetches
+ * from each provider's API.
+ */
+function clearProviderModelCaches(): void {
+	const registry = getProviderRegistry();
+	for (const provider of registry.getAll()) {
+		if (provider.clearModelCache) {
+			provider.clearModelCache();
+		}
+	}
+}
+
+/**
+ * Clear the models cache for a specific key or all.
+ * Provider-level caches are only cleared on a full clear (no cacheKey).
  */
 export function clearModelsCache(cacheKey?: string): void {
 	if (cacheKey) {
@@ -329,6 +343,43 @@ export function clearModelsCache(cacheKey?: string): void {
 	} else {
 		modelsCache.clear();
 		cacheTimestamps.clear();
+		clearProviderModelCaches();
+	}
+}
+
+/**
+ * Refresh models from all providers, preserving the existing cache on failure.
+ * Clears provider-level caches first so each provider re-fetches from its API,
+ * but only replaces the global cache if the fetch succeeds.
+ */
+export async function refreshModels(): Promise<void> {
+	const cacheKey = 'global';
+
+	// Wait for any in-progress background refresh to finish so we don't race
+	const inProgress = refreshInProgress.get(cacheKey);
+	if (inProgress) {
+		await inProgress;
+	}
+
+	const previousModels = modelsCache.get(cacheKey);
+	clearProviderModelCaches();
+
+	const models = await loadModelsFromProviders();
+	if (models.length > 0) {
+		const mergedModels = mergeWithFallbackModels(models);
+		// If the new result has fewer models than the previous cache, at least one
+		// provider likely returned static fallback data instead of live API results
+		// (e.g. OpenRouter returns FALLBACK_MODELS on HTTP errors). Keep the old,
+		// richer cache rather than replacing it with degraded fallback metadata.
+		// Compare merged-vs-merged so the fallback entries added by mergeWithFallbackModels
+		// don't distort the comparison.
+		if (previousModels && previousModels.length > mergedModels.length) {
+			modelsCache.set(cacheKey, previousModels);
+			cacheTimestamps.set(cacheKey, Date.now());
+			return;
+		}
+		modelsCache.set(cacheKey, mergedModels);
+		cacheTimestamps.set(cacheKey, Date.now());
 	}
 }
 
