@@ -513,6 +513,8 @@ export function ModelsSettings() {
 		setRefreshing(true);
 		try {
 			await fetchModels(true);
+		} catch {
+			toast.error('Failed to refresh models');
 		} finally {
 			setRefreshing(false);
 		}
@@ -523,6 +525,8 @@ export function ModelsSettings() {
 			setLoading(true);
 			try {
 				await fetchModels(false);
+			} catch {
+				// Initial load failed — models will remain empty until user refreshes
 			} finally {
 				setLoading(false);
 			}

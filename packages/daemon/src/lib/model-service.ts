@@ -354,6 +354,13 @@ export function clearModelsCache(cacheKey?: string): void {
  */
 export async function refreshModels(): Promise<void> {
 	const cacheKey = 'global';
+
+	// Wait for any in-progress background refresh to finish so we don't race
+	const inProgress = refreshInProgress.get(cacheKey);
+	if (inProgress) {
+		await inProgress;
+	}
+
 	const previousModels = modelsCache.get(cacheKey);
 	clearProviderModelCaches();
 
