@@ -607,6 +607,8 @@ export function createTables(db: BunDatabase): void {
 function createIndexes(db: BunDatabase): void {
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session
       ON sdk_messages(session_id, timestamp)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
+      ON sdk_messages(session_id, timestamp DESC, id DESC)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
       ON sdk_messages(message_type, message_subtype)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status

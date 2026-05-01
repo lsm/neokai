@@ -474,15 +474,18 @@ class SessionStore {
 	 */
 	private _applyMessagesDelta(event: LiveQueryDeltaEvent): void {
 		let next = this.sdkMessages.value.slice();
+		let changed = false;
 
 		if (event.removed?.length) {
 			const removedIds = new Set(
 				(event.removed as Array<{ id?: unknown }>).map((r) => r.id).filter((id) => id != null)
 			);
+			const beforeLength = next.length;
 			next = next.filter((m) => {
 				const id = (m as ChatMessage & { id?: unknown }).id;
 				return !(id != null && removedIds.has(id));
 			});
+			changed ||= next.length !== beforeLength;
 		}
 
 		if (event.updated?.length) {
@@ -493,7 +496,11 @@ class SessionStore {
 			}
 			next = next.map((m) => {
 				const id = (m as ChatMessage & { id?: unknown }).id;
-				if (id != null && updatedById.has(id)) return updatedById.get(id)!;
+				if (id != null && updatedById.has(id)) {
+					const updated = updatedById.get(id)!;
+					if (updated !== m) changed = true;
+					return updated;
+				}
 				return m;
 			});
 		}
@@ -509,6 +516,7 @@ class SessionStore {
 				trulyNew.push(row);
 			}
 			if (trulyNew.length) {
+				changed = true;
 				next = [...next, ...trulyNew].sort(
 					(a, b) =>
 						((a as ChatMessage & { timestamp?: number }).timestamp || 0) -
@@ -518,7 +526,9 @@ class SessionStore {
 			this._syncCommandsFromSDKMessages(trulyNew);
 		}
 
-		this.sdkMessages.value = next;
+		if (changed) {
+			this.sdkMessages.value = next;
+		}
 	}
 
 	/**
@@ -693,7 +703,17 @@ class SessionStore {
 	 */
 	prependMessages(messages: ChatMessage[]): void {
 		if (messages.length === 0) return;
-		this.sdkMessages.value = [...messages, ...this.sdkMessages.value];
+		const seenIds = new Set(
+			this.sdkMessages.value
+				.map((message) => (message as ChatMessage & { id?: unknown }).id)
+				.filter((id) => id != null)
+		);
+		const uniqueMessages = messages.filter((message) => {
+			const id = (message as ChatMessage & { id?: unknown }).id;
+			return id == null || !seenIds.has(id);
+		});
+		if (uniqueMessages.length === 0) return;
+		this.sdkMessages.value = [...uniqueMessages, ...this.sdkMessages.value];
 	}
 
 	/**

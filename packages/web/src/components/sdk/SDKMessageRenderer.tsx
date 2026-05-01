@@ -3,6 +3,7 @@
  */
 
 import type { JSX } from 'preact';
+import { memo } from 'preact/compat';
 import { useState } from 'preact/hooks';
 import type {
 	SDKAuthStatusMessage,
@@ -181,7 +182,7 @@ function SystemInitPill({ message }: { message: SystemInitMessage }) {
 /**
  * Main SDK message renderer - routes to appropriate sub-renderer
  */
-export function SDKMessageRenderer({
+function SDKMessageRendererImpl({
 	message,
 	toolResultsMap,
 	toolInputsMap,
@@ -324,3 +325,35 @@ export function SDKMessageRenderer({
 	// Checkbox rendering is now handled by individual message components
 	return renderedMessage;
 }
+
+function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
+	return (
+		prev.message === next.message &&
+		prev.toolResultsMap === next.toolResultsMap &&
+		prev.toolInputsMap === next.toolInputsMap &&
+		prev.subagentMessagesMap === next.subagentMessagesMap &&
+		prev.sessionInfo === next.sessionInfo &&
+		prev.sessionId === next.sessionId &&
+		prev.resolvedQuestions === next.resolvedQuestions &&
+		prev.pendingQuestion === next.pendingQuestion &&
+		prev.onQuestionResolved === next.onQuestionResolved &&
+		prev.onRewind === next.onRewind &&
+		prev.rewindingMessageUuid === next.rewindingMessageUuid &&
+		prev.rewindMode === next.rewindMode &&
+		prev.selectedMessages === next.selectedMessages &&
+		prev.onMessageCheckboxChange === next.onMessageCheckboxChange &&
+		prev.allMessages === next.allMessages &&
+		prev.taskContext === next.taskContext &&
+		prev.showSubagentMessages === next.showSubagentMessages &&
+		prev.flattenSubagentTools === next.flattenSubagentTools &&
+		prev.showToolResultUserMessages === next.showToolResultUserMessages &&
+		prev.isRunning === next.isRunning
+	);
+}
+
+/**
+ * Memoized to keep large SDK threads responsive: streaming appends often update
+ * only one or two message objects, so unchanged rows can skip re-running the
+ * tool/result routing and markdown/tool block rendering work.
+ */
+export const SDKMessageRenderer = memo(SDKMessageRendererImpl, areMessageRendererPropsEqual);

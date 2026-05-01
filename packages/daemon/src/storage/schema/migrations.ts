@@ -538,6 +538,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 112: Normalize Space GitHub dedupe keys after canonical repo casing change.
 	runMigration112(db);
+
+	// Migration 113: Add descending timestamp/id index for large SDK message windows.
+	runMigration113(db);
 }
 
 /**
@@ -7810,4 +7813,10 @@ export function runMigration112(db: BunDatabase): void {
 		)
 	`);
 	db.exec(`UPDATE space_github_events SET dedupe_key = lower(dedupe_key)`);
+}
+
+export function runMigration113(db: BunDatabase): void {
+	if (!tableExists(db, 'sdk_messages')) return;
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
+		ON sdk_messages(session_id, timestamp DESC, id DESC)`);
 }

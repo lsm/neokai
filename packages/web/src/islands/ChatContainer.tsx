@@ -20,6 +20,7 @@ import type {
 	ChatMessage,
 	MessageDeliveryMode,
 	MessageImage,
+	QuestionDraftResponse,
 	ResolvedQuestion,
 	SessionFeatures,
 } from '@neokai/shared';
@@ -741,6 +742,30 @@ export default function ChatContainer({
 	const removedOutputs = session?.metadata?.removedOutputs || [];
 	const maps = useMessageMaps(messages, sessionId, removedOutputs);
 
+	const handleQuestionResolved = useCallback(
+		(state: 'submitted' | 'cancelled', responses: QuestionDraftResponse[]) => {
+			// Move question to resolved state locally for immediate UI feedback
+			// (Server also persists this via question.respond/cancel RPC)
+			if (pendingQuestion) {
+				const resolved = {
+					question: pendingQuestion,
+					state,
+					responses,
+					resolvedAt: Date.now(),
+				};
+				// Update ref immediately (synchronous)
+				resolvingQuestionsRef.current.set(pendingQuestion.toolUseId, resolved);
+				// Also schedule update to resolvedQuestions (will be merged with server data)
+				setResolvedQuestions((prev) => {
+					const next = new Map(prev);
+					next.set(pendingQuestion.toolUseId, resolved);
+					return next;
+				});
+			}
+		},
+		[pendingQuestion]
+	);
+
 	// Combined resolved questions map (state + ref)
 	// Includes questions synced from server (state) and questions being resolved (ref)
 	const allResolvedQuestions = useMemo(() => {
@@ -1260,26 +1285,7 @@ export default function ChatContainer({
 										selectedMessages={selectedMessages}
 										onMessageCheckboxChange={handleMessageCheckboxChange}
 										allMessages={messages}
-										onQuestionResolved={(state, responses) => {
-											// Move question to resolved state locally for immediate UI feedback
-											// (Server also persists this via question.respond/cancel RPC)
-											if (pendingQuestion) {
-												const resolved = {
-													question: pendingQuestion,
-													state,
-													responses,
-													resolvedAt: Date.now(),
-												};
-												// Update ref immediately (synchronous)
-												resolvingQuestionsRef.current.set(pendingQuestion.toolUseId, resolved);
-												// Also schedule update to resolvedQuestions (will be merged with server data)
-												setResolvedQuestions((prev) => {
-													const next = new Map(prev);
-													next.set(pendingQuestion.toolUseId, resolved);
-													return next;
-												});
-											}
-										}}
+										onQuestionResolved={handleQuestionResolved}
 									/>
 								</div>
 							))}

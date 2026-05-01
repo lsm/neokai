@@ -699,4 +699,50 @@ describe('useMessageMaps', () => {
 			expect(agent2Messages?.[0].uuid).toBe(uuid2);
 		});
 	});
+
+	describe('performance characteristics', () => {
+		it('keeps session init mapping linear for large tool-heavy threads', () => {
+			const messages: SDKMessage[] = [];
+			for (let i = 0; i < 250; i++) {
+				messages.push({
+					type: 'user',
+					uuid: `user-${i}`,
+					session_id: 'session-1',
+					message: { role: 'user', content: `prompt ${i}` },
+				} as unknown as SDKMessage);
+				messages.push({
+					type: 'system',
+					subtype: 'init',
+					uuid: `init-${i}`,
+					session_id: 'session-1',
+					tools: ['Read', 'Bash'],
+				} as unknown as SDKMessage);
+				messages.push({
+					type: 'assistant',
+					uuid: `assistant-${i}`,
+					session_id: 'session-1',
+					message: {
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: `tool-${i}`, name: 'Read', input: {} }],
+					},
+				} as unknown as SDKMessage);
+				messages.push({
+					type: 'user',
+					uuid: `result-${i}`,
+					session_id: 'session-1',
+					message: {
+						role: 'user',
+						content: [{ type: 'tool_result', tool_use_id: `tool-${i}`, content: 'ok' }],
+					},
+				} as unknown as SDKMessage);
+			}
+
+			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+
+			expect(result.current.sessionInfoMap.size).toBe(250);
+			expect(result.current.toolInputsMap.size).toBe(250);
+			expect(result.current.toolResultsMap.size).toBe(250);
+			expect(result.current.sessionInfoMap.get('user-249')?.uuid).toBe('init-249');
+		});
+	});
 });
