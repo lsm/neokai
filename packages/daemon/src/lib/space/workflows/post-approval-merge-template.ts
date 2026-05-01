@@ -29,7 +29,7 @@
  *
  * Workflow authors referencing this template MUST ensure their end node signals
  * `{ pr_url }` (inside the `data` payload of `send_message(target:
- * 'task-agent', …)` and/or `save_artifact({ type: 'result', data: { prUrl } })`)
+ * 'task-agent', …)` and/or `save_artifact({ type: 'result', data: { pr_url } })`)
  * before `approve_task()` / `submit_for_approval()`. The earlier §2.1
  * `post_approval_action` discriminator was removed — post-approval routing is
  * declarative on the workflow's `postApproval` field, not signalled at runtime.

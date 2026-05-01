@@ -102,12 +102,12 @@ const PR_READY_BASH_SCRIPT = [
  * the reviewer can still post comments on the PR thread.
  *
  * Environment variables:
- *   NEOKAI_GATE_DATA_JSON       — current gate data; may contain `pr_url`
+ *   NEOKAI_GATE_DATA_JSON       — current gate data; may contain `pr_url` or `review_url`
  *   NEOKAI_WORKFLOW_START_ISO   — ISO8601 timestamp of workflowRun.createdAt,
  *                                 injected by the gate script runner
  */
 const REVIEW_POSTED_BASH_SCRIPT = [
-	'PR_URL=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+	'PR_URL=$(jq -r \'.pr_url // .review_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
 	'if [ -z "$PR_URL" ]; then',
 	'  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
 	'fi',
@@ -353,7 +353,7 @@ const FULLSTACK_QA_PROMPT =
 	'post-approval result artifact has been saved for runtime dispatch.\n' +
 	'- `submit_for_approval({ reason? })` — request human sign-off instead of self-closing. ' +
 	'Use when autonomy blocks self-close (and only when QA passes — see pre-conditions above).\n\n' +
-	'If everything passes, `save_artifact({ type: "result", append: true, summary: "QA passed.", data: { prUrl: "<url>" } })` and ' +
+	'If everything passes, `save_artifact({ type: "result", append: true, summary: "QA passed.", data: { pr_url: "<url>" } })` and ' +
 	'`approve_task`. Do NOT merge the PR yourself — a post-approval reviewer session runs ' +
 	'the merge after the task transitions to `approved`. If issues are found, send a detailed ' +
 	'fix list to Coding and record a `save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` ' +
@@ -472,7 +472,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'comment_urls: ["<comment #1 url>", "<comment #2 url>"] }). The `data` payload ' +
 							'satisfies the review-posted-gate and gives the coder direct links to each ' +
 							'thread.\n' +
-							'   d. Call `save_artifact({ type: "result", append: true, summary: "Requested changes: ...", data: { prUrl: "<url>", reviewUrl: "<gh pr review url>" } })` so the cycle is recorded.\n' +
+							'   d. Call `save_artifact({ type: "result", append: true, summary: "Requested changes: ...", data: { pr_url: "<url>", review_url: "<gh pr review url>" } })` so the cycle is recorded.\n' +
 							'   e. **STOP. Do NOT call `approve_task`. Do NOT call `submit_for_approval`.** ' +
 							'Both are terminal actions that close the review loop — calling either while ' +
 							'P0–P3 findings are open hands the task off before Coding can address them. ' +
@@ -482,8 +482,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'   a. Post an approval review: `gh pr review <pr-url> --approve ' +
 							'--body-file <file>`.\n' +
 							'   b. Verify the PR is still open and mergeable.\n' +
-							'   c. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>" } })` ' +
-							'to record the audit entry. The `prUrl` inside `data` is what ' +
+							'   c. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>" } })` ' +
+							'to record the audit entry. The `pr_url` inside `data` is what ' +
 							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
 							'merge template — top-level keys outside `data` are silently stripped by ' +
 							'the tool schema, so nest it correctly.\n' +
@@ -651,8 +651,8 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'--body-file <file>`. A visible GitHub review is required — an internal ' +
 							'summary is not enough.\n' +
 							'   b. Verify the PR is still open and mergeable.\n' +
-							'   c. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>" } })` ' +
-							'to record the final audit entry. The `prUrl` inside `data` is what ' +
+							'   c. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>" } })` ' +
+							'to record the final audit entry. The `pr_url` inside `data` is what ' +
 							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
 							'merge template — top-level keys outside `data` are silently stripped by ' +
 							'the tool schema, so nest it correctly.\n' +
@@ -781,7 +781,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'3. Verify test coverage is adequate\n' +
 							'4. Post your review to the PR via `gh pr review` (+ inline comments via `gh api` ' +
 							'where relevant) — this is required, not optional\n' +
-							'5. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>" } })` to record the audit entry. Nest `prUrl` inside `data`; top-level keys outside `data` are stripped by the tool schema\n' +
+							'5. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>" } })` to record the audit entry. Nest `pr_url` inside `data`; top-level keys outside `data` are stripped by the tool schema\n' +
 							'6. If your verdict is APPROVE: call `approve_task()` as your final action. If ' +
 							'autonomy blocks self-close, call `submit_for_approval({ reason: "..." })` ' +
 							'instead. If your verdict is REQUEST_CHANGES: stop after step 5 — do NOT call ' +
@@ -1098,8 +1098,8 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'carry the same approval semantic. Leave the workflow open for the next ' +
 							'Coding cycle.\n' +
 							'5. If all green:\n' +
-							'   a. Call `save_artifact({ type: "result", append: true, summary, data: { prUrl: "<url>", testOutput: "<output>" } })` ' +
-							'to record the audit entry. The `prUrl` inside `data` is what ' +
+							'   a. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>", test_output: "<output>" } })` ' +
+							'to record the audit entry. The `pr_url` inside `data` is what ' +
 							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
 							'merge template — top-level keys outside `data` are silently stripped by ' +
 							'the tool schema, so nest it correctly.\n' +
