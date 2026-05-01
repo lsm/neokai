@@ -6,14 +6,15 @@
  * The component renders a non-blocking inline banner, not a full-page modal.
  *
  * Progression:
- * - connected/connecting → hidden
+ * - connected / connecting (initial load, attempts=0) → hidden
+ * - connecting (reconnect, attempts>0) → shows banner (prevents flicker)
  * - reconnecting (attempts ≤ 2) → "Reconnecting…"
  * - disconnected/error / reconnecting (attempts > 2) → "Connection lost. Retrying…"
  * - failed → "Unable to reconnect." + Retry button
  */
 
-import { getBannerLevel } from '../ConnectionOverlay';
 import type { ConnectionState } from '@neokai/shared';
+import { getBannerLevel } from '../ConnectionOverlay';
 
 describe('ConnectionOverlay - getBannerLevel logic', () => {
 	describe('States that should be hidden', () => {
@@ -23,6 +24,18 @@ describe('ConnectionOverlay - getBannerLevel logic', () => {
 
 		it('should be hidden when connecting (initial load)', () => {
 			expect(getBannerLevel('connecting', 0)).toBe('hidden');
+		});
+	});
+
+	describe('Connecting during reconnect cycle', () => {
+		it('should show reconnecting banner when connecting with attempts > 0', () => {
+			expect(getBannerLevel('connecting', 1)).toBe('reconnecting');
+			expect(getBannerLevel('connecting', 2)).toBe('reconnecting');
+		});
+
+		it('should show lost banner when connecting with high attempt count', () => {
+			expect(getBannerLevel('connecting', 3)).toBe('lost');
+			expect(getBannerLevel('connecting', 5)).toBe('lost');
 		});
 	});
 

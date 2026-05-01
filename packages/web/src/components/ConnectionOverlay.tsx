@@ -15,15 +15,20 @@
  * and readable at all times.
  */
 
-import { useState, useCallback } from 'preact/hooks';
-import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
+import { useCallback, useState } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
+import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 
 export type BannerLevel = 'hidden' | 'reconnecting' | 'lost' | 'failed';
 
 export function getBannerLevel(state: typeof connectionState.value, attempts: number): BannerLevel {
-	if (state === 'connected' || state === 'connecting') return 'hidden';
-	if (state === 'reconnecting') return attempts <= 2 ? 'reconnecting' : 'lost';
+	if (state === 'connected') return 'hidden';
+	// Only hide 'connecting' on initial load (attempts === 0).
+	// During reconnect cycles the transport transitions through 'connecting' with
+	// non-zero attempt counts — the banner should stay visible to avoid flicker.
+	if (state === 'connecting' && attempts === 0) return 'hidden';
+	if (state === 'reconnecting' || state === 'connecting')
+		return attempts <= 2 ? 'reconnecting' : 'lost';
 	if (state === 'disconnected' || state === 'error') return 'lost';
 	if (state === 'failed') return 'failed';
 	return 'hidden';

@@ -117,12 +117,17 @@ export function useSendMessage({
 					if (deliveryMode !== 'immediate') {
 						qPayload.deliveryMode = deliveryMode;
 					}
-					enqueueAction(qLabel, async () => {
-						const h = connectionManager.getHubIfConnected();
-						if (!h) throw new Error('Not connected');
-						const res = await h.request<{ messageId?: string }>('message.send', qPayload);
-						if (res?.messageId) onMessageAccepted?.(res.messageId);
-					});
+					// Force queue â hub is null so immediate execution would fail
+					enqueueAction(
+						qLabel,
+						async () => {
+							const h = connectionManager.getHubIfConnected();
+							if (!h) throw new Error('Not connected');
+							const res = await h.request<{ messageId?: string }>('message.send', qPayload);
+							if (res?.messageId) onMessageAccepted?.(res.messageId);
+						},
+						{ executeImmediately: false }
+					);
 					toast.info('Message queued — will send when reconnected.');
 					onSendComplete();
 					clearSendTimeout();
