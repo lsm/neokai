@@ -20,8 +20,11 @@ import type {
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
 import { isValidModel, getAvailableModels, getModelInfoUnfiltered } from '../../model-service';
+import { Logger } from '../../logger';
 import { getPresetAgentTemplates } from '../agents/seed-agents';
 import { computeAgentTemplateHash } from '../agents/agent-template-hash';
+
+const log = new Logger('space-agent-manager');
 
 const KNOWN_TOOLS_SET = new Set<string>(KNOWN_TOOLS);
 
@@ -209,11 +212,22 @@ export class SpaceAgentManager {
 			};
 		}
 
+		const templateHash = computeAgentTemplateHash(preset);
+		log.info('Syncing space agent from preset template', {
+			agentId,
+			spaceId: existing.spaceId,
+			agentName: existing.name,
+			templateName: existing.templateName,
+			previousTemplateHash: existing.templateHash,
+			templateHash,
+			source: 'user_sync_from_template',
+		});
+
 		const updated = this.repo.update(agentId, {
 			description: preset.description,
 			tools: preset.tools,
 			customPrompt: preset.customPrompt,
-			templateHash: computeAgentTemplateHash(preset),
+			templateHash,
 		});
 		if (!updated) return { ok: false, error: `Agent not found after sync: ${agentId}` };
 		return { ok: true, value: updated };
