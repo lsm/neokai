@@ -2,7 +2,7 @@
 /**
  * Tests for ConnectionOverlay component
  *
- * Tests the banner visibility logic (getBannerLevel) directly.
+ * Tests the exported getBannerLevel logic directly from the component.
  * The component renders a non-blocking inline banner, not a full-page modal.
  *
  * Progression:
@@ -12,20 +12,8 @@
  * - failed → "Unable to reconnect." + Retry button
  */
 
+import { getBannerLevel } from '../ConnectionOverlay';
 import type { ConnectionState } from '@neokai/shared';
-
-/**
- * Mirrors the getBannerLevel logic from ConnectionOverlay.tsx
- */
-type BannerLevel = 'hidden' | 'reconnecting' | 'lost' | 'failed';
-
-function getBannerLevel(state: ConnectionState, attempts: number): BannerLevel {
-	if (state === 'connected' || state === 'connecting') return 'hidden';
-	if (state === 'reconnecting') return attempts <= 2 ? 'reconnecting' : 'lost';
-	if (state === 'disconnected' || state === 'error') return 'lost';
-	if (state === 'failed') return 'failed';
-	return 'hidden';
-}
 
 describe('ConnectionOverlay - getBannerLevel logic', () => {
 	describe('States that should be hidden', () => {

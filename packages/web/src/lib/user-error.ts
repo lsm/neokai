@@ -43,8 +43,7 @@ export function isAuthError(error: unknown): boolean {
 		lower.includes('token expired') ||
 		lower.includes('not authenticated') ||
 		(lower.includes('auth') && lower.includes('fail')) ||
-		lower.includes('401') ||
-		lower.includes('403')
+		lower.includes('401')
 	);
 }
 

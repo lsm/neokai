@@ -101,6 +101,10 @@ describe('isAuthError', () => {
 		expect(isAuthError(new Error('ECONNREFUSED'))).toBe(false);
 	});
 
+	it('should NOT flag 403 as auth error (permission denied, not session expiry)', () => {
+		expect(isAuthError(new Error('HTTP 403 Forbidden'))).toBe(false);
+	});
+
 	it('should handle null/undefined', () => {
 		expect(isAuthError(null)).toBe(false);
 		expect(isAuthError(undefined)).toBe(false);

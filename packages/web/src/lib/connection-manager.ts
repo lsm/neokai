@@ -317,7 +317,12 @@ export class ConnectionManager {
 			// Auth/session expiry detection — redirect to re-auth, don't loop retries
 			if (state === 'error' && error && isAuthError(error)) {
 				connectionState.value = 'error';
-				// Redirect to settings/auth for re-authentication
+				// Stop transport and outbound queue before redirect to prevent
+				// reconnect loop firing between href assignment and navigation
+				stopAutoFlush();
+				if (this.transport) {
+					this.transport.close();
+				}
 				if (typeof window !== 'undefined') {
 					window.location.href = '/settings?tab=providers&reason=session_expired';
 				}

@@ -19,11 +19,11 @@ import { useState, useCallback } from 'preact/hooks';
 import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 
-type BannerLevel = 'hidden' | 'reconnecting' | 'lost' | 'failed';
+export type BannerLevel = 'hidden' | 'reconnecting' | 'lost' | 'failed';
 
-function getBannerLevel(state: typeof connectionState.value): BannerLevel {
+export function getBannerLevel(state: typeof connectionState.value, attempts: number): BannerLevel {
 	if (state === 'connected' || state === 'connecting') return 'hidden';
-	if (state === 'reconnecting') return 'reconnecting';
+	if (state === 'reconnecting') return attempts <= 2 ? 'reconnecting' : 'lost';
 	if (state === 'disconnected' || state === 'error') return 'lost';
 	if (state === 'failed') return 'failed';
 	return 'hidden';
@@ -34,7 +34,7 @@ export function ConnectionOverlay() {
 	const attempts = reconnectAttemptCount.value;
 	const [retrying, setRetrying] = useState(false);
 
-	const level = getBannerLevel(state);
+	const level = getBannerLevel(state, attempts);
 
 	const handleReconnect = useCallback(async () => {
 		setRetrying(true);
@@ -49,8 +49,8 @@ export function ConnectionOverlay() {
 
 	if (level === 'hidden') return null;
 
-	// --- Reconnecting (first attempt, amber) ---
-	if (level === 'reconnecting' && attempts <= 2) {
+	// --- Reconnecting (first attempts, amber) ---
+	if (level === 'reconnecting') {
 		return (
 			<div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-none">
 				<div class="mt-2 px-4 py-2 rounded-lg bg-amber-500/90 text-black text-sm font-medium flex items-center gap-2 shadow-lg">
@@ -76,7 +76,7 @@ export function ConnectionOverlay() {
 	}
 
 	// --- Connection lost (repeated failures, amber) ---
-	if (level === 'lost' || (level === 'reconnecting' && attempts > 2)) {
+	if (level === 'lost') {
 		return (
 			<div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-none">
 				<div class="mt-2 px-4 py-2 rounded-lg bg-amber-600/90 text-black text-sm font-medium flex items-center gap-2 shadow-lg">

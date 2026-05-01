@@ -78,11 +78,16 @@ export function useSendMessage({
 				enqueueAction(label, async () => {
 					const hub = connectionManager.getHubIfConnected();
 					if (!hub) throw new Error('Not connected');
-					await hub.request<{ messageId?: string }>('message.send', {
-						sessionId,
-						content,
-						images,
-					});
+					const payload: {
+						sessionId: string;
+						content: string;
+						images?: MessageImage[];
+						deliveryMode?: MessageDeliveryMode;
+					} = { sessionId, content, images };
+					if (deliveryMode !== 'immediate') {
+						payload.deliveryMode = deliveryMode;
+					}
+					await hub.request<{ messageId?: string }>('message.send', payload);
 				});
 				toast.info('Message queued — will send when reconnected.');
 				return true;
