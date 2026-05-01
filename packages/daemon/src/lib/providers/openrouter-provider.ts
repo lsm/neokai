@@ -138,6 +138,13 @@ export class OpenRouterProvider implements Provider {
 	private modelCache: ModelInfo[] | null = null;
 	private lastAuthError: string | undefined;
 
+	/**
+	 * Clear the model cache so the next getModels() call re-fetches from the API.
+	 */
+	clearModelCache(): void {
+		this.modelCache = null;
+	}
+
 	constructor(
 		private readonly env: NodeJS.ProcessEnv = process.env,
 		private readonly fetchImpl: typeof fetch = fetch
@@ -282,6 +289,7 @@ export class OpenRouterProvider implements Provider {
 			description: model.description || model.name || model.id,
 			releaseDate: releaseDateFromCreated(model.created),
 			available: true,
+			preferContextWindowMetadata: true,
 		};
 	}
 

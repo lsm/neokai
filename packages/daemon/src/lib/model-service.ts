@@ -323,6 +323,17 @@ export async function initializeModels(): Promise<void> {
  * Clear the models cache for a specific key or all
  */
 export function clearModelsCache(cacheKey?: string): void {
+	// Also clear per-provider model caches so the next fetch hits the API
+	const registry = getProviderRegistry();
+	for (const provider of registry.getAll()) {
+		if (
+			'clearModelCache' in provider &&
+			typeof (provider as { clearModelCache(): void }).clearModelCache === 'function'
+		) {
+			(provider as { clearModelCache(): void }).clearModelCache();
+		}
+	}
+
 	if (cacheKey) {
 		modelsCache.delete(cacheKey);
 		cacheTimestamps.delete(cacheKey);
