@@ -89,6 +89,7 @@ vi.mock('@neokai/shared', () => ({
 vi.mock('../state', () => ({
 	appState: { value: {} },
 	connectionState: { value: 'disconnected' },
+	reconnectAttemptCount: { value: 0 },
 }));
 
 vi.mock('../global-store', () => ({

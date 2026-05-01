@@ -5,11 +5,13 @@
  * Extracted from ChatContainer.tsx for better separation of concerns.
  */
 
-import { useRef, useCallback } from 'preact/hooks';
-import type { Session, MessageDeliveryMode, MessageImage } from '@neokai/shared';
+import type { MessageDeliveryMode, MessageImage, Session } from '@neokai/shared';
+import { useCallback, useRef } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager';
+import { enqueueAction } from '../lib/outbound-queue';
 import { connectionState } from '../lib/state';
 import { toast } from '../lib/toast';
+import { sanitizeUserError } from '../lib/user-error';
 
 export interface UseSendMessageOptions {
 	sessionId: string;
@@ -70,8 +72,26 @@ export function useSendMessage({
 
 			const isConnected = connectionState.value === 'connected';
 			if (!isConnected) {
-				toast.error('Connection lost. Please refresh the page.');
-				return false;
+				// Queue message for when connection is restored
+				const label =
+					content.length > 40 ? `Message: ${content.slice(0, 40)}…` : `Message: ${content}`;
+				enqueueAction(label, async () => {
+					const hub = connectionManager.getHubIfConnected();
+					if (!hub) throw new Error('Not connected');
+					const payload: {
+						sessionId: string;
+						content: string;
+						images?: MessageImage[];
+						deliveryMode?: MessageDeliveryMode;
+					} = { sessionId, content, images };
+					if (deliveryMode !== 'immediate') {
+						payload.deliveryMode = deliveryMode;
+					}
+					const result = await hub.request<{ messageId?: string }>('message.send', payload);
+					if (result?.messageId) onMessageAccepted?.(result.messageId);
+				});
+				toast.info('Message queued — will send when reconnected.');
+				return true;
 			}
 
 			try {
@@ -85,10 +105,33 @@ export function useSendMessage({
 
 				const hub = connectionManager.getHubIfConnected();
 				if (!hub) {
-					toast.error('Connection lost.');
+					// Hub disappeared during send (race during socket teardown) - queue for retry
+					const qLabel =
+						content.length > 40 ? `Message: ${content.slice(0, 40)}…` : `Message: ${content}`;
+					const qPayload: {
+						sessionId: string;
+						content: string;
+						images?: MessageImage[];
+						deliveryMode?: MessageDeliveryMode;
+					} = { sessionId, content, images };
+					if (deliveryMode !== 'immediate') {
+						qPayload.deliveryMode = deliveryMode;
+					}
+					// Force queue â hub is null so immediate execution would fail
+					enqueueAction(
+						qLabel,
+						async () => {
+							const h = connectionManager.getHubIfConnected();
+							if (!h) throw new Error('Not connected');
+							const res = await h.request<{ messageId?: string }>('message.send', qPayload);
+							if (res?.messageId) onMessageAccepted?.(res.messageId);
+						},
+						{ executeImmediately: false }
+					);
+					toast.info('Message queued — will send when reconnected.');
 					onSendComplete();
 					clearSendTimeout();
-					return false;
+					return true;
 				}
 
 				const requestPayload: {
@@ -111,7 +154,7 @@ export function useSendMessage({
 				clearSendTimeout();
 				return true;
 			} catch (err) {
-				const message = err instanceof Error ? err.message : 'Failed to send message';
+				const message = sanitizeUserError(err);
 				onError(message);
 				toast.error(message);
 				onSendComplete();

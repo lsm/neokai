@@ -35,11 +35,25 @@ vi.mock('../../lib/connection-manager', () => ({
 // Mock toast
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
+const mockToastInfo = vi.fn();
 
 vi.mock('../../lib/toast', () => ({
 	toast: {
 		success: (msg: string) => mockToastSuccess(msg),
 		error: (msg: string) => mockToastError(msg),
+		info: (msg: string) => mockToastInfo(msg),
+	},
+}));
+
+vi.mock('../../lib/outbound-queue', () => ({
+	enqueueAction: vi.fn(() => Promise.resolve({ id: 'queue-1', label: 'Test', status: 'pending' })),
+}));
+
+vi.mock('../../lib/user-error', () => ({
+	sanitizeUserError: (err: unknown) => {
+		if (err instanceof Error) return err.message;
+		if (typeof err === 'string') return err;
+		return 'Something went wrong.';
 	},
 }));
 
@@ -243,7 +257,7 @@ describe('useSendMessage', () => {
 			});
 
 			expect(onSendStart).not.toHaveBeenCalled();
-			expect(mockToastError).toHaveBeenCalledWith('Connection lost. Please refresh the page.');
+			expect(mockToastInfo).toHaveBeenCalledWith('Message queued — will send when reconnected.');
 		});
 
 		it('should not send when connecting', async () => {
@@ -267,7 +281,7 @@ describe('useSendMessage', () => {
 			});
 
 			expect(onSendStart).not.toHaveBeenCalled();
-			expect(mockToastError).toHaveBeenCalledWith('Connection lost. Please refresh the page.');
+			expect(mockToastInfo).toHaveBeenCalledWith('Message queued — will send when reconnected.');
 		});
 	});
 
@@ -375,7 +389,7 @@ describe('useSendMessage', () => {
 	});
 
 	describe('hub connection handling', () => {
-		it('should handle no hub connection', async () => {
+		it('should queue message when hub disappears during send', async () => {
 			mockGetHubIfConnected.mockReturnValue(null);
 
 			const onSendStart = vi.fn();
@@ -397,7 +411,8 @@ describe('useSendMessage', () => {
 			});
 
 			expect(onSendStart).toHaveBeenCalled();
-			expect(mockToastError).toHaveBeenCalledWith('Connection lost.');
+			// Hub disappeared mid-send - message is queued for retry
+			expect(mockToastInfo).toHaveBeenCalledWith('Message queued — will send when reconnected.');
 			expect(onSendComplete).toHaveBeenCalled();
 		});
 	});
@@ -449,7 +464,7 @@ describe('useSendMessage', () => {
 				await result.current.sendMessage('Hello');
 			});
 
-			expect(onError).toHaveBeenCalledWith('Failed to send message');
+			expect(onError).toHaveBeenCalledWith('Unknown error');
 		});
 	});
 
