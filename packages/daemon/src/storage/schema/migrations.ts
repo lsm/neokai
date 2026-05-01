@@ -2473,27 +2473,42 @@ function runMigration29(db: BunDatabase): void {
 	// any missing columns here.
 	// -------------------------------------------------------------------------
 
-	// space_agents: role (added in former migration 30)
-	try {
-		db.prepare(`SELECT role FROM space_agents LIMIT 1`).all();
-	} catch {
-		db.exec(`ALTER TABLE space_agents ADD COLUMN role TEXT NOT NULL DEFAULT 'coder'`);
+	// space_agents: role/provider/inject_workflow_context (added by early Space previews)
+	//
+	// These idempotent upgrades live in the original Space schema migration, which
+	// is re-run on every daemon startup. Later migrations (M74/M80) intentionally
+	// remove `role` and `inject_workflow_context` and consolidate legacy
+	// `system_prompt`/`instructions` into `custom_prompt`. Re-adding the removed
+	// columns to an already-modern schema would cause M74 to rebuild the table on
+	// every restart; before this guard, that rebuild dropped `custom_prompt` and
+	// M80 repopulated it from stale `system_prompt`, silently downgrading preset
+	// agent prompts. Only apply the legacy column upgrades to pre-M80 schemas.
+	const spaceAgentsHaveCustomPrompt = tableHasColumn(db, 'space_agents', 'custom_prompt');
+	if (!spaceAgentsHaveCustomPrompt) {
+		// space_agents: role (added in former migration 30)
+		try {
+			db.prepare(`SELECT role FROM space_agents LIMIT 1`).all();
+		} catch {
+			db.exec(`ALTER TABLE space_agents ADD COLUMN role TEXT NOT NULL DEFAULT 'coder'`);
+		}
 	}
 
-	// space_agents: provider (added in former migration 30)
+	// space_agents: provider (added in former migration 30; still part of the current schema)
 	try {
 		db.prepare(`SELECT provider FROM space_agents LIMIT 1`).all();
 	} catch {
 		db.exec(`ALTER TABLE space_agents ADD COLUMN provider TEXT`);
 	}
 
-	// space_agents: inject_workflow_context (added in former migration 33)
-	try {
-		db.prepare(`SELECT inject_workflow_context FROM space_agents LIMIT 1`).all();
-	} catch {
-		db.exec(
-			`ALTER TABLE space_agents ADD COLUMN inject_workflow_context INTEGER NOT NULL DEFAULT 0`
-		);
+	if (!spaceAgentsHaveCustomPrompt) {
+		// space_agents: inject_workflow_context (added in former migration 33)
+		try {
+			db.prepare(`SELECT inject_workflow_context FROM space_agents LIMIT 1`).all();
+		} catch {
+			db.exec(
+				`ALTER TABLE space_agents ADD COLUMN inject_workflow_context INTEGER NOT NULL DEFAULT 0`
+			);
+		}
 	}
 
 	// space_workflows: start_step_id (added in former migration 32)

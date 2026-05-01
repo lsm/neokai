@@ -28,6 +28,10 @@ import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import { runMigration106 } from '../../../../../src/storage/schema/migrations.ts';
+import { SpaceAgentRepository } from '../../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceAgentManager } from '../../../../../src/lib/space/managers/space-agent-manager.ts';
+import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
+import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
 
 interface AgentRow {
 	id: string;
@@ -86,6 +90,15 @@ function readAgent(db: BunDatabase, id: string): AgentRow | undefined {
 			   FROM space_agents WHERE id = ?`
 		)
 		.get(id) as AgentRow | undefined;
+}
+
+function readAgentTimestamps(
+	db: BunDatabase,
+	id: string
+): { created_at: number; updated_at: number } | undefined {
+	return db.prepare(`SELECT created_at, updated_at FROM space_agents WHERE id = ?`).get(id) as
+		| { created_at: number; updated_at: number }
+		| undefined;
 }
 
 describe('Migration 106: backfill preset agent template tracking', () => {
@@ -250,5 +263,73 @@ describe('Migration 106: backfill preset agent template tracking', () => {
 		expect(() => runMigration106(db)).not.toThrow();
 		const count = (db.prepare(`SELECT COUNT(*) AS c FROM space_agents`).get() as { c: number }).c;
 		expect(count).toBe(0);
+	});
+
+	test('restart migrations preserve a Reviewer prompt synced to the current template', async () => {
+		const reviewer = getPresetAgentTemplates().find((p) => p.name === 'Reviewer');
+		if (!reviewer) throw new Error('Reviewer preset missing');
+
+		insertAgent(db, {
+			id: 'reviewer-agent',
+			spaceId: 'sp-1',
+			name: 'Reviewer',
+			description: reviewer.description,
+			tools: reviewer.tools,
+			customPrompt:
+				'You are an expert code reviewer. You review pull requests for correctness, security, performance, style, and test coverage. You give specific, actionable feedback.\n\nReview the code thoroughly. If satisfied, summarize your findings. If changes are needed, provide specific feedback.',
+			templateName: 'Reviewer',
+			templateHash: 'stale-reviewer-hash',
+		});
+
+		const manager = new SpaceAgentManager(new SpaceAgentRepository(db as any));
+		const sync = await manager.syncFromTemplate('reviewer-agent');
+		expect(sync.ok).toBe(true);
+		if (!sync.ok) throw new Error('sync failed');
+		expect(sync.value.customPrompt).toBe(reviewer.customPrompt);
+		expect(sync.value.templateHash).toBe(computeAgentTemplateHash(reviewer));
+		expect(sync.value.customPrompt).not.toContain('You are an expert code reviewer');
+
+		const beforeRestart = readAgent(db, 'reviewer-agent')!;
+		const beforeTimestamps = readAgentTimestamps(db, 'reviewer-agent')!;
+
+		// Simulate daemon restart/bootstrap: run the full migration stack again on
+		// an already-modern schema. This used to re-add legacy columns, trigger M74's
+		// table rebuild, drop custom_prompt, and let M80 repopulate from stale
+		// system_prompt/instructions data.
+		runMigrations(db, () => {});
+
+		const afterRestart = readAgent(db, 'reviewer-agent')!;
+		const afterTimestamps = readAgentTimestamps(db, 'reviewer-agent')!;
+		expect(afterRestart.custom_prompt).toBe(reviewer.customPrompt);
+		expect(afterRestart.template_hash).toBe(computeAgentTemplateHash(reviewer));
+		expect(afterRestart).toEqual(beforeRestart);
+		expect(afterTimestamps).toEqual(beforeTimestamps);
+	});
+
+	test('restart migrations do not overwrite customized preset prompts', () => {
+		const reviewer = getPresetAgentTemplates().find((p) => p.name === 'Reviewer');
+		if (!reviewer) throw new Error('Reviewer preset missing');
+		const customizedPrompt = `${reviewer.customPrompt}\n\nUser-specific review policy.`;
+
+		insertAgent(db, {
+			id: 'customized-reviewer',
+			spaceId: 'sp-1',
+			name: 'Reviewer',
+			description: reviewer.description,
+			tools: reviewer.tools,
+			customPrompt: customizedPrompt,
+			templateName: 'Reviewer',
+			templateHash: computeAgentTemplateHash({ ...reviewer, customPrompt: customizedPrompt }),
+		});
+		const before = readAgent(db, 'customized-reviewer')!;
+		const beforeTimestamps = readAgentTimestamps(db, 'customized-reviewer')!;
+
+		runMigrations(db, () => {});
+
+		const after = readAgent(db, 'customized-reviewer')!;
+		const afterTimestamps = readAgentTimestamps(db, 'customized-reviewer')!;
+		expect(after.custom_prompt).toBe(customizedPrompt);
+		expect(after).toEqual(before);
+		expect(afterTimestamps).toEqual(beforeTimestamps);
 	});
 });
