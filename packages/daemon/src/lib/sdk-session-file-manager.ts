@@ -1191,7 +1191,33 @@ function extractMessageText(entry: Record<string, unknown>): string {
  * @param filePath - Absolute path to the SDK JSONL transcript
  * @returns Summary text when found, otherwise null
  */
-export function extractCompactionSummary(filePath: string): string | null {
+export interface CompactionSummaryInfo {
+	summary: string;
+	filePath: string;
+	boundaryTimestamp?: number;
+	summaryTimestamp?: number;
+}
+
+function parseEntryTimestamp(entry: Record<string, unknown>): number | undefined {
+	const timestamp = entry.timestamp;
+	if (typeof timestamp === 'number' && Number.isFinite(timestamp)) {
+		return timestamp;
+	}
+	if (typeof timestamp === 'string') {
+		const parsed = Date.parse(timestamp);
+		return Number.isFinite(parsed) ? parsed : undefined;
+	}
+	return undefined;
+}
+
+/**
+ * Extract the SDK compaction summary plus provenance from a JSONL session transcript.
+ *
+ * The timestamps let callers decide whether this compacted summary is still current
+ * relative to live NeoKai messages. A summary older than already-loaded live turns
+ * must not be re-injected as the active pending context after resume/restart.
+ */
+export function extractCompactionSummaryInfo(filePath: string): CompactionSummaryInfo | null {
 	if (!existsSync(filePath)) {
 		return null;
 	}
@@ -1226,6 +1252,7 @@ export function extractCompactionSummary(filePath: string): string | null {
 			return null;
 		}
 
+		const boundaryTimestamp = parseEntryTimestamp(entries[compactBoundaryIndex]);
 		for (let i = compactBoundaryIndex + 1; i < entries.length; i++) {
 			const entry = entries[i];
 			if (entry.type !== 'assistant' && entry.type !== 'user') {
@@ -1234,7 +1261,12 @@ export function extractCompactionSummary(filePath: string): string | null {
 
 			const text = extractMessageText(entry);
 			if (text) {
-				return text;
+				return {
+					summary: text,
+					filePath,
+					boundaryTimestamp,
+					summaryTimestamp: parseEntryTimestamp(entry),
+				};
 			}
 		}
 	} catch {
@@ -1242,6 +1274,10 @@ export function extractCompactionSummary(filePath: string): string | null {
 	}
 
 	return null;
+}
+
+export function extractCompactionSummary(filePath: string): string | null {
+	return extractCompactionSummaryInfo(filePath)?.summary ?? null;
 }
 
 /**

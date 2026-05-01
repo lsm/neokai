@@ -1080,6 +1080,86 @@ describe('QueryRunner', () => {
 			}
 		});
 
+		it('should not carry a compacted summary older than live conversation messages', async () => {
+			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
+			const testSdkDir = join(
+				tmpdir(),
+				`query-runner-stale-compaction-${Date.now()}-${Math.random().toString(36).slice(2)}`
+			);
+			try {
+				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
+				mockSession.sdkSessionId = 'sdk-session-id';
+				mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
+				const sessionFilePath = getSDKSessionFilePath(
+					mockSession.workspacePath!,
+					mockSession.sdkSessionId
+				);
+				mkdirSync(dirname(sessionFilePath), { recursive: true });
+				writeFileSync(
+					sessionFilePath,
+					[
+						JSON.stringify({
+							type: 'system',
+							subtype: 'compact_boundary',
+							timestamp: '2026-04-29T10:00:00.000Z',
+						}),
+						JSON.stringify({
+							type: 'assistant',
+							timestamp: '2026-04-29T10:01:00.000Z',
+							message: {
+								role: 'assistant',
+								content: [{ type: 'text', text: 'Old topic A pending work' }],
+							},
+						}),
+					].join('\n') + '\n',
+					'utf-8'
+				);
+				getSDKMessagesSpy.mockImplementation(() => ({
+					messages: [
+						{
+							type: 'user',
+							uuid: 'live-topic-b-message',
+							timestamp: Date.parse('2026-04-30T10:00:00.000Z'),
+						},
+					],
+					hasMore: false,
+				}));
+				buildSpy
+					.mockRejectedValueOnce(
+						new Error('No message found with message.uuid of: missing-message-uuid')
+					)
+					.mockRejectedValueOnce(new Error('stop after retry'));
+
+				const ctx = createContext();
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				expect(buildSpy).toHaveBeenCalledTimes(2);
+				expect(mockSession.metadata.resumeSessionAt).toBeUndefined();
+				expect(mockSession.metadata.compactionSummary).toBeUndefined();
+				expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+					'test-session-id',
+					expect.objectContaining({
+						message: expect.objectContaining({
+							content: expect.arrayContaining([
+								expect.objectContaining({
+									text: expect.stringContaining('only the AI context window'),
+								}),
+							]),
+						}),
+					})
+				);
+			} finally {
+				rmSync(testSdkDir, { recursive: true, force: true });
+				if (originalTestSdkSessionDir !== undefined) {
+					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
+				} else {
+					delete process.env.TEST_SDK_SESSION_DIR;
+				}
+			}
+		});
+
 		it('should retry no-message-found from the newest remaining message UUID before clearing SDK state', async () => {
 			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
 			const testSdkDir = join(

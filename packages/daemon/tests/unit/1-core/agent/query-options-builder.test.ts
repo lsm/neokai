@@ -332,7 +332,7 @@ describe('QueryOptionsBuilder', () => {
 			}
 		});
 
-		it('should clear stale resumeSessionAt before passing options to the SDK', async () => {
+		it('should carry a compact summary when it is at least as recent as loaded live messages', async () => {
 			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
 			const testSdkDir = join(
 				tmpdir(),
@@ -376,6 +376,73 @@ describe('QueryOptionsBuilder', () => {
 				expect(mockSession.metadata.compactionSummary).toBe('Compacted context summary');
 				expect(mockSession.sdkSessionId).toBeUndefined();
 				expect(mockSession.sdkOriginPath).toBeUndefined();
+				expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
+					metadata: mockSession.metadata,
+					sdkSessionId: undefined,
+					sdkOriginPath: undefined,
+				});
+			} finally {
+				rmSync(testSdkDir, { recursive: true, force: true });
+				if (originalTestSdkSessionDir !== undefined) {
+					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
+				} else {
+					delete process.env.TEST_SDK_SESSION_DIR;
+				}
+			}
+		});
+
+		it('should ignore an old compact summary when newer live messages already exist', async () => {
+			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
+			const testSdkDir = join(
+				tmpdir(),
+				`query-options-resume-stale-summary-${Date.now()}-${Math.random().toString(36).slice(2)}`
+			);
+			try {
+				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
+				mockSession.sdkSessionId = 'sdk-session-old-summary';
+				mockSession.sdkOriginPath = mockSession.workspacePath;
+				mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
+				const sessionFilePath = getSDKSessionFilePath(
+					mockSession.workspacePath!,
+					mockSession.sdkSessionId
+				);
+				mkdirSync(dirname(sessionFilePath), { recursive: true });
+				writeFileSync(
+					sessionFilePath,
+					[
+						JSON.stringify({
+							type: 'system',
+							subtype: 'compact_boundary',
+							timestamp: '2026-04-29T10:00:00.000Z',
+						}),
+						JSON.stringify({
+							type: 'assistant',
+							timestamp: '2026-04-29T10:01:00.000Z',
+							message: {
+								role: 'assistant',
+								content: [{ type: 'text', text: 'Old topic A pending work' }],
+							},
+						}),
+					].join('\n') + '\n',
+					'utf-8'
+				);
+				getSDKMessagesSpy.mockImplementation(() => ({
+					messages: [
+						{
+							type: 'user',
+							uuid: 'live-topic-b-message',
+							timestamp: Date.parse('2026-04-30T10:00:00.000Z'),
+						},
+					],
+					hasMore: false,
+				}));
+
+				const options = await builder.build();
+				const result = builder.addSessionStateOptions(options);
+
+				expect(result.resume).toBeUndefined();
+				expect(result.resumeSessionAt).toBeUndefined();
+				expect(mockSession.metadata.compactionSummary).toBeUndefined();
 				expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
 					metadata: mockSession.metadata,
 					sdkSessionId: undefined,

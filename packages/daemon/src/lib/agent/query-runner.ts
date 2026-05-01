@@ -26,7 +26,7 @@ import type { QueryOptionsBuilder } from './query-options-builder';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
 import type { OriginalEnvVars } from '../provider-service';
 import {
-	extractCompactionSummary,
+	extractCompactionSummaryInfo,
 	findBestEffortResumeSessionAt,
 	getSDKSessionFilePath,
 } from '../sdk-session-file-manager';
@@ -651,7 +651,17 @@ export class QueryRunner {
 					);
 					delete session.metadata.resumeSessionAt;
 					if (compactionSummary) {
-						session.metadata.compactionSummary = compactionSummary;
+						session.metadata.compactionSummary = compactionSummary.summary;
+						logger.info(
+							`context.compaction_summary.selected ${JSON.stringify({
+								event: 'context.compaction_summary.selected',
+								sessionId: session.id,
+								sdkSessionId: session.sdkSessionId,
+								sourceFile: compactionSummary.filePath,
+								summaryTimestamp: compactionSummary.summaryTimestamp,
+								reason: 'sdk_message_not_found_no_live_messages_after_summary',
+							})}`
+						);
 					} else {
 						delete session.metadata.compactionSummary;
 					}
@@ -923,8 +933,10 @@ export class QueryRunner {
 		}
 	}
 
-	private extractCompactionSummaryFromCurrentSdkSession(): string | null {
-		const { session, logger } = this.ctx;
+	private extractCompactionSummaryFromCurrentSdkSession(): ReturnType<
+		typeof extractCompactionSummaryInfo
+	> {
+		const { session, logger, db } = this.ctx;
 		if (!session.sdkSessionId) {
 			return null;
 		}
@@ -936,7 +948,32 @@ export class QueryRunner {
 
 		try {
 			const filePath = getSDKSessionFilePath(workspacePath, session.sdkSessionId);
-			return extractCompactionSummary(filePath);
+			const summaryInfo = extractCompactionSummaryInfo(filePath);
+			if (!summaryInfo) return null;
+
+			const latestSummaryTimestamp = summaryInfo.summaryTimestamp ?? summaryInfo.boundaryTimestamp;
+			const { messages } = db.getSDKMessages(session.id, 1);
+			const latestLiveMessageTimestamp = messages[0]?.timestamp;
+			if (
+				typeof latestSummaryTimestamp === 'number' &&
+				typeof latestLiveMessageTimestamp === 'number' &&
+				latestSummaryTimestamp < latestLiveMessageTimestamp
+			) {
+				logger.warn(
+					`context.compaction_summary.skipped ${JSON.stringify({
+						event: 'context.compaction_summary.skipped',
+						sessionId: session.id,
+						sdkSessionId: session.sdkSessionId,
+						sourceFile: summaryInfo.filePath,
+						summaryTimestamp: latestSummaryTimestamp,
+						latestLiveMessageTimestamp,
+						reason: 'live_messages_are_newer_than_summary',
+					})}`
+				);
+				return null;
+			}
+
+			return summaryInfo;
 		} catch (error) {
 			logger.warn(
 				`Failed to extract SDK compaction summary for session ${session.id}: ` +

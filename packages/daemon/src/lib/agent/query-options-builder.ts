@@ -48,7 +48,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import type { Database } from '../../storage/database';
 import {
-	extractCompactionSummary,
+	extractCompactionSummaryInfo,
 	findBestEffortResumeSessionAt,
 	getSDKSessionFilePath,
 	messageUuidExistsInSessionFile,
@@ -89,6 +89,7 @@ export interface QueryOptionsBuilderContext {
 	readonly session: Session;
 	readonly settingsManager: SettingsManager;
 	readonly db?: Database;
+	readonly logger?: Pick<import('../logger').Logger, 'info' | 'warn'>;
 	/** Skills manager for injecting plugin/MCP server skills into SDK options. Optional for backwards compatibility. */
 	readonly skillsManager?: SkillsManager;
 	/** App MCP server repo for resolving mcp_server skill configs. Optional for backwards compatibility. */
@@ -561,13 +562,36 @@ export class QueryOptionsBuilder {
 		delete session.metadata.resumeSessionAt;
 
 		if (workspacePath && previousSdkSessionId) {
-			const compactionSummary = extractCompactionSummary(
+			const summaryInfo = extractCompactionSummaryInfo(
 				getSDKSessionFilePath(workspacePath, previousSdkSessionId)
 			);
-			if (compactionSummary) {
-				session.metadata.compactionSummary = compactionSummary;
+			if (summaryInfo && this.isCompactionSummaryEligible(summaryInfo)) {
+				session.metadata.compactionSummary = summaryInfo.summary;
+				this.ctx.logger?.info(
+					`context.compaction_summary.selected ${JSON.stringify({
+						event: 'context.compaction_summary.selected',
+						sessionId: session.id,
+						sdkSessionId: previousSdkSessionId,
+						sourceFile: summaryInfo.filePath,
+						summaryTimestamp: summaryInfo.summaryTimestamp,
+						reason: 'stale_resume_session_at_no_live_messages_after_summary',
+					})}`
+				);
 			} else {
 				delete session.metadata.compactionSummary;
+				this.ctx.logger?.warn(
+					`context.compaction_summary.skipped ${JSON.stringify({
+						event: 'context.compaction_summary.skipped',
+						sessionId: session.id,
+						sdkSessionId: previousSdkSessionId,
+						sourceFile: summaryInfo?.filePath,
+						summaryTimestamp: summaryInfo?.summaryTimestamp,
+						latestLiveMessageTimestamp: this.getLatestLiveMessageTimestamp(),
+						reason: summaryInfo
+							? 'live_messages_are_newer_than_summary'
+							: 'no_compaction_summary_found',
+					})}`
+				);
 			}
 		}
 
@@ -579,6 +603,32 @@ export class QueryOptionsBuilder {
 			sdkSessionId: undefined,
 			sdkOriginPath: undefined,
 		});
+	}
+
+	private isCompactionSummaryEligible(summaryInfo: {
+		summaryTimestamp?: number;
+		boundaryTimestamp?: number;
+	}): boolean {
+		const latestSummaryTimestamp = summaryInfo.summaryTimestamp ?? summaryInfo.boundaryTimestamp;
+		const latestLiveMessageTimestamp = this.getLatestLiveMessageTimestamp();
+		if (latestSummaryTimestamp === undefined || latestLiveMessageTimestamp === undefined) {
+			return true;
+		}
+		return latestSummaryTimestamp >= latestLiveMessageTimestamp;
+	}
+
+	private getLatestLiveMessageTimestamp(): number | undefined {
+		const { db, session } = this.ctx;
+		if (!db) return undefined;
+		try {
+			const { messages } = db.getSDKMessages(session.id, 1);
+			const newest = messages[0];
+			return typeof newest?.timestamp === 'number' && Number.isFinite(newest.timestamp)
+				? newest.timestamp
+				: undefined;
+		} catch {
+			return undefined;
+		}
 	}
 
 	private getSdkResumeWorkspacePath(): string | undefined {
