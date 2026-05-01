@@ -999,10 +999,9 @@ describe('QueryRunner', () => {
 			expect(userMessage).not.toContain('attempt(s)');
 		});
 
-		it('should clear SDK state and retry fresh when one-shot resumeSessionAt is missing', async () => {
+		it('should preserve SDK state and retry without one-shot resumeSessionAt when its message is missing', async () => {
 			mockSession.sdkSessionId = 'sdk-session-id';
 			mockSession.sdkOriginPath = mockSession.workspacePath;
-			(mockSession.metadata as Record<string, unknown>).resumeSessionAt = 'stale-persisted-uuid';
 
 			buildSpy
 				.mockRejectedValueOnce(
@@ -1016,27 +1015,19 @@ describe('QueryRunner', () => {
 			await ctx.queryPromise?.catch(() => {});
 
 			expect(buildSpy).toHaveBeenCalledTimes(2);
-			expect(mockSession.sdkSessionId).toBeUndefined();
-			expect(mockSession.sdkOriginPath).toBeUndefined();
+			expect(mockSession.sdkSessionId).toBe('sdk-session-id');
+			expect(mockSession.sdkOriginPath).toBe(mockSession.workspacePath);
 			expect(mockSession.metadata.compactionSummary).toBeUndefined();
-			expect((mockSession.metadata as Record<string, unknown>).resumeSessionAt).toBe(
-				'stale-persisted-uuid'
+			expect(updateSessionSpy).not.toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
+					sdkSessionId: undefined,
+				})
 			);
-			expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
-				sdkSessionId: undefined,
-				sdkOriginPath: undefined,
-			});
-			expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+			expect(saveSDKMessageSpy).not.toHaveBeenCalledWith(
 				'test-session-id',
 				expect.objectContaining({
 					type: 'assistant',
-					message: expect.objectContaining({
-						content: expect.arrayContaining([
-							expect.objectContaining({
-								text: expect.stringContaining('one-time rewind point'),
-							}),
-						]),
-					}),
 				})
 			);
 		});
@@ -1066,11 +1057,7 @@ describe('QueryRunner', () => {
 			await ctx.queryPromise?.catch(() => {});
 
 			expect(buildSpy).toHaveBeenCalledTimes(2);
-			expect(mockSession.sdkSessionId).toBeUndefined();
-			expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
-				sdkSessionId: undefined,
-				sdkOriginPath: undefined,
-			});
+			expect(mockSession.sdkSessionId).toBe('sdk-session-id');
 			expect(updateSessionSpy).not.toHaveBeenCalledWith(
 				'test-session-id',
 				expect.objectContaining({

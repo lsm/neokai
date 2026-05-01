@@ -617,30 +617,12 @@ export class QueryRunner {
 				}
 			}
 			if (isMessageNotFound) {
-				// Runtime-only resumeSessionAt should be one-shot. If the SDK rejects it,
-				// clear SDK resume identity and retry fresh rather than persisting/falling
-				// back to another rewind point that can become stale after restart.
-				logger.error(
-					'No message found for one-shot resumeSessionAt; clearing sdkSessionId and sdkOriginPath before retry.'
+				// Runtime-only resumeSessionAt is one-shot and has already been consumed.
+				// Retry without the rewind cutoff, but keep sdkSessionId because the SDK
+				// conversation still exists; only the requested message UUID was missing.
+				logger.warn(
+					'No message found for one-shot resumeSessionAt; retrying without resumeSessionAt while preserving sdkSessionId.'
 				);
-				session.sdkSessionId = undefined;
-				session.sdkOriginPath = undefined;
-				this.ctx.db.updateSession(session.id, {
-					sdkSessionId: undefined,
-					sdkOriginPath: undefined,
-				});
-
-				try {
-					await this.displayErrorAsAssistantMessage(
-						'⚠️ **Conversation context was reset.**\n\n' +
-							'The one-time rewind point is no longer present in the Claude SDK transcript. ' +
-							'Your conversation history in NeoKai is preserved; only the AI context window has been reset.\n\n' +
-							'Retrying your message with a fresh AI session.',
-						{ markAsError: false }
-					);
-				} catch {
-					// Best-effort — don't let message emission block cleanup
-				}
 			}
 
 			// Auto-retry once on startup timeout — the user shouldn't have to resend.
@@ -682,7 +664,7 @@ export class QueryRunner {
 				return await this.runQuery(queryGeneration, true);
 			}
 			if (isMessageNotFound && !isRetry && !this.ctx.isCleaningUp()) {
-				logger.warn('Auto-retrying query after clearing one-shot resumeSessionAt.');
+				logger.warn('Auto-retrying query without one-shot resumeSessionAt.');
 				await stateManager.setIdle();
 
 				if (this.ctx.queryObject) {
