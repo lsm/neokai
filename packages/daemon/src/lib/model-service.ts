@@ -344,6 +344,33 @@ export function clearModelsCache(cacheKey?: string): void {
 }
 
 /**
+ * Refresh models from all providers, preserving the existing cache on failure.
+ * Clears provider-level caches first so each provider re-fetches from its API,
+ * but only replaces the global cache if the fetch succeeds.
+ */
+export async function refreshModels(): Promise<void> {
+	const cacheKey = 'global';
+
+	// Clear provider-level caches so getModels() hits the API
+	const registry = getProviderRegistry();
+	for (const provider of registry.getAll()) {
+		if (
+			'clearModelCache' in provider &&
+			typeof (provider as { clearModelCache(): void }).clearModelCache === 'function'
+		) {
+			(provider as { clearModelCache(): void }).clearModelCache();
+		}
+	}
+
+	const models = await loadModelsFromProviders();
+	if (models.length > 0) {
+		const mergedModels = mergeWithFallbackModels(models);
+		modelsCache.set(cacheKey, mergedModels);
+		cacheTimestamps.set(cacheKey, Date.now());
+	}
+}
+
+/**
  * Get current models cache (for testing)
  * @returns Map of cached models
  *

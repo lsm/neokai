@@ -706,9 +706,7 @@ export function setupSessionHandlers(
 	// Handle listing available models
 	messageHub.onRequest('models.list', async (data) => {
 		try {
-			const { getAvailableModels, clearModelsCache, initializeModels } = await import(
-				'../model-service'
-			);
+			const { getAvailableModels, refreshModels } = await import('../model-service');
 
 			const params = data as {
 				forceRefresh?: boolean;
@@ -717,8 +715,7 @@ export function setupSessionHandlers(
 			const forceRefresh = params?.forceRefresh ?? params?.useCache === false;
 
 			if (forceRefresh) {
-				clearModelsCache();
-				await initializeModels();
+				await refreshModels();
 			}
 
 			const availableModels = getAvailableModels('global');

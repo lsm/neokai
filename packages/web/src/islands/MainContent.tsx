@@ -40,9 +40,9 @@ const AppMcpServersSettings = lazy(() =>
 const SkillsRegistry = lazy(() =>
 	import('../components/settings/SkillsRegistry.tsx').then((m) => ({ default: m.SkillsRegistry }))
 );
-const FallbackModelsSettings = lazy(() =>
-	import('../components/settings/FallbackModelsSettings.tsx').then((m) => ({
-		default: m.FallbackModelsSettings,
+const ModelsSettings = lazy(() =>
+	import('../components/settings/ModelsSettings.tsx').then((m) => ({
+		default: m.ModelsSettings,
 	}))
 );
 const UsageAnalytics = lazy(() =>
@@ -159,7 +159,7 @@ export default function MainContent() {
 							{settingsSection === 'providers' && <ProvidersSettings />}
 							{settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
 							{settingsSection === 'skills' && <SkillsRegistry />}
-							{settingsSection === 'fallback-models' && <FallbackModelsSettings />}
+							{settingsSection === 'models' && <ModelsSettings />}
 							{settingsSection === 'neo' && <NeoSettings />}
 							{settingsSection === 'usage' && <UsageAnalytics />}
 							{settingsSection === 'about' && <AboutSection />}

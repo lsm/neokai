@@ -454,7 +454,7 @@ function OverrideEditorModal({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export function FallbackModelsSettings() {
+export function ModelsSettings() {
 	const settings = globalSettings.value;
 	const [fallbackModels, setFallbackModels] = useState<FallbackModelEntry[]>(
 		settings?.fallbackModels ?? []
@@ -633,7 +633,7 @@ export function FallbackModelsSettings() {
 	const overrideEntries = Object.entries(modelFallbackMap);
 
 	return (
-		<SettingsSection title="Fallback Models">
+		<SettingsSection title="Models">
 			<div class="flex items-center gap-2 mb-4">
 				<Button
 					variant="ghost"
