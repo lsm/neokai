@@ -277,6 +277,16 @@ describe('WebSocketClientTransport - Basic Interface', () => {
 		});
 	});
 
+	describe('getReconnectAttempts', () => {
+		it('should return 0 initially', () => {
+			const transport = new WebSocketClientTransport({
+				url: 'ws://localhost:8080',
+			});
+
+			expect(transport.getReconnectAttempts()).toBe(0);
+		});
+	});
+
 	describe('options validation', () => {
 		it('should work with minimal options', () => {
 			const transport = new WebSocketClientTransport({

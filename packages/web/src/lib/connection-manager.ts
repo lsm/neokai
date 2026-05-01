@@ -29,13 +29,15 @@
  */
 
 import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
-import { appState, connectionState } from './state';
+import { appState, connectionState, reconnectAttemptCount } from './state';
 import { globalStore } from './global-store';
 import { sessionStore } from './session-store';
 import { spaceStore } from './space-store';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
 import { currentSessionIdSignal, slashCommandsSignal } from './signals';
+import { isAuthError } from './user-error';
+import { startAutoFlush, stopAutoFlush } from './outbound-queue';
 
 // Expose signals immediately when module loads (for E2E testing)
 if (typeof window !== 'undefined') {
@@ -301,7 +303,7 @@ export class ConnectionManager {
 		});
 
 		// Listen to connection state changes and update global state
-		this.messageHub.onConnection((state) => {
+		this.messageHub.onConnection((state, error) => {
 			// During resume validation, don't report 'connected' until validation completes.
 			// This prevents the UI from seeing a false-positive 'connected' state while
 			// the health check and channel rejoin are still in progress.
@@ -311,11 +313,35 @@ export class ConnectionManager {
 				this.notifyConnectionHandlers();
 				return;
 			}
+
+			// Auth/session expiry detection — redirect to re-auth, don't loop retries
+			if (state === 'error' && error && isAuthError(error)) {
+				connectionState.value = 'error';
+				// Stop transport and outbound queue before redirect to prevent
+				// reconnect loop firing between href assignment and navigation
+				stopAutoFlush();
+				if (this.transport) {
+					this.transport.close();
+				}
+				if (typeof window !== 'undefined') {
+					window.location.href = '/settings?tab=providers&reason=session_expired';
+				}
+				return;
+			}
+
 			connectionState.value = state;
 
 			// Notify connection handlers when connected
 			if (state === 'connected') {
+				reconnectAttemptCount.value = 0;
 				this.notifyConnectionHandlers();
+			}
+
+			// Track reconnect attempts for UI progression
+			if (state === 'reconnecting' || state === 'connecting') {
+				if (this.transport) {
+					reconnectAttemptCount.value = this.transport.getReconnectAttempts();
+				}
 			}
 		});
 
@@ -356,6 +382,9 @@ export class ConnectionManager {
 
 		// FIX P5: Start periodic state validation
 		this.startPeriodicStateValidation();
+
+		// Start auto-flush for queued outbound actions
+		startAutoFlush();
 
 		// Mark ready for testing
 		if (typeof window !== 'undefined' && window.__messageHub) {
@@ -415,6 +444,9 @@ export class ConnectionManager {
 	async disconnect(): Promise<void> {
 		// FIX P5: Stop periodic state validation
 		this.stopPeriodicStateValidation();
+
+		// Stop outbound queue auto-flush
+		stopAutoFlush();
 
 		// Update connection state
 		connectionState.value = 'disconnected';
