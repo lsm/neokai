@@ -354,10 +354,20 @@ export function clearModelsCache(cacheKey?: string): void {
  */
 export async function refreshModels(): Promise<void> {
 	const cacheKey = 'global';
+	const previousModels = modelsCache.get(cacheKey);
 	clearProviderModelCaches();
 
 	const models = await loadModelsFromProviders();
 	if (models.length > 0) {
+		// If the new result has fewer models than the previous cache, at least one
+		// provider likely returned static fallback data instead of live API results
+		// (e.g. OpenRouter returns FALLBACK_MODELS on HTTP errors). Keep the old,
+		// richer cache rather than replacing it with degraded fallback metadata.
+		if (previousModels && previousModels.length > models.length) {
+			modelsCache.set(cacheKey, previousModels);
+			cacheTimestamps.set(cacheKey, Date.now());
+			return;
+		}
 		const mergedModels = mergeWithFallbackModels(models);
 		modelsCache.set(cacheKey, mergedModels);
 		cacheTimestamps.set(cacheKey, Date.now());
