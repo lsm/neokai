@@ -266,7 +266,7 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
 	if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
 	if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
 	if (modelId === 'ollama') return 'ollama';
-	if (modelId === 'ollama-cloud' || modelId.endsWith('-cloud')) return 'ollama-cloud';
+	if (modelId === 'ollama-cloud') return 'ollama-cloud';
 	if (modelId.startsWith('gpt-oss:')) return modelId.endsWith('-cloud') ? 'ollama-cloud' : 'ollama';
 	if (modelId === 'openrouter/auto' || (modelId.includes('/') && !modelId.startsWith('claude-')))
 		return 'openrouter';

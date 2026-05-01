@@ -66,7 +66,7 @@ export class OllamaProvider implements Provider {
 		extendedThinking: false,
 		maxContextWindow: 128000,
 		functionCalling: true,
-		vision: true,
+		vision: false,
 	};
 
 	static readonly LOCAL_BASE_URL = 'http://localhost:11434';
@@ -78,6 +78,7 @@ export class OllamaProvider implements Provider {
 	private readonly fetchImpl: typeof fetch;
 	private readonly kind: OllamaProviderKind;
 	private modelCache: ModelInfo[] | null = null;
+	private modelCacheAt = 0;
 	private lastAuthError: string | undefined;
 	private bridgeServer: OllamaBridgeServer | null = null;
 	private bridgeKey: string | null = null;
@@ -111,13 +112,14 @@ export class OllamaProvider implements Provider {
 
 	async getModels(): Promise<ModelInfo[]> {
 		if (!this.isAvailable()) return [];
-		if (this.modelCache) return this.modelCache;
+		if (this.modelCache && Date.now() - this.modelCacheAt < 5 * 60_000) return this.modelCache;
 		try {
 			const response = await this.fetchImpl(`${this.getBaseUrl()}/api/tags`, {
 				headers: this.getApiKey() ? { Authorization: `Bearer ${this.getApiKey()}` } : undefined,
 			});
 			if (response.status === 401 || response.status === 403) {
-				this.lastAuthError = 'Ollama API key was rejected. Check OLLAMA_CLOUD_API_KEY.';
+				const keyName = this.kind === 'cloud' ? 'OLLAMA_CLOUD_API_KEY' : 'OLLAMA_API_KEY';
+				this.lastAuthError = `Ollama API key was rejected. Check ${keyName}.`;
 				return [];
 			}
 			if (!response.ok) return this.fallbackModels();
@@ -126,6 +128,7 @@ export class OllamaProvider implements Provider {
 				.map((model) => this.toModelInfo(model))
 				.filter((model): model is ModelInfo => model !== null);
 			this.modelCache = models.length > 0 ? models : this.fallbackModels();
+			this.modelCacheAt = Date.now();
 			this.lastAuthError = undefined;
 			return this.modelCache;
 		} catch {
@@ -138,9 +141,12 @@ export class OllamaProvider implements Provider {
 		const id = modelId.toLowerCase();
 		const knownOllamaPrefixes = ['llama', 'qwen', 'mistral', 'gemma', 'phi', 'gpt-oss'];
 		if (this.kind === 'cloud') {
-			return id.endsWith('-cloud') || id.startsWith('gpt-oss:');
+			return id === 'ollama-cloud' || id.startsWith('gpt-oss:');
 		}
-		return id.includes(':') || knownOllamaPrefixes.some((prefix) => id.startsWith(prefix));
+		return (
+			!id.endsWith('-cloud') &&
+			(id.includes(':') || knownOllamaPrefixes.some((prefix) => id.startsWith(prefix)))
+		);
 	}
 
 	getModelForTier(_tier: ModelTier): string | undefined {
@@ -196,9 +202,9 @@ export class OllamaProvider implements Provider {
 			};
 		}
 		return {
-			isAuthenticated: true,
+			isAuthenticated: this.lastAuthError === undefined,
 			method: 'api_key',
-			error: undefined,
+			error: this.lastAuthError,
 		};
 	}
 

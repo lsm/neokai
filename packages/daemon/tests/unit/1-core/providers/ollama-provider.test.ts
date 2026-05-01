@@ -27,6 +27,8 @@ describe('OllamaProvider', () => {
 		expect(cloud.displayName).toBe('Ollama Cloud');
 		expect(cloud.isAvailable()).toBe(false);
 		expect(local.capabilities.streaming).toBe(true);
+		expect(local.capabilities.functionCalling).toBe(true);
+		expect(local.capabilities.vision).toBe(false);
 	});
 
 	it('loads models from /api/tags for local Ollama', async () => {
@@ -54,8 +56,11 @@ describe('OllamaProvider', () => {
 		});
 
 		const models = await provider.getModels();
+		const cachedModels = await provider.getModels();
 
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 		expect(fetchMock).toHaveBeenCalledWith('http://ollama.test/api/tags', { headers: undefined });
+		expect(cachedModels).toBe(models);
 		expect(models).toHaveLength(1);
 		expect(models[0]).toMatchObject({
 			id: 'llama3.2:latest',
@@ -81,6 +86,31 @@ describe('OllamaProvider', () => {
 		expect(fetchMock).toHaveBeenCalledWith('https://ollama.com/api/tags', {
 			headers: { Authorization: 'Bearer ollama-key' },
 		});
+	});
+
+	it('surfaces local auth failures with the local API key env var', async () => {
+		process.env.OLLAMA_API_KEY = 'bad-local-key';
+		const fetchMock = mock(async () => new Response('Unauthorized', { status: 401 }));
+		const provider = new OllamaProvider({
+			kind: 'local',
+			env: process.env,
+			fetchImpl: fetchMock as typeof fetch,
+		});
+
+		const models = await provider.getModels();
+		const status = await provider.getAuthStatus();
+
+		expect(models).toEqual([]);
+		expect(status.error).toContain('OLLAMA_API_KEY');
+	});
+
+	it('routes cloud-tagged gpt-oss models only to the cloud provider', () => {
+		const local = new OllamaProvider({ kind: 'local' });
+		const cloud = new OllamaProvider({ kind: 'cloud' });
+
+		expect(local.ownsModel('gpt-oss:120b-cloud')).toBe(false);
+		expect(cloud.ownsModel('gpt-oss:120b-cloud')).toBe(true);
+		expect(cloud.ownsModel('other-provider-cloud')).toBe(false);
 	});
 
 	it('builds Anthropic-compatible routing through a local bridge', () => {

@@ -3,8 +3,10 @@ import {
 	type AnthropicContentBlockToolResult,
 	type AnthropicRequest,
 	contentBlockStartTextSSE,
+	contentBlockStartToolUseSSE,
 	contentBlockStopSSE,
 	errorSSE,
+	inputJsonDeltaSSE,
 	messageDeltaSSE,
 	messageStartSSE,
 	messageStopSSE,
@@ -51,15 +53,17 @@ type OllamaChatRequest = {
 	};
 };
 
+type OllamaToolCall = {
+	function?: { name?: string; arguments?: Record<string, unknown> | string };
+};
+
 type OllamaChatChunk = {
 	model?: string;
 	created_at?: string;
 	message?: {
 		role?: string;
 		content?: string;
-		tool_calls?: Array<{
-			function?: { name?: string; arguments?: Record<string, unknown> | string };
-		}>;
+		tool_calls?: OllamaToolCall[];
 	};
 	done?: boolean;
 	done_reason?: string;
@@ -149,6 +153,32 @@ function parseJsonLine(line: string): OllamaChatChunk | null {
 	}
 }
 
+function toolArgumentsToJson(argumentsValue: Record<string, unknown> | string | undefined): string {
+	if (typeof argumentsValue === 'string') return argumentsValue;
+	return JSON.stringify(argumentsValue ?? {});
+}
+
+function emitToolCall(params: {
+	send: (chunk: string) => void;
+	toolCall: OllamaToolCall;
+	index: number;
+}): boolean {
+	const name = params.toolCall.function?.name;
+	if (!name) return false;
+	params.send(
+		contentBlockStartToolUseSSE(
+			params.index,
+			`toolu_ollama_${Math.random().toString(36).slice(2, 12)}`,
+			name
+		)
+	);
+	params.send(
+		inputJsonDeltaSSE(params.index, toolArgumentsToJson(params.toolCall.function?.arguments))
+	);
+	params.send(contentBlockStopSSE(params.index));
+	return true;
+}
+
 async function streamOllamaToAnthropic(params: {
 	ollamaResponse: Response;
 	controller: ReadableStreamDefaultController<Uint8Array>;
@@ -160,6 +190,8 @@ async function streamOllamaToAnthropic(params: {
 	const send = (chunk: string) => controller.enqueue(encoder.encode(chunk));
 	let outputText = '';
 	let startedText = false;
+	let nextBlockIndex = 0;
+	let emittedToolUse = false;
 	let finalPromptTokens: number | undefined;
 	let finalOutputTokens: number | undefined;
 
@@ -185,11 +217,21 @@ async function streamOllamaToAnthropic(params: {
 				const text = chunk.message?.content ?? '';
 				if (text) {
 					if (!startedText) {
-						send(contentBlockStartTextSSE(0));
+						send(contentBlockStartTextSSE(nextBlockIndex));
 						startedText = true;
 					}
 					outputText += text;
-					send(textDeltaSSE(0, text));
+					send(textDeltaSSE(nextBlockIndex, text));
+				}
+				for (const toolCall of chunk.message?.tool_calls ?? []) {
+					if (startedText) {
+						send(contentBlockStopSSE(nextBlockIndex));
+						startedText = false;
+						nextBlockIndex += 1;
+					}
+					emittedToolUse =
+						emitToolCall({ send, toolCall, index: nextBlockIndex }) || emittedToolUse;
+					nextBlockIndex += 1;
 				}
 				if (chunk.done) {
 					finalPromptTokens = chunk.prompt_eval_count;
@@ -203,21 +245,34 @@ async function streamOllamaToAnthropic(params: {
 			const text = tail.message?.content ?? '';
 			if (text) {
 				if (!startedText) {
-					send(contentBlockStartTextSSE(0));
+					send(contentBlockStartTextSSE(nextBlockIndex));
 					startedText = true;
 				}
 				outputText += text;
-				send(textDeltaSSE(0, text));
+				send(textDeltaSSE(nextBlockIndex, text));
+			}
+			for (const toolCall of tail.message?.tool_calls ?? []) {
+				if (startedText) {
+					send(contentBlockStopSSE(nextBlockIndex));
+					startedText = false;
+					nextBlockIndex += 1;
+				}
+				emittedToolUse = emitToolCall({ send, toolCall, index: nextBlockIndex }) || emittedToolUse;
+				nextBlockIndex += 1;
 			}
 			if (tail.done) {
 				finalPromptTokens = tail.prompt_eval_count;
 				finalOutputTokens = tail.eval_count;
 			}
 		}
-		if (!startedText) send(contentBlockStartTextSSE(0));
-		send(contentBlockStopSSE(0));
+		if (startedText) {
+			send(contentBlockStopSSE(nextBlockIndex));
+		} else if (!emittedToolUse) {
+			send(contentBlockStartTextSSE(nextBlockIndex));
+			send(contentBlockStopSSE(nextBlockIndex));
+		}
 		send(
-			messageDeltaSSE('end_turn', {
+			messageDeltaSSE(emittedToolUse ? 'tool_use' : 'end_turn', {
 				inputTokens: finalPromptTokens ?? inputTokens,
 				outputTokens: finalOutputTokens ?? estimateTokens(outputText),
 			})

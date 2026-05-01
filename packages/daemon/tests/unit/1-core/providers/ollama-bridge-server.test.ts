@@ -68,6 +68,45 @@ describe('Ollama Anthropic bridge server', () => {
 		expect(text).toContain('event: message_stop');
 	});
 
+	it('translates Ollama tool calls to Anthropic tool_use SSE', async () => {
+		const fetchMock = mock(async () => {
+			const body = [
+				JSON.stringify({
+					model: 'llama3.2',
+					message: {
+						role: 'assistant',
+						tool_calls: [{ function: { name: 'get_weather', arguments: { city: 'London' } } }],
+					},
+					done: false,
+				}),
+				JSON.stringify({ model: 'llama3.2', done: true, prompt_eval_count: 10, eval_count: 3 }),
+			].join('\n');
+			return new Response(body, { status: 200 });
+		});
+		const server = createOllamaAnthropicBridgeServer({
+			baseUrl: 'http://ollama.test',
+			fetchImpl: fetchMock as typeof fetch,
+		});
+		servers.push(server);
+
+		const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'llama3.2',
+				messages: [{ role: 'user', content: 'weather?' }],
+				tools: [{ name: 'get_weather', input_schema: { type: 'object' } }],
+			}),
+		});
+		const text = await response.text();
+
+		expect(response.status).toBe(200);
+		expect(text).toContain('"type":"tool_use"');
+		expect(text).toContain('"name":"get_weather"');
+		expect(text).toContain('"partial_json":"{\\"city\\":\\"London\\"}"');
+		expect(text).toContain('"stop_reason":"tool_use"');
+	});
+
 	it('maps upstream failures to Anthropic JSON errors', async () => {
 		const fetchMock = mock(async () => new Response('Unauthorized', { status: 401 }));
 		const server = createOllamaAnthropicBridgeServer({
