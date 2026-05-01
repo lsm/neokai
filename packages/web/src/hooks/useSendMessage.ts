@@ -123,7 +123,7 @@ export function useSendMessage({
 						const res = await h.request<{ messageId?: string }>('message.send', qPayload);
 						if (res?.messageId) onMessageAccepted?.(res.messageId);
 					});
-					toast.info('Message queued - will send when reconnected.');
+					toast.info('Message queued — will send when reconnected.');
 					onSendComplete();
 					clearSendTimeout();
 					return true;

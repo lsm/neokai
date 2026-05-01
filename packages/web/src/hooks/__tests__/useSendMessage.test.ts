@@ -412,7 +412,7 @@ describe('useSendMessage', () => {
 
 			expect(onSendStart).toHaveBeenCalled();
 			// Hub disappeared mid-send - message is queued for retry
-			expect(mockToastInfo).toHaveBeenCalledWith('Message queued - will send when reconnected.');
+			expect(mockToastInfo).toHaveBeenCalledWith('Message queued — will send when reconnected.');
 			expect(onSendComplete).toHaveBeenCalled();
 		});
 	});
