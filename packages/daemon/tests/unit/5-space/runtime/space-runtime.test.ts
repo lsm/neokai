@@ -564,7 +564,7 @@ describe('SpaceRuntime', () => {
 				const task = tasks[0];
 
 				// Enqueue messages with different fates
-				const expiredResult = pendingMessageRepo.enqueue({
+				pendingMessageRepo.enqueue({
 					workflowRunId: run.id,
 					spaceId: SPACE_ID,
 					taskId: task.id,
