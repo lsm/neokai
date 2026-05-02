@@ -183,7 +183,7 @@ describe('End-node prompts save runtime post-approval data before approve_task',
 describe('Post-approval merge prompt checks review conversations', () => {
 	test('merge template verifies CI and unresolved review threads before merging', () => {
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('gh pr checks');
-		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('reviewThreads(first:100)');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('reviewThreads(first:100');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('isResolved=false');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('resolveReviewThread');
 		const checkIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf(
@@ -192,6 +192,16 @@ describe('Post-approval merge prompt checks review conversations', () => {
 		const mergeIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('gh pr merge');
 		expect(checkIdx).toBeGreaterThan(-1);
 		expect(mergeIdx).toBeGreaterThan(checkIdx);
+	});
+
+	test('merge template includes pagination guidance for review threads', () => {
+		// The post-approval merge session must paginate review threads, not
+		// stop at the first 100. The GraphQL query includes $cursor and the
+		// instructions explicitly tell the agent to paginate using endCursor.
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('$cursor');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('endCursor');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('hasNextPage');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('Do NOT stop at the first page');
 	});
 });
 
