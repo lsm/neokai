@@ -263,7 +263,7 @@ const PD_TASK_DISPATCHER_PROMPT =
 	'enforce ordering, block dependents until prerequisites are done, and cascade-cancel on ' +
 	'failure. Do NOT rely on prose-only dependency hints — they are informational, not enforced.\n\n' +
 	'   - BOTTOM task (item 1): `depends_on: []` (no prerequisites).\n' +
-	'   - MIDDLE / TOP tasks (item N > 1): `depends_on: [<taskId of item N-1>]`.\n\n' +
+	'   - MIDDLE / TOP tasks (item N > 1): `depends_on: [<task_id of item N-1>]`.\n\n' +
 	'The `description` must contain the original plan item content PLUS a ' +
 	'"## Stacked PR Instructions" section appended at the end.\n\n' +
 	'   For the BOTTOM task (item 1 — PR base is `dev`):\n' +
@@ -288,7 +288,7 @@ const PD_TASK_DISPATCHER_PROMPT =
 	"that task's branch exists.\n" +
 	'   ```\n\n' +
 	'4. Collect the returned task IDs. Build a stack map: ' +
-	'{ prefix, items: [{ title, taskId, branch, baseBranch, position }] }.\n' +
+	'{ prefix, items: [{ title, task_id, branch, base_branch, position }] }.\n' +
 	'5. Call `save_artifact({ type: "result", append: true, summary: "Created N tasks from plan: <short list>", ' +
 	'created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
 	'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] })` to record the dispatch audit entry.\n' +

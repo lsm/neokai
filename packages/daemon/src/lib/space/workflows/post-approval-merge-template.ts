@@ -57,5 +57,5 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
 	'     git fetch origin && git checkout dev && git pull --ff-only',
 	'4. Save an audit artifact:',
 	'     save_artifact({ type: "result", append: true,',
-	'                     data: { merged_pr_url, mergedAt, approval_source: "{{approval_source}}" } })',
+	'                     data: { merged_pr_url, merged_at, approval_source: "{{approval_source}}" } })',
 ].join('\n');
