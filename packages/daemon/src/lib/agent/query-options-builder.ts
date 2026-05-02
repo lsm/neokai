@@ -72,7 +72,7 @@ function extractBashCommand(input: unknown): string {
 }
 
 function isGhPrMergeCommand(command: string): boolean {
-	return /(^|[;&|()\n]\s*)gh\s+pr\s+merge\b/.test(command);
+	return /(^|[;&|()\n`]\s*)gh\s+pr\s+merge\b/.test(command);
 }
 
 function createBlockCoderPrMergeHook(): HookCallback {

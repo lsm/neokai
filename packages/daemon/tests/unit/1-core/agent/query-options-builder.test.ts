@@ -772,28 +772,33 @@ describe('QueryOptionsBuilder', () => {
 			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
 			expect(hook).toBeDefined();
 
-			const result = await hook!(
-				{
-					hook_event_name: 'PreToolUse',
-					tool_name: 'Bash',
-					tool_input: { command: 'gh pr merge https://github.com/org/repo/pull/1 --squash' },
-					tool_use_id: 'tool-1',
-					session_id: 'session-1',
-					transcript_path: '/tmp/transcript.jsonl',
-					cwd: '/tmp/repo',
-				},
-				'tool-1',
-				{ signal: new AbortController().signal }
-			);
+			for (const command of [
+				'gh pr merge https://github.com/org/repo/pull/1 --squash',
+				'`gh pr merge 123`',
+			]) {
+				const result = await hook!(
+					{
+						hook_event_name: 'PreToolUse',
+						tool_name: 'Bash',
+						tool_input: { command },
+						tool_use_id: 'tool-1',
+						session_id: 'session-1',
+						transcript_path: '/tmp/transcript.jsonl',
+						cwd: '/tmp/repo',
+					},
+					'tool-1',
+					{ signal: new AbortController().signal }
+				);
 
-			expect(result).toEqual({
-				hookSpecificOutput: {
-					hookEventName: 'PreToolUse',
-					permissionDecision: 'deny',
-					permissionDecisionReason:
-						'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
-				},
-			});
+				expect(result).toEqual({
+					hookSpecificOutput: {
+						hookEventName: 'PreToolUse',
+						permissionDecision: 'deny',
+						permissionDecisionReason:
+							'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
+					},
+				});
+			}
 		});
 
 		it('allows non-merge bash commands for coder-role sessions', async () => {
