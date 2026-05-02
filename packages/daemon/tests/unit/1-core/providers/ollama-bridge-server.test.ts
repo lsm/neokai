@@ -68,6 +68,24 @@ describe('Ollama Anthropic bridge server', () => {
 		expect(text).toContain('event: message_stop');
 	});
 
+	it('serves Anthropic-compatible model listing for SDK initialization', async () => {
+		const fetchMock = mock(async () => new Response('', { status: 500 }));
+		const server = createOllamaAnthropicBridgeServer({
+			baseUrl: 'http://ollama.test',
+			fetchImpl: fetchMock as typeof fetch,
+		});
+		servers.push(server);
+
+		const response = await fetch(`http://127.0.0.1:${server.port}/v1/models`);
+		const body = await response.json();
+
+		expect(response.status).toBe(200);
+		expect(body).toEqual({
+			data: [{ id: 'default', type: 'model', display_name: 'Ollama' }],
+		});
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
 	it('translates Ollama tool calls to Anthropic tool_use SSE', async () => {
 		const fetchMock = mock(async () => {
 			const body = [

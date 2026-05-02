@@ -343,6 +343,14 @@ export function createOllamaAnthropicBridgeServer(config: OllamaBridgeConfig): O
 		async fetch(req: Request): Promise<Response> {
 			const url = new URL(req.url);
 			if (url.pathname === '/health' || url.pathname === '/v1/health') return new Response('ok');
+			if (url.pathname === '/v1/models' && req.method === 'GET') {
+				return new Response(
+					JSON.stringify({
+						data: [{ id: 'default', type: 'model', display_name: 'Ollama' }],
+					}),
+					{ headers: { 'Content-Type': 'application/json' } }
+				);
+			}
 			if (url.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
 				try {
 					const body = (await req.json()) as AnthropicRequest;

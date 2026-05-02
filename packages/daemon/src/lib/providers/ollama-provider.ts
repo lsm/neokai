@@ -137,11 +137,12 @@ export class OllamaProvider implements Provider {
 	}
 
 	ownsModel(modelId: string): boolean {
-		if (modelId === 'ollama' || modelId === 'ollama-cloud') return true;
 		const id = modelId.toLowerCase();
+		if (id === 'ollama') return this.kind === 'local';
+		if (id === 'ollama-cloud') return this.kind === 'cloud';
 		const knownOllamaPrefixes = ['llama', 'qwen', 'mistral', 'gemma', 'phi', 'gpt-oss'];
 		if (this.kind === 'cloud') {
-			return id === 'ollama-cloud' || id.startsWith('gpt-oss:');
+			return id.startsWith('gpt-oss:');
 		}
 		return (
 			!id.endsWith('-cloud') &&

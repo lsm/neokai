@@ -104,10 +104,14 @@ describe('OllamaProvider', () => {
 		expect(status.error).toContain('OLLAMA_API_KEY');
 	});
 
-	it('routes cloud-tagged gpt-oss models only to the cloud provider', () => {
+	it('routes Ollama shorthands and cloud-tagged gpt-oss models to the matching provider', () => {
 		const local = new OllamaProvider({ kind: 'local' });
 		const cloud = new OllamaProvider({ kind: 'cloud' });
 
+		expect(local.ownsModel('ollama')).toBe(true);
+		expect(cloud.ownsModel('ollama')).toBe(false);
+		expect(local.ownsModel('ollama-cloud')).toBe(false);
+		expect(cloud.ownsModel('ollama-cloud')).toBe(true);
 		expect(local.ownsModel('gpt-oss:120b-cloud')).toBe(false);
 		expect(cloud.ownsModel('gpt-oss:120b-cloud')).toBe(true);
 		expect(cloud.ownsModel('other-provider-cloud')).toBe(false);
