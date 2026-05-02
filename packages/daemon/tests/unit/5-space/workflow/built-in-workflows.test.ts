@@ -112,6 +112,16 @@ describe('CODING_WORKFLOW template', () => {
 		expect(prompt).toContain('The reviewer handles the merge.');
 	});
 
+	test('coder agent slot has toolGuards with gh pr merge deny rule', () => {
+		const guards = CODING_WORKFLOW.nodes[0].agents[0]?.toolGuards;
+		expect(guards).toBeDefined();
+		expect(guards).toHaveLength(1);
+		expect(guards![0].matcher).toBe('Bash');
+		expect(guards![0].decision).toBe('deny');
+		expect(guards![0].pattern).toContain('gh');
+		expect(guards![0].reason).toContain('merge');
+	});
+
 	test('has two channels', () => {
 		expect(CODING_WORKFLOW.channels).toHaveLength(2);
 	});
@@ -2265,6 +2275,57 @@ describe('Coding Workflow export/import round-trip', () => {
 		const reviewToCode = reimported.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
 		expect(reviewToCode).toBeDefined();
 		expect(reviewToCode!.maxCycles).toBe(5);
+	});
+
+	test('toolGuards survive export/import round-trip', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		const exported = exportWorkflow(wf, mockAgents);
+
+		// Verify exported coder agent has toolGuards
+		const codingNode = exported.nodes.find((n) => n.name === 'Coding');
+		expect(codingNode).toBeDefined();
+		const coderAgent = codingNode!.agents.find((a) => a.name === 'coder');
+		expect(coderAgent).toBeDefined();
+		expect(coderAgent!.toolGuards).toBeDefined();
+		expect(coderAgent!.toolGuards).toHaveLength(1);
+		expect(coderAgent!.toolGuards![0].matcher).toBe('Bash');
+		expect(coderAgent!.toolGuards![0].decision).toBe('deny');
+
+		// Delete and re-import
+		for (const w of manager.listWorkflows(SPACE_ID)) {
+			manager.deleteWorkflow(w.id);
+		}
+		const agentNameToId = new Map<string, string>(mockAgents.map((a) => [a.name, a.id]));
+		manager.createWorkflow({
+			spaceId: SPACE_ID,
+			name: exported.name,
+			description: exported.description,
+			nodes: exported.nodes.map((s) => ({
+				name: s.name,
+				agents: s.agents.map((a) => ({
+					agentId: agentNameToId.get(a.agentRef) ?? a.agentRef,
+					name: a.name,
+					toolGuards: a.toolGuards,
+				})),
+			})),
+			startNodeId: undefined,
+			tags: exported.tags,
+			channels: exported.channels,
+			completionAutonomyLevel: exported.completionAutonomyLevel ?? 3,
+		});
+
+		// Verify re-imported coder has toolGuards
+		const reimported = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === CODING_WORKFLOW.name)!;
+		const reimCoder = reimported.nodes
+			.find((n) => n.name === 'Coding')
+			?.agents.find((a) => a.name === 'coder');
+		expect(reimCoder?.toolGuards).toBeDefined();
+		expect(reimCoder?.toolGuards).toHaveLength(1);
+		expect(reimCoder?.toolGuards![0].matcher).toBe('Bash');
+		expect(reimCoder?.toolGuards![0].decision).toBe('deny');
 	});
 });
 

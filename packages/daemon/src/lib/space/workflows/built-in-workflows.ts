@@ -20,7 +20,7 @@
  *   `resolveChannels()` matches node names via the `nodeNameToAgents` lookup.
  */
 
-import type { GateScript, SpaceWorkflow, DeclarativeToolGuard } from '@neokai/shared';
+import type { GateScript, SpaceWorkflow, DeclarativeToolGuard, WorkflowNode } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import { Logger } from '../../logger';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -1383,6 +1383,39 @@ export interface SeedBuiltInWorkflowsResult {
 }
 
 /**
+ * Merge `toolGuards` from template agent slots onto matching existing agent slots.
+ *
+ * Unlike `customPrompt` (user-configurable), `toolGuards` are structural enforcement
+ * metadata that must stay in sync with the template. This function only touches the
+ * `toolGuards` field on each agent slot — all other fields (customPrompt, model,
+ * disabledSkillIds, etc.) are preserved from the existing row.
+ *
+ * Matching is by node name + agent name, which are stable identifiers.
+ */
+function mergeToolGuardsFromTemplate(
+	existingNodes: WorkflowNode[],
+	templateNodes: Pick<WorkflowNode, 'name' | 'agents'>[]
+): WorkflowNode[] {
+	const templateAgentsByKey = new Map<string, DeclarativeToolGuard[] | undefined>();
+	for (const node of templateNodes) {
+		for (const agent of node.agents) {
+			templateAgentsByKey.set(`${node.name}::${agent.name}`, agent.toolGuards);
+		}
+	}
+
+	return existingNodes.map((node) => ({
+		...node,
+		agents: node.agents.map((agent) => {
+			const key = `${node.name}::${agent.name}`;
+			const templateGuards = templateAgentsByKey.get(key);
+			if (templateGuards === undefined) return agent;
+			// Merge: overwrite toolGuards from template, keep everything else
+			return { ...agent, toolGuards: templateGuards };
+		}),
+	}));
+}
+
+/**
  * Fields that the built-in seeder re-stamps when it detects template drift
  * on an already-seeded row.
  *
@@ -1456,15 +1489,18 @@ export function seedBuiltInWorkflows(
 			if (row.templateHash === expectedHash) continue;
 
 			try {
+				// Targeted merge of toolGuards from template onto existing agent slots.
+				// Unlike prompts (user-configurable), toolGuards are structural enforcement
+				// metadata that must stay in sync with the template.
+				const mergedNodes = mergeToolGuardsFromTemplate(row.nodes, template.nodes);
+
 				workflowManager.updateWorkflow(row.id, {
 					completionAutonomyLevel: template.completionAutonomyLevel,
 					// Pass `null` (not `undefined`) when the template clears the route,
 					// so the repository writes the new value rather than leaving the
 					// old one in place.
 					postApproval: template.postApproval ?? null,
-					// Never re-stamp nodes/prompts during startup/idempotent seed reruns.
-					// User/workflow configuration is runtime data and must not be silently
-					// replaced by built-in template text outside an explicit sync action.
+					nodes: mergedNodes,
 					templateHash: expectedHash,
 				});
 				restamped.push(template.name);
