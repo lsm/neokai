@@ -774,7 +774,10 @@ describe('QueryOptionsBuilder', () => {
 
 			for (const command of [
 				'gh pr merge https://github.com/org/repo/pull/1 --squash',
+				'  gh pr merge https://github.com/org/repo/pull/1 --squash',
 				'`gh pr merge 123`',
+				'GH_TOKEN=token gh pr merge 123',
+				'command gh pr merge 123',
 			]) {
 				const result = await hook!(
 					{
@@ -799,6 +802,32 @@ describe('QueryOptionsBuilder', () => {
 					},
 				});
 			}
+		});
+
+		it('denies gh pr merge for legacy coder sessions', async () => {
+			mockSession.type = 'coder';
+			mockSession.config.agent = undefined;
+			const options = await builder.build();
+			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+			expect(hook).toBeDefined();
+
+			const result = await hook!(
+				{
+					hook_event_name: 'PreToolUse',
+					tool_name: 'Bash',
+					tool_input: { command: 'gh pr merge 123' },
+					tool_use_id: 'tool-1',
+					session_id: 'session-1',
+					transcript_path: '/tmp/transcript.jsonl',
+					cwd: '/tmp/repo',
+				},
+				'tool-1',
+				{ signal: new AbortController().signal }
+			);
+
+			expect(result).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
 		});
 
 		it('allows non-merge bash commands for coder-role sessions', async () => {

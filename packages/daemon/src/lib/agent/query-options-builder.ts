@@ -60,6 +60,7 @@ const BLOCK_CODER_PR_MERGE_REASON =
 	'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.';
 
 function isCoderRoleSession(session: Session): boolean {
+	if (session.type === 'coder') return true;
 	if (session.type !== 'worker') return false;
 	const agentName = session.config.agent?.toLowerCase();
 	return agentName === 'coder';
@@ -72,7 +73,9 @@ function extractBashCommand(input: unknown): string {
 }
 
 function isGhPrMergeCommand(command: string): boolean {
-	return /(^|[;&|()\n`]\s*)gh\s+pr\s+merge\b/.test(command);
+	return /(?:^|[;&|()\n`])\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;&|()`]+|command)\s+)*gh\s+pr\s+merge\b/.test(
+		command
+	);
 }
 
 function createBlockCoderPrMergeHook(): HookCallback {
