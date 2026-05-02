@@ -161,6 +161,7 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
 
 		mockDb = {
 			updateSession: updateSessionSpy,
+			saveNeokaiActionMessage: mock(() => {}),
 		} as unknown as Database;
 
 		mockMessageHub = {
@@ -356,6 +357,7 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 			messageQueue,
 			db: {
 				updateSession: updateSessionSpy,
+				saveNeokaiActionMessage: mock(() => {}),
 			} as unknown as Database,
 			messageHub: {
 				event: publishSpy,
@@ -437,18 +439,27 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 	// ---- Test 6 ----
 
 	it(
-		'restart() preserves sdkSessionId when session file is missing — SDK will attempt recovery',
+		'restart() emits sdkResumeChoice when session file is missing — user decides',
 		async () => {
 			const sdkId = 'sdk-continuity-missing';
 			// Do NOT create the session file — simulate a stale/missing file
 
 			mockContext.session.sdkSessionId = sdkId;
+			mockContext.session.sdkOriginPath = '/some/path';
 			manager = new QueryLifecycleManager(mockContext);
 
 			await manager.restart();
 
-			// sdkSessionId is preserved — SDK may recreate the file on resume
+			// sdkSessionId is preserved — user chooses via sdkResumeChoice prompt
 			expect(mockContext.session.sdkSessionId).toBe(sdkId);
+			// A neokai_action message with sdk_resume_choice should be emitted
+			expect(publishSpy).toHaveBeenCalledWith(
+				'state.sdkMessages.delta',
+				expect.objectContaining({
+					added: [expect.objectContaining({ action: 'sdk_resume_choice', resolved: false })],
+				}),
+				expect.any(Object)
+			);
 		},
 		{ timeout: 5000 }
 	);
