@@ -982,6 +982,29 @@ describe('SpaceTaskManager', () => {
 			expect(reviewing.pendingCompletionReason).toBeNull();
 		});
 
+		it('allows repeated review→review submissions and refreshes pending-completion metadata', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+
+			const first = await manager.submitTaskForReview(task.id, {
+				submittedByNodeId: 'node-A',
+				reason: 'cycle one',
+			});
+
+			const second = await manager.submitTaskForReview(task.id, {
+				submittedByNodeId: 'node-B',
+				reason: 'cycle two',
+			});
+
+			expect(second.status).toBe('review');
+			expect(second.pendingCheckpointType).toBe('task_completion');
+			expect(second.pendingCompletionSubmittedByNodeId).toBe('node-B');
+			expect(second.pendingCompletionReason).toBe('cycle two');
+			expect(second.pendingCompletionSubmittedAt).toBeGreaterThanOrEqual(
+				first.pendingCompletionSubmittedAt ?? 0
+			);
+		});
+
 		it('rejects illegal source statuses before any pending-* fields get written', async () => {
 			// `done → review` is not in VALID_SPACE_TASK_TRANSITIONS — the helper
 			// must surface the transition error from `setTaskStatus` *before*

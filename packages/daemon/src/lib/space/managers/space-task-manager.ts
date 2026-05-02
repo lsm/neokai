@@ -294,8 +294,11 @@ export class SpaceTaskManager {
 
 		// Inline transition validation. Mirrors the check in `setTaskStatus` —
 		// kept here (rather than delegating) so the status flip and the pending-*
-		// stamp can happen in a single SQL UPDATE.
-		if (!isValidSpaceTaskTransition(task.status, 'review')) {
+		// stamp can happen in a single SQL UPDATE. Re-submitting while already in
+		// `review` is intentionally idempotent for multi-cycle workflows: each cycle
+		// refreshes the pending-completion metadata instead of failing with a
+		// misleading `review → review` transition error.
+		if (task.status !== 'review' && !isValidSpaceTaskTransition(task.status, 'review')) {
 			throw new Error(
 				`Invalid status transition from '${task.status}' to 'review'. ` +
 					`Allowed: ${VALID_SPACE_TASK_TRANSITIONS[task.status].join(', ') || 'none'}`

@@ -182,9 +182,11 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.script!.timeoutMs).toBe(30000);
 		// The script must consult the workflow start timestamp injected by the runner.
 		expect(gate.script!.source).toContain('NEOKAI_WORKFLOW_START_ISO');
-		// Primary check: query GitHub for the formal reviews list via the PR URL.
-		expect(gate.script!.source).toContain('gh pr view "$PR_URL" --json reviews');
+		// Primary check: query GitHub for formal approval / changes-requested reviews.
+		expect(gate.script!.source).toContain('gh pr view "$PR_URL" --json reviews,comments,author');
 		expect(gate.script!.source).toContain('submittedAt');
+		expect(gate.script!.source).toContain('APPROVED');
+		expect(gate.script!.source).toContain('CHANGES_REQUESTED');
 		// Must fail loudly when neither review nor PR comment has landed since start.
 		expect(gate.script!.source).toContain('exit 1');
 		// Must echo pr_url/review_count on success for downstream consumers.
@@ -192,18 +194,24 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.script!.source).toContain('review_count');
 	});
 
-	test('review-posted-gate falls back to PR comments when no formal review exists', () => {
+	test('review-posted-gate accepts comment-only evidence only for own PRs', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
 		const src = gate.script!.source;
-		// Fallback: check PR conversation comments when no formal review is found.
-		// This handles same-account setups where GitHub blocks self-reviews.
-		expect(src).toContain('gh pr view "$PR_URL" --json comments');
+		// Fallback: check COMMENTED reviews and PR conversation comments only after
+		// confirming the authenticated account owns the PR. Non-own PRs must still
+		// provide APPROVED or CHANGES_REQUESTED review events.
+		expect(src).toContain('gh api user --jq .login');
+		expect(src).toContain('AUTHOR_LOGIN');
+		expect(src).toContain('VIEWER_LOGIN');
+		expect(src).toContain('[ "$AUTHOR_LOGIN" != "$VIEWER_LOGIN" ]');
+		expect(src).toContain('COMMENTED');
 		expect(src).toContain('createdAt');
 		// Must also filter comments by workflow start timestamp.
 		expect(src).toContain('NEOKAI_WORKFLOW_START_ISO');
 		// Gate passes via comments fallback — outputs the same pr_url/review_count shape.
 		expect(src).toContain('pr_url');
 		expect(src).toContain('review_count');
+		expect(src).toContain('own_pr_comment');
 		// Error message must mention both "review" and "PR comment" so operators understand what was checked.
 		expect(src).toContain('PR comment');
 	});

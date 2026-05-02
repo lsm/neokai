@@ -184,11 +184,11 @@ const PR_READY_BASH_SCRIPT = [
  * channel: the runtime refuses to deliver a "changes requested" message until
  * a formal review or at least one PR comment is visible on GitHub.
  *
- * Primary check: formal GitHub review (gh pr review / pulls/{n}/reviews).
- * Fallback check: PR conversation comments since workflow start. This covers
- * the edge case where reviewer and coder share the same GitHub account —
- * GitHub blocks self-reviews, so a formal review can never be posted, but
- * the reviewer can still post comments on the PR thread.
+ * Primary check: formal GitHub review (gh pr review / pulls/{n}/reviews)
+ * with APPROVED or CHANGES_REQUESTED state.
+ * Own-PR fallback: COMMENTED reviews or PR conversation comments since workflow
+ * start. GitHub blocks APPROVE/REQUEST_CHANGES on your own PR, so comment-only
+ * evidence is accepted only when the authenticated GitHub user is the PR author.
  *
  * Environment variables:
  *   NEOKAI_GATE_DATA_JSON       — current gate data; may contain `pr_url` or `review_url`
@@ -209,26 +209,29 @@ const REVIEW_POSTED_BASH_SCRIPT = [
 	'  echo "NEOKAI_WORKFLOW_START_ISO not injected — cannot determine review window" >&2',
 	'  exit 1',
 	'fi',
-	'if ! REVIEW_JSON=$(gh pr view "$PR_URL" --json reviews); then',
-	'  echo "Failed to fetch reviews for ${PR_URL}" >&2',
+	'if ! PR_JSON=$(gh pr view "$PR_URL" --json reviews,comments,author); then',
+	'  echo "Failed to fetch review evidence for ${PR_URL}" >&2',
 	'  exit 1',
 	'fi',
-	'REVIEW_COUNT=$(jq --arg since "$START_ISO" \'[.reviews[] | select(.submittedAt > $since)] | length\' <<< "$REVIEW_JSON")',
-	'if [ "$REVIEW_COUNT" != "0" ] && [ -n "$REVIEW_COUNT" ]; then',
-	'  jq -n --arg url "$PR_URL" --argjson n "$REVIEW_COUNT" \'{"pr_url":$url,"review_count":$n}\'',
+	'FORMAL_REVIEW_COUNT=$(jq --arg since "$START_ISO" \'[.reviews[] | select(.submittedAt > $since) | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | length\' <<< "$PR_JSON")',
+	'if [ "$FORMAL_REVIEW_COUNT" != "0" ] && [ -n "$FORMAL_REVIEW_COUNT" ]; then',
+	'  jq -n --arg url "$PR_URL" --argjson n "$FORMAL_REVIEW_COUNT" \'{"pr_url":$url,"review_count":$n,"review_evidence":"formal_review"}\'',
 	'  exit 0',
 	'fi',
-	'# No formal review found — fall back to PR comments (handles same-account self-review restriction)',
-	'if ! COMMENTS_JSON=$(gh pr view "$PR_URL" --json comments); then',
-	'  echo "No formal review on ${PR_URL} since ${START_ISO}; also failed to fetch PR comments" >&2',
+	'AUTHOR_LOGIN=$(jq -r \'.author.login // empty\' <<< "$PR_JSON")',
+	'VIEWER_LOGIN=$(gh api user --jq .login 2>/dev/null || true)',
+	'if [ -z "$AUTHOR_LOGIN" ] || [ -z "$VIEWER_LOGIN" ] || [ "$AUTHOR_LOGIN" != "$VIEWER_LOGIN" ]; then',
+	'  echo "No APPROVED or CHANGES_REQUESTED review found on ${PR_URL} since workflow start (${START_ISO}); comment-only evidence is accepted only for own PRs" >&2',
 	'  exit 1',
 	'fi',
-	'COMMENT_COUNT=$(jq --arg since "$START_ISO" \'[.comments[] | select(.createdAt > $since)] | length\' <<< "$COMMENTS_JSON")',
+	'COMMENT_REVIEW_COUNT=$(jq --arg since "$START_ISO" \'[.reviews[] | select(.submittedAt > $since) | select(.state == "COMMENTED")] | length\' <<< "$PR_JSON")',
+	'PR_COMMENT_COUNT=$(jq --arg since "$START_ISO" \'[.comments[] | select(.createdAt > $since)] | length\' <<< "$PR_JSON")',
+	'COMMENT_COUNT=$((COMMENT_REVIEW_COUNT + PR_COMMENT_COUNT))',
 	'if [ "$COMMENT_COUNT" = "0" ] || [ -z "$COMMENT_COUNT" ]; then',
-	'  echo "No review or PR comment found on ${PR_URL} since workflow start (${START_ISO})" >&2',
+	'  echo "No review or PR comment found on own PR ${PR_URL} since workflow start (${START_ISO})" >&2',
 	'  exit 1',
 	'fi',
-	'jq -n --arg url "$PR_URL" --argjson n "$COMMENT_COUNT" \'{"pr_url":$url,"review_count":$n}\'',
+	'jq -n --arg url "$PR_URL" --argjson n "$COMMENT_COUNT" \'{"pr_url":$url,"review_count":$n,"review_evidence":"own_pr_comment"}\'',
 ].join('\n');
 
 /**
