@@ -317,10 +317,10 @@ describe('ProviderRegistry', () => {
 		});
 	});
 
-	describe('initializeProviders — all six providers registered', () => {
+	describe('initializeProviders — all built-in providers registered', () => {
 		// Outer beforeEach already resets registry+factory; no per-test resets needed.
 
-		it('should register exactly six built-in providers', () => {
+		it('should register exactly eight built-in providers', () => {
 			const reg = initializeProviders();
 
 			const ids = reg
@@ -328,7 +328,16 @@ describe('ProviderRegistry', () => {
 				.map((p) => p.id)
 				.sort();
 			expect(ids).toEqual(
-				['anthropic', 'anthropic-codex', 'anthropic-copilot', 'glm', 'minimax', 'openrouter'].sort()
+				[
+					'anthropic',
+					'anthropic-codex',
+					'anthropic-copilot',
+					'glm',
+					'minimax',
+					'ollama',
+					'ollama-cloud',
+					'openrouter',
+				].sort()
 			);
 		});
 
@@ -352,6 +361,12 @@ describe('ProviderRegistry', () => {
 			expect(reg.has('openrouter')).toBe(true);
 		});
 
+		it('should include ollama providers', () => {
+			const reg = initializeProviders();
+			expect(reg.has('ollama')).toBe(true);
+			expect(reg.has('ollama-cloud')).toBe(true);
+		});
+
 		it('should include anthropic-codex provider', () => {
 			const reg = initializeProviders();
 			expect(reg.has('anthropic-codex')).toBe(true);
@@ -367,13 +382,13 @@ describe('ProviderRegistry', () => {
 			const reg2 = initializeProviders();
 			// The global singleton must be the same reference — not a new instance
 			expect(reg1).toBe(reg2);
-			expect(reg2.size).toBe(6);
+			expect(reg2.size).toBe(8);
 		});
 
 		it('should use the global registry singleton', () => {
 			initializeProviders();
 			const globalReg = getProviderRegistry();
-			expect(globalReg.size).toBe(6);
+			expect(globalReg.size).toBe(8);
 		});
 	});
 
@@ -486,6 +501,18 @@ describe('inferProviderForModel', () => {
 		expect(inferProviderForModel('anthropic/claude-sonnet-4.6')).toBe('openrouter');
 		expect(inferProviderForModel('openai/gpt-5.4')).toBe('openrouter');
 		expect(inferProviderForModel('deepseek/deepseek-r1')).toBe('openrouter');
+	});
+
+	it('maps Ollama model shorthands to Ollama providers', () => {
+		expect(inferProviderForModel('ollama')).toBe('ollama');
+		expect(inferProviderForModel('ollama-cloud')).toBe('ollama-cloud');
+		expect(inferProviderForModel('gpt-oss:20b')).toBe('ollama');
+		expect(inferProviderForModel('gpt-oss:120b')).toBe('ollama-cloud');
+		expect(inferProviderForModel('gpt-oss:120b-cloud')).toBe('ollama-cloud');
+		expect(inferProviderForModel('qwen3.5:cloud')).toBe('ollama-cloud');
+		expect(inferProviderForModel('qwen3:32b')).toBe('ollama');
+		expect(inferProviderForModel('qwen3-coder:480b')).toBe('ollama-cloud');
+		expect(inferProviderForModel('other-provider-cloud')).toBe('anthropic');
 	});
 
 	it('maps gpt- prefix to anthropic-codex', () => {

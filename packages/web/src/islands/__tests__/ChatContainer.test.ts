@@ -434,7 +434,7 @@ describe('Passive Event Listener', () => {
  *   1. Render a "not started yet" state with a minimal composer.
  *   2. On send, call `spaceStore.activateTaskNodeAgent(taskId, agentName, msg)`.
  *   3. Watch `spaceStore.taskActivity` for a live session; when found, call
- *      `replaceOverlayHistory(sessionId, agentName)` to hand off.
+ *      `replaceOverlayHistory(sessionId, agentName, undefined, taskContext)` to hand off.
  */
 describe('Pending Agent Mode', () => {
 	const source = chatContainerSource;
@@ -483,6 +483,18 @@ describe('Pending Agent Mode', () => {
 	it('send handler calls replaceOverlayHistory when daemon returns sessionId', () => {
 		// If the daemon returns a sessionId synchronously, hand off immediately
 		expect(source).toMatch(/result\.sessionId[\s\S]*?replaceOverlayHistory/);
+	});
+
+	it('pending live-member handoff preserves nodeExecutionId in task context', () => {
+		expect(source).toMatch(
+			/pendingLiveMember\?\.sessionId[\s\S]*?pendingLiveMember\.nodeExecution\?\.nodeExecutionId[\s\S]*?nodeExecutionId: pendingLiveMember\.nodeExecution\.nodeExecutionId/
+		);
+	});
+
+	it('synchronous pending send handoff preserves nodeExecutionId when activity is available', () => {
+		expect(source).toMatch(
+			/result\.sessionId[\s\S]*?matchingLiveMember[\s\S]*?matchingLiveMember\?\.nodeExecution\?\.nodeExecutionId[\s\S]*?nodeExecutionId: matchingLiveMember\.nodeExecution\.nodeExecutionId/
+		);
 	});
 
 	it('error state sets pendingErrorMessage on failure', () => {

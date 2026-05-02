@@ -359,6 +359,16 @@ function mapSpaceTaskActivityRow(row: Record<string, unknown>): Record<string, u
 	return {
 		...row,
 		kind,
+		nodeExecution:
+			kind === 'node_agent'
+				? {
+						nodeExecutionId: row.nodeExecutionId,
+						nodeId: row.workflowNodeId,
+						agentName: row.agentName,
+						status: row.executionStatus,
+						result: row.executionResult ?? null,
+					}
+				: null,
 		label:
 			kind === 'task_agent'
 				? 'Task Agent'
@@ -558,9 +568,11 @@ orchestration AS (
     tt.id AS task_id,
     tt.title AS task_title,
     tt.status AS task_status,
+    NULL AS node_execution_id,
     NULL AS workflow_node_id,
     NULL AS agent_name,
     NULL AS execution_status,
+    NULL AS execution_result,
     NULL AS execution_updated_at
   FROM target_task tt
   JOIN sessions s ON s.id = tt.task_agent_session_id
@@ -577,9 +589,11 @@ node_agents AS (
     tt.id AS task_id,
     tt.title AS task_title,
     tt.status AS task_status,
+    ne.id AS node_execution_id,
     ne.workflow_node_id AS workflow_node_id,
     ne.agent_name AS agent_name,
     ne.status AS execution_status,
+    ne.result AS execution_result,
     ne.updated_at AS execution_updated_at
   FROM node_executions ne
   JOIN target_task tt
@@ -635,8 +649,10 @@ SELECT
   ase.task_id AS taskId,
   ase.task_title AS taskTitle,
   ase.task_status AS taskStatus,
+  ase.node_execution_id AS nodeExecutionId,
   ase.workflow_node_id AS workflowNodeId,
   ase.agent_name AS agentName,
+  ase.execution_result AS executionResult,
   ase.task_id AS currentStep,
   NULL AS error,
   NULL AS completionSummary,
@@ -683,6 +699,7 @@ orchestration AS (
     'task_agent' AS kind,
     'task-agent' AS role,
     'Task Agent' AS label,
+    NULL AS node_execution_id,
     tt.id AS task_id,
     tt.title AS task_title
   FROM target_task tt
@@ -697,6 +714,7 @@ node_agents AS (
     'node_agent' AS kind,
     ne.agent_name AS role,
     COALESCE(sa.name, ne.agent_name, 'agent') AS label,
+    ne.id AS node_execution_id,
     tt.id AS task_id,
     tt.title AS task_title
   FROM node_executions ne
@@ -719,6 +737,7 @@ github_events AS (
     'github' AS kind,
     'github' AS role,
     'GitHub' AS label,
+    NULL AS nodeExecutionId,
     tt.id AS taskId,
     tt.title AS taskTitle,
     'github_pr_activity' AS messageType,
@@ -747,6 +766,7 @@ joined AS (
     ase.kind AS kind,
     ase.role AS role,
     ase.label AS label,
+    ase.node_execution_id AS nodeExecutionId,
     ase.task_id AS taskId,
     ase.task_title AS taskTitle,
     sm.message_type AS messageType,
@@ -773,6 +793,7 @@ SELECT
   kind,
   role,
   label,
+  nodeExecutionId,
   taskId,
   taskTitle,
   messageType,
@@ -940,6 +961,7 @@ SELECT
   kind,
   role,
   label,
+  nodeExecutionId,
   taskId,
   taskTitle,
   messageType,

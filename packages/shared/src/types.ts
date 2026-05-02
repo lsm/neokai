@@ -205,6 +205,8 @@ export type { RuntimeState } from './types/neo';
  * - 'glm': GLM (智谱AI) via Anthropic-compatible API
  * - 'minimax': MiniMax via Anthropic-compatible API
  * - 'openrouter': OpenRouter Anthropic-compatible API gateway
+ * - 'ollama': Local Ollama through the native /api/chat endpoint
+ * - 'ollama-cloud': Ollama Cloud through the native /api/chat endpoint
  * - 'anthropic-copilot': GitHub Copilot backend via Anthropic-compatible embedded server
  * - 'anthropic-codex': Anthropic-compatible HTTP bridge backed by Codex app-server
  */
@@ -213,6 +215,8 @@ export type Provider =
 	| 'glm'
 	| 'minimax'
 	| 'openrouter'
+	| 'ollama'
+	| 'ollama-cloud'
 	| 'anthropic-copilot'
 	| 'anthropic-codex';
 
