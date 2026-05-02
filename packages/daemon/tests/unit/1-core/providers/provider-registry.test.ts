@@ -507,6 +507,7 @@ describe('inferProviderForModel', () => {
 		expect(inferProviderForModel('ollama')).toBe('ollama');
 		expect(inferProviderForModel('ollama-cloud')).toBe('ollama-cloud');
 		expect(inferProviderForModel('gpt-oss:20b')).toBe('ollama');
+		expect(inferProviderForModel('gpt-oss:120b')).toBe('ollama-cloud');
 		expect(inferProviderForModel('gpt-oss:120b-cloud')).toBe('ollama-cloud');
 		expect(inferProviderForModel('qwen3.5:cloud')).toBe('ollama-cloud');
 		expect(inferProviderForModel('qwen3:32b')).toBe('ollama');
