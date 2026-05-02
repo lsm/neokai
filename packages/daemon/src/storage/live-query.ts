@@ -20,6 +20,25 @@ export interface LiveQueryHandle<T> {
 	dispose(): void;
 }
 
+export interface LiveQuerySubscribeOptions {
+	/**
+	 * Optional debounce for reevaluating this query after a table change.
+	 *
+	 * Default behavior remains microtask-based so normal UI surfaces stay
+	 * immediate. Expensive high-frequency feeds can opt in to a short debounce
+	 * to coalesce bursts of writes into one latest-state delta.
+	 */
+	debounceMs?: number;
+	/**
+	 * Optional metadata builder for the whole result set. It is evaluated once
+	 * per cached query evaluation, not once per subscriber.
+	 */
+	getMetadata?: (
+		rows: Record<string, unknown>[],
+		params: ReadonlyArray<unknown>
+	) => Record<string, unknown> | undefined;
+}
+
 export interface QueryDiff<T = Record<string, unknown>> {
 	type: 'snapshot' | 'delta';
 	rows: T[];
@@ -45,9 +64,26 @@ interface QueryEntry<T extends Record<string, unknown>> {
 	tables: string[];
 	cachedRows: T[];
 	cachedHash: number;
+	cachedRowHashes: Map<unknown, number> | null;
+	cachedMetadata: Record<string, unknown> | undefined;
+	getMetadata:
+		| ((
+				rows: Record<string, unknown>[],
+				params: ReadonlyArray<unknown>
+		  ) => Record<string, unknown> | undefined)
+		| undefined;
 	subscribers: Set<Subscriber<T>>;
-	/** True when a microtask re-evaluation is already queued */
+	/** True when a re-evaluation is already queued */
 	pendingEval: boolean;
+	/** Timer handle when the pending evaluation uses debounceMs instead of a microtask. */
+	pendingTimer: ReturnType<typeof setTimeout> | null;
+	/** Delay used for table-change reevaluations. */
+	debounceMs: number;
+}
+
+interface RowHashSnapshot {
+	hash: number;
+	rowHashes: Map<unknown, number> | null;
 }
 
 // ============================================================================
@@ -104,10 +140,33 @@ export function extractTables(sql: string): string[] {
 	return Array.from(tables);
 }
 
-/** Hash rows using Bun.hash for fast change detection. */
-function hashRows(rows: Record<string, unknown>[]): number {
-	const hash = Bun.hash(JSON.stringify(rows));
+function hashString(value: string): number {
+	const hash = Bun.hash(value);
 	return typeof hash === 'bigint' ? Number(hash) : hash;
+}
+
+/**
+ * Build a compact hash for a result set.
+ *
+ * For the common `id`-keyed path, cache one hash per row so later diffs only
+ * stringify newly fetched rows, not both the previous and next result sets.
+ */
+function hashRows(rows: Record<string, unknown>[]): RowHashSnapshot {
+	const hasId = rows.length > 0 && 'id' in rows[0];
+	if (!hasId) {
+		return { hash: hashString(JSON.stringify(rows)), rowHashes: null };
+	}
+
+	const rowHashes = new Map<unknown, number>();
+	const digestParts: string[] = [String(rows.length)];
+	for (const row of rows) {
+		const id = row['id'];
+		const rowHash = hashString(JSON.stringify(row));
+		rowHashes.set(id, rowHash);
+		digestParts.push(`${String(id).length}:${String(id)}:${rowHash}`);
+	}
+
+	return { hash: hashString(digestParts.join('|')), rowHashes };
 }
 
 /**
@@ -118,7 +177,9 @@ function hashRows(rows: Record<string, unknown>[]): number {
  */
 export function computeDiff<T extends Record<string, unknown>>(
 	oldRows: T[],
-	newRows: T[]
+	newRows: T[],
+	oldRowHashes?: Map<unknown, number> | null,
+	newRowHashes?: Map<unknown, number> | null
 ): { added: T[]; removed: T[]; updated: T[] } {
 	const hasId =
 		(newRows.length > 0 && 'id' in newRows[0]) || (oldRows.length > 0 && 'id' in oldRows[0]);
@@ -149,7 +210,11 @@ export function computeDiff<T extends Record<string, unknown>>(
 		const oldRow = oldById.get(id);
 		if (oldRow === undefined) {
 			added.push(newRow);
-		} else if (JSON.stringify(oldRow) !== JSON.stringify(newRow)) {
+		} else if (
+			oldRowHashes && newRowHashes
+				? oldRowHashes.get(id) !== newRowHashes.get(id)
+				: JSON.stringify(oldRow) !== JSON.stringify(newRow)
+		) {
 			updated.push(newRow);
 		}
 	}
@@ -171,6 +236,8 @@ export class LiveQueryEngine {
 	private queries = new Map<string, QueryEntry<Record<string, unknown>>>();
 	/** Map from table name to set of cache keys that depend on it */
 	private tableIndex = new Map<string, Set<string>>();
+	/** Prepared statements keyed by SQL text, reused across evaluations. */
+	private statements = new Map<string, ReturnType<BunDatabase['prepare']>>();
 	private changeListener: (data: { tables: string[]; versions: Record<string, number> }) => void;
 	private disposed = false;
 
@@ -193,25 +260,33 @@ export class LiveQueryEngine {
 	subscribe<T extends Record<string, unknown>>(
 		sql: string,
 		params: ReadonlyArray<unknown>,
-		onChange: (diff: QueryDiff<T>) => void
+		onChange: (diff: QueryDiff<T>) => void,
+		options: LiveQuerySubscribeOptions = {}
 	): LiveQueryHandle<T> {
 		const cacheKey = sql + '\0' + JSON.stringify(params);
+		const debounceMs = Math.max(0, Math.floor(options.debounceMs ?? 0));
 
 		let entry = this.queries.get(cacheKey) as QueryEntry<T> | undefined;
 
 		if (!entry) {
 			const rows = this.runQuery<T>(sql, params);
-			const hash = hashRows(rows);
+			const hashSnapshot = hashRows(rows);
 			const tables = extractTables(sql);
+			const cachedMetadata = options.getMetadata?.(rows, params);
 
 			entry = {
 				sql,
 				params,
 				tables,
 				cachedRows: rows,
-				cachedHash: hash,
+				cachedHash: hashSnapshot.hash,
+				cachedRowHashes: hashSnapshot.rowHashes,
+				cachedMetadata,
+				getMetadata: options.getMetadata,
 				subscribers: new Set(),
 				pendingEval: false,
+				pendingTimer: null,
+				debounceMs,
 			} as unknown as QueryEntry<T>;
 
 			this.queries.set(cacheKey, entry as unknown as QueryEntry<Record<string, unknown>>);
@@ -224,6 +299,14 @@ export class LiveQueryEngine {
 				}
 				keys.add(cacheKey);
 			}
+		} else {
+			if (debounceMs > entry.debounceMs) {
+				entry.debounceMs = debounceMs;
+			}
+			if (!entry.getMetadata && options.getMetadata) {
+				entry.getMetadata = options.getMetadata;
+				entry.cachedMetadata = options.getMetadata(entry.cachedRows, entry.params);
+			}
 		}
 
 		const subscriber: Subscriber<T> = { onChange, disposed: false };
@@ -235,6 +318,7 @@ export class LiveQueryEngine {
 			type: 'snapshot',
 			rows: (entry as QueryEntry<T>).cachedRows.slice(),
 			version,
+			metadata: (entry as QueryEntry<T>).cachedMetadata,
 		});
 
 		return {
@@ -244,6 +328,9 @@ export class LiveQueryEngine {
 				(entry as QueryEntry<T>).subscribers.delete(subscriber);
 				// Clean up entry if no subscribers remain
 				if ((entry as QueryEntry<T>).subscribers.size === 0) {
+					if ((entry as QueryEntry<T>).pendingTimer) {
+						clearTimeout((entry as QueryEntry<T>).pendingTimer!);
+					}
 					this.queries.delete(cacheKey);
 					for (const table of (entry as QueryEntry<T>).tables) {
 						const keys = this.tableIndex.get(table);
@@ -263,8 +350,14 @@ export class LiveQueryEngine {
 	dispose(): void {
 		this.disposed = true;
 		this.reactiveDb.off('change', this.changeListener as (...args: unknown[]) => void);
+		for (const entry of this.queries.values()) {
+			if (entry.pendingTimer) {
+				clearTimeout(entry.pendingTimer);
+			}
+		}
 		this.queries.clear();
 		this.tableIndex.clear();
+		this.statements.clear();
 	}
 
 	// ============================================================================
@@ -282,7 +375,11 @@ export class LiveQueryEngine {
 			if (!entry || entry.pendingEval) continue;
 
 			entry.pendingEval = true;
-			queueMicrotask(() => this.evaluateQuery(cacheKey));
+			if (entry.debounceMs > 0) {
+				entry.pendingTimer = setTimeout(() => this.evaluateQuery(cacheKey), entry.debounceMs);
+			} else {
+				queueMicrotask(() => this.evaluateQuery(cacheKey));
+			}
 		}
 	}
 
@@ -293,18 +390,27 @@ export class LiveQueryEngine {
 		if (!entry) return;
 
 		entry.pendingEval = false;
+		entry.pendingTimer = null;
 
 		const newRows = this.runQuery(entry.sql, entry.params);
-		const newHash = hashRows(newRows);
+		const newHashSnapshot = hashRows(newRows);
 
-		if (newHash === entry.cachedHash) return;
+		if (newHashSnapshot.hash === entry.cachedHash) return;
 
 		const oldRows = entry.cachedRows;
-		const diff = computeDiff(oldRows, newRows);
+		const newMetadata = entry.getMetadata?.(newRows, entry.params);
+		const diff = computeDiff(
+			oldRows,
+			newRows,
+			entry.cachedRowHashes,
+			newHashSnapshot.rowHashes
+		);
 		const version = this.computeVersion(entry.tables);
 
 		entry.cachedRows = newRows;
-		entry.cachedHash = newHash;
+		entry.cachedHash = newHashSnapshot.hash;
+		entry.cachedRowHashes = newHashSnapshot.rowHashes;
+		entry.cachedMetadata = newMetadata;
 
 		const queryDiff: QueryDiff<Record<string, unknown>> = {
 			type: 'delta',
@@ -313,6 +419,7 @@ export class LiveQueryEngine {
 			removed: diff.removed,
 			updated: diff.updated,
 			version,
+			metadata: newMetadata,
 		};
 
 		for (const subscriber of entry.subscribers) {
@@ -326,7 +433,11 @@ export class LiveQueryEngine {
 		sql: string,
 		params: ReadonlyArray<unknown>
 	): T[] {
-		const stmt = this.db.prepare(sql);
+		let stmt = this.statements.get(sql);
+		if (!stmt) {
+			stmt = this.db.prepare(sql);
+			this.statements.set(sql, stmt);
+		}
 		const paramsArray = Array.from(params) as Parameters<typeof stmt.all>;
 		return stmt.all(...paramsArray) as T[];
 	}

@@ -31,6 +31,12 @@ export interface NamedQuery {
 	/** Number of positional parameters the SQL expects */
 	paramCount: number;
 	/**
+	 * Optional debounce for table-change reevaluation. Use only for expensive
+	 * feeds fed by high-frequency writes, where latest-state delivery matters
+	 * more than one event per row mutation.
+	 */
+	debounceMs?: number;
+	/**
 	 * Optional row transformer applied after every query execution.
 	 * Must return a plain object whose keys match the frontend TypeScript types.
 	 */
@@ -1652,6 +1658,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SESSION_GROUP_MESSAGES_BY_GROUP_SQL,
 			paramCount: 1,
+			debounceMs: 150,
 			mapRow: mapSessionGroupMessageRow,
 		},
 	],
@@ -1660,6 +1667,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SPACE_TASK_ACTIVITY_BY_TASK_SQL,
 			paramCount: 1,
+			debounceMs: 250,
 			mapRow: mapSpaceTaskActivityRow,
 		},
 	],
@@ -1668,6 +1676,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SPACE_TASK_MESSAGES_BY_TASK_SQL,
 			paramCount: 1,
+			debounceMs: 250,
 			mapRow: mapSpaceTaskMessageRow,
 		},
 	],
@@ -1676,6 +1685,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL,
 			paramCount: 1,
+			debounceMs: 250,
 			mapRow: mapSpaceTaskMessageRow,
 		},
 	],
@@ -1745,6 +1755,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: MESSAGES_BY_SESSION_SQL,
 			paramCount: 2,
+			debounceMs: 100,
 			mapRow: mapMessageRow,
 		},
 	],
@@ -2012,10 +2023,10 @@ export function setupLiveQueryHandlers(
 					return;
 				}
 
-				// Extract metadata from raw rows (before mapRow strips internal columns).
-				// Params are forwarded so handlers like the compact-thread mapResult can
-				// run a sidecar prepared statement bound to the same task id.
-				const metadata = namedQuery.mapResult?.(diff.rows as Record<string, unknown>[], params);
+				// Metadata is computed by LiveQueryEngine once per cached query
+				// evaluation so identical subscriptions share expensive sidecars
+				// like the compact task feed's active-turn aggregation.
+				const metadata = diff.metadata;
 
 				let message: ReturnType<typeof createEventMessage>;
 
@@ -2068,6 +2079,10 @@ export function setupLiveQueryHandlers(
 						}
 					}
 				}
+			},
+			{
+				debounceMs: namedQuery.debounceMs,
+				getMetadata: namedQuery.mapResult,
 			}
 		);
 
