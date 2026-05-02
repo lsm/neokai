@@ -758,16 +758,27 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('hooks configuration', () => {
-		it('should return empty hooks for non-coder sessions', async () => {
+		const NO_MERGE_GUARD = {
+			matcher: 'Bash',
+			pattern:
+				'(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*gh\\s+pr\\s+merge\\b',
+			decision: 'deny' as const,
+			reason:
+				'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
+		};
+
+		it('should return empty hooks when no toolGuards provided', async () => {
 			const options = await builder.build();
 
 			expect(options.hooks).toEqual({});
 		});
 
-		it('denies gh pr merge for coder-role sessions', async () => {
-			mockSession.type = 'worker';
-			mockSession.config.agent = 'coder';
-			const options = await builder.build();
+		it('compiles declarative tool guards into PreToolUse hooks', async () => {
+			const guardBuilder = new QueryOptionsBuilder({
+				...mockContext,
+				toolGuards: [NO_MERGE_GUARD],
+			});
+			const options = await guardBuilder.build();
 
 			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
 			expect(hook).toBeDefined();
@@ -778,6 +789,7 @@ describe('QueryOptionsBuilder', () => {
 				'`gh pr merge 123`',
 				'GH_TOKEN=token gh pr merge 123',
 				'command gh pr merge 123',
+				'env GH_TOKEN=token gh pr merge 123',
 			]) {
 				const result = await hook!(
 					{
@@ -797,43 +809,18 @@ describe('QueryOptionsBuilder', () => {
 					hookSpecificOutput: {
 						hookEventName: 'PreToolUse',
 						permissionDecision: 'deny',
-						permissionDecisionReason:
-							'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
+						permissionDecisionReason: NO_MERGE_GUARD.reason,
 					},
 				});
 			}
 		});
 
-		it('denies gh pr merge for legacy coder sessions', async () => {
-			mockSession.type = 'coder';
-			mockSession.config.agent = undefined;
-			const options = await builder.build();
-			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
-			expect(hook).toBeDefined();
-
-			const result = await hook!(
-				{
-					hook_event_name: 'PreToolUse',
-					tool_name: 'Bash',
-					tool_input: { command: 'gh pr merge 123' },
-					tool_use_id: 'tool-1',
-					session_id: 'session-1',
-					transcript_path: '/tmp/transcript.jsonl',
-					cwd: '/tmp/repo',
-				},
-				'tool-1',
-				{ signal: new AbortController().signal }
-			);
-
-			expect(result).toMatchObject({
-				hookSpecificOutput: { permissionDecision: 'deny' },
+		it('allows non-merge bash commands when tool guard is present', async () => {
+			const guardBuilder = new QueryOptionsBuilder({
+				...mockContext,
+				toolGuards: [NO_MERGE_GUARD],
 			});
-		});
-
-		it('allows non-merge bash commands for coder-role sessions', async () => {
-			mockSession.type = 'worker';
-			mockSession.config.agent = 'coder';
-			const options = await builder.build();
+			const options = await guardBuilder.build();
 			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
 
 			const result = await hook!(
@@ -851,6 +838,27 @@ describe('QueryOptionsBuilder', () => {
 			);
 
 			expect(result).toEqual({});
+		});
+
+		it('groups guards by matcher into separate matcher entries', async () => {
+			const guardBuilder = new QueryOptionsBuilder({
+				...mockContext,
+				toolGuards: [
+					NO_MERGE_GUARD,
+					{
+						matcher: 'Bash',
+						pattern: 'rm\\s+-rf\\s+/',
+						decision: 'deny' as const,
+						reason: 'No recursive force deletes from root',
+					},
+				],
+			});
+			const options = await guardBuilder.build();
+
+			// Both guards share the same matcher, so they should be under one entry
+			expect(options.hooks?.PreToolUse).toHaveLength(1);
+			expect(options.hooks?.PreToolUse?.[0]?.matcher).toBe('Bash');
+			expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(2);
 		});
 	});
 

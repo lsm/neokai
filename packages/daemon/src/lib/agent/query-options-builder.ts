@@ -37,7 +37,7 @@ import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
 import type { PermissionMode } from '@neokai/shared/types/settings';
 import type { McpServerConfig } from '@neokai/shared/types/sdk-config';
 import type { AppMcpServerSourceType } from '@neokai/shared';
-import type { SkillEnablementOverride } from '@neokai/shared';
+import type { SkillEnablementOverride, DeclarativeToolGuard } from '@neokai/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { SkillsManager } from '../skills-manager';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
@@ -56,42 +56,27 @@ import { requireModelContextWindow } from '../providers/codex-anthropic-bridge/m
 
 export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
 
-const BLOCK_CODER_PR_MERGE_REASON =
-	'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.';
-
-function isCoderRoleSession(session: Session): boolean {
-	if (session.type === 'coder') return true;
-	if (session.type !== 'worker') return false;
-	const agentName = session.config.agent?.toLowerCase();
-	return agentName === 'coder';
-}
-
-function extractBashCommand(input: unknown): string {
-	if (!input || typeof input !== 'object') return '';
-	const command = (input as Record<string, unknown>).command;
-	return typeof command === 'string' ? command : '';
-}
-
-function isGhPrMergeCommand(command: string): boolean {
-	return /(?:^|[;&|()\n`])\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;&|()`]+|command)\s+)*gh\s+pr\s+merge\b/.test(
-		command
-	);
-}
-
-function createBlockCoderPrMergeHook(): HookCallback {
+/**
+ * Compile a single declarative tool guard into a PreToolUse hook callback.
+ * The guard specifies a tool matcher, a regex pattern against the tool input,
+ * and a decision to apply when matched.
+ */
+function compileToolGuard(guard: DeclarativeToolGuard): HookCallback {
+	const pattern = new RegExp(guard.pattern);
 	return async (input) => {
 		if (input.hook_event_name !== 'PreToolUse') return {};
 		const preInput = input as PreToolUseHookInput;
-		if (preInput.tool_name !== 'Bash') return {};
+		if (preInput.tool_name !== guard.matcher) return {};
 
-		const command = extractBashCommand(preInput.tool_input);
-		if (!isGhPrMergeCommand(command)) return {};
+		const command = (preInput.tool_input as Record<string, unknown>)?.command;
+		if (typeof command !== 'string') return {};
+		if (!pattern.test(command)) return {};
 
 		return {
 			hookSpecificOutput: {
 				hookEventName: 'PreToolUse' as const,
-				permissionDecision: 'deny' as const,
-				permissionDecisionReason: BLOCK_CODER_PR_MERGE_REASON,
+				permissionDecision: guard.decision,
+				permissionDecisionReason: guard.reason,
 			},
 		};
 	};
@@ -149,6 +134,12 @@ export interface QueryOptionsBuilderContext {
 	 * is excluded from injection even if it is globally enabled in the skills registry.
 	 */
 	readonly skillOverrides?: SkillEnablementOverride[];
+	/**
+	 * Declarative tool guards from the workflow node agent definition.
+	 * Compiled into SDK hooks at runtime — the builder has no hardcoded
+	 * knowledge of specific guards.
+	 */
+	readonly toolGuards?: DeclarativeToolGuard[];
 }
 
 export class QueryOptionsBuilder {
@@ -934,9 +925,28 @@ CRITICAL RULES:
 	 * Build hooks configuration
 	 */
 	private buildHooks(): Options['hooks'] {
+		const guards = this.ctx.toolGuards;
+		if (!guards?.length) return {};
+
 		const hooks: NonNullable<Options['hooks']> = {};
-		if (isCoderRoleSession(this.ctx.session)) {
-			hooks.PreToolUse = [{ matcher: 'Bash', hooks: [createBlockCoderPrMergeHook()] }];
+		// Group guards by matcher (tool name) to create one matcher entry per tool
+		const byMatcher = new Map<string, DeclarativeToolGuard[]>();
+		for (const guard of guards) {
+			const existing = byMatcher.get(guard.matcher) ?? [];
+			existing.push(guard);
+			byMatcher.set(guard.matcher, existing);
+		}
+
+		const preToolUse: NonNullable<Options['hooks']>['PreToolUse'] = [];
+		for (const [matcher, matcherGuards] of byMatcher) {
+			preToolUse.push({
+				matcher,
+				hooks: matcherGuards.map(compileToolGuard),
+			});
+		}
+
+		if (preToolUse.length > 0) {
+			hooks.PreToolUse = preToolUse;
 		}
 		return hooks;
 	}

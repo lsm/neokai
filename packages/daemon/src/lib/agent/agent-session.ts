@@ -85,7 +85,12 @@ import type {
 	McpServerConfig,
 	Provider,
 } from '@neokai/shared';
-import type { ChatMessage, MessageOrigin, SkillEnablementOverride } from '@neokai/shared';
+import type {
+	ChatMessage,
+	MessageOrigin,
+	SkillEnablementOverride,
+	DeclarativeToolGuard,
+} from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { Database } from '../../storage/database';
 import { ErrorManager } from '../error-manager';
@@ -165,6 +170,11 @@ export interface AgentSessionInit {
 	 * globally enabled.
 	 */
 	skillOverrides?: SkillEnablementOverride[];
+	/**
+	 * Declarative tool guards from the workflow node agent definition.
+	 * Compiled into SDK hooks at runtime by the query options builder.
+	 */
+	toolGuards?: DeclarativeToolGuard[];
 }
 
 export interface AgentSessionRuntimeOptions {
@@ -324,6 +334,7 @@ export class AgentSession
 		readonly skillsManager?: import('../skills-manager').SkillsManager,
 		readonly appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
 		readonly skillOverrides?: SkillEnablementOverride[],
+		readonly toolGuards?: DeclarativeToolGuard[],
 		private readonly runtimeOptions: AgentSessionRuntimeOptions = {}
 	) {
 		this.errorManager = new ErrorManager(this.messageHub, this.daemonHub);
@@ -513,7 +524,8 @@ export class AgentSession
 			getApiKey,
 			skillsManager,
 			appMcpServerRepo,
-			init.skillOverrides
+			init.skillOverrides,
+			init.toolGuards
 		);
 		return agentSession;
 	}
@@ -547,6 +559,7 @@ export class AgentSession
 			getApiKey,
 			skillsManager,
 			appMcpServerRepo,
+			undefined,
 			undefined,
 			options
 		);

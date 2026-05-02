@@ -20,12 +20,33 @@
  *   `resolveChannels()` matches node names via the `nodeNameToAgents` lookup.
  */
 
-import type { GateScript, SpaceWorkflow } from '@neokai/shared';
+import type { GateScript, SpaceWorkflow, DeclarativeToolGuard } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import { Logger } from '../../logger';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './post-approval-merge-template.ts';
 import { computeWorkflowHash } from './template-hash.ts';
+
+// ---------------------------------------------------------------------------
+// Declarative tool guard: prevent coder agents from merging PRs
+// ---------------------------------------------------------------------------
+
+const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
+	matcher: 'Bash',
+	// Matches `gh pr merge` in all common shell forms:
+	// - Direct: gh pr merge ...
+	// - Leading whitespace:   gh pr merge ...
+	// - After separators: ; gh pr merge | gh pr merge && gh pr merge
+	// - Subshell: $(gh pr merge) `gh pr merge`
+	// - Env prefix: GH_TOKEN=... gh pr merge
+	// - command builtin: command gh pr merge
+	// - env wrapper: env GH_TOKEN=... gh pr merge
+	pattern:
+		'(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*gh\\s+pr\\s+merge\\b',
+	decision: 'deny',
+	reason:
+		'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
+};
 
 const builtInSeederLog = new Logger('seed-built-in-workflows');
 
@@ -423,6 +444,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'5. Push fixes, verify tests still pass, then send_message to Review again ' +
 							'(again with `data: { pr_url }`) to re-trigger the review cycle',
 					},
+					toolGuards: [CODER_NO_MERGE_GUARD],
 				},
 			],
 		},
@@ -1052,6 +1074,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'4. Write code-pr-gate with field pr_url so Review can activate\n' +
 							'5. Share blockers clearly with Reviewer/QA when needed',
 					},
+					toolGuards: [CODER_NO_MERGE_GUARD],
 				},
 			],
 		},
