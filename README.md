@@ -49,8 +49,13 @@ Set one of these environment variables before starting:
 | `ANTHROPIC_API_KEY` | Anthropic API key (recommended) |
 | `CLAUDE_CODE_OAUTH_TOKEN` | OAuth token from Claude Code |
 | `OPENROUTER_API_KEY` | OpenRouter API key for OpenRouter models |
+| `OLLAMA_BASE_URL` | Optional local Ollama URL (defaults to `http://localhost:11434`) |
+| `OLLAMA_CLOUD_API_KEY` | Ollama Cloud API key |
+| `OLLAMA_CLOUD_BASE_URL` | Optional Ollama Cloud API URL (defaults to `https://ollama.com`) |
 
 OpenRouter models use `provider/model` IDs such as `anthropic/claude-sonnet-4.6` and `openrouter/auto`. See [OpenRouter setup](docs/providers/openrouter-setup.md) for provider details and compatibility notes.
+
+Ollama local and Ollama Cloud models use the native `/api/chat` and `/api/tags` APIs through NeoKai's provider bridge. See [Ollama setup](docs/providers/ollama-setup.md) for local and cloud configuration.
 
 ## Usage
 
