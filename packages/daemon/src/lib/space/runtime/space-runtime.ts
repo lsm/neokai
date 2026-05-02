@@ -1145,6 +1145,13 @@ export class SpaceRuntime {
 				this.config.pendingMessageRepo.clearTerminalForRun(preTxRunId);
 			}
 			this.blockedRetryCounts.delete(preTxRunId);
+			// Clear non-terminal idle retry counters so a manually recovered run
+			// starts with a fresh retry budget instead of re-blocking immediately.
+			for (const key of this.nonTerminalIdleCounts.keys()) {
+				if (key.startsWith(preTxRunId + ':')) {
+					this.nonTerminalIdleCounts.delete(key);
+				}
+			}
 		}
 
 		const liveSessionIds = new Set<string>();
