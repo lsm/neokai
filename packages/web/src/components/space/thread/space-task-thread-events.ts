@@ -32,6 +32,7 @@ export interface ParsedThreadRow {
 	kind: 'task_agent' | 'node_agent';
 	label: string;
 	role: string;
+	nodeExecutionId?: string | null;
 	taskId: string;
 	taskTitle: string;
 	createdAt: number;
@@ -51,6 +52,7 @@ export interface SpaceTaskThreadEvent {
 	id: string;
 	label: string;
 	role: string;
+	nodeExecutionId?: string | null;
 	taskId: string;
 	taskTitle: string;
 	sessionId: string | null;
@@ -318,6 +320,7 @@ function extractAssistantEvents(
 			id: `${String(row.id)}-assistant-empty`,
 			label: row.label,
 			role: row.role,
+			nodeExecutionId: row.nodeExecutionId ?? null,
 			taskId: row.taskId,
 			taskTitle: row.taskTitle,
 			sessionId: row.sessionId,
@@ -347,6 +350,7 @@ export function parseThreadRow(row: SpaceTaskThreadMessageRow): ParsedThreadRow 
 			kind: row.kind,
 			label: row.label,
 			role: row.role,
+			nodeExecutionId: row.nodeExecutionId ?? null,
 			taskId: row.taskId,
 			taskTitle: row.taskTitle,
 			createdAt: row.createdAt,
@@ -362,6 +366,7 @@ export function parseThreadRow(row: SpaceTaskThreadMessageRow): ParsedThreadRow 
 			kind: row.kind,
 			label: row.label,
 			role: row.role,
+			nodeExecutionId: row.nodeExecutionId ?? null,
 			taskId: row.taskId,
 			taskTitle: row.taskTitle,
 			createdAt: row.createdAt,
@@ -519,6 +524,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 			id: `${String(row.id)}-unknown`,
 			label: row.label,
 			role: row.role,
+			nodeExecutionId: row.nodeExecutionId ?? null,
 			taskId: row.taskId,
 			taskTitle: row.taskTitle,
 			sessionId: row.sessionId,

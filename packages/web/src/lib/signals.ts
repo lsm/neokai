@@ -63,9 +63,13 @@ export const spaceOverlayHighlightMessageIdSignal = signal<string | null>(null);
 // Task messaging context for live workflow node-agent overlays. When set, sends
 // from AgentOverlayChat route through space.task.sendMessage instead of the
 // generic message.send RPC so they target the already-live workflow sub-session.
-export const spaceOverlayTaskContextSignal = signal<{ taskId: string; agentName: string } | null>(
-	null
-);
+export interface SpaceOverlayTaskContext {
+	taskId: string;
+	agentName: string;
+	nodeExecutionId?: string | null;
+}
+
+export const spaceOverlayTaskContextSignal = signal<SpaceOverlayTaskContext | null>(null);
 // Pending-agent overlay routing — set when the user opens a not-started peer
 // from the task agent dropdown. The overlay renders a "Starting…" composer
 // against the agent name; on first send it invokes

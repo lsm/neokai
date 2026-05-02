@@ -26,12 +26,14 @@ function makeRow(opts: {
 	role?: string;
 	origin?: string | null;
 	turnIndex?: number;
+	nodeExecutionId?: string | null;
 }) {
 	return parseThreadRow({
 		id: opts.id,
 		sessionId: opts.sessionId ?? 'space:s:task:t',
 		kind: opts.kind ?? 'task_agent',
 		role: opts.role ?? 'task',
+		nodeExecutionId: opts.nodeExecutionId,
 		label: opts.label,
 		taskId: 't',
 		taskTitle: 'Task',
@@ -273,6 +275,7 @@ describe('MinimalThreadFeed', () => {
 				label: 'Coder Agent',
 				kind: 'node_agent',
 				role: 'coder',
+				nodeExecutionId: 'exec-coder-1',
 				createdAt: t,
 				message: assistantText('node-a1', 'done'),
 				sessionId: 'session-node',
@@ -295,6 +298,7 @@ describe('MinimalThreadFeed', () => {
 		expect(mockPushOverlayHistory).toHaveBeenCalledWith('session-node', 'Coder Agent', 'node-a1', {
 			taskId: 'task-1',
 			agentName: 'coder',
+			nodeExecutionId: 'exec-coder-1',
 		});
 
 		unmount();

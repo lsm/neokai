@@ -99,11 +99,13 @@ describe('Overlay history', () => {
 			pushOverlayHistory('session-abc', 'Coder', undefined, {
 				taskId: 'task-1',
 				agentName: 'coder',
+				nodeExecutionId: 'exec-coder-1',
 			});
 
 			expect(spaceOverlayTaskContextSignal.value).toEqual({
 				taskId: 'task-1',
 				agentName: 'coder',
+				nodeExecutionId: 'exec-coder-1',
 			});
 		});
 

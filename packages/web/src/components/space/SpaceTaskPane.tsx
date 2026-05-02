@@ -487,6 +487,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			pushOverlayHistory(nodeMember.sessionId, nodeMember.label, undefined, {
 				taskId: task.id,
 				agentName: nodeMember.role,
+				...(nodeMember.nodeExecution?.nodeExecutionId
+					? { nodeExecutionId: nodeMember.nodeExecution.nodeExecutionId }
+					: {}),
 			});
 			return;
 		}
@@ -650,7 +653,15 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						member.sessionId,
 						member.label,
 						undefined,
-						member.kind === 'node_agent' ? { taskId: task.id, agentName: member.role } : null
+						member.kind === 'node_agent'
+							? {
+									taskId: task.id,
+									agentName: member.role,
+									...(member.nodeExecution?.nodeExecutionId
+										? { nodeExecutionId: member.nodeExecution.nodeExecutionId }
+										: {}),
+								}
+							: null
 					);
 				},
 			}))

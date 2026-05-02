@@ -147,6 +147,7 @@ interface CompletedFeedTurn {
 	agent: string;
 	agentKind: 'task_agent' | 'node_agent';
 	agentRole: string;
+	agentNodeExecutionId?: string | null;
 	startedAt: number;
 	durationSec: number;
 	toolCalls: number;
@@ -183,6 +184,7 @@ interface ActiveFeedTurn {
 	agent: string;
 	agentKind: 'task_agent' | 'node_agent';
 	agentRole: string;
+	agentNodeExecutionId?: string | null;
 	startedAt: number;
 	status: string;
 	toolCalls: number;
@@ -207,6 +209,8 @@ interface MessageFeedTurn {
 	toKind: 'task_agent' | 'node_agent';
 	/** Raw workflow slot/role name for routing task messages. */
 	toRole: string;
+	/** Node execution id for exact routing to duplicate-named node agents. */
+	toNodeExecutionId?: string | null;
 	/** Rendered message text (markdown when not fallback). */
 	body: string;
 	bodyIsFallback: boolean;
@@ -491,6 +495,7 @@ function buildCompletedTurn(
 		agent: block.agentLabel,
 		agentKind: rows[0]?.kind ?? 'task_agent',
 		agentRole: rows[0]?.role ?? block.agentLabel,
+		agentNodeExecutionId: rows[0]?.nodeExecutionId ?? null,
 		startedAt,
 		durationSec,
 		toolCalls: countSummaryEntries(transitionSummary, 'tool_use') ?? countToolCalls(rows),
@@ -516,6 +521,7 @@ function buildActiveTurn(
 		agent: block.agentLabel,
 		agentKind: rows[0]?.kind ?? 'task_agent',
 		agentRole: rows[0]?.role ?? block.agentLabel,
+		agentNodeExecutionId: rows[0]?.nodeExecutionId ?? null,
 		startedAt: rows[0].createdAt,
 		status: 'Running…',
 		toolCalls: countToolCallsForActive(rows, summary),
@@ -626,6 +632,7 @@ function buildMessageTurn(
 		toLabel: row.label,
 		toKind: row.kind,
 		toRole: row.role,
+		toNodeExecutionId: row.nodeExecutionId ?? null,
 		body,
 		bodyIsFallback: fallback,
 		createdAt: row.createdAt,
@@ -976,6 +983,7 @@ function CompletedBody({
 					pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid, {
 						taskId: overlayTaskId,
 						agentName: turn.agentRole,
+						...(turn.agentNodeExecutionId ? { nodeExecutionId: turn.agentNodeExecutionId } : {}),
 					});
 				} else {
 					pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid);
@@ -1084,6 +1092,7 @@ function AgentTurnRow({
 					pushOverlayHistory(turn.sessionId as string, turn.agent, highlightMessageUuid, {
 						taskId: overlayTaskId,
 						agentName: turn.agentRole,
+						...(turn.agentNodeExecutionId ? { nodeExecutionId: turn.agentNodeExecutionId } : {}),
 					});
 				} else {
 					pushOverlayHistory(turn.sessionId as string, turn.agent, highlightMessageUuid);
@@ -1271,6 +1280,9 @@ function SyntheticMessageTurn({
 										{
 											taskId: overlayTaskId,
 											agentName: turn.toRole,
+											...(turn.toNodeExecutionId
+												? { nodeExecutionId: turn.toNodeExecutionId }
+												: {}),
 										}
 									);
 								} else {

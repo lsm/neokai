@@ -20,6 +20,7 @@ import {
 	spaceOverlaySessionIdSignal,
 	spaceOverlayAgentNameSignal,
 	spaceOverlayHighlightMessageIdSignal,
+	type SpaceOverlayTaskContext,
 	spaceOverlayTaskContextSignal,
 	spaceOverlayPendingTaskIdSignal,
 	spaceOverlayPendingAgentNameSignal,
@@ -635,7 +636,7 @@ export function pushOverlayHistory(
 	sessionId: string,
 	agentName?: string,
 	highlightMessageId?: string,
-	taskContext?: { taskId: string; agentName: string } | null
+	taskContext?: SpaceOverlayTaskContext | null
 ): void {
 	const currentPath = getCurrentPath();
 	window.history.pushState(
@@ -670,7 +671,7 @@ export function replaceOverlayHistory(
 	sessionId: string,
 	agentName?: string,
 	highlightMessageId?: string,
-	taskContext: { taskId: string; agentName: string } | null = spaceOverlayTaskContextSignal.value
+	taskContext: SpaceOverlayTaskContext | null = spaceOverlayTaskContextSignal.value
 ): void {
 	const currentPath = getCurrentPath();
 	window.history.replaceState(

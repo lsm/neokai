@@ -13,6 +13,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import { Portal } from '../ui/Portal';
 import { setupFocusTrap } from '../ui/Modal';
 import ChatContainer from '../../islands/ChatContainer';
+import type { SpaceOverlayTaskContext } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
 
@@ -45,7 +46,7 @@ interface AgentOverlayChatProps {
 	 * sends are routed through task messaging so the daemon injects into the
 	 * existing MCP-enabled workflow sub-session instead of creating a bare session.
 	 */
-	taskContext?: { taskId: string; agentName: string } | null;
+	taskContext?: SpaceOverlayTaskContext | null;
 }
 
 export function AgentOverlayChat({
@@ -64,6 +65,7 @@ export function AgentOverlayChat({
 				const result = await spaceStore.sendTaskMessage(taskContext.taskId, trimmed, {
 					kind: 'node_agent',
 					agentName: taskContext.agentName,
+					...(taskContext.nodeExecutionId ? { nodeExecutionId: taskContext.nodeExecutionId } : {}),
 				});
 				if (result?.delivered === false && !result?.queued) {
 					throw new Error(
