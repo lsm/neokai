@@ -431,6 +431,51 @@ describe('CODING_WORKFLOW template', () => {
 		}
 	});
 
+	test('code-ready-gate fails when GraphQL returns errors', async () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
+		const workspace = mkdtempSync(join(tmpdir(), 'neokai-pr-ready-gate-gql-err-'));
+		const binDir = join(workspace, 'bin');
+		const ghPath = join(binDir, 'gh');
+		const prUrl = 'https://github.com/test/repo/pull/42';
+
+		try {
+			mkdirSync(binDir);
+			writeFileSync(
+				ghPath,
+				[
+					'#!/usr/bin/env bash',
+					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
+					`  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}'`,
+					'  exit 0',
+					'fi',
+					'if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
+					`  printf '%s\\n' '{"errors":[{"message":"Resource not accessible"}]}'`,
+					'  exit 0',
+					'fi',
+					'printf "unexpected gh args: %s\\n" "$*" >&2',
+					'exit 2',
+				].join('\n')
+			);
+			chmodSync(ghPath, 0o755);
+
+			const result = await executeGateScript(
+				gate.script!,
+				{
+					workspacePath: workspace,
+					gateId: 'code-ready-gate',
+					runId: 'run-1',
+					gateData: { pr_url: prUrl },
+				},
+				{ PATH: `${binDir}:${process.env.PATH ?? ''}` }
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('GraphQL errors');
+		} finally {
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
 	test('code-ready-gate passes for a clean mergeable PR with zero unresolved threads', async () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
 		const workspace = mkdtempSync(join(tmpdir(), 'neokai-pr-ready-gate-clean-'));
