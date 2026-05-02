@@ -101,6 +101,8 @@ interface ChatContainerProps {
 	 * normal chat view.
 	 */
 	pendingAgent?: { taskId: string; agentName: string } | null;
+	/** Optional send override used by workflow node-agent overlays. */
+	onSendOverride?: (content: string, images?: MessageImage[]) => Promise<boolean>;
 }
 
 export default function ChatContainer({
@@ -109,6 +111,7 @@ export default function ChatContainer({
 	onBack,
 	highlightMessageId,
 	pendingAgent,
+	onSendOverride,
 }: ChatContainerProps) {
 	// ========================================
 	// Refs
@@ -809,9 +812,29 @@ export default function ChatContainer({
 				}
 			}
 
+			if (onSendOverride) {
+				if (images && images.length > 0) {
+					toast.error('Image attachments are not supported for task agent messages yet.');
+					return false;
+				}
+				if (deliveryMode !== 'immediate') {
+					toast.error('Queued sends are not supported for task agent messages yet.');
+					return false;
+				}
+				try {
+					setLocalError(null);
+					sessionStore.clearError();
+					return await onSendOverride(content, images);
+				} catch (err) {
+					const message = err instanceof Error ? err.message : String(err);
+					setLocalError(message);
+					return false;
+				}
+			}
+
 			return await sendMessage(content, images, deliveryMode);
 		},
-		[sendMessage, session, showWorktreeChoice, pendingWorktreeMode, sessionId]
+		[sendMessage, session, showWorktreeChoice, pendingWorktreeMode, sessionId, onSendOverride]
 	);
 
 	const handleAutoScrollChange = useCallback(

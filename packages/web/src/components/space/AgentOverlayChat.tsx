@@ -13,6 +13,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import { Portal } from '../ui/Portal';
 import { setupFocusTrap } from '../ui/Modal';
 import ChatContainer from '../../islands/ChatContainer';
+import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
 
 interface AgentOverlayChatProps {
@@ -39,6 +40,12 @@ interface AgentOverlayChatProps {
 	 * "Starting…" composer and hands off to the live session when it appears.
 	 */
 	pendingAgent?: { taskId: string; agentName: string } | null;
+	/**
+	 * Workflow task context for live node-agent sessions. When present, composer
+	 * sends are routed through task messaging so the daemon injects into the
+	 * existing MCP-enabled workflow sub-session instead of creating a bare session.
+	 */
+	taskContext?: { taskId: string; agentName: string } | null;
 }
 
 export function AgentOverlayChat({
@@ -47,8 +54,20 @@ export function AgentOverlayChat({
 	highlightMessageId,
 	onClose,
 	pendingAgent,
+	taskContext,
 }: AgentOverlayChatProps) {
 	const panelRef = useRef<HTMLDivElement>(null);
+	const handleTaskContextSend = taskContext
+		? async (message: string) => {
+				const trimmed = message.trim();
+				if (!trimmed) return false;
+				await spaceStore.sendTaskMessage(taskContext.taskId, trimmed, {
+					kind: 'node_agent',
+					agentName: taskContext.agentName,
+				});
+				return true;
+			}
+		: undefined;
 
 	// Close on Escape key
 	useEffect(() => {
@@ -178,6 +197,7 @@ export function AgentOverlayChat({
 							onBack={onClose}
 							highlightMessageId={highlightMessageId}
 							pendingAgent={pendingAgent ?? null}
+							onSendOverride={handleTaskContextSend}
 						/>
 					</div>
 				</div>

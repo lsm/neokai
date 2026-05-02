@@ -14,6 +14,7 @@ import {
 	navSectionSignal,
 	spaceOverlaySessionIdSignal,
 	spaceOverlayAgentNameSignal,
+	spaceOverlayTaskContextSignal,
 	currentSpaceIdSignal,
 } from '../signals';
 
@@ -49,6 +50,7 @@ describe('Overlay history', () => {
 		// Reset signals
 		spaceOverlaySessionIdSignal.value = null;
 		spaceOverlayAgentNameSignal.value = null;
+		spaceOverlayTaskContextSignal.value = null;
 		navSectionSignal.value = 'spaces';
 		currentSpaceIdSignal.value = null;
 
@@ -71,6 +73,7 @@ describe('Overlay history', () => {
 		cleanupRouter();
 		spaceOverlaySessionIdSignal.value = null;
 		spaceOverlayAgentNameSignal.value = null;
+		spaceOverlayTaskContextSignal.value = null;
 	});
 
 	describe('pushOverlayHistory', () => {
@@ -90,6 +93,18 @@ describe('Overlay history', () => {
 			pushOverlayHistory('session-abc');
 
 			expect(spaceOverlayAgentNameSignal.value).toBeNull();
+		});
+
+		it('should preserve task context for workflow node-agent overlays', () => {
+			pushOverlayHistory('session-abc', 'Coder', undefined, {
+				taskId: 'task-1',
+				agentName: 'coder',
+			});
+
+			expect(spaceOverlayTaskContextSignal.value).toEqual({
+				taskId: 'task-1',
+				agentName: 'coder',
+			});
 		});
 
 		it('should preserve existing history state', () => {
@@ -117,6 +132,7 @@ describe('Overlay history', () => {
 			expect(mockHistory.back).toHaveBeenCalled();
 			expect(spaceOverlaySessionIdSignal.value).toBeNull();
 			expect(spaceOverlayAgentNameSignal.value).toBeNull();
+			expect(spaceOverlayTaskContextSignal.value).toBeNull();
 		});
 
 		it('should just clear signals when no overlay history entry exists', () => {
@@ -127,6 +143,7 @@ describe('Overlay history', () => {
 			expect(mockHistory.back).not.toHaveBeenCalled();
 			expect(spaceOverlaySessionIdSignal.value).toBeNull();
 			expect(spaceOverlayAgentNameSignal.value).toBeNull();
+			expect(spaceOverlayTaskContextSignal.value).toBeNull();
 		});
 	});
 
@@ -142,6 +159,7 @@ describe('Overlay history', () => {
 
 			expect(spaceOverlaySessionIdSignal.value).toBeNull();
 			expect(spaceOverlayAgentNameSignal.value).toBeNull();
+			expect(spaceOverlayTaskContextSignal.value).toBeNull();
 		});
 
 		it('should not interfere with normal navigation when overlay is closed', () => {

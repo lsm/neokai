@@ -456,7 +456,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			(m) => m.kind === 'node_agent' && _agentSlotNames.includes(m.role)
 		);
 		if (nodeMember) {
-			pushOverlayHistory(nodeMember.sessionId, nodeMember.label);
+			pushOverlayHistory(nodeMember.sessionId, nodeMember.label, undefined, {
+				taskId: task.id,
+				agentName: nodeMember.role,
+			});
 			return;
 		}
 
@@ -615,7 +618,12 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			...activityMembers.map((member) => ({
 				label: `Open ${member.label} (${ACTIVITY_STATE_LABELS[member.state]})`,
 				onClick: () => {
-					pushOverlayHistory(member.sessionId, member.label);
+					pushOverlayHistory(
+						member.sessionId,
+						member.label,
+						undefined,
+						member.kind === 'node_agent' ? { taskId: task.id, agentName: member.role } : null
+					);
 				},
 			}))
 		);
@@ -875,6 +883,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 											: 'scroll-pb-3'
 									}
 									activeAgentLabels={activeAgentLabels}
+									overlayTaskId={task.id}
 									autoScrollEnabled={autoScrollEnabled}
 									onShowScrollButtonChange={setShowScrollButton}
 									onScrollToBottomChange={(scrollToBottom) => {

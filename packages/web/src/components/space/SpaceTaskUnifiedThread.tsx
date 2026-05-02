@@ -23,6 +23,8 @@ interface SpaceTaskUnifiedThreadProps {
 	 * last row can't suppress Coder's still-running rail.
 	 */
 	activeAgentLabels?: ReadonlySet<string>;
+	/** Task id forwarded to overlay open affordances for node-agent send routing. */
+	overlayTaskId?: string;
 	autoScrollEnabled?: boolean;
 	onShowScrollButtonChange?: (showScrollButton: boolean) => void;
 	onScrollToBottomChange?: (scrollToBottom: ((smooth?: boolean) => void) | null) => void;
@@ -35,6 +37,7 @@ export function SpaceTaskUnifiedThread({
 	bottomScrollPaddingClass = 'scroll-pb-3',
 	topInsetClass = '',
 	activeAgentLabels,
+	overlayTaskId,
 	autoScrollEnabled = true,
 	onShowScrollButtonChange,
 	onScrollToBottomChange,
@@ -110,6 +113,7 @@ export function SpaceTaskUnifiedThread({
 						parsedRows={parsedRows}
 						activeAgentLabels={activeAgentLabels}
 						activeTurnSummaries={activeTurnSummaries}
+						overlayTaskId={overlayTaskId}
 					/>
 					<div ref={messagesEndRef} />
 				</div>
