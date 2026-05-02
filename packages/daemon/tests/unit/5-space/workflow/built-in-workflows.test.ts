@@ -231,8 +231,8 @@ describe('CODING_WORKFLOW template', () => {
 				[
 					'#!/usr/bin/env bash',
 					`printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
-					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(reviewUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews" ]; then`,
-					`  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z"}]}'`,
+					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(reviewUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
+					`  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z","state":"CHANGES_REQUESTED"}],"comments":[],"author":{"login":"other"}}'`,
 					'  exit 0',
 					'fi',
 					'printf "unexpected gh args: %s\\n" "$*" >&2',
@@ -254,8 +254,14 @@ describe('CODING_WORKFLOW template', () => {
 			);
 
 			expect(result.success).toBe(true);
-			expect(result.data).toEqual({ pr_url: reviewUrl, review_count: 1 });
-			expect(readFileSync(logPath, 'utf8').trim()).toBe(`pr view ${reviewUrl} --json reviews`);
+			expect(result.data).toEqual({
+				pr_url: reviewUrl,
+				review_count: 1,
+				review_evidence: 'formal_review',
+			});
+			expect(readFileSync(logPath, 'utf8').trim()).toBe(
+				`pr view ${reviewUrl} --json reviews,comments,author`
+			);
 		} finally {
 			rmSync(workspace, { recursive: true, force: true });
 		}
