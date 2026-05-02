@@ -1022,6 +1022,132 @@ describe('openai-responses-bridge server', () => {
 		expect(events.at(-1)?.event).toBe('message_stop');
 	});
 
+	it('reports model_context_window from config models for non-Codex models', async () => {
+		// Simulates a bridge configured with a non-Codex model (e.g. OpenRouter
+		// model with 1M context). The context window should come from the config
+		// models list, not from the Codex-only getModelContextWindow() lookup.
+		const nonCodexModels = [
+			{
+				id: 'deepseek/deepseek-chat-pro-v4',
+				display_name: 'DeepSeek V4 Pro',
+				created_at: '2026-01-01T00:00:00Z',
+				context_window: 1_000_000,
+			},
+		];
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models: nonCodexModels,
+			fetchImpl: async () =>
+				sse([
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: 'hello' },
+					},
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: { usage: { input_tokens: 5, output_tokens: 1 }, output: [] },
+						},
+					},
+				]),
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'deepseek/deepseek-chat-pro-v4',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'Say hello.' }],
+			}),
+		});
+
+		const events = await readSSEEvents(resp.body);
+		const start = messageStartEvent(events);
+		const startMessage = start?.message as
+			| { usage?: { model_context_window?: number } }
+			| undefined;
+		expect(startMessage?.usage?.model_context_window).toBe(1_000_000);
+
+		const delta = messageDeltaEvent(events);
+		const deltaUsage = delta?.usage as { model_context_window?: number } | undefined;
+		expect(deltaUsage?.model_context_window).toBe(1_000_000);
+	});
+
+	it('falls back to Codex context window for Codex models in config', async () => {
+		// When the model is a known Codex model AND is in config.models,
+		// the config value takes precedence (they should match, but this
+		// verifies the config-based lookup path works for Codex too).
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models: [
+				{
+					id: 'gpt-5.3-codex',
+					display_name: 'GPT-5.3 Codex',
+					created_at: '2025-12-01T00:00:00Z',
+					context_window: 272000,
+				},
+			],
+			fetchImpl: async () =>
+				sse([
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: 'hi' },
+					},
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: { usage: { input_tokens: 1, output_tokens: 1 }, output: [] },
+						},
+					},
+				]),
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'hi' }],
+			}),
+		});
+
+		const events = await readSSEEvents(resp.body);
+		const start = messageStartEvent(events);
+		const startMessage = start?.message as
+			| { usage?: { model_context_window?: number } }
+			| undefined;
+		expect(startMessage?.usage?.model_context_window).toBe(272000);
+	});
+
+	it('includes config model in GET /v1/models response with correct context_window', async () => {
+		const nonCodexModels = [
+			{
+				id: 'deepseek/deepseek-chat-pro-v4',
+				display_name: 'DeepSeek V4 Pro',
+				created_at: '2026-01-01T00:00:00Z',
+				context_window: 1_000_000,
+			},
+		];
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models: nonCodexModels,
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/models`);
+		const body = (await resp.json()) as {
+			data: Array<{ id: string; context_window: number; max_context_window: number }>;
+		};
+
+		expect(body.data).toHaveLength(1);
+		expect(body.data[0].id).toBe('deepseek/deepseek-chat-pro-v4');
+		expect(body.data[0].context_window).toBe(1_000_000);
+		expect(body.data[0].max_context_window).toBe(1_000_000);
+	});
+
 	it('propagates the original 401 when ChatGPT OAuth refresh is unavailable', async () => {
 		let refreshAttempts = 0;
 		server = createOpenAIResponsesBridgeServer({
