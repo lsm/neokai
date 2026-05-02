@@ -2744,7 +2744,8 @@ export class SpaceRuntime {
 			canonicalTask.status === 'review' ||
 			canonicalTask.status === 'approved' ||
 			canonicalTask.status === 'done' ||
-			canonicalTask.status === 'cancelled'
+			canonicalTask.status === 'cancelled' ||
+			canonicalTask.status === 'archived'
 		) {
 			return 'none';
 		}
