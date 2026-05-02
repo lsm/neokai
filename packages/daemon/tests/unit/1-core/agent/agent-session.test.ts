@@ -2592,6 +2592,7 @@ describe('AgentSession', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				{ autoReplayPendingMessages: false }
 			);
 
