@@ -1119,14 +1119,14 @@ export class SpaceRuntime {
 		// so the next tick does not immediately re-block the run based on stale
 		// pending message state from the previous failed cycle.
 		//
-		// Guarded on spaceId ownership so a wrong-space caller cannot delete
-		// messages or reset retry counters for a run it does not own. The
-		// transaction below also validates ownership and throws on mismatch,
-		// but the side-effects here run outside the transaction and need their
-		// own guard.
+		// Guarded on both task AND run ownership so a wrong-space caller (or a
+		// task whose workflowRunId points to a foreign run) cannot delete messages
+		// or reset retry counters. The transaction below also validates and throws
+		// on mismatch, but these side-effects run outside the transaction.
 		const preTxTask = this.config.taskRepo.getTask(taskId);
 		const preTxRunId = preTxTask?.workflowRunId;
-		if (preTxRunId && preTxTask.spaceId === spaceId) {
+		const preTxRun = preTxRunId ? this.config.workflowRunRepo.getRun(preTxRunId) : null;
+		if (preTxRunId && preTxTask.spaceId === spaceId && preTxRun?.spaceId === spaceId) {
 			if (this.config.pendingMessageRepo) {
 				this.config.pendingMessageRepo.clearTerminalForRun(preTxRunId);
 			}
