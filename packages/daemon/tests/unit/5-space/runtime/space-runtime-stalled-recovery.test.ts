@@ -39,6 +39,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository.ts';
 import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repositories/tool-continuation-recovery-repository.ts';
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository.ts';
@@ -57,6 +58,18 @@ function makeDb(): BunDatabase {
 	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
+	// runMigrations() applies migrations only; these unit fixtures need the base
+	// sdk_messages table because runtime recovery inspects persisted SDK output.
+	db.exec(`CREATE TABLE IF NOT EXISTS sdk_messages (
+		id TEXT PRIMARY KEY,
+		session_id TEXT NOT NULL,
+		message_type TEXT NOT NULL,
+		message_subtype TEXT,
+		sdk_message TEXT NOT NULL,
+		timestamp TEXT NOT NULL,
+		send_status TEXT,
+		origin TEXT
+	)`);
 	return db;
 }
 
@@ -126,6 +139,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 	let workflowManager: SpaceWorkflowManager;
 	let spaceManager: SpaceManager;
 	let nodeExecutionRepo: NodeExecutionRepository;
+	let sdkMessageRepo: SDKMessageRepository;
 	let notifications: SpaceRuntimeNotification[];
 
 	const SPACE_ID = 'space-recovery-1';
@@ -142,6 +156,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			workflowRunRepo,
 			taskRepo,
 			nodeExecutionRepo,
+			sdkMessageRepo,
 			...overrides,
 		});
 		rt.setNotificationSink({
@@ -200,6 +215,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 		workflowManager = new SpaceWorkflowManager(workflowRepo);
 		spaceManager = new SpaceManager(db);
 		nodeExecutionRepo = new NodeExecutionRepository(db);
+		sdkMessageRepo = new SDKMessageRepository(db);
 		notifications = [];
 	});
 
@@ -211,9 +227,213 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 		}
 	});
 
+	function saveAssistantMessage(sessionId: string, content: unknown[], stopReason: string | null) {
+		sdkMessageRepo.saveSDKMessage(sessionId, {
+			type: 'assistant',
+			session_id: sessionId,
+			uuid: `${sessionId}-assistant-${Date.now()}-${Math.random()}`,
+			parent_tool_use_id: null,
+			message: {
+				id: `${sessionId}-message`,
+				type: 'message',
+				role: 'assistant',
+				model: 'claude-test',
+				content,
+				stop_reason: stopReason,
+				stop_sequence: null,
+				usage: { input_tokens: 1, output_tokens: 1 },
+			},
+		} as any);
+	}
+
 	// -------------------------------------------------------------------------
 	// 1. Stalled with no completion signal → blocked
 	// -------------------------------------------------------------------------
+
+	describe('non-terminal idle last-message recovery', () => {
+		test('idle execution with unresolved tool_use is retried and not advanced', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Non Terminal Idle Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Non Terminal Idle Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'idle', {
+				agentSessionId: 'non-terminal-session',
+			});
+			saveAssistantMessage(
+				'non-terminal-session',
+				[{ type: 'tool_use', id: 'tool-1', name: 'do_work', input: {} }],
+				'tool_use'
+			);
+
+			const rt = makeRuntime({
+				taskAgentManager: {
+					rehydrate: async () => {},
+					isSessionAlive: () => false,
+					getAgentSessionById: () => null,
+					isExecutionSpawning: () => false,
+				} as any,
+			});
+			(rt as any).recoveryDone = true;
+			await rt.executeTick();
+
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			expect(updated.status).toBe('pending');
+			expect(updated.agentSessionId).toBeNull();
+			expect(updated.result ?? '').toContain('non-terminal last message');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+			expect(notifications.some((event) => event.kind === 'agent_idle_non_terminal')).toBe(true);
+			expect(notifications.some((event) => event.kind === 'task_retry')).toBe(true);
+		});
+
+		test('recoverStalledRuns retries non-terminal idle execution instead of blocking immediately', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Restart Non Terminal Idle Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Restart Non Terminal Idle Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'idle', {
+				agentSessionId: 'restart-non-terminal-session',
+			});
+			saveAssistantMessage(
+				'restart-non-terminal-session',
+				[{ type: 'tool_use', id: 'tool-restart', name: 'do_work', input: {} }],
+				'tool_use'
+			);
+
+			const rt = makeRuntime();
+			await rt.recoverStalledRuns();
+
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			expect(updated.status).toBe('pending');
+			expect(updated.agentSessionId).toBeNull();
+			expect(updated.result ?? '').toContain('non-terminal last message');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+			expect(notifications.some((event) => event.kind === 'agent_idle_non_terminal')).toBe(true);
+			expect(notifications.some((event) => event.kind === 'task_retry')).toBe(true);
+			expect(notifications.some((event) => event.kind === 'workflow_run_needs_attention')).toBe(
+				false
+			);
+		});
+
+		test('repeated non-terminal idle blocks and escalates after retry limit', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Repeated Non Terminal Idle Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Repeated Non Terminal Idle Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'idle', {
+				agentSessionId: 'non-terminal-repeat',
+			});
+			saveAssistantMessage('non-terminal-repeat', [{ type: 'thinking', thinking: 'hmm' }], null);
+			const rt = makeRuntime({
+				taskAgentManager: {
+					rehydrate: async () => {},
+					isSessionAlive: () => false,
+					getAgentSessionById: () => null,
+					isExecutionSpawning: () => false,
+				} as any,
+			});
+			(rt as any).recoveryDone = true;
+			(rt as any).nonTerminalIdleCounts.set(`${run.id}:${execution.id}`, 3);
+			await rt.executeTick();
+
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			expect(updated.status).toBe('blocked');
+			expect(updated.result).toContain('Agent went idle without completing');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)?.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+			expect(notifications.some((event) => event.kind === 'workflow_run_needs_attention')).toBe(
+				true
+			);
+		});
+
+		test('blocked non-terminal idle run sets blockedRetryCounts to prevent auto-retry', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Block retry budget test',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Block retry budget test',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'idle', {
+				agentSessionId: 'non-terminal-blocked-session',
+			});
+			saveAssistantMessage(
+				'non-terminal-blocked-session',
+				[{ type: 'tool_use', id: 'tu-1', name: 'test', input: {} }],
+				null
+			);
+
+			const rt = makeRuntime();
+			// Exhaust retry budget so handleNonTerminalIdleExecutions blocks immediately
+			(rt as any).nonTerminalIdleCounts.set(`${run.id}:${execution.id}`, 3);
+			// Simulate the handler being called directly (as it would be from processRunTick)
+			const outcome = await (rt as any).handleNonTerminalIdleExecutions(
+				run.id,
+				SPACE_ID,
+				taskRepo.getTask(task.id)!
+			);
+
+			expect(outcome).toBe('blocked');
+			expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			// Verify blockedRetryCounts is exhausted so attemptBlockedRunRecovery won't auto-retry
+			expect((rt as any).blockedRetryCounts.get(run.id)).toBeGreaterThanOrEqual(1);
+		});
+	});
 
 	describe('orphaned tool_result waiting_rebind recovery', () => {
 		test('queued continuation resets waiting_rebind execution to pending for one deterministic retry', async () => {
@@ -578,6 +798,13 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				agentSessionId: 'dead-review-session',
 				result: 'previous review finished',
 			});
+			// Seed a terminal SDK message so the non-terminal idle handler skips
+			// this execution — downstream recovery should reset it instead.
+			saveAssistantMessage(
+				'dead-review-session',
+				[{ type: 'text', text: 'Review complete' }],
+				'end_turn'
+			);
 
 			await makeRuntime({
 				pendingMessageRepo: new PendingAgentMessageRepository(db),
@@ -933,6 +1160,12 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				agentSessionId: 'dead-reviewer-a-session',
 				result: 'reviewer A already exited',
 			});
+			// Terminal SDK message so non-terminal idle handler skips this execution.
+			saveAssistantMessage(
+				'dead-reviewer-a-session',
+				[{ type: 'text', text: 'Reviewer A done' }],
+				'end_turn'
+			);
 
 			await makeRuntime({
 				pendingMessageRepo: new PendingAgentMessageRepository(db),
@@ -985,6 +1218,13 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				agentSessionId: 'dead-docs-session',
 				result: 'docs branch already finished',
 			});
+			// Terminal SDK message so non-terminal idle handler skips Docs — it is
+			// a sibling branch that already finished and should stay idle.
+			saveAssistantMessage(
+				'dead-docs-session',
+				[{ type: 'text', text: 'Docs complete' }],
+				'end_turn'
+			);
 
 			await makeRuntime({
 				pendingMessageRepo: new PendingAgentMessageRepository(db),
@@ -1034,6 +1274,18 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				agentSessionId: 'dead-review-session',
 				result: 'review branch already finished',
 			});
+			// Terminal SDK messages for both sessions so the non-terminal idle
+			// handler skips them — downstream recovery should leave them idle.
+			saveAssistantMessage(
+				'dead-docs-session',
+				[{ type: 'text', text: 'Docs complete' }],
+				'end_turn'
+			);
+			saveAssistantMessage(
+				'dead-review-session',
+				[{ type: 'text', text: 'Review complete' }],
+				'end_turn'
+			);
 
 			await makeRuntime({
 				pendingMessageRepo: new PendingAgentMessageRepository(db),
