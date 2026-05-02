@@ -7847,7 +7847,9 @@ export function runMigration114(db: BunDatabase): void {
 	if (!tableExists(db, 'space_tasks')) return;
 	// Add 'draft' to the status CHECK constraint.
 	// SQLite doesn't support ALTER TABLE ... ALTER CONSTRAINT, so we recreate the table.
-	// This is safe because space_tasks has no foreign keys referencing it from other tables.
+	// CRITICAL: Disable foreign keys during table recreation to prevent
+	// CASCADE deletes from wiping child rows (space_worktrees, space_task_report_results, etc.)
+	// when we DROP TABLE space_tasks.
 	const cols = [];
 	if (tableHasColumn(db, 'space_tasks', 'id')) cols.push('id');
 	if (tableHasColumn(db, 'space_tasks', 'space_id')) cols.push('space_id');
@@ -7903,67 +7905,72 @@ export function runMigration114(db: BunDatabase): void {
 	if (tableHasColumn(db, 'space_tasks', 'updated_at')) cols.push('updated_at');
 	const colList = cols.join(', ');
 
-	db.exec(`CREATE TABLE space_tasks_new (
-		id TEXT PRIMARY KEY NOT NULL,
-		space_id TEXT NOT NULL,
-		task_number INTEGER NOT NULL,
-		title TEXT NOT NULL,
-		description TEXT NOT NULL DEFAULT '',
-		status TEXT NOT NULL DEFAULT 'open'
-			CHECK(status IN ('draft', 'open', 'in_progress', 'review', 'done', 'blocked', 'cancelled', 'archived', 'approved')),
-		priority TEXT NOT NULL DEFAULT 'normal'
-			CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
-		labels TEXT NOT NULL DEFAULT '[]',
-		depends_on TEXT NOT NULL DEFAULT '[]',
-		result TEXT,
-		error TEXT,
-		progress INTEGER,
-		current_step TEXT,
-		task_type TEXT,
-		assigned_agent TEXT,
-		created_by_task_id TEXT,
-		input_draft TEXT,
-		active_session TEXT,
-		workflow_run_id TEXT,
-		preferred_workflow_id TEXT,
-		task_agent_session_id TEXT,
-		started_at INTEGER,
-		completed_at INTEGER,
-		archived_at INTEGER,
-		restrictions TEXT,
-		pr_url TEXT,
-		pr_number INTEGER,
-		pr_created_at INTEGER,
-		block_reason TEXT,
-		approval_source TEXT,
-		approval_reason TEXT,
-		approved_at INTEGER,
-		pending_checkpoint_type TEXT,
-		pending_completion_submitted_by_node_id TEXT,
-		pending_completion_submitted_at INTEGER,
-		pending_completion_reason TEXT,
-		reported_status TEXT,
-		reported_summary TEXT,
-		post_approval_session_id TEXT,
-		post_approval_started_at INTEGER,
-		post_approval_blocked_reason TEXT,
-		created_at INTEGER NOT NULL,
-		updated_at INTEGER NOT NULL
-	)`);
-	db.exec(`INSERT INTO space_tasks_new (${colList}) SELECT ${colList} FROM space_tasks`);
-	db.exec(`DROP TABLE space_tasks`);
-	db.exec(`ALTER TABLE space_tasks_new RENAME TO space_tasks`);
-	// Recreate indexes
-	db.exec(
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_space_number ON space_tasks(space_id, task_number)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_status ON space_tasks(space_id, status)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run ON space_tasks(workflow_run_id)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_tasks_created_by ON space_tasks(created_by_task_id)`
-	);
+	db.exec('PRAGMA foreign_keys = OFF');
+	try {
+		db.exec(`CREATE TABLE space_tasks_new (
+			id TEXT PRIMARY KEY NOT NULL,
+			space_id TEXT NOT NULL,
+			task_number INTEGER NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'open'
+				CHECK(status IN ('draft', 'open', 'in_progress', 'review', 'done', 'blocked', 'cancelled', 'archived', 'approved')),
+			priority TEXT NOT NULL DEFAULT 'normal'
+				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+			labels TEXT NOT NULL DEFAULT '[]',
+			depends_on TEXT NOT NULL DEFAULT '[]',
+			result TEXT,
+			error TEXT,
+			progress INTEGER,
+			current_step TEXT,
+			task_type TEXT,
+			assigned_agent TEXT,
+			created_by_task_id TEXT,
+			input_draft TEXT,
+			active_session TEXT,
+			workflow_run_id TEXT,
+			preferred_workflow_id TEXT,
+			task_agent_session_id TEXT,
+			started_at INTEGER,
+			completed_at INTEGER,
+			archived_at INTEGER,
+			restrictions TEXT,
+			pr_url TEXT,
+			pr_number INTEGER,
+			pr_created_at INTEGER,
+			block_reason TEXT,
+			approval_source TEXT,
+			approval_reason TEXT,
+			approved_at INTEGER,
+			pending_checkpoint_type TEXT,
+			pending_completion_submitted_by_node_id TEXT,
+			pending_completion_submitted_at INTEGER,
+			pending_completion_reason TEXT,
+			reported_status TEXT,
+			reported_summary TEXT,
+			post_approval_session_id TEXT,
+			post_approval_started_at INTEGER,
+			post_approval_blocked_reason TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`);
+		db.exec(`INSERT INTO space_tasks_new (${colList}) SELECT ${colList} FROM space_tasks`);
+		db.exec(`DROP TABLE space_tasks`);
+		db.exec(`ALTER TABLE space_tasks_new RENAME TO space_tasks`);
+		// Recreate indexes
+		db.exec(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_space_number ON space_tasks(space_id, task_number)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_status ON space_tasks(space_id, status)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run ON space_tasks(workflow_run_id)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_tasks_created_by ON space_tasks(created_by_task_id)`
+		);
+	} finally {
+		db.exec('PRAGMA foreign_keys = ON');
+	}
 }
