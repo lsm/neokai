@@ -55,6 +55,10 @@ import { executeGateScript } from './gate-script-executor';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import type { NotificationSink, SpaceNotificationEvent } from './notification-sink';
 import { Logger } from '../../logger';
+import {
+	PermanentSpawnError,
+	validateExecutionAgainstWorkflow,
+} from './workflow-node-execution-validation';
 
 const log = new Logger('channel-router');
 
@@ -360,6 +364,20 @@ export class ChannelRouter {
 			const agentName = agentEntry.name;
 			const existing = existingByAgentName.get(agentName);
 			if (existing) {
+				const validation = validateExecutionAgainstWorkflow(existing, workflow);
+				if (!validation.valid) {
+					this.config.nodeExecutionRepo.update(existing.id, {
+						status: 'cancelled',
+						agentSessionId: null,
+						result: validation.reason,
+						completedAt: Date.now(),
+					});
+					log.warn(
+						`ChannelRouter: cancelled stale workflow node execution ${existing.id}: ${validation.reason}`
+					);
+					throw new PermanentSpawnError(validation.reason);
+				}
+
 				// Re-activation path for cyclic channels.
 				//
 				// Default: preserve `agentSessionId` and flip status to `in_progress`,

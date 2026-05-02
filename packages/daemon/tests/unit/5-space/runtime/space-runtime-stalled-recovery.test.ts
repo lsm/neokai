@@ -1768,6 +1768,28 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(notifications.length).toBe(0);
 		});
 
+		test('stale pending execution is cancelled during restart recovery', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Stale Pending Exec',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			const stale = seedExec(run.id, 'deleted-node', 'Step A', 'pending');
+
+			const rt = makeRuntime();
+			await rt.recoverStalledRuns();
+
+			const after = nodeExecutionRepo.getById(stale.id)!;
+			expect(after.status).toBe('cancelled');
+			expect(after.result).toContain('Workflow node deleted-node no longer exists');
+		});
+
 		test('blocked execution → run untouched (existing blocked-recovery path owns it)', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Step A', agentId: AGENT },

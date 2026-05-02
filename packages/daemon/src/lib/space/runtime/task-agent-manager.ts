@@ -78,6 +78,11 @@ import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import { createEndNodeHandlers, createMarkCompleteHandler } from '../tools/end-node-handlers';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import { jsonResult } from '../tools/tool-result';
+import {
+	assertExecutionValidAgainstWorkflow,
+	PermanentSpawnError,
+	validateTaskAllowsSpawn,
+} from './workflow-node-execution-validation';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
@@ -882,13 +887,10 @@ export class TaskAgentManager {
 		let spawnedSessionId: string | null = null;
 
 		try {
-			const node = workflow.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
-			if (!node) {
-				throw new Error(
-					`Workflow node "${execution.workflowNodeId}" not found in workflow "${workflow.id}"`
-				);
-			}
+			validateTaskAllowsSpawn(task);
+			assertExecutionValidAgainstWorkflow(execution, workflow);
 
+			const node = workflow.nodes.find((candidate) => candidate.id === execution.workflowNodeId)!;
 			const nodeAgents = resolveNodeAgents(node);
 			const slot =
 				nodeAgents.length === 1
@@ -945,7 +947,7 @@ export class TaskAgentManager {
 				? this.config.spaceAgentManager.getById(slot.agentId)
 				: null;
 			if (shouldKickoff && !customAgent) {
-				throw new Error(`Agent not found: ${slot.agentId}`);
+				throw new PermanentSpawnError(`Agent not found: ${slot.agentId}`);
 			}
 
 			const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
