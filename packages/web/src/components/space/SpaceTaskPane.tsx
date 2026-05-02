@@ -6,7 +6,7 @@ import {
 	type SpaceTaskStatus,
 } from '@neokai/shared';
 import type { ComponentChildren } from 'preact';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { borderColors } from '../../lib/design-tokens';
 import {
 	navigateToSpaceTask,
@@ -17,8 +17,8 @@ import { currentSpaceIdSignal, currentSpaceTaskViewTabSignal } from '../../lib/s
 import { spaceStore } from '../../lib/space-store';
 import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { cn } from '../../lib/utils';
-import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
+import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
 import { PendingGateBanner } from './PendingGateBanner';
 import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
 import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
@@ -27,7 +27,7 @@ import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
-import { TaskSessionChatComposer, type TaskComposerTarget } from './TaskSessionChatComposer';
+import { type TaskComposerTarget, TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { getTransitionActions } from './TaskStatusActions';
 import { useRunGateSummaries } from './use-run-gate-summaries.ts';
 
@@ -173,6 +173,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
 	const [showScrollButton, setShowScrollButton] = useState(false);
 	const [threadScroller, setThreadScroller] = useState<HTMLDivElement | null>(null);
+	const [taskComposerElement, setTaskComposerElement] = useState<HTMLDivElement | null>(null);
+	const [taskComposerPaddingPx, setTaskComposerPaddingPx] = useState(144);
 	const threadPanelRef = useRef<HTMLDivElement>(null);
 	const scrollToBottomRef = useRef<((smooth?: boolean) => void) | null>(null);
 	const draftWasActiveRef = useRef(false);
@@ -335,6 +337,32 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const hasUnifiedWorkflowThread =
 		!!task.workflowRunId || !!agentSessionId || activityMembers.length > 0;
 	const showInlineComposer = !isTerminalTask;
+
+	useLayoutEffect(() => {
+		if (!showInlineComposer) {
+			setTaskComposerPaddingPx(12);
+			return;
+		}
+
+		const composer = taskComposerElement;
+		if (!composer) return;
+
+		const syncComposerPadding = () => {
+			const composerHeight = Math.max(
+				composer.getBoundingClientRect().height,
+				composer.scrollHeight
+			);
+			setTaskComposerPaddingPx(Math.max(144, Math.ceil(composerHeight) + 16));
+		};
+
+		syncComposerPadding();
+
+		const resizeObserver = new ResizeObserver(syncComposerPadding);
+		resizeObserver.observe(composer);
+
+		return () => resizeObserver.disconnect();
+	}, [showInlineComposer, taskComposerElement, threadSendError]);
+
 	const canSendThreadMessage = !isTerminalTask && !ensuringThread && !sendingThread;
 	const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
 	const canShowArtifactsTab = !!task.workflowRunId;
@@ -862,26 +890,16 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						class="h-full"
 					/>
 				) : (
-					<div class="h-full flex flex-col relative">
+					<div
+						class="h-full flex flex-col relative"
+						style={`--task-composer-offset: ${taskComposerPaddingPx}px;`}
+					>
 						<div ref={threadPanelRef} class="flex-1 min-h-0" data-testid="task-thread-panel">
 							{hasUnifiedWorkflowThread ? (
 								<SpaceTaskUnifiedThread
 									taskId={task.id}
 									topInsetClass="pt-12"
-									bottomInsetClass={
-										showInlineComposer
-											? threadSendError
-												? 'pb-52 sm:pb-44'
-												: 'pb-44 sm:pb-36'
-											: 'pb-3'
-									}
-									bottomScrollPaddingClass={
-										showInlineComposer
-											? threadSendError
-												? 'scroll-pb-52 sm:scroll-pb-44'
-												: 'scroll-pb-44 sm:scroll-pb-36'
-											: 'scroll-pb-3'
-									}
+									bottomInsetPx={taskComposerPaddingPx}
 									activeAgentLabels={activeAgentLabels}
 									overlayTaskId={task.id}
 									autoScrollEnabled={autoScrollEnabled}
@@ -912,7 +930,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						{showScrollButton && (
 							<ScrollToBottomButton
 								onClick={handleScrollToBottom}
-								bottomClass={threadSendError ? 'bottom-52 sm:bottom-44' : 'bottom-44 sm:bottom-36'}
+								bottomClass="bottom-[var(--task-composer-offset)]"
 								autoScroll={autoScrollEnabled}
 							/>
 						)}
@@ -939,6 +957,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 									if (draftWasActiveRef.current && !hasDraft) setTargetLocked(false);
 									draftWasActiveRef.current = hasDraft;
 								}}
+								onComposerRef={setTaskComposerElement}
 								onSend={sendThreadMessage}
 							/>
 						)}
