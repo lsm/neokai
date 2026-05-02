@@ -409,7 +409,8 @@ const FULLSTACK_REVIEW_PROMPT =
 	'If the change is ready for QA, write to review-approval-gate (field: approved = true). ' +
 	'If changes are needed, send actionable feedback to Coding via ' +
 	'`send_message(target="Coding", ...)`. Review is not the end node, so the ' +
-	'task-completion tools are not available to you.';
+	'task-completion tools are not available to you.\n\n' +
+	'Never set a PR to auto-merge — auto-merge is not allowed.';
 
 const FULLSTACK_QA_PROMPT =
 	'You are the QA node in a Fullstack QA Loop workflow. Run thorough validation, including backend tests, ' +
@@ -755,7 +756,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'call `submit_for_approval({ reason: "..." })` instead — the runtime will ' +
 							'still route post-approval once the human approves. Do NOT attempt to merge ' +
 							'the PR yourself; a post-approval reviewer session runs the merge after the ' +
-							'task transitions to `approved`.',
+							'task transitions to `approved`. Never set a PR to auto-merge — auto-merge is not allowed.',
 					},
 				},
 			],
@@ -880,7 +881,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'6. If your verdict is APPROVE: call `approve_task()` as your final action. If ' +
 							'autonomy blocks self-close, call `submit_for_approval({ reason: "..." })` ' +
 							'instead. If your verdict is REQUEST_CHANGES: stop after step 5 — do NOT call ' +
-							'either terminal tool.',
+							'either terminal tool.\n\nNever set a PR to auto-merge — auto-merge is not allowed.',
 					},
 				},
 			],
