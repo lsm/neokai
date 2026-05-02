@@ -18,7 +18,12 @@
  * - Hooks (output limiter)
  */
 
-import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk';
+import type {
+	Options,
+	CanUseTool,
+	HookCallback,
+	PreToolUseHookInput,
+} from '@anthropic-ai/claude-agent-sdk';
 import type {
 	Session,
 	ThinkingLevel,
@@ -32,7 +37,7 @@ import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
 import type { PermissionMode } from '@neokai/shared/types/settings';
 import type { McpServerConfig } from '@neokai/shared/types/sdk-config';
 import type { AppMcpServerSourceType } from '@neokai/shared';
-import type { SkillEnablementOverride } from '@neokai/shared';
+import type { SkillEnablementOverride, DeclarativeToolGuard } from '@neokai/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { SkillsManager } from '../skills-manager';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
@@ -50,6 +55,42 @@ import type { Database } from '../../storage/database';
 import { requireModelContextWindow } from '../providers/codex-anthropic-bridge/model-context-windows';
 
 export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
+
+/**
+ * Compile a single declarative tool guard into a PreToolUse hook callback.
+ * The guard specifies a tool matcher, a regex pattern against the tool input,
+ * and a decision to apply when matched.
+ *
+ * Invalid regex patterns are caught at compile time and produce a no-op hook,
+ * preventing a bad workflow row from crashing query startup.
+ */
+function compileToolGuard(guard: DeclarativeToolGuard): HookCallback {
+	let pattern: RegExp;
+	try {
+		pattern = new RegExp(guard.pattern);
+	} catch {
+		// Bad pattern — guard is silently disabled so the session still works.
+		return async () => ({});
+	}
+	return async (input) => {
+		if (input.hook_event_name !== 'PreToolUse') return {};
+		// tool_name filtering is handled by the SDK matcher field in buildHooks();
+		// no redundant check here so regex-style matchers (e.g. "Write|Edit") work.
+		const preInput = input as PreToolUseHookInput;
+
+		const command = (preInput.tool_input as Record<string, unknown>)?.command;
+		if (typeof command !== 'string') return {};
+		if (!pattern.test(command)) return {};
+
+		return {
+			hookSpecificOutput: {
+				hookEventName: 'PreToolUse' as const,
+				permissionDecision: guard.decision,
+				permissionDecisionReason: guard.reason,
+			},
+		};
+	};
+}
 
 /**
  * Provider-specific SDK settings overrides.
@@ -103,6 +144,12 @@ export interface QueryOptionsBuilderContext {
 	 * is excluded from injection even if it is globally enabled in the skills registry.
 	 */
 	readonly skillOverrides?: SkillEnablementOverride[];
+	/**
+	 * Declarative tool guards from the workflow node agent definition.
+	 * Compiled into SDK hooks at runtime — the builder has no hardcoded
+	 * knowledge of specific guards.
+	 */
+	readonly toolGuards?: DeclarativeToolGuard[];
 }
 
 export class QueryOptionsBuilder {
@@ -888,7 +935,33 @@ CRITICAL RULES:
 	 * Build hooks configuration
 	 */
 	private buildHooks(): Options['hooks'] {
-		return {};
+		const guards = this.ctx.toolGuards;
+		if (!guards?.length) return {};
+
+		const hooks: NonNullable<Options['hooks']> = {};
+		// Group guards by matcher (tool name) to create one matcher entry per tool.
+		// Skip malformed entries (null, non-object) so a bad persisted workflow
+		// cannot crash query startup.
+		const byMatcher = new Map<string, DeclarativeToolGuard[]>();
+		for (const guard of guards) {
+			if (!guard || typeof guard !== 'object' || !guard.matcher) continue;
+			const existing = byMatcher.get(guard.matcher) ?? [];
+			existing.push(guard);
+			byMatcher.set(guard.matcher, existing);
+		}
+
+		const preToolUse: NonNullable<Options['hooks']>['PreToolUse'] = [];
+		for (const [matcher, matcherGuards] of byMatcher) {
+			preToolUse.push({
+				matcher,
+				hooks: matcherGuards.map(compileToolGuard),
+			});
+		}
+
+		if (preToolUse.length > 0) {
+			hooks.PreToolUse = preToolUse;
+		}
+		return hooks;
 	}
 
 	/**

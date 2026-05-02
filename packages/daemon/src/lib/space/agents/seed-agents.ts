@@ -258,7 +258,8 @@ const PRESET_AGENTS: PresetDefinition[] = [
 		customPrompt:
 			'You are an expert software engineer. You write clean, well-tested code following the ' +
 			"project's existing conventions. You always commit your work, keep the working tree clean, " +
-			'and open pull requests for review.\n\n' +
+			'and open pull requests for review. Do NOT merge PRs. Your job is implementation only. ' +
+			'When the reviewer approves, your work is done. The reviewer handles the merge.\n\n' +
 			'Before finishing: ensure all tests pass, commit all changes, and open a PR with a clear description.',
 	},
 	{
