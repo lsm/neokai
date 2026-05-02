@@ -175,7 +175,7 @@ export function useAutoScroll({
 		}
 
 		return setupScrollDetection(container);
-	}, [nearBottomThreshold, messageCount]);
+	}, [nearBottomThreshold, messageCount, scrollToBottom]);
 
 	// When loadingOlder transitions from true to false, skip the message-count delta
 	// that was introduced by revealing older messages so that auto-scroll doesn't fire.
