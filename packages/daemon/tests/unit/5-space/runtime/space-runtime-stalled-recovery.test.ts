@@ -389,6 +389,50 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				true
 			);
 		});
+
+		test('blocked non-terminal idle run sets blockedRetryCounts to prevent auto-retry', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Block retry budget test',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Block retry budget test',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'idle', {
+				agentSessionId: 'non-terminal-blocked-session',
+			});
+			saveAssistantMessage(
+				'non-terminal-blocked-session',
+				[{ type: 'tool_use', id: 'tu-1', name: 'test', input: {} }],
+				null
+			);
+
+			const rt = makeRuntime();
+			// Exhaust retry budget so handleNonTerminalIdleExecutions blocks immediately
+			(rt as any).nonTerminalIdleCounts.set(`${run.id}:${execution.id}`, 3);
+			// Simulate the handler being called directly (as it would be from processRunTick)
+			const outcome = await (rt as any).handleNonTerminalIdleExecutions(
+				run.id,
+				SPACE_ID,
+				taskRepo.getTask(task.id)!
+			);
+
+			expect(outcome).toBe('blocked');
+			expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			// Verify blockedRetryCounts is exhausted so attemptBlockedRunRecovery won't auto-retry
+			expect((rt as any).blockedRetryCounts.get(run.id)).toBeGreaterThanOrEqual(1);
+		});
 	});
 
 	describe('orphaned tool_result waiting_rebind recovery', () => {

@@ -2831,6 +2831,9 @@ export class SpaceRuntime {
 				retriesExhausted: retryCount - 1,
 				timestamp: new Date().toISOString(),
 			});
+			// Exhaust the blocked-run auto-retry budget so attemptBlockedRunRecovery
+			// escalates immediately instead of re-spawning the agent.
+			this.blockedRetryCounts.set(runId, MAX_BLOCKED_RUN_RETRIES);
 			return 'blocked';
 		}
 		return 'none';
