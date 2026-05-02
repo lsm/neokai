@@ -90,8 +90,7 @@ const FATAL_ERROR_PATTERNS = [
 const TRANSIENT_CONNECTION_PATTERNS = [
 	/socket connection was closed/i,
 	/verbose:\s*true\s+in the second argument to fetch/i,
-	/fetch failed/i,
-	/connection closed/i,
+	/TypeError:\s*fetch\s+failed/i,
 	/connection reset/i,
 	/stream closed/i,
 	/SocketError/i,

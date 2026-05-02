@@ -365,11 +365,11 @@ describe('ApiErrorCircuitBreaker', () => {
 			expect(circuitBreaker.isTripped()).toBe(false);
 		});
 
-		it('should NOT count fetch-failed as connection errors', async () => {
+		it('should NOT count TypeError fetch failed as connection errors', async () => {
 			const message = {
 				type: 'user',
 				message: {
-					content: 'fetch failed',
+					content: 'TypeError: fetch failed',
 				},
 			};
 

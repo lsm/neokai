@@ -16,7 +16,7 @@ import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../../../src/storage/database';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
-import type { ErrorManager } from '../../../../src/lib/error-manager';
+import { ErrorCategory, type ErrorManager } from '../../../../src/lib/error-manager';
 import type { Logger } from '../../../../src/lib/logger';
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
 import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
@@ -1285,6 +1285,142 @@ describe('QueryRunner', () => {
 			expect((ctx as Record<string, unknown>).startupTimeoutAutoRecoverAttempts).toBeUndefined();
 		});
 	});
+
+	describe('transient connection error handling', () => {
+		// Integration tests: exercise the runQuery() catch block when a transient
+		// connection error is thrown during the SDK query.  buildSpy is set to throw
+		// connection errors so the retry path is triggered without needing a real
+		// subprocess or network.  ANTHROPIC_API_KEY is set to a dummy value so the
+		// pre-query auth check passes.
+
+		let savedApiKey: string | undefined;
+
+		beforeEach(() => {
+			savedApiKey = process.env.ANTHROPIC_API_KEY;
+			process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+			mockSession.workspacePath = tmpdir();
+		});
+
+		afterEach(() => {
+			if (savedApiKey === undefined) {
+				delete process.env.ANTHROPIC_API_KEY;
+			} else {
+				process.env.ANTHROPIC_API_KEY = savedApiKey;
+			}
+		});
+
+		it('should retry once and show sanitized retry message on transient connection error', async () => {
+			buildSpy
+				.mockRejectedValueOnce(
+					new Error(
+						'The socket connection was closed unexpectedly. For more information, pass verbose: true in the second argument to fetch()'
+					)
+				)
+				.mockRejectedValueOnce(new Error('stop after retry'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// buildSpy was called twice: original + retry
+			expect(buildSpy).toHaveBeenCalledTimes(2);
+			// The retry path should show a sanitized message via displayErrorAsAssistantMessage
+			expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
+					type: 'assistant',
+					message: expect.objectContaining({
+						content: expect.arrayContaining([
+							expect.objectContaining({
+								text: expect.stringContaining('The connection was interrupted'),
+							}),
+						]),
+					}),
+				})
+			);
+		});
+
+		it('should always call messageQueue.clear() on connection error', async () => {
+			buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(clearSpy).toHaveBeenCalled();
+		});
+
+		it('should surface error via handleError on exhausted transient connection retry', async () => {
+			buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(handleErrorSpy).toHaveBeenCalled();
+		});
+
+		it('should categorize exhausted transient connection error as CONNECTION', async () => {
+			buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(handleErrorSpy).toHaveBeenCalledWith(
+				'test-session-id',
+				expect.any(Error),
+				ErrorCategory.CONNECTION,
+				expect.any(String),
+				expect.anything(),
+				expect.any(Object)
+			);
+		});
+
+		it('should show sanitized user-facing message after exhausted retries', async () => {
+			buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// The exhausted retry message must NOT contain raw fetch internals
+			const userMessage = handleErrorSpy.mock.calls[0][3] as string;
+			expect(userMessage).toContain('Could not get a response');
+			expect(userMessage).toContain('connection was interrupted');
+			expect(userMessage).not.toContain('verbose: true');
+			expect(userMessage).not.toContain('fetch()');
+		});
+
+		it('should call stateManager.setIdle after handling connection error', async () => {
+			buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(setIdleSpy).toHaveBeenCalled();
+		});
+
+		it('should NOT retry more than once on the same transient connection error', async () => {
+			buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// Exactly 2 calls: initial + 1 retry. A third call would mean a
+			// double-retry, which is wrong (isRetry flag guards against it).
+			expect(buildSpy).toHaveBeenCalledTimes(2);
+		});
+	});
 });
 
 describe('QueryRunner error categorization', () => {
@@ -1383,137 +1519,6 @@ describe('QueryRunner error categorization', () => {
 		const _message = 'some unknown error';
 		// None of the conditions match
 		expect(category).toBe('system');
-	});
-});
-
-describe('QueryRunner transient connection error handling', () => {
-	it('should detect transient fetch/connection errors', () => {
-		const transientMessages = [
-			'API Error: The socket connection was closed unexpectedly. For more information, pass verbose: true in the second argument to fetch()',
-			'fetch failed',
-			'connection reset',
-			'stream closed',
-			'SocketError',
-			'ReadableStream is locked',
-			'network down',
-			'Unable to connect',
-			'backend connection error',
-			'connection closed',
-			'connection reset by peer',
-		];
-
-		for (const message of transientMessages) {
-			const isTransientConnectionError =
-				message.includes('socket connection was closed') ||
-				message.includes('verbose: true in the second argument to fetch()') ||
-				message.includes('fetch failed') ||
-				message.includes('connection closed') ||
-				message.includes('connection reset') ||
-				message.includes('stream closed') ||
-				message.includes('SocketError') ||
-				message.includes('ReadableStream is locked') ||
-				message.includes('network down') ||
-				message.includes('Unable to connect') ||
-				message.includes('backend connection error');
-			expect(isTransientConnectionError).toBe(true);
-		}
-	});
-
-	it('should not flag non-connection errors as transient', () => {
-		const nonTransientMessages = [
-			'401 Unauthorized',
-			'429 Too Many Requests',
-			'model_not_found',
-			'SDK startup timeout',
-		];
-
-		for (const message of nonTransientMessages) {
-			const isTransientConnectionError =
-				message.includes('socket connection was closed') ||
-				message.includes('verbose: true in the second argument to fetch()') ||
-				message.includes('fetch failed') ||
-				message.includes('connection closed') ||
-				message.includes('connection reset') ||
-				message.includes('stream closed') ||
-				message.includes('SocketError') ||
-				message.includes('ReadableStream is locked') ||
-				message.includes('network down') ||
-				message.includes('Unable to connect') ||
-				message.includes('backend connection error');
-			expect(isTransientConnectionError).toBe(false);
-		}
-	});
-
-	it('should categorize transient connection errors as connection category', () => {
-		const transientMessage =
-			'API Error: The socket connection was closed unexpectedly. For more information, pass verbose: true in the second argument to fetch()';
-
-		let category = 'system';
-
-		const isTransientConnectionError =
-			transientMessage.includes('socket connection was closed') ||
-			transientMessage.includes('verbose: true in the second argument to fetch()') ||
-			transientMessage.includes('fetch failed') ||
-			transientMessage.includes('connection closed') ||
-			transientMessage.includes('connection reset') ||
-			transientMessage.includes('stream closed') ||
-			transientMessage.includes('SocketError') ||
-			transientMessage.includes('ReadableStream is locked') ||
-			transientMessage.includes('network down') ||
-			transientMessage.includes('Unable to connect') ||
-			transientMessage.includes('backend connection error');
-
-		if (
-			transientMessage.includes('ECONNREFUSED') ||
-			transientMessage.includes('ENOTFOUND') ||
-			transientMessage.includes('EHOSTUNREACH') ||
-			isTransientConnectionError
-		) {
-			category = 'connection';
-		}
-
-		expect(category).toBe('connection');
-	});
-
-	it('should sanitize raw fetch error strings', () => {
-		const rawMessage =
-			'API Error: The socket connection was closed unexpectedly. ' +
-			'For more information, pass verbose: true in the second argument to fetch()';
-
-		const isTransientConnectionError =
-			rawMessage.includes('socket connection was closed') ||
-			rawMessage.includes('verbose: true in the second argument to fetch()') ||
-			rawMessage.includes('fetch failed') ||
-			rawMessage.includes('connection closed') ||
-			rawMessage.includes('connection reset') ||
-			rawMessage.includes('stream closed') ||
-			rawMessage.includes('SocketError') ||
-			rawMessage.includes('ReadableStream is locked') ||
-			rawMessage.includes('network down') ||
-			rawMessage.includes('Unable to connect') ||
-			rawMessage.includes('backend connection error');
-
-		// Sanitization yields a user-friendly message — never the raw string
-		const sanitized = isTransientConnectionError
-			? 'The connection was interrupted. Retrying…'
-			: rawMessage;
-
-		expect(sanitized).not.toContain('verbose: true');
-		expect(sanitized).not.toContain('socket connection was closed');
-		expect(sanitized).toContain('connection was interrupted');
-	});
-
-	it('should provide generic retry-exhausted message without raw internals', () => {
-		const exhaustedMessage =
-			'Could not get a response. The connection was interrupted. Please try again.';
-
-		// Never contains raw fetch internals
-		expect(exhaustedMessage).not.toContain('verbose: true');
-		expect(exhaustedMessage).not.toContain('socket connection was closed');
-		expect(exhaustedMessage).not.toContain('fetch()');
-
-		// Contains actionable guidance
-		expect(exhaustedMessage).toContain('Please try again');
 	});
 });
 

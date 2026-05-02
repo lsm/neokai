@@ -580,8 +580,7 @@ export class QueryRunner {
 			const isTransientConnectionError =
 				errorMessage.includes('socket connection was closed') ||
 				errorMessage.includes('verbose: true in the second argument to fetch()') ||
-				errorMessage.includes('fetch failed') ||
-				errorMessage.includes('connection closed') ||
+				errorMessage.includes('TypeError: fetch failed') ||
 				errorMessage.includes('connection reset') ||
 				errorMessage.includes('stream closed') ||
 				errorMessage.includes('SocketError') ||
