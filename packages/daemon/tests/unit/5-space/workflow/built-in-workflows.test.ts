@@ -320,11 +320,12 @@ describe('CODING_WORKFLOW template', () => {
 		}
 	});
 
-	test('code-ready-gate blocks when review thread pagination exceeds first page', async () => {
+	test('code-ready-gate paginates review threads and blocks on unresolved across pages', async () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
 		const workspace = mkdtempSync(join(tmpdir(), 'neokai-pr-ready-gate-paged-'));
 		const binDir = join(workspace, 'bin');
 		const ghPath = join(binDir, 'gh');
+		const statePath = join(workspace, 'page.state');
 		const prUrl = 'https://github.com/test/repo/pull/42';
 
 		try {
@@ -338,8 +339,17 @@ describe('CODING_WORKFLOW template', () => {
 					'  exit 0',
 					'fi',
 					'if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
-					`  printf '%s\\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":true}}}}}}'`,
-					'  exit 0',
+					'  PAGE_FILE=' + JSON.stringify(statePath),
+					'  PAGE_NUM=$(cat "$PAGE_FILE" 2>/dev/null || echo "1")',
+					'  if [ "$PAGE_NUM" = "1" ]; then',
+					`    printf '%s\\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"t1","isResolved":true,"comments":{"nodes":[{"url":"https://github.com/test/repo/pull/42#discussion_r_resolved"}]}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor2"}}}}}}'`,
+					'    echo "2" > "$PAGE_FILE"',
+					'    exit 0',
+					'  fi',
+					'  if [ "$PAGE_NUM" = "2" ]; then',
+					`    printf '%s\\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"t2","isResolved":false,"comments":{"nodes":[{"url":"https://github.com/test/repo/pull/42#discussion_r_unresolved"}]}}],"pageInfo":{"hasNextPage":false}}}}}}'`,
+					'    exit 0',
+					'  fi',
 					'fi',
 					'printf "unexpected gh args: %s\\n" "$*" >&2',
 					'exit 2',
@@ -359,7 +369,63 @@ describe('CODING_WORKFLOW template', () => {
 			);
 
 			expect(result.success).toBe(false);
-			expect(result.error).toContain('more than 100 review conversations');
+			expect(result.error).toContain('unresolved review conversation');
+			expect(result.error).toContain('discussion_r_unresolved');
+		} finally {
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
+	test('code-ready-gate passes when all review threads across multiple pages are resolved', async () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
+		const workspace = mkdtempSync(join(tmpdir(), 'neokai-pr-ready-gate-paged-clean-'));
+		const binDir = join(workspace, 'bin');
+		const ghPath = join(binDir, 'gh');
+		const statePath = join(workspace, 'page.state');
+		const prUrl = 'https://github.com/test/repo/pull/42';
+
+		try {
+			mkdirSync(binDir);
+			writeFileSync(
+				ghPath,
+				[
+					'#!/usr/bin/env bash',
+					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
+					`  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}'`,
+					'  exit 0',
+					'fi',
+					'if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
+					'  PAGE_FILE=' + JSON.stringify(statePath),
+					'  PAGE_NUM=$(cat "$PAGE_FILE" 2>/dev/null || echo "1")',
+					'  if [ "$PAGE_NUM" = "1" ]; then',
+					`    printf '%s\\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"t1","isResolved":true,"comments":{"nodes":[{"url":"https://github.com/test/repo/pull/42#discussion_r1"}]}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor2"}}}}}}'`,
+					'    echo "2" > "$PAGE_FILE"',
+					'    exit 0',
+					'  fi',
+					'  if [ "$PAGE_NUM" = "2" ]; then',
+					`    printf '%s\\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"t2","isResolved":true,"comments":{"nodes":[{"url":"https://github.com/test/repo/pull/42#discussion_r2"}]}}],"pageInfo":{"hasNextPage":false}}}}}}'`,
+					'    exit 0',
+					'  fi',
+					'fi',
+					'printf "unexpected gh args: %s\\n" "$*" >&2',
+					'exit 2',
+				].join('\n')
+			);
+			chmodSync(ghPath, 0o755);
+
+			const result = await executeGateScript(
+				gate.script!,
+				{
+					workspacePath: workspace,
+					gateId: 'code-ready-gate',
+					runId: 'run-1',
+					gateData: { pr_url: prUrl },
+				},
+				{ PATH: `${binDir}:${process.env.PATH ?? ''}` }
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual({ pr_url: prUrl });
 		} finally {
 			rmSync(workspace, { recursive: true, force: true });
 		}
