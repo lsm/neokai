@@ -45,7 +45,38 @@ const FULLSTACK_CODING_NODE = 'tpl-fullstack-coding';
 const FULLSTACK_REVIEW_NODE = 'tpl-fullstack-review';
 const FULLSTACK_QA_NODE = 'tpl-fullstack-qa';
 
+const REVIEW_THREAD_CHECK_BASH_FUNCTION = [
+	'check_unresolved_review_threads() {',
+	'  local pr_url="$1"',
+	'  local pr_meta owner repo number threads_json has_more unresolved_count unresolved_urls',
+	'  if ! pr_meta=$(jq -nr --arg url "$pr_url" \'$url | capture("github.com/(?<owner>[^/]+)/(?<repo>[^/]+)/pull/(?<number>[0-9]+)")\' 2>/dev/null); then',
+	'    echo "Unable to parse GitHub PR URL for review-thread check: ${pr_url}" >&2',
+	'    exit 1',
+	'  fi',
+	'  owner=$(jq -r .owner <<< "$pr_meta")',
+	'  repo=$(jq -r .repo <<< "$pr_meta")',
+	'  number=$(jq -r .number <<< "$pr_meta")',
+	'  if ! threads_json=$(gh api graphql -f owner="$owner" -f name="$repo" -F number="$number" -f query=\'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved comments(first:20){nodes{url author{login} body}}} pageInfo{hasNextPage}}}}}\'); then',
+	'    echo "Failed to retrieve review conversations for ${pr_url}" >&2',
+	'    exit 1',
+	'  fi',
+	'  has_more=$(jq -r \'.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false\' <<< "$threads_json")',
+	'  if [ "$has_more" = "true" ]; then',
+	'    echo "PR has more than 100 review conversations; resolve/verify conversations manually before handoff" >&2',
+	'    exit 1',
+	'  fi',
+	'  unresolved_count=$(jq \'[.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false)] | length\' <<< "$threads_json")',
+	'  if [ "$unresolved_count" != "0" ]; then',
+	'    unresolved_urls=$(jq -r \'.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false) | (.comments.nodes[0].url // .id)\' <<< "$threads_json")',
+	'    echo "PR has ${unresolved_count} unresolved review conversation(s); resolve them before handoff:" >&2',
+	'    printf \'%s\\n\' "$unresolved_urls" >&2',
+	'    exit 1',
+	'  fi',
+	'}',
+].join('\n');
+
 const PR_READY_BASH_SCRIPT = [
+	REVIEW_THREAD_CHECK_BASH_FUNCTION,
 	'# Prefer explicit PR URL from gate data JSON when available; fallback to current branch.',
 	'PR_TARGET=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
 	'# When pr_url is supplied, validate that exact PR rather than rediscovering via branch filters.',
@@ -84,6 +115,7 @@ const PR_READY_BASH_SCRIPT = [
 	'  echo "PR merge checks not satisfied (mergeStateStatus: ${PR_STATUS:-unknown})" >&2',
 	'  exit 1',
 	'fi',
+	'check_unresolved_review_threads "$PR_URL"',
 	'jq -n --arg url "$PR_URL" \'{"pr_url":$url}\'',
 ].join('\n');
 
@@ -418,8 +450,15 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'explaining what changed. One reply per comment creates a visible audit trail.\n' +
 							'4. For items you disagree with: reply on the same thread explaining why, with ' +
 							'evidence from the code or tests. Do not change code you believe is correct.\n' +
-							'5. Push fixes, verify tests still pass, then send_message to Review again ' +
-							'(again with `data: { pr_url }`) to re-trigger the review cycle',
+							'5. After pushing fixes for review feedback, resolve all open GitHub review ' +
+							'conversation threads that you addressed before handing back to the reviewer. ' +
+							'Use `gh api graphql` to check unresolved `reviewThreads` (`isResolved == false`) ' +
+							'and resolve addressed threads with the `resolveReviewThread` mutation. Do not ' +
+							'resolve threads you intentionally disagree with until you have replied with ' +
+							'evidence and the reviewer has accepted that resolution.\n' +
+							'6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+							'then send_message to Review again (again with `data: { pr_url }`) to ' +
+							're-trigger the review cycle',
 					},
 				},
 			],
@@ -481,7 +520,10 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'prior-round P0–P3 findings have been addressed in the latest commits):\n' +
 							'   a. Post an approval review: `gh pr review <pr-url> --approve ' +
 							'--body-file <file>`.\n' +
-							'   b. Verify the PR is still open and mergeable.\n' +
+							'   b. Verify the PR is still open, mergeable, and has no unresolved GitHub ' +
+							'review conversations. Use `gh api graphql` to inspect `reviewThreads` and ' +
+							'confirm every thread has `isResolved: true`; if unresolved conversations ' +
+							'remain, request the coder to resolve them instead of approving.\n' +
 							'   c. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>" } })` ' +
 							'to record the audit entry. The `pr_url` inside `data` is what ' +
 							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +

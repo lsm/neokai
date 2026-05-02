@@ -150,6 +150,15 @@ describe('End-node prompts save runtime post-approval data before approve_task',
 			expect(signalIdx).toBeLessThan(approveIdx);
 		});
 
+		if (label === 'CODING_WORKFLOW') {
+			test(`${label} end-node prompt requires unresolved review conversations to be checked`, () => {
+				const prompt = endNodePrompt(wf);
+				expect(prompt).toContain('unresolved GitHub');
+				expect(prompt).toContain('reviewThreads');
+				expect(prompt).toContain('isResolved: true');
+			});
+		}
+
 		test(`${label} end-node prompt instructs the agent NOT to merge itself`, () => {
 			const prompt = endNodePrompt(wf);
 			// Narrow guard: the end-node agent must be told explicitly that it
@@ -170,6 +179,21 @@ describe('End-node prompts save runtime post-approval data before approve_task',
 // ---------------------------------------------------------------------------
 // Removed legacy instructions
 // ---------------------------------------------------------------------------
+
+describe('Post-approval merge prompt checks review conversations', () => {
+	test('merge template verifies CI and unresolved review threads before merging', () => {
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('gh pr checks');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('reviewThreads(first:100)');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('isResolved=false');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('resolveReviewThread');
+		const checkIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf(
+			'Verify all GitHub review conversations'
+		);
+		const mergeIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('gh pr merge');
+		expect(checkIdx).toBeGreaterThan(-1);
+		expect(mergeIdx).toBeGreaterThan(checkIdx);
+	});
+});
 
 describe('Legacy merge/worktree instructions removed from QA end node', () => {
 	test('FULLSTACK_QA_LOOP_WORKFLOW QA prompt does NOT embed gh pr merge', () => {
