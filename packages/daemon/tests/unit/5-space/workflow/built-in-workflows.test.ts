@@ -182,9 +182,11 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.script!.timeoutMs).toBe(30000);
 		// The script must consult the workflow start timestamp injected by the runner.
 		expect(gate.script!.source).toContain('NEOKAI_WORKFLOW_START_ISO');
-		// Primary check: query GitHub for the formal reviews list via the PR URL.
-		expect(gate.script!.source).toContain('gh pr view "$PR_URL" --json reviews');
+		// Primary check: query GitHub for formal approval / changes-requested reviews.
+		expect(gate.script!.source).toContain('gh pr view "$PR_URL" --json reviews,comments,author');
 		expect(gate.script!.source).toContain('submittedAt');
+		expect(gate.script!.source).toContain('APPROVED');
+		expect(gate.script!.source).toContain('CHANGES_REQUESTED');
 		// Must fail loudly when neither review nor PR comment has landed since start.
 		expect(gate.script!.source).toContain('exit 1');
 		// Must echo pr_url/review_count on success for downstream consumers.
@@ -192,20 +194,122 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.script!.source).toContain('review_count');
 	});
 
-	test('review-posted-gate falls back to PR comments when no formal review exists', () => {
+	test('review-posted-gate accepts comment-only evidence only for own PRs', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
 		const src = gate.script!.source;
-		// Fallback: check PR conversation comments when no formal review is found.
-		// This handles same-account setups where GitHub blocks self-reviews.
-		expect(src).toContain('gh pr view "$PR_URL" --json comments');
+		// Fallback: check COMMENTED reviews and PR conversation comments only after
+		// confirming the authenticated account owns the PR. Non-own PRs must still
+		// provide APPROVED or CHANGES_REQUESTED review events.
+		expect(src).toContain('gh api user --jq .login');
+		expect(src).toContain('AUTHOR_LOGIN');
+		expect(src).toContain('VIEWER_LOGIN');
+		expect(src).toContain('[ "$AUTHOR_LOGIN" != "$VIEWER_LOGIN" ]');
+		expect(src).toContain('COMMENTED');
 		expect(src).toContain('createdAt');
 		// Must also filter comments by workflow start timestamp.
 		expect(src).toContain('NEOKAI_WORKFLOW_START_ISO');
 		// Gate passes via comments fallback — outputs the same pr_url/review_count shape.
 		expect(src).toContain('pr_url');
 		expect(src).toContain('review_count');
+		expect(src).toContain('own_pr_comment');
 		// Error message must mention both "review" and "PR comment" so operators understand what was checked.
 		expect(src).toContain('PR comment');
+	});
+
+	test('review-posted-gate passes own-PR COMMENTED reviews', async () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
+		const workspace = mkdtempSync(join(tmpdir(), 'neokai-review-posted-gate-own-pr-'));
+		const binDir = join(workspace, 'bin');
+		const ghPath = join(binDir, 'gh');
+		const prUrl = 'https://github.com/test/repo/pull/42';
+
+		try {
+			mkdirSync(binDir);
+			writeFileSync(
+				ghPath,
+				[
+					'#!/usr/bin/env bash',
+					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
+					`  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z","state":"COMMENTED"}],"comments":[],"author":{"login":"lsm"}}'`,
+					'  exit 0',
+					'fi',
+					'if [ "$1" = "api" ] && [ "$2" = "user" ] && [ "$3" = "--jq" ] && [ "$4" = ".login" ]; then',
+					`  printf '%s\\n' 'lsm'`,
+					'  exit 0',
+					'fi',
+					'printf "unexpected gh args: %s\\n" "$*" >&2',
+					'exit 2',
+				].join('\n')
+			);
+			chmodSync(ghPath, 0o755);
+
+			const result = await executeGateScript(
+				gate.script!,
+				{
+					workspacePath: workspace,
+					gateId: 'review-posted-gate',
+					runId: 'run-1',
+					gateData: { pr_url: prUrl },
+					workflowStartIso: '2026-05-01T00:00:00Z',
+				},
+				{ PATH: `${binDir}:${process.env.PATH ?? ''}` }
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual({
+				pr_url: prUrl,
+				review_count: 1,
+				review_evidence: 'own_pr_comment',
+			});
+		} finally {
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
+	test('review-posted-gate rejects comment-only evidence on non-own PRs', async () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
+		const workspace = mkdtempSync(join(tmpdir(), 'neokai-review-posted-gate-non-own-pr-'));
+		const binDir = join(workspace, 'bin');
+		const ghPath = join(binDir, 'gh');
+		const prUrl = 'https://github.com/test/repo/pull/42';
+
+		try {
+			mkdirSync(binDir);
+			writeFileSync(
+				ghPath,
+				[
+					'#!/usr/bin/env bash',
+					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
+					`  printf '%s\\n' '{"reviews":[],"comments":[{"createdAt":"2026-05-01T12:00:00Z"}],"author":{"login":"someone-else"}}'`,
+					'  exit 0',
+					'fi',
+					'if [ "$1" = "api" ] && [ "$2" = "user" ] && [ "$3" = "--jq" ] && [ "$4" = ".login" ]; then',
+					`  printf '%s\\n' 'lsm'`,
+					'  exit 0',
+					'fi',
+					'printf "unexpected gh args: %s\\n" "$*" >&2',
+					'exit 2',
+				].join('\n')
+			);
+			chmodSync(ghPath, 0o755);
+
+			const result = await executeGateScript(
+				gate.script!,
+				{
+					workspacePath: workspace,
+					gateId: 'review-posted-gate',
+					runId: 'run-1',
+					gateData: { pr_url: prUrl },
+					workflowStartIso: '2026-05-01T00:00:00Z',
+				},
+				{ PATH: `${binDir}:${process.env.PATH ?? ''}` }
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('comment-only evidence is accepted only for own PRs');
+		} finally {
+			rmSync(workspace, { recursive: true, force: true });
+		}
 	});
 
 	test('review-posted-gate uses review_url gate data when pr_url is absent', async () => {
@@ -223,8 +327,8 @@ describe('CODING_WORKFLOW template', () => {
 				[
 					'#!/usr/bin/env bash',
 					`printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
-					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(reviewUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews" ]; then`,
-					`  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z"}]}'`,
+					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(reviewUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
+					`  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z","state":"CHANGES_REQUESTED"}],"comments":[],"author":{"login":"other"}}'`,
 					'  exit 0',
 					'fi',
 					'printf "unexpected gh args: %s\\n" "$*" >&2',
@@ -246,8 +350,14 @@ describe('CODING_WORKFLOW template', () => {
 			);
 
 			expect(result.success).toBe(true);
-			expect(result.data).toEqual({ pr_url: reviewUrl, review_count: 1 });
-			expect(readFileSync(logPath, 'utf8').trim()).toBe(`pr view ${reviewUrl} --json reviews`);
+			expect(result.data).toEqual({
+				pr_url: reviewUrl,
+				review_count: 1,
+				review_evidence: 'formal_review',
+			});
+			expect(readFileSync(logPath, 'utf8').trim()).toBe(
+				`pr view ${reviewUrl} --json reviews,comments,author`
+			);
 		} finally {
 			rmSync(workspace, { recursive: true, force: true });
 		}

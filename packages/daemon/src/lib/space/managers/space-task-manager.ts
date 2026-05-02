@@ -295,7 +295,21 @@ export class SpaceTaskManager {
 		// Inline transition validation. Mirrors the check in `setTaskStatus` —
 		// kept here (rather than delegating) so the status flip and the pending-*
 		// stamp can happen in a single SQL UPDATE.
-		if (!isValidSpaceTaskTransition(task.status, 'review')) {
+		//
+		// Re-submitting while already in `review` is intentionally idempotent ONLY
+		// when the existing checkpoint is `task_completion` (multi-cycle workflows
+		// where the agent re-submits after a prior submit_for_approval).  Other
+		// checkpoint types — notably `gate` set by handleGatePendingApproval — must
+		// NOT be overwritten because the runtime relies on `pendingCheckpointType:
+		// 'gate'` to reactivate the task when the gate opens.
+		if (task.status === 'review') {
+			if (task.pendingCheckpointType !== 'task_completion' && task.pendingCheckpointType != null) {
+				throw new Error(
+					`Cannot re-submit task in 'review' with pendingCheckpointType '${task.pendingCheckpointType}'. ` +
+						`Only 'task_completion' checkpoints can be refreshed.`
+				);
+			}
+		} else if (!isValidSpaceTaskTransition(task.status, 'review')) {
 			throw new Error(
 				`Invalid status transition from '${task.status}' to 'review'. ` +
 					`Allowed: ${VALID_SPACE_TASK_TRANSITIONS[task.status].join(', ') || 'none'}`
