@@ -7,8 +7,6 @@
  * Refactored to use shared hooks for better separation of concerns.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { ComponentChildren } from 'preact';
 import type {
 	MessageDeliveryMode,
 	MessageImage,
@@ -16,22 +14,24 @@ import type {
 	ReferenceMention,
 	SessionType,
 } from '@neokai/shared';
-import { isAgentWorking } from '../lib/state.ts';
+import type { ComponentChildren } from 'preact';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import {
+	useCommandAutocomplete,
+	useFileAttachments,
+	useInputDraft,
+	useInterrupt,
+	useModal,
+	useModelSwitcher,
+	useReferenceAutocomplete,
+} from '../hooks';
 import { connectionManager } from '../lib/connection-manager';
 import { getMessagesBottomPaddingPx } from '../lib/layout-metrics.ts';
+import { isAgentWorking } from '../lib/state.ts';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
 import { InputActionsMenu } from './InputActionsMenu.tsx';
 import { InputTextarea } from './InputTextarea.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
-import {
-	useInputDraft,
-	useModelSwitcher,
-	useModal,
-	useCommandAutocomplete,
-	useReferenceAutocomplete,
-	useFileAttachments,
-	useInterrupt,
-} from '../hooks';
 
 /**
  * Replace the active @query at the end of `content` with a formatted reference token.
@@ -309,7 +309,7 @@ export default function MessageInput({
 		void refreshQueuedMessages();
 	}, [refreshQueuedMessages]);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		syncMessagesContainerPadding();
 	}, [syncMessagesContainerPadding]);
 

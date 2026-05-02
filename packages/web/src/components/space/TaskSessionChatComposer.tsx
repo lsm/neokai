@@ -1,4 +1,5 @@
 import type { MessageDeliveryMode, MessageImage } from '@neokai/shared';
+import type { Ref } from 'preact';
 import { useMemo, useState } from 'preact/hooks';
 import { ChatComposer } from '../ChatComposer.tsx';
 import { useModelSwitcher } from '../../hooks';
@@ -30,6 +31,7 @@ interface TaskSessionChatComposerProps {
 	onAutoScrollChange: (enabled: boolean) => void;
 	onTargetSelect: (targetId: string) => void;
 	onDraftActiveChange?: (hasDraft: boolean) => void;
+	onComposerRef?: Ref<HTMLDivElement>;
 	onSend: (message: string, target: TaskComposerTarget | null) => Promise<boolean>;
 }
 
@@ -47,6 +49,7 @@ export function TaskSessionChatComposer({
 	onAutoScrollChange,
 	onTargetSelect,
 	onDraftActiveChange,
+	onComposerRef,
 	onSend,
 }: TaskSessionChatComposerProps) {
 	const {
@@ -133,7 +136,7 @@ export function TaskSessionChatComposer({
 		) : null;
 
 	return (
-		<div class="relative z-10" data-testid="task-session-chat-composer">
+		<div ref={onComposerRef} class="relative z-10" data-testid="task-session-chat-composer">
 			<ChatComposer
 				sessionId={sessionId}
 				readonly={false}
