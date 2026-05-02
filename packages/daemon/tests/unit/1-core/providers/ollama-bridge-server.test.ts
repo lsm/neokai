@@ -215,6 +215,83 @@ describe('Ollama Anthropic bridge server', () => {
 		});
 	});
 
+	it('preserves tool-result ordering before supplemental user text', async () => {
+		let capturedRequest: unknown;
+		const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+			capturedRequest = JSON.parse(String(init?.body));
+			return new Response(JSON.stringify({ model: 'llama3.2', done: true }), { status: 200 });
+		});
+		const server = createOllamaAnthropicBridgeServer({
+			baseUrl: 'http://ollama.test',
+			fetchImpl: fetchMock as typeof fetch,
+		});
+		servers.push(server);
+
+		await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'llama3.2',
+				messages: [
+					{
+						role: 'assistant',
+						content: [
+							{
+								type: 'tool_use',
+								id: 'toolu_1',
+								name: 'get_weather',
+								input: { city: 'London' },
+							},
+						],
+					},
+					{
+						role: 'user',
+						content: [
+							{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Rainy' },
+							{ type: 'text', text: 'Please summarize the result.' },
+						],
+					},
+				],
+			}),
+		});
+
+		expect(capturedRequest).toMatchObject({
+			messages: [
+				{
+					role: 'assistant',
+					content: '',
+					tool_calls: [{ function: { name: 'get_weather', arguments: { city: 'London' } } }],
+				},
+				{ role: 'tool', content: 'Rainy', tool_name: 'get_weather' },
+				{ role: 'user', content: 'Please summarize the result.' },
+			],
+		});
+	});
+
+	it('maps upstream rate limits to Anthropic rate_limit_error', async () => {
+		const fetchMock = mock(async () => new Response('Too Many Requests', { status: 429 }));
+		const server = createOllamaAnthropicBridgeServer({
+			baseUrl: 'https://ollama.com',
+			apiKey: 'cloud-key',
+			fetchImpl: fetchMock as typeof fetch,
+		});
+		servers.push(server);
+
+		const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-oss:120b-cloud',
+				messages: [{ role: 'user', content: 'Hi' }],
+			}),
+		});
+		const body = await response.json();
+
+		expect(response.status).toBe(429);
+		expect(body.error.type).toBe('rate_limit_error');
+		expect(body.error.message).toContain('Too Many Requests');
+	});
+
 	it('maps upstream failures to Anthropic JSON errors', async () => {
 		const fetchMock = mock(async () => new Response('Unauthorized', { status: 401 }));
 		const server = createOllamaAnthropicBridgeServer({

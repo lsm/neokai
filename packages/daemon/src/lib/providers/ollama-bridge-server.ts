@@ -84,6 +84,7 @@ function sendJsonError(status: number, type: AnthropicErrorType, message: string
 function mapStatusToAnthropicError(status: number): AnthropicErrorType {
 	if (status === 401 || status === 403) return 'authentication_error';
 	if (status === 404) return 'not_found_error';
+	if (status === 429) return 'rate_limit_error';
 	if (status >= 500) return 'api_error';
 	return 'invalid_request_error';
 }
@@ -151,7 +152,6 @@ function appendOllamaMessages(
 		messages.push({ role: 'user', content: text });
 		return;
 	}
-	if (text) messages.push({ role: 'user', content: text });
 	for (const result of toolResults) {
 		messages.push({
 			role: 'tool',
@@ -159,6 +159,7 @@ function appendOllamaMessages(
 			tool_name: toolNameByUseId.get(result.tool_use_id) ?? result.tool_use_id,
 		});
 	}
+	if (text) messages.push({ role: 'user', content: text });
 }
 
 function buildOllamaRequest(body: AnthropicRequest): OllamaChatRequest {
