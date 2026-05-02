@@ -939,9 +939,12 @@ CRITICAL RULES:
 		if (!guards?.length) return {};
 
 		const hooks: NonNullable<Options['hooks']> = {};
-		// Group guards by matcher (tool name) to create one matcher entry per tool
+		// Group guards by matcher (tool name) to create one matcher entry per tool.
+		// Skip malformed entries (null, non-object) so a bad persisted workflow
+		// cannot crash query startup.
 		const byMatcher = new Map<string, DeclarativeToolGuard[]>();
 		for (const guard of guards) {
+			if (!guard || typeof guard !== 'object' || !guard.matcher) continue;
 			const existing = byMatcher.get(guard.matcher) ?? [];
 			existing.push(guard);
 			byMatcher.set(guard.matcher, existing);
