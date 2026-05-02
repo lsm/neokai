@@ -84,6 +84,8 @@ export interface QueryOptionsBuilderContext {
 	readonly settingsManager: SettingsManager;
 	readonly db?: Database;
 	consumePendingResumeSessionAt?(): string | undefined;
+	/** Peek at the pending resumeSessionAt without consuming it. Used by addSessionStateOptions which may be called multiple times. */
+	peekPendingResumeSessionAt?(): string | undefined;
 	/** Skills manager for injecting plugin/MCP server skills into SDK options. Optional for backwards compatibility. */
 	readonly skillsManager?: SkillsManager;
 	/** App MCP server repo for resolving mcp_server skill configs. Optional for backwards compatibility. */
@@ -490,7 +492,7 @@ export class QueryOptionsBuilder {
 			result.resume = this.ctx.session.sdkSessionId;
 		}
 
-		const resumeSessionAt = this.ctx.consumePendingResumeSessionAt?.();
+		const resumeSessionAt = this.ctx.peekPendingResumeSessionAt?.();
 		if (resumeSessionAt) {
 			result.resumeSessionAt = resumeSessionAt;
 		}

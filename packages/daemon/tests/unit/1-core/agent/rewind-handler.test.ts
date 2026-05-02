@@ -39,6 +39,7 @@ describe('RewindHandler', () => {
 	let rewindFilesSpy: ReturnType<typeof mock>;
 	let updateSessionSpy: ReturnType<typeof mock>;
 	let setPendingResumeSessionAtSpy: ReturnType<typeof mock>;
+	let clearPendingResumeSessionAtSpy: ReturnType<typeof mock>;
 	let testSdkSessionDir: string;
 	let originalTestSdkSessionDir: string | undefined;
 
@@ -72,6 +73,7 @@ describe('RewindHandler', () => {
 		deleteMessagesAtAndAfterSpy = mock(() => 5);
 		updateSessionSpy = mock(() => {});
 		setPendingResumeSessionAtSpy = mock(() => {});
+		clearPendingResumeSessionAtSpy = mock(() => {});
 		getUserMessagesSpy = mock(() => [
 			{
 				uuid: testRewindPoint.uuid,
@@ -146,6 +148,7 @@ describe('RewindHandler', () => {
 			queryObject: mockQueryObject,
 			firstMessageReceived: true,
 			setPendingResumeSessionAt: setPendingResumeSessionAtSpy,
+			clearPendingResumeSessionAt: clearPendingResumeSessionAtSpy,
 			...overrides,
 		};
 	}
@@ -417,6 +420,7 @@ describe('RewindHandler', () => {
 				await handler.executeRewind(testRewindPoint.uuid, 'conversation');
 
 				expect(setPendingResumeSessionAtSpy).not.toHaveBeenCalled();
+				expect(clearPendingResumeSessionAtSpy).toHaveBeenCalled();
 				expect(updateSessionSpy).not.toHaveBeenCalledWith(mockSession.id, {
 					metadata: mockSession.metadata,
 				});
@@ -430,6 +434,7 @@ describe('RewindHandler', () => {
 				await handler.executeRewind(testRewindPoint.uuid, 'conversation');
 
 				expect(setPendingResumeSessionAtSpy).not.toHaveBeenCalled();
+				expect(clearPendingResumeSessionAtSpy).toHaveBeenCalled();
 				expect(updateSessionSpy).not.toHaveBeenCalledWith(mockSession.id, {
 					metadata: mockSession.metadata,
 				});
@@ -703,6 +708,7 @@ describe('RewindHandler', () => {
 			await handler.executeSelectiveRewind([testRewindPoint.uuid]);
 
 			expect(setPendingResumeSessionAtSpy).not.toHaveBeenCalled();
+			expect(clearPendingResumeSessionAtSpy).toHaveBeenCalled();
 		});
 	});
 

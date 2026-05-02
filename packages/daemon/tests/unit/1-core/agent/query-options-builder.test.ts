@@ -228,12 +228,12 @@ describe('QueryOptionsBuilder', () => {
 			expect(result.resume).toBe('sdk-session-123');
 		});
 
-		it('should add pending one-shot resumeSessionAt and consume it once', async () => {
+		it('should add pending one-shot resumeSessionAt via peek (not consume)', async () => {
 			mockSession.sdkSessionId = 'sdk-session-valid';
-			const consumePendingResumeSessionAt = mock(() => 'resumable-message-uuid');
+			const peekPendingResumeSessionAt = mock(() => 'resumable-message-uuid');
 			builder = new QueryOptionsBuilder({
 				...mockContext,
-				consumePendingResumeSessionAt,
+				peekPendingResumeSessionAt,
 			});
 
 			const options = await builder.build();
@@ -241,7 +241,7 @@ describe('QueryOptionsBuilder', () => {
 
 			expect(result.resume).toBe('sdk-session-valid');
 			expect(result.resumeSessionAt).toBe('resumable-message-uuid');
-			expect(consumePendingResumeSessionAt).toHaveBeenCalledTimes(1);
+			expect(peekPendingResumeSessionAt).toHaveBeenCalledTimes(1);
 			expect(updateSessionSpy).not.toHaveBeenCalled();
 		});
 
@@ -260,10 +260,10 @@ describe('QueryOptionsBuilder', () => {
 		it('should not carry compact summaries while building resume options', async () => {
 			mockSession.sdkSessionId = 'sdk-session-valid';
 			mockSession.sdkOriginPath = mockSession.workspacePath;
-			const consumePendingResumeSessionAt = mock(() => undefined);
+			const peekPendingResumeSessionAt = mock(() => undefined);
 			builder = new QueryOptionsBuilder({
 				...mockContext,
-				consumePendingResumeSessionAt,
+				peekPendingResumeSessionAt,
 			});
 
 			const options = await builder.build();

@@ -81,6 +81,7 @@ export interface RewindHandlerContext {
 	readonly queryObject: Query | null;
 	readonly firstMessageReceived: boolean;
 	setPendingResumeSessionAt(messageUuid: string): void;
+	clearPendingResumeSessionAt(): void;
 }
 
 /**
@@ -343,6 +344,10 @@ export class RewindHandler {
 			)
 		) {
 			this.ctx.setPendingResumeSessionAt(previousUserMessage.uuid);
+		} else {
+			// No resumable predecessor — clear any stale pending value from a previous
+			// rewind that didn't complete, so it doesn't leak into the next query.
+			this.ctx.clearPendingResumeSessionAt();
 		}
 
 		// Step 4: Restart query to apply new state
@@ -765,6 +770,9 @@ export class RewindHandler {
 					)
 				) {
 					this.ctx.setPendingResumeSessionAt(previousUserMessage.uuid);
+				} else {
+					// No resumable predecessor — clear any stale pending value.
+					this.ctx.clearPendingResumeSessionAt();
 				}
 
 				// Restart query to apply new state

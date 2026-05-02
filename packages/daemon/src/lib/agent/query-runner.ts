@@ -144,6 +144,9 @@ export interface QueryRunnerContext {
 	 * resume cannot silently start a degraded Space Agent turn.
 	 */
 	onMissingSpaceChatMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
+
+	/** Consume (clear) the one-shot resumeSessionAt after the query has started. */
+	consumePendingResumeSessionAt?(): string | undefined;
 }
 
 /**
@@ -450,6 +453,11 @@ export class QueryRunner {
 			});
 			this.ctx.queryObject = queryObject;
 
+			// Consume the one-shot resumeSessionAt now that the query has started
+			// with the options containing it. Peek was used in addSessionStateOptions
+			// to avoid losing the value on rebuild (e.g., MCP self-heal).
+			this.ctx.consumePendingResumeSessionAt?.();
+
 			// Set up startup timeout
 			const queryStartTime = Date.now();
 			let startupTimeoutReached = false;
@@ -731,8 +739,8 @@ export class QueryRunner {
 
 					// For startup timeouts / resume failures, provide actionable recovery hints.
 					// Keep the hints distinct: NEOKAI_SDK_STARTUP_TIMEOUT_MS is irrelevant to a
-					// missing/corrupt session file — the session ID was already cleared above,
-					// so the next message will automatically start a fresh session.
+					// missing/corrupt session file — sdkSessionId is intentionally preserved so
+					// the user can choose via sdkResumeChoice prompt.
 					const startupTimeoutUserMessage = isStartupTimeout
 						? `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}). ` +
 							`Common causes: another Claude Code session is using the same workspace, ` +
@@ -745,13 +753,12 @@ export class QueryRunner {
 								`The previous session transcript was not found — this can happen after a provider switch, ` +
 								`workspace path change, or if the ~/.claude/projects/ directory was cleaned up. ` +
 								`Your message history in NeoKai is preserved; only the AI context window is reset. ` +
-								`Please resend your message — a fresh session starts automatically.`
+								`Please resend your message — you will be asked to choose whether to start a fresh session or keep the existing context.`
 							: isMessageNotFound
 								? `The AI session could not resume from the previous rewind point ` +
 									`(workspace: ${session.workspacePath ?? 'unbound'}). The Claude SDK transcript no longer ` +
 									`contains that message UUID, likely after SDK compaction. Your message history in NeoKai ` +
-									`is preserved; only the AI context window is reset. Please resend your message — a fresh ` +
-									`session starts automatically.`
+									`is preserved; only the AI context window is reset. Please resend your message.`
 								: undefined;
 
 					await errorManager.handleError(

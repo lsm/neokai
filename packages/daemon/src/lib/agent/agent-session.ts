@@ -1136,6 +1136,14 @@ export class AgentSession
 		this.pendingResumeSessionAt = messageUuid;
 	}
 
+	peekPendingResumeSessionAt(): string | undefined {
+		return this.pendingResumeSessionAt;
+	}
+
+	clearPendingResumeSessionAt(): void {
+		this.pendingResumeSessionAt = undefined;
+	}
+
 	consumePendingResumeSessionAt(): string | undefined {
 		const value = this.pendingResumeSessionAt;
 		this.pendingResumeSessionAt = undefined;

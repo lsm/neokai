@@ -352,13 +352,19 @@ export class QueryLifecycleManager {
 			if (session.sdkSessionId) {
 				const isValid = this.validateAndRepairWithMigration();
 				if (!isValid) {
-					// Session file missing or unrepairably corrupted — log but keep sdkSessionId.
-					// The SDK may recreate the file on resume, or "No conversation found" will
-					// be caught in query-runner and cleared there as a last resort.
+					// Session file missing or unrepairably corrupted — clear sdkSessionId
+					// and start fresh. This is an internal restart path (not user-facing),
+					// so silently starting fresh is better than looping on "No conversation found".
 					this.logger.warn(
 						`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-							'Will attempt resume anyway — SDK may recover.'
+							'Clearing sdkSessionId to start fresh.'
 					);
+					session.sdkSessionId = undefined;
+					session.sdkOriginPath = undefined;
+					this.ctx.db.updateSession(session.id, {
+						sdkSessionId: undefined,
+						sdkOriginPath: undefined,
+					});
 				}
 			}
 
@@ -447,8 +453,14 @@ export class QueryLifecycleManager {
 					if (!isValid) {
 						this.logger.warn(
 							`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-								'Will attempt resume anyway — SDK may recover.'
+								'Clearing sdkSessionId to start fresh.'
 						);
+						session.sdkSessionId = undefined;
+						session.sdkOriginPath = undefined;
+						this.ctx.db.updateSession(session.id, {
+							sdkSessionId: undefined,
+							sdkOriginPath: undefined,
+						});
 					}
 				}
 
