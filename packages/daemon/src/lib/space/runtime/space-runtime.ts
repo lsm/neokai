@@ -2229,6 +2229,7 @@ export class SpaceRuntime {
 
 				this.config.nodeExecutionRepo.update(execution.id, {
 					status: 'idle',
+					agentSessionId: null,
 					result: `Auto-completed: agent timed out after ${timeoutMinutes} minutes`,
 				});
 				await this.safeNotify({
