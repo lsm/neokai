@@ -788,6 +788,42 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 		});
 
+		test('coder idle and reviewer cancelled from prior activation → reviewer resets pending', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coding', agentId: AGENT },
+				{ id: STEP_B, name: 'Review', agentId: AGENT },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recover cancelled reviewer',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Recover cancelled reviewer',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'idle');
+			const cancelledReviewer = seedExec(run.id, STEP_B, 'Review', 'cancelled', {
+				agentSessionId: 'cancelled-review-session',
+				result: 'review cancelled during restart',
+			});
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			const reviewer = nodeExecutionRepo.getById(cancelledReviewer.id)!;
+			expect(reviewer.status).toBe('pending');
+			expect(reviewer.agentSessionId).toBeNull();
+			expect(reviewer.result).toBeNull();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+
 		test('linear run stalled after later node → only latest handoff is recovered', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Plan', agentId: AGENT },
@@ -1163,7 +1199,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			});
 		});
 
-		test('multi-node run with all idle/cancelled executions → blocked', async () => {
+		test('multi-node run with no idle source execution → blocked', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Step A', agentId: AGENT },
 				{ id: STEP_B, name: 'Step B', agentId: AGENT },
@@ -1185,7 +1221,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				status: 'in_progress',
 			});
 
-			seedExec(run.id, STEP_A, 'Step A', 'idle');
+			seedExec(run.id, STEP_A, 'Step A', 'cancelled');
 			seedExec(run.id, STEP_B, 'Step B', 'cancelled');
 
 			const rt = makeRuntime();

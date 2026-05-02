@@ -1630,7 +1630,7 @@ export class SpaceRuntime {
 						.listByNode(run.id, targetNode.id)
 						.find((execution) => execution.agentName === agentEntry.name);
 					if (existing) {
-						if (existing.status === 'idle') {
+						if (existing.status === 'idle' || existing.status === 'cancelled') {
 							this.config.nodeExecutionRepo.update(existing.id, {
 								status: 'pending',
 								agentSessionId: null,
