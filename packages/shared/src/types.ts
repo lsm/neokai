@@ -538,8 +538,6 @@ export interface SessionMetadata {
 	// We track lastSdkCost to detect resets and costBaseline to preserve pre-reset totals
 	lastSdkCost?: number; // Last SDK-reported total_cost_usd (resets when agent restarts)
 	costBaseline?: number; // Accumulated cost from previous runs before last reset
-	resumeSessionAt?: string; // Checkpoint ID to resume conversation from (for rewind feature)
-	compactionSummary?: string; // Temporary carry-over summary when SDK compaction forces a fresh session
 	worktreeChoice?: {
 		status: 'pending' | 'completed';
 		choice?: 'worktree' | 'direct';
@@ -561,8 +559,6 @@ export interface SessionMetadata {
 		pendingInstruction?: string;
 		retryCount: number;
 	};
-	/** Runtime init fingerprint for non-worker sessions (used to invalidate stale SDK resume state) */
-	runtimeInitFingerprint?: string;
 	/** Non-secret provenance for the configured system prompt used when a session was spawned. */
 	promptProvenance?: {
 		source: string;

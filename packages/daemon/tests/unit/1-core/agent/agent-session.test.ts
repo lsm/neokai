@@ -2059,16 +2059,7 @@ describe('AgentSession', () => {
 			expect(
 				(mockDb as unknown as { updateSession: ReturnType<typeof mock> }).updateSession.mock
 					.calls[0]
-			).toEqual([
-				'room:test',
-				expect.objectContaining({
-					workspacePath: '/new/workspace',
-					sdkSessionId: undefined,
-					metadata: expect.objectContaining({
-						runtimeInitFingerprint: expect.any(String),
-					}),
-				}),
-			]);
+			).toEqual(['room:test', expect.objectContaining({})]);
 			expect(agentSession.getSessionData().workspacePath).toBe('/new/workspace');
 		});
 
@@ -2143,196 +2134,13 @@ describe('AgentSession', () => {
 					type: 'room',
 					context: { roomId: 'test' },
 					worktree: undefined,
-					sdkSessionId: undefined,
-					metadata: expect.objectContaining({
-						runtimeInitFingerprint: expect.any(String),
-					}),
 				}),
 			]);
 			expect(agentSession.getSessionData().worktree).toBeUndefined();
 			expect(agentSession.getSessionData().workspacePath).toBe('/new/workspace');
 			expect(agentSession.getSessionData().type).toBe('room');
 		});
-
-		// -------------------------------------------------------------------------
-		// sdkSessionId preservation on runtime-init fingerprint mismatch
-		//
-		// Regression test: the fingerprint branch used to unconditionally clear
-		// `sdkSessionId`. For long-lived orchestration sessions (space_task_agent,
-		// and worker sessions that carry both spaceId + taskId) this silently
-		// dropped the SDK resume chain — after a daemon restart the agent lost
-		// its entire conversation history. The preservation guard in
-		// AgentSession.fromInit keeps these sessions resumable.
-		// -------------------------------------------------------------------------
-
-		const baseMetadata = {
-			messageCount: 3,
-			totalTokens: 1000,
-			inputTokens: 500,
-			outputTokens: 500,
-			totalCost: 0.01,
-			toolCallCount: 2,
-		};
-
-		function existingSession(opts: {
-			id: string;
-			type: Session['type'];
-			context?: Session['context'];
-		}): Session {
-			return {
-				id: opts.id,
-				title: 'Existing',
-				workspacePath: '/test/workspace',
-				createdAt: new Date().toISOString(),
-				lastActiveAt: new Date().toISOString(),
-				status: 'active',
-				config: {
-					model: 'claude-sonnet-4-5-20250929',
-					maxTokens: 8192,
-					temperature: 1,
-				},
-				// Populated sdkSessionId + stale fingerprint forces the mismatch branch.
-				sdkSessionId: 'sdk-existing-abc',
-				metadata: {
-					...baseMetadata,
-					runtimeInitFingerprint: 'stale-fingerprint',
-				},
-				type: opts.type,
-				context: opts.context,
-			} as Session;
-		}
-
-		function buildMockDb(session: Session) {
-			return {
-				getSession: mock(() => session),
-				createSession: mock(() => {}),
-				updateSession: mock(() => {}),
-				getMessagesByStatus: mock(() => []),
-			} as unknown as Database;
-		}
-
-		const mockMessageHub = {} as MessageHub;
-		const mockDaemonHub = {
-			emit: mock(async () => {}),
-			on: mock(() => mock(() => {})),
-		} as unknown as DaemonHub;
-		const mockGetApiKey = mock(async () => 'test-key');
-
-		it('preserves sdkSessionId on fingerprint mismatch for space_task_agent sessions', () => {
-			const session = existingSession({
-				id: 'space:abc:task:t1',
-				type: 'space_task_agent',
-				context: { spaceId: 'abc', taskId: 't1' },
-			});
-			const mockDb = buildMockDb(session);
-
-			const init = {
-				sessionId: session.id,
-				workspacePath: '/test/workspace',
-				type: 'space_task_agent' as const,
-				context: { spaceId: 'abc', taskId: 't1' },
-				model: 'claude-sonnet-4-5-20250929',
-				// Differs from session.config.systemPrompt (undefined) so fingerprint
-				// will change and the mismatch branch is exercised.
-				systemPrompt: 'fresh prompt',
-			};
-
-			const agentSession = AgentSession.fromInit(
-				init,
-				mockDb,
-				mockMessageHub,
-				mockDaemonHub,
-				mockGetApiKey,
-				'claude-sonnet-4-5-20250929'
-			);
-
-			// In-memory session keeps the sdkSessionId (not reset to undefined).
-			expect(agentSession.getSessionData().sdkSessionId).toBe('sdk-existing-abc');
-
-			// Persistence call — fingerprint updated, sdkSessionId NOT in the update payload.
-			const updateCalls = (mockDb as unknown as { updateSession: ReturnType<typeof mock> })
-				.updateSession.mock.calls;
-			expect(updateCalls.length).toBeGreaterThan(0);
-			const updatePayload = updateCalls[0][1] as Record<string, unknown>;
-			// The preservation branch deliberately omits sdkSessionId from the update
-			// (no `updates.sdkSessionId = undefined`), so it is not a key on the payload.
-			expect(Object.prototype.hasOwnProperty.call(updatePayload, 'sdkSessionId')).toBe(false);
-			// Fingerprint is refreshed.
-			const metadata = updatePayload.metadata as Record<string, unknown>;
-			expect(metadata.runtimeInitFingerprint).toEqual(expect.any(String));
-			expect(metadata.runtimeInitFingerprint).not.toBe('stale-fingerprint');
-		});
-
-		it('leaves sdkSessionId untouched for worker sessions (fingerprint branch skipped entirely)', () => {
-			// Worker sessions skip fingerprint tracking inside
-			// `buildRuntimeInitFingerprint` (it returns undefined for workers), so
-			// the mismatch branch never fires for them. sdkSessionId is therefore
-			// preserved by construction — this test pins that invariant down so a
-			// future change that starts fingerprinting workers doesn't silently
-			// start clearing their resume chain.
-			const session = existingSession({
-				id: 'space:abc:task:t1:agent:coder',
-				type: 'worker',
-				context: { spaceId: 'abc', taskId: 't1' },
-			});
-			const mockDb = buildMockDb(session);
-
-			const init = {
-				sessionId: session.id,
-				workspacePath: '/test/workspace',
-				type: 'worker' as const,
-				context: { spaceId: 'abc', taskId: 't1' },
-				model: 'claude-sonnet-4-5-20250929',
-				systemPrompt: 'new prompt',
-			};
-
-			const agentSession = AgentSession.fromInit(
-				init,
-				mockDb,
-				mockMessageHub,
-				mockDaemonHub,
-				mockGetApiKey,
-				'claude-sonnet-4-5-20250929'
-			);
-
-			expect(agentSession.getSessionData().sdkSessionId).toBe('sdk-existing-abc');
-		});
-
-		it('still clears sdkSessionId on fingerprint mismatch for room sessions', () => {
-			const session = existingSession({
-				id: 'room:foo',
-				type: 'room',
-				context: { roomId: 'foo' },
-			});
-			const mockDb = buildMockDb(session);
-
-			const init = {
-				sessionId: session.id,
-				workspacePath: '/test/workspace',
-				type: 'room' as const,
-				context: { roomId: 'foo' },
-				model: 'claude-sonnet-4-5-20250929',
-				systemPrompt: 'new prompt',
-			};
-
-			const agentSession = AgentSession.fromInit(
-				init,
-				mockDb,
-				mockMessageHub,
-				mockDaemonHub,
-				mockGetApiKey,
-				'claude-sonnet-4-5-20250929'
-			);
-
-			// Room sessions are not orchestration carriers — fingerprint mismatch
-			// continues to invalidate the SDK resume chain as before.
-			expect(agentSession.getSessionData().sdkSessionId).toBeUndefined();
-			const updatePayload = (mockDb as unknown as { updateSession: ReturnType<typeof mock> })
-				.updateSession.mock.calls[0][1] as Record<string, unknown>;
-			expect(updatePayload.sdkSessionId).toBeUndefined();
-		});
 	});
-
 	// ---------------------------------------------------------------------------
 	// awaitSdkSessionCaptured
 	// ---------------------------------------------------------------------------

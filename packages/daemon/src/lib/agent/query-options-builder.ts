@@ -47,12 +47,6 @@ import {
 import { homedir } from 'os';
 import { join } from 'path';
 import type { Database } from '../../storage/database';
-import {
-	extractCompactionSummary,
-	findBestEffortResumeSessionAt,
-	getSDKSessionFilePath,
-	messageUuidExistsInSessionFile,
-} from '../sdk-session-file-manager';
 import { requireModelContextWindow } from '../providers/codex-anthropic-bridge/model-context-windows';
 
 export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
@@ -89,6 +83,9 @@ export interface QueryOptionsBuilderContext {
 	readonly session: Session;
 	readonly settingsManager: SettingsManager;
 	readonly db?: Database;
+	consumePendingResumeSessionAt?(): string | undefined;
+	/** Peek at the pending resumeSessionAt without consuming it. Used by addSessionStateOptions which may be called multiple times. */
+	peekPendingResumeSessionAt?(): string | undefined;
 	/** Skills manager for injecting plugin/MCP server skills into SDK options. Optional for backwards compatibility. */
 	readonly skillsManager?: SkillsManager;
 	/** App MCP server repo for resolving mcp_server skill configs. Optional for backwards compatibility. */
@@ -495,32 +492,12 @@ export class QueryOptionsBuilder {
 			result.resume = this.ctx.session.sdkSessionId;
 		}
 
-		// Add resumeSessionAt for conversation rewind.
-		// When set, only messages up to and including this UUID are resumed.
-		// Validate it immediately before handing options to the SDK: SDK compaction
-		// can remove old UUIDs after NeoKai persisted a rewind pointer, and passing a
-		// stale value makes Claude Code fail startup with "No message found".
-		if (this.ctx.session.metadata?.resumeSessionAt) {
-			const resumeSessionAt = this.ctx.session.metadata.resumeSessionAt;
-			if (this.isResumeSessionAtValid(resumeSessionAt)) {
-				result.resumeSessionAt = resumeSessionAt;
-			} else {
-				const bestEffortResumeSessionAt = this.ctx.db
-					? findBestEffortResumeSessionAt(
-							this.getSdkResumeWorkspacePath(),
-							this.ctx.session.sdkSessionId,
-							this.ctx.session.id,
-							this.ctx.db
-						)
-					: undefined;
-				if (bestEffortResumeSessionAt) {
-					this.replaceStaleResumeSessionAt(bestEffortResumeSessionAt);
-					result.resumeSessionAt = bestEffortResumeSessionAt;
-				} else {
-					this.clearStaleResumeSessionAt();
-					delete result.resume;
-				}
-			}
+		const resumeSessionAt = this.ctx.peekPendingResumeSessionAt?.();
+		if (resumeSessionAt && result.resume) {
+			// Only emit resumeSessionAt when we have an active SDK session to resume.
+			// Without resume (sdkSessionId), resumeSessionAt is meaningless and can
+			// cause SDK startup failures.
+			result.resumeSessionAt = resumeSessionAt;
 		}
 
 		// Add thinking configuration based on thinkingLevel config
@@ -528,57 +505,6 @@ export class QueryOptionsBuilder {
 		result.thinking = this.thinkingLevelToThinkingConfig(thinkingLevel);
 
 		return result as Options;
-	}
-
-	private isResumeSessionAtValid(messageUuid: string): boolean {
-		const { session } = this.ctx;
-		const sdkWorkspacePath = this.getSdkResumeWorkspacePath();
-		if (!sdkWorkspacePath || !session.sdkSessionId) {
-			return false;
-		}
-
-		return messageUuidExistsInSessionFile(
-			sdkWorkspacePath,
-			session.sdkSessionId,
-			session.id,
-			messageUuid
-		);
-	}
-
-	private replaceStaleResumeSessionAt(resumeSessionAt: string): void {
-		const { session, db } = this.ctx;
-		session.metadata.resumeSessionAt = resumeSessionAt;
-		db?.updateSession(session.id, {
-			metadata: session.metadata,
-		});
-	}
-
-	private clearStaleResumeSessionAt(): void {
-		const { session, db } = this.ctx;
-		const previousSdkSessionId = session.sdkSessionId;
-		const workspacePath = this.getSdkResumeWorkspacePath();
-
-		delete session.metadata.resumeSessionAt;
-
-		if (workspacePath && previousSdkSessionId) {
-			const compactionSummary = extractCompactionSummary(
-				getSDKSessionFilePath(workspacePath, previousSdkSessionId)
-			);
-			if (compactionSummary) {
-				session.metadata.compactionSummary = compactionSummary;
-			} else {
-				delete session.metadata.compactionSummary;
-			}
-		}
-
-		session.sdkSessionId = undefined;
-		session.sdkOriginPath = undefined;
-
-		db?.updateSession(session.id, {
-			metadata: session.metadata,
-			sdkSessionId: undefined,
-			sdkOriginPath: undefined,
-		});
 	}
 
 	private getSdkResumeWorkspacePath(): string | undefined {
@@ -606,7 +532,6 @@ export class QueryOptionsBuilder {
 	 */
 	private buildSystemPrompt(): Options['systemPrompt'] {
 		const config = this.ctx.session.config;
-		const compactionSummaryText = this.getCompactionSummaryAppendText();
 
 		// Priority 1: Check if SDKConfig systemPrompt is explicitly set
 		if (config.systemPrompt !== undefined) {
@@ -624,7 +549,6 @@ export class QueryOptionsBuilder {
 			};
 
 			const append = this.joinSystemPromptAppendParts([
-				compactionSummaryText,
 				this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
 			]);
 			if (append) {
@@ -637,14 +561,7 @@ export class QueryOptionsBuilder {
 		// No Claude Code preset - use minimal system prompt or undefined
 		// When worktree is used, still append isolation instructions
 		if (this.ctx.session.worktree) {
-			return this.joinSystemPromptAppendParts([
-				compactionSummaryText,
-				this.getMinimalWorktreePrompt(),
-			]);
-		}
-
-		if (compactionSummaryText) {
-			return compactionSummaryText;
+			return this.joinSystemPromptAppendParts([this.getMinimalWorktreePrompt()]);
 		}
 
 		// If no worktree, systemPromptConfig remains undefined (SDK default behavior)
@@ -657,13 +574,10 @@ export class QueryOptionsBuilder {
 	 * Handles both custom string prompts and Claude Code preset configuration
 	 */
 	private buildCustomSystemPrompt(systemPrompt: SystemPromptConfig): Options['systemPrompt'] {
-		const compactionSummaryText = this.getCompactionSummaryAppendText();
-
 		// Custom string prompt
 		if (typeof systemPrompt === 'string') {
 			return this.joinSystemPromptAppendParts([
 				systemPrompt,
-				compactionSummaryText,
 				this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
 			]);
 		}
@@ -677,7 +591,6 @@ export class QueryOptionsBuilder {
 
 			const append = this.joinSystemPromptAppendParts([
 				systemPrompt.append,
-				compactionSummaryText,
 				this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
 			]);
 			if (append) {
@@ -689,15 +602,6 @@ export class QueryOptionsBuilder {
 
 		// Unknown format - return as-is
 		return undefined;
-	}
-
-	private getCompactionSummaryAppendText(): string | undefined {
-		const summary = this.ctx.session.metadata.compactionSummary?.trim();
-		if (!summary) {
-			return undefined;
-		}
-
-		return `[Previous conversation summary - context was reset due to SDK compaction]\n${summary}`;
 	}
 
 	private joinSystemPromptAppendParts(parts: Array<string | undefined>): string {

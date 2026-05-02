@@ -80,6 +80,8 @@ export interface RewindHandlerContext {
 	readonly logger: Logger;
 	readonly queryObject: Query | null;
 	readonly firstMessageReceived: boolean;
+	setPendingResumeSessionAt(messageUuid: string): void;
+	clearPendingResumeSessionAt(): void;
 }
 
 /**
@@ -296,7 +298,7 @@ export class RewindHandler {
 	 *
 	 * Key changes from original:
 	 * 1. Deletes the checkpoint message ITSELF (not just messages after it)
-	 * 2. Finds the previous user message for resumeSessionAt
+	 * 2. Finds the previous user message for one-shot runtime resumeSessionAt
 	 * 3. Explicitly truncates the SDK JSONL file
 	 */
 	private async executeConversationRewind(
@@ -324,7 +326,7 @@ export class RewindHandler {
 			checkpointId
 		);
 
-		// Step 3: Find the previous user message for resumeSessionAt
+		// Step 3: Find the previous user message for one-shot runtime resumeSessionAt
 		// After deleting the checkpoint message, the remaining user messages are the ones before it
 		const remainingUserMessages = db.getUserMessages(session.id);
 		const previousUserMessage =
@@ -341,12 +343,12 @@ export class RewindHandler {
 				previousUserMessage.uuid
 			)
 		) {
-			session.metadata.resumeSessionAt = previousUserMessage.uuid;
+			this.ctx.setPendingResumeSessionAt(previousUserMessage.uuid);
 		} else {
-			// No resumable previous user message - clear resumeSessionAt for fresh start
-			delete session.metadata.resumeSessionAt;
+			// No resumable predecessor — clear any stale pending value from a previous
+			// rewind that didn't complete, so it doesn't leak into the next query.
+			this.ctx.clearPendingResumeSessionAt();
 		}
-		db.updateSession(session.id, { metadata: session.metadata });
 
 		// Step 4: Restart query to apply new state
 		await lifecycleManager.restart();
@@ -751,7 +753,7 @@ export class RewindHandler {
 					);
 				}
 
-				// Update resumeSessionAt to the previous user message
+				// Set one-shot runtime resumeSessionAt to the previous user message
 				const remainingUserMessages = db.getUserMessages(session.id);
 				const previousUserMessage =
 					remainingUserMessages.length > 0
@@ -767,11 +769,11 @@ export class RewindHandler {
 						previousUserMessage.uuid
 					)
 				) {
-					session.metadata.resumeSessionAt = previousUserMessage.uuid;
+					this.ctx.setPendingResumeSessionAt(previousUserMessage.uuid);
 				} else {
-					delete session.metadata.resumeSessionAt;
+					// No resumable predecessor — clear any stale pending value.
+					this.ctx.clearPendingResumeSessionAt();
 				}
-				db.updateSession(session.id, { metadata: session.metadata });
 
 				// Restart query to apply new state
 				await lifecycleManager.restart();
