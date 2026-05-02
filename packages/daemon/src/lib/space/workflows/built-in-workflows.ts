@@ -372,13 +372,15 @@ const REVIEW_THREAD_RESOLUTION_GUIDANCE =
 	'unresolved `reviewThreads` (`isResolved == false`) and resolve addressed threads with ' +
 	'the `resolveReviewThread` mutation. Do not resolve threads you intentionally disagree ' +
 	'with until you have replied with evidence and the reviewer has accepted that resolution. ' +
-	'Verify no unresolved review conversations remain before writing the PR-ready gate again.';
+	'Verify no unresolved review conversations remain before writing the PR-ready gate again. ' +
+	'Never set a PR to auto-merge — auto-merge is not allowed.';
 
 const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
 	'Verify the PR is still open, mergeable, and has no unresolved GitHub review ' +
 	'conversations. Use `gh api graphql` to inspect `reviewThreads` and confirm every ' +
 	'thread has `isResolved: true`; if unresolved conversations remain, request the ' +
-	'author to resolve them instead of approving.';
+	'author to resolve them instead of approving. Never set a PR to auto-merge — ' +
+	'auto-merge is not allowed.';
 
 const FULLSTACK_CODING_PROMPT =
 	'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
@@ -437,7 +439,8 @@ const FULLSTACK_QA_PROMPT =
 	'Use when autonomy blocks self-close (and only when QA passes — see pre-conditions above).\n\n' +
 	'If everything passes, `save_artifact({ type: "result", append: true, summary: "QA passed.", data: { pr_url: "<url>" } })` and ' +
 	'`approve_task`. Do NOT merge the PR yourself — a post-approval reviewer session runs ' +
-	'the merge after the task transitions to `approved`. If issues are found, send a detailed ' +
+	'the merge after the task transitions to `approved`. Never set a PR to ' +
+	'auto-merge — auto-merge is not allowed. If issues are found, send a detailed ' +
 	'fix list to Coding and record a `save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` ' +
 	'audit entry; do NOT call `approve_task` and do NOT call `submit_for_approval`.';
 
@@ -579,7 +582,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'self-close, call `submit_for_approval({ reason: "..." })` instead — ' +
 							'the runtime will still route post-approval once the human approves. ' +
 							'Do NOT attempt to merge the PR yourself; a post-approval reviewer session ' +
-							'runs the merge after the task transitions to `approved`.',
+							'runs the merge after the task transitions to `approved`. Never set a PR to ' +
+							'auto-merge — auto-merge is not allowed.',
 					},
 				},
 			],

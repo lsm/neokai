@@ -185,7 +185,8 @@ describe('Post-approval merge prompt checks review conversations', () => {
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('gh pr checks');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('reviewThreads(first:100');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('isResolved=false');
-		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('resolveReviewThread');
+		// Auto-merge/auto-resolve of review conversations is explicitly prohibited.
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('NOT allowed');
 		const checkIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf(
 			'Verify all GitHub review conversations'
 		);
@@ -321,6 +322,14 @@ describe('Shared merge template canonical content', () => {
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('Approve merging PR');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('approval_source != "human"');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('autonomy_level < 4');
+	});
+
+	test('merge template does not auto-resolve review conversations', () => {
+		// The merge template must NOT instruct the reviewer to resolve threads
+		// with the resolveReviewThread mutation — auto-merge is not allowed.
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('resolveReviewThread');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('auto-resolve');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('NOT allowed');
 	});
 
 	test('template contains the squash-merge command and conflict guard', () => {
