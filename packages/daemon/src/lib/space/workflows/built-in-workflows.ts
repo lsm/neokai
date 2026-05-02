@@ -394,8 +394,10 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 					name: 'coder',
 					customPrompt: {
 						value:
-							'You are a software engineer in a Coding→Review iterative workflow. Your job is to ' +
-							'implement the task, write tests, commit your changes, and open a pull request.\n\n' +
+							'You are a software engineer in a Coding→Review iterative workflow. Your job is implementation only: ' +
+							'implement the task, write tests, commit your changes, and open a pull request. ' +
+							'Do NOT merge PRs. Your job is implementation only. When the reviewer approves, ' +
+							'your work is done. The reviewer handles the merge.\n\n' +
 							'Steps:\n' +
 							'1. Read and understand the task requirements\n' +
 							'2. Implement the changes with logical, well-described commits\n' +

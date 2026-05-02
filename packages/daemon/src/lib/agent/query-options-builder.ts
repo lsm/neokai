@@ -18,7 +18,12 @@
  * - Hooks (output limiter)
  */
 
-import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk';
+import type {
+	Options,
+	CanUseTool,
+	HookCallback,
+	PreToolUseHookInput,
+} from '@anthropic-ai/claude-agent-sdk';
 import type {
 	Session,
 	ThinkingLevel,
@@ -50,6 +55,44 @@ import type { Database } from '../../storage/database';
 import { requireModelContextWindow } from '../providers/codex-anthropic-bridge/model-context-windows';
 
 export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
+
+const BLOCK_CODER_PR_MERGE_REASON =
+	'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.';
+
+function isCoderRoleSession(session: Session): boolean {
+	if (session.type !== 'worker') return false;
+	const agentName = session.config.agent?.toLowerCase();
+	return agentName === 'coder';
+}
+
+function extractBashCommand(input: unknown): string {
+	if (!input || typeof input !== 'object') return '';
+	const command = (input as Record<string, unknown>).command;
+	return typeof command === 'string' ? command : '';
+}
+
+function isGhPrMergeCommand(command: string): boolean {
+	return /(^|[;&|()\n]\s*)gh\s+pr\s+merge\b/.test(command);
+}
+
+function createBlockCoderPrMergeHook(): HookCallback {
+	return async (input) => {
+		if (input.hook_event_name !== 'PreToolUse') return {};
+		const preInput = input as PreToolUseHookInput;
+		if (preInput.tool_name !== 'Bash') return {};
+
+		const command = extractBashCommand(preInput.tool_input);
+		if (!isGhPrMergeCommand(command)) return {};
+
+		return {
+			hookSpecificOutput: {
+				hookEventName: 'PreToolUse' as const,
+				permissionDecision: 'deny' as const,
+				permissionDecisionReason: BLOCK_CODER_PR_MERGE_REASON,
+			},
+		};
+	};
+}
 
 /**
  * Provider-specific SDK settings overrides.
@@ -888,7 +931,11 @@ CRITICAL RULES:
 	 * Build hooks configuration
 	 */
 	private buildHooks(): Options['hooks'] {
-		return {};
+		const hooks: NonNullable<Options['hooks']> = {};
+		if (isCoderRoleSession(this.ctx.session)) {
+			hooks.PreToolUse = [{ matcher: 'Bash', hooks: [createBlockCoderPrMergeHook()] }];
+		}
+		return hooks;
 	}
 
 	/**

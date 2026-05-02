@@ -105,6 +105,13 @@ describe('CODING_WORKFLOW template', () => {
 		expect(CODING_WORKFLOW.nodes[1].agents[0]?.name).toBe('reviewer');
 	});
 
+	test('coder prompt forbids merging and delegates approval merge to reviewer', () => {
+		const prompt = CODING_WORKFLOW.nodes[0].agents[0]?.customPrompt?.value;
+		expect(prompt).toContain('Do NOT merge PRs. Your job is implementation only.');
+		expect(prompt).toContain('When the reviewer approves, your work is done.');
+		expect(prompt).toContain('The reviewer handles the merge.');
+	});
+
 	test('has two channels', () => {
 		expect(CODING_WORKFLOW.channels).toHaveLength(2);
 	});

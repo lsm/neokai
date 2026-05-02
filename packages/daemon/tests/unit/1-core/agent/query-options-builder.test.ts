@@ -758,11 +758,65 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('hooks configuration', () => {
-		it('should return empty hooks', async () => {
+		it('should return empty hooks for non-coder sessions', async () => {
 			const options = await builder.build();
 
-			// buildHooks() returns {} — no hooks configured
 			expect(options.hooks).toEqual({});
+		});
+
+		it('denies gh pr merge for coder-role sessions', async () => {
+			mockSession.type = 'worker';
+			mockSession.config.agent = 'coder';
+			const options = await builder.build();
+
+			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+			expect(hook).toBeDefined();
+
+			const result = await hook!(
+				{
+					hook_event_name: 'PreToolUse',
+					tool_name: 'Bash',
+					tool_input: { command: 'gh pr merge https://github.com/org/repo/pull/1 --squash' },
+					tool_use_id: 'tool-1',
+					session_id: 'session-1',
+					transcript_path: '/tmp/transcript.jsonl',
+					cwd: '/tmp/repo',
+				},
+				'tool-1',
+				{ signal: new AbortController().signal }
+			);
+
+			expect(result).toEqual({
+				hookSpecificOutput: {
+					hookEventName: 'PreToolUse',
+					permissionDecision: 'deny',
+					permissionDecisionReason:
+						'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
+				},
+			});
+		});
+
+		it('allows non-merge bash commands for coder-role sessions', async () => {
+			mockSession.type = 'worker';
+			mockSession.config.agent = 'coder';
+			const options = await builder.build();
+			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+
+			const result = await hook!(
+				{
+					hook_event_name: 'PreToolUse',
+					tool_name: 'Bash',
+					tool_input: { command: 'gh pr view --json url && bun test' },
+					tool_use_id: 'tool-1',
+					session_id: 'session-1',
+					transcript_path: '/tmp/transcript.jsonl',
+					cwd: '/tmp/repo',
+				},
+				'tool-1',
+				{ signal: new AbortController().signal }
+			);
+
+			expect(result).toEqual({});
 		});
 	});
 
