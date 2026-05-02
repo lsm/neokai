@@ -145,6 +145,7 @@ interface CompletedFeedTurn {
 	state: 'completed';
 	id: string;
 	agent: string;
+	agentRole: string;
 	startedAt: number;
 	durationSec: number;
 	toolCalls: number;
@@ -179,6 +180,7 @@ interface ActiveFeedTurn {
 	state: 'active';
 	id: string;
 	agent: string;
+	agentRole: string;
 	startedAt: number;
 	status: string;
 	toolCalls: number;
@@ -199,6 +201,8 @@ interface MessageFeedTurn {
 	fromLabel: string;
 	/** Recipient agent label — the session this row belongs to. */
 	toLabel: string;
+	/** Raw workflow slot/role name for routing task messages. */
+	toRole: string;
 	/** Rendered message text (markdown when not fallback). */
 	body: string;
 	bodyIsFallback: boolean;
@@ -481,6 +485,7 @@ function buildCompletedTurn(
 		state: 'completed',
 		id: turnId,
 		agent: block.agentLabel,
+		agentRole: rows[0]?.role ?? block.agentLabel,
 		startedAt,
 		durationSec,
 		toolCalls: countSummaryEntries(transitionSummary, 'tool_use') ?? countToolCalls(rows),
@@ -504,6 +509,7 @@ function buildActiveTurn(
 		state: 'active',
 		id: turnId,
 		agent: block.agentLabel,
+		agentRole: rows[0]?.role ?? block.agentLabel,
 		startedAt: rows[0].createdAt,
 		status: 'Running…',
 		toolCalls: countToolCallsForActive(rows, summary),
@@ -612,6 +618,7 @@ function buildMessageTurn(
 		id: `msg-${String(row.id)}`,
 		fromLabel,
 		toLabel: row.label,
+		toRole: row.role,
 		body,
 		bodyIsFallback: fallback,
 		createdAt: row.createdAt,
@@ -961,7 +968,7 @@ function CompletedBody({
 				if (overlayTaskId) {
 					pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid, {
 						taskId: overlayTaskId,
-						agentName: turn.agent,
+						agentName: turn.agentRole,
 					});
 				} else {
 					pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid);
@@ -1069,7 +1076,7 @@ function AgentTurnRow({
 				if (overlayTaskId) {
 					pushOverlayHistory(turn.sessionId as string, turn.agent, highlightMessageUuid, {
 						taskId: overlayTaskId,
-						agentName: turn.agent,
+						agentName: turn.agentRole,
 					});
 				} else {
 					pushOverlayHistory(turn.sessionId as string, turn.agent, highlightMessageUuid);
@@ -1256,7 +1263,7 @@ function SyntheticMessageTurn({
 										turn.highlightMessageUuid,
 										{
 											taskId: overlayTaskId,
-											agentName: turn.toLabel,
+											agentName: turn.toRole,
 										}
 									);
 								} else {

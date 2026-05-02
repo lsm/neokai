@@ -30,6 +30,7 @@ export interface ParsedThreadRow {
 	id: string | number;
 	sessionId: string | null;
 	label: string;
+	role: string;
 	taskId: string;
 	taskTitle: string;
 	createdAt: number;
@@ -48,6 +49,7 @@ export interface TodoItem {
 export interface SpaceTaskThreadEvent {
 	id: string;
 	label: string;
+	role: string;
 	taskId: string;
 	taskTitle: string;
 	sessionId: string | null;
@@ -150,6 +152,7 @@ function extractAssistantEvents(
 			events.push({
 				id: eventId,
 				label: row.label,
+				role: row.role,
 				taskId: row.taskId,
 				taskTitle: row.taskTitle,
 				sessionId: row.sessionId,
@@ -192,6 +195,7 @@ function extractAssistantEvents(
 					events.push({
 						id: eventId,
 						label: row.label,
+						role: row.role,
 						taskId: row.taskId,
 						taskTitle: row.taskTitle,
 						sessionId: row.sessionId,
@@ -268,6 +272,7 @@ function extractAssistantEvents(
 			events.push({
 				id: eventId,
 				label: row.label,
+				role: row.role,
 				taskId: row.taskId,
 				taskTitle: row.taskTitle,
 				sessionId: row.sessionId,
@@ -294,6 +299,7 @@ function extractAssistantEvents(
 			events.push({
 				id: eventId,
 				label: row.label,
+				role: row.role,
 				taskId: row.taskId,
 				taskTitle: row.taskTitle,
 				sessionId: row.sessionId,
@@ -310,6 +316,7 @@ function extractAssistantEvents(
 		events.push({
 			id: `${String(row.id)}-assistant-empty`,
 			label: row.label,
+			role: row.role,
 			taskId: row.taskId,
 			taskTitle: row.taskTitle,
 			sessionId: row.sessionId,
@@ -337,6 +344,7 @@ export function parseThreadRow(row: SpaceTaskThreadMessageRow): ParsedThreadRow 
 			id: row.id,
 			sessionId: row.sessionId,
 			label: row.label,
+			role: row.role,
 			taskId: row.taskId,
 			taskTitle: row.taskTitle,
 			createdAt: row.createdAt,
@@ -350,6 +358,7 @@ export function parseThreadRow(row: SpaceTaskThreadMessageRow): ParsedThreadRow 
 			id: row.id,
 			sessionId: row.sessionId,
 			label: row.label,
+			role: row.role,
 			taskId: row.taskId,
 			taskTitle: row.taskTitle,
 			createdAt: row.createdAt,
@@ -369,6 +378,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 			events.push({
 				id: `${String(row.id)}-fallback`,
 				label: row.label,
+				role: row.role,
 				taskId: row.taskId,
 				taskTitle: row.taskTitle,
 				sessionId: row.sessionId,
@@ -390,6 +400,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 			events.push({
 				id: `${String(row.id)}-user`,
 				label: row.label,
+				role: row.role,
 				taskId: row.taskId,
 				taskTitle: row.taskTitle,
 				sessionId: row.sessionId,
@@ -409,6 +420,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 			events.push({
 				id: `${String(row.id)}-progress`,
 				label: row.label,
+				role: row.role,
 				taskId: row.taskId,
 				taskTitle: row.taskTitle,
 				sessionId: row.sessionId,
@@ -430,6 +442,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 			events.push({
 				id: `${String(row.id)}-result`,
 				label: row.label,
+				role: row.role,
 				taskId: row.taskId,
 				taskTitle: row.taskTitle,
 				sessionId: row.sessionId,
@@ -456,6 +469,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 			events.push({
 				id: `${String(row.id)}-rate-limit`,
 				label: row.label,
+				role: row.role,
 				taskId: row.taskId,
 				taskTitle: row.taskTitle,
 				sessionId: row.sessionId,
@@ -484,6 +498,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 			events.push({
 				id: `${String(row.id)}-system`,
 				label: row.label,
+				role: row.role,
 				taskId: row.taskId,
 				taskTitle: row.taskTitle,
 				sessionId: row.sessionId,
@@ -500,6 +515,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 		events.push({
 			id: `${String(row.id)}-unknown`,
 			label: row.label,
+			role: row.role,
 			taskId: row.taskId,
 			taskTitle: row.taskTitle,
 			sessionId: row.sessionId,

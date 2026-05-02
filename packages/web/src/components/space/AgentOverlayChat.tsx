@@ -58,13 +58,18 @@ export function AgentOverlayChat({
 }: AgentOverlayChatProps) {
 	const panelRef = useRef<HTMLDivElement>(null);
 	const handleTaskContextSend = taskContext
-		? async (message: string) => {
+		? async (message: string, _images?: unknown[]) => {
 				const trimmed = message.trim();
 				if (!trimmed) return false;
-				await spaceStore.sendTaskMessage(taskContext.taskId, trimmed, {
+				const result = await spaceStore.sendTaskMessage(taskContext.taskId, trimmed, {
 					kind: 'node_agent',
 					agentName: taskContext.agentName,
 				});
+				if (result?.delivered === false && !result?.queued) {
+					throw new Error(
+						'Agent is starting — your message could not be delivered. Try again in a moment.'
+					);
+				}
 				return true;
 			}
 		: undefined;
