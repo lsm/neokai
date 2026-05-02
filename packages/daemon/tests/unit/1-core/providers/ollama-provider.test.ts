@@ -89,6 +89,30 @@ describe('OllamaProvider', () => {
 		});
 	});
 
+	it('clears the Ollama model cache for forced refreshes', async () => {
+		const fetchMock = mock(
+			async () =>
+				new Response(
+					JSON.stringify({
+						models: [{ name: 'llama3.2:latest', model: 'llama3.2:latest' }],
+					}),
+					{ status: 200 }
+				)
+		);
+		const provider = new OllamaProvider({
+			kind: 'local',
+			env: process.env,
+			fetchImpl: fetchMock as typeof fetch,
+		});
+
+		await provider.getModels();
+		await provider.getModels();
+		provider.clearModelCache();
+		await provider.getModels();
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
 	it('uses bearer auth and cloud base URL for Ollama Cloud model listing', async () => {
 		process.env.OLLAMA_CLOUD_API_KEY = 'ollama-key';
 		const fetchMock = mock(

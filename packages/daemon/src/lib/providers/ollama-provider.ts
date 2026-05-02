@@ -121,6 +121,11 @@ export class OllamaProvider implements Provider {
 		);
 	}
 
+	clearModelCache(): void {
+		this.modelCache = null;
+		this.modelCacheAt = 0;
+	}
+
 	async getModels(): Promise<ModelInfo[]> {
 		if (this.kind === 'cloud' && !this.getApiKey()) return [];
 		if (this.modelCache && Date.now() - this.modelCacheAt < 5 * 60_000) return this.modelCache;
