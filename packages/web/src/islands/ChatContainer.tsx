@@ -72,6 +72,48 @@ import { cn } from '../lib/utils';
 import type { StructuredError } from '../types/error.ts';
 import { ErrorCategory } from '../types/error.ts';
 
+export async function sendChatContainerMessage({
+	content,
+	images,
+	deliveryMode,
+	onSendOverride,
+	sendMessage,
+	setLocalError,
+}: {
+	content: string;
+	images?: MessageImage[];
+	deliveryMode: MessageDeliveryMode;
+	onSendOverride?: (content: string, images?: MessageImage[]) => Promise<boolean>;
+	sendMessage: (
+		content: string,
+		images?: MessageImage[],
+		deliveryMode?: MessageDeliveryMode
+	) => Promise<boolean>;
+	setLocalError: (message: string | null) => void;
+}): Promise<boolean> {
+	if (onSendOverride) {
+		if (images && images.length > 0) {
+			toast.error('Image attachments are not supported for task agent messages yet.');
+			return false;
+		}
+		if (deliveryMode !== 'immediate') {
+			toast.error('Queued sends are not supported for task agent messages yet.');
+			return false;
+		}
+		try {
+			setLocalError(null);
+			sessionStore.clearError();
+			return await onSendOverride(content, images);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			setLocalError(message);
+			return false;
+		}
+	}
+
+	return await sendMessage(content, images, deliveryMode);
+}
+
 interface ChatContainerProps {
 	sessionId: string;
 	readonly?: boolean;
@@ -101,6 +143,8 @@ interface ChatContainerProps {
 	 * normal chat view.
 	 */
 	pendingAgent?: { taskId: string; agentName: string } | null;
+	/** Optional send override used by workflow node-agent overlays. */
+	onSendOverride?: (content: string, images?: MessageImage[]) => Promise<boolean>;
 }
 
 export default function ChatContainer({
@@ -109,6 +153,7 @@ export default function ChatContainer({
 	onBack,
 	highlightMessageId,
 	pendingAgent,
+	onSendOverride,
 }: ChatContainerProps) {
 	// ========================================
 	// Refs
@@ -148,10 +193,18 @@ export default function ChatContainer({
 
 	// When a live session appears, hand off to the standard session-mode overlay.
 	useEffect(() => {
-		if (pendingLiveMember?.sessionId) {
+		if (pendingLiveMember?.sessionId && pendingAgent) {
 			replaceOverlayHistory(
 				pendingLiveMember.sessionId,
-				pendingLiveMember.label || pendingAgent!.agentName
+				pendingLiveMember.label || pendingAgent.agentName,
+				undefined,
+				{
+					taskId: pendingAgent.taskId,
+					agentName: pendingAgent.agentName,
+					...(pendingLiveMember.nodeExecution?.nodeExecutionId
+						? { nodeExecutionId: pendingLiveMember.nodeExecution.nodeExecutionId }
+						: {}),
+				}
 			);
 		}
 	}, [pendingLiveMember, pendingAgent]);
@@ -177,7 +230,20 @@ export default function ChatContainer({
 			);
 			setPendingContent('');
 			if (result.sessionId) {
-				replaceOverlayHistory(result.sessionId, pendingAgent.agentName);
+				const matchingLiveMember =
+					(spaceStore.taskActivity.value.get(pendingAgent.taskId) ?? []).find(
+						(m) =>
+							m.kind === 'node_agent' &&
+							m.role === pendingAgent.agentName &&
+							m.sessionId === result.sessionId
+					) ?? null;
+				replaceOverlayHistory(result.sessionId, pendingAgent.agentName, undefined, {
+					taskId: pendingAgent.taskId,
+					agentName: pendingAgent.agentName,
+					...(matchingLiveMember?.nodeExecution?.nodeExecutionId
+						? { nodeExecutionId: matchingLiveMember.nodeExecution.nodeExecutionId }
+						: {}),
+				});
 			} else {
 				setPendingWaitingForSession(true);
 			}
@@ -809,9 +875,16 @@ export default function ChatContainer({
 				}
 			}
 
-			return await sendMessage(content, images, deliveryMode);
+			return await sendChatContainerMessage({
+				content,
+				images,
+				deliveryMode,
+				onSendOverride,
+				sendMessage,
+				setLocalError,
+			});
 		},
-		[sendMessage, session, showWorktreeChoice, pendingWorktreeMode, sessionId]
+		[sendMessage, session, showWorktreeChoice, pendingWorktreeMode, sessionId, onSendOverride]
 	);
 
 	const handleAutoScrollChange = useCallback(

@@ -18,11 +18,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const {
 	mockSpaceOverlaySessionIdSignal,
 	mockSpaceOverlayAgentNameSignal,
+	mockSpaceOverlayTaskContextSignal,
 	viewTabBridge,
 	idBridge,
 } = vi.hoisted(() => ({
 	mockSpaceOverlaySessionIdSignal: { value: null as string | null },
 	mockSpaceOverlayAgentNameSignal: { value: null as string | null },
+	mockSpaceOverlayTaskContextSignal: {
+		value: null as { taskId: string; agentName: string; nodeExecutionId?: string | null } | null,
+	},
 	// Bridges to hold real signals for reactive tab/id updates
 	viewTabBridge: { signal: null as ReturnType<typeof signal<string>> | null },
 	idBridge: { signal: null as ReturnType<typeof signal<string | null>> | null },
@@ -35,10 +39,18 @@ const {
 	mockNavigateToSpaceTask,
 } = vi.hoisted(() => ({
 	mockNavigateToSpaceAgent: vi.fn(),
-	mockPushOverlayHistory: vi.fn((sessionId: string, agentName?: string) => {
-		mockSpaceOverlaySessionIdSignal.value = sessionId;
-		mockSpaceOverlayAgentNameSignal.value = agentName ?? null;
-	}),
+	mockPushOverlayHistory: vi.fn(
+		(
+			sessionId: string,
+			agentName?: string,
+			_highlight?: string,
+			taskContext?: { taskId: string; agentName: string; nodeExecutionId?: string | null } | null
+		) => {
+			mockSpaceOverlaySessionIdSignal.value = sessionId;
+			mockSpaceOverlayAgentNameSignal.value = agentName ?? null;
+			mockSpaceOverlayTaskContextSignal.value = taskContext ?? null;
+		}
+	),
 	mockPushOverlayHistoryForPendingAgent: vi.fn(),
 	mockNavigateToSpaceTask: vi.fn((_spaceId: string, _taskId: string, view: string) => {
 		if (viewTabBridge.signal) {
@@ -74,6 +86,9 @@ vi.mock('../../../lib/signals', async (importOriginal) => {
 		},
 		get spaceOverlayAgentNameSignal() {
 			return mockSpaceOverlayAgentNameSignal;
+		},
+		get spaceOverlayTaskContextSignal() {
+			return mockSpaceOverlayTaskContextSignal;
 		},
 		get currentSpaceTaskViewTabSignal() {
 			return mockCurrentSpaceTaskViewTabSignal;
@@ -248,6 +263,7 @@ describe('SpaceTaskPane', () => {
 		mockUnsubscribeTaskActivity.mockClear();
 		mockSpaceOverlaySessionIdSignal.value = null;
 		mockSpaceOverlayAgentNameSignal.value = null;
+		mockSpaceOverlayTaskContextSignal.value = null;
 		mockCurrentSpaceTaskViewTabSignal.value = 'thread';
 		mockCurrentSpaceIdSignal.value = null;
 		mockWorkflowCanvasOnNodeClick.mockClear();
@@ -477,6 +493,7 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		mockNavigateToSpaceTask.mockClear();
 		mockSpaceOverlaySessionIdSignal.value = null;
 		mockSpaceOverlayAgentNameSignal.value = null;
+		mockSpaceOverlayTaskContextSignal.value = null;
 		mockCurrentSpaceTaskViewTabSignal.value = 'thread';
 		mockCurrentSpaceIdSignal.value = null;
 	});
@@ -653,6 +670,7 @@ describe('SpaceTaskPane — canvas toggle', () => {
 						state: 'active' as const,
 						messageCount: 0,
 						nodeExecution: {
+							nodeExecutionId: 'exec-coder-1',
 							nodeId: 'node-1',
 							agentName: 'coder',
 							status: 'in_progress' as const,
@@ -672,6 +690,11 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		// Should use the activity member's session, NOT the parent task's session
 		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-node-agent');
 		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Coder Node');
+		expect(mockSpaceOverlayTaskContextSignal.value).toEqual({
+			taskId: 'task-1',
+			agentName: 'coder',
+			nodeExecutionId: 'exec-coder-1',
+		});
 	});
 
 	it('canvas node click matches by role (slot name), not by label — regression for Review node bug', () => {
@@ -831,6 +854,7 @@ describe('SpaceTaskPane — activity members actions', () => {
 		mockUnsubscribeTaskActivity.mockClear();
 		mockSpaceOverlaySessionIdSignal.value = null;
 		mockSpaceOverlayAgentNameSignal.value = null;
+		mockSpaceOverlayTaskContextSignal.value = null;
 		mockCurrentSpaceTaskViewTabSignal.value = 'thread';
 		mockCurrentSpaceIdSignal.value = null;
 	});
@@ -1023,6 +1047,7 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
 		mockPushOverlayHistoryForPendingAgent.mockClear();
 		mockSpaceOverlaySessionIdSignal.value = null;
 		mockSpaceOverlayAgentNameSignal.value = null;
+		mockSpaceOverlayTaskContextSignal.value = null;
 	});
 
 	afterEach(() => {

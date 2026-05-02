@@ -15,22 +15,51 @@
  * - Escape listener is removed on unmount.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render } from '@testing-library/preact';
+
+const mockSendTaskMessage = vi.hoisted(() => vi.fn());
 
 // Mock ChatContainer — it relies on WebSocket/stores not available in unit
 // tests. Expose `onBack` via a data-attribute so tests can assert it was
 // forwarded, and render a button that invokes it so the dismiss path through
 // ChatContainer's header is covered end-to-end.
 vi.mock('../../../islands/ChatContainer', () => ({
-	default: ({ sessionId, onBack }: { sessionId: string; onBack?: () => void }) => (
-		<div data-testid="mock-chat-container" data-has-on-back={onBack ? '1' : '0'}>
+	default: ({
+		sessionId,
+		onBack,
+		onSendOverride,
+	}: {
+		sessionId: string;
+		onBack?: () => void;
+		onSendOverride?: (message: string) => Promise<boolean>;
+	}) => (
+		<div
+			data-testid="mock-chat-container"
+			data-has-on-back={onBack ? '1' : '0'}
+			data-has-send-override={onSendOverride ? '1' : '0'}
+		>
 			<button type="button" data-testid="mock-chat-header-back" onClick={onBack}>
 				back
 			</button>
+			{onSendOverride ? (
+				<button
+					type="button"
+					data-testid="mock-chat-send-override"
+					onClick={() => void onSendOverride(' hello node ')}
+				>
+					send
+				</button>
+			) : null}
 			{sessionId}
 		</div>
 	),
+}));
+
+vi.mock('../../../lib/space-store', () => ({
+	spaceStore: {
+		sendTaskMessage: mockSendTaskMessage,
+	},
 }));
 
 // Mock cn utility
@@ -47,6 +76,8 @@ describe('AgentOverlayChat', () => {
 
 	beforeEach(() => {
 		cleanup();
+		mockSendTaskMessage.mockReset();
+		mockSendTaskMessage.mockResolvedValue({ delivered: true });
 		onClose = vi.fn();
 	});
 
@@ -76,6 +107,30 @@ describe('AgentOverlayChat', () => {
 		expect(getByTestId('mock-chat-container').getAttribute('data-has-on-back')).toBe('1');
 		fireEvent.click(getByTestId('mock-chat-header-back'));
 		expect(onClose).toHaveBeenCalledTimes(1);
+	});
+
+	it('routes task-context sends with the exact node execution id', async () => {
+		const { getByTestId } = render(
+			<AgentOverlayChat
+				sessionId={SESSION_ID}
+				onClose={onClose}
+				taskContext={{
+					taskId: 'task-1',
+					agentName: 'coder',
+					nodeExecutionId: 'exec-coder-1',
+				}}
+			/>
+		);
+		expect(getByTestId('mock-chat-container').getAttribute('data-has-send-override')).toBe('1');
+
+		fireEvent.click(getByTestId('mock-chat-send-override'));
+		await vi.waitFor(() => {
+			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'hello node', {
+				kind: 'node_agent',
+				agentName: 'coder',
+				nodeExecutionId: 'exec-coder-1',
+			});
+		});
 	});
 
 	it('calls onClose when Escape key is pressed', () => {
