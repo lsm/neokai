@@ -1182,6 +1182,74 @@ describe('QueryRunner', () => {
 			expect((ctx as Record<string, unknown>).startupTimeoutAutoRecoverAttempts).toBeUndefined();
 		});
 	});
+
+	describe('generation-gated consumePendingResumeSessionAt', () => {
+		// Verify that the consumePendingResumeSessionAt call after the for-await
+		// loop is gated on getQueryGeneration() === queryGeneration. Without this
+		// guard, a stale aborted query (from restart()/rewind) would consume the
+		// pendingResumeSessionAt meant for the new query.
+		//
+		// Uses mock.module to replace the SDK query() with an empty async generator
+		// so the for-await loop completes normally and the consume call is reached.
+
+		let consumeSpy: ReturnType<typeof mock>;
+		let savedApiKey: string | undefined;
+
+		beforeEach(() => {
+			savedApiKey = process.env.ANTHROPIC_API_KEY;
+			process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+			mockSession.workspacePath = tmpdir();
+			consumeSpy = mock(() => 'consumed-uuid');
+			buildSpy.mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+
+			// Mock the SDK query() to return an empty async generator
+			mock.module('@anthropic-ai/claude-agent-sdk', () => {
+				async function* emptyQuery(): AsyncGenerator<unknown, void, unknown> {
+					// Empty — for-await loop completes immediately
+				}
+				return {
+					query: () => emptyQuery(),
+				};
+			});
+		});
+
+		afterEach(() => {
+			mock.restore();
+			if (savedApiKey === undefined) {
+				delete process.env.ANTHROPIC_API_KEY;
+			} else {
+				process.env.ANTHROPIC_API_KEY = savedApiKey;
+			}
+		});
+
+		it('should call consumePendingResumeSessionAt when generation matches', async () => {
+			let gen = 0;
+			const ctx = createContext({
+				consumePendingResumeSessionAt: consumeSpy,
+				incrementQueryGeneration: () => ++gen,
+				getQueryGeneration: () => gen,
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(consumeSpy).toHaveBeenCalled();
+		});
+
+		it('should NOT call consumePendingResumeSessionAt when generation mismatches', async () => {
+			let gen = 0;
+			const ctx = createContext({
+				consumePendingResumeSessionAt: consumeSpy,
+				incrementQueryGeneration: () => ++gen, // returns 1
+				getQueryGeneration: () => 2, // current gen is 2, query ran as gen 1
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(consumeSpy).not.toHaveBeenCalled();
+		});
+	});
 });
 
 describe('QueryRunner error categorization', () => {

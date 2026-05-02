@@ -395,7 +395,6 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 			setCleaningUp: mock(() => {}),
 			cleanupEventSubscriptions: mock(() => {}),
 			clearModelsCache: clearModelsCacheSpy,
-			clearPendingResumeSessionAt: mock(() => {}),
 			...overrides,
 		};
 	}
