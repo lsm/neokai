@@ -45,7 +45,73 @@ const FULLSTACK_CODING_NODE = 'tpl-fullstack-coding';
 const FULLSTACK_REVIEW_NODE = 'tpl-fullstack-review';
 const FULLSTACK_QA_NODE = 'tpl-fullstack-qa';
 
+const REVIEW_THREAD_CHECK_BASH_FUNCTION = [
+	'check_unresolved_review_threads() {',
+	'  local pr_url="$1"',
+	'  local pr_meta owner repo number gh_hostname threads_json unresolved_count unresolved_urls cursor has_more',
+	'  pr_meta=$(jq -nr --arg url "$pr_url" \'$url | capture("https?://(?<host>[^/]+)/(?<owner>[^/]+)/(?<repo>[^/]+)/pull/(?<number>[0-9]+)")\' 2>/dev/null || true)',
+	'  if [ -z "$pr_meta" ]; then',
+	'    echo "Unable to parse GitHub PR URL for review-thread check: ${pr_url}" >&2',
+	'    exit 1',
+	'  fi',
+	'  owner=$(jq -r .owner <<< "$pr_meta")',
+	'  repo=$(jq -r .repo <<< "$pr_meta")',
+	'  number=$(jq -r .number <<< "$pr_meta")',
+	'  gh_hostname=$(jq -r .host <<< "$pr_meta")',
+	'  local gh_host_args=("--hostname" "$gh_hostname")',
+	'  unresolved_count=0',
+	'  unresolved_urls=""',
+	'  cursor=""',
+	'  while true; do',
+	'    local page_args=("-f" "owner=$owner" "-f" "name=$repo" "-F" "number=$number")',
+	'    local page_query',
+	'    if [ -n "$cursor" ]; then',
+	'      page_args+=("-f" "cursor=$cursor")',
+	"      page_query='query($owner:String!,$name:String!,$number:Int!,$cursor:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}'",
+	'    else',
+	"      page_query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}'",
+	'    fi',
+	'    page_args+=("-f" "query=$page_query")',
+	'    if ! threads_json=$(gh api graphql "${gh_host_args[@]}" "${page_args[@]}"); then',
+	'      echo "Failed to retrieve review conversations for ${pr_url}" >&2',
+	'      exit 1',
+	'    fi',
+	'    if [ "$(jq \'.errors\' <<< "$threads_json")" != "null" ]; then',
+	'      echo "GraphQL errors when retrieving review conversations for ${pr_url}: $(jq -c \'.errors\' <<< "$threads_json")" >&2',
+	'      exit 1',
+	'    fi',
+	'    if [ "$(jq \'.data.repository.pullRequest.reviewThreads\' <<< "$threads_json")" = "null" ]; then',
+	'      echo "Incomplete GraphQL response for ${pr_url} — reviewThreads data missing" >&2',
+	'      exit 1',
+	'    fi',
+	'    local page_unresolved',
+	'    page_unresolved=$(jq \'[.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false)] | length\' <<< "$threads_json")',
+	'    unresolved_count=$((unresolved_count + page_unresolved))',
+	'    if [ "$page_unresolved" != "0" ]; then',
+	'      local page_urls',
+	'      page_urls=$(jq -r \'.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false) | (.comments.nodes[0].url // .id)\' <<< "$threads_json")',
+	'      unresolved_urls="${unresolved_urls}${page_urls}"$\'\\n\'',
+	'    fi',
+	'    has_more=$(jq -r \'.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false\' <<< "$threads_json")',
+	'    if [ "$has_more" != "true" ]; then',
+	'      break',
+	'    fi',
+	'    cursor=$(jq -r \'.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // ""\' <<< "$threads_json")',
+	'    if [ -z "$cursor" ]; then',
+	'      echo "Incomplete pagination for ${pr_url}: hasNextPage is true but endCursor is missing" >&2',
+	'      exit 1',
+	'    fi',
+	'  done',
+	'  if [ "$unresolved_count" != "0" ]; then',
+	'    echo "PR has ${unresolved_count} unresolved review conversation(s); resolve them before handoff:" >&2',
+	'    printf \'%s\\n\' "$unresolved_urls" >&2',
+	'    exit 1',
+	'  fi',
+	'}',
+].join('\n');
+
 const PR_READY_BASH_SCRIPT = [
+	REVIEW_THREAD_CHECK_BASH_FUNCTION,
 	'# Prefer explicit PR URL from gate data JSON when available; fallback to current branch.',
 	'PR_TARGET=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
 	'# When pr_url is supplied, validate that exact PR rather than rediscovering via branch filters.',
@@ -84,6 +150,7 @@ const PR_READY_BASH_SCRIPT = [
 	'  echo "PR merge checks not satisfied (mergeStateStatus: ${PR_STATUS:-unknown})" >&2',
 	'  exit 1',
 	'fi',
+	'check_unresolved_review_threads "$PR_URL"',
 	'jq -n --arg url "$PR_URL" \'{"pr_url":$url}\'',
 ].join('\n');
 
@@ -299,12 +366,30 @@ const PD_TASK_DISPATCHER_PROMPT =
 	'Do NOT create fewer tasks than the plan requires. ' +
 	'If the plan is empty or ambiguous, send feedback to Planning before closing the task.';
 
+const REVIEW_THREAD_RESOLUTION_GUIDANCE =
+	'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
+	'threads — including those where you disagree with the reviewer. First reply with your ' +
+	'reasoning, then resolve the thread with the `resolveReviewThread` mutation. The ' +
+	'PR-ready gate blocks on any unresolved thread, so leaving one open creates a deadlock. ' +
+	'If the reviewer disagrees with your reasoning, they can re-open the thread. ' +
+	'Use `gh api graphql` to verify no unresolved review conversations remain before ' +
+	'writing the PR-ready gate again. ' +
+	'Never set a PR to auto-merge — auto-merge is not allowed.';
+
+const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
+	'Verify the PR is still open, mergeable, and has no unresolved GitHub review ' +
+	'conversations. Use `gh api graphql` to inspect `reviewThreads` and confirm every ' +
+	'thread has `isResolved: true`; if unresolved conversations remain, request the ' +
+	'author to resolve them instead of approving. Never set a PR to auto-merge — ' +
+	'auto-merge is not allowed.';
+
 const FULLSTACK_CODING_PROMPT =
 	'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
 	'write tests, and keep one PR updated across review and QA cycles.\n\n' +
 	'When implementation is ready, ensure the PR is open and mergeable and write code-pr-gate with ' +
 	'field pr_url so Review can activate. Coding is not the end node — the task-completion tools ' +
-	'(`approve_task`, `submit_for_approval`) are not available to you.';
+	'(`approve_task`, `submit_for_approval`) are not available to you.\n\n' +
+	REVIEW_THREAD_RESOLUTION_GUIDANCE;
 
 const FULLSTACK_REVIEW_PROMPT =
 	'You are the Reviewer in a Fullstack QA Loop workflow. Review the PR for correctness, ' +
@@ -325,7 +410,8 @@ const FULLSTACK_REVIEW_PROMPT =
 	'If the change is ready for QA, write to review-approval-gate (field: approved = true). ' +
 	'If changes are needed, send actionable feedback to Coding via ' +
 	'`send_message(target="Coding", ...)`. Review is not the end node, so the ' +
-	'task-completion tools are not available to you.';
+	'task-completion tools are not available to you.\n\n' +
+	'Never set a PR to auto-merge — auto-merge is not allowed.';
 
 const FULLSTACK_QA_PROMPT =
 	'You are the QA node in a Fullstack QA Loop workflow. Run thorough validation, including backend tests, ' +
@@ -355,7 +441,8 @@ const FULLSTACK_QA_PROMPT =
 	'Use when autonomy blocks self-close (and only when QA passes — see pre-conditions above).\n\n' +
 	'If everything passes, `save_artifact({ type: "result", append: true, summary: "QA passed.", data: { pr_url: "<url>" } })` and ' +
 	'`approve_task`. Do NOT merge the PR yourself — a post-approval reviewer session runs ' +
-	'the merge after the task transitions to `approved`. If issues are found, send a detailed ' +
+	'the merge after the task transitions to `approved`. Never set a PR to ' +
+	'auto-merge — auto-merge is not allowed. If issues are found, send a detailed ' +
 	'fix list to Coding and record a `save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` ' +
 	'audit entry; do NOT call `approve_task` and do NOT call `submit_for_approval`.';
 
@@ -418,8 +505,12 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'explaining what changed. One reply per comment creates a visible audit trail.\n' +
 							'4. For items you disagree with: reply on the same thread explaining why, with ' +
 							'evidence from the code or tests. Do not change code you believe is correct.\n' +
-							'5. Push fixes, verify tests still pass, then send_message to Review again ' +
-							'(again with `data: { pr_url }`) to re-trigger the review cycle',
+							'5. ' +
+							REVIEW_THREAD_RESOLUTION_GUIDANCE +
+							'\n' +
+							'6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+							'then send_message to Review again (again with `data: { pr_url }`) to ' +
+							're-trigger the review cycle',
 					},
 				},
 			],
@@ -481,7 +572,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'prior-round P0–P3 findings have been addressed in the latest commits):\n' +
 							'   a. Post an approval review: `gh pr review <pr-url> --approve ' +
 							'--body-file <file>`.\n' +
-							'   b. Verify the PR is still open and mergeable.\n' +
+							'   b. ' +
+							REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
+							'\n' +
 							'   c. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>" } })` ' +
 							'to record the audit entry. The `pr_url` inside `data` is what ' +
 							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
@@ -491,7 +584,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'self-close, call `submit_for_approval({ reason: "..." })` instead — ' +
 							'the runtime will still route post-approval once the human approves. ' +
 							'Do NOT attempt to merge the PR yourself; a post-approval reviewer session ' +
-							'runs the merge after the task transitions to `approved`.',
+							'runs the merge after the task transitions to `approved`. Never set a PR to ' +
+							'auto-merge — auto-merge is not allowed.',
 					},
 				},
 			],
@@ -611,7 +705,8 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'4. Include sources, evidence, and clear conclusions\n' +
 							'5. Commit findings and open a PR with `gh pr create`\n\n' +
 							'If re-activated after review feedback: address each point, expand research where requested, ' +
-							'update the documents, and push new commits.',
+							'update the documents, and push new commits. ' +
+							REVIEW_THREAD_RESOLUTION_GUIDANCE,
 					},
 				},
 			],
@@ -650,7 +745,9 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'   a. Post an approval review: `gh pr review <pr-url> --approve ' +
 							'--body-file <file>`. A visible GitHub review is required — an internal ' +
 							'summary is not enough.\n' +
-							'   b. Verify the PR is still open and mergeable.\n' +
+							'   b. ' +
+							REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
+							'\n' +
 							'   c. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>" } })` ' +
 							'to record the final audit entry. The `pr_url` inside `data` is what ' +
 							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
@@ -660,7 +757,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'call `submit_for_approval({ reason: "..." })` instead — the runtime will ' +
 							'still route post-approval once the human approves. Do NOT attempt to merge ' +
 							'the PR yourself; a post-approval reviewer session runs the merge after the ' +
-							'task transitions to `approved`.',
+							'task transitions to `approved`. Never set a PR to auto-merge — auto-merge is not allowed.',
 					},
 				},
 			],
@@ -785,7 +882,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'6. If your verdict is APPROVE: call `approve_task()` as your final action. If ' +
 							'autonomy blocks self-close, call `submit_for_approval({ reason: "..." })` ' +
 							'instead. If your verdict is REQUEST_CHANGES: stop after step 5 — do NOT call ' +
-							'either terminal tool.',
+							'either terminal tool.\n\nNever set a PR to auto-merge — auto-merge is not allowed.',
 					},
 				},
 			],
