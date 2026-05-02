@@ -96,7 +96,7 @@ import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@neokai/shared';
 /**
  * AgentSessionInit - Configuration for creating a new AgentSession
  *
- * Used by RoomAgentService and LobbyAgentService to create sessions
+ * Used by SpaceRuntimeService and other session creators to create sessions
  * with custom system prompts, MCP servers, and feature flags.
  */
 export interface PromptProvenanceInit {
@@ -111,7 +111,7 @@ export interface PromptProvenanceInit {
 }
 
 export interface AgentSessionInit {
-	/** Session ID (e.g., 'room:abc123', 'lobby:default', or UUID for worker) */
+	/** Session ID (e.g., 'space:chat:abc123', or UUID for worker) */
 	sessionId: string;
 
 	/** Workspace path for this session */
@@ -129,7 +129,7 @@ export interface AgentSessionInit {
 	/** Feature flags controlling UI capabilities */
 	features?: SessionFeatures;
 
-	/** Optional context for room/lobby sessions */
+	/** Optional context for session orchestration */
 	context?: SessionContext;
 
 	/** Session type - defaults to 'worker' */
@@ -304,7 +304,7 @@ export class AgentSession
 
 	/**
 	 * Unified per-scope MCP enablement repo — exposed on the context so the
-	 * QueryOptionsBuilder can resolve the session > room > space > registry
+	 * QueryOptionsBuilder can resolve the session > space > registry
 	 * precedence for skill-wrapped MCP servers (MCP M6).
 	 *
 	 * Exposed as a getter because every AgentSession already owns a Database
@@ -411,7 +411,7 @@ export class AgentSession
 	/**
 	 * Create an AgentSession from init configuration
 	 *
-	 * This is the preferred way to create room/lobby sessions.
+	 * This is the preferred way to create Space chat and orchestration sessions.
 	 * For worker sessions, use SessionManager.createSession() which handles
 	 * title generation, worktree setup, etc.
 	 *
@@ -443,9 +443,8 @@ export class AgentSession
 		} else {
 			const updates: Partial<Session> = {};
 			let hasUpdates = false;
-			const runtimeInitFingerprint = AgentSession.buildRuntimeInitFingerprint(init);
 
-			// Keep deterministic workspace for long-lived room/lobby session IDs across restarts.
+			// Keep deterministic workspace for long-lived session IDs across restarts.
 			if (init.workspacePath && session.workspacePath !== init.workspacePath) {
 				updates.workspacePath = init.workspacePath;
 				session = { ...session, workspacePath: init.workspacePath };
@@ -467,7 +466,7 @@ export class AgentSession
 				hasUpdates = true;
 			}
 
-			// Room/lobby sessions should never run with a worktree path from stale persisted state.
+			// Non-worker sessions should never run with a worktree path from stale persisted state.
 			if (init.type && init.type !== 'worker' && session.worktree) {
 				updates.worktree = undefined;
 				session = { ...session, worktree: undefined };
@@ -485,47 +484,6 @@ export class AgentSession
 				};
 				updates.metadata = nextMetadata;
 				session = { ...session, metadata: nextMetadata };
-				hasUpdates = true;
-			}
-
-			if (
-				runtimeInitFingerprint &&
-				session.metadata.runtimeInitFingerprint !== runtimeInitFingerprint
-			) {
-				const nextMetadata: SessionMetadata = {
-					...session.metadata,
-					runtimeInitFingerprint,
-				};
-				updates.metadata = nextMetadata;
-				// Task-agent orchestration state is long-lived — the whole point is the
-				// agent remembers context across restarts. Never clear sdkSessionId for
-				// these sessions; the rehydrate path uses `restore()` (not fromInit) so
-				// hitting this branch for a space_task_agent would be a defensive regression
-				// that silently drops the conversation history.
-				//
-				// Node-agent sub-sessions (type: 'worker' with a spaceId+taskId context) are
-				// equally long-lived under the "one session per named agent per task" reuse
-				// contract — see `createSubSession`'s reuse path. Preserve sdkSessionId for
-				// them too so a fingerprint mismatch cannot wipe their conversation history.
-				const preserveSdkSessionId =
-					session.type === 'space_task_agent' ||
-					(session.type === 'worker' &&
-						typeof session.context?.spaceId === 'string' &&
-						typeof session.context?.taskId === 'string');
-				if (!preserveSdkSessionId) {
-					// Invalidate stale SDK resume chain when runtime init surface changes.
-					updates.sdkSessionId = undefined;
-					session = {
-						...session,
-						sdkSessionId: undefined,
-						metadata: nextMetadata,
-					};
-				} else {
-					session = {
-						...session,
-						metadata: nextMetadata,
-					};
-				}
 				hasUpdates = true;
 			}
 
@@ -604,7 +562,6 @@ export class AgentSession
 		const now = new Date().toISOString();
 		const type = init.type ?? 'worker';
 		const features = init.features ?? WORKER_FEATURES;
-		const runtimeInitFingerprint = AgentSession.buildRuntimeInitFingerprint(init);
 
 		const config: SessionConfig = {
 			model: init.model ?? defaultModel,
@@ -636,26 +593,21 @@ export class AgentSession
 			outputTokens: 0,
 			totalCost: 0,
 			toolCallCount: 0,
-			...(runtimeInitFingerprint ? { runtimeInitFingerprint } : {}),
 			...(init.promptProvenance ? { promptProvenance: init.promptProvenance } : {}),
 		};
 
 		return {
 			id: init.sessionId,
 			title:
-				type === 'room_chat'
-					? 'Room Chat'
-					: type === 'coder'
-						? 'Coder Agent'
-						: type === 'planner'
-							? 'Planner Agent'
-							: type === 'leader'
-								? 'Leader Agent'
-								: type === 'general'
-									? 'General Agent'
-									: type === 'lobby'
-										? 'Lobby Agent'
-										: 'New Session',
+				type === 'coder'
+					? 'Coder Agent'
+					: type === 'planner'
+						? 'Planner Agent'
+						: type === 'leader'
+							? 'Leader Agent'
+							: type === 'general'
+								? 'General Agent'
+								: 'New Session',
 			workspacePath: init.workspacePath,
 			createdAt: now,
 			lastActiveAt: now,
@@ -665,19 +617,6 @@ export class AgentSession
 			type,
 			context: init.context,
 		};
-	}
-
-	private static buildRuntimeInitFingerprint(init: AgentSessionInit): string | undefined {
-		if (!init.type || init.type === 'worker') {
-			return undefined;
-		}
-
-		return JSON.stringify({
-			type: init.type,
-			workspacePath: init.workspacePath,
-			context: init.context ?? null,
-			mcpServers: Object.keys(init.mcpServers ?? {}).sort(),
-		});
 	}
 
 	// ============================================================================
@@ -869,7 +808,7 @@ export class AgentSession
 	 * overwrites the keys present in `additional`. Used when a cross-cutting
 	 * subsystem (e.g., `SpaceRuntimeService`) wants to attach a shared MCP
 	 * server (like `space-agent-tools`) to a session without disturbing other
-	 * runtime-attached servers (e.g., `task-agent`, `db-query`, `room-tools`)
+	 * runtime-attached servers (e.g., `task-agent`, `db-query`)
 	 * that may have been added by other owners.
 	 */
 	mergeRuntimeMcpServers(additional: Record<string, McpServerConfig>): void {
@@ -995,7 +934,7 @@ export class AgentSession
 
 	/**
 	 * Apply a runtime system prompt to in-memory session config only.
-	 * Used to inject context-specific instructions (e.g. room workflow guidance)
+	 * Used to inject context-specific instructions (e.g. space workflow guidance)
 	 * without persisting them to the database.
 	 */
 	setRuntimeSystemPrompt(systemPrompt: SystemPromptConfig): void {

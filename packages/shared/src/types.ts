@@ -559,8 +559,6 @@ export interface SessionMetadata {
 		pendingInstruction?: string;
 		retryCount: number;
 	};
-	/** Runtime init fingerprint for non-worker sessions (used to invalidate stale SDK resume state) */
-	runtimeInitFingerprint?: string;
 	/** Non-secret provenance for the configured system prompt used when a session was spawned. */
 	promptProvenance?: {
 		source: string;
