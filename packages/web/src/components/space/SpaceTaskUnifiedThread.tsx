@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'preact/hooks';
-import { useSpaceTaskMessages } from '../../hooks/useSpaceTaskMessages';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
+import { useSpaceTaskMessages } from '../../hooks/useSpaceTaskMessages';
 import { MinimalThreadFeed } from './thread/minimal/MinimalThreadFeed';
 import { parseThreadRow } from './thread/space-task-thread-events';
 
@@ -8,6 +8,7 @@ interface SpaceTaskUnifiedThreadProps {
 	taskId: string;
 	bottomInsetClass?: string;
 	bottomScrollPaddingClass?: string;
+	bottomInsetPx?: number;
 	/**
 	 * Top padding applied to the scroll container so the first message clears
 	 * any floating overlay (e.g. SpaceTaskPane's tab pill) at scroll-top. Older
@@ -33,6 +34,7 @@ export function SpaceTaskUnifiedThread({
 	taskId,
 	bottomInsetClass = 'pb-3',
 	bottomScrollPaddingClass = 'scroll-pb-3',
+	bottomInsetPx,
 	topInsetClass = '',
 	activeAgentLabels,
 	autoScrollEnabled = true,
@@ -99,11 +101,22 @@ export function SpaceTaskUnifiedThread({
 		);
 	}
 
+	const dynamicBottomInsetStyle =
+		bottomInsetPx === undefined
+			? undefined
+			: {
+					paddingBottom: `${bottomInsetPx}px`,
+					scrollPaddingBottom: `${bottomInsetPx}px`,
+				};
+	const bottomInsetClasses =
+		bottomInsetPx === undefined ? `${bottomInsetClass} ${bottomScrollPaddingClass}` : '';
+
 	return (
 		<div class="h-full min-h-0 flex flex-col relative" data-testid="space-task-unified-thread">
 			<div
 				ref={containerRef}
-				class={`flex-1 overflow-y-auto ${topInsetClass} ${bottomInsetClass} ${bottomScrollPaddingClass}`}
+				class={`flex-1 overflow-y-auto ${topInsetClass} ${bottomInsetClasses}`}
+				style={dynamicBottomInsetStyle}
 			>
 				<div class="min-h-[calc(100%+1px)]">
 					<MinimalThreadFeed
