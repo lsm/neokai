@@ -70,6 +70,11 @@ export class MessageQueue {
 	 */
 	onMessageYielded?: (messageId: string, sentAt: number) => void;
 
+	private wakeWaiters(): void {
+		this.waiters.forEach((waiter) => waiter());
+		this.waiters = [];
+	}
+
 	/**
 	 * Enqueue a message to be sent to Claude via the streaming query
 	 */
@@ -134,8 +139,7 @@ export class MessageQueue {
 			this.queue.push(queuedMessage);
 
 			// Wake up any waiting message generators
-			this.waiters.forEach((waiter) => waiter());
-			this.waiters = [];
+			this.wakeWaiters();
 		});
 	}
 
@@ -169,6 +173,7 @@ export class MessageQueue {
 		this.running = true;
 		// Increment generation when starting - this invalidates any old generators
 		this.generation++;
+		this.wakeWaiters();
 	}
 
 	/**
@@ -185,8 +190,7 @@ export class MessageQueue {
 	stop(): void {
 		this.running = false;
 		// Wake up any waiting generators so they can exit
-		this.waiters.forEach((waiter) => waiter());
-		this.waiters = [];
+		this.wakeWaiters();
 	}
 
 	/**
@@ -276,8 +280,6 @@ export class MessageQueue {
 			// Wait for message to be enqueued
 			await new Promise<void>((resolve) => {
 				this.waiters.push(resolve);
-				// Also wake up after timeout to check running status
-				setTimeout(resolve, 1000);
 			});
 
 			if (!this.running) return null;

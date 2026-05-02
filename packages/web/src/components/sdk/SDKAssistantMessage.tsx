@@ -8,12 +8,7 @@
  * - AskUserQuestion tool blocks with inline QuestionPrompt
  */
 
-import type {
-	PendingUserQuestion,
-	QuestionDraftResponse,
-	ResolvedQuestion,
-	ChatMessage,
-} from '@neokai/shared';
+import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
 import {
@@ -54,7 +49,6 @@ interface Props {
 	rewindMode?: boolean;
 	selectedMessages?: Set<string>;
 	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
-	allMessages?: ChatMessage[];
 	/**
 	 * When true, child tool / thinking / subagent blocks in this message are
 	 * each wrapped in <RunningBorder> so the animated arc traces their border.
@@ -79,7 +73,6 @@ export function SDKAssistantMessage({
 	rewindMode,
 	selectedMessages,
 	onMessageCheckboxChange,
-	allMessages: _allMessages,
 	isRunning,
 	flattenSubagentTools = false,
 }: Props) {
@@ -242,13 +235,11 @@ export function SDKAssistantMessage({
 			</div>
 		) : null;
 
-	// Check if this assistant message has sub-agent children
-	// If so, we should not show a checkbox for this message (the sub-agent messages will have their own)
-	const hasSubagentChild =
-		_allMessages?.some((msg) => {
-			const msgWithParent = msg as SDKMessage & { parent_tool_use_id?: string | null };
-			return msgWithParent.parent_tool_use_id === message.uuid;
-		}) || false;
+	// Check if this assistant message has sub-agent children.
+	// If so, we should not show a checkbox for this message (the sub-agent messages will have their own).
+	// Use the memoized parent_tool_use_id map instead of scanning the whole message array so
+	// streaming appends do not invalidate every memoized SDKMessageRenderer row.
+	const hasSubagentChild = message.uuid ? subagentMessagesMap?.has(message.uuid) || false : false;
 
 	// Checkbox rendering for rewind mode (using shared function)
 	const renderCheckbox = () =>

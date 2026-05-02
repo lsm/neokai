@@ -71,6 +71,14 @@ function query(db: BunDatabase, sessionId: string, limit: number): Record<string
 	return entry.mapRow ? rows.map(entry.mapRow) : rows;
 }
 
+function queryPlan(db: BunDatabase, sessionId: string, limit: number): string {
+	const entry = NAMED_QUERY_REGISTRY.get('messages.bySession')!;
+	const planRows = db.prepare(`EXPLAIN QUERY PLAN ${entry.sql}`).all(sessionId, limit) as Array<{
+		detail: string;
+	}>;
+	return planRows.map((row) => row.detail).join('\n');
+}
+
 // ---------------------------------------------------------------------------
 // Registry metadata
 // ---------------------------------------------------------------------------
@@ -218,6 +226,17 @@ describe('messages.bySession — SQL behavior', () => {
 		// With LIMIT=3, only the 3 most recent top-level rows should be included,
 		// and returned in ascending order (t3, t4, t5).
 		expect(ids).toEqual(['t3', 't4', 't5']);
+	});
+
+	test('uses the session timestamp index for the top-level window', () => {
+		const plan = queryPlan(db, 's1', 200);
+		expect(plan).toContain('idx_sdk_messages_session_timestamp_id');
+		expect(plan).not.toContain('SCAN sdk_messages USING');
+	});
+
+	test('uses the parent tool expression index for subagent lookups', () => {
+		const plan = queryPlan(db, 's1', 200);
+		expect(plan).toContain('idx_sdk_messages_parent_tool');
 	});
 
 	test('includes subagent messages whose parent_tool_use_id matches a top-level tool_use', () => {

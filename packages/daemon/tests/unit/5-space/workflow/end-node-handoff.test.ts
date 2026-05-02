@@ -5,7 +5,7 @@
  * the post-approval routing contract:
  *
  *   - Coding / Research / QA end nodes each save a result artifact carrying
- *     `data.prUrl` BEFORE calling `approve_task`. These three workflows MUST also declare a
+ *     `data.pr_url` BEFORE calling `approve_task`. These three workflows MUST also declare a
  *     `postApproval: { targetAgent: 'reviewer', instructions: <merge template> }`
  *     route so the runtime dispatches the merge. PR 5/5 removed the legacy
  *     `post_approval_action: "merge_pr"` discriminator from the data payload —
@@ -115,13 +115,13 @@ describe('End-node post-approval declarations', () => {
 
 describe('End-node prompts save runtime post-approval data before approve_task', () => {
 	for (const [label, wf] of MERGE_ROUTED_WORKFLOWS) {
-		test(`${label} end-node prompt includes save_artifact data.prUrl and no task-agent relay`, () => {
+		test(`${label} end-node prompt includes save_artifact data.pr_url and no task-agent relay`, () => {
 			const prompt = endNodePrompt(wf);
 			// Every merge-routed workflow must instruct its end-node agent to save
 			// a result artifact carrying the PR URL. `dispatchPostApproval` reads
 			// that artifact when interpolating `{{pr_url}}` into the merge template.
 			expect(prompt).toContain('save_artifact');
-			expect(prompt).toContain('prUrl');
+			expect(prompt).toContain('pr_url');
 			expect(prompt).not.toContain('target: "task-agent"');
 			// PR 5/5: the legacy `post_approval_action: "merge_pr"`
 			// discriminator was removed — post-approval routing is fully
@@ -133,7 +133,7 @@ describe('End-node prompts save runtime post-approval data before approve_task',
 		test(`${label} end-node prompt places result artifact BEFORE the final approve_task call`, () => {
 			const prompt = endNodePrompt(wf);
 			// Anchor on the final `save_artifact(` instruction — the runtime reads
-			// its `data.prUrl` before dispatching the post-approval route.
+			// its `data.pr_url` before dispatching the post-approval route.
 			const signalIdx = prompt.lastIndexOf('save_artifact(');
 			// Use lastIndexOf: the first `approve_task()` occurrence in every
 			// prompt lives in the "TOOL CONTRACT" block at the top, which is a

@@ -367,6 +367,19 @@ describe('ReactiveDatabase', () => {
 			reactiveDb.commitTransaction(); // depth=0 — flush
 			expect(events.length).toBe(1);
 		});
+
+		test('transaction methods are available on the proxied db facade', () => {
+			const events: unknown[] = [];
+			reactiveDb.on('change', () => events.push(1));
+
+			reactiveDb.db.beginTransaction?.();
+			reactiveDb.db.createSession(makeSession('proxied-tx1'));
+			reactiveDb.db.createSession(makeSession('proxied-tx2'));
+			expect(events.length).toBe(0);
+
+			reactiveDb.db.commitTransaction?.();
+			expect(events.length).toBe(1);
+		});
 	});
 
 	// -------------------------------------------------------------------------

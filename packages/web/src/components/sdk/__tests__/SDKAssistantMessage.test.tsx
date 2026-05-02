@@ -1262,8 +1262,7 @@ describe('SDKAssistantMessage', () => {
 		it('should not render checkbox when message has sub-agent children', () => {
 			const message = createTextOnlyMessage('Parent message');
 			const childMessage = createTextOnlyMessage('Child message');
-			(childMessage as unknown as Record<string, unknown>).parent_tool_use_id = message.uuid;
-			const allMessages = [message, childMessage] as SDKMessage[];
+			const subagentMessagesMap = new Map([[message.uuid!, [childMessage as SDKMessage]]]);
 			const selectedMessages = new Set<string>();
 
 			const { container } = render(
@@ -1272,7 +1271,7 @@ describe('SDKAssistantMessage', () => {
 					rewindMode={true}
 					selectedMessages={selectedMessages}
 					onMessageCheckboxChange={onMessageCheckboxChange}
-					allMessages={allMessages}
+					subagentMessagesMap={subagentMessagesMap}
 				/>
 			);
 

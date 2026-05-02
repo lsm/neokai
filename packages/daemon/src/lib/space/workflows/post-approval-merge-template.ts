@@ -29,7 +29,7 @@
  *
  * Workflow authors referencing this template MUST ensure their end node signals
  * `{ pr_url }` (inside the `data` payload of `send_message(target:
- * 'task-agent', …)` and/or `save_artifact({ type: 'result', data: { prUrl } })`)
+ * 'task-agent', …)` and/or `save_artifact({ type: 'result', data: { pr_url } })`)
  * before `approve_task()` / `submit_for_approval()`. The earlier §2.1
  * `post_approval_action` discriminator was removed — post-approval routing is
  * declarative on the workflow's `postApproval` field, not signalled at runtime.
@@ -57,5 +57,5 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
 	'     git fetch origin && git checkout dev && git pull --ff-only',
 	'4. Save an audit artifact:',
 	'     save_artifact({ type: "result", append: true,',
-	'                     data: { merged_pr_url, mergedAt, approval_source: "{{approval_source}}" } })',
+	'                     data: { merged_pr_url, merged_at, approval_source: "{{approval_source}}" } })',
 ].join('\n');
