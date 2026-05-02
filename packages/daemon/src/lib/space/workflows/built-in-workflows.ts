@@ -1420,15 +1420,23 @@ function mergeToolGuardsFromTemplate(
  * on an already-seeded row.
  *
  * - `postApproval`, `completionAutonomyLevel`, and `templateHash` are
- *   updated. Persisted node definitions, including workflow-node agent
- *   `customPrompt.value`, are deliberately left untouched so daemon restart /
- *   startup seed passes cannot replace user-configured runtime prompts.
- * - Nodes / channels / gates are NOT re-stamped here: changing those fields
- *   channel or gate structure on any built-in template, and re-stamping
- *   them would regenerate IDs. If a future template change adjusts those,
- *   extend this list and the re-stamp payload below accordingly.
+ *   updated. Persisted node agent `customPrompt.value` is deliberately left
+ *   untouched so daemon restart / startup seed passes cannot replace
+ *   user-configured runtime prompts.
+ * - Agent `toolGuards` are merged onto matching agent slots (by node name +
+ *   agent name) so structural enforcement metadata stays in sync with the
+ *   template. Other node fields (customPrompt, model, disabledSkillIds, etc.)
+ *   are preserved.
+ * - Channels / gates are NOT re-stamped: changing those would regenerate IDs.
+ *   If a future template change adjusts those, extend this list and the
+ *   re-stamp payload below accordingly.
  */
-const RESTAMP_FIELDS = ['postApproval', 'completionAutonomyLevel', 'templateHash'] as const;
+const RESTAMP_FIELDS = [
+	'postApproval',
+	'completionAutonomyLevel',
+	'templateHash',
+	'nodes(toolGuards)',
+] as const;
 
 /**
  * Seeds all built-in workflow templates into the given space.
@@ -1445,9 +1453,9 @@ const RESTAMP_FIELDS = ['postApproval', 'completionAutonomyLevel', 'templateHash
  *     (matched via `templateName`), their stored `templateHash` is compared
  *     to the current template hash. On mismatch, the row is re-stamped
  *     with the narrow field set listed in {@link RESTAMP_FIELDS} — see the
- *     constant's doc-comment for why node content is intentionally NOT
- *     re-stamped. This is how PR 3/5's new `postApproval` routes land on
- *     pre-existing spaces.
+ *     constant's doc-comment for details. Agent `toolGuards` are merged onto
+ *     matching slots (preserving user-configured prompts). This is how new
+ *     `postApproval` routes and `toolGuards` land on pre-existing spaces.
  *   - Rows without a `templateName` (user-created workflows) are ignored.
  *
  * Individual workflow creation / re-stamp errors are captured per-workflow
@@ -1506,7 +1514,7 @@ export function seedBuiltInWorkflows(
 				restamped.push(template.name);
 				builtInSeederLog.info(
 					`re-stamped built-in workflow '${template.name}' (id=${row.id}) ` +
-						`in space ${spaceId}: fields=${RESTAMP_FIELDS.join(',')}`
+						`in space ${spaceId}: fields=${RESTAMP_FIELDS.join(',')} (toolGuards merged onto agent slots)`
 				);
 			} catch (err) {
 				errors.push({
