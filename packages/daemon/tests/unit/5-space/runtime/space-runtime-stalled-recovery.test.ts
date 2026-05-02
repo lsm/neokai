@@ -821,6 +821,47 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 		});
 
+		test('agent-name channel recovers handoff when node names differ', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Implementation', agentId: AGENT },
+					{ id: STEP_B, name: 'Verification', agentId: AGENT },
+				],
+				{
+					channels: [{ id: 'coder-to-reviewer', from: 'coder', to: 'reviewer' }],
+				}
+			);
+			workflow.nodes[0].agents[0].name = 'coder';
+			workflow.nodes[1].agents[0].name = 'reviewer';
+			workflowManager.updateWorkflow(workflow.id, { nodes: workflow.nodes });
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recover agent-name channel',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Recover agent-name channel',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const coder = seedExec(run.id, STEP_A, 'coder', 'idle');
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(nodeExecutionRepo.getById(coder.id)?.status).toBe('idle');
+			expect(findExec(run.id, STEP_B).status).toBe('pending');
+			expect(findExec(run.id, STEP_B).agentName).toBe('reviewer');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+
 		test('fan-out recovery only activates the stalled target branch', async () => {
 			const workflow = buildLinearWorkflow(
 				SPACE_ID,
