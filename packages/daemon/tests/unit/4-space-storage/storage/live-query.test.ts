@@ -218,6 +218,40 @@ describe('LiveQueryEngine', () => {
 		});
 	});
 
+	describe('debounced reevaluation', () => {
+		const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+		test('coalesces multiple table changes into one latest-state delta', async () => {
+			const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];
+			engine.subscribe(SQL, [], (diff) => diffs.push(diff), { debounceMs: 20 });
+
+			insertItem(db, 'a', 'Alpha', 1);
+			mockReactive.bumpAndFire('items');
+			insertItem(db, 'b', 'Beta', 2);
+			mockReactive.bumpAndFire('items');
+
+			await Promise.resolve();
+			expect(diffs.length).toBe(1);
+
+			await wait(35);
+			expect(diffs.length).toBe(2);
+			expect(diffs[1].type).toBe('delta');
+			expect(diffs[1].added?.map((row) => row.id).sort()).toEqual(['a', 'b']);
+		});
+
+		test('clears pending debounced evaluations when last subscriber disposes', async () => {
+			const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];
+			const handle = engine.subscribe(SQL, [], (diff) => diffs.push(diff), { debounceMs: 20 });
+
+			insertItem(db, 'a', 'Alpha', 1);
+			mockReactive.bumpAndFire('items');
+			handle.dispose();
+
+			await wait(35);
+			expect(diffs.length).toBe(1);
+		});
+	});
+
 	// -------------------------------------------------------------------------
 	// UPDATE delta
 	// -------------------------------------------------------------------------
@@ -379,6 +413,76 @@ describe('LiveQueryEngine', () => {
 
 			expect(allDiffs.length).toBe(2); // snapshot + delta
 			expect(filteredDiffs.length).toBe(1); // only snapshot; no data change for that query
+		});
+
+		test('shared query metadata is computed once and delivered to all subscribers', async () => {
+			const diffs1: QueryDiff<{ id: string; name: string; val: number }>[] = [];
+			const diffs2: QueryDiff<{ id: string; name: string; val: number }>[] = [];
+			let metadataCalls = 0;
+
+			const getMetadata = (rows: Record<string, unknown>[]) => {
+				metadataCalls += 1;
+				return { count: rows.length };
+			};
+
+			engine.subscribe(SQL, [], (diff) => diffs1.push(diff), { getMetadata });
+			engine.subscribe(SQL, [], (diff) => diffs2.push(diff), { getMetadata });
+
+			expect(metadataCalls).toBe(1);
+			expect(diffs1[0].metadata).toEqual({ count: 0 });
+			expect(diffs2[0].metadata).toEqual({ count: 0 });
+
+			insertItem(db, 'shared', 'Shared', 1);
+			mockReactive.bumpAndFire('items');
+			await Promise.resolve();
+
+			expect(metadataCalls).toBe(2);
+			expect(diffs1[1].metadata).toEqual({ count: 1 });
+			expect(diffs2[1].metadata).toEqual({ count: 1 });
+		});
+
+		test('metadata-only changes emit deltas and refresh later snapshots', async () => {
+			insertItem(db, 'meta', 'Metadata', 1);
+
+			const sqlWithSideTable = `
+				SELECT items.id, items.name, items.val
+				FROM items
+				LEFT JOIN other ON other.id = '__never_matches__'
+				ORDER BY items.id
+			`;
+			const diffs1: QueryDiff<{ id: string; name: string; val: number }>[] = [];
+			const diffs2: QueryDiff<{ id: string; name: string; val: number }>[] = [];
+			let metadataCalls = 0;
+
+			const getMetadata = () => {
+				metadataCalls += 1;
+				const row = db.prepare('SELECT COUNT(*) AS count FROM other').get() as { count: number };
+				return { sideCount: row.count };
+			};
+
+			engine.subscribe(sqlWithSideTable, [], (diff) => diffs1.push(diff), { getMetadata });
+
+			expect(metadataCalls).toBe(1);
+			expect(diffs1[0].metadata).toEqual({ sideCount: 0 });
+
+			db.exec(`INSERT INTO other (id, note) VALUES ('side', 'side metadata')`);
+			mockReactive.bumpAndFire('other');
+			await Promise.resolve();
+
+			expect(metadataCalls).toBe(2);
+			expect(diffs1.length).toBe(2);
+			expect(diffs1[1].type).toBe('delta');
+			expect(diffs1[1].rows).toEqual(diffs1[0].rows);
+			expect(diffs1[1].added).toEqual([]);
+			expect(diffs1[1].removed).toEqual([]);
+			expect(diffs1[1].updated).toEqual([]);
+			expect(diffs1[1].metadata).toEqual({ sideCount: 1 });
+
+			engine.subscribe(sqlWithSideTable, [], (diff) => diffs2.push(diff), { getMetadata });
+
+			expect(metadataCalls).toBe(2);
+			expect(diffs2[0].type).toBe('snapshot');
+			expect(diffs2[0].metadata).toEqual({ sideCount: 1 });
 		});
 	});
 
