@@ -320,6 +320,96 @@ describe('CODING_WORKFLOW template', () => {
 		}
 	});
 
+	test('code-ready-gate blocks when review thread pagination exceeds first page', async () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
+		const workspace = mkdtempSync(join(tmpdir(), 'neokai-pr-ready-gate-paged-'));
+		const binDir = join(workspace, 'bin');
+		const ghPath = join(binDir, 'gh');
+		const prUrl = 'https://github.com/test/repo/pull/42';
+
+		try {
+			mkdirSync(binDir);
+			writeFileSync(
+				ghPath,
+				[
+					'#!/usr/bin/env bash',
+					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
+					`  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}'`,
+					'  exit 0',
+					'fi',
+					'if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
+					`  printf '%s\\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":true}}}}}}'`,
+					'  exit 0',
+					'fi',
+					'printf "unexpected gh args: %s\\n" "$*" >&2',
+					'exit 2',
+				].join('\n')
+			);
+			chmodSync(ghPath, 0o755);
+
+			const result = await executeGateScript(
+				gate.script!,
+				{
+					workspacePath: workspace,
+					gateId: 'code-ready-gate',
+					runId: 'run-1',
+					gateData: { pr_url: prUrl },
+				},
+				{ PATH: `${binDir}:${process.env.PATH ?? ''}` }
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('more than 100 review conversations');
+		} finally {
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
+	test('code-ready-gate passes for a clean mergeable PR with zero unresolved threads', async () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
+		const workspace = mkdtempSync(join(tmpdir(), 'neokai-pr-ready-gate-clean-'));
+		const binDir = join(workspace, 'bin');
+		const ghPath = join(binDir, 'gh');
+		const prUrl = 'https://github.com/test/repo/pull/42';
+
+		try {
+			mkdirSync(binDir);
+			writeFileSync(
+				ghPath,
+				[
+					'#!/usr/bin/env bash',
+					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
+					`  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}'`,
+					'  exit 0',
+					'fi',
+					'if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
+					`  printf '%s\\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}'`,
+					'  exit 0',
+					'fi',
+					'printf "unexpected gh args: %s\\n" "$*" >&2',
+					'exit 2',
+				].join('\n')
+			);
+			chmodSync(ghPath, 0o755);
+
+			const result = await executeGateScript(
+				gate.script!,
+				{
+					workspacePath: workspace,
+					gateId: 'code-ready-gate',
+					runId: 'run-1',
+					gateData: { pr_url: prUrl },
+				},
+				{ PATH: `${binDir}:${process.env.PATH ?? ''}` }
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual({ pr_url: prUrl });
+		} finally {
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
 	test('code-ready-gate validates supplied pr_url without branch rediscovery', async () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
 		const workspace = mkdtempSync(join(tmpdir(), 'neokai-pr-ready-gate-'));
@@ -494,6 +584,8 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(gate.script!.source).toContain('exit 1');
 		expect(gate.script!.source).toContain('pr_url');
 		expect(gate.script!.source).toContain('not authenticated');
+		expect(gate.script!.source).toContain('reviewThreads(first:100)');
+		expect(gate.script!.source).toContain('isResolved == false');
 	});
 
 	test('research-ready-gate resets on cycle', () => {

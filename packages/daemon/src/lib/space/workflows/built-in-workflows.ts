@@ -49,7 +49,8 @@ const REVIEW_THREAD_CHECK_BASH_FUNCTION = [
 	'check_unresolved_review_threads() {',
 	'  local pr_url="$1"',
 	'  local pr_meta owner repo number threads_json has_more unresolved_count unresolved_urls',
-	'  if ! pr_meta=$(jq -nr --arg url "$pr_url" \'$url | capture("github.com/(?<owner>[^/]+)/(?<repo>[^/]+)/pull/(?<number>[0-9]+)")\' 2>/dev/null); then',
+	'  pr_meta=$(jq -nr --arg url "$pr_url" \'$url | capture("https?://[^/]+/(?<owner>[^/]+)/(?<repo>[^/]+)/pull/(?<number>[0-9]+)")\' 2>/dev/null || true)',
+	'  if [ -z "$pr_meta" ]; then',
 	'    echo "Unable to parse GitHub PR URL for review-thread check: ${pr_url}" >&2',
 	'    exit 1',
 	'  fi',
@@ -331,12 +332,27 @@ const PD_TASK_DISPATCHER_PROMPT =
 	'Do NOT create fewer tasks than the plan requires. ' +
 	'If the plan is empty or ambiguous, send feedback to Planning before closing the task.';
 
+const REVIEW_THREAD_RESOLUTION_GUIDANCE =
+	'After pushing fixes for review feedback, resolve all open GitHub review conversation ' +
+	'threads that you addressed before handing back. Use `gh api graphql` to check ' +
+	'unresolved `reviewThreads` (`isResolved == false`) and resolve addressed threads with ' +
+	'the `resolveReviewThread` mutation. Do not resolve threads you intentionally disagree ' +
+	'with until you have replied with evidence and the reviewer has accepted that resolution. ' +
+	'Verify no unresolved review conversations remain before writing the PR-ready gate again.';
+
+const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
+	'Verify the PR is still open, mergeable, and has no unresolved GitHub review ' +
+	'conversations. Use `gh api graphql` to inspect `reviewThreads` and confirm every ' +
+	'thread has `isResolved: true`; if unresolved conversations remain, request the ' +
+	'author to resolve them instead of approving.';
+
 const FULLSTACK_CODING_PROMPT =
 	'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
 	'write tests, and keep one PR updated across review and QA cycles.\n\n' +
 	'When implementation is ready, ensure the PR is open and mergeable and write code-pr-gate with ' +
 	'field pr_url so Review can activate. Coding is not the end node — the task-completion tools ' +
-	'(`approve_task`, `submit_for_approval`) are not available to you.';
+	'(`approve_task`, `submit_for_approval`) are not available to you.\n\n' +
+	REVIEW_THREAD_RESOLUTION_GUIDANCE;
 
 const FULLSTACK_REVIEW_PROMPT =
 	'You are the Reviewer in a Fullstack QA Loop workflow. Review the PR for correctness, ' +
@@ -450,12 +466,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'explaining what changed. One reply per comment creates a visible audit trail.\n' +
 							'4. For items you disagree with: reply on the same thread explaining why, with ' +
 							'evidence from the code or tests. Do not change code you believe is correct.\n' +
-							'5. After pushing fixes for review feedback, resolve all open GitHub review ' +
-							'conversation threads that you addressed before handing back to the reviewer. ' +
-							'Use `gh api graphql` to check unresolved `reviewThreads` (`isResolved == false`) ' +
-							'and resolve addressed threads with the `resolveReviewThread` mutation. Do not ' +
-							'resolve threads you intentionally disagree with until you have replied with ' +
-							'evidence and the reviewer has accepted that resolution.\n' +
+							'5. ' +
+							REVIEW_THREAD_RESOLUTION_GUIDANCE +
+							'\n' +
 							'6. Verify no unresolved review conversations remain, verify tests still pass, ' +
 							'then send_message to Review again (again with `data: { pr_url }`) to ' +
 							're-trigger the review cycle',
@@ -520,10 +533,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'prior-round P0–P3 findings have been addressed in the latest commits):\n' +
 							'   a. Post an approval review: `gh pr review <pr-url> --approve ' +
 							'--body-file <file>`.\n' +
-							'   b. Verify the PR is still open, mergeable, and has no unresolved GitHub ' +
-							'review conversations. Use `gh api graphql` to inspect `reviewThreads` and ' +
-							'confirm every thread has `isResolved: true`; if unresolved conversations ' +
-							'remain, request the coder to resolve them instead of approving.\n' +
+							'   b. ' +
+							REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
+							'\n' +
 							'   c. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>" } })` ' +
 							'to record the audit entry. The `pr_url` inside `data` is what ' +
 							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
@@ -653,7 +665,8 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'4. Include sources, evidence, and clear conclusions\n' +
 							'5. Commit findings and open a PR with `gh pr create`\n\n' +
 							'If re-activated after review feedback: address each point, expand research where requested, ' +
-							'update the documents, and push new commits.',
+							'update the documents, and push new commits. ' +
+							REVIEW_THREAD_RESOLUTION_GUIDANCE,
 					},
 				},
 			],
@@ -692,7 +705,9 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'   a. Post an approval review: `gh pr review <pr-url> --approve ' +
 							'--body-file <file>`. A visible GitHub review is required — an internal ' +
 							'summary is not enough.\n' +
-							'   b. Verify the PR is still open and mergeable.\n' +
+							'   b. ' +
+							REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
+							'\n' +
 							'   c. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>" } })` ' +
 							'to record the final audit entry. The `pr_url` inside `data` is what ' +
 							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
