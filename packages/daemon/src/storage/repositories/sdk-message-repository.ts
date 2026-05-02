@@ -239,7 +239,10 @@ export class SDKMessageRepository {
 	}
 
 	/**
-	 * Get the most recently persisted SDK message for a session.
+	 * Get the most recently persisted top-level SDK message for a session.
+	 *
+	 * Excludes subagent/tool-linked rows (those with a `parent_tool_use_id`)
+	 * so that a subagent `result` cannot shadow a stalled main-thread message.
 	 *
 	 * Used by workflow runtime safety checks that need to know whether a node
 	 * agent went idle after a terminal SDK result / clear end-turn, or stopped
@@ -249,6 +252,7 @@ export class SDKMessageRepository {
 		const stmt = this.db.prepare(
 			`SELECT id, sdk_message, timestamp FROM sdk_messages
 	       WHERE session_id = ?
+		       AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
 	       ORDER BY timestamp DESC, rowid DESC
 	       LIMIT 1`
 		);
