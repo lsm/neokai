@@ -11,6 +11,7 @@ import { AnthropicProvider } from './anthropic-provider.js';
 import { GlmProvider } from './glm-provider.js';
 import { MinimaxProvider } from './minimax-provider.js';
 import { OpenRouterProvider } from './openrouter-provider.js';
+import { OllamaProvider } from './ollama-provider.js';
 import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-provider.js';
 import { AnthropicToCopilotBridgeProvider } from './anthropic-copilot/index.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
@@ -55,6 +56,11 @@ export function initializeProviders(): ProviderRegistry {
 
 	// Register OpenRouter provider (will be available if OPENROUTER_API_KEY is set)
 	registry.register(new OpenRouterProvider());
+
+	// Register Ollama providers. Local Ollama is available by default at localhost:11434;
+	// Ollama Cloud requires OLLAMA_CLOUD_API_KEY.
+	registry.register(new OllamaProvider({ kind: 'local' }));
+	registry.register(new OllamaProvider({ kind: 'cloud' }));
 
 	// Register Anthropic-to-Codex bridge provider for OpenAI/Codex-backed models.
 	// Discovers credentials from env (OPENAI_API_KEY/CODEX_API_KEY),
