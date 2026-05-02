@@ -41,8 +41,9 @@ const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
 	// - Env prefix: GH_TOKEN=... gh pr merge
 	// - command builtin: command gh pr merge
 	// - env wrapper: env GH_TOKEN=... gh pr merge
+	// - Line continuation: gh pr \<newline>merge
 	pattern:
-		'(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*gh\\s+pr\\s+merge\\b',
+		'(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*gh[\\s\\\\]+pr[\\s\\\\]+merge\\b',
 	decision: 'deny',
 	reason:
 		'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',

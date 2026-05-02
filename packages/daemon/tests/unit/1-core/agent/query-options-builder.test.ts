@@ -761,7 +761,7 @@ describe('QueryOptionsBuilder', () => {
 		const NO_MERGE_GUARD = {
 			matcher: 'Bash',
 			pattern:
-				'(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*gh\\s+pr\\s+merge\\b',
+				'(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*gh[\\s\\\\]+pr[\\s\\\\]+merge\\b',
 			decision: 'deny' as const,
 			reason:
 				'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
@@ -790,6 +790,7 @@ describe('QueryOptionsBuilder', () => {
 				'GH_TOKEN=token gh pr merge 123',
 				'command gh pr merge 123',
 				'env GH_TOKEN=token gh pr merge 123',
+				'gh pr \\\nmerge 123', // line continuation
 			]) {
 				const result = await hook!(
 					{
