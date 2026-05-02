@@ -160,9 +160,37 @@ export class OpenRouterProvider implements Provider {
 		return apiKey || undefined;
 	}
 
+	private getAllowedModelIds(): Set<string> | null {
+		const envConfigured = this.env.OPENROUTER_ALLOWED_MODELS ?? this.env.OPENROUTER_MODEL_ALLOWLIST;
+		const configured = envConfigured ?? this.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS;
+		if (!configured?.trim()) return null;
+
+		const ids = configured
+			.split(/[\n,]/)
+			.map((id) => id.trim())
+			.filter(Boolean)
+			.map((entry) => {
+				if (envConfigured !== undefined) return entry;
+				const [provider, ...rest] = entry.split(':');
+				return provider === this.id && rest.length > 0 ? rest.join(':') : '';
+			})
+			.filter(Boolean);
+
+		return ids.length > 0 ? new Set(ids) : null;
+	}
+
+	private getConfiguredAllowedModels(): ModelInfo[] {
+		const allowedIds = this.getAllowedModelIds();
+		if (!allowedIds) return [];
+
+		return Array.from(allowedIds).map((id) => this.toModelInfo({ id }));
+	}
+
 	async getModels(): Promise<ModelInfo[]> {
 		if (!this.isAvailable()) return [];
 		if (this.modelCache) return this.modelCache;
+
+		const allowedIds = this.getAllowedModelIds();
 
 		try {
 			const response = await this.fetchImpl(OpenRouterProvider.MODELS_URL, {
@@ -178,21 +206,31 @@ export class OpenRouterProvider implements Provider {
 			}
 
 			if (!response.ok) {
-				return OpenRouterProvider.FALLBACK_MODELS;
+				const fallback = this.getConfiguredAllowedModels();
+				this.modelCache = fallback.length > 0 ? fallback : OpenRouterProvider.FALLBACK_MODELS;
+				return this.modelCache;
 			}
 
 			const body = (await response.json()) as OpenRouterModelsResponse;
-			const models = OpenRouterProvider.curateApiModels(
-				(body.data ?? [])
-					.filter((model) => typeof model.id === 'string' && model.id.length > 0)
-					.map((model) => this.toModelInfo(model))
-			);
+			const apiModels = (body.data ?? [])
+				.filter((model) => typeof model.id === 'string' && model.id.length > 0)
+				.filter((model) => !allowedIds || allowedIds.has(model.id))
+				.map((model) => this.toModelInfo(model));
+			const models = allowedIds ? apiModels : OpenRouterProvider.curateApiModels(apiModels);
+			const configuredAllowedModels = this.getConfiguredAllowedModels();
 
-			this.modelCache = models.length > 0 ? models : OpenRouterProvider.FALLBACK_MODELS;
+			this.modelCache =
+				models.length > 0
+					? models
+					: configuredAllowedModels.length > 0
+						? configuredAllowedModels
+						: OpenRouterProvider.FALLBACK_MODELS;
 			this.lastAuthError = undefined;
 			return this.modelCache;
 		} catch {
-			return OpenRouterProvider.FALLBACK_MODELS;
+			const fallback = this.getConfiguredAllowedModels();
+			this.modelCache = fallback.length > 0 ? fallback : OpenRouterProvider.FALLBACK_MODELS;
+			return this.modelCache;
 		}
 	}
 
@@ -223,6 +261,13 @@ export class OpenRouterProvider implements Provider {
 		if (!isProbablyOpenRouterKey(apiKey)) {
 			throw new Error(
 				'OPENROUTER_API_KEY does not look like an OpenRouter key (expected sk-or-...).'
+			);
+		}
+
+		const allowedIds = this.getAllowedModelIds();
+		if (allowedIds && !allowedIds.has(modelId)) {
+			throw new Error(
+				`OpenRouter model '${modelId}' is not in the configured allowlist. Update it in Settings → Models → OpenRouter Model Allowlist.`
 			);
 		}
 
