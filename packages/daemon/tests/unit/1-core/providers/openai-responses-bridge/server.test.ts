@@ -1148,6 +1148,57 @@ describe('openai-responses-bridge server', () => {
 		expect(body.data[0].max_context_window).toBe(1_000_000);
 	});
 
+	it('falls back to Codex-only context window when model is NOT in config.models', async () => {
+		// Bridge is configured with only gpt-5.3-codex, but the request uses
+		// gpt-5.4-mini which is a known Codex model but NOT in this bridge's
+		// config.models. The fallback to getCodexModelContextWindow() should
+		// return the correct value (128000 for gpt-5.4-mini).
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models: [
+				{
+					id: 'gpt-5.3-codex',
+					display_name: 'GPT-5.3 Codex',
+					created_at: '2025-12-01T00:00:00Z',
+					context_window: 272000,
+				},
+			],
+			fetchImpl: async () =>
+				sse([
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: 'hi' },
+					},
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: { usage: { input_tokens: 1, output_tokens: 1 }, output: [] },
+						},
+					},
+				]),
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.4-mini',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'hi' }],
+			}),
+		});
+
+		const events = await readSSEEvents(resp.body);
+		const start = messageStartEvent(events);
+		const startMessage = start?.message as
+			| { usage?: { model_context_window?: number } }
+			| undefined;
+		// gpt-5.4-mini is NOT in config.models but IS a known Codex model,
+		// so resolveContextWindow falls back to getCodexModelContextWindow('gpt-5.4-mini') = 128000
+		expect(startMessage?.usage?.model_context_window).toBe(128000);
+	});
+
 	it('propagates the original 401 when ChatGPT OAuth refresh is unavailable', async () => {
 		let refreshAttempts = 0;
 		server = createOpenAIResponsesBridgeServer({
