@@ -958,13 +958,22 @@ describe('QueryRunner', () => {
 			expect(userMessage).not.toContain('attempt(s)');
 		});
 
-		it('should pass session-reset hint (no timeout mention) for conversation-not-found', async () => {
+		it('should preserve sdkSessionId and surface error for conversation-not-found', async () => {
+			mockSession.sdkSessionId = 'sdk-session-id';
 			buildSpy.mockRejectedValue(new Error('No conversation found for session abc123'));
 			const ctx = createContext();
 			runner = new QueryRunner(ctx);
 			runner.start();
 			await ctx.queryPromise?.catch(() => {});
 
+			// Do NOT auto-clear sdkSessionId — let the user choose via sdkResumeChoice prompt
+			expect(mockSession.sdkSessionId).toBe('sdk-session-id');
+			expect(updateSessionSpy).not.toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
+					sdkSessionId: undefined,
+				})
+			);
 			expect(handleErrorSpy).toHaveBeenCalledWith(
 				'test-session-id',
 				expect.any(Error),

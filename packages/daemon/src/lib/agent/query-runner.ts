@@ -573,8 +573,6 @@ export class QueryRunner {
 			// Never clear sdkSessionId on timeout: the session file is valid and the
 			// conversation can be resumed once the workspace lock conflict resolves.
 			// Clearing it would lose the ability to resume the conversation history.
-			// "No conversation found" is permanent — clear sdkSessionId so the next
-			// attempt starts fresh instead of looping on a dead conversation.
 			if (isStartupTimeout && session.sdkSessionId) {
 				logger.error(
 					`Startup timeout with sdkSessionId (${session.sdkSessionId}). ` +
@@ -582,39 +580,14 @@ export class QueryRunner {
 				);
 			}
 			if (isConversationNotFound && session.sdkSessionId) {
-				// Clear sdkSessionId and sdkOriginPath — the conversation transcript is
-				// irrecoverably gone (file not found even after cross-path migration attempts
-				// in QueryLifecycleManager). Common causes: provider switch, manual deletion,
-				// or workspace completely removed. Keeping it would cause every subsequent
-				// attempt to fail with the same error. Clearing it lets the next message
-				// start a fresh conversation automatically.
+				// Do NOT auto-clear sdkSessionId here. The query-lifecycle-manager
+				// already handles the missing-transcript case with a user-facing
+				// sdkResumeChoice prompt ("Start Fresh" / "Leave as Is"). Silently
+				// clearing here bypasses that prompt and loses context irreversibly.
 				logger.error(
 					`No conversation found for sdkSessionId (${session.sdkSessionId}). ` +
-						'All fallback path lookups were exhausted. ' +
-						'Clearing sdkSessionId — next message will start a fresh conversation.'
+						'Not clearing sdkSessionId — let the user choose via sdkResumeChoice prompt.'
 				);
-				session.sdkSessionId = undefined;
-				session.sdkOriginPath = undefined;
-				this.ctx.db.updateSession(session.id, {
-					sdkSessionId: undefined,
-					sdkOriginPath: undefined,
-				});
-
-				// Emit a visible system message so the user knows a new session was started.
-				// This is the deterministic rotation path required by the task spec.
-				try {
-					await this.displayErrorAsAssistantMessage(
-						'⚠️ **Conversation history could not be resumed.**\n\n' +
-							'The previous session transcript was not found — this can happen after a ' +
-							'provider switch, workspace path change, or external cleanup of ' +
-							'`~/.claude/projects/`. Your conversation history in NeoKai is preserved; ' +
-							'only the AI context window has been reset.\n\n' +
-							'**Please resend your message** — a fresh AI session will start automatically.',
-						{ markAsError: false }
-					);
-				} catch {
-					// Best-effort — don't let message emission block cleanup
-				}
 			}
 			if (isMessageNotFound) {
 				// Runtime-only resumeSessionAt is one-shot and has already been consumed.
