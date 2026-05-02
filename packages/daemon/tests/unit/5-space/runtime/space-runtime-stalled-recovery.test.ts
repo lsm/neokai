@@ -862,6 +862,58 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 		});
 
+		test('multi-agent target recovers missing slot when sibling slot is idle', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Coding', agentId: AGENT },
+					{ id: STEP_B, name: 'Review', agentId: AGENT },
+					{ id: 'step-done', name: 'Done', agentId: AGENT },
+				],
+				{ endNodeId: 'step-done' }
+			);
+			workflow.nodes[1].agents = [
+				{ agentId: AGENT, name: 'Reviewer A' },
+				{ agentId: AGENT, name: 'Reviewer B' },
+			];
+			workflowManager.updateWorkflow(workflow.id, { nodes: workflow.nodes });
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recover missing reviewer slot',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Recover missing reviewer slot',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'idle');
+			const reviewerA = seedExec(run.id, STEP_B, 'Reviewer A', 'idle', {
+				agentSessionId: 'dead-reviewer-a-session',
+				result: 'reviewer A already exited',
+			});
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			const reviewExecutions = nodeExecutionRepo.listByNode(run.id, STEP_B);
+			expect(nodeExecutionRepo.getById(reviewerA.id)?.status).toBe('pending');
+			expect(reviewExecutions.map((execution) => execution.agentName)).toContain('Reviewer A');
+			expect(reviewExecutions.map((execution) => execution.agentName)).toContain('Reviewer B');
+			expect(
+				nodeExecutionRepo
+					.listByNode(run.id, STEP_B)
+					.find((execution) => execution.agentName === 'Reviewer B')?.status
+			).toBe('pending');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+
 		test('fan-out recovery only activates the stalled target branch', async () => {
 			const workflow = buildLinearWorkflow(
 				SPACE_ID,

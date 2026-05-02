@@ -1557,7 +1557,6 @@ export class SpaceRuntime {
 
 		const nodeByName = new Map(workflow.nodes.map((node) => [node.name, node]));
 		const idleExecutions = executions.filter((execution) => execution.status === 'idle');
-		const idleNodeIds = new Set(idleExecutions.map((execution) => execution.workflowNodeId));
 		const stalledTransitions: Array<{
 			sourceExecution: NodeExecution;
 			sourceNode: SpaceWorkflow['nodes'][number];
@@ -1577,7 +1576,8 @@ export class SpaceRuntime {
 				).filter((targetName) => {
 					const targetNode = nodeByName.get(targetName);
 					return (
-						!targetNode || !idleNodeIds.has(targetNode.id) || targetNode.id === workflow.endNodeId
+						!targetNode ||
+						this.shouldRecoverRestartRecoveryTarget(targetNode, executions, workflow.endNodeId)
 					);
 				});
 				if (targetNames.length === 0) continue;
@@ -1741,6 +1741,23 @@ export class SpaceRuntime {
 		return (
 			channel.from === '*' || channel.from === sourceNode.name || channel.from === sourceAgentName
 		);
+	}
+
+	private shouldRecoverRestartRecoveryTarget(
+		targetNode: SpaceWorkflow['nodes'][number],
+		executions: NodeExecution[],
+		endNodeId?: string
+	): boolean {
+		if (targetNode.id === endNodeId) return true;
+		const executionsByAgent = new Map(
+			executions
+				.filter((execution) => execution.workflowNodeId === targetNode.id)
+				.map((execution) => [execution.agentName, execution])
+		);
+		return resolveNodeAgents(targetNode).some((agentEntry) => {
+			const execution = executionsByAgent.get(agentEntry.name);
+			return !execution || execution.status !== 'idle';
+		});
 	}
 
 	private resolveRestartRecoveryTargetNames(
