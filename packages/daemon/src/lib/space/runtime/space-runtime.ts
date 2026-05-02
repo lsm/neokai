@@ -1115,6 +1115,24 @@ export class SpaceRuntime {
 			);
 		}
 
+		// Clear stale expired/failed queued handoffs and reset in-memory counters
+		// so the next tick does not immediately re-block the run based on stale
+		// pending message state from the previous failed cycle.
+		//
+		// The task and run are read inside the transaction below; the pre-tx
+		// lookups here are only to resolve the run ID for cleanup. If the task
+		// doesn't exist or isn't workflow-backed the transaction will throw
+		// before any writes occur, so the cleanup below is harmless even when
+		// the pre-tx read returns stale data.
+		const preTxTask = this.config.taskRepo.getTask(taskId);
+		const preTxRunId = preTxTask?.workflowRunId;
+		if (preTxRunId) {
+			if (this.config.pendingMessageRepo) {
+				this.config.pendingMessageRepo.clearTerminalForRun(preTxRunId);
+			}
+			this.blockedRetryCounts.delete(preTxRunId);
+		}
+
 		const liveSessionIds = new Set<string>();
 		const recoverTx = this.config.db.transaction(() => {
 			const task = this.config.taskRepo.getTask(taskId);

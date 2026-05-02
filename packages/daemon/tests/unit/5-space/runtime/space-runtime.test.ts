@@ -466,6 +466,212 @@ describe('SpaceRuntime', () => {
 			expect(resumed.workflowRunId).toBeUndefined();
 			expect(resumed.completedAt).toBeNull();
 		});
+
+		describe('recoverWorkflowBackedTask() — handoff expiration regression', () => {
+			/** Minimal taskAgentManager stub that satisfies the runtime's tick loop. */
+			function makeStubTam() {
+				return {
+					isSessionAlive: (_sid: string) => false,
+					isExecutionSpawning: (_eid: string) => false,
+					spawnWorkflowNodeAgentForExecution: async () => {
+						throw new Error('spawn failed');
+					},
+					rehydrate: async () => {},
+					getAgentSessionById: (_sid: string) => null,
+					interruptBySessionId: async () => {},
+					flushPendingMessagesForTarget: async () => {},
+					tryResumeNodeAgentSession: async () => {},
+				} as unknown as SpaceRuntimeConfig['taskAgentManager'];
+			}
+
+			test('clears expired queued handoffs so next tick does not re-block the run', async () => {
+				const pendingMessageRepo = new PendingAgentMessageRepository(db);
+				runtime = new SpaceRuntime({
+					db,
+					spaceManager,
+					spaceAgentManager: agentManager,
+					spaceWorkflowManager: workflowManager,
+					workflowRunRepo,
+					taskRepo,
+					nodeExecutionRepo,
+					pendingMessageRepo,
+					taskAgentManager: makeStubTam(),
+				});
+
+				const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+					{ id: STEP_B, name: 'Review', agentId: AGENT_CODER },
+				]);
+				const { run, tasks } = await runtime.startWorkflowRun(
+					SPACE_ID,
+					workflow.id,
+					'Handoff expiry'
+				);
+				const task = tasks[0];
+
+				// Simulate an expired queued handoff message to the reviewer node.
+				// In production, expireStale() inside repairQueuedWorkflowNodeHandoffs
+				// converts pending → expired; here we pre-expire to force the blocked path.
+				pendingMessageRepo.enqueue({
+					workflowRunId: run.id,
+					spaceId: SPACE_ID,
+					taskId: task.id,
+					targetKind: 'node_agent',
+					targetAgentName: 'Review',
+					message: 'handoff to reviewer',
+					expiresAt: Date.now() - 1, // already expired
+				});
+
+				// Tick to trigger the expired-handoff → blocked path
+				await runtime.executeTick();
+
+				// Verify the run is now blocked due to expired handoff
+				const blockedRun = workflowRunRepo.getRun(run.id)!;
+				expect(blockedRun.status).toBe('blocked');
+
+				const blockedTask = taskRepo.getTask(task.id)!;
+				expect(blockedTask.status).toBe('blocked');
+
+				// Now recover the task
+				await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
+
+				// Verify expired messages were cleared
+				const allMessages = pendingMessageRepo.listAllForRun(run.id);
+				const expiredMessages = allMessages.filter((m) => m.status === 'expired');
+				expect(expiredMessages).toHaveLength(0);
+
+				// Run the tick again — should NOT re-block
+				await runtime.executeTick();
+
+				const recoveredTask = taskRepo.getTask(task.id)!;
+				const recoveredRun = workflowRunRepo.getRun(run.id)!;
+				expect(recoveredTask.status).toBe('in_progress');
+				expect(recoveredRun.status).toBe('in_progress');
+			});
+
+			test('clearTerminalForRun clears expired, failed, and delivered but preserves pending', async () => {
+				const pendingMessageRepo = new PendingAgentMessageRepository(db);
+
+				// Create a run to attach messages to
+				const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+				]);
+				const { run, tasks } = await runtime.startWorkflowRun(
+					SPACE_ID,
+					workflow.id,
+					'Clear terminal'
+				);
+				const task = tasks[0];
+
+				// Enqueue messages with different fates
+				const expiredResult = pendingMessageRepo.enqueue({
+					workflowRunId: run.id,
+					spaceId: SPACE_ID,
+					taskId: task.id,
+					targetKind: 'node_agent',
+					targetAgentName: 'Plan',
+					message: 'will expire',
+					expiresAt: Date.now() - 1,
+				});
+				pendingMessageRepo.expireStale(run.id); // convert to expired
+
+				const failedResult = pendingMessageRepo.enqueue({
+					workflowRunId: run.id,
+					spaceId: SPACE_ID,
+					taskId: task.id,
+					targetKind: 'node_agent',
+					targetAgentName: 'Plan',
+					message: 'will fail',
+					maxAttempts: 1,
+				});
+				pendingMessageRepo.markAttemptFailed(failedResult.record.id, 'test failure');
+
+				pendingMessageRepo.enqueue({
+					workflowRunId: run.id,
+					spaceId: SPACE_ID,
+					taskId: task.id,
+					targetKind: 'node_agent',
+					targetAgentName: 'Plan',
+					message: 'stays pending',
+				});
+
+				// Verify setup: 1 expired, 1 failed, 1 pending
+				const before = pendingMessageRepo.listAllForRun(run.id);
+				expect(before.filter((m) => m.status === 'expired')).toHaveLength(1);
+				expect(before.filter((m) => m.status === 'failed')).toHaveLength(1);
+				expect(before.filter((m) => m.status === 'pending')).toHaveLength(1);
+
+				// Clear terminal messages
+				const deleted = pendingMessageRepo.clearTerminalForRun(run.id);
+				expect(deleted).toBe(2); // expired + failed
+
+				// Verify: only pending remains
+				const after = pendingMessageRepo.listAllForRun(run.id);
+				expect(after).toHaveLength(1);
+				expect(after[0].status).toBe('pending');
+				expect(after[0].message).toBe('stays pending');
+			});
+
+			test('resets blocked retry counter on recovery so auto-retry is not exhausted', async () => {
+				runtime = new SpaceRuntime({
+					db,
+					spaceManager,
+					spaceAgentManager: agentManager,
+					spaceWorkflowManager: workflowManager,
+					workflowRunRepo,
+					taskRepo,
+					nodeExecutionRepo,
+				});
+
+				const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+				]);
+				const { run, tasks } = await runtime.startWorkflowRun(
+					SPACE_ID,
+					workflow.id,
+					'Retry counter'
+				);
+				const task = tasks[0];
+
+				// Helper to manually block run + executions + task
+				const blockAll = () => {
+					workflowRunRepo.transitionStatus(run.id, 'blocked');
+					const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+					nodeExecutionRepo.update(execution.id, {
+						status: 'blocked',
+						result: 'test block',
+					});
+					taskRepo.updateTask(task.id, {
+						status: 'blocked',
+						blockReason: 'execution_failed',
+						result: 'blocked',
+					});
+				};
+
+				// Block and tick — auto-retry fires (counter becomes 1),
+				// resets execution to pending, run → in_progress.
+				// MAX_BLOCKED_RUN_RETRIES = 1.
+				blockAll();
+				await runtime.executeTick();
+				expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+
+				// Block again and tick — counter (1) >= MAX (1), retries exhausted,
+				// run stays blocked.
+				blockAll();
+				await runtime.executeTick();
+				expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
+
+				// Recover — should reset the retry counter
+				await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
+
+				// Block again and tick — auto-retry should fire again (counter was reset)
+				blockAll();
+				await runtime.executeTick();
+
+				const retriedRun = workflowRunRepo.getRun(run.id)!;
+				expect(retriedRun.status).toBe('in_progress');
+			});
+		});
 	});
 
 	// -------------------------------------------------------------------------
