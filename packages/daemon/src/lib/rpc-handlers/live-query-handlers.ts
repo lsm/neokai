@@ -18,7 +18,7 @@ import type {
 	LiveQuerySnapshotEvent,
 	LiveQueryDeltaEvent,
 } from '@neokai/shared';
-import type { LiveQueryEngine, LiveQueryHandle } from '../../storage/live-query';
+import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query';
 import { Logger } from '../logger';
 
 // ============================================================================
@@ -2004,14 +2004,7 @@ export function setupLiveQueryHandlers(
 		const handle = liveQueries.subscribe(
 			sql,
 			params,
-			(diff: {
-				type: 'snapshot' | 'delta';
-				rows: Record<string, unknown>[];
-				added?: Record<string, unknown>[];
-				removed?: Record<string, unknown>[];
-				updated?: Record<string, unknown>[];
-				version: number;
-			}) => {
+			(diff: QueryDiff<Record<string, unknown>>) => {
 				const router = messageHub.getRouter();
 				if (!router) {
 					// Router not yet registered or already torn down.  Mark snapshot
