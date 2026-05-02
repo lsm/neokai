@@ -90,9 +90,21 @@ export class OllamaProvider implements Provider {
 		this.displayName = options.kind === 'cloud' ? 'Ollama Cloud' : 'Ollama (Local)';
 	}
 
-	isAvailable(): boolean {
+	async isAvailable(): Promise<boolean> {
 		if (this.kind === 'cloud') return !!this.getApiKey();
-		return true;
+		try {
+			const response = await this.fetchImpl(`${this.getBaseUrl()}/api/tags`, {
+				headers: this.getApiKey() ? { Authorization: `Bearer ${this.getApiKey()}` } : undefined,
+			});
+			if (response.status === 401 || response.status === 403) {
+				this.lastAuthError = 'Ollama API key was rejected. Check OLLAMA_API_KEY.';
+				return false;
+			}
+			if (response.ok) this.lastAuthError = undefined;
+			return response.ok;
+		} catch {
+			return false;
+		}
 	}
 
 	getApiKey(): string | undefined {
@@ -110,7 +122,7 @@ export class OllamaProvider implements Provider {
 	}
 
 	async getModels(): Promise<ModelInfo[]> {
-		if (!this.isAvailable()) return [];
+		if (this.kind === 'cloud' && !this.getApiKey()) return [];
 		if (this.modelCache && Date.now() - this.modelCacheAt < 5 * 60_000) return this.modelCache;
 		try {
 			const response = await this.fetchImpl(`${this.getBaseUrl()}/api/tags`, {

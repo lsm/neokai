@@ -16,19 +16,38 @@ describe('OllamaProvider', () => {
 		process.env = originalEnv;
 	});
 
-	it('exposes local and cloud identities', () => {
-		const local = new OllamaProvider({ kind: 'local' });
+	it('exposes local and cloud identities', async () => {
+		const fetchMock = mock(
+			async () => new Response(JSON.stringify({ models: [] }), { status: 200 })
+		);
+		const local = new OllamaProvider({ kind: 'local', fetchImpl: fetchMock as typeof fetch });
 		const cloud = new OllamaProvider({ kind: 'cloud' });
 
 		expect(local.id).toBe('ollama');
 		expect(local.displayName).toBe('Ollama (Local)');
-		expect(local.isAvailable()).toBe(true);
+		expect(await local.isAvailable()).toBe(true);
 		expect(cloud.id).toBe('ollama-cloud');
 		expect(cloud.displayName).toBe('Ollama Cloud');
-		expect(cloud.isAvailable()).toBe(false);
+		expect(await cloud.isAvailable()).toBe(false);
 		expect(local.capabilities.streaming).toBe(true);
 		expect(local.capabilities.functionCalling).toBe(true);
 		expect(local.capabilities.vision).toBe(false);
+	});
+
+	it('does not mark local Ollama available when the daemon is unreachable', async () => {
+		const fetchMock = mock(async () => {
+			throw new Error('connection refused');
+		});
+		const provider = new OllamaProvider({
+			kind: 'local',
+			env: process.env,
+			fetchImpl: fetchMock as typeof fetch,
+		});
+
+		expect(await provider.isAvailable()).toBe(false);
+		expect(fetchMock).toHaveBeenCalledWith('http://localhost:11434/api/tags', {
+			headers: undefined,
+		});
 	});
 
 	it('loads models from /api/tags for local Ollama', async () => {
