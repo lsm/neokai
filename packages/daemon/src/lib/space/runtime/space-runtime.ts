@@ -1569,17 +1569,15 @@ export class SpaceRuntime {
 			if (!node) continue;
 			for (const [channelIndex, channel] of channels.entries()) {
 				if (!this.matchesRestartRecoveryChannelSource(channel, node, execution.agentName)) continue;
-				const targetNames = this.resolveRestartRecoveryTargetNames(
-					channel,
-					workflow,
-					node.name
-				).filter((targetName) => {
-					const targetNode = nodeByName.get(targetName);
-					return (
-						!targetNode ||
-						this.shouldRecoverRestartRecoveryTarget(targetNode, executions, workflow.endNodeId)
-					);
-				});
+				const targetNames = this.resolveRestartRecoveryTargetNames(channel, workflow).filter(
+					(targetName) => {
+						const targetNode = nodeByName.get(targetName);
+						return (
+							!targetNode ||
+							this.shouldRecoverRestartRecoveryTarget(targetNode, executions, workflow.endNodeId)
+						);
+					}
+				);
 				if (targetNames.length === 0) continue;
 				stalledTransitions.push({
 					sourceExecution: execution,
@@ -1762,13 +1760,9 @@ export class SpaceRuntime {
 
 	private resolveRestartRecoveryTargetNames(
 		channel: WorkflowChannel,
-		workflow: SpaceWorkflow,
-		sourceNodeName: string
+		workflow: SpaceWorkflow
 	): string[] {
 		const rawTargets = Array.isArray(channel.to) ? channel.to : [channel.to];
-		if (rawTargets.includes('*')) {
-			return workflow.nodes.map((node) => node.name).filter((name) => name !== sourceNodeName);
-		}
 		const resolvedTargets = new Set<string>();
 		for (const rawTarget of rawTargets) {
 			const targetNode = workflow.nodes.find(

@@ -998,6 +998,57 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 		});
 
+		test('wildcard target recovery does not broadcast to unrelated nodes', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Coding', agentId: AGENT },
+					{ id: STEP_B, name: 'Docs', agentId: AGENT },
+					{ id: 'step-c', name: 'Review', agentId: AGENT },
+				],
+				{
+					channels: [{ id: 'coding-to-any', from: 'Coding', to: '*' }],
+				}
+			);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Do not broadcast wildcard target',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Do not broadcast wildcard target',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const coder = seedExec(run.id, STEP_A, 'Coding', 'idle');
+			const docs = seedExec(run.id, STEP_B, 'Docs', 'idle', {
+				agentSessionId: 'dead-docs-session',
+				result: 'docs branch already finished',
+			});
+			const reviewer = seedExec(run.id, 'step-c', 'Review', 'idle', {
+				agentSessionId: 'dead-review-session',
+				result: 'review branch already finished',
+			});
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(nodeExecutionRepo.getById(coder.id)?.status).toBe('idle');
+			expect(nodeExecutionRepo.getById(docs.id)?.status).toBe('idle');
+			expect(nodeExecutionRepo.getById(docs.id)?.agentSessionId).toBe('dead-docs-session');
+			expect(nodeExecutionRepo.getById(docs.id)?.result).toBe('docs branch already finished');
+			expect(nodeExecutionRepo.getById(reviewer.id)?.status).toBe('idle');
+			expect(nodeExecutionRepo.getById(reviewer.id)?.agentSessionId).toBe('dead-review-session');
+			expect(nodeExecutionRepo.getById(reviewer.id)?.result).toBe('review branch already finished');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+		});
+
 		test('cyclic recovery increments cycle count and resets cycle gates', async () => {
 			const workflow = buildLinearWorkflow(
 				SPACE_ID,
