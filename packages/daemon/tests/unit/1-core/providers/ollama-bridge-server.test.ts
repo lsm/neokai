@@ -107,6 +107,57 @@ describe('Ollama Anthropic bridge server', () => {
 		expect(text).toContain('"stop_reason":"tool_use"');
 	});
 
+	it('preserves tool-call history when building Ollama requests', async () => {
+		let capturedRequest: unknown;
+		const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+			capturedRequest = JSON.parse(String(init?.body));
+			return new Response(JSON.stringify({ model: 'llama3.2', done: true }), { status: 200 });
+		});
+		const server = createOllamaAnthropicBridgeServer({
+			baseUrl: 'http://ollama.test',
+			fetchImpl: fetchMock as typeof fetch,
+		});
+		servers.push(server);
+
+		await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'llama3.2',
+				messages: [
+					{ role: 'user', content: 'weather?' },
+					{
+						role: 'assistant',
+						content: [
+							{
+								type: 'tool_use',
+								id: 'toolu_1',
+								name: 'get_weather',
+								input: { city: 'London' },
+							},
+						],
+					},
+					{
+						role: 'user',
+						content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Rainy' }],
+					},
+				],
+			}),
+		});
+
+		expect(capturedRequest).toMatchObject({
+			messages: [
+				{ role: 'user', content: 'weather?' },
+				{
+					role: 'assistant',
+					content: '',
+					tool_calls: [{ function: { name: 'get_weather', arguments: { city: 'London' } } }],
+				},
+				{ role: 'tool', content: 'Rainy', tool_name: 'get_weather' },
+			],
+		});
+	});
+
 	it('maps upstream failures to Anthropic JSON errors', async () => {
 		const fetchMock = mock(async () => new Response('Unauthorized', { status: 401 }));
 		const server = createOllamaAnthropicBridgeServer({

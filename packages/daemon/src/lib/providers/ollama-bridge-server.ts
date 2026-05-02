@@ -1,6 +1,7 @@
 import {
 	type AnthropicContentBlockText,
 	type AnthropicContentBlockToolResult,
+	type AnthropicContentBlockToolUse,
 	type AnthropicRequest,
 	contentBlockStartTextSSE,
 	contentBlockStartToolUseSSE,
@@ -31,6 +32,7 @@ export type OllamaBridgeConfig = {
 type OllamaChatMessage = {
 	role: 'system' | 'user' | 'assistant' | 'tool';
 	content: string;
+	tool_calls?: OllamaToolCall[];
 	tool_name?: string;
 };
 
@@ -90,20 +92,16 @@ function estimateTokens(text: string): number {
 	return Math.max(1, Math.ceil(text.length / 4));
 }
 
+function toolResultText(toolResult: AnthropicContentBlockToolResult): string {
+	if (typeof toolResult.content === 'string') return toolResult.content;
+	return toolResult.content.map((part) => part.text).join('');
+}
+
 function extractText(content: string | AnthropicRequest['messages'][number]['content']): string {
 	if (typeof content === 'string') return content;
 	return content
-		.map((block) => {
-			if (block.type === 'text') return (block as AnthropicContentBlockText).text;
-			if (block.type === 'tool_result') {
-				const toolResult = block as AnthropicContentBlockToolResult;
-				if (typeof toolResult.content === 'string') return toolResult.content;
-				return toolResult.content.map((part) => part.text).join('');
-			}
-			if (block.type === 'tool_use') return JSON.stringify(block.input);
-			return '';
-		})
-		.filter(Boolean)
+		.filter((block): block is AnthropicContentBlockText => block.type === 'text')
+		.map((block) => block.text)
 		.join('\n');
 }
 
@@ -113,12 +111,63 @@ function extractSystemText(system: AnthropicRequest['system'] | undefined): stri
 	return system.map((block) => block.text).join('\n');
 }
 
+function toOllamaToolCall(toolUse: AnthropicContentBlockToolUse): OllamaToolCall {
+	return {
+		function: {
+			name: toolUse.name,
+			arguments: toolUse.input,
+		},
+	};
+}
+
+function appendOllamaMessages(
+	messages: OllamaChatMessage[],
+	message: AnthropicRequest['messages'][number],
+	toolNameByUseId: Map<string, string>
+): void {
+	if (typeof message.content === 'string') {
+		messages.push({ role: message.role, content: message.content });
+		return;
+	}
+
+	const text = extractText(message.content);
+	const toolUses = message.content.filter(
+		(block): block is AnthropicContentBlockToolUse => block.type === 'tool_use'
+	);
+	if (message.role === 'assistant') {
+		for (const toolUse of toolUses) toolNameByUseId.set(toolUse.id, toolUse.name);
+		messages.push({
+			role: 'assistant',
+			content: text,
+			...(toolUses.length > 0 ? { tool_calls: toolUses.map(toOllamaToolCall) } : {}),
+		});
+		return;
+	}
+
+	const toolResults = message.content.filter(
+		(block): block is AnthropicContentBlockToolResult => block.type === 'tool_result'
+	);
+	if (toolResults.length === 0) {
+		messages.push({ role: 'user', content: text });
+		return;
+	}
+	if (text) messages.push({ role: 'user', content: text });
+	for (const result of toolResults) {
+		messages.push({
+			role: 'tool',
+			content: toolResultText(result),
+			tool_name: toolNameByUseId.get(result.tool_use_id) ?? result.tool_use_id,
+		});
+	}
+}
+
 function buildOllamaRequest(body: AnthropicRequest): OllamaChatRequest {
 	const messages: OllamaChatMessage[] = [];
+	const toolNameByUseId = new Map<string, string>();
 	const system = extractSystemText(body.system);
 	if (system) messages.push({ role: 'system', content: system });
 	for (const message of body.messages) {
-		messages.push({ role: message.role, content: extractText(message.content) });
+		appendOllamaMessages(messages, message, toolNameByUseId);
 	}
 
 	const request: OllamaChatRequest = {
