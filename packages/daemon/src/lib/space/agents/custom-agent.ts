@@ -9,6 +9,7 @@
 import type { AgentSessionInit, PromptProvenanceInit } from '../../agent/agent-session';
 import type {
 	AgentDefinition,
+	DeclarativeToolGuard,
 	McpServerConfig,
 	Space,
 	SpaceAgent,
@@ -81,6 +82,8 @@ export interface SlotOverrides {
 	disabledSkillIds?: string[];
 	/** Extra MCP servers to add for this slot */
 	extraMcpServers?: Record<string, McpServerConfig>;
+	/** Declarative tool guards from the workflow node agent definition */
+	toolGuards?: DeclarativeToolGuard[];
 	/** Runtime metadata used to make prompt provenance observable without prompt content. */
 	resolutionContext?: SlotResolutionContext;
 }
@@ -435,6 +438,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		: undefined;
 
 	const extraMcpServers = slotOverrides?.extraMcpServers;
+	const toolGuards = slotOverrides?.toolGuards;
 
 	if (customTools) {
 		const agentKey = sanitizeAgentKey(customAgent.name);
@@ -467,6 +471,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 			...customToolPermissions,
 			skillOverrides,
 			mcpServers: extraMcpServers,
+			toolGuards,
 		};
 	}
 
@@ -487,6 +492,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		...customToolPermissions,
 		skillOverrides,
 		mcpServers: extraMcpServers,
+		toolGuards,
 	};
 }
 

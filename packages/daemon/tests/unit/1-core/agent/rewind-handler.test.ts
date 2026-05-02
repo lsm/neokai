@@ -38,6 +38,8 @@ describe('RewindHandler', () => {
 	let deleteMessagesAtAndAfterSpy: ReturnType<typeof mock>;
 	let rewindFilesSpy: ReturnType<typeof mock>;
 	let updateSessionSpy: ReturnType<typeof mock>;
+	let setPendingResumeSessionAtSpy: ReturnType<typeof mock>;
+	let clearPendingResumeSessionAtSpy: ReturnType<typeof mock>;
 	let testSdkSessionDir: string;
 	let originalTestSdkSessionDir: string | undefined;
 
@@ -70,6 +72,8 @@ describe('RewindHandler', () => {
 		deleteMessagesAfterSpy = mock(() => 5);
 		deleteMessagesAtAndAfterSpy = mock(() => 5);
 		updateSessionSpy = mock(() => {});
+		setPendingResumeSessionAtSpy = mock(() => {});
+		clearPendingResumeSessionAtSpy = mock(() => {});
 		getUserMessagesSpy = mock(() => [
 			{
 				uuid: testRewindPoint.uuid,
@@ -143,6 +147,8 @@ describe('RewindHandler', () => {
 			logger: mockLogger,
 			queryObject: mockQueryObject,
 			firstMessageReceived: true,
+			setPendingResumeSessionAt: setPendingResumeSessionAtSpy,
+			clearPendingResumeSessionAt: clearPendingResumeSessionAtSpy,
 			...overrides,
 		};
 	}
@@ -382,7 +388,7 @@ describe('RewindHandler', () => {
 				expect(deleteMessagesAtAndAfterSpy).toHaveBeenCalledWith(mockSession.id, testTimestamp);
 			});
 
-			it('should set resumeSessionAt to previous user message after deletion', async () => {
+			it('should set pending resumeSessionAt to previous user message after deletion', async () => {
 				const previousMessage = {
 					uuid: 'prev-msg-uuid',
 					timestamp: testTimestamp - 10000,
@@ -395,40 +401,41 @@ describe('RewindHandler', () => {
 				handler = createHandler();
 				await handler.executeRewind(testRewindPoint.uuid, 'conversation');
 
-				expect(mockSession.metadata.resumeSessionAt).toBe('prev-msg-uuid');
-				expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
+				expect(setPendingResumeSessionAtSpy).toHaveBeenCalledWith('prev-msg-uuid');
+				expect(updateSessionSpy).not.toHaveBeenCalledWith(mockSession.id, {
 					metadata: mockSession.metadata,
 				});
 			});
 
-			it('should clear resumeSessionAt when previous user message is missing from SDK transcript', async () => {
+			it('should not set pending resumeSessionAt when previous user message is missing from SDK transcript', async () => {
 				const previousMessage = {
 					uuid: 'compacted-prev-msg-uuid',
 					timestamp: testTimestamp - 10000,
 					content: 'Previous message',
 				};
-				mockSession.metadata.resumeSessionAt = 'old-resume-uuid';
 				getUserMessagesSpy.mockReturnValue([previousMessage]);
 				writeSdkTranscript(['different-message-uuid']);
 
 				handler = createHandler();
 				await handler.executeRewind(testRewindPoint.uuid, 'conversation');
 
-				expect(mockSession.metadata.resumeSessionAt).toBeUndefined();
-				expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
+				expect(setPendingResumeSessionAtSpy).not.toHaveBeenCalled();
+				expect(clearPendingResumeSessionAtSpy).toHaveBeenCalled();
+				expect(updateSessionSpy).not.toHaveBeenCalledWith(mockSession.id, {
 					metadata: mockSession.metadata,
 				});
 			});
 
-			it('should clear resumeSessionAt when no previous user message exists', async () => {
+			it('should not set pending resumeSessionAt when no previous user message exists', async () => {
 				// After deleting the only user message, getUserMessages returns empty
 				getUserMessagesSpy.mockReturnValue([]);
 
 				handler = createHandler();
 				await handler.executeRewind(testRewindPoint.uuid, 'conversation');
 
-				expect(mockSession.metadata.resumeSessionAt).toBeUndefined();
-				expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
+				expect(setPendingResumeSessionAtSpy).not.toHaveBeenCalled();
+				expect(clearPendingResumeSessionAtSpy).toHaveBeenCalled();
+				expect(updateSessionSpy).not.toHaveBeenCalledWith(mockSession.id, {
 					metadata: mockSession.metadata,
 				});
 			});
@@ -664,7 +671,7 @@ describe('RewindHandler', () => {
 			expect(result.success).toBe(true);
 		});
 
-		it('should set resumeSessionAt to previous user message after selective rewind', async () => {
+		it('should set pending resumeSessionAt to previous user message after selective rewind', async () => {
 			const previousMessage = {
 				uuid: 'prev-msg-uuid',
 				timestamp: testTimestamp - 10000,
@@ -681,17 +688,15 @@ describe('RewindHandler', () => {
 			handler = createHandler();
 			await handler.executeSelectiveRewind([testRewindPoint.uuid]);
 
-			expect(mockSession.metadata.resumeSessionAt).toBe('prev-msg-uuid');
-			expect(updateSessionSpy).toHaveBeenCalled();
+			expect(setPendingResumeSessionAtSpy).toHaveBeenCalledWith('prev-msg-uuid');
 		});
 
-		it('should clear resumeSessionAt after selective rewind when previous UUID is missing from SDK transcript', async () => {
+		it('should not set pending resumeSessionAt after selective rewind when previous UUID is missing from SDK transcript', async () => {
 			const previousMessage = {
 				uuid: 'compacted-prev-msg-uuid',
 				timestamp: testTimestamp - 10000,
 				content: 'Previous message',
 			};
-			mockSession.metadata.resumeSessionAt = 'old-resume-uuid';
 			mockDb.getSDKMessages = mock(() => ({
 				messages: [{ uuid: testRewindPoint.uuid, timestamp: testTimestamp }],
 				hasMore: false,
@@ -702,8 +707,8 @@ describe('RewindHandler', () => {
 			handler = createHandler();
 			await handler.executeSelectiveRewind([testRewindPoint.uuid]);
 
-			expect(mockSession.metadata.resumeSessionAt).toBeUndefined();
-			expect(updateSessionSpy).toHaveBeenCalled();
+			expect(setPendingResumeSessionAtSpy).not.toHaveBeenCalled();
+			expect(clearPendingResumeSessionAtSpy).toHaveBeenCalled();
 		});
 	});
 

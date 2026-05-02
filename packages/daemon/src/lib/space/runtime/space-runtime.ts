@@ -1115,6 +1115,24 @@ export class SpaceRuntime {
 			);
 		}
 
+		// Clear stale expired/failed queued handoffs and reset in-memory counters
+		// so the next tick does not immediately re-block the run based on stale
+		// pending message state from the previous failed cycle.
+		//
+		// Guarded on both task AND run ownership so a wrong-space caller (or a
+		// task whose workflowRunId points to a foreign run) cannot delete messages
+		// or reset retry counters. The transaction below also validates and throws
+		// on mismatch, but these side-effects run outside the transaction.
+		const preTxTask = this.config.taskRepo.getTask(taskId);
+		const preTxRunId = preTxTask?.workflowRunId;
+		const preTxRun = preTxRunId ? this.config.workflowRunRepo.getRun(preTxRunId) : null;
+		if (preTxRunId && preTxTask.spaceId === spaceId && preTxRun?.spaceId === spaceId) {
+			if (this.config.pendingMessageRepo) {
+				this.config.pendingMessageRepo.clearTerminalForRun(preTxRunId);
+			}
+			this.blockedRetryCounts.delete(preTxRunId);
+		}
+
 		const liveSessionIds = new Set<string>();
 		const recoverTx = this.config.db.transaction(() => {
 			const task = this.config.taskRepo.getTask(taskId);
