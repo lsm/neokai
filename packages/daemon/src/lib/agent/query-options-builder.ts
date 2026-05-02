@@ -74,8 +74,9 @@ function compileToolGuard(guard: DeclarativeToolGuard): HookCallback {
 	}
 	return async (input) => {
 		if (input.hook_event_name !== 'PreToolUse') return {};
+		// tool_name filtering is handled by the SDK matcher field in buildHooks();
+		// no redundant check here so regex-style matchers (e.g. "Write|Edit") work.
 		const preInput = input as PreToolUseHookInput;
-		if (preInput.tool_name !== guard.matcher) return {};
 
 		const command = (preInput.tool_input as Record<string, unknown>)?.command;
 		if (typeof command !== 'string') return {};
