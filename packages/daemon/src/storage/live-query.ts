@@ -66,6 +66,7 @@ interface QueryEntry<T extends Record<string, unknown>> {
 	cachedHash: number;
 	cachedRowHashes: Map<unknown, number> | null;
 	cachedMetadata: Record<string, unknown> | undefined;
+	cachedMetadataHash: number;
 	getMetadata:
 		| ((
 				rows: Record<string, unknown>[],
@@ -167,6 +168,10 @@ function hashRows(rows: Record<string, unknown>[]): RowHashSnapshot {
 	}
 
 	return { hash: hashString(digestParts.join('|')), rowHashes };
+}
+
+function hashMetadata(metadata: Record<string, unknown> | undefined): number {
+	return metadata === undefined ? 0 : hashString(JSON.stringify(metadata));
 }
 
 /**
@@ -282,6 +287,7 @@ export class LiveQueryEngine {
 				cachedHash: hashSnapshot.hash,
 				cachedRowHashes: hashSnapshot.rowHashes,
 				cachedMetadata,
+				cachedMetadataHash: hashMetadata(cachedMetadata),
 				getMetadata: options.getMetadata,
 				subscribers: new Set(),
 				pendingEval: false,
@@ -306,6 +312,7 @@ export class LiveQueryEngine {
 			if (!entry.getMetadata && options.getMetadata) {
 				entry.getMetadata = options.getMetadata;
 				entry.cachedMetadata = options.getMetadata(entry.cachedRows, entry.params);
+				entry.cachedMetadataHash = hashMetadata(entry.cachedMetadata);
 			}
 		}
 
@@ -394,23 +401,24 @@ export class LiveQueryEngine {
 
 		const newRows = this.runQuery(entry.sql, entry.params);
 		const newHashSnapshot = hashRows(newRows);
+		const newMetadata = entry.getMetadata?.(newRows, entry.params);
+		const newMetadataHash = hashMetadata(newMetadata);
+		const rowsChanged = newHashSnapshot.hash !== entry.cachedHash;
+		const metadataChanged = newMetadataHash !== entry.cachedMetadataHash;
 
-		if (newHashSnapshot.hash === entry.cachedHash) return;
+		if (!rowsChanged && !metadataChanged) return;
 
 		const oldRows = entry.cachedRows;
-		const newMetadata = entry.getMetadata?.(newRows, entry.params);
-		const diff = computeDiff(
-			oldRows,
-			newRows,
-			entry.cachedRowHashes,
-			newHashSnapshot.rowHashes
-		);
+		const diff = rowsChanged
+			? computeDiff(oldRows, newRows, entry.cachedRowHashes, newHashSnapshot.rowHashes)
+			: { added: [], removed: [], updated: [] };
 		const version = this.computeVersion(entry.tables);
 
 		entry.cachedRows = newRows;
 		entry.cachedHash = newHashSnapshot.hash;
 		entry.cachedRowHashes = newHashSnapshot.rowHashes;
 		entry.cachedMetadata = newMetadata;
+		entry.cachedMetadataHash = newMetadataHash;
 
 		const queryDiff: QueryDiff<Record<string, unknown>> = {
 			type: 'delta',
