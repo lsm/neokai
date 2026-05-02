@@ -57,6 +57,10 @@ export interface NamedQuery {
 	) => Record<string, unknown> | undefined;
 }
 
+const DEBOUNCE_SDK_MESSAGES_MS = 100;
+const DEBOUNCE_SESSION_GROUP_MESSAGES_MS = 150;
+const DEBOUNCE_SPACE_TASK_FEEDS_MS = 250;
+
 // ============================================================================
 // Row mappers
 // ============================================================================
@@ -1658,7 +1662,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SESSION_GROUP_MESSAGES_BY_GROUP_SQL,
 			paramCount: 1,
-			debounceMs: 150,
+			debounceMs: DEBOUNCE_SESSION_GROUP_MESSAGES_MS,
 			mapRow: mapSessionGroupMessageRow,
 		},
 	],
@@ -1667,7 +1671,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SPACE_TASK_ACTIVITY_BY_TASK_SQL,
 			paramCount: 1,
-			debounceMs: 250,
+			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
 			mapRow: mapSpaceTaskActivityRow,
 		},
 	],
@@ -1676,7 +1680,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SPACE_TASK_MESSAGES_BY_TASK_SQL,
 			paramCount: 1,
-			debounceMs: 250,
+			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
 			mapRow: mapSpaceTaskMessageRow,
 		},
 	],
@@ -1685,7 +1689,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL,
 			paramCount: 1,
-			debounceMs: 250,
+			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
 			mapRow: mapSpaceTaskMessageRow,
 		},
 	],
@@ -1755,7 +1759,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: MESSAGES_BY_SESSION_SQL,
 			paramCount: 2,
-			debounceMs: 100,
+			debounceMs: DEBOUNCE_SDK_MESSAGES_MS,
 			mapRow: mapMessageRow,
 		},
 	],

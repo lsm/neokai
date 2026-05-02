@@ -241,7 +241,10 @@ export class LiveQueryEngine {
 	private queries = new Map<string, QueryEntry<Record<string, unknown>>>();
 	/** Map from table name to set of cache keys that depend on it */
 	private tableIndex = new Map<string, Set<string>>();
-	/** Prepared statements keyed by SQL text, reused across evaluations. */
+	/**
+	 * Prepared statements keyed by SQL text. Public subscriptions resolve to
+	 * constant named-query SQL, so this stays bounded by the registry size.
+	 */
 	private statements = new Map<string, ReturnType<BunDatabase['prepare']>>();
 	private changeListener: (data: { tables: string[]; versions: Record<string, number> }) => void;
 	private disposed = false;

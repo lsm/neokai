@@ -1068,11 +1068,11 @@ export class QueryRunner {
 	): AsyncGenerator<unknown, void, unknown> {
 		const iterator = queryObj[Symbol.asyncIterator]();
 		const abortResult = { aborted: true } as const;
-		let resolveAbort: ((value: typeof abortResult) => void) | null = null;
+		let resolveAbort!: (value: typeof abortResult) => void;
 		const abortPromise = new Promise<typeof abortResult>((resolve) => {
 			resolveAbort = resolve;
 		});
-		const onAbort = () => resolveAbort?.(abortResult);
+		const onAbort = () => resolveAbort(abortResult);
 
 		try {
 			if (signal.aborted) {
