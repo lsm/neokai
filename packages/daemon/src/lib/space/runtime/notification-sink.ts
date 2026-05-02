@@ -87,6 +87,27 @@ export interface AgentCrashEvent {
 	timestamp: string;
 }
 
+/** A node agent went idle without a terminal SDK message or reported status. */
+export interface AgentIdleNonTerminalEvent {
+	kind: 'agent_idle_non_terminal';
+	/** Space the task belongs to. */
+	spaceId: string;
+	/** Task whose node agent stopped ambiguously. */
+	taskId: string;
+	/** Workflow run containing the node execution. */
+	runId: string;
+	/** Node execution that went idle ambiguously. */
+	executionId: string;
+	/** Node ID for diagnostics. */
+	nodeId: string;
+	/** Agent slot/name that went idle. */
+	agentName: string;
+	/** Human-readable classifier reason. */
+	reason: string;
+	/** ISO-8601 timestamp when the event was emitted. */
+	timestamp: string;
+}
+
 /** A blocked execution is being automatically retried by the runtime. */
 export interface TaskRetryEvent {
 	kind: 'task_retry';
@@ -252,6 +273,7 @@ export type SpaceNotificationEvent =
 	| WorkflowRunReopenedEvent
 	| AgentAutoCompletedEvent
 	| AgentCrashEvent
+	| AgentIdleNonTerminalEvent
 	| TaskRetryEvent
 	| WorkflowRunNeedsAttentionEvent
 	| TaskAwaitingApprovalEvent;

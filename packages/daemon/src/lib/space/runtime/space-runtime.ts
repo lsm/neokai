@@ -66,6 +66,7 @@ import { GateDataRepository } from '../../../storage/repositories/gate-data-repo
 import { evaluateGate } from './gate-evaluator';
 import { executeGateScript } from './gate-script-executor';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
+import { classifyLastMessageForIdleAgent } from './last-message-classifier';
 
 const log = new Logger('space-runtime');
 
@@ -282,6 +283,14 @@ export class SpaceRuntime {
 
 	/** In-memory store of resolved channels per run ID. Replaces run.config._resolvedChannels. */
 	private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
+
+	/**
+	 * Tracks idle executions whose last SDK message was non-terminal.
+	 *
+	 * The counter is intentionally in-memory like crash recovery: transient idle
+	 * ambiguity gets one automatic re-spawn, then escalates if it repeats.
+	 */
+	private nonTerminalIdleCounts = new Map<string, number>();
 	private readonly toolContinuationRepo: ToolContinuationRecoveryRepository;
 
 	constructor(private config: SpaceRuntimeConfig) {
@@ -1491,6 +1500,16 @@ export class SpaceRuntime {
 				canonicalTask.status === 'approved' ||
 				canonicalTask.reportedStatus !== null);
 
+		if (!completionSignalled && canonicalTask) {
+			const nonTerminalIdleOutcome = await this.handleNonTerminalIdleExecutions(
+				run.id,
+				run.spaceId,
+				canonicalTask
+			);
+			if (nonTerminalIdleOutcome === 'blocked') return 'blocked';
+			if (nonTerminalIdleOutcome === 'retried') return 'skipped';
+		}
+
 		if (completionSignalled) {
 			// Tick loop's CompletionDetector + processRunTick will fire on the
 			// next pass and transition the run to `done` (or pick up the
@@ -2234,6 +2253,16 @@ export class SpaceRuntime {
 
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
+			const nonTerminalIdleOutcome = await this.handleNonTerminalIdleExecutions(
+				runId,
+				meta.spaceId,
+				canonicalTask
+			);
+			if (nonTerminalIdleOutcome === 'blocked') {
+				return;
+			}
+			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+
 			if (
 				canonicalTask.status === 'done' ||
 				canonicalTask.status === 'cancelled' ||
@@ -2691,6 +2720,119 @@ export class SpaceRuntime {
 			reason,
 			timestamp: new Date().toISOString(),
 		});
+	}
+
+	private async handleNonTerminalIdleExecutions(
+		runId: string,
+		spaceId: string,
+		canonicalTask: SpaceTask
+	): Promise<'none' | 'retried' | 'blocked'> {
+		// Explicit task completion or pause signals are authoritative. A final tool
+		// call may have set reportedStatus or parked the task for human/post-approval
+		// review even if the SDK result row has not been persisted yet, so never
+		// retry/block when the task already carries one of those lifecycle signals.
+		if (
+			canonicalTask.reportedStatus !== null ||
+			canonicalTask.status === 'review' ||
+			canonicalTask.status === 'approved' ||
+			canonicalTask.status === 'done' ||
+			canonicalTask.status === 'cancelled'
+		) {
+			return 'none';
+		}
+
+		const idleExecutions = this.config.nodeExecutionRepo
+			.listByWorkflowRun(runId)
+			.filter((execution) => execution.status === 'idle' && execution.agentSessionId);
+		for (const execution of idleExecutions) {
+			const sessionId = execution.agentSessionId;
+			if (!sessionId) continue;
+			const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
+			const classification = classifyLastMessageForIdleAgent(lastMessage);
+			if (classification.terminal) {
+				this.nonTerminalIdleCounts.delete(`${runId}:${execution.id}`);
+				continue;
+			}
+
+			const key = `${runId}:${execution.id}`;
+			const retryCount = (this.nonTerminalIdleCounts.get(key) ?? 0) + 1;
+			this.nonTerminalIdleCounts.set(key, retryCount);
+			const reason = `Agent went idle without completing — non-terminal last message (${classification.reason})`;
+			log.warn(
+				`Node ${execution.workflowNodeId} went idle with non-terminal last message, not advancing: ` +
+					`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${classification.reason}`
+			);
+			await this.safeNotify({
+				kind: 'agent_idle_non_terminal',
+				spaceId,
+				taskId: canonicalTask.id,
+				runId,
+				executionId: execution.id,
+				nodeId: execution.workflowNodeId,
+				agentName: execution.agentName,
+				reason,
+				timestamp: new Date().toISOString(),
+			});
+
+			if (retryCount <= MAX_TASK_AGENT_CRASH_RETRIES) {
+				this.config.nodeExecutionRepo.update(execution.id, {
+					status: 'pending',
+					agentSessionId: null,
+					result: reason,
+					completedAt: null,
+					startedAt: null,
+				});
+				await this.safeNotify({
+					kind: 'task_retry',
+					spaceId,
+					taskId: canonicalTask.id,
+					runId,
+					originalReason: reason,
+					attemptNumber: retryCount,
+					maxAttempts: MAX_TASK_AGENT_CRASH_RETRIES,
+					timestamp: new Date().toISOString(),
+				});
+				return 'retried';
+			}
+
+			this.config.nodeExecutionRepo.update(execution.id, {
+				status: 'blocked',
+				agentSessionId: null,
+				result: reason,
+			});
+			await this.transitionRunStatusAndEmit(runId, 'blocked');
+			await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+				status: 'blocked',
+				result: reason,
+				blockReason: 'execution_failed',
+				completedAt: null,
+			});
+			await this.safeNotify({
+				kind: 'task_blocked',
+				spaceId,
+				taskId: canonicalTask.id,
+				reason,
+				timestamp: new Date().toISOString(),
+			});
+			await this.safeNotify({
+				kind: 'workflow_run_blocked',
+				spaceId,
+				runId,
+				reason,
+				timestamp: new Date().toISOString(),
+			});
+			await this.safeNotify({
+				kind: 'workflow_run_needs_attention',
+				spaceId,
+				runId,
+				taskId: canonicalTask.id,
+				reason,
+				retriesExhausted: retryCount - 1,
+				timestamp: new Date().toISOString(),
+			});
+			return 'blocked';
+		}
+		return 'none';
 	}
 
 	private async handleWaitingRebindExecutions(

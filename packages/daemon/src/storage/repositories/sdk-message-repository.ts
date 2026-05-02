@@ -239,6 +239,28 @@ export class SDKMessageRepository {
 	}
 
 	/**
+	 * Get the most recently persisted SDK message for a session.
+	 *
+	 * Used by workflow runtime safety checks that need to know whether a node
+	 * agent went idle after a terminal SDK result / clear end-turn, or stopped
+	 * mid-turn (for example after a tool_use without a matching tool_result).
+	 */
+	getLastSDKMessage(sessionId: string): (SDKMessage & { dbId: string; timestamp: number }) | null {
+		const stmt = this.db.prepare(
+			`SELECT id, sdk_message, timestamp FROM sdk_messages
+	       WHERE session_id = ?
+	       ORDER BY timestamp DESC, rowid DESC
+	       LIMIT 1`
+		);
+		const row = stmt.get(sessionId) as {
+			id: string;
+			sdk_message: string;
+			timestamp: string;
+		} | null;
+		return row ? this.inflatePersistedMessage(row) : null;
+	}
+
+	/**
 	 * Get the count of SDK messages for a session
 	 *
 	 * Only counts top-level messages (excludes nested subagent messages with parent_tool_use_id)
