@@ -821,6 +821,112 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 		});
 
+		test('fan-out recovery only activates the stalled target branch', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Coding', agentId: AGENT },
+					{ id: STEP_B, name: 'Docs', agentId: AGENT },
+					{ id: 'step-c', name: 'Review', agentId: AGENT },
+				],
+				{
+					channels: [
+						{ id: 'coding-to-docs', from: 'Coding', to: 'Docs' },
+						{ id: 'coding-to-review', from: 'Coding', to: 'Review' },
+					],
+				}
+			);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recover one fan-out branch',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Recover one fan-out branch',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const coder = seedExec(run.id, STEP_A, 'Coding', 'idle');
+			const docs = seedExec(run.id, STEP_B, 'Docs', 'idle', {
+				agentSessionId: 'dead-docs-session',
+				result: 'docs branch already finished',
+			});
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(nodeExecutionRepo.getById(coder.id)?.status).toBe('idle');
+			expect(nodeExecutionRepo.getById(docs.id)?.status).toBe('idle');
+			expect(nodeExecutionRepo.getById(docs.id)?.agentSessionId).toBe('dead-docs-session');
+			expect(nodeExecutionRepo.getById(docs.id)?.result).toBe('docs branch already finished');
+			expect(findExec(run.id, 'step-c').status).toBe('pending');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+
+		test('cyclic recovery increments cycle count and resets cycle gates', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Coding', agentId: AGENT },
+					{ id: STEP_B, name: 'Review', agentId: AGENT },
+				],
+				{
+					channels: [
+						{ id: 'coding-to-review', from: 'Coding', to: 'Review' },
+						{ id: 'review-to-coding', from: 'Review', to: 'Coding', maxCycles: 2 },
+					],
+					gates: [
+						{
+							id: 'cycle-votes',
+							resetOnCycle: true,
+							fields: [{ name: 'votes', type: 'map' }],
+						},
+					],
+					endNodeId: STEP_B,
+				}
+			);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recover cyclic handoff',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Recover cyclic handoff',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_B, 'Review', 'idle');
+			db.prepare(
+				`INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`
+			).run(run.id, 'cycle-votes', JSON.stringify({ votes: { reviewer: true } }), Date.now());
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(findExec(run.id, STEP_A).status).toBe('pending');
+			expect(new ChannelCycleRepository(db).get(run.id, 1)?.count).toBe(1);
+			expect(
+				JSON.parse(
+					db
+						.prepare(`SELECT data FROM gate_data WHERE run_id = ? AND gate_id = ?`)
+						.get(run.id, 'cycle-votes')?.data as string
+				)
+			).toEqual({ votes: {} });
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+
 		test('cyclic channel at maxCycles → run blocked', async () => {
 			const workflow = buildLinearWorkflow(
 				SPACE_ID,

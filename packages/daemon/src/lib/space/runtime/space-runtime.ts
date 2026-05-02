@@ -1558,110 +1558,113 @@ export class SpaceRuntime {
 		const nodeByName = new Map(workflow.nodes.map((node) => [node.name, node]));
 		const idleExecutions = executions.filter((execution) => execution.status === 'idle');
 		const idleNodeIds = new Set(idleExecutions.map((execution) => execution.workflowNodeId));
-		const candidateSourceNodeIds = new Set<string>();
+		const stalledTransitions: Array<{
+			sourceExecution: NodeExecution;
+			sourceNode: SpaceWorkflow['nodes'][number];
+			channel: WorkflowChannel;
+			channelIndex: number;
+			targetNames: string[];
+		}> = [];
 		for (const execution of idleExecutions) {
 			const node = workflow.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
 			if (!node) continue;
-			for (const channel of channels) {
-				if (channel.from !== '*' && channel.from !== node.name) continue;
-				for (const targetName of this.resolveRestartRecoveryTargetNames(
-					channel,
-					workflow,
-					node.name
-				)) {
-					const targetNode = nodeByName.get(targetName);
-					if (
-						!targetNode ||
-						!idleNodeIds.has(targetNode.id) ||
-						targetNode.id === workflow.endNodeId
-					) {
-						candidateSourceNodeIds.add(node.id);
-					}
-				}
-			}
-		}
-		const sourceExecutions = idleExecutions.filter((execution) =>
-			candidateSourceNodeIds.has(execution.workflowNodeId)
-		);
-		const createdOrReset: string[] = [];
-		const blockedGateReasons: string[] = [];
-
-		for (const sourceExecution of sourceExecutions) {
-			const sourceNode = workflow.nodes.find((node) => node.id === sourceExecution.workflowNodeId);
-			if (!sourceNode) continue;
 			for (const [channelIndex, channel] of channels.entries()) {
-				if (channel.from !== '*' && channel.from !== sourceNode.name) continue;
-				const cycleResult = this.evaluateRestartRecoveryCycle(
-					run.id,
-					workflow,
-					channel,
-					channelIndex
-				);
-				if (!cycleResult.open) {
-					blockedGateReasons.push(cycleResult.reason);
-					continue;
-				}
+				if (channel.from !== '*' && channel.from !== node.name) continue;
 				const targetNames = this.resolveRestartRecoveryTargetNames(
 					channel,
 					workflow,
-					sourceNode.name
-				);
-				for (const targetName of targetNames) {
+					node.name
+				).filter((targetName) => {
 					const targetNode = nodeByName.get(targetName);
-					if (!targetNode || targetNode.id === sourceNode.id) continue;
-
-					const gateResult = await this.evaluateRestartRecoveryChannelGate(
-						run.id,
-						workflow,
-						channel
+					return (
+						!targetNode || !idleNodeIds.has(targetNode.id) || targetNode.id === workflow.endNodeId
 					);
-					if (!gateResult.open) {
-						blockedGateReasons.push(
-							gateResult.reason ??
-								`Gate ${channel.gateId ?? 'unknown'} blocked channel ${channel.id}`
-						);
+				});
+				if (targetNames.length === 0) continue;
+				stalledTransitions.push({
+					sourceExecution: execution,
+					sourceNode: node,
+					channel,
+					channelIndex,
+					targetNames,
+				});
+			}
+		}
+		const createdOrReset: string[] = [];
+		const blockedGateReasons: string[] = [];
+
+		for (const {
+			sourceExecution,
+			sourceNode,
+			channel,
+			channelIndex,
+			targetNames,
+		} of stalledTransitions) {
+			const cycleResult = this.evaluateRestartRecoveryCycle(
+				run.id,
+				workflow,
+				channel,
+				channelIndex
+			);
+			if (!cycleResult.open) {
+				blockedGateReasons.push(cycleResult.reason);
+				continue;
+			}
+			let activatedOnChannel = false;
+			for (const targetName of targetNames) {
+				const targetNode = nodeByName.get(targetName);
+				if (!targetNode || targetNode.id === sourceNode.id) continue;
+
+				const gateResult = await this.evaluateRestartRecoveryChannelGate(run.id, workflow, channel);
+				if (!gateResult.open) {
+					blockedGateReasons.push(
+						gateResult.reason ?? `Gate ${channel.gateId ?? 'unknown'} blocked channel ${channel.id}`
+					);
+					continue;
+				}
+
+				let activatedForTarget = false;
+				let resetExistingTarget = false;
+				for (const agentEntry of resolveNodeAgents(targetNode)) {
+					const existing = this.config.nodeExecutionRepo
+						.listByNode(run.id, targetNode.id)
+						.find((execution) => execution.agentName === agentEntry.name);
+					if (existing) {
+						if (existing.status === 'idle') {
+							this.config.nodeExecutionRepo.update(existing.id, {
+								status: 'pending',
+								agentSessionId: null,
+								result: null,
+								startedAt: null,
+								completedAt: null,
+							});
+							activatedForTarget = true;
+							resetExistingTarget = true;
+						}
 						continue;
 					}
-
-					let activatedForTarget = false;
-					let resetExistingTarget = false;
-					for (const agentEntry of resolveNodeAgents(targetNode)) {
-						const existing = this.config.nodeExecutionRepo
-							.listByNode(run.id, targetNode.id)
-							.find((execution) => execution.agentName === agentEntry.name);
-						if (existing) {
-							if (existing.status === 'idle') {
-								this.config.nodeExecutionRepo.update(existing.id, {
-									status: 'pending',
-									agentSessionId: null,
-									result: null,
-									startedAt: null,
-									completedAt: null,
-								});
-								activatedForTarget = true;
-								resetExistingTarget = true;
-							}
-							continue;
-						}
-						this.config.nodeExecutionRepo.createOrIgnore({
-							workflowRunId: run.id,
-							workflowNodeId: targetNode.id,
-							agentName: agentEntry.name,
-							agentId: agentEntry.agentId ?? null,
-							status: 'pending',
-						});
-						activatedForTarget = true;
-					}
-					if (activatedForTarget) {
-						createdOrReset.push(targetNode.name);
-						this.enqueueRestartRecoveryMessage(
-							run,
-							sourceExecution.agentName,
-							targetNode,
-							resetExistingTarget
-						);
-					}
+					this.config.nodeExecutionRepo.createOrIgnore({
+						workflowRunId: run.id,
+						workflowNodeId: targetNode.id,
+						agentName: agentEntry.name,
+						agentId: agentEntry.agentId ?? null,
+						status: 'pending',
+					});
+					activatedForTarget = true;
 				}
+				if (activatedForTarget) {
+					createdOrReset.push(targetNode.name);
+					activatedOnChannel = true;
+					this.enqueueRestartRecoveryMessage(
+						run,
+						sourceExecution.agentName,
+						targetNode,
+						resetExistingTarget
+					);
+				}
+			}
+			if (activatedOnChannel) {
+				this.recordRestartRecoveryCycleTraversal(run.id, workflow, channel, channelIndex);
 			}
 		}
 
@@ -1702,6 +1705,32 @@ export class SpaceRuntime {
 			};
 		}
 		return { open: true };
+	}
+
+	private recordRestartRecoveryCycleTraversal(
+		runId: string,
+		workflow: SpaceWorkflow,
+		channel: WorkflowChannel,
+		channelIndex: number
+	): void {
+		if (!isChannelCyclic(channelIndex, workflow.channels ?? [], workflow.nodes)) return;
+		const maxCycles = channel.maxCycles ?? 5;
+		const cycleRepo = new ChannelCycleRepository(this.config.db);
+		const gateDataRepo = new GateDataRepository(this.config.db);
+		const cyclicGates = (workflow.gates ?? []).filter((gate) => gate.resetOnCycle);
+		const increment = () => {
+			for (const gate of cyclicGates) {
+				gateDataRepo.reset(runId, gate.id, computeGateDefaults(gate.fields ?? []));
+			}
+			return cycleRepo.incrementCycleCount(runId, channelIndex, maxCycles);
+		};
+		const incremented =
+			cyclicGates.length > 0 ? this.config.db.transaction(increment)() : increment();
+		if (!incremented) {
+			log.warn(
+				`SpaceRuntime.recoverStalledRuns: cyclic channel "${channel.id ?? channelIndex}" reached maxCycles during recovery activation`
+			);
+		}
 	}
 
 	private resolveRestartRecoveryTargetNames(
