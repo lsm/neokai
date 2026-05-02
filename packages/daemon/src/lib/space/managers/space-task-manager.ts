@@ -24,6 +24,7 @@ import { SpaceTaskRepository } from '../../../storage/repositories/space-task-re
  * Maps current status -> allowed next statuses
  */
 export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> = {
+	draft: ['open', 'archived'], // Only publish or archive
 	open: ['in_progress', 'blocked', 'done', 'cancelled'],
 	// `in_progress → approved` is the end-node `approve_task` path (PR 2/5 of
 	// the task-agent-as-post-approval-executor refactor). It replaces the
@@ -247,6 +248,19 @@ export class SpaceTaskManager {
 	 */
 	async startTask(taskId: string): Promise<SpaceTask> {
 		return this.setTaskStatus(taskId, 'in_progress');
+	}
+
+	/**
+	 * Publish a draft task — transition from `draft` to `open`.
+	 *
+	 * This is the only way to make a draft task runnable. The orchestrator
+	 * never picks up tasks in `draft` status; this method promotes the task
+	 * to `open` so the runtime's tick loop can attach a workflow and start it.
+	 *
+	 * @throws if the task is not in `draft` status
+	 */
+	async publishTask(taskId: string): Promise<SpaceTask> {
+		return this.setTaskStatus(taskId, 'open');
 	}
 
 	/**

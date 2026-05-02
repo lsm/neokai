@@ -541,6 +541,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 113: Add SDK message indexes for large thread windows and replay lookups.
 	runMigration113(db);
+
+	// Migration 114: Add 'draft' to space_tasks status CHECK constraint.
+	runMigration114(db);
 }
 
 /**
@@ -7838,4 +7841,129 @@ export function runMigration113(db: BunDatabase): void {
 		ON sdk_messages(session_id, json_extract(sdk_message, '$.parent_tool_use_id'))`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_uuid_status
 		ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`);
+}
+
+export function runMigration114(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+	// Add 'draft' to the status CHECK constraint.
+	// SQLite doesn't support ALTER TABLE ... ALTER CONSTRAINT, so we recreate the table.
+	// This is safe because space_tasks has no foreign keys referencing it from other tables.
+	const cols = [];
+	if (tableHasColumn(db, 'space_tasks', 'id')) cols.push('id');
+	if (tableHasColumn(db, 'space_tasks', 'space_id')) cols.push('space_id');
+	if (tableHasColumn(db, 'space_tasks', 'task_number')) cols.push('task_number');
+	if (tableHasColumn(db, 'space_tasks', 'title')) cols.push('title');
+	if (tableHasColumn(db, 'space_tasks', 'description')) cols.push('description');
+	if (tableHasColumn(db, 'space_tasks', 'status')) cols.push('status');
+	if (tableHasColumn(db, 'space_tasks', 'priority')) cols.push('priority');
+	if (tableHasColumn(db, 'space_tasks', 'labels')) cols.push('labels');
+	if (tableHasColumn(db, 'space_tasks', 'depends_on')) cols.push('depends_on');
+	if (tableHasColumn(db, 'space_tasks', 'result')) cols.push('result');
+	if (tableHasColumn(db, 'space_tasks', 'error')) cols.push('error');
+	if (tableHasColumn(db, 'space_tasks', 'progress')) cols.push('progress');
+	if (tableHasColumn(db, 'space_tasks', 'current_step')) cols.push('current_step');
+	if (tableHasColumn(db, 'space_tasks', 'task_type')) cols.push('task_type');
+	if (tableHasColumn(db, 'space_tasks', 'assigned_agent')) cols.push('assigned_agent');
+	if (tableHasColumn(db, 'space_tasks', 'created_by_task_id')) cols.push('created_by_task_id');
+	if (tableHasColumn(db, 'space_tasks', 'input_draft')) cols.push('input_draft');
+	if (tableHasColumn(db, 'space_tasks', 'active_session')) cols.push('active_session');
+	if (tableHasColumn(db, 'space_tasks', 'workflow_run_id')) cols.push('workflow_run_id');
+	if (tableHasColumn(db, 'space_tasks', 'preferred_workflow_id'))
+		cols.push('preferred_workflow_id');
+	if (tableHasColumn(db, 'space_tasks', 'task_agent_session_id'))
+		cols.push('task_agent_session_id');
+	if (tableHasColumn(db, 'space_tasks', 'started_at')) cols.push('started_at');
+	if (tableHasColumn(db, 'space_tasks', 'completed_at')) cols.push('completed_at');
+	if (tableHasColumn(db, 'space_tasks', 'archived_at')) cols.push('archived_at');
+	if (tableHasColumn(db, 'space_tasks', 'restrictions')) cols.push('restrictions');
+	if (tableHasColumn(db, 'space_tasks', 'pr_url')) cols.push('pr_url');
+	if (tableHasColumn(db, 'space_tasks', 'pr_number')) cols.push('pr_number');
+	if (tableHasColumn(db, 'space_tasks', 'pr_created_at')) cols.push('pr_created_at');
+	if (tableHasColumn(db, 'space_tasks', 'block_reason')) cols.push('block_reason');
+	if (tableHasColumn(db, 'space_tasks', 'approval_source')) cols.push('approval_source');
+	if (tableHasColumn(db, 'space_tasks', 'approval_reason')) cols.push('approval_reason');
+	if (tableHasColumn(db, 'space_tasks', 'approved_at')) cols.push('approved_at');
+	if (tableHasColumn(db, 'space_tasks', 'pending_checkpoint_type'))
+		cols.push('pending_checkpoint_type');
+	if (tableHasColumn(db, 'space_tasks', 'pending_completion_submitted_by_node_id'))
+		cols.push('pending_completion_submitted_by_node_id');
+	if (tableHasColumn(db, 'space_tasks', 'pending_completion_submitted_at'))
+		cols.push('pending_completion_submitted_at');
+	if (tableHasColumn(db, 'space_tasks', 'pending_completion_reason'))
+		cols.push('pending_completion_reason');
+	if (tableHasColumn(db, 'space_tasks', 'reported_status')) cols.push('reported_status');
+	if (tableHasColumn(db, 'space_tasks', 'reported_summary')) cols.push('reported_summary');
+	if (tableHasColumn(db, 'space_tasks', 'post_approval_session_id'))
+		cols.push('post_approval_session_id');
+	if (tableHasColumn(db, 'space_tasks', 'post_approval_started_at'))
+		cols.push('post_approval_started_at');
+	if (tableHasColumn(db, 'space_tasks', 'post_approval_blocked_reason'))
+		cols.push('post_approval_blocked_reason');
+	if (tableHasColumn(db, 'space_tasks', 'created_at')) cols.push('created_at');
+	if (tableHasColumn(db, 'space_tasks', 'updated_at')) cols.push('updated_at');
+	const colList = cols.join(', ');
+
+	db.exec(`CREATE TABLE space_tasks_new (
+		id TEXT PRIMARY KEY NOT NULL,
+		space_id TEXT NOT NULL,
+		task_number INTEGER NOT NULL,
+		title TEXT NOT NULL,
+		description TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL DEFAULT 'open'
+			CHECK(status IN ('draft', 'open', 'in_progress', 'review', 'done', 'blocked', 'cancelled', 'archived', 'approved')),
+		priority TEXT NOT NULL DEFAULT 'normal'
+			CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+		labels TEXT NOT NULL DEFAULT '[]',
+		depends_on TEXT NOT NULL DEFAULT '[]',
+		result TEXT,
+		error TEXT,
+		progress INTEGER,
+		current_step TEXT,
+		task_type TEXT,
+		assigned_agent TEXT,
+		created_by_task_id TEXT,
+		input_draft TEXT,
+		active_session TEXT,
+		workflow_run_id TEXT,
+		preferred_workflow_id TEXT,
+		task_agent_session_id TEXT,
+		started_at INTEGER,
+		completed_at INTEGER,
+		archived_at INTEGER,
+		restrictions TEXT,
+		pr_url TEXT,
+		pr_number INTEGER,
+		pr_created_at INTEGER,
+		block_reason TEXT,
+		approval_source TEXT,
+		approval_reason TEXT,
+		approved_at INTEGER,
+		pending_checkpoint_type TEXT,
+		pending_completion_submitted_by_node_id TEXT,
+		pending_completion_submitted_at INTEGER,
+		pending_completion_reason TEXT,
+		reported_status TEXT,
+		reported_summary TEXT,
+		post_approval_session_id TEXT,
+		post_approval_started_at INTEGER,
+		post_approval_blocked_reason TEXT,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	)`);
+	db.exec(`INSERT INTO space_tasks_new (${colList}) SELECT ${colList} FROM space_tasks`);
+	db.exec(`DROP TABLE space_tasks`);
+	db.exec(`ALTER TABLE space_tasks_new RENAME TO space_tasks`);
+	// Recreate indexes
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_space_number ON space_tasks(space_id, task_number)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_status ON space_tasks(space_id, status)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run ON space_tasks(workflow_run_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_created_by ON space_tasks(created_by_task_id)`
+	);
 }

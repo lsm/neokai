@@ -106,6 +106,7 @@ function createMockTaskManager(task: SpaceTask | null = mockTask): SpaceTaskMana
 		setTaskStatus: mock(async () => ({ ...task!, status: 'in_progress' as const })),
 		updateTask: mock(async () => ({ ...task!, title: 'Updated' })),
 		updateTaskProgress: mock(async () => ({ ...task!, progress: 50 })),
+		publishTask: mock(async () => ({ ...task!, status: 'open' as const })),
 		// Unified entry point used by both `spaceTask.submitForReview` (UI) and
 		// the agent `submit_for_approval` tool. Returns a task in `review` with
 		// the pending-completion fields stamped — mirrors the real manager's
@@ -923,6 +924,50 @@ describe('space-task-handlers', () => {
 			await expect(
 				call('spaceTask.submitForReview', { spaceId: 'space-1', taskId: 'task-1' })
 			).rejects.toThrow('Invalid status transition');
+		});
+
+		describe('spaceTask.publish', () => {
+			beforeEach(() => setup());
+
+			it('publishes a draft task and emits space.task.updated', async () => {
+				const mockDraftTask = { ...mockTask, status: 'draft' };
+				(taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue(mockDraftTask);
+				(taskManager.publishTask as ReturnType<typeof mock>).mockResolvedValue({
+					...mockTask,
+					status: 'open',
+				});
+
+				const result = await call('spaceTask.publish', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+				});
+
+				expect(result.status).toBe('open');
+				expect(taskManager.publishTask).toHaveBeenCalledWith('task-1');
+				expect(daemonHub.emit).toHaveBeenCalledWith('space.task.updated', {
+					sessionId: 'global',
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					task: expect.objectContaining({ status: 'open' }),
+				});
+			});
+
+			it('throws when taskId is missing', async () => {
+				await expect(call('spaceTask.publish', { spaceId: 'space-1' })).rejects.toThrow(
+					'taskId is required'
+				);
+			});
+
+			it('throws when task is not in draft status', async () => {
+				(taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue({
+					...mockTask,
+					status: 'open',
+				});
+
+				await expect(
+					call('spaceTask.publish', { spaceId: 'space-1', taskId: 'task-1' })
+				).rejects.toThrow("not in 'draft' status");
+			});
 		});
 	});
 });

@@ -384,6 +384,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			priority?: SpaceTaskPriority;
 			workflow_id?: string;
 			depends_on?: string[];
+			draft?: boolean;
 		}): Promise<ToolResult> {
 			try {
 				const task = await taskManager.createTask({
@@ -392,6 +393,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					priority: args.priority,
 					preferredWorkflowId: args.workflow_id ?? null,
 					dependsOn: args.depends_on,
+					status: args.draft ? 'draft' : undefined,
 				});
 				return jsonResult({ success: true, task });
 			} catch (err) {
@@ -1089,6 +1091,12 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.optional()
 					.describe(
 						'List of task IDs this task depends on. All must be in the same space. The task will be blocked until every dependency reaches status=done. Cycles and non-existent IDs are rejected.'
+					),
+				draft: z
+					.boolean()
+					.optional()
+					.describe(
+						'When true, create the task in draft status. Draft tasks are never auto-started by the runtime, even with a workflow and priority assigned. Must be explicitly published before orchestration picks it up.'
 					),
 			},
 			(args) => handlers.create_standalone_task(args)

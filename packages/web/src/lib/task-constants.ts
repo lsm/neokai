@@ -1,5 +1,6 @@
 export const TASK_STATUS_COLORS: Record<string, string> = {
-	// SpaceTaskStatus values
+	// SpaceTaskStatus values (also covers Room 'draft')
+	draft: 'text-slate-400',
 	open: 'text-gray-400',
 	in_progress: 'text-yellow-400',
 	approved: 'text-emerald-400',
@@ -12,7 +13,6 @@ export const TASK_STATUS_COLORS: Record<string, string> = {
 	completed: 'text-green-400',
 	needs_attention: 'text-red-400',
 	review: 'text-purple-400',
-	draft: 'text-gray-500',
 	rate_limited: 'text-orange-500',
 	usage_limited: 'text-orange-600',
 };

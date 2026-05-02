@@ -4252,6 +4252,7 @@ export class TaskAgentManager {
 			custom_agent_id?: string;
 			workflow_id?: string;
 			depends_on?: string[];
+			draft?: boolean;
 		}) => {
 			try {
 				const task = await boundTaskManager.createTask({
@@ -4260,6 +4261,7 @@ export class TaskAgentManager {
 					priority: args.priority,
 					preferredWorkflowId: args.workflow_id ?? null,
 					dependsOn: args.depends_on,
+					status: args.draft ? 'draft' : undefined,
 				});
 				return jsonResult({ success: true, task });
 			} catch (err) {

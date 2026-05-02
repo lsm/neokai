@@ -5,6 +5,7 @@ import type { SpaceTaskStatus } from '@neokai/shared';
  * Kept in sync manually — the shared package doesn't export this constant.
  */
 export const VALID_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> = {
+	draft: ['open', 'archived'],
 	open: ['in_progress', 'blocked', 'done', 'cancelled'],
 	in_progress: ['open', 'review', 'done', 'blocked', 'cancelled'],
 	review: ['done', 'in_progress', 'cancelled', 'archived'],
@@ -22,6 +23,8 @@ export const VALID_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> 
  * Human-readable labels for each transition, keyed by `from -> to`.
  */
 export const TRANSITION_LABELS: Record<string, string> = {
+	'draft->open': 'Publish',
+	'draft->archived': 'Archive',
 	'open->in_progress': 'Start',
 	'open->blocked': 'Block',
 	'open->done': 'Mark Done',
