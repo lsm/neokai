@@ -560,7 +560,7 @@ export class AgentSession
 			skillsManager,
 			appMcpServerRepo,
 			undefined,
-			undefined,
+			session.config.toolGuards,
 			options
 		);
 		return agentSession;
@@ -597,6 +597,8 @@ export class AgentSession
 			sdkToolsPreset: init.sdkToolsPreset,
 			allowedTools: init.allowedTools,
 			disallowedTools: init.disallowedTools,
+			// Persist tool guards so they survive daemon restart / session restore
+			toolGuards: init.toolGuards,
 		};
 
 		const metadata: SessionMetadata = {

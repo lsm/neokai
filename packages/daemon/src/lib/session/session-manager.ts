@@ -157,7 +157,7 @@ export class SessionManager {
 			this.skillsManager,
 			this.appMcpServerRepo,
 			undefined,
-			undefined,
+			session.config.toolGuards,
 			{
 				autoReplayPendingMessages: !this.needsSpaceRuntimeProvisioning(session),
 				...runtimeOptions,
