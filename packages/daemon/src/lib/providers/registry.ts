@@ -268,6 +268,8 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
 	if (modelId === 'ollama') return 'ollama';
 	if (modelId === 'ollama-cloud') return 'ollama-cloud';
 	if (modelId.endsWith(':cloud')) return 'ollama-cloud';
+	if (/^qwen[\w.-]*:[1-9]\d{2,}b$/i.test(modelId)) return 'ollama-cloud';
+	if (/^qwen[\w.-]*:/i.test(modelId)) return 'ollama';
 	if (modelId.startsWith('gpt-oss:')) return modelId.endsWith('-cloud') ? 'ollama-cloud' : 'ollama';
 	if (modelId === 'openrouter/auto' || (modelId.includes('/') && !modelId.startsWith('claude-')))
 		return 'openrouter';

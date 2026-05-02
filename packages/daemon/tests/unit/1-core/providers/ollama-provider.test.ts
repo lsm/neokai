@@ -159,6 +159,10 @@ describe('OllamaProvider', () => {
 		expect(cloud.ownsModel('gpt-oss:120b-cloud')).toBe(true);
 		expect(local.ownsModel('qwen3.5:cloud')).toBe(false);
 		expect(cloud.ownsModel('qwen3.5:cloud')).toBe(true);
+		expect(local.ownsModel('qwen3:32b')).toBe(true);
+		expect(cloud.ownsModel('qwen3:32b')).toBe(false);
+		expect(local.ownsModel('qwen3-coder:480b')).toBe(false);
+		expect(cloud.ownsModel('qwen3-coder:480b')).toBe(true);
 		expect(cloud.ownsModel('other-provider-cloud')).toBe(false);
 	});
 

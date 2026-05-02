@@ -13,6 +13,7 @@ import {
 	messageStopSSE,
 	textDeltaSSE,
 } from './codex-anthropic-bridge/translator.js';
+import { estimateAnthropicInputTokens } from './codex-anthropic-bridge/token-estimator.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from './shared/error-envelope.js';
 import { Logger } from '../logger.js';
 
@@ -363,15 +364,12 @@ export function createOllamaAnthropicBridgeServer(config: OllamaBridgeConfig): O
 			if (url.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
 				try {
 					const body = (await req.json()) as AnthropicRequest;
-					const input = [
-						extractSystemText(body.system),
-						...body.messages.map((m) => extractText(m.content)),
-					]
-						.filter(Boolean)
-						.join('\n');
-					return new Response(JSON.stringify({ input_tokens: estimateTokens(input) }), {
-						headers: { 'Content-Type': 'application/json' },
-					});
+					return new Response(
+						JSON.stringify({ input_tokens: estimateAnthropicInputTokens(body) }),
+						{
+							headers: { 'Content-Type': 'application/json' },
+						}
+					);
 				} catch {
 					return sendJsonError(400, 'invalid_request_error', 'Bad Request');
 				}

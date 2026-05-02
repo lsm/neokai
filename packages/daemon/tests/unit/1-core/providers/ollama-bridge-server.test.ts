@@ -86,6 +86,67 @@ describe('Ollama Anthropic bridge server', () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
+	it('includes tool schemas and tool blocks in token counting', async () => {
+		const fetchMock = mock(async () => new Response('', { status: 500 }));
+		const server = createOllamaAnthropicBridgeServer({
+			baseUrl: 'http://ollama.test',
+			fetchImpl: fetchMock as typeof fetch,
+		});
+		servers.push(server);
+
+		const plainResponse = await fetch(`http://127.0.0.1:${server.port}/v1/messages/count_tokens`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'llama3.2',
+				messages: [{ role: 'user', content: 'weather?' }],
+			}),
+		});
+		const toolResponse = await fetch(`http://127.0.0.1:${server.port}/v1/messages/count_tokens`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'llama3.2',
+				messages: [
+					{ role: 'user', content: 'weather?' },
+					{
+						role: 'assistant',
+						content: [
+							{
+								type: 'tool_use',
+								id: 'toolu_1',
+								name: 'get_weather',
+								input: { city: 'London' },
+							},
+						],
+					},
+					{
+						role: 'user',
+						content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Rainy' }],
+					},
+				],
+				tools: [
+					{
+						name: 'get_weather',
+						description: 'Get current weather',
+						input_schema: {
+							type: 'object',
+							properties: { city: { type: 'string' } },
+						},
+					},
+				],
+			}),
+		});
+
+		const plainBody = await plainResponse.json();
+		const toolBody = await toolResponse.json();
+
+		expect(plainResponse.status).toBe(200);
+		expect(toolResponse.status).toBe(200);
+		expect(toolBody.input_tokens).toBeGreaterThan(plainBody.input_tokens);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
 	it('maps Ollama length stop reason to Anthropic max_tokens', async () => {
 		const fetchMock = mock(async () => {
 			const body = [

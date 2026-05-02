@@ -159,11 +159,13 @@ export class OllamaProvider implements Provider {
 		const knownOllamaPrefixes = ['llama', 'qwen', 'mistral', 'gemma', 'phi', 'gpt-oss'];
 		const isCloudModel =
 			id.endsWith(':cloud') || (id.startsWith('gpt-oss:') && id.endsWith('-cloud'));
+		const isLikelyCloudScaleModel = /^qwen[\w.-]*:[1-9]\d{2,}b$/.test(id);
 		if (this.kind === 'cloud') {
-			return isCloudModel;
+			return isCloudModel || isLikelyCloudScaleModel;
 		}
 		return (
 			!isCloudModel &&
+			!isLikelyCloudScaleModel &&
 			(id.includes(':') || knownOllamaPrefixes.some((prefix) => id.startsWith(prefix)))
 		);
 	}
