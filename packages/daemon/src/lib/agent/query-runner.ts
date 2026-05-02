@@ -453,11 +453,6 @@ export class QueryRunner {
 			});
 			this.ctx.queryObject = queryObject;
 
-			// Consume the one-shot resumeSessionAt now that the query has started
-			// with the options containing it. Peek was used in addSessionStateOptions
-			// to avoid losing the value on rebuild (e.g., MCP self-heal).
-			this.ctx.consumePendingResumeSessionAt?.();
-
 			// Set up startup timeout
 			const queryStartTime = Date.now();
 			let startupTimeoutReached = false;
@@ -546,6 +541,11 @@ export class QueryRunner {
 					}
 				}
 			}
+
+			// Consume the one-shot resumeSessionAt now that the query completed
+			// successfully. Peek was used in addSessionStateOptions so options had
+			// the value; consuming only on success preserves it for startup retries.
+			this.ctx.consumePendingResumeSessionAt?.();
 
 			// Stop the queue immediately after the query ends to close the race window
 			// between the for-await loop ending and the finally block calling stop().
