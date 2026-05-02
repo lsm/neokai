@@ -115,6 +115,8 @@ export function formatEventMessage(
 			return formatAgentAutoCompleted(event, autonomyLevel);
 		case 'agent_crash':
 			return formatAgentCrash(event, autonomyLevel);
+		case 'agent_idle_non_terminal':
+			return formatAgentIdleNonTerminal(event, autonomyLevel);
 		case 'task_retry':
 			return formatTaskRetry(event, autonomyLevel);
 		case 'workflow_run_needs_attention':
@@ -299,6 +301,37 @@ function formatAgentCrash(
 		autonomyLevel,
 	};
 	return buildMessage(event.kind, humanReadable, payload);
+}
+
+function formatAgentIdleNonTerminal(
+	event: {
+		kind: 'agent_idle_non_terminal';
+		spaceId: string;
+		taskId: string;
+		runId: string;
+		executionId: string;
+		nodeId: string;
+		agentName: string;
+		reason: string;
+		timestamp: string;
+	},
+	autonomyLevel: SpaceAutonomyLevel
+): string {
+	const humanReadable =
+		`Node ${event.nodeId} (${event.agentName}) in workflow run ${event.runId} went idle with a non-terminal last message. ` +
+		`The runtime will not advance the workflow from this idle state. Reason: ${event.reason}`;
+	return buildMessage(event.kind, humanReadable, {
+		kind: event.kind,
+		spaceId: event.spaceId,
+		taskId: event.taskId,
+		runId: event.runId,
+		executionId: event.executionId,
+		nodeId: event.nodeId,
+		agentName: event.agentName,
+		reason: event.reason,
+		timestamp: event.timestamp,
+		autonomyLevel,
+	});
 }
 
 function formatTaskRetry(
