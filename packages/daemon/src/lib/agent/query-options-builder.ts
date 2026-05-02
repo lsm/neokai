@@ -493,7 +493,10 @@ export class QueryOptionsBuilder {
 		}
 
 		const resumeSessionAt = this.ctx.peekPendingResumeSessionAt?.();
-		if (resumeSessionAt) {
+		if (resumeSessionAt && result.resume) {
+			// Only emit resumeSessionAt when we have an active SDK session to resume.
+			// Without resume (sdkSessionId), resumeSessionAt is meaningless and can
+			// cause SDK startup failures.
 			result.resumeSessionAt = resumeSessionAt;
 		}
 
