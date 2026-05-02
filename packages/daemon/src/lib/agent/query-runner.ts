@@ -645,6 +645,11 @@ export class QueryRunner {
 				return await this.runQuery(queryGeneration, true);
 			}
 			if (isMessageNotFound && !isRetry && !this.ctx.isCleaningUp()) {
+				// Consume the stale resumeSessionAt before retrying. The for-await loop
+				// threw before reaching the consume at line ~548, so the value is still
+				// pending. Without this, peek returns the same UUID and the retry fails
+				// with the same 'No message found' error.
+				this.ctx.consumePendingResumeSessionAt?.();
 				logger.warn('Auto-retrying query without one-shot resumeSessionAt.');
 				await stateManager.setIdle();
 
