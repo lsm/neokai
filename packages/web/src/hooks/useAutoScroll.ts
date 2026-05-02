@@ -21,7 +21,7 @@
  */
 
 import type { RefObject } from 'preact';
-import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 
 export interface UseAutoScrollOptions {
 	/** Ref to the scrollable container element */
@@ -159,7 +159,7 @@ export function useAutoScroll({
 						!loadingOlderRef.current &&
 						(enabledRef.current || !hasScrolledOnMountRef.current)
 					) {
-						container.scrollTop = container.scrollHeight;
+						scrollToBottom();
 					}
 					handleScroll();
 				});
@@ -175,7 +175,7 @@ export function useAutoScroll({
 		}
 
 		return setupScrollDetection(container);
-	}, [nearBottomThreshold, messageCount]);
+	}, [nearBottomThreshold, messageCount, scrollToBottom]);
 
 	// When loadingOlder transitions from true to false, skip the message-count delta
 	// that was introduced by revealing older messages so that auto-scroll doesn't fire.
