@@ -675,7 +675,7 @@ export function ModelsSettings() {
 				<textarea
 					value={openRouterAllowlistText}
 					onInput={(e) => setOpenRouterAllowlistText(e.currentTarget.value)}
-					placeholder="xai/grok-4.3\nqwen/qwen3.6-max-preview\ndeepseek/deepseek-v4-pro"
+					placeholder={`xai/grok-4.3\nqwen/qwen3.6-max-preview\ndeepseek/deepseek-v4-pro`}
 					class="w-full h-28 bg-dark-900 border border-dark-600 rounded px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600 focus:outline-none focus:border-blue-500 font-mono"
 				/>
 				<Button

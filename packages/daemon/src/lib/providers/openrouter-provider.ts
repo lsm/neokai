@@ -162,10 +162,7 @@ export class OpenRouterProvider implements Provider {
 
 	private getAllowedModelIds(): Set<string> | null {
 		const envConfigured = this.env.OPENROUTER_ALLOWED_MODELS ?? this.env.OPENROUTER_MODEL_ALLOWLIST;
-		const configured =
-			envConfigured ??
-			this.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS ??
-			this.env.NEOKAI_PROVIDER_MODEL_ALLOWLIST;
+		const configured = envConfigured ?? this.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS;
 		if (!configured?.trim()) return null;
 
 		const ids = configured
@@ -210,7 +207,8 @@ export class OpenRouterProvider implements Provider {
 
 			if (!response.ok) {
 				const fallback = this.getConfiguredAllowedModels();
-				return fallback.length > 0 ? fallback : OpenRouterProvider.FALLBACK_MODELS;
+				this.modelCache = fallback.length > 0 ? fallback : OpenRouterProvider.FALLBACK_MODELS;
+				return this.modelCache;
 			}
 
 			const body = (await response.json()) as OpenRouterModelsResponse;
@@ -231,7 +229,8 @@ export class OpenRouterProvider implements Provider {
 			return this.modelCache;
 		} catch {
 			const fallback = this.getConfiguredAllowedModels();
-			return fallback.length > 0 ? fallback : OpenRouterProvider.FALLBACK_MODELS;
+			this.modelCache = fallback.length > 0 ? fallback : OpenRouterProvider.FALLBACK_MODELS;
+			return this.modelCache;
 		}
 	}
 
@@ -268,7 +267,7 @@ export class OpenRouterProvider implements Provider {
 		const allowedIds = this.getAllowedModelIds();
 		if (allowedIds && !allowedIds.has(modelId)) {
 			throw new Error(
-				`OpenRouter model '${modelId}' is not in OPENROUTER_ALLOWED_MODELS. Add it to the allowlist or choose an enabled OpenRouter model.`
+				`OpenRouter model '${modelId}' is not in the configured allowlist. Update it in Settings → Models → OpenRouter Model Allowlist.`
 			);
 		}
 

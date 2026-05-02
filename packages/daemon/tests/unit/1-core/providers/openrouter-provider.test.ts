@@ -199,18 +199,45 @@ describe('OpenRouterProvider', () => {
 		expect(models.map((model) => model.id)).toEqual(['xai/grok-4.3', 'deepseek/deepseek-v4-pro']);
 	});
 
-	it('uses configured account allowlist when OpenRouter model metadata cannot be fetched', async () => {
+	it('parses UI-driven provider-prefixed OpenRouter allowlist', async () => {
+		process.env.OPENROUTER_API_KEY = 'sk-or-test';
+		process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS =
+			'openrouter:xai/grok-4.3\nanthropic:claude-sonnet-4.6\nopenrouter:qwen/qwen3.6-max-preview';
+		const fetchMock = mock(
+			async () =>
+				new Response(
+					JSON.stringify({
+						data: [
+							{ id: 'xai/grok-4.3', name: 'Grok 4.3' },
+							{ id: 'qwen/qwen3.6-max-preview', name: 'Qwen3.6 Max Preview' },
+							{ id: 'anthropic/claude-sonnet-4.6', name: 'Claude Sonnet 4.6' },
+						],
+					}),
+					{ status: 200 }
+				)
+		);
+		const provider = new OpenRouterProvider(process.env, fetchMock as unknown as typeof fetch);
+
+		const models = await provider.getModels();
+
+		expect(models.map((model) => model.id)).toEqual(['xai/grok-4.3', 'qwen/qwen3.6-max-preview']);
+	});
+
+	it('uses and caches configured account allowlist when OpenRouter model metadata cannot be fetched', async () => {
 		process.env.OPENROUTER_API_KEY = 'sk-or-test';
 		process.env.OPENROUTER_ALLOWED_MODELS = 'qwen/qwen3.6-max-preview\ngoogle/gemma-4-31b:free';
 		const fetchMock = mock(async () => new Response('Bad gateway', { status: 502 }));
 		const provider = new OpenRouterProvider(process.env, fetchMock as unknown as typeof fetch);
 
 		const models = await provider.getModels();
+		const cachedModels = await provider.getModels();
 
 		expect(models.map((model) => model.id)).toEqual([
 			'qwen/qwen3.6-max-preview',
 			'google/gemma-4-31b:free',
 		]);
+		expect(cachedModels).toBe(models);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 		expect(models.every((model) => model.provider === 'openrouter')).toBe(true);
 	});
 
@@ -220,7 +247,7 @@ describe('OpenRouterProvider', () => {
 		const provider = new OpenRouterProvider();
 
 		expect(() => provider.buildSdkConfig('anthropic/claude-sonnet-4.6')).toThrow(
-			"OpenRouter model 'anthropic/claude-sonnet-4.6' is not in OPENROUTER_ALLOWED_MODELS"
+			"OpenRouter model 'anthropic/claude-sonnet-4.6' is not in the configured allowlist"
 		);
 		expect(provider.buildSdkConfig('xai/grok-4.3').envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(
 			'xai/grok-4.3'
