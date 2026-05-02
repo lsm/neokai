@@ -376,6 +376,8 @@ export interface SpaceTaskActivityMember {
 	 * Provides workflow-internal state (node, agent slot, result) without polluting SpaceTask.
 	 */
 	nodeExecution?: {
+		/** Node execution ID for exact routing to this workflow sub-session */
+		nodeExecutionId: string;
 		/** Workflow node ID */
 		nodeId: string;
 		/** Human-readable node / agent slot name */

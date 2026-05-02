@@ -17,6 +17,7 @@ import {
 	spaceOverlaySessionIdSignal,
 	spaceOverlayAgentNameSignal,
 	spaceOverlayHighlightMessageIdSignal,
+	spaceOverlayTaskContextSignal,
 	spaceOverlayPendingTaskIdSignal,
 	spaceOverlayPendingAgentNameSignal,
 } from '../lib/signals';
@@ -71,6 +72,7 @@ export default function SpaceIsland({
 	const overlaySessionId = spaceOverlaySessionIdSignal.value;
 	const overlayAgentName = spaceOverlayAgentNameSignal.value;
 	const overlayHighlightMessageId = spaceOverlayHighlightMessageIdSignal.value;
+	const overlayTaskContext = spaceOverlayTaskContextSignal.value;
 	// Pending-agent overlay — workflow-declared peer that hasn't spawned yet.
 	// When set, renders PendingAgentOverlay; once the daemon spawns the session
 	// (via taskActivity), the overlay hands off to spaceOverlaySessionIdSignal
@@ -98,6 +100,7 @@ export default function SpaceIsland({
 				agentName={overlayAgentName ?? undefined}
 				highlightMessageId={overlayHighlightMessageId ?? undefined}
 				onClose={handleOverlayClose}
+				taskContext={overlayTaskContext}
 			/>
 		) : null;
 
