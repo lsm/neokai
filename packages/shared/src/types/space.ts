@@ -1480,6 +1480,11 @@ export interface ExportedWorkflowNodeAgent {
 	 * Must be a positive integer when present.
 	 */
 	timeoutMs?: number;
+	/**
+	 * Declarative tool guards to carry through export/import round-trips.
+	 * Mirrors `WorkflowNodeAgent.toolGuards`.
+	 */
+	toolGuards?: DeclarativeToolGuard[];
 }
 
 /**
