@@ -25,11 +25,6 @@ import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryOptionsBuilder } from './query-options-builder';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
 import type { OriginalEnvVars } from '../provider-service';
-import {
-	extractCompactionSummary,
-	findBestEffortResumeSessionAt,
-	getSDKSessionFilePath,
-} from '../sdk-session-file-manager';
 // Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
 
@@ -149,6 +144,9 @@ export interface QueryRunnerContext {
 	 * resume cannot silently start a degraded Space Agent turn.
 	 */
 	onMissingSpaceChatMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
+
+	/** Consume (clear) the one-shot resumeSessionAt after the query has started. */
+	consumePendingResumeSessionAt?(): string | undefined;
 }
 
 /**
@@ -544,6 +542,18 @@ export class QueryRunner {
 				}
 			}
 
+			// Consume the one-shot resumeSessionAt now that the query completed
+			// successfully. Peek was used in addSessionStateOptions so options had
+			// the value; consuming only on success preserves it for startup retries.
+			// Guard: only consume if this is still the current query. When restart()
+			// aborts this query via createAbortableQuery (which breaks, not throws),
+			// execution reaches here — but the RewindHandler may have already set a
+			// new pendingResumeSessionAt for the restarted query. Without this guard
+			// the stale old query consumes the value the new query needs.
+			if (this.ctx.getQueryGeneration() === queryGeneration) {
+				this.ctx.consumePendingResumeSessionAt?.();
+			}
+
 			// Stop the queue immediately after the query ends to close the race window
 			// between the for-await loop ending and the finally block calling stop().
 			// Without this, ensureQueryStarted() can see isRunning()=true while no
@@ -578,8 +588,6 @@ export class QueryRunner {
 			// Never clear sdkSessionId on timeout: the session file is valid and the
 			// conversation can be resumed once the workspace lock conflict resolves.
 			// Clearing it would lose the ability to resume the conversation history.
-			// "No conversation found" is permanent — clear sdkSessionId so the next
-			// attempt starts fresh instead of looping on a dead conversation.
 			if (isStartupTimeout && session.sdkSessionId) {
 				logger.error(
 					`Startup timeout with sdkSessionId (${session.sdkSessionId}). ` +
@@ -587,97 +595,22 @@ export class QueryRunner {
 				);
 			}
 			if (isConversationNotFound && session.sdkSessionId) {
-				// Clear sdkSessionId and sdkOriginPath — the conversation transcript is
-				// irrecoverably gone (file not found even after cross-path migration attempts
-				// in QueryLifecycleManager). Common causes: provider switch, manual deletion,
-				// or workspace completely removed. Keeping it would cause every subsequent
-				// attempt to fail with the same error. Clearing it lets the next message
-				// start a fresh conversation automatically.
+				// Do NOT auto-clear sdkSessionId here. The query-lifecycle-manager
+				// already handles the missing-transcript case with a user-facing
+				// sdkResumeChoice prompt ("Start Fresh" / "Leave as Is"). Silently
+				// clearing here bypasses that prompt and loses context irreversibly.
 				logger.error(
 					`No conversation found for sdkSessionId (${session.sdkSessionId}). ` +
-						'All fallback path lookups were exhausted. ' +
-						'Clearing sdkSessionId — next message will start a fresh conversation.'
+						'Not clearing sdkSessionId — let the user choose via sdkResumeChoice prompt.'
 				);
-				session.sdkSessionId = undefined;
-				session.sdkOriginPath = undefined;
-				this.ctx.db.updateSession(session.id, {
-					sdkSessionId: undefined,
-					sdkOriginPath: undefined,
-				});
-
-				// Emit a visible system message so the user knows a new session was started.
-				// This is the deterministic rotation path required by the task spec.
-				try {
-					await this.displayErrorAsAssistantMessage(
-						'⚠️ **Conversation history could not be resumed.**\n\n' +
-							'The previous session transcript was not found — this can happen after a ' +
-							'provider switch, workspace path change, or external cleanup of ' +
-							'`~/.claude/projects/`. Your conversation history in NeoKai is preserved; ' +
-							'only the AI context window has been reset.\n\n' +
-							'**Please resend your message** — a fresh AI session will start automatically.',
-						{ markAsError: false }
-					);
-				} catch {
-					// Best-effort — don't let message emission block cleanup
-				}
 			}
 			if (isMessageNotFound) {
-				// The SDK found the transcript but could not find resumeSessionAt inside it.
-				// This commonly happens after SDK compaction removes old message UUIDs.
-				const oldResumeSessionAt = session.metadata.resumeSessionAt;
-				const bestEffortResumeSessionAt = findBestEffortResumeSessionAt(
-					session.sdkOriginPath ?? session.worktree?.worktreePath ?? session.workspacePath,
-					session.sdkSessionId,
-					session.id,
-					this.ctx.db
+				// Runtime-only resumeSessionAt is one-shot and has already been consumed.
+				// Retry without the rewind cutoff, but keep sdkSessionId because the SDK
+				// conversation still exists; only the requested message UUID was missing.
+				logger.warn(
+					'No message found for one-shot resumeSessionAt; retrying without resumeSessionAt while preserving sdkSessionId.'
 				);
-
-				if (bestEffortResumeSessionAt) {
-					logger.warn(
-						`No message found for resumeSessionAt (${oldResumeSessionAt ?? 'unknown'}). ` +
-							`Retrying from nearest available message UUID (${bestEffortResumeSessionAt}).`
-					);
-					session.metadata.resumeSessionAt = bestEffortResumeSessionAt;
-					this.ctx.db.updateSession(session.id, {
-						metadata: session.metadata,
-					});
-				} else {
-					// Clear both the rewind pointer and SDK transcript identity so the retry
-					// starts with a fresh context instead of looping on stale JSONL state.
-					const compactionSummary = this.extractCompactionSummaryFromCurrentSdkSession();
-					logger.error(
-						`No message found for resumeSessionAt (${oldResumeSessionAt ?? 'unknown'}). ` +
-							'No fallback message UUID was available; clearing resumeSessionAt, sdkSessionId, and sdkOriginPath before retry.'
-					);
-					delete session.metadata.resumeSessionAt;
-					if (compactionSummary) {
-						session.metadata.compactionSummary = compactionSummary;
-					} else {
-						delete session.metadata.compactionSummary;
-					}
-					session.sdkSessionId = undefined;
-					session.sdkOriginPath = undefined;
-					this.ctx.db.updateSession(session.id, {
-						metadata: session.metadata,
-						sdkSessionId: undefined,
-						sdkOriginPath: undefined,
-					});
-
-					try {
-						await this.displayErrorAsAssistantMessage(
-							'⚠️ **Conversation context was reset.**\n\n' +
-								'The previous rewind point is no longer present in the Claude SDK transcript. ' +
-								'This can happen after SDK compaction. Your conversation history in NeoKai is preserved; ' +
-								(compactionSummary
-									? 'a compacted summary from the previous SDK transcript will be carried into the fresh AI session.\n\n'
-									: 'only the AI context window has been reset.\n\n') +
-								'Retrying your message with a fresh AI session.',
-							{ markAsError: false }
-						);
-					} catch {
-						// Best-effort — don't let message emission block cleanup
-					}
-				}
 			}
 
 			// Auto-retry once on startup timeout — the user shouldn't have to resend.
@@ -719,7 +652,12 @@ export class QueryRunner {
 				return await this.runQuery(queryGeneration, true);
 			}
 			if (isMessageNotFound && !isRetry && !this.ctx.isCleaningUp()) {
-				logger.warn('Auto-retrying query after clearing stale resumeSessionAt.');
+				// Consume the stale resumeSessionAt before retrying. The for-await loop
+				// threw before reaching the consume at line ~548, so the value is still
+				// pending. Without this, peek returns the same UUID and the retry fails
+				// with the same 'No message found' error.
+				this.ctx.consumePendingResumeSessionAt?.();
+				logger.warn('Auto-retrying query without one-shot resumeSessionAt.');
 				await stateManager.setIdle();
 
 				if (this.ctx.queryObject) {
@@ -813,8 +751,8 @@ export class QueryRunner {
 
 					// For startup timeouts / resume failures, provide actionable recovery hints.
 					// Keep the hints distinct: NEOKAI_SDK_STARTUP_TIMEOUT_MS is irrelevant to a
-					// missing/corrupt session file — the session ID was already cleared above,
-					// so the next message will automatically start a fresh session.
+					// missing/corrupt session file — sdkSessionId is intentionally preserved so
+					// the user can choose via sdkResumeChoice prompt.
 					const startupTimeoutUserMessage = isStartupTimeout
 						? `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}). ` +
 							`Common causes: another Claude Code session is using the same workspace, ` +
@@ -827,13 +765,12 @@ export class QueryRunner {
 								`The previous session transcript was not found — this can happen after a provider switch, ` +
 								`workspace path change, or if the ~/.claude/projects/ directory was cleaned up. ` +
 								`Your message history in NeoKai is preserved; only the AI context window is reset. ` +
-								`Please resend your message — a fresh session starts automatically.`
+								`Please resend your message — you will be asked to choose whether to start a fresh session or keep the existing context.`
 							: isMessageNotFound
 								? `The AI session could not resume from the previous rewind point ` +
 									`(workspace: ${session.workspacePath ?? 'unbound'}). The Claude SDK transcript no longer ` +
 									`contains that message UUID, likely after SDK compaction. Your message history in NeoKai ` +
-									`is preserved; only the AI context window is reset. Please resend your message — a fresh ` +
-									`session starts automatically.`
+									`is preserved; only the AI context window is reset. Please resend your message.`
 								: undefined;
 
 					await errorManager.handleError(
@@ -920,29 +857,6 @@ export class QueryRunner {
 				this.ctx.queryPromise = null;
 			}
 			// Stale query: skip all cleanup — new query owns shared state
-		}
-	}
-
-	private extractCompactionSummaryFromCurrentSdkSession(): string | null {
-		const { session, logger } = this.ctx;
-		if (!session.sdkSessionId) {
-			return null;
-		}
-
-		const workspacePath = session.sdkOriginPath ?? session.workspacePath;
-		if (!workspacePath) {
-			return null;
-		}
-
-		try {
-			const filePath = getSDKSessionFilePath(workspacePath, session.sdkSessionId);
-			return extractCompactionSummary(filePath);
-		} catch (error) {
-			logger.warn(
-				`Failed to extract SDK compaction summary for session ${session.id}: ` +
-					`${error instanceof Error ? error.message : String(error)}`
-			);
-			return null;
 		}
 	}
 
@@ -1038,24 +952,6 @@ export class QueryRunner {
 		// Delegate to callback
 		await this.ctx.onSDKMessage(message);
 		await this.ctx.onMarkApiSuccess();
-		await this.clearCompactionSummaryAfterCarry();
-	}
-
-	private async clearCompactionSummaryAfterCarry(): Promise<void> {
-		const { session, db, logger } = this.ctx;
-		if (!session.metadata.compactionSummary || this.ctx.isCleaningUp()) {
-			return;
-		}
-
-		delete session.metadata.compactionSummary;
-		try {
-			db.updateSession(session.id, { metadata: session.metadata });
-		} catch (error) {
-			logger.warn(
-				`Failed to clear carried compaction summary for session ${session.id}: ` +
-					`${error instanceof Error ? error.message : String(error)}`
-			);
-		}
 	}
 
 	/**
