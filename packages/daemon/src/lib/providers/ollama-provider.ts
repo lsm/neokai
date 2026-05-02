@@ -80,8 +80,7 @@ export class OllamaProvider implements Provider {
 	private modelCache: ModelInfo[] | null = null;
 	private modelCacheAt = 0;
 	private lastAuthError: string | undefined;
-	private bridgeServer: OllamaBridgeServer | null = null;
-	private bridgeKey: string | null = null;
+	private bridgeServers = new Map<string, OllamaBridgeServer>();
 
 	constructor(options: OllamaProviderOptions) {
 		this.kind = options.kind;
@@ -210,22 +209,21 @@ export class OllamaProvider implements Provider {
 	}
 
 	async shutdown(): Promise<void> {
-		this.bridgeServer?.stop();
-		this.bridgeServer = null;
-		this.bridgeKey = null;
+		for (const bridge of this.bridgeServers.values()) bridge.stop();
+		this.bridgeServers.clear();
 	}
 
 	private getOrCreateBridge(baseUrl: string, apiKey?: string): OllamaBridgeServer {
 		const key = `${baseUrl}\u0000${apiKey ?? ''}`;
-		if (this.bridgeServer && this.bridgeKey === key) return this.bridgeServer;
-		this.bridgeServer?.stop();
-		this.bridgeServer = createOllamaAnthropicBridgeServer({
+		const existingBridge = this.bridgeServers.get(key);
+		if (existingBridge) return existingBridge;
+		const bridge = createOllamaAnthropicBridgeServer({
 			baseUrl,
 			apiKey,
 			fetchImpl: this.fetchImpl,
 		});
-		this.bridgeKey = key;
-		return this.bridgeServer;
+		this.bridgeServers.set(key, bridge);
+		return bridge;
 	}
 
 	private fallbackModels(): ModelInfo[] {

@@ -243,6 +243,7 @@ async function streamOllamaToAnthropic(params: {
 	let emittedToolUse = false;
 	let finalPromptTokens: number | undefined;
 	let finalOutputTokens: number | undefined;
+	let finalDoneReason: string | undefined;
 
 	try {
 		send(
@@ -285,6 +286,7 @@ async function streamOllamaToAnthropic(params: {
 				if (chunk.done) {
 					finalPromptTokens = chunk.prompt_eval_count;
 					finalOutputTokens = chunk.eval_count;
+					finalDoneReason = chunk.done_reason;
 				}
 			}
 		}
@@ -312,6 +314,7 @@ async function streamOllamaToAnthropic(params: {
 			if (tail.done) {
 				finalPromptTokens = tail.prompt_eval_count;
 				finalOutputTokens = tail.eval_count;
+				finalDoneReason = tail.done_reason;
 			}
 		}
 		if (startedText) {
@@ -320,8 +323,13 @@ async function streamOllamaToAnthropic(params: {
 			send(contentBlockStartTextSSE(nextBlockIndex));
 			send(contentBlockStopSSE(nextBlockIndex));
 		}
+		const stopReason = emittedToolUse
+			? 'tool_use'
+			: finalDoneReason === 'length'
+				? 'max_tokens'
+				: 'end_turn';
 		send(
-			messageDeltaSSE(emittedToolUse ? 'tool_use' : 'end_turn', {
+			messageDeltaSSE(stopReason, {
 				inputTokens: finalPromptTokens ?? inputTokens,
 				outputTokens: finalOutputTokens ?? estimateTokens(outputText),
 			})

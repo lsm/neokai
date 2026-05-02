@@ -132,6 +132,24 @@ describe('OllamaProvider', () => {
 		void provider.shutdown();
 	});
 
+	it('keeps distinct bridges for different session override upstreams', () => {
+		const provider = new OllamaProvider({ kind: 'local' });
+
+		const first = provider.buildSdkConfig('llama3.2:latest', {
+			baseUrl: 'http://ollama-one.test',
+		});
+		const second = provider.buildSdkConfig('llama3.2:latest', {
+			baseUrl: 'http://ollama-two.test',
+		});
+		const firstAgain = provider.buildSdkConfig('llama3.2:latest', {
+			baseUrl: 'http://ollama-one.test',
+		});
+
+		expect(first.envVars.ANTHROPIC_BASE_URL).not.toBe(second.envVars.ANTHROPIC_BASE_URL);
+		expect(firstAgain.envVars.ANTHROPIC_BASE_URL).toBe(first.envVars.ANTHROPIC_BASE_URL);
+		void provider.shutdown();
+	});
+
 	it('requires an API key for cloud SDK routing', () => {
 		const provider = new OllamaProvider({ kind: 'cloud' });
 

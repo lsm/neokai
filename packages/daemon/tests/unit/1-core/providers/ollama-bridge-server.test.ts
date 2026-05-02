@@ -86,6 +86,45 @@ describe('Ollama Anthropic bridge server', () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
+	it('maps Ollama length stop reason to Anthropic max_tokens', async () => {
+		const fetchMock = mock(async () => {
+			const body = [
+				JSON.stringify({
+					model: 'llama3.2',
+					message: { role: 'assistant', content: 'Partial' },
+					done: false,
+				}),
+				JSON.stringify({
+					model: 'llama3.2',
+					done: true,
+					done_reason: 'length',
+					prompt_eval_count: 10,
+					eval_count: 3,
+				}),
+			].join('\n');
+			return new Response(body, { status: 200 });
+		});
+		const server = createOllamaAnthropicBridgeServer({
+			baseUrl: 'http://ollama.test',
+			fetchImpl: fetchMock as typeof fetch,
+		});
+		servers.push(server);
+
+		const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'llama3.2',
+				messages: [{ role: 'user', content: 'short answer' }],
+				max_tokens: 1,
+			}),
+		});
+		const text = await response.text();
+
+		expect(response.status).toBe(200);
+		expect(text).toContain('"stop_reason":"max_tokens"');
+	});
+
 	it('translates Ollama tool calls to Anthropic tool_use SSE', async () => {
 		const fetchMock = mock(async () => {
 			const body = [
