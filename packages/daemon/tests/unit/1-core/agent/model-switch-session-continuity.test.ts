@@ -161,6 +161,7 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
 
 		mockDb = {
 			updateSession: updateSessionSpy,
+			saveNeokaiActionMessage: mock(() => {}),
 		} as unknown as Database;
 
 		mockMessageHub = {
@@ -356,6 +357,7 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 			messageQueue,
 			db: {
 				updateSession: updateSessionSpy,
+				saveNeokaiActionMessage: mock(() => {}),
 			} as unknown as Database,
 			messageHub: {
 				event: publishSpy,
@@ -438,7 +440,7 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 	// ---- Test 6 ----
 
 	it(
-		'restart() clears sdkSessionId when session file is missing — starts fresh',
+		'restart() emits sdkResumeChoice when session file is missing — user decides',
 		async () => {
 			const sdkId = 'sdk-continuity-missing';
 			// Do NOT create the session file — simulate a stale/missing file
@@ -449,20 +451,16 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 
 			await manager.restart();
 
-			// sdkSessionId is cleared — session file is missing so starting fresh
-			// is better than looping on "No conversation found"
-			expect(mockContext.session.sdkSessionId).toBeUndefined();
-			expect(mockContext.session.sdkOriginPath).toBeUndefined();
-			expect(updateSessionSpy).toHaveBeenCalledWith(
-				mockContext.session.id,
+			// sdkSessionId is preserved — user chooses via sdkResumeChoice prompt
+			expect(mockContext.session.sdkSessionId).toBe(sdkId);
+			// A neokai_action message with sdk_resume_choice should be emitted
+			expect(publishSpy).toHaveBeenCalledWith(
+				'state.sdkMessages.delta',
 				expect.objectContaining({
-					sdkSessionId: undefined,
-					sdkOriginPath: undefined,
-				})
+					added: [expect.objectContaining({ action: 'sdk_resume_choice', resolved: false })],
+				}),
+				expect.any(Object)
 			);
-			// Also clears stale pending resumeSessionAt so the next query
-			// doesn't emit resumeSessionAt without resume (sdkSessionId)
-			expect(mockContext.clearPendingResumeSessionAt).toHaveBeenCalled();
 		},
 		{ timeout: 5000 }
 	);

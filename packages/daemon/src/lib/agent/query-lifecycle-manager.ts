@@ -355,20 +355,13 @@ export class QueryLifecycleManager {
 			if (session.sdkSessionId) {
 				const isValid = this.validateAndRepairWithMigration();
 				if (!isValid) {
-					// Session file missing or unrepairably corrupted — clear sdkSessionId
-					// and start fresh. This is an internal restart path (not user-facing),
-					// so silently starting fresh is better than looping on "No conversation found".
+					// Session file missing — surface to the user via sdkResumeChoice prompt
+					// so they can choose to start fresh or keep the existing session.
 					this.logger.warn(
 						`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-							'Clearing sdkSessionId to start fresh.'
+							'Emitting sdk_resume_choice for user.'
 					);
-					session.sdkSessionId = undefined;
-					session.sdkOriginPath = undefined;
-					this.ctx.db.updateSession(session.id, {
-						sdkSessionId: undefined,
-						sdkOriginPath: undefined,
-					});
-					this.ctx.clearPendingResumeSessionAt?.();
+					await this.emitSdkResumeChoiceMessage();
 				}
 			}
 
@@ -457,15 +450,9 @@ export class QueryLifecycleManager {
 					if (!isValid) {
 						this.logger.warn(
 							`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-								'Clearing sdkSessionId to start fresh.'
+								'Emitting sdk_resume_choice for user.'
 						);
-						session.sdkSessionId = undefined;
-						session.sdkOriginPath = undefined;
-						this.ctx.db.updateSession(session.id, {
-							sdkSessionId: undefined,
-							sdkOriginPath: undefined,
-						});
-						this.ctx.clearPendingResumeSessionAt?.();
+						await this.emitSdkResumeChoiceMessage();
 					}
 				}
 
