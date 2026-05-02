@@ -29,6 +29,7 @@ export type SpaceTaskThreadEventKind =
 export interface ParsedThreadRow {
 	id: string | number;
 	sessionId: string | null;
+	kind: 'task_agent' | 'node_agent';
 	label: string;
 	role: string;
 	taskId: string;
@@ -343,6 +344,7 @@ export function parseThreadRow(row: SpaceTaskThreadMessageRow): ParsedThreadRow 
 		return {
 			id: row.id,
 			sessionId: row.sessionId,
+			kind: row.kind,
 			label: row.label,
 			role: row.role,
 			taskId: row.taskId,
@@ -357,6 +359,7 @@ export function parseThreadRow(row: SpaceTaskThreadMessageRow): ParsedThreadRow 
 		return {
 			id: row.id,
 			sessionId: row.sessionId,
+			kind: row.kind,
 			label: row.label,
 			role: row.role,
 			taskId: row.taskId,

@@ -145,6 +145,7 @@ interface CompletedFeedTurn {
 	state: 'completed';
 	id: string;
 	agent: string;
+	agentKind: 'task_agent' | 'node_agent';
 	agentRole: string;
 	startedAt: number;
 	durationSec: number;
@@ -180,6 +181,7 @@ interface ActiveFeedTurn {
 	state: 'active';
 	id: string;
 	agent: string;
+	agentKind: 'task_agent' | 'node_agent';
 	agentRole: string;
 	startedAt: number;
 	status: string;
@@ -201,6 +203,8 @@ interface MessageFeedTurn {
 	fromLabel: string;
 	/** Recipient agent label — the session this row belongs to. */
 	toLabel: string;
+	/** Recipient agent kind, used to avoid node-agent routing for Task Agent sessions. */
+	toKind: 'task_agent' | 'node_agent';
 	/** Raw workflow slot/role name for routing task messages. */
 	toRole: string;
 	/** Rendered message text (markdown when not fallback). */
@@ -485,6 +489,7 @@ function buildCompletedTurn(
 		state: 'completed',
 		id: turnId,
 		agent: block.agentLabel,
+		agentKind: rows[0]?.kind ?? 'task_agent',
 		agentRole: rows[0]?.role ?? block.agentLabel,
 		startedAt,
 		durationSec,
@@ -509,6 +514,7 @@ function buildActiveTurn(
 		state: 'active',
 		id: turnId,
 		agent: block.agentLabel,
+		agentKind: rows[0]?.kind ?? 'task_agent',
 		agentRole: rows[0]?.role ?? block.agentLabel,
 		startedAt: rows[0].createdAt,
 		status: 'Running…',
@@ -618,6 +624,7 @@ function buildMessageTurn(
 		id: `msg-${String(row.id)}`,
 		fromLabel,
 		toLabel: row.label,
+		toKind: row.kind,
 		toRole: row.role,
 		body,
 		bodyIsFallback: fallback,
@@ -965,7 +972,7 @@ function CompletedBody({
 		? () => {
 				// `pushOverlayHistory` reads the highlight signal; passing the message
 				// uuid scrolls the slide-over straight to this turn's surfaced reply.
-				if (overlayTaskId) {
+				if (overlayTaskId && turn.agentKind === 'node_agent') {
 					pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid, {
 						taskId: overlayTaskId,
 						agentName: turn.agentRole,
@@ -1073,7 +1080,7 @@ function AgentTurnRow({
 		? () => {
 				const highlightMessageUuid =
 					turn.state === 'completed' ? turn.highlightMessageUuid : undefined;
-				if (overlayTaskId) {
+				if (overlayTaskId && turn.agentKind === 'node_agent') {
 					pushOverlayHistory(turn.sessionId as string, turn.agent, highlightMessageUuid, {
 						taskId: overlayTaskId,
 						agentName: turn.agentRole,
@@ -1256,7 +1263,7 @@ function SyntheticMessageTurn({
 				onOpenSession={
 					turn.sessionId
 						? () => {
-								if (overlayTaskId) {
+								if (overlayTaskId && turn.toKind === 'node_agent') {
 									pushOverlayHistory(
 										turn.sessionId as string,
 										turn.toLabel,
