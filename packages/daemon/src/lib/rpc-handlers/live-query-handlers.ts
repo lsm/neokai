@@ -18,7 +18,7 @@ import type {
 	LiveQuerySnapshotEvent,
 	LiveQueryDeltaEvent,
 } from '@neokai/shared';
-import type { LiveQueryEngine, LiveQueryHandle } from '../../storage/live-query';
+import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query';
 import { Logger } from '../logger';
 
 // ============================================================================
@@ -30,6 +30,12 @@ export interface NamedQuery {
 	sql: string;
 	/** Number of positional parameters the SQL expects */
 	paramCount: number;
+	/**
+	 * Optional debounce for table-change reevaluation. Use only for expensive
+	 * feeds fed by high-frequency writes, where latest-state delivery matters
+	 * more than one event per row mutation.
+	 */
+	debounceMs?: number;
 	/**
 	 * Optional row transformer applied after every query execution.
 	 * Must return a plain object whose keys match the frontend TypeScript types.
@@ -50,6 +56,10 @@ export interface NamedQuery {
 		params: ReadonlyArray<unknown>
 	) => Record<string, unknown> | undefined;
 }
+
+const DEBOUNCE_SDK_MESSAGES_MS = 100;
+const DEBOUNCE_SESSION_GROUP_MESSAGES_MS = 150;
+const DEBOUNCE_SPACE_TASK_FEEDS_MS = 250;
 
 // ============================================================================
 // Row mappers
@@ -1652,6 +1662,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SESSION_GROUP_MESSAGES_BY_GROUP_SQL,
 			paramCount: 1,
+			debounceMs: DEBOUNCE_SESSION_GROUP_MESSAGES_MS,
 			mapRow: mapSessionGroupMessageRow,
 		},
 	],
@@ -1660,6 +1671,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SPACE_TASK_ACTIVITY_BY_TASK_SQL,
 			paramCount: 1,
+			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
 			mapRow: mapSpaceTaskActivityRow,
 		},
 	],
@@ -1668,6 +1680,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SPACE_TASK_MESSAGES_BY_TASK_SQL,
 			paramCount: 1,
+			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
 			mapRow: mapSpaceTaskMessageRow,
 		},
 	],
@@ -1676,6 +1689,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL,
 			paramCount: 1,
+			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
 			mapRow: mapSpaceTaskMessageRow,
 		},
 	],
@@ -1745,6 +1759,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: MESSAGES_BY_SESSION_SQL,
 			paramCount: 2,
+			debounceMs: DEBOUNCE_SDK_MESSAGES_MS,
 			mapRow: mapMessageRow,
 		},
 	],
@@ -1989,14 +2004,7 @@ export function setupLiveQueryHandlers(
 		const handle = liveQueries.subscribe(
 			sql,
 			params,
-			(diff: {
-				type: 'snapshot' | 'delta';
-				rows: Record<string, unknown>[];
-				added?: Record<string, unknown>[];
-				removed?: Record<string, unknown>[];
-				updated?: Record<string, unknown>[];
-				version: number;
-			}) => {
+			(diff: QueryDiff<Record<string, unknown>>) => {
 				const router = messageHub.getRouter();
 				if (!router) {
 					// Router not yet registered or already torn down.  Mark snapshot
@@ -2012,10 +2020,10 @@ export function setupLiveQueryHandlers(
 					return;
 				}
 
-				// Extract metadata from raw rows (before mapRow strips internal columns).
-				// Params are forwarded so handlers like the compact-thread mapResult can
-				// run a sidecar prepared statement bound to the same task id.
-				const metadata = namedQuery.mapResult?.(diff.rows as Record<string, unknown>[], params);
+				// Metadata is computed by LiveQueryEngine once per cached query
+				// evaluation so identical subscriptions share expensive sidecars
+				// like the compact task feed's active-turn aggregation.
+				const metadata = diff.metadata;
 
 				let message: ReturnType<typeof createEventMessage>;
 
@@ -2068,6 +2076,10 @@ export function setupLiveQueryHandlers(
 						}
 					}
 				}
+			},
+			{
+				debounceMs: namedQuery.debounceMs,
+				getMetadata: namedQuery.mapResult,
 			}
 		);
 

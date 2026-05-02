@@ -1067,49 +1067,37 @@ export class QueryRunner {
 		signal: AbortSignal
 	): AsyncGenerator<unknown, void, unknown> {
 		const iterator = queryObj[Symbol.asyncIterator]();
-		const abortError = new Error('Query aborted');
-
-		let _abortPromiseReject: ((error: Error) => void) | null = null;
-		const setupAbortPromise = (): Promise<never> => {
-			return new Promise<never>((_, reject) => {
-				_abortPromiseReject = reject;
-				if (signal.aborted) {
-					reject(abortError);
-				} else {
-					signal.addEventListener('abort', () => reject(abortError), { once: true });
-				}
-			});
-		};
+		const abortResult = { aborted: true } as const;
+		let resolveAbort!: (value: typeof abortResult) => void;
+		const abortPromise = new Promise<typeof abortResult>((resolve) => {
+			resolveAbort = resolve;
+		});
+		const onAbort = () => resolveAbort(abortResult);
 
 		try {
 			if (signal.aborted) {
 				return;
 			}
 
+			signal.addEventListener('abort', onAbort, { once: true });
+
 			while (!signal.aborted) {
 				const nextPromise = iterator.next();
-				const abortPromise = setupAbortPromise();
 
-				try {
-					const result = await Promise.race([nextPromise, abortPromise]);
+				const result = await Promise.race([nextPromise, abortPromise]);
 
-					if (signal.aborted) {
-						break;
-					}
-
-					if (result.done) {
-						break;
-					}
-
-					yield result.value;
-				} catch (error) {
-					if ((error as Error).message === 'Query aborted') {
-						break;
-					}
-					throw error;
+				if ('aborted' in result || signal.aborted) {
+					break;
 				}
+
+				if (result.done) {
+					break;
+				}
+
+				yield result.value;
 			}
 		} finally {
+			signal.removeEventListener('abort', onAbort);
 			try {
 				await iterator.return?.();
 			} catch {
