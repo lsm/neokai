@@ -393,6 +393,7 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 			setCleaningUp: mock(() => {}),
 			cleanupEventSubscriptions: mock(() => {}),
 			clearModelsCache: clearModelsCacheSpy,
+			clearPendingResumeSessionAt: mock(() => {}),
 			...overrides,
 		};
 	}
@@ -459,6 +460,9 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 					sdkOriginPath: undefined,
 				})
 			);
+			// Also clears stale pending resumeSessionAt so the next query
+			// doesn't emit resumeSessionAt without resume (sdkSessionId)
+			expect(mockContext.clearPendingResumeSessionAt).toHaveBeenCalled();
 		},
 		{ timeout: 5000 }
 	);

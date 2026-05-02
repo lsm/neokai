@@ -72,6 +72,9 @@ export interface QueryLifecycleManagerContext {
 	// Method to start the streaming query
 	startStreamingQuery(): Promise<void>;
 
+	// Clear stale pending resumeSessionAt when SDK identity is reset
+	clearPendingResumeSessionAt?(): void;
+
 	// Cleanup support
 	setCleaningUp(value: boolean): void;
 	cleanupEventSubscriptions(): void;
@@ -365,6 +368,7 @@ export class QueryLifecycleManager {
 						sdkSessionId: undefined,
 						sdkOriginPath: undefined,
 					});
+					this.ctx.clearPendingResumeSessionAt?.();
 				}
 			}
 
@@ -461,6 +465,7 @@ export class QueryLifecycleManager {
 							sdkSessionId: undefined,
 							sdkOriginPath: undefined,
 						});
+						this.ctx.clearPendingResumeSessionAt?.();
 					}
 				}
 
