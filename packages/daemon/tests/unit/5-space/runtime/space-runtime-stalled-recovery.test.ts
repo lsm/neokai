@@ -830,7 +830,11 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 					{ id: STEP_B, name: 'Review', agentId: AGENT },
 				],
 				{
-					channels: [{ id: 'review-to-coding', from: 'Review', to: 'Coding', maxCycles: 1 }],
+					channels: [
+						{ id: 'coding-to-review', from: 'Coding', to: 'Review' },
+						{ id: 'review-to-coding', from: 'Review', to: 'Coding', maxCycles: 1 },
+					],
+					endNodeId: STEP_B,
 				}
 			);
 			const run = workflowRunRepo.createRun({
@@ -847,15 +851,14 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				workflowNodeId: STEP_A,
 				status: 'in_progress',
 			});
-			seedExec(run.id, STEP_A, 'Coding', 'idle');
 			seedExec(run.id, STEP_B, 'Review', 'idle');
-			new ChannelCycleRepository(db).incrementCycleCount(run.id, 0, 1);
+			new ChannelCycleRepository(db).incrementCycleCount(run.id, 1, 1);
 
 			await makeRuntime({
 				pendingMessageRepo: new PendingAgentMessageRepository(db),
 			}).recoverStalledRuns();
 
-			expect(findExec(run.id, STEP_A).status).toBe('idle');
+			expect(findExec(run.id, STEP_A)).toBeUndefined();
 			expect(findExec(run.id, STEP_B).status).toBe('idle');
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
 			expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
