@@ -1282,6 +1282,28 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		expect(thread.getAttribute('data-bottom-scroll-padding')).toBe('');
 	});
 
+	it('rebinds dynamic inset measurement when returning to the thread view', () => {
+		const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+		HTMLElement.prototype.getBoundingClientRect = function () {
+			if (this.getAttribute('data-testid') === 'task-session-chat-composer') {
+				return { height: 220 } as DOMRect;
+			}
+			return originalGetBoundingClientRect.call(this);
+		};
+		try {
+			mockTasks.value = [makeTask({ workflowRunId: 'run-1', taskAgentSessionId: 'session-abc' })];
+			mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+			const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+			fireEvent.click(getByTestId('canvas-toggle'));
+			fireEvent.click(getByTestId('thread-toggle'));
+
+			const thread = getByTestId('space-task-unified-thread');
+			expect(Number(thread.getAttribute('data-bottom-inset-px'))).toBe(236);
+		} finally {
+			HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+		}
+	});
+
 	it('renders the active banner outside task-pane-content so it is visible across tabs', () => {
 		mockTasks.value = [
 			makeTask({

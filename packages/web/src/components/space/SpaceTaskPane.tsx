@@ -173,9 +173,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
 	const [showScrollButton, setShowScrollButton] = useState(false);
 	const [threadScroller, setThreadScroller] = useState<HTMLDivElement | null>(null);
+	const [taskComposerElement, setTaskComposerElement] = useState<HTMLDivElement | null>(null);
 	const [taskComposerPaddingPx, setTaskComposerPaddingPx] = useState(144);
 	const threadPanelRef = useRef<HTMLDivElement>(null);
-	const taskComposerRef = useRef<HTMLDivElement>(null);
 	const scrollToBottomRef = useRef<((smooth?: boolean) => void) | null>(null);
 	const draftWasActiveRef = useRef(false);
 	// Modal-local error feedback. Separate from `threadSendError` because
@@ -344,7 +344,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			return;
 		}
 
-		const composer = taskComposerRef.current;
+		const composer = taskComposerElement;
 		if (!composer) return;
 
 		const syncComposerPadding = () => {
@@ -361,7 +361,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		resizeObserver.observe(composer);
 
 		return () => resizeObserver.disconnect();
-	}, [showInlineComposer, threadSendError]);
+	}, [showInlineComposer, taskComposerElement, threadSendError]);
 
 	const canSendThreadMessage = !isTerminalTask && !ensuringThread && !sendingThread;
 	const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
@@ -927,31 +927,30 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						)}
 
 						{showInlineComposer && (
-							<div ref={taskComposerRef}>
-								<TaskSessionChatComposer
-									sessionId={agentSessionId ?? ''}
-									mentionCandidates={mentionCandidates}
-									targets={composerTargets}
-									selectedTargetId={selectedTarget?.id ?? null}
-									hasTaskAgentSession={!!agentSessionId}
-									canSend={canSendThreadMessage}
-									isSending={sendingThread}
-									isProcessing={isAgentActive}
-									autoScroll={autoScrollEnabled}
-									errorMessage={threadSendError}
-									onAutoScrollChange={setAutoScrollEnabled}
-									onTargetSelect={(targetId) => {
-										setSelectedTargetId(targetId);
-										setTargetLocked(true);
-									}}
-									onDraftActiveChange={(hasDraft) => {
-										setHasComposerDraft(hasDraft);
-										if (draftWasActiveRef.current && !hasDraft) setTargetLocked(false);
-										draftWasActiveRef.current = hasDraft;
-									}}
-									onSend={sendThreadMessage}
-								/>
-							</div>
+							<TaskSessionChatComposer
+								sessionId={agentSessionId ?? ''}
+								mentionCandidates={mentionCandidates}
+								targets={composerTargets}
+								selectedTargetId={selectedTarget?.id ?? null}
+								hasTaskAgentSession={!!agentSessionId}
+								canSend={canSendThreadMessage}
+								isSending={sendingThread}
+								isProcessing={isAgentActive}
+								autoScroll={autoScrollEnabled}
+								errorMessage={threadSendError}
+								onAutoScrollChange={setAutoScrollEnabled}
+								onTargetSelect={(targetId) => {
+									setSelectedTargetId(targetId);
+									setTargetLocked(true);
+								}}
+								onDraftActiveChange={(hasDraft) => {
+									setHasComposerDraft(hasDraft);
+									if (draftWasActiveRef.current && !hasDraft) setTargetLocked(false);
+									draftWasActiveRef.current = hasDraft;
+								}}
+								onComposerRef={setTaskComposerElement}
+								onSend={sendThreadMessage}
+							/>
 						)}
 					</div>
 				)}
