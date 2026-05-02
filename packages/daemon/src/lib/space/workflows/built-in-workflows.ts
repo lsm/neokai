@@ -20,12 +20,34 @@
  *   `resolveChannels()` matches node names via the `nodeNameToAgents` lookup.
  */
 
-import type { GateScript, SpaceWorkflow } from '@neokai/shared';
+import type { GateScript, SpaceWorkflow, DeclarativeToolGuard, WorkflowNode } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import { Logger } from '../../logger';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './post-approval-merge-template.ts';
 import { computeWorkflowHash } from './template-hash.ts';
+
+// ---------------------------------------------------------------------------
+// Declarative tool guard: prevent coder agents from merging PRs
+// ---------------------------------------------------------------------------
+
+const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
+	matcher: 'Bash',
+	// Matches `gh pr merge` in all common shell forms:
+	// - Direct: gh pr merge ...
+	// - Leading whitespace:   gh pr merge ...
+	// - After separators: ; gh pr merge | gh pr merge && gh pr merge
+	// - Subshell: $(gh pr merge) `gh pr merge`
+	// - Env prefix: GH_TOKEN=... gh pr merge
+	// - command builtin: command gh pr merge
+	// - env wrapper: env GH_TOKEN=... gh pr merge
+	// - Line continuation: gh pr \<newline>merge
+	pattern:
+		'(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*gh[\\s\\\\]+pr[\\s\\\\]+merge\\b',
+	decision: 'deny',
+	reason:
+		'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
+};
 
 const builtInSeederLog = new Logger('seed-built-in-workflows');
 
@@ -481,8 +503,10 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 					name: 'coder',
 					customPrompt: {
 						value:
-							'You are a software engineer in a Coding→Review iterative workflow. Your job is to ' +
-							'implement the task, write tests, commit your changes, and open a pull request.\n\n' +
+							'You are a software engineer in a Coding→Review iterative workflow. Your job is implementation only: ' +
+							'implement the task, write tests, commit your changes, and open a pull request. ' +
+							'Do NOT merge PRs. When the reviewer approves, your work is done. ' +
+							'The reviewer handles the merge.\n\n' +
 							'Steps:\n' +
 							'1. Read and understand the task requirements\n' +
 							'2. Implement the changes with logical, well-described commits\n' +
@@ -512,6 +536,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'then send_message to Review again (again with `data: { pr_url }`) to ' +
 							're-trigger the review cycle',
 					},
+					toolGuards: [CODER_NO_MERGE_GUARD],
 				},
 			],
 		},
@@ -1147,6 +1172,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'4. Write code-pr-gate with field pr_url so Review can activate\n' +
 							'5. Share blockers clearly with Reviewer/QA when needed',
 					},
+					toolGuards: [CODER_NO_MERGE_GUARD],
 				},
 			],
 		},
@@ -1357,19 +1383,60 @@ export interface SeedBuiltInWorkflowsResult {
 }
 
 /**
+ * Merge `toolGuards` from template agent slots onto matching existing agent slots.
+ *
+ * Unlike `customPrompt` (user-configurable), `toolGuards` are structural enforcement
+ * metadata that must stay in sync with the template. This function only touches the
+ * `toolGuards` field on each agent slot — all other fields (customPrompt, model,
+ * disabledSkillIds, etc.) are preserved from the existing row.
+ *
+ * Matching is by node name + agent name, which are stable identifiers.
+ */
+function mergeToolGuardsFromTemplate(
+	existingNodes: WorkflowNode[],
+	templateNodes: Pick<WorkflowNode, 'name' | 'agents'>[]
+): WorkflowNode[] {
+	const templateAgentsByKey = new Map<string, DeclarativeToolGuard[] | undefined>();
+	for (const node of templateNodes) {
+		for (const agent of node.agents) {
+			templateAgentsByKey.set(`${node.name}::${agent.name}`, agent.toolGuards);
+		}
+	}
+
+	return existingNodes.map((node) => ({
+		...node,
+		agents: node.agents.map((agent) => {
+			const key = `${node.name}::${agent.name}`;
+			const templateGuards = templateAgentsByKey.get(key);
+			if (templateGuards === undefined) return agent;
+			// Merge: overwrite toolGuards from template, keep everything else
+			return { ...agent, toolGuards: templateGuards };
+		}),
+	}));
+}
+
+/**
  * Fields that the built-in seeder re-stamps when it detects template drift
  * on an already-seeded row.
  *
  * - `postApproval`, `completionAutonomyLevel`, and `templateHash` are
- *   updated. Persisted node definitions, including workflow-node agent
- *   `customPrompt.value`, are deliberately left untouched so daemon restart /
- *   startup seed passes cannot replace user-configured runtime prompts.
- * - Nodes / channels / gates are NOT re-stamped here: changing those fields
- *   channel or gate structure on any built-in template, and re-stamping
- *   them would regenerate IDs. If a future template change adjusts those,
- *   extend this list and the re-stamp payload below accordingly.
+ *   updated. Persisted node agent `customPrompt.value` is deliberately left
+ *   untouched so daemon restart / startup seed passes cannot replace
+ *   user-configured runtime prompts.
+ * - Agent `toolGuards` are merged onto matching agent slots (by node name +
+ *   agent name) so structural enforcement metadata stays in sync with the
+ *   template. Other node fields (customPrompt, model, disabledSkillIds, etc.)
+ *   are preserved.
+ * - Channels / gates are NOT re-stamped: changing those would regenerate IDs.
+ *   If a future template change adjusts those, extend this list and the
+ *   re-stamp payload below accordingly.
  */
-const RESTAMP_FIELDS = ['postApproval', 'completionAutonomyLevel', 'templateHash'] as const;
+const RESTAMP_FIELDS = [
+	'postApproval',
+	'completionAutonomyLevel',
+	'templateHash',
+	'nodes(toolGuards)',
+] as const;
 
 /**
  * Seeds all built-in workflow templates into the given space.
@@ -1386,9 +1453,9 @@ const RESTAMP_FIELDS = ['postApproval', 'completionAutonomyLevel', 'templateHash
  *     (matched via `templateName`), their stored `templateHash` is compared
  *     to the current template hash. On mismatch, the row is re-stamped
  *     with the narrow field set listed in {@link RESTAMP_FIELDS} — see the
- *     constant's doc-comment for why node content is intentionally NOT
- *     re-stamped. This is how PR 3/5's new `postApproval` routes land on
- *     pre-existing spaces.
+ *     constant's doc-comment for details. Agent `toolGuards` are merged onto
+ *     matching slots (preserving user-configured prompts). This is how new
+ *     `postApproval` routes and `toolGuards` land on pre-existing spaces.
  *   - Rows without a `templateName` (user-created workflows) are ignored.
  *
  * Individual workflow creation / re-stamp errors are captured per-workflow
@@ -1430,21 +1497,24 @@ export function seedBuiltInWorkflows(
 			if (row.templateHash === expectedHash) continue;
 
 			try {
+				// Targeted merge of toolGuards from template onto existing agent slots.
+				// Unlike prompts (user-configurable), toolGuards are structural enforcement
+				// metadata that must stay in sync with the template.
+				const mergedNodes = mergeToolGuardsFromTemplate(row.nodes, template.nodes);
+
 				workflowManager.updateWorkflow(row.id, {
 					completionAutonomyLevel: template.completionAutonomyLevel,
 					// Pass `null` (not `undefined`) when the template clears the route,
 					// so the repository writes the new value rather than leaving the
 					// old one in place.
 					postApproval: template.postApproval ?? null,
-					// Never re-stamp nodes/prompts during startup/idempotent seed reruns.
-					// User/workflow configuration is runtime data and must not be silently
-					// replaced by built-in template text outside an explicit sync action.
+					nodes: mergedNodes,
 					templateHash: expectedHash,
 				});
 				restamped.push(template.name);
 				builtInSeederLog.info(
 					`re-stamped built-in workflow '${template.name}' (id=${row.id}) ` +
-						`in space ${spaceId}: fields=${RESTAMP_FIELDS.join(',')}`
+						`in space ${spaceId}: fields=${RESTAMP_FIELDS.join(',')} (toolGuards merged onto agent slots)`
 				);
 			} catch (err) {
 				errors.push({

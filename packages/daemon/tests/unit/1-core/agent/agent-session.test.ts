@@ -630,6 +630,7 @@ describe('AgentSession', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				{ hardReset: hardResetSpy }
 			);
 			// biome-ignore lint: test mock access
@@ -652,6 +653,7 @@ describe('AgentSession', () => {
 				mockMessageHub,
 				mockDaemonHub,
 				mockGetApiKey,
+				undefined,
 				undefined,
 				undefined,
 				undefined,
@@ -1942,6 +1944,33 @@ describe('AgentSession', () => {
 			expect(session.config.allowedTools).toEqual(['Read', 'Bash']);
 			expect(session.config.disallowedTools).toEqual(['Write', 'Edit']);
 		});
+
+		it('should persist toolGuards in session config for daemon restart restore', () => {
+			const toolGuards = [
+				{
+					matcher: 'Bash',
+					pattern: 'gh\\s+pr\\s+merge\\b',
+					decision: 'deny' as const,
+					reason: 'Coder agents must not merge PRs',
+				},
+			];
+
+			const init = {
+				sessionId: 'coder:task-1',
+				workspacePath: '/test/workspace',
+				type: 'coder' as const,
+				model: 'claude-sonnet-4-5-20250929',
+				toolGuards,
+			};
+
+			const session = AgentSession.createSessionFromInit(init, 'claude-sonnet-4-5-20250929');
+
+			expect(session.config.toolGuards).toEqual(toolGuards);
+
+			// Config should be JSON-serializable
+			const serialized = JSON.stringify(session.config);
+			expect(serialized).toContain('toolGuards');
+		});
 	});
 
 	describe('fromInit', () => {
@@ -2590,6 +2619,7 @@ describe('AgentSession', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				{ autoReplayPendingMessages: false }
 			);
 
@@ -3051,6 +3081,118 @@ describe('AgentSession', () => {
 			expect(entries.length).toBe(1);
 			expect(entries[0]).not.toHaveProperty('spaceId');
 			expect(entries[0]).not.toHaveProperty('taskId');
+		});
+	});
+
+	describe('restore', () => {
+		it('should re-apply toolGuards from persisted session config', () => {
+			const toolGuards = [
+				{
+					matcher: 'Bash',
+					pattern: 'gh\\s+pr\\s+merge\\b',
+					decision: 'deny' as const,
+					reason: 'Coder agents must not merge PRs',
+				},
+			];
+
+			const seedSession = {
+				id: 'restored-session',
+				title: 'Restored Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active' as const,
+				config: {
+					model: 'claude-sonnet-4-5-20250929',
+					maxTokens: 4096,
+					temperature: 1.0,
+					toolGuards,
+				},
+				metadata: {},
+			};
+
+			const db = {
+				getSession: mock(() => seedSession),
+				updateSession: mock(() => {}),
+				getUserMessages: mock(() => []),
+				getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
+				deleteMessagesAfter: mock(() => 0),
+				deleteMessagesAtAndAfter: mock(() => 0),
+				getUserMessageByUuid: mock(() => undefined),
+				countMessagesAfter: mock(() => 0),
+				getMessagesByStatus: mock(() => []),
+				updateMessage: mock(() => {}),
+			} as unknown as Database;
+
+			const msgHub = {
+				onMessage: mock(() => () => {}),
+				sendMessage: mock(() => {}),
+			} as unknown as MessageHub;
+
+			const dHub = {
+				on: mock(() => () => {}),
+				emit: mock(() => {}),
+			} as unknown as DaemonHub;
+
+			const getApiKey = mock(async () => 'test-key');
+
+			const agentSession = AgentSession.restore('restored-session', db, msgHub, dHub, getApiKey);
+
+			expect(agentSession).not.toBeNull();
+			expect(agentSession!.toolGuards).toEqual(toolGuards);
+		});
+
+		it('should pass undefined toolGuards when config has no toolGuards', () => {
+			const seedSession = {
+				id: 'restored-session-no-guards',
+				title: 'Restored Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active' as const,
+				config: {
+					model: 'claude-sonnet-4-5-20250929',
+					maxTokens: 4096,
+					temperature: 1.0,
+				},
+				metadata: {},
+			};
+
+			const db = {
+				getSession: mock(() => seedSession),
+				updateSession: mock(() => {}),
+				getUserMessages: mock(() => []),
+				getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
+				deleteMessagesAfter: mock(() => 0),
+				deleteMessagesAtAndAfter: mock(() => 0),
+				getUserMessageByUuid: mock(() => undefined),
+				countMessagesAfter: mock(() => 0),
+				getMessagesByStatus: mock(() => []),
+				updateMessage: mock(() => {}),
+			} as unknown as Database;
+
+			const msgHub = {
+				onMessage: mock(() => () => {}),
+				sendMessage: mock(() => {}),
+			} as unknown as MessageHub;
+
+			const dHub = {
+				on: mock(() => () => {}),
+				emit: mock(() => {}),
+			} as unknown as DaemonHub;
+
+			const getApiKey = mock(async () => 'test-key');
+
+			const agentSession = AgentSession.restore(
+				'restored-session-no-guards',
+				db,
+				msgHub,
+				dHub,
+				getApiKey
+			);
+
+			expect(agentSession).not.toBeNull();
+			expect(agentSession!.toolGuards).toBeUndefined();
 		});
 	});
 });

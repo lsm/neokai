@@ -758,11 +758,141 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('hooks configuration', () => {
-		it('should return empty hooks', async () => {
+		const NO_MERGE_GUARD = {
+			matcher: 'Bash',
+			pattern:
+				'(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*gh[\\s\\\\]+pr[\\s\\\\]+merge\\b',
+			decision: 'deny' as const,
+			reason:
+				'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
+		};
+
+		it('should return empty hooks when no toolGuards provided', async () => {
 			const options = await builder.build();
 
-			// buildHooks() returns {} — no hooks configured
 			expect(options.hooks).toEqual({});
+		});
+
+		it('compiles declarative tool guards into PreToolUse hooks', async () => {
+			const guardBuilder = new QueryOptionsBuilder({
+				...mockContext,
+				toolGuards: [NO_MERGE_GUARD],
+			});
+			const options = await guardBuilder.build();
+
+			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+			expect(hook).toBeDefined();
+
+			for (const command of [
+				'gh pr merge https://github.com/org/repo/pull/1 --squash',
+				'  gh pr merge https://github.com/org/repo/pull/1 --squash',
+				'`gh pr merge 123`',
+				'GH_TOKEN=token gh pr merge 123',
+				'command gh pr merge 123',
+				'env GH_TOKEN=token gh pr merge 123',
+				'gh pr \\\nmerge 123', // line continuation
+			]) {
+				const result = await hook!(
+					{
+						hook_event_name: 'PreToolUse',
+						tool_name: 'Bash',
+						tool_input: { command },
+						tool_use_id: 'tool-1',
+						session_id: 'session-1',
+						transcript_path: '/tmp/transcript.jsonl',
+						cwd: '/tmp/repo',
+					},
+					'tool-1',
+					{ signal: new AbortController().signal }
+				);
+
+				expect(result).toEqual({
+					hookSpecificOutput: {
+						hookEventName: 'PreToolUse',
+						permissionDecision: 'deny',
+						permissionDecisionReason: NO_MERGE_GUARD.reason,
+					},
+				});
+			}
+		});
+
+		it('allows non-merge bash commands when tool guard is present', async () => {
+			const guardBuilder = new QueryOptionsBuilder({
+				...mockContext,
+				toolGuards: [NO_MERGE_GUARD],
+			});
+			const options = await guardBuilder.build();
+			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+
+			const result = await hook!(
+				{
+					hook_event_name: 'PreToolUse',
+					tool_name: 'Bash',
+					tool_input: { command: 'gh pr view --json url && bun test' },
+					tool_use_id: 'tool-1',
+					session_id: 'session-1',
+					transcript_path: '/tmp/transcript.jsonl',
+					cwd: '/tmp/repo',
+				},
+				'tool-1',
+				{ signal: new AbortController().signal }
+			);
+
+			expect(result).toEqual({});
+		});
+
+		it('groups guards by matcher into separate matcher entries', async () => {
+			const guardBuilder = new QueryOptionsBuilder({
+				...mockContext,
+				toolGuards: [
+					NO_MERGE_GUARD,
+					{
+						matcher: 'Bash',
+						pattern: 'rm\\s+-rf\\s+/',
+						decision: 'deny' as const,
+						reason: 'No recursive force deletes from root',
+					},
+				],
+			});
+			const options = await guardBuilder.build();
+
+			// Both guards share the same matcher, so they should be under one entry
+			expect(options.hooks?.PreToolUse).toHaveLength(1);
+			expect(options.hooks?.PreToolUse?.[0]?.matcher).toBe('Bash');
+			expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(2);
+		});
+
+		it('gracefully skips guards with invalid regex patterns', async () => {
+			const guardBuilder = new QueryOptionsBuilder({
+				...mockContext,
+				toolGuards: [
+					{
+						matcher: 'Bash',
+						pattern: '[invalid(', // unmatched paren — invalid regex
+						decision: 'deny' as const,
+						reason: 'Bad pattern',
+					},
+				],
+			});
+			const options = await guardBuilder.build();
+
+			// Hook is compiled (no crash), but the no-op callback returns {}
+			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+			expect(hook).toBeDefined();
+			const result = await hook!(
+				{
+					hook_event_name: 'PreToolUse',
+					tool_name: 'Bash',
+					tool_input: { command: 'anything' },
+					tool_use_id: 'tool-1',
+					session_id: 'session-1',
+					transcript_path: '/tmp/transcript.jsonl',
+					cwd: '/tmp/repo',
+				},
+				'tool-1',
+				{ signal: new AbortController().signal }
+			);
+			expect(result).toEqual({});
 		});
 	});
 
