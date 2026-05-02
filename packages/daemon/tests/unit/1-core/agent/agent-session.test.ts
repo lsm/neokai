@@ -630,6 +630,7 @@ describe('AgentSession', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				{ hardReset: hardResetSpy }
 			);
 			// biome-ignore lint: test mock access
@@ -652,6 +653,7 @@ describe('AgentSession', () => {
 				mockMessageHub,
 				mockDaemonHub,
 				mockGetApiKey,
+				undefined,
 				undefined,
 				undefined,
 				undefined,
