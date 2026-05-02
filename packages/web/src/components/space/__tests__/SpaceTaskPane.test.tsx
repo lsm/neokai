@@ -145,11 +145,13 @@ vi.mock('../SpaceTaskUnifiedThread', () => ({
 		topInsetClass,
 		bottomInsetClass,
 		bottomScrollPaddingClass,
+		bottomInsetPx,
 	}: {
 		taskId: string;
 		topInsetClass?: string;
 		bottomInsetClass?: string;
 		bottomScrollPaddingClass?: string;
+		bottomInsetPx?: number;
 	}) => (
 		<div
 			data-testid="space-task-unified-thread"
@@ -157,6 +159,7 @@ vi.mock('../SpaceTaskUnifiedThread', () => ({
 			data-top-inset={topInsetClass ?? ''}
 			data-bottom-inset={bottomInsetClass ?? ''}
 			data-bottom-scroll-padding={bottomScrollPaddingClass ?? ''}
+			data-bottom-inset-px={bottomInsetPx ?? ''}
 		/>
 	),
 }));
@@ -355,8 +358,7 @@ describe('SpaceTaskPane — composer', () => {
 
 		await waitFor(() => expect(getByText('Invalid transition')).toBeTruthy());
 		const thread = getByTestId('space-task-unified-thread');
-		expect(thread.getAttribute('data-bottom-inset')).toBe('pb-52 sm:pb-44');
-		expect(thread.getAttribute('data-bottom-scroll-padding')).toBe('scroll-pb-52 sm:scroll-pb-44');
+		expect(Number(thread.getAttribute('data-bottom-inset-px'))).toBeGreaterThanOrEqual(144);
 	});
 
 	it('does not submit empty message', () => {
@@ -1269,14 +1271,37 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('task-space', 'task-1', 'canvas');
 	});
 
-	it('passes insets to SpaceTaskUnifiedThread so messages clear floating controls', () => {
+	it('passes dynamic inset pixels to SpaceTaskUnifiedThread so messages clear floating controls', () => {
 		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
 		const thread = getByTestId('space-task-unified-thread');
 		expect(thread.getAttribute('data-top-inset')).toBe('pt-12');
-		expect(thread.getAttribute('data-bottom-inset')).toBe('pb-44 sm:pb-36');
-		expect(thread.getAttribute('data-bottom-scroll-padding')).toBe('scroll-pb-44 sm:scroll-pb-36');
+		expect(Number(thread.getAttribute('data-bottom-inset-px'))).toBeGreaterThanOrEqual(144);
+		expect(thread.getAttribute('data-bottom-inset')).toBe('');
+		expect(thread.getAttribute('data-bottom-scroll-padding')).toBe('');
+	});
+
+	it('rebinds dynamic inset measurement when returning to the thread view', () => {
+		const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+		HTMLElement.prototype.getBoundingClientRect = function () {
+			if (this.getAttribute('data-testid') === 'task-session-chat-composer') {
+				return { height: 220 } as DOMRect;
+			}
+			return originalGetBoundingClientRect.call(this);
+		};
+		try {
+			mockTasks.value = [makeTask({ workflowRunId: 'run-1', taskAgentSessionId: 'session-abc' })];
+			mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+			const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+			fireEvent.click(getByTestId('canvas-toggle'));
+			fireEvent.click(getByTestId('thread-toggle'));
+
+			const thread = getByTestId('space-task-unified-thread');
+			expect(Number(thread.getAttribute('data-bottom-inset-px'))).toBe(236);
+		} finally {
+			HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+		}
 	});
 
 	it('renders the active banner outside task-pane-content so it is visible across tabs', () => {
