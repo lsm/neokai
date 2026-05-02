@@ -691,13 +691,13 @@ describe('useAutoScroll', () => {
 	});
 
 	describe('content-growth re-anchor', () => {
-		it('should re-pin to bottom when content grows while user is near bottom', () => {
+		it('should re-pin via scrollIntoView when content grows while user is near bottom', () => {
 			// Reproduces the "lands somewhere random" symptom: an initial
 			// scroll-to-bottom fires, but then async content (markdown,
 			// syntax highlighting, image loads) grows the scrollHeight after
 			// the scroll, leaving the last messages stranded above the actual
 			// bottom. The ResizeObserver path catches the growth and re-pins.
-			const { containerRef, endRef } = createMockRefs();
+			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
 
 			// Container is initially at bottom.
 			containerRef.current!.scrollTop = 500;
@@ -726,8 +726,9 @@ describe('useAutoScroll', () => {
 			});
 			vi.useRealTimers();
 
-			// Container should have been scrolled to the new bottom.
-			expect(containerRef.current!.scrollTop).toBe(1500);
+			// Re-pin through scrollIntoView so CSS scroll-padding-bottom is honored.
+			expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: 'instant', block: 'end' });
+			expect(containerRef.current!.scrollTop).toBe(500);
 		});
 
 		it('should NOT re-pin to bottom when user has scrolled away from bottom', () => {

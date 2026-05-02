@@ -21,7 +21,7 @@
  */
 
 import type { RefObject } from 'preact';
-import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 
 export interface UseAutoScrollOptions {
 	/** Ref to the scrollable container element */
@@ -159,7 +159,7 @@ export function useAutoScroll({
 						!loadingOlderRef.current &&
 						(enabledRef.current || !hasScrolledOnMountRef.current)
 					) {
-						container.scrollTop = container.scrollHeight;
+						scrollToBottom();
 					}
 					handleScroll();
 				});
