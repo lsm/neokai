@@ -545,7 +545,14 @@ export class QueryRunner {
 			// Consume the one-shot resumeSessionAt now that the query completed
 			// successfully. Peek was used in addSessionStateOptions so options had
 			// the value; consuming only on success preserves it for startup retries.
-			this.ctx.consumePendingResumeSessionAt?.();
+			// Guard: only consume if this is still the current query. When restart()
+			// aborts this query via createAbortableQuery (which breaks, not throws),
+			// execution reaches here — but the RewindHandler may have already set a
+			// new pendingResumeSessionAt for the restarted query. Without this guard
+			// the stale old query consumes the value the new query needs.
+			if (this.ctx.getQueryGeneration() === queryGeneration) {
+				this.ctx.consumePendingResumeSessionAt?.();
+			}
 
 			// Stop the queue immediately after the query ends to close the race window
 			// between the for-await loop ending and the finally block calling stop().
