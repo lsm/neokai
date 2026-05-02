@@ -202,6 +202,10 @@ describe('Post-approval merge prompt checks review conversations', () => {
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('endCursor');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('hasNextPage');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('Do NOT stop at the first page');
+		// The template instructs the agent to pass --hostname extracted from
+		// the PR URL so GitHub Enterprise PRs query the correct backend.
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--hostname');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('<host>');
 	});
 });
 
