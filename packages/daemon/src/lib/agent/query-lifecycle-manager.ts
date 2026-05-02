@@ -355,8 +355,10 @@ export class QueryLifecycleManager {
 			if (session.sdkSessionId) {
 				const isValid = this.validateAndRepairWithMigration();
 				if (!isValid) {
-					// Session file missing — surface to the user via sdkResumeChoice prompt
-					// so they can choose to start fresh or keep the existing session.
+					// Do NOT silently clear sdkSessionId — the user may be able to recover
+					// the session (e.g., transient FS issue, or future DB-restore feature).
+					// Instead, surface the sdkResumeChoice prompt so the user decides.
+					// This matches the UX of ensureQueryStarted()'s handling.
 					this.logger.warn(
 						`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
 							'Emitting sdk_resume_choice for user.'
@@ -448,6 +450,9 @@ export class QueryLifecycleManager {
 				if (session.sdkSessionId) {
 					const isValid = this.validateAndRepairWithMigration();
 					if (!isValid) {
+						// Do NOT silently clear sdkSessionId — surface to user for manual
+						// recovery choice (start fresh vs keep session). See restart()
+						// for the same pattern.
 						this.logger.warn(
 							`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
 								'Emitting sdk_resume_choice for user.'
