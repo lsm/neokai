@@ -125,6 +125,15 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 	// Setting sources to load (all enabled by default)
 	settingSources: SettingSource[];
 
+	/**
+	 * Optional per-provider model allowlists. When a provider has entries here,
+	 * model selection UIs and runtime validation only allow the listed model IDs.
+	 * This is needed for providers such as OpenRouter where account-enabled model
+	 * restrictions are configured in the provider dashboard but are not exposed by
+	 * the provider's public models API.
+	 */
+	providerModelAllowlists?: Record<string, string[]>;
+
 	// Default thinking level for new sessions
 	// Maps to maxThinkingTokens in SDK options
 	thinkingLevel?: ThinkingLevel;

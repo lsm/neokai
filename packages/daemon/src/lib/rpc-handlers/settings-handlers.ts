@@ -11,6 +11,26 @@ import type { SettingsManager } from '../settings-manager';
 import type { Database } from '../../storage/database';
 import type { McpImportService } from '../mcp';
 
+function applyProviderModelAllowlistsToEnv(allowlists?: Record<string, string[]>): void {
+	if (!allowlists || Object.keys(allowlists).length === 0) {
+		delete process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS;
+		return;
+	}
+
+	const entries = Object.entries(allowlists).flatMap(([provider, models]) =>
+		models
+			.map((model) => model.trim())
+			.filter(Boolean)
+			.map((model) => `${provider}:${model}`)
+	);
+
+	if (entries.length === 0) {
+		delete process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS;
+	} else {
+		process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS = entries.join('\n');
+	}
+}
+
 export function registerSettingsHandlers(
 	messageHub: MessageHub,
 	settingsManager: SettingsManager,
@@ -32,6 +52,11 @@ export function registerSettingsHandlers(
 		'settings.global.update',
 		async (data: { updates: Partial<GlobalSettings> }) => {
 			const updated = settingsManager.updateGlobalSettings(data.updates);
+			if (data.updates.providerModelAllowlists !== undefined) {
+				applyProviderModelAllowlistsToEnv(data.updates.providerModelAllowlists);
+				const { clearModelsCache } = await import('../model-service');
+				clearModelsCache();
+			}
 			// Emit event for StateManager to broadcast (global event)
 			daemonHub.emit('settings.updated', {
 				sessionId: 'global',

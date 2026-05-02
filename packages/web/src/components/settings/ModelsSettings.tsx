@@ -462,6 +462,9 @@ export function ModelsSettings() {
 	const [modelFallbackMap, setModelFallbackMap] = useState<Record<string, FallbackModelEntry[]>>(
 		settings?.modelFallbackMap ?? {}
 	);
+	const [openRouterAllowlistText, setOpenRouterAllowlistText] = useState(
+		(settings?.providerModelAllowlists?.openrouter ?? []).join('\n')
+	);
 	const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
 	const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, ProviderAuthStatus>>(
 		new Map()
@@ -484,6 +487,7 @@ export function ModelsSettings() {
 		if (settings) {
 			setFallbackModels(settings.fallbackModels ?? []);
 			setModelFallbackMap(settings.modelFallbackMap ?? {});
+			setOpenRouterAllowlistText((settings.providerModelAllowlists?.openrouter ?? []).join('\n'));
 		}
 	}, [settings]);
 
@@ -507,6 +511,35 @@ export function ModelsSettings() {
 			authMap.set(p.id, p);
 		}
 		setProviderAuthStatuses(authMap);
+	};
+
+	const saveOpenRouterAllowlist = async () => {
+		const openrouter = Array.from(
+			new Set(
+				openRouterAllowlistText
+					.split(/[\n,]/)
+					.map((id) => id.trim())
+					.filter(Boolean)
+			)
+		);
+		const nextAllowlists = { ...settings?.providerModelAllowlists };
+		if (openrouter.length > 0) {
+			nextAllowlists.openrouter = openrouter;
+		} else {
+			delete nextAllowlists.openrouter;
+		}
+
+		setIsUpdating(true);
+		try {
+			await updateGlobalSettings({ providerModelAllowlists: nextAllowlists });
+			setOpenRouterAllowlistText(openrouter.join('\n'));
+			toast.success('OpenRouter model allowlist updated');
+			await fetchModels(true);
+		} catch {
+			toast.error('Failed to update OpenRouter model allowlist');
+		} finally {
+			setIsUpdating(false);
+		}
 	};
 
 	const handleRefresh = async () => {
@@ -630,6 +663,31 @@ export function ModelsSettings() {
 
 	return (
 		<SettingsSection title="Models">
+			<div class="mb-6 space-y-2">
+				<div>
+					<h4 class="text-sm font-medium text-gray-300">OpenRouter Model Allowlist</h4>
+					<p class="text-xs text-gray-500 mt-0.5">
+						OpenRouter does not expose dashboard-enabled account models through its public API. Add
+						one model ID per line to limit model pickers and runtime validation to models you have
+						enabled on OpenRouter.
+					</p>
+				</div>
+				<textarea
+					value={openRouterAllowlistText}
+					onInput={(e) => setOpenRouterAllowlistText(e.currentTarget.value)}
+					placeholder="xai/grok-4.3\nqwen/qwen3.6-max-preview\ndeepseek/deepseek-v4-pro"
+					class="w-full h-28 bg-dark-900 border border-dark-600 rounded px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600 focus:outline-none focus:border-blue-500 font-mono"
+				/>
+				<Button
+					variant="primary"
+					size="xs"
+					onClick={saveOpenRouterAllowlist}
+					disabled={isUpdating}
+					loading={isUpdating}
+				>
+					Save OpenRouter allowlist
+				</Button>
+			</div>
 			<div class="flex items-center gap-2 mb-4">
 				<Button
 					variant="ghost"
