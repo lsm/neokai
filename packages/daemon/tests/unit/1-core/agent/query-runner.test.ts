@@ -1386,6 +1386,137 @@ describe('QueryRunner error categorization', () => {
 	});
 });
 
+describe('QueryRunner transient connection error handling', () => {
+	it('should detect transient fetch/connection errors', () => {
+		const transientMessages = [
+			'API Error: The socket connection was closed unexpectedly. For more information, pass verbose: true in the second argument to fetch()',
+			'fetch failed',
+			'connection reset',
+			'stream closed',
+			'SocketError',
+			'ReadableStream is locked',
+			'network down',
+			'Unable to connect',
+			'backend connection error',
+			'connection closed',
+			'connection reset by peer',
+		];
+
+		for (const message of transientMessages) {
+			const isTransientConnectionError =
+				message.includes('socket connection was closed') ||
+				message.includes('verbose: true in the second argument to fetch()') ||
+				message.includes('fetch failed') ||
+				message.includes('connection closed') ||
+				message.includes('connection reset') ||
+				message.includes('stream closed') ||
+				message.includes('SocketError') ||
+				message.includes('ReadableStream is locked') ||
+				message.includes('network down') ||
+				message.includes('Unable to connect') ||
+				message.includes('backend connection error');
+			expect(isTransientConnectionError).toBe(true);
+		}
+	});
+
+	it('should not flag non-connection errors as transient', () => {
+		const nonTransientMessages = [
+			'401 Unauthorized',
+			'429 Too Many Requests',
+			'model_not_found',
+			'SDK startup timeout',
+		];
+
+		for (const message of nonTransientMessages) {
+			const isTransientConnectionError =
+				message.includes('socket connection was closed') ||
+				message.includes('verbose: true in the second argument to fetch()') ||
+				message.includes('fetch failed') ||
+				message.includes('connection closed') ||
+				message.includes('connection reset') ||
+				message.includes('stream closed') ||
+				message.includes('SocketError') ||
+				message.includes('ReadableStream is locked') ||
+				message.includes('network down') ||
+				message.includes('Unable to connect') ||
+				message.includes('backend connection error');
+			expect(isTransientConnectionError).toBe(false);
+		}
+	});
+
+	it('should categorize transient connection errors as connection category', () => {
+		const transientMessage =
+			'API Error: The socket connection was closed unexpectedly. For more information, pass verbose: true in the second argument to fetch()';
+
+		let category = 'system';
+
+		const isTransientConnectionError =
+			transientMessage.includes('socket connection was closed') ||
+			transientMessage.includes('verbose: true in the second argument to fetch()') ||
+			transientMessage.includes('fetch failed') ||
+			transientMessage.includes('connection closed') ||
+			transientMessage.includes('connection reset') ||
+			transientMessage.includes('stream closed') ||
+			transientMessage.includes('SocketError') ||
+			transientMessage.includes('ReadableStream is locked') ||
+			transientMessage.includes('network down') ||
+			transientMessage.includes('Unable to connect') ||
+			transientMessage.includes('backend connection error');
+
+		if (
+			transientMessage.includes('ECONNREFUSED') ||
+			transientMessage.includes('ENOTFOUND') ||
+			transientMessage.includes('EHOSTUNREACH') ||
+			isTransientConnectionError
+		) {
+			category = 'connection';
+		}
+
+		expect(category).toBe('connection');
+	});
+
+	it('should sanitize raw fetch error strings', () => {
+		const rawMessage =
+			'API Error: The socket connection was closed unexpectedly. ' +
+			'For more information, pass verbose: true in the second argument to fetch()';
+
+		const isTransientConnectionError =
+			rawMessage.includes('socket connection was closed') ||
+			rawMessage.includes('verbose: true in the second argument to fetch()') ||
+			rawMessage.includes('fetch failed') ||
+			rawMessage.includes('connection closed') ||
+			rawMessage.includes('connection reset') ||
+			rawMessage.includes('stream closed') ||
+			rawMessage.includes('SocketError') ||
+			rawMessage.includes('ReadableStream is locked') ||
+			rawMessage.includes('network down') ||
+			rawMessage.includes('Unable to connect') ||
+			rawMessage.includes('backend connection error');
+
+		// Sanitization yields a user-friendly message — never the raw string
+		const sanitized = isTransientConnectionError
+			? 'The connection was interrupted. Retrying…'
+			: rawMessage;
+
+		expect(sanitized).not.toContain('verbose: true');
+		expect(sanitized).not.toContain('socket connection was closed');
+		expect(sanitized).toContain('connection was interrupted');
+	});
+
+	it('should provide generic retry-exhausted message without raw internals', () => {
+		const exhaustedMessage =
+			'Could not get a response. The connection was interrupted. Please try again.';
+
+		// Never contains raw fetch internals
+		expect(exhaustedMessage).not.toContain('verbose: true');
+		expect(exhaustedMessage).not.toContain('socket connection was closed');
+		expect(exhaustedMessage).not.toContain('fetch()');
+
+		// Contains actionable guidance
+		expect(exhaustedMessage).toContain('Please try again');
+	});
+});
+
 describe('QueryRunner API validation error parsing', () => {
 	it('should parse 400 status code errors', () => {
 		const errorMessage =

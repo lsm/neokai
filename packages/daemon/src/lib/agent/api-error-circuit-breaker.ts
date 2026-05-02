@@ -79,6 +79,28 @@ const FATAL_ERROR_PATTERNS = [
 	/image.*base64.*size.*exceeds/i,
 ];
 
+/**
+ * Transient error patterns that should NOT be counted by the circuit breaker.
+ *
+ * These represent mid-stream HTTP connection drops (network blips, server restarts,
+ * timeouts) that the daemon's own retry logic handles. A single transient drop
+ * should not contribute to the circuit breaker's error count — only genuinely
+ * repeated connection failures (matching FATAL_ERROR_PATTERNS above) should trip it.
+ */
+const TRANSIENT_CONNECTION_PATTERNS = [
+	/socket connection was closed/i,
+	/verbose:\s*true\s+in the second argument to fetch/i,
+	/fetch failed/i,
+	/connection closed/i,
+	/connection reset/i,
+	/stream closed/i,
+	/SocketError/i,
+	/ReadableStream is locked/i,
+	/network down/i,
+	/Unable to connect/i,
+	/backend connection error/i,
+];
+
 export class ApiErrorCircuitBreaker {
 	private logger: Logger;
 	private config: CircuitBreakerConfig;
@@ -232,6 +254,16 @@ export class ApiErrorCircuitBreaker {
 
 		if (!messageText) {
 			return false;
+		}
+
+		// Skip transient connection errors — these are mid-stream HTTP drops that
+		// the daemon's own retry logic handles. A single network blip should not
+		// contribute to the circuit breaker's error count. Only genuinely repeated
+		// connection failures (matching FATAL_ERROR_PATTERNS) should trip it.
+		for (const pattern of TRANSIENT_CONNECTION_PATTERNS) {
+			if (pattern.test(messageText)) {
+				return false;
+			}
 		}
 
 		// Check for error pattern

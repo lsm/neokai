@@ -345,4 +345,74 @@ describe('ApiErrorCircuitBreaker', () => {
 			expect(state2.tripCount).toBe(2);
 		});
 	});
+
+	describe('transient connection error filtering', () => {
+		it('should NOT count transient fetch errors as connection errors', async () => {
+			// "socket connection was closed" is a transient blip, not a persistent failure
+			const message = {
+				type: 'user',
+				message: {
+					content:
+						'API Error: The socket connection was closed unexpectedly. For more information, pass verbose: true',
+				},
+			};
+
+			// Send 5 messages — should NOT trip even with 3-threshold
+			for (let i = 0; i < 5; i++) {
+				const tripped = await circuitBreaker.checkMessage(message);
+				expect(tripped).toBe(false);
+			}
+			expect(circuitBreaker.isTripped()).toBe(false);
+		});
+
+		it('should NOT count fetch-failed as connection errors', async () => {
+			const message = {
+				type: 'user',
+				message: {
+					content: 'fetch failed',
+				},
+			};
+
+			for (let i = 0; i < 5; i++) {
+				const tripped = await circuitBreaker.checkMessage(message);
+				expect(tripped).toBe(false);
+			}
+			expect(circuitBreaker.isTripped()).toBe(false);
+		});
+
+		it('should NOT count stream-closed as connection errors', async () => {
+			const message = {
+				type: 'user',
+				message: {
+					content: 'stream closed',
+				},
+			};
+
+			for (let i = 0; i < 5; i++) {
+				const tripped = await circuitBreaker.checkMessage(message);
+				expect(tripped).toBe(false);
+			}
+			expect(circuitBreaker.isTripped()).toBe(false);
+		});
+
+		it('should still count genuine repeated Connection errors (stderr format)', async () => {
+			// Only true repeated "Connection error" in stderr should trip
+			const message = {
+				type: 'user',
+				message: {
+					content: '<local-command-stderr>Error: Connection error.</local-command-stderr>',
+				},
+			};
+
+			// First two don't trip
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
+			expect(circuitBreaker.isTripped()).toBe(false);
+
+			// Third trips
+			const tripped = await circuitBreaker.checkMessage(message);
+			expect(tripped).toBe(true);
+			expect(circuitBreaker.isTripped()).toBe(true);
+		});
+	});
 });

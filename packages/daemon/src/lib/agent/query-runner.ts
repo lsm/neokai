@@ -574,6 +574,22 @@ export class QueryRunner {
 			const isConversationNotFound = errorMessage.includes('No conversation found');
 			const isMessageNotFound = errorMessage.includes('No message found');
 
+			// Detect transient fetch/connection errors that escape the SDK's own retry logic.
+			// These are mid-stream HTTP connection drops (network blip, server restart, timeout)
+			// that should be retried rather than surfaced as raw developer-facing error strings.
+			const isTransientConnectionError =
+				errorMessage.includes('socket connection was closed') ||
+				errorMessage.includes('verbose: true in the second argument to fetch()') ||
+				errorMessage.includes('fetch failed') ||
+				errorMessage.includes('connection closed') ||
+				errorMessage.includes('connection reset') ||
+				errorMessage.includes('stream closed') ||
+				errorMessage.includes('SocketError') ||
+				errorMessage.includes('ReadableStream is locked') ||
+				errorMessage.includes('network down') ||
+				errorMessage.includes('Unable to connect') ||
+				errorMessage.includes('backend connection error');
+
 			// Startup timeout is transient — always keep sdkSessionId so resume works.
 			// Never clear sdkSessionId on timeout: the session file is valid and the
 			// conversation can be resumed once the workspace lock conflict resolves.
@@ -743,6 +759,44 @@ export class QueryRunner {
 				return await this.runQuery(queryGeneration, true);
 			}
 
+			// Auto-retry once on transient connection errors (mid-stream HTTP drop).
+			// These are network blips that escape the SDK's own retry logic — retrying
+			// the entire query is the safest recovery path.
+			if (isTransientConnectionError && !isRetry && !this.ctx.isCleaningUp()) {
+				logger.warn('Auto-retrying query after transient connection error (1 retry).');
+				await stateManager.setIdle();
+
+				// Display a sanitized retry message so the user knows what's happening,
+				// but never show the raw fetch error string ("verbose: true", etc.).
+				try {
+					await this.displayErrorAsAssistantMessage('⚠️ The connection was interrupted. Retrying…', {
+						markAsError: false,
+					});
+				} catch {
+					// Best-effort — don't let message emission block the retry
+				}
+
+				if (this.ctx.queryObject) {
+					try {
+						this.ctx.queryObject.close();
+					} catch {
+						// Ignore close errors
+					}
+					this.ctx.queryObject = null;
+				}
+
+				const exitPromise = this.ctx.processExitedPromise;
+				if (exitPromise) {
+					await Promise.race([
+						exitPromise,
+						new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+					]);
+					this.ctx.processExitedPromise = null;
+				}
+
+				return await this.runQuery(queryGeneration, true);
+			}
+
 			// Clear the queue on non-retryable errors so stale messages don't bleed into the next session.
 			messageQueue.clear();
 
@@ -785,7 +839,12 @@ export class QueryRunner {
 						errorMessage.includes('invalid_api_key')
 					) {
 						category = ErrorCategory.AUTHENTICATION;
-					} else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND')) {
+					} else if (
+						errorMessage.includes('ECONNREFUSED') ||
+						errorMessage.includes('ENOTFOUND') ||
+						errorMessage.includes('EHOSTUNREACH') ||
+						isTransientConnectionError
+					) {
 						category = ErrorCategory.CONNECTION;
 					} else if (
 						errorMessage.includes('429') ||
@@ -834,7 +893,9 @@ export class QueryRunner {
 									`contains that message UUID, likely after SDK compaction. Your message history in NeoKai ` +
 									`is preserved; only the AI context window is reset. Please resend your message — a fresh ` +
 									`session starts automatically.`
-								: undefined;
+								: isTransientConnectionError && isRetry
+									? 'Could not get a response. The connection was interrupted. Please try again.'
+									: undefined;
 
 					await errorManager.handleError(
 						session.id,
