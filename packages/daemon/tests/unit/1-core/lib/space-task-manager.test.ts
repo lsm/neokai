@@ -1005,6 +1005,35 @@ describe('SpaceTaskManager', () => {
 			);
 		});
 
+		it('rejects review→review when pendingCheckpointType is gate', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+
+			// Simulate handleGatePendingApproval: put task in review with gate checkpoint
+			await manager.submitTaskForReview(task.id, {
+				submittedByNodeId: null,
+				reason: null,
+			});
+			// Directly update to simulate gate pending state
+			const repo: any = (manager as any).taskRepo;
+			repo.updateTask(task.id, {
+				status: 'review',
+				pendingCheckpointType: 'gate',
+			});
+
+			await expect(
+				manager.submitTaskForReview(task.id, {
+					submittedByNodeId: null,
+					reason: null,
+				})
+			).rejects.toThrow(/Cannot re-submit task in 'review' with pendingCheckpointType 'gate'/);
+
+			// Confirm gate checkpoint was not overwritten
+			const after = await manager.getTask(task.id);
+			expect(after?.status).toBe('review');
+			expect(after?.pendingCheckpointType).toBe('gate');
+		});
+
 		it('rejects illegal source statuses before any pending-* fields get written', async () => {
 			// `done → review` is not in VALID_SPACE_TASK_TRANSITIONS — the helper
 			// must surface the transition error from `setTaskStatus` *before*
