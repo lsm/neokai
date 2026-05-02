@@ -349,23 +349,24 @@ export class QueryLifecycleManager {
 			// The interrupted query may have left the session file in an inconsistent state
 			// (e.g., orphaned tool_results from interrupted SDK context compaction).
 			// Also detects stale sdkSessionId when the session file no longer exists.
-			let blockedOnResumeChoice = false;
 			if (session.sdkSessionId) {
 				const isValid = this.validateAndRepairWithMigration();
 				if (!isValid) {
 					// Do NOT silently clear sdkSessionId — the user may be able to recover
 					// the session (e.g., transient FS issue, or future DB-restore feature).
-					// Instead, surface the sdkResumeChoice prompt so the user decides.
-					// This matches the UX of ensureQueryStarted()'s handling.
-					// Do NOT call startStreamingQuery() — the session file is missing,
-					// the query would fail with "No conversation found" producing a
-					// redundant error alongside the choice prompt.
+					// Emit the sdkResumeChoice prompt so the user can choose to start fresh.
+					// Unlike ensureQueryStarted() (which blocks until the user responds),
+					// restart() must always call startStreamingQuery() because:
+					//   1. The model switch/settings change needs to take effect.
+					//   2. If the user later picks "leave_as_is", the RPC handler calls
+					//      restart() again — blocking here would create an infinite loop.
+					// The SDK handles the missing session file gracefully (errors with
+					// "No conversation found", caught by query-runner's error handling).
 					this.logger.warn(
 						`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-							'Emitting sdk_resume_choice for user.'
+							'Emitting sdk_resume_choice for user, but starting query anyway.'
 					);
 					await this.emitSdkResumeChoiceMessage();
-					blockedOnResumeChoice = true;
 				}
 			}
 
@@ -373,9 +374,7 @@ export class QueryLifecycleManager {
 			// This is critical for model switch to pick up the correct model
 			await this.ctx.clearModelsCache();
 
-			if (!blockedOnResumeChoice) {
-				await this.ctx.startStreamingQuery();
-			}
+			await this.ctx.startStreamingQuery();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 			throw new Error(`Query restart failed: ${errorMessage}`);
@@ -451,28 +450,22 @@ export class QueryLifecycleManager {
 
 				// Validate and repair SDK session file before restarting.
 				// Includes cross-path migration when effective CWD changed since session init.
-				let blockedOnResumeChoice = false;
 				if (session.sdkSessionId) {
 					const isValid = this.validateAndRepairWithMigration();
 					if (!isValid) {
 						// Do NOT silently clear sdkSessionId — surface to user for manual
 						// recovery choice (start fresh vs keep session). See restart()
-						// for the same pattern.
-						// Do NOT call startStreamingQuery() — the session file is missing,
-						// the query would fail with "No conversation found" producing a
-						// redundant error alongside the choice prompt.
+						// for the same pattern. Always call startStreamingQuery() — blocking
+						// here would break the leave_as_is path (infinite re-prompt loop).
 						this.logger.warn(
 							`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-								'Emitting sdk_resume_choice for user.'
+								'Emitting sdk_resume_choice for user, but starting query anyway.'
 						);
 						await this.emitSdkResumeChoiceMessage();
-						blockedOnResumeChoice = true;
 					}
 				}
 
-				if (!blockedOnResumeChoice) {
-					await this.ctx.startStreamingQuery();
-				}
+				await this.ctx.startStreamingQuery();
 			}
 
 			// Post-restart: Notify clients
