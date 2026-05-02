@@ -198,7 +198,13 @@ export default function ChatContainer({
 				pendingLiveMember.sessionId,
 				pendingLiveMember.label || pendingAgent.agentName,
 				undefined,
-				{ taskId: pendingAgent.taskId, agentName: pendingAgent.agentName }
+				{
+					taskId: pendingAgent.taskId,
+					agentName: pendingAgent.agentName,
+					...(pendingLiveMember.nodeExecution?.nodeExecutionId
+						? { nodeExecutionId: pendingLiveMember.nodeExecution.nodeExecutionId }
+						: {}),
+				}
 			);
 		}
 	}, [pendingLiveMember, pendingAgent]);
@@ -224,9 +230,19 @@ export default function ChatContainer({
 			);
 			setPendingContent('');
 			if (result.sessionId) {
+				const matchingLiveMember =
+					(spaceStore.taskActivity.value.get(pendingAgent.taskId) ?? []).find(
+						(m) =>
+							m.kind === 'node_agent' &&
+							m.role === pendingAgent.agentName &&
+							m.sessionId === result.sessionId
+					) ?? null;
 				replaceOverlayHistory(result.sessionId, pendingAgent.agentName, undefined, {
 					taskId: pendingAgent.taskId,
 					agentName: pendingAgent.agentName,
+					...(matchingLiveMember?.nodeExecution?.nodeExecutionId
+						? { nodeExecutionId: matchingLiveMember.nodeExecution.nodeExecutionId }
+						: {}),
 				});
 			} else {
 				setPendingWaitingForSession(true);
