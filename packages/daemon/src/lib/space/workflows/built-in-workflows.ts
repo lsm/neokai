@@ -227,7 +227,7 @@ const REVIEW_POSTED_BASH_SCRIPT = [
 	'COMMENT_REVIEW_COUNT=$(jq --arg since "$START_ISO" \'[.reviews[] | select(.submittedAt > $since) | select(.state == "COMMENTED")] | length\' <<< "$PR_JSON")',
 	'PR_COMMENT_COUNT=$(jq --arg since "$START_ISO" \'[.comments[] | select(.createdAt > $since)] | length\' <<< "$PR_JSON")',
 	'COMMENT_COUNT=$((COMMENT_REVIEW_COUNT + PR_COMMENT_COUNT))',
-	'if [ "$COMMENT_COUNT" = "0" ] || [ -z "$COMMENT_COUNT" ]; then',
+	'if [ "$COMMENT_COUNT" = "0" ]; then',
 	'  echo "No review or PR comment found on own PR ${PR_URL} since workflow start (${START_ISO})" >&2',
 	'  exit 1',
 	'fi',

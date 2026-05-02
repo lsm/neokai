@@ -216,6 +216,102 @@ describe('CODING_WORKFLOW template', () => {
 		expect(src).toContain('PR comment');
 	});
 
+	test('review-posted-gate passes own-PR COMMENTED reviews', async () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
+		const workspace = mkdtempSync(join(tmpdir(), 'neokai-review-posted-gate-own-pr-'));
+		const binDir = join(workspace, 'bin');
+		const ghPath = join(binDir, 'gh');
+		const prUrl = 'https://github.com/test/repo/pull/42';
+
+		try {
+			mkdirSync(binDir);
+			writeFileSync(
+				ghPath,
+				[
+					'#!/usr/bin/env bash',
+					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
+					`  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z","state":"COMMENTED"}],"comments":[],"author":{"login":"lsm"}}'`,
+					'  exit 0',
+					'fi',
+					'if [ "$1" = "api" ] && [ "$2" = "user" ] && [ "$3" = "--jq" ] && [ "$4" = ".login" ]; then',
+					`  printf '%s\\n' 'lsm'`,
+					'  exit 0',
+					'fi',
+					'printf "unexpected gh args: %s\\n" "$*" >&2',
+					'exit 2',
+				].join('\n')
+			);
+			chmodSync(ghPath, 0o755);
+
+			const result = await executeGateScript(
+				gate.script!,
+				{
+					workspacePath: workspace,
+					gateId: 'review-posted-gate',
+					runId: 'run-1',
+					gateData: { pr_url: prUrl },
+					workflowStartIso: '2026-05-01T00:00:00Z',
+				},
+				{ PATH: `${binDir}:${process.env.PATH ?? ''}` }
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual({
+				pr_url: prUrl,
+				review_count: 1,
+				review_evidence: 'own_pr_comment',
+			});
+		} finally {
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
+	test('review-posted-gate rejects comment-only evidence on non-own PRs', async () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
+		const workspace = mkdtempSync(join(tmpdir(), 'neokai-review-posted-gate-non-own-pr-'));
+		const binDir = join(workspace, 'bin');
+		const ghPath = join(binDir, 'gh');
+		const prUrl = 'https://github.com/test/repo/pull/42';
+
+		try {
+			mkdirSync(binDir);
+			writeFileSync(
+				ghPath,
+				[
+					'#!/usr/bin/env bash',
+					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
+					`  printf '%s\\n' '{"reviews":[],"comments":[{"createdAt":"2026-05-01T12:00:00Z"}],"author":{"login":"someone-else"}}'`,
+					'  exit 0',
+					'fi',
+					'if [ "$1" = "api" ] && [ "$2" = "user" ] && [ "$3" = "--jq" ] && [ "$4" = ".login" ]; then',
+					`  printf '%s\\n' 'lsm'`,
+					'  exit 0',
+					'fi',
+					'printf "unexpected gh args: %s\\n" "$*" >&2',
+					'exit 2',
+				].join('\n')
+			);
+			chmodSync(ghPath, 0o755);
+
+			const result = await executeGateScript(
+				gate.script!,
+				{
+					workspacePath: workspace,
+					gateId: 'review-posted-gate',
+					runId: 'run-1',
+					gateData: { pr_url: prUrl },
+					workflowStartIso: '2026-05-01T00:00:00Z',
+				},
+				{ PATH: `${binDir}:${process.env.PATH ?? ''}` }
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('comment-only evidence is accepted only for own PRs');
+		} finally {
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
 	test('review-posted-gate uses review_url gate data when pr_url is absent', async () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
 		const workspace = mkdtempSync(join(tmpdir(), 'neokai-review-posted-gate-'));
