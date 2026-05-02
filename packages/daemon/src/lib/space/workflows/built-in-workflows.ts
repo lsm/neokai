@@ -67,9 +67,9 @@ const REVIEW_THREAD_CHECK_BASH_FUNCTION = [
 	'    local page_query',
 	'    if [ -n "$cursor" ]; then',
 	'      page_args+=("-f" "cursor=$cursor")',
-	"      page_query='query($owner:String!,$name:String!,$number:Int!,$cursor:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:20){nodes{url author{login} body}}} pageInfo{hasNextPage endCursor}}}}}'",
+	"      page_query='query($owner:String!,$name:String!,$number:Int!,$cursor:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}'",
 	'    else',
-	"      page_query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved comments(first:20){nodes{url author{login} body}}} pageInfo{hasNextPage endCursor}}}}}'",
+	"      page_query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}'",
 	'    fi',
 	'    page_args+=("-f" "query=$page_query")',
 	'    if ! threads_json=$(gh api graphql "${gh_host_args[@]}" "${page_args[@]}"); then',
@@ -367,12 +367,13 @@ const PD_TASK_DISPATCHER_PROMPT =
 	'If the plan is empty or ambiguous, send feedback to Planning before closing the task.';
 
 const REVIEW_THREAD_RESOLUTION_GUIDANCE =
-	'After pushing fixes for review feedback, resolve all open GitHub review conversation ' +
-	'threads that you addressed before handing back. Use `gh api graphql` to check ' +
-	'unresolved `reviewThreads` (`isResolved == false`) and resolve addressed threads with ' +
-	'the `resolveReviewThread` mutation. Do not resolve threads you intentionally disagree ' +
-	'with until you have replied with evidence and the reviewer has accepted that resolution. ' +
-	'Verify no unresolved review conversations remain before writing the PR-ready gate again. ' +
+	'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
+	'threads — including those where you disagree with the reviewer. First reply with your ' +
+	'reasoning, then resolve the thread with the `resolveReviewThread` mutation. The ' +
+	'PR-ready gate blocks on any unresolved thread, so leaving one open creates a deadlock. ' +
+	'If the reviewer disagrees with your reasoning, they can re-open the thread. ' +
+	'Use `gh api graphql` to verify no unresolved review conversations remain before ' +
+	'writing the PR-ready gate again. ' +
 	'Never set a PR to auto-merge — auto-merge is not allowed.';
 
 const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
