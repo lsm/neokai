@@ -60,9 +60,18 @@ export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
  * Compile a single declarative tool guard into a PreToolUse hook callback.
  * The guard specifies a tool matcher, a regex pattern against the tool input,
  * and a decision to apply when matched.
+ *
+ * Invalid regex patterns are caught at compile time and produce a no-op hook,
+ * preventing a bad workflow row from crashing query startup.
  */
 function compileToolGuard(guard: DeclarativeToolGuard): HookCallback {
-	const pattern = new RegExp(guard.pattern);
+	let pattern: RegExp;
+	try {
+		pattern = new RegExp(guard.pattern);
+	} catch {
+		// Bad pattern — guard is silently disabled so the session still works.
+		return async () => ({});
+	}
 	return async (input) => {
 		if (input.hook_event_name !== 'PreToolUse') return {};
 		const preInput = input as PreToolUseHookInput;

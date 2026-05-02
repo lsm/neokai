@@ -860,6 +860,39 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.hooks?.PreToolUse?.[0]?.matcher).toBe('Bash');
 			expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(2);
 		});
+
+		it('gracefully skips guards with invalid regex patterns', async () => {
+			const guardBuilder = new QueryOptionsBuilder({
+				...mockContext,
+				toolGuards: [
+					{
+						matcher: 'Bash',
+						pattern: '[invalid(', // unmatched paren — invalid regex
+						decision: 'deny' as const,
+						reason: 'Bad pattern',
+					},
+				],
+			});
+			const options = await guardBuilder.build();
+
+			// Hook is compiled (no crash), but the no-op callback returns {}
+			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+			expect(hook).toBeDefined();
+			const result = await hook!(
+				{
+					hook_event_name: 'PreToolUse',
+					tool_name: 'Bash',
+					tool_input: { command: 'anything' },
+					tool_use_id: 'tool-1',
+					session_id: 'session-1',
+					transcript_path: '/tmp/transcript.jsonl',
+					cwd: '/tmp/repo',
+				},
+				'tool-1',
+				{ signal: new AbortController().signal }
+			);
+			expect(result).toEqual({});
+		});
 	});
 
 	describe('worktree isolation text', () => {
