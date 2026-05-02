@@ -321,8 +321,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			).rejects.toThrow('message is required');
 		});
 
-		it('throws when message exceeds 10,000 characters', async () => {
-			const longMessage = 'x'.repeat(10_001);
+		it('throws when message exceeds 100,000 characters', async () => {
+			const longMessage = 'x'.repeat(100_001);
 			await expect(
 				call('space.task.sendMessage', {
 					spaceId: 'space-1',
@@ -1873,14 +1873,14 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			).rejects.toThrow(/not declared/);
 		});
 
-		it('throws when message exceeds 10,000 characters', async () => {
+		it('throws when message exceeds 100,000 characters', async () => {
 			const { handlers: h } = setupActivate();
 			await expect(
 				(h.get('space.task.activateNodeAgent') as RequestHandler)({
 					spaceId: 'space-1',
 					taskId: 'task-1',
 					agentName: 'reviewer',
-					message: 'x'.repeat(10_001),
+					message: 'x'.repeat(100_001),
 				})
 			).rejects.toThrow(/too long/);
 		});
