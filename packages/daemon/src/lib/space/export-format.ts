@@ -70,6 +70,13 @@ const workflowNodeAgentOverrideSchema = z.object({
  */
 const overrideOrStringSchema = z.union([workflowNodeAgentOverrideSchema, z.string().min(1)]);
 
+const declarativeToolGuardSchema = z.object({
+	matcher: z.string().min(1),
+	pattern: z.string().min(1),
+	decision: z.literal('deny'),
+	reason: z.string().min(1),
+});
+
 const exportedWorkflowNodeAgentSchema = z.object({
 	agentRef: z.string().min(1),
 	name: z.string().min(1),
@@ -85,6 +92,8 @@ const exportedWorkflowNodeAgentSchema = z.object({
 	extraMcpServers: z.record(z.string(), z.unknown()).optional(),
 	/** Optional per-slot agent timeout in milliseconds. Positive integer. */
 	timeoutMs: z.number().int().positive().optional(),
+	/** Declarative tool guards (e.g. deny `gh pr merge` for coder agents). */
+	toolGuards: z.array(declarativeToolGuardSchema).optional(),
 });
 
 /**
@@ -248,6 +257,7 @@ export function exportWorkflow(
 			if (a.disabledSkillIds !== undefined) entry.disabledSkillIds = a.disabledSkillIds;
 			if (a.extraMcpServers !== undefined) entry.extraMcpServers = a.extraMcpServers;
 			if (a.timeoutMs !== undefined) entry.timeoutMs = a.timeoutMs;
+			if (a.toolGuards !== undefined) entry.toolGuards = a.toolGuards;
 			return entry;
 		});
 

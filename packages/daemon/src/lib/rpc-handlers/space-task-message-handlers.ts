@@ -372,8 +372,8 @@ export function setupSpaceTaskMessageHandlers(
 		if (!params.message || params.message.trim() === '') {
 			throw new Error('message is required');
 		}
-		if (params.message.length > 10_000) {
-			throw new Error('Message is too long (max 10,000 characters)');
+		if (params.message.length > 100_000) {
+			throw new Error('Message is too long (max 100,000 characters)');
 		}
 
 		// Validate task exists and belongs to the given space
@@ -514,8 +514,8 @@ export function setupSpaceTaskMessageHandlers(
 			if (typeof params.message !== 'string') {
 				throw new Error('message must be a string');
 			}
-			if (params.message.length > 10_000) {
-				throw new Error('Message is too long (max 10,000 characters)');
+			if (params.message.length > 100_000) {
+				throw new Error('Message is too long (max 100,000 characters)');
 			}
 		}
 

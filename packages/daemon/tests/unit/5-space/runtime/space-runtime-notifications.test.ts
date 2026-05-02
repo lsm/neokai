@@ -70,6 +70,20 @@ function makeDb(): BunDatabase {
 	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
+
+	// runMigrations() applies migrations only; these unit fixtures need the base
+	// sdk_messages table because runtime recovery inspects persisted SDK output.
+	db.exec(`CREATE TABLE IF NOT EXISTS sdk_messages (
+		id TEXT PRIMARY KEY,
+		session_id TEXT NOT NULL,
+		message_type TEXT NOT NULL,
+		message_subtype TEXT,
+		sdk_message TEXT NOT NULL,
+		timestamp TEXT NOT NULL,
+		send_status TEXT,
+		origin TEXT
+	)`);
+
 	return db;
 }
 

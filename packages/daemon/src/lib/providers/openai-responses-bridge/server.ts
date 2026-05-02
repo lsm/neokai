@@ -25,7 +25,7 @@ import {
 	textDeltaSSE,
 } from '../codex-anthropic-bridge/translator.js';
 import { estimateAnthropicInputTokens } from '../codex-anthropic-bridge/token-estimator.js';
-import { getModelContextWindow } from '../codex-anthropic-bridge/model-context-windows.js';
+import { getModelContextWindow as getCodexModelContextWindow } from '../codex-anthropic-bridge/model-context-windows.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
 import { Logger } from '../../logger.js';
 
@@ -134,6 +134,16 @@ type ResponseContinuation = {
 	responseId: string;
 	cleanupTimer: ReturnType<typeof setTimeout>;
 };
+
+/**
+ * Resolve the context window for a model.
+ * Prefers the config-provided context window (from bridge models list, which may
+ * include non-Codex models like OpenRouter models with 1M+ context), falling back
+ * to the Codex-only static lookup for backward compatibility.
+ */
+function resolveContextWindow(model: string, configContextWindow?: number): number | undefined {
+	return configContextWindow ?? getCodexModelContextWindow(model);
+}
 
 function generateMsgId(): string {
 	return `msg_${Math.random().toString(36).slice(2, 14)}`;
@@ -589,12 +599,20 @@ async function streamResponsesToAnthropic({
 	model,
 	estimatedInputTokens,
 	onFunctionCallResponse,
+	modelContextWindow,
 }: {
 	openAIResponse: Response;
 	controller: ReadableStreamDefaultController<Uint8Array>;
 	model: string;
 	estimatedInputTokens: number;
 	onFunctionCallResponse?: (callId: string, responseId: string) => void;
+	/**
+	 * Context window for the active model, resolved from the bridge config's models
+	 * list at session creation time. Takes precedence over the Codex-only
+	 * `getModelContextWindow()` lookup so that non-Codex models (e.g. OpenRouter
+	 * models with large context windows) are reported correctly to the SDK.
+	 */
+	modelContextWindow?: number;
 }): Promise<void> {
 	const enc = new TextEncoder();
 	let closed = false;
@@ -635,7 +653,12 @@ async function streamResponsesToAnthropic({
 		if (started) return !closed;
 		started = true;
 		return send(
-			messageStartSSE(messageId, model, estimatedInputTokens, getModelContextWindow(model))
+			messageStartSSE(
+				messageId,
+				model,
+				estimatedInputTokens,
+				resolveContextWindow(model, modelContextWindow)
+			)
 		);
 	};
 
@@ -739,7 +762,7 @@ async function streamResponsesToAnthropic({
 			messageDeltaSSE(stopReason, {
 				inputTokens: completedUsage?.inputTokens ?? estimatedInputTokens,
 				outputTokens: completedUsage?.outputTokens || heuristicOutputTokens,
-				modelContextWindow: getModelContextWindow(model),
+				modelContextWindow: resolveContextWindow(model, modelContextWindow),
 			})
 		);
 		send(messageStopSSE());
@@ -801,6 +824,24 @@ export function createOpenAIResponsesBridgeServer(
 	const fetchImpl = config.fetchImpl ?? fetch;
 	const baseUrl = config.openAIBaseUrl ?? defaultBaseUrlForAuth(config.auth);
 	const modelsResponse = modelsListResponse(config.models);
+	// Build a model ID → context_window lookup from the bridge config's models
+	// list. This includes both Codex models and any non-Codex models passed at
+	// bridge creation time (e.g. OpenRouter models with 1M+ context). The lookup
+	// is used by the streaming path to report the correct context window to the SDK
+	// instead of falling back to the Codex-only getModelContextWindow().
+	const contextWindowByModelId = new Map<string, number>();
+	for (const model of config.models) {
+		contextWindowByModelId.set(model.id, model.context_window);
+	}
+	// Also index by aliases so that resolved alias → context_window works.
+	if (config.modelAliases) {
+		for (const [alias, modelId] of Object.entries(config.modelAliases)) {
+			const cw = contextWindowByModelId.get(modelId);
+			if (cw !== undefined) {
+				contextWindowByModelId.set(alias, cw);
+			}
+		}
+	}
 	const continuationTtlMs = config.continuationTtlMs ?? DEFAULT_RESPONSE_CONTINUATION_TTL_MS;
 	const continuations = new Map<string, ResponseContinuation>();
 	let resolvedAuth: ResolvedResponsesAuth | undefined;
@@ -968,6 +1009,7 @@ export function createOpenAIResponsesBridgeServer(
 			const estimatedInputTokens = continuation
 				? estimateResponsesPayloadTokens(body, continuation.input)
 				: estimateAnthropicInputTokens(body);
+			const resolvedModelContextWindow = contextWindowByModelId.get(model);
 			const stream = new ReadableStream<Uint8Array>({
 				start(controller) {
 					// Each HTTP request creates its own ReadableStream controller. SDK-level retries issue
@@ -977,6 +1019,9 @@ export function createOpenAIResponsesBridgeServer(
 						controller,
 						model,
 						estimatedInputTokens,
+						...(resolvedModelContextWindow !== undefined
+							? { modelContextWindow: resolvedModelContextWindow }
+							: {}),
 						...(isChatgptOAuth
 							? {}
 							: {

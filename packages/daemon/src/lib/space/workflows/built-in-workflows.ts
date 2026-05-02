@@ -20,12 +20,34 @@
  *   `resolveChannels()` matches node names via the `nodeNameToAgents` lookup.
  */
 
-import type { GateScript, SpaceWorkflow } from '@neokai/shared';
+import type { GateScript, SpaceWorkflow, DeclarativeToolGuard, WorkflowNode } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import { Logger } from '../../logger';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './post-approval-merge-template.ts';
 import { computeWorkflowHash } from './template-hash.ts';
+
+// ---------------------------------------------------------------------------
+// Declarative tool guard: prevent coder agents from merging PRs
+// ---------------------------------------------------------------------------
+
+const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
+	matcher: 'Bash',
+	// Matches `gh pr merge` in all common shell forms:
+	// - Direct: gh pr merge ...
+	// - Leading whitespace:   gh pr merge ...
+	// - After separators: ; gh pr merge | gh pr merge && gh pr merge
+	// - Subshell: $(gh pr merge) `gh pr merge`
+	// - Env prefix: GH_TOKEN=... gh pr merge
+	// - command builtin: command gh pr merge
+	// - env wrapper: env GH_TOKEN=... gh pr merge
+	// - Line continuation: gh pr \<newline>merge
+	pattern:
+		'(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*gh[\\s\\\\]+pr[\\s\\\\]+merge\\b',
+	decision: 'deny',
+	reason:
+		'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
+};
 
 const builtInSeederLog = new Logger('seed-built-in-workflows');
 
@@ -45,7 +67,73 @@ const FULLSTACK_CODING_NODE = 'tpl-fullstack-coding';
 const FULLSTACK_REVIEW_NODE = 'tpl-fullstack-review';
 const FULLSTACK_QA_NODE = 'tpl-fullstack-qa';
 
+const REVIEW_THREAD_CHECK_BASH_FUNCTION = [
+	'check_unresolved_review_threads() {',
+	'  local pr_url="$1"',
+	'  local pr_meta owner repo number gh_hostname threads_json unresolved_count unresolved_urls cursor has_more',
+	'  pr_meta=$(jq -nr --arg url "$pr_url" \'$url | capture("https?://(?<host>[^/]+)/(?<owner>[^/]+)/(?<repo>[^/]+)/pull/(?<number>[0-9]+)")\' 2>/dev/null || true)',
+	'  if [ -z "$pr_meta" ]; then',
+	'    echo "Unable to parse GitHub PR URL for review-thread check: ${pr_url}" >&2',
+	'    exit 1',
+	'  fi',
+	'  owner=$(jq -r .owner <<< "$pr_meta")',
+	'  repo=$(jq -r .repo <<< "$pr_meta")',
+	'  number=$(jq -r .number <<< "$pr_meta")',
+	'  gh_hostname=$(jq -r .host <<< "$pr_meta")',
+	'  local gh_host_args=("--hostname" "$gh_hostname")',
+	'  unresolved_count=0',
+	'  unresolved_urls=""',
+	'  cursor=""',
+	'  while true; do',
+	'    local page_args=("-f" "owner=$owner" "-f" "name=$repo" "-F" "number=$number")',
+	'    local page_query',
+	'    if [ -n "$cursor" ]; then',
+	'      page_args+=("-f" "cursor=$cursor")',
+	"      page_query='query($owner:String!,$name:String!,$number:Int!,$cursor:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}'",
+	'    else',
+	"      page_query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}'",
+	'    fi',
+	'    page_args+=("-f" "query=$page_query")',
+	'    if ! threads_json=$(gh api graphql "${gh_host_args[@]}" "${page_args[@]}"); then',
+	'      echo "Failed to retrieve review conversations for ${pr_url}" >&2',
+	'      exit 1',
+	'    fi',
+	'    if [ "$(jq \'.errors\' <<< "$threads_json")" != "null" ]; then',
+	'      echo "GraphQL errors when retrieving review conversations for ${pr_url}: $(jq -c \'.errors\' <<< "$threads_json")" >&2',
+	'      exit 1',
+	'    fi',
+	'    if [ "$(jq \'.data.repository.pullRequest.reviewThreads\' <<< "$threads_json")" = "null" ]; then',
+	'      echo "Incomplete GraphQL response for ${pr_url} — reviewThreads data missing" >&2',
+	'      exit 1',
+	'    fi',
+	'    local page_unresolved',
+	'    page_unresolved=$(jq \'[.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false)] | length\' <<< "$threads_json")',
+	'    unresolved_count=$((unresolved_count + page_unresolved))',
+	'    if [ "$page_unresolved" != "0" ]; then',
+	'      local page_urls',
+	'      page_urls=$(jq -r \'.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false) | (.comments.nodes[0].url // .id)\' <<< "$threads_json")',
+	'      unresolved_urls="${unresolved_urls}${page_urls}"$\'\\n\'',
+	'    fi',
+	'    has_more=$(jq -r \'.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false\' <<< "$threads_json")',
+	'    if [ "$has_more" != "true" ]; then',
+	'      break',
+	'    fi',
+	'    cursor=$(jq -r \'.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // ""\' <<< "$threads_json")',
+	'    if [ -z "$cursor" ]; then',
+	'      echo "Incomplete pagination for ${pr_url}: hasNextPage is true but endCursor is missing" >&2',
+	'      exit 1',
+	'    fi',
+	'  done',
+	'  if [ "$unresolved_count" != "0" ]; then',
+	'    echo "PR has ${unresolved_count} unresolved review conversation(s); resolve them before handoff:" >&2',
+	'    printf \'%s\\n\' "$unresolved_urls" >&2',
+	'    exit 1',
+	'  fi',
+	'}',
+].join('\n');
+
 const PR_READY_BASH_SCRIPT = [
+	REVIEW_THREAD_CHECK_BASH_FUNCTION,
 	'# Prefer explicit PR URL from gate data JSON when available; fallback to current branch.',
 	'PR_TARGET=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
 	'# When pr_url is supplied, validate that exact PR rather than rediscovering via branch filters.',
@@ -84,6 +172,7 @@ const PR_READY_BASH_SCRIPT = [
 	'  echo "PR merge checks not satisfied (mergeStateStatus: ${PR_STATUS:-unknown})" >&2',
 	'  exit 1',
 	'fi',
+	'check_unresolved_review_threads "$PR_URL"',
 	'jq -n --arg url "$PR_URL" \'{"pr_url":$url}\'',
 ].join('\n');
 
@@ -95,11 +184,11 @@ const PR_READY_BASH_SCRIPT = [
  * channel: the runtime refuses to deliver a "changes requested" message until
  * a formal review or at least one PR comment is visible on GitHub.
  *
- * Primary check: formal GitHub review (gh pr review / pulls/{n}/reviews).
- * Fallback check: PR conversation comments since workflow start. This covers
- * the edge case where reviewer and coder share the same GitHub account —
- * GitHub blocks self-reviews, so a formal review can never be posted, but
- * the reviewer can still post comments on the PR thread.
+ * Primary check: formal GitHub review (gh pr review / pulls/{n}/reviews)
+ * with APPROVED or CHANGES_REQUESTED state.
+ * Own-PR fallback: COMMENTED reviews or PR conversation comments since workflow
+ * start. GitHub blocks APPROVE/REQUEST_CHANGES on your own PR, so comment-only
+ * evidence is accepted only when the authenticated GitHub user is the PR author.
  *
  * Environment variables:
  *   NEOKAI_GATE_DATA_JSON       — current gate data; may contain `pr_url` or `review_url`
@@ -120,26 +209,29 @@ const REVIEW_POSTED_BASH_SCRIPT = [
 	'  echo "NEOKAI_WORKFLOW_START_ISO not injected — cannot determine review window" >&2',
 	'  exit 1',
 	'fi',
-	'if ! REVIEW_JSON=$(gh pr view "$PR_URL" --json reviews); then',
-	'  echo "Failed to fetch reviews for ${PR_URL}" >&2',
+	'if ! PR_JSON=$(gh pr view "$PR_URL" --json reviews,comments,author); then',
+	'  echo "Failed to fetch review evidence for ${PR_URL}" >&2',
 	'  exit 1',
 	'fi',
-	'REVIEW_COUNT=$(jq --arg since "$START_ISO" \'[.reviews[] | select(.submittedAt > $since)] | length\' <<< "$REVIEW_JSON")',
-	'if [ "$REVIEW_COUNT" != "0" ] && [ -n "$REVIEW_COUNT" ]; then',
-	'  jq -n --arg url "$PR_URL" --argjson n "$REVIEW_COUNT" \'{"pr_url":$url,"review_count":$n}\'',
+	'FORMAL_REVIEW_COUNT=$(jq --arg since "$START_ISO" \'[.reviews[] | select(.submittedAt > $since) | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | length\' <<< "$PR_JSON")',
+	'if [ "$FORMAL_REVIEW_COUNT" != "0" ] && [ -n "$FORMAL_REVIEW_COUNT" ]; then',
+	'  jq -n --arg url "$PR_URL" --argjson n "$FORMAL_REVIEW_COUNT" \'{"pr_url":$url,"review_count":$n,"review_evidence":"formal_review"}\'',
 	'  exit 0',
 	'fi',
-	'# No formal review found — fall back to PR comments (handles same-account self-review restriction)',
-	'if ! COMMENTS_JSON=$(gh pr view "$PR_URL" --json comments); then',
-	'  echo "No formal review on ${PR_URL} since ${START_ISO}; also failed to fetch PR comments" >&2',
+	'AUTHOR_LOGIN=$(jq -r \'.author.login // empty\' <<< "$PR_JSON")',
+	'VIEWER_LOGIN=$(gh api user --jq .login 2>/dev/null || true)',
+	'if [ -z "$AUTHOR_LOGIN" ] || [ -z "$VIEWER_LOGIN" ] || [ "$AUTHOR_LOGIN" != "$VIEWER_LOGIN" ]; then',
+	'  echo "No APPROVED or CHANGES_REQUESTED review found on ${PR_URL} since workflow start (${START_ISO}); comment-only evidence is accepted only for own PRs" >&2',
 	'  exit 1',
 	'fi',
-	'COMMENT_COUNT=$(jq --arg since "$START_ISO" \'[.comments[] | select(.createdAt > $since)] | length\' <<< "$COMMENTS_JSON")',
-	'if [ "$COMMENT_COUNT" = "0" ] || [ -z "$COMMENT_COUNT" ]; then',
-	'  echo "No review or PR comment found on ${PR_URL} since workflow start (${START_ISO})" >&2',
+	'COMMENT_REVIEW_COUNT=$(jq --arg since "$START_ISO" \'[.reviews[] | select(.submittedAt > $since) | select(.state == "COMMENTED")] | length\' <<< "$PR_JSON")',
+	'PR_COMMENT_COUNT=$(jq --arg since "$START_ISO" \'[.comments[] | select(.createdAt > $since)] | length\' <<< "$PR_JSON")',
+	'COMMENT_COUNT=$((COMMENT_REVIEW_COUNT + PR_COMMENT_COUNT))',
+	'if [ "$COMMENT_COUNT" = "0" ]; then',
+	'  echo "No review or PR comment found on own PR ${PR_URL} since workflow start (${START_ISO})" >&2',
 	'  exit 1',
 	'fi',
-	'jq -n --arg url "$PR_URL" --argjson n "$COMMENT_COUNT" \'{"pr_url":$url,"review_count":$n}\'',
+	'jq -n --arg url "$PR_URL" --argjson n "$COMMENT_COUNT" \'{"pr_url":$url,"review_count":$n,"review_evidence":"own_pr_comment"}\'',
 ].join('\n');
 
 /**
@@ -299,12 +391,30 @@ const PD_TASK_DISPATCHER_PROMPT =
 	'Do NOT create fewer tasks than the plan requires. ' +
 	'If the plan is empty or ambiguous, send feedback to Planning before closing the task.';
 
+const REVIEW_THREAD_RESOLUTION_GUIDANCE =
+	'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
+	'threads — including those where you disagree with the reviewer. First reply with your ' +
+	'reasoning, then resolve the thread with the `resolveReviewThread` mutation. The ' +
+	'PR-ready gate blocks on any unresolved thread, so leaving one open creates a deadlock. ' +
+	'If the reviewer disagrees with your reasoning, they can re-open the thread. ' +
+	'Use `gh api graphql` to verify no unresolved review conversations remain before ' +
+	'writing the PR-ready gate again. ' +
+	'Never set a PR to auto-merge — auto-merge is not allowed.';
+
+const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
+	'Verify the PR is still open, mergeable, and has no unresolved GitHub review ' +
+	'conversations. Use `gh api graphql` to inspect `reviewThreads` and confirm every ' +
+	'thread has `isResolved: true`; if unresolved conversations remain, request the ' +
+	'author to resolve them instead of approving. Never set a PR to auto-merge — ' +
+	'auto-merge is not allowed.';
+
 const FULLSTACK_CODING_PROMPT =
 	'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
 	'write tests, and keep one PR updated across review and QA cycles.\n\n' +
 	'When implementation is ready, ensure the PR is open and mergeable and write code-pr-gate with ' +
 	'field pr_url so Review can activate. Coding is not the end node — the task-completion tools ' +
-	'(`approve_task`, `submit_for_approval`) are not available to you.';
+	'(`approve_task`, `submit_for_approval`) are not available to you.\n\n' +
+	REVIEW_THREAD_RESOLUTION_GUIDANCE;
 
 const FULLSTACK_REVIEW_PROMPT =
 	'You are the Reviewer in a Fullstack QA Loop workflow. Review the PR for correctness, ' +
@@ -325,7 +435,8 @@ const FULLSTACK_REVIEW_PROMPT =
 	'If the change is ready for QA, write to review-approval-gate (field: approved = true). ' +
 	'If changes are needed, send actionable feedback to Coding via ' +
 	'`send_message(target="Coding", ...)`. Review is not the end node, so the ' +
-	'task-completion tools are not available to you.';
+	'task-completion tools are not available to you.\n\n' +
+	'Never set a PR to auto-merge — auto-merge is not allowed.';
 
 const FULLSTACK_QA_PROMPT =
 	'You are the QA node in a Fullstack QA Loop workflow. Run thorough validation, including backend tests, ' +
@@ -355,7 +466,8 @@ const FULLSTACK_QA_PROMPT =
 	'Use when autonomy blocks self-close (and only when QA passes — see pre-conditions above).\n\n' +
 	'If everything passes, `save_artifact({ type: "result", append: true, summary: "QA passed.", data: { pr_url: "<url>" } })` and ' +
 	'`approve_task`. Do NOT merge the PR yourself — a post-approval reviewer session runs ' +
-	'the merge after the task transitions to `approved`. If issues are found, send a detailed ' +
+	'the merge after the task transitions to `approved`. Never set a PR to ' +
+	'auto-merge — auto-merge is not allowed. If issues are found, send a detailed ' +
 	'fix list to Coding and record a `save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` ' +
 	'audit entry; do NOT call `approve_task` and do NOT call `submit_for_approval`.';
 
@@ -394,8 +506,10 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 					name: 'coder',
 					customPrompt: {
 						value:
-							'You are a software engineer in a Coding→Review iterative workflow. Your job is to ' +
-							'implement the task, write tests, commit your changes, and open a pull request.\n\n' +
+							'You are a software engineer in a Coding→Review iterative workflow. Your job is implementation only: ' +
+							'implement the task, write tests, commit your changes, and open a pull request. ' +
+							'Do NOT merge PRs. When the reviewer approves, your work is done. ' +
+							'The reviewer handles the merge.\n\n' +
 							'Steps:\n' +
 							'1. Read and understand the task requirements\n' +
 							'2. Implement the changes with logical, well-described commits\n' +
@@ -418,9 +532,14 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'explaining what changed. One reply per comment creates a visible audit trail.\n' +
 							'4. For items you disagree with: reply on the same thread explaining why, with ' +
 							'evidence from the code or tests. Do not change code you believe is correct.\n' +
-							'5. Push fixes, verify tests still pass, then send_message to Review again ' +
-							'(again with `data: { pr_url }`) to re-trigger the review cycle',
+							'5. ' +
+							REVIEW_THREAD_RESOLUTION_GUIDANCE +
+							'\n' +
+							'6. Verify no unresolved review conversations remain, verify tests still pass, ' +
+							'then send_message to Review again (again with `data: { pr_url }`) to ' +
+							're-trigger the review cycle',
 					},
+					toolGuards: [CODER_NO_MERGE_GUARD],
 				},
 			],
 		},
@@ -481,7 +600,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'prior-round P0–P3 findings have been addressed in the latest commits):\n' +
 							'   a. Post an approval review: `gh pr review <pr-url> --approve ' +
 							'--body-file <file>`.\n' +
-							'   b. Verify the PR is still open and mergeable.\n' +
+							'   b. ' +
+							REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
+							'\n' +
 							'   c. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>" } })` ' +
 							'to record the audit entry. The `pr_url` inside `data` is what ' +
 							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
@@ -491,7 +612,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'self-close, call `submit_for_approval({ reason: "..." })` instead — ' +
 							'the runtime will still route post-approval once the human approves. ' +
 							'Do NOT attempt to merge the PR yourself; a post-approval reviewer session ' +
-							'runs the merge after the task transitions to `approved`.',
+							'runs the merge after the task transitions to `approved`. Never set a PR to ' +
+							'auto-merge — auto-merge is not allowed.',
 					},
 				},
 			],
@@ -611,7 +733,8 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'4. Include sources, evidence, and clear conclusions\n' +
 							'5. Commit findings and open a PR with `gh pr create`\n\n' +
 							'If re-activated after review feedback: address each point, expand research where requested, ' +
-							'update the documents, and push new commits.',
+							'update the documents, and push new commits. ' +
+							REVIEW_THREAD_RESOLUTION_GUIDANCE,
 					},
 				},
 			],
@@ -650,7 +773,9 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'   a. Post an approval review: `gh pr review <pr-url> --approve ' +
 							'--body-file <file>`. A visible GitHub review is required — an internal ' +
 							'summary is not enough.\n' +
-							'   b. Verify the PR is still open and mergeable.\n' +
+							'   b. ' +
+							REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
+							'\n' +
 							'   c. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>" } })` ' +
 							'to record the final audit entry. The `pr_url` inside `data` is what ' +
 							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
@@ -660,7 +785,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'call `submit_for_approval({ reason: "..." })` instead — the runtime will ' +
 							'still route post-approval once the human approves. Do NOT attempt to merge ' +
 							'the PR yourself; a post-approval reviewer session runs the merge after the ' +
-							'task transitions to `approved`.',
+							'task transitions to `approved`. Never set a PR to auto-merge — auto-merge is not allowed.',
 					},
 				},
 			],
@@ -785,7 +910,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'6. If your verdict is APPROVE: call `approve_task()` as your final action. If ' +
 							'autonomy blocks self-close, call `submit_for_approval({ reason: "..." })` ' +
 							'instead. If your verdict is REQUEST_CHANGES: stop after step 5 — do NOT call ' +
-							'either terminal tool.',
+							'either terminal tool.\n\nNever set a PR to auto-merge — auto-merge is not allowed.',
 					},
 				},
 			],
@@ -1050,6 +1175,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'4. Write code-pr-gate with field pr_url so Review can activate\n' +
 							'5. Share blockers clearly with Reviewer/QA when needed',
 					},
+					toolGuards: [CODER_NO_MERGE_GUARD],
 				},
 			],
 		},
@@ -1260,19 +1386,60 @@ export interface SeedBuiltInWorkflowsResult {
 }
 
 /**
+ * Merge `toolGuards` from template agent slots onto matching existing agent slots.
+ *
+ * Unlike `customPrompt` (user-configurable), `toolGuards` are structural enforcement
+ * metadata that must stay in sync with the template. This function only touches the
+ * `toolGuards` field on each agent slot — all other fields (customPrompt, model,
+ * disabledSkillIds, etc.) are preserved from the existing row.
+ *
+ * Matching is by node name + agent name, which are stable identifiers.
+ */
+function mergeToolGuardsFromTemplate(
+	existingNodes: WorkflowNode[],
+	templateNodes: Pick<WorkflowNode, 'name' | 'agents'>[]
+): WorkflowNode[] {
+	const templateAgentsByKey = new Map<string, DeclarativeToolGuard[] | undefined>();
+	for (const node of templateNodes) {
+		for (const agent of node.agents) {
+			templateAgentsByKey.set(`${node.name}::${agent.name}`, agent.toolGuards);
+		}
+	}
+
+	return existingNodes.map((node) => ({
+		...node,
+		agents: node.agents.map((agent) => {
+			const key = `${node.name}::${agent.name}`;
+			const templateGuards = templateAgentsByKey.get(key);
+			if (templateGuards === undefined) return agent;
+			// Merge: overwrite toolGuards from template, keep everything else
+			return { ...agent, toolGuards: templateGuards };
+		}),
+	}));
+}
+
+/**
  * Fields that the built-in seeder re-stamps when it detects template drift
  * on an already-seeded row.
  *
  * - `postApproval`, `completionAutonomyLevel`, and `templateHash` are
- *   updated. Persisted node definitions, including workflow-node agent
- *   `customPrompt.value`, are deliberately left untouched so daemon restart /
- *   startup seed passes cannot replace user-configured runtime prompts.
- * - Nodes / channels / gates are NOT re-stamped here: changing those fields
- *   channel or gate structure on any built-in template, and re-stamping
- *   them would regenerate IDs. If a future template change adjusts those,
- *   extend this list and the re-stamp payload below accordingly.
+ *   updated. Persisted node agent `customPrompt.value` is deliberately left
+ *   untouched so daemon restart / startup seed passes cannot replace
+ *   user-configured runtime prompts.
+ * - Agent `toolGuards` are merged onto matching agent slots (by node name +
+ *   agent name) so structural enforcement metadata stays in sync with the
+ *   template. Other node fields (customPrompt, model, disabledSkillIds, etc.)
+ *   are preserved.
+ * - Channels / gates are NOT re-stamped: changing those would regenerate IDs.
+ *   If a future template change adjusts those, extend this list and the
+ *   re-stamp payload below accordingly.
  */
-const RESTAMP_FIELDS = ['postApproval', 'completionAutonomyLevel', 'templateHash'] as const;
+const RESTAMP_FIELDS = [
+	'postApproval',
+	'completionAutonomyLevel',
+	'templateHash',
+	'nodes(toolGuards)',
+] as const;
 
 /**
  * Seeds all built-in workflow templates into the given space.
@@ -1289,9 +1456,9 @@ const RESTAMP_FIELDS = ['postApproval', 'completionAutonomyLevel', 'templateHash
  *     (matched via `templateName`), their stored `templateHash` is compared
  *     to the current template hash. On mismatch, the row is re-stamped
  *     with the narrow field set listed in {@link RESTAMP_FIELDS} — see the
- *     constant's doc-comment for why node content is intentionally NOT
- *     re-stamped. This is how PR 3/5's new `postApproval` routes land on
- *     pre-existing spaces.
+ *     constant's doc-comment for details. Agent `toolGuards` are merged onto
+ *     matching slots (preserving user-configured prompts). This is how new
+ *     `postApproval` routes and `toolGuards` land on pre-existing spaces.
  *   - Rows without a `templateName` (user-created workflows) are ignored.
  *
  * Individual workflow creation / re-stamp errors are captured per-workflow
@@ -1333,21 +1500,24 @@ export function seedBuiltInWorkflows(
 			if (row.templateHash === expectedHash) continue;
 
 			try {
+				// Targeted merge of toolGuards from template onto existing agent slots.
+				// Unlike prompts (user-configurable), toolGuards are structural enforcement
+				// metadata that must stay in sync with the template.
+				const mergedNodes = mergeToolGuardsFromTemplate(row.nodes, template.nodes);
+
 				workflowManager.updateWorkflow(row.id, {
 					completionAutonomyLevel: template.completionAutonomyLevel,
 					// Pass `null` (not `undefined`) when the template clears the route,
 					// so the repository writes the new value rather than leaving the
 					// old one in place.
 					postApproval: template.postApproval ?? null,
-					// Never re-stamp nodes/prompts during startup/idempotent seed reruns.
-					// User/workflow configuration is runtime data and must not be silently
-					// replaced by built-in template text outside an explicit sync action.
+					nodes: mergedNodes,
 					templateHash: expectedHash,
 				});
 				restamped.push(template.name);
 				builtInSeederLog.info(
 					`re-stamped built-in workflow '${template.name}' (id=${row.id}) ` +
-						`in space ${spaceId}: fields=${RESTAMP_FIELDS.join(',')}`
+						`in space ${spaceId}: fields=${RESTAMP_FIELDS.join(',')} (toolGuards merged onto agent slots)`
 				);
 			} catch (err) {
 				errors.push({

@@ -12,6 +12,7 @@ export interface SpaceTaskThreadMessageRow {
 	kind: 'task_agent' | 'node_agent';
 	role: string;
 	label: string;
+	nodeExecutionId?: string | null;
 	taskId: string;
 	taskTitle: string;
 	messageType: string;

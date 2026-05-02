@@ -376,6 +376,8 @@ export interface SpaceTaskActivityMember {
 	 * Provides workflow-internal state (node, agent slot, result) without polluting SpaceTask.
 	 */
 	nodeExecution?: {
+		/** Node execution ID for exact routing to this workflow sub-session */
+		nodeExecutionId: string;
 		/** Workflow node ID */
 		nodeId: string;
 		/** Human-readable node / agent slot name */
@@ -957,6 +959,28 @@ export interface WorkflowNodeAgentOverride {
 }
 
 /**
+ * A declarative tool guard that blocks or restricts specific tool invocations.
+ *
+ * Defined on a `WorkflowNodeAgent` slot and compiled into SDK hooks at runtime
+ * by the query options builder. The builder has no hardcoded knowledge of specific
+ * guards — it compiles whatever declarative rules the workflow provides.
+ */
+export interface DeclarativeToolGuard {
+	/** Tool name to match (e.g., `'Bash'`) */
+	matcher: string;
+	/**
+	 * Regex pattern applied to the tool input's `command` field (for `Bash` matcher).
+	 * When the pattern matches, the `decision` is applied.
+	 * Use `^` to match all invocations of the tool regardless of input.
+	 */
+	pattern: string;
+	/** Decision when the pattern matches */
+	decision: 'deny';
+	/** Human-readable reason shown to the agent when the decision is applied */
+	reason: string;
+}
+
+/**
  * A single agent entry within a multi-agent workflow node.
  * References a SpaceAgent by ID with an optional per-slot configuration override.
  */
@@ -1005,6 +1029,12 @@ export interface WorkflowNodeAgent {
 	 * Must be a positive integer when present.
 	 */
 	timeoutMs?: number;
+	/**
+	 * Declarative tool guards compiled into SDK hooks at runtime.
+	 * The builder has no hardcoded knowledge of specific guards — it compiles
+	 * whatever rules the workflow provides.
+	 */
+	toolGuards?: DeclarativeToolGuard[];
 }
 
 /**
@@ -1452,6 +1482,11 @@ export interface ExportedWorkflowNodeAgent {
 	 * Must be a positive integer when present.
 	 */
 	timeoutMs?: number;
+	/**
+	 * Declarative tool guards to carry through export/import round-trips.
+	 * Mirrors `WorkflowNodeAgent.toolGuards`.
+	 */
+	toolGuards?: DeclarativeToolGuard[];
 }
 
 /**

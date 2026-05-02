@@ -15,15 +15,12 @@ import {
 import type { Session } from '@neokai/shared';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { generateUUID } from '@neokai/shared';
-import { homedir, tmpdir } from 'os';
-import { dirname, join } from 'node:path';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'os';
 import { createTables } from '../../../../src/storage/schema';
 import { SkillRepository } from '../../../../src/storage/repositories/skill-repository';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import { SkillsManager } from '../../../../src/lib/skills-manager';
 import { noOpReactiveDb } from '../../../helpers/reactive-database';
-import { getSDKSessionFilePath } from '../../../../src/lib/sdk-session-file-manager';
 
 describe('QueryOptionsBuilder', () => {
 	let builder: QueryOptionsBuilder;
@@ -231,164 +228,50 @@ describe('QueryOptionsBuilder', () => {
 			expect(result.resume).toBe('sdk-session-123');
 		});
 
-		it('should add resumeSessionAt when the message still exists in the SDK transcript', async () => {
-			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
-			const testSdkDir = join(
-				tmpdir(),
-				`query-options-resume-valid-${Date.now()}-${Math.random().toString(36).slice(2)}`
-			);
-			try {
-				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
-				mockSession.sdkSessionId = 'sdk-session-valid';
-				mockSession.metadata.resumeSessionAt = 'resumable-message-uuid';
-				const sessionFilePath = getSDKSessionFilePath(
-					mockSession.workspacePath!,
-					mockSession.sdkSessionId
-				);
-				mkdirSync(dirname(sessionFilePath), { recursive: true });
-				writeFileSync(
-					sessionFilePath,
-					`${JSON.stringify({ type: 'user', uuid: 'resumable-message-uuid' })}\n`,
-					'utf-8'
-				);
+		it('should add pending one-shot resumeSessionAt via peek (not consume)', async () => {
+			mockSession.sdkSessionId = 'sdk-session-valid';
+			const peekPendingResumeSessionAt = mock(() => 'resumable-message-uuid');
+			builder = new QueryOptionsBuilder({
+				...mockContext,
+				peekPendingResumeSessionAt,
+			});
 
-				const options = await builder.build();
-				const result = builder.addSessionStateOptions(options);
+			const options = await builder.build();
+			const result = builder.addSessionStateOptions(options);
 
-				expect(result.resume).toBe('sdk-session-valid');
-				expect(result.resumeSessionAt).toBe('resumable-message-uuid');
-				expect(updateSessionSpy).not.toHaveBeenCalled();
-			} finally {
-				rmSync(testSdkDir, { recursive: true, force: true });
-				if (originalTestSdkSessionDir !== undefined) {
-					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
-				} else {
-					delete process.env.TEST_SDK_SESSION_DIR;
-				}
-			}
+			expect(result.resume).toBe('sdk-session-valid');
+			expect(result.resumeSessionAt).toBe('resumable-message-uuid');
+			expect(peekPendingResumeSessionAt).toHaveBeenCalledTimes(1);
+			expect(updateSessionSpy).not.toHaveBeenCalled();
 		});
 
-		it('should replace stale resumeSessionAt with the newest remaining message UUID that still exists in the SDK transcript', async () => {
-			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
-			const testSdkDir = join(
-				tmpdir(),
-				`query-options-resume-fallback-${Date.now()}-${Math.random().toString(36).slice(2)}`
-			);
-			try {
-				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
-				mockSession.sdkSessionId = 'sdk-session-fallback';
-				mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
-				const sessionFilePath = getSDKSessionFilePath(
-					mockSession.workspacePath!,
-					mockSession.sdkSessionId
-				);
-				mkdirSync(dirname(sessionFilePath), { recursive: true });
-				writeFileSync(
-					sessionFilePath,
-					[
-						JSON.stringify({ type: 'user', uuid: 'older-existing-message-uuid' }),
-						JSON.stringify({ type: 'assistant', uuid: 'newer-existing-message-uuid' }),
-					].join('\n') + '\n',
-					'utf-8'
-				);
-				getSDKMessagesSpy.mockImplementation(() => ({
-					messages: [
-						{
-							type: 'user',
-							uuid: 'older-existing-message-uuid',
-							timestamp: 1000,
-						},
-						{
-							type: 'assistant',
-							uuid: 'newer-existing-message-uuid',
-							timestamp: 2000,
-						},
-						{
-							type: 'assistant',
-							uuid: 'newer-missing-message-uuid',
-							timestamp: 3000,
-						},
-					],
-					hasMore: false,
-				}));
+		it('should not read persisted metadata resumeSessionAt', async () => {
+			mockSession.sdkSessionId = 'sdk-session-valid';
+			(mockSession.metadata as Record<string, unknown>).resumeSessionAt = 'stale-persisted-uuid';
 
-				const options = await builder.build();
-				const result = builder.addSessionStateOptions(options);
+			const options = await builder.build();
+			const result = builder.addSessionStateOptions(options);
 
-				expect(result.resume).toBe('sdk-session-fallback');
-				expect(result.resumeSessionAt).toBe('newer-existing-message-uuid');
-				expect(mockSession.metadata.resumeSessionAt).toBe('newer-existing-message-uuid');
-				expect(mockSession.sdkSessionId).toBe('sdk-session-fallback');
-				expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
-					metadata: mockSession.metadata,
-				});
-			} finally {
-				rmSync(testSdkDir, { recursive: true, force: true });
-				if (originalTestSdkSessionDir !== undefined) {
-					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
-				} else {
-					delete process.env.TEST_SDK_SESSION_DIR;
-				}
-			}
+			expect(result.resume).toBe('sdk-session-valid');
+			expect(result.resumeSessionAt).toBeUndefined();
+			expect(updateSessionSpy).not.toHaveBeenCalled();
 		});
 
-		it('should clear stale resumeSessionAt before passing options to the SDK', async () => {
-			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
-			const testSdkDir = join(
-				tmpdir(),
-				`query-options-resume-stale-${Date.now()}-${Math.random().toString(36).slice(2)}`
-			);
-			try {
-				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
-				mockSession.sdkSessionId = 'sdk-session-stale';
-				mockSession.sdkOriginPath = mockSession.workspacePath;
-				mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
-				const sessionFilePath = getSDKSessionFilePath(
-					mockSession.workspacePath!,
-					mockSession.sdkSessionId
-				);
-				mkdirSync(dirname(sessionFilePath), { recursive: true });
-				writeFileSync(
-					sessionFilePath,
-					[
-						JSON.stringify({
-							type: 'system',
-							subtype: 'compact_boundary',
-							compact_metadata: { trigger: 'auto' },
-						}),
-						JSON.stringify({
-							type: 'assistant',
-							message: {
-								role: 'assistant',
-								content: [{ type: 'text', text: 'Compacted context summary' }],
-							},
-						}),
-					].join('\n') + '\n',
-					'utf-8'
-				);
+		it('should not carry compact summaries while building resume options', async () => {
+			mockSession.sdkSessionId = 'sdk-session-valid';
+			mockSession.sdkOriginPath = mockSession.workspacePath;
+			const peekPendingResumeSessionAt = mock(() => undefined);
+			builder = new QueryOptionsBuilder({
+				...mockContext,
+				peekPendingResumeSessionAt,
+			});
 
-				const options = await builder.build();
-				const result = builder.addSessionStateOptions(options);
+			const options = await builder.build();
+			const result = builder.addSessionStateOptions(options);
 
-				expect(result.resume).toBeUndefined();
-				expect(result.resumeSessionAt).toBeUndefined();
-				expect(mockSession.metadata.resumeSessionAt).toBeUndefined();
-				expect(mockSession.metadata.compactionSummary).toBe('Compacted context summary');
-				expect(mockSession.sdkSessionId).toBeUndefined();
-				expect(mockSession.sdkOriginPath).toBeUndefined();
-				expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
-					metadata: mockSession.metadata,
-					sdkSessionId: undefined,
-					sdkOriginPath: undefined,
-				});
-			} finally {
-				rmSync(testSdkDir, { recursive: true, force: true });
-				if (originalTestSdkSessionDir !== undefined) {
-					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
-				} else {
-					delete process.env.TEST_SDK_SESSION_DIR;
-				}
-			}
+			expect(result.resume).toBe('sdk-session-valid');
+			expect(result.resumeSessionAt).toBeUndefined();
+			expect(updateSessionSpy).not.toHaveBeenCalled();
 		});
 
 		it('should not add resume when no SDK session ID', async () => {
@@ -448,21 +331,6 @@ describe('QueryOptionsBuilder', () => {
 			});
 		});
 
-		it('should append carried compaction summary to Claude Code preset', async () => {
-			mockSession.metadata.compactionSummary = 'The user was debugging rewind recovery.';
-			const options = await builder.build();
-
-			expect(options.systemPrompt).toEqual(
-				expect.objectContaining({
-					type: 'preset',
-					preset: 'claude_code',
-					append: expect.stringContaining(
-						'[Previous conversation summary - context was reset due to SDK compaction]\nThe user was debugging rewind recovery.'
-					),
-				})
-			);
-		});
-
 		it('should append worktree isolation text when worktree exists', async () => {
 			mockSession.worktree = {
 				worktreePath: '/worktree/path',
@@ -489,17 +357,6 @@ describe('QueryOptionsBuilder', () => {
 			const options = await builder.build();
 
 			expect(options.systemPrompt).toBe('Custom system prompt');
-		});
-
-		it('should append carried compaction summary to custom string system prompt', async () => {
-			mockSession.config.systemPrompt = 'Custom system prompt';
-			mockSession.metadata.compactionSummary = 'Compact summary text';
-			const options = await builder.build();
-
-			expect(options.systemPrompt).toContain('Custom system prompt');
-			expect(options.systemPrompt).toContain(
-				'[Previous conversation summary - context was reset due to SDK compaction]\nCompact summary text'
-			);
 		});
 
 		it('should combine custom prompt with worktree isolation', async () => {
@@ -901,11 +758,141 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('hooks configuration', () => {
-		it('should return empty hooks', async () => {
+		const NO_MERGE_GUARD = {
+			matcher: 'Bash',
+			pattern:
+				'(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*gh[\\s\\\\]+pr[\\s\\\\]+merge\\b',
+			decision: 'deny' as const,
+			reason:
+				'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
+		};
+
+		it('should return empty hooks when no toolGuards provided', async () => {
 			const options = await builder.build();
 
-			// buildHooks() returns {} — no hooks configured
 			expect(options.hooks).toEqual({});
+		});
+
+		it('compiles declarative tool guards into PreToolUse hooks', async () => {
+			const guardBuilder = new QueryOptionsBuilder({
+				...mockContext,
+				toolGuards: [NO_MERGE_GUARD],
+			});
+			const options = await guardBuilder.build();
+
+			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+			expect(hook).toBeDefined();
+
+			for (const command of [
+				'gh pr merge https://github.com/org/repo/pull/1 --squash',
+				'  gh pr merge https://github.com/org/repo/pull/1 --squash',
+				'`gh pr merge 123`',
+				'GH_TOKEN=token gh pr merge 123',
+				'command gh pr merge 123',
+				'env GH_TOKEN=token gh pr merge 123',
+				'gh pr \\\nmerge 123', // line continuation
+			]) {
+				const result = await hook!(
+					{
+						hook_event_name: 'PreToolUse',
+						tool_name: 'Bash',
+						tool_input: { command },
+						tool_use_id: 'tool-1',
+						session_id: 'session-1',
+						transcript_path: '/tmp/transcript.jsonl',
+						cwd: '/tmp/repo',
+					},
+					'tool-1',
+					{ signal: new AbortController().signal }
+				);
+
+				expect(result).toEqual({
+					hookSpecificOutput: {
+						hookEventName: 'PreToolUse',
+						permissionDecision: 'deny',
+						permissionDecisionReason: NO_MERGE_GUARD.reason,
+					},
+				});
+			}
+		});
+
+		it('allows non-merge bash commands when tool guard is present', async () => {
+			const guardBuilder = new QueryOptionsBuilder({
+				...mockContext,
+				toolGuards: [NO_MERGE_GUARD],
+			});
+			const options = await guardBuilder.build();
+			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+
+			const result = await hook!(
+				{
+					hook_event_name: 'PreToolUse',
+					tool_name: 'Bash',
+					tool_input: { command: 'gh pr view --json url && bun test' },
+					tool_use_id: 'tool-1',
+					session_id: 'session-1',
+					transcript_path: '/tmp/transcript.jsonl',
+					cwd: '/tmp/repo',
+				},
+				'tool-1',
+				{ signal: new AbortController().signal }
+			);
+
+			expect(result).toEqual({});
+		});
+
+		it('groups guards by matcher into separate matcher entries', async () => {
+			const guardBuilder = new QueryOptionsBuilder({
+				...mockContext,
+				toolGuards: [
+					NO_MERGE_GUARD,
+					{
+						matcher: 'Bash',
+						pattern: 'rm\\s+-rf\\s+/',
+						decision: 'deny' as const,
+						reason: 'No recursive force deletes from root',
+					},
+				],
+			});
+			const options = await guardBuilder.build();
+
+			// Both guards share the same matcher, so they should be under one entry
+			expect(options.hooks?.PreToolUse).toHaveLength(1);
+			expect(options.hooks?.PreToolUse?.[0]?.matcher).toBe('Bash');
+			expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(2);
+		});
+
+		it('gracefully skips guards with invalid regex patterns', async () => {
+			const guardBuilder = new QueryOptionsBuilder({
+				...mockContext,
+				toolGuards: [
+					{
+						matcher: 'Bash',
+						pattern: '[invalid(', // unmatched paren — invalid regex
+						decision: 'deny' as const,
+						reason: 'Bad pattern',
+					},
+				],
+			});
+			const options = await guardBuilder.build();
+
+			// Hook is compiled (no crash), but the no-op callback returns {}
+			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+			expect(hook).toBeDefined();
+			const result = await hook!(
+				{
+					hook_event_name: 'PreToolUse',
+					tool_name: 'Bash',
+					tool_input: { command: 'anything' },
+					tool_use_id: 'tool-1',
+					session_id: 'session-1',
+					transcript_path: '/tmp/transcript.jsonl',
+					cwd: '/tmp/repo',
+				},
+				'tool-1',
+				{ signal: new AbortController().signal }
+			);
+			expect(result).toEqual({});
 		});
 	});
 

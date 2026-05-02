@@ -3405,6 +3405,7 @@ export class TaskAgentManager {
 			customPrompt: slotCustomPrompt,
 			disabledSkillIds: slot.disabledSkillIds,
 			extraMcpServers: slot.extraMcpServers,
+			toolGuards: slot.toolGuards,
 			resolutionContext: {
 				agentId: slot.agentId,
 				agentName: slot.name,
