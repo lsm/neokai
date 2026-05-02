@@ -266,4 +266,19 @@ describe('OpenRouterProvider', () => {
 		expect(authStatus.isAuthenticated).toBe(false);
 		expect(authStatus.error).toContain('rejected by OpenRouter');
 	});
+
+	it('FALLBACK_MODELS have correct context windows per model family', () => {
+		const byAlias = Object.fromEntries(
+			OpenRouterProvider.FALLBACK_MODELS.map((m) => [m.alias, m.contextWindow])
+		);
+		expect(byAlias['openrouter-auto']).toBe(1_000_000); // routing — any model
+		expect(byAlias['openrouter-sonnet']).toBe(200_000); // Claude Sonnet ~200K
+		expect(byAlias['openrouter-opus']).toBe(200_000); // Claude Opus ~200K
+		expect(byAlias['openrouter-haiku']).toBe(200_000); // Claude Haiku ~200K
+	});
+
+	it('capabilities.maxContextWindow is 1M for unknown models with large contexts', () => {
+		const provider = new OpenRouterProvider();
+		expect(provider.capabilities.maxContextWindow).toBe(1_000_000);
+	});
 });
