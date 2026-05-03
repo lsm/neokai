@@ -62,17 +62,28 @@ function buildTemplateUpdateParams(
 		return spaceAgents.find((a) => a.name.toLowerCase() === roleName.toLowerCase())?.id;
 	}
 
-	const existingNodeIdsByName = new Map(
-		existingWorkflow?.nodes.map((node) => [node.name, node.id])
-	);
+	const existingNodeIdQueuesByName = new Map<string, string[]>();
+	for (const existingNode of existingWorkflow?.nodes ?? []) {
+		const queue = existingNodeIdQueuesByName.get(existingNode.name) ?? [];
+		queue.push(existingNode.id);
+		existingNodeIdQueuesByName.set(existingNode.name, queue);
+	}
 	const existingNodeIdsInOrder = existingWorkflow?.nodes.map((node) => node.id) ?? [];
+	const usedExistingNodeIds = new Set<string>();
 	const nodeIdMap = new Map<string, string>();
 	for (let i = 0; i < template.nodes.length; i++) {
 		const node = template.nodes[i];
-		nodeIdMap.set(
-			node.id,
-			existingNodeIdsByName.get(node.name) ?? existingNodeIdsInOrder[i] ?? generateUUID()
-		);
+		const nameQueue = existingNodeIdQueuesByName.get(node.name);
+		const existingIdByName = nameQueue?.shift();
+		const existingIdByPosition = existingNodeIdsInOrder[i];
+		const existingId =
+			existingIdByName && !usedExistingNodeIds.has(existingIdByName)
+				? existingIdByName
+				: existingIdByPosition && !usedExistingNodeIds.has(existingIdByPosition)
+					? existingIdByPosition
+					: undefined;
+		if (existingId) usedExistingNodeIds.add(existingId);
+		nodeIdMap.set(node.id, existingId ?? generateUUID());
 	}
 
 	const newNodes = template.nodes.map((node) => {

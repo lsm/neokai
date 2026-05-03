@@ -666,6 +666,31 @@ describe('space-workflow-handlers', () => {
 			);
 		});
 
+		it('reuses existing node IDs one-by-one when node names are duplicated', async () => {
+			const [template] = getBuiltInWorkflows();
+			const agents = agentsForTemplate(template);
+			const wfLinked: SpaceWorkflow = {
+				...mockWorkflow,
+				nodes: [
+					{ id: 'existing-a', name: template.nodes[0].name, agents: [] },
+					{ id: 'existing-b', name: template.nodes[0].name, agents: [] },
+				],
+				startNodeId: 'existing-a',
+				templateName: template.name,
+				templateHash: 'old-hash',
+			};
+			setup(mockSpace, wfLinked, agents);
+			(workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(wfLinked);
+
+			await call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' });
+
+			const [, calledParams] = (workflowManager.updateWorkflow as ReturnType<typeof mock>).mock
+				.calls[0] as [string, Record<string, unknown>];
+			const calledNodes = calledParams.nodes as Array<{ id: string }>;
+			expect(calledNodes.map((node) => node.id)).toEqual(['existing-a', 'existing-b']);
+			expect(new Set(calledNodes.map((node) => node.id)).size).toBe(calledNodes.length);
+		});
+
 		it('throws when id is missing', async () => {
 			setup();
 			await expect(call('spaceWorkflow.syncFromTemplate', { spaceId: 'space-1' })).rejects.toThrow(
