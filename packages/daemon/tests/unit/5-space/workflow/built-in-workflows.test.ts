@@ -1697,23 +1697,61 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(after.templateHash).toBe(computeWorkflowHash(CODING_WORKFLOW));
 	});
 
-	test('re-stamp preserves node UUIDs (safe for in-flight runs)', () => {
+	test('re-stamp preserves node rows, layout, and updates toolGuards in place', () => {
 		// The narrow re-stamp explicitly does NOT regenerate node UUIDs because
-		// live workflow_run rows reference them. This test locks that behaviour
-		// in: forcing a re-stamp must not shift any node ID.
+		// live workflow_run rows reference them. It also must not delete/reinsert
+		// node rows because in-flight executions depend on those row identities.
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
 		const originalNodeIds = coding.nodes.map((n) => n.id).sort();
+		const originalRows = db
+			.prepare(
+				`SELECT id, rowid FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`
+			)
+			.all(coding.id) as Array<{ id: string; rowid: number }>;
+		const rowsAfterEditorSave = () =>
+			db
+				.prepare(
+					`SELECT id, rowid FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`
+				)
+				.all(coding.id) as Array<{ id: string; rowid: number }>;
+		const layout = Object.fromEntries(
+			coding.nodes.map((node, index) => [node.id, { x: index * 100, y: index * 50 }])
+		);
 
+		manager.updateWorkflow(coding.id, {
+			layout,
+			nodes: coding.nodes.map((node) =>
+				node.id !== codingNode.id
+					? node
+					: {
+							...node,
+							agents: node.agents.map((agent) => ({ ...agent, toolGuards: undefined })),
+						}
+			),
+		});
+		const savedRows = rowsAfterEditorSave();
+		expect(savedRows.map((row) => row.id).sort()).toEqual(originalRows.map((row) => row.id).sort());
 		db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
 			'force-drift',
 			coding.id
 		);
+
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
 		const after = manager.getWorkflow(coding.id)!;
 		const afterNodeIds = after.nodes.map((n) => n.id).sort();
+		const afterRows = db
+			.prepare(
+				`SELECT id, rowid FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`
+			)
+			.all(coding.id) as Array<{ id: string; rowid: number }>;
+		const afterCodingAgent = after.nodes.find((n) => n.id === codingNode.id)!.agents[0];
 		expect(afterNodeIds).toEqual(originalNodeIds);
+		expect(afterRows).toEqual(savedRows);
+		expect(after.layout).toEqual(layout);
+		expect(afterCodingAgent.toolGuards).toEqual(CODING_WORKFLOW.nodes[0].agents[0]!.toolGuards);
 	});
 
 	test('is idempotent — leaves user-created workflows untouched', async () => {

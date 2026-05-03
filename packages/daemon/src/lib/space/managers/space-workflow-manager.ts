@@ -157,6 +157,10 @@ export class SpaceWorkflowManager {
 			this.validateName(existing.spaceId, trimmedName, id);
 			params = { ...params, name: trimmedName };
 		}
+		if (params.nodes !== undefined) {
+			this.validateStableNodeIds(id, existing.nodes, params.nodes ?? []);
+		}
+
 		const effectiveNodes: WorkflowNodeInput[] =
 			params.nodes !== undefined
 				? (params.nodes ?? []).map(
@@ -234,6 +238,21 @@ export class SpaceWorkflowManager {
 		return this.repo.updateWorkflow(id, params);
 	}
 
+	/**
+	 * Built-in workflow re-stamping may update structural enforcement metadata on
+	 * existing node-agent slots, but it must never replace node rows. Workflow
+	 * runs and node executions reference node IDs directly, so a template drift
+	 * pass that changes the node ID set would strand in-flight executions.
+	 */
+	updateWorkflowNodeToolGuards(id: string, nodes: SpaceWorkflow['nodes']): void {
+		const existing = this.repo.getWorkflow(id);
+		if (!existing) {
+			throw new WorkflowValidationError(`Workflow not found: ${id}`);
+		}
+		this.validateStableNodeIds(id, existing.nodes, nodes);
+		this.repo.updateWorkflowNodeToolGuards(id, nodes);
+	}
+
 	// -------------------------------------------------------------------------
 	// Delete
 	// -------------------------------------------------------------------------
@@ -283,6 +302,29 @@ export class SpaceWorkflowManager {
 			const node = nodes[i];
 			this.validateNodeAgentRef(spaceId, node, i);
 		}
+	}
+
+	private validateStableNodeIds(
+		workflowId: string,
+		existingNodes: Array<{ id: string }>,
+		incomingNodes: Array<{ id?: string }>
+	): void {
+		const existingIds = existingNodes.map((node) => node.id);
+		const incomingIds = incomingNodes.map((node) => node.id).filter((id): id is string => !!id);
+		const sameLength =
+			existingIds.length === incomingNodes.length && incomingIds.length === incomingNodes.length;
+		const existingSet = new Set(existingIds);
+		const sameSet = sameLength && incomingIds.every((id) => existingSet.has(id));
+
+		if (sameSet) return;
+
+		logger.error(
+			`workflow.idChangeRejected: workflowId=${workflowId} ` +
+				`existingNodeIds=[${existingIds.join(',')}] incomingNodeIds=[${incomingIds.join(',')}]`
+		);
+		throw new WorkflowValidationError(
+			'Workflow node IDs are stable and cannot be added, removed, regenerated, or omitted during update'
+		);
 	}
 
 	private validateNodeAgentRef(spaceId: string, node: WorkflowNodeInput, index: number): void {

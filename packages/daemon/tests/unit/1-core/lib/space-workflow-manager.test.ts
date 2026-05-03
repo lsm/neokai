@@ -220,30 +220,31 @@ describe('SpaceWorkflowManager', () => {
 			);
 		});
 
-		it('validates start/end against effective nodes when nodes are replaced', () => {
+		it('validates start/end against effective nodes when stable nodes are updated', () => {
 			const created = manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Test Workflow',
 				nodes: [
-					{ id: 'node-old', name: 'Old Step', agents: [{ agentId: 'agent-1', name: 'coder' }] },
+					{ id: 'node-1', name: 'Old Step 1', agents: [{ agentId: 'agent-1', name: 'coder' }] },
+					{ id: 'node-2', name: 'Old Step 2', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 				],
 				completionAutonomyLevel: 3,
 			});
 
 			const updated = manager.updateWorkflow(created.id, {
 				nodes: [
-					{ id: 'node-new-1', name: 'New Step 1', agents: [{ agentId: 'agent-1', name: 'coder' }] },
-					{ id: 'node-new-2', name: 'New Step 2', agents: [{ agentId: 'agent-1', name: 'coder' }] },
+					{ id: 'node-1', name: 'New Step 1', agents: [{ agentId: 'agent-1', name: 'coder' }] },
+					{ id: 'node-2', name: 'New Step 2', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 				],
-				startNodeId: 'node-new-2',
-				endNodeId: 'node-new-1',
+				startNodeId: 'node-2',
+				endNodeId: 'node-1',
 			});
 
-			expect(updated?.startNodeId).toBe('node-new-2');
-			expect(updated?.endNodeId).toBe('node-new-1');
+			expect(updated?.startNodeId).toBe('node-2');
+			expect(updated?.endNodeId).toBe('node-1');
 		});
 
-		it('rejects stale startNodeId/endNodeId when nodes are replaced', () => {
+		it('rejects attempts to add, remove, regenerate, or omit node IDs on update', () => {
 			const created = manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Test Workflow',
@@ -252,15 +253,6 @@ describe('SpaceWorkflowManager', () => {
 				],
 				completionAutonomyLevel: 3,
 			});
-
-			expect(() =>
-				manager.updateWorkflow(created.id, {
-					nodes: [
-						{ id: 'node-new', name: 'New Step', agents: [{ agentId: 'agent-1', name: 'coder' }] },
-					],
-					startNodeId: 'node-old',
-				})
-			).toThrow('startNodeId "node-old" does not match any node in this workflow');
 
 			expect(() =>
 				manager.updateWorkflow(created.id, {
@@ -268,9 +260,18 @@ describe('SpaceWorkflowManager', () => {
 						{ id: 'node-new', name: 'New Step', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 					],
 					startNodeId: 'node-new',
-					endNodeId: 'node-old',
 				})
-			).toThrow('endNodeId "node-old" does not match any node in this workflow');
+			).toThrow(
+				'Workflow node IDs are stable and cannot be added, removed, regenerated, or omitted during update'
+			);
+
+			expect(() =>
+				manager.updateWorkflow(created.id, {
+					nodes: [{ name: 'Missing ID', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				})
+			).toThrow(
+				'Workflow node IDs are stable and cannot be added, removed, regenerated, or omitted during update'
+			);
 		});
 
 		it('rejects empty string startNodeId/endNodeId on update', () => {
@@ -333,7 +334,7 @@ describe('SpaceWorkflowManager', () => {
 			).toThrow('"ghost"');
 		});
 
-		it('re-validates an existing postApproval route when nodes are replaced', () => {
+		it('re-validates an existing postApproval route when stable nodes are updated', () => {
 			const created = manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'WF',
@@ -348,12 +349,12 @@ describe('SpaceWorkflowManager', () => {
 				postApproval: { targetAgent: 'reviewer', instructions: '' },
 			});
 
-			// Replace nodes so `reviewer` is no longer a declared agent.
+			// Update the stable node so `reviewer` is no longer a declared agent.
 			expect(() =>
 				manager.updateWorkflow(created.id, {
 					nodes: [
 						{
-							id: 'node-2',
+							id: 'node-1',
 							name: 'Coding',
 							agents: [{ agentId: 'agent-2', name: 'coder' }],
 						},

@@ -391,6 +391,33 @@ export class SpaceWorkflowRepository {
 		return this.getWorkflow(id)!;
 	}
 
+	/**
+	 * Update only persisted node-agent toolGuards for existing workflow nodes.
+	 *
+	 * This intentionally avoids replacing rows in `space_workflow_nodes`: workflow
+	 * IDs, node IDs, and node-agent slots are stable identifiers referenced by
+	 * in-flight workflow runs. Nodes are matched by stable node ID and only the
+	 * JSON config for that node is rewritten.
+	 */
+	updateWorkflowNodeToolGuards(workflowId: string, nodes: WorkflowNode[]): void {
+		const now = Date.now();
+		const updateNode = this.db.prepare(
+			`UPDATE space_workflow_nodes SET config = ?, updated_at = ? WHERE workflow_id = ? AND id = ?`
+		);
+
+		for (const node of nodes) {
+			const cfg: NodeConfigJson = { agents: node.agents };
+			const result = updateNode.run(JSON.stringify(cfg), now, workflowId, node.id);
+			if (result.changes === 0) {
+				log.error(
+					`workflow.nodeToolGuards.update.missingNode: workflowId=${workflowId} nodeId=${node.id}`
+				);
+			}
+		}
+
+		this.db.prepare(`UPDATE space_workflows SET updated_at = ? WHERE id = ?`).run(now, workflowId);
+	}
+
 	// -------------------------------------------------------------------------
 	// Delete
 	// -------------------------------------------------------------------------
