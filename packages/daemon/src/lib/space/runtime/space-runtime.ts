@@ -67,10 +67,7 @@ import { evaluateGate } from './gate-evaluator';
 import { executeGateScript } from './gate-script-executor';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier';
-import {
-	isPermanentSpawnError,
-	validateExecutionAgainstWorkflow,
-} from './workflow-node-execution-validation';
+import { isPermanentSpawnError } from './workflow-node-execution-validation';
 
 const log = new Logger('space-runtime');
 
@@ -1304,19 +1301,7 @@ export class SpaceRuntime {
 		if (this.executors.has(run.id)) return true;
 
 		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
-		if (!workflow) {
-			this.cancelInvalidWorkflowNodeExecutions(
-				run.id,
-				null,
-				this.config.nodeExecutionRepo.listByWorkflowRun(run.id)
-			);
-			return false;
-		}
-		this.cancelInvalidWorkflowNodeExecutions(
-			run.id,
-			workflow,
-			this.config.nodeExecutionRepo.listByWorkflowRun(run.id)
-		);
+		if (!workflow) return false;
 
 		const space = knownSpace ?? (await this.config.spaceManager.getSpace(run.spaceId));
 		if (!space) return false;
@@ -1466,11 +1451,8 @@ export class SpaceRuntime {
 		run: SpaceWorkflowRun
 	): Promise<'completion-pending' | 'blocked' | 'skipped'> {
 		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
-		const executions = this.cancelInvalidWorkflowNodeExecutions(
-			run.id,
-			workflow,
-			this.config.nodeExecutionRepo.listByWorkflowRun(run.id)
-		);
+		if (!workflow) return 'skipped';
+		const executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
 		if (executions.length === 0) return 'skipped';
 
 		// If the tick loop has any work it can drive — `pending` (about
@@ -1983,7 +1965,6 @@ export class SpaceRuntime {
 		}
 
 		let nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-		nodeExecutions = this.cancelInvalidWorkflowNodeExecutions(runId, meta.workflow, nodeExecutions);
 		if (nodeExecutions.length === 0) return;
 
 		// Refresh dedup entries for this run's canonical task.
@@ -2511,31 +2492,6 @@ export class SpaceRuntime {
 		}
 	}
 
-	private cancelInvalidWorkflowNodeExecutions(
-		runId: string,
-		workflow: SpaceWorkflow | null | undefined,
-		executions: NodeExecution[]
-	): NodeExecution[] {
-		let cancelledCount = 0;
-		for (const execution of executions) {
-			if (execution.status === 'cancelled') continue;
-			const validation = validateExecutionAgainstWorkflow(execution, workflow);
-			if (validation.valid) continue;
-			this.config.nodeExecutionRepo.update(execution.id, {
-				status: 'cancelled',
-				agentSessionId: null,
-				result: validation.reason,
-				completedAt: Date.now(),
-			});
-			cancelledCount++;
-			log.warn(
-				`SpaceRuntime: cancelled stale workflow node execution ${execution.id} on run ${runId}: ${validation.reason}`
-			);
-		}
-		if (cancelledCount === 0) return executions;
-		return this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-	}
-
 	private cancelExecutionForPermanentSpawnError(execution: NodeExecution, err: unknown): boolean {
 		if (!isPermanentSpawnError(err)) return false;
 		this.config.nodeExecutionRepo.update(execution.id, {
@@ -2627,15 +2583,6 @@ export class SpaceRuntime {
 			if (!first) return;
 			blockedReason = `Queued workflow handoff to ${targetAgentName} failed after ${first.attempts} attempt(s): ${first.lastError ?? 'delivery failed'}`;
 		};
-		const failQueuedHandoffsForCancelledExecution = (
-			targetAgentName: string,
-			execution: NodeExecution,
-			rowsForCurrentAttempt: typeof pending
-		): void => {
-			const reason = `Queued workflow handoff to ${targetAgentName} cannot be delivered because target execution ${execution.id} is cancelled${execution.result ? `: ${execution.result}` : ''}`;
-			for (const row of rowsForCurrentAttempt) repo.markFailed(row.id, reason);
-			blockedReason = reason;
-		};
 
 		for (const targetAgentName of targets) {
 			const rowsForTarget = pending.filter((row) => row.targetAgentName === targetAgentName);
@@ -2665,10 +2612,6 @@ export class SpaceRuntime {
 				await tam.tryResumeNodeAgentSession(runId, execution.agentName);
 				execution = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
 				if (execution.status === 'waiting_rebind') {
-					continue;
-				}
-				if (execution.status === 'cancelled') {
-					failQueuedHandoffsForCancelledExecution(targetAgentName, execution, rowsForTarget);
 					continue;
 				}
 
