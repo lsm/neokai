@@ -91,6 +91,7 @@ function buildLinearWorkflow(
 
 function makeMockTaskAgentManager(
 	taskRepo: SpaceTaskRepository,
+	nodeExecutionRepo: NodeExecutionRepository,
 	overrides: {
 		isSpawning?: (taskId: string) => boolean;
 		isTaskAgentAlive?: (taskId: string) => boolean;
@@ -124,8 +125,17 @@ function makeMockTaskAgentManager(
 			if (overrides.spawnWorkflowNodeAgent) {
 				const legacySessionId = await overrides.spawnWorkflowNodeAgent(task);
 				const t = task as { id?: string };
+				const e = execution as { id?: string };
 				if (t.id && legacySessionId) sessionToTask.set(legacySessionId, t.id);
 				if (t.id) spawned.push(t.id);
+				if (e.id) {
+					nodeExecutionRepo.update(e.id, {
+						status: 'in_progress',
+						agentSessionId: legacySessionId,
+						startedAt: Date.now(),
+						completedAt: null,
+					});
+				}
 				return legacySessionId;
 			}
 			const e = execution as { id?: string };
@@ -135,6 +145,14 @@ function makeMockTaskAgentManager(
 			const sessionId = `session:${executionId}`;
 			sessionToTask.set(sessionId, taskId);
 			spawned.push(taskId);
+			if (e.id) {
+				nodeExecutionRepo.update(e.id, {
+					status: 'in_progress',
+					agentSessionId: sessionId,
+					startedAt: Date.now(),
+					completedAt: null,
+				});
+			}
 			return sessionId;
 		});
 	const spawnImpl =
@@ -255,7 +273,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
 	describe('tick picks up new tasks from workflow runs', () => {
 		test('tick spawns agent for task created by startWorkflowRun before first tick', async () => {
-			const tam = makeMockTaskAgentManager(taskRepo);
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
 			const rt = new SpaceRuntime(buildConfig(tam));
 
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -274,7 +292,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 		});
 
 		test('tick picks up workflow run created between ticks', async () => {
-			const tam = makeMockTaskAgentManager(taskRepo, {
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isTaskAgentAlive: (taskId: string) => {
 					const task = taskRepo.getTask(taskId);
 					return !!task?.taskAgentSessionId;
@@ -300,7 +318,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 		});
 
 		test('tick picks up tasks added to an existing run between ticks', async () => {
-			const tam = makeMockTaskAgentManager(taskRepo, {
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isTaskAgentAlive: (taskId: string) => {
 					const task = taskRepo.getTask(taskId);
 					return !!task?.taskAgentSessionId;
@@ -349,7 +367,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
 	describe('multiple ticks do not duplicate executors', () => {
 		test('executor count stays 1 after multiple ticks for the same active run', async () => {
-			const tam = makeMockTaskAgentManager(taskRepo, {
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isTaskAgentAlive: () => true,
 			});
 			const rt = new SpaceRuntime(buildConfig(tam));
@@ -370,7 +388,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 		});
 
 		test('two different runs produce exactly two executors across multiple ticks', async () => {
-			const tam = makeMockTaskAgentManager(taskRepo, {
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isTaskAgentAlive: () => true,
 			});
 			const rt = new SpaceRuntime(buildConfig(tam));
@@ -402,7 +420,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 	describe('tick skips already-running tasks', () => {
 		test('in_progress task with alive agent is not re-spawned', async () => {
 			let spawnCount = 0;
-			const tam = makeMockTaskAgentManager(taskRepo, {
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isTaskAgentAlive: () => true,
 				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
@@ -441,7 +459,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			// The fresh runtime rehydrates both runs on first tick, then
 			// processRunTick throws for run1 but succeeds for run2.
 			const spawned: string[] = [];
-			const tam = makeMockTaskAgentManager(taskRepo, {
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isTaskAgentAlive: (taskId: string) => {
 					const task = taskRepo.getTask(taskId);
 					return !!task?.taskAgentSessionId;
@@ -491,7 +509,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
 		test('first error is re-thrown after all runs are processed', async () => {
 			// Create two runs with real spaceManager first
-			const tam = makeMockTaskAgentManager(taskRepo);
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
 			const realRt = new SpaceRuntime(buildConfig(tam));
 
 			const wf1 = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -676,7 +694,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 		});
 
 		test('cleanupTerminalExecutors leaves in_progress runs alone', async () => {
-			const tam = makeMockTaskAgentManager(taskRepo, {
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isTaskAgentAlive: () => true,
 			});
 			const rt = new SpaceRuntime(buildConfig(tam));
@@ -708,7 +726,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
 	describe('multiple independent workflow runs in same tick', () => {
 		test('tick spawns agents for tasks across multiple runs', async () => {
-			const tam = makeMockTaskAgentManager(taskRepo, {
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isTaskAgentAlive: (taskId: string) => {
 					const task = taskRepo.getTask(taskId);
 					return !!task?.taskAgentSessionId;
@@ -737,7 +755,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 		});
 
 		test('one run completing does not affect sibling run processing', async () => {
-			const tam = makeMockTaskAgentManager(taskRepo, {
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isTaskAgentAlive: () => true,
 			});
 			const rt = new SpaceRuntime(buildConfig(tam));
@@ -858,7 +876,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 		test('spawn failure for one task does not prevent spawning another task', async () => {
 			let callCount = 0;
 			const spawned: string[] = [];
-			const tam = makeMockTaskAgentManager(taskRepo, {
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isTaskAgentAlive: (taskId: string) => {
 					const task = taskRepo.getTask(taskId);
 					return !!task?.taskAgentSessionId;
@@ -900,7 +918,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
 		test('spawn failure keeps task in open status for retry on next tick', async () => {
 			let failOnce = true;
-			const tam = makeMockTaskAgentManager(taskRepo, {
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isTaskAgentAlive: (taskId: string) => {
 					const task = taskRepo.getTask(taskId);
 					return !!task?.taskAgentSessionId;
@@ -943,7 +961,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
 	describe('rehydration does not duplicate executors from startWorkflowRun', () => {
 		test('startWorkflowRun before first tick — rehydration skips already-registered executor', async () => {
-			const tam = makeMockTaskAgentManager(taskRepo, {
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isTaskAgentAlive: () => true,
 			});
 			const rt = new SpaceRuntime(buildConfig(tam));
@@ -970,7 +988,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 	describe('rehydration happens exactly once', () => {
 		test('rehydrate is called exactly once across multiple ticks', async () => {
 			let rehydrateCount = 0;
-			const tam = makeMockTaskAgentManager(taskRepo, {
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				rehydrate: async () => {
 					rehydrateCount++;
 				},

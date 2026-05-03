@@ -78,6 +78,11 @@ import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import { createEndNodeHandlers, createMarkCompleteHandler } from '../tools/end-node-handlers';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import { jsonResult } from '../tools/tool-result';
+import {
+	assertExecutionValidAgainstWorkflow,
+	PermanentSpawnError,
+	validateTaskAllowsSpawn,
+} from './workflow-node-execution-validation';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
@@ -843,6 +848,13 @@ export class TaskAgentManager {
 		options: SpawnTaskAgentOptions = {}
 	): Promise<string> {
 		if (execution.agentSessionId && this.agentSessionIndex.has(execution.agentSessionId)) {
+			const startedAt = execution.startedAt ?? Date.now();
+			this.config.nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: execution.agentSessionId,
+				startedAt,
+				completedAt: null,
+			});
 			return execution.agentSessionId;
 		}
 
@@ -882,13 +894,10 @@ export class TaskAgentManager {
 		let spawnedSessionId: string | null = null;
 
 		try {
-			const node = workflow.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
-			if (!node) {
-				throw new Error(
-					`Workflow node "${execution.workflowNodeId}" not found in workflow "${workflow.id}"`
-				);
-			}
+			validateTaskAllowsSpawn(task);
+			assertExecutionValidAgainstWorkflow(execution, workflow);
 
+			const node = workflow.nodes.find((candidate) => candidate.id === execution.workflowNodeId)!;
 			const nodeAgents = resolveNodeAgents(node);
 			const slot =
 				nodeAgents.length === 1
@@ -945,7 +954,7 @@ export class TaskAgentManager {
 				? this.config.spaceAgentManager.getById(slot.agentId)
 				: null;
 			if (shouldKickoff && !customAgent) {
-				throw new Error(`Agent not found: ${slot.agentId}`);
+				throw new PermanentSpawnError(`Agent not found: ${slot.agentId}`);
 			}
 
 			const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
@@ -985,6 +994,34 @@ export class TaskAgentManager {
 			const spawned = this.getSubSession(actualSessionId);
 			if (!spawned) {
 				throw new Error(`Spawned node session ${actualSessionId} is not registered in memory`);
+			}
+
+			const startedAt = Date.now();
+			const updatedExecution = this.config.nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: actualSessionId,
+				startedAt,
+				completedAt: null,
+			});
+			if (
+				!updatedExecution ||
+				updatedExecution.status !== 'in_progress' ||
+				updatedExecution.agentSessionId !== actualSessionId ||
+				!updatedExecution.startedAt
+			) {
+				log.error('[Spawn] Execution state mismatch after spawn', {
+					executionId: execution.id,
+					expectedStatus: 'in_progress',
+					actualStatus: updatedExecution?.status ?? null,
+					expectedSessionId: actualSessionId,
+					actualSessionId: updatedExecution?.agentSessionId ?? null,
+				});
+				this.config.nodeExecutionRepo.update(execution.id, {
+					status: 'blocked',
+					result: 'Execution state corruption after spawn',
+					completedAt: Date.now(),
+				});
+				throw new Error(`Execution state corruption after spawn for ${execution.id}`);
 			}
 
 			// Defensive guarantee: verify the node-agent MCP server is present in the
@@ -1305,17 +1342,25 @@ export class TaskAgentManager {
 							`TaskAgentManager: reusing session ${existingSessionId} for agent "${memberInfo.agentName}" (task ${taskId}); skipping new session ${sessionId}`
 						);
 
-						// Point the new NodeExecution at the existing session ID.
+						// Point the new NodeExecution at the existing session ID and mark it active.
 						if (memberInfo.nodeId) {
 							const nodeExecs = this.config.nodeExecutionRepo.listByNode(
 								parentTask.workflowRunId,
 								memberInfo.nodeId
 							);
-							const match = nodeExecs.find(
-								(e) => e.agentName === memberInfo.agentName && !e.agentSessionId
-							);
+							const match =
+								nodeExecs.find((e) => e.agentName === memberInfo.agentName && !e.agentSessionId) ??
+								nodeExecs.find(
+									(e) =>
+										e.agentName === memberInfo.agentName && e.agentSessionId === existingSessionId
+								);
 							if (match) {
-								this.config.nodeExecutionRepo.updateSessionId(match.id, existingSessionId);
+								this.config.nodeExecutionRepo.update(match.id, {
+									status: 'in_progress',
+									agentSessionId: existingSessionId,
+									startedAt: match.startedAt ?? Date.now(),
+									completedAt: null,
+								});
 							}
 						}
 
@@ -1449,9 +1494,9 @@ export class TaskAgentManager {
 		// Register in SessionManager cache to prevent duplicate AgentSession creation.
 		this.config.sessionManager.registerSession(subSession);
 
-		// Write agent_session_id on the matching NodeExecution record so that
-		// AgentMessageRouter, sibling cleanup, and live-query SQL can resolve
-		// the session. Requires nodeId (workflowNodeId) and agentName.
+		// Write active execution state on the matching NodeExecution record so that
+		// AgentMessageRouter, sibling cleanup, timeout tracking, and live-query SQL
+		// can resolve the session. Requires nodeId (workflowNodeId) and agentName.
 		if (memberInfo?.nodeId && memberInfo.agentName) {
 			const parentTask = this.config.taskRepo.getTask(taskId);
 			if (parentTask?.workflowRunId) {
@@ -1461,7 +1506,12 @@ export class TaskAgentManager {
 				);
 				const match = nodeExecs.find((e) => e.agentName === memberInfo.agentName);
 				if (match && !match.agentSessionId) {
-					this.config.nodeExecutionRepo.updateSessionId(match.id, sessionId);
+					this.config.nodeExecutionRepo.update(match.id, {
+						status: 'in_progress',
+						agentSessionId: sessionId,
+						startedAt: match.startedAt ?? Date.now(),
+						completedAt: null,
+					});
 				} else if (match && match.agentSessionId) {
 					log.warn(
 						`TaskAgentManager: NodeExecution ${match.id} already has agentSessionId ${match.agentSessionId}; skipping update for new session ${sessionId}`
@@ -1941,6 +1991,7 @@ export class TaskAgentManager {
 					return s?.autonomyLevel ?? 1;
 				},
 				isSessionAlive: (sid) => this.isSessionAlive(sid),
+				cancelSessionById: (sid) => this.cancelBySessionId(sid),
 				notificationSink: this.config.spaceRuntimeService.getSharedRuntime().getNotificationSink(),
 				onGatePendingApproval: (runId, gateId) =>
 					this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
@@ -4092,6 +4143,7 @@ export class TaskAgentManager {
 				return s?.autonomyLevel ?? 1;
 			},
 			isSessionAlive: (sid) => this.isSessionAlive(sid),
+			cancelSessionById: (sid) => this.cancelBySessionId(sid),
 			// Forward the runtime's current sink so a peer-agent `send_message`
 			// that auto-reopens a terminal run still emits `workflow_run_reopened`
 			// into the Space Agent session.
