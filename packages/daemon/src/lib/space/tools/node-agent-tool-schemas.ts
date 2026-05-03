@@ -192,6 +192,12 @@ export const CreateStandaloneTaskSchema = z.object({
 			'List of task IDs this task depends on. All must be in the same space. The task will be blocked until every dependency reaches status=done.'
 		)
 		.optional(),
+	draft: z
+		.boolean()
+		.describe(
+			'When true, create the task in draft status. Draft tasks are never auto-started by the runtime, even with a workflow and priority assigned. Must be explicitly published (draft → open) before orchestration picks it up.'
+		)
+		.optional(),
 });
 
 export type CreateStandaloneTaskInput = z.infer<typeof CreateStandaloneTaskSchema>;

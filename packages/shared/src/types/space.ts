@@ -151,6 +151,9 @@ export interface UpdateSpaceParams {
 /**
  * Space task status
  *
+ * - `draft`       — task is a draft; never picked up by the orchestrator regardless of
+ *                   workflow or priority. Only explicit user/API action (`publish`) can
+ *                   promote it to `open`. No automated transition out of `draft` exists.
  * - `open`        — task is queued and waiting to be picked up
  * - `in_progress` — a Task Agent session is actively working on this task
  * - `review`      — workflow agents completed; awaiting human review/approval (supervised mode)
@@ -167,6 +170,7 @@ export interface UpdateSpaceParams {
  * - `archived`    — task is archived (soft-delete, `archivedAt` is stamped)
  */
 export type SpaceTaskStatus =
+	| 'draft'
 	| 'open'
 	| 'in_progress'
 	| 'review'
@@ -405,7 +409,7 @@ export interface CreateSpaceTaskParams {
 	labels?: string[];
 	/** IDs of prerequisite tasks in the same space */
 	dependsOn?: string[];
-	/** Initial status — defaults to 'open' */
+	/** Initial status — defaults to 'open'. Use 'draft' to create a draft task. */
 	status?: SpaceTaskStatus;
 	/** Workflow run that spawned this task */
 	workflowRunId?: string | null;

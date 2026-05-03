@@ -38,7 +38,7 @@ export function setupSpaceTaskHandlers(
 ): void {
 	// ─── spaceTask.create ───────────────────────────────────────────────────────
 	messageHub.onRequest('spaceTask.create', async (data) => {
-		const params = data as CreateSpaceTaskParams;
+		const params = data as CreateSpaceTaskParams & { draft?: boolean };
 
 		if (!params.spaceId) {
 			throw new Error('spaceId is required');
@@ -58,7 +58,16 @@ export function setupSpaceTaskHandlers(
 		}
 
 		const taskManager = taskManagerFactory(params.spaceId);
-		const { spaceId, ...rest } = params;
+		const { spaceId, draft, ...rest } = params;
+
+		// The draft flag is an alias for status: 'draft'. Reject contradictory
+		// input instead of silently allowing status to override draft: true.
+		if (draft && rest.status && rest.status !== 'draft') {
+			throw new Error('draft: true cannot be combined with a non-draft status');
+		}
+		if (draft) {
+			rest.status = 'draft';
+		}
 		const task = await taskManager.createTask(rest);
 
 		daemonHub
@@ -461,6 +470,50 @@ export function setupSpaceTaskHandlers(
 				approvalReason: params.reason ?? null,
 			});
 		}
+
+		daemonHub
+			.emit('space.task.updated', {
+				sessionId: 'global',
+				spaceId: params.spaceId,
+				taskId: params.taskId,
+				task,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit space.task.updated:', err);
+			});
+
+		return task;
+	});
+
+	// ─── spaceTask.publish ─────────────────────────────────────────────────────
+	// Promote a draft task to `open` so the orchestrator can pick it up.
+	// This is the only valid transition out of `draft` — enforced by
+	// VALID_SPACE_TASK_TRANSITIONS. The handler validates the current status
+	// before delegating to SpaceTaskManager.publishTask.
+	messageHub.onRequest('spaceTask.publish', async (data) => {
+		const params = data as { spaceId: string; taskId: string };
+
+		if (!params.spaceId) throw new Error('spaceId is required');
+		if (!params.taskId) throw new Error('taskId is required');
+
+		const space = await spaceManager.getSpace(params.spaceId);
+		if (!space) {
+			throw new Error(`Space not found: ${params.spaceId}`);
+		}
+
+		const taskManager = taskManagerFactory(params.spaceId);
+		const currentTask = await taskManager.getTask(params.taskId);
+		if (!currentTask) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+
+		if (currentTask.status !== 'draft') {
+			throw new Error(
+				`Task ${params.taskId} is not in 'draft' status (current: ${currentTask.status}). Only draft tasks can be published.`
+			);
+		}
+
+		const task = await taskManager.publishTask(params.taskId);
 
 		daemonHub
 			.emit('space.task.updated', {

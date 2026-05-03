@@ -359,12 +359,12 @@ export class SpaceTaskRepository {
 	}
 
 	/**
-	 * Promote open tasks created by a planning task (legacy method, kept for API compatibility)
+	 * Promote draft tasks created by a planning task (legacy method, kept for API compatibility)
 	 */
 	promoteDraftTasksByCreator(createdByTaskId: string): number {
 		const result = this.db
 			.prepare(
-				`UPDATE space_tasks SET status = 'open', updated_at = ? WHERE created_by_task_id = ? AND status = 'open'`
+				`UPDATE space_tasks SET status = 'open', updated_at = ? WHERE created_by_task_id = ? AND status = 'draft'`
 			)
 			.run(Date.now(), createdByTaskId);
 		if (result.changes > 0) {

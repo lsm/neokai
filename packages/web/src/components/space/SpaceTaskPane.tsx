@@ -38,6 +38,7 @@ interface SpaceTaskPaneProps {
 }
 
 const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
+	draft: 'Draft',
 	open: 'Open',
 	in_progress: 'In Progress',
 	review: 'Awaiting Review',
@@ -69,6 +70,7 @@ const ACTIVITY_STATE_LABELS: Record<SpaceTaskActivityState, string> = {
 };
 
 const STATUS_BADGE_CLASSES: Record<SpaceTaskStatus, string> = {
+	draft: 'border-slate-500/30 bg-slate-500/10 text-slate-300',
 	open: 'border-gray-500/30 bg-gray-500/10 text-gray-300',
 	in_progress: 'border-blue-500/30 bg-blue-500/10 text-blue-300',
 	review: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
@@ -580,7 +582,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		try {
 			setStatusTransitioning(true);
 			setThreadSendError(null);
-			if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, newStatus)) {
+			if (task.status === 'draft' && newStatus === 'open') {
+				await spaceStore.publishTask(task.id);
+			} else if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, newStatus)) {
 				await spaceStore.recoverWorkflowTask(task.id, newStatus);
 			} else {
 				await spaceStore.updateTask(task.id, { status: newStatus });

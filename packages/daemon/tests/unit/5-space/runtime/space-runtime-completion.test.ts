@@ -175,6 +175,8 @@ class MockTaskAgentManager {
 	readonly interruptedSessions: string[] = [];
 	readonly spawnedExecutionSessions: string[] = [];
 
+	constructor(private readonly nodeExecutionRepo?: NodeExecutionRepository) {}
+
 	isTaskAgentAlive(_taskId: string): boolean {
 		return false;
 	}
@@ -209,6 +211,12 @@ class MockTaskAgentManager {
 	): Promise<string> {
 		const sessionId = `mock-session:${execution.id}`;
 		this.spawnedExecutionSessions.push(sessionId);
+		this.nodeExecutionRepo?.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: sessionId,
+			startedAt: Date.now(),
+			completedAt: null,
+		});
 		return sessionId;
 	}
 
@@ -272,7 +280,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			taskRepo,
 			nodeExecutionRepo,
 			notificationSink: sink,
-			taskAgentManager: new MockTaskAgentManager() as unknown as TaskAgentManager,
+			taskAgentManager: new MockTaskAgentManager(nodeExecutionRepo) as unknown as TaskAgentManager,
 			...extraConfig,
 		};
 		return new SpaceRuntime(config);
@@ -1091,7 +1099,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			// their status transitions to `idle` — NOT `cancelled` — so they
 			// remain a valid message target. The session itself is kept alive
 			// in memory; only `archived` triggers full teardown.
-			const mockTam = new MockTaskAgentManager();
+			const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
 			mockTam.isSessionAlive = () => true;
 			const rt = makeRuntimeWithTam({
 				taskAgentManager: mockTam as unknown as TaskAgentManager,
@@ -1157,7 +1165,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			// These two invariants are what list_peers / deliverMessage rely on
 			// when the Task Agent asks for a reviewer→coder send_message to
 			// succeed after the coder node has finished.
-			const mockTam = new MockTaskAgentManager();
+			const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
 			mockTam.isSessionAlive = () => true;
 			const rt = makeRuntimeWithTam({
 				taskAgentManager: mockTam as unknown as TaskAgentManager,
