@@ -316,6 +316,10 @@ function streamGeminiResponse(geminiResponse: Response, model: string): Response
 			const reader = geminiResponse.body.getReader();
 			const decoder = new TextDecoder();
 			let buffer = '';
+			// dataBuffer persists across network chunks so SSE events
+			// whose blank-line terminator arrives in a later chunk are
+			// not dropped.
+			let dataBuffer = '';
 
 			try {
 				while (true) {
@@ -327,8 +331,6 @@ function streamGeminiResponse(geminiResponse: Response, model: string): Response
 					// Parse SSE lines
 					const lines = buffer.split('\n');
 					buffer = lines.pop() ?? '';
-
-					let dataBuffer = '';
 
 					for (const line of lines) {
 						if (line.startsWith('data: ')) {
@@ -349,10 +351,13 @@ function streamGeminiResponse(geminiResponse: Response, model: string): Response
 					}
 				}
 
-				// Process any remaining buffer
+				// Process any remaining dataBuffer (event without trailing newline)
 				if (buffer.startsWith('data: ')) {
+					dataBuffer += buffer.slice(6).trim();
+				}
+				if (dataBuffer) {
 					try {
-						const chunk = JSON.parse(buffer.slice(6).trim()) as GeminiResponseChunk;
+						const chunk = JSON.parse(dataBuffer) as GeminiResponseChunk;
 						const events = processGeminiChunk(chunk, state);
 						for (const event of events) {
 							controller.enqueue(encoder.encode(event));
@@ -407,6 +412,8 @@ function processGeminiChunk(chunk: GeminiResponseChunk, state: GeminiStreamState
 	for (const candidate of candidates) {
 		if (!candidate.content?.parts) continue;
 
+		let hasFunctionCall = false;
+
 		for (const part of candidate.content.parts) {
 			if (part.text !== undefined) {
 				// Text content
@@ -417,6 +424,7 @@ function processGeminiChunk(chunk: GeminiResponseChunk, state: GeminiStreamState
 				state.outputTokens += Math.ceil(part.text.length / 4);
 			} else if (part.functionCall) {
 				// Function call (tool use)
+				hasFunctionCall = true;
 				const toolUseId = `toolu_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
 				const argsJson = JSON.stringify(part.functionCall.args ?? {});
 
@@ -431,7 +439,9 @@ function processGeminiChunk(chunk: GeminiResponseChunk, state: GeminiStreamState
 
 		// Check finish reason
 		if (candidate.finishReason) {
-			const stopReason = convertFinishReason(candidate.finishReason);
+			// When the candidate contains function calls, the stop reason must
+			// be tool_use so Anthropic-compatible clients trigger tool execution.
+			const stopReason = hasFunctionCall ? 'tool_use' : convertFinishReason(candidate.finishReason);
 			events.push(messageDeltaSSE(stopReason, { outputTokens: Math.max(state.outputTokens, 1) }));
 			events.push(messageStopSSE());
 			state.finished = true;
@@ -448,6 +458,7 @@ async function collectGeminiResponse(geminiResponse: Response, model: string): P
 	const reader = geminiResponse.body!.getReader();
 	const decoder = new TextDecoder();
 	let buffer = '';
+	let dataBuffer = '';
 
 	const chunks: GeminiResponseChunk[] = [];
 
@@ -460,7 +471,6 @@ async function collectGeminiResponse(geminiResponse: Response, model: string): P
 		const lines = buffer.split('\n');
 		buffer = lines.pop() ?? '';
 
-		let dataBuffer = '';
 		for (const line of lines) {
 			if (line.startsWith('data: ')) {
 				dataBuffer += line.slice(6).trim();
@@ -481,6 +491,7 @@ async function collectGeminiResponse(geminiResponse: Response, model: string): P
 	let stopReason = 'end_turn';
 	let inputTokens = 0;
 	let outputTokens = 0;
+	let hasFunctionCall = false;
 
 	for (const chunk of chunks) {
 		if (!chunk.response) continue;
@@ -500,18 +511,18 @@ async function collectGeminiResponse(geminiResponse: Response, model: string): P
 						text: part.text,
 					});
 				} else if (part.functionCall) {
+					hasFunctionCall = true;
 					contentBlocks.push({
 						type: 'tool_use',
 						id: `toolu_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`,
 						name: part.functionCall.name,
 						input: part.functionCall.args ?? {},
 					});
-					stopReason = 'tool_use';
 				}
 			}
 
 			if (candidate.finishReason) {
-				stopReason = convertFinishReason(candidate.finishReason);
+				stopReason = hasFunctionCall ? 'tool_use' : convertFinishReason(candidate.finishReason);
 			}
 		}
 	}

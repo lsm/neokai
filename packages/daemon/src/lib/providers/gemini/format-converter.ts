@@ -164,6 +164,20 @@ export function convertModelId(modelId: string): string {
 export function convertMessages(messages: AnthropicMessage[]): GeminiContent[] {
 	const contents: GeminiContent[] = [];
 
+	// Build a map of tool_use_id → function name from prior tool_use blocks
+	// so tool_result blocks can reference the correct function name.
+	const toolNameMap = new Map<string, string>();
+
+	// First pass: collect tool names from all tool_use blocks
+	for (const msg of messages) {
+		if (typeof msg.content === 'string') continue;
+		for (const block of msg.content) {
+			if (block.type === 'tool_use') {
+				toolNameMap.set(block.id, block.name);
+			}
+		}
+	}
+
 	for (const msg of messages) {
 		const role = msg.role === 'assistant' ? 'model' : 'user';
 
@@ -191,17 +205,19 @@ export function convertMessages(messages: AnthropicMessage[]): GeminiContent[] {
 				});
 			} else if (block.type === 'tool_result') {
 				// Tool results need to be in a user-turn in Gemini format
-				// with a functionResponse part
+				// with a functionResponse part using the original function name
 				const textContent =
 					typeof block.content === 'string'
 						? block.content
 						: block.content.map((c) => c.text).join('');
 
-				// Parse the tool_use_id to recover the function name if possible
-				// The tool result format in Gemini uses functionResponse
+				// Look up the actual function name from the corresponding tool_use block
+				const functionName =
+					toolNameMap.get(block.tool_use_id) ?? extractToolNameFromId(block.tool_use_id);
+
 				toolResultParts.push({
 					functionResponse: {
-						name: extractToolNameFromId(block.tool_use_id),
+						name: functionName,
 						response: { result: textContent },
 					},
 				});

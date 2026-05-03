@@ -164,6 +164,63 @@ describe('Gemini Format Converter', () => {
 				result: 'Line 1Line 2',
 			});
 		});
+
+		it('maps tool_result to the original function name from prior tool_use block', () => {
+			const messages = [
+				{
+					role: 'assistant' as const,
+					content: [
+						{
+							type: 'tool_use' as const,
+							id: 'toolu_abc123',
+							name: 'read_file',
+							input: { path: '/src/index.ts' },
+						},
+					],
+				},
+				{
+					role: 'user' as const,
+					content: [
+						{
+							type: 'tool_result' as const,
+							tool_use_id: 'toolu_abc123',
+							content: 'export const hello = "world";',
+						},
+					],
+				},
+			];
+
+			const contents = convertMessages(messages);
+
+			// The functionResponse should use "read_file", not a fabricated name
+			expect(contents).toHaveLength(2);
+			const functionResponse = contents[1].parts[0].functionResponse;
+			expect(functionResponse).toBeDefined();
+			expect(functionResponse!.name).toBe('read_file');
+			expect(functionResponse!.response).toEqual({
+				result: 'export const hello = "world";',
+			});
+		});
+
+		it('falls back to extracted name when tool_use_id has no matching tool_use block', () => {
+			const messages = [
+				{
+					role: 'user' as const,
+					content: [
+						{
+							type: 'tool_result' as const,
+							tool_use_id: 'orphan_id_999',
+							content: 'orphaned result',
+						},
+					],
+				},
+			];
+
+			const contents = convertMessages(messages);
+
+			// Should use extractToolNameFromId fallback
+			expect(contents[0].parts[0].functionResponse!.name).toBe('tool_orphan_i');
+		});
 	});
 
 	// -------------------------------------------------------------------------
