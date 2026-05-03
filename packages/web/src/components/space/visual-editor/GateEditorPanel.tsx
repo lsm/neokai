@@ -1,5 +1,12 @@
 import { useMemo, useState } from 'preact/hooks';
-import type { Gate, GateField, GateFieldType, GateFieldCheck, GateScript } from '@neokai/shared';
+import type {
+	Gate,
+	GateField,
+	GateFieldType,
+	GateFieldCheck,
+	GateScript,
+	GatePoll,
+} from '@neokai/shared';
 
 export interface GateEditorPanelProps {
 	gate: Gate;
@@ -39,6 +46,13 @@ const SCRIPT_PRESETS = {
 		source: 'npx tsc --noEmit 2>/dev/null && echo \'{"passed":true}\' || echo \'{"passed":false}\'',
 	},
 } as const;
+
+const POLL_MIN_INTERVAL_MS = 10_000;
+const POLL_INTERVAL_PRESETS = [
+	{ label: '30s', valueMs: 30_000 },
+	{ label: '1m', valueMs: 60_000 },
+	{ label: '5m', valueMs: 300_000 },
+];
 
 // ---------------------------------------------------------------------------
 // Lightweight client-side validation (mirrors daemon gate-evaluator.ts)
@@ -587,6 +601,194 @@ export function GateEditorPanel({
 					</div>
 				)}
 			</div>
+
+			{/* Gate Poll */}
+			<PollSection gate={gate} onChange={updateGate} />
+		</div>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// PollSection sub-component
+// ---------------------------------------------------------------------------
+
+interface PollSectionProps {
+	gate: Gate;
+	onChange: (partial: Partial<Gate>) => void;
+}
+
+function PollSection({ gate, onChange }: PollSectionProps) {
+	const pollEnabled = !!gate.poll;
+	const pollIntervalSec = gate.poll ? Math.round(gate.poll.intervalMs / 1000) : 30;
+	const pollScript = gate.poll?.script ?? '';
+	const pollTarget = gate.poll?.target ?? 'to';
+	const pollTemplate = gate.poll?.messageTemplate ?? '';
+
+	const intervalError = useMemo(() => {
+		if (!pollEnabled) return '';
+		const ms = pollIntervalSec * 1000;
+		if (ms < POLL_MIN_INTERVAL_MS) return 'interval: minimum is 10 seconds';
+		return '';
+	}, [pollEnabled, pollIntervalSec]);
+
+	const scriptError = useMemo(() => {
+		if (!pollEnabled) return '';
+		if (!pollScript.trim()) return 'script: required when poll is enabled';
+		return '';
+	}, [pollEnabled, pollScript]);
+
+	function togglePollEnabled(checked: boolean) {
+		if (checked) {
+			onChange({
+				poll: {
+					intervalMs: 30_000,
+					script: '',
+					target: 'to',
+				},
+			});
+		} else {
+			onChange({ poll: undefined });
+		}
+	}
+
+	function updatePoll(partial: Partial<GatePoll>) {
+		const current = gate.poll ?? {
+			intervalMs: 30_000,
+			script: '',
+			target: 'to' as const,
+		};
+		onChange({ poll: { ...current, ...partial } });
+	}
+
+	return (
+		<div class="space-y-2" data-testid="gate-editor-poll-section">
+			<div class="flex items-center justify-between">
+				<label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">
+					Poll (Periodic Script)
+				</label>
+				<button
+					type="button"
+					data-testid="gate-editor-poll-enabled"
+					role="switch"
+					aria-checked={pollEnabled}
+					onClick={() => togglePollEnabled(!pollEnabled)}
+					class={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+						pollEnabled ? 'bg-blue-500' : 'bg-dark-600'
+					}`}
+				>
+					<span
+						class={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+							pollEnabled ? 'translate-x-4' : 'translate-x-0.5'
+						}`}
+					/>
+				</button>
+			</div>
+
+			{pollEnabled && (
+				<div class="space-y-2 pl-1 border-l-2 border-blue-500/30">
+					{/* Interval */}
+					<div class="space-y-0.5">
+						<label class="text-[10px] uppercase tracking-wider text-gray-600">
+							Interval (seconds)
+						</label>
+						<div class="flex gap-1.5 mb-1">
+							{POLL_INTERVAL_PRESETS.map((preset) => (
+								<button
+									key={preset.label}
+									type="button"
+									data-testid={`gate-editor-poll-interval-preset-${preset.label}`}
+									onClick={() => updatePoll({ intervalMs: preset.valueMs })}
+									class={`rounded border px-2 py-1 text-[11px] transition-colors ${
+										pollIntervalSec * 1000 === preset.valueMs
+											? 'border-blue-500 bg-blue-500/10 text-blue-200'
+											: 'border-dark-600 bg-dark-800 text-gray-400 hover:border-dark-500'
+									}`}
+								>
+									{preset.label}
+								</button>
+							))}
+						</div>
+						<input
+							type="number"
+							data-testid="gate-editor-poll-interval"
+							value={pollIntervalSec}
+							min={10}
+							onInput={(e) => {
+								const val = Number((e.currentTarget as HTMLInputElement).value);
+								if (isNaN(val)) return;
+								updatePoll({ intervalMs: Math.max(10, val) * 1000 });
+							}}
+							class={`w-full text-xs bg-dark-800 border rounded px-2 py-1 text-gray-200 font-mono focus:outline-none ${
+								intervalError
+									? 'border-red-500 focus:border-red-500'
+									: 'border-dark-600 focus:border-blue-500'
+							}`}
+						/>
+						{intervalError && (
+							<p data-testid="gate-editor-poll-interval-error" class="text-[10px] text-red-400">
+								{intervalError}
+							</p>
+						)}
+					</div>
+
+					{/* Script */}
+					<div class="space-y-0.5">
+						<label class="text-[10px] uppercase tracking-wider text-gray-600">Poll Script</label>
+						<textarea
+							data-testid="gate-editor-poll-script"
+							value={pollScript}
+							placeholder={
+								'if [ -z "$PR_URL" ]; then exit 0; fi\ngh api "repos/$REPO_OWNER/$REPO_NAME/pulls/$PR_NUMBER/comments" \\\n  --jq \'.[-1] | .body\''
+							}
+							rows={4}
+							onInput={(e) => updatePoll({ script: e.currentTarget.value })}
+							class={`w-full text-xs bg-dark-800 border rounded px-2 py-1.5 text-gray-200 font-mono focus:outline-none placeholder-gray-700 resize-y leading-relaxed ${
+								scriptError
+									? 'border-red-500 focus:border-red-500'
+									: 'border-dark-600 focus:border-blue-500'
+							}`}
+						/>
+						{scriptError && (
+							<p data-testid="gate-editor-poll-script-error" class="text-[10px] text-red-400">
+								{scriptError}
+							</p>
+						)}
+					</div>
+
+					{/* Target */}
+					<div class="space-y-0.5">
+						<label class="text-[10px] uppercase tracking-wider text-gray-600">Target Node</label>
+						<select
+							data-testid="gate-editor-poll-target"
+							value={pollTarget}
+							onChange={(e) => updatePoll({ target: e.currentTarget.value as 'from' | 'to' })}
+							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500"
+						>
+							<option value="to">To node (target)</option>
+							<option value="from">From node (source)</option>
+						</select>
+					</div>
+
+					{/* Message Template */}
+					<div class="space-y-0.5">
+						<label class="text-[10px] uppercase tracking-wider text-gray-600">
+							Message Template
+						</label>
+						<input
+							type="text"
+							data-testid="gate-editor-poll-template"
+							value={pollTemplate}
+							placeholder="Use {{output}} as placeholder"
+							onInput={(e) =>
+								updatePoll({
+									messageTemplate: (e.currentTarget as HTMLInputElement).value || undefined,
+								})
+							}
+							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700"
+						/>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }

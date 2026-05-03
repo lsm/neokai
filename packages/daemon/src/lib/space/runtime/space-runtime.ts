@@ -65,6 +65,7 @@ import { resolveTimeoutForExecution } from './resolve-node-timeout';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import { evaluateGate } from './gate-evaluator';
 import { executeGateScript } from './gate-script-executor';
+import { GatePollManager, extractPrContext, type PollScriptContext } from './gate-poll-manager';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier';
 import { isPermanentSpawnError } from './workflow-node-execution-validation';
@@ -294,6 +295,12 @@ export class SpaceRuntime {
 	private nonTerminalIdleCounts = new Map<string, number>();
 	private readonly toolContinuationRepo: ToolContinuationRecoveryRepository;
 
+	/**
+	 * Manages gate poll timers for periodic script execution and message injection.
+	 * Lazy-initialized when taskAgentManager is available.
+	 */
+	private pollManager: GatePollManager | null = null;
+
 	constructor(private config: SpaceRuntimeConfig) {
 		this.notificationSink = config.notificationSink ?? new NullNotificationSink();
 		this.completionDetector = config.completionDetector ?? new CompletionDetector(config.taskRepo);
@@ -396,6 +403,24 @@ export class SpaceRuntime {
 	setTaskAgentManager(manager: TaskAgentManager): void {
 		this.config.taskAgentManager = manager;
 		manager.attachToolContinuationRepo?.(this.toolContinuationRepo);
+		// Initialize the poll manager now that taskAgentManager is available
+		if (!this.pollManager) {
+			this.pollManager = new GatePollManager(
+				{
+					injectSubSessionMessage: (sessionId, message, isSynthetic) =>
+						manager.injectSubSessionMessage(sessionId, message, isSynthetic),
+				},
+				{
+					getActiveSessionForNode: (runId, nodeId) => {
+						const executions = this.config.nodeExecutionRepo.listByNode(runId, nodeId);
+						const active = executions.find(
+							(e) => e.status !== 'cancelled' && e.status !== 'idle' && e.agentSessionId !== null
+						);
+						return active?.agentSessionId ?? null;
+					},
+				}
+			);
+		}
 	}
 
 	/**
@@ -891,6 +916,8 @@ export class SpaceRuntime {
 	 * be resumed by calling start() again.
 	 */
 	async stop(): Promise<void> {
+		// Stop all gate poll timers
+		this.pollManager?.stopAll();
 		if (this.tickTimer !== null) {
 			clearInterval(this.tickTimer);
 			this.tickTimer = null;
@@ -1083,6 +1110,14 @@ export class SpaceRuntime {
 		// TODO: Milestone 6: pass resolvedChannels to session group creation in
 		// TaskAgentManager.spawnTaskAgent() rather than storing in run config.
 		this.storeWorkflowChannels(run.id, workflow.channels ?? []);
+
+		// Start gate polls for this workflow run
+		if (this.pollManager && canonicalTask) {
+			const pollContext = this.buildPollScriptContext(canonicalTask, run, spaceId);
+			if (pollContext) {
+				this.pollManager.startPolls(run.id, workflow, space.workspacePath, spaceId, pollContext);
+			}
+		}
 
 		return { run, tasks: canonicalTask ? [canonicalTask] : [] };
 	}
@@ -3277,6 +3312,55 @@ export class SpaceRuntime {
 	 * 2. Scan node_executions for those nodes.
 	 * 3. Return the first non-empty execution result.
 	 */
+
+	/**
+	 * Build the poll script context for a workflow run.
+	 *
+	 * Resolves task metadata and PR URL from artifacts for injection as
+	 * environment variables into poll scripts.
+	 *
+	 * @returns PollScriptContext, or null when the task is missing
+	 */
+	private buildPollScriptContext(
+		task: SpaceTask,
+		run: SpaceWorkflowRun,
+		spaceId: string
+	): PollScriptContext | null {
+		// Resolve PR URL from artifacts (same pattern as dispatchPostApproval)
+		let prUrl = '';
+		if (this.config.artifactRepo) {
+			try {
+				const artifacts = this.config.artifactRepo.listByRun(run.id);
+				for (let i = artifacts.length - 1; i >= 0; i--) {
+					const data = artifacts[i]?.data;
+					if (!data) continue;
+					const candidate =
+						(typeof data.prUrl === 'string' && data.prUrl) ||
+						(typeof data.pr_url === 'string' && data.pr_url);
+					if (candidate) {
+						prUrl = candidate;
+						break;
+					}
+				}
+			} catch {
+				// Swallow — PR URL is best-effort for polls
+			}
+		}
+
+		const prCtx = extractPrContext(prUrl);
+
+		return {
+			TASK_ID: task.id,
+			TASK_TITLE: task.title,
+			SPACE_ID: spaceId,
+			PR_URL: prUrl,
+			PR_NUMBER: prCtx.PR_NUMBER,
+			REPO_OWNER: prCtx.REPO_OWNER,
+			REPO_NAME: prCtx.REPO_NAME,
+			WORKFLOW_RUN_ID: run.id,
+		};
+	}
+
 	private resolveCompletionSummary(runId: string, workflow: SpaceWorkflow): string | undefined {
 		const channels = workflow.channels ?? [];
 		const nodes = workflow.nodes;
@@ -3380,6 +3464,8 @@ export class SpaceRuntime {
 					this.notifiedTaskSet.delete(`${task.id}:blocked`);
 					this.notifiedTaskSet.delete(`${task.id}:timeout`);
 				}
+				// Stop gate polls for this terminal run
+				this.pollManager?.stopPolls(runId);
 				this.executors.delete(runId);
 				this.executorMeta.delete(runId);
 			}
