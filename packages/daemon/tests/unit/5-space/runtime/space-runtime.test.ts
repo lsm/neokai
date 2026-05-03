@@ -1170,6 +1170,12 @@ describe('SpaceRuntime', () => {
 						? await overrides.spawn(execution.id)
 						: `session:${execution.id}`;
 					liveSessions.add(sessionId);
+					nodeExecutionRepo.update(execution.id, {
+						status: 'in_progress',
+						agentSessionId: sessionId,
+						startedAt: Date.now(),
+						completedAt: null,
+					});
 					return sessionId;
 				},
 				flushPendingMessagesForTarget: async (
@@ -1357,6 +1363,60 @@ describe('SpaceRuntime', () => {
 			expect(tam._spawnedExecutionIds).toHaveLength(1);
 		});
 
+		test('repairs pending execution state when it references a live session before spawn', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coder', agentId: AGENT_CODER },
+			]);
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Respawn repair'
+			);
+			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
+			nodeExecutionRepo.update(execution.id, {
+				status: 'pending',
+				agentSessionId: 'session:live-respawn',
+				startedAt: null,
+				completedAt: null,
+			});
+			const tam = makeRepairTam({ liveSessions: new Set(['session:live-respawn']) });
+			await buildRepairRuntime(tam, new PendingAgentMessageRepository(db)).executeTick();
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			expect(updated.status).toBe('in_progress');
+			expect(updated.agentSessionId).toBe('session:live-respawn');
+			expect(updated.startedAt).toBeTruthy();
+			expect(tam._spawnedExecutionIds).toHaveLength(0);
+		});
+
+		test('clears dead pending session references and spawns a fresh session', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coder', agentId: AGENT_CODER },
+			]);
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Dead respawn repair'
+			);
+			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
+			nodeExecutionRepo.update(execution.id, {
+				status: 'pending',
+				agentSessionId: 'session:dead-respawn',
+				startedAt: null,
+				result: 'stale error',
+				completedAt: Date.now(),
+			});
+			const tam = makeRepairTam();
+			await buildRepairRuntime(tam, new PendingAgentMessageRepository(db)).executeTick();
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			expect(tam._spawnedExecutionIds).toEqual([execution.id]);
+			expect(updated.status).toBe('in_progress');
+			expect(updated.agentSessionId).toBe(`session:${execution.id}`);
+			expect(updated.result).toBeNull();
+			expect(updated.completedAt).toBeNull();
+		});
+
 		test('resolved handoffs do not bind to a different live slot on the same node', async () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
@@ -1474,6 +1534,67 @@ describe('SpaceRuntime', () => {
 			expect(row.lastError).toContain('space missing-space not found');
 			expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
 			expect(taskRepo.getTask(task.id)!.status).toBe('blocked');
+		});
+
+		test('preserves terminal execution state when spawn fails after concurrent cancellation', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coder', agentId: AGENT_CODER },
+			]);
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Concurrent spawn cancellation'
+			);
+			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
+			const tam = makeRepairTam({
+				spawn: async (executionId) => {
+					nodeExecutionRepo.update(executionId, {
+						status: 'cancelled',
+						result: 'cancelled concurrently',
+						completedAt: Date.now(),
+					});
+					throw new Error('spawn failed after cancellation');
+				},
+			});
+			await buildRepairRuntime(tam, new PendingAgentMessageRepository(db)).executeTick();
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			expect(updated.status).toBe('cancelled');
+			expect(updated.result).toBe('cancelled concurrently');
+			expect(updated.agentSessionId).toBeNull();
+		});
+
+		test('spawn retry exhaustion blocks the run in the same tick', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coder', agentId: AGENT_CODER },
+			]);
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Spawn retry exhaustion'
+			);
+			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
+			const tam = makeRepairTam({
+				spawn: async () => {
+					throw new Error('spawn keeps failing');
+				},
+			});
+			const rt = buildRepairRuntime(tam, new PendingAgentMessageRepository(db));
+
+			await rt.executeTick();
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+			await rt.executeTick();
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+			await rt.executeTick();
+
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			expect(updated.status).toBe('blocked');
+			expect(updated.result).toContain('spawn keeps failing');
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(tasks[0].id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(tasks[0].id)!.blockReason).toBe('agent_crashed');
+			expect(taskRepo.getTask(tasks[0].id)!.result).toContain('spawn keeps failing');
 		});
 
 		test('activation failures are retried and eventually block the run', async () => {
@@ -1627,10 +1748,23 @@ describe('SpaceRuntime', () => {
 					_space: unknown,
 					_workflow: unknown,
 					_run: unknown,
-					_execution: unknown
-				) => spawnImpl(task),
+					execution: unknown
+				) => {
+					const sessionId = await spawnImpl(task);
+					const e = execution as { id?: string };
+					if (e.id) {
+						nodeExecutionRepo.update(e.id, {
+							status: 'in_progress',
+							agentSessionId: sessionId,
+							startedAt: Date.now(),
+							completedAt: null,
+						});
+					}
+					return sessionId;
+				},
 				cancelBySessionId: overrides.cancelBySessionId ?? (() => {}),
 				interruptBySessionId: overrides.interruptBySessionId ?? (async () => {}),
+				getAgentSessionById: () => null,
 				rehydrate: overrides.rehydrate ?? (async () => {}),
 				_spawned: spawned,
 			};
