@@ -2627,6 +2627,15 @@ export class SpaceRuntime {
 			if (!first) return;
 			blockedReason = `Queued workflow handoff to ${targetAgentName} failed after ${first.attempts} attempt(s): ${first.lastError ?? 'delivery failed'}`;
 		};
+		const failQueuedHandoffsForCancelledExecution = (
+			targetAgentName: string,
+			execution: NodeExecution,
+			rowsForCurrentAttempt: typeof pending
+		): void => {
+			const reason = `Queued workflow handoff to ${targetAgentName} cannot be delivered because target execution ${execution.id} is cancelled${execution.result ? `: ${execution.result}` : ''}`;
+			for (const row of rowsForCurrentAttempt) repo.markFailed(row.id, reason);
+			blockedReason = reason;
+		};
 
 		for (const targetAgentName of targets) {
 			const rowsForTarget = pending.filter((row) => row.targetAgentName === targetAgentName);
@@ -2659,6 +2668,7 @@ export class SpaceRuntime {
 					continue;
 				}
 				if (execution.status === 'cancelled') {
+					failQueuedHandoffsForCancelledExecution(targetAgentName, execution, rowsForTarget);
 					continue;
 				}
 
