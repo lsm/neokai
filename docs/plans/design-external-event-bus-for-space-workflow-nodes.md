@@ -463,7 +463,7 @@ class EventRouter {
         const exec = nodeExecutions.find(
           e => e.workflowNodeId === node.id && e.agentName === agent.name
         );
-        if (!exec || isTerminal(exec.status)) continue;
+        if (!exec || !isReceivingStatus(exec.status)) continue;
 
         for (const interest of agent.eventInterests) {
           const sub: Subscription = {
@@ -487,15 +487,16 @@ class EventRouter {
 
   /**
    * Unregister subscriptions for a specific node execution.
-   * Called when a node execution transitions to a non-receiving state.
+   * Called when a node execution transitions to `cancelled` state.
    *
-   * Receiving states: in_progress (active agent session)
-   * Non-receiving states: pending, idle, waiting_rebind, blocked, cancelled
+   * Only `cancelled` nodes are removed from the subscription index.
+   * All other states (`pending`, `in_progress`, `idle`, `waiting_rebind`,
+   * `blocked`) remain subscribed because:
+   * - `in_progress`: live session receives events immediately
+   * - `idle`: session exists and can be woken via injectMessage (defer mode)
+   * - `waiting_rebind`/`blocked`/`pending`: events queued for later delivery
    *
-   * For `idle` and `waiting_rebind`, events may still be relevant (agent
-   * could be re-activated), so we keep subscriptions but skip delivery
-   * (the event is queued in the in-memory pending queue instead).
-   * For `blocked`/`cancelled`, subscriptions are fully removed.
+   * See `isReceivingStatus` helper for the complete state classification.
    */
   unregisterExecution(
     workflowRunId: string,
@@ -610,22 +611,32 @@ class EventRouter {
       }
 
       case 'task': {
-        // Check if event's PR number matches any task in this workflow run.
-        // Note: a workflow run CAN have multiple tasks (e.g., sub-tasks created
-        // by the planner). We check ALL non-archived tasks for a PR match.
+        // The DaemonHub 'space.githubEvent.routed' event already carries the
+        // resolved taskId from SpacePrTaskResolver. We use that directly instead
+        // of re-running the resolver, which could match a historical task outside
+        // this run (SpacePrTaskResolver searches ALL tasks in the space).
+        //
+        // We constrain matching to tasks within THIS workflow run only:
+        // 1. Load all non-archived tasks for this run.
+        // 2. Check if the event's routed taskId is among them.
         if (!event.prNumber) return false;
-        const tasks = this.taskRepo.listByWorkflowRun(sub.workflowRunId);
-        if (tasks.length === 0) return false;
 
-        // The SpacePrTaskResolver already handles the PR → task matching logic.
-        // For the common case (1 task per run), this is a single lookup.
-        // For multi-task runs, we check if any task matches.
+        // Optimization: the adapter includes the routed taskId in ExternalEvent.payload.
+        // Use it for a direct membership check — no resolver call needed.
+        const routedTaskId = event.payload?.taskId as string | undefined;
+        if (routedTaskId) {
+          const tasks = this.taskRepo.listByWorkflowRun(sub.workflowRunId);
+          return tasks.some(t => t.id === routedTaskId);
+        }
+
+        // Fallback (should rarely happen): if the adapter didn't include taskId,
+        // load run tasks and check if any references the event's PR number.
+        const tasks = this.taskRepo.listByWorkflowRun(sub.workflowRunId);
         for (const task of tasks) {
           const resolved = this.prResolver.resolve(sub.spaceId, {
             repoOwner: event.repoOwner ?? '',
             repoName: event.repoName ?? '',
             prNumber: event.prNumber,
-            // ... minimal shape for resolver
           } as any);
           if (resolved.taskId === task.id) return true;
         }
@@ -778,19 +789,36 @@ class TrieNode<T> {
 
 ### Helper: `isReceivingStatus`
 
+Determines whether a node execution should remain in the subscription index.
+This is intentionally different from `TERMINAL_NODE_EXECUTION_STATUSES` in
+`node-execution-manager.ts`, which includes `idle`. For the event bus, `idle`
+nodes MUST stay subscribed because:
+
+1. The agent session still exists and can be woken via `injectMessage`.
+2. The `deliveryMode: 'defer'` mechanism handles idle sessions natively.
+3. Removing idle nodes from the subscription index would prevent wake-on-idle
+   delivery — the core use case for the event bus.
+
 ```typescript
 import type { NodeExecutionStatus } from '@neokai/shared';
 
-/** Node execution states that should NOT receive events. */
-const TERMINAL_RECEIVING_STATES: ReadonlySet<NodeExecutionStatus> = new Set([
+/**
+ * States where the node should be excluded from the subscription index.
+ * Only `cancelled` is excluded — the node has been permanently stopped.
+ *
+ * States that remain subscribed:
+ * - `pending`       — no session yet, events queued for first turn
+ * - `in_progress`   — live session, events injected immediately
+ * - `idle`          — session exists but finished a turn; events wake it
+ * - `waiting_rebind` — session paused for tool recovery; events queued
+ * - `blocked`       — session exists but waiting for human; events queued
+ */
+const NON_RECEIVING_STATES: ReadonlySet<NodeExecutionStatus> = new Set([
   'cancelled',
-  // Note: 'idle' and 'waiting_rebind' keep their subscriptions alive —
-  // the agent session exists and may be re-activated. Events are queued
-  // rather than delivered immediately for these states.
 ]);
 
 function isReceivingStatus(status: NodeExecutionStatus): boolean {
-  return !TERMINAL_RECEIVING_STATES.has(status);
+  return !NON_RECEIVING_STATES.has(status);
 }
 ```
 
