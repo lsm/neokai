@@ -22,10 +22,10 @@ import {
 	currentSpaceTaskIdSignal,
 	currentSpaceViewModeSignal,
 } from '../lib/signals';
-import { isActionRequired, isActiveTask } from '../lib/task-filters';
+import { isActionRequired, isActiveTask, isDraftTask } from '../lib/task-filters';
 import { cn } from '../lib/utils';
 
-type TaskTab = 'active' | 'action';
+type TaskTab = 'active' | 'action' | 'draft';
 
 const sessionStatusColors: Record<string, string> = {
 	active: 'bg-green-500',
@@ -116,6 +116,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		if (!task) return;
 		if (isActiveTask(task) && taskTab !== 'active') setTaskTab('active');
 		else if (isActionRequired(task) && taskTab !== 'action') setTaskTab('action');
+		else if (isDraftTask(task) && taskTab !== 'draft') setTaskTab('draft');
 		// Only re-run when the selected task changes, not on every task list update.
 	}, [selectedTaskId]);
 
@@ -129,19 +130,22 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 
 	// Action tab + Tasks-nav badge share the same predicate (`isActionRequired`)
 	// so the badge count cannot drift from what's visible under the Action tab.
-	const { activeCount, actionCount } = useMemo(() => {
+	const { activeCount, actionCount, draftCount } = useMemo(() => {
 		let active = 0;
 		let action = 0;
+		let draft = 0;
 		for (const task of tasks) {
 			if (isActiveTask(task)) active++;
 			else if (isActionRequired(task)) action++;
+			else if (isDraftTask(task)) draft++;
 		}
-		return { activeCount: active, actionCount: action };
+		return { activeCount: active, actionCount: action, draftCount: draft };
 	}, [tasks]);
 
 	const tasksForTab = useMemo(() => {
 		const sorted = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt);
-		const predicate = taskTab === 'action' ? isActionRequired : isActiveTask;
+		const predicate =
+			taskTab === 'action' ? isActionRequired : taskTab === 'draft' ? isDraftTask : isActiveTask;
 		return sorted.filter(predicate);
 	}, [tasks, taskTab, selectedTaskId]);
 
@@ -350,6 +354,14 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 							active={taskTab === 'action'}
 							onClick={() => setTaskTab('action')}
 						/>
+						{draftCount > 0 && (
+							<TaskTabButton
+								label="Drafts"
+								count={draftCount}
+								active={taskTab === 'draft'}
+								onClick={() => setTaskTab('draft')}
+							/>
+						)}
 					</div>
 					{tasksForTab.length === 0 ? (
 						<div class="px-4 py-3 text-xs text-gray-600">No tasks</div>

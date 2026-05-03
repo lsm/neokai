@@ -390,7 +390,7 @@ export function navigateToSpaceConfigure(
 
 export function navigateToSpaceTasks(
 	spaceId: string,
-	tab?: 'action' | 'active' | 'completed' | 'archived',
+	tab?: 'action' | 'active' | 'completed' | 'archived' | 'draft',
 	replace = false
 ): void {
 	if (routerState.isNavigating) return;
