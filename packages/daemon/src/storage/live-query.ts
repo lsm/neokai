@@ -7,7 +7,10 @@
  */
 
 import { Database as BunDatabase } from 'bun:sqlite';
+import { Logger } from '../lib/logger';
 import type { ReactiveDatabase, TableChangeScope } from './reactive-database';
+
+const log = new Logger('live-query');
 
 // ============================================================================
 // Public API types
@@ -402,14 +405,21 @@ export class LiveQueryEngine {
 		const keys = this.tableIndex.get(table.toLowerCase());
 		if (!keys || keys.size === 0) return;
 
+		let evaluated = 0;
+		let skipped = 0;
+
 		for (const cacheKey of keys) {
 			const entry = this.queries.get(cacheKey);
 			if (!entry || entry.pendingEval) continue;
 
 			// Scope filtering: when scope metadata is available and the entry
 			// has a filter, skip re-evaluation if the change is unrelated.
-			if (scope && entry.scopeFilter && !entry.scopeFilter(scope)) continue;
+			if (scope && entry.scopeFilter && !entry.scopeFilter(scope)) {
+				skipped++;
+				continue;
+			}
 
+			evaluated++;
 			entry.pendingEval = true;
 			if (entry.debounceMs > 0) {
 				entry.pendingTimer = setTimeout(() => this.evaluateQuery(cacheKey), entry.debounceMs);
@@ -417,6 +427,10 @@ export class LiveQueryEngine {
 				queueMicrotask(() => this.evaluateQuery(cacheKey));
 			}
 		}
+
+		log.debug(
+			`table=${table} scope=${scope ? 'present' : 'none'} evaluated=${evaluated} skipped=${skipped} total=${keys.size}`
+		);
 	}
 
 	private evaluateQuery(cacheKey: string): void {
