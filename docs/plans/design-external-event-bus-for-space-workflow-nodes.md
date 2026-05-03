@@ -1,0 +1,851 @@
+# Design: External Event Bus for Space Workflow Nodes
+
+## Status: Draft
+
+## Problem
+
+The Space Agent spends most of its time relaying "check the new review comments" to the coder node. External events (PR reviews, CI failures, etc.) arrive via webhooks/polling but have no path to workflow **nodes** — they only route to Rooms or to the Space Agent's global session (via `SpaceGitHubService`). We need a system where workflow nodes declare interest in event types, and matching events are delivered directly to their agent sessions.
+
+## Current State
+
+Two parallel event pipelines exist today, neither of which routes to individual workflow nodes:
+
+1. **Room pipeline** (`GitHubService`): Webhook → normalize → filter → security → route → `deliverToRoom()` → DaemonHub `room.message`. Routes to **Rooms**, not Spaces.
+2. **Space pipeline** (`SpaceGitHubService`): Webhook → normalize → dedupe → `SpacePrTaskResolver.resolve()` → `injectTaskAgent()`. Routes events to the **Task Agent session** (the orchestrator), which must then manually relay to the coder node.
+
+The Space pipeline already does the hard part — it normalizes events, resolves them to a task by PR number, and injects them into the Task Agent session. But it stops one hop short: the coder node still depends on the Task Agent to forward relevant events.
+
+## Design Overview
+
+```
+External Event Sources (GitHub webhook, polling, future: Slack, CI)
+       │
+       ▼
+┌─────────────────────┐
+│  EventIngestion     │  Normalize → validate → publish to EventBus
+│  (adapter per source│
+└────────┬────────────┘
+         │ publish(topic, payload)
+         ▼
+┌─────────────────────┐
+│  EventBus           │  In-memory, backed by TypedHub. Namespaced topics.
+│  (singleton)        │  O(1) subscriber lookup by topic pattern.
+└────────┬────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  EventRouter        │  Subscribes to all topics. Matches events to
+│  (per-runtime)      │  active node interests. Delivers via AgentMessageRouter
+│                     │  or injects directly into sessions.
+└─────────────────────┘
+```
+
+## 1. Namespaced Event Topics
+
+Topic format: `{source}/{owner}/{repo}/{resource}.{action}`
+
+Examples:
+```
+github/lsm/neokai/pull_request.review_submitted
+github/lsm/neokai/pull_request.comment_created
+github/lsm/neokai/pull_request.synchronize
+github/lsm/neokai/check_suite.completed
+github/lsm/neokai/issues.opened
+github/lsm/neokai/pull_request.*            ← wildcard: all PR events for this repo
+github/lsm/neokai/*.*                       ← wildcard: all events for this repo
+github/lsm/neokai/pull_request.review_*     ← prefix wildcard: all review events
+```
+
+### Topic construction rules
+
+1. `source` — adapter identifier (`github`, `slack`, `ci`). Lowercase, no slashes.
+2. `owner/repo` — from the event's repository context. Both lowercase for case-insensitive matching.
+3. `resource` — the GitHub resource type: `pull_request`, `issue`, `check_suite`, `pull_request_review`, etc.
+4. `action` — the specific action: `opened`, `review_submitted`, `comment_created`, `completed`, etc.
+5. For resources without a natural `owner/repo` (e.g. a Slack message), the convention is `{source}/{workspace}/{channel}.{action}`.
+
+### Matching rules
+
+Subscriptions use glob-style patterns:
+- `*` matches any single path segment (no slashes)
+- `**` matches any number of path segments
+- Literal segments match exactly (case-insensitive)
+
+We implement matching via a **trie-based prefix index** (see §4), not regex. This keeps matching O(k) where k = topic depth, independent of the number of subscriptions.
+
+## 2. Node-Level Event Subscription (`eventInterests`)
+
+### Schema addition to `WorkflowNodeAgent`
+
+```typescript
+// packages/shared/src/types/space.ts — add to WorkflowNodeAgent
+
+export interface EventInterest {
+  /**
+   * Glob pattern matching event topics.
+   * Examples: 'github/*/*/pull_request.*', 'ci/*/*/check_suite.completed'
+   */
+  topic: string;
+
+  /**
+   * Scoping mode — determines how the router filters events for this node.
+   * - 'task'    — Only events related to THIS TASK (e.g. same PR number, same branch).
+   *               The router uses the task's associated PR/branch to filter.
+   * - 'repo'    — All events for the space's configured repository.
+   * - 'global'  — All events matching the topic pattern, no additional filtering.
+   */
+  scope: 'task' | 'repo' | 'global';
+
+  /**
+   * Optional label for diagnostics. Not used in routing logic.
+   * Example: 'PR review comments', 'CI failures'
+   */
+  label?: string;
+}
+
+// Added to WorkflowNodeAgent:
+export interface WorkflowNodeAgent {
+  // ... existing fields ...
+
+  /**
+   * Events this node is interested in receiving. When matched, the event is
+   * injected into the agent's session as a structured message.
+   * Omit or empty array = no event subscriptions (default).
+   */
+  eventInterests?: EventInterest[];
+}
+```
+
+### Example workflow definition
+
+```json
+{
+  "nodes": [
+    {
+      "id": "coder",
+      "name": "Code",
+      "agents": [{
+        "agentId": "...",
+        "name": "coder",
+        "eventInterests": [
+          {
+            "topic": "github/*/*/pull_request.review_submitted",
+            "scope": "task",
+            "label": "PR reviews on my task's PR"
+          },
+          {
+            "topic": "github/*/*/pull_request.comment_created",
+            "scope": "task",
+            "label": "PR comments on my task's PR"
+          },
+          {
+            "topic": "github/*/*/pull_request_review_comment.*",
+            "scope": "task",
+            "label": "Inline review comments"
+          }
+        ]
+      }]
+    },
+    {
+      "id": "monitor",
+      "name": "CI Monitor",
+      "agents": [{
+        "agentId": "...",
+        "name": "ci-monitor",
+        "eventInterests": [
+          {
+            "topic": "github/*/*/check_suite.completed",
+            "scope": "repo",
+            "label": "All CI completions in the repo"
+          }
+        ]
+      }]
+    }
+  ]
+}
+```
+
+### Scoping details
+
+**`task` scope** is the critical innovation. The router resolves the task's context at match time:
+
+1. The task's `SpaceTask` record has `workflowRunId` and (via `workflow_run_artifacts` or gate data) an associated PR number and branch name.
+2. The router queries the same `SpacePrTaskResolver` that `SpaceGitHubService` already uses to match PR numbers to tasks.
+3. For a `task`-scoped subscription, the router checks: does this event's PR number / branch match the node execution's parent task?
+4. The node author never specifies a PR number — it's implicit from the task context.
+
+**`repo` scope** filters to events from any of the space's watched repositories (`space_github_watched_repos`). The node author doesn't need to know repo names.
+
+**`global` scope** passes through all events matching the topic pattern. Use sparingly (e.g. a "global monitor" node).
+
+### Auto-scoping resolution at runtime
+
+When an event arrives, the router:
+
+1. Extracts `prNumber` and `repoOwner/repoName` from the event payload.
+2. For each active node execution with `eventInterests`:
+   a. Compiles the interest's `topic` glob against the event's topic.
+   b. If matched, checks scope:
+      - `task`: resolves `SpaceTask` → `SpacePrTaskResolver` → does event's PR match this task?
+      - `repo`: does event's repo match any watched repo in the node's space?
+      - `global`: pass.
+   c. If scope check passes, the event is queued for delivery to this node's agent session.
+
+## 3. EventIngestion Adapter Interface
+
+```typescript
+// packages/daemon/src/lib/space/runtime/event-bus/types.ts
+
+/**
+ * A normalized external event on the bus.
+ */
+export interface ExternalEvent {
+  /** Unique event ID (UUID) */
+  id: string;
+  /** Fully qualified topic: 'github/owner/repo/resource.action' */
+  topic: string;
+  /** Timestamp when the event occurred (epoch ms) */
+  occurredAt: number;
+  /** Timestamp when the event was ingested (epoch ms) */
+  ingestedAt: number;
+  /** Source adapter identifier */
+  source: string;
+  /**
+   * For scope resolution. Not all events have a PR number;
+   * absence means 'task'-scoped subscriptions won't match.
+   */
+  prNumber?: number;
+  /** Repository owner (lowercase) */
+  repoOwner?: string;
+  /** Repository name (lowercase) */
+  repoName?: string;
+  /** Branch name, if available */
+  branch?: string;
+  /** Human-readable summary for agent consumption */
+  summary: string;
+  /** External URL (e.g. GitHub PR link) */
+  externalUrl?: string;
+  /** Structured payload — adapter-specific, not constrained */
+  payload: Record<string, unknown>;
+  /**
+   * Deduplication key. The bus tracks delivered events by (eventId, nodeId)
+   * to prevent double delivery.
+   */
+  dedupeKey: string;
+}
+
+/**
+ * Interface that event source adapters must implement.
+ */
+export interface EventAdapter {
+  /** Adapter identifier (used in topic namespace: '{source}/...') */
+  readonly sourceId: string;
+
+  /**
+   * Start the adapter. Called once at daemon startup.
+   * The adapter calls `publisher.publish(event)` whenever it has an event.
+   */
+  start(publisher: EventPublisher): Promise<void>;
+
+  /** Stop the adapter. Called at daemon shutdown. */
+  stop(): Promise<void>;
+}
+
+/**
+ * Callback adapters use to publish events onto the bus.
+ */
+export interface EventPublisher {
+  publish(event: ExternalEvent): Promise<void>;
+}
+```
+
+### GitHub adapter
+
+The GitHub adapter wraps the existing `SpaceGitHubService.ingest()` pipeline. Rather than duplicating normalization logic, the adapter hooks into the point where `SpaceGitHubService` has already normalized and resolved the event:
+
+```typescript
+class GitHubEventAdapter implements EventAdapter {
+  readonly sourceId = 'github';
+
+  constructor(
+    private readonly spaceGitHubService: SpaceGitHubService,
+    private readonly watchedRepoLookup: (owner: string, repo: string) => { spaceId: string }[]
+  ) {}
+
+  async start(publisher: EventPublisher): Promise<void> {
+    // Hook into SpaceGitHubService by intercepting the post-normalization path.
+    // SpaceGitHubService already:
+    //   1. Normalizes the webhook/polling event
+    //   2. Deduplicates via dedupeKey
+    //   3. Resolves PR → taskId via SpacePrTaskResolver
+    //   4. Emits DaemonHub 'space.githubEvent.routed'
+    //
+    // The adapter subscribes to 'space.githubEvent.routed' on DaemonHub
+    // and converts the event to an ExternalEvent for the bus.
+    //
+    // This means:
+    //   - No change to existing webhook/polling normalization
+    //   - Events continue flowing to Task Agent as before
+    //   - Additionally, events appear on the EventBus for node delivery
+  }
+}
+```
+
+The adapter subscribes to the existing `space.githubEvent.routed` DaemonHub event (already emitted by `SpaceGitHubService.appendTaskActivity`). It converts the event to `ExternalEvent` format and publishes to the bus.
+
+**Why this approach:**
+- Zero changes to the existing `SpaceGitHubService` webhook handler or polling pipeline.
+- The existing PR-to-task resolution (`SpacePrTaskResolver`) continues to work.
+- The existing Task Agent injection continues to work (we don't replace it, we supplement it).
+- The adapter is purely additive: it converts an already-normalized event into bus format.
+
+## 4. EventRouter Design
+
+### Architecture
+
+The `EventRouter` subscribes to all topics on the `EventBus`. When an event arrives, it:
+
+1. Looks up all active node executions that have `eventInterests`.
+2. For each matching interest, checks scope.
+3. Delivers the event to the matching node's agent session.
+
+### Trie-based subscription index
+
+For O(1)-ish lookup, we maintain a **topic trie**:
+
+```
+root
+  └── github
+      └── *                    ← matches any owner
+          └── *                ← matches any repo
+              ├── pull_request
+              │   ├── *        ← all PR actions
+              │   │   └── [subscriptions: coder(task), ...]
+              │   ├── review_submitted
+              │   │   └── [subscriptions: coder(task)]
+              │   └── comment_created
+              │       └── [subscriptions: coder(task)]
+              └── check_suite
+                  └── completed
+                      └── [subscriptions: ci-monitor(repo)]
+```
+
+The trie maps topic segments to `Set<Subscription>` at leaf nodes. Wildcard segments (`*`) match any single segment at that depth.
+
+**Build cost**: O(n × k) where n = number of subscriptions, k = topic depth (typically 4-5). Built once when a workflow run starts.
+
+**Lookup cost**: O(k) per event — walk the trie by topic segment, collect subscriptions at each level (exact match + wildcard).
+
+### Subscription index lifecycle
+
+The index is **per-SpaceRuntime instance** and rebuilt when:
+
+1. A workflow run starts (node executions are created with interests from the workflow definition).
+2. A node execution transitions to a new status (e.g. `in_progress` → starts receiving events; `idle`/`cancelled` → removed from index).
+3. A workflow definition is updated (interests may have changed — next run picks up changes).
+
+```typescript
+interface Subscription {
+  workflowRunId: string;
+  nodeId: string;
+  agentName: string;
+  interest: EventInterest;    // from the workflow definition
+  agentSessionId: string | null; // resolved at delivery time
+  spaceId: string;
+}
+```
+
+### EventRouter implementation sketch
+
+```typescript
+class EventRouter {
+  // topic trie for fast lookup
+  private topicTrie: TopicTrie<Subscription[]> = new TopicTrie();
+
+  // track which runs have active subscriptions (for lifecycle management)
+  private activeRuns: Map<string, Set<Subscription>> = new Map();
+
+  // dedup: (dedupeKey, agentSessionId) → timestamp
+  private delivered: Map<string, number> = new Map();
+
+  constructor(
+    private readonly eventBus: EventBus,
+    private readonly nodeExecutionRepo: NodeExecutionRepository,
+    private readonly taskRepo: SpaceTaskRepository,
+    private readonly sessionFactory: SessionFactory,
+    private readonly prResolver: SpacePrTaskResolver,
+  ) {
+    // Subscribe to ALL events on the bus
+    this.eventBus.subscribe('*', this.handleEvent.bind(this));
+  }
+
+  /**
+   * Register all event interests for a workflow run.
+   * Called when a workflow run starts or when node executions change.
+   */
+  registerRunInterests(
+    spaceId: string,
+    workflowRunId: string,
+    workflow: SpaceWorkflow,
+    nodeExecutions: NodeExecution[],
+  ): void {
+    // Clear previous subscriptions for this run
+    this.clearRunInterests(workflowRunId);
+
+    const runSubs = new Set<Subscription>();
+
+    for (const node of workflow.nodes) {
+      for (const agent of node.agents) {
+        if (!agent.eventInterests?.length) continue;
+
+        // Only register if this node has at least one active (non-terminal) execution
+        const exec = nodeExecutions.find(
+          e => e.workflowNodeId === node.id && e.agentName === agent.name
+        );
+        if (!exec || isTerminal(exec.status)) continue;
+
+        for (const interest of agent.eventInterests) {
+          const sub: Subscription = {
+            workflowRunId,
+            nodeId: node.id,
+            agentName: agent.name,
+            interest,
+            agentSessionId: exec.agentSessionId,
+            spaceId,
+          };
+
+          // Insert into trie
+          this.topicTrie.insert(interest.topic, sub);
+          runSubs.add(sub);
+        }
+      }
+    }
+
+    this.activeRuns.set(workflowRunId, runSubs);
+  }
+
+  private async handleEvent(event: ExternalEvent): Promise<void> {
+    // 1. Look up matching subscriptions via trie
+    const matched = this.topicTrie.lookup(event.topic);
+
+    if (matched.length === 0) return;
+
+    // 2. For each matched subscription, check scope and deliver
+    for (const sub of matched) {
+      await this.deliverToSubscription(event, sub);
+    }
+  }
+
+  private async deliverToSubscription(event: ExternalEvent, sub: Subscription): Promise<void> {
+    // Scope check
+    if (!this.passesScopeCheck(event, sub)) return;
+
+    // Dedup check
+    const dedupeKey = `${event.dedupeKey}:${sub.agentName}:${sub.workflowRunId}`;
+    if (this.delivered.has(dedupeKey)) return;
+
+    // Resolve session
+    const sessionId = await this.resolveSession(sub);
+    if (!sessionId) {
+      // Session not active — queue for later delivery
+      this.queueForDelivery(event, sub);
+      return;
+    }
+
+    // Format and inject
+    const message = this.formatEventMessage(event);
+    try {
+      await this.sessionFactory.injectMessage(sessionId, message, {
+        deliveryMode: 'defer',
+      });
+
+      // Mark delivered
+      this.delivered.set(dedupeKey, Date.now());
+    } catch (err) {
+      log.warn(`Failed to deliver event to ${sub.agentName}`, { error: err });
+    }
+  }
+
+  private passesScopeCheck(event: ExternalEvent, sub: Subscription): boolean {
+    switch (sub.interest.scope) {
+      case 'global':
+        return true;
+
+      case 'repo': {
+        // Check if event's repo matches any watched repo in this space
+        if (!event.repoOwner || !event.repoName) return false;
+        return this.isWatchedRepo(sub.spaceId, event.repoOwner, event.repoName);
+      }
+
+      case 'task': {
+        // Check if event's PR number matches the subscription's task
+        if (!event.prNumber) return false;
+        const task = this.taskRepo.getByWorkflowRunId(sub.workflowRunId);
+        if (!task) return false;
+        // Reuse the existing SpacePrTaskResolver logic
+        return this.prResolver.resolve(sub.spaceId, {
+          repoOwner: event.repoOwner ?? '',
+          repoName: event.repoName ?? '',
+          prNumber: event.prNumber,
+          // ... minimal shape for resolver
+        } as any).taskId === task.id;
+      }
+    }
+  }
+}
+```
+
+## 5. Event Delivery Lifecycle
+
+### State machine per event delivery
+
+```
+Event arrives → Match subscriptions → Scope check → Dedup check → Session check
+                                                                         │
+                                                          ┌──────────────┼──────────────┐
+                                                          ▼              ▼              ▼
+                                                    Session live   Session idle   No session
+                                                          │              │              │
+                                                          ▼              ▼              ▼
+                                                    Inject via      Wake + inject  Queue in
+                                                    injectMessage   injectMessage  pending_events
+                                                          │              │              │
+                                                          ▼              ▼              ▼
+                                                    Mark delivered  Mark delivered  Await session
+                                                                                     start
+```
+
+### Deduplication
+
+- **Key**: `(event.dedupeKey, subscription.agentName, subscription.workflowRunId)`
+- **Storage**: In-memory `Map<string, number>` (timestamp). Evicted when the workflow run completes.
+- **Guarantee**: Same external event is never delivered twice to the same node agent within a run.
+- The upstream `SpaceGitHubService` already deduplicates by `(spaceId, dedupeKey)` — this is an additional per-node dedup.
+
+### Wake-on-idle
+
+When an event matches a subscription whose node execution is `idle` (agent session exists but finished its turn):
+
+1. Call `sessionFactory.injectMessage(sessionId, message, { deliveryMode: 'defer' })`.
+2. The existing defer mechanism handles waking: if idle → enqueue immediately; if busy → persist as deferred, replay after current turn.
+3. No new wake mechanism needed — the existing `SessionNotificationSink` pattern already solves this.
+
+### Queue for not-yet-started nodes
+
+When a node execution is `pending` (no session yet):
+
+1. The event is queued in an in-memory `Map<executionId, ExternalEvent[]>`.
+2. When `TaskAgentManager` creates the node's session, it checks for queued events.
+3. Queued events are injected as initial context in the session's first turn.
+4. Queue is bounded: max 50 events per execution, oldest dropped (with a warning log).
+
+### Backpressure
+
+- **Rate limiting**: If a single node receives > 10 events per minute, subsequent events are coalesced into a digest message: "N additional events received in the last minute. Summary: ..."
+- **Event TTL**: Events older than 5 minutes are dropped from the queue (they're likely stale for an agent's decision-making).
+- **Bus overflow**: The `EventBus` uses TypedHub's async-everywhere design — slow consumers don't block publishers. Handlers run via `queueMicrotask`.
+
+## 6. Topic Trie Implementation
+
+```typescript
+/**
+ * Simple trie for topic-pattern matching.
+ * Supports * (single segment wildcard) at any position.
+ */
+class TopicTrie<T> {
+  private root = new TrieNode<T>();
+
+  /**
+   * Insert a value at a glob pattern.
+   * Pattern segments: literal match or '*' for wildcard.
+   */
+  insert(pattern: string, value: T): void {
+    const segments = pattern.split('/');
+    let node = this.root;
+    for (const segment of segments) {
+      const key = segment === '*' ? '__wildcard__' : segment.toLowerCase();
+      if (!node.children.has(key)) {
+        node.children.set(key, new TrieNode());
+      }
+      node = node.children.get(key)!;
+    }
+    if (!node.values) node.values = [];
+    node.values.push(value);
+  }
+
+  /**
+   * Lookup all values whose patterns match the given topic.
+   * Returns all values from exact matches AND wildcard matches at each level.
+   * O(depth) — independent of total number of patterns.
+   */
+  lookup(topic: string): T[] {
+    const segments = topic.split('/');
+    const results: T[] = [];
+
+    const walk = (node: TrieNode<T>, depth: number) => {
+      if (depth === segments.length) {
+        // Terminal node — collect values
+        if (node.values) results.push(...node.values);
+        return;
+      }
+
+      const segment = segments[depth].toLowerCase();
+
+      // Exact match
+      const exact = node.children.get(segment);
+      if (exact) walk(exact, depth + 1);
+
+      // Wildcard match
+      const wildcard = node.children.get('__wildcard__');
+      if (wildcard) walk(wildcard, depth + 1);
+    };
+
+    walk(this.root, 0);
+    return results;
+  }
+
+  /**
+   * Remove all values matching a predicate.
+   */
+  remove(predicate: (value: T) => boolean): void {
+    const clean = (node: TrieNode<T>) => {
+      if (node.values) {
+        node.values = node.values.filter(v => !predicate(v));
+      }
+      for (const child of node.children.values()) {
+        clean(child);
+      }
+    };
+    clean(this.root);
+  }
+}
+
+class TrieNode<T> {
+  children: Map<string, TrieNode<T>> = new Map();
+  values?: T[];
+}
+```
+
+**Complexity**:
+- Insert: O(k) where k = segment count (~4-5)
+- Lookup: O(k) — walks trie by segment, collects from exact + wildcard at each level
+- Memory: O(n × k) where n = number of subscriptions
+
+This is O(1) relative to the number of subscriptions — each lookup traverses at most 2^k paths (2 per level: exact + wildcard), and k is small and constant.
+
+## 7. Wiring the GitHub Adapter
+
+### Changes to existing code
+
+**Minimal.** The adapter hooks into the existing `SpaceGitHubService` via DaemonHub subscription:
+
+```
+SpaceGitHubService.handleWebhook()
+    → normalizeSpaceGitHubWebhook()
+    → ingest(spaceId, normalized)
+        → storeEvent() + dedupe
+        → SpacePrTaskResolver.resolve()
+        → appendTaskActivity()
+            → DaemonHub.emit('space.githubEvent.routed', { taskId, event })
+        → scheduleTaskNotification()
+            → injectTaskAgent(taskId, message)
+```
+
+The GitHub adapter subscribes to `space.githubEvent.routed` and converts it:
+
+```typescript
+// No changes to SpaceGitHubService.
+// The adapter is a new subscriber:
+
+class GitHubEventAdapter implements EventAdapter {
+  async start(publisher: EventPublisher): Promise<void> {
+    this.daemonHub.on('space.githubEvent.routed', async (data) => {
+      const { event, taskId } = data;
+
+      // Construct topic from event
+      const topic = `github/${event.repo.split('/')[0]}/${event.repo.split('/')[1]}/${mapEventType(event.eventType)}.${mapAction(event.action)}`;
+
+      // Publish to bus
+      await publisher.publish({
+        id: crypto.randomUUID(),
+        topic,
+        occurredAt: Date.now(),
+        ingestedAt: Date.now(),
+        source: 'github',
+        prNumber: event.prNumber,
+        repoOwner: event.repo.split('/')[0],
+        repoName: event.repo.split('/')[1],
+        summary: event.summary,
+        externalUrl: event.externalUrl,
+        payload: event,
+        dedupeKey: `github:${event.repo}:${event.prNumber}:${event.eventType}:${event.externalUrl}`,
+      });
+    });
+  }
+}
+```
+
+### Event type mapping
+
+The `SpaceGitHubService` already normalizes to `SpaceGitHubEventKind` (`issue_comment`, `pull_request_review`, `pull_request_review_comment`, `pull_request`). We map these to bus topics:
+
+| SpaceGitHubEventKind | Bus topic resource |
+|---|---|
+| `issue_comment` | `pull_request.comment_created` (PR comments only, already filtered) |
+| `pull_request_review` | `pull_request.review_submitted` |
+| `pull_request_review_comment` | `pull_request.review_comment_created` |
+| `pull_request` | `pull_request.{action}` (opened, synchronize, closed, etc.) |
+
+### Task-scoped resolution optimization
+
+For `task` scope, we already have the `taskId` from `space.githubEvent.routed`. The router can short-circuit:
+
+1. Look up which node executions in that task's run have `eventInterests` matching the event.
+2. Only check scope for those nodes — skip the full trie walk for nodes that don't care about this event type.
+
+This optimization turns the common case (one coder node interested in review comments) into a direct map lookup: `taskId → workflowRunId → nodeExecutions → filter by interest topic match`.
+
+## 8. Migration Path
+
+### DB schema changes
+
+None required for V1. Event interests are stored as part of the workflow definition JSON in `space_workflows.nodes[].agents[].eventInterests`. The existing JSON serialization of workflow nodes already supports arbitrary fields.
+
+### Type changes
+
+1. Add `EventInterest` interface to `packages/shared/src/types/space.ts`.
+2. Add `eventInterests?: EventInterest[]` to `WorkflowNodeAgent`.
+3. Add validation in the workflow create/update path (Zod schema or manual validation):
+   - `topic` must be a valid glob pattern (non-empty, no `..` segments).
+   - `scope` must be one of `'task' | 'repo' | 'global'`.
+   - Max 10 interests per agent slot (prevent abuse).
+
+### New files
+
+```
+packages/daemon/src/lib/space/runtime/event-bus/
+  ├── types.ts              # ExternalEvent, EventAdapter, EventPublisher interfaces
+  ├── event-bus.ts           # EventBus singleton (wraps TypedHub)
+  ├── topic-trie.ts          # TopicTrie<T> implementation
+  ├── event-router.ts        # EventRouter — subscribes to bus, matches, delivers
+  ├── github-adapter.ts      # GitHubEventAdapter — bridges SpaceGitHubService → EventBus
+  └── index.ts               # Public exports
+```
+
+### Wiring into SpaceRuntime
+
+```typescript
+// In SpaceRuntimeConfig, add:
+interface SpaceRuntimeConfig {
+  // ... existing fields ...
+  eventBus?: EventBus;  // Optional — created internally if not provided
+}
+
+// In SpaceRuntime.executeTick(), after node executions are resolved:
+if (this.eventRouter) {
+  this.eventRouter.registerRunInterests(
+    spaceId,
+    workflowRunId,
+    workflow,
+    activeNodeExecutions,
+  );
+}
+
+// In daemon startup (e.g. in SpaceRuntimeService or init function):
+const eventBus = new EventBus(daemonHub);
+const eventRouter = new EventRouter(eventBus, ...dependencies);
+const githubAdapter = new GitHubEventAdapter(daemonHub);
+
+await githubAdapter.start(eventBus);
+```
+
+### Phased rollout
+
+**Phase 1 (MVP — this PR):**
+- Add `EventInterest` type to `WorkflowNodeAgent`.
+- Implement `EventBus`, `TopicTrie`, `EventRouter`, `GitHubEventAdapter`.
+- Wire GitHub adapter to existing `space.githubEvent.routed` events.
+- Deliver events to coder nodes with `task` scope.
+- No UI changes needed — event interests are authored in workflow JSON.
+
+**Phase 2 (follow-up):**
+- Add `eventInterests` editor to the workflow visual editor UI.
+- Add event delivery status to the task activity panel.
+- Add digest/coalescing for high-frequency events.
+- Add metrics: events matched, events delivered, delivery latency.
+
+**Phase 3 (future extensibility):**
+- Slack adapter: subscribe to Slack Events API, normalize to `ExternalEvent`, publish.
+- CI adapter: subscribe to GitHub Check Suite events, normalize, publish.
+- Custom adapter API: allow Space operators to register custom adapters via config.
+
+## 9. Relationship to Existing Systems
+
+| Existing system | Relationship |
+|---|---|
+| **DaemonHub / TypedHub** | `EventBus` is a TypedHub participant on the shared `InProcessTransportBus`. The bus uses the same async-everywhere, session-scoped routing that DaemonHub uses. |
+| **GitHubService** (Room pipeline) | Unchanged. Continues routing to Rooms. The event bus is additive. |
+| **SpaceGitHubService** (Space pipeline) | Unchanged. Continues injecting into Task Agent. The GitHub adapter subscribes to `space.githubEvent.routed` as an additional consumer. |
+| **SessionNotificationSink** | The event bus uses the same `sessionFactory.injectMessage()` with `deliveryMode: 'defer'` pattern. |
+| **AgentMessageRouter** | Not used for event delivery. Events are injected directly via `sessionFactory.injectMessage()`, not via the agent-to-agent messaging channel. Events are not agent-originated messages — they're system-injected context. |
+| **ChannelRouter** | Not involved. Event delivery is not a workflow channel transition. It's an injection into an existing session, not an activation trigger. |
+
+## 10. Key Design Decisions
+
+### Why TypedHub and not a standalone EventEmitter?
+
+TypedHub provides:
+- Async-everywhere design (cluster-ready).
+- Session-scoped subscriptions (O(1) lookup).
+- Already wired into the daemon's lifecycle.
+- No new dependency.
+
+Using TypedHub as the backing transport means the EventBus inherits all of these properties for free.
+
+### Why not route through AgentMessageRouter?
+
+AgentMessageRouter is designed for agent-to-agent communication with channel topology authorization. External events are system-injected context, not agent messages. Routing them through AgentMessageRouter would:
+- Require topology changes (events don't come from a declared node).
+- Conflate system events with agent-to-agent messages in the message history.
+- Add unnecessary authorization overhead.
+
+Direct injection via `sessionFactory.injectMessage()` is simpler and semantically correct.
+
+### Why trie-based matching instead of regex?
+
+1. **Performance**: Trie lookup is O(k) per event regardless of subscription count. Regex matching is O(n) per event where n = number of subscriptions.
+2. **Composability**: Trie supports incremental add/remove (subscriptions change as nodes activate/deactivate). Regex requires rebuilding the full pattern.
+3. **Debuggability**: Trie structure can be inspected and visualized. Regex patterns are opaque.
+
+### Why not extend SpaceGitHubService directly?
+
+The adapter pattern separates concerns:
+- `SpaceGitHubService` owns GitHub-specific normalization, dedup, and PR resolution.
+- The event bus is source-agnostic (GitHub, Slack, CI, etc.).
+- The adapter bridges the two without coupling.
+- Future adapters (Slack, CI) don't touch `SpaceGitHubService`.
+
+### Why `deliveryMode: 'defer'` for event injection?
+
+The existing defer mechanism already handles:
+- Idle sessions: message enqueued immediately, processed on next turn.
+- Busy sessions: message persisted as deferred, replayed after current turn.
+- No dropped messages, no interrupted turns.
+
+This is exactly the behavior we want for external events.
+
+## 11. Testing Strategy
+
+### Unit tests
+
+1. **TopicTrie**: Insert patterns, verify lookup returns correct values for exact and wildcard matches.
+2. **EventRouter**: Given subscriptions and events, verify scope filtering, dedup, and delivery.
+3. **GitHubEventAdapter**: Given a `space.githubEvent.routed` event, verify correct `ExternalEvent` construction.
+4. **Scope resolution**: Test `task` scope with various task/PR associations.
+
+### Integration tests
+
+1. End-to-end: webhook → normalize → ingest → bus → router → session injection.
+2. Dedup: same event delivered twice, verify only one injection.
+3. Wake-on-idle: node idle → event arrives → session receives message.
+4. Pending node: event arrives for pending node → session created → event delivered.
