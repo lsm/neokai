@@ -226,13 +226,27 @@ describe('SpaceWorkflowRepository', () => {
 			completionAutonomyLevel: 3,
 		});
 		expect(wf.nodes).toHaveLength(2);
+		const originalRows = db
+			.prepare(
+				`SELECT id, rowid FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`
+			)
+			.all(wf.id) as Array<{ id: string; rowid: number }>;
 
 		const updated = repo.updateWorkflow(wf.id, {
-			nodes: [{ id: 'node-coder', name: 'Review', agentId: 'agent-general' }, plannerNode],
+			nodes: [plannerNode, { id: 'node-coder', name: 'Review', agentId: 'agent-general' }],
 		});
+		const reorderedRows = db
+			.prepare(
+				`SELECT id, rowid FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`
+			)
+			.all(wf.id) as Array<{ id: string; rowid: number }>;
 		expect(updated?.nodes).toHaveLength(2);
-		expect(updated?.nodes[0].id).toBe('node-coder');
-		expect(updated?.nodes[0].agents[0].agentId).toBe('agent-general');
+		expect(updated?.nodes.map((node) => node.id)).toEqual(['node-planner', 'node-coder']);
+		expect(updated?.nodes[1].agents[0].agentId).toBe('agent-general');
+		expect(reorderedRows.map((row) => row.id)).toEqual(['node-planner', 'node-coder']);
+		expect(new Set(reorderedRows.map((row) => row.rowid))).toEqual(
+			new Set(originalRows.map((row) => row.rowid))
+		);
 	});
 
 	test('updateWorkflow returns null for missing id', () => {

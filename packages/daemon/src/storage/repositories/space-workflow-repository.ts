@@ -468,12 +468,15 @@ export class SpaceWorkflowRepository {
 		const updateNode = this.db.prepare(
 			`UPDATE space_workflow_nodes SET name = ?, config = ?, updated_at = ? WHERE workflow_id = ? AND id = ?`
 		);
+		const rowOrderByNodeId = new Map<string, number>();
 
-		for (const node of nodes) {
+		for (let i = 0; i < nodes.length; i++) {
+			const node = nodes[i];
 			if (!node.id) {
 				log.error(`workflow.node.update.missingStableId: workflowId=${workflowId}`);
 				continue;
 			}
+			rowOrderByNodeId.set(node.id, i + 1);
 			const result = updateNode.run(
 				node.name,
 				JSON.stringify(this.buildNodeConfig(node)),
@@ -485,6 +488,53 @@ export class SpaceWorkflowRepository {
 				log.error(`workflow.node.update.missingNode: workflowId=${workflowId} nodeId=${node.id}`);
 			}
 		}
+
+		this.reorderWorkflowNodeRows(workflowId, rowOrderByNodeId);
+	}
+
+	private reorderWorkflowNodeRows(workflowId: string, rowOrderByNodeId: Map<string, number>): void {
+		if (rowOrderByNodeId.size === 0) return;
+
+		const existingRows = this.db
+			.prepare(`SELECT id FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`)
+			.all(workflowId) as Array<{ id: string }>;
+		const sortedIds = [...existingRows]
+			.sort((a, b) => {
+				const aOrder = rowOrderByNodeId.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+				const bOrder = rowOrderByNodeId.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+				return aOrder - bOrder;
+			})
+			.map((row) => row.id);
+		if (sortedIds.every((id, index) => id === existingRows[index]?.id)) return;
+
+		const rowsById = new Map<string, NodeRow>();
+		for (const row of this.db
+			.prepare(`SELECT * FROM space_workflow_nodes WHERE workflow_id = ?`)
+			.all(workflowId) as NodeRow[]) {
+			rowsById.set(row.id, row);
+		}
+
+		this.db.transaction(() => {
+			this.db.prepare(`DELETE FROM space_workflow_nodes WHERE workflow_id = ?`).run(workflowId);
+			const insertNodeRow = this.db.prepare(
+				`INSERT INTO space_workflow_nodes
+					(id, workflow_id, name, description, config, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?)`
+			);
+			for (const nodeId of sortedIds) {
+				const row = rowsById.get(nodeId);
+				if (!row) continue;
+				insertNodeRow.run(
+					row.id,
+					row.workflow_id,
+					row.name,
+					row.description,
+					row.config,
+					row.created_at,
+					row.updated_at
+				);
+			}
+		})();
 	}
 
 	private buildNodeConfig(input: WorkflowNodeInput): NodeConfigJson {
