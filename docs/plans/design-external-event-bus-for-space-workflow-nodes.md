@@ -318,11 +318,13 @@ this.daemonHub?.emit('space.githubEvent.routed', {
         summary: event.summary,
         externalUrl: event.externalUrl,
         rawPayload: event.rawPayload,   // ← ADD THIS (for adapter consumers)
+        dedupeKey: event.dedupeKey,    // ← ADD THIS (for adapter deduplication)
+        deliveryId: event.deliveryId, // ← ADD THIS (unique GitHub delivery ID)
     },
 });
 ```
 
-This is a two-field addition to `appendTaskActivity` — both `action` and `rawPayload` are already available on the `NormalizedSpaceGitHubEvent` at the call site. This is the only change to existing code.
+This is a four-field addition to `appendTaskActivity` — `action`, `rawPayload`, `dedupeKey`, and `deliveryId` are all already available on the `NormalizedSpaceGitHubEvent` at the call site. This is the only change to existing code.
 
 **Why this approach:**
 - Minimal change to the existing `SpaceGitHubService` — two additional fields in an existing DaemonHub emission.
@@ -879,7 +881,7 @@ class GitHubEventAdapter implements EventAdapter {
           taskId,
           rawPayload: event.rawPayload,   // Include original webhook/polling payload
         },
-        dedupeKey: `github:${event.repo}:${event.prNumber}:${event.eventType}:${event.action}:${event.externalUrl}`,
+        dedupeKey: event.dedupeKey,  // Use upstream identity (includes deliveryId); avoids collapsing distinct events that share repo/pr/action/url
       });
     });
   }
