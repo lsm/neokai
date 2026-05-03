@@ -530,10 +530,12 @@ class EventRouter {
     this.topicTrie.remove(v => v.workflowRunId === workflowRunId);
     this.activeRuns.delete(workflowRunId);
 
-    // Also clean up dedup entries for this run
-    const prefix = `:${workflowRunId}:`;
+    // Also clean up dedup entries for this run.
+    // Delivery keys are: `${event.dedupeKey}:${sub.nodeId}:${sub.agentName}:${workflowRunId}`
+    // The run ID is the final segment — match with suffix `:${workflowRunId}`.
+    const suffix = `:${workflowRunId}`;
     for (const key of this.delivered.keys()) {
-      if (key.includes(prefix)) {
+      if (key.endsWith(suffix)) {
         this.delivered.delete(key);
       }
     }
