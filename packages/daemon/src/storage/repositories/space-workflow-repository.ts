@@ -380,15 +380,38 @@ export class SpaceWorkflowRepository {
 		}
 
 		if (hasNodeReplacement) {
-			this.db.prepare(`DELETE FROM space_workflow_nodes WHERE workflow_id = ?`).run(id);
 			const nodes = params.nodes ?? [];
-			for (let i = 0; i < nodes.length; i++) {
-				const node = nodes[i];
-				this.insertNode(id, node as WorkflowNodeInput, node.id ?? generateUUID(), i, now);
-			}
+			this.updateWorkflowNodesInPlace(id, nodes as WorkflowNodeInput[], now);
 		}
 
 		return this.getWorkflow(id)!;
+	}
+
+	/**
+	 * Update only persisted node-agent toolGuards for existing workflow nodes.
+	 *
+	 * This intentionally avoids replacing rows in `space_workflow_nodes`: workflow
+	 * IDs, node IDs, and node-agent slots are stable identifiers referenced by
+	 * in-flight workflow runs. Nodes are matched by stable node ID and only the
+	 * JSON config for that node is rewritten.
+	 */
+	updateWorkflowNodeToolGuards(workflowId: string, nodes: WorkflowNode[]): void {
+		const now = Date.now();
+		const updateNode = this.db.prepare(
+			`UPDATE space_workflow_nodes SET config = ?, updated_at = ? WHERE workflow_id = ? AND id = ?`
+		);
+
+		for (const node of nodes) {
+			const cfg: NodeConfigJson = { agents: node.agents };
+			const result = updateNode.run(JSON.stringify(cfg), now, workflowId, node.id);
+			if (result.changes === 0) {
+				log.error(
+					`workflow.nodeToolGuards.update.missingNode: workflowId=${workflowId} nodeId=${node.id}`
+				);
+			}
+		}
+
+		this.db.prepare(`UPDATE space_workflows SET updated_at = ? WHERE id = ?`).run(now, workflowId);
 	}
 
 	// -------------------------------------------------------------------------
@@ -437,13 +460,103 @@ export class SpaceWorkflowRepository {
 		return rows.map((r) => rowToNode(r, ctx));
 	}
 
-	private insertNode(
+	private updateWorkflowNodesInPlace(
 		workflowId: string,
-		input: WorkflowNodeInput,
-		nodeId: string,
-		_index: number,
+		nodes: WorkflowNodeInput[],
 		now: number
 	): void {
+		const existingRows = this.db
+			.prepare(`SELECT id FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`)
+			.all(workflowId) as Array<{ id: string }>;
+		const existingNodeIds = new Set(existingRows.map((row) => row.id));
+		const incomingNodeIds = new Set(
+			nodes.map((node) => node.id).filter((id): id is string => !!id)
+		);
+		const updateNode = this.db.prepare(
+			`UPDATE space_workflow_nodes SET name = ?, config = ?, updated_at = ? WHERE workflow_id = ? AND id = ?`
+		);
+		const insertNodeRow = this.db.prepare(
+			`INSERT INTO space_workflow_nodes
+				(id, workflow_id, name, description, config, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`
+		);
+		const rowOrderByNodeId = new Map<string, number>();
+
+		for (let i = 0; i < nodes.length; i++) {
+			const node = nodes[i];
+			if (!node.id) {
+				log.error(`workflow.node.update.missingStableId: workflowId=${workflowId}`);
+				continue;
+			}
+			rowOrderByNodeId.set(node.id, i + 1);
+			const configJson = JSON.stringify(this.buildNodeConfig(node));
+			if (existingNodeIds.has(node.id)) {
+				const result = updateNode.run(node.name, configJson, now, workflowId, node.id);
+				if (result.changes === 0) {
+					log.error(`workflow.node.update.missingNode: workflowId=${workflowId} nodeId=${node.id}`);
+				}
+			} else {
+				insertNodeRow.run(node.id, workflowId, node.name, '', configJson, now, now);
+			}
+		}
+
+		for (const nodeId of existingNodeIds) {
+			if (!incomingNodeIds.has(nodeId)) {
+				this.db
+					.prepare(`DELETE FROM space_workflow_nodes WHERE workflow_id = ? AND id = ?`)
+					.run(workflowId, nodeId);
+			}
+		}
+
+		this.reorderWorkflowNodeRows(workflowId, rowOrderByNodeId);
+	}
+
+	private reorderWorkflowNodeRows(workflowId: string, rowOrderByNodeId: Map<string, number>): void {
+		if (rowOrderByNodeId.size === 0) return;
+
+		const existingRows = this.db
+			.prepare(`SELECT id FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`)
+			.all(workflowId) as Array<{ id: string }>;
+		const sortedIds = [...existingRows]
+			.sort((a, b) => {
+				const aOrder = rowOrderByNodeId.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+				const bOrder = rowOrderByNodeId.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+				return aOrder - bOrder;
+			})
+			.map((row) => row.id);
+		if (sortedIds.every((id, index) => id === existingRows[index]?.id)) return;
+
+		const rowsById = new Map<string, NodeRow>();
+		for (const row of this.db
+			.prepare(`SELECT * FROM space_workflow_nodes WHERE workflow_id = ?`)
+			.all(workflowId) as NodeRow[]) {
+			rowsById.set(row.id, row);
+		}
+
+		this.db.transaction(() => {
+			this.db.prepare(`DELETE FROM space_workflow_nodes WHERE workflow_id = ?`).run(workflowId);
+			const insertNodeRow = this.db.prepare(
+				`INSERT INTO space_workflow_nodes
+					(id, workflow_id, name, description, config, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?)`
+			);
+			for (const nodeId of sortedIds) {
+				const row = rowsById.get(nodeId);
+				if (!row) continue;
+				insertNodeRow.run(
+					row.id,
+					row.workflow_id,
+					row.name,
+					row.description,
+					row.config,
+					row.created_at,
+					row.updated_at
+				);
+			}
+		})();
+	}
+
+	private buildNodeConfig(input: WorkflowNodeInput): NodeConfigJson {
 		const nodeCfg: NodeConfigJson = {};
 
 		// Normalize agents: use `agents` array if present, otherwise fall back to legacy
@@ -459,12 +572,30 @@ export class SpaceWorkflowRepository {
 			nodeCfg.agents = resolvedAgents;
 		}
 
+		return nodeCfg;
+	}
+
+	private insertNode(
+		workflowId: string,
+		input: WorkflowNodeInput,
+		nodeId: string,
+		_index: number,
+		now: number
+	): void {
 		this.db
 			.prepare(
 				`INSERT INTO space_workflow_nodes
-	           (id, workflow_id, name, description, config, created_at, updated_at)
-	         VALUES (?, ?, ?, ?, ?, ?, ?)`
+		           (id, workflow_id, name, description, config, created_at, updated_at)
+		         VALUES (?, ?, ?, ?, ?, ?, ?)`
 			)
-			.run(nodeId, workflowId, input.name, '', JSON.stringify(nodeCfg), now, now);
+			.run(
+				nodeId,
+				workflowId,
+				input.name,
+				'',
+				JSON.stringify(this.buildNodeConfig(input)),
+				now,
+				now
+			);
 	}
 }

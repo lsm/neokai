@@ -213,12 +213,12 @@ describe('SpaceWorkflowRepository', () => {
 		// Small delay to ensure timestamp difference
 		await new Promise((r) => setTimeout(r, 2));
 		const updated = repo.updateWorkflow(wf.id, {
-			nodes: [{ id: 'new-step', name: 'Plan', agentId: 'agent-planner' }],
+			nodes: [{ id: 'node-coder', name: 'Plan', agentId: 'agent-planner' }],
 		});
 		expect(updated?.updatedAt).toBeGreaterThan(before);
 	});
 
-	test('updateWorkflow replaces all steps on steps param', () => {
+	test('updateWorkflow updates stable nodes in place on nodes param', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF',
@@ -226,12 +226,27 @@ describe('SpaceWorkflowRepository', () => {
 			completionAutonomyLevel: 3,
 		});
 		expect(wf.nodes).toHaveLength(2);
+		const originalRows = db
+			.prepare(
+				`SELECT id, rowid FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`
+			)
+			.all(wf.id) as Array<{ id: string; rowid: number }>;
 
 		const updated = repo.updateWorkflow(wf.id, {
-			nodes: [{ id: 'step-review', name: 'Review', agentId: 'agent-general' }],
+			nodes: [plannerNode, { id: 'node-coder', name: 'Review', agentId: 'agent-general' }],
 		});
-		expect(updated?.nodes).toHaveLength(1);
-		expect(updated?.nodes[0].agents[0].agentId).toBe('agent-general');
+		const reorderedRows = db
+			.prepare(
+				`SELECT id, rowid FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`
+			)
+			.all(wf.id) as Array<{ id: string; rowid: number }>;
+		expect(updated?.nodes).toHaveLength(2);
+		expect(updated?.nodes.map((node) => node.id)).toEqual(['node-planner', 'node-coder']);
+		expect(updated?.nodes[1].agents[0].agentId).toBe('agent-general');
+		expect(reorderedRows.map((row) => row.id)).toEqual(['node-planner', 'node-coder']);
+		expect(new Set(reorderedRows.map((row) => row.rowid))).toEqual(
+			new Set(originalRows.map((row) => row.rowid))
+		);
 	});
 
 	test('updateWorkflow returns null for missing id', () => {
@@ -795,7 +810,7 @@ describe('SpaceWorkflowManager', () => {
 		const mgr = new SpaceWorkflowManager(repo, lookup);
 		expect(() =>
 			mgr.updateWorkflow(wf.id, {
-				nodes: [{ id: 'step-x', name: 'Step', agentId: 'non-existent' }],
+				nodes: [{ id: 'node-coder', name: 'Step', agentId: 'non-existent' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -923,7 +938,7 @@ describe('SpaceWorkflowManager', () => {
 		});
 		expect(() =>
 			manager.updateWorkflow(wf.id, {
-				nodes: [{ id: 'step-x', name: 'Step', agents: [{ agentId: '' }] }],
+				nodes: [{ id: 'node-coder', name: 'Step', agents: [{ agentId: '' }] }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -1083,7 +1098,7 @@ describe('SpaceWorkflowManager', () => {
 		expect(wf.channels![0].from).toBe('*');
 	});
 
-	test('updateWorkflow stores channels at workflow level when replacing step', () => {
+	test('updateWorkflow stores channels at workflow level when updating a stable step', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF',
@@ -1092,11 +1107,10 @@ describe('SpaceWorkflowManager', () => {
 		});
 		const updated = manager.updateWorkflow(wf.id, {
 			nodes: [
-				{ id: 'n1', name: 'Code', agents: [{ agentId: 'agent-coder-id', name: 'coder' }] },
-				{ id: 'n2', name: 'Review', agents: [{ agentId: 'agent-coder-id', name: 'reviewer' }] },
+				{ id: 'node-coder', name: 'Code', agents: [{ agentId: 'agent-coder-id', name: 'coder' }] },
 			],
 			channels: [{ id: 'ch-1', from: 'Code', to: 'Review' }],
-			startNodeId: 'n1',
+			startNodeId: 'node-coder',
 		});
 		expect(updated!.channels).toHaveLength(1);
 		expect(updated!.channels![0].from).toBe('Code');
@@ -1151,28 +1165,32 @@ describe('SpaceWorkflowManager', () => {
 		});
 	});
 
-	test('updateWorkflow replaces multi-agent step with channels correctly', () => {
+	test('updateWorkflow updates a stable node with multi-agent config correctly', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Update Multi-Agent',
-			nodes: [coderNode],
+			nodes: [
+				{ id: 'step-parallel', name: 'Code', agents: [{ agentId: 'agent-a', name: 'a' }] },
+				{ id: 'step-end', name: 'End', agents: [{ agentId: 'agent-a', name: 'end' }] },
+			],
+			startNodeId: 'step-parallel',
+			endNodeId: 'step-end',
 			completionAutonomyLevel: 3,
 		});
 
 		const updated = manager.updateWorkflow(wf.id, {
 			nodes: [
 				{
-					id: 'step-new',
+					id: 'step-parallel',
 					name: 'New Parallel Step',
 					agents: [
 						{ agentId: 'agent-a', name: 'a' },
 						{ agentId: 'agent-b', name: 'b' },
 					],
 				},
-				// Synthetic single-agent end node — multi-agent end nodes are forbidden.
 				{ id: 'step-end', name: 'End', agents: [{ agentId: 'agent-a', name: 'end' }] },
 			],
-			startNodeId: 'step-new',
+			startNodeId: 'step-parallel',
 			endNodeId: 'step-end',
 		})!;
 
