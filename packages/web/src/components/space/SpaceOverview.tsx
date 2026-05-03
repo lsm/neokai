@@ -16,7 +16,6 @@ import {
 	navigateToSpaceSession,
 	navigateToSpaceTasks,
 } from '../../lib/router';
-import { currentSpaceTasksFilterSignal } from '../../lib/signals';
 import { createSession } from '../../lib/api-helpers';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { toast } from '../../lib/toast';
@@ -371,8 +370,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 		onSelectTask ?? ((taskId: string) => navigateToSpaceTask(spaceId, taskId));
 
 	const handleAwaitingApprovalClick = () => {
-		currentSpaceTasksFilterSignal.value = 'awaiting_task_completion';
-		navigateToSpaceTasks(spaceId);
+		navigateToSpaceTasks(spaceId, 'action');
 	};
 
 	return (
