@@ -582,7 +582,7 @@ export class QueryRunner {
 			// (e.g. "fetch failed") include their name prefix.  All downstream
 			// pattern checks use includes() on substrings, so the "Error: " /
 			// "TypeError: " prefix does not break any existing detection logic.
-			const errorMessage = error instanceof Error ? String(error) : String(error);
+			const errorMessage = String(error);
 			const isAbortError = error instanceof Error && error.name === 'AbortError';
 			const isStartupTimeout = errorMessage.includes('SDK startup timeout');
 			const isConversationNotFound = errorMessage.includes('No conversation found');
