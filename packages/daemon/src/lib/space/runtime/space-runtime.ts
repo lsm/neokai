@@ -1952,6 +1952,46 @@ export class SpaceRuntime {
 	 * Process a single workflow run tick: re-read from DB, recreate executor
 	 * with fresh state, detect issues, and spawn/monitor Task Agent sessions.
 	 */
+	private resetWorkflowNodeExecutionForSpawnRetry(
+		runId: string,
+		execution: NodeExecution,
+		reason: string,
+		sessionId: string | null = execution.agentSessionId
+	): boolean {
+		const crashKey = `${runId}:${execution.id}`;
+		const crashCount = (this.taskCrashCounts.get(crashKey) ?? 0) + 1;
+		this.taskCrashCounts.set(crashKey, crashCount);
+		const exhausted = crashCount > MAX_TASK_AGENT_CRASH_RETRIES;
+		if (exhausted) {
+			log.warn(
+				`SpaceRuntime: workflow node agent spawn/retry failed for execution ${execution.id} ` +
+					`(session ${sessionId ?? 'none'}); marking blocked after ${crashCount} failures ` +
+					`(limit: ${MAX_TASK_AGENT_CRASH_RETRIES}): ${reason}`
+			);
+			this.config.nodeExecutionRepo.update(execution.id, {
+				agentSessionId: null,
+				startedAt: null,
+				status: 'blocked',
+				result: `Agent session failed to spawn or crashed ${crashCount} times consecutively: ${reason}`,
+			});
+			return true;
+		}
+
+		log.warn(
+			`SpaceRuntime: workflow node agent spawn/retry failed for execution ${execution.id} ` +
+				`(session ${sessionId ?? 'none'}); resetting execution to pending ` +
+				`(failure ${crashCount}/${MAX_TASK_AGENT_CRASH_RETRIES}): ${reason}`
+		);
+		this.config.nodeExecutionRepo.update(execution.id, {
+			agentSessionId: null,
+			startedAt: null,
+			status: 'pending',
+			result: null,
+			completedAt: null,
+		});
+		return false;
+	}
+
 	private async processRunTick(runId: string): Promise<void> {
 		// Always re-read run from DB to pick up external status changes (e.g. human
 		// approval reset, external cancellation).
@@ -2130,10 +2170,6 @@ export class SpaceRuntime {
 					continue;
 				}
 
-				const crashKey = `${runId}:${execution.id}`;
-				const crashCount = (this.taskCrashCounts.get(crashKey) ?? 0) + 1;
-				this.taskCrashCounts.set(crashKey, crashCount);
-
 				// Part C (task #138): if the dead session was sitting in
 				// `waiting_for_input`, the persisted AskUserQuestion card is now
 				// unanswerable. Try to flip it to `cancelled` (cancelReason
@@ -2152,27 +2188,13 @@ export class SpaceRuntime {
 					);
 				}
 
-				if (crashCount <= MAX_TASK_AGENT_CRASH_RETRIES) {
-					log.warn(
-						`SpaceRuntime: workflow node agent crashed for execution ${execution.id} ` +
-							`(session ${execution.agentSessionId}); resetting execution to pending ` +
-							`(crash ${crashCount}/${MAX_TASK_AGENT_CRASH_RETRIES})`
-					);
-					this.config.nodeExecutionRepo.update(execution.id, {
-						agentSessionId: null,
-						status: 'pending',
-					});
-				} else {
-					log.warn(
-						`SpaceRuntime: workflow node agent crashed for execution ${execution.id} ` +
-							`(session ${execution.agentSessionId}); marking blocked ` +
-							`after ${crashCount} crashes (limit: ${MAX_TASK_AGENT_CRASH_RETRIES})`
-					);
-					this.config.nodeExecutionRepo.update(execution.id, {
-						agentSessionId: null,
-						status: 'blocked',
-						result: `Agent session crashed ${crashCount} times consecutively`,
-					});
+				const exhausted = this.resetWorkflowNodeExecutionForSpawnRetry(
+					runId,
+					execution,
+					'agent session is no longer alive',
+					execution.agentSessionId
+				);
+				if (exhausted) {
 					blockedByCrash = true;
 					await this.safeNotify({
 						kind: 'agent_crash',
@@ -2186,36 +2208,7 @@ export class SpaceRuntime {
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
 			if (blockedByCrash) {
-				const blockedReason =
-					nodeExecutions.find((execution) => execution.status === 'blocked')?.result ??
-					'One or more workflow agents are blocked';
-				const dedupKey = `${canonicalTask.id}:blocked`;
-				if (!this.notifiedTaskSet.has(dedupKey)) {
-					this.notifiedTaskSet.add(dedupKey);
-					await this.safeNotify({
-						kind: 'task_blocked',
-						spaceId: meta.spaceId,
-						taskId: canonicalTask.id,
-						reason: blockedReason,
-						timestamp: new Date().toISOString(),
-					});
-				}
-				await this.transitionRunStatusAndEmit(runId, 'blocked');
-				if (canonicalTask.status !== 'blocked') {
-					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
-						status: 'blocked',
-						result: blockedReason,
-						blockReason: 'agent_crashed',
-						completedAt: null,
-					});
-				}
-				await this.safeNotify({
-					kind: 'workflow_run_blocked',
-					spaceId: meta.spaceId,
-					runId,
-					reason: 'One or more tasks require attention',
-					timestamp: new Date().toISOString(),
-				});
+				await this.blockRunForAgentCrash(runId, meta.spaceId, canonicalTask, nodeExecutions);
 				return;
 			}
 
@@ -2464,6 +2457,28 @@ export class SpaceRuntime {
 			}
 
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+			for (const execution of nodeExecutions) {
+				if (execution.status !== 'pending' || !execution.agentSessionId) continue;
+				if (tam.isSessionAlive(execution.agentSessionId)) {
+					log.warn(
+						`SpaceRuntime: repaired pending execution ${execution.id} with live session ${execution.agentSessionId}`
+					);
+					this.config.nodeExecutionRepo.update(execution.id, {
+						status: 'in_progress',
+						agentSessionId: execution.agentSessionId,
+						startedAt: execution.startedAt ?? Date.now(),
+						completedAt: null,
+					});
+					continue;
+				}
+				this.resetWorkflowNodeExecutionForSpawnRetry(
+					runId,
+					execution,
+					'pending execution referenced a dead session before spawn',
+					execution.agentSessionId
+				);
+			}
+			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 			const pendingExecutions = nodeExecutions.filter(
 				(execution) => execution.status === 'pending' && !execution.agentSessionId
 			);
@@ -2491,7 +2506,7 @@ export class SpaceRuntime {
 					for (const execution of pendingExecutions) {
 						if (tam.isExecutionSpawning(execution.id)) continue;
 						try {
-							const sessionId = await tam.spawnWorkflowNodeAgentForExecution(
+							await tam.spawnWorkflowNodeAgentForExecution(
 								canonicalTask,
 								space,
 								meta.workflow,
@@ -2501,23 +2516,34 @@ export class SpaceRuntime {
 									kickoff: true,
 								}
 							);
-							this.config.nodeExecutionRepo.update(execution.id, {
-								status: 'in_progress',
-								agentSessionId: sessionId,
-							});
 						} catch (err) {
 							if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
 								permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
 								continue;
 							}
-							const stale = this.config.nodeExecutionRepo.getById(execution.id);
-							if (stale?.agentSessionId) {
+							const stale = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
+							if (
+								stale.status === 'cancelled' ||
+								stale.status === 'blocked' ||
+								stale.status === 'idle'
+							) {
+								log.warn(
+									`SpaceRuntime: preserving terminal execution ${execution.id} (${stale.status}) after spawn failure: ${err instanceof Error ? err.message : String(err)}`
+								);
+								continue;
+							}
+							if (stale.agentSessionId) {
 								tam.cancelBySessionId(stale.agentSessionId);
-								this.config.nodeExecutionRepo.update(execution.id, {
-									agentSessionId: null,
-									status: 'pending',
-									result: null,
-								});
+							}
+							if (
+								this.resetWorkflowNodeExecutionForSpawnRetry(
+									runId,
+									stale,
+									err instanceof Error ? err.message : String(err),
+									stale.agentSessionId
+								)
+							) {
+								blockedByCrash = true;
 							}
 							log.warn(
 								`SpaceRuntime: transient spawn failure for workflow node execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
@@ -2542,6 +2568,11 @@ export class SpaceRuntime {
 							);
 							return;
 						}
+					}
+					if (blockedByCrash) {
+						nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+						await this.blockRunForAgentCrash(runId, meta.spaceId, canonicalTask, nodeExecutions);
+						return;
 					}
 					if (
 						canonicalTask.status === 'open' ||
@@ -2720,13 +2751,17 @@ export class SpaceRuntime {
 				}
 
 				if (execution.agentSessionId && !tam.isSessionAlive(execution.agentSessionId)) {
-					this.config.nodeExecutionRepo.update(execution.id, {
-						agentSessionId: null,
-						status: 'pending',
-						result: null,
-						completedAt: null,
-					});
+					this.resetWorkflowNodeExecutionForSpawnRetry(
+						runId,
+						execution,
+						'queued handoff execution referenced a dead session before spawn',
+						execution.agentSessionId
+					);
 					execution = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
+					if (execution.status === 'blocked') {
+						blockedReason = execution.result ?? 'Queued workflow handoff target failed to spawn';
+						continue;
+					}
 				}
 
 				if (execution.status === 'blocked') {
@@ -2751,10 +2786,6 @@ export class SpaceRuntime {
 					execution,
 					{ kickoff: true }
 				);
-				this.config.nodeExecutionRepo.update(execution.id, {
-					status: 'in_progress',
-					agentSessionId: sessionId,
-				});
 				await tam.flushPendingMessagesForTarget(runId, execution.agentName, sessionId);
 				recordBlockedFlushFailure(targetAgentName, rowsForTarget);
 			} catch (err) {
@@ -2831,6 +2862,44 @@ export class SpaceRuntime {
 			}
 		}
 		return null;
+	}
+
+	private async blockRunForAgentCrash(
+		runId: string,
+		spaceId: string,
+		canonicalTask: SpaceTask,
+		nodeExecutions: NodeExecution[]
+	): Promise<void> {
+		const blockedReason =
+			nodeExecutions.find((execution) => execution.status === 'blocked')?.result ??
+			'One or more workflow agents are blocked';
+		const dedupKey = `${canonicalTask.id}:blocked`;
+		if (!this.notifiedTaskSet.has(dedupKey)) {
+			this.notifiedTaskSet.add(dedupKey);
+			await this.safeNotify({
+				kind: 'task_blocked',
+				spaceId,
+				taskId: canonicalTask.id,
+				reason: blockedReason,
+				timestamp: new Date().toISOString(),
+			});
+		}
+		await this.transitionRunStatusAndEmit(runId, 'blocked');
+		if (canonicalTask.status !== 'blocked') {
+			await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+				status: 'blocked',
+				result: blockedReason,
+				blockReason: 'agent_crashed',
+				completedAt: null,
+			});
+		}
+		await this.safeNotify({
+			kind: 'workflow_run_blocked',
+			spaceId,
+			runId,
+			reason: 'One or more tasks require attention',
+			timestamp: new Date().toISOString(),
+		});
 	}
 
 	private async blockRunForQueuedHandoffFailure(

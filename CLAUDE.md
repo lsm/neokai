@@ -51,6 +51,10 @@ make run [PORT=8080]             # Production server (PORT optional)
 make test-daemon       # Daemon tests (all shards in parallel, with coverage)
 make test-web          # Web tests only (vitest run) with coverage
 
+# Never run bare `bun test` from the monorepo root. It is too broad/slow and
+# includes suites with expected environment-specific failures. Use focused
+# package commands or explicit test files instead.
+
 # Daemon test runner (scripts/test-daemon.sh)
 # Do NOT run `bun test packages/daemon/tests/unit`; use this shard runner instead.
 ./scripts/test-daemon.sh                # All daemon unit shards in parallel (fast, no coverage)
