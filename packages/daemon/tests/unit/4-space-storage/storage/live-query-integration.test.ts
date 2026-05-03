@@ -554,4 +554,104 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
 			expect(finalState.status).toBe('idle');
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// Scoped invalidation — full pipeline
+	// -------------------------------------------------------------------------
+
+	describe('scoped invalidation — full pipeline', () => {
+		const MESSAGES_SQL =
+			'SELECT id, session_id, message_type FROM sdk_messages WHERE session_id = ? ORDER BY timestamp';
+
+		test('writing to session A does NOT re-evaluate scoped query for session B', async () => {
+			reactiveDb.db.createSession(makeSession('scoped-a'));
+			reactiveDb.db.createSession(makeSession('scoped-b'));
+			await Promise.resolve();
+
+			const diffsA: QueryDiff<{ id: string; session_id: string; message_type: string }>[] = [];
+			const diffsB: QueryDiff<{ id: string; session_id: string; message_type: string }>[] = [];
+
+			engine.subscribe(MESSAGES_SQL, ['scoped-a'], (diff) => diffsA.push(diff), {
+				scopeExtractor: (params) => ({ sessionId: params[0] as string }),
+			});
+			engine.subscribe(MESSAGES_SQL, ['scoped-b'], (diff) => diffsB.push(diff), {
+				scopeExtractor: (params) => ({ sessionId: params[0] as string }),
+			});
+
+			expect(diffsA.length).toBe(1);
+			expect(diffsB.length).toBe(1);
+
+			// Write a message for session A
+			reactiveDb.db.saveSDKMessage(
+				'scoped-a',
+				makeUserMessage(crypto.randomUUID(), 'Hello from A')
+			);
+			await Promise.resolve();
+
+			// A should get a delta; B should NOT
+			expect(diffsA.length).toBe(2);
+			expect(diffsA[1].type).toBe('delta');
+			expect(diffsA[1].added?.length).toBe(1);
+
+			expect(diffsB.length).toBe(1); // still only snapshot
+		});
+
+		test('writing to both sessions triggers their respective queries', async () => {
+			reactiveDb.db.createSession(makeSession('scoped-c'));
+			reactiveDb.db.createSession(makeSession('scoped-d'));
+			await Promise.resolve();
+
+			const diffsC: QueryDiff<{ id: string; session_id: string; message_type: string }>[] = [];
+			const diffsD: QueryDiff<{ id: string; session_id: string; message_type: string }>[] = [];
+
+			engine.subscribe(MESSAGES_SQL, ['scoped-c'], (diff) => diffsC.push(diff), {
+				scopeExtractor: (params) => ({ sessionId: params[0] as string }),
+			});
+			engine.subscribe(MESSAGES_SQL, ['scoped-d'], (diff) => diffsD.push(diff), {
+				scopeExtractor: (params) => ({ sessionId: params[0] as string }),
+			});
+
+			// Write to C
+			reactiveDb.db.saveSDKMessage('scoped-c', makeUserMessage(crypto.randomUUID(), 'Hello C'));
+			await Promise.resolve();
+
+			// Write to D
+			reactiveDb.db.saveSDKMessage('scoped-d', makeUserMessage(crypto.randomUUID(), 'Hello D'));
+			await Promise.resolve();
+
+			// Each should have received only their own delta
+			expect(diffsC.length).toBe(2);
+			expect(diffsD.length).toBe(2);
+		});
+
+		test('deleteMessagesAfter carries scope and only invalidates affected query', async () => {
+			reactiveDb.db.createSession(makeSession('scoped-f'));
+			reactiveDb.db.createSession(makeSession('scoped-g'));
+			await Promise.resolve();
+
+			// Insert messages for both
+			reactiveDb.db.saveSDKMessage('scoped-f', makeUserMessage(crypto.randomUUID(), 'F msg'));
+			reactiveDb.db.saveSDKMessage('scoped-g', makeUserMessage(crypto.randomUUID(), 'G msg'));
+			await Promise.resolve();
+
+			const diffsF: QueryDiff<{ id: string; session_id: string; message_type: string }>[] = [];
+			const diffsG: QueryDiff<{ id: string; session_id: string; message_type: string }>[] = [];
+
+			engine.subscribe(MESSAGES_SQL, ['scoped-f'], (diff) => diffsF.push(diff), {
+				scopeExtractor: (params) => ({ sessionId: params[0] as string }),
+			});
+			engine.subscribe(MESSAGES_SQL, ['scoped-g'], (diff) => diffsG.push(diff), {
+				scopeExtractor: (params) => ({ sessionId: params[0] as string }),
+			});
+
+			// Delete messages for session F
+			reactiveDb.db.deleteMessagesAfter('scoped-f', 0);
+			await Promise.resolve();
+
+			// F should get a delta (removed messages); G should NOT
+			expect(diffsF.length).toBe(2);
+			expect(diffsF[1].type).toBe('delta');
+			expect(diffsG.length).toBe(1); // only snapshot
+		});
+	});
 });

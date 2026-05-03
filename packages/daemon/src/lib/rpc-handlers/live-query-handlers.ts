@@ -18,7 +18,12 @@ import type {
 	LiveQuerySnapshotEvent,
 	LiveQueryDeltaEvent,
 } from '@neokai/shared';
-import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query';
+import type {
+	LiveQueryEngine,
+	LiveQueryHandle,
+	QueryDiff,
+	ScopeExtractor,
+} from '../../storage/live-query';
 import { Logger } from '../logger';
 
 // ============================================================================
@@ -55,6 +60,19 @@ export interface NamedQuery {
 		rawRows: Record<string, unknown>[],
 		params: ReadonlyArray<unknown>
 	) => Record<string, unknown> | undefined;
+	/**
+	 * Optional scope extractor for scoped invalidation.
+	 *
+	 * When a table change event carries scope information (e.g. the sessionId
+	 * that was written to), the engine compares the extracted scope against
+	 * the event's scope. Queries whose scope does not overlap are skipped,
+	 * avoiding unnecessary SQL re-evaluation.
+	 *
+	 * For example, `messages.bySession` extracts `params[0]` as `sessionId`
+	 * so that writing a message for session A does not re-evaluate queries
+	 * subscribed to session B.
+	 */
+	scopeExtractor?: ScopeExtractor;
 }
 
 const DEBOUNCE_SDK_MESSAGES_MS = 100;
@@ -1744,6 +1762,8 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: NEO_MESSAGES_SQL,
 			paramCount: 2,
+			// neo.messages always queries session_id = 'neo:global'
+			scopeExtractor: () => ({ sessionId: 'neo:global' }),
 		},
 	],
 	[
@@ -1783,6 +1803,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			paramCount: 2,
 			debounceMs: DEBOUNCE_SDK_MESSAGES_MS,
 			mapRow: mapMessageRow,
+			scopeExtractor: (params) => ({ sessionId: params[0] as string }),
 		},
 	],
 	[
@@ -2102,6 +2123,7 @@ export function setupLiveQueryHandlers(
 			{
 				debounceMs: namedQuery.debounceMs,
 				getMetadata: namedQuery.mapResult,
+				scopeExtractor: namedQuery.scopeExtractor,
 			}
 		);
 

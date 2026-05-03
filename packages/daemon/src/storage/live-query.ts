@@ -7,7 +7,7 @@
  */
 
 import { Database as BunDatabase } from 'bun:sqlite';
-import type { ReactiveDatabase } from './reactive-database';
+import type { ReactiveDatabase, TableChangeScope } from './reactive-database';
 
 // ============================================================================
 // Public API types
@@ -19,6 +19,19 @@ export interface LiveQueryHandle<T> {
 	/** Stop receiving updates */
 	dispose(): void;
 }
+
+/**
+ * Extracts a scope key from a query's parameters.
+ *
+ * When a table change event carries scope information (e.g. the `sessionId`
+ * that was written to), the engine compares it against each query entry's
+ * scope key. Queries whose scope does not overlap are skipped, avoiding
+ * unnecessary re-evaluation.
+ *
+ * Return `undefined` to indicate the query should always be re-evaluated
+ * (fallback / scope-agnostic).
+ */
+export type ScopeExtractor = (params: ReadonlyArray<unknown>) => TableChangeScope | undefined;
 
 export interface LiveQuerySubscribeOptions {
 	/**
@@ -37,6 +50,14 @@ export interface LiveQuerySubscribeOptions {
 		rows: Record<string, unknown>[],
 		params: ReadonlyArray<unknown>
 	) => Record<string, unknown> | undefined;
+	/**
+	 * Optional scope key extractor. Given a query's bound parameters, returns
+	 * the scope this query is interested in (e.g. `{ sessionId: params[0] }`).
+	 *
+	 * When a scoped table change event arrives, the engine skips re-evaluation
+	 * for queries whose extracted scope does not match the event's scope.
+	 */
+	scopeExtractor?: ScopeExtractor;
 }
 
 export interface QueryDiff<T = Record<string, unknown>> {
@@ -80,6 +101,8 @@ interface QueryEntry<T extends Record<string, unknown>> {
 	pendingTimer: ReturnType<typeof setTimeout> | null;
 	/** Delay used for table-change reevaluations. */
 	debounceMs: number;
+	/** Optional scope extractor for scoped invalidation. */
+	scopeExtractor?: ScopeExtractor;
 }
 
 interface RowHashSnapshot {
@@ -246,8 +269,23 @@ export class LiveQueryEngine {
 	 * constant named-query SQL, so this stays bounded by the registry size.
 	 */
 	private statements = new Map<string, ReturnType<BunDatabase['prepare']>>();
-	private changeListener: (data: { tables: string[]; versions: Record<string, number> }) => void;
+	private changeListener: (data: {
+		tables: string[];
+		versions: Record<string, number>;
+		scope?: TableChangeScope;
+	}) => void;
 	private disposed = false;
+	/**
+	 * Instrumentation counters for tracking scoped invalidation effectiveness.
+	 * Reset on each `onTableChange` call for per-event granularity.
+	 */
+	private _lastInvalidationStats = {
+		table: '',
+		scope: undefined as TableChangeScope | undefined,
+		candidates: 0,
+		skipped: 0,
+		reevaluated: 0,
+	};
 
 	constructor(
 		private db: BunDatabase,
@@ -255,7 +293,7 @@ export class LiveQueryEngine {
 	) {
 		this.changeListener = (data) => {
 			for (const table of data.tables) {
-				this.onTableChange(table);
+				this.onTableChange(table, data.scope);
 			}
 		};
 		this.reactiveDb.on('change', this.changeListener);
@@ -296,6 +334,7 @@ export class LiveQueryEngine {
 				pendingEval: false,
 				pendingTimer: null,
 				debounceMs,
+				scopeExtractor: options.scopeExtractor,
 			} as unknown as QueryEntry<T>;
 
 			this.queries.set(cacheKey, entry as unknown as QueryEntry<Record<string, unknown>>);
@@ -316,6 +355,9 @@ export class LiveQueryEngine {
 				entry.getMetadata = options.getMetadata;
 				entry.cachedMetadata = options.getMetadata(entry.cachedRows, entry.params);
 				entry.cachedMetadataHash = hashMetadata(entry.cachedMetadata);
+			}
+			if (!entry.scopeExtractor && options.scopeExtractor) {
+				entry.scopeExtractor = options.scopeExtractor;
 			}
 		}
 
@@ -370,20 +412,54 @@ export class LiveQueryEngine {
 		this.statements.clear();
 	}
 
+	/**
+	 * Return instrumentation stats from the most recent invalidation event.
+	 *
+	 * Useful for logging and diagnostics to verify scoped invalidation is
+	 * working correctly.
+	 */
+	getLastInvalidationStats(): {
+		table: string;
+		scope: TableChangeScope | undefined;
+		candidates: number;
+		skipped: number;
+		reevaluated: number;
+	} {
+		return { ...this._lastInvalidationStats };
+	}
+
 	// ============================================================================
 	// Private
 	// ============================================================================
 
-	private onTableChange(table: string): void {
+	private onTableChange(table: string, scope?: TableChangeScope): void {
 		if (this.disposed) return;
 
 		const keys = this.tableIndex.get(table.toLowerCase());
 		if (!keys || keys.size === 0) return;
 
+		// Instrumentation tracking for this invalidation event
+		let candidates = 0;
+		let skipped = 0;
+		let reevaluated = 0;
+
 		for (const cacheKey of keys) {
 			const entry = this.queries.get(cacheKey);
 			if (!entry || entry.pendingEval) continue;
 
+			candidates++;
+
+			// Scope-based filtering: if the change carries scope info and this
+			// query entry has a scope extractor, check whether they overlap.
+			if (scope?.sessionId && entry.scopeExtractor) {
+				const queryScope = entry.scopeExtractor(entry.params);
+				if (queryScope?.sessionId && queryScope.sessionId !== scope.sessionId) {
+					skipped++;
+					continue; // Scope mismatch — skip re-evaluation
+				}
+			}
+
+			reevaluated++;
 			entry.pendingEval = true;
 			if (entry.debounceMs > 0) {
 				entry.pendingTimer = setTimeout(() => this.evaluateQuery(cacheKey), entry.debounceMs);
@@ -391,6 +467,9 @@ export class LiveQueryEngine {
 				queueMicrotask(() => this.evaluateQuery(cacheKey));
 			}
 		}
+
+		// Store instrumentation data for external consumers
+		this._lastInvalidationStats = { table, scope, candidates, skipped, reevaluated };
 	}
 
 	private evaluateQuery(cacheKey: string): void {

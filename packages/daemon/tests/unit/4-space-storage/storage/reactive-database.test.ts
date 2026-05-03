@@ -626,4 +626,171 @@ describe('ReactiveDatabase', () => {
 			expect(events[0].versions).toHaveProperty('sdk_messages');
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// Scope in change events
+	// -------------------------------------------------------------------------
+
+	describe('scope in change events', () => {
+		test('saveSDKMessage carries sessionId in scope', () => {
+			const events: Array<{ tables: string[]; scope?: { sessionId?: string } }> = [];
+			reactiveDb.on('change', (data) => events.push(data));
+
+			const session = makeSession('scope-s1');
+			db.createSession(session); // create via raw db so we don't pollute events
+			reactiveDb.db.saveSDKMessage('scope-s1', {
+				type: 'user',
+				uuid: 'test-uuid',
+				message: { role: 'user', content: 'hello' },
+			} as any);
+
+			expect(events.length).toBe(1);
+			expect(events[0].scope).toBeDefined();
+			expect(events[0].scope?.sessionId).toBe('scope-s1');
+		});
+
+		test('saveUserMessage carries sessionId in scope', () => {
+			const events: Array<{ tables: string[]; scope?: { sessionId?: string } }> = [];
+			reactiveDb.on('change', (data) => events.push(data));
+
+			const session = makeSession('scope-s2');
+			db.createSession(session);
+			reactiveDb.db.saveUserMessage(
+				'scope-s2',
+				{
+					type: 'user',
+					uuid: 'test-uuid',
+					message: { role: 'user', content: 'hello' },
+				} as any,
+				'consumed'
+			);
+
+			expect(events.length).toBe(1);
+			expect(events[0].scope?.sessionId).toBe('scope-s2');
+		});
+
+		test('deleteMessagesAfter carries sessionId in scope', () => {
+			const session = makeSession('scope-s3');
+			db.createSession(session);
+
+			const events: Array<{ tables: string[]; scope?: { sessionId?: string } }> = [];
+			reactiveDb.on('change', (data) => events.push(data));
+
+			reactiveDb.db.deleteMessagesAfter('scope-s3', Date.now());
+
+			expect(events.length).toBe(1);
+			expect(events[0].scope?.sessionId).toBe('scope-s3');
+		});
+
+		test('deleteMessagesAtAndAfter carries sessionId in scope', () => {
+			const session = makeSession('scope-s4');
+			db.createSession(session);
+
+			const events: Array<{ tables: string[]; scope?: { sessionId?: string } }> = [];
+			reactiveDb.on('change', (data) => events.push(data));
+
+			reactiveDb.db.deleteMessagesAtAndAfter('scope-s4', Date.now());
+
+			expect(events.length).toBe(1);
+			expect(events[0].scope?.sessionId).toBe('scope-s4');
+		});
+
+		test('session writes do NOT carry scope', () => {
+			const events: Array<{ tables: string[]; scope?: { sessionId?: string } }> = [];
+			reactiveDb.on('change', (data) => events.push(data));
+
+			reactiveDb.db.createSession(makeSession('no-scope'));
+
+			expect(events.length).toBe(1);
+			expect(events[0].scope).toBeUndefined();
+		});
+
+		test('notifyChange with explicit scope carries it in event', () => {
+			const events: Array<{ tables: string[]; scope?: { sessionId?: string } }> = [];
+			reactiveDb.on('change', (data) => events.push(data));
+
+			reactiveDb.notifyChange('sdk_messages', { sessionId: 'explicit-session' });
+
+			expect(events.length).toBe(1);
+			expect(events[0].scope?.sessionId).toBe('explicit-session');
+		});
+
+		test('notifyChange without scope has undefined scope', () => {
+			const events: Array<{ tables: string[]; scope?: { sessionId?: string } }> = [];
+			reactiveDb.on('change', (data) => events.push(data));
+
+			reactiveDb.notifyChange('tasks');
+
+			expect(events.length).toBe(1);
+			expect(events[0].scope).toBeUndefined();
+		});
+
+		test('transaction merges scope — different sessionIds → undefined scope', () => {
+			const session1 = makeSession('tx-scope1');
+			const session2 = makeSession('tx-scope2');
+			db.createSession(session1);
+			db.createSession(session2);
+
+			const events: Array<{ tables: string[]; scope?: { sessionId?: string } }> = [];
+			reactiveDb.on('change', (data) => events.push(data));
+
+			reactiveDb.beginTransaction();
+			reactiveDb.db.saveSDKMessage('tx-scope1', {
+				type: 'user',
+				uuid: 'u1',
+				message: { role: 'user', content: 'a' },
+			} as any);
+			reactiveDb.db.saveSDKMessage('tx-scope2', {
+				type: 'user',
+				uuid: 'u2',
+				message: { role: 'user', content: 'b' },
+			} as any);
+			reactiveDb.commitTransaction();
+
+			expect(events.length).toBe(1);
+			// Scope should be undefined because the two writes have different sessionIds
+			// (indeterminate scope)
+			expect(events[0].scope).toBeUndefined();
+		});
+
+		test('transaction preserves scope when all writes share same sessionId', () => {
+			const session = makeSession('tx-same');
+			db.createSession(session);
+
+			const events: Array<{ tables: string[]; scope?: { sessionId?: string } }> = [];
+			reactiveDb.on('change', (data) => events.push(data));
+
+			reactiveDb.beginTransaction();
+			reactiveDb.db.saveSDKMessage('tx-same', {
+				type: 'user',
+				uuid: 'u1',
+				message: { role: 'user', content: 'a' },
+			} as any);
+			reactiveDb.db.saveSDKMessage('tx-same', {
+				type: 'user',
+				uuid: 'u2',
+				message: { role: 'user', content: 'b' },
+			} as any);
+			reactiveDb.commitTransaction();
+
+			expect(events.length).toBe(1);
+			expect(events[0].scope?.sessionId).toBe('tx-same');
+		});
+
+		test('transaction abort clears pending scope', () => {
+			const events: Array<{ tables: string[]; scope?: { sessionId?: string } }> = [];
+			reactiveDb.on('change', (data) => events.push(data));
+
+			reactiveDb.beginTransaction();
+			reactiveDb.notifyChange('sdk_messages', { sessionId: 'aborted-scope' });
+			reactiveDb.abortTransaction();
+
+			expect(events.length).toBe(0);
+
+			// After abort, a new write should not carry stale scope
+			reactiveDb.notifyChange('sdk_messages', { sessionId: 'fresh-scope' });
+			expect(events.length).toBe(1);
+			expect(events[0].scope?.sessionId).toBe('fresh-scope');
+		});
+	});
 });
