@@ -314,7 +314,10 @@ export class SpaceWorkflowManager {
 		const sameLength =
 			existingIds.length === incomingNodes.length && incomingIds.length === incomingNodes.length;
 		const existingSet = new Set(existingIds);
-		const sameSet = sameLength && incomingIds.every((id) => existingSet.has(id));
+		const sameSet =
+			sameLength &&
+			new Set(incomingIds).size === existingSet.size &&
+			incomingIds.every((id) => existingSet.has(id));
 
 		if (sameSet) return;
 

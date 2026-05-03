@@ -277,12 +277,13 @@ describe('SpaceWorkflowManager', () => {
 			expect(updatedNodeRows).toEqual(createdNodeRows);
 		});
 
-		it('rejects attempts to add, remove, regenerate, or omit node IDs on update', () => {
+		it('rejects attempts to add, remove, duplicate, regenerate, or omit node IDs on update', () => {
 			const created = manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Test Workflow',
 				nodes: [
 					{ id: 'node-old', name: 'Old Step', agents: [{ agentId: 'agent-1', name: 'coder' }] },
+					{ id: 'node-other', name: 'Other Step', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 				],
 				completionAutonomyLevel: 3,
 			});
@@ -291,8 +292,32 @@ describe('SpaceWorkflowManager', () => {
 				manager.updateWorkflow(created.id, {
 					nodes: [
 						{ id: 'node-new', name: 'New Step', agents: [{ agentId: 'agent-1', name: 'coder' }] },
+						{
+							id: 'node-other',
+							name: 'Other Step',
+							agents: [{ agentId: 'agent-1', name: 'coder' }],
+						},
 					],
 					startNodeId: 'node-new',
+				})
+			).toThrow(
+				'Workflow node IDs are stable and cannot be added, removed, regenerated, or omitted during update'
+			);
+
+			expect(() =>
+				manager.updateWorkflow(created.id, {
+					nodes: [
+						{
+							id: 'node-old',
+							name: 'Duplicate 1',
+							agents: [{ agentId: 'agent-1', name: 'coder' }],
+						},
+						{
+							id: 'node-old',
+							name: 'Duplicate 2',
+							agents: [{ agentId: 'agent-1', name: 'coder' }],
+						},
+					],
 				})
 			).toThrow(
 				'Workflow node IDs are stable and cannot be added, removed, regenerated, or omitted during update'
