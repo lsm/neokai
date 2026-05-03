@@ -101,8 +101,16 @@ export function createGeminiBridgeServer(config: GeminiBridgeConfig): GeminiBrid
 				return new Response(
 					JSON.stringify({
 						data: [
-							{ id: 'gemini-2.5-pro', type: 'model', display_name: 'Gemini 2.5 Pro' },
-							{ id: 'gemini-2.5-flash', type: 'model', display_name: 'Gemini 2.5 Flash' },
+							{
+								id: 'gemini-2.5-pro',
+								type: 'model',
+								display_name: 'Gemini 2.5 Pro',
+							},
+							{
+								id: 'gemini-2.5-flash',
+								type: 'model',
+								display_name: 'Gemini 2.5 Flash',
+							},
 						],
 					}),
 					{ headers: { 'Content-Type': 'application/json' } }
@@ -185,7 +193,9 @@ async function handleGeminiRequest(
 	// Get a fresh access token
 	let accessToken: string;
 	try {
-		const tokenResponse = await refreshAccessToken(account.refresh_token, { fetchImpl });
+		const tokenResponse = await refreshAccessToken(account.refresh_token, {
+			fetchImpl,
+		});
 		accessToken = tokenResponse.access_token;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -198,6 +208,7 @@ async function handleGeminiRequest(
 		// Try another available account instead of failing immediately
 		if (isTokenInvalid || message.includes('NetworkError')) {
 			excludedAccountIds.add(account.id);
+			rotationManager.releaseSession(sessionId);
 			const altAccount = await rotationManager.getAccountForSession(sessionId);
 			if (
 				altAccount &&
@@ -273,7 +284,10 @@ async function handleGeminiRequest(
 				const errorText = await response.text();
 				return new Response(
 					createAnthropicErrorBody(mapStatusToAnthropicError(response.status), errorText),
-					{ status: response.status, headers: { 'Content-Type': 'application/json' } }
+					{
+						status: response.status,
+						headers: { 'Content-Type': 'application/json' },
+					}
 				);
 			}
 
@@ -356,8 +370,8 @@ function streamGeminiResponse(geminiResponse: Response, model: string): Response
 
 					buffer += decoder.decode(value, { stream: true });
 
-					// Parse SSE lines
-					const lines = buffer.split('\n');
+					// Parse SSE lines (normalize CRLF to LF)
+					const lines = buffer.split('\n').map((l) => l.replace(/\r$/, ''));
 					buffer = lines.pop() ?? '';
 
 					for (const line of lines) {
@@ -402,7 +416,9 @@ function streamGeminiResponse(geminiResponse: Response, model: string): Response
 			if (!state.finished) {
 				controller.enqueue(
 					encoder.encode(
-						messageDeltaSSE('end_turn', { outputTokens: Math.max(state.outputTokens, 1) })
+						messageDeltaSSE('end_turn', {
+							outputTokens: Math.max(state.outputTokens, 1),
+						})
 					)
 				);
 				controller.enqueue(encoder.encode(messageStopSSE()));
@@ -475,7 +491,11 @@ function processGeminiChunk(chunk: GeminiResponseChunk, state: GeminiStreamState
 				chunkHasFunctionCall || state.hasSeenFunctionCall
 					? 'tool_use'
 					: convertFinishReason(candidate.finishReason);
-			events.push(messageDeltaSSE(stopReason, { outputTokens: Math.max(state.outputTokens, 1) }));
+			events.push(
+				messageDeltaSSE(stopReason, {
+					outputTokens: Math.max(state.outputTokens, 1),
+				})
+			);
 			events.push(messageStopSSE());
 			state.finished = true;
 		}
@@ -500,8 +520,8 @@ async function collectGeminiResponse(geminiResponse: Response, model: string): P
 		if (done) break;
 		buffer += decoder.decode(value, { stream: true });
 
-		// Parse SSE lines
-		const lines = buffer.split('\n');
+		// Parse SSE lines (normalize CRLF to LF)
+		const lines = buffer.split('\n').map((l) => l.replace(/\r$/, ''));
 		buffer = lines.pop() ?? '';
 
 		for (const line of lines) {
@@ -548,25 +568,27 @@ async function collectGeminiResponse(geminiResponse: Response, model: string): P
 		}
 
 		for (const candidate of chunk.response.candidates ?? []) {
-			if (!candidate.content?.parts) continue;
-
-			for (const part of candidate.content.parts) {
-				if (part.text !== undefined) {
-					contentBlocks.push({
-						type: 'text',
-						text: part.text,
-					});
-				} else if (part.functionCall) {
-					hasFunctionCall = true;
-					contentBlocks.push({
-						type: 'tool_use',
-						id: `toolu_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`,
-						name: part.functionCall.name,
-						input: part.functionCall.args ?? {},
-					});
+			// Process content parts when present
+			if (candidate.content?.parts) {
+				for (const part of candidate.content.parts) {
+					if (part.text !== undefined) {
+						contentBlocks.push({
+							type: 'text',
+							text: part.text,
+						});
+					} else if (part.functionCall) {
+						hasFunctionCall = true;
+						contentBlocks.push({
+							type: 'tool_use',
+							id: `toolu_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`,
+							name: part.functionCall.name,
+							input: part.functionCall.args ?? {},
+						});
+					}
 				}
 			}
 
+			// Handle finishReason even when parts are absent (finish-only chunks)
 			if (candidate.finishReason) {
 				stopReason = hasFunctionCall ? 'tool_use' : convertFinishReason(candidate.finishReason);
 			}
