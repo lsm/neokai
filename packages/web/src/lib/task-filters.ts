@@ -49,7 +49,20 @@ export function isActionRequired(task: ActionRequiredTaskInput): boolean {
  *   `postApprovalBlockedReason` populated because dispatch failed)
  *   visible to the user. The task-detail pane's
  *   `PendingPostApprovalBanner` surfaces the actionable failure.
+ *
+ * Excludes:
+ * - `draft`: draft tasks are not yet runnable. They appear in a separate
+ *   "Drafts" grouping.
  */
 export function isActiveTask(task: ActionRequiredTaskInput): boolean {
 	return task.status === 'open' || task.status === 'in_progress' || task.status === 'approved';
+}
+
+/**
+ * Returns true when a task is in draft status — not yet published.
+ *
+ * Used to group draft tasks separately from active tasks.
+ */
+export function isDraftTask(task: ActionRequiredTaskInput): boolean {
+	return task.status === 'draft';
 }

@@ -1587,6 +1587,24 @@ class SpaceStore {
 	}
 
 	/**
+	 * Publish a draft task — transition from `draft` to `open`.
+	 * Only draft tasks can be published. After publishing, the orchestrator
+	 * can pick up the task and attach a workflow.
+	 */
+	async publishTask(taskId: string): Promise<SpaceTask> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		return hub.request<SpaceTask>('spaceTask.publish', {
+			taskId,
+			spaceId,
+		});
+	}
+
+	/**
 	 * Submit a task for human review (UI counterpart to the agent
 	 * `submit_for_approval` tool). Routes to the `spaceTask.submitForReview` RPC
 	 * which sets `status='review'`, `pendingCheckpointType='task_completion'`,
