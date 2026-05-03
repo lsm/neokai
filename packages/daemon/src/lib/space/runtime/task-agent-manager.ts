@@ -848,14 +848,19 @@ export class TaskAgentManager {
 		options: SpawnTaskAgentOptions = {}
 	): Promise<string> {
 		if (execution.agentSessionId && this.agentSessionIndex.has(execution.agentSessionId)) {
-			const startedAt = execution.startedAt ?? Date.now();
-			this.config.nodeExecutionRepo.update(execution.id, {
-				status: 'in_progress',
-				agentSessionId: execution.agentSessionId,
-				startedAt,
-				completedAt: null,
-			});
-			return execution.agentSessionId;
+			if (this.isSessionAlive(execution.agentSessionId)) {
+				const startedAt = execution.startedAt ?? Date.now();
+				this.config.nodeExecutionRepo.update(execution.id, {
+					status: 'in_progress',
+					agentSessionId: execution.agentSessionId,
+					startedAt,
+					completedAt: null,
+				});
+				return execution.agentSessionId;
+			}
+			// Indexed session is dead — evict so the create/reuse path below
+			// runs instead of short-circuiting on a stale entry.
+			this.agentSessionIndex.delete(execution.agentSessionId);
 		}
 
 		if (this.spawningExecutionIds.has(execution.id)) {
