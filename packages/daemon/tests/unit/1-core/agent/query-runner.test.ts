@@ -1409,6 +1409,30 @@ describe('QueryRunner', () => {
 			// double-retry, which is wrong (isRetry flag guards against it).
 			expect(buildSpy).toHaveBeenCalledTimes(2);
 		});
+
+		it('should not retry transient-looking errors after an intentional interrupt', async () => {
+			buildSpy.mockRejectedValue(new Error('stream closed'));
+			getStateSpy.mockReturnValue({ status: 'interrupted' });
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(buildSpy).toHaveBeenCalledTimes(1);
+			expect(saveSDKMessageSpy).not.toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
+					message: expect.objectContaining({
+						content: expect.arrayContaining([
+							expect.objectContaining({
+								text: expect.stringContaining('The connection was interrupted'),
+							}),
+						]),
+					}),
+				})
+			);
+		});
 	});
 });
 

@@ -584,6 +584,10 @@ export class QueryRunner {
 			// "TypeError: " prefix does not break any existing detection logic.
 			const errorMessage = String(error);
 			const isAbortError = error instanceof Error && error.name === 'AbortError';
+			const isQueryInterrupted =
+				isAbortError ||
+				stateManager.getState().status === 'interrupted' ||
+				this.ctx.queryAbortController?.signal.aborted === true;
 			const isStartupTimeout = errorMessage.includes('SDK startup timeout');
 			const isConversationNotFound = errorMessage.includes('No conversation found');
 			const isMessageNotFound = errorMessage.includes('No message found');
@@ -703,7 +707,12 @@ export class QueryRunner {
 			// Auto-retry once on transient connection errors (mid-stream HTTP drop).
 			// These are network blips that escape the SDK's own retry logic — retrying
 			// the entire query is the safest recovery path.
-			if (isTransientConnectionError && !isRetry && !this.ctx.isCleaningUp()) {
+			if (
+				isTransientConnectionError &&
+				!isQueryInterrupted &&
+				!isRetry &&
+				!this.ctx.isCleaningUp()
+			) {
 				logger.warn('Auto-retrying query after transient connection error (1 retry).');
 				await stateManager.setIdle();
 
