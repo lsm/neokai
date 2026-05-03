@@ -1536,6 +1536,34 @@ describe('SpaceRuntime', () => {
 			expect(taskRepo.getTask(task.id)!.status).toBe('blocked');
 		});
 
+		test('preserves terminal execution state when spawn fails after concurrent cancellation', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coder', agentId: AGENT_CODER },
+			]);
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Concurrent spawn cancellation'
+			);
+			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
+			const tam = makeRepairTam({
+				spawn: async (executionId) => {
+					nodeExecutionRepo.update(executionId, {
+						status: 'cancelled',
+						result: 'cancelled concurrently',
+						completedAt: Date.now(),
+					});
+					throw new Error('spawn failed after cancellation');
+				},
+			});
+			await buildRepairRuntime(tam, new PendingAgentMessageRepository(db)).executeTick();
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			expect(updated.status).toBe('cancelled');
+			expect(updated.result).toBe('cancelled concurrently');
+			expect(updated.agentSessionId).toBeNull();
+		});
+
 		test('activation failures are retried and eventually block the run', async () => {
 			const { run, task, pendingRepo } = await setupQueuedHandoff({ maxAttempts: 2 });
 			const tam = makeRepairTam({

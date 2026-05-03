@@ -2492,6 +2492,16 @@ export class SpaceRuntime {
 							);
 						} catch (err) {
 							const stale = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
+							if (
+								stale.status === 'cancelled' ||
+								stale.status === 'blocked' ||
+								stale.status === 'idle'
+							) {
+								log.warn(
+									`SpaceRuntime: preserving terminal execution ${execution.id} (${stale.status}) after spawn failure: ${err instanceof Error ? err.message : String(err)}`
+								);
+								continue;
+							}
 							if (stale.agentSessionId) {
 								tam.cancelBySessionId(stale.agentSessionId);
 							}
