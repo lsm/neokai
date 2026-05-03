@@ -1170,6 +1170,12 @@ describe('SpaceRuntime', () => {
 						? await overrides.spawn(execution.id)
 						: `session:${execution.id}`;
 					liveSessions.add(sessionId);
+					nodeExecutionRepo.update(execution.id, {
+						status: 'in_progress',
+						agentSessionId: sessionId,
+						startedAt: Date.now(),
+						completedAt: null,
+					});
 					return sessionId;
 				},
 				flushPendingMessagesForTarget: async (
@@ -1355,6 +1361,60 @@ describe('SpaceRuntime', () => {
 			await buildRepairRuntime(tam, pendingRepo).executeTick();
 			expect(resumedAgentName).toBe('coder-slot');
 			expect(tam._spawnedExecutionIds).toHaveLength(1);
+		});
+
+		test('repairs pending execution state when it references a live session before spawn', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coder', agentId: AGENT_CODER },
+			]);
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Respawn repair'
+			);
+			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
+			nodeExecutionRepo.update(execution.id, {
+				status: 'pending',
+				agentSessionId: 'session:live-respawn',
+				startedAt: null,
+				completedAt: null,
+			});
+			const tam = makeRepairTam({ liveSessions: new Set(['session:live-respawn']) });
+			await buildRepairRuntime(tam, new PendingAgentMessageRepository(db)).executeTick();
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			expect(updated.status).toBe('in_progress');
+			expect(updated.agentSessionId).toBe('session:live-respawn');
+			expect(updated.startedAt).toBeTruthy();
+			expect(tam._spawnedExecutionIds).toHaveLength(0);
+		});
+
+		test('clears dead pending session references and spawns a fresh session', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coder', agentId: AGENT_CODER },
+			]);
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Dead respawn repair'
+			);
+			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
+			nodeExecutionRepo.update(execution.id, {
+				status: 'pending',
+				agentSessionId: 'session:dead-respawn',
+				startedAt: null,
+				result: 'stale error',
+				completedAt: Date.now(),
+			});
+			const tam = makeRepairTam();
+			await buildRepairRuntime(tam, new PendingAgentMessageRepository(db)).executeTick();
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			expect(tam._spawnedExecutionIds).toEqual([execution.id]);
+			expect(updated.status).toBe('in_progress');
+			expect(updated.agentSessionId).toBe(`session:${execution.id}`);
+			expect(updated.result).toBeNull();
+			expect(updated.completedAt).toBeNull();
 		});
 
 		test('resolved handoffs do not bind to a different live slot on the same node', async () => {
@@ -1627,10 +1687,23 @@ describe('SpaceRuntime', () => {
 					_space: unknown,
 					_workflow: unknown,
 					_run: unknown,
-					_execution: unknown
-				) => spawnImpl(task),
+					execution: unknown
+				) => {
+					const sessionId = await spawnImpl(task);
+					const e = execution as { id?: string };
+					if (e.id) {
+						nodeExecutionRepo.update(e.id, {
+							status: 'in_progress',
+							agentSessionId: sessionId,
+							startedAt: Date.now(),
+							completedAt: null,
+						});
+					}
+					return sessionId;
+				},
 				cancelBySessionId: overrides.cancelBySessionId ?? (() => {}),
 				interruptBySessionId: overrides.interruptBySessionId ?? (async () => {}),
+				getAgentSessionById: () => null,
 				rehydrate: overrides.rehydrate ?? (async () => {}),
 				_spawned: spawned,
 			};

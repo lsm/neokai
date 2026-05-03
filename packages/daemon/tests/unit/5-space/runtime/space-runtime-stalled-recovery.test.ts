@@ -895,6 +895,12 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				) => {
 					const sessionId = `session:${execution.id}`;
 					live.add(sessionId);
+					nodeExecutionRepo.update(execution.id, {
+						status: 'in_progress',
+						agentSessionId: sessionId,
+						startedAt: Date.now(),
+						completedAt: null,
+					});
 					return sessionId;
 				},
 				flushPendingMessagesForTarget: async (

@@ -2547,6 +2547,82 @@ describe('TaskAgentManager', () => {
 			}
 		});
 
+		test('cancels execution when post-spawn state verification detects mismatch', async () => {
+			const wfId = 'wf-spawn-mismatch';
+			const wfRunId = 'run-spawn-mismatch';
+			const nodeId = 'node-spawn-mismatch';
+			const now = Date.now();
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, tags, layout, created_at, updated_at) VALUES (?, ?, ?, '', ?, '[]', '{}', ?, ?)`
+				)
+				.run(wfId, ctx.spaceId, 'Spawn Mismatch WF', nodeId, now, now);
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_nodes (id, workflow_id, name, description, config, created_at, updated_at) VALUES (?, ?, ?, '', ?, ?, ?)`
+				)
+				.run(
+					nodeId,
+					wfId,
+					'Coding',
+					JSON.stringify({ agents: [{ agentId: ctx.agentId, name: 'coder' }] }),
+					now,
+					now
+				);
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at) VALUES (?, ?, ?, '', 'in_progress', ?, ?)`
+				)
+				.run(wfRunId, ctx.spaceId, wfId, now, now);
+			const task = await ctx.taskManager.createTask({
+				title: 'Spawn mismatch task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+			});
+			const workflow = ctx.workflowManager.getWorkflow(wfId)!;
+			const run = ctx.workflowRunRepo.getRun(wfRunId)!;
+			const execution = ctx.nodeExecutionRepo.create({
+				workflowRunId: wfRunId,
+				workflowNodeId: nodeId,
+				agentName: 'coder',
+				agentId: ctx.agentId,
+				status: 'pending',
+			});
+			const originalUpdate = ctx.nodeExecutionRepo.update.bind(ctx.nodeExecutionRepo);
+			let inProgressUpdates = 0;
+			ctx.nodeExecutionRepo.update = ((executionId, patch) => {
+				if (patch.status === 'in_progress' && ++inProgressUpdates >= 2) {
+					return originalUpdate(executionId, {
+						...patch,
+						status: 'pending',
+						agentSessionId: 'wrong-session',
+					});
+				}
+				return originalUpdate(executionId, patch);
+			}) as typeof ctx.nodeExecutionRepo.update;
+
+			try {
+				await expect(
+					ctx.manager.spawnWorkflowNodeAgentForExecution(
+						task,
+						ctx.space,
+						workflow,
+						run,
+						execution,
+						{ kickoff: false }
+					)
+				).rejects.toThrow('Execution state corruption after spawn');
+				const updated = ctx.nodeExecutionRepo.getById(execution.id)!;
+				expect(updated.status).toBe('cancelled');
+				expect(updated.result).toBe('Execution state corruption after spawn');
+				expect(updated.completedAt).toBeTruthy();
+			} finally {
+				ctx.nodeExecutionRepo.update = originalUpdate;
+			}
+		});
+
 		test('resets stale execution session before spawning target session', async () => {
 			const { wfRunId, reviewNodeId, taskId } = await seedRunWithTwoNodes();
 			const staleSessionId = 'stale-reviewer-session';

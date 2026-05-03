@@ -1907,7 +1907,7 @@ export class SpaceRuntime {
 		const crashKey = `${runId}:${execution.id}`;
 		const crashCount = (this.taskCrashCounts.get(crashKey) ?? 0) + 1;
 		this.taskCrashCounts.set(crashKey, crashCount);
-		const exhausted = crashCount >= MAX_TASK_AGENT_CRASH_RETRIES;
+		const exhausted = crashCount > MAX_TASK_AGENT_CRASH_RETRIES;
 		if (exhausted) {
 			log.warn(
 				`SpaceRuntime: workflow node agent spawn/retry failed for execution ${execution.id} ` +
