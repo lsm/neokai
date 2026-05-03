@@ -11,13 +11,15 @@ import type { SettingsManager } from '../settings-manager';
 import type { Database } from '../../storage/database';
 import type { McpImportService } from '../mcp';
 
-async function syncProviderModelAllowlists(allowlists?: Record<string, string[]>): Promise<void> {
+export async function syncProviderModelAllowlists(
+	allowlists?: Record<string, string[]>
+): Promise<void> {
 	applyProviderModelAllowlistsToEnv(allowlists);
 	const { clearModelsCache } = await import('../model-service');
 	clearModelsCache();
 }
 
-function applyProviderModelAllowlistsToEnv(allowlists?: Record<string, string[]>): void {
+export function applyProviderModelAllowlistsToEnv(allowlists?: Record<string, string[]>): void {
 	if (!allowlists || Object.keys(allowlists).length === 0) {
 		delete process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS;
 		return;

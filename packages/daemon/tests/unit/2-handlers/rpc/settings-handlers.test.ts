@@ -25,7 +25,10 @@ import {
 	type SessionSettings,
 	DEFAULT_GLOBAL_SETTINGS,
 } from '@neokai/shared';
-import { registerSettingsHandlers } from '../../../../src/lib/rpc-handlers/settings-handlers';
+import {
+	applyProviderModelAllowlistsToEnv,
+	registerSettingsHandlers,
+} from '../../../../src/lib/rpc-handlers/settings-handlers';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { Database } from '../../../../src/storage/database';
@@ -176,7 +179,29 @@ describe('Settings RPC Handlers', () => {
 	});
 
 	afterEach(() => {
+		delete process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS;
 		mock.restore();
+	});
+
+	describe('provider model allowlist sync', () => {
+		it('hydrates provider allowlists into env for startup model initialization', () => {
+			applyProviderModelAllowlistsToEnv({
+				openrouter: ['xai/grok-4.3', ' deepseek/deepseek-v4-pro '],
+				anthropic: ['claude-sonnet-4.6'],
+			});
+
+			expect(process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS).toBe(
+				'openrouter:xai/grok-4.3\nopenrouter:deepseek/deepseek-v4-pro\nanthropic:claude-sonnet-4.6'
+			);
+		});
+
+		it('clears provider allowlist env when no persisted allowlists exist', () => {
+			process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS = 'openrouter:xai/grok-4.3';
+
+			applyProviderModelAllowlistsToEnv(undefined);
+
+			expect(process.env.NEOKAI_PROVIDER_MODEL_ALLOWLISTS).toBeUndefined();
+		});
 	});
 
 	describe('settings.global.get', () => {

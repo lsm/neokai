@@ -10,6 +10,7 @@ import { StateManager } from './lib/state-manager';
 import { MessageHub, MessageHubRouter } from '@neokai/shared';
 import { createDaemonHub } from './lib/daemon-hub';
 import { setupRPCHandlers } from './lib/rpc-handlers';
+import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers';
 import { WebSocketServerTransport } from './lib/websocket-server-transport';
 import { createWebSocketHandlers } from './routes/setup-websocket';
 import { createGitHubService, type GitHubService } from './lib/github/github-service';
@@ -177,6 +178,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// discovered. Room-scoped sessions use their own defaultPath for project-level
 	// MCP resolution and are not affected by this global instance.
 	const settingsManager = new SettingsManager(db, process.env.NEOKAI_WORKSPACE_PATH ?? homedir());
+	applyProviderModelAllowlistsToEnv(settingsManager.getGlobalSettings().providerModelAllowlists);
 
 	// Check authentication status
 	const authStatus = await authManager.getAuthStatus();
