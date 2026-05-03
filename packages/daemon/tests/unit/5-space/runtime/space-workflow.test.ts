@@ -213,12 +213,12 @@ describe('SpaceWorkflowRepository', () => {
 		// Small delay to ensure timestamp difference
 		await new Promise((r) => setTimeout(r, 2));
 		const updated = repo.updateWorkflow(wf.id, {
-			nodes: [{ id: 'new-step', name: 'Plan', agentId: 'agent-planner' }],
+			nodes: [{ id: 'node-coder', name: 'Plan', agentId: 'agent-planner' }],
 		});
 		expect(updated?.updatedAt).toBeGreaterThan(before);
 	});
 
-	test('updateWorkflow replaces all steps on steps param', () => {
+	test('updateWorkflow updates stable nodes in place on nodes param', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF',
@@ -228,9 +228,10 @@ describe('SpaceWorkflowRepository', () => {
 		expect(wf.nodes).toHaveLength(2);
 
 		const updated = repo.updateWorkflow(wf.id, {
-			nodes: [{ id: 'step-review', name: 'Review', agentId: 'agent-general' }],
+			nodes: [{ id: 'node-coder', name: 'Review', agentId: 'agent-general' }, plannerNode],
 		});
-		expect(updated?.nodes).toHaveLength(1);
+		expect(updated?.nodes).toHaveLength(2);
+		expect(updated?.nodes[0].id).toBe('node-coder');
 		expect(updated?.nodes[0].agents[0].agentId).toBe('agent-general');
 	});
 
@@ -795,7 +796,7 @@ describe('SpaceWorkflowManager', () => {
 		const mgr = new SpaceWorkflowManager(repo, lookup);
 		expect(() =>
 			mgr.updateWorkflow(wf.id, {
-				nodes: [{ id: 'step-x', name: 'Step', agentId: 'non-existent' }],
+				nodes: [{ id: 'node-coder', name: 'Step', agentId: 'non-existent' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -923,7 +924,7 @@ describe('SpaceWorkflowManager', () => {
 		});
 		expect(() =>
 			manager.updateWorkflow(wf.id, {
-				nodes: [{ id: 'step-x', name: 'Step', agents: [{ agentId: '' }] }],
+				nodes: [{ id: 'node-coder', name: 'Step', agents: [{ agentId: '' }] }],
 			})
 		).toThrow(WorkflowValidationError);
 	});

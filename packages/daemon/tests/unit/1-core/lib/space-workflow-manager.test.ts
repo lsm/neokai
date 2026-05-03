@@ -244,6 +244,39 @@ describe('SpaceWorkflowManager', () => {
 			expect(updated?.endNodeId).toBe('node-1');
 		});
 
+		it('updates stable nodes in place without changing row IDs', () => {
+			const created = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Stable Update Workflow',
+				nodes: [
+					{ id: 'node-1', name: 'Old Step 1', agents: [{ agentId: 'agent-1', name: 'coder' }] },
+					{ id: 'node-2', name: 'Old Step 2', agents: [{ agentId: 'agent-2', name: 'reviewer' }] },
+				],
+				completionAutonomyLevel: 3,
+			});
+			const createdNodeRows = db
+				.prepare(
+					`SELECT id, rowid FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`
+				)
+				.all(created.id) as Array<{ id: string; rowid: number }>;
+
+			const updated = manager.updateWorkflow(created.id, {
+				nodes: [
+					{ id: 'node-1', name: 'New Step 1', agents: [{ agentId: 'agent-3', name: 'coder' }] },
+					{ id: 'node-2', name: 'New Step 2', agents: [{ agentId: 'agent-4', name: 'reviewer' }] },
+				],
+			});
+			const updatedNodeRows = db
+				.prepare(
+					`SELECT id, rowid FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`
+				)
+				.all(created.id) as Array<{ id: string; rowid: number }>;
+
+			expect(updated?.nodes.map((node) => node.id)).toEqual(['node-1', 'node-2']);
+			expect(updated?.nodes.map((node) => node.name)).toEqual(['New Step 1', 'New Step 2']);
+			expect(updatedNodeRows).toEqual(createdNodeRows);
+		});
+
 		it('rejects attempts to add, remove, regenerate, or omit node IDs on update', () => {
 			const created = manager.createWorkflow({
 				spaceId: 'space-1',

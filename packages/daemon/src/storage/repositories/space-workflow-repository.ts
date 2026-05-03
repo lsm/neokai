@@ -380,12 +380,8 @@ export class SpaceWorkflowRepository {
 		}
 
 		if (hasNodeReplacement) {
-			this.db.prepare(`DELETE FROM space_workflow_nodes WHERE workflow_id = ?`).run(id);
 			const nodes = params.nodes ?? [];
-			for (let i = 0; i < nodes.length; i++) {
-				const node = nodes[i];
-				this.insertNode(id, node as WorkflowNodeInput, node.id ?? generateUUID(), i, now);
-			}
+			this.updateWorkflowNodesInPlace(id, nodes as WorkflowNodeInput[], now);
 		}
 
 		return this.getWorkflow(id)!;
@@ -464,13 +460,34 @@ export class SpaceWorkflowRepository {
 		return rows.map((r) => rowToNode(r, ctx));
 	}
 
-	private insertNode(
+	private updateWorkflowNodesInPlace(
 		workflowId: string,
-		input: WorkflowNodeInput,
-		nodeId: string,
-		_index: number,
+		nodes: WorkflowNodeInput[],
 		now: number
 	): void {
+		const updateNode = this.db.prepare(
+			`UPDATE space_workflow_nodes SET name = ?, config = ?, updated_at = ? WHERE workflow_id = ? AND id = ?`
+		);
+
+		for (const node of nodes) {
+			if (!node.id) {
+				log.error(`workflow.node.update.missingStableId: workflowId=${workflowId}`);
+				continue;
+			}
+			const result = updateNode.run(
+				node.name,
+				JSON.stringify(this.buildNodeConfig(node)),
+				now,
+				workflowId,
+				node.id
+			);
+			if (result.changes === 0) {
+				log.error(`workflow.node.update.missingNode: workflowId=${workflowId} nodeId=${node.id}`);
+			}
+		}
+	}
+
+	private buildNodeConfig(input: WorkflowNodeInput): NodeConfigJson {
 		const nodeCfg: NodeConfigJson = {};
 
 		// Normalize agents: use `agents` array if present, otherwise fall back to legacy
@@ -486,12 +503,30 @@ export class SpaceWorkflowRepository {
 			nodeCfg.agents = resolvedAgents;
 		}
 
+		return nodeCfg;
+	}
+
+	private insertNode(
+		workflowId: string,
+		input: WorkflowNodeInput,
+		nodeId: string,
+		_index: number,
+		now: number
+	): void {
 		this.db
 			.prepare(
 				`INSERT INTO space_workflow_nodes
-	           (id, workflow_id, name, description, config, created_at, updated_at)
-	         VALUES (?, ?, ?, ?, ?, ?, ?)`
+		           (id, workflow_id, name, description, config, created_at, updated_at)
+		         VALUES (?, ?, ?, ?, ?, ?, ?)`
 			)
-			.run(nodeId, workflowId, input.name, '', JSON.stringify(nodeCfg), now, now);
+			.run(
+				nodeId,
+				workflowId,
+				input.name,
+				'',
+				JSON.stringify(this.buildNodeConfig(input)),
+				now,
+				now
+			);
 	}
 }

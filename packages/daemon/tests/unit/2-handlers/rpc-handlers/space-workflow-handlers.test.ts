@@ -653,6 +653,10 @@ describe('space-workflow-handlers', () => {
 			expect(calledParams.name).toBe(template.name);
 			expect(calledParams.templateName).toBe(template.name);
 			expect(calledParams.templateHash).toBe(templateHash);
+			const calledNodes = calledParams.nodes as Array<{ id: string; name: string }>;
+			expect(calledNodes.map((node) => node.id)).toContain('step-1');
+			expect(calledNodes.find((node) => node.id === 'step-1')?.name).toBe(template.nodes[0].name);
+			expect(calledParams.startNodeId).toBe('step-1');
 			expect(daemonHub.emit).toHaveBeenCalledWith(
 				'spaceWorkflow.updated',
 				expect.objectContaining({
@@ -1033,6 +1037,10 @@ describe('space-workflow-handlers', () => {
 			expect(calledParams.name).toBe(template.name);
 			expect(calledParams.templateName).toBe(template.name);
 			expect(calledParams.templateHash).toBe(templateHash);
+			const calledNodes = calledParams.nodes as Array<{ id: string; name: string }>;
+			expect(calledNodes.map((node) => node.id)).toContain('step-1');
+			expect(calledNodes.find((node) => node.id === 'step-1')?.name).toBe(template.nodes[0].name);
+			expect(calledParams.startNodeId).toBe('step-1');
 
 			// Emitted spaceWorkflow.deleted for the older row and spaceWorkflow.updated for the kept row.
 			expect(daemonHub.emit).toHaveBeenCalledWith('spaceWorkflow.deleted', {
