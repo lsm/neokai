@@ -339,6 +339,47 @@ describe('GatePollManager', () => {
 		});
 	});
 
+	describe('lastOutput deferred until injection succeeds', () => {
+		test('lastOutput is not updated when no active session exists', async () => {
+			(resolver.getActiveSessionForNode as ReturnType<typeof vi.fn>).mockReturnValue(null);
+
+			const workflow = makeWorkflowWithPoll({ script: 'echo "pending output"' });
+			manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());
+
+			// Tick 1: no session — output should NOT be marked as seen
+			await triggerTick(
+				manager,
+				'run-1',
+				'gate-1',
+				makePoll({ script: 'echo "pending output"' }),
+				'/tmp',
+				makeContext(),
+				'node-2'
+			);
+			expect(injector.injectSubSessionMessage).not.toHaveBeenCalled();
+
+			// Now a session appears
+			(resolver.getActiveSessionForNode as ReturnType<typeof vi.fn>).mockReturnValue('session-1');
+
+			// Tick 2: same output — should still be injected because lastOutput
+			// was not updated when there was no session
+			await triggerTick(
+				manager,
+				'run-1',
+				'gate-1',
+				makePoll({ script: 'echo "pending output"' }),
+				'/tmp',
+				makeContext(),
+				'node-2'
+			);
+			expect(injector.injectSubSessionMessage).toHaveBeenCalledWith(
+				'session-1',
+				'pending output',
+				true
+			);
+		});
+	});
+
 	describe('poll tick execution', () => {
 		test('executes script and injects message when output changes', async () => {
 			const workflow = makeWorkflowWithPoll({ script: 'echo "new output"' });

@@ -369,9 +369,7 @@ export class GatePollManager {
 				return;
 			}
 
-			// Output changed and is non-empty — inject message
-			activePoll.lastOutput = output;
-
+			// Output changed and is non-empty — attempt injection
 			const message = formatPollMessage(output, poll.messageTemplate);
 			const sessionId = this.sessionResolver.getActiveSessionForNode(runId, targetNodeId);
 
@@ -384,6 +382,10 @@ export class GatePollManager {
 			}
 
 			await this.messageInjector.injectSubSessionMessage(sessionId, message, true);
+
+			// Only mark output as seen after successful injection, so that if
+			// there is no active session the change is re-attempted on the next tick.
+			activePoll.lastOutput = output;
 
 			log.info(
 				`GatePollManager: injected poll message for gate "${gateId}" on run "${runId}" ` +
