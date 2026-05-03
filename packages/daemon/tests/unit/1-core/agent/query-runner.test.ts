@@ -13,7 +13,7 @@ import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../../../src/storage/database';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
-import type { ErrorManager } from '../../../../src/lib/error-manager';
+import { ErrorCategory, type ErrorManager } from '../../../../src/lib/error-manager';
 import type { Logger } from '../../../../src/lib/logger';
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
 import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
@@ -50,6 +50,7 @@ describe('QueryRunner', () => {
 	let addSessionStateOptionsSpy: ReturnType<typeof mock>;
 	let setCanUseToolSpy: ReturnType<typeof mock>;
 	let createCanUseToolCallbackSpy: ReturnType<typeof mock>;
+	let enqueueWithIdSpy: ReturnType<typeof mock>;
 
 	// State variables (mutable context properties)
 	let queryGeneration: number;
@@ -119,6 +120,7 @@ describe('QueryRunner', () => {
 		clearSpy = mock(() => {});
 		stopSpy = mock(() => {});
 		sizeSpy = mock(() => 0);
+		enqueueWithIdSpy = mock(async () => {});
 		mockMessageQueue = {
 			isRunning: isRunningSpy,
 			start: startSpy,
@@ -126,6 +128,7 @@ describe('QueryRunner', () => {
 			stop: stopSpy,
 			size: sizeSpy,
 			getGeneration: mock(() => 0),
+			enqueueWithId: enqueueWithIdSpy,
 			messageGenerator: mock(async function* () {
 				// Empty generator for tests
 			}),
@@ -613,6 +616,83 @@ describe('QueryRunner', () => {
 			expect(setProcessingSpy).not.toHaveBeenCalled();
 			expect(updateMessageStatusSpy).not.toHaveBeenCalled();
 			expect(publishSpy).not.toHaveBeenCalled();
+		});
+
+		it('should track last consumed non-internal message for transient retry re-enqueue', async () => {
+			async function* mockMessageGenerator() {
+				yield {
+					message: {
+						uuid: 'msg-1',
+						session_id: 'test-session-id',
+						parent_tool_use_id: null,
+						message: { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+						internal: false,
+					},
+					onSent: () => {},
+				};
+			}
+
+			const mockQueue = {
+				...mockMessageQueue,
+				messageGenerator: mock(() => mockMessageGenerator()),
+			} as unknown as MessageQueue;
+
+			runner = createRunner({
+				messageQueue: mockQueue as unknown as MessageQueue,
+			});
+
+			const generator = runner.createMessageGeneratorWrapper();
+			for await (const _msg of generator) {
+				// Consume the generator
+			}
+
+			// After consuming a non-internal message, the runner should have tracked it
+			// for potential re-enqueue on transient connection error retry.
+			const tracked = (
+				runner as unknown as {
+					lastConsumedUserMessage: { uuid: string; content: unknown } | null;
+				}
+			).lastConsumedUserMessage;
+			expect(tracked).not.toBeNull();
+			expect(tracked!.uuid).toBe('msg-1');
+			expect(tracked!.content).toEqual([{ type: 'text', text: 'Hello' }]);
+		});
+
+		it('should not track internal messages for transient retry re-enqueue', async () => {
+			async function* mockMessageGenerator() {
+				yield {
+					message: {
+						uuid: 'internal-msg',
+						session_id: 'test-session-id',
+						parent_tool_use_id: null,
+						message: { role: 'user', content: [{ type: 'text', text: '/context' }] },
+						internal: true,
+					},
+					onSent: () => {},
+				};
+			}
+
+			const mockQueue = {
+				...mockMessageQueue,
+				messageGenerator: mock(() => mockMessageGenerator()),
+			} as unknown as MessageQueue;
+
+			runner = createRunner({
+				messageQueue: mockQueue as unknown as MessageQueue,
+			});
+
+			const generator = runner.createMessageGeneratorWrapper();
+			for await (const _msg of generator) {
+				// Consume the generator
+			}
+
+			// Internal messages should NOT be tracked for re-enqueue
+			const tracked = (
+				runner as unknown as {
+					lastConsumedUserMessage: { uuid: string } | null;
+				}
+			).lastConsumedUserMessage;
+			expect(tracked).toBeNull();
 		});
 	});
 
@@ -1273,6 +1353,292 @@ describe('QueryRunner', () => {
 			expect(closeSpy).not.toHaveBeenCalled();
 			expect(ctx.queryObject).toBe(originalQueryObject);
 		});
+	});
+
+	describe('transient connection error handling', () => {
+		// Integration tests: exercise the runQuery() catch block when a transient
+		// connection error is thrown during the SDK query.  buildSpy is set to throw
+		// connection errors so the retry path is triggered without needing a real
+		// subprocess or network.  ANTHROPIC_API_KEY is set to a dummy value so the
+		// pre-query auth check passes.
+
+		let savedApiKey: string | undefined;
+
+		beforeEach(() => {
+			savedApiKey = process.env.ANTHROPIC_API_KEY;
+			process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+			mockSession.workspacePath = tmpdir();
+		});
+
+		afterEach(() => {
+			if (savedApiKey === undefined) {
+				delete process.env.ANTHROPIC_API_KEY;
+			} else {
+				process.env.ANTHROPIC_API_KEY = savedApiKey;
+			}
+		});
+
+		it('should retry once and show sanitized retry message on transient connection error', async () => {
+			buildSpy
+				.mockRejectedValueOnce(
+					new Error(
+						'The socket connection was closed unexpectedly. For more information, pass verbose: true in the second argument to fetch()'
+					)
+				)
+				.mockRejectedValueOnce(new Error('stop after retry'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// buildSpy was called twice: original + retry
+			expect(buildSpy).toHaveBeenCalledTimes(2);
+			// The retry path should show a sanitized message via displayErrorAsAssistantMessage
+			expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
+					type: 'assistant',
+					message: expect.objectContaining({
+						content: expect.arrayContaining([
+							expect.objectContaining({
+								text: expect.stringContaining('The connection was interrupted'),
+							}),
+						]),
+					}),
+				})
+			);
+		});
+
+		it('should always call messageQueue.clear() on connection error', async () => {
+			buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(clearSpy).toHaveBeenCalled();
+		});
+
+		it('should surface error via handleError on exhausted transient connection retry', async () => {
+			buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(handleErrorSpy).toHaveBeenCalled();
+		});
+
+		it('should categorize exhausted transient connection error as CONNECTION', async () => {
+			buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(handleErrorSpy).toHaveBeenCalledWith(
+				'test-session-id',
+				expect.any(Error),
+				ErrorCategory.CONNECTION,
+				expect.any(String),
+				expect.anything(),
+				expect.any(Object)
+			);
+		});
+
+		it('should show sanitized user-facing message after exhausted retries', async () => {
+			buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// The exhausted retry message must NOT contain raw fetch internals
+			const userMessage = handleErrorSpy.mock.calls[0][3] as string;
+			expect(userMessage).toContain('Could not get a response');
+			expect(userMessage).toContain('connection was interrupted');
+			expect(userMessage).not.toContain('verbose: true');
+			expect(userMessage).not.toContain('fetch()');
+		});
+
+		it('should call stateManager.setIdle after handling connection error', async () => {
+			buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(setIdleSpy).toHaveBeenCalled();
+		});
+
+		it('should NOT retry more than once on the same transient connection error', async () => {
+			buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// Exactly 2 calls: initial + 1 retry. A third call would mean a
+			// double-retry, which is wrong (isRetry flag guards against it).
+			expect(buildSpy).toHaveBeenCalledTimes(2);
+		});
+
+		it('should not retry transient-looking errors after an intentional interrupt', async () => {
+			buildSpy.mockRejectedValue(new Error('stream closed'));
+			getStateSpy.mockReturnValue({ status: 'interrupted' });
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(buildSpy).toHaveBeenCalledTimes(1);
+			expect(saveSDKMessageSpy).not.toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
+					message: expect.objectContaining({
+						content: expect.arrayContaining([
+							expect.objectContaining({
+								text: expect.stringContaining('The connection was interrupted'),
+							}),
+						]),
+					}),
+				})
+			);
+		});
+
+		it('should not re-enqueue when no user message was consumed (error before for-await)', async () => {
+			// buildSpy throws immediately (before the message generator is consumed),
+			// so lastConsumedUserMessage is never set and no re-enqueue should happen.
+			buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+		});
+
+		it('should re-enqueue tracked user message on transient connection error retry', async () => {
+			// Simulates the scenario where the SDK drops mid-stream AFTER consuming a user
+			// message from the queue.  Since the SDK's query() can't be mocked in unit tests
+			// (it's imported at module load), we pre-set lastConsumedUserMessage on the runner
+			// and then trigger the transient error via buildSpy to verify the re-enqueue.
+			//
+			// In production, lastConsumedUserMessage is set by createMessageGeneratorWrapper()
+			// when yielding non-internal messages to the SDK (verified by the tracking test
+			// in the createMessageGeneratorWrapper describe block).
+			const consumedUuid = 'consumed-msg-uuid';
+			const consumedContent = [{ type: 'text' as const, text: 'Hello, Claude!' }];
+
+			buildSpy
+				.mockRejectedValueOnce(
+					new Error(
+						'The socket connection was closed unexpectedly. For more information, pass verbose: true in the second argument to fetch()'
+					)
+				)
+				.mockRejectedValueOnce(new Error('stop after retry'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+
+			// Pre-set the tracked message (simulates createMessageGeneratorWrapper having
+			// consumed a user message before the transient error occurred).
+			(runner as unknown as { lastConsumedUserMessage: unknown }).lastConsumedUserMessage = {
+				uuid: consumedUuid,
+				content: consumedContent,
+			};
+
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// The tracked message should have been re-enqueued before the retry
+			expect(enqueueWithIdSpy).toHaveBeenCalledWith(consumedUuid, consumedContent);
+		});
+
+		it('should clear lastConsumedUserMessage after re-enqueueing', async () => {
+			const consumedUuid = 'consumed-msg-uuid';
+			const consumedContent = [{ type: 'text' as const, text: 'Hello' }];
+
+			buildSpy
+				.mockRejectedValueOnce(new Error('TypeError: fetch failed'))
+				.mockRejectedValueOnce(new Error('stop after retry'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+
+			(runner as unknown as { lastConsumedUserMessage: unknown }).lastConsumedUserMessage = {
+				uuid: consumedUuid,
+				content: consumedContent,
+			};
+
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// After re-enqueue, the tracking field should be cleared
+			expect(
+				(runner as unknown as { lastConsumedUserMessage: unknown }).lastConsumedUserMessage
+			).toBeNull();
+		});
+
+		// NOTE: The "retry succeeds" happy path (build rejects once, resolves on retry)
+		// cannot be tested in unit tests because query-runner.ts:461 calls the real
+		// (unmocked) SDK query() after build() resolves.  In the test environment,
+		// this either hangs (timing out) or throws (flaky depending on env).
+		//
+		// The retry path is adequately covered by the tests above that verify:
+		//  - buildSpy.toHaveBeenCalledTimes(2) proves retry fires exactly once
+		//  - saveSDKMessageSpy proves the retry message is displayed
+		//  - re-enqueue tests prove consumed messages are restored before retry
+		//  - handleErrorSpy tests prove exhausted retries surface sanitized errors
+
+		// Test each transient pattern that previously had no dedicated coverage.
+		const untestedPatterns = [
+			'ReadableStream is locked',
+			'network down',
+			'Unable to connect',
+			'backend connection error',
+			'SocketError',
+		];
+
+		for (const pattern of untestedPatterns) {
+			it(`should detect "${pattern}" as a transient connection error`, async () => {
+				buildSpy
+					.mockRejectedValueOnce(new Error(`Some error: ${pattern} occurred`))
+					.mockRejectedValueOnce(new Error('stop after retry'));
+
+				const ctx = createContext();
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				// Should have retried once (2 calls total)
+				expect(buildSpy).toHaveBeenCalledTimes(2);
+
+				// Should show the retry message
+				expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+					'test-session-id',
+					expect.objectContaining({
+						type: 'assistant',
+						message: expect.objectContaining({
+							content: expect.arrayContaining([
+								expect.objectContaining({
+									text: expect.stringContaining('The connection was interrupted'),
+								}),
+							]),
+						}),
+					})
+				);
+			});
+		}
 	});
 });
 
