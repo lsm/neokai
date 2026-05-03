@@ -109,6 +109,9 @@ export class GeminiOAuthProvider implements Provider {
 	private _pendingCodeVerifier?: string;
 	private _pendingOAuthState?: string;
 	private _oauthCallbackServer?: { stop(): void };
+	/** Flow ID of the currently active OAuth callback server, used to prevent
+	 *  stale background handlers from tearing down a newer flow's server. */
+	private _activeCallbackFlowId?: string;
 
 	constructor(deps?: OAuthClientDeps) {
 		this._deps = deps;
@@ -212,6 +215,18 @@ export class GeminiOAuthProvider implements Provider {
 			const invalidAccounts = accounts.filter((a) => a.status === 'invalid');
 
 			if (activeAccounts.length === 0) {
+				const exhaustedAccounts = accounts.filter((a) => a.status === 'exhausted');
+				if (exhaustedAccounts.length > 0) {
+					// Accounts exist but are temporarily rate-limited — still authenticated
+					return {
+						isAuthenticated: true,
+						method: 'oauth',
+						user: {
+							email: exhaustedAccounts.map((a) => a.email).join(', '),
+						},
+					};
+				}
+
 				return {
 					isAuthenticated: false,
 					method: 'oauth',
@@ -308,15 +323,32 @@ export class GeminiOAuthProvider implements Provider {
 		const callbackPort = server.port ?? 0;
 		const redirectUri = `http://localhost:${callbackPort}/callback`;
 
-		// Build the auth URL with the local callback redirect URI
-		const { authUrl, codeVerifier, state } = await buildAuthUrlWithRedirect(redirectUri);
+		// Build the auth URL with the local callback redirect URI.
+		// If URL generation fails (e.g. missing OAuth env vars), stop the
+		// server before rethrowing so we don't leak an orphaned server.
+		let authUrl: string;
+		let codeVerifier: string;
+		let state: string;
+		try {
+			({ authUrl, codeVerifier, state } = await buildAuthUrlWithRedirect(redirectUri));
+		} catch (err) {
+			server.stop();
+			this._oauthCallbackServer = undefined;
+			throw err;
+		}
+
 		expectedState = state;
 		this._pendingCodeVerifier = codeVerifier;
 		this._pendingOAuthState = state;
+
+		// Assign a unique flow ID so the background handler only tears down
+		// its own server (not a newer login flow's server).
+		const flowId = crypto.randomUUID();
 		this._oauthCallbackServer = server;
+		this._activeCallbackFlowId = flowId;
 
 		// Start background code exchange — runs after the user authorizes
-		this.handleOAuthCallback(codePromise, codeVerifier, redirectUri);
+		this.handleOAuthCallback(codePromise, codeVerifier, redirectUri, flowId);
 
 		return {
 			type: 'redirect',
@@ -329,11 +361,15 @@ export class GeminiOAuthProvider implements Provider {
 	/**
 	 * Background handler: waits for the OAuth code from the callback server,
 	 * exchanges it for tokens, and saves the account.
+	 *
+	 * @param flowId - Unique ID for this login flow; the finally block only
+	 *   tears down the callback server if it still belongs to this flow.
 	 */
 	private async handleOAuthCallback(
 		codePromise: Promise<string>,
 		codeVerifier: string,
-		redirectUri: string
+		redirectUri: string,
+		flowId: string
 	): Promise<void> {
 		try {
 			// Wait for the code with a 240-second timeout (allows MFA and account switching)
@@ -368,7 +404,12 @@ export class GeminiOAuthProvider implements Provider {
 		} catch (err) {
 			log.error(`OAuth code exchange failed: ${err instanceof Error ? err.message : err}`);
 		} finally {
-			this.stopOAuthCallbackServer();
+			// Only tear down the server if this flow still owns it.
+			// A newer startOAuthFlow() call may have replaced it.
+			if (this._activeCallbackFlowId === flowId) {
+				this.stopOAuthCallbackServer();
+				this._activeCallbackFlowId = undefined;
+			}
 		}
 	}
 
