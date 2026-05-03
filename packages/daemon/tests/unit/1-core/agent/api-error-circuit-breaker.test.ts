@@ -414,5 +414,30 @@ describe('ApiErrorCircuitBreaker', () => {
 			expect(tripped).toBe(true);
 			expect(circuitBreaker.isTripped()).toBe(true);
 		});
+
+		it('should count fatal Connection errors even when transient substring is present', async () => {
+			// When a stderr error contains both a fatal "Connection error" marker
+			// AND a transient substring like "connection reset", the fatal marker
+			// must take precedence — the ordering fix ensures extractErrorPattern
+			// runs before the transient skip, preventing persistent outages from
+			// being masked by transient substrings.
+			const message = {
+				type: 'user',
+				message: {
+					content:
+						'<local-command-stderr>Error: Connection error. The connection reset unexpectedly.</local-command-stderr>',
+				},
+			};
+
+			// First two messages should be counted but not trip
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
+			expect(circuitBreaker.isTripped()).toBe(false);
+
+			// Third message should trip the breaker — fatal pattern wins over transient
+			const tripped = await circuitBreaker.checkMessage(message);
+			expect(tripped).toBe(true);
+			expect(circuitBreaker.isTripped()).toBe(true);
+		});
 	});
 });

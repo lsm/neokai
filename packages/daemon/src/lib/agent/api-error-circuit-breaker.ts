@@ -255,18 +255,25 @@ export class ApiErrorCircuitBreaker {
 			return false;
 		}
 
+		// Check for fatal error patterns FIRST — an SDK stderr payload like
+		// "Error: Connection error ... connection reset" contains both a fatal
+		// marker (Connection error) and a transient substring (connection reset).
+		// The fatal marker must take precedence so repeated persistent outages
+		// increment circuit-breaker error counts as intended.
+		const errorPattern = this.extractErrorPattern(messageText);
+
 		// Skip transient connection errors — these are mid-stream HTTP drops that
-		// the daemon's own retry logic handles. A single network blip should not
-		// contribute to the circuit breaker's error count. Only genuinely repeated
-		// connection failures (matching FATAL_ERROR_PATTERNS) should trip it.
-		for (const pattern of TRANSIENT_CONNECTION_PATTERNS) {
-			if (pattern.test(messageText)) {
-				return false;
+		// the daemon's own retry logic handles. Only skip when no fatal error pattern
+		// was detected inside a stderr block, so transient substrings cannot mask
+		// genuine repeated connection failures.
+		if (!errorPattern) {
+			for (const pattern of TRANSIENT_CONNECTION_PATTERNS) {
+				if (pattern.test(messageText)) {
+					return false;
+				}
 			}
 		}
 
-		// Check for error pattern
-		const errorPattern = this.extractErrorPattern(messageText);
 		if (!errorPattern) {
 			return false;
 		}
