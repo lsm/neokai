@@ -287,13 +287,15 @@ export class GeminiOAuthProvider implements Provider {
 	}
 
 	/**
-	 * Logout — removes all accounts.
+	 * Logout — removes all accounts and tears down active bridge servers.
 	 */
 	async logout(): Promise<void> {
 		const accounts = await loadAccounts();
 		for (const account of accounts) {
 			await persistRemoveAccount(account.id);
 		}
+		// Tear down active bridge servers so they stop using the old rotation manager
+		await this.shutdown();
 		this.rotationManager = new AccountRotationManager();
 		log.info('Logged out all Google accounts');
 	}
