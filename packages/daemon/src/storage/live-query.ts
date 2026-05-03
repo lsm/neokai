@@ -7,7 +7,7 @@
  */
 
 import { Database as BunDatabase } from 'bun:sqlite';
-import type { ReactiveDatabase } from './reactive-database';
+import type { ReactiveDatabase, TableChangeScope } from './reactive-database';
 
 // ============================================================================
 // Public API types
@@ -37,6 +37,21 @@ export interface LiveQuerySubscribeOptions {
 		rows: Record<string, unknown>[],
 		params: ReadonlyArray<unknown>
 	) => Record<string, unknown> | undefined;
+	/**
+	 * Optional scope filter. When a table-change event carries scope metadata,
+	 * this function decides whether the change is relevant to this particular
+	 * query subscription. Return `false` to skip re-evaluation entirely.
+	 *
+	 * When the scope is absent (e.g. transaction flushes, methods without scope
+	 * extraction) the filter is NOT called and the query is re-evaluated as
+	 * usual — this preserves the existing fallback-to-full-reevaluation
+	 * behaviour.
+	 *
+	 * Example: a `messages.bySession` subscription with `params[0] = "sess-A"`
+	 * would provide `(scope) => scope.sessionId === "sess-A"` so that writes
+	 * for session B skip re-evaluation of session A's feed.
+	 */
+	scopeFilter?: (scope: TableChangeScope) => boolean;
 }
 
 export interface QueryDiff<T = Record<string, unknown>> {
@@ -80,6 +95,8 @@ interface QueryEntry<T extends Record<string, unknown>> {
 	pendingTimer: ReturnType<typeof setTimeout> | null;
 	/** Delay used for table-change reevaluations. */
 	debounceMs: number;
+	/** Scope filter — when set, skips re-evaluation for unrelated scopes. */
+	scopeFilter: ((scope: TableChangeScope) => boolean) | undefined;
 }
 
 interface RowHashSnapshot {
@@ -246,7 +263,11 @@ export class LiveQueryEngine {
 	 * constant named-query SQL, so this stays bounded by the registry size.
 	 */
 	private statements = new Map<string, ReturnType<BunDatabase['prepare']>>();
-	private changeListener: (data: { tables: string[]; versions: Record<string, number> }) => void;
+	private changeListener: (data: {
+		tables: string[];
+		versions: Record<string, number>;
+		scope?: TableChangeScope;
+	}) => void;
 	private disposed = false;
 
 	constructor(
@@ -255,7 +276,7 @@ export class LiveQueryEngine {
 	) {
 		this.changeListener = (data) => {
 			for (const table of data.tables) {
-				this.onTableChange(table);
+				this.onTableChange(table, data.scope);
 			}
 		};
 		this.reactiveDb.on('change', this.changeListener);
@@ -296,6 +317,7 @@ export class LiveQueryEngine {
 				pendingEval: false,
 				pendingTimer: null,
 				debounceMs,
+				scopeFilter: options.scopeFilter,
 			} as unknown as QueryEntry<T>;
 
 			this.queries.set(cacheKey, entry as unknown as QueryEntry<Record<string, unknown>>);
@@ -374,7 +396,7 @@ export class LiveQueryEngine {
 	// Private
 	// ============================================================================
 
-	private onTableChange(table: string): void {
+	private onTableChange(table: string, scope?: TableChangeScope): void {
 		if (this.disposed) return;
 
 		const keys = this.tableIndex.get(table.toLowerCase());
@@ -383,6 +405,10 @@ export class LiveQueryEngine {
 		for (const cacheKey of keys) {
 			const entry = this.queries.get(cacheKey);
 			if (!entry || entry.pendingEval) continue;
+
+			// Scope filtering: when scope metadata is available and the entry
+			// has a filter, skip re-evaluation if the change is unrelated.
+			if (scope && entry.scopeFilter && !entry.scopeFilter(scope)) continue;
 
 			entry.pendingEval = true;
 			if (entry.debounceMs > 0) {
