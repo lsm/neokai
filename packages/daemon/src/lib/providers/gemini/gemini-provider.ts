@@ -107,6 +107,7 @@ export class GeminiOAuthProvider implements Provider {
 	private bridgeServers = new Map<string, GeminiBridgeServer>();
 	private _deps?: OAuthClientDeps;
 	private _pendingCodeVerifier?: string;
+	private _pendingOAuthState?: string;
 	private _oauthCallbackServer?: { stop(): void };
 
 	constructor(deps?: OAuthClientDeps) {
@@ -249,13 +250,16 @@ export class GeminiOAuthProvider implements Provider {
 		// Tear down any previous callback server
 		this.stopOAuthCallbackServer();
 
+		// Start a local callback server to receive the OAuth redirect
+		// State will be injected after building the auth URL
+		let expectedState = '';
+
 		// Promise that resolves when the OAuth callback delivers the auth code
 		let resolveCode: ((code: string) => void) | undefined;
 		const codePromise = new Promise<string>((resolve) => {
 			resolveCode = resolve;
 		});
 
-		// Start a local callback server to receive the OAuth redirect
 		const server = Bun.serve({
 			port: 0,
 			idleTimeout: 255, // seconds — give the user time to authorize
@@ -270,6 +274,15 @@ export class GeminiOAuthProvider implements Provider {
 				if (error) {
 					return new Response(OAUTH_ERROR_HTML(error), {
 						status: 400,
+						headers: { 'Content-Type': 'text/html' },
+					});
+				}
+
+				// Validate state parameter to prevent CSRF
+				const returnedState = url.searchParams.get('state');
+				if (!returnedState || returnedState !== expectedState) {
+					return new Response(OAUTH_ERROR_HTML('Invalid OAuth state parameter'), {
+						status: 403,
 						headers: { 'Content-Type': 'text/html' },
 					});
 				}
@@ -296,8 +309,10 @@ export class GeminiOAuthProvider implements Provider {
 		const redirectUri = `http://localhost:${callbackPort}/callback`;
 
 		// Build the auth URL with the local callback redirect URI
-		const { authUrl, codeVerifier } = await buildAuthUrlWithRedirect(redirectUri);
+		const { authUrl, codeVerifier, state } = await buildAuthUrlWithRedirect(redirectUri);
+		expectedState = state;
 		this._pendingCodeVerifier = codeVerifier;
+		this._pendingOAuthState = state;
 		this._oauthCallbackServer = server;
 
 		// Start background code exchange — runs after the user authorizes
@@ -333,6 +348,7 @@ export class GeminiOAuthProvider implements Provider {
 			}
 
 			this._pendingCodeVerifier = undefined;
+			this._pendingOAuthState = undefined;
 			this.stopOAuthCallbackServer();
 
 			const tokenResponse = await exchangeAuthCode(code, codeVerifier, this._deps, redirectUri);

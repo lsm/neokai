@@ -375,8 +375,9 @@ function streamGeminiResponse(geminiResponse: Response, model: string): Response
 					buffer = lines.pop() ?? '';
 
 					for (const line of lines) {
-						if (line.startsWith('data: ')) {
-							dataBuffer += line.slice(6).trim();
+						const dataContent = extractSSEData(line);
+						if (dataContent !== undefined) {
+							dataBuffer += dataContent.trim();
 						} else if (line === '' && dataBuffer) {
 							// End of SSE event — process the data
 							try {
@@ -394,8 +395,9 @@ function streamGeminiResponse(geminiResponse: Response, model: string): Response
 				}
 
 				// Process any remaining dataBuffer (event without trailing newline)
-				if (buffer.startsWith('data: ')) {
-					dataBuffer += buffer.slice(6).trim();
+				const trailingData = extractSSEData(buffer);
+				if (trailingData !== undefined) {
+					dataBuffer += trailingData.trim();
 				}
 				if (dataBuffer) {
 					try {
@@ -525,8 +527,9 @@ async function collectGeminiResponse(geminiResponse: Response, model: string): P
 		buffer = lines.pop() ?? '';
 
 		for (const line of lines) {
-			if (line.startsWith('data: ')) {
-				dataBuffer += line.slice(6).trim();
+			const dataContent = extractSSEData(line);
+			if (dataContent !== undefined) {
+				dataBuffer += dataContent.trim();
 			} else if (line === '' && dataBuffer) {
 				try {
 					chunks.push(JSON.parse(dataBuffer) as GeminiResponseChunk);
@@ -540,8 +543,9 @@ async function collectGeminiResponse(geminiResponse: Response, model: string): P
 
 	// Flush any trailing SSE payload that arrived at EOF without a
 	// terminating blank line (mirrors the streaming path's EOF handling).
-	if (buffer.startsWith('data: ')) {
-		dataBuffer += buffer.slice(6).trim();
+	const trailingData = extractSSEData(buffer);
+	if (trailingData !== undefined) {
+		dataBuffer += trailingData.trim();
 	}
 	if (dataBuffer) {
 		try {
@@ -614,6 +618,16 @@ async function collectGeminiResponse(geminiResponse: Response, model: string): P
 }
 
 // ---------------------------------------------------------------------------
+/**
+ * Extract the data payload from an SSE `data:` line.
+ * Handles both `data: value` (with space) and `data:value` (without space).
+ */
+function extractSSEData(line: string): string | undefined {
+	if (line.startsWith('data: ')) return line.slice(6); // 'data: ' = 6 chars
+	if (line.startsWith('data:') && line.length > 5) return line.slice(5); // 'data:' = 5 chars
+	return undefined;
+}
+
 // Utilities
 // ---------------------------------------------------------------------------
 

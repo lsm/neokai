@@ -13,6 +13,7 @@ export {
 	REDIRECT_URI,
 	buildAuthUrl,
 	buildAuthUrlWithRedirect,
+	generateStateParameter,
 	exchangeAuthCode,
 	refreshAccessToken,
 	fetchUserInfo,

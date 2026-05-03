@@ -125,6 +125,13 @@ export function generateCodeVerifier(): string {
 	return base64URLEncode(array);
 }
 
+/** Generate a random state parameter for OAuth CSRF protection. */
+export function generateStateParameter(): string {
+	const array = new Uint8Array(32);
+	crypto.getRandomValues(array);
+	return base64URLEncode(array);
+}
+
 /** Generate a code challenge from a code verifier. */
 export async function generateCodeChallenge(verifier: string): Promise<string> {
 	const encoder = new TextEncoder();
@@ -177,9 +184,10 @@ export async function buildAuthUrl(): Promise<{ authUrl: string; codeVerifier: s
  */
 export async function buildAuthUrlWithRedirect(
 	redirectUri: string
-): Promise<{ authUrl: string; codeVerifier: string }> {
+): Promise<{ authUrl: string; codeVerifier: string; state: string }> {
 	const codeVerifier = generateCodeVerifier();
 	const codeChallenge = await generateCodeChallenge(codeVerifier);
+	const stateParam = generateStateParameter();
 
 	const params = new URLSearchParams({
 		client_id: getOAuthClientId(),
@@ -190,10 +198,11 @@ export async function buildAuthUrlWithRedirect(
 		prompt: 'consent',
 		code_challenge: codeChallenge,
 		code_challenge_method: 'S256',
+		state: stateParam,
 	});
 
 	const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-	return { authUrl, codeVerifier };
+	return { authUrl, codeVerifier, state: stateParam };
 }
 
 /**
