@@ -509,7 +509,7 @@ describe('SpaceOverview', () => {
 			expect(getByTestId('awaiting-approval-summary').textContent).toContain('1 task');
 		});
 
-		it('clicking the summary navigates to the tasks view', () => {
+		it('clicking the summary navigates to the tasks Action tab', () => {
 			mockSpace.value = makeSpace();
 			mockTasks.value = [
 				makeTask('t1', 'review', {
@@ -518,7 +518,7 @@ describe('SpaceOverview', () => {
 			];
 			const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);
 			fireEvent.click(getByTestId('awaiting-approval-summary'));
-			expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1');
+			expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'action');
 		});
 	});
 });
