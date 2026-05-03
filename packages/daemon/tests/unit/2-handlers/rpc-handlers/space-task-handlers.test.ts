@@ -236,6 +236,33 @@ describe('space-task-handlers', () => {
 				})
 			).rejects.toThrow('Dependency task not found');
 		});
+
+		it('creates a draft task when draft flag is true', async () => {
+			await call('spaceTask.create', {
+				spaceId: 'space-1',
+				title: 'Draft',
+				description: 'D',
+				draft: true,
+			});
+
+			expect(taskManager.createTask).toHaveBeenCalledWith(
+				expect.objectContaining({ status: 'draft' })
+			);
+		});
+
+		it('rejects contradictory draft flag and non-draft status', async () => {
+			await expect(
+				call('spaceTask.create', {
+					spaceId: 'space-1',
+					title: 'Draft',
+					description: 'D',
+					draft: true,
+					status: 'open',
+				})
+			).rejects.toThrow('draft: true cannot be combined with a non-draft status');
+
+			expect(taskManager.createTask).not.toHaveBeenCalled();
+		});
 	});
 
 	// ─── spaceTask.list ────────────────────────────────────────────────────────

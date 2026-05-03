@@ -1034,7 +1034,17 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 			'List SpaceTasks for this space. Filterable by status and workflow run. Use compact:true and limit/offset to reduce payload size.',
 			{
 				status: z
-					.enum(['open', 'in_progress', 'done', 'blocked', 'cancelled', 'archived'])
+					.enum([
+						'draft',
+						'open',
+						'in_progress',
+						'review',
+						'approved',
+						'done',
+						'blocked',
+						'cancelled',
+						'archived',
+					])
 					.optional()
 					.describe('Filter by task status'),
 				workflow_run_id: z

@@ -274,15 +274,42 @@ describe('SpaceTaskManager — draft task lifecycle', () => {
 		expect(await taskManager.areDependenciesMet(dependent)).toBe(true);
 	});
 
-	test('draft task with workflow_id and priority is still draft', async () => {
+	test('draft task with preferred workflow and priority is still draft and unattached', async () => {
 		const task = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Draft with workflow',
 			description: '',
 			status: 'draft',
 			priority: 'urgent',
+			preferredWorkflowId: 'workflow-123',
 		});
 		expect(task.status).toBe('draft');
 		expect(task.priority).toBe('urgent');
+		expect(task.preferredWorkflowId).toBe('workflow-123');
+		expect(task.workflowRunId).toBeUndefined();
+	});
+
+	test('draft task can depend on another draft but remains blocked until dependency is done', async () => {
+		const dependency = await taskManager.createTask({
+			title: 'Draft dependency',
+			description: '',
+			status: 'draft',
+		});
+
+		const dependent = await taskManager.createTask({
+			title: 'Dependent draft',
+			description: '',
+			status: 'draft',
+			dependsOn: [dependency.id],
+		});
+
+		expect(dependent.dependsOn).toEqual([dependency.id]);
+		expect(await taskManager.areDependenciesMet(dependent)).toBe(false);
+
+		await taskManager.publishTask(dependency.id);
+		await taskManager.setTaskStatus(dependency.id, 'in_progress');
+		await taskManager.setTaskStatus(dependency.id, 'done');
+
+		expect(await taskManager.areDependenciesMet(dependent)).toBe(true);
 	});
 });

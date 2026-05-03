@@ -60,8 +60,12 @@ export function setupSpaceTaskHandlers(
 		const taskManager = taskManagerFactory(params.spaceId);
 		const { spaceId, draft, ...rest } = params;
 
-		// If draft flag is set, override status to 'draft'
-		if (draft && !rest.status) {
+		// The draft flag is an alias for status: 'draft'. Reject contradictory
+		// input instead of silently allowing status to override draft: true.
+		if (draft && rest.status && rest.status !== 'draft') {
+			throw new Error('draft: true cannot be combined with a non-draft status');
+		}
+		if (draft) {
 			rest.status = 'draft';
 		}
 		const task = await taskManager.createTask(rest);

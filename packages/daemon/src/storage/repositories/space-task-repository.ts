@@ -364,7 +364,7 @@ export class SpaceTaskRepository {
 	promoteDraftTasksByCreator(createdByTaskId: string): number {
 		const result = this.db
 			.prepare(
-				`UPDATE space_tasks SET status = 'open', updated_at = ? WHERE created_by_task_id = ? AND status = 'open'`
+				`UPDATE space_tasks SET status = 'open', updated_at = ? WHERE created_by_task_id = ? AND status = 'draft'`
 			)
 			.run(Date.now(), createdByTaskId);
 		if (result.changes > 0) {

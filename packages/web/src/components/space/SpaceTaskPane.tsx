@@ -582,7 +582,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		try {
 			setStatusTransitioning(true);
 			setThreadSendError(null);
-			if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, newStatus)) {
+			if (task.status === 'draft' && newStatus === 'open') {
+				await spaceStore.publishTask(task.id);
+			} else if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, newStatus)) {
 				await spaceStore.recoverWorkflowTask(task.id, newStatus);
 			} else {
 				await spaceStore.updateTask(task.id, { status: newStatus });
