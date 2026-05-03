@@ -541,6 +541,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 113: Add SDK message indexes for large thread windows and replay lookups.
 	runMigration113(db);
+
+	// Migration 114: Add 'draft' to space_tasks status CHECK constraint.
+	runMigration114(db);
 }
 
 /**
@@ -7838,4 +7841,72 @@ export function runMigration113(db: BunDatabase): void {
 		ON sdk_messages(session_id, json_extract(sdk_message, '$.parent_tool_use_id'))`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_uuid_status
 		ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`);
+}
+
+export function runMigration114(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+
+	// Add 'draft' to the status CHECK constraint.
+	// SQLite doesn't support ALTER TABLE ... ALTER CONSTRAINT, so we recreate the table.
+	// We derive the new DDL from the live schema so all existing constraints
+	// (FOREIGN KEYs, CHECKs on other columns) are preserved automatically.
+	const master = db
+		.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='space_tasks'`)
+		.get() as { sql?: string } | undefined;
+	const currentSql = master?.sql ?? '';
+	if (!currentSql) return;
+
+	// Already has 'draft' in the CHECK? Idempotent — skip.
+	if (statusCheckContains(db, 'space_tasks', 'draft')) return;
+
+	// Build new DDL: rename table + widen status CHECK to include 'draft'.
+	const newTableSql = addDraftToStatusCheck(
+		replaceCreateTableName(currentSql, 'space_tasks_m114_new')
+	);
+	const copyColumns = tableColumnNames(db, 'space_tasks').map(quoteSqlIdent).join(', ');
+	const existingIndexDdl = capturedIndexDdl(db, 'space_tasks');
+
+	// CRITICAL: Disable foreign keys during table recreation to prevent
+	// CASCADE deletes from wiping child rows when we DROP TABLE space_tasks.
+	db.exec('PRAGMA foreign_keys = OFF');
+	db.exec('BEGIN');
+	try {
+		db.exec(`DROP TABLE IF EXISTS space_tasks_m114_new`);
+		db.exec(newTableSql);
+		db.exec(
+			`INSERT INTO space_tasks_m114_new (${copyColumns}) SELECT ${copyColumns} FROM space_tasks`
+		);
+		db.exec(`DROP TABLE space_tasks`);
+		db.exec(`ALTER TABLE space_tasks_m114_new RENAME TO space_tasks`);
+		recreateCompatibleIndexes(db, 'space_tasks', existingIndexDdl);
+		db.exec('COMMIT');
+	} catch (err) {
+		db.exec('ROLLBACK');
+		throw err;
+	} finally {
+		db.exec('PRAGMA foreign_keys = ON');
+	}
+}
+
+/**
+ * Adds 'draft' to the status CHECK constraint in a CREATE TABLE statement.
+ * The new table keeps all other constraints (FKs, CHECKs) untouched.
+ */
+function addDraftToStatusCheck(createSql: string): string {
+	let matched = false;
+	const result = createSql.replace(
+		/CHECK\s*\(\s*status\s+IN\s*\(([^)]*)\)\s*\)/i,
+		(match, values: string) => {
+			matched = true;
+			if (values.includes("'draft'")) {
+				return match;
+			}
+			// Insert 'draft' as the first value
+			return `CHECK(status IN ('draft', ${values.trim()}))`;
+		}
+	);
+	if (!matched) {
+		throw new Error('Unable to add draft to space_tasks.status CHECK constraint');
+	}
+	return result;
 }

@@ -34,8 +34,8 @@ export const currentSpaceViewModeSignal = signal<SpaceViewMode>('overview');
 export type SpaceConfigureTab = 'agents' | 'workflows' | 'settings';
 export const currentSpaceConfigureTabSignal = signal<SpaceConfigureTab>('agents');
 
-// Tasks filter tab (action | active | completed | archived) — driven by URL
-export type SpaceTasksFilterTab = 'action' | 'active' | 'completed' | 'archived';
+// Tasks filter tab (action | active | draft | completed | archived) — driven by URL
+export type SpaceTasksFilterTab = 'action' | 'active' | 'completed' | 'archived' | 'draft';
 export const currentSpaceTasksFilterTabSignal = signal<SpaceTasksFilterTab>('active');
 
 // Task detail sub-view (thread | canvas | artifacts) — driven by URL

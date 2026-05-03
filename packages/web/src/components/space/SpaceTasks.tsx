@@ -19,10 +19,10 @@ import {
 	currentSpaceTasksFilterTabSignal,
 } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
-import { isActionRequired, isActiveTask } from '../../lib/task-filters';
+import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
 import { getRelativeTime } from '../../lib/utils';
 
-type TaskFilterTab = 'action' | 'active' | 'completed' | 'archived';
+type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'archived';
 
 /**
  * Predicate for the "Awaiting Approval" pre-filter chip — tasks paused at a
@@ -53,11 +53,13 @@ const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested', 'g
 export const TAB_PREDICATES: Record<TaskFilterTab, (task: SpaceTask) => boolean> = {
 	action: isActionRequired,
 	active: isActiveTask,
+	draft: isDraftTask,
 	completed: (t) => t.status === 'done' || t.status === 'cancelled',
 	archived: (t) => t.status === 'archived',
 };
 
 const STATUS_BORDER: Record<string, string> = {
+	draft: 'border-l-slate-500',
 	open: 'border-l-gray-500',
 	in_progress: 'border-l-blue-500',
 	blocked: 'border-l-amber-500',
@@ -69,6 +71,7 @@ const STATUS_BORDER: Record<string, string> = {
 };
 
 const STATUS_LABEL: Record<string, string> = {
+	draft: 'Draft',
 	open: 'Open',
 	in_progress: 'In Progress',
 	blocked: 'Blocked',
@@ -133,9 +136,12 @@ const ARCHIVED_GROUPS: StatusGroupDef[] = [
 	{ status: 'archived', title: 'Archived', variant: 'gray' },
 ];
 
+const DRAFT_GROUPS: StatusGroupDef[] = [{ status: 'draft', title: 'Drafts', variant: 'default' }];
+
 const TAB_GROUPS_DEF: Record<TaskFilterTab, StatusGroupDef[]> = {
 	action: ACTION_GROUPS,
 	active: ACTIVE_GROUPS,
+	draft: DRAFT_GROUPS,
 	completed: COMPLETED_GROUPS,
 	archived: ARCHIVED_GROUPS,
 };
@@ -210,6 +216,7 @@ function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
 			description: 'Tasks requiring human input, review, or unblocking will appear here',
 		},
 		active: { title: 'No active tasks', description: 'Active tasks will appear here' },
+		draft: { title: 'No draft tasks', description: 'Tasks created as drafts will appear here' },
 		completed: { title: 'No completed tasks', description: 'Completed tasks will appear here' },
 		archived: { title: 'No archived tasks', description: 'Archived tasks will appear here' },
 	};
@@ -457,6 +464,7 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 		const c: Record<TaskFilterTab, number> = {
 			action: 0,
 			active: 0,
+			draft: 0,
 			completed: 0,
 			archived: 0,
 		};
@@ -530,6 +538,14 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 						isActive={activeTab === 'active'}
 						onClick={() => navigateToSpaceTasks(spaceId, 'active')}
 					/>
+					{counts.draft > 0 && (
+						<TabButton
+							label="Drafts"
+							count={counts.draft}
+							isActive={activeTab === 'draft'}
+							onClick={() => navigateToSpaceTasks(spaceId, 'draft')}
+						/>
+					)}
 					<TabButton
 						label="Completed"
 						count={counts.completed}
