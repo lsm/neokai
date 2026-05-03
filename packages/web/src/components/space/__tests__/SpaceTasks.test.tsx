@@ -12,9 +12,8 @@ let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
 
 // Bridge pattern: hoisted bridge objects allow mockNavigateToSpaceTasks to update
 // the real Preact signals (which are created after import).
-const { filterTabBridge, filterBridge, idBridge } = vi.hoisted(() => ({
+const { filterTabBridge, idBridge } = vi.hoisted(() => ({
 	filterTabBridge: { signal: null as ReturnType<typeof signal<string>> | null },
-	filterBridge: { signal: null as ReturnType<typeof signal<string | null>> | null },
 	idBridge: { signal: null as ReturnType<typeof signal<string | null>> | null },
 }));
 
@@ -27,9 +26,8 @@ const { mockNavigateToSpaceTasks } = vi.hoisted(() => ({
 	}),
 }));
 
-// Plain holders for non-reactive signals (only read in useEffect, not render)
-const { mockCurrentSpaceTasksFilterSignal, mockCurrentSpaceIdSignal } = vi.hoisted(() => ({
-	mockCurrentSpaceTasksFilterSignal: { value: null as string | null },
+// Plain holders for non-reactive signals (only read, not render)
+const { mockCurrentSpaceIdSignal } = vi.hoisted(() => ({
 	mockCurrentSpaceIdSignal: { value: null as string | null },
 }));
 
@@ -38,7 +36,6 @@ const mockCurrentSpaceTasksFilterTabSignal = signal<string>('active');
 
 // Wire bridge so mockNavigateToSpaceTasks can update the real signal
 filterTabBridge.signal = mockCurrentSpaceTasksFilterTabSignal;
-filterBridge.signal = mockCurrentSpaceTasksFilterSignal;
 idBridge.signal = mockCurrentSpaceIdSignal;
 
 vi.mock('../../../lib/signals', async (importOriginal) => {
@@ -47,9 +44,6 @@ vi.mock('../../../lib/signals', async (importOriginal) => {
 		...actual,
 		get currentSpaceTasksFilterTabSignal() {
 			return mockCurrentSpaceTasksFilterTabSignal;
-		},
-		get currentSpaceTasksFilterSignal() {
-			return mockCurrentSpaceTasksFilterSignal;
 		},
 		get currentSpaceIdSignal() {
 			return mockCurrentSpaceIdSignal;
@@ -107,7 +101,6 @@ describe('SpaceTasks', () => {
 		cleanup();
 		mockTasks.value = [];
 		mockCurrentSpaceTasksFilterTabSignal.value = 'active';
-		mockCurrentSpaceTasksFilterSignal.value = null;
 		mockCurrentSpaceIdSignal.value = null;
 		mockNavigateToSpaceTasks.mockClear();
 	});
@@ -434,52 +427,6 @@ describe('SpaceTasks', () => {
 			badges = getAllByTestId('task-dependency-badge');
 			expect(badges[0].getAttribute('data-dep-status')).toBe('done');
 			expect(badges[0].className).toContain('text-green-300');
-		});
-	});
-
-	describe('Awaiting-approval filter chip', () => {
-		it('is hidden when no tasks are paused at a submit_for_approval checkpoint', () => {
-			mockTasks.value = [makeTask('t1', 'review')];
-			const { queryByTestId, getByText } = render(<SpaceTasks spaceId="space-1" />);
-			fireEvent.click(getByText('Action'));
-			expect(queryByTestId('tasks-filter-awaiting-approval')).toBeNull();
-		});
-
-		it('shows chip with count when at least one task is paused at a submit_for_approval checkpoint', () => {
-			mockTasks.value = [
-				makeTask('t1', 'review', {
-					pendingCheckpointType: 'task_completion',
-				}),
-				makeTask('t2', 'review'),
-			];
-			const { getByTestId, getByText } = render(<SpaceTasks spaceId="space-1" />);
-			fireEvent.click(getByText('Action'));
-			const chip = getByTestId('tasks-filter-awaiting-approval');
-			expect(chip.textContent).toContain('Awaiting Approval');
-			expect(chip.textContent).toContain('1');
-		});
-
-		it('filters the list to awaiting-approval tasks only when toggled on', () => {
-			mockTasks.value = [
-				makeTask('t1', 'review', {
-					pendingCheckpointType: 'task_completion',
-				}),
-				makeTask('t2', 'review'),
-			];
-			const { getByTestId, getByText, queryByText } = render(<SpaceTasks spaceId="space-1" />);
-			fireEvent.click(getByText('Action'));
-			// Both tasks visible by default (action tab: blocked + review)
-			expect(getByText('Task t1')).toBeTruthy();
-			expect(getByText('Task t2')).toBeTruthy();
-
-			// Toggle the filter chip on
-			fireEvent.click(getByTestId('tasks-filter-awaiting-approval'));
-			expect(getByText('Task t1')).toBeTruthy();
-			expect(queryByText('Task t2')).toBeNull();
-
-			// Toggle off via Clear filter
-			fireEvent.click(getByTestId('tasks-filter-clear'));
-			expect(getByText('Task t2')).toBeTruthy();
 		});
 	});
 

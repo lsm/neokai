@@ -11,28 +11,14 @@
  */
 
 import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus } from '@neokai/shared';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useMemo } from 'preact/hooks';
 import { navigateToSpaceTasks } from '../../lib/router';
-import {
-	currentSpaceIdSignal,
-	currentSpaceTasksFilterSignal,
-	currentSpaceTasksFilterTabSignal,
-} from '../../lib/signals';
+import { currentSpaceIdSignal, currentSpaceTasksFilterTabSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
 import { getRelativeTime } from '../../lib/utils';
 
 type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'archived';
-
-/**
- * Predicate for the "Awaiting Approval" pre-filter chip — tasks paused at a
- * `submit_for_approval` (`task_completion`) checkpoint. Matches
- * `SpaceOverview`'s summary count exactly so both surfaces stay in sync when
- * the filter is activated via click-through.
- */
-function isAwaitingTaskCompletion(task: SpaceTask): boolean {
-	return task.pendingCheckpointType === 'task_completion';
-}
 
 /** Block reasons that indicate a task needs human attention */
 const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested', 'gate_rejected'];
@@ -434,31 +420,8 @@ interface SpaceTasksProps {
 
 export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps) {
 	const tasks = spaceStore.tasks.value;
-	const preFilter = currentSpaceTasksFilterSignal.value;
-	// When the pre-filter is set (e.g. deep-link from the Overview summary),
-	// land on the Action tab so the filtered list is non-empty by default.
-	// Otherwise keep the default of "Active" — matches historical behavior for
-	// users coming in without a filter.
 	const activeTab: TaskFilterTab = currentSpaceTasksFilterTabSignal.value;
 	const spaceId = currentSpaceIdSignal.value ?? '';
-	const [activeFilter, setActiveFilter] = useState<'awaiting_task_completion' | null>(preFilter);
-
-	// Sync from the signal once, then clear it so the filter doesn't re-apply on
-	// re-renders or when the component remounts from an unrelated cause. The
-	// chip's own state is what persists for the duration of this view.
-	// Intentionally run once at mount; the signal is a one-shot hand-off.
-	useEffect(() => {
-		if (preFilter) {
-			setActiveFilter(preFilter);
-			navigateToSpaceTasks(spaceId, 'action');
-			currentSpaceTasksFilterSignal.value = null;
-		}
-	}, []);
-
-	const awaitingApprovalCount = useMemo(
-		() => tasks.filter(isAwaitingTaskCompletion).length,
-		[tasks]
-	);
 
 	const counts = useMemo(() => {
 		const c: Record<TaskFilterTab, number> = {
@@ -484,12 +447,8 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 
 	const filteredTasks = useMemo(() => {
 		const predicate = TAB_PREDICATES[activeTab];
-		let list = [...tasks].filter(predicate);
-		if (activeFilter === 'awaiting_task_completion') {
-			list = list.filter(isAwaitingTaskCompletion);
-		}
-		return list.sort((a, b) => b.updatedAt - a.updatedAt);
-	}, [tasks, activeTab, activeFilter]);
+		return [...tasks].filter(predicate).sort((a, b) => b.updatedAt - a.updatedAt);
+	}, [tasks, activeTab]);
 
 	// Build the dep lookup once per render of the list — O(N) total rather
 	// than O(N) per row inside the badge component.
@@ -561,43 +520,6 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 						variant="gray"
 					/>
 				</div>
-
-				{/* Awaiting-approval filter chip — visible when at least one task is
-				paused at a `submit_for_approval` checkpoint. Toggling on narrows the
-				list to those tasks only; toggling off restores the full tab view. The
-				count here matches the Overview summary verbatim so click-through
-				parity holds. */}
-				{awaitingApprovalCount > 0 && (
-					<div class="flex items-center gap-2" data-testid="space-tasks-filter-bar">
-						<button
-							type="button"
-							onClick={() =>
-								setActiveFilter((f) =>
-									f === 'awaiting_task_completion' ? null : 'awaiting_task_completion'
-								)
-							}
-							data-testid="tasks-filter-awaiting-approval"
-							aria-pressed={activeFilter === 'awaiting_task_completion'}
-							class={`px-2.5 py-1 text-xs font-medium rounded-full border transition-colors ${
-								activeFilter === 'awaiting_task_completion'
-									? 'bg-amber-900/40 text-amber-200 border-amber-700/60'
-									: 'bg-dark-800 text-gray-300 border-dark-600 hover:bg-dark-700'
-							}`}
-						>
-							⏸ Awaiting Approval ({awaitingApprovalCount})
-						</button>
-						{activeFilter === 'awaiting_task_completion' && (
-							<button
-								type="button"
-								onClick={() => setActiveFilter(null)}
-								data-testid="tasks-filter-clear"
-								class="text-xs text-gray-500 hover:text-gray-300"
-							>
-								Clear filter
-							</button>
-						)}
-					</div>
-				)}
 
 				{filteredTasks.length === 0 ? (
 					<EmptyTabState tab={activeTab} />
