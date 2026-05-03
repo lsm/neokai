@@ -1451,8 +1451,11 @@ export class SpaceRuntime {
 		run: SpaceWorkflowRun
 	): Promise<'completion-pending' | 'blocked' | 'skipped'> {
 		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
-		if (!workflow) return 'skipped';
 		const executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
+		if (!workflow) {
+			await this.blockRunWithMissingWorkflow(run, executions);
+			return 'blocked';
+		}
 		if (executions.length === 0) return 'skipped';
 
 		// If the tick loop has any work it can drive — `pending` (about
@@ -1573,6 +1576,51 @@ export class SpaceRuntime {
 				`with all node executions idle/cancelled and no completion signal — flagged blocked`
 		);
 		return 'blocked';
+	}
+
+	private async blockRunWithMissingWorkflow(
+		run: SpaceWorkflowRun,
+		executions: NodeExecution[]
+	): Promise<void> {
+		const reason = `Workflow ${run.workflowId} no longer exists; workflow run cannot continue`;
+		const now = Date.now();
+		for (const execution of executions) {
+			if (execution.status === 'cancelled') continue;
+			this.config.nodeExecutionRepo.update(execution.id, {
+				status: 'cancelled',
+				agentSessionId: null,
+				result: reason,
+				completedAt: now,
+			});
+		}
+		await this.transitionRunStatusAndEmit(run.id, 'blocked');
+		const canonicalTask = this.pickCanonicalTaskForRun(
+			run,
+			this.config.taskRepo.listByWorkflowRun(run.id)
+		);
+		if (canonicalTask) {
+			await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, {
+				status: 'blocked',
+				blockReason: 'workflow_invalid',
+				result: reason,
+				completedAt: null,
+			});
+			await this.safeNotify({
+				kind: 'task_blocked',
+				spaceId: run.spaceId,
+				taskId: canonicalTask.id,
+				reason,
+				timestamp: new Date().toISOString(),
+			});
+		}
+		await this.safeNotify({
+			kind: 'workflow_run_blocked',
+			spaceId: run.spaceId,
+			runId: run.id,
+			reason,
+			timestamp: new Date().toISOString(),
+		});
+		log.warn(`SpaceRuntime.recoverStalledRuns: blocked run ${run.id}: ${reason}`);
 	}
 
 	private async activateRestartRecoveryDownstreamNodes(

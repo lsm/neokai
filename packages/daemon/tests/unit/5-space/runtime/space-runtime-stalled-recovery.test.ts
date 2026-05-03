@@ -1769,6 +1769,40 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(notifications.length).toBe(0);
 		});
 
+		test('run with deleted workflow is blocked during restart recovery', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Deleted Workflow Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Deleted Workflow Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'pending');
+			workflowManager.deleteWorkflow(workflow.id);
+
+			const rt = makeRuntime();
+			await rt.recoverStalledRuns();
+
+			const reason = `Workflow ${workflow.id} no longer exists; workflow run cannot continue`;
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)!.blockReason).toBe('workflow_invalid');
+			expect(nodeExecutionRepo.getById(execution.id)!.status).toBe('cancelled');
+			expect(nodeExecutionRepo.getById(execution.id)!.result).toBe(reason);
+			expect(notifications.some((n) => n.kind === 'workflow_run_blocked')).toBe(true);
+		});
+
 		test('stale pending execution is cancelled when tick attempts spawn', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Step A', agentId: AGENT },
