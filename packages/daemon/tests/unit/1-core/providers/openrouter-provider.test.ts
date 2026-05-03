@@ -196,6 +196,29 @@ describe('OpenRouterProvider', () => {
 		expect(models.at(-1)?.id).toBe('community/model-34');
 	});
 
+	it('allows openrouter/ models when explicitly listed in allowlist', async () => {
+		process.env.OPENROUTER_API_KEY = 'sk-or-test';
+		process.env.OPENROUTER_ALLOWED_MODELS = 'openrouter/auto, xai/grok-4.3';
+		const fetchMock = mock(
+			async () =>
+				new Response(
+					JSON.stringify({
+						data: [
+							{ id: 'openrouter/auto', name: 'OpenRouter Auto' },
+							{ id: 'xai/grok-4.3', name: 'Grok 4.3' },
+							{ id: 'anthropic/claude-sonnet-4.6', name: 'Claude Sonnet 4.6' },
+						],
+					}),
+					{ status: 200 }
+				)
+		);
+		const provider = new OpenRouterProvider(process.env, fetchMock as unknown as typeof fetch);
+
+		const models = await provider.getModels();
+
+		expect(models.map((model) => model.id)).toEqual(['openrouter/auto', 'xai/grok-4.3']);
+	});
+
 	it('filters OpenRouter models to configured account allowlist', async () => {
 		process.env.OPENROUTER_API_KEY = 'sk-or-test';
 		process.env.OPENROUTER_ALLOWED_MODELS = 'xai/grok-4.3, deepseek/deepseek-v4-pro';

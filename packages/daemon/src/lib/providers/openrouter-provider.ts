@@ -214,7 +214,10 @@ export class OpenRouterProvider implements Provider {
 			const body = (await response.json()) as OpenRouterModelsResponse;
 			const apiModels = (body.data ?? [])
 				.filter((model) => typeof model.id === 'string' && model.id.length > 0)
-				.filter((model) => !SYSTEM_MODEL_PREFIXES.some((prefix) => model.id.startsWith(prefix)))
+				.filter(
+					(model) =>
+						allowedIds || !SYSTEM_MODEL_PREFIXES.some((prefix) => model.id.startsWith(prefix))
+				)
 				.filter((model) => !allowedIds || allowedIds.has(model.id))
 				.map((model) => this.toModelInfo(model));
 			this.modelCache = apiModels;
