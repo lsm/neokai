@@ -293,7 +293,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 
 			const updated = nodeExecutionRepo.getById(execution.id)!;
 			expect(updated.status).toBe('pending');
-			expect(updated.agentSessionId).toBeNull();
+			expect(updated.agentSessionId).toBe('non-terminal-session');
 			expect(updated.result ?? '').toContain('non-terminal last message');
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
@@ -334,7 +334,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 
 			const updated = nodeExecutionRepo.getById(execution.id)!;
 			expect(updated.status).toBe('pending');
-			expect(updated.agentSessionId).toBeNull();
+			expect(updated.agentSessionId).toBe('restart-non-terminal-session');
 			expect(updated.result ?? '').toContain('non-terminal last message');
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
@@ -489,7 +489,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			const updated = nodeExecutionRepo.getById(execution.id)!;
 			const inbox = recoveryRepo.listPendingInboxForExecution(execution.id);
 			expect(updated.status).toBe('pending');
-			expect(updated.agentSessionId).toBeNull();
+			expect(updated.agentSessionId).toBe('dead-session');
 			expect(updated.data?.orphanedToolContinuation).toMatchObject({
 				state: 'rebound',
 				retryCount: 1,
@@ -813,7 +813,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 
 			const reviewer = nodeExecutionRepo.getById(previousReviewer.id)!;
 			expect(reviewer.status).toBe('pending');
-			expect(reviewer.agentSessionId).toBeNull();
+			expect(reviewer.agentSessionId).toBe('dead-review-session');
 			expect(reviewer.result).toBeNull();
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 			const pending = new PendingAgentMessageRepository(db).listPendingForTarget(run.id, 'Review');
@@ -1053,7 +1053,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 
 			const reviewer = nodeExecutionRepo.getById(cancelledReviewer.id)!;
 			expect(reviewer.status).toBe('pending');
-			expect(reviewer.agentSessionId).toBeNull();
+			expect(reviewer.agentSessionId).toBe('cancelled-review-session');
 			expect(reviewer.result).toBeNull();
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 		});
@@ -1812,7 +1812,9 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(taskRepo.getTask(task.id)!.status).toBe('blocked');
 			expect(taskRepo.getTask(task.id)!.blockReason).toBe('workflow_invalid');
 			expect(nodeExecutionRepo.getById(execution.id)!.status).toBe('cancelled');
-			expect(nodeExecutionRepo.getById(execution.id)!.agentSessionId).toBeNull();
+			expect(nodeExecutionRepo.getById(execution.id)!.agentSessionId).toBe(
+				'session:missing-workflow'
+			);
 			expect(nodeExecutionRepo.getById(execution.id)!.result).toBe(reason);
 			expect(cancelledSessions).toEqual(['session:missing-workflow']);
 			expect(notifications.some((n) => n.kind === 'workflow_run_blocked')).toBe(true);

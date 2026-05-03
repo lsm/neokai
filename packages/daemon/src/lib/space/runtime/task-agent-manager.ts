@@ -1892,14 +1892,17 @@ export class TaskAgentManager {
 		await this.tryResumeNodeAgentSession(workflowRunId, agentName);
 		const existing = this.config.nodeExecutionRepo
 			.listByWorkflowRun(workflowRunId)
-			.filter((execution) => execution.agentName === agentName && execution.agentSessionId)
+			.filter(
+				(execution) =>
+					execution.agentName === agentName &&
+					(execution.status === 'in_progress' || execution.status === 'blocked')
+			)
 			.at(-1);
-		if (existing?.agentSessionId) {
-			if (this.isSessionAlive(existing.agentSessionId)) {
+		if (existing) {
+			if (existing.agentSessionId && this.isSessionAlive(existing.agentSessionId)) {
 				return [{ agentName, sessionId: existing.agentSessionId }];
 			}
 			this.config.nodeExecutionRepo.update(existing.id, {
-				agentSessionId: null,
 				status: 'pending',
 			});
 		}
@@ -3200,6 +3203,9 @@ export class TaskAgentManager {
 
 		const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
 		for (const execution of executions) {
+			// agentSessionId is write-once: once assigned during spawn, it is never
+			// cleared. Pending executions that were never spawned will have a null
+			// agentSessionId, which this guard correctly skips.
 			const subSessionId = execution.agentSessionId;
 			if (!subSessionId) continue;
 

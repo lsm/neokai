@@ -1249,7 +1249,6 @@ export class SpaceRuntime {
 				} else {
 					this.config.nodeExecutionRepo.update(execution.id, {
 						status: 'pending',
-						agentSessionId: null,
 						result: null,
 						data: null,
 						startedAt: null,
@@ -1591,7 +1590,6 @@ export class SpaceRuntime {
 			}
 			this.config.nodeExecutionRepo.update(execution.id, {
 				status: 'cancelled',
-				agentSessionId: null,
 				result: reason,
 				completedAt: now,
 			});
@@ -1711,7 +1709,6 @@ export class SpaceRuntime {
 						if (existing.status === 'idle' || existing.status === 'cancelled') {
 							this.config.nodeExecutionRepo.update(existing.id, {
 								status: 'pending',
-								agentSessionId: null,
 								result: null,
 								startedAt: null,
 								completedAt: null,
@@ -1969,7 +1966,6 @@ export class SpaceRuntime {
 					`(limit: ${MAX_TASK_AGENT_CRASH_RETRIES}): ${reason}`
 			);
 			this.config.nodeExecutionRepo.update(execution.id, {
-				agentSessionId: null,
 				startedAt: null,
 				status: 'blocked',
 				result: `Agent session failed to spawn or crashed ${crashCount} times consecutively: ${reason}`,
@@ -1983,7 +1979,6 @@ export class SpaceRuntime {
 				`(failure ${crashCount}/${MAX_TASK_AGENT_CRASH_RETRIES}): ${reason}`
 		);
 		this.config.nodeExecutionRepo.update(execution.id, {
-			agentSessionId: null,
 			startedAt: null,
 			status: 'pending',
 			result: null,
@@ -2283,7 +2278,6 @@ export class SpaceRuntime {
 
 				this.config.nodeExecutionRepo.update(execution.id, {
 					status: 'idle',
-					agentSessionId: null,
 					result: `Auto-completed: agent timed out after ${timeoutMinutes} minutes`,
 				});
 				await this.safeNotify({
@@ -2458,7 +2452,8 @@ export class SpaceRuntime {
 
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 			for (const execution of nodeExecutions) {
-				if (execution.status !== 'pending' || !execution.agentSessionId) continue;
+				if (execution.status !== 'pending') continue;
+				if (!execution.agentSessionId) continue;
 				if (tam.isSessionAlive(execution.agentSessionId)) {
 					log.warn(
 						`SpaceRuntime: repaired pending execution ${execution.id} with live session ${execution.agentSessionId}`
@@ -2471,16 +2466,11 @@ export class SpaceRuntime {
 					});
 					continue;
 				}
-				this.resetWorkflowNodeExecutionForSpawnRetry(
-					runId,
-					execution,
-					'pending execution referenced a dead session before spawn',
-					execution.agentSessionId
-				);
+				// Dead session on a pending execution: spawn will overwrite the
 			}
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 			const pendingExecutions = nodeExecutions.filter(
-				(execution) => execution.status === 'pending' && !execution.agentSessionId
+				(execution) => execution.status === 'pending'
 			);
 
 			// Skip spawning when the canonical task is terminal (done/cancelled/archived).
@@ -2621,7 +2611,6 @@ export class SpaceRuntime {
 		if (!isPermanentSpawnError(err)) return false;
 		this.config.nodeExecutionRepo.update(execution.id, {
 			status: 'cancelled',
-			agentSessionId: null,
 			result: err.message,
 			completedAt: Date.now(),
 		});
@@ -2767,7 +2756,6 @@ export class SpaceRuntime {
 				if (execution.status === 'blocked') {
 					this.config.nodeExecutionRepo.update(execution.id, {
 						status: 'pending',
-						agentSessionId: null,
 						result: null,
 						completedAt: null,
 					});
@@ -2980,7 +2968,6 @@ export class SpaceRuntime {
 			if (retryCount <= MAX_TASK_AGENT_CRASH_RETRIES) {
 				this.config.nodeExecutionRepo.update(execution.id, {
 					status: 'pending',
-					agentSessionId: null,
 					result: reason,
 					completedAt: null,
 					startedAt: null,
@@ -3000,7 +2987,6 @@ export class SpaceRuntime {
 
 			this.config.nodeExecutionRepo.update(execution.id, {
 				status: 'blocked',
-				agentSessionId: null,
 				result: reason,
 			});
 			await this.transitionRunStatusAndEmit(runId, 'blocked');
@@ -3105,7 +3091,6 @@ export class SpaceRuntime {
 			};
 			this.config.nodeExecutionRepo.update(execution.id, {
 				status: 'blocked',
-				agentSessionId: null,
 				result: reason,
 				data,
 				completedAt: Date.now(),
@@ -3153,7 +3138,6 @@ export class SpaceRuntime {
 			);
 			this.config.nodeExecutionRepo.update(execution.id, {
 				status: 'pending',
-				agentSessionId: null,
 				result: null,
 				data,
 				startedAt: null,
@@ -3221,7 +3205,6 @@ export class SpaceRuntime {
 			// Tier 1: Reset blocked executions and resume the run.
 			for (const execution of blockedExecutions) {
 				this.config.nodeExecutionRepo.update(execution.id, {
-					agentSessionId: null,
 					status: 'pending',
 					result: null,
 				});
