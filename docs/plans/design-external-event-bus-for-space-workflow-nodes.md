@@ -372,11 +372,13 @@ The trie maps topic segments to `Set<Subscription>` at leaf nodes. Wildcard segm
 
 ### Subscription index lifecycle
 
-The index is **per-SpaceRuntime instance** and rebuilt when:
+The index is **per-SpaceRuntime instance** and updated via two distinct operations:
 
-1. A workflow run starts (node executions are created with interests from the workflow definition).
-2. A node execution transitions to a new status (e.g. `in_progress` → starts receiving events; `idle`/`cancelled` → removed from index).
-3. A workflow definition is updated (interests may have changed — next run picks up changes).
+1. **`registerRunInterests`** (called on every `executeTick`): Diff-based trie update. Compares current node execution states against existing subscriptions. Adds subscriptions for newly active nodes, removes subscriptions for `cancelled` nodes. Does NOT touch the dedup map or pending queue — those are preserved across tick refreshes.
+
+2. **`clearRunInterests`** (called only on `done`/`cancelled` terminal transitions): Full teardown. Removes all trie subscriptions, dedup entries, and pending queue entries for the run. NOT called on `blocked` transitions because blocked is resumable.
+
+3. A workflow definition is updated (interests may have changed — next `registerRunInterests` call picks up changes via the diff).
 
 ```typescript
 interface Subscription {
@@ -443,8 +445,12 @@ class EventRouter {
   }
 
   /**
-   * Register all event interests for a workflow run.
-   * Called when a workflow run starts or when node executions change.
+   * Refresh event interests for a workflow run based on current node execution states.
+   * Called on every executeTick to keep the trie in sync with node lifecycle changes.
+   *
+   * This is a DIFF-BASED update — it only adds/removes trie subscriptions for nodes
+   * whose status has changed. It does NOT touch the dedup map or pending queue.
+   * Terminal-run cleanup (dedup + pending) is handled exclusively by `clearRunInterests`.
    */
   registerRunInterests(
     spaceId: string,
@@ -452,39 +458,65 @@ class EventRouter {
     workflow: SpaceWorkflow,
     nodeExecutions: NodeExecution[],
   ): void {
-    // Clear previous subscriptions for this run
-    this.clearRunInterests(workflowRunId);
-
-    const runSubs = new Set<Subscription>();
+    // Build the desired set of subscriptions from current node execution states.
+    const desiredSubs = new Map<string, Subscription>();  // key: `${nodeId}:${agentName}`
 
     for (const node of workflow.nodes) {
       for (const agent of node.agents) {
         if (!agent.eventInterests?.length) continue;
 
-        // Only register if this node has at least one active (non-terminal) execution
         const exec = nodeExecutions.find(
           e => e.workflowNodeId === node.id && e.agentName === agent.name
         );
         if (!exec || !isReceivingStatus(exec.status)) continue;
 
+        const subKey = `${node.id}:${agent.name}`;
         for (const interest of agent.eventInterests) {
-          const sub: Subscription = {
+          // Include interest topic in key so a single agent can have multiple interests
+          const fullKey = `${subKey}:${interest.topic}`;
+          desiredSubs.set(fullKey, {
             workflowRunId,
             nodeId: node.id,
             agentName: agent.name,
             interest,
             agentSessionId: exec.agentSessionId,
             spaceId,
-          };
-
-          // Insert into trie
-          this.topicTrie.insert(interest.topic, sub);
-          runSubs.add(sub);
+          });
         }
       }
     }
 
-    this.activeRuns.set(workflowRunId, runSubs);
+    // Diff against current subscriptions for this run.
+    const currentSubs = this.activeRuns.get(workflowRunId) ?? new Set<Subscription>();
+    const currentKeys = new Set<string>();
+    for (const sub of currentSubs) {
+      currentKeys.add(`${sub.nodeId}:${sub.agentName}:${sub.interest.topic}`);
+    }
+    const desiredKeys = new Set(desiredSubs.keys());
+
+    // Remove subscriptions no longer in the desired set (e.g. node went cancelled).
+    for (const key of currentKeys) {
+      if (!desiredKeys.has(key)) {
+        const [nodeId, agentName, ...topicParts] = key.split(':');
+        const topic = topicParts.join(':');
+        this.topicTrie.remove(
+          v => v.workflowRunId === workflowRunId
+            && v.nodeId === nodeId
+            && v.agentName === agentName
+            && v.interest.topic === topic,
+        );
+      }
+    }
+
+    // Add new subscriptions not currently in the trie.
+    for (const [key, sub] of desiredSubs) {
+      if (!currentKeys.has(key)) {
+        this.topicTrie.insert(sub.interest.topic, sub);
+      }
+    }
+
+    // Replace active run set with the new desired set.
+    this.activeRuns.set(workflowRunId, new Set(desiredSubs.values()));
   }
 
   /**
@@ -1019,6 +1051,7 @@ interface SpaceRuntimeConfig {
 }
 
 // In SpaceRuntime.executeTick(), after node executions are resolved:
+// This does a DIFF-BASED update of trie subscriptions. Safe to call on every tick.
 if (this.eventRouter) {
   this.eventRouter.registerRunInterests(
     spaceId,
@@ -1026,6 +1059,12 @@ if (this.eventRouter) {
     workflow,
     activeNodeExecutions,
   );
+}
+
+// In the workflow run status transition handler:
+// Called ONLY on truly terminal transitions (done, cancelled) — NOT on blocked.
+if (newStatus === 'done' || newStatus === 'cancelled') {
+  this.eventRouter.clearRunInterests(workflowRunId);
 }
 
 // In daemon startup (e.g. in SpaceRuntimeService or init function):
