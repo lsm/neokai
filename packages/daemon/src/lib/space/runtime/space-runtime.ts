@@ -23,6 +23,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
 	NodeExecution,
 	Space,
+	SpaceApprovalSource,
 	SpaceTask,
 	SpaceWorkflow,
 	SpaceWorkflowRun,
@@ -30,45 +31,44 @@ import type {
 	WorkflowChannel,
 } from '@neokai/shared';
 import { computeGateDefaults, isChannelCyclic, resolveNodeAgents } from '@neokai/shared';
-import type { SpaceManager } from '../managers/space-manager';
-import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
-import type { TaskAgentManager } from './task-agent-manager';
-import { isValidSpaceTaskTransition, SpaceTaskManager } from '../managers/space-task-manager';
-import { WorkflowExecutor } from './workflow-executor';
-import { selectWorkflow } from './workflow-selector';
-import { Logger } from '../../logger';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
-import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
-import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
-import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
-import { type NotificationSink, NullNotificationSink } from './notification-sink';
+import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
+import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
+import { Logger } from '../../logger';
+import type { SpaceAgentManager } from '../managers/space-agent-manager';
+import type { SpaceManager } from '../managers/space-manager';
+import { isValidSpaceTaskTransition, SpaceTaskManager } from '../managers/space-task-manager';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { CompletionDetector } from './completion-detector';
-import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
-import {
-	PostApprovalRouter,
-	type PostApprovalRouteContext,
-	type PostApprovalRouteResult,
-} from './post-approval-router';
-import type { SpaceApprovalSource } from '@neokai/shared';
 import {
 	DEFAULT_NODE_TIMEOUT_MS,
 	MAX_BLOCKED_RUN_RETRIES,
 	MAX_TASK_AGENT_CRASH_RETRIES,
 } from './constants';
-import { resolveTimeoutForExecution } from './resolve-node-timeout';
-import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import { evaluateGate } from './gate-evaluator';
+import { extractPrContext, GatePollManager, type PollScriptContext } from './gate-poll-manager';
 import { executeGateScript } from './gate-script-executor';
-import { GatePollManager, extractPrContext, type PollScriptContext } from './gate-poll-manager';
-import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier';
+import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
+import { type NotificationSink, NullNotificationSink } from './notification-sink';
+import {
+	type PostApprovalRouteContext,
+	type PostApprovalRouteResult,
+	PostApprovalRouter,
+} from './post-approval-router';
+import { resolveTimeoutForExecution } from './resolve-node-timeout';
+import type { TaskAgentManager } from './task-agent-manager';
+import { WorkflowExecutor } from './workflow-executor';
 import { isPermanentSpawnError } from './workflow-node-execution-validation';
+import { selectWorkflow } from './workflow-selector';
 
 const log = new Logger('space-runtime');
 
@@ -875,6 +875,9 @@ export class SpaceRuntime {
 				.filter((run) => run.status === 'done' || run.status === 'cancelled');
 			for (const run of terminalRuns) {
 				if (this.executors.has(run.id)) continue;
+				// Ensure polls are stopped for terminal runs discovered outside
+				// the executor map (e.g. daemon restart after run completed).
+				this.pollManager?.stopPolls(run.id);
 				await this.reconcileTerminalRunTasks(run);
 			}
 		}
@@ -2508,7 +2511,6 @@ export class SpaceRuntime {
 						startedAt: execution.startedAt ?? Date.now(),
 						completedAt: null,
 					});
-					continue;
 				}
 				// Dead session on a pending execution: spawn will overwrite the
 			}
@@ -3438,7 +3440,7 @@ export class SpaceRuntime {
 	private async cleanupTerminalExecutors(): Promise<void> {
 		for (const [runId] of this.executors) {
 			const run = this.config.workflowRunRepo.getRun(runId);
-			if (!run || run.status === 'done' || run.status === 'cancelled') {
+			if (!run || run.status === 'done' || run.status === 'cancelled' || run.status === 'blocked') {
 				if (run?.status === 'done') {
 					const meta = this.executorMeta.get(runId);
 					if (meta) {

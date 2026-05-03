@@ -163,6 +163,11 @@ interface ActivePoll {
 	timer: ReturnType<typeof setInterval>;
 	/** The last known output (for change detection) */
 	lastOutput: string;
+	/**
+	 * Whether this poll is still active. Set to `false` by `stopPolls`/`stopAll`
+	 * before clearing the interval, so in-flight ticks can bail out early.
+	 */
+	active: boolean;
 }
 
 export class GatePollManager {
@@ -218,7 +223,7 @@ export class GatePollManager {
 		this.runContexts.set(runId, { workflow, workspacePath, spaceId });
 
 		for (const gate of polledGates) {
-			const poll = gate.poll!;
+			const poll = gate.poll as GatePoll;
 			const key = `${runId}:${gate.id}`;
 
 			// Enforce minimum interval
@@ -271,7 +276,13 @@ export class GatePollManager {
 				timer.unref();
 			}
 
-			this.activePolls.set(key, { timer, lastOutput: '' });
+			// NOTE: lastOutput starts empty on every startPolls call. This means the
+			// first non-empty poll output after a run restarts or retries will always
+			// be injected, even if the same output was seen in a previous lifecycle.
+			// This is intentional: after a daemon restart there is no reliable way to
+			// restore lastOutput without DB persistence, and re-injecting on restart
+			// is safer than silently dropping the first poll result.
+			this.activePolls.set(key, { timer, lastOutput: '', active: true });
 		}
 	}
 
@@ -283,6 +294,7 @@ export class GatePollManager {
 		const prefix = `${runId}:`;
 		for (const [key, poll] of this.activePolls) {
 			if (key.startsWith(prefix)) {
+				poll.active = false;
 				clearInterval(poll.timer);
 				this.activePolls.delete(key);
 				log.info(`GatePollManager: stopped poll "${key}" for terminal run "${runId}"`);
@@ -296,6 +308,7 @@ export class GatePollManager {
 	 */
 	stopAll(): void {
 		for (const [key, poll] of this.activePolls) {
+			poll.active = false;
 			clearInterval(poll.timer);
 			log.info(`GatePollManager: stopped poll "${key}" during shutdown`);
 		}
@@ -341,6 +354,9 @@ export class GatePollManager {
 
 		try {
 			const output = await this.executePollScript(poll.script, workspacePath, context);
+
+			// Bail out if the poll was stopped while the script was executing
+			if (!activePoll.active) return;
 
 			if (output === null) {
 				// Script error or empty output — do nothing
@@ -406,16 +422,16 @@ export class GatePollManager {
 		const env = buildRestrictedEnv(gateContext);
 
 		// Inject poll-specific context variables
-		env['TASK_ID'] = context.TASK_ID;
-		env['TASK_TITLE'] = context.TASK_TITLE;
-		env['SPACE_ID'] = context.SPACE_ID;
-		env['PR_URL'] = context.PR_URL;
-		env['PR_NUMBER'] = context.PR_NUMBER;
-		env['REPO_OWNER'] = context.REPO_OWNER;
-		env['REPO_NAME'] = context.REPO_NAME;
-		env['WORKFLOW_RUN_ID'] = context.WORKFLOW_RUN_ID;
+		env.TASK_ID = context.TASK_ID;
+		env.TASK_TITLE = context.TASK_TITLE;
+		env.SPACE_ID = context.SPACE_ID;
+		env.PR_URL = context.PR_URL;
+		env.PR_NUMBER = context.PR_NUMBER;
+		env.REPO_OWNER = context.REPO_OWNER;
+		env.REPO_NAME = context.REPO_NAME;
+		env.WORKFLOW_RUN_ID = context.WORKFLOW_RUN_ID;
 
-		let proc;
+		let proc: Bun.Subprocess<'pipe', 'pipe', 'pipe'>;
 		try {
 			proc = Bun.spawn(['bash', '-c', script], {
 				cwd: workspacePath,

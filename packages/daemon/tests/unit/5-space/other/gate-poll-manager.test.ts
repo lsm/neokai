@@ -8,18 +8,17 @@
  * rather than fake timers, because Bun's test runner has limited async timer support.
  */
 
-import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import {
-	GatePollManager,
-	extractPrContext,
-	resolveTargetNodeName,
-	formatPollMessage,
-	type PollScriptContext,
-	type PollMessageInjector,
-	type PollSessionResolver,
-	MIN_POLL_INTERVAL_MS,
-} from '../../../../src/lib/space/runtime/gate-poll-manager';
 import type { Gate, GatePoll, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import {
+	extractPrContext,
+	formatPollMessage,
+	GatePollManager,
+	type PollMessageInjector,
+	type PollScriptContext,
+	type PollSessionResolver,
+	resolveTargetNodeName,
+} from '../../../../src/lib/space/runtime/gate-poll-manager';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -262,6 +261,81 @@ describe('GatePollManager', () => {
 
 			manager.stopAll();
 			expect(manager.activePollCount).toBe(0);
+		});
+	});
+
+	describe('lastOutput reset on restart', () => {
+		test('re-injects previously seen output after stop+restart (intentional behavior)', async () => {
+			const workflow = makeWorkflowWithPoll({ script: 'echo "known output"' });
+			manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());
+
+			// First tick — injects "known output"
+			await triggerTick(
+				manager,
+				'run-1',
+				'gate-1',
+				makePoll({ script: 'echo "known output"' }),
+				'/tmp',
+				makeContext(),
+				'node-2'
+			);
+			expect(injector.injectSubSessionMessage).toHaveBeenCalledTimes(1);
+
+			// Second tick — same output, no re-injection
+			await triggerTick(
+				manager,
+				'run-1',
+				'gate-1',
+				makePoll({ script: 'echo "known output"' }),
+				'/tmp',
+				makeContext(),
+				'node-2'
+			);
+			expect(injector.injectSubSessionMessage).toHaveBeenCalledTimes(1);
+
+			// Stop and restart the poll (simulates run restart)
+			manager.stopPolls('run-1');
+			manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());
+
+			// After restart, same output is re-injected (lastOutput was reset)
+			await triggerTick(
+				manager,
+				'run-1',
+				'gate-1',
+				makePoll({ script: 'echo "known output"' }),
+				'/tmp',
+				makeContext(),
+				'node-2'
+			);
+			expect(injector.injectSubSessionMessage).toHaveBeenCalledTimes(2);
+		});
+	});
+
+	describe('in-flight tick cancellation', () => {
+		test('in-flight tick is cancelled when poll is stopped during execution', async () => {
+			const workflow = makeWorkflowWithPoll({ script: 'echo "output"' });
+			manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());
+
+			// Trigger a tick but stop the poll while it's running.
+			// The script will execute but the active guard should prevent injection.
+			// We test this by stopping immediately after the tick starts.
+			const tickPromise = triggerTick(
+				manager,
+				'run-1',
+				'gate-1',
+				makePoll({ script: 'echo "output"' }),
+				'/tmp',
+				makeContext(),
+				'node-2'
+			);
+
+			// Stop polls while the script is running
+			manager.stopPolls('run-1');
+
+			await tickPromise;
+
+			// Injection should not happen because active was set to false
+			expect(injector.injectSubSessionMessage).not.toHaveBeenCalled();
 		});
 	});
 

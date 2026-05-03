@@ -12,22 +12,22 @@
  *   - validateGateFields: runtime validation of field definitions
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
+import type { Channel, Gate, GateField, GateScript } from '@neokai/shared';
 import {
-	evaluateGate,
-	evaluateFields,
 	evaluateFieldCheck,
-	isChannelOpen,
-	validateGateFields,
-	validateGateColor,
-	validateGateLabel,
-	validateGateScript,
-	validateGate,
-	type GateScriptExecutorFn,
+	evaluateFields,
+	evaluateGate,
 	type GateScriptExecutorContext,
-	type GateScriptExecutorResult,
+	type GateScriptExecutorFn,
+	isChannelOpen,
+	validateGate,
+	validateGateColor,
+	validateGateFields,
+	validateGateLabel,
+	validateGatePoll,
+	validateGateScript,
 } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
-import type { Gate, GateField, GateScript, Channel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Scalar field — op: '==' (default comparison)
@@ -1030,6 +1030,115 @@ describe('validateGateScript', () => {
 });
 
 // ---------------------------------------------------------------------------
+// validateGatePoll
+// ---------------------------------------------------------------------------
+
+describe('validateGatePoll', () => {
+	test('accepts undefined (optional field)', () => {
+		expect(validateGatePoll(undefined)).toHaveLength(0);
+	});
+
+	test('accepts null (optional field)', () => {
+		expect(validateGatePoll(null)).toHaveLength(0);
+	});
+
+	test('accepts valid poll with minimum intervalMs', () => {
+		expect(
+			validateGatePoll({ intervalMs: 10_000, script: 'echo hello', target: 'from' })
+		).toHaveLength(0);
+	});
+
+	test('accepts valid poll with "to" target', () => {
+		expect(
+			validateGatePoll({ intervalMs: 30_000, script: 'echo hello', target: 'to' })
+		).toHaveLength(0);
+	});
+
+	test('accepts valid poll with messageTemplate', () => {
+		expect(
+			validateGatePoll({
+				intervalMs: 60_000,
+				script: 'echo hello',
+				target: 'from',
+				messageTemplate: 'Result: {{output}}',
+			})
+		).toHaveLength(0);
+	});
+
+	test('rejects intervalMs below 10000', () => {
+		const errors = validateGatePoll({ intervalMs: 5_000, script: 'echo hi', target: 'from' });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('intervalMs');
+		expect(errors[0]).toContain('10000');
+	});
+
+	test('rejects intervalMs at 9999', () => {
+		const errors = validateGatePoll({ intervalMs: 9_999, script: 'echo hi', target: 'from' });
+		expect(errors.length).toBeGreaterThan(0);
+	});
+
+	test('accepts intervalMs at exactly 10000', () => {
+		expect(
+			validateGatePoll({ intervalMs: 10_000, script: 'echo hi', target: 'from' })
+		).toHaveLength(0);
+	});
+
+	test('rejects empty script string', () => {
+		const errors = validateGatePoll({ intervalMs: 30_000, script: '', target: 'from' });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('script');
+	});
+
+	test('rejects whitespace-only script string', () => {
+		const errors = validateGatePoll({ intervalMs: 30_000, script: '   ', target: 'from' });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('script');
+	});
+
+	test('rejects non-string script', () => {
+		const errors = validateGatePoll({ intervalMs: 30_000, script: 42, target: 'from' });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('script');
+	});
+
+	test('rejects invalid target', () => {
+		const errors = validateGatePoll({
+			intervalMs: 30_000,
+			script: 'echo hi',
+			target: 'invalid',
+		});
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('target');
+	});
+
+	test('rejects undefined target', () => {
+		const errors = validateGatePoll({
+			intervalMs: 30_000,
+			script: 'echo hi',
+			target: undefined,
+		});
+		expect(errors.length).toBeGreaterThan(0);
+	});
+
+	test('rejects non-object input', () => {
+		const errors = validateGatePoll('not an object');
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('expected object');
+	});
+
+	test('rejects non-string messageTemplate', () => {
+		const errors = validateGatePoll({
+			intervalMs: 30_000,
+			script: 'echo hi',
+			target: 'from',
+			messageTemplate: 42,
+		});
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('messageTemplate');
+	});
+});
+
+// ---------------------------------------------------------------------------
 // validateGate
 // ---------------------------------------------------------------------------
 
@@ -1179,6 +1288,37 @@ describe('validateGate', () => {
 		const errors = validateGate({ id: 'g1', fields: 'bad', resetOnCycle: false });
 		// Should have both the "expected an array" error and the "at least one" error
 		expect(errors.some((e) => e.includes('expected an array'))).toBe(true);
+		expect(errors.some((e) => e.includes('at least one'))).toBe(true);
+	});
+
+	test('gate with valid poll passes', () => {
+		const errors = validateGate({
+			id: 'g1',
+			fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			poll: { intervalMs: 30_000, script: 'echo hello', target: 'from' },
+			resetOnCycle: false,
+		});
+		expect(errors).toHaveLength(0);
+	});
+
+	test('gate with invalid poll intervalMs produces error', () => {
+		const errors = validateGate({
+			id: 'g1',
+			fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			poll: { intervalMs: 5_000, script: 'echo hello', target: 'from' },
+			resetOnCycle: false,
+		});
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors.some((e) => e.includes('intervalMs'))).toBe(true);
+	});
+
+	test('gate with poll but no fields or script still requires fields or script', () => {
+		const errors = validateGate({
+			id: 'g1',
+			poll: { intervalMs: 30_000, script: 'echo hello', target: 'from' },
+			resetOnCycle: false,
+		});
+		// poll does NOT count as a gate check mechanism
 		expect(errors.some((e) => e.includes('at least one'))).toBe(true);
 	});
 

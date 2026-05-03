@@ -21,7 +21,7 @@
  * point. `isChannelOpen()` remains synchronous (no script execution).
  */
 
-import type { Gate, GateField, GateFieldCheck, GateScript, Channel } from '@neokai/shared';
+import type { Channel, Gate, GateField, GateFieldCheck, GateScript } from '@neokai/shared';
 import {
 	deepMergeWithDepthLimit,
 	type GateScriptContext,
