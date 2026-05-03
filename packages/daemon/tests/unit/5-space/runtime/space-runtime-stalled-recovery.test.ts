@@ -39,7 +39,10 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository.ts';
 import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repositories/tool-continuation-recovery-repository.ts';
+import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
+import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -55,6 +58,18 @@ function makeDb(): BunDatabase {
 	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
+	// runMigrations() applies migrations only; these unit fixtures need the base
+	// sdk_messages table because runtime recovery inspects persisted SDK output.
+	db.exec(`CREATE TABLE IF NOT EXISTS sdk_messages (
+		id TEXT PRIMARY KEY,
+		session_id TEXT NOT NULL,
+		message_type TEXT NOT NULL,
+		message_subtype TEXT,
+		sdk_message TEXT NOT NULL,
+		timestamp TEXT NOT NULL,
+		send_status TEXT,
+		origin TEXT
+	)`);
 	return db;
 }
 
@@ -76,7 +91,12 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 function buildLinearWorkflow(
 	spaceId: string,
 	workflowManager: SpaceWorkflowManager,
-	nodes: Array<{ id: string; name: string; agentId: string }>
+	nodes: Array<{ id: string; name: string; agentId: string }>,
+	opts: {
+		channels?: SpaceWorkflow['channels'];
+		gates?: SpaceWorkflow['gates'];
+		endNodeId?: string;
+	} = {}
 ): SpaceWorkflow {
 	const transitions = nodes.slice(0, -1).map((step, i) => ({
 		from: step.id,
@@ -90,7 +110,16 @@ function buildLinearWorkflow(
 		description: 'Test',
 		nodes,
 		transitions,
+		channels:
+			opts.channels ??
+			nodes.slice(0, -1).map((step, i) => ({
+				id: `${step.id}-to-${nodes[i + 1].id}`,
+				from: step.name,
+				to: nodes[i + 1].name,
+			})),
+		gates: opts.gates,
 		startNodeId: nodes[0].id,
+		endNodeId: opts.endNodeId ?? nodes.at(-1)?.id,
 		rules: [],
 		tags: [],
 		completionAutonomyLevel: 3,
@@ -110,6 +139,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 	let workflowManager: SpaceWorkflowManager;
 	let spaceManager: SpaceManager;
 	let nodeExecutionRepo: NodeExecutionRepository;
+	let sdkMessageRepo: SDKMessageRepository;
 	let notifications: SpaceRuntimeNotification[];
 
 	const SPACE_ID = 'space-recovery-1';
@@ -126,6 +156,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			workflowRunRepo,
 			taskRepo,
 			nodeExecutionRepo,
+			sdkMessageRepo,
 			...overrides,
 		});
 		rt.setNotificationSink({
@@ -184,6 +215,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 		workflowManager = new SpaceWorkflowManager(workflowRepo);
 		spaceManager = new SpaceManager(db);
 		nodeExecutionRepo = new NodeExecutionRepository(db);
+		sdkMessageRepo = new SDKMessageRepository(db);
 		notifications = [];
 	});
 
@@ -195,9 +227,213 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 		}
 	});
 
+	function saveAssistantMessage(sessionId: string, content: unknown[], stopReason: string | null) {
+		sdkMessageRepo.saveSDKMessage(sessionId, {
+			type: 'assistant',
+			session_id: sessionId,
+			uuid: `${sessionId}-assistant-${Date.now()}-${Math.random()}`,
+			parent_tool_use_id: null,
+			message: {
+				id: `${sessionId}-message`,
+				type: 'message',
+				role: 'assistant',
+				model: 'claude-test',
+				content,
+				stop_reason: stopReason,
+				stop_sequence: null,
+				usage: { input_tokens: 1, output_tokens: 1 },
+			},
+		} as any);
+	}
+
 	// -------------------------------------------------------------------------
 	// 1. Stalled with no completion signal → blocked
 	// -------------------------------------------------------------------------
+
+	describe('non-terminal idle last-message recovery', () => {
+		test('idle execution with unresolved tool_use is retried and not advanced', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Non Terminal Idle Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Non Terminal Idle Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'idle', {
+				agentSessionId: 'non-terminal-session',
+			});
+			saveAssistantMessage(
+				'non-terminal-session',
+				[{ type: 'tool_use', id: 'tool-1', name: 'do_work', input: {} }],
+				'tool_use'
+			);
+
+			const rt = makeRuntime({
+				taskAgentManager: {
+					rehydrate: async () => {},
+					isSessionAlive: () => false,
+					getAgentSessionById: () => null,
+					isExecutionSpawning: () => false,
+				} as any,
+			});
+			(rt as any).recoveryDone = true;
+			await rt.executeTick();
+
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			expect(updated.status).toBe('pending');
+			expect(updated.agentSessionId).toBeNull();
+			expect(updated.result ?? '').toContain('non-terminal last message');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+			expect(notifications.some((event) => event.kind === 'agent_idle_non_terminal')).toBe(true);
+			expect(notifications.some((event) => event.kind === 'task_retry')).toBe(true);
+		});
+
+		test('recoverStalledRuns retries non-terminal idle execution instead of blocking immediately', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Restart Non Terminal Idle Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Restart Non Terminal Idle Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'idle', {
+				agentSessionId: 'restart-non-terminal-session',
+			});
+			saveAssistantMessage(
+				'restart-non-terminal-session',
+				[{ type: 'tool_use', id: 'tool-restart', name: 'do_work', input: {} }],
+				'tool_use'
+			);
+
+			const rt = makeRuntime();
+			await rt.recoverStalledRuns();
+
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			expect(updated.status).toBe('pending');
+			expect(updated.agentSessionId).toBeNull();
+			expect(updated.result ?? '').toContain('non-terminal last message');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+			expect(notifications.some((event) => event.kind === 'agent_idle_non_terminal')).toBe(true);
+			expect(notifications.some((event) => event.kind === 'task_retry')).toBe(true);
+			expect(notifications.some((event) => event.kind === 'workflow_run_needs_attention')).toBe(
+				false
+			);
+		});
+
+		test('repeated non-terminal idle blocks and escalates after retry limit', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Repeated Non Terminal Idle Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Repeated Non Terminal Idle Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'idle', {
+				agentSessionId: 'non-terminal-repeat',
+			});
+			saveAssistantMessage('non-terminal-repeat', [{ type: 'thinking', thinking: 'hmm' }], null);
+			const rt = makeRuntime({
+				taskAgentManager: {
+					rehydrate: async () => {},
+					isSessionAlive: () => false,
+					getAgentSessionById: () => null,
+					isExecutionSpawning: () => false,
+				} as any,
+			});
+			(rt as any).recoveryDone = true;
+			(rt as any).nonTerminalIdleCounts.set(`${run.id}:${execution.id}`, 3);
+			await rt.executeTick();
+
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			expect(updated.status).toBe('blocked');
+			expect(updated.result).toContain('Agent went idle without completing');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)?.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+			expect(notifications.some((event) => event.kind === 'workflow_run_needs_attention')).toBe(
+				true
+			);
+		});
+
+		test('blocked non-terminal idle run sets blockedRetryCounts to prevent auto-retry', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Block retry budget test',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Block retry budget test',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'idle', {
+				agentSessionId: 'non-terminal-blocked-session',
+			});
+			saveAssistantMessage(
+				'non-terminal-blocked-session',
+				[{ type: 'tool_use', id: 'tu-1', name: 'test', input: {} }],
+				null
+			);
+
+			const rt = makeRuntime();
+			// Exhaust retry budget so handleNonTerminalIdleExecutions blocks immediately
+			(rt as any).nonTerminalIdleCounts.set(`${run.id}:${execution.id}`, 3);
+			// Simulate the handler being called directly (as it would be from processRunTick)
+			const outcome = await (rt as any).handleNonTerminalIdleExecutions(
+				run.id,
+				SPACE_ID,
+				taskRepo.getTask(task.id)!
+			);
+
+			expect(outcome).toBe('blocked');
+			expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			// Verify blockedRetryCounts is exhausted so attemptBlockedRunRecovery won't auto-retry
+			expect((rt as any).blockedRetryCounts.get(run.id)).toBeGreaterThanOrEqual(1);
+		});
+	});
 
 	describe('orphaned tool_result waiting_rebind recovery', () => {
 		test('queued continuation resets waiting_rebind execution to pending for one deterministic retry', async () => {
@@ -504,6 +740,715 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 	});
 
 	describe('runs with all node executions terminal and no completion signal', () => {
+		test('coder idle and reviewer never created → reviewer is activated pending on daemon restart', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coding', agentId: AGENT },
+				{ id: STEP_B, name: 'Review', agentId: AGENT },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recover missing reviewer',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Recover missing reviewer',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'idle');
+			const pendingRepo = new PendingAgentMessageRepository(db);
+
+			await makeRuntime({ pendingMessageRepo: pendingRepo }).recoverStalledRuns();
+
+			const reviewer = findExec(run.id, STEP_B);
+			expect(reviewer.status).toBe('pending');
+			expect(reviewer.agentSessionId).toBeNull();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+			expect(pendingRepo.listPendingForTarget(run.id, 'Review')[0].message).toContain(
+				'Daemon restart recovery'
+			);
+		});
+
+		test('coder idle and reviewer idle from previous cycle → reviewer resets to pending', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coding', agentId: AGENT },
+				{ id: STEP_B, name: 'Review', agentId: AGENT },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recover idle reviewer',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Recover idle reviewer',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'idle');
+			const previousReviewer = seedExec(run.id, STEP_B, 'Review', 'idle', {
+				agentSessionId: 'dead-review-session',
+				result: 'previous review finished',
+			});
+			// Seed a terminal SDK message so the non-terminal idle handler skips
+			// this execution — downstream recovery should reset it instead.
+			saveAssistantMessage(
+				'dead-review-session',
+				[{ type: 'text', text: 'Review complete' }],
+				'end_turn'
+			);
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			const reviewer = nodeExecutionRepo.getById(previousReviewer.id)!;
+			expect(reviewer.status).toBe('pending');
+			expect(reviewer.agentSessionId).toBeNull();
+			expect(reviewer.result).toBeNull();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			const pending = new PendingAgentMessageRepository(db).listPendingForTarget(run.id, 'Review');
+			expect(pending[0].message).toContain("Review node's previous session ended");
+		});
+
+		test('coder cancelled and reviewer never created → run blocked', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coding', agentId: AGENT },
+				{ id: STEP_B, name: 'Review', agentId: AGENT },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Do not recover cancelled source',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Do not recover cancelled source',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'cancelled');
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(findExec(run.id, STEP_B)).toBeUndefined();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+		});
+
+		test('coder idle with queued handoff and reviewer never created → tick repair creates and spawns reviewer', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coding', agentId: AGENT },
+				{ id: STEP_B, name: 'Review', agentId: AGENT },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Queued handoff repair',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Queued handoff repair',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'idle');
+			const pendingRepo = new PendingAgentMessageRepository(db);
+			pendingRepo.enqueue({
+				workflowRunId: run.id,
+				spaceId: SPACE_ID,
+				taskId: task.id,
+				sourceAgentName: 'Coding',
+				targetKind: 'node_agent',
+				targetAgentName: 'Review',
+				message: 'please review',
+			});
+			const live = new Set<string>();
+			const tam = {
+				rehydrate: async () => {},
+				isSessionAlive: (sessionId: string) => live.has(sessionId),
+				getAgentSessionById: () => null,
+				isExecutionSpawning: () => false,
+				tryResumeNodeAgentSession: async () => {},
+				spawnWorkflowNodeAgentForExecution: async (
+					_task: unknown,
+					_space: unknown,
+					_workflow: unknown,
+					_run: unknown,
+					execution: { id: string }
+				) => {
+					const sessionId = `session:${execution.id}`;
+					live.add(sessionId);
+					return sessionId;
+				},
+				flushPendingMessagesForTarget: async (
+					runId: string,
+					agentName: string,
+					sessionId: string
+				) => {
+					for (const row of pendingRepo.listPendingForTarget(runId, agentName))
+						pendingRepo.markDelivered(row.id, sessionId);
+				},
+				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
+			};
+
+			await makeRuntime({
+				pendingMessageRepo: pendingRepo,
+				taskAgentManager: tam as any,
+			}).executeTick();
+
+			const reviewer = findExec(run.id, STEP_B);
+			expect(reviewer.status).toBe('in_progress');
+			expect(reviewer.agentSessionId).toBe(`session:${reviewer.id}`);
+			expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
+		});
+
+		test('coder idle with blocked coder→reviewer gate → run blocked', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Coding', agentId: AGENT },
+					{ id: STEP_B, name: 'Review', agentId: AGENT },
+				],
+				{
+					channels: [{ id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'ready' }],
+					gates: [
+						{
+							id: 'ready',
+							resetOnCycle: false,
+							fields: [{ name: 'pr_url', type: 'string', check: { op: 'exists' as const } }],
+						},
+					],
+				}
+			);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Gate blocked handoff',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Gate blocked handoff',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'idle');
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(findExec(run.id, STEP_B)).toBeUndefined();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+		});
+
+		test('coder idle with open coder→reviewer gate → reviewer is activated', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Coding', agentId: AGENT },
+					{ id: STEP_B, name: 'Review', agentId: AGENT },
+				],
+				{
+					channels: [{ id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'ready' }],
+					gates: [
+						{
+							id: 'ready',
+							resetOnCycle: false,
+							fields: [{ name: 'pr_url', type: 'string', check: { op: 'exists' as const } }],
+						},
+					],
+				}
+			);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Gate open handoff',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Gate open handoff',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'idle');
+			db.prepare(
+				`INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`
+			).run(
+				run.id,
+				'ready',
+				JSON.stringify({ pr_url: 'https://github.com/acme/repo/pull/1' }),
+				Date.now()
+			);
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(findExec(run.id, STEP_B).status).toBe('pending');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+
+		test('coder idle and reviewer cancelled from prior activation → reviewer resets pending', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coding', agentId: AGENT },
+				{ id: STEP_B, name: 'Review', agentId: AGENT },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recover cancelled reviewer',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Recover cancelled reviewer',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'idle');
+			const cancelledReviewer = seedExec(run.id, STEP_B, 'Review', 'cancelled', {
+				agentSessionId: 'cancelled-review-session',
+				result: 'review cancelled during restart',
+			});
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			const reviewer = nodeExecutionRepo.getById(cancelledReviewer.id)!;
+			expect(reviewer.status).toBe('pending');
+			expect(reviewer.agentSessionId).toBeNull();
+			expect(reviewer.result).toBeNull();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+
+		test('linear run stalled after later node → only latest handoff is recovered', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT },
+				{ id: STEP_B, name: 'Code', agentId: AGENT },
+				{ id: 'step-c', name: 'Review', agentId: AGENT },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recover latest handoff only',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Recover latest handoff only',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const plan = seedExec(run.id, STEP_A, 'Plan', 'idle');
+			const code = seedExec(run.id, STEP_B, 'Code', 'idle');
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(nodeExecutionRepo.getById(plan.id)?.status).toBe('idle');
+			expect(nodeExecutionRepo.getById(code.id)?.status).toBe('idle');
+			expect(findExec(run.id, 'step-c').status).toBe('pending');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+
+		test('agent-name channel recovers handoff when node names differ', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Implementation', agentId: AGENT },
+					{ id: STEP_B, name: 'Verification', agentId: AGENT },
+				],
+				{
+					channels: [{ id: 'coder-to-reviewer', from: 'coder', to: 'reviewer' }],
+				}
+			);
+			workflow.nodes[0].agents[0].name = 'coder';
+			workflow.nodes[1].agents[0].name = 'reviewer';
+			workflowManager.updateWorkflow(workflow.id, { nodes: workflow.nodes });
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recover agent-name channel',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Recover agent-name channel',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const coder = seedExec(run.id, STEP_A, 'coder', 'idle');
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(nodeExecutionRepo.getById(coder.id)?.status).toBe('idle');
+			expect(findExec(run.id, STEP_B).status).toBe('pending');
+			expect(findExec(run.id, STEP_B).agentName).toBe('reviewer');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+
+		test('multi-agent target recovers missing slot when sibling slot is idle', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Coding', agentId: AGENT },
+					{ id: STEP_B, name: 'Review', agentId: AGENT },
+					{ id: 'step-done', name: 'Done', agentId: AGENT },
+				],
+				{ endNodeId: 'step-done' }
+			);
+			workflow.nodes[1].agents = [
+				{ agentId: AGENT, name: 'Reviewer A' },
+				{ agentId: AGENT, name: 'Reviewer B' },
+			];
+			workflowManager.updateWorkflow(workflow.id, { nodes: workflow.nodes });
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recover missing reviewer slot',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Recover missing reviewer slot',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'idle');
+			const reviewerA = seedExec(run.id, STEP_B, 'Reviewer A', 'idle', {
+				agentSessionId: 'dead-reviewer-a-session',
+				result: 'reviewer A already exited',
+			});
+			// Terminal SDK message so non-terminal idle handler skips this execution.
+			saveAssistantMessage(
+				'dead-reviewer-a-session',
+				[{ type: 'text', text: 'Reviewer A done' }],
+				'end_turn'
+			);
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			const reviewExecutions = nodeExecutionRepo.listByNode(run.id, STEP_B);
+			expect(nodeExecutionRepo.getById(reviewerA.id)?.status).toBe('pending');
+			expect(reviewExecutions.map((execution) => execution.agentName)).toContain('Reviewer A');
+			expect(reviewExecutions.map((execution) => execution.agentName)).toContain('Reviewer B');
+			expect(
+				nodeExecutionRepo
+					.listByNode(run.id, STEP_B)
+					.find((execution) => execution.agentName === 'Reviewer B')?.status
+			).toBe('pending');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+
+		test('fan-out recovery only activates the stalled target branch', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Coding', agentId: AGENT },
+					{ id: STEP_B, name: 'Docs', agentId: AGENT },
+					{ id: 'step-c', name: 'Review', agentId: AGENT },
+				],
+				{
+					channels: [
+						{ id: 'coding-to-docs', from: 'Coding', to: 'Docs' },
+						{ id: 'coding-to-review', from: 'Coding', to: 'Review' },
+					],
+				}
+			);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recover one fan-out branch',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Recover one fan-out branch',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const coder = seedExec(run.id, STEP_A, 'Coding', 'idle');
+			const docs = seedExec(run.id, STEP_B, 'Docs', 'idle', {
+				agentSessionId: 'dead-docs-session',
+				result: 'docs branch already finished',
+			});
+			// Terminal SDK message so non-terminal idle handler skips Docs — it is
+			// a sibling branch that already finished and should stay idle.
+			saveAssistantMessage(
+				'dead-docs-session',
+				[{ type: 'text', text: 'Docs complete' }],
+				'end_turn'
+			);
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(nodeExecutionRepo.getById(coder.id)?.status).toBe('idle');
+			expect(nodeExecutionRepo.getById(docs.id)?.status).toBe('idle');
+			expect(nodeExecutionRepo.getById(docs.id)?.agentSessionId).toBe('dead-docs-session');
+			expect(nodeExecutionRepo.getById(docs.id)?.result).toBe('docs branch already finished');
+			expect(findExec(run.id, 'step-c').status).toBe('pending');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+
+		test('wildcard target recovery does not broadcast to unrelated nodes', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Coding', agentId: AGENT },
+					{ id: STEP_B, name: 'Docs', agentId: AGENT },
+					{ id: 'step-c', name: 'Review', agentId: AGENT },
+				],
+				{
+					channels: [{ id: 'coding-to-any', from: 'Coding', to: '*' }],
+				}
+			);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Do not broadcast wildcard target',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Do not broadcast wildcard target',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const coder = seedExec(run.id, STEP_A, 'Coding', 'idle');
+			const docs = seedExec(run.id, STEP_B, 'Docs', 'idle', {
+				agentSessionId: 'dead-docs-session',
+				result: 'docs branch already finished',
+			});
+			const reviewer = seedExec(run.id, 'step-c', 'Review', 'idle', {
+				agentSessionId: 'dead-review-session',
+				result: 'review branch already finished',
+			});
+			// Terminal SDK messages for both sessions so the non-terminal idle
+			// handler skips them — downstream recovery should leave them idle.
+			saveAssistantMessage(
+				'dead-docs-session',
+				[{ type: 'text', text: 'Docs complete' }],
+				'end_turn'
+			);
+			saveAssistantMessage(
+				'dead-review-session',
+				[{ type: 'text', text: 'Review complete' }],
+				'end_turn'
+			);
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(nodeExecutionRepo.getById(coder.id)?.status).toBe('idle');
+			expect(nodeExecutionRepo.getById(docs.id)?.status).toBe('idle');
+			expect(nodeExecutionRepo.getById(docs.id)?.agentSessionId).toBe('dead-docs-session');
+			expect(nodeExecutionRepo.getById(docs.id)?.result).toBe('docs branch already finished');
+			expect(nodeExecutionRepo.getById(reviewer.id)?.status).toBe('idle');
+			expect(nodeExecutionRepo.getById(reviewer.id)?.agentSessionId).toBe('dead-review-session');
+			expect(nodeExecutionRepo.getById(reviewer.id)?.result).toBe('review branch already finished');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+		});
+
+		test('cyclic recovery increments cycle count and resets cycle gates', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Coding', agentId: AGENT },
+					{ id: STEP_B, name: 'Review', agentId: AGENT },
+				],
+				{
+					channels: [
+						{ id: 'coding-to-review', from: 'Coding', to: 'Review' },
+						{ id: 'review-to-coding', from: 'Review', to: 'Coding', maxCycles: 2 },
+					],
+					gates: [
+						{
+							id: 'cycle-votes',
+							resetOnCycle: true,
+							fields: [{ name: 'votes', type: 'map' }],
+						},
+					],
+					endNodeId: STEP_B,
+				}
+			);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recover cyclic handoff',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Recover cyclic handoff',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_B, 'Review', 'idle');
+			db.prepare(
+				`INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`
+			).run(run.id, 'cycle-votes', JSON.stringify({ votes: { reviewer: true } }), Date.now());
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(findExec(run.id, STEP_A).status).toBe('pending');
+			expect(new ChannelCycleRepository(db).get(run.id, 1)?.count).toBe(1);
+			expect(
+				JSON.parse(
+					db
+						.prepare(`SELECT data FROM gate_data WHERE run_id = ? AND gate_id = ?`)
+						.get(run.id, 'cycle-votes')?.data as string
+				)
+			).toEqual({ votes: {} });
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+
+		test('cyclic channel at maxCycles → run blocked', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Coding', agentId: AGENT },
+					{ id: STEP_B, name: 'Review', agentId: AGENT },
+				],
+				{
+					channels: [
+						{ id: 'coding-to-review', from: 'Coding', to: 'Review' },
+						{ id: 'review-to-coding', from: 'Review', to: 'Coding', maxCycles: 1 },
+					],
+					endNodeId: STEP_B,
+				}
+			);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Cycle cap handoff',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Cycle cap handoff',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_B, 'Review', 'idle');
+			new ChannelCycleRepository(db).incrementCycleCount(run.id, 1, 1);
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(findExec(run.id, STEP_A)).toBeUndefined();
+			expect(findExec(run.id, STEP_B).status).toBe('idle');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+		});
+
+		test('coder idle with closed script gate → run blocked', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Coding', agentId: AGENT },
+					{ id: STEP_B, name: 'Review', agentId: AGENT },
+				],
+				{
+					channels: [
+						{ id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'script-ready' },
+					],
+					gates: [
+						{
+							id: 'script-ready',
+							resetOnCycle: false,
+							fields: [],
+							script: { interpreter: 'bash', source: 'exit 1' },
+						},
+					],
+				}
+			);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Script gate blocked handoff',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Script gate blocked handoff',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			seedExec(run.id, STEP_A, 'Coding', 'idle');
+
+			await makeRuntime({
+				pendingMessageRepo: new PendingAgentMessageRepository(db),
+			}).recoverStalledRuns();
+
+			expect(findExec(run.id, STEP_B)).toBeUndefined();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+		});
+
 		test('single-node run with idle execution → run blocked, task blocked, notifications emitted', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Step A', agentId: AGENT },
@@ -557,7 +1502,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			});
 		});
 
-		test('multi-node run with all idle/cancelled executions → blocked', async () => {
+		test('multi-node run with no idle source execution → blocked', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Step A', agentId: AGENT },
 				{ id: STEP_B, name: 'Step B', agentId: AGENT },
@@ -579,7 +1524,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				status: 'in_progress',
 			});
 
-			seedExec(run.id, STEP_A, 'Step A', 'idle');
+			seedExec(run.id, STEP_A, 'Step A', 'cancelled');
 			seedExec(run.id, STEP_B, 'Step B', 'cancelled');
 
 			const rt = makeRuntime();

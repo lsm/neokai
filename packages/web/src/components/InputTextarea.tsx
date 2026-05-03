@@ -84,7 +84,7 @@ export function InputTextarea({
 	onKeyDown,
 	onSubmit,
 	disabled,
-	maxChars = 10000,
+	maxChars = 100000,
 	placeholder = 'Ask or make anything...',
 	showAgentMentionAutocomplete = false,
 	agentMentionCandidates = [],

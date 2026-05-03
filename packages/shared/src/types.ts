@@ -1,54 +1,53 @@
-import type { SettingSource } from './types/settings.ts';
 import type { ResolvedQuestion } from './state-types.ts';
 import type { SDKConfig, ToolsPresetConfig } from './types/sdk-config.ts';
-
-export type {
-	AppMcpServerSourceType,
-	AppMcpServer,
-	CreateAppMcpServerRequest,
-	UpdateAppMcpServerRequest,
-} from './types/app-mcp-server.ts';
-
-// Re-export SDK config types for convenience
-export type {
-	SDKConfig,
-	SystemPromptConfig,
-	ClaudeCodePreset,
-	ToolsPresetConfig,
-	ToolsPreset,
-	ToolsSettings,
-	AgentModel,
-	AgentDefinition,
-	AgentMcpServerSpec,
-	AgentsConfig,
-	SandboxSettings,
-	NetworkSandboxSettings,
-	SandboxIgnoreViolations,
-	McpServerConfig,
-	McpStdioServerConfig,
-	McpSSEServerConfig,
-	McpHttpServerConfig,
-	McpSettings,
-	OutputFormatConfig,
-	PluginConfig,
-	SdkBeta,
-	ModelSettings,
-	ThinkingConfig,
-	EnvironmentSettings,
-	SessionResumptionSettings,
-	ConfigUpdateResult,
-	ValidationResult,
-} from './types/sdk-config.ts';
+import type { SettingSource } from './types/settings.ts';
+import type { DeclarativeToolGuard } from './types/space.ts';
 
 // Re-export new provider types (note: Provider and ProviderInfo excluded to avoid conflicts with legacy types)
 export type {
+	ModelTier,
 	ProviderCapabilities,
 	ProviderContext,
 	ProviderId,
 	ProviderSdkConfig,
 	ProviderSessionConfig,
-	ModelTier,
 } from './provider/types';
+export type {
+	AppMcpServer,
+	AppMcpServerSourceType,
+	CreateAppMcpServerRequest,
+	UpdateAppMcpServerRequest,
+} from './types/app-mcp-server.ts';
+// Re-export SDK config types for convenience
+export type {
+	AgentDefinition,
+	AgentMcpServerSpec,
+	AgentModel,
+	AgentsConfig,
+	ClaudeCodePreset,
+	ConfigUpdateResult,
+	EnvironmentSettings,
+	McpHttpServerConfig,
+	McpServerConfig,
+	McpSettings,
+	McpSSEServerConfig,
+	McpStdioServerConfig,
+	ModelSettings,
+	NetworkSandboxSettings,
+	OutputFormatConfig,
+	PluginConfig,
+	SandboxIgnoreViolations,
+	SandboxSettings,
+	SDKConfig,
+	SdkBeta,
+	SessionResumptionSettings,
+	SystemPromptConfig,
+	ThinkingConfig,
+	ToolsPreset,
+	ToolsPresetConfig,
+	ToolsSettings,
+	ValidationResult,
+} from './types/sdk-config.ts';
 
 // ============================================================================
 // Unified Session Architecture Types
@@ -206,6 +205,8 @@ export type { RuntimeState } from './types/neo';
  * - 'glm': GLM (智谱AI) via Anthropic-compatible API
  * - 'minimax': MiniMax via Anthropic-compatible API
  * - 'openrouter': OpenRouter Anthropic-compatible API gateway
+ * - 'ollama': Local Ollama through the native /api/chat endpoint
+ * - 'ollama-cloud': Ollama Cloud through the native /api/chat endpoint
  * - 'anthropic-copilot': GitHub Copilot backend via Anthropic-compatible embedded server
  * - 'anthropic-codex': Anthropic-compatible HTTP bridge backed by Codex app-server
  */
@@ -214,6 +215,8 @@ export type Provider =
 	| 'glm'
 	| 'minimax'
 	| 'openrouter'
+	| 'ollama'
+	| 'ollama-cloud'
 	| 'anthropic-copilot'
 	| 'anthropic-codex';
 
@@ -417,6 +420,14 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 	 * - room/lobby: all features disabled
 	 */
 	features?: SessionFeatures;
+
+	/**
+	 * Declarative tool guards from the workflow node agent definition.
+	 * Persisted in session config so they survive daemon restart and
+	 * session restore without needing the workflow definition at hand.
+	 * Compiled into SDK hooks at runtime by the query options builder.
+	 */
+	toolGuards?: DeclarativeToolGuard[];
 }
 
 /**

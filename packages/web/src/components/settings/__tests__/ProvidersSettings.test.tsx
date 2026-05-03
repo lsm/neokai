@@ -229,6 +229,28 @@ describe('ProvidersSettings', () => {
 				);
 			});
 		});
+
+		it('should display Ollama Local and Ollama Cloud providers', async () => {
+			const mockProviders = [
+				createMockProvider('ollama', 'Ollama (Local)', {
+					isAuthenticated: true,
+					method: 'api_key',
+				}),
+				createMockProvider('ollama-cloud', 'Ollama Cloud', {
+					isAuthenticated: false,
+					error: 'Set OLLAMA_CLOUD_API_KEY to enable Ollama Cloud.',
+				}),
+			];
+			mockListProviderAuthStatus.mockResolvedValue({ providers: mockProviders });
+
+			const { container } = render(<ProvidersSettings />);
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('Ollama (Local)');
+				expect(container.textContent).toContain('Ollama Cloud');
+				expect(container.textContent).toContain('Set OLLAMA_CLOUD_API_KEY');
+			});
+		});
 	});
 
 	describe('Login Button for Unauthenticated Providers', () => {

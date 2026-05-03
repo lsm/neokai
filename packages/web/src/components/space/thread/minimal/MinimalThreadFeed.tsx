@@ -84,6 +84,8 @@ interface MinimalThreadFeedProps {
 	 * gone).
 	 */
 	activeTurnSummaries?: ActiveTurnSummary[];
+	/** Task id used to preserve node-agent task messaging when opening overlays. */
+	overlayTaskId?: string;
 }
 
 /**
@@ -143,6 +145,9 @@ interface CompletedFeedTurn {
 	state: 'completed';
 	id: string;
 	agent: string;
+	agentKind: 'task_agent' | 'node_agent';
+	agentRole: string;
+	agentNodeExecutionId?: string | null;
 	startedAt: number;
 	durationSec: number;
 	toolCalls: number;
@@ -177,6 +182,9 @@ interface ActiveFeedTurn {
 	state: 'active';
 	id: string;
 	agent: string;
+	agentKind: 'task_agent' | 'node_agent';
+	agentRole: string;
+	agentNodeExecutionId?: string | null;
 	startedAt: number;
 	status: string;
 	toolCalls: number;
@@ -197,6 +205,12 @@ interface MessageFeedTurn {
 	fromLabel: string;
 	/** Recipient agent label — the session this row belongs to. */
 	toLabel: string;
+	/** Recipient agent kind, used to avoid node-agent routing for Task Agent sessions. */
+	toKind: 'task_agent' | 'node_agent';
+	/** Raw workflow slot/role name for routing task messages. */
+	toRole: string;
+	/** Node execution id for exact routing to duplicate-named node agents. */
+	toNodeExecutionId?: string | null;
 	/** Rendered message text (markdown when not fallback). */
 	body: string;
 	bodyIsFallback: boolean;
@@ -479,6 +493,9 @@ function buildCompletedTurn(
 		state: 'completed',
 		id: turnId,
 		agent: block.agentLabel,
+		agentKind: rows[0]?.kind ?? 'task_agent',
+		agentRole: rows[0]?.role ?? block.agentLabel,
+		agentNodeExecutionId: rows[0]?.nodeExecutionId ?? null,
 		startedAt,
 		durationSec,
 		toolCalls: countSummaryEntries(transitionSummary, 'tool_use') ?? countToolCalls(rows),
@@ -502,6 +519,9 @@ function buildActiveTurn(
 		state: 'active',
 		id: turnId,
 		agent: block.agentLabel,
+		agentKind: rows[0]?.kind ?? 'task_agent',
+		agentRole: rows[0]?.role ?? block.agentLabel,
+		agentNodeExecutionId: rows[0]?.nodeExecutionId ?? null,
 		startedAt: rows[0].createdAt,
 		status: 'Running…',
 		toolCalls: countToolCallsForActive(rows, summary),
@@ -610,6 +630,9 @@ function buildMessageTurn(
 		id: `msg-${String(row.id)}`,
 		fromLabel,
 		toLabel: row.label,
+		toKind: row.kind,
+		toRole: row.role,
+		toNodeExecutionId: row.nodeExecutionId ?? null,
 		body,
 		bodyIsFallback: fallback,
 		createdAt: row.createdAt,
@@ -945,12 +968,26 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
  * fills the row on mobile, and `md:max-w-[86%]` caps the width on desktop
  * to keep long markdown readable instead of stretching edge-to-edge.
  */
-function CompletedBody({ turn }: { turn: CompletedFeedTurn }) {
+function CompletedBody({
+	turn,
+	overlayTaskId,
+}: {
+	turn: CompletedFeedTurn;
+	overlayTaskId?: string;
+}) {
 	const openSession = turn.sessionId
 		? () => {
 				// `pushOverlayHistory` reads the highlight signal; passing the message
 				// uuid scrolls the slide-over straight to this turn's surfaced reply.
-				pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid);
+				if (overlayTaskId && turn.agentKind === 'node_agent') {
+					pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid, {
+						taskId: overlayTaskId,
+						agentName: turn.agentRole,
+						...(turn.agentNodeExecutionId ? { nodeExecutionId: turn.agentNodeExecutionId } : {}),
+					});
+				} else {
+					pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid);
+				}
 			}
 		: undefined;
 	return (
@@ -1038,14 +1075,28 @@ function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
  * on mobile and feels closer to Slack/Reddit/Discord post layouts than
  * iMessage chat bubbles — a better fit for "agent post with long output".
  */
-function AgentTurnRow({ turn }: { turn: CompletedFeedTurn | ActiveFeedTurn }) {
+function AgentTurnRow({
+	turn,
+	overlayTaskId,
+}: {
+	turn: CompletedFeedTurn | ActiveFeedTurn;
+	overlayTaskId?: string;
+}) {
 	const color = getAgentColor(turn.agent);
 	const initial = agentInitial(turn.agent);
 	const openSession = turn.sessionId
 		? () => {
 				const highlightMessageUuid =
 					turn.state === 'completed' ? turn.highlightMessageUuid : undefined;
-				pushOverlayHistory(turn.sessionId as string, turn.agent, highlightMessageUuid);
+				if (overlayTaskId && turn.agentKind === 'node_agent') {
+					pushOverlayHistory(turn.sessionId as string, turn.agent, highlightMessageUuid, {
+						taskId: overlayTaskId,
+						agentName: turn.agentRole,
+						...(turn.agentNodeExecutionId ? { nodeExecutionId: turn.agentNodeExecutionId } : {}),
+					});
+				} else {
+					pushOverlayHistory(turn.sessionId as string, turn.agent, highlightMessageUuid);
+				}
 			}
 		: undefined;
 	const headerContent = (
@@ -1123,7 +1174,7 @@ function AgentTurnRow({ turn }: { turn: CompletedFeedTurn | ActiveFeedTurn }) {
 			{turn.state === 'active' ? (
 				<ActiveBody turn={turn} color={color} />
 			) : (
-				<CompletedBody turn={turn} />
+				<CompletedBody turn={turn} overlayTaskId={overlayTaskId} />
 			)}
 		</div>
 	);
@@ -1183,7 +1234,13 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
  *   • An "open in session" callback that pops the session overlay scrolled
  *     to this synthetic message.
  */
-function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
+function SyntheticMessageTurn({
+	turn,
+	overlayTaskId,
+}: {
+	turn: MessageFeedTurn;
+	overlayTaskId?: string;
+}) {
 	const fromColor = getAgentColor(turn.fromLabel);
 	const toColor = getAgentColor(turn.toLabel);
 	const fromShort = shortAgentName(turn.fromLabel);
@@ -1214,12 +1271,28 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 				widthClass={TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS}
 				onOpenSession={
 					turn.sessionId
-						? () =>
-								pushOverlayHistory(
-									turn.sessionId as string,
-									turn.toLabel,
-									turn.highlightMessageUuid
-								)
+						? () => {
+								if (overlayTaskId && turn.toKind === 'node_agent') {
+									pushOverlayHistory(
+										turn.sessionId as string,
+										turn.toLabel,
+										turn.highlightMessageUuid,
+										{
+											taskId: overlayTaskId,
+											agentName: turn.toRole,
+											...(turn.toNodeExecutionId
+												? { nodeExecutionId: turn.toNodeExecutionId }
+												: {}),
+										}
+									);
+								} else {
+									pushOverlayHistory(
+										turn.sessionId as string,
+										turn.toLabel,
+										turn.highlightMessageUuid
+									);
+								}
+							}
 						: undefined
 				}
 			/>
@@ -1227,15 +1300,15 @@ function SyntheticMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 	);
 }
 
-function MinimalTurnRow({ turn }: { turn: FeedTurn }) {
+function MinimalTurnRow({ turn, overlayTaskId }: { turn: FeedTurn; overlayTaskId?: string }) {
 	if (turn.state === 'message') {
 		return turn.isSynthetic ? (
-			<SyntheticMessageTurn turn={turn} />
+			<SyntheticMessageTurn turn={turn} overlayTaskId={overlayTaskId} />
 		) : (
 			<HumanMessageTurn turn={turn} />
 		);
 	}
-	return <AgentTurnRow turn={turn} />;
+	return <AgentTurnRow turn={turn} overlayTaskId={overlayTaskId} />;
 }
 
 /* ── public component ────────────────────────────────────────────────────── */
@@ -1246,6 +1319,7 @@ export function MinimalThreadFeed({
 	parsedRows,
 	activeAgentLabels = EMPTY_ACTIVE_AGENT_LABELS,
 	activeTurnSummaries = [],
+	overlayTaskId,
 }: MinimalThreadFeedProps) {
 	const turns = buildFeedTurns(parsedRows, activeAgentLabels, activeTurnSummaries);
 	if (turns.length === 0) return null;
@@ -1255,7 +1329,7 @@ export function MinimalThreadFeed({
 			<style>{ANIMATIONS_CSS}</style>
 			<div class="px-4 py-4 space-y-6" data-testid="space-task-event-feed-minimal">
 				{turns.map((turn) => (
-					<MinimalTurnRow key={turn.id} turn={turn} />
+					<MinimalTurnRow key={turn.id} turn={turn} overlayTaskId={overlayTaskId} />
 				))}
 			</div>
 		</>

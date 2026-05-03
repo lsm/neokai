@@ -193,6 +193,7 @@ export function buildWorkflowCreateParams(
 				disabledSkillIds?: string[];
 				extraMcpServers?: import('@neokai/shared').WorkflowNodeAgent['extraMcpServers'];
 				timeoutMs?: number;
+				toolGuards?: import('@neokai/shared').DeclarativeToolGuard[];
 			} = {
 				agentId: agentId ?? '',
 				name: a.name,
@@ -215,6 +216,7 @@ export function buildWorkflowCreateParams(
 					import('@neokai/shared').McpServerConfig
 				>;
 			if (typeof a.timeoutMs === 'number') entry.timeoutMs = a.timeoutMs;
+			if (a.toolGuards !== undefined) entry.toolGuards = a.toolGuards;
 			return entry;
 		});
 

@@ -310,6 +310,23 @@ export class PendingAgentMessageRepository {
 	}
 
 	/**
+	 * Delete all terminal (expired, failed, delivered) rows for a run.
+	 * Pending rows are preserved so in-flight delivery can proceed.
+	 *
+	 * Used by task recovery to clear stale expired/failed handoffs that would
+	 * otherwise re-block the run on the next tick.
+	 */
+	clearTerminalForRun(workflowRunId: string): number {
+		const result = this.db
+			.prepare(
+				`DELETE FROM pending_agent_messages
+				 WHERE workflow_run_id = ? AND status IN ('expired', 'failed', 'delivered')`
+			)
+			.run(workflowRunId);
+		return result.changes;
+	}
+
+	/**
 	 * Delete all rows for a run regardless of status. Used when a workflow run is
 	 * deleted (FK also cascades, but this gives callers an explicit path).
 	 */

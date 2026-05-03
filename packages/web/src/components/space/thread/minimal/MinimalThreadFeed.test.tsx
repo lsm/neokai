@@ -22,14 +22,18 @@ function makeRow(opts: {
 	createdAt: number;
 	message: unknown;
 	sessionId?: string;
+	kind?: 'task_agent' | 'node_agent';
+	role?: string;
 	origin?: string | null;
 	turnIndex?: number;
+	nodeExecutionId?: string | null;
 }) {
 	return parseThreadRow({
 		id: opts.id,
 		sessionId: opts.sessionId ?? 'space:s:task:t',
-		kind: 'task_agent',
-		role: 'task',
+		kind: opts.kind ?? 'task_agent',
+		role: opts.role ?? 'task',
+		nodeExecutionId: opts.nodeExecutionId,
 		label: opts.label,
 		taskId: 't',
 		taskTitle: 'Task',
@@ -261,6 +265,47 @@ describe('MinimalThreadFeed', () => {
 		expect(trigger.getAttribute('aria-label')).toBe('Open Coder Agent session');
 		fireEvent.click(trigger);
 		expect(mockPushOverlayHistory).toHaveBeenCalledWith('session-active', 'Coder Agent', undefined);
+	});
+
+	it('adds task context only for node-agent overlay opens from the feed', () => {
+		const t = Date.now();
+		const nodeRows = [
+			makeRow({
+				id: 'node-a1',
+				label: 'Coder Agent',
+				kind: 'node_agent',
+				role: 'coder',
+				nodeExecutionId: 'exec-coder-1',
+				createdAt: t,
+				message: assistantText('node-a1', 'done'),
+				sessionId: 'session-node',
+			}),
+		];
+		const taskRows = [
+			makeRow({
+				id: 'task-a1',
+				label: 'Task Agent',
+				kind: 'task_agent',
+				role: 'task',
+				createdAt: t,
+				message: assistantText('task-a1', 'done'),
+				sessionId: 'session-task',
+			}),
+		];
+
+		const { unmount } = render(<MinimalThreadFeed parsedRows={nodeRows} overlayTaskId="task-1" />);
+		fireEvent.click(screen.getByTestId('minimal-thread-agent-open'));
+		expect(mockPushOverlayHistory).toHaveBeenCalledWith('session-node', 'Coder Agent', 'node-a1', {
+			taskId: 'task-1',
+			agentName: 'coder',
+			nodeExecutionId: 'exec-coder-1',
+		});
+
+		unmount();
+		mockPushOverlayHistory.mockClear();
+		render(<MinimalThreadFeed parsedRows={taskRows} overlayTaskId="task-1" />);
+		fireEvent.click(screen.getByTestId('minimal-thread-agent-open'));
+		expect(mockPushOverlayHistory).toHaveBeenCalledWith('session-task', 'Task Agent', 'task-a1');
 	});
 
 	it('renders the last assistant text of a completed block as its message body', async () => {

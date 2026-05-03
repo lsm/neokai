@@ -178,6 +178,12 @@ export class ProviderService {
 		if (providerId === 'openrouter') {
 			return process.env.OPENROUTER_API_KEY;
 		}
+		if (providerId === 'ollama') {
+			return process.env.OLLAMA_API_KEY;
+		}
+		if (providerId === 'ollama-cloud') {
+			return process.env.OLLAMA_CLOUD_API_KEY;
+		}
 
 		return undefined;
 	}
