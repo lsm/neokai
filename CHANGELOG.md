@@ -2,6 +2,41 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.18.0] - 2026-05-03
+
+A release adding Ollama provider support, Space GitHub PR ingestion, draft task status, and significant workflow and bridge reliability improvements. 37 commits since v0.17.0.
+
+### Added
+
+- **Ollama model providers**: Local model support with environment-based configuration
+- **Space GitHub PR ingestion**: Poll and ingest GitHub PRs into Spaces with dedupe key normalization and cursor follow-ups
+- **Native draft status for Space tasks**: Tasks can be created in draft state before activation
+- **Workflow agent prompts**: Data-driven prompt templates for workflow agents
+- **Provider model allowlists**: Applied on startup to gate available models
+
+### Changed
+
+- **Route overlay sends through task messaging**: Overlay messages flow through the task messaging pipeline
+- **Cancel stale workflow node executions**: Timeout and cancel workflow nodes stuck in intermediate states
+- **Recover stalled workflow handoffs after restart**: Workflow transitions resume properly across daemon restarts
+- **Make agent_session_id write-once**: Prevents mutation issues on node_executions
+- **Scope sdk_messages live-query invalidation**: Invalidation scoped per session to reduce churn
+- **Reduce daemon live-query churn**: Optimize query refresh patterns
+- **Improve large SDK thread performance**: Better handling of long conversation histories
+
+### Removed
+
+- **"Awaiting Approval" filter chip**: Removed from tasks Action tab; status filters are sufficient
+
+### Fixed
+
+- **Codex bridge**: Retry SDK API requests on transient connection errors; fix OpenRouter model allowlist filtering; fix OpenRouter model cache never refreshing; fix context window reporting for non-Codex models and increase chat limits
+- **Workflow**: Fix restamp ID preservation; fix node respawn state tracking; fix queued workflow handoff recovery; fix runtime reverting manually reopened/resumed tasks back to Blocked; fix own-PR review handoffs; prevent coder agents from merging PRs; block unresolved PR conversations before merge
+- **Agent resilience**: Guard idle node agents with last-message checks; fix Space Agent MCP recovery after resume; fix restart migration preserving agent prompts; fix stale compact summary carryover; fix autocompact buffer threshold mapping
+- **Chat UX**: Fix chat autoscroll padding; fix MinimalThreadFeed active turn drift; graceful socket disconnection handling in UI
+- **GitHub**: Fix Space GitHub polling cursor follow-ups; normalize Space GitHub dedupe keys
+- **Review**: Fix review-posted gate URL extraction
+
 ## [0.17.0] - 2026-04-29
 
 A major release adding the OpenAI Responses bridge and OpenRouter provider, retiring the Room feature, and hardening Codex bridge reliability and Space workflow resilience. 46 commits since v0.16.0.
