@@ -67,6 +67,7 @@ import { evaluateGate } from './gate-evaluator';
 import { executeGateScript } from './gate-script-executor';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier';
+import { isPermanentSpawnError } from './workflow-node-execution-validation';
 
 const log = new Logger('space-runtime');
 
@@ -1449,7 +1450,12 @@ export class SpaceRuntime {
 	private async recoverSingleRun(
 		run: SpaceWorkflowRun
 	): Promise<'completion-pending' | 'blocked' | 'skipped'> {
+		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
 		const executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
+		if (!workflow) {
+			await this.blockRunWithMissingWorkflow(run, executions);
+			return 'blocked';
+		}
 		if (executions.length === 0) return 'skipped';
 
 		// If the tick loop has any work it can drive — `pending` (about
@@ -1570,6 +1576,54 @@ export class SpaceRuntime {
 				`with all node executions idle/cancelled and no completion signal — flagged blocked`
 		);
 		return 'blocked';
+	}
+
+	private async blockRunWithMissingWorkflow(
+		run: SpaceWorkflowRun,
+		executions: NodeExecution[]
+	): Promise<void> {
+		const reason = `Workflow ${run.workflowId} no longer exists; workflow run cannot continue`;
+		const now = Date.now();
+		for (const execution of executions) {
+			if (execution.status === 'cancelled') continue;
+			if (execution.agentSessionId) {
+				this.config.taskAgentManager?.cancelBySessionId(execution.agentSessionId);
+			}
+			this.config.nodeExecutionRepo.update(execution.id, {
+				status: 'cancelled',
+				agentSessionId: null,
+				result: reason,
+				completedAt: now,
+			});
+		}
+		await this.transitionRunStatusAndEmit(run.id, 'blocked');
+		const canonicalTask = this.pickCanonicalTaskForRun(
+			run,
+			this.config.taskRepo.listByWorkflowRun(run.id)
+		);
+		if (canonicalTask) {
+			await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, {
+				status: 'blocked',
+				blockReason: 'workflow_invalid',
+				result: reason,
+				completedAt: null,
+			});
+			await this.safeNotify({
+				kind: 'task_blocked',
+				spaceId: run.spaceId,
+				taskId: canonicalTask.id,
+				reason,
+				timestamp: new Date().toISOString(),
+			});
+		}
+		await this.safeNotify({
+			kind: 'workflow_run_blocked',
+			spaceId: run.spaceId,
+			runId: run.id,
+			reason,
+			timestamp: new Date().toISOString(),
+		});
+		log.warn(`SpaceRuntime.recoverStalledRuns: blocked run ${run.id}: ${reason}`);
 	}
 
 	private async activateRestartRecoveryDownstreamNodes(
@@ -2448,6 +2502,7 @@ export class SpaceRuntime {
 						`SpaceRuntime: cannot spawn workflow node agents for run ${runId} — space ${meta.spaceId} not found`
 					);
 				} else {
+					let permanentSpawnFailureReason: string | null = null;
 					for (const execution of pendingExecutions) {
 						if (tam.isExecutionSpawning(execution.id)) continue;
 						try {
@@ -2462,6 +2517,10 @@ export class SpaceRuntime {
 								}
 							);
 						} catch (err) {
+							if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
+								permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
+								continue;
+							}
 							const stale = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
 							if (
 								stale.status === 'cancelled' ||
@@ -2486,10 +2545,28 @@ export class SpaceRuntime {
 							) {
 								blockedByCrash = true;
 							}
-							log.error(
-								`SpaceRuntime: failed to spawn workflow node agent for execution ${execution.id}:`,
-								err
+							log.warn(
+								`SpaceRuntime: transient spawn failure for workflow node execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
 							);
+						}
+					}
+					if (permanentSpawnFailureReason) {
+						const refreshedExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+						const hasDriveableExecution = refreshedExecutions.some(
+							(execution) =>
+								execution.status === 'pending' ||
+								execution.status === 'in_progress' ||
+								execution.status === 'waiting_rebind' ||
+								execution.status === 'blocked'
+						);
+						if (!hasDriveableExecution) {
+							await this.blockRunForPermanentSpawnFailure(
+								runId,
+								meta.spaceId,
+								canonicalTask,
+								permanentSpawnFailureReason
+							);
+							return;
 						}
 					}
 					if (blockedByCrash) {
@@ -2516,6 +2593,42 @@ export class SpaceRuntime {
 			// `task.reportedStatus`.
 			return;
 		}
+	}
+
+	private async blockRunForPermanentSpawnFailure(
+		runId: string,
+		spaceId: string,
+		canonicalTask: SpaceTask,
+		reason: string
+	): Promise<void> {
+		await this.transitionRunStatusAndEmit(runId, 'blocked');
+		await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+			status: 'blocked',
+			result: reason,
+			blockReason: 'workflow_invalid',
+			completedAt: null,
+		});
+		await this.safeNotify({
+			kind: 'workflow_run_blocked',
+			spaceId,
+			runId,
+			reason,
+			timestamp: new Date().toISOString(),
+		});
+	}
+
+	private cancelExecutionForPermanentSpawnError(execution: NodeExecution, err: unknown): boolean {
+		if (!isPermanentSpawnError(err)) return false;
+		this.config.nodeExecutionRepo.update(execution.id, {
+			status: 'cancelled',
+			agentSessionId: null,
+			result: err.message,
+			completedAt: Date.now(),
+		});
+		log.warn(
+			`SpaceRuntime: cancelled workflow node execution ${execution.id} after permanent spawn failure: ${err.message}`
+		);
+		return true;
 	}
 
 	private async repairQueuedWorkflowNodeHandoffs(
@@ -2651,7 +2764,7 @@ export class SpaceRuntime {
 					}
 				}
 
-				if (execution.status === 'blocked' || execution.status === 'cancelled') {
+				if (execution.status === 'blocked') {
 					this.config.nodeExecutionRepo.update(execution.id, {
 						status: 'pending',
 						agentSessionId: null,
@@ -2677,9 +2790,21 @@ export class SpaceRuntime {
 				recordBlockedFlushFailure(targetAgentName, rowsForTarget);
 			} catch (err) {
 				const errMsg = err instanceof Error ? err.message : String(err);
-				log.warn(
-					`SpaceRuntime: queued workflow handoff repair failed for target ${targetAgentName}: ${errMsg}`
+				if (isPermanentSpawnError(err)) {
+					log.warn(
+						`SpaceRuntime: queued workflow handoff target ${targetAgentName} has permanent spawn failure: ${errMsg}`
+					);
+				} else {
+					log.warn(
+						`SpaceRuntime: queued workflow handoff repair failed for target ${targetAgentName}: ${errMsg}`
+					);
+				}
+				const maybeExecution = this.resolveQueuedHandoffExecution(
+					runId,
+					meta.workflow,
+					targetAgentName
 				);
+				if (maybeExecution) this.cancelExecutionForPermanentSpawnError(maybeExecution, err);
 				for (const row of rowsForTarget) {
 					const updated = repo.markAttemptFailed(row.id, errMsg);
 					if (updated?.status === 'failed') {
