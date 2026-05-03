@@ -19,6 +19,7 @@ import type {
 	LiveQueryDeltaEvent,
 } from '@neokai/shared';
 import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query';
+import type { TableChangeScope } from '../../storage/reactive-database';
 import { Logger } from '../logger';
 
 // ============================================================================
@@ -55,6 +56,23 @@ export interface NamedQuery {
 		rawRows: Record<string, unknown>[],
 		params: ReadonlyArray<unknown>
 	) => Record<string, unknown> | undefined;
+	/**
+	 * Optional scope filter builder. Called once per subscribe RPC with the
+	 * subscription's params; returns a `(scope) => boolean` closure that
+	 * decides whether a scoped table-change event is relevant to this
+	 * particular subscription.
+	 *
+	 * When the closure returns `false`, re-evaluation is skipped entirely.
+	 * When no closure is provided (or the event has no scope), the query is
+	 * re-evaluated as usual (backward-compatible fallback).
+	 *
+	 * @param params  The positional parameters the live query was subscribed with.
+	 * @param db      The raw Bun SQLite database for membership lookups.
+	 */
+	buildScopeFilter?: (
+		params: ReadonlyArray<unknown>,
+		db: BunDatabase
+	) => ((scope: TableChangeScope) => boolean) | undefined;
 }
 
 const DEBOUNCE_SDK_MESSAGES_MS = 100;
@@ -1678,6 +1696,38 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
 	return { ...parsed, ...extras };
 }
 
+/**
+ * Build a scope filter for task-scoped queries (`spaceTaskMessages.byTask*`,
+ * `spaceTaskActivity.byTask`). Returns `false` when the writing session is
+ * not part of the target task, so the live query engine can skip re-evaluation.
+ *
+ * The prepared statement checks both the task_agent_session_id and any
+ * node_execution agent_session_ids linked to the task's workflow_run.
+ */
+function buildTaskScopeFilter(
+	params: ReadonlyArray<unknown>,
+	db: BunDatabase
+): ((scope: TableChangeScope) => boolean) | undefined {
+	const taskId = params[0] as string;
+	const stmt = db.prepare(`
+		SELECT 1 FROM space_tasks st
+		WHERE st.id = ?
+			AND (
+				st.task_agent_session_id = ?
+				OR EXISTS (
+					SELECT 1 FROM node_executions ne
+					JOIN space_tasks st2 ON st2.workflow_run_id = ne.workflow_run_id
+					WHERE st2.id = ? AND ne.agent_session_id = ?
+				)
+			)
+		LIMIT 1
+	`);
+	return (scope) => {
+		if (!scope.sessionId) return true;
+		return !!stmt.get(taskId, scope.sessionId, taskId, scope.sessionId);
+	};
+}
+
 export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 	[
 		'sessionGroupMessages.byGroup',
@@ -1686,6 +1736,16 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			paramCount: 1,
 			debounceMs: DEBOUNCE_SESSION_GROUP_MESSAGES_MS,
 			mapRow: mapSessionGroupMessageRow,
+			buildScopeFilter: (params, db) => {
+				const groupId = params[0] as string;
+				const stmt = db.prepare(
+					'SELECT 1 FROM session_group_members WHERE group_id = ? AND session_id = ? LIMIT 1'
+				);
+				return (scope) => {
+					if (!scope.sessionId) return true;
+					return !!stmt.get(groupId, scope.sessionId);
+				};
+			},
 		},
 	],
 	[
@@ -1695,6 +1755,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			paramCount: 1,
 			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
 			mapRow: mapSpaceTaskActivityRow,
+			buildScopeFilter: buildTaskScopeFilter,
 		},
 	],
 	[
@@ -1704,6 +1765,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			paramCount: 1,
 			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
 			mapRow: mapSpaceTaskMessageRow,
+			buildScopeFilter: buildTaskScopeFilter,
 		},
 	],
 	[
@@ -1713,6 +1775,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			paramCount: 1,
 			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
 			mapRow: mapSpaceTaskMessageRow,
+			buildScopeFilter: buildTaskScopeFilter,
 		},
 	],
 	[
@@ -1744,6 +1807,12 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: NEO_MESSAGES_SQL,
 			paramCount: 2,
+			buildScopeFilter: () => {
+				return (scope) => {
+					if (!scope.sessionId) return true;
+					return scope.sessionId === 'neo:global';
+				};
+			},
 		},
 	],
 	[
@@ -1783,6 +1852,13 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			paramCount: 2,
 			debounceMs: DEBOUNCE_SDK_MESSAGES_MS,
 			mapRow: mapMessageRow,
+			buildScopeFilter: (params) => {
+				const targetSessionId = params[0] as string;
+				return (scope) => {
+					if (!scope.sessionId) return true;
+					return scope.sessionId === targetSessionId;
+				};
+			},
 		},
 	],
 	[
@@ -2102,6 +2178,7 @@ export function setupLiveQueryHandlers(
 			{
 				debounceMs: namedQuery.debounceMs,
 				getMetadata: namedQuery.mapResult,
+				scopeFilter: namedQuery.buildScopeFilter?.(params, db),
 			}
 		);
 
