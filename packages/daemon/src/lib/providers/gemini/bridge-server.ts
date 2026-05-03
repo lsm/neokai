@@ -63,6 +63,9 @@ const CODE_ASSIST_ENDPOINT = 'https://cloudcode-pa.googleapis.com/v1internal:str
 /** Maximum retry attempts for transient errors. */
 const MAX_RETRIES = 3;
 
+/** Maximum number of alternative accounts to try on token failure. */
+const MAX_ACCOUNT_FAILOVER = 3;
+
 /** Status codes that trigger a retry. */
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 
@@ -176,7 +179,8 @@ async function handleGeminiRequest(
 	anthropicRequest: AnthropicRequest,
 	rotationManager: AccountRotationManager,
 	sessionId: string,
-	fetchImpl: typeof fetch
+	fetchImpl: typeof fetch,
+	excludedAccountIds: Set<string> = new Set()
 ): Promise<Response> {
 	// Get a fresh access token
 	let accessToken: string;
@@ -184,11 +188,35 @@ async function handleGeminiRequest(
 		const tokenResponse = await refreshAccessToken(account.refresh_token, { fetchImpl });
 		accessToken = tokenResponse.access_token;
 	} catch (error) {
-		// If the token is invalid, mark the account
 		const message = error instanceof Error ? error.message : String(error);
-		if (message.includes('invalid') || message.includes('revoked')) {
+		const isTokenInvalid = message.includes('invalid') || message.includes('revoked');
+
+		if (isTokenInvalid) {
 			await rotationManager.markInvalid(account.id);
 		}
+
+		// Try another available account instead of failing immediately
+		if (isTokenInvalid || message.includes('NetworkError')) {
+			excludedAccountIds.add(account.id);
+			const altAccount = await rotationManager.getAccountForSession(sessionId);
+			if (
+				altAccount &&
+				!excludedAccountIds.has(altAccount.id) &&
+				excludedAccountIds.size <= MAX_ACCOUNT_FAILOVER
+			) {
+				_log.info(`Token refresh failed for ${account.email}, trying account ${altAccount.email}`);
+				return handleGeminiRequest(
+					geminiRequest,
+					altAccount,
+					anthropicRequest,
+					rotationManager,
+					sessionId,
+					fetchImpl,
+					excludedAccountIds
+				);
+			}
+		}
+
 		return new Response(
 			createAnthropicErrorBody(
 				'authentication_error',

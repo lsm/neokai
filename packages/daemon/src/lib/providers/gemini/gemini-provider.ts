@@ -321,14 +321,14 @@ export class GeminiOAuthProvider implements Provider {
 		redirectUri: string
 	): Promise<void> {
 		try {
-			// Wait for the code with a 60-second timeout
+			// Wait for the code with a 240-second timeout (allows MFA and account switching)
 			const code = await Promise.race([
 				codePromise,
-				new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 60_000)),
+				new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 240_000)),
 			]);
 
 			if (!code) {
-				log.warn('OAuth callback timed out — no code received within 60 seconds');
+				log.warn('OAuth callback timed out — no code received within 240 seconds');
 				return;
 			}
 
