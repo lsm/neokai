@@ -1814,7 +1814,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				title: 'Stale Pending Exec',
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
-			taskRepo.createTask({
+			const task = taskRepo.createTask({
 				spaceId: SPACE_ID,
 				title: 'Stale Pending Exec',
 				description: '',
@@ -1848,6 +1848,9 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			const after = nodeExecutionRepo.getById(stale.id)!;
 			expect(after.status).toBe('cancelled');
 			expect(after.result).toContain('Workflow node deleted-node no longer exists');
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)!.blockReason).toBe('workflow_invalid');
 		});
 
 		test('blocked execution → run untouched (existing blocked-recovery path owns it)', async () => {

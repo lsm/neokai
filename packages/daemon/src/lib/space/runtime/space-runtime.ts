@@ -2484,6 +2484,7 @@ export class SpaceRuntime {
 						`SpaceRuntime: cannot spawn workflow node agents for run ${runId} — space ${meta.spaceId} not found`
 					);
 				} else {
+					let permanentSpawnFailureReason: string | null = null;
 					for (const execution of pendingExecutions) {
 						if (tam.isExecutionSpawning(execution.id)) continue;
 						try {
@@ -2503,6 +2504,7 @@ export class SpaceRuntime {
 							});
 						} catch (err) {
 							if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
+								permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
 								continue;
 							}
 							const stale = this.config.nodeExecutionRepo.getById(execution.id);
@@ -2517,6 +2519,25 @@ export class SpaceRuntime {
 							log.warn(
 								`SpaceRuntime: transient spawn failure for workflow node execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
 							);
+						}
+					}
+					if (permanentSpawnFailureReason) {
+						const refreshedExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+						const hasDriveableExecution = refreshedExecutions.some(
+							(execution) =>
+								execution.status === 'pending' ||
+								execution.status === 'in_progress' ||
+								execution.status === 'waiting_rebind' ||
+								execution.status === 'blocked'
+						);
+						if (!hasDriveableExecution) {
+							await this.blockRunForPermanentSpawnFailure(
+								runId,
+								meta.spaceId,
+								canonicalTask,
+								permanentSpawnFailureReason
+							);
+							return;
 						}
 					}
 					if (
@@ -2538,6 +2559,28 @@ export class SpaceRuntime {
 			// `task.reportedStatus`.
 			return;
 		}
+	}
+
+	private async blockRunForPermanentSpawnFailure(
+		runId: string,
+		spaceId: string,
+		canonicalTask: SpaceTask,
+		reason: string
+	): Promise<void> {
+		await this.transitionRunStatusAndEmit(runId, 'blocked');
+		await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+			status: 'blocked',
+			result: reason,
+			blockReason: 'workflow_invalid',
+			completedAt: null,
+		});
+		await this.safeNotify({
+			kind: 'workflow_run_blocked',
+			spaceId,
+			runId,
+			reason,
+			timestamp: new Date().toISOString(),
+		});
 	}
 
 	private cancelExecutionForPermanentSpawnError(execution: NodeExecution, err: unknown): boolean {
