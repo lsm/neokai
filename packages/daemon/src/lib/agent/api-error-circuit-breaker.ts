@@ -17,6 +17,7 @@
  */
 
 import { Logger } from '../logger';
+import { TRANSIENT_CONNECTION_ERROR_REGEXES } from './transient-error-patterns';
 
 /**
  * Tracked error occurrence
@@ -82,23 +83,11 @@ const FATAL_ERROR_PATTERNS = [
 /**
  * Transient error patterns that should NOT be counted by the circuit breaker.
  *
- * These represent mid-stream HTTP connection drops (network blips, server restarts,
- * timeouts) that the daemon's own retry logic handles. A single transient drop
- * should not contribute to the circuit breaker's error count — only genuinely
- * repeated connection failures (matching FATAL_ERROR_PATTERNS above) should trip it.
+ * Sourced from the shared transient-error-patterns.ts module so that
+ * query-runner.ts (substring includes) and the circuit breaker (regex)
+ * stay in sync automatically.
  */
-const TRANSIENT_CONNECTION_PATTERNS = [
-	/socket connection was closed/i,
-	/verbose:\s*true\s+in the second argument to fetch/i,
-	/TypeError:\s*fetch\s+failed/i,
-	/connection reset/i,
-	/stream closed/i,
-	/SocketError/i,
-	/ReadableStream is locked/i,
-	/network down/i,
-	/Unable to connect/i,
-	/backend connection error/i,
-];
+const TRANSIENT_CONNECTION_PATTERNS = TRANSIENT_CONNECTION_ERROR_REGEXES;
 
 export class ApiErrorCircuitBreaker {
 	private logger: Logger;
