@@ -521,7 +521,11 @@ class EventRouter {
 
   /**
    * Clear all subscriptions for a workflow run.
-   * Called when the workflow run reaches a terminal state (done, cancelled, blocked).
+   * Called when the workflow run reaches a truly terminal state (done or cancelled).
+   *
+   * NOT called for `blocked` runs because blocked is resumable — the run may be
+   * reopened (see WorkflowRunReopenedEvent) and its node subscriptions should
+   * remain active so queued/arriving events can be delivered upon resume.
    */
   clearRunInterests(workflowRunId: string): void {
     const runSubs = this.activeRuns.get(workflowRunId);
@@ -573,6 +577,15 @@ class EventRouter {
     const dedupeKey = `${event.dedupeKey}:${sub.nodeId}:${sub.agentName}:${sub.workflowRunId}`;
     if (this.delivered.has(dedupeKey)) return;
 
+    // Mark dedup BEFORE session resolution / queueing. This prevents the same
+    // event from being queued multiple times for inactive sessions — if the
+    // event arrives again before the queued delivery is flushed, the dedup
+    // check above will catch it. The tradeoff is that if injection fails (e.g.
+    // session crashes during delivery), the event will not be retried; this is
+    // acceptable because the upstream SpaceGitHubService re-polls on restart
+    // and will generate a fresh event.
+    this.delivered.set(dedupeKey, Date.now());
+
     // Resolve session — re-read from nodeExecutionRepo for latest state
     const sessionId = await this.resolveSession(sub);
     if (!sessionId) {
@@ -592,14 +605,12 @@ class EventRouter {
       await this.sessionFactory.injectMessage(sessionId, message, {
         deliveryMode: 'defer',
       });
-
-      // Mark delivered
-      this.delivered.set(dedupeKey, Date.now());
     } catch (err) {
       log.warn(`Failed to deliver event to ${sub.agentName}`, { error: err });
       // Session may have completed between resolution and injection.
-      // This is expected and safe — the event is NOT marked as delivered,
-      // so if the session restarts, the event can be re-attempted.
+      // The event is already dedup-marked so it won't be re-delivered for
+      // this run. A fresh event will arrive via the next poll cycle if the
+      // underlying external event is still relevant.
     }
   }
 
@@ -864,8 +875,12 @@ class GitHubEventAdapter implements EventAdapter {
       const { event, taskId } = data;
       const [repoOwner, repoName] = event.repo.split('/');
 
-      // Construct topic from event
-      const topic = `github/${repoOwner}/${repoName}/${mapEventType(event.eventType)}.${mapAction(event.action)}`;
+      // Construct topic from event.
+      // mapEventType returns the full resource.action string from the table below.
+      // For most SpaceGitHubEventKinds, the mapping already includes the action
+      // (e.g., pull_request_review → "pull_request.review_submitted").
+      // For plain pull_request events, the action is appended from event.action.
+      const topic = `github/${repoOwner}/${repoName}/${mapEventType(event.eventType, event.action)}`;
 
       // Publish to bus
       await publisher.publish({
@@ -897,12 +912,24 @@ class GitHubEventAdapter implements EventAdapter {
 
 The `SpaceGitHubService` already normalizes to `SpaceGitHubEventKind` (`issue_comment`, `pull_request_review`, `pull_request_review_comment`, `pull_request`). We map these to bus topics:
 
-| SpaceGitHubEventKind | Bus topic resource |
+| SpaceGitHubEventKind | `mapEventType(kind, action)` returns |
 |---|---|
 | `issue_comment` | `pull_request.comment_created` (PR comments only, already filtered) |
 | `pull_request_review` | `pull_request.review_submitted` |
 | `pull_request_review_comment` | `pull_request.review_comment_created` |
-| `pull_request` | `pull_request.{action}` (opened, synchronize, closed, etc.) |
+| `pull_request` | `pull_request.${action}` (opened, synchronize, closed, etc.) |
+
+```typescript
+function mapEventType(kind: string, action: string): string {
+  switch (kind) {
+    case 'issue_comment': return 'pull_request.comment_created';
+    case 'pull_request_review': return 'pull_request.review_submitted';
+    case 'pull_request_review_comment': return 'pull_request.review_comment_created';
+    case 'pull_request': return `pull_request.${action}`;
+    default: return `${kind}.${action}`;
+  }
+}
+```
 
 ### Task-scoped resolution optimization
 
