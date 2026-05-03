@@ -478,7 +478,7 @@ describe('ChannelRouter', () => {
 			expect(cancelledSessions).toEqual(['session:stale-activation']);
 			const after = nodeExecutionRepo.getById(stale.id)!;
 			expect(after.status).toBe('cancelled');
-			expect(after.agentSessionId).toBeNull();
+			expect(after.agentSessionId).toBe('session:stale-activation');
 			expect(after.result).toContain(
 				'Agent slot stale-slot on workflow node node-a now references'
 			);
