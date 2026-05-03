@@ -465,8 +465,20 @@ export class SpaceWorkflowRepository {
 		nodes: WorkflowNodeInput[],
 		now: number
 	): void {
+		const existingRows = this.db
+			.prepare(`SELECT id FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`)
+			.all(workflowId) as Array<{ id: string }>;
+		const existingNodeIds = new Set(existingRows.map((row) => row.id));
+		const incomingNodeIds = new Set(
+			nodes.map((node) => node.id).filter((id): id is string => !!id)
+		);
 		const updateNode = this.db.prepare(
 			`UPDATE space_workflow_nodes SET name = ?, config = ?, updated_at = ? WHERE workflow_id = ? AND id = ?`
+		);
+		const insertNodeRow = this.db.prepare(
+			`INSERT INTO space_workflow_nodes
+				(id, workflow_id, name, description, config, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`
 		);
 		const rowOrderByNodeId = new Map<string, number>();
 
@@ -477,15 +489,22 @@ export class SpaceWorkflowRepository {
 				continue;
 			}
 			rowOrderByNodeId.set(node.id, i + 1);
-			const result = updateNode.run(
-				node.name,
-				JSON.stringify(this.buildNodeConfig(node)),
-				now,
-				workflowId,
-				node.id
-			);
-			if (result.changes === 0) {
-				log.error(`workflow.node.update.missingNode: workflowId=${workflowId} nodeId=${node.id}`);
+			const configJson = JSON.stringify(this.buildNodeConfig(node));
+			if (existingNodeIds.has(node.id)) {
+				const result = updateNode.run(node.name, configJson, now, workflowId, node.id);
+				if (result.changes === 0) {
+					log.error(`workflow.node.update.missingNode: workflowId=${workflowId} nodeId=${node.id}`);
+				}
+			} else {
+				insertNodeRow.run(node.id, workflowId, node.name, '', configJson, now, now);
+			}
+		}
+
+		for (const nodeId of existingNodeIds) {
+			if (!incomingNodeIds.has(nodeId)) {
+				this.db
+					.prepare(`DELETE FROM space_workflow_nodes WHERE workflow_id = ? AND id = ?`)
+					.run(workflowId, nodeId);
 			}
 		}
 

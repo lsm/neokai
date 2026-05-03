@@ -158,7 +158,9 @@ export class SpaceWorkflowManager {
 			params = { ...params, name: trimmedName };
 		}
 		if (params.nodes !== undefined) {
-			this.validateStableNodeIds(id, existing.nodes, params.nodes ?? []);
+			this.validateStableNodeIds(id, existing.nodes, params.nodes ?? [], {
+				allowStructuralChanges: true,
+			});
 		}
 
 		const effectiveNodes: WorkflowNodeInput[] =
@@ -307,26 +309,29 @@ export class SpaceWorkflowManager {
 	private validateStableNodeIds(
 		workflowId: string,
 		existingNodes: Array<{ id: string }>,
-		incomingNodes: Array<{ id?: string }>
+		incomingNodes: Array<{ id?: string }>,
+		options: { allowStructuralChanges?: boolean } = {}
 	): void {
 		const existingIds = existingNodes.map((node) => node.id);
 		const incomingIds = incomingNodes.map((node) => node.id).filter((id): id is string => !!id);
-		const sameLength =
-			existingIds.length === incomingNodes.length && incomingIds.length === incomingNodes.length;
+		const allIncomingIdsPresent = incomingIds.length === incomingNodes.length;
+		const incomingIdsUnique = new Set(incomingIds).size === incomingIds.length;
 		const existingSet = new Set(existingIds);
 		const sameSet =
-			sameLength &&
+			existingIds.length === incomingNodes.length &&
+			allIncomingIdsPresent &&
 			new Set(incomingIds).size === existingSet.size &&
 			incomingIds.every((id) => existingSet.has(id));
 
 		if (sameSet) return;
+		if (options.allowStructuralChanges && allIncomingIdsPresent && incomingIdsUnique) return;
 
 		logger.error(
 			`workflow.idChangeRejected: workflowId=${workflowId} ` +
 				`existingNodeIds=[${existingIds.join(',')}] incomingNodeIds=[${incomingIds.join(',')}]`
 		);
 		throw new WorkflowValidationError(
-			'Workflow node IDs are stable and cannot be added, removed, regenerated, or omitted during update'
+			'Workflow node IDs are stable and cannot be duplicated, regenerated, or omitted during update'
 		);
 	}
 
