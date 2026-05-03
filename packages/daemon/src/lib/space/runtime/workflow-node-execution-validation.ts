@@ -58,6 +58,13 @@ export function validateExecutionAgainstWorkflow(
 			permanent: true,
 		};
 	}
+	if (execution.agentId && slot.agentId !== execution.agentId) {
+		return {
+			valid: false,
+			reason: `Agent slot ${execution.agentName} on workflow node ${execution.workflowNodeId} now references agent ${slot.agentId} instead of ${execution.agentId}`,
+			permanent: true,
+		};
+	}
 
 	return { valid: true };
 }

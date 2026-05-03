@@ -45,6 +45,7 @@ import {
 	ActivationError,
 	ChannelGateBlockedError,
 } from '../../../../src/lib/space/runtime/channel-router.ts';
+import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import type { Gate, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
 import { computeGateDefaults } from '@neokai/shared';
 
@@ -423,6 +424,64 @@ describe('ChannelRouter', () => {
 			expect(tasks).toHaveLength(1);
 			expect(tasks[0].workflowRunId).toBe(run.id);
 			expect(nodeExecutionRepo.listByNode(run.id, NODE_A)).toHaveLength(1);
+		});
+
+		test('cancels live session before cancelling stale execution during activation', async () => {
+			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+				{
+					id: NODE_A,
+					name: 'Node A',
+					agents: [{ agentId: AGENT_CODER, name: 'stale-slot' }],
+				},
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Stale Activation Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			const nodeExecutionRepo = new NodeExecutionRepository(db);
+			const stale = nodeExecutionRepo.create({
+				workflowRunId: run.id,
+				workflowNodeId: NODE_A,
+				agentName: 'stale-slot',
+				agentId: AGENT_CODER,
+				agentSessionId: 'session:stale-activation',
+				status: 'cancelled',
+			});
+			workflowManager.updateWorkflow(workflow.id, {
+				nodes: [
+					{ id: NODE_A, name: 'Node A', agents: [{ agentId: AGENT_PLANNER, name: 'stale-slot' }] },
+				],
+				startNodeId: NODE_A,
+				endNodeId: NODE_A,
+				channels: [],
+			});
+			const cancelledSessions: string[] = [];
+			const routerWithCancellation = new ChannelRouter({
+				taskRepo,
+				workflowRunRepo,
+				workflowManager,
+				agentManager,
+				gateDataRepo,
+				channelCycleRepo,
+				db,
+				nodeExecutionRepo,
+				cancelSessionById: (sessionId) => cancelledSessions.push(sessionId),
+			});
+
+			await expect(routerWithCancellation.activateNode(run.id, NODE_A)).rejects.toBeInstanceOf(
+				PermanentSpawnError
+			);
+			expect(cancelledSessions).toEqual(['session:stale-activation']);
+			const after = nodeExecutionRepo.getById(stale.id)!;
+			expect(after.status).toBe('cancelled');
+			expect(after.agentSessionId).toBeNull();
+			expect(after.result).toContain(
+				'Agent slot stale-slot on workflow node node-a now references'
+			);
 		});
 
 		// -----------------------------------------------------------------------

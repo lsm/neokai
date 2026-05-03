@@ -944,6 +944,9 @@ export class SpaceRuntimeService {
 				return s?.autonomyLevel ?? 1;
 			},
 			isSessionAlive: taskAgentManager ? (sid) => taskAgentManager.isSessionAlive(sid) : undefined,
+			cancelSessionById: taskAgentManager
+				? (sid) => taskAgentManager.cancelBySessionId(sid)
+				: undefined,
 			// Forward the runtime's current sink so a gate-driven reopen still
 			// surfaces `workflow_run_reopened` to the Space Agent session.
 			notificationSink: this.runtime.getNotificationSink(),
@@ -1000,6 +1003,9 @@ export class SpaceRuntimeService {
 				return s?.autonomyLevel ?? 1;
 			},
 			isSessionAlive: taskAgentManager ? (sid) => taskAgentManager.isSessionAlive(sid) : undefined,
+			cancelSessionById: taskAgentManager
+				? (sid) => taskAgentManager.cancelBySessionId(sid)
+				: undefined,
 			// Forward the runtime's current sink so activation-driven reopens of
 			// terminal runs still surface `workflow_run_reopened` to the Space
 			// Agent session (mirrors `notifyGateDataChanged` above).

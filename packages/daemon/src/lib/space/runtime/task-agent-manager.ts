@@ -1943,6 +1943,7 @@ export class TaskAgentManager {
 					return s?.autonomyLevel ?? 1;
 				},
 				isSessionAlive: (sid) => this.isSessionAlive(sid),
+				cancelSessionById: (sid) => this.cancelBySessionId(sid),
 				notificationSink: this.config.spaceRuntimeService.getSharedRuntime().getNotificationSink(),
 				onGatePendingApproval: (runId, gateId) =>
 					this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
@@ -4094,6 +4095,7 @@ export class TaskAgentManager {
 				return s?.autonomyLevel ?? 1;
 			},
 			isSessionAlive: (sid) => this.isSessionAlive(sid),
+			cancelSessionById: (sid) => this.cancelBySessionId(sid),
 			// Forward the runtime's current sink so a peer-agent `send_message`
 			// that auto-reopens a terminal run still emits `workflow_run_reopened`
 			// into the Space Agent session.

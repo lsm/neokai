@@ -226,6 +226,11 @@ export interface ChannelRouterConfig {
 	 */
 	isSessionAlive?: (sessionId: string) => boolean;
 	/**
+	 * Optional cancellation hook for live agent sessions when activation discovers
+	 * the backing node execution is permanently invalid and must be detached.
+	 */
+	cancelSessionById?: (sessionId: string) => void;
+	/**
 	 * Optional notification sink for surfacing runtime events (e.g.
 	 * `workflow_run_reopened`). When omitted, the router silently skips
 	 * notification emission — appropriate for tests and other standalone uses.
@@ -366,6 +371,9 @@ export class ChannelRouter {
 			if (existing) {
 				const validation = validateExecutionAgainstWorkflow(existing, workflow);
 				if (!validation.valid) {
+					if (existing.agentSessionId) {
+						this.config.cancelSessionById?.(existing.agentSessionId);
+					}
 					this.config.nodeExecutionRepo.update(existing.id, {
 						status: 'cancelled',
 						agentSessionId: null,
