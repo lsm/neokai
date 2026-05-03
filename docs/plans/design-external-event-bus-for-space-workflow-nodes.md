@@ -68,10 +68,18 @@ github/lsm/neokai/pull_request.review_*     ← prefix wildcard: all review even
 
 Subscriptions use glob-style patterns:
 - `*` matches any single path segment (no slashes)
-- `**` matches any number of path segments
 - Literal segments match exactly (case-insensitive)
 
-We implement matching via a **trie-based prefix index** (see §4), not regex. This keeps matching O(k) where k = topic depth, independent of the number of subscriptions.
+> **V1 scope note:** The `**` (multi-segment) wildcard is deferred to a follow-up. All v1 use cases are covered by single-segment `*` wildcards at the `owner`, `repo`, or `action` position (e.g., `github/*/*/pull_request.review_submitted`). Adding `**` support requires a depth-bounded recursive trie walk and is not justified by current subscription patterns.
+
+Pattern validation (enforced at workflow create/update time):
+- Must be non-empty.
+- Must not contain `..` segments.
+- Must not contain empty segments (no double slashes).
+- Each segment must be a literal string or `*`.
+- Max 10 interests per agent slot.
+
+We implement matching via a **trie-based prefix index** (see §4), not regex.
 
 ## 2. Node-Level Event Subscription (`eventInterests`)
 
@@ -293,11 +301,35 @@ class GitHubEventAdapter implements EventAdapter {
 
 The adapter subscribes to the existing `space.githubEvent.routed` DaemonHub event (already emitted by `SpaceGitHubService.appendTaskActivity`). It converts the event to `ExternalEvent` format and publishes to the bus.
 
+**Note — `action` field gap:** The current `space.githubEvent.routed` payload emitted by `appendTaskActivity` only includes `{ repo, prNumber, eventType, summary, externalUrl }`. It does NOT include `action`. The adapter needs the action to construct proper topics (e.g., `pull_request.review_submitted` vs `pull_request.opened`).
+
+**Fix:** Extend the `appendTaskActivity` payload in `SpaceGitHubService` to include `action`:
+
+```typescript
+// In space-github.ts, appendTaskActivity():
+this.daemonHub?.emit('space.githubEvent.routed', {
+    sessionId: 'global',
+    taskId,
+    event: {
+        repo: `${event.repoOwner}/${event.repoName}`,
+        prNumber: event.prNumber,
+        eventType: event.eventType,
+        action: event.action,           // ← ADD THIS
+        summary: event.summary,
+        externalUrl: event.externalUrl,
+        rawPayload: event.rawPayload,   // ← ADD THIS (for adapter consumers)
+    },
+});
+```
+
+This is a two-field addition to `appendTaskActivity` — both `action` and `rawPayload` are already available on the `NormalizedSpaceGitHubEvent` at the call site. This is the only change to existing code.
+
 **Why this approach:**
-- Zero changes to the existing `SpaceGitHubService` webhook handler or polling pipeline.
+- Minimal change to the existing `SpaceGitHubService` — two additional fields in an existing DaemonHub emission.
 - The existing PR-to-task resolution (`SpacePrTaskResolver`) continues to work.
 - The existing Task Agent injection continues to work (we don't replace it, we supplement it).
 - The adapter is purely additive: it converts an already-normalized event into bus format.
+- `rawPayload` is included so adapter consumers (and future adapters) have access to the full original event data without re-fetching from GitHub.
 
 ## 4. EventRouter Design
 
@@ -334,7 +366,7 @@ The trie maps topic segments to `Set<Subscription>` at leaf nodes. Wildcard segm
 
 **Build cost**: O(n × k) where n = number of subscriptions, k = topic depth (typically 4-5). Built once when a workflow run starts.
 
-**Lookup cost**: O(k) per event — walk the trie by topic segment, collect subscriptions at each level (exact match + wildcard).
+**Lookup cost**: The trie walks both exact-match and wildcard branches at each level. With k levels, this produces at most 2^k paths. At each leaf, m subscriptions are collected. Total cost per lookup is O(2^k × m) where m is the total number of matching subscriptions across all leaves. Since k is small and bounded (4–5 topic segments), 2^k is a small constant (16–32). The real benefit over linear scan is that non-matching subscriptions are never visited — only subscriptions whose pattern segments align with the event's topic are collected.
 
 ### Subscription index lifecycle
 
@@ -367,16 +399,45 @@ class EventRouter {
 
   // dedup: (dedupeKey, agentSessionId) → timestamp
   private delivered: Map<string, number> = new Map();
+  // TTL for dedup entries — entries older than this are evicted on next access
+  private static readonly DEDUP_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+  // Cache: spaceId → Set of "owner/repo" strings for watched repos
+  // Refreshed on spaceWorkflow.updated events (when watched repos change)
+  private watchedRepoCache: Map<string, Set<string>> = new Map();
 
   constructor(
     private readonly eventBus: EventBus,
     private readonly nodeExecutionRepo: NodeExecutionRepository,
     private readonly taskRepo: SpaceTaskRepository,
+    private readonly spaceTaskManager: SpaceTaskManager,
     private readonly sessionFactory: SessionFactory,
     private readonly prResolver: SpacePrTaskResolver,
+    private readonly spaceGitHubRepo: SpaceGitHubRepository,
   ) {
     // Subscribe to ALL events on the bus
     this.eventBus.subscribe('*', this.handleEvent.bind(this));
+  }
+
+  /** Check if a repo is watched for a given space. Uses cached data. */
+  private isWatchedRepo(spaceId: string, owner: string, repo: string): boolean {
+    let cached = this.watchedRepoCache.get(spaceId);
+    if (!cached) {
+      const repos = this.spaceGitHubRepo.listWatchedRepos(spaceId);
+      cached = new Set(
+        repos.filter(r => r.enabled).map(r => `${r.owner.toLowerCase()}/${r.repo.toLowerCase()}`)
+      );
+      this.watchedRepoCache.set(spaceId, cached);
+    }
+    return cached.has(`${owner.toLowerCase()}/${repo.toLowerCase()}`);
+  }
+
+  /** Evict stale dedup entries (called periodically or on demand). */
+  private evictStaleDedup(): void {
+    const cutoff = Date.now() - EventRouter.DEDUP_TTL_MS;
+    for (const [key, ts] of this.delivered.entries()) {
+      if (ts < cutoff) this.delivered.delete(key);
+    }
   }
 
   /**
@@ -424,6 +485,64 @@ class EventRouter {
     this.activeRuns.set(workflowRunId, runSubs);
   }
 
+  /**
+   * Unregister subscriptions for a specific node execution.
+   * Called when a node execution transitions to a non-receiving state.
+   *
+   * Receiving states: in_progress (active agent session)
+   * Non-receiving states: pending, idle, waiting_rebind, blocked, cancelled
+   *
+   * For `idle` and `waiting_rebind`, events may still be relevant (agent
+   * could be re-activated), so we keep subscriptions but skip delivery
+   * (the event is queued in the in-memory pending queue instead).
+   * For `blocked`/`cancelled`, subscriptions are fully removed.
+   */
+  unregisterExecution(
+    workflowRunId: string,
+    nodeId: string,
+    agentName: string,
+  ): void {
+    const runSubs = this.activeRuns.get(workflowRunId);
+    if (!runSubs) return;
+
+    const toRemove = [...runSubs].filter(
+      s => s.nodeId === nodeId && s.agentName === agentName,
+    );
+    for (const sub of toRemove) {
+      runSubs.delete(sub);
+      this.topicTrie.remove(
+        v => v.workflowRunId === workflowRunId && v.agentName === agentName && v.nodeId === nodeId,
+      );
+    }
+  }
+
+  /**
+   * Clear all subscriptions for a workflow run.
+   * Called when the workflow run reaches a terminal state (done, cancelled, blocked).
+   */
+  clearRunInterests(workflowRunId: string): void {
+    const runSubs = this.activeRuns.get(workflowRunId);
+    if (!runSubs) return;
+
+    this.topicTrie.remove(v => v.workflowRunId === workflowRunId);
+    this.activeRuns.delete(workflowRunId);
+
+    // Also clean up dedup entries for this run
+    const prefix = `:${workflowRunId}:`;
+    for (const key of this.delivered.keys()) {
+      if (key.includes(prefix)) {
+        this.delivered.delete(key);
+      }
+    }
+
+    // Clean up in-memory pending queue for this run
+    for (const [execId, events] of this.pendingQueue.entries()) {
+      if (execId.startsWith(workflowRunId)) {
+        this.pendingQueue.delete(execId);
+      }
+    }
+  }
+
   private async handleEvent(event: ExternalEvent): Promise<void> {
     // 1. Look up matching subscriptions via trie
     const matched = this.topicTrie.lookup(event.topic);
@@ -444,7 +563,7 @@ class EventRouter {
     const dedupeKey = `${event.dedupeKey}:${sub.agentName}:${sub.workflowRunId}`;
     if (this.delivered.has(dedupeKey)) return;
 
-    // Resolve session
+    // Resolve session — re-read from nodeExecutionRepo for latest state
     const sessionId = await this.resolveSession(sub);
     if (!sessionId) {
       // Session not active — queue for later delivery
@@ -452,7 +571,12 @@ class EventRouter {
       return;
     }
 
-    // Format and inject
+    // Format and inject.
+    // NOTE: There is a TOCTOU race — the session could complete between our
+    // resolveSession call and injectMessage. This is safe: injectMessage on a
+    // completed/absent session returns a caught error (logged as a warning),
+    // and the dedup map prevents re-delivery if the same event arrives again
+    // after the session restarts. No data loss or corruption occurs.
     const message = this.formatEventMessage(event);
     try {
       await this.sessionFactory.injectMessage(sessionId, message, {
@@ -463,6 +587,9 @@ class EventRouter {
       this.delivered.set(dedupeKey, Date.now());
     } catch (err) {
       log.warn(`Failed to deliver event to ${sub.agentName}`, { error: err });
+      // Session may have completed between resolution and injection.
+      // This is expected and safe — the event is NOT marked as delivered,
+      // so if the session restarts, the event can be re-attempted.
     }
   }
 
@@ -472,23 +599,35 @@ class EventRouter {
         return true;
 
       case 'repo': {
-        // Check if event's repo matches any watched repo in this space
+        // Check if event's repo matches any watched repo in this space.
+        // Uses SpaceGitHubRepository.getEnabledRepos(owner, repo) which queries
+        // the `space_github_watched_repos` table filtered by (spaceId, owner, repo, enabled=1).
+        // The router caches this per-space to avoid DB hits on every event.
         if (!event.repoOwner || !event.repoName) return false;
         return this.isWatchedRepo(sub.spaceId, event.repoOwner, event.repoName);
       }
 
       case 'task': {
-        // Check if event's PR number matches the subscription's task
+        // Check if event's PR number matches any task in this workflow run.
+        // Note: a workflow run CAN have multiple tasks (e.g., sub-tasks created
+        // by the planner). We check ALL non-archived tasks for a PR match.
         if (!event.prNumber) return false;
-        const task = this.taskRepo.getByWorkflowRunId(sub.workflowRunId);
-        if (!task) return false;
-        // Reuse the existing SpacePrTaskResolver logic
-        return this.prResolver.resolve(sub.spaceId, {
-          repoOwner: event.repoOwner ?? '',
-          repoName: event.repoName ?? '',
-          prNumber: event.prNumber,
-          // ... minimal shape for resolver
-        } as any).taskId === task.id;
+        const tasks = this.taskRepo.listByWorkflowRun(sub.workflowRunId);
+        if (tasks.length === 0) return false;
+
+        // The SpacePrTaskResolver already handles the PR → task matching logic.
+        // For the common case (1 task per run), this is a single lookup.
+        // For multi-task runs, we check if any task matches.
+        for (const task of tasks) {
+          const resolved = this.prResolver.resolve(sub.spaceId, {
+            repoOwner: event.repoOwner ?? '',
+            repoName: event.repoName ?? '',
+            prNumber: event.prNumber,
+            // ... minimal shape for resolver
+          } as any);
+          if (resolved.taskId === task.id) return true;
+        }
+        return false;
       }
     }
   }
@@ -534,10 +673,17 @@ When an event matches a subscription whose node execution is `idle` (agent sessi
 
 When a node execution is `pending` (no session yet):
 
-1. The event is queued in an in-memory `Map<executionId, ExternalEvent[]>`.
+1. The event is queued in an in-memory `Map<string, ExternalEvent[]>` keyed by `${workflowRunId}:${nodeId}:${agentName}`.
 2. When `TaskAgentManager` creates the node's session, it checks for queued events.
 3. Queued events are injected as initial context in the session's first turn.
 4. Queue is bounded: max 50 events per execution, oldest dropped (with a warning log).
+
+**Known limitation — daemon restart**: The in-memory pending queue is lost on daemon restart. For v1, this is acceptable because:
+- Events between daemon restarts are also lost (the webhook/polling pipeline itself doesn't guarantee delivery during downtime).
+- The existing `SpaceGitHubService` polling service re-polls on startup, so events that arrived during downtime are re-normalized and re-routed.
+- For nodes that are still `pending` after restart, the next poll cycle will generate fresh events that flow through the bus.
+
+If persistent queuing is needed in a future iteration, events can be persisted to a `space_event_delivery_queue` SQLite table with the same schema as the in-memory map, and drained on node activation.
 
 ### Backpressure
 
@@ -576,7 +722,9 @@ class TopicTrie<T> {
   /**
    * Lookup all values whose patterns match the given topic.
    * Returns all values from exact matches AND wildcard matches at each level.
-   * O(depth) — independent of total number of patterns.
+   * Walks at most 2^k paths where k = topic segment count (bounded, small).
+   * Only collects subscriptions from matching leaves — non-matching patterns
+   * are never visited.
    */
   lookup(topic: string): T[] {
     const segments = topic.split('/');
@@ -626,18 +774,34 @@ class TrieNode<T> {
 }
 ```
 
+### Helper: `isReceivingStatus`
+
+```typescript
+import type { NodeExecutionStatus } from '@neokai/shared';
+
+/** Node execution states that should NOT receive events. */
+const TERMINAL_RECEIVING_STATES: ReadonlySet<NodeExecutionStatus> = new Set([
+  'cancelled',
+  // Note: 'idle' and 'waiting_rebind' keep their subscriptions alive —
+  // the agent session exists and may be re-activated. Events are queued
+  // rather than delivered immediately for these states.
+]);
+
+function isReceivingStatus(status: NodeExecutionStatus): boolean {
+  return !TERMINAL_RECEIVING_STATES.has(status);
+}
+```
+
 **Complexity**:
 - Insert: O(k) where k = segment count (~4-5)
-- Lookup: O(k) — walks trie by segment, collects from exact + wildcard at each level
+- Lookup: O(2^k × m) — walks at most 2^k paths (exact + wildcard at each level), collects m total matching subscriptions from leaves. Since k is bounded (4–5), 2^k is a small constant.
 - Memory: O(n × k) where n = number of subscriptions
-
-This is O(1) relative to the number of subscriptions — each lookup traverses at most 2^k paths (2 per level: exact + wildcard), and k is small and constant.
 
 ## 7. Wiring the GitHub Adapter
 
 ### Changes to existing code
 
-**Minimal.** The adapter hooks into the existing `SpaceGitHubService` via DaemonHub subscription:
+**Two-field addition.** The `appendTaskActivity` method in `space-github.ts` must include `action: event.action` and `rawPayload: event.rawPayload` in the `space.githubEvent.routed` DaemonHub payload. This is the only change to existing code. All other existing behavior (webhook handling, polling, normalization, Task Agent injection) remains unchanged.
 
 ```
 SpaceGitHubService.handleWebhook()
@@ -661,9 +825,10 @@ class GitHubEventAdapter implements EventAdapter {
   async start(publisher: EventPublisher): Promise<void> {
     this.daemonHub.on('space.githubEvent.routed', async (data) => {
       const { event, taskId } = data;
+      const [repoOwner, repoName] = event.repo.split('/');
 
       // Construct topic from event
-      const topic = `github/${event.repo.split('/')[0]}/${event.repo.split('/')[1]}/${mapEventType(event.eventType)}.${mapAction(event.action)}`;
+      const topic = `github/${repoOwner}/${repoName}/${mapEventType(event.eventType)}.${mapAction(event.action)}`;
 
       // Publish to bus
       await publisher.publish({
@@ -673,12 +838,18 @@ class GitHubEventAdapter implements EventAdapter {
         ingestedAt: Date.now(),
         source: 'github',
         prNumber: event.prNumber,
-        repoOwner: event.repo.split('/')[0],
-        repoName: event.repo.split('/')[1],
+        repoOwner,
+        repoName,
         summary: event.summary,
         externalUrl: event.externalUrl,
-        payload: event,
-        dedupeKey: `github:${event.repo}:${event.prNumber}:${event.eventType}:${event.externalUrl}`,
+        payload: {
+          // Full normalized event for adapter consumers
+          eventType: event.eventType,
+          action: event.action,
+          taskId,
+          rawPayload: event.rawPayload,   // Include original webhook/polling payload
+        },
+        dedupeKey: `github:${event.repo}:${event.prNumber}:${event.eventType}:${event.action}:${event.externalUrl}`,
       });
     });
   }
@@ -716,9 +887,10 @@ None required for V1. Event interests are stored as part of the workflow definit
 1. Add `EventInterest` interface to `packages/shared/src/types/space.ts`.
 2. Add `eventInterests?: EventInterest[]` to `WorkflowNodeAgent`.
 3. Add validation in the workflow create/update path (Zod schema or manual validation):
-   - `topic` must be a valid glob pattern (non-empty, no `..` segments).
+   - `topic` must pass `validateGlobPattern()` (non-empty, no `..` segments, no double slashes, valid characters).
    - `scope` must be one of `'task' | 'repo' | 'global'`.
    - Max 10 interests per agent slot (prevent abuse).
+   - `validateGlobPattern()` is the single source of truth — called at workflow create/update and again at trie insertion time as a safety net.
 
 ### New files
 
@@ -727,9 +899,50 @@ packages/daemon/src/lib/space/runtime/event-bus/
   ├── types.ts              # ExternalEvent, EventAdapter, EventPublisher interfaces
   ├── event-bus.ts           # EventBus singleton (wraps TypedHub)
   ├── topic-trie.ts          # TopicTrie<T> implementation
+  ├── topic-validator.ts     # validateGlobPattern() helper
   ├── event-router.ts        # EventRouter — subscribes to bus, matches, delivers
   ├── github-adapter.ts      # GitHubEventAdapter — bridges SpaceGitHubService → EventBus
   └── index.ts               # Public exports
+```
+
+### Topic pattern validation
+
+```typescript
+// topic-validator.ts
+
+/**
+ * Validate a glob pattern for event subscriptions.
+ * Rejects patterns that could corrupt the trie or match unintended topics.
+ * Called at workflow create/update time and again at trie insertion time.
+ */
+export function validateGlobPattern(pattern: string): { valid: boolean; reason?: string } {
+  if (!pattern || pattern.trim().length === 0) {
+    return { valid: false, reason: 'Topic pattern must not be empty' };
+  }
+
+  const segments = pattern.split('/');
+
+  if (segments.length < 2) {
+    return { valid: false, reason: 'Topic pattern must have at least 2 segments (source/resource)' };
+  }
+
+  for (const segment of segments) {
+    if (segment === '') {
+      return { valid: false, reason: 'Topic pattern must not contain empty segments (double slashes)' };
+    }
+    if (segment === '..') {
+      return { valid: false, reason: 'Topic pattern must not contain ".." segments' };
+    }
+    if (segment !== '*' && !/^[a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*$/.test(segment)) {
+      return {
+        valid: false,
+        reason: `Segment "${segment}" contains invalid characters. Use alphanumeric, dash, underscore, or dot. Use "*" for wildcard.`,
+      };
+    }
+  }
+
+  return { valid: true };
+}
 ```
 
 ### Wiring into SpaceRuntime
@@ -845,7 +1058,10 @@ This is exactly the behavior we want for external events.
 
 ### Integration tests
 
-1. End-to-end: webhook → normalize → ingest → bus → router → session injection.
-2. Dedup: same event delivered twice, verify only one injection.
-3. Wake-on-idle: node idle → event arrives → session receives message.
-4. Pending node: event arrives for pending node → session created → event delivered.
+1. **End-to-end webhook flow**: Emit a `space.githubEvent.routed` event with a review_submitted action for PR #42 on repo `lsm/neokai`. The coder node in a workflow has `task`-scoped interest in `github/*/*/pull_request.review_submitted`. Verify the event reaches the coder node's session as an injected message.
+
+2. **Dedup across two events with same dedupeKey**: Emit two `space.githubEvent.routed` events for the same PR review (identical `dedupeKey`). Verify `injectMessage` is called exactly once for the coder node — the second event is silently dropped by the dedup check. Also verify that if two *different* nodes subscribe to the same event (e.g., coder + ci-monitor), each node receives exactly one injection independently.
+
+3. **Wake-on-idle delivery**: Set a node execution's session to `idle` state (agent finished its turn). Emit a matching event. Verify `injectMessage` is called with `deliveryMode: 'defer'` and the session processes the message on its next turn (via the existing defer replay mechanism).
+
+4. **Pending node queuing**: Emit an event for a node whose execution is `pending` (no session yet). Verify the event is stored in the in-memory pending queue. Then simulate `TaskAgentManager` creating the session. Verify the queued event is flushed and injected into the new session as part of the first turn.
