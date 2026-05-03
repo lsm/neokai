@@ -370,6 +370,8 @@ export interface GeminiStreamState {
 	inputTokens: number;
 	outputTokens: number;
 	finished: boolean;
+	/** True if any functionCall part has been seen across all chunks. */
+	hasSeenFunctionCall: boolean;
 }
 
 /** Create a new stream state tracker. */
@@ -384,6 +386,7 @@ export function createStreamState(model: string): GeminiStreamState {
 		inputTokens: 0,
 		outputTokens: 0,
 		finished: false,
+		hasSeenFunctionCall: false,
 	};
 }
 

@@ -247,7 +247,10 @@ export class AccountRotationManager {
 	 */
 	async addAccount(account: GoogleOAuthAccount): Promise<void> {
 		await this.initialize();
-		this.accounts.push(account);
+		// Avoid duplicating if initialize() already loaded this account from storage
+		if (!this.accounts.some((a) => a.id === account.id)) {
+			this.accounts.push(account);
+		}
 	}
 
 	/**

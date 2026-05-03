@@ -438,38 +438,43 @@ function processGeminiChunk(chunk: GeminiResponseChunk, state: GeminiStreamState
 
 	const candidates = response.candidates ?? [];
 	for (const candidate of candidates) {
-		if (!candidate.content?.parts) continue;
+		let chunkHasFunctionCall = false;
 
-		let hasFunctionCall = false;
+		// Process content parts if present
+		if (candidate.content?.parts) {
+			for (const part of candidate.content.parts) {
+				if (part.text !== undefined) {
+					// Text content
+					events.push(contentBlockStartTextSSE(state.contentBlockIndex));
+					events.push(textDeltaSSE(state.contentBlockIndex, part.text));
+					events.push(contentBlockStopSSE(state.contentBlockIndex));
+					state.contentBlockIndex++;
+					state.outputTokens += Math.ceil(part.text.length / 4);
+				} else if (part.functionCall) {
+					// Function call (tool use)
+					chunkHasFunctionCall = true;
+					state.hasSeenFunctionCall = true;
+					const toolUseId = `toolu_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
+					const argsJson = JSON.stringify(part.functionCall.args ?? {});
 
-		for (const part of candidate.content.parts) {
-			if (part.text !== undefined) {
-				// Text content
-				events.push(contentBlockStartTextSSE(state.contentBlockIndex));
-				events.push(textDeltaSSE(state.contentBlockIndex, part.text));
-				events.push(contentBlockStopSSE(state.contentBlockIndex));
-				state.contentBlockIndex++;
-				state.outputTokens += Math.ceil(part.text.length / 4);
-			} else if (part.functionCall) {
-				// Function call (tool use)
-				hasFunctionCall = true;
-				const toolUseId = `toolu_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
-				const argsJson = JSON.stringify(part.functionCall.args ?? {});
-
-				events.push(
-					contentBlockStartToolUseSSE(state.contentBlockIndex, toolUseId, part.functionCall.name)
-				);
-				events.push(inputJsonDeltaSSE(state.contentBlockIndex, argsJson));
-				events.push(contentBlockStopSSE(state.contentBlockIndex));
-				state.contentBlockIndex++;
+					events.push(
+						contentBlockStartToolUseSSE(state.contentBlockIndex, toolUseId, part.functionCall.name)
+					);
+					events.push(inputJsonDeltaSSE(state.contentBlockIndex, argsJson));
+					events.push(contentBlockStopSSE(state.contentBlockIndex));
+					state.contentBlockIndex++;
+				}
 			}
 		}
 
-		// Check finish reason
+		// Check finish reason — handle finish-only chunks (no parts) too.
+		// Gemini can emit finishReason on a terminal chunk with no content.
 		if (candidate.finishReason) {
-			// When the candidate contains function calls, the stop reason must
-			// be tool_use so Anthropic-compatible clients trigger tool execution.
-			const stopReason = hasFunctionCall ? 'tool_use' : convertFinishReason(candidate.finishReason);
+			// Use tool_use if this chunk or any prior chunk contained a function call
+			const stopReason =
+				chunkHasFunctionCall || state.hasSeenFunctionCall
+					? 'tool_use'
+					: convertFinishReason(candidate.finishReason);
 			events.push(messageDeltaSSE(stopReason, { outputTokens: Math.max(state.outputTokens, 1) }));
 			events.push(messageStopSSE());
 			state.finished = true;
