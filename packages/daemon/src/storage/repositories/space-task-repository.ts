@@ -359,7 +359,7 @@ export class SpaceTaskRepository {
 	}
 
 	/**
-	 * Promote open tasks created by a planning task (legacy method, kept for API compatibility)
+	 * Promote draft tasks created by a planning task (legacy method, kept for API compatibility)
 	 */
 	promoteDraftTasksByCreator(createdByTaskId: string): number {
 		const result = this.db

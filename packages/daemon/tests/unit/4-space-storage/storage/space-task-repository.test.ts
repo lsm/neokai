@@ -355,13 +355,13 @@ describe('SpaceTaskRepository', () => {
 	});
 
 	describe('promoteDraftTasksByCreator', () => {
-		it('only promotes open tasks (not in_progress tasks)', () => {
-			// promoteDraftTasksByCreator targets open tasks (was 'draft' before M71 → now 'open')
+		it('promotes draft tasks to open and leaves in_progress tasks unchanged', () => {
+			// promoteDraftTasksByCreator targets draft tasks created by the planner
 			repo.createTask({
 				spaceId,
 				title: 'D',
 				description: '',
-				status: 'open',
+				status: 'draft',
 				createdByTaskId: 'planner-1',
 			});
 			repo.createTask({
@@ -373,11 +373,11 @@ describe('SpaceTaskRepository', () => {
 			});
 
 			const count = repo.promoteDraftTasksByCreator('planner-1');
-			// SQLite counts the 'open' row as changed (even though it stays 'open')
-			expect(count).toBeGreaterThanOrEqual(0);
+			expect(count).toBe(1);
 
 			const tasks = repo.listBySpace(spaceId);
-			// The in_progress task is unchanged
+			const draft = tasks.find((t) => t.title === 'D');
+			expect(draft!.status).toBe('open');
 			const inProgress = tasks.find((t) => t.title === 'P');
 			expect(inProgress!.status).toBe('in_progress');
 		});
