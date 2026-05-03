@@ -327,7 +327,7 @@ this.daemonHub?.emit('space.githubEvent.routed', {
 This is a four-field addition to `appendTaskActivity` — `action`, `rawPayload`, `dedupeKey`, and `deliveryId` are all already available on the `NormalizedSpaceGitHubEvent` at the call site. This is the only change to existing code.
 
 **Why this approach:**
-- Minimal change to the existing `SpaceGitHubService` — two additional fields in an existing DaemonHub emission.
+- Minimal change to the existing `SpaceGitHubService` — four additional fields (`action`, `deliveryId`, `dedupeKey`, `rawPayload`) in an existing DaemonHub emission.
 - The existing PR-to-task resolution (`SpacePrTaskResolver`) continues to work.
 - The existing Task Agent injection continues to work (we don't replace it, we supplement it).
 - The adapter is purely additive: it converts an already-normalized event into bus format.
@@ -538,10 +538,13 @@ class EventRouter {
       }
     }
 
-    // Clean up in-memory pending queue for this run
-    for (const [execId, events] of this.pendingQueue.entries()) {
-      if (execId.startsWith(workflowRunId)) {
-        this.pendingQueue.delete(execId);
+    // Clean up in-memory pending queue for this run.
+    // Keys are `${workflowRunId}:${nodeId}:${agentName}` — use the delimiter
+    // to avoid false prefix matches (e.g., run "abc1" matching "abc10:*").
+    const runPrefix = `${workflowRunId}:`;
+    for (const [key, events] of this.pendingQueue.entries()) {
+      if (key.startsWith(runPrefix)) {
+        this.pendingQueue.delete(key);
       }
     }
   }
