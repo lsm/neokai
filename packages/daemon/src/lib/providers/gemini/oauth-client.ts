@@ -64,7 +64,7 @@ export const OAUTH_SCOPES = [
 	'https://www.googleapis.com/auth/userinfo.profile',
 ];
 
-/** Redirect URI for headless/code-entry auth flow. */
+/** Redirect URI for headless/code-entry auth flow (fallback). */
 export const REDIRECT_URI = 'https://codeassist.google.com/authcode';
 
 /** Google token endpoint. */
@@ -170,6 +170,33 @@ export async function buildAuthUrl(): Promise<{ authUrl: string; codeVerifier: s
 }
 
 /**
+ * Build the Google OAuth authorization URL with a custom redirect URI.
+ *
+ * Used by the local callback server flow where the redirect URI is
+ * `http://localhost:{port}/callback`.
+ */
+export async function buildAuthUrlWithRedirect(
+	redirectUri: string
+): Promise<{ authUrl: string; codeVerifier: string }> {
+	const codeVerifier = generateCodeVerifier();
+	const codeChallenge = await generateCodeChallenge(codeVerifier);
+
+	const params = new URLSearchParams({
+		client_id: getOAuthClientId(),
+		redirect_uri: redirectUri,
+		response_type: 'code',
+		scope: OAUTH_SCOPES.join(' '),
+		access_type: 'offline',
+		prompt: 'consent',
+		code_challenge: codeChallenge,
+		code_challenge_method: 'S256',
+	});
+
+	const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+	return { authUrl, codeVerifier };
+}
+
+/**
  * Exchange an authorization code for tokens.
  *
  * @param code - The authorization code from the user
@@ -179,7 +206,8 @@ export async function buildAuthUrl(): Promise<{ authUrl: string; codeVerifier: s
 export async function exchangeAuthCode(
 	code: string,
 	codeVerifier: string,
-	deps?: OAuthClientDeps
+	deps?: OAuthClientDeps,
+	redirectUri: string = REDIRECT_URI
 ): Promise<GoogleTokenResponse> {
 	const fetchFn = deps?.fetchImpl ?? fetch;
 
@@ -190,7 +218,7 @@ export async function exchangeAuthCode(
 			code,
 			client_id: getOAuthClientId(),
 			client_secret: getOAuthClientSecret(),
-			redirect_uri: REDIRECT_URI,
+			redirect_uri: redirectUri,
 			grant_type: 'authorization_code',
 			code_verifier: codeVerifier,
 		}).toString(),

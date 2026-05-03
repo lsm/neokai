@@ -485,6 +485,19 @@ async function collectGeminiResponse(geminiResponse: Response, model: string): P
 		}
 	}
 
+	// Flush any trailing SSE payload that arrived at EOF without a
+	// terminating blank line (mirrors the streaming path's EOF handling).
+	if (buffer.startsWith('data: ')) {
+		dataBuffer += buffer.slice(6).trim();
+	}
+	if (dataBuffer) {
+		try {
+			chunks.push(JSON.parse(dataBuffer) as GeminiResponseChunk);
+		} catch {
+			// Skip
+		}
+	}
+
 	// Combine chunks into a single Anthropic response
 	const state = createStreamState(model);
 	const contentBlocks: Array<Record<string, unknown>> = [];

@@ -10,6 +10,7 @@
  * - Account exhaustion detection and cooldown
  * - Invalid token detection and flagging
  * - Anthropic Messages API ↔ Gemini Code Assist format translation
+ * - Self-contained OAuth via local callback server
  */
 
 import type {
@@ -24,7 +25,7 @@ import type {
 import type { ModelInfo } from '@neokai/shared';
 import { createLogger } from '@neokai/shared/logger';
 import {
-	buildAuthUrl,
+	buildAuthUrlWithRedirect,
 	exchangeAuthCode,
 	fetchUserInfo,
 	loadAccounts,
@@ -78,6 +79,14 @@ const GEMINI_MODELS: ModelInfo[] = [
 	},
 ];
 
+/** Success HTML shown in the browser after OAuth completes. */
+const OAUTH_SUCCESS_HTML =
+	'<html><body><h2>Authorization successful!</h2><p>You can close this tab and return to NeoKai.</p></body></html>';
+
+/** Error HTML shown in the browser when OAuth fails. */
+const OAUTH_ERROR_HTML = (reason: string) =>
+	`<html><body><h2>Authorization failed</h2><p>${reason}</p><p>You can close this tab.</p></body></html>`;
+
 // ---------------------------------------------------------------------------
 // Gemini OAuth Provider
 // ---------------------------------------------------------------------------
@@ -97,6 +106,8 @@ export class GeminiOAuthProvider implements Provider {
 	private rotationManager: AccountRotationManager;
 	private bridgeServers = new Map<string, GeminiBridgeServer>();
 	private _deps?: OAuthClientDeps;
+	private _pendingCodeVerifier?: string;
+	private _oauthCallbackServer?: { stop(): void };
 
 	constructor(deps?: OAuthClientDeps) {
 		this._deps = deps;
@@ -226,28 +237,130 @@ export class GeminiOAuthProvider implements Provider {
 	/**
 	 * Start the OAuth flow for adding a new Google account.
 	 *
-	 * Returns a redirect-type flow with the auth URL the user should visit.
+	 * Spins up a local callback server on a random port, builds the Google
+	 * OAuth URL with `http://localhost:{port}/callback` as the redirect URI,
+	 * and returns the URL for the user to visit. When the user authorizes,
+	 * Google redirects to the local server which automatically exchanges the
+	 * code for tokens and persists the account.
+	 *
+	 * The caller polls `getAuthStatus()` to detect completion.
 	 */
 	async startOAuthFlow(): Promise<ProviderOAuthFlowData> {
-		const { authUrl, codeVerifier } = await buildAuthUrl();
+		// Tear down any previous callback server
+		this.stopOAuthCallbackServer();
 
-		// Store the code verifier temporarily for the callback
-		// In a real implementation, this would be stored in session state
+		// Promise that resolves when the OAuth callback delivers the auth code
+		let resolveCode: ((code: string) => void) | undefined;
+		const codePromise = new Promise<string>((resolve) => {
+			resolveCode = resolve;
+		});
+
+		// Start a local callback server to receive the OAuth redirect
+		const server = Bun.serve({
+			port: 0,
+			idleTimeout: 255, // seconds — give the user time to authorize
+			fetch(req: Request): Response {
+				const url = new URL(req.url);
+
+				if (url.pathname === '/favicon.ico') {
+					return new Response('', { status: 204 });
+				}
+
+				const error = url.searchParams.get('error');
+				if (error) {
+					return new Response(OAUTH_ERROR_HTML(error), {
+						status: 400,
+						headers: { 'Content-Type': 'text/html' },
+					});
+				}
+
+				const code = url.searchParams.get('code');
+				if (!code) {
+					return new Response(OAUTH_ERROR_HTML('Missing authorization code'), {
+						status: 400,
+						headers: { 'Content-Type': 'text/html' },
+					});
+				}
+
+				// Resolve the promise so the background exchanger can proceed
+				resolveCode?.(code);
+
+				return new Response(OAUTH_SUCCESS_HTML, {
+					status: 200,
+					headers: { 'Content-Type': 'text/html' },
+				});
+			},
+		});
+
+		const callbackPort = server.port ?? 0;
+		const redirectUri = `http://localhost:${callbackPort}/callback`;
+
+		// Build the auth URL with the local callback redirect URI
+		const { authUrl, codeVerifier } = await buildAuthUrlWithRedirect(redirectUri);
 		this._pendingCodeVerifier = codeVerifier;
+		this._oauthCallbackServer = server;
+
+		// Start background code exchange — runs after the user authorizes
+		this.handleOAuthCallback(codePromise, codeVerifier, redirectUri);
 
 		return {
 			type: 'redirect',
 			authUrl,
 			message:
-				'Visit the URL to authorize your Google account, then provide the authorization code.',
+				'Visit the URL to authorize your Google account. The page will redirect automatically.',
 		};
+	}
+
+	/**
+	 * Background handler: waits for the OAuth code from the callback server,
+	 * exchanges it for tokens, and saves the account.
+	 */
+	private async handleOAuthCallback(
+		codePromise: Promise<string>,
+		codeVerifier: string,
+		redirectUri: string
+	): Promise<void> {
+		try {
+			// Wait for the code with a 60-second timeout
+			const code = await Promise.race([
+				codePromise,
+				new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 60_000)),
+			]);
+
+			if (!code) {
+				log.warn('OAuth callback timed out — no code received within 60 seconds');
+				return;
+			}
+
+			this._pendingCodeVerifier = undefined;
+			this.stopOAuthCallbackServer();
+
+			const tokenResponse = await exchangeAuthCode(code, codeVerifier, this._deps, redirectUri);
+
+			if (!tokenResponse.refresh_token) {
+				log.error('No refresh token received from Google OAuth');
+				return;
+			}
+
+			const userInfo = await fetchUserInfo(tokenResponse.access_token, this._deps);
+			const account = createAccount(userInfo.email, tokenResponse.refresh_token, 1500);
+
+			await persistAddAccount(account);
+			await this.rotationManager.addAccount(account);
+
+			log.info(`Added Google account via OAuth callback: ${userInfo.email}`);
+		} catch (err) {
+			log.error(`OAuth code exchange failed: ${err instanceof Error ? err.message : err}`);
+		} finally {
+			this.stopOAuthCallbackServer();
+		}
 	}
 
 	/**
 	 * Complete the OAuth flow by exchanging the authorization code.
 	 *
-	 * This is called separately after startOAuthFlow() once the user
-	 * provides the authorization code from the Google consent page.
+	 * Kept for backward compatibility and manual code entry scenarios,
+	 * but the primary flow uses the local callback server in startOAuthFlow().
 	 */
 	async completeOAuthFlow(authCode: string): Promise<{ email: string; accountId: string }> {
 		if (!this._pendingCodeVerifier) {
@@ -296,6 +409,7 @@ export class GeminiOAuthProvider implements Provider {
 		}
 		// Tear down active bridge servers so they stop using the old rotation manager
 		await this.shutdown();
+		this.stopOAuthCallbackServer();
 		this.rotationManager = new AccountRotationManager();
 		log.info('Logged out all Google accounts');
 	}
@@ -312,14 +426,21 @@ export class GeminiOAuthProvider implements Provider {
 	}
 
 	/**
+	 * Stop the OAuth callback server if running.
+	 */
+	private stopOAuthCallbackServer(): void {
+		if (this._oauthCallbackServer) {
+			this._oauthCallbackServer.stop();
+			this._oauthCallbackServer = undefined;
+		}
+	}
+
+	/**
 	 * Get the rotation manager (for testing).
 	 */
 	getRotationManager(): AccountRotationManager {
 		return this.rotationManager;
 	}
-
-	/** Pending PKCE code verifier for the in-progress OAuth flow. */
-	private _pendingCodeVerifier?: string;
 
 	/**
 	 * Set the code verifier (for testing or pre-seeded flows).

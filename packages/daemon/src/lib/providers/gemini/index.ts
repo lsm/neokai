@@ -12,6 +12,7 @@ export {
 	OAUTH_SCOPES,
 	REDIRECT_URI,
 	buildAuthUrl,
+	buildAuthUrlWithRedirect,
 	exchangeAuthCode,
 	refreshAccessToken,
 	fetchUserInfo,
