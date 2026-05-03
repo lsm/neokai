@@ -211,7 +211,7 @@ async function handleGeminiRequest(
 		}
 
 		// Try another available account instead of failing immediately
-		if (isTokenInvalid || message.includes('NetworkError')) {
+		if (isTokenInvalid || error instanceof TypeError) {
 			excludedAccountIds.add(account.id);
 			rotationManager.releaseSession(sessionId);
 			const altAccount = await rotationManager.getAccountForSession(sessionId);

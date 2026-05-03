@@ -362,7 +362,10 @@ export class AccountRotationManager {
 					`Resetting daily counter for ${account.email} (was ${account.daily_request_count})`
 				);
 				account.daily_request_count = 0;
-				account.status = 'active';
+				// Only reset to active if not invalid (revoked tokens stay invalid)
+				if (account.status !== 'invalid') {
+					account.status = 'active';
+				}
 				account.cooldown_until = 0;
 			}
 		}
