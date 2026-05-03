@@ -34,6 +34,27 @@ function createMockFetch(responses: Array<{ status: number; body: string }>): ty
 // ---------------------------------------------------------------------------
 
 describe('Google Gemini OAuth Client', () => {
+	const originalClientId = process.env.GOOGLE_GEMINI_CLIENT_ID;
+	const originalClientSecret = process.env.GOOGLE_GEMINI_CLIENT_SECRET;
+
+	beforeEach(() => {
+		process.env.GOOGLE_GEMINI_CLIENT_ID = 'test-client-id';
+		process.env.GOOGLE_GEMINI_CLIENT_SECRET = 'test-client-secret';
+	});
+
+	afterEach(() => {
+		if (originalClientId !== undefined) {
+			process.env.GOOGLE_GEMINI_CLIENT_ID = originalClientId;
+		} else {
+			delete process.env.GOOGLE_GEMINI_CLIENT_ID;
+		}
+		if (originalClientSecret !== undefined) {
+			process.env.GOOGLE_GEMINI_CLIENT_SECRET = originalClientSecret;
+		} else {
+			delete process.env.GOOGLE_GEMINI_CLIENT_SECRET;
+		}
+	});
+
 	describe('buildAuthUrl', () => {
 		it('returns an auth URL with the correct parameters', async () => {
 			const { authUrl, codeVerifier } = await buildAuthUrl();

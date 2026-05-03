@@ -260,15 +260,15 @@ export class GeminiOAuthProvider implements Provider {
 		// Exchange code for tokens
 		const tokenResponse = await exchangeAuthCode(authCode, codeVerifier, this._deps);
 
+		if (!tokenResponse.refresh_token) {
+			throw new Error('No refresh token received from Google OAuth. Please try again.');
+		}
+
 		// Fetch user info
 		const userInfo = await fetchUserInfo(tokenResponse.access_token, this._deps);
 
 		// Create and store the account
-		const account = createAccount(
-			userInfo.email,
-			tokenResponse.refresh_token ?? '', // Should always be present with offline access
-			1500
-		);
+		const account = createAccount(userInfo.email, tokenResponse.refresh_token, 1500);
 
 		await persistAddAccount(account);
 		await this.rotationManager.addAccount(account);

@@ -6,6 +6,27 @@ import { describe, expect, it, mock, beforeEach, afterEach } from 'bun:test';
 import { GeminiOAuthProvider } from '../../../../src/lib/providers/gemini/gemini-provider.js';
 
 describe('GeminiOAuthProvider', () => {
+	const originalClientId = process.env.GOOGLE_GEMINI_CLIENT_ID;
+	const originalClientSecret = process.env.GOOGLE_GEMINI_CLIENT_SECRET;
+
+	beforeEach(() => {
+		process.env.GOOGLE_GEMINI_CLIENT_ID = 'test-client-id';
+		process.env.GOOGLE_GEMINI_CLIENT_SECRET = 'test-client-secret';
+	});
+
+	afterEach(() => {
+		if (originalClientId !== undefined) {
+			process.env.GOOGLE_GEMINI_CLIENT_ID = originalClientId;
+		} else {
+			delete process.env.GOOGLE_GEMINI_CLIENT_ID;
+		}
+		if (originalClientSecret !== undefined) {
+			process.env.GOOGLE_GEMINI_CLIENT_SECRET = originalClientSecret;
+		} else {
+			delete process.env.GOOGLE_GEMINI_CLIENT_SECRET;
+		}
+	});
+
 	describe('identity', () => {
 		it('exposes correct id and displayName', () => {
 			const provider = new GeminiOAuthProvider();
