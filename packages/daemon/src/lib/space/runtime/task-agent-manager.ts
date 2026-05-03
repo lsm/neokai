@@ -1902,6 +1902,11 @@ export class TaskAgentManager {
 			if (existing.agentSessionId && this.isSessionAlive(existing.agentSessionId)) {
 				return [{ agentName, sessionId: existing.agentSessionId }];
 			}
+			// Evict the stale session from the index so the spawn code
+			// doesn't short-circuit on agentSessionIndex.has().
+			if (existing.agentSessionId) {
+				this.agentSessionIndex.delete(existing.agentSessionId);
+			}
 			this.config.nodeExecutionRepo.update(existing.id, {
 				status: 'pending',
 			});
