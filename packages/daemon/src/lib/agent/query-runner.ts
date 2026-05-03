@@ -14,7 +14,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
 import { spawn as nodeSpawn } from 'node:child_process';
 import type { UUID } from 'crypto';
-import type { Session, MessageHub } from '@neokai/shared';
+import type { MessageContent, Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { generateUUID } from '@neokai/shared';
 import { Database } from '../../storage/database';
@@ -24,6 +24,7 @@ import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryOptionsBuilder } from './query-options-builder';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
+import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from './transient-error-patterns';
 import type { OriginalEnvVars } from '../provider-service';
 // Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
@@ -153,6 +154,16 @@ export interface QueryRunnerContext {
  * Runs SDK queries with streaming input mode
  */
 export class QueryRunner {
+	/**
+	 * Last non-internal user message consumed by the generator, for re-enqueue
+	 * on transient connection error retry.  Set by createMessageGeneratorWrapper()
+	 * when a message is yielded to the SDK; cleared after re-enqueue or on cleanup.
+	 */
+	private lastConsumedUserMessage: {
+		uuid: string;
+		content: string | MessageContent[];
+	} | null = null;
+
 	constructor(private ctx: QueryRunnerContext) {}
 
 	/**
@@ -578,11 +589,27 @@ export class QueryRunner {
 				return;
 			}
 
-			const errorMessage = error instanceof Error ? error.message : String(error);
+			// Use String(error) rather than error.message so TypeError instances
+			// (e.g. "fetch failed") include their name prefix.  All downstream
+			// pattern checks use includes() on substrings, so the "Error: " /
+			// "TypeError: " prefix does not break any existing detection logic.
+			const errorMessage = String(error);
 			const isAbortError = error instanceof Error && error.name === 'AbortError';
+			const isQueryInterrupted =
+				isAbortError ||
+				stateManager.getState().status === 'interrupted' ||
+				this.ctx.queryAbortController?.signal.aborted === true;
 			const isStartupTimeout = errorMessage.includes('SDK startup timeout');
 			const isConversationNotFound = errorMessage.includes('No conversation found');
 			const isMessageNotFound = errorMessage.includes('No message found');
+
+			// Detect transient fetch/connection errors that escape the SDK's own retry logic.
+			// These are mid-stream HTTP connection drops (network blip, server restart, timeout)
+			// that should be retried rather than surfaced as raw developer-facing error strings.
+			// Patterns are shared with api-error-circuit-breaker.ts via transient-error-patterns.ts.
+			const isTransientConnectionError = TRANSIENT_CONNECTION_ERROR_SUBSTRINGS.some((substr) =>
+				errorMessage.includes(substr)
+			);
 
 			// Startup timeout is transient — always keep sdkSessionId so resume works.
 			// Never clear sdkSessionId on timeout: the session file is valid and the
@@ -681,6 +708,64 @@ export class QueryRunner {
 				return await this.runQuery(queryGeneration, true);
 			}
 
+			// Auto-retry once on transient connection errors (mid-stream HTTP drop).
+			// These are network blips that escape the SDK's own retry logic — retrying
+			// the entire query is the safest recovery path.
+			if (
+				isTransientConnectionError &&
+				!isQueryInterrupted &&
+				!isRetry &&
+				!this.ctx.isCleaningUp()
+			) {
+				logger.warn('Auto-retrying query after transient connection error (1 retry).');
+				await stateManager.setIdle();
+
+				// Re-enqueue the last consumed user message so the retry has input to
+				// process.  Without this, the message was already shifted out of
+				// MessageQueue by messageGenerator() and the retry starts with an
+				// empty queue, silently dropping the user's request.
+				const lastMsg = this.lastConsumedUserMessage;
+				if (lastMsg) {
+					logger.warn(
+						`Re-enqueueing user message ${lastMsg.uuid} for transient connection error retry.`
+					);
+					// Fire-and-forget: the promise resolves when the retry's generator
+					// consumes the message, or rejects on timeout/interrupt (harmless).
+					messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
+					this.lastConsumedUserMessage = null;
+				}
+
+				// Display a sanitized retry message so the user knows what's happening,
+				// but never show the raw fetch error string ("verbose: true", etc.).
+				try {
+					await this.displayErrorAsAssistantMessage('⚠️ The connection was interrupted. Retrying…', {
+						markAsError: false,
+					});
+				} catch {
+					// Best-effort — don't let message emission block the retry
+				}
+
+				if (this.ctx.queryObject) {
+					try {
+						this.ctx.queryObject.close();
+					} catch {
+						// Ignore close errors
+					}
+					this.ctx.queryObject = null;
+				}
+
+				const exitPromise = this.ctx.processExitedPromise;
+				if (exitPromise) {
+					await Promise.race([
+						exitPromise,
+						new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+					]);
+					this.ctx.processExitedPromise = null;
+				}
+
+				return await this.runQuery(queryGeneration, true);
+			}
+
 			// Clear the queue on non-retryable errors so stale messages don't bleed into the next session.
 			messageQueue.clear();
 
@@ -723,7 +808,12 @@ export class QueryRunner {
 						errorMessage.includes('invalid_api_key')
 					) {
 						category = ErrorCategory.AUTHENTICATION;
-					} else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND')) {
+					} else if (
+						errorMessage.includes('ECONNREFUSED') ||
+						errorMessage.includes('ENOTFOUND') ||
+						errorMessage.includes('EHOSTUNREACH') ||
+						isTransientConnectionError
+					) {
 						category = ErrorCategory.CONNECTION;
 					} else if (
 						errorMessage.includes('429') ||
@@ -771,8 +861,9 @@ export class QueryRunner {
 									`(workspace: ${session.workspacePath ?? 'unbound'}). The Claude SDK transcript no longer ` +
 									`contains that message UUID, likely after SDK compaction. Your message history in NeoKai ` +
 									`is preserved; only the AI context window is reset. Please resend your message.`
-								: undefined;
-
+								: isTransientConnectionError && isRetry
+									? 'Could not get a response. The connection was interrupted. Please try again.'
+									: undefined;
 					await errorManager.handleError(
 						session.id,
 						error as Error,
@@ -937,6 +1028,15 @@ export class QueryRunner {
 
 			if (!isInternal) {
 				await stateManager.setProcessing(message.uuid ?? 'unknown', 'initializing');
+				// Track the last consumed non-internal message so the transient
+				// connection error retry can re-enqueue it.  The message has
+				// already been shifted out of MessageQueue by messageGenerator(),
+				// so without re-enqueue the retry starts with an empty queue and
+				// the user's request is silently dropped.
+				this.lastConsumedUserMessage = {
+					uuid: message.uuid ?? '',
+					content: message.message?.content ?? '',
+				};
 			}
 
 			yield message;
