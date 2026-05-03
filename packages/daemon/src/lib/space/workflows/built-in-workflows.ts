@@ -1430,15 +1430,16 @@ function mergeToolGuardsFromTemplate(
  *   agent name) so structural enforcement metadata stays in sync with the
  *   template. Other node fields (customPrompt, model, disabledSkillIds, etc.)
  *   are preserved.
- * - Channels / gates are NOT re-stamped: changing those would regenerate IDs.
- *   If a future template change adjusts those, extend this list and the
- *   re-stamp payload below accordingly.
+ * - Channels, gates, layout, and node rows are NOT re-stamped. Workflow IDs,
+ *   node IDs, and persisted node-agent slots are stable identifiers for
+ *   in-flight runs, so template drift must never replace node rows. Agent
+ *   `toolGuards` are updated in-place on existing node configs instead.
  */
 const RESTAMP_FIELDS = [
 	'postApproval',
 	'completionAutonomyLevel',
 	'templateHash',
-	'nodes(toolGuards)',
+	'nodes(toolGuards in-place)',
 ] as const;
 
 /**
@@ -1511,9 +1512,9 @@ export function seedBuiltInWorkflows(
 					// so the repository writes the new value rather than leaving the
 					// old one in place.
 					postApproval: template.postApproval ?? null,
-					nodes: mergedNodes,
 					templateHash: expectedHash,
 				});
+				workflowManager.updateWorkflowNodeToolGuards(row.id, mergedNodes);
 				restamped.push(template.name);
 				builtInSeederLog.info(
 					`re-stamped built-in workflow '${template.name}' (id=${row.id}) ` +

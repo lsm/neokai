@@ -54,16 +54,36 @@ function buildTemplateUpdateParams(
 	spaceAgentManager: SpaceAgentManager,
 	spaceId: string,
 	template: SpaceWorkflow,
-	errorVerb: 'sync' | 'resync'
+	errorVerb: 'sync' | 'resync',
+	existingWorkflow?: SpaceWorkflow
 ): UpdateSpaceWorkflowParams {
 	const spaceAgents = spaceAgentManager.listBySpaceId(spaceId);
 	function resolveAgentId(roleName: string): string | undefined {
 		return spaceAgents.find((a) => a.name.toLowerCase() === roleName.toLowerCase())?.id;
 	}
 
+	const existingNodeIdQueuesByName = new Map<string, string[]>();
+	for (const existingNode of existingWorkflow?.nodes ?? []) {
+		const queue = existingNodeIdQueuesByName.get(existingNode.name) ?? [];
+		queue.push(existingNode.id);
+		existingNodeIdQueuesByName.set(existingNode.name, queue);
+	}
+	const existingNodeIdsInOrder = existingWorkflow?.nodes.map((node) => node.id) ?? [];
+	const usedExistingNodeIds = new Set<string>();
 	const nodeIdMap = new Map<string, string>();
-	for (const node of template.nodes) {
-		nodeIdMap.set(node.id, generateUUID());
+	for (let i = 0; i < template.nodes.length; i++) {
+		const node = template.nodes[i];
+		const nameQueue = existingNodeIdQueuesByName.get(node.name);
+		const existingIdByName = nameQueue?.shift();
+		const existingIdByPosition = existingNodeIdsInOrder[i];
+		const existingId =
+			existingIdByName && !usedExistingNodeIds.has(existingIdByName)
+				? existingIdByName
+				: existingIdByPosition && !usedExistingNodeIds.has(existingIdByPosition)
+					? existingIdByPosition
+					: undefined;
+		if (existingId) usedExistingNodeIds.add(existingId);
+		nodeIdMap.set(node.id, existingId ?? generateUUID());
 	}
 
 	const newNodes = template.nodes.map((node) => {
@@ -568,7 +588,8 @@ export function setupSpaceWorkflowHandlers(
 			spaceAgentManager,
 			params.spaceId,
 			template,
-			'sync'
+			'sync',
+			workflow
 		);
 
 		// Preserve the existing workflow's templateName rather than adopting the
@@ -716,7 +737,8 @@ export function setupSpaceWorkflowHandlers(
 			spaceAgentManager,
 			params.spaceId,
 			template,
-			'resync'
+			'resync',
+			kept
 		);
 
 		// Overwrite the kept row first. If the update fails the duplicates stay
