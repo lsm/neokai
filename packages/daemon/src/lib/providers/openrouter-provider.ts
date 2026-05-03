@@ -217,15 +217,7 @@ export class OpenRouterProvider implements Provider {
 				.filter((model) => !SYSTEM_MODEL_PREFIXES.some((prefix) => model.id.startsWith(prefix)))
 				.filter((model) => !allowedIds || allowedIds.has(model.id))
 				.map((model) => this.toModelInfo(model));
-			const models = allowedIds ? apiModels : OpenRouterProvider.curateApiModels(apiModels);
-			const configuredAllowedModels = this.getConfiguredAllowedModels();
-
-			this.modelCache =
-				models.length > 0
-					? models
-					: configuredAllowedModels.length > 0
-						? configuredAllowedModels
-						: OpenRouterProvider.FALLBACK_MODELS;
+			this.modelCache = apiModels;
 			this.lastAuthError = undefined;
 			return this.modelCache;
 		} catch {
