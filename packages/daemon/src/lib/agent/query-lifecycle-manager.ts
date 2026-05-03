@@ -352,13 +352,21 @@ export class QueryLifecycleManager {
 			if (session.sdkSessionId) {
 				const isValid = this.validateAndRepairWithMigration();
 				if (!isValid) {
-					// Session file missing or unrepairably corrupted — log but keep sdkSessionId.
-					// The SDK may recreate the file on resume, or "No conversation found" will
-					// be caught in query-runner and cleared there as a last resort.
+					// Do NOT silently clear sdkSessionId — the user may be able to recover
+					// the session (e.g., transient FS issue, or future DB-restore feature).
+					// Emit the sdkResumeChoice prompt so the user can choose to start fresh.
+					// Unlike ensureQueryStarted() (which blocks until the user responds),
+					// restart() must always call startStreamingQuery() because:
+					//   1. The model switch/settings change needs to take effect.
+					//   2. If the user later picks "leave_as_is", the RPC handler calls
+					//      restart() again — blocking here would create an infinite loop.
+					// The SDK handles the missing session file gracefully (errors with
+					// "No conversation found", caught by query-runner's error handling).
 					this.logger.warn(
 						`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-							'Will attempt resume anyway — SDK may recover.'
+							'Emitting sdk_resume_choice for user, but starting query anyway.'
 					);
+					await this.emitSdkResumeChoiceMessage();
 				}
 			}
 
@@ -445,10 +453,15 @@ export class QueryLifecycleManager {
 				if (session.sdkSessionId) {
 					const isValid = this.validateAndRepairWithMigration();
 					if (!isValid) {
+						// Do NOT silently clear sdkSessionId — surface to user for manual
+						// recovery choice (start fresh vs keep session). See restart()
+						// for the same pattern. Always call startStreamingQuery() — blocking
+						// here would break the leave_as_is path (infinite re-prompt loop).
 						this.logger.warn(
 							`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-								'Will attempt resume anyway — SDK may recover.'
+								'Emitting sdk_resume_choice for user, but starting query anyway.'
 						);
+						await this.emitSdkResumeChoiceMessage();
 					}
 				}
 

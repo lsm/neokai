@@ -150,6 +150,15 @@ describe('End-node prompts save runtime post-approval data before approve_task',
 			expect(signalIdx).toBeLessThan(approveIdx);
 		});
 
+		if (label === 'CODING_WORKFLOW') {
+			test(`${label} end-node prompt requires unresolved review conversations to be checked`, () => {
+				const prompt = endNodePrompt(wf);
+				expect(prompt).toContain('unresolved GitHub');
+				expect(prompt).toContain('reviewThreads');
+				expect(prompt).toContain('isResolved: true');
+			});
+		}
+
 		test(`${label} end-node prompt instructs the agent NOT to merge itself`, () => {
 			const prompt = endNodePrompt(wf);
 			// Narrow guard: the end-node agent must be told explicitly that it
@@ -170,6 +179,36 @@ describe('End-node prompts save runtime post-approval data before approve_task',
 // ---------------------------------------------------------------------------
 // Removed legacy instructions
 // ---------------------------------------------------------------------------
+
+describe('Post-approval merge prompt checks review conversations', () => {
+	test('merge template verifies CI and unresolved review threads before merging', () => {
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('gh pr checks');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('reviewThreads(first:100');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('isResolved=false');
+		// Auto-merge/auto-resolve of review conversations is explicitly prohibited.
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('NOT allowed');
+		const checkIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf(
+			'Verify all GitHub review conversations'
+		);
+		const mergeIdx = PR_MERGE_POST_APPROVAL_INSTRUCTIONS.indexOf('gh pr merge');
+		expect(checkIdx).toBeGreaterThan(-1);
+		expect(mergeIdx).toBeGreaterThan(checkIdx);
+	});
+
+	test('merge template includes pagination guidance for review threads', () => {
+		// The post-approval merge session must paginate review threads, not
+		// stop at the first 100. The GraphQL query includes $cursor and the
+		// instructions explicitly tell the agent to paginate using endCursor.
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('$cursor');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('endCursor');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('hasNextPage');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('Do NOT stop at the first page');
+		// The template instructs the agent to pass --hostname extracted from
+		// the PR URL so GitHub Enterprise PRs query the correct backend.
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('--hostname');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('<host>');
+	});
+});
 
 describe('Legacy merge/worktree instructions removed from QA end node', () => {
 	test('FULLSTACK_QA_LOOP_WORKFLOW QA prompt does NOT embed gh pr merge', () => {
@@ -283,6 +322,14 @@ describe('Shared merge template canonical content', () => {
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('Approve merging PR');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('approval_source != "human"');
 		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('autonomy_level < 4');
+	});
+
+	test('merge template does not auto-resolve review conversations', () => {
+		// The merge template must NOT instruct the reviewer to resolve threads
+		// with the resolveReviewThread mutation — auto-merge is not allowed.
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('resolveReviewThread');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('auto-resolve');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('NOT allowed');
 	});
 
 	test('template contains the squash-merge command and conflict guard', () => {

@@ -29,7 +29,7 @@ import type {
 	UpdateSpaceTaskParams,
 	WorkflowChannel,
 } from '@neokai/shared';
-import { resolveNodeAgents } from '@neokai/shared';
+import { computeGateDefaults, isChannelCyclic, resolveNodeAgents } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -46,6 +46,7 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
 import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
+import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
 import { CompletionDetector } from './completion-detector';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
@@ -61,6 +62,11 @@ import {
 	MAX_TASK_AGENT_CRASH_RETRIES,
 } from './constants';
 import { resolveTimeoutForExecution } from './resolve-node-timeout';
+import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import { evaluateGate } from './gate-evaluator';
+import { executeGateScript } from './gate-script-executor';
+import { getBuiltInGateScript } from '../workflows/built-in-workflows';
+import { classifyLastMessageForIdleAgent } from './last-message-classifier';
 
 const log = new Logger('space-runtime');
 
@@ -277,6 +283,14 @@ export class SpaceRuntime {
 
 	/** In-memory store of resolved channels per run ID. Replaces run.config._resolvedChannels. */
 	private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
+
+	/**
+	 * Tracks idle executions whose last SDK message was non-terminal.
+	 *
+	 * The counter is intentionally in-memory like crash recovery: transient idle
+	 * ambiguity gets one automatic re-spawn, then escalates if it repeats.
+	 */
+	private nonTerminalIdleCounts = new Map<string, number>();
 	private readonly toolContinuationRepo: ToolContinuationRecoveryRepository;
 
 	constructor(private config: SpaceRuntimeConfig) {
@@ -1115,6 +1129,31 @@ export class SpaceRuntime {
 			);
 		}
 
+		// Clear stale expired/failed queued handoffs and reset in-memory counters
+		// so the next tick does not immediately re-block the run based on stale
+		// pending message state from the previous failed cycle.
+		//
+		// Guarded on both task AND run ownership so a wrong-space caller (or a
+		// task whose workflowRunId points to a foreign run) cannot delete messages
+		// or reset retry counters. The transaction below also validates and throws
+		// on mismatch, but these side-effects run outside the transaction.
+		const preTxTask = this.config.taskRepo.getTask(taskId);
+		const preTxRunId = preTxTask?.workflowRunId;
+		const preTxRun = preTxRunId ? this.config.workflowRunRepo.getRun(preTxRunId) : null;
+		if (preTxRunId && preTxTask.spaceId === spaceId && preTxRun?.spaceId === spaceId) {
+			if (this.config.pendingMessageRepo) {
+				this.config.pendingMessageRepo.clearTerminalForRun(preTxRunId);
+			}
+			this.blockedRetryCounts.delete(preTxRunId);
+			// Clear non-terminal idle retry counters so a manually recovered run
+			// starts with a fresh retry budget instead of re-blocking immediately.
+			for (const key of this.nonTerminalIdleCounts.keys()) {
+				if (key.startsWith(preTxRunId + ':')) {
+					this.nonTerminalIdleCounts.delete(key);
+				}
+			}
+		}
+
 		const liveSessionIds = new Set<string>();
 		const recoverTx = this.config.db.transaction(() => {
 			const task = this.config.taskRepo.getTask(taskId);
@@ -1468,6 +1507,16 @@ export class SpaceRuntime {
 				canonicalTask.status === 'approved' ||
 				canonicalTask.reportedStatus !== null);
 
+		if (!completionSignalled && canonicalTask) {
+			const nonTerminalIdleOutcome = await this.handleNonTerminalIdleExecutions(
+				run.id,
+				run.spaceId,
+				canonicalTask
+			);
+			if (nonTerminalIdleOutcome === 'blocked') return 'blocked';
+			if (nonTerminalIdleOutcome === 'retried') return 'skipped';
+		}
+
 		if (completionSignalled) {
 			// Tick loop's CompletionDetector + processRunTick will fire on the
 			// next pass and transition the run to `done` (or pick up the
@@ -1476,6 +1525,9 @@ export class SpaceRuntime {
 			// here — the run is at rest, not stalled.
 			return 'completion-pending';
 		}
+
+		const activated = await this.activateRestartRecoveryDownstreamNodes(run, executions);
+		if (activated) return 'skipped';
 
 		// Genuinely stalled with no completion signal — flag the run
 		// as blocked so the user-facing task surfaces in the "Needs Attention"
@@ -1518,6 +1570,296 @@ export class SpaceRuntime {
 				`with all node executions idle/cancelled and no completion signal — flagged blocked`
 		);
 		return 'blocked';
+	}
+
+	private async activateRestartRecoveryDownstreamNodes(
+		run: SpaceWorkflowRun,
+		executions: NodeExecution[]
+	): Promise<boolean> {
+		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+		if (!workflow) return false;
+		const channels = workflow.channels ?? [];
+		if (channels.length === 0) return false;
+
+		const nodeByName = new Map(workflow.nodes.map((node) => [node.name, node]));
+		const idleExecutions = executions.filter((execution) => execution.status === 'idle');
+		const stalledTransitions: Array<{
+			sourceExecution: NodeExecution;
+			sourceNode: SpaceWorkflow['nodes'][number];
+			channel: WorkflowChannel;
+			channelIndex: number;
+			targetNames: string[];
+		}> = [];
+		for (const execution of idleExecutions) {
+			const node = workflow.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
+			if (!node) continue;
+			for (const [channelIndex, channel] of channels.entries()) {
+				if (!this.matchesRestartRecoveryChannelSource(channel, node, execution.agentName)) continue;
+				const targetNames = this.resolveRestartRecoveryTargetNames(channel, workflow).filter(
+					(targetName) => {
+						const targetNode = nodeByName.get(targetName);
+						return (
+							!targetNode ||
+							this.shouldRecoverRestartRecoveryTarget(targetNode, executions, workflow.endNodeId)
+						);
+					}
+				);
+				if (targetNames.length === 0) continue;
+				stalledTransitions.push({
+					sourceExecution: execution,
+					sourceNode: node,
+					channel,
+					channelIndex,
+					targetNames,
+				});
+			}
+		}
+		const createdOrReset: string[] = [];
+		const blockedGateReasons: string[] = [];
+
+		for (const {
+			sourceExecution,
+			sourceNode,
+			channel,
+			channelIndex,
+			targetNames,
+		} of stalledTransitions) {
+			const cycleResult = this.evaluateRestartRecoveryCycle(
+				run.id,
+				workflow,
+				channel,
+				channelIndex
+			);
+			if (!cycleResult.open) {
+				blockedGateReasons.push(cycleResult.reason);
+				continue;
+			}
+			let activatedOnChannel = false;
+			for (const targetName of targetNames) {
+				const targetNode = nodeByName.get(targetName);
+				if (!targetNode || targetNode.id === sourceNode.id) continue;
+
+				const gateResult = await this.evaluateRestartRecoveryChannelGate(run.id, workflow, channel);
+				if (!gateResult.open) {
+					blockedGateReasons.push(
+						gateResult.reason ?? `Gate ${channel.gateId ?? 'unknown'} blocked channel ${channel.id}`
+					);
+					continue;
+				}
+
+				let activatedForTarget = false;
+				let resetExistingTarget = false;
+				for (const agentEntry of resolveNodeAgents(targetNode)) {
+					const existing = this.config.nodeExecutionRepo
+						.listByNode(run.id, targetNode.id)
+						.find((execution) => execution.agentName === agentEntry.name);
+					if (existing) {
+						if (existing.status === 'idle' || existing.status === 'cancelled') {
+							this.config.nodeExecutionRepo.update(existing.id, {
+								status: 'pending',
+								agentSessionId: null,
+								result: null,
+								startedAt: null,
+								completedAt: null,
+							});
+							activatedForTarget = true;
+							resetExistingTarget = true;
+						}
+						continue;
+					}
+					this.config.nodeExecutionRepo.createOrIgnore({
+						workflowRunId: run.id,
+						workflowNodeId: targetNode.id,
+						agentName: agentEntry.name,
+						agentId: agentEntry.agentId ?? null,
+						status: 'pending',
+					});
+					activatedForTarget = true;
+				}
+				if (activatedForTarget) {
+					createdOrReset.push(targetNode.name);
+					activatedOnChannel = true;
+					this.enqueueRestartRecoveryMessage(
+						run,
+						sourceExecution.agentName,
+						targetNode,
+						resetExistingTarget
+					);
+				}
+			}
+			if (activatedOnChannel) {
+				this.recordRestartRecoveryCycleTraversal(run.id, workflow, channel, channelIndex);
+			}
+		}
+
+		if (createdOrReset.length > 0) {
+			log.warn(
+				`SpaceRuntime.recoverStalledRuns: recovered run ${run.id} by activating downstream node(s): ${[
+					...new Set(createdOrReset),
+				].join(', ')}`
+			);
+			return true;
+		}
+		if (blockedGateReasons.length > 0) {
+			log.warn(
+				`SpaceRuntime.recoverStalledRuns: run ${run.id} has downstream transition(s) but gate(s) are closed: ${[
+					...new Set(blockedGateReasons),
+				].join('; ')}`
+			);
+		}
+		return false;
+	}
+
+	private evaluateRestartRecoveryCycle(
+		runId: string,
+		workflow: SpaceWorkflow,
+		channel: WorkflowChannel,
+		channelIndex: number
+	): { open: true } | { open: false; reason: string } {
+		if (!isChannelCyclic(channelIndex, workflow.channels ?? [], workflow.nodes)) {
+			return { open: true };
+		}
+		const maxCycles = channel.maxCycles ?? 5;
+		const cycleRepo = new ChannelCycleRepository(this.config.db);
+		const record = cycleRepo.get(runId, channelIndex);
+		if (record && record.count >= maxCycles) {
+			return {
+				open: false,
+				reason: `Cyclic channel "${channel.id ?? channelIndex}" has reached the maximum cycle count (${maxCycles}). Increase maxCycles to allow more cycles.`,
+			};
+		}
+		return { open: true };
+	}
+
+	private recordRestartRecoveryCycleTraversal(
+		runId: string,
+		workflow: SpaceWorkflow,
+		channel: WorkflowChannel,
+		channelIndex: number
+	): void {
+		if (!isChannelCyclic(channelIndex, workflow.channels ?? [], workflow.nodes)) return;
+		const maxCycles = channel.maxCycles ?? 5;
+		const cycleRepo = new ChannelCycleRepository(this.config.db);
+		const gateDataRepo = new GateDataRepository(this.config.db);
+		const cyclicGates = (workflow.gates ?? []).filter((gate) => gate.resetOnCycle);
+		const increment = () => {
+			for (const gate of cyclicGates) {
+				gateDataRepo.reset(runId, gate.id, computeGateDefaults(gate.fields ?? []));
+			}
+			return cycleRepo.incrementCycleCount(runId, channelIndex, maxCycles);
+		};
+		const incremented =
+			cyclicGates.length > 0 ? this.config.db.transaction(increment)() : increment();
+		if (!incremented) {
+			log.warn(
+				`SpaceRuntime.recoverStalledRuns: cyclic channel "${channel.id ?? channelIndex}" reached maxCycles during recovery activation`
+			);
+		}
+	}
+
+	private matchesRestartRecoveryChannelSource(
+		channel: WorkflowChannel,
+		sourceNode: SpaceWorkflow['nodes'][number],
+		sourceAgentName: string
+	): boolean {
+		return (
+			channel.from === '*' || channel.from === sourceNode.name || channel.from === sourceAgentName
+		);
+	}
+
+	private shouldRecoverRestartRecoveryTarget(
+		targetNode: SpaceWorkflow['nodes'][number],
+		executions: NodeExecution[],
+		endNodeId?: string
+	): boolean {
+		if (targetNode.id === endNodeId) return true;
+		const executionsByAgent = new Map(
+			executions
+				.filter((execution) => execution.workflowNodeId === targetNode.id)
+				.map((execution) => [execution.agentName, execution])
+		);
+		return resolveNodeAgents(targetNode).some((agentEntry) => {
+			const execution = executionsByAgent.get(agentEntry.name);
+			return !execution || execution.status !== 'idle';
+		});
+	}
+
+	private resolveRestartRecoveryTargetNames(
+		channel: WorkflowChannel,
+		workflow: SpaceWorkflow
+	): string[] {
+		const rawTargets = Array.isArray(channel.to) ? channel.to : [channel.to];
+		const resolvedTargets = new Set<string>();
+		for (const rawTarget of rawTargets) {
+			const targetNode = workflow.nodes.find(
+				(node) =>
+					node.name === rawTarget ||
+					node.id === rawTarget ||
+					resolveNodeAgents(node).some((agent) => agent.name === rawTarget)
+			);
+			resolvedTargets.add(targetNode?.name ?? rawTarget);
+		}
+		return [...resolvedTargets];
+	}
+
+	private async evaluateRestartRecoveryChannelGate(
+		runId: string,
+		workflow: SpaceWorkflow,
+		channel: WorkflowChannel
+	): Promise<{ open: boolean; reason?: string }> {
+		if (!channel.gateId) return { open: true };
+		const storedGate = (workflow.gates ?? []).find((candidate) => candidate.id === channel.gateId);
+		if (!storedGate) {
+			return {
+				open: false,
+				reason: `Gate "${channel.gateId}" not found — channel "${channel.id}" is closed (misconfiguration)`,
+			};
+		}
+		let gate = storedGate;
+		if (workflow.templateName && storedGate.script) {
+			const liveScript = getBuiltInGateScript(workflow.templateName, storedGate.id);
+			if (liveScript) gate = { ...storedGate, script: liveScript };
+		}
+		const gateDataRepo = new GateDataRepository(this.config.db);
+		const runtimeData =
+			gateDataRepo.get(runId, gate.id)?.data ?? computeGateDefaults(gate.fields ?? []);
+		const run = this.config.workflowRunRepo.getRun(runId);
+		const space = await this.config.spaceManager.getSpace(workflow.spaceId);
+		const result = await evaluateGate(gate, runtimeData, executeGateScript, {
+			workspacePath: space?.workspacePath ?? process.cwd(),
+			gateId: gate.id,
+			runId,
+			gateData: runtimeData,
+			workflowStartIso: run ? new Date(run.createdAt).toISOString() : undefined,
+		});
+		return { open: result.open, reason: result.reason };
+	}
+
+	private enqueueRestartRecoveryMessage(
+		run: SpaceWorkflowRun,
+		lastAgentName: string,
+		targetNode: SpaceWorkflow['nodes'][number],
+		resetExistingTarget: boolean
+	): void {
+		const repo = this.config.pendingMessageRepo;
+		if (!repo) return;
+		const tasks = this.config.taskRepo.listByWorkflowRun(run.id);
+		const task = this.pickCanonicalTaskForRun(run, tasks);
+		const message = resetExistingTarget
+			? `[Daemon restart recovery] The ${targetNode.name} node's previous session ended before completing the workflow. Please check the PR and review status, then continue.`
+			: `[Daemon restart recovery] The previous agent (${lastAgentName}) completed but the handoff message was not delivered. Please check the PR and review status, then continue.`;
+		for (const agentEntry of resolveNodeAgents(targetNode)) {
+			repo.enqueue({
+				workflowRunId: run.id,
+				spaceId: run.spaceId,
+				taskId: task?.id ?? null,
+				sourceAgentName: lastAgentName,
+				targetKind: 'node_agent',
+				targetAgentName: agentEntry.name,
+				message,
+				idempotencyKey: `daemon-restart-recovery:${targetNode.id}:${agentEntry.name}`,
+			});
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -1894,6 +2236,7 @@ export class SpaceRuntime {
 
 				this.config.nodeExecutionRepo.update(execution.id, {
 					status: 'idle',
+					agentSessionId: null,
 					result: `Auto-completed: agent timed out after ${timeoutMinutes} minutes`,
 				});
 				await this.safeNotify({
@@ -1916,6 +2259,16 @@ export class SpaceRuntime {
 				);
 			}
 
+			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+
+			const nonTerminalIdleOutcome = await this.handleNonTerminalIdleExecutions(
+				runId,
+				meta.spaceId,
+				canonicalTask
+			);
+			if (nonTerminalIdleOutcome === 'blocked') {
+				return;
+			}
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
 			if (
@@ -2375,6 +2728,123 @@ export class SpaceRuntime {
 			reason,
 			timestamp: new Date().toISOString(),
 		});
+	}
+
+	private async handleNonTerminalIdleExecutions(
+		runId: string,
+		spaceId: string,
+		canonicalTask: SpaceTask
+	): Promise<'none' | 'retried' | 'blocked'> {
+		// Explicit task completion or pause signals are authoritative. A final tool
+		// call may have set reportedStatus or parked the task for human/post-approval
+		// review even if the SDK result row has not been persisted yet, so never
+		// retry/block when the task already carries one of those lifecycle signals.
+		if (
+			canonicalTask.reportedStatus !== null ||
+			canonicalTask.status === 'review' ||
+			canonicalTask.status === 'approved' ||
+			canonicalTask.status === 'done' ||
+			canonicalTask.status === 'cancelled' ||
+			canonicalTask.status === 'archived'
+		) {
+			return 'none';
+		}
+
+		const idleExecutions = this.config.nodeExecutionRepo
+			.listByWorkflowRun(runId)
+			.filter((execution) => execution.status === 'idle' && execution.agentSessionId);
+		for (const execution of idleExecutions) {
+			const sessionId = execution.agentSessionId;
+			if (!sessionId) continue;
+			const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
+			const classification = classifyLastMessageForIdleAgent(lastMessage);
+			if (classification.terminal) {
+				this.nonTerminalIdleCounts.delete(`${runId}:${execution.id}`);
+				continue;
+			}
+
+			const key = `${runId}:${execution.id}`;
+			const retryCount = (this.nonTerminalIdleCounts.get(key) ?? 0) + 1;
+			this.nonTerminalIdleCounts.set(key, retryCount);
+			const reason = `Agent went idle without completing — non-terminal last message (${classification.reason})`;
+			log.warn(
+				`Node ${execution.workflowNodeId} went idle with non-terminal last message, not advancing: ` +
+					`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${classification.reason}`
+			);
+			await this.safeNotify({
+				kind: 'agent_idle_non_terminal',
+				spaceId,
+				taskId: canonicalTask.id,
+				runId,
+				executionId: execution.id,
+				nodeId: execution.workflowNodeId,
+				agentName: execution.agentName,
+				reason,
+				timestamp: new Date().toISOString(),
+			});
+
+			if (retryCount <= MAX_TASK_AGENT_CRASH_RETRIES) {
+				this.config.nodeExecutionRepo.update(execution.id, {
+					status: 'pending',
+					agentSessionId: null,
+					result: reason,
+					completedAt: null,
+					startedAt: null,
+				});
+				await this.safeNotify({
+					kind: 'task_retry',
+					spaceId,
+					taskId: canonicalTask.id,
+					runId,
+					originalReason: reason,
+					attemptNumber: retryCount,
+					maxAttempts: MAX_TASK_AGENT_CRASH_RETRIES,
+					timestamp: new Date().toISOString(),
+				});
+				return 'retried';
+			}
+
+			this.config.nodeExecutionRepo.update(execution.id, {
+				status: 'blocked',
+				agentSessionId: null,
+				result: reason,
+			});
+			await this.transitionRunStatusAndEmit(runId, 'blocked');
+			await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+				status: 'blocked',
+				result: reason,
+				blockReason: 'execution_failed',
+				completedAt: null,
+			});
+			await this.safeNotify({
+				kind: 'task_blocked',
+				spaceId,
+				taskId: canonicalTask.id,
+				reason,
+				timestamp: new Date().toISOString(),
+			});
+			await this.safeNotify({
+				kind: 'workflow_run_blocked',
+				spaceId,
+				runId,
+				reason,
+				timestamp: new Date().toISOString(),
+			});
+			await this.safeNotify({
+				kind: 'workflow_run_needs_attention',
+				spaceId,
+				runId,
+				taskId: canonicalTask.id,
+				reason,
+				retriesExhausted: retryCount - 1,
+				timestamp: new Date().toISOString(),
+			});
+			// Exhaust the blocked-run auto-retry budget so attemptBlockedRunRecovery
+			// escalates immediately instead of re-spawning the agent.
+			this.blockedRetryCounts.set(runId, MAX_BLOCKED_RUN_RETRIES);
+			return 'blocked';
+		}
+		return 'none';
 	}
 
 	private async handleWaitingRebindExecutions(

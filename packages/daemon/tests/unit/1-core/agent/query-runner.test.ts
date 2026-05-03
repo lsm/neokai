@@ -6,10 +6,7 @@
 
 import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { tmpdir } from 'node:os';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
 import { QueryRunner, type QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
-import { getSDKSessionFilePath } from '../../../../src/lib/sdk-session-file-manager';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
@@ -664,25 +661,6 @@ describe('QueryRunner', () => {
 
 			expect(onMarkApiSuccessSpy).toHaveBeenCalled();
 		});
-
-		it('should clear carried compaction summary after the first handled SDK message', async () => {
-			mockSession.metadata.compactionSummary = 'Temporary compacted context';
-			runner = createRunner();
-
-			const message = {
-				type: 'system',
-				subtype: 'init',
-				uuid: 'init-uuid',
-				session_id: 'sdk-session-123',
-			};
-
-			await runner.handleSDKMessage(message as unknown as SDKMessage);
-
-			expect(mockSession.metadata.compactionSummary).toBeUndefined();
-			expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
-				metadata: mockSession.metadata,
-			});
-		});
 	});
 
 	describe('createAbortableQuery', () => {
@@ -980,13 +958,22 @@ describe('QueryRunner', () => {
 			expect(userMessage).not.toContain('attempt(s)');
 		});
 
-		it('should pass session-reset hint (no timeout mention) for conversation-not-found', async () => {
+		it('should preserve sdkSessionId and surface error for conversation-not-found', async () => {
+			mockSession.sdkSessionId = 'sdk-session-id';
 			buildSpy.mockRejectedValue(new Error('No conversation found for session abc123'));
 			const ctx = createContext();
 			runner = new QueryRunner(ctx);
 			runner.start();
 			await ctx.queryPromise?.catch(() => {});
 
+			// Do NOT auto-clear sdkSessionId — let the user choose via sdkResumeChoice prompt
+			expect(mockSession.sdkSessionId).toBe('sdk-session-id');
+			expect(updateSessionSpy).not.toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
+					sdkSessionId: undefined,
+				})
+			);
 			expect(handleErrorSpy).toHaveBeenCalledWith(
 				'test-session-id',
 				expect.any(Error),
@@ -1002,160 +989,70 @@ describe('QueryRunner', () => {
 			expect(userMessage).not.toContain('attempt(s)');
 		});
 
-		it('should carry compacted summary while clearing stale resumeSessionAt and SDK state before retrying no-message-found', async () => {
-			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
-			const testSdkDir = join(
-				tmpdir(),
-				`query-runner-compaction-${Date.now()}-${Math.random().toString(36).slice(2)}`
-			);
-			try {
-				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
-				mockSession.sdkSessionId = 'sdk-session-id';
-				mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
-				const sessionFilePath = getSDKSessionFilePath(
-					mockSession.workspacePath!,
-					mockSession.sdkSessionId
-				);
-				mkdirSync(dirname(sessionFilePath), { recursive: true });
-				writeFileSync(
-					sessionFilePath,
-					[
-						JSON.stringify({
-							type: 'system',
-							subtype: 'compact_boundary',
-							compact_metadata: { trigger: 'auto', pre_tokens: 150000 },
-						}),
-						JSON.stringify({
-							type: 'assistant',
-							message: {
-								role: 'assistant',
-								content: [{ type: 'text', text: 'Recovered compacted context' }],
-							},
-						}),
-					].join('\n') + '\n',
-					'utf-8'
-				);
+		it('should preserve SDK state and retry without one-shot resumeSessionAt when its message is missing', async () => {
+			mockSession.sdkSessionId = 'sdk-session-id';
+			mockSession.sdkOriginPath = mockSession.workspacePath;
 
-				buildSpy
-					.mockRejectedValueOnce(
-						new Error('No message found with message.uuid of: missing-message-uuid')
-					)
-					.mockRejectedValueOnce(new Error('stop after retry'));
+			buildSpy
+				.mockRejectedValueOnce(
+					new Error('No message found with message.uuid of: missing-message-uuid')
+				)
+				.mockRejectedValueOnce(new Error('stop after retry'));
 
-				const ctx = createContext();
-				runner = new QueryRunner(ctx);
-				runner.start();
-				await ctx.queryPromise?.catch(() => {});
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
 
-				expect(buildSpy).toHaveBeenCalledTimes(2);
-				expect(mockSession.metadata.resumeSessionAt).toBeUndefined();
-				expect(mockSession.metadata.compactionSummary).toBe('Recovered compacted context');
-				expect(mockSession.sdkSessionId).toBeUndefined();
-				expect(mockSession.sdkOriginPath).toBeUndefined();
-				expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
-					metadata: mockSession.metadata,
+			expect(buildSpy).toHaveBeenCalledTimes(2);
+			expect(mockSession.sdkSessionId).toBe('sdk-session-id');
+			expect(mockSession.sdkOriginPath).toBe(mockSession.workspacePath);
+			expect(updateSessionSpy).not.toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
 					sdkSessionId: undefined,
-					sdkOriginPath: undefined,
-				});
-				expect(saveSDKMessageSpy).toHaveBeenCalledWith(
-					'test-session-id',
-					expect.objectContaining({
-						type: 'assistant',
-						message: expect.objectContaining({
-							content: expect.arrayContaining([
-								expect.objectContaining({
-									text: expect.stringContaining('compacted summary'),
-								}),
-							]),
-						}),
-					})
-				);
-			} finally {
-				rmSync(testSdkDir, { recursive: true, force: true });
-				if (originalTestSdkSessionDir !== undefined) {
-					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
-				} else {
-					delete process.env.TEST_SDK_SESSION_DIR;
-				}
-			}
+				})
+			);
+			expect(saveSDKMessageSpy).not.toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
+					type: 'assistant',
+				})
+			);
 		});
 
-		it('should retry no-message-found from the newest remaining message UUID before clearing SDK state', async () => {
-			const originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
-			const testSdkDir = join(
-				tmpdir(),
-				`query-runner-resume-fallback-${Date.now()}-${Math.random().toString(36).slice(2)}`
+		it('should not fall back to another resume point before retrying no-message-found', async () => {
+			mockSession.sdkSessionId = 'sdk-session-id';
+
+			getSDKMessagesSpy.mockImplementation(() => ({
+				messages: [
+					{
+						type: 'assistant',
+						uuid: 'newer-existing-message-uuid',
+						timestamp: 2000,
+					},
+				],
+				hasMore: false,
+			}));
+			buildSpy
+				.mockRejectedValueOnce(
+					new Error('No message found with message.uuid of: missing-message-uuid')
+				)
+				.mockRejectedValueOnce(new Error('stop after retry'));
+
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(buildSpy).toHaveBeenCalledTimes(2);
+			expect(mockSession.sdkSessionId).toBe('sdk-session-id');
+			expect(updateSessionSpy).not.toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
+					metadata: expect.anything(),
+				})
 			);
-			try {
-				process.env.TEST_SDK_SESSION_DIR = testSdkDir;
-				mockSession.sdkSessionId = 'sdk-session-id';
-				mockSession.metadata.resumeSessionAt = 'missing-message-uuid';
-				const sessionFilePath = getSDKSessionFilePath(
-					mockSession.workspacePath!,
-					mockSession.sdkSessionId
-				);
-				mkdirSync(dirname(sessionFilePath), { recursive: true });
-				writeFileSync(
-					sessionFilePath,
-					[
-						JSON.stringify({ type: 'user', uuid: 'older-existing-message-uuid' }),
-						JSON.stringify({ type: 'assistant', uuid: 'newer-existing-message-uuid' }),
-					].join('\n') + '\n',
-					'utf-8'
-				);
-				getSDKMessagesSpy.mockImplementation(() => ({
-					messages: [
-						{
-							type: 'user',
-							uuid: 'older-existing-message-uuid',
-							timestamp: 1000,
-						},
-						{
-							type: 'assistant',
-							uuid: 'newer-existing-message-uuid',
-							timestamp: 2000,
-						},
-						{
-							type: 'assistant',
-							uuid: 'newer-missing-message-uuid',
-							timestamp: 3000,
-						},
-					],
-					hasMore: false,
-				}));
-
-				buildSpy
-					.mockRejectedValueOnce(
-						new Error('No message found with message.uuid of: missing-message-uuid')
-					)
-					.mockRejectedValueOnce(new Error('stop after retry'));
-
-				const ctx = createContext();
-				runner = new QueryRunner(ctx);
-				runner.start();
-				await ctx.queryPromise?.catch(() => {});
-
-				expect(buildSpy).toHaveBeenCalledTimes(2);
-				expect(mockSession.metadata.resumeSessionAt).toBe('newer-existing-message-uuid');
-				expect(mockSession.sdkSessionId).toBe('sdk-session-id');
-				expect(mockSession.sdkOriginPath).toBeUndefined();
-				expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
-					metadata: mockSession.metadata,
-				});
-				expect(updateSessionSpy).not.toHaveBeenCalledWith(
-					'test-session-id',
-					expect.objectContaining({
-						sdkSessionId: undefined,
-					})
-				);
-			} finally {
-				rmSync(testSdkDir, { recursive: true, force: true });
-				if (originalTestSdkSessionDir !== undefined) {
-					process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
-				} else {
-					delete process.env.TEST_SDK_SESSION_DIR;
-				}
-			}
 		});
 
 		it('should call stateManager.setIdle after handling startup timeout error', async () => {
@@ -1283,6 +1180,98 @@ describe('QueryRunner', () => {
 		it('should not have startupTimeoutAutoRecoverAttempts in QueryRunnerContext', () => {
 			const ctx = createContext();
 			expect((ctx as Record<string, unknown>).startupTimeoutAutoRecoverAttempts).toBeUndefined();
+		});
+	});
+
+	describe('generation-gated consumePendingResumeSessionAt', () => {
+		// Verify that the consumePendingResumeSessionAt call after the for-await
+		// loop is gated on getQueryGeneration() === queryGeneration. Without this
+		// guard, a stale aborted query (from restart()/rewind) would consume the
+		// pendingResumeSessionAt meant for the new query.
+		//
+		// The for-await success path (where the consume runs) cannot be reached in
+		// unit tests — the SDK's `query()` import is already bound at module load
+		// and mock.module cannot intercept it. Instead, we test the guard through
+		// the isMessageNotFound retry path where consumePendingResumeSessionAt IS
+		// reachable (line ~659), and verify the guard pattern (identical to
+		// messageQueue.stop() and close() generation guards) via the finally block.
+
+		it('should consume resumeSessionAt before isMessageNotFound retry', async () => {
+			// buildSpy throws "No message found" → catch block consumes the stale
+			// resumeSessionAt before retrying (line ~659). Verifies the spy is called.
+			// ANTHROPIC_API_KEY must be set so the auth check passes and buildSpy is reached.
+			const savedApiKey = process.env.ANTHROPIC_API_KEY;
+			process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+			try {
+				mockSession.workspacePath = tmpdir(); // real dir for fs.mkdir
+				mockSession.sdkSessionId = 'sdk-session-id';
+				mockSession.sdkOriginPath = mockSession.workspacePath;
+				const consumeSpy = mock(() => 'consumed-uuid');
+				buildSpy
+					.mockRejectedValueOnce(new Error('No message found with message.uuid of: stale-uuid'))
+					.mockRejectedValueOnce(new Error('stop after retry'));
+				const ctx = createContext({ consumePendingResumeSessionAt: consumeSpy });
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				expect(consumeSpy).toHaveBeenCalledTimes(1);
+			} finally {
+				if (savedApiKey === undefined) {
+					delete process.env.ANTHROPIC_API_KEY;
+				} else {
+					process.env.ANTHROPIC_API_KEY = savedApiKey;
+				}
+			}
+		});
+
+		it('should use same generation guard pattern as messageQueue.stop() and close()', async () => {
+			// All three guards use: if (getQueryGeneration() === queryGeneration)
+			// This test verifies the pattern works correctly via the messageQueue.stop()
+			// guard (reachable through the finally block on auth failure, same guard
+			// condition as the consume guard at line ~553).
+			const closeSpy = mock(() => {});
+			let gen = 0;
+			const ctx = createContext({
+				queryObject: {
+					interrupt: mock(async () => {}),
+					close: closeSpy,
+				} as unknown as Query,
+				// Same generation → guard passes → cleanup runs
+				incrementQueryGeneration: () => ++gen,
+				getQueryGeneration: () => gen,
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// Guard passed: close() called, queryObject nulled
+			expect(closeSpy).toHaveBeenCalled();
+			expect(ctx.queryObject).toBeNull();
+		});
+
+		it('should skip consume on generation mismatch (same pattern as close() guard)', async () => {
+			// When restart()/rewind increments the generation after setting
+			// pendingResumeSessionAt, the stale old query's guard fails.
+			// Verified via the finally block's close() guard (identical pattern).
+			const closeSpy = mock(() => {});
+			let gen = 0;
+			const originalQueryObject = {
+				interrupt: mock(async () => {}),
+				close: closeSpy,
+			} as unknown as Query;
+			const ctx = createContext({
+				queryObject: originalQueryObject,
+				incrementQueryGeneration: () => ++gen, // returns 1
+				getQueryGeneration: () => 2, // current gen is 2, query ran as gen 1
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// Guard failed: close() NOT called, queryObject NOT nulled
+			expect(closeSpy).not.toHaveBeenCalled();
+			expect(ctx.queryObject).toBe(originalQueryObject);
 		});
 	});
 

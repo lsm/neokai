@@ -20,6 +20,8 @@ import {
 	spaceOverlaySessionIdSignal,
 	spaceOverlayAgentNameSignal,
 	spaceOverlayHighlightMessageIdSignal,
+	type SpaceOverlayTaskContext,
+	spaceOverlayTaskContextSignal,
 	spaceOverlayPendingTaskIdSignal,
 	spaceOverlayPendingAgentNameSignal,
 } from './signals.ts';
@@ -610,6 +612,7 @@ function handlePopState(_event: PopStateEvent): void {
 		spaceOverlaySessionIdSignal.value = null;
 		spaceOverlayAgentNameSignal.value = null;
 		spaceOverlayHighlightMessageIdSignal.value = null;
+		spaceOverlayTaskContextSignal.value = null;
 		spaceOverlayPendingTaskIdSignal.value = null;
 		spaceOverlayPendingAgentNameSignal.value = null;
 		return;
@@ -632,7 +635,8 @@ export function initializeRouter(): string | null {
 export function pushOverlayHistory(
 	sessionId: string,
 	agentName?: string,
-	highlightMessageId?: string
+	highlightMessageId?: string,
+	taskContext?: SpaceOverlayTaskContext | null
 ): void {
 	const currentPath = getCurrentPath();
 	window.history.pushState(
@@ -643,6 +647,7 @@ export function pushOverlayHistory(
 	spaceOverlaySessionIdSignal.value = sessionId;
 	spaceOverlayAgentNameSignal.value = agentName ?? null;
 	spaceOverlayHighlightMessageIdSignal.value = highlightMessageId ?? null;
+	spaceOverlayTaskContextSignal.value = taskContext ?? null;
 	spaceOverlayPendingTaskIdSignal.value = null;
 	spaceOverlayPendingAgentNameSignal.value = null;
 }
@@ -659,12 +664,14 @@ export function pushOverlayHistoryForPendingAgent(taskId: string, agentName: str
 	spaceOverlaySessionIdSignal.value = null;
 	spaceOverlayAgentNameSignal.value = agentName;
 	spaceOverlayHighlightMessageIdSignal.value = null;
+	spaceOverlayTaskContextSignal.value = { taskId, agentName };
 }
 
 export function replaceOverlayHistory(
 	sessionId: string,
 	agentName?: string,
-	highlightMessageId?: string
+	highlightMessageId?: string,
+	taskContext: SpaceOverlayTaskContext | null = spaceOverlayTaskContextSignal.value
 ): void {
 	const currentPath = getCurrentPath();
 	window.history.replaceState(
@@ -675,6 +682,7 @@ export function replaceOverlayHistory(
 	spaceOverlaySessionIdSignal.value = sessionId;
 	spaceOverlayAgentNameSignal.value = agentName ?? null;
 	spaceOverlayHighlightMessageIdSignal.value = highlightMessageId ?? null;
+	spaceOverlayTaskContextSignal.value = taskContext;
 	spaceOverlayPendingTaskIdSignal.value = null;
 	spaceOverlayPendingAgentNameSignal.value = null;
 }
@@ -688,6 +696,7 @@ export function closeOverlayHistory(): void {
 		spaceOverlaySessionIdSignal.value = null;
 		spaceOverlayAgentNameSignal.value = null;
 		spaceOverlayHighlightMessageIdSignal.value = null;
+		spaceOverlayTaskContextSignal.value = null;
 		spaceOverlayPendingTaskIdSignal.value = null;
 		spaceOverlayPendingAgentNameSignal.value = null;
 		window.history.back();
@@ -695,6 +704,7 @@ export function closeOverlayHistory(): void {
 		spaceOverlaySessionIdSignal.value = null;
 		spaceOverlayAgentNameSignal.value = null;
 		spaceOverlayHighlightMessageIdSignal.value = null;
+		spaceOverlayTaskContextSignal.value = null;
 		spaceOverlayPendingTaskIdSignal.value = null;
 		spaceOverlayPendingAgentNameSignal.value = null;
 	}

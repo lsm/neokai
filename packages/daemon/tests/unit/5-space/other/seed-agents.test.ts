@@ -79,7 +79,7 @@ describe('seedPresetAgents', () => {
 		expect(reviewer?.tools).toContain('Bash');
 	});
 
-	it('coder has full coding toolset', async () => {
+	it('coder has full coding toolset and explicit no-merge prompt', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const coder = seeded.find((a) => a.name === 'Coder');
 
@@ -87,6 +87,9 @@ describe('seedPresetAgents', () => {
 		expect(coder?.tools).toContain('Write');
 		expect(coder?.tools).toContain('Edit');
 		expect(coder?.tools).toContain('Bash');
+		expect(coder?.customPrompt).toContain('Do NOT merge PRs. Your job is implementation only.');
+		expect(coder?.customPrompt).toContain('When the reviewer approves, your work is done.');
+		expect(coder?.customPrompt).toContain('The reviewer handles the merge.');
 	});
 
 	it('research agent has full coding toolset (Write + Edit for committing findings)', async () => {
@@ -427,7 +430,8 @@ describe('preset agent exact definitions', () => {
 		expect(coder.customPrompt).toBe(
 			'You are an expert software engineer. You write clean, well-tested code following the ' +
 				"project's existing conventions. You always commit your work, keep the working tree clean, " +
-				'and open pull requests for review.\n\n' +
+				'and open pull requests for review. Do NOT merge PRs. Your job is implementation only. ' +
+				'When the reviewer approves, your work is done. The reviewer handles the merge.\n\n' +
 				'Before finishing: ensure all tests pass, commit all changes, and open a PR with a clear description.'
 		);
 	});

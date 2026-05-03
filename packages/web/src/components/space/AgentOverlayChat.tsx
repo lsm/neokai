@@ -13,6 +13,8 @@ import { useEffect, useRef } from 'preact/hooks';
 import { Portal } from '../ui/Portal';
 import { setupFocusTrap } from '../ui/Modal';
 import ChatContainer from '../../islands/ChatContainer';
+import type { SpaceOverlayTaskContext } from '../../lib/signals';
+import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
 
 interface AgentOverlayChatProps {
@@ -39,6 +41,12 @@ interface AgentOverlayChatProps {
 	 * "Starting…" composer and hands off to the live session when it appears.
 	 */
 	pendingAgent?: { taskId: string; agentName: string } | null;
+	/**
+	 * Workflow task context for live node-agent sessions. When present, composer
+	 * sends are routed through task messaging so the daemon injects into the
+	 * existing MCP-enabled workflow sub-session instead of creating a bare session.
+	 */
+	taskContext?: SpaceOverlayTaskContext | null;
 }
 
 export function AgentOverlayChat({
@@ -47,8 +55,26 @@ export function AgentOverlayChat({
 	highlightMessageId,
 	onClose,
 	pendingAgent,
+	taskContext,
 }: AgentOverlayChatProps) {
 	const panelRef = useRef<HTMLDivElement>(null);
+	const handleTaskContextSend = taskContext
+		? async (message: string, _images?: unknown[]) => {
+				const trimmed = message.trim();
+				if (!trimmed) return false;
+				const result = await spaceStore.sendTaskMessage(taskContext.taskId, trimmed, {
+					kind: 'node_agent',
+					agentName: taskContext.agentName,
+					...(taskContext.nodeExecutionId ? { nodeExecutionId: taskContext.nodeExecutionId } : {}),
+				});
+				if (result?.delivered === false && !result?.queued) {
+					throw new Error(
+						'Agent is starting — your message could not be delivered. Try again in a moment.'
+					);
+				}
+				return true;
+			}
+		: undefined;
 
 	// Close on Escape key
 	useEffect(() => {
@@ -178,6 +204,7 @@ export function AgentOverlayChat({
 							onBack={onClose}
 							highlightMessageId={highlightMessageId}
 							pendingAgent={pendingAgent ?? null}
+							onSendOverride={handleTaskContextSend}
 						/>
 					</div>
 				</div>
