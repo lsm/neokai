@@ -43,7 +43,7 @@ const CURATED_PROVIDER_PREFIXES = [
 	'qwen/',
 ] as const;
 
-const CURATED_MODEL_IDS = ['openrouter/auto'] as const;
+const SYSTEM_MODEL_PREFIXES = ['~', 'openrouter/'] as const;
 
 function isProbablyOpenRouterKey(apiKey: string): boolean {
 	return apiKey.trim().startsWith('sk-or-');
@@ -84,7 +84,7 @@ export class OpenRouterProvider implements Provider {
 	};
 
 	static readonly BASE_URL = 'https://openrouter.ai/api';
-	static readonly MODELS_URL = 'https://openrouter.ai/api/v1/models?output_modalities=text';
+	static readonly MODELS_URL = 'https://openrouter.ai/api/v1/models/user';
 	static readonly DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
 	static readonly MAX_API_MODELS = 30;
 
@@ -214,6 +214,7 @@ export class OpenRouterProvider implements Provider {
 			const body = (await response.json()) as OpenRouterModelsResponse;
 			const apiModels = (body.data ?? [])
 				.filter((model) => typeof model.id === 'string' && model.id.length > 0)
+				.filter((model) => !SYSTEM_MODEL_PREFIXES.some((prefix) => model.id.startsWith(prefix)))
 				.filter((model) => !allowedIds || allowedIds.has(model.id))
 				.map((model) => this.toModelInfo(model));
 			const models = allowedIds ? apiModels : OpenRouterProvider.curateApiModels(apiModels);
@@ -341,10 +342,7 @@ export class OpenRouterProvider implements Provider {
 	private static curateApiModels(models: ModelInfo[]): ModelInfo[] {
 		const curated = models.filter((model) => {
 			const id = model.id.toLowerCase();
-			return (
-				CURATED_MODEL_IDS.some((modelId) => id === modelId) ||
-				CURATED_PROVIDER_PREFIXES.some((prefix) => id.startsWith(prefix))
-			);
+			return CURATED_PROVIDER_PREFIXES.some((prefix) => id.startsWith(prefix));
 		});
 
 		const candidates = curated.length > 0 ? curated : models;

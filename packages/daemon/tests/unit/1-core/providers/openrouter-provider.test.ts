@@ -138,13 +138,14 @@ describe('OpenRouterProvider', () => {
 		expect(models.at(-1)?.id).toBe('anthropic/claude-test-29');
 	});
 
-	it('keeps OpenRouter auto and popular provider families in curated API models', async () => {
+	it('filters system models and keeps popular provider families in curated API models', async () => {
 		process.env.OPENROUTER_API_KEY = 'sk-or-test';
 		const data = [
 			{ id: 'openrouter/auto', name: 'OpenRouter Auto' },
 			{ id: 'xai/grok-4', name: 'Grok 4' },
 			{ id: 'cohere/command-a', name: 'Command A' },
 			{ id: 'qwen/qwen3-coder', name: 'Qwen3 Coder' },
+			{ id: '~anthropic/claude-sonnet-latest', name: 'Claude Sonnet Latest' },
 			{ id: 'random-lab/experimental-1', name: 'Experimental 1' },
 		];
 		const fetchMock = mock(async () => new Response(JSON.stringify({ data }), { status: 200 }));
@@ -153,11 +154,28 @@ describe('OpenRouterProvider', () => {
 		const models = await provider.getModels();
 
 		expect(models.map((model) => model.id)).toEqual([
-			'openrouter/auto',
 			'xai/grok-4',
 			'cohere/command-a',
 			'qwen/qwen3-coder',
 		]);
+	});
+
+	it('excludes all system models with ~ and openrouter/ prefixes from results', async () => {
+		process.env.OPENROUTER_API_KEY = 'sk-or-test';
+		const data = [
+			{ id: '~anthropic/claude-sonnet-latest', name: 'Claude Sonnet Latest' },
+			{ id: '~openai/gpt-latest', name: 'GPT Latest' },
+			{ id: 'openrouter/auto', name: 'Auto Router' },
+			{ id: 'openrouter/free', name: 'Free Router' },
+			{ id: 'openrouter/pareto-code', name: 'Pareto Code Router' },
+			{ id: 'anthropic/claude-sonnet-4.6', name: 'Claude Sonnet 4.6' },
+		];
+		const fetchMock = mock(async () => new Response(JSON.stringify({ data }), { status: 200 }));
+		const provider = new OpenRouterProvider(process.env, fetchMock as unknown as typeof fetch);
+
+		const models = await provider.getModels();
+
+		expect(models.map((model) => model.id)).toEqual(['anthropic/claude-sonnet-4.6']);
 	});
 
 	it('falls back to the first API models when no curated families are present', async () => {
