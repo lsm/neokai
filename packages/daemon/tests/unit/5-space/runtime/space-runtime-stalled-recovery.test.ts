@@ -48,6 +48,7 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import type { SpaceWorkflow, SpaceRuntimeNotification, NodeExecutionStatus } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -1768,7 +1769,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(notifications.length).toBe(0);
 		});
 
-		test('stale pending execution is cancelled during restart recovery', async () => {
+		test('stale pending execution is cancelled when tick attempts spawn', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Step A', agentId: AGENT },
 			]);
@@ -1779,11 +1780,36 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				title: 'Stale Pending Exec',
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Stale Pending Exec',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
 
 			const stale = seedExec(run.id, 'deleted-node', 'Step A', 'pending');
+			const tam = {
+				rehydrate: async () => {},
+				isExecutionSpawning: () => false,
+				isSessionAlive: () => false,
+				tryResumeNodeAgentSession: async () => {},
+				spawnWorkflowNodeAgentForExecution: async () => {
+					throw new PermanentSpawnError(
+						'Workflow node deleted-node no longer exists in workflow definition'
+					);
+				},
+				flushPendingMessagesForTarget: async () => {},
+				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
+			};
 
-			const rt = makeRuntime();
+			const rt = makeRuntime({ taskAgentManager: tam as never });
 			await rt.recoverStalledRuns();
+			expect(nodeExecutionRepo.getById(stale.id)!.status).toBe('pending');
+
+			await rt.executeTick();
 
 			const after = nodeExecutionRepo.getById(stale.id)!;
 			expect(after.status).toBe('cancelled');
