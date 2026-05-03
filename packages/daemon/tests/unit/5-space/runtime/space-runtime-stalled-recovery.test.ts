@@ -1788,10 +1788,17 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				workflowNodeId: STEP_A,
 				status: 'in_progress',
 			});
-			const execution = seedExec(run.id, STEP_A, 'Step A', 'pending');
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'in_progress', {
+				agentSessionId: 'session:missing-workflow',
+			});
 			workflowManager.deleteWorkflow(workflow.id);
+			const cancelledSessions: string[] = [];
+			const tam = {
+				rehydrate: async () => {},
+				cancelBySessionId: (sessionId: string) => cancelledSessions.push(sessionId),
+			};
 
-			const rt = makeRuntime();
+			const rt = makeRuntime({ taskAgentManager: tam as never });
 			await rt.recoverStalledRuns();
 
 			const reason = `Workflow ${workflow.id} no longer exists; workflow run cannot continue`;
@@ -1799,7 +1806,9 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(taskRepo.getTask(task.id)!.status).toBe('blocked');
 			expect(taskRepo.getTask(task.id)!.blockReason).toBe('workflow_invalid');
 			expect(nodeExecutionRepo.getById(execution.id)!.status).toBe('cancelled');
+			expect(nodeExecutionRepo.getById(execution.id)!.agentSessionId).toBeNull();
 			expect(nodeExecutionRepo.getById(execution.id)!.result).toBe(reason);
+			expect(cancelledSessions).toEqual(['session:missing-workflow']);
 			expect(notifications.some((n) => n.kind === 'workflow_run_blocked')).toBe(true);
 		});
 

@@ -1586,6 +1586,9 @@ export class SpaceRuntime {
 		const now = Date.now();
 		for (const execution of executions) {
 			if (execution.status === 'cancelled') continue;
+			if (execution.agentSessionId) {
+				this.config.taskAgentManager?.cancelBySessionId(execution.agentSessionId);
+			}
 			this.config.nodeExecutionRepo.update(execution.id, {
 				status: 'cancelled',
 				agentSessionId: null,
