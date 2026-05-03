@@ -137,10 +137,10 @@ export class GeminiOAuthProvider implements Provider {
 	}
 
 	/**
-	 * Check if a model ID belongs to this provider.
+	 * Check if a model ID belongs to this provider (exact match against catalog).
 	 */
 	ownsModel(modelId: string): boolean {
-		return modelId.startsWith('gemini-');
+		return GEMINI_MODELS.some((m) => m.id === modelId);
 	}
 
 	/**

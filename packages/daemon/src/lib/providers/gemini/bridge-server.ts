@@ -111,6 +111,11 @@ export function createGeminiBridgeServer(config: GeminiBridgeConfig): GeminiBrid
 								type: 'model',
 								display_name: 'Gemini 2.5 Flash',
 							},
+							{
+								id: 'gemini-2.0-flash',
+								type: 'model',
+								display_name: 'Gemini 2.0 Flash',
+							},
 						],
 					}),
 					{ headers: { 'Content-Type': 'application/json' } }

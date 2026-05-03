@@ -275,6 +275,6 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
 	if (modelId === 'openrouter/auto' || (modelId.includes('/') && !modelId.startsWith('claude-')))
 		return 'openrouter';
 	if (modelId.startsWith('gpt-')) return 'anthropic-codex';
-	if (modelId.startsWith('gemini-')) return 'google-gemini-oauth';
+	if (modelId.startsWith('gemini-2.')) return 'google-gemini-oauth';
 	return 'anthropic';
 }
