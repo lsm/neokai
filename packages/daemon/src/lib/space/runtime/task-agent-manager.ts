@@ -1015,7 +1015,7 @@ export class TaskAgentManager {
 					actualSessionId: updatedExecution?.agentSessionId ?? null,
 				});
 				this.config.nodeExecutionRepo.update(execution.id, {
-					status: 'cancelled',
+					status: 'blocked',
 					result: 'Execution state corruption after spawn',
 					completedAt: Date.now(),
 				});

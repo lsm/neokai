@@ -2547,7 +2547,7 @@ describe('TaskAgentManager', () => {
 			}
 		});
 
-		test('cancels execution when post-spawn state verification detects mismatch', async () => {
+		test('blocks execution when post-spawn state verification detects mismatch', async () => {
 			const wfId = 'wf-spawn-mismatch';
 			const wfRunId = 'run-spawn-mismatch';
 			const nodeId = 'node-spawn-mismatch';
@@ -2615,7 +2615,7 @@ describe('TaskAgentManager', () => {
 					)
 				).rejects.toThrow('Execution state corruption after spawn');
 				const updated = ctx.nodeExecutionRepo.getById(execution.id)!;
-				expect(updated.status).toBe('cancelled');
+				expect(updated.status).toBe('blocked');
 				expect(updated.result).toBe('Execution state corruption after spawn');
 				expect(updated.completedAt).toBeTruthy();
 			} finally {

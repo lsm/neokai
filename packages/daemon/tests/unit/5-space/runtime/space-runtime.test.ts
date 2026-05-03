@@ -1564,6 +1564,39 @@ describe('SpaceRuntime', () => {
 			expect(updated.agentSessionId).toBeNull();
 		});
 
+		test('spawn retry exhaustion blocks the run in the same tick', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coder', agentId: AGENT_CODER },
+			]);
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Spawn retry exhaustion'
+			);
+			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
+			const tam = makeRepairTam({
+				spawn: async () => {
+					throw new Error('spawn keeps failing');
+				},
+			});
+			const rt = buildRepairRuntime(tam, new PendingAgentMessageRepository(db));
+
+			await rt.executeTick();
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+			await rt.executeTick();
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+			await rt.executeTick();
+
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			expect(updated.status).toBe('blocked');
+			expect(updated.result).toContain('spawn keeps failing');
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(tasks[0].id)!.status).toBe('blocked');
+			expect(taskRepo.getTask(tasks[0].id)!.blockReason).toBe('agent_crashed');
+			expect(taskRepo.getTask(tasks[0].id)!.result).toContain('spawn keeps failing');
+		});
+
 		test('activation failures are retried and eventually block the run', async () => {
 			const { run, task, pendingRepo } = await setupQueuedHandoff({ maxAttempts: 2 });
 			const tam = makeRepairTam({

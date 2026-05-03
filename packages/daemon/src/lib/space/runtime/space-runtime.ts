@@ -2154,36 +2154,7 @@ export class SpaceRuntime {
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
 			if (blockedByCrash) {
-				const blockedReason =
-					nodeExecutions.find((execution) => execution.status === 'blocked')?.result ??
-					'One or more workflow agents are blocked';
-				const dedupKey = `${canonicalTask.id}:blocked`;
-				if (!this.notifiedTaskSet.has(dedupKey)) {
-					this.notifiedTaskSet.add(dedupKey);
-					await this.safeNotify({
-						kind: 'task_blocked',
-						spaceId: meta.spaceId,
-						taskId: canonicalTask.id,
-						reason: blockedReason,
-						timestamp: new Date().toISOString(),
-					});
-				}
-				await this.transitionRunStatusAndEmit(runId, 'blocked');
-				if (canonicalTask.status !== 'blocked') {
-					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
-						status: 'blocked',
-						result: blockedReason,
-						blockReason: 'agent_crashed',
-						completedAt: null,
-					});
-				}
-				await this.safeNotify({
-					kind: 'workflow_run_blocked',
-					spaceId: meta.spaceId,
-					runId,
-					reason: 'One or more tasks require attention',
-					timestamp: new Date().toISOString(),
-				});
+				await this.blockRunForAgentCrash(runId, meta.spaceId, canonicalTask, nodeExecutions);
 				return;
 			}
 
@@ -2521,6 +2492,11 @@ export class SpaceRuntime {
 							);
 						}
 					}
+					if (blockedByCrash) {
+						nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+						await this.blockRunForAgentCrash(runId, meta.spaceId, canonicalTask, nodeExecutions);
+						return;
+					}
 					if (
 						canonicalTask.status === 'open' ||
 						(canonicalTask.status === 'review' && canonicalTask.pendingCheckpointType === 'gate')
@@ -2761,6 +2737,44 @@ export class SpaceRuntime {
 			}
 		}
 		return null;
+	}
+
+	private async blockRunForAgentCrash(
+		runId: string,
+		spaceId: string,
+		canonicalTask: SpaceTask,
+		nodeExecutions: NodeExecution[]
+	): Promise<void> {
+		const blockedReason =
+			nodeExecutions.find((execution) => execution.status === 'blocked')?.result ??
+			'One or more workflow agents are blocked';
+		const dedupKey = `${canonicalTask.id}:blocked`;
+		if (!this.notifiedTaskSet.has(dedupKey)) {
+			this.notifiedTaskSet.add(dedupKey);
+			await this.safeNotify({
+				kind: 'task_blocked',
+				spaceId,
+				taskId: canonicalTask.id,
+				reason: blockedReason,
+				timestamp: new Date().toISOString(),
+			});
+		}
+		await this.transitionRunStatusAndEmit(runId, 'blocked');
+		if (canonicalTask.status !== 'blocked') {
+			await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+				status: 'blocked',
+				result: blockedReason,
+				blockReason: 'agent_crashed',
+				completedAt: null,
+			});
+		}
+		await this.safeNotify({
+			kind: 'workflow_run_blocked',
+			spaceId,
+			runId,
+			reason: 'One or more tasks require attention',
+			timestamp: new Date().toISOString(),
+		});
 	}
 
 	private async blockRunForQueuedHandoffFailure(
