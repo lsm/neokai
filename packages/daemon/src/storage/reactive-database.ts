@@ -1,14 +1,31 @@
 import { EventEmitter } from 'node:events';
 import { Database } from './index';
 
+/**
+ * Scope metadata attached to table-change events when the change can be
+ * attributed to a specific context (e.g. a single session).
+ *
+ * When present, LiveQueryEngine can skip re-evaluating queries that are
+ * clearly unrelated to the scope — for example, a `messages.bySession`
+ * subscription for session B should not re-evaluate when session A writes a
+ * message.
+ */
+export interface TableChangeScope {
+	/** The session that produced the write, when known. */
+	sessionId?: string;
+}
+
 export interface TableChangeEvent {
 	tables: string[];
 	versions: Record<string, number>;
+	/** Scope metadata for the change. Only populated for single-table, non-transaction events. */
+	scope?: TableChangeScope;
 }
 
 export interface TableVersionEvent {
 	table: string;
 	version: number;
+	scope?: TableChangeScope;
 }
 
 export interface ReactiveDatabase {
@@ -41,36 +58,57 @@ export interface ReactiveDatabase {
 	notifyChange(table: string): void;
 }
 
-// Static mapping from facade method name to table name
-const METHOD_TABLE_MAP: Record<string, string> = {
+// Mapping from facade method name to table name + optional scope extractor.
+// When a scope extractor is provided, the proxy extracts scope metadata from
+// the method arguments and attaches it to the emitted change event. This
+// allows LiveQueryEngine to skip re-evaluating unrelated queries.
+interface MethodMapping {
+	table: string;
+	/** Extract scope from the method's positional arguments. */
+	extractScope?: (args: unknown[]) => TableChangeScope;
+}
+
+const METHOD_TABLE_MAP: Record<string, MethodMapping> = {
 	// Session operations
-	createSession: 'sessions',
-	updateSession: 'sessions',
-	deleteSession: 'sessions',
-	// SDK Message operations
-	saveSDKMessage: 'sdk_messages',
-	saveUserMessage: 'sdk_messages',
-	updateMessageStatus: 'sdk_messages',
-	updateMessageTimestamp: 'sdk_messages',
-	deleteMessagesAfter: 'sdk_messages',
-	deleteMessagesAtAndAfter: 'sdk_messages',
+	createSession: { table: 'sessions' },
+	updateSession: { table: 'sessions' },
+	deleteSession: { table: 'sessions' },
+	// SDK Message operations — scoped by sessionId where available
+	saveSDKMessage: {
+		table: 'sdk_messages',
+		extractScope: (args) => ({ sessionId: args[0] as string }),
+	},
+	saveUserMessage: {
+		table: 'sdk_messages',
+		extractScope: (args) => ({ sessionId: args[0] as string }),
+	},
+	updateMessageStatus: { table: 'sdk_messages' }, // args are messageIds, no sessionId
+	updateMessageTimestamp: { table: 'sdk_messages' }, // args are messageId, no sessionId
+	deleteMessagesAfter: {
+		table: 'sdk_messages',
+		extractScope: (args) => ({ sessionId: args[0] as string }),
+	},
+	deleteMessagesAtAndAfter: {
+		table: 'sdk_messages',
+		extractScope: (args) => ({ sessionId: args[0] as string }),
+	},
 	// Settings operations
-	saveGlobalToolsConfig: 'global_tools_config',
-	saveGlobalSettings: 'global_settings',
-	updateGlobalSettings: 'global_settings',
+	saveGlobalToolsConfig: { table: 'global_tools_config' },
+	saveGlobalSettings: { table: 'global_settings' },
+	updateGlobalSettings: { table: 'global_settings' },
 	// GitHub Mapping operations
-	createGitHubMapping: 'room_github_mappings',
-	updateGitHubMapping: 'room_github_mappings',
-	deleteGitHubMapping: 'room_github_mappings',
-	deleteGitHubMappingByRoomId: 'room_github_mappings',
+	createGitHubMapping: { table: 'room_github_mappings' },
+	updateGitHubMapping: { table: 'room_github_mappings' },
+	deleteGitHubMapping: { table: 'room_github_mappings' },
+	deleteGitHubMappingByRoomId: { table: 'room_github_mappings' },
 	// Inbox Item operations
-	createInboxItem: 'inbox_items',
-	updateInboxItemStatus: 'inbox_items',
-	dismissInboxItem: 'inbox_items',
-	routeInboxItem: 'inbox_items',
-	blockInboxItem: 'inbox_items',
-	deleteInboxItem: 'inbox_items',
-	deleteInboxItemsForRepository: 'inbox_items',
+	createInboxItem: { table: 'inbox_items' },
+	updateInboxItemStatus: { table: 'inbox_items' },
+	dismissInboxItem: { table: 'inbox_items' },
+	routeInboxItem: { table: 'inbox_items' },
+	blockInboxItem: { table: 'inbox_items' },
+	deleteInboxItem: { table: 'inbox_items' },
+	deleteInboxItemsForRepository: { table: 'inbox_items' },
 };
 
 export function createReactiveDatabase(db: Database): ReactiveDatabase {
@@ -83,7 +121,7 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 		return tableVersions[table] ?? 0;
 	}
 
-	function incrementAndEmit(table: string): void {
+	function incrementAndEmit(table: string, scope?: TableChangeScope): void {
 		tableVersions[table] = getVersion(table) + 1;
 		const version = tableVersions[table];
 
@@ -92,12 +130,13 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 			return;
 		}
 
-		const versionEvent: TableVersionEvent = { table, version };
+		const versionEvent: TableVersionEvent = { table, version, scope };
 		emitter.emit(`change:${table}`, versionEvent);
 
 		const changeEvent: TableChangeEvent = {
 			tables: [table],
 			versions: { [table]: version },
+			scope,
 		};
 		emitter.emit('change', changeEvent);
 	}
@@ -116,6 +155,8 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 			emitter.emit(`change:${table}`, versionEvent);
 		}
 
+		// Transaction flushes do not carry scope — multiple writes may target
+		// different sessions, making single-scope attribution inaccurate.
 		const changeEvent: TableChangeEvent = { tables, versions };
 		emitter.emit('change', changeEvent);
 	}
@@ -132,8 +173,8 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 				return value;
 			}
 
-			const table = METHOD_TABLE_MAP[prop];
-			if (!table) {
+			const mapping = METHOD_TABLE_MAP[prop];
+			if (!mapping) {
 				// Bind to original target so methods that access private fields (e.g.
 				// Database#rawDb or BunDatabase's internal Statement constructor) work
 				// correctly when called through the proxy.
@@ -144,7 +185,8 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 			return function (this: Database, ...args: unknown[]) {
 				const result = (value as (...a: unknown[]) => unknown).apply(target, args);
 				// Only emit if the call didn't throw
-				incrementAndEmit(table);
+				const scope = mapping.extractScope?.(args);
+				incrementAndEmit(mapping.table, scope);
 				return result;
 			};
 		},
