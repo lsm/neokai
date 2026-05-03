@@ -406,7 +406,7 @@ describe('SpaceRuntime', () => {
 
 			const recoveredExecution = nodeExecutionRepo.getById(execution.id)!;
 			expect(recoveredExecution.status).toBe('pending');
-			expect(recoveredExecution.agentSessionId).toBeNull();
+			expect(recoveredExecution.agentSessionId).toBe('stale-session');
 			expect(recoveredExecution.result).toBeNull();
 			expect(recoveredExecution.data).toBeNull();
 			expect(recoveredExecution.startedAt).toBeNull();

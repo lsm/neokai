@@ -2640,7 +2640,7 @@ describe('TaskAgentManager', () => {
 			const spawnSpy = spyOn(ctx.manager, 'spawnWorkflowNodeAgentForExecution').mockImplementation(
 				async (_task, _space, _workflow, _run, execution) => {
 					expect(execution.id).toBe(staleExec.id);
-					expect(execution.agentSessionId).toBeNull();
+					expect(execution.agentSessionId).toBe(staleSessionId);
 					expect(execution.status).toBe('pending');
 					return 'fresh-reviewer-session';
 				}
@@ -2656,7 +2656,7 @@ describe('TaskAgentManager', () => {
 				expect(sessions).toEqual([{ agentName: 'reviewer', sessionId: 'fresh-reviewer-session' }]);
 				expect(spawnSpy).toHaveBeenCalledTimes(1);
 				const updated = ctx.nodeExecutionRepo.getById(staleExec.id);
-				expect(updated?.agentSessionId).toBeNull();
+				expect(updated?.agentSessionId).toBe(staleSessionId);
 				expect(updated?.status).toBe('pending');
 			} finally {
 				spawnSpy.mockRestore();

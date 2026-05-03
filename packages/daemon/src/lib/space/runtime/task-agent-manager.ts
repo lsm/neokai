@@ -848,14 +848,19 @@ export class TaskAgentManager {
 		options: SpawnTaskAgentOptions = {}
 	): Promise<string> {
 		if (execution.agentSessionId && this.agentSessionIndex.has(execution.agentSessionId)) {
-			const startedAt = execution.startedAt ?? Date.now();
-			this.config.nodeExecutionRepo.update(execution.id, {
-				status: 'in_progress',
-				agentSessionId: execution.agentSessionId,
-				startedAt,
-				completedAt: null,
-			});
-			return execution.agentSessionId;
+			if (this.isSessionAlive(execution.agentSessionId)) {
+				const startedAt = execution.startedAt ?? Date.now();
+				this.config.nodeExecutionRepo.update(execution.id, {
+					status: 'in_progress',
+					agentSessionId: execution.agentSessionId,
+					startedAt,
+					completedAt: null,
+				});
+				return execution.agentSessionId;
+			}
+			// Indexed session is dead — evict so the create/reuse path below
+			// runs instead of short-circuiting on a stale entry.
+			this.agentSessionIndex.delete(execution.agentSessionId);
 		}
 
 		if (this.spawningExecutionIds.has(execution.id)) {
@@ -1892,14 +1897,22 @@ export class TaskAgentManager {
 		await this.tryResumeNodeAgentSession(workflowRunId, agentName);
 		const existing = this.config.nodeExecutionRepo
 			.listByWorkflowRun(workflowRunId)
-			.filter((execution) => execution.agentName === agentName && execution.agentSessionId)
+			.filter(
+				(execution) =>
+					execution.agentName === agentName &&
+					(execution.status === 'in_progress' || execution.status === 'blocked')
+			)
 			.at(-1);
-		if (existing?.agentSessionId) {
-			if (this.isSessionAlive(existing.agentSessionId)) {
+		if (existing) {
+			if (existing.agentSessionId && this.isSessionAlive(existing.agentSessionId)) {
 				return [{ agentName, sessionId: existing.agentSessionId }];
 			}
+			// Evict the stale session from the index so the spawn code
+			// doesn't short-circuit on agentSessionIndex.has().
+			if (existing.agentSessionId) {
+				this.agentSessionIndex.delete(existing.agentSessionId);
+			}
 			this.config.nodeExecutionRepo.update(existing.id, {
-				agentSessionId: null,
 				status: 'pending',
 			});
 		}
@@ -3200,6 +3213,9 @@ export class TaskAgentManager {
 
 		const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
 		for (const execution of executions) {
+			// agentSessionId is write-once: once assigned during spawn, it is never
+			// cleared. Pending executions that were never spawned will have a null
+			// agentSessionId, which this guard correctly skips.
 			const subSessionId = execution.agentSessionId;
 			if (!subSessionId) continue;
 
