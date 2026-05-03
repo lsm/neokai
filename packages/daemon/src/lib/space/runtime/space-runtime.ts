@@ -2152,6 +2152,14 @@ export class SpaceRuntime {
 			const tam = this.config.taskAgentManager;
 			let blockedByCrash = false;
 
+			// Snapshot which executions were already pending before this tick's
+			// liveness/auto-complete processing. The repair loop below uses this
+			// to avoid re-elevating executions that were just force-idled and
+			// then reset to pending within the same tick.
+			const preTickPendingIds = new Set(
+				nodeExecutions.filter((e) => e.status === 'pending').map((e) => e.id)
+			);
+
 			// Step 1: Check workflow-node agent liveness by NodeExecution.sessionId.
 			for (const execution of nodeExecutions) {
 				if (
@@ -2454,6 +2462,7 @@ export class SpaceRuntime {
 			for (const execution of nodeExecutions) {
 				if (execution.status !== 'pending') continue;
 				if (!execution.agentSessionId) continue;
+				if (!preTickPendingIds.has(execution.id)) continue;
 				if (tam.isSessionAlive(execution.agentSessionId)) {
 					log.warn(
 						`SpaceRuntime: repaired pending execution ${execution.id} with live session ${execution.agentSessionId}`
@@ -2934,7 +2943,12 @@ export class SpaceRuntime {
 
 		const idleExecutions = this.config.nodeExecutionRepo
 			.listByWorkflowRun(runId)
-			.filter((execution) => execution.status === 'idle' && execution.agentSessionId);
+			.filter(
+				(execution) =>
+					execution.status === 'idle' &&
+					execution.agentSessionId &&
+					!execution.result?.startsWith('Auto-completed:')
+			);
 		for (const execution of idleExecutions) {
 			const sessionId = execution.agentSessionId;
 			if (!sessionId) continue;
