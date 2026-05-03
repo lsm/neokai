@@ -376,7 +376,6 @@ export class ChannelRouter {
 					}
 					this.config.nodeExecutionRepo.update(existing.id, {
 						status: 'cancelled',
-						agentSessionId: null,
 						result: validation.reason,
 						completedAt: Date.now(),
 					});
@@ -394,8 +393,9 @@ export class ChannelRouter {
 				// will then deliver to the existing session via injectSubSessionMessage.
 				//
 				// Fallback: if `isSessionAlive` reports the session is no longer live
-				// (daemon restart, manual cleanup, crash), null the session id and
-				// reset to `pending` so the tick loop respawns a fresh session.
+				// (daemon restart, manual cleanup, crash), reset to `pending` so the
+				// tick loop respawns a fresh session. agentSessionId is write-once and
+				// is never cleared; spawn code detects pending status to create a new session.
 				if (TERMINAL_NODE_EXECUTION_STATUSES.has(existing.status)) {
 					const sessionId = existing.agentSessionId;
 					const probe = this.config.isSessionAlive;
@@ -409,7 +409,6 @@ export class ChannelRouter {
 					} else {
 						this.config.nodeExecutionRepo.update(existing.id, {
 							status: 'pending',
-							agentSessionId: null,
 							result: null,
 							startedAt: null,
 							completedAt: null,
