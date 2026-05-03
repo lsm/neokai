@@ -147,7 +147,7 @@ export interface WorkflowNodeAgent {
             "label": "PR comments on my task's PR"
           },
           {
-            "topic": "github/*/*/pull_request_review_comment.*",
+            "topic": "github/*/*/pull_request.review_comment_created",
             "scope": "task",
             "label": "Inline review comments"
           }
@@ -559,8 +559,10 @@ class EventRouter {
     // Scope check
     if (!this.passesScopeCheck(event, sub)) return;
 
-    // Dedup check
-    const dedupeKey = `${event.dedupeKey}:${sub.agentName}:${sub.workflowRunId}`;
+    // Dedup check — include nodeId to handle cases where the same agent name
+    // appears in multiple nodes within the same run (e.g., two "Reviewer" agents
+    // in different nodes). Each node-execution is deduped independently.
+    const dedupeKey = `${event.dedupeKey}:${sub.nodeId}:${sub.agentName}:${sub.workflowRunId}`;
     if (this.delivered.has(dedupeKey)) return;
 
     // Resolve session — re-read from nodeExecutionRepo for latest state
@@ -656,7 +658,7 @@ Event arrives → Match subscriptions → Scope check → Dedup check → Sessio
 
 ### Deduplication
 
-- **Key**: `(event.dedupeKey, subscription.agentName, subscription.workflowRunId)`
+- **Key**: `(event.dedupeKey, subscription.nodeId, subscription.agentName, subscription.workflowRunId)` — includes `nodeId` to handle cases where the same agent name appears in multiple nodes within the same run.
 - **Storage**: In-memory `Map<string, number>` (timestamp). Evicted when the workflow run completes.
 - **Guarantee**: Same external event is never delivered twice to the same node agent within a run.
 - The upstream `SpaceGitHubService` already deduplicates by `(spaceId, dedupeKey)` — this is an additional per-node dedup.
