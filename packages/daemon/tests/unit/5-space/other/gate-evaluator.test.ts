@@ -1083,6 +1083,18 @@ describe('validateGatePoll', () => {
 		).toHaveLength(0);
 	});
 
+	test('rejects NaN intervalMs', () => {
+		const errors = validateGatePoll({ intervalMs: NaN, script: 'echo hi', target: 'from' });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('finite');
+	});
+
+	test('rejects Infinity intervalMs', () => {
+		const errors = validateGatePoll({ intervalMs: Infinity, script: 'echo hi', target: 'from' });
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors[0]).toContain('finite');
+	});
+
 	test('rejects empty script string', () => {
 		const errors = validateGatePoll({ intervalMs: 30_000, script: '', target: 'from' });
 		expect(errors.length).toBeGreaterThan(0);

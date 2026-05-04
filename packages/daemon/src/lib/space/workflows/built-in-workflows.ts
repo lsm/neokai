@@ -73,7 +73,7 @@ const PR_INLINE_COMMENTS_POLL: GatePoll = {
 	intervalMs: 30_000,
 	script: [
 		'if [ -z "$PR_URL" ]; then exit 0; fi',
-		'gh api "repos/$REPO_OWNER/$REPO_NAME/pulls/$PR_NUMBER/comments" --jq \'.[-1] | "- **" + .user.login + "**: " + .body\'',
+		'gh api "repos/$REPO_OWNER/$REPO_NAME/pulls/$PR_NUMBER/comments" --jq \'if length == 0 then empty else .[-1] | "- **" + .user.login + "**: " + .body end\'',
 	].join('\n'),
 	target: 'to',
 	messageTemplate: 'New PR inline review comment:\n{{output}}',
