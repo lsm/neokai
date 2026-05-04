@@ -32,6 +32,7 @@ function createTestDb(): InstanceType<typeof Database> {
 				CHECK(status IN ('active', 'archived')),
 			autonomy_level TEXT DEFAULT 'supervised',
 			config TEXT,
+			task_agent_config TEXT,
 			slug TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
