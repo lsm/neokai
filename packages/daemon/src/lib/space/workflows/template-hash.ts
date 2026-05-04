@@ -84,14 +84,21 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
 
 	// Exhaustive JSON serialization of channels — all fields included automatically.
 	const channels = (workflow.channels ?? [])
-		.map((c) =>
-			JSON.stringify({
+		.map((c) => {
+			// Normalize single-element `to` arrays to a string so that `"Reviewer"`
+			// and `["Reviewer"]` produce the same hash (runtime treats them equivalently).
+			const normalizedTo = Array.isArray(c.to)
+				? c.to.length === 1
+					? c.to[0]
+					: [...c.to].sort()
+				: c.to;
+			return JSON.stringify({
 				from: c.from,
-				to: Array.isArray(c.to) ? [...c.to].sort() : c.to,
+				to: normalizedTo,
 				gateId: c.gateId ?? null,
 				maxCycles: c.maxCycles ?? null,
-			})
-		)
+			});
+		})
 		.sort();
 
 	// Exhaustive JSON serialization of gates — all structurally-meaningful fields
@@ -111,13 +118,13 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
 						type: f.type,
 						check: serializeCheck(f.check),
 					})),
-				script: g.script ? g.script.source.slice(0, 64) : null,
+				script: g.script ? g.script.source : null,
 				poll: g.poll
 					? {
 							intervalMs: g.poll.intervalMs,
 							target: g.poll.target,
 							messageTemplate: g.poll.messageTemplate ?? '',
-							scriptPrefix: g.poll.script.slice(0, 64),
+							script: g.poll.script,
 						}
 					: null,
 			})

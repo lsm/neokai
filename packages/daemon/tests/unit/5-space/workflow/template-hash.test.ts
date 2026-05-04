@@ -117,6 +117,29 @@ describe('buildWorkflowFingerprint', () => {
 		expect(parsed.maxCycles).toBeNull();
 	});
 
+	it('normalizes single-target channel to arrays to strings', () => {
+		const wf1 = makeWorkflow({
+			channels: [{ id: 'ch1', from: 'Coder', to: 'Reviewer' }],
+		});
+		const wf2 = makeWorkflow({
+			channels: [{ id: 'ch1', from: 'Coder', to: ['Reviewer'] }],
+		});
+		expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
+		// Verify the normalized form is a string, not an array
+		const fp = buildWorkflowFingerprint(wf1);
+		const parsed = JSON.parse(fp.channels[0]);
+		expect(parsed.to).toBe('Reviewer');
+	});
+
+	it('keeps multi-target channel to as sorted array', () => {
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch1', from: 'Coder', to: ['Reviewer', 'QA'] }],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.channels[0]);
+		expect(parsed.to).toEqual(['QA', 'Reviewer']); // sorted
+	});
+
 	it('returns sorted gate JSON serializations', () => {
 		const wf = makeWorkflow({
 			gates: [
@@ -236,7 +259,7 @@ describe('buildWorkflowFingerprint', () => {
 		expect(parsedTrue.resetOnCycle).toBe(true);
 	});
 
-	it('includes gate script prefix in serialization', () => {
+	it('includes gate script source in serialization', () => {
 		const wf = makeWorkflow({
 			gates: [
 				{
@@ -260,7 +283,7 @@ describe('buildWorkflowFingerprint', () => {
 		expect(parsed.script).toBeNull();
 	});
 
-	it('truncates gate script source to 64 chars', () => {
+	it('includes full gate script source (no truncation)', () => {
 		const longScript = 'a'.repeat(100);
 		const wf = makeWorkflow({
 			gates: [
@@ -273,8 +296,8 @@ describe('buildWorkflowFingerprint', () => {
 		});
 		const fp = buildWorkflowFingerprint(wf);
 		const parsed = JSON.parse(fp.gates[0]);
-		expect(parsed.script).toHaveLength(64);
-		expect(parsed.script).toBe('a'.repeat(64));
+		expect(parsed.script).toBe(longScript);
+		expect(parsed.script).toHaveLength(100);
 	});
 
 	it('includes gate poll in serialization when present', () => {
@@ -298,7 +321,7 @@ describe('buildWorkflowFingerprint', () => {
 			intervalMs: 30_000,
 			target: 'to',
 			messageTemplate: 'PR update: {{output}}',
-			scriptPrefix: 'gh pr view --json mergeable',
+			script: 'gh pr view --json mergeable',
 		});
 	});
 
@@ -330,7 +353,7 @@ describe('buildWorkflowFingerprint', () => {
 		expect(parsed.poll.messageTemplate).toBe('');
 	});
 
-	it('truncates poll script to 64 chars', () => {
+	it('includes full poll script (no truncation)', () => {
 		const longScript = 'x'.repeat(100);
 		const wf = makeWorkflow({
 			gates: [
@@ -347,8 +370,8 @@ describe('buildWorkflowFingerprint', () => {
 		});
 		const fp = buildWorkflowFingerprint(wf);
 		const parsed = JSON.parse(fp.gates[0]);
-		expect(parsed.poll.scriptPrefix).toHaveLength(64);
-		expect(parsed.poll.scriptPrefix).toBe('x'.repeat(64));
+		expect(parsed.poll.script).toBe(longScript);
+		expect(parsed.poll.script).toHaveLength(100);
 	});
 
 	it('excludes writers from gate field serialization', () => {
