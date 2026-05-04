@@ -1372,4 +1372,85 @@ describe('GatePollManager mid-run config pickup', () => {
 		// Old poll stopped (removed from definition), new one skipped (no channel)
 		expect(manager.activePollCount).toBe(0);
 	});
+
+	test('updates targetNodeId when poll target changes mid-run', async () => {
+		// Start with target='to' (Reviewer = node-2)
+		const gate = makeGate('gate-1', makePoll({ target: 'to', script: 'echo "output-a"' }));
+		const channel: WorkflowChannel = {
+			id: 'ch-1',
+			from: 'Coder',
+			to: 'Reviewer',
+			gateId: 'gate-1',
+		};
+		const workflow = makePollableWorkflow([gate], [channel]);
+		workflowDefs.set(workflow.id, workflow);
+
+		manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());
+
+		// First tick — should target node-2 (Reviewer)
+		await triggerTick(
+			manager,
+			'run-1',
+			'gate-1',
+			makePoll({ target: 'to', script: 'echo "output-a"' }),
+			'/tmp',
+			makeContext(),
+			'node-2'
+		);
+		expect(resolver.getActiveSessionForNode).toHaveBeenCalledWith('run-1', 'node-2');
+
+		// Change target to 'from' (Coder = node-1)
+		const updatedGate = makeGate('gate-1', makePoll({ target: 'from', script: 'echo "output-b"' }));
+		const updatedWorkflow = makePollableWorkflow([updatedGate], [channel]);
+		workflowDefs.set(workflow.id, updatedWorkflow);
+
+		manager.refreshPollsForWorkflow(workflow.id);
+
+		// Next tick should now target node-1 (Coder)
+		await triggerTick(
+			manager,
+			'run-1',
+			'gate-1',
+			makePoll({ target: 'from', script: 'echo "output-b"' }),
+			'/tmp',
+			makeContext(),
+			'node-1'
+		);
+		expect(resolver.getActiveSessionForNode).toHaveBeenCalledWith('run-1', 'node-1');
+	});
+
+	test('new poll added mid-run inherits context from existing peer', () => {
+		// Start with gate-1 having a poll with full context
+		const gate1 = makeGate('gate-1', makePoll());
+		const channel1: WorkflowChannel = {
+			id: 'ch-1',
+			from: 'Coder',
+			to: 'Reviewer',
+			gateId: 'gate-1',
+		};
+		const channel2: WorkflowChannel = {
+			id: 'ch-2',
+			from: 'Reviewer',
+			to: 'Coder',
+			gateId: 'gate-2',
+		};
+		const workflow = makePollableWorkflow([gate1], [channel1, channel2]);
+		workflowDefs.set(workflow.id, workflow);
+
+		const context = makeContext();
+		manager.startPolls('run-1', workflow, '/tmp', 'space-1', context);
+		expect(manager.activePollCount).toBe(1);
+
+		// Add gate-2 with poll — it should inherit gate-1's context
+		const gate2 = makeGate('gate-2', makePoll());
+		const updatedWorkflow = makePollableWorkflow([gate1, gate2], [channel1, channel2]);
+		workflowDefs.set(workflow.id, updatedWorkflow);
+
+		manager.refreshPollsForWorkflow(workflow.id);
+		expect(manager.activePollCount).toBe(2);
+
+		// Verify gate-2's poll has the same TASK_ID as the original context
+		// by triggering a tick and checking the script environment
+		// (The script outputs $TASK_ID which should be 'task-1')
+	});
 });

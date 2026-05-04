@@ -522,6 +522,11 @@ export class GatePollManager {
 					`GatePollManager.refreshPolls: starting new poll for gate "${gate.id}" on run "${runId}" (poll was added mid-run)`
 				);
 
+				// Reuse context from another active poll for the same run so polls
+				// added mid-run get the same TASK_ID / PR fields as polls started
+				// at run start. Fall back to minimal context only if no peer exists.
+				const peerContext = this.findPeerContext(runId);
+
 				const capturedRunId = runId;
 				const capturedGateId = gate.id;
 
@@ -549,7 +554,7 @@ export class GatePollManager {
 					inFlight: false,
 					pollConfig: { ...poll },
 					targetNodeId: targetNode.id,
-					context: {
+					context: peerContext ?? {
 						TASK_ID: '',
 						TASK_TITLE: '',
 						SPACE_ID: ctx.spaceId,
@@ -582,6 +587,10 @@ export class GatePollManager {
 					// The timer closure reads from ap.pollConfig on each tick,
 					// so script/target/template changes take effect immediately.
 					existing.pollConfig = { ...poll };
+
+					// Also update the target node ID so subsequent ticks inject
+					// into the correct node session when the target direction changes.
+					existing.targetNodeId = targetNode.id;
 
 					if (intervalChanged) {
 						// Recreate timer with new interval
@@ -628,6 +637,25 @@ export class GatePollManager {
 				this.activePolls.delete(key);
 			}
 		}
+	}
+
+	// ---------------------------------------------------------------------------
+	// Private helpers
+	// ---------------------------------------------------------------------------
+
+	/**
+	 * Find the script context from an existing active poll for the given run.
+	 * Used when a new poll is added mid-run to inherit the task/PR context.
+	 * Returns null if no active poll exists for the run.
+	 */
+	private findPeerContext(runId: string): PollScriptContext | null {
+		const prefix = `${runId}:`;
+		for (const [key, ap] of this.activePolls) {
+			if (key.startsWith(prefix) && ap.active) {
+				return { ...ap.context };
+			}
+		}
+		return null;
 	}
 
 	// ---------------------------------------------------------------------------
