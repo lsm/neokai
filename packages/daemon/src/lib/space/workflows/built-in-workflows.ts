@@ -20,7 +20,13 @@
  *   `resolveChannels()` matches node names via the `nodeNameToAgents` lookup.
  */
 
-import type { GateScript, SpaceWorkflow, DeclarativeToolGuard, WorkflowNode } from '@neokai/shared';
+import type {
+	DeclarativeToolGuard,
+	GatePoll,
+	GateScript,
+	SpaceWorkflow,
+	WorkflowNode,
+} from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import { Logger } from '../../logger';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -47,6 +53,30 @@ const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
 	decision: 'deny',
 	reason:
 		'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
+};
+
+// ---------------------------------------------------------------------------
+// Shared gate poll: PR inline review comments
+// ---------------------------------------------------------------------------
+
+/**
+ * Shared poll config that checks for new PR inline review comments.
+ *
+ * Used on gates leading into multi-agent reviewer nodes so that comments
+ * posted during an active review session are surfaced to the reviewers
+ * without requiring a human to relay them.
+ *
+ * Available env vars (injected by GatePollManager):
+ *   PR_URL, PR_NUMBER, REPO_OWNER, REPO_NAME, TASK_ID, SPACE_ID, WORKFLOW_RUN_ID
+ */
+const PR_INLINE_COMMENTS_POLL: GatePoll = {
+	intervalMs: 30_000,
+	script: [
+		'if [ -z "$PR_URL" ]; then exit 0; fi',
+		'gh api "repos/$REPO_OWNER/$REPO_NAME/pulls/$PR_NUMBER/comments" --jq \'.[-1] | "- **" + .user.login + "**: " + .body\'',
+	].join('\n'),
+	target: 'to',
+	messageTemplate: 'New PR inline review comment:\n{{output}}',
 };
 
 const builtInSeederLog = new Logger('seed-built-in-workflows');
@@ -1088,6 +1118,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 				source: PR_READY_BASH_SCRIPT,
 				timeoutMs: 30000,
 			},
+			poll: PR_INLINE_COMMENTS_POLL,
 			resetOnCycle: true,
 		},
 		{
