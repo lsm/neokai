@@ -112,7 +112,7 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
 				resetOnCycle: g.resetOnCycle,
 				fields: (g.fields ?? [])
 					.slice()
-					.sort((a, b) => a.name.localeCompare(b.name))
+					.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
 					.map((f) => ({
 						name: f.name,
 						type: f.type,
