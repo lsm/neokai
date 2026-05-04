@@ -151,6 +151,19 @@ export interface PollSessionResolver {
 	getActiveSessionForNode(runId: string, nodeId: string): string | null;
 }
 
+/**
+ * Callback for resolving the current PR URL for a workflow run.
+ * Used to refresh PR-related context fields on each poll tick so that
+ * polls can discover PR URLs that appear after the run starts (e.g. when
+ * the coder creates a PR during the run).
+ */
+export interface PollPrUrlResolver {
+	/**
+	 * Returns the current PR URL for the given run, or empty string if none.
+	 */
+	getPrUrlForRun(runId: string): Promise<string>;
+}
+
 // ---------------------------------------------------------------------------
 // GatePollManager
 // ---------------------------------------------------------------------------
@@ -197,7 +210,8 @@ export class GatePollManager {
 
 	constructor(
 		private readonly messageInjector: PollMessageInjector,
-		private readonly sessionResolver: PollSessionResolver
+		private readonly sessionResolver: PollSessionResolver,
+		private readonly prUrlResolver?: PollPrUrlResolver
 	) {}
 
 	/**
@@ -379,6 +393,17 @@ export class GatePollManager {
 		activePoll.inFlight = true;
 
 		try {
+			// Refresh PR context from artifact store so polls discover PR URLs
+			// that appear after the run starts (e.g. when coder creates a PR).
+			if (this.prUrlResolver) {
+				try {
+					const freshPrUrl = await this.prUrlResolver.getPrUrlForRun(runId);
+					context = { ...context, ...extractPrContext(freshPrUrl), PR_URL: freshPrUrl };
+				} catch {
+					// Resolver failure should not block the tick
+				}
+			}
+
 			const output = await this.executePollScript(poll.script, workspacePath, context);
 
 			// Bail out if the poll was stopped while the script was executing

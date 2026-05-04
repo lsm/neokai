@@ -449,6 +449,63 @@ describe('GatePollManager', () => {
 		});
 	});
 
+	describe('PR context refresh per tick', () => {
+		test('refreshes PR fields from resolver before each tick', async () => {
+			const prUrlResolver = {
+				getPrUrlForNode: vi.fn(),
+				getPrUrlForRun: vi
+					.fn()
+					.mockResolvedValueOnce('https://github.com/owner/repo/pull/99')
+					.mockResolvedValueOnce('https://github.com/owner/repo/pull/100'),
+			};
+			const managerWithResolver = new GatePollManager(injector, resolver, prUrlResolver);
+
+			const script = 'echo "$PR_URL $PR_NUMBER"';
+			const workflow = makeWorkflowWithPoll({ script });
+			managerWithResolver.startPolls('run-1', workflow, '/tmp', 'space-1', {
+				...makeContext(),
+				PR_URL: '',
+				PR_NUMBER: '',
+				REPO_OWNER: '',
+				REPO_NAME: '',
+			});
+
+			// Tick 1: resolver returns PR 99
+			await triggerTick(
+				managerWithResolver,
+				'run-1',
+				'gate-1',
+				makePoll({ script }),
+				'/tmp',
+				{ ...makeContext(), PR_URL: '', PR_NUMBER: '', REPO_OWNER: '', REPO_NAME: '' },
+				'node-2'
+			);
+			expect(injector.injectSubSessionMessage).toHaveBeenCalledWith(
+				'session-1',
+				'https://github.com/owner/repo/pull/99 99',
+				true
+			);
+
+			// Tick 2: resolver returns PR 100
+			await triggerTick(
+				managerWithResolver,
+				'run-1',
+				'gate-1',
+				makePoll({ script }),
+				'/tmp',
+				{ ...makeContext(), PR_URL: '', PR_NUMBER: '', REPO_OWNER: '', REPO_NAME: '' },
+				'node-2'
+			);
+			expect(injector.injectSubSessionMessage).toHaveBeenCalledWith(
+				'session-1',
+				'https://github.com/owner/repo/pull/100 100',
+				true
+			);
+
+			managerWithResolver.stopAll();
+		});
+	});
+
 	describe('interval validation', () => {
 		test('skips poll with NaN intervalMs', () => {
 			const workflow = makeWorkflowWithPoll({ intervalMs: NaN });

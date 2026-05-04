@@ -418,6 +418,27 @@ export class SpaceRuntime {
 						);
 						return active?.agentSessionId ?? null;
 					},
+				},
+				// PR URL resolver: refreshes PR context on each poll tick so polls
+				// discover PR URLs that appear after the run starts.
+				{
+					getPrUrlForRun: async (runId) => {
+						if (!this.config.artifactRepo) return '';
+						try {
+							const artifacts = this.config.artifactRepo.listByRun(runId);
+							for (let i = artifacts.length - 1; i >= 0; i--) {
+								const data = artifacts[i]?.data;
+								if (!data) continue;
+								const candidate =
+									(typeof data.prUrl === 'string' && data.prUrl) ||
+									(typeof data.pr_url === 'string' && data.pr_url);
+								if (candidate) return candidate;
+							}
+						} catch {
+							// Swallow - PR URL resolution is best-effort
+						}
+						return '';
+					},
 				}
 			);
 		}
