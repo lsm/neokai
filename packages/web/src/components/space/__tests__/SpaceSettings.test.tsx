@@ -54,6 +54,21 @@ vi.mock('../export-import-utils', () => ({
 	downloadBundle: (...args) => mockDownloadBundle(...args),
 }));
 
+vi.mock('../visual-editor/WorkflowModelSelect', () => ({
+	WorkflowModelSelect: ({ value, onChange, testId, className }) => (
+		<select
+			data-testid={testId}
+			value={value ?? ''}
+			onChange={(e) => onChange(e.target.value || undefined)}
+			class={className}
+		>
+			<option value="">-- No override --</option>
+			<option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+			<option value="claude-opus-4">Claude Opus 4</option>
+		</select>
+	),
+}));
+
 vi.mock('../../ui/Button', () => ({
 	Button: ({ children, onClick, type, loading, disabled, variant }) => (
 		<button
@@ -152,6 +167,7 @@ describe('SpaceSettings', () => {
 				instructions: 'Use TypeScript strict mode',
 				backgroundContext: undefined,
 				autonomyLevel: 1,
+				defaultModel: null,
 			});
 		});
 	});
@@ -367,6 +383,7 @@ describe('SpaceSettings', () => {
 				instructions: 'Use strict mode',
 				backgroundContext: 'Bun + Hono',
 				autonomyLevel: 1,
+				defaultModel: null,
 			});
 		});
 	});

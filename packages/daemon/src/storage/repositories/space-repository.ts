@@ -10,6 +10,7 @@ import type {
 	Space,
 	SpaceAutonomyLevel,
 	SpaceConfig,
+	TaskAgentConfig,
 	CreateSpaceParams,
 	UpdateSpaceParams,
 } from '@neokai/shared';
@@ -26,8 +27,8 @@ export class SpaceRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO spaces (id, slug, workspace_path, name, description, background_context, instructions, default_model, allowed_models, session_ids, status, autonomy_level, config, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO spaces (id, slug, workspace_path, name, description, background_context, instructions, default_model, allowed_models, session_ids, status, autonomy_level, config, task_agent_config, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -44,6 +45,7 @@ export class SpaceRepository {
 			'active',
 			params.autonomyLevel ?? 1,
 			params.config ? JSON.stringify(params.config) : null,
+			params.taskAgentConfig ? JSON.stringify(params.taskAgentConfig) : null,
 			now,
 			now
 		);
@@ -161,6 +163,10 @@ export class SpaceRepository {
 		if (params.config !== undefined) {
 			fields.push('config = ?');
 			values.push(JSON.stringify(params.config));
+		}
+		if (params.taskAgentConfig !== undefined) {
+			fields.push('task_agent_config = ?');
+			values.push(params.taskAgentConfig ? JSON.stringify(params.taskAgentConfig) : null);
 		}
 
 		if (fields.length > 0) {
@@ -285,6 +291,10 @@ export class SpaceRepository {
 		const rawModels = JSON.parse((row.allowed_models as string) ?? '[]') as string[];
 		const rawConfig = row.config as string | null;
 		const config = rawConfig ? (JSON.parse(rawConfig) as SpaceConfig) : undefined;
+		const rawTaskAgentConfig = row.task_agent_config as string | null;
+		const taskAgentConfig = rawTaskAgentConfig
+			? (JSON.parse(rawTaskAgentConfig) as TaskAgentConfig)
+			: undefined;
 		return {
 			id: row.id as string,
 			slug: (row.slug as string) ?? '',
@@ -301,6 +311,7 @@ export class SpaceRepository {
 			stopped: (row.stopped as number) === 1,
 			autonomyLevel: ((row.autonomy_level as number) ?? 1) as SpaceAutonomyLevel,
 			config,
+			taskAgentConfig,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
 		};
