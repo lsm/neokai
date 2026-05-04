@@ -7,9 +7,18 @@
  * variables. If the output changes and is non-empty, a message is injected into
  * the target node's agent session.
  *
+ * Mid-run config pickup:
+ * - `refreshPolls()` — re-reads the workflow definition, diffs poll configs, and
+ *   starts/stops/updates poll timers to match the latest definition. Called when a
+ *   `spaceWorkflow.updated` event fires for a workflow with active runs.
+ * - Timer closures read poll config from the `ActivePoll` state object (not from
+ *   captured closure variables), so config changes picked up by `refreshPolls` are
+ *   visible on the next tick without restarting the timer.
+ *
  * Lifecycle:
  * - `startPolls()` — called when a workflow run starts
  * - `stopPolls()` — called when a workflow run reaches a terminal state
+ * - `refreshPolls()` — called when the workflow definition changes mid-run
  * - All state is in-memory only; no DB persistence needed
  */
 
@@ -164,6 +173,19 @@ export interface PollPrUrlResolver {
 	getPrUrlForRun(runId: string): Promise<string>;
 }
 
+/**
+ * Callback for re-reading the current workflow definition.
+ * Used by `refreshPolls` so the manager can detect mid-run poll config
+ * changes without being restarted.
+ */
+export interface PollWorkflowDefProvider {
+	/**
+	 * Returns the current workflow definition for the given workflow ID,
+	 * or null if the workflow no longer exists.
+	 */
+	getWorkflow(workflowId: string): SpaceWorkflow | null;
+}
+
 // ---------------------------------------------------------------------------
 // GatePollManager
 // ---------------------------------------------------------------------------
@@ -186,6 +208,17 @@ interface ActivePoll {
 	 * a script takes longer than the poll interval.
 	 */
 	inFlight: boolean;
+	/**
+	 * Snapshot of the poll config used to start this timer.
+	 * Updated by `refreshPolls` when the config changes mid-run.
+	 */
+	pollConfig: GatePoll;
+	/** The resolved target node ID for this poll. */
+	targetNodeId: string;
+	/** The script context (captured at start/refresh time). */
+	context: PollScriptContext;
+	/** The workspace path for script execution. */
+	workspacePath: string;
 }
 
 export class GatePollManager {
@@ -202,16 +235,19 @@ export class GatePollManager {
 	private runContexts = new Map<
 		string,
 		{
+			workflowId: string;
 			workflow: SpaceWorkflow;
 			workspacePath: string;
 			spaceId: string;
+			scriptContext: PollScriptContext | null;
 		}
 	>();
 
 	constructor(
 		private readonly messageInjector: PollMessageInjector,
 		private readonly sessionResolver: PollSessionResolver,
-		private readonly prUrlResolver?: PollPrUrlResolver
+		private readonly prUrlResolver?: PollPrUrlResolver,
+		private readonly workflowDefProvider?: PollWorkflowDefProvider
 	) {}
 
 	/**
@@ -234,12 +270,19 @@ export class GatePollManager {
 		const gates = workflow.gates ?? [];
 		const polledGates = gates.filter((g) => g.poll);
 
+		// Always store run context so refreshPollsForWorkflow can find this run
+		// even when no gates have poll initially (polls may be added later).
+		this.runContexts.set(runId, {
+			workflowId: workflow.id,
+			workflow,
+			workspacePath,
+			spaceId,
+			scriptContext: { ...scriptContext },
+		});
+
 		if (polledGates.length === 0) {
 			return;
 		}
-
-		// Store run context for later use in tick handlers
-		this.runContexts.set(runId, { workflow, workspacePath, spaceId });
 
 		for (const gate of polledGates) {
 			const poll = gate.poll as GatePoll;
@@ -283,22 +326,20 @@ export class GatePollManager {
 					`(interval=${intervalMs}ms, target=${poll.target}:${targetNodeName})`
 			);
 
-			// Capture context for the closure
-			const capturedContext = { ...scriptContext };
+			// Capture runId and gateId for the closure — these are immutable.
 			const capturedRunId = runId;
 			const capturedGateId = gate.id;
-			const capturedWorkspacePath = workspacePath;
-			const capturedPoll = { ...poll };
-			const capturedTargetNodeId = targetNode.id;
 
 			const timer = setInterval(async () => {
+				const ap = this.activePolls.get(`${capturedRunId}:${capturedGateId}`);
+				if (!ap || !ap.active) return;
 				await this.executePollTick(
 					capturedRunId,
 					capturedGateId,
-					capturedPoll,
-					capturedWorkspacePath,
-					capturedContext,
-					capturedTargetNodeId
+					ap.pollConfig,
+					ap.workspacePath,
+					ap.context,
+					ap.targetNodeId
 				);
 			}, intervalMs);
 
@@ -313,7 +354,16 @@ export class GatePollManager {
 			// This is intentional: after a daemon restart there is no reliable way to
 			// restore lastOutput without DB persistence, and re-injecting on restart
 			// is safer than silently dropping the first poll result.
-			this.activePolls.set(key, { timer, lastOutput: '', active: true, inFlight: false });
+			this.activePolls.set(key, {
+				timer,
+				lastOutput: '',
+				active: true,
+				inFlight: false,
+				pollConfig: { ...poll },
+				targetNodeId: targetNode.id,
+				context: { ...scriptContext },
+				workspacePath,
+			});
 		}
 	}
 
@@ -359,6 +409,265 @@ export class GatePollManager {
 	 */
 	isPollActive(runId: string, gateId: string): boolean {
 		return this.activePolls.has(`${runId}:${gateId}`);
+	}
+
+	/**
+	 * Returns the set of run IDs that are currently being polled (for testing/diagnostics).
+	 */
+	get activeRunIds(): Set<string> {
+		const runIds = new Set<string>();
+		for (const key of this.activePolls.keys()) {
+			const runId = key.split(':')[0];
+			runIds.add(runId);
+		}
+		return runIds;
+	}
+
+	/**
+	 * Returns the workflow ID for a run, or undefined if the run has no active polls.
+	 */
+	getWorkflowIdForRun(runId: string): string | undefined {
+		return this.runContexts.get(runId)?.workflowId;
+	}
+
+	// ---------------------------------------------------------------------------
+	// Mid-run config refresh
+	// ---------------------------------------------------------------------------
+
+	/**
+	 * Refresh polls for all active runs that use the given workflow.
+	 *
+	 * Called when a `spaceWorkflow.updated` event fires. For each active run
+	 * belonging to the updated workflow, this method:
+	 *   1. Re-reads the latest workflow definition
+	 *   2. Diffs gate poll configs against currently active polls
+	 *   3. Starts new polls, stops removed polls, updates changed polls
+	 *
+	 * If `workflowDefProvider` was not provided at construction time, this is a no-op.
+	 */
+	refreshPollsForWorkflow(workflowId: string): void {
+		if (!this.workflowDefProvider) return;
+
+		// Find all active runs for this workflow
+		for (const [runId, ctx] of this.runContexts) {
+			if (ctx.workflowId !== workflowId) continue;
+			this.refreshPollsForRun(runId);
+		}
+	}
+
+	/**
+	 * Refresh polls for a single run by re-reading the latest workflow definition.
+	 *
+	 * Handles three cases:
+	 * - Poll added to a gate → start a new timer
+	 * - Poll removed from a gate → stop the timer
+	 * - Poll config changed (interval, script, target) → update the timer
+	 *
+	 * No-op if the run is not tracked or the workflow no longer exists.
+	 */
+	refreshPollsForRun(runId: string): void {
+		const ctx = this.runContexts.get(runId);
+		if (!ctx) return;
+
+		const latestWorkflow = this.workflowDefProvider?.getWorkflow(ctx.workflowId);
+		if (!latestWorkflow) {
+			log.warn(
+				`GatePollManager: workflow "${ctx.workflowId}" no longer exists during refresh for run "${runId}" — keeping existing polls`
+			);
+			return;
+		}
+
+		// Update the cached workflow in runContexts
+		ctx.workflow = latestWorkflow;
+
+		const latestGates = latestWorkflow.gates ?? [];
+		const latestPolledGateIds = new Set<string>();
+
+		// Start or update polls for gates that now have poll config
+		for (const gate of latestGates) {
+			if (!gate.poll) continue;
+
+			const poll = gate.poll as GatePoll;
+			const key = `${runId}:${gate.id}`;
+			const existing = this.activePolls.get(key);
+
+			// Validate interval
+			if (
+				typeof poll.intervalMs !== 'number' ||
+				!Number.isFinite(poll.intervalMs) ||
+				poll.intervalMs <= 0
+			) {
+				log.warn(
+					`GatePollManager.refreshPolls: skipping gate "${gate.id}" — invalid intervalMs: ${poll.intervalMs}`
+				);
+				continue;
+			}
+
+			const intervalMs = Math.max(poll.intervalMs, MIN_POLL_INTERVAL_MS);
+
+			// Resolve target node
+			const targetNodeName = resolveTargetNodeName(gate.id, latestWorkflow, poll.target);
+			if (!targetNodeName) {
+				log.warn(
+					`GatePollManager.refreshPolls: skipping gate "${gate.id}" — no channel references this gate`
+				);
+				continue;
+			}
+			const targetNode = latestWorkflow.nodes.find((n) => n.name === targetNodeName);
+			if (!targetNode) {
+				log.warn(
+					`GatePollManager.refreshPolls: skipping gate "${gate.id}" — target node "${targetNodeName}" not found`
+				);
+				continue;
+			}
+
+			// Only mark as successfully polled after validation passes
+			latestPolledGateIds.add(gate.id);
+			if (!existing) {
+				// NEW: poll was added to this gate — start a new timer
+				log.info(
+					`GatePollManager.refreshPolls: starting new poll for gate "${gate.id}" on run "${runId}" (poll was added mid-run)`
+				);
+
+				// Reuse context from another active poll for the same run so polls
+				// added mid-run get the same TASK_ID / PR fields as polls started
+				// at run start. Fall back to minimal context only if no peer exists.
+				const peerContext = this.findPeerContext(runId);
+
+				const capturedRunId = runId;
+				const capturedGateId = gate.id;
+
+				const timer = setInterval(async () => {
+					const ap = this.activePolls.get(`${capturedRunId}:${capturedGateId}`);
+					if (!ap || !ap.active) return;
+					await this.executePollTick(
+						capturedRunId,
+						capturedGateId,
+						ap.pollConfig,
+						ap.workspacePath,
+						ap.context,
+						ap.targetNodeId
+					);
+				}, intervalMs);
+
+				if (timer.unref) {
+					timer.unref();
+				}
+
+				this.activePolls.set(key, {
+					timer,
+					lastOutput: '',
+					active: true,
+					inFlight: false,
+					pollConfig: { ...poll },
+					targetNodeId: targetNode.id,
+					context: peerContext ?? {
+						TASK_ID: '',
+						TASK_TITLE: '',
+						SPACE_ID: ctx.spaceId,
+						PR_URL: '',
+						PR_NUMBER: '',
+						REPO_OWNER: '',
+						REPO_NAME: '',
+						WORKFLOW_RUN_ID: runId,
+					},
+					workspacePath: ctx.workspacePath,
+				});
+			} else {
+				// Always update target node ID since channel endpoints may
+				// have been rewired even if poll config is unchanged.
+				existing.targetNodeId = targetNode.id;
+
+				// EXISTING: check if config changed
+				const configChanged =
+					existing.pollConfig.intervalMs !== poll.intervalMs ||
+					existing.pollConfig.script !== poll.script ||
+					existing.pollConfig.target !== poll.target ||
+					existing.pollConfig.messageTemplate !== poll.messageTemplate;
+
+				if (configChanged) {
+					log.info(
+						`GatePollManager.refreshPolls: updating poll for gate "${gate.id}" on run "${runId}" (config changed mid-run)`
+					);
+
+					// If interval changed, we need to recreate the timer
+					const intervalChanged =
+						Math.max(existing.pollConfig.intervalMs, MIN_POLL_INTERVAL_MS) !== intervalMs;
+
+					// Update the poll config on the existing ActivePoll.
+					// The timer closure reads from ap.pollConfig on each tick,
+					// so script/target/template changes take effect immediately.
+					existing.pollConfig = { ...poll };
+
+					if (intervalChanged) {
+						// Recreate timer with new interval
+						clearInterval(existing.timer);
+
+						const capturedRunId = runId;
+						const capturedGateId = gate.id;
+
+						const timer = setInterval(async () => {
+							const ap = this.activePolls.get(`${capturedRunId}:${capturedGateId}`);
+							if (!ap || !ap.active) return;
+							await this.executePollTick(
+								capturedRunId,
+								capturedGateId,
+								ap.pollConfig,
+								ap.workspacePath,
+								ap.context,
+								ap.targetNodeId
+							);
+						}, intervalMs);
+
+						if (timer.unref) {
+							timer.unref();
+						}
+
+						existing.timer = timer;
+					}
+				}
+				// If config didn't change, no action needed
+			}
+		}
+
+		// Stop polls for gates that no longer have poll config
+		const prefix = `${runId}:`;
+		for (const [key, ap] of this.activePolls) {
+			if (!key.startsWith(prefix)) continue;
+			const gateId = key.slice(prefix.length);
+			if (!latestPolledGateIds.has(gateId)) {
+				log.info(
+					`GatePollManager.refreshPolls: stopping poll for gate "${gateId}" on run "${runId}" (poll was removed mid-run)`
+				);
+				ap.active = false;
+				clearInterval(ap.timer);
+				this.activePolls.delete(key);
+			}
+		}
+	}
+
+	// ---------------------------------------------------------------------------
+	// Private helpers
+	// ---------------------------------------------------------------------------
+
+	/**
+	 * Find the script context from an existing active poll for the given run.
+	 * Used when a new poll is added mid-run to inherit the task/PR context.
+	 * Returns null if no active poll exists for the run.
+	 */
+	private findPeerContext(runId: string): PollScriptContext | null {
+		const prefix = `${runId}:`;
+		for (const [key, ap] of this.activePolls) {
+			if (key.startsWith(prefix) && ap.active) {
+				return { ...ap.context };
+			}
+		}
+		// No active peer — fall back to the script context stored when the run started.
+		const ctx = this.runContexts.get(runId);
+		if (ctx?.scriptContext) {
+			return { ...ctx.scriptContext };
+		}
+		return null;
 	}
 
 	// ---------------------------------------------------------------------------

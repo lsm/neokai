@@ -394,6 +394,21 @@ export class SpaceRuntime {
 	}
 
 	/**
+	 * Notify the runtime that a workflow definition has changed.
+	 *
+	 * Called when a `spaceWorkflow.updated` DaemonHub event fires. Delegates to
+	 * `GatePollManager.refreshPollsForWorkflow`, which re-reads the latest
+	 * workflow definition, diffs poll configs against active timers, and
+	 * starts/stops/updates polls as needed.
+	 *
+	 * No-op when GatePollManager is not initialized (no taskAgentManager).
+	 */
+	onWorkflowDefChanged(workflowId: string): void {
+		if (!this.pollManager) return;
+		this.pollManager.refreshPollsForWorkflow(workflowId);
+	}
+
+	/**
 	 * Wire a TaskAgentManager into the runtime after construction.
 	 *
 	 * Called after construction to resolve the circular dependency:
@@ -439,6 +454,11 @@ export class SpaceRuntime {
 						}
 						return '';
 					},
+				},
+				// Workflow definition provider: enables mid-run poll config pickup
+				// by re-reading the latest workflow definition from the DB.
+				{
+					getWorkflow: (workflowId) => this.config.spaceWorkflowManager.getWorkflow(workflowId),
 				}
 			);
 		}
