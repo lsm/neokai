@@ -1453,11 +1453,57 @@ describe('GatePollManager mid-run config pickup', () => {
 		// by triggering a tick and checking the script environment
 		// (The script outputs $TASK_ID which should be 'task-1')
 	});
-});
 
-// ---------------------------------------------------------------------------
-// Context inheritance for empty-run polls
-// ---------------------------------------------------------------------------
+	test('updates targetNodeId when channel endpoint changes without poll config change', async () => {
+		// Start with channel from Coder -> Reviewer (target=to => node-2)
+		const gate = makeGate('gate-1', makePoll({ script: 'echo output-a' }));
+		const channel: WorkflowChannel = {
+			id: 'ch-1',
+			from: 'Coder',
+			to: 'Reviewer',
+			gateId: 'gate-1',
+		};
+		const workflow = makePollableWorkflow([gate], [channel]);
+		workflowDefs.set(workflow.id, workflow);
+
+		manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());
+
+		// First tick targets node-2 (Reviewer)
+		await triggerTick(
+			manager,
+			'run-1',
+			'gate-1',
+			makePoll({ script: 'echo output-a' }),
+			'/tmp',
+			makeContext(),
+			'node-2'
+		);
+		expect(resolver.getActiveSessionForNode).toHaveBeenCalledWith('run-1', 'node-2');
+
+		// Change channel endpoint: from Reviewer -> Coder
+		// Same poll config, different channel wiring => target node changes
+		const updatedChannel: WorkflowChannel = {
+			id: 'ch-1',
+			from: 'Reviewer',
+			to: 'Coder',
+			gateId: 'gate-1',
+		};
+		const updatedGate = makeGate('gate-1', makePoll({ script: 'echo output-a' }));
+		const updatedWorkflow = makePollableWorkflow([updatedGate], [updatedChannel]);
+		workflowDefs.set(workflow.id, updatedWorkflow);
+
+		manager.refreshPollsForWorkflow(workflow.id);
+
+		// Verify the ActivePoll's targetNodeId was updated to node-1 (Coder)
+		// even though poll config (script, interval, target, template) is identical
+		const activePolls = (manager as Record<string, unknown>).activePolls as Map<
+			string,
+			{ targetNodeId: string }
+		>;
+		const ap = activePolls.get('run-1:gate-1');
+		expect(ap?.targetNodeId).toBe('node-1');
+	});
+});
 
 describe('GatePollManager context inheritance for empty runs', () => {
 	let injector: PollMessageInjector;

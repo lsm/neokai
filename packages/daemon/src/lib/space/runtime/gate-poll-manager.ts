@@ -574,6 +574,10 @@ export class GatePollManager {
 					workspacePath: ctx.workspacePath,
 				});
 			} else {
+				// Always update target node ID since channel endpoints may
+				// have been rewired even if poll config is unchanged.
+				existing.targetNodeId = targetNode.id;
+
 				// EXISTING: check if config changed
 				const configChanged =
 					existing.pollConfig.intervalMs !== poll.intervalMs ||
@@ -594,10 +598,6 @@ export class GatePollManager {
 					// The timer closure reads from ap.pollConfig on each tick,
 					// so script/target/template changes take effect immediately.
 					existing.pollConfig = { ...poll };
-
-					// Also update the target node ID so subsequent ticks inject
-					// into the correct node session when the target direction changes.
-					existing.targetNodeId = targetNode.id;
 
 					if (intervalChanged) {
 						// Recreate timer with new interval
