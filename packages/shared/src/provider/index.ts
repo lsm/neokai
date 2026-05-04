@@ -24,4 +24,13 @@ export type {
 	ProviderRefreshResponse,
 	ListProviderAuthStatusResponse,
 	OAuthFlowData,
+	GeminiAccountStatus,
+	GeminiAccountInfo,
+	ListGeminiAccountsResponse,
+	StartGeminiOAuthRequest,
+	StartGeminiOAuthResponse,
+	CompleteGeminiOAuthRequest,
+	CompleteGeminiOAuthResponse,
+	RemoveGeminiAccountRequest,
+	RemoveGeminiAccountResponse,
 } from './auth-types.js';
