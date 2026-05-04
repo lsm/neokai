@@ -380,6 +380,95 @@ describe('GatePollManager', () => {
 		});
 	});
 
+	describe('overlapping tick prevention', () => {
+		test('skips tick when previous tick is still in flight', async () => {
+			const workflow = makeWorkflowWithPoll({ script: 'sleep 0.1 && echo "slow output"' });
+			manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());
+
+			// Start a slow tick (don't await it yet)
+			const slowTick = triggerTick(
+				manager,
+				'run-1',
+				'gate-1',
+				makePoll({ script: 'sleep 0.1 && echo "slow output"' }),
+				'/tmp',
+				makeContext(),
+				'node-2'
+			);
+
+			// Immediately trigger a second tick — should be skipped
+			await triggerTick(
+				manager,
+				'run-1',
+				'gate-1',
+				makePoll({ script: 'echo "fast output"' }),
+				'/tmp',
+				makeContext(),
+				'node-2'
+			);
+
+			// Wait for the slow tick to finish
+			await slowTick;
+
+			// Only one injection should have occurred (from the slow tick)
+			expect(injector.injectSubSessionMessage).toHaveBeenCalledTimes(1);
+			expect(injector.injectSubSessionMessage).toHaveBeenCalledWith(
+				'session-1',
+				'slow output',
+				true
+			);
+		});
+
+		test('allows tick after previous tick completes', async () => {
+			const workflow = makeWorkflowWithPoll({ script: 'echo "first"' });
+			manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());
+
+			// First tick completes
+			await triggerTick(
+				manager,
+				'run-1',
+				'gate-1',
+				makePoll({ script: 'echo "first"' }),
+				'/tmp',
+				makeContext(),
+				'node-2'
+			);
+			expect(injector.injectSubSessionMessage).toHaveBeenCalledTimes(1);
+
+			// Second tick with different output should be allowed
+			await triggerTick(
+				manager,
+				'run-1',
+				'gate-1',
+				makePoll({ script: 'echo "second"' }),
+				'/tmp',
+				makeContext(),
+				'node-2'
+			);
+			expect(injector.injectSubSessionMessage).toHaveBeenCalledTimes(2);
+		});
+	});
+
+	describe('interval validation', () => {
+		test('skips poll with NaN intervalMs', () => {
+			const workflow = makeWorkflowWithPoll({ intervalMs: NaN });
+			manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());
+			expect(manager.activePollCount).toBe(0);
+		});
+
+		test('skips poll with negative intervalMs', () => {
+			const workflow = makeWorkflowWithPoll({ intervalMs: -1000 });
+			manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());
+			expect(manager.activePollCount).toBe(0);
+		});
+
+		test('skips poll with zero intervalMs', () => {
+			const workflow = makeWorkflowWithPoll({ intervalMs: 0 });
+			manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());
+			expect(manager.activePollCount).toBe(0);
+		});
+	});
+
 	describe('poll tick execution', () => {
 		test('executes script and injects message when output changes', async () => {
 			const workflow = makeWorkflowWithPoll({ script: 'echo "new output"' });

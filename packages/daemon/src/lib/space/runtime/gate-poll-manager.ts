@@ -168,6 +168,11 @@ interface ActivePoll {
 	 * before clearing the interval, so in-flight ticks can bail out early.
 	 */
 	active: boolean;
+	/**
+	 * Whether a tick is currently executing. Prevents overlapping ticks when
+	 * a script takes longer than the poll interval.
+	 */
+	inFlight: boolean;
 }
 
 export class GatePollManager {
@@ -226,6 +231,18 @@ export class GatePollManager {
 			const poll = gate.poll as GatePoll;
 			const key = `${runId}:${gate.id}`;
 
+			// Validate interval — skip polls with malformed intervalMs (e.g. NaN, string)
+			if (
+				typeof poll.intervalMs !== 'number' ||
+				!Number.isFinite(poll.intervalMs) ||
+				poll.intervalMs <= 0
+			) {
+				log.warn(
+					`GatePollManager: skipping poll for gate "${gate.id}" — invalid intervalMs: ${poll.intervalMs}`
+				);
+				continue;
+			}
+
 			// Enforce minimum interval
 			const intervalMs = Math.max(poll.intervalMs, MIN_POLL_INTERVAL_MS);
 
@@ -282,7 +299,7 @@ export class GatePollManager {
 			// This is intentional: after a daemon restart there is no reliable way to
 			// restore lastOutput without DB persistence, and re-injecting on restart
 			// is safer than silently dropping the first poll result.
-			this.activePolls.set(key, { timer, lastOutput: '', active: true });
+			this.activePolls.set(key, { timer, lastOutput: '', active: true, inFlight: false });
 		}
 	}
 
@@ -352,6 +369,15 @@ export class GatePollManager {
 			return;
 		}
 
+		// Prevent overlapping ticks - skip if a previous tick is still executing
+		if (activePoll.inFlight) {
+			log.debug(
+				`GatePollManager: skipping poll tick for gate "${gateId}" on run "${runId}" - previous tick still in flight`
+			);
+			return;
+		}
+		activePoll.inFlight = true;
+
 		try {
 			const output = await this.executePollScript(poll.script, workspacePath, context);
 
@@ -397,6 +423,10 @@ export class GatePollManager {
 				`GatePollManager: poll tick error for gate "${gateId}" on run "${runId}": ` +
 					`${err instanceof Error ? err.message : String(err)}`
 			);
+		} finally {
+			// Always clear inFlight so the next tick can execute
+			const ap = this.activePolls.get(`${runId}:${gateId}`);
+			if (ap) ap.inFlight = false;
 		}
 	}
 
