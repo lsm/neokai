@@ -389,6 +389,22 @@ export class SpaceRuntimeService {
 		);
 		this.unsubscribers.push(unsubCreated);
 
+		// When a workflow definition is updated, refresh gate poll timers for
+		// all active runs using that workflow so mid-run config changes are
+		// picked up without requiring a task restart.
+		const unsubWorkflowUpdated = daemonHub.on(
+			'spaceWorkflow.updated',
+			(event) => {
+				try {
+					this.runtime.onWorkflowDefChanged(event.workflow.id);
+				} catch (err) {
+					log.error(`Failed to refresh gate polls for workflow ${event.workflow.id}:`, err);
+				}
+			},
+			{ sessionId: 'global' }
+		);
+		this.unsubscribers.push(unsubWorkflowUpdated);
+
 		// When any new session is created with `context.spaceId`, attach the
 		// shared Space coordination tools. The space-chat session itself is
 		// handled by `setupSpaceAgentSession` (it also sets the system prompt);
