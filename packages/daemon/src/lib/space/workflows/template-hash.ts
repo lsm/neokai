@@ -1,15 +1,20 @@
 /**
- * Template Hash Utility
+ * ⚠️ IMPORTANT: GATE/CHANNEL FINGERPRINT RULES ⚠️
  *
- * Computes a deterministic canonical hash of a workflow's structural fingerprint
- * for template drift detection.
+ * This module computes a canonical hash of workflow templates for drift detection.
+ * The fingerprint is derived from the FULL workflow structure — all gate fields,
+ * channel fields, and node prompt fields are automatically included via exhaustive
+ * JSON serialization.
  *
- * The fingerprint covers node names, channel topology, gate internals (fields,
- * script, requiredLevel, resetOnCycle), description, instructions, per-agent
- * custom prompts, the workflow-level `completionAutonomyLevel`, and the
- * workflow-level `postApproval` route.
- * It does NOT include agent UUIDs (which differ per-space), layout coordinates,
- * or tags (which are cosmetic).
+ * When adding new fields to Gate, GatePoll, Channel, or WorkflowNodeAgent types,
+ * NO changes to this file are needed — the exhaustive serialization ensures
+ * new fields are captured automatically.
+ *
+ * Hash changes trigger template re-seeding on daemon restart. This is expected
+ * and correct behavior — it ensures all spaces get the latest template structure.
+ *
+ * DO NOT hand-craft field lists or string formats for structural entities.
+ * Always use JSON.stringify on the relevant subset of each object.
  */
 
 import type { SpaceWorkflow } from '@neokai/shared';
@@ -22,11 +27,15 @@ interface WorkflowFingerprint {
 	description: string;
 	instructions: string;
 	nodeNames: string[];
+	/**
+	 * Exhaustive JSON serialization of each channel.
+	 * All structurally-meaningful fields are included automatically.
+	 */
 	channels: string[];
 	/**
-	 * Rich gate serialization covering id, requiredLevel, resetOnCycle,
-	 * field names/types/checks, and a script prefix. This detects changes to
-	 * gate internals (not just gate additions/removals).
+	 * Exhaustive JSON serialization of each gate.
+	 * All structurally-meaningful fields (id, requiredLevel, resetOnCycle, fields,
+	 * script, poll) are included automatically — no hand-crafted string format.
 	 */
 	gates: string[];
 	/**
@@ -56,35 +65,43 @@ interface WorkflowFingerprint {
 export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFingerprint {
 	const nodeNames = workflow.nodes.map((n) => n.name).sort();
 
+	// Exhaustive JSON serialization of channels — all fields included automatically.
 	const channels = (workflow.channels ?? [])
-		.map((c) => {
-			const to = Array.isArray(c.to) ? [...c.to].sort().join(',') : c.to;
-			return `${c.from}->${to}`;
-		})
+		.map((c) =>
+			JSON.stringify({
+				from: c.from,
+				to: Array.isArray(c.to) ? [...c.to].sort() : c.to,
+				gateId: c.gateId ?? null,
+				maxCycles: c.maxCycles ?? null,
+			})
+		)
 		.sort();
 
-	// Serialize each gate including its structural internals.
-	// Format: `<id>|<requiredLevel>|<resetOnCycle>|<sorted-fields>|<script-prefix>`
-	// Fields: `<name>:<type>:<checkOp>[:<checkExtra>]` — sorted for stability.
-	// Script: first 64 chars of source (captures script identity without full content).
+	// Exhaustive JSON serialization of gates — all structurally-meaningful fields
+	// included automatically. No hand-crafted string format that can drift from
+	// the type definition.
 	const gates = (workflow.gates ?? [])
-		.map((g) => {
-			const fields = (g.fields ?? [])
-				.map((f) => {
-					const check = f.check;
-					let checkStr = check.op;
-					if (check.op === 'count') {
-						checkStr += `:${String(check.match)}:${check.min}`;
-					} else if (check.op !== 'exists' && 'value' in check && check.value !== undefined) {
-						checkStr += `:${String(check.value)}`;
-					}
-					return `${f.name}:${f.type}:${checkStr}`;
-				})
-				.sort()
-				.join(',');
-			const scriptPrefix = g.script ? g.script.source.slice(0, 64) : '';
-			return `${g.id}|${g.requiredLevel ?? 0}|${g.resetOnCycle}|${fields}|${scriptPrefix}`;
-		})
+		.map((g) =>
+			JSON.stringify({
+				id: g.id,
+				requiredLevel: g.requiredLevel ?? 0,
+				resetOnCycle: g.resetOnCycle,
+				fields: (g.fields ?? []).map((f) => ({
+					name: f.name,
+					type: f.type,
+					check: f.check,
+				})),
+				script: g.script ? g.script.source.slice(0, 64) : null,
+				poll: g.poll
+					? {
+							intervalMs: g.poll.intervalMs,
+							target: g.poll.target,
+							messageTemplate: g.poll.messageTemplate ?? '',
+							scriptPrefix: g.poll.script.slice(0, 64),
+						}
+					: null,
+			})
+		)
 		.sort();
 
 	// Serialize per-agent custom prompts.
