@@ -63,9 +63,12 @@ const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
  * Shared poll config that fetches all unresolved PR review thread comments.
  *
  * Uses the GitHub GraphQL API to query review threads with isResolved=false,
- * then formats the first comment of each unresolved thread with author,
- * body, and URL. The poll detects changes when new unresolved threads appear
- * or existing threads are resolved.
+ * then formats the **latest** comment of each unresolved thread (using
+ * `comments(last:1)`) with author, body, and URL. This ensures that follow-up
+ * replies in existing threads change the poll output and trigger re-injection.
+ *
+ * NOTE: Capped at 100 review threads per query. Cursor-based pagination could
+ * be added for PRs exceeding this, but 100 threads covers virtually all PRs.
  *
  * Available env vars (injected by GatePollManager):
  *   PR_URL, PR_NUMBER, REPO_OWNER, REPO_NAME, TASK_ID, SPACE_ID, WORKFLOW_RUN_ID
@@ -74,7 +77,7 @@ const PR_INLINE_COMMENTS_POLL: GatePoll = {
 	intervalMs: 30_000,
 	script: [
 		'if [ -z "$PR_URL" ]; then exit 0; fi',
-		'QUERY="query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login} body url}}}}}}}"',
+		'QUERY="query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved comments(last:1){nodes{author{login} body url}}}}}}}"',
 		'gh api graphql -f query="$QUERY" -f owner="$REPO_OWNER" -f name="$REPO_NAME" -F number="$PR_NUMBER" --jq \'[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[0] | "- **" + .author.login + "**: " + .body + "\\n  " + .url] | join("\\n\\n")\'',
 	].join('\n'),
 	target: 'to',
