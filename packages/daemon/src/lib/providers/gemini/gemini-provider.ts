@@ -26,6 +26,7 @@ import type { ModelInfo } from '@neokai/shared';
 import { createLogger } from '@neokai/shared/logger';
 import {
 	buildAuthUrlWithRedirect,
+	getOAuthClientId,
 	exchangeAuthCode,
 	fetchUserInfo,
 	loadAccounts,
@@ -126,7 +127,14 @@ export class GeminiOAuthProvider implements Provider {
 	async isAvailable(): Promise<boolean> {
 		try {
 			const accounts = await loadAccounts();
-			return accounts.some((a) => a.status !== 'invalid');
+			if (!accounts.some((a) => a.status !== 'invalid')) return false;
+			// Verify OAuth client env vars are configured
+			try {
+				getOAuthClientId();
+				return true;
+			} catch {
+				return false;
+			}
 		} catch {
 			return false;
 		}
@@ -385,7 +393,11 @@ export class GeminiOAuthProvider implements Provider {
 
 			this._pendingCodeVerifier = undefined;
 			this._pendingOAuthState = undefined;
-			this.stopOAuthCallbackServer();
+			// Only shut down the server if this flow still owns it
+			if (this._activeCallbackFlowId === flowId) {
+				this.stopOAuthCallbackServer();
+				this._activeCallbackFlowId = undefined;
+			}
 
 			const tokenResponse = await exchangeAuthCode(code, codeVerifier, this._deps, redirectUri);
 
