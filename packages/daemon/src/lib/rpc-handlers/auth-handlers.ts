@@ -43,8 +43,27 @@ import {
 
 const log = new Logger('auth-handlers');
 
+/** TTL for pending OAuth flows — 10 minutes. */
+const FLOW_TTL_MS = 10 * 60 * 1000;
+
+interface PendingFlow {
+	codeVerifier: string;
+	reauthAccountId?: string;
+	createdAt: number;
+}
+
 /** Active OAuth code verifiers keyed by a flow ID. */
-const pendingFlows = new Map<string, { codeVerifier: string; reauthAccountId?: string }>();
+const pendingFlows = new Map<string, PendingFlow>();
+
+/** Evict expired flows (called lazily on start/complete). */
+function evictExpiredFlows(): void {
+	const now = Date.now();
+	for (const [id, flow] of pendingFlows) {
+		if (now - flow.createdAt > FLOW_TTL_MS) {
+			pendingFlows.delete(id);
+		}
+	}
+}
 
 /**
  * Convert a GoogleOAuthAccount to a GeminiAccountInfo (strips sensitive tokens).
@@ -265,22 +284,28 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
 	 * Generates an auth URL with the headless redirect URI and stores the
 	 * PKCE code verifier for later exchange. Returns the URL for the UI
 	 * to display to the user.
+	 *
+	 * Note: Flows are held in-process only; a daemon restart mid-flow
+	 * will lose the pending verifier and the user must start a new flow.
 	 */
 	messageHub.onRequest(
 		'auth.gemini.startOAuth',
 		async (req: StartGeminiOAuthRequest): Promise<StartGeminiOAuthResponse> => {
+			evictExpiredFlows();
 			try {
 				const { authUrl, codeVerifier } = await buildAuthUrl();
 				const flowId = crypto.randomUUID();
 				pendingFlows.set(flowId, {
 					codeVerifier,
 					reauthAccountId: req.accountId,
+					createdAt: Date.now(),
 				});
 
 				return {
 					success: true,
 					authUrl,
-					message: flowId,
+					flowId,
+					message: 'Visit the URL to authorize your Google account, then paste the auth code.',
 				};
 			} catch (error) {
 				log.error('Failed to start Gemini OAuth flow:', error);
@@ -296,7 +321,8 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
 	 * Complete a Gemini OAuth flow by exchanging the auth code for tokens.
 	 *
 	 * The flow ID maps to the stored PKCE verifier. After successful exchange,
-	 * the account is persisted and the flow is cleaned up.
+	 * the account is persisted and the flow is cleaned up. The in-memory
+	 * rotation manager is kept in sync so sessions pick up changes immediately.
 	 */
 	messageHub.onRequest(
 		'auth.gemini.completeOAuth',
@@ -319,6 +345,15 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
 				};
 			}
 
+			// Check TTL
+			if (Date.now() - flow.createdAt > FLOW_TTL_MS) {
+				pendingFlows.delete(flowId);
+				return {
+					success: false,
+					error: 'OAuth flow expired. Please start a new one.',
+				};
+			}
+
 			try {
 				const tokenResponse = await exchangeAuthCode(authCode, flow.codeVerifier);
 
@@ -332,30 +367,50 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
 
 				const userInfo = await fetchUserInfo(tokenResponse.access_token);
 
+				// Helper to sync the rotation manager with the updated account list
+				const syncRotationManager = async () => {
+					const registry = getProviderRegistry();
+					const provider = registry.get('google-gemini-oauth');
+					if (provider && 'getRotationManager' in provider) {
+						const rm = (
+							provider as { getRotationManager: () => { initialize: () => Promise<void> } }
+						).getRotationManager();
+						await rm.initialize();
+					}
+				};
+
 				// If this is a re-auth flow, update the existing account
 				if (flow.reauthAccountId) {
+					await updateAccount(flow.reauthAccountId, {
+						refresh_token: tokenResponse.refresh_token,
+						status: 'active',
+						cooldown_until: 0,
+					});
+					pendingFlows.delete(flowId);
+					await syncRotationManager();
+					log.info(`Re-authenticated Google account: ${userInfo.email}`);
 					const accounts = await loadAccounts();
-					const existing = accounts.find((a) => a.id === flow.reauthAccountId);
-					if (existing) {
-						await updateAccount(flow.reauthAccountId, {
-							refresh_token: tokenResponse.refresh_token,
-							status: 'active',
-							cooldown_until: 0,
-						});
-						const updated = (await loadAccounts()).find((a) => a.id === flow.reauthAccountId);
-						pendingFlows.delete(flowId);
-						log.info(`Re-authenticated Google account: ${userInfo.email}`);
-						return {
-							success: true,
-							account: updated ? accountToInfo(updated) : undefined,
-						};
-					}
+					const updated = accounts.find((a) => a.id === flow.reauthAccountId);
+					return {
+						success: true,
+						account: updated ? accountToInfo(updated) : undefined,
+					};
 				}
 
-				// New account
+				// New account — check for duplicate email
+				const existingAccounts = await loadAccounts();
+				if (existingAccounts.some((a) => a.email === userInfo.email)) {
+					pendingFlows.delete(flowId);
+					return {
+						success: false,
+						error: `Account ${userInfo.email} already exists. Remove it first or use re-authenticate.`,
+					};
+				}
+
 				const account = createAccount(userInfo.email, tokenResponse.refresh_token);
 				await persistAddAccount(account);
 				pendingFlows.delete(flowId);
+				await syncRotationManager();
 
 				log.info(`Added Google account via headless OAuth: ${userInfo.email}`);
 				return {
@@ -381,6 +436,17 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
 		async (req: RemoveGeminiAccountRequest): Promise<RemoveGeminiAccountResponse> => {
 			try {
 				await persistRemoveAccount(req.accountId);
+				// Sync the in-memory rotation manager so active sessions stop using this account
+				const registry = getProviderRegistry();
+				const provider = registry.get('google-gemini-oauth');
+				if (provider && 'getRotationManager' in provider) {
+					const rm = (
+						provider as {
+							getRotationManager: () => { removeAccount: (id: string) => Promise<void> };
+						}
+					).getRotationManager();
+					await rm.removeAccount(req.accountId);
+				}
 				log.info(`Removed Gemini OAuth account: ${req.accountId}`);
 				return { success: true };
 			} catch (error) {

@@ -196,18 +196,6 @@ export function ProvidersSettings() {
 										</span>
 									)}
 								</div>
-								{!geminiProvider.isAuthenticated && (
-									<Button
-										variant="secondary"
-										size="xs"
-										disabled={!!pendingProvider}
-										onClick={() => {
-											// The GeminiAccountsPanel's Add button handles the actual OAuth
-										}}
-									>
-										Setup
-									</Button>
-								)}
 							</div>
 							{geminiProvider.error && (
 								<p class="text-xs text-red-400 mb-2">{geminiProvider.error}</p>

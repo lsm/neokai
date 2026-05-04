@@ -106,7 +106,7 @@ export function GeminiAccountsPanel() {
 			const response = await startGeminiOAuth();
 			if (response.success && response.authUrl) {
 				setOauthAuthUrl(response.authUrl);
-				setOauthFlowId(response.message || '');
+				setOauthFlowId(response.flowId || '');
 				setShowAddModal(true);
 			} else {
 				toast.error(response.error || 'Failed to start OAuth flow');
@@ -124,7 +124,7 @@ export function GeminiAccountsPanel() {
 			const response = await startGeminiOAuth(account.id);
 			if (response.success && response.authUrl) {
 				setOauthAuthUrl(response.authUrl);
-				setOauthFlowId(response.message || '');
+				setOauthFlowId(response.flowId || '');
 				setShowAddModal(true);
 			} else {
 				toast.error(response.error || 'Failed to start re-authentication');

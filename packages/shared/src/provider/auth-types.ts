@@ -161,7 +161,9 @@ export interface StartGeminiOAuthResponse {
 	success: boolean;
 	/** Auth URL for the user to visit */
 	authUrl?: string;
-	/** Code verifier (stored server-side for exchange) */
+	/** Flow ID used to correlate start → complete (passed back in completeOAuth) */
+	flowId?: string;
+	/** Human-readable message / instructions */
 	message?: string;
 	/** Error message if failed */
 	error?: string;

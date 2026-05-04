@@ -271,8 +271,8 @@ export function AddGoogleAccountModal({
 							<Button variant="primary" size="sm" onClick={() => setStep('code')}>
 								Try Again
 							</Button>
-							<Button variant="ghost" size="sm" onClick={() => setStep('url')}>
-								Start Over
+							<Button variant="ghost" size="sm" onClick={onCancel}>
+								Cancel
 							</Button>
 						</div>
 					</div>

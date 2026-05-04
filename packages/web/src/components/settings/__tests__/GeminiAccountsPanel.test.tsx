@@ -489,7 +489,7 @@ describe('GeminiAccountsPanel', () => {
 			mockStartGeminiOAuth.mockResolvedValue({
 				success: true,
 				authUrl: 'https://reauth.url',
-				message: 'reauth-flow-123',
+				flowId: 'reauth-flow-123',
 			});
 
 			const { container, getByTestId } = render(<GeminiAccountsPanel />);

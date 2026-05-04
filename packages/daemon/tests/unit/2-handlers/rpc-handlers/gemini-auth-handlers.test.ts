@@ -193,21 +193,22 @@ describe('Gemini Auth RPC Handlers', () => {
 	});
 
 	describe('auth.gemini.startOAuth', () => {
-		it('starts OAuth flow and returns auth URL', async () => {
+		it('starts OAuth flow and returns auth URL with flowId', async () => {
 			const handler = messageHubData.handlers.get('auth.gemini.startOAuth');
 			expect(handler).toBeDefined();
 
 			const result = (await handler!({}, {})) as {
 				success: boolean;
 				authUrl?: string;
+				flowId?: string;
 				message?: string;
 			};
 
 			expect(result.success).toBe(true);
 			expect(result.authUrl).toBe('https://accounts.google.com/o/oauth2/v2/auth?mock=1');
+			expect(result.flowId).toBeDefined();
+			expect(result.flowId!.length).toBeGreaterThan(0);
 			expect(result.message).toBeDefined();
-			// The message field contains the flowId (UUID)
-			expect(result.message!.length).toBeGreaterThan(0);
 		});
 
 		it('stores accountId for re-auth flows', async () => {
@@ -215,12 +216,11 @@ describe('Gemini Auth RPC Handlers', () => {
 
 			const result = (await handler!({ accountId: 'acc-to-reauth' }, {})) as {
 				success: boolean;
-				message?: string;
+				flowId?: string;
 			};
 
 			expect(result.success).toBe(true);
-			// The flowId is stored with reauthAccountId — we verify this works
-			// by completing the flow later in the completeOAuth tests
+			expect(result.flowId).toBeDefined();
 		});
 
 		it('returns error when buildAuthUrl throws', async () => {
@@ -285,11 +285,11 @@ describe('Gemini Auth RPC Handlers', () => {
 			const startResult = (await startHandler!({}, {})) as {
 				success: boolean;
 				authUrl?: string;
-				message?: string;
+				flowId?: string;
 			};
 
 			expect(startResult.success).toBe(true);
-			const flowId = startResult.message!;
+			const flowId = startResult.flowId!;
 
 			// Complete the flow
 			const completeResult = (await completeHandler!(
@@ -324,9 +324,9 @@ describe('Gemini Auth RPC Handlers', () => {
 
 			const startResult = (await startHandler!({}, {})) as {
 				success: boolean;
-				message?: string;
+				flowId?: string;
 			};
-			const flowId = startResult.message!;
+			const flowId = startResult.flowId!;
 
 			const completeResult = (await completeHandler!({ authCode: 'code', flowId }, {})) as {
 				success: boolean;
@@ -338,21 +338,7 @@ describe('Gemini Auth RPC Handlers', () => {
 		});
 
 		it('handles re-auth flow when accountId provided', async () => {
-			mockLoadAccounts.mockImplementationOnce(async () => [
-				{
-					id: 'acc-to-reauth',
-					email: 'reauth@gmail.com',
-					refresh_token: 'old-rt',
-					added_at: Date.now() - 86_400_000,
-					last_used_at: 0,
-					daily_request_count: 0,
-					daily_limit: 1500,
-					status: 'invalid',
-					cooldown_until: 0,
-				},
-			]);
-
-			// Return updated account on second load
+			// The re-auth path calls updateAccount, then loadAccounts to get updated record
 			mockLoadAccounts.mockImplementationOnce(async () => [
 				{
 					id: 'acc-to-reauth',
@@ -373,9 +359,9 @@ describe('Gemini Auth RPC Handlers', () => {
 			// Start with accountId for re-auth
 			const startResult = (await startHandler!({ accountId: 'acc-to-reauth' }, {})) as {
 				success: boolean;
-				message?: string;
+				flowId?: string;
 			};
-			const flowId = startResult.message!;
+			const flowId = startResult.flowId!;
 
 			const completeResult = (await completeHandler!({ authCode: 'code', flowId }, {})) as {
 				success: boolean;
@@ -394,6 +380,43 @@ describe('Gemini Auth RPC Handlers', () => {
 			expect(mockPersistAddAccount).not.toHaveBeenCalled();
 		});
 
+		it('returns specific error for duplicate email', async () => {
+			// loadAccounts returns an account with the same email the mock user info will return
+			mockLoadAccounts.mockImplementationOnce(async () => [
+				{
+					id: 'existing-acc',
+					email: 'test@gmail.com', // same as mockFetchUserInfo returns
+					refresh_token: 'existing-rt',
+					added_at: Date.now() - 86_400_000,
+					last_used_at: 0,
+					daily_request_count: 0,
+					daily_limit: 1500,
+					status: 'active',
+					cooldown_until: 0,
+				},
+			]);
+
+			const startHandler = messageHubData.handlers.get('auth.gemini.startOAuth');
+			const completeHandler = messageHubData.handlers.get('auth.gemini.completeOAuth');
+
+			const startResult = (await startHandler!({}, {})) as {
+				success: boolean;
+				flowId?: string;
+			};
+			const flowId = startResult.flowId!;
+
+			const completeResult = (await completeHandler!({ authCode: 'code', flowId }, {})) as {
+				success: boolean;
+				error?: string;
+			};
+
+			expect(completeResult.success).toBe(false);
+			expect(completeResult.error).toContain('already exists');
+			expect(completeResult.error).toContain('test@gmail.com');
+			// Should NOT have called persistAddAccount
+			expect(mockPersistAddAccount).not.toHaveBeenCalled();
+		});
+
 		it('handles exchange errors gracefully', async () => {
 			mockExchangeAuthCode.mockImplementationOnce(async () => {
 				throw new Error('Token exchange failed (400): invalid_grant');
@@ -404,9 +427,9 @@ describe('Gemini Auth RPC Handlers', () => {
 
 			const startResult = (await startHandler!({}, {})) as {
 				success: boolean;
-				message?: string;
+				flowId?: string;
 			};
-			const flowId = startResult.message!;
+			const flowId = startResult.flowId!;
 
 			const completeResult = (await completeHandler!({ authCode: 'bad-code', flowId }, {})) as {
 				success: boolean;
