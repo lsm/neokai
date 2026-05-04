@@ -17,7 +17,7 @@
  * Always use JSON.stringify on the relevant subset of each object.
  */
 
-import type { SpaceWorkflow } from '@neokai/shared';
+import type { GateFieldCheck, SpaceWorkflow } from '@neokai/shared';
 
 /**
  * Canonical shape used for hashing — uses only template-portable fields.
@@ -59,6 +59,23 @@ interface WorkflowFingerprint {
 }
 
 /**
+ * Serialize a gate field check into a deterministic object with keys in fixed
+ * order. This avoids reliance on JSON key insertion order from imported objects,
+ * which can vary across parse/serialize round-trips.
+ */
+function serializeCheck(check: GateFieldCheck): Record<string, unknown> {
+	if (check.op === 'count') {
+		return { op: 'count', match: check.match, min: check.min };
+	}
+	// Scalar checks: op is always present; value only when defined.
+	const result: Record<string, unknown> = { op: check.op };
+	if ('value' in check && check.value !== undefined) {
+		result.value = check.value;
+	}
+	return result;
+}
+
+/**
  * Extract the canonical fingerprint of a workflow for hash comparison.
  * Sorts all collections to ensure deterministic output regardless of insertion order.
  */
@@ -86,11 +103,14 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
 				id: g.id,
 				requiredLevel: g.requiredLevel ?? 0,
 				resetOnCycle: g.resetOnCycle,
-				fields: (g.fields ?? []).map((f) => ({
-					name: f.name,
-					type: f.type,
-					check: f.check,
-				})),
+				fields: (g.fields ?? [])
+					.slice()
+					.sort((a, b) => a.name.localeCompare(b.name))
+					.map((f) => ({
+						name: f.name,
+						type: f.type,
+						check: serializeCheck(f.check),
+					})),
 				script: g.script ? g.script.source.slice(0, 64) : null,
 				poll: g.poll
 					? {

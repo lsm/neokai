@@ -369,6 +369,119 @@ describe('buildWorkflowFingerprint', () => {
 		expect(parsed.fields[0].writers).toBeUndefined();
 		expect(parsed.fields[0].name).toBe('approved');
 	});
+
+	it('sorts gate fields by name for canonical ordering', () => {
+		const wf = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{ name: 'zebra', type: 'boolean', writers: [], check: { op: 'exists' } },
+						{ name: 'alpha', type: 'boolean', writers: [], check: { op: 'exists' } },
+						{ name: 'middle', type: 'boolean', writers: [], check: { op: 'exists' } },
+					],
+				},
+			],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.gates[0]);
+		expect(parsed.fields.map((f: { name: string }) => f.name)).toEqual([
+			'alpha',
+			'middle',
+			'zebra',
+		]);
+	});
+
+	it('produces same hash regardless of gate field insertion order', () => {
+		const wf1 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{ name: 'b_field', type: 'boolean', writers: [], check: { op: 'exists' } },
+						{ name: 'a_field', type: 'boolean', writers: [], check: { op: 'exists' } },
+					],
+				},
+			],
+		});
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{ name: 'a_field', type: 'boolean', writers: [], check: { op: 'exists' } },
+						{ name: 'b_field', type: 'boolean', writers: [], check: { op: 'exists' } },
+					],
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
+	});
+
+	it('serializes check objects with deterministic key ordering', () => {
+		const wf = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{
+							name: 'votes',
+							type: 'map',
+							writers: [],
+							check: { op: 'count', match: 'approved', min: 3 },
+						},
+					],
+				},
+			],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.gates[0]);
+		// Keys should be in fixed order: op, match, min
+		expect(Object.keys(parsed.fields[0].check)).toEqual(['op', 'match', 'min']);
+		expect(parsed.fields[0].check).toEqual({ op: 'count', match: 'approved', min: 3 });
+	});
+
+	it('produces same hash for scalar checks regardless of key insertion order', () => {
+		// Simulate a check object parsed from JSON with different key ordering
+		const checkObj = JSON.parse('{"value":true,"op":"=="}') as { op: string; value: unknown };
+		const wf1 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: [],
+							check: { op: '==', value: true },
+						},
+					],
+				},
+			],
+		});
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: [],
+							check: checkObj as any,
+						},
+					],
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
+	});
 });
 
 describe('computeWorkflowHash', () => {
