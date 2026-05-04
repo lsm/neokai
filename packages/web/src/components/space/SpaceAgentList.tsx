@@ -16,7 +16,7 @@ import { spaceStore } from '../../lib/space-store';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { Modal } from '../ui/Modal';
-import type { SpaceAgent, AgentDriftReport, TaskAgentConfig } from '@neokai/shared';
+import type { Space, SpaceAgent, AgentDriftReport, TaskAgentConfig } from '@neokai/shared';
 import { SpaceAgentEditor } from './SpaceAgentEditor';
 import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect';
 import { connectionManager } from '../../lib/connection-manager';
@@ -162,10 +162,13 @@ function TaskAgentCard({ spaceId, taskAgentConfig, defaultModel }: TaskAgentCard
 			if (model) config.model = model;
 			if (customPrompt.trim()) config.customPrompt = customPrompt.trim();
 			// Send null to clear if both are empty, otherwise send the config
-			await hub.request('space.update', {
+			const updated = await hub.request<Space>('space.update', {
 				id: spaceId,
 				taskAgentConfig: config.model || config.customPrompt ? config : null,
 			});
+			// Apply response directly to avoid stale-state from event spread-merge
+			// (undefined fields like taskAgentConfig are dropped during JSON serialization)
+			spaceStore.space.value = updated;
 			setEditing(false);
 			toast.success('Task Agent config updated');
 		} catch (err) {
@@ -190,10 +193,12 @@ function TaskAgentCard({ spaceId, taskAgentConfig, defaultModel }: TaskAgentCard
 		}
 		try {
 			setSaving(true);
-			await hub.request('space.update', {
+			const updated = await hub.request<Space>('space.update', {
 				id: spaceId,
 				taskAgentConfig: null,
 			});
+			// Apply response directly to avoid stale-state from event spread-merge
+			spaceStore.space.value = updated;
 			setEditing(false);
 			toast.success('Task Agent reset to defaults');
 		} catch (err) {

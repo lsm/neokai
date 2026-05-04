@@ -79,7 +79,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		try {
 			setSaving(true);
 			setSaveError(null);
-			await hub.request('space.update', {
+			const updated = await hub.request<Space>('space.update', {
 				id: space.id,
 				name: name.trim(),
 				description: description.trim() || undefined,
@@ -88,6 +88,9 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 				autonomyLevel,
 				defaultModel: defaultModel || null,
 			});
+			// Apply response directly to avoid stale-state from event spread-merge
+			// (undefined fields like defaultModel are dropped during JSON serialization)
+			spaceStore.space.value = updated;
 			toast.success('Space updated');
 		} catch (err) {
 			setSaveError(err instanceof Error ? err.message : 'Failed to save changes');
