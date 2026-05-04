@@ -17,7 +17,7 @@
  * Always use JSON.stringify on the relevant subset of each object.
  */
 
-import type { GateFieldCheck, SpaceWorkflow } from '@neokai/shared';
+import type { GateField, GateFieldCheck, SpaceWorkflow } from '@neokai/shared';
 
 /**
  * Canonical shape used for hashing — uses only template-portable fields.
@@ -56,6 +56,26 @@ interface WorkflowFingerprint {
 	 * templates gain or modify their `postApproval` entry.
 	 */
 	postApproval: string;
+}
+
+/**
+ * Locale-independent string comparison for deterministic ordering.
+ */
+function compareStrings(a: string, b: string): number {
+	return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Total-order comparator for gate fields. Sorts by name, then type, then
+ * serialized check — ensuring deterministic ordering even when field names
+ * are duplicated (which is not enforced by runtime validation).
+ */
+function compareGateFields(a: GateField, b: GateField): number {
+	return (
+		compareStrings(a.name, b.name) ||
+		compareStrings(a.type, b.type) ||
+		compareStrings(JSON.stringify(serializeCheck(a.check)), JSON.stringify(serializeCheck(b.check)))
+	);
 }
 
 /**
@@ -112,7 +132,7 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
 				resetOnCycle: g.resetOnCycle,
 				fields: (g.fields ?? [])
 					.slice()
-					.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+					.sort(compareGateFields)
 					.map((f) => ({
 						name: f.name,
 						type: f.type,

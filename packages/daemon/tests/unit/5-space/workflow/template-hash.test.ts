@@ -444,6 +444,37 @@ describe('buildWorkflowFingerprint', () => {
 		expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
 	});
 
+	it('sorts duplicate-name gate fields by type then check for total ordering', () => {
+		const wf1 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{ name: 'dup', type: 'boolean', writers: [], check: { op: 'exists' } },
+						{ name: 'dup', type: 'map', writers: [], check: { op: 'count', match: 'yes', min: 1 } },
+						{ name: 'dup', type: 'boolean', writers: [], check: { op: '==', value: true } },
+					],
+				},
+			],
+		});
+		// Same fields in different insertion order
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{ name: 'dup', type: 'map', writers: [], check: { op: 'count', match: 'yes', min: 1 } },
+						{ name: 'dup', type: 'boolean', writers: [], check: { op: '==', value: true } },
+						{ name: 'dup', type: 'boolean', writers: [], check: { op: 'exists' } },
+					],
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
+	});
+
 	it('serializes check objects with deterministic key ordering', () => {
 		const wf = makeWorkflow({
 			gates: [
