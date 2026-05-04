@@ -656,11 +656,12 @@ describe('SpaceRuntimeService', () => {
 			svc.start();
 			await svc.stop();
 
-			// Three DaemonHub subscriptions are registered: space.created,
-			// session.created, and session.deleted (which releases per-session db-query
-			// servers). Hard-reset reprovisioning uses SessionManager's awaited
-			// in-process subscriber instead of DaemonHub.
-			expect(unsubFn).toHaveBeenCalledTimes(3);
+			// Four DaemonHub subscriptions are registered: space.created,
+			// spaceWorkflow.updated (mid-run gate poll refresh), session.created,
+			// and session.deleted (which releases per-session db-query servers).
+			// Hard-reset reprovisioning uses SessionManager's awaited in-process
+			// subscriber instead of DaemonHub.
+			expect(unsubFn).toHaveBeenCalledTimes(4);
 		});
 	});
 
