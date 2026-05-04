@@ -19,6 +19,7 @@ import { Button } from '../ui/Button.tsx';
 import { AUTONOMY_LEVELS } from '../../lib/space-constants.ts';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary.tsx';
 import { SpaceMcpSettings } from './SpaceMcpSettings.tsx';
+import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect.tsx';
 
 interface SpaceSettingsProps {
 	space: Space;
@@ -31,6 +32,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 	const [instructions, setInstructions] = useState(space.instructions ?? '');
 	const [backgroundContext, setBackgroundContext] = useState(space.backgroundContext ?? '');
 	const [autonomyLevel, setAutonomyLevel] = useState<SpaceAutonomyLevel>(space.autonomyLevel ?? 1);
+	const [defaultModel, setDefaultModel] = useState<string | undefined>(space.defaultModel);
 	const [saving, setSaving] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const [isArchiving, setIsArchiving] = useState(false);
@@ -43,6 +45,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		setInstructions(space.instructions ?? '');
 		setBackgroundContext(space.backgroundContext ?? '');
 		setAutonomyLevel(space.autonomyLevel ?? 1);
+		setDefaultModel(space.defaultModel);
 		setSaveError(null);
 	}, [
 		space.id,
@@ -51,6 +54,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		space.instructions,
 		space.backgroundContext,
 		space.autonomyLevel,
+		space.defaultModel,
 	]);
 
 	const isDirty =
@@ -58,7 +62,8 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		description !== (space.description ?? '') ||
 		instructions !== (space.instructions ?? '') ||
 		backgroundContext !== (space.backgroundContext ?? '') ||
-		autonomyLevel !== (space.autonomyLevel ?? 1);
+		autonomyLevel !== (space.autonomyLevel ?? 1) ||
+		defaultModel !== space.defaultModel;
 
 	async function handleSave(e: Event) {
 		e.preventDefault();
@@ -81,6 +86,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 				instructions: instructions.trim() || undefined,
 				backgroundContext: backgroundContext.trim() || undefined,
 				autonomyLevel,
+				defaultModel: defaultModel || null,
 			});
 			toast.success('Space updated');
 		} catch (err) {
@@ -287,6 +293,20 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 							/>
 						</div>
 
+						<div>
+							<label class="block text-xs font-medium text-gray-400 mb-1">Default Model</label>
+							<p class="text-xs text-gray-500 mb-2">
+								Default model for agents and sessions in this Space. Falls back to the app-level
+								default when not set.
+							</p>
+							<WorkflowModelSelect
+								value={defaultModel}
+								onChange={(val) => setDefaultModel(val)}
+								testId="default-model-select"
+								className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+							/>
+						</div>
+
 						{isDirty && (
 							<div class="flex gap-2 justify-end">
 								<Button
@@ -299,6 +319,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 										setInstructions(space.instructions ?? '');
 										setBackgroundContext(space.backgroundContext ?? '');
 										setAutonomyLevel(space.autonomyLevel ?? 1);
+										setDefaultModel(space.defaultModel);
 										setSaveError(null);
 									}}
 								>

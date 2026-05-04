@@ -16,8 +16,9 @@ import { spaceStore } from '../../lib/space-store';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { Modal } from '../ui/Modal';
-import type { SpaceAgent, AgentDriftReport } from '@neokai/shared';
+import type { SpaceAgent, AgentDriftReport, TaskAgentConfig } from '@neokai/shared';
 import { SpaceAgentEditor } from './SpaceAgentEditor';
+import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect';
 import { connectionManager } from '../../lib/connection-manager';
 import { toast } from '../../lib/toast';
 
@@ -122,6 +123,194 @@ function AgentCard({ agent, drifted, syncing, onEdit, onDelete, onSync }: AgentC
 	);
 }
 
+/**
+ * DEFAULT_TASK_AGENT_MODEL must match the constant in task-agent.ts.
+ * Duplicated here to avoid importing daemon code in the web bundle.
+ */
+const DEFAULT_TASK_AGENT_MODEL = 'claude-sonnet-4-6';
+
+interface TaskAgentCardProps {
+	spaceId: string;
+	taskAgentConfig?: TaskAgentConfig;
+	defaultModel?: string;
+}
+
+function TaskAgentCard({ spaceId, taskAgentConfig, defaultModel }: TaskAgentCardProps) {
+	const [editing, setEditing] = useState(false);
+	const [model, setModel] = useState<string | undefined>(taskAgentConfig?.model);
+	const [customPrompt, setCustomPrompt] = useState(taskAgentConfig?.customPrompt ?? '');
+	const [saving, setSaving] = useState(false);
+
+	// Sync local state when props change (e.g. after save)
+	useEffect(() => {
+		setModel(taskAgentConfig?.model);
+		setCustomPrompt(taskAgentConfig?.customPrompt ?? '');
+	}, [taskAgentConfig?.model, taskAgentConfig?.customPrompt]);
+
+	const resolvedModel = taskAgentConfig?.model ?? defaultModel ?? DEFAULT_TASK_AGENT_MODEL;
+	const hasOverrides = !!(taskAgentConfig?.model || taskAgentConfig?.customPrompt);
+
+	async function handleSave() {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			toast.error('Not connected to server');
+			return;
+		}
+		try {
+			setSaving(true);
+			const config: TaskAgentConfig = {};
+			if (model) config.model = model;
+			if (customPrompt.trim()) config.customPrompt = customPrompt.trim();
+			// Send null to clear if both are empty, otherwise send the config
+			await hub.request('space.update', {
+				id: spaceId,
+				taskAgentConfig: config.model || config.customPrompt ? config : null,
+			});
+			setEditing(false);
+			toast.success('Task Agent config updated');
+		} catch (err) {
+			toast.error(`Failed to save: ${err instanceof Error ? err.message : String(err)}`);
+		} finally {
+			setSaving(false);
+		}
+	}
+
+	async function handleReset() {
+		if (
+			!confirm(
+				'Reset Task Agent to defaults? This will clear the model override and custom prompt.'
+			)
+		) {
+			return;
+		}
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			toast.error('Not connected to server');
+			return;
+		}
+		try {
+			setSaving(true);
+			await hub.request('space.update', {
+				id: spaceId,
+				taskAgentConfig: null,
+			});
+			setEditing(false);
+			toast.success('Task Agent reset to defaults');
+		} catch (err) {
+			toast.error(`Failed to reset: ${err instanceof Error ? err.message : String(err)}`);
+		} finally {
+			setSaving(false);
+		}
+	}
+
+	return (
+		<div class="bg-dark-850 border border-blue-900/30 rounded-lg p-4">
+			<div class="flex items-start justify-between gap-3">
+				<div class="flex-1 min-w-0">
+					<div class="flex items-center gap-2 flex-wrap">
+						<span class="text-xs font-medium text-blue-400 uppercase tracking-wider">Built-in</span>
+						<span class="text-sm font-medium text-gray-100">Task Agent</span>
+						<span class="text-xs text-gray-500 font-mono">{resolvedModel}</span>
+						{hasOverrides && (
+							<span class="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-blue-900/30 border border-blue-700/50 rounded text-blue-400">
+								Customized
+							</span>
+						)}
+					</div>
+					<p class="text-xs text-gray-500 mt-1.5">
+						Orchestration agent that manages task workflows, coordinates node agents, and handles
+						human gates.
+					</p>
+					{taskAgentConfig?.customPrompt && (
+						<p class="text-xs text-gray-400 mt-1 line-clamp-2 italic">
+							{taskAgentConfig.customPrompt}
+						</p>
+					)}
+				</div>
+				<div class="flex items-center gap-1 flex-shrink-0">
+					{hasOverrides && (
+						<button
+							type="button"
+							onClick={handleReset}
+							disabled={saving}
+							class="px-2.5 py-1 text-xs text-gray-400 hover:text-gray-200 bg-dark-800 hover:bg-dark-700 rounded border border-dark-700 hover:border-dark-600 transition-colors disabled:opacity-50"
+							title="Reset to code defaults"
+						>
+							{saving ? 'Resetting...' : 'Reset to defaults'}
+						</button>
+					)}
+					<button
+						type="button"
+						onClick={() => setEditing(!editing)}
+						class="p-1.5 rounded text-gray-500 hover:text-gray-300 hover:bg-dark-700 transition-colors"
+						aria-label="Edit Task Agent"
+					>
+						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+							/>
+						</svg>
+					</button>
+				</div>
+			</div>
+
+			{editing && (
+				<div class="mt-4 pt-3 border-t border-dark-700 space-y-3">
+					<div>
+						<label class="block text-xs font-medium text-gray-400 mb-1">Model Override</label>
+						<p class="text-xs text-gray-500 mb-2">
+							Overrides the model used by the Task Agent. Falls back to the space default or{' '}
+							<span class="font-mono">{DEFAULT_TASK_AGENT_MODEL}</span> when not set.
+						</p>
+						<WorkflowModelSelect
+							value={model}
+							onChange={(val) => setModel(val)}
+							testId="task-agent-model-select"
+							className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+						/>
+					</div>
+					<div>
+						<label class="block text-xs font-medium text-gray-400 mb-1">
+							Custom Prompt
+							<span class="text-gray-600 ml-1">(optional)</span>
+						</label>
+						<p class="text-xs text-gray-500 mb-1">
+							Appended to the Task Agent system prompt after the contract sections.
+						</p>
+						<textarea
+							value={customPrompt}
+							onInput={(e) => setCustomPrompt((e.target as HTMLTextAreaElement).value)}
+							placeholder="e.g. Always prefer squashing commits..."
+							rows={4}
+							class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500 resize-y text-sm"
+						/>
+					</div>
+					<div class="flex gap-2 justify-end">
+						<Button
+							type="button"
+							variant="secondary"
+							size="sm"
+							onClick={() => {
+								setEditing(false);
+								setModel(taskAgentConfig?.model);
+								setCustomPrompt(taskAgentConfig?.customPrompt ?? '');
+							}}
+						>
+							Cancel
+						</Button>
+						<Button type="button" size="sm" loading={saving} onClick={handleSave}>
+							Save
+						</Button>
+					</div>
+				</div>
+			)}
+		</div>
+	);
+}
+
 function PlusIcon() {
 	return (
 		<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -148,6 +337,7 @@ export function SpaceAgentList() {
 	const loading = spaceStore.loading.value;
 	const workflows = spaceStore.workflows.value;
 	const spaceId = spaceStore.spaceId.value;
+	const space = spaceStore.space.value;
 
 	const [editorOpen, setEditorOpen] = useState(false);
 	const [editingAgent, setEditingAgent] = useState<SpaceAgent | null>(null);
@@ -292,6 +482,20 @@ export function SpaceAgentList() {
 				</Button>
 			</div>
 
+			{/* Built-in Task Agent */}
+			{space && (
+				<div class="mb-4">
+					<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+						Built-in
+					</h3>
+					<TaskAgentCard
+						spaceId={space.id}
+						taskAgentConfig={space.taskAgentConfig}
+						defaultModel={space.defaultModel}
+					/>
+				</div>
+			)}
+
 			{/* Agent list or empty state */}
 			{agents.length === 0 ? (
 				<div class="flex flex-col items-center justify-center flex-1 py-12 text-center">
@@ -309,6 +513,11 @@ export function SpaceAgentList() {
 			) : (
 				<div class="flex-1 overflow-y-auto">
 					<div class="min-h-[calc(100%+1px)] space-y-2">
+						{space && (
+							<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+								Custom Agents
+							</h3>
+						)}
 						{agents.map((agent) => (
 							<AgentCard
 								key={agent.id}

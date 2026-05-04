@@ -48,6 +48,20 @@ export interface SpaceConfig {
 }
 
 /**
+ * Per-space overrides for the built-in Task Agent.
+ *
+ * The Task Agent is not a seeded SpaceAgent — it has no row in the `space_agents`
+ * table. Its prompt is generated in code at `task-agent.ts`. This config allows
+ * per-space customization of model and prompt additions without mutating code.
+ */
+export interface TaskAgentConfig {
+	/** Model override for the Task Agent. Falls back to `space.defaultModel` then `DEFAULT_TASK_AGENT_MODEL`. */
+	model?: string;
+	/** Custom prompt additions appended after the contract sections (similar to SpaceAgent.customPrompt). */
+	customPrompt?: string;
+}
+
+/**
  * A Space — a workspace-first context for multi-agent workflows.
  * Unlike Rooms, a Space has a single required workspace path and is
  * designed around workflow execution with customizable agents.
@@ -86,6 +100,8 @@ export interface Space {
 	autonomyLevel?: SpaceAutonomyLevel;
 	/** Runtime configuration (maxConcurrentTasks, taskTimeoutMs, etc.) */
 	config?: SpaceConfig;
+	/** Per-space overrides for the built-in Task Agent (model and custom prompt). */
+	taskAgentConfig?: TaskAgentConfig;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
@@ -128,6 +144,8 @@ export interface CreateSpaceParams {
 	autonomyLevel?: SpaceAutonomyLevel;
 	/** Runtime configuration */
 	config?: SpaceConfig;
+	/** Per-space overrides for the built-in Task Agent */
+	taskAgentConfig?: TaskAgentConfig;
 }
 
 /**
@@ -142,6 +160,8 @@ export interface UpdateSpaceParams {
 	allowedModels?: string[];
 	autonomyLevel?: SpaceAutonomyLevel;
 	config?: SpaceConfig;
+	/** Per-space overrides for the built-in Task Agent. Pass null to clear. */
+	taskAgentConfig?: TaskAgentConfig | null;
 }
 
 // ============================================================================

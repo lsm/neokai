@@ -10,6 +10,7 @@ import type {
 	Space,
 	SpaceAutonomyLevel,
 	SpaceConfig,
+	TaskAgentConfig,
 	CreateSpaceParams,
 	UpdateSpaceParams,
 } from '@neokai/shared';
@@ -285,6 +286,10 @@ export class SpaceRepository {
 		const rawModels = JSON.parse((row.allowed_models as string) ?? '[]') as string[];
 		const rawConfig = row.config as string | null;
 		const config = rawConfig ? (JSON.parse(rawConfig) as SpaceConfig) : undefined;
+		const rawTaskAgentConfig = row.task_agent_config as string | null;
+		const taskAgentConfig = rawTaskAgentConfig
+			? (JSON.parse(rawTaskAgentConfig) as TaskAgentConfig)
+			: undefined;
 		return {
 			id: row.id as string,
 			slug: (row.slug as string) ?? '',
@@ -301,6 +306,7 @@ export class SpaceRepository {
 			stopped: (row.stopped as number) === 1,
 			autonomyLevel: ((row.autonomy_level as number) ?? 1) as SpaceAutonomyLevel,
 			config,
+			taskAgentConfig,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
 		};
