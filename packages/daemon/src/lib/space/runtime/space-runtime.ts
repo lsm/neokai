@@ -23,6 +23,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
 	NodeExecution,
 	Space,
+	SpaceApprovalSource,
 	SpaceTask,
 	SpaceWorkflow,
 	SpaceWorkflowRun,
@@ -30,44 +31,44 @@ import type {
 	WorkflowChannel,
 } from '@neokai/shared';
 import { computeGateDefaults, isChannelCyclic, resolveNodeAgents } from '@neokai/shared';
-import type { SpaceManager } from '../managers/space-manager';
-import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
-import type { TaskAgentManager } from './task-agent-manager';
-import { isValidSpaceTaskTransition, SpaceTaskManager } from '../managers/space-task-manager';
-import { WorkflowExecutor } from './workflow-executor';
-import { selectWorkflow } from './workflow-selector';
-import { Logger } from '../../logger';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
-import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
-import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
-import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
-import { type NotificationSink, NullNotificationSink } from './notification-sink';
+import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
+import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
+import { Logger } from '../../logger';
+import type { SpaceAgentManager } from '../managers/space-agent-manager';
+import type { SpaceManager } from '../managers/space-manager';
+import { isValidSpaceTaskTransition, SpaceTaskManager } from '../managers/space-task-manager';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { CompletionDetector } from './completion-detector';
-import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
-import {
-	PostApprovalRouter,
-	type PostApprovalRouteContext,
-	type PostApprovalRouteResult,
-} from './post-approval-router';
-import type { SpaceApprovalSource } from '@neokai/shared';
 import {
 	DEFAULT_NODE_TIMEOUT_MS,
 	MAX_BLOCKED_RUN_RETRIES,
 	MAX_TASK_AGENT_CRASH_RETRIES,
 } from './constants';
-import { resolveTimeoutForExecution } from './resolve-node-timeout';
-import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import { evaluateGate } from './gate-evaluator';
+import { extractPrContext, GatePollManager, type PollScriptContext } from './gate-poll-manager';
 import { executeGateScript } from './gate-script-executor';
-import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier';
+import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
+import { type NotificationSink, NullNotificationSink } from './notification-sink';
+import {
+	type PostApprovalRouteContext,
+	type PostApprovalRouteResult,
+	PostApprovalRouter,
+} from './post-approval-router';
+import { resolveTimeoutForExecution } from './resolve-node-timeout';
+import type { TaskAgentManager } from './task-agent-manager';
+import { WorkflowExecutor } from './workflow-executor';
 import { isPermanentSpawnError } from './workflow-node-execution-validation';
+import { selectWorkflow } from './workflow-selector';
 
 const log = new Logger('space-runtime');
 
@@ -294,6 +295,12 @@ export class SpaceRuntime {
 	private nonTerminalIdleCounts = new Map<string, number>();
 	private readonly toolContinuationRepo: ToolContinuationRecoveryRepository;
 
+	/**
+	 * Manages gate poll timers for periodic script execution and message injection.
+	 * Lazy-initialized when taskAgentManager is available.
+	 */
+	private pollManager: GatePollManager | null = null;
+
 	constructor(private config: SpaceRuntimeConfig) {
 		this.notificationSink = config.notificationSink ?? new NullNotificationSink();
 		this.completionDetector = config.completionDetector ?? new CompletionDetector(config.taskRepo);
@@ -396,6 +403,45 @@ export class SpaceRuntime {
 	setTaskAgentManager(manager: TaskAgentManager): void {
 		this.config.taskAgentManager = manager;
 		manager.attachToolContinuationRepo?.(this.toolContinuationRepo);
+		// Initialize the poll manager now that taskAgentManager is available
+		if (!this.pollManager) {
+			this.pollManager = new GatePollManager(
+				{
+					injectSubSessionMessage: (sessionId, message, isSynthetic) =>
+						manager.injectSubSessionMessage(sessionId, message, isSynthetic),
+				},
+				{
+					getActiveSessionForNode: (runId, nodeId) => {
+						const executions = this.config.nodeExecutionRepo.listByNode(runId, nodeId);
+						const active = executions.find(
+							(e) => e.status !== 'cancelled' && e.status !== 'idle' && e.agentSessionId !== null
+						);
+						return active?.agentSessionId ?? null;
+					},
+				},
+				// PR URL resolver: refreshes PR context on each poll tick so polls
+				// discover PR URLs that appear after the run starts.
+				{
+					getPrUrlForRun: async (runId) => {
+						if (!this.config.artifactRepo) return '';
+						try {
+							const artifacts = this.config.artifactRepo.listByRun(runId);
+							for (let i = artifacts.length - 1; i >= 0; i--) {
+								const data = artifacts[i]?.data;
+								if (!data) continue;
+								const candidate =
+									(typeof data.prUrl === 'string' && data.prUrl) ||
+									(typeof data.pr_url === 'string' && data.pr_url);
+								if (candidate) return candidate;
+							}
+						} catch {
+							// Swallow - PR URL resolution is best-effort
+						}
+						return '';
+					},
+				}
+			);
+		}
 	}
 
 	/**
@@ -850,6 +896,9 @@ export class SpaceRuntime {
 				.filter((run) => run.status === 'done' || run.status === 'cancelled');
 			for (const run of terminalRuns) {
 				if (this.executors.has(run.id)) continue;
+				// Ensure polls are stopped for terminal runs discovered outside
+				// the executor map (e.g. daemon restart after run completed).
+				this.pollManager?.stopPolls(run.id);
 				await this.reconcileTerminalRunTasks(run);
 			}
 		}
@@ -891,6 +940,8 @@ export class SpaceRuntime {
 	 * be resumed by calling start() again.
 	 */
 	async stop(): Promise<void> {
+		// Stop all gate poll timers
+		this.pollManager?.stopAll();
 		if (this.tickTimer !== null) {
 			clearInterval(this.tickTimer);
 			this.tickTimer = null;
@@ -1083,6 +1134,14 @@ export class SpaceRuntime {
 		// TODO: Milestone 6: pass resolvedChannels to session group creation in
 		// TaskAgentManager.spawnTaskAgent() rather than storing in run config.
 		this.storeWorkflowChannels(run.id, workflow.channels ?? []);
+
+		// Start gate polls for this workflow run
+		if (this.pollManager && canonicalTask) {
+			const pollContext = this.buildPollScriptContext(canonicalTask, run, spaceId);
+			if (pollContext) {
+				this.pollManager.startPolls(run.id, workflow, space.workspacePath, spaceId, pollContext);
+			}
+		}
 
 		return { run, tasks: canonicalTask ? [canonicalTask] : [] };
 	}
@@ -2473,7 +2532,6 @@ export class SpaceRuntime {
 						startedAt: execution.startedAt ?? Date.now(),
 						completedAt: null,
 					});
-					continue;
 				}
 				// Dead session on a pending execution: spawn will overwrite the
 			}
@@ -3277,6 +3335,55 @@ export class SpaceRuntime {
 	 * 2. Scan node_executions for those nodes.
 	 * 3. Return the first non-empty execution result.
 	 */
+
+	/**
+	 * Build the poll script context for a workflow run.
+	 *
+	 * Resolves task metadata and PR URL from artifacts for injection as
+	 * environment variables into poll scripts.
+	 *
+	 * @returns PollScriptContext, or null when the task is missing
+	 */
+	private buildPollScriptContext(
+		task: SpaceTask,
+		run: SpaceWorkflowRun,
+		spaceId: string
+	): PollScriptContext | null {
+		// Resolve PR URL from artifacts (same pattern as dispatchPostApproval)
+		let prUrl = '';
+		if (this.config.artifactRepo) {
+			try {
+				const artifacts = this.config.artifactRepo.listByRun(run.id);
+				for (let i = artifacts.length - 1; i >= 0; i--) {
+					const data = artifacts[i]?.data;
+					if (!data) continue;
+					const candidate =
+						(typeof data.prUrl === 'string' && data.prUrl) ||
+						(typeof data.pr_url === 'string' && data.pr_url);
+					if (candidate) {
+						prUrl = candidate;
+						break;
+					}
+				}
+			} catch {
+				// Swallow — PR URL is best-effort for polls
+			}
+		}
+
+		const prCtx = extractPrContext(prUrl);
+
+		return {
+			TASK_ID: task.id,
+			TASK_TITLE: task.title,
+			SPACE_ID: spaceId,
+			PR_URL: prUrl,
+			PR_NUMBER: prCtx.PR_NUMBER,
+			REPO_OWNER: prCtx.REPO_OWNER,
+			REPO_NAME: prCtx.REPO_NAME,
+			WORKFLOW_RUN_ID: run.id,
+		};
+	}
+
 	private resolveCompletionSummary(runId: string, workflow: SpaceWorkflow): string | undefined {
 		const channels = workflow.channels ?? [];
 		const nodes = workflow.nodes;
@@ -3354,6 +3461,16 @@ export class SpaceRuntime {
 	private async cleanupTerminalExecutors(): Promise<void> {
 		for (const [runId] of this.executors) {
 			const run = this.config.workflowRunRepo.getRun(runId);
+
+			// Blocked runs keep their executor so they remain rehydratable and can
+			// be retried (blocked → in_progress). Stop polls only — do not remove
+			// the executor or prune dedup keys (processRunTick handles dedup clearing
+			// when it observes canonicalTask.status !== 'blocked').
+			if (run?.status === 'blocked') {
+				this.pollManager?.stopPolls(runId);
+				continue;
+			}
+
 			if (!run || run.status === 'done' || run.status === 'cancelled') {
 				if (run?.status === 'done') {
 					const meta = this.executorMeta.get(runId);
@@ -3380,6 +3497,8 @@ export class SpaceRuntime {
 					this.notifiedTaskSet.delete(`${task.id}:blocked`);
 					this.notifiedTaskSet.delete(`${task.id}:timeout`);
 				}
+				// Stop gate polls for this terminal run
+				this.pollManager?.stopPolls(runId);
 				this.executors.delete(runId);
 				this.executorMeta.delete(runId);
 			}

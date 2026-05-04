@@ -863,6 +863,49 @@ export interface GateScript {
 	timeoutMs?: number;
 }
 
+/**
+ * Gate Poll — periodic script execution that injects messages into workflow
+ * node sessions when script output changes.
+ *
+ * When a gate has `poll` defined, the runtime starts a timer at `intervalMs`
+ * once the workflow run becomes `in_progress`. On each tick, the script is
+ * executed in the same sandboxed environment as gate scripts, with additional
+ * context variables (TASK_ID, PR_URL, etc.) injected as environment variables.
+ *
+ * If the script's stdout changes AND is non-empty, a message is injected into
+ * the target node's agent session using `TaskAgentManager.injectSubSessionMessage()`.
+ * The message is formatted using `messageTemplate` (default: raw output).
+ *
+ * Polling stops when the workflow run reaches a terminal state (`done`,
+ * `cancelled`, or `blocked`).
+ */
+export interface GatePoll {
+	/** Poll interval in milliseconds (minimum 10_000 / 10 seconds) */
+	intervalMs: number;
+	/**
+	 * Script to execute periodically. Runs in a sandboxed environment using
+	 * the same infrastructure as gate scripts (bash interpreter only).
+	 * Context is provided via environment variables — never hardcoded.
+	 *
+	 * Available env vars: TASK_ID, TASK_TITLE, SPACE_ID, PR_URL, PR_NUMBER,
+	 * REPO_OWNER, REPO_NAME, WORKFLOW_RUN_ID
+	 */
+	script: string;
+	/**
+	 * Which side of the gate's channel to inject the message into.
+	 * - `'from'` — inject into the source node's agent session
+	 * - `'to'` — inject into the target node's agent session
+	 */
+	target: 'from' | 'to';
+	/**
+	 * Optional template wrapping script output. Use `{{output}}` as placeholder.
+	 * When omitted, the raw script stdout is used as the message body.
+	 *
+	 * Example: `"New PR review comment:\n{{output}}"`
+	 */
+	messageTemplate?: string;
+}
+
 export interface Gate {
 	/** Unique identifier */
 	id: string;
@@ -888,6 +931,13 @@ export interface Gate {
 	 * Undefined = no approval needed beyond validation.
 	 */
 	requiredLevel?: SpaceAutonomyLevel;
+	/**
+	 * Optional poll configuration for periodic script execution and message injection.
+	 * When defined, the runtime starts a timer that executes the script at the
+	 * specified interval and injects messages into the target node when output changes.
+	 * Undefined = no polling (default, backward compatible).
+	 */
+	poll?: GatePoll;
 }
 
 /**

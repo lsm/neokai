@@ -20,7 +20,13 @@
  *   `resolveChannels()` matches node names via the `nodeNameToAgents` lookup.
  */
 
-import type { GateScript, SpaceWorkflow, DeclarativeToolGuard, WorkflowNode } from '@neokai/shared';
+import type {
+	DeclarativeToolGuard,
+	GatePoll,
+	GateScript,
+	SpaceWorkflow,
+	WorkflowNode,
+} from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import { Logger } from '../../logger';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -47,6 +53,35 @@ const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
 	decision: 'deny',
 	reason:
 		'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
+};
+
+// ---------------------------------------------------------------------------
+// Shared gate poll: PR inline review comments
+// ---------------------------------------------------------------------------
+
+/**
+ * Shared poll config that fetches all unresolved PR review thread comments.
+ *
+ * Uses the GitHub GraphQL API to query review threads with isResolved=false,
+ * then formats the **latest** comment of each unresolved thread (using
+ * `comments(last:1)`) with author, body, and URL. This ensures that follow-up
+ * replies in existing threads change the poll output and trigger re-injection.
+ *
+ * NOTE: Capped at 100 review threads per query. Cursor-based pagination could
+ * be added for PRs exceeding this, but 100 threads covers virtually all PRs.
+ *
+ * Available env vars (injected by GatePollManager):
+ *   PR_URL, PR_NUMBER, REPO_OWNER, REPO_NAME, TASK_ID, SPACE_ID, WORKFLOW_RUN_ID
+ */
+const PR_INLINE_COMMENTS_POLL: GatePoll = {
+	intervalMs: 30_000,
+	script: [
+		'if [ -z "$PR_URL" ]; then exit 0; fi',
+		'QUERY="query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved comments(last:1){nodes{author{login} body url}}}}}}}"',
+		'gh api graphql -f query="$QUERY" -f owner="$REPO_OWNER" -f name="$REPO_NAME" -F number="$PR_NUMBER" --jq \'[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[0] | "- **" + .author.login + "**: " + .body + "\\n  " + .url] | join("\\n\\n")\'',
+	].join('\n'),
+	target: 'to',
+	messageTemplate: 'Unresolved PR review comments:\n{{output}}',
 };
 
 const builtInSeederLog = new Logger('seed-built-in-workflows');
@@ -653,6 +688,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 				source: PR_READY_BASH_SCRIPT,
 				timeoutMs: 30000,
 			},
+			poll: PR_INLINE_COMMENTS_POLL,
 			resetOnCycle: true,
 		},
 		{
@@ -823,6 +859,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 				source: PR_READY_BASH_SCRIPT,
 				timeoutMs: 30000,
 			},
+			poll: PR_INLINE_COMMENTS_POLL,
 			resetOnCycle: true,
 		},
 	],
@@ -1088,6 +1125,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 				source: PR_READY_BASH_SCRIPT,
 				timeoutMs: 30000,
 			},
+			poll: PR_INLINE_COMMENTS_POLL,
 			resetOnCycle: true,
 		},
 		{
@@ -1266,6 +1304,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 				source: PR_READY_BASH_SCRIPT,
 				timeoutMs: 30000,
 			},
+			poll: PR_INLINE_COMMENTS_POLL,
 			resetOnCycle: true,
 		},
 		{
