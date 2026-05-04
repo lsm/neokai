@@ -239,6 +239,7 @@ export class GatePollManager {
 			workflow: SpaceWorkflow;
 			workspacePath: string;
 			spaceId: string;
+			scriptContext: PollScriptContext | null;
 		}
 	>();
 
@@ -271,7 +272,13 @@ export class GatePollManager {
 
 		// Always store run context so refreshPollsForWorkflow can find this run
 		// even when no gates have poll initially (polls may be added later).
-		this.runContexts.set(runId, { workflowId: workflow.id, workflow, workspacePath, spaceId });
+		this.runContexts.set(runId, {
+			workflowId: workflow.id,
+			workflow,
+			workspacePath,
+			spaceId,
+			scriptContext: { ...scriptContext },
+		});
 
 		if (polledGates.length === 0) {
 			return;
@@ -654,6 +661,11 @@ export class GatePollManager {
 			if (key.startsWith(prefix) && ap.active) {
 				return { ...ap.context };
 			}
+		}
+		// No active peer — fall back to the script context stored when the run started.
+		const ctx = this.runContexts.get(runId);
+		if (ctx?.scriptContext) {
+			return { ...ctx.scriptContext };
 		}
 		return null;
 	}

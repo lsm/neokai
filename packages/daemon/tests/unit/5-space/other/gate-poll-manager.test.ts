@@ -1454,3 +1454,73 @@ describe('GatePollManager mid-run config pickup', () => {
 		// (The script outputs $TASK_ID which should be 'task-1')
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Context inheritance for empty-run polls
+// ---------------------------------------------------------------------------
+
+describe('GatePollManager context inheritance for empty runs', () => {
+	let injector: PollMessageInjector;
+	let resolver: PollSessionResolver;
+	let workflowDefs: Map<string, SpaceWorkflow>;
+	let manager: GatePollManager;
+
+	beforeEach(() => {
+		injector = {
+			injectSubSessionMessage: vi.fn().mockResolvedValue(undefined),
+		};
+		resolver = {
+			getActiveSessionForNode: vi.fn().mockReturnValue('session-1'),
+		};
+		workflowDefs = new Map();
+		manager = new GatePollManager(injector, resolver, undefined, {
+			getWorkflow: (workflowId) => workflowDefs.get(workflowId) ?? null,
+		});
+	});
+
+	afterEach(() => {
+		manager.stopAll();
+	});
+
+	function makePollableWorkflow(gates: Gate[], channels: WorkflowChannel[] = []): SpaceWorkflow {
+		return makeWorkflow(gates, channels);
+	}
+
+	test('poll added to run that started with zero polls inherits stored context', async () => {
+		// Start with NO polls at all
+		const gate = makeGate('gate-1'); // no poll
+		const channel: WorkflowChannel = {
+			id: 'ch-1',
+			from: 'Coder',
+			to: 'Reviewer',
+			gateId: 'gate-1',
+		};
+		const workflow = makePollableWorkflow([gate], [channel]);
+		workflowDefs.set(workflow.id, workflow);
+
+		const ctx = makeContext();
+		manager.startPolls('run-1', workflow, '/tmp', 'space-1', ctx);
+		expect(manager.activePollCount).toBe(0);
+
+		// Add a poll to gate-1 mid-run
+		const updatedGate = makeGate('gate-1', makePoll({ script: 'echo "$TASK_ID"' }));
+		const updatedWorkflow = makePollableWorkflow([updatedGate], [channel]);
+		workflowDefs.set(workflow.id, updatedWorkflow);
+
+		manager.refreshPollsForWorkflow(workflow.id);
+		expect(manager.activePollCount).toBe(1);
+
+		// The new poll should have the original context (TASK_ID=task-1),
+		// not empty strings. Verify by triggering a tick.
+		await triggerTick(
+			manager,
+			'run-1',
+			'gate-1',
+			makePoll({ script: 'echo "$TASK_ID"' }),
+			'/tmp',
+			ctx,
+			'node-2'
+		);
+		expect(injector.injectSubSessionMessage).toHaveBeenCalledWith('session-1', 'task-1', true);
+	});
+});
