@@ -683,6 +683,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 				source: PR_READY_BASH_SCRIPT,
 				timeoutMs: 30000,
 			},
+			poll: PR_INLINE_COMMENTS_POLL,
 			resetOnCycle: true,
 		},
 		{
@@ -853,6 +854,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 				source: PR_READY_BASH_SCRIPT,
 				timeoutMs: 30000,
 			},
+			poll: PR_INLINE_COMMENTS_POLL,
 			resetOnCycle: true,
 		},
 	],
@@ -1297,6 +1299,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 				source: PR_READY_BASH_SCRIPT,
 				timeoutMs: 30000,
 			},
+			poll: PR_INLINE_COMMENTS_POLL,
 			resetOnCycle: true,
 		},
 		{
