@@ -60,11 +60,12 @@ const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
 // ---------------------------------------------------------------------------
 
 /**
- * Shared poll config that checks for new PR inline review comments.
+ * Shared poll config that fetches all unresolved PR review thread comments.
  *
- * Used on gates leading into multi-agent reviewer nodes so that comments
- * posted during an active review session are surfaced to the reviewers
- * without requiring a human to relay them.
+ * Uses the GitHub GraphQL API to query review threads with isResolved=false,
+ * then formats the first comment of each unresolved thread with author,
+ * body, and URL. The poll detects changes when new unresolved threads appear
+ * or existing threads are resolved.
  *
  * Available env vars (injected by GatePollManager):
  *   PR_URL, PR_NUMBER, REPO_OWNER, REPO_NAME, TASK_ID, SPACE_ID, WORKFLOW_RUN_ID
@@ -73,10 +74,11 @@ const PR_INLINE_COMMENTS_POLL: GatePoll = {
 	intervalMs: 30_000,
 	script: [
 		'if [ -z "$PR_URL" ]; then exit 0; fi',
-		'gh api "repos/$REPO_OWNER/$REPO_NAME/pulls/$PR_NUMBER/comments" --jq \'if length == 0 then empty else .[-1] | "- **" + .user.login + "**: " + .body end\'',
+		'QUERY="query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login} body url}}}}}}}"',
+		'gh api graphql -f query="$QUERY" -f owner="$REPO_OWNER" -f name="$REPO_NAME" -F number="$PR_NUMBER" --jq \'[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[0] | "- **" + .author.login + "**: " + .body + "\\n  " + .url] | join("\\n\\n")\'',
 	].join('\n'),
 	target: 'to',
-	messageTemplate: 'New PR inline review comment:\n{{output}}',
+	messageTemplate: 'Unresolved PR review comments:\n{{output}}',
 };
 
 const builtInSeederLog = new Logger('seed-built-in-workflows');
