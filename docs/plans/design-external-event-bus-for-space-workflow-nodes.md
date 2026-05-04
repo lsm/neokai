@@ -407,7 +407,8 @@ class EventRouter {
   private static readonly DEDUP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
   // Cache: spaceId → Set of "owner/repo" strings for watched repos
-  // Refreshed on spaceWorkflow.updated events (when watched repos change)
+  // Invalidated via invalidateWatchedRepoCache() when repos are added/removed
+  // through the `space.github.watchRepo` RPC path.
   private watchedRepoCache: Map<string, Set<string>> = new Map();
 
   constructor(
@@ -434,6 +435,20 @@ class EventRouter {
       this.watchedRepoCache.set(spaceId, cached);
     }
     return cached.has(`${owner.toLowerCase()}/${repo.toLowerCase()}`);
+  }
+
+  /**
+   * Invalidate the watched-repo cache for a given space (or all spaces).
+   * Called when watched repos change via the `space.github.watchRepo` RPC path
+   * (enabling/disabling repos). Without this, `repo`-scoped matching grows stale
+   * until process restart.
+   */
+  invalidateWatchedRepoCache(spaceId?: string): void {
+    if (spaceId) {
+      this.watchedRepoCache.delete(spaceId);
+    } else {
+      this.watchedRepoCache.clear();
+    }
   }
 
   /** Evict stale dedup entries (called periodically or on demand). */
@@ -472,8 +487,9 @@ class EventRouter {
 
         const subKey = `${node.id}:${agent.name}`;
         for (const interest of agent.eventInterests) {
-          // Include interest topic in key so a single agent can have multiple interests
-          const fullKey = `${subKey}:${interest.topic}`;
+          // Include topic AND scope in key — same agent can subscribe to the same topic
+          // with different scopes (e.g., both 'task' and 'repo' scope for the same pattern).
+          const fullKey = `${subKey}:${interest.topic}:${interest.scope}`;
           desiredSubs.set(fullKey, {
             workflowRunId,
             nodeId: node.id,
@@ -490,20 +506,22 @@ class EventRouter {
     const currentSubs = this.activeRuns.get(workflowRunId) ?? new Set<Subscription>();
     const currentKeys = new Set<string>();
     for (const sub of currentSubs) {
-      currentKeys.add(`${sub.nodeId}:${sub.agentName}:${sub.interest.topic}`);
+      currentKeys.add(`${sub.nodeId}:${sub.agentName}:${sub.interest.topic}:${sub.interest.scope}`);
     }
     const desiredKeys = new Set(desiredSubs.keys());
 
     // Remove subscriptions no longer in the desired set (e.g. node went cancelled).
     for (const key of currentKeys) {
       if (!desiredKeys.has(key)) {
-        const [nodeId, agentName, ...topicParts] = key.split(':');
-        const topic = topicParts.join(':');
+        const [nodeId, agentName, ...rest] = key.split(':');
+        const scope = rest.pop()!;
+        const topic = rest.join(':');
         this.topicTrie.remove(
           v => v.workflowRunId === workflowRunId
             && v.nodeId === nodeId
             && v.agentName === agentName
-            && v.interest.topic === topic,
+            && v.interest.topic === topic
+            && v.interest.scope === scope,
         );
       }
     }
@@ -1010,6 +1028,11 @@ packages/daemon/src/lib/space/runtime/event-bus/
  * Validate a glob pattern for event subscriptions.
  * Rejects patterns that could corrupt the trie or match unintended topics.
  * Called at workflow create/update time and again at trie insertion time.
+ *
+ * Requires at least 4 segments because all event topics have the format
+ * `{source}/{owner}/{repo}/{resource}.{action}` (4 segments minimum).
+ * Patterns like `github/*` would pass validation but never match any event,
+ * creating silent misconfigurations.
  */
 export function validateGlobPattern(pattern: string): { valid: boolean; reason?: string } {
   if (!pattern || pattern.trim().length === 0) {
@@ -1018,8 +1041,11 @@ export function validateGlobPattern(pattern: string): { valid: boolean; reason?:
 
   const segments = pattern.split('/');
 
-  if (segments.length < 2) {
-    return { valid: false, reason: 'Topic pattern must have at least 2 segments (source/resource)' };
+  if (segments.length < 4) {
+    return {
+      valid: false,
+      reason: `Topic pattern must have at least 4 segments (source/owner/repo/resource.action); got ${segments.length}. Example: 'github/*/*/pull_request.review_submitted'`,
+    };
   }
 
   for (const segment of segments) {
@@ -1066,6 +1092,11 @@ if (this.eventRouter) {
 if (newStatus === 'done' || newStatus === 'cancelled') {
   this.eventRouter.clearRunInterests(workflowRunId);
 }
+
+// In the `space.github.watchRepo` RPC handler (packages/daemon/src/lib/rpc-handlers/index.ts):
+// After persisting the watch/unwatch change, invalidate the watched-repo cache
+// so that repo-scoped matching reflects the new state immediately.
+await this.eventRouter.invalidateWatchedRepoCache(spaceId);
 
 // In daemon startup (e.g. in SpaceRuntimeService or init function):
 const eventBus = new EventBus(daemonHub);
