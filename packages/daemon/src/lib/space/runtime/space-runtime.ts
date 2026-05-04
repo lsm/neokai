@@ -3440,7 +3440,17 @@ export class SpaceRuntime {
 	private async cleanupTerminalExecutors(): Promise<void> {
 		for (const [runId] of this.executors) {
 			const run = this.config.workflowRunRepo.getRun(runId);
-			if (!run || run.status === 'done' || run.status === 'cancelled' || run.status === 'blocked') {
+
+			// Blocked runs keep their executor so they remain rehydratable and can
+			// be retried (blocked → in_progress). Stop polls only — do not remove
+			// the executor or prune dedup keys (processRunTick handles dedup clearing
+			// when it observes canonicalTask.status !== 'blocked').
+			if (run?.status === 'blocked') {
+				this.pollManager?.stopPolls(runId);
+				continue;
+			}
+
+			if (!run || run.status === 'done' || run.status === 'cancelled') {
 				if (run?.status === 'done') {
 					const meta = this.executorMeta.get(runId);
 					if (meta) {
