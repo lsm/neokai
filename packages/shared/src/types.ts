@@ -218,7 +218,8 @@ export type Provider =
 	| 'ollama'
 	| 'ollama-cloud'
 	| 'anthropic-copilot'
-	| 'anthropic-codex';
+	| 'anthropic-codex'
+	| 'google-gemini-oauth';
 
 /**
  * Provider-specific configuration

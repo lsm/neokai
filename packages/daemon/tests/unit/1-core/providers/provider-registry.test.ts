@@ -320,7 +320,7 @@ describe('ProviderRegistry', () => {
 	describe('initializeProviders — all built-in providers registered', () => {
 		// Outer beforeEach already resets registry+factory; no per-test resets needed.
 
-		it('should register exactly eight built-in providers', () => {
+		it('should register exactly nine built-in providers', () => {
 			const reg = initializeProviders();
 
 			const ids = reg
@@ -333,6 +333,7 @@ describe('ProviderRegistry', () => {
 					'anthropic-codex',
 					'anthropic-copilot',
 					'glm',
+					'google-gemini-oauth',
 					'minimax',
 					'ollama',
 					'ollama-cloud',
@@ -377,18 +378,23 @@ describe('ProviderRegistry', () => {
 			expect(reg.has('anthropic-copilot')).toBe(true);
 		});
 
+		it('should include google-gemini-oauth provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('google-gemini-oauth')).toBe(true);
+		});
+
 		it('should return the same singleton registry on repeated calls without reset', () => {
 			const reg1 = initializeProviders();
 			const reg2 = initializeProviders();
 			// The global singleton must be the same reference — not a new instance
 			expect(reg1).toBe(reg2);
-			expect(reg2.size).toBe(8);
+			expect(reg2.size).toBe(9);
 		});
 
 		it('should use the global registry singleton', () => {
 			initializeProviders();
 			const globalReg = getProviderRegistry();
-			expect(globalReg.size).toBe(8);
+			expect(globalReg.size).toBe(9);
 		});
 	});
 
@@ -529,5 +535,10 @@ describe('inferProviderForModel', () => {
 	it('defaults unknown models to anthropic', () => {
 		expect(inferProviderForModel('sonnet')).toBe('anthropic');
 		expect(inferProviderForModel('unknown-model')).toBe('anthropic');
+	});
+
+	it('routes gemini- models to google-gemini-oauth', () => {
+		expect(inferProviderForModel('gemini-2.5-pro')).toBe('google-gemini-oauth');
+		expect(inferProviderForModel('gemini-2.5-flash')).toBe('google-gemini-oauth');
 	});
 });
