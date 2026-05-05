@@ -424,7 +424,7 @@ interface Subscription {
 ```typescript
 class EventRouter {
   // topic trie for fast lookup
-  private topicTrie: TopicTrie<Subscription[]> = new TopicTrie();
+  private topicTrie: TopicTrie<Subscription> = new TopicTrie();
 
   // track which runs have active subscriptions (for lifecycle management)
   private activeRuns: Map<string, Set<Subscription>> = new Map();
