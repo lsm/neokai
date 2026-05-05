@@ -3,7 +3,9 @@ import {
 	navSectionSignal,
 	contextPanelOpenSignal,
 	currentSpaceIdSignal,
+	currentSpaceConfigureTabSignal,
 	currentSpaceSessionIdSignal,
+	currentSpaceTasksFilterTabSignal,
 	currentSpaceViewModeSignal,
 	settingsSectionSignal,
 	type NavSection,
@@ -172,6 +174,8 @@ export function ContextPanel() {
 	}, [navSection]);
 	const activeSettingsSection = settingsSectionSignal.value;
 	const currentSpaceId = currentSpaceIdSignal.value;
+	const currentSpaceConfigureTab = currentSpaceConfigureTabSignal.value;
+	const currentSpaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
 	const currentSpaceViewMode = currentSpaceViewModeSignal.value;
 	const currentSpaceSessionId = currentSpaceSessionIdSignal.value;
 
@@ -284,13 +288,13 @@ export function ContextPanel() {
 		} else {
 			switch (currentSpaceViewMode) {
 				case 'tasks':
-					navigateToSpaceTasks(spaceId);
+					navigateToSpaceTasks(spaceId, currentSpaceTasksFilterTab);
 					break;
 				case 'sessions':
 					navigateToSpaceSessions(spaceId);
 					break;
 				case 'configure':
-					navigateToSpaceConfigure(spaceId);
+					navigateToSpaceConfigure(spaceId, currentSpaceConfigureTab);
 					break;
 				case 'overview':
 				default:

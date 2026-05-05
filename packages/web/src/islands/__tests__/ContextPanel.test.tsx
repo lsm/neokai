@@ -31,7 +31,11 @@ const {
 let mockNavSectionSignal!: Signal<'chats' | 'inbox' | 'spaces' | 'settings'>;
 let mockContextPanelOpenSignal!: Signal<boolean>;
 let mockCurrentSpaceIdSignal!: Signal<string | null>;
+let mockCurrentSpaceConfigureTabSignal!: Signal<'agents' | 'workflows' | 'settings'>;
 let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
+let mockCurrentSpaceTasksFilterTabSignal!: Signal<
+	'action' | 'active' | 'completed' | 'archived' | 'draft'
+>;
 let mockCurrentSpaceViewModeSignal!: Signal<'overview' | 'tasks' | 'sessions' | 'configure'>;
 let mockSettingsSectionSignal!: Signal<
 	'general' | 'providers' | 'app-mcp-servers' | 'skills' | 'models' | 'neo' | 'usage' | 'about'
@@ -64,7 +68,9 @@ function initSignals() {
 	mockNavSectionSignal = signal('spaces');
 	mockContextPanelOpenSignal = signal(true);
 	mockCurrentSpaceIdSignal = signal('space-1');
+	mockCurrentSpaceConfigureTabSignal = signal('agents');
 	mockCurrentSpaceSessionIdSignal = signal(null);
+	mockCurrentSpaceTasksFilterTabSignal = signal('active');
 	mockCurrentSpaceViewModeSignal = signal('overview');
 	mockSettingsSectionSignal = signal('general');
 	mockConnectionStateSignal = signal('connected');
@@ -153,8 +159,14 @@ vi.mock('../../lib/signals.ts', async (importOriginal) => {
 		get currentSpaceIdSignal() {
 			return mockCurrentSpaceIdSignal;
 		},
+		get currentSpaceConfigureTabSignal() {
+			return mockCurrentSpaceConfigureTabSignal;
+		},
 		get currentSpaceSessionIdSignal() {
 			return mockCurrentSpaceSessionIdSignal;
+		},
+		get currentSpaceTasksFilterTabSignal() {
+			return mockCurrentSpaceTasksFilterTabSignal;
 		},
 		get currentSpaceViewModeSignal() {
 			return mockCurrentSpaceViewModeSignal;
@@ -207,18 +219,40 @@ describe('ContextPanel', () => {
 	});
 
 	it.each([
-		['overview', mockNavigateToSpace],
-		['tasks', mockNavigateToSpaceTasks],
-		['sessions', mockNavigateToSpaceSessions],
-		['configure', mockNavigateToSpaceConfigure],
-	] as const)('preserves the %s view mode when switching spaces', (viewMode, expectedNavigate) => {
+		['overview', mockNavigateToSpace, ['space-2']],
+		['tasks', mockNavigateToSpaceTasks, ['space-2', 'active']],
+		['sessions', mockNavigateToSpaceSessions, ['space-2']],
+		['configure', mockNavigateToSpaceConfigure, ['space-2', 'agents']],
+	] as const)('preserves the %s view mode when switching spaces', (viewMode, expectedNavigate, args) => {
 		mockCurrentSpaceViewModeSignal.value = viewMode;
 		render(<ContextPanel />);
 
 		fireEvent.click(screen.getByText('Beta'));
 
-		expect(expectedNavigate).toHaveBeenCalledWith('space-2');
+		expect(expectedNavigate).toHaveBeenCalledWith(...args);
 		expect(mockNavigateToSpaceAgent).not.toHaveBeenCalled();
+		expect(mockContextPanelOpenSignal.value).toBe(false);
+	});
+
+	it('preserves the current task filter when switching spaces from tasks', () => {
+		mockCurrentSpaceViewModeSignal.value = 'tasks';
+		mockCurrentSpaceTasksFilterTabSignal.value = 'completed';
+		render(<ContextPanel />);
+
+		fireEvent.click(screen.getByText('Beta'));
+
+		expect(mockNavigateToSpaceTasks).toHaveBeenCalledWith('space-2', 'completed');
+		expect(mockContextPanelOpenSignal.value).toBe(false);
+	});
+
+	it('preserves the current configure subtab when switching spaces from configure', () => {
+		mockCurrentSpaceViewModeSignal.value = 'configure';
+		mockCurrentSpaceConfigureTabSignal.value = 'workflows';
+		render(<ContextPanel />);
+
+		fireEvent.click(screen.getByText('Beta'));
+
+		expect(mockNavigateToSpaceConfigure).toHaveBeenCalledWith('space-2', 'workflows');
 		expect(mockContextPanelOpenSignal.value).toBe(false);
 	});
 
@@ -241,7 +275,7 @@ describe('ContextPanel', () => {
 
 		fireEvent.click(screen.getByText('Beta'));
 
-		expect(mockNavigateToSpaceTasks).toHaveBeenCalledWith('space-2');
+		expect(mockNavigateToSpaceTasks).toHaveBeenCalledWith('space-2', 'active');
 		expect(mockNavigateToSpaceAgent).not.toHaveBeenCalled();
 	});
 
