@@ -416,6 +416,77 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 			await runtime.stop();
 		});
 
+		test('gate poll session resolver ignores cancelled fallback sessions', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Cancelled Fallback Poll-${Date.now()}-${Math.random()}`,
+				description: 'Test',
+				nodes: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT },
+				],
+				transitions: [],
+				channels: [
+					{ id: 'channel-cancelled', from: 'Step A', to: 'Step B', gateId: 'gate-cancelled' },
+				],
+				gates: [
+					{
+						id: 'gate-cancelled',
+						resetOnCycle: false,
+						poll: { intervalMs: 60_000, script: 'printf poll', target: 'from' },
+					},
+				],
+				startNodeId: STEP_A,
+				endNodeId: STEP_B,
+				rules: [],
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+			const run = workflowRunRepo.transitionStatus(
+				workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Cancelled Fallback Poll Run',
+				}).id,
+				'in_progress'
+			);
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Cancelled Fallback Poll Run',
+				description: '',
+				workflowRunId: run.id,
+				status: 'in_progress',
+			});
+			const nodeExecutionRepo = new NodeExecutionRepository(db);
+			const execution = nodeExecutionRepo.create({
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				agentName: 'agent',
+				agentId: AGENT,
+				agentSessionId: 'session-cancelled',
+				status: 'idle',
+			});
+			nodeExecutionRepo.update(execution.id, { status: 'cancelled' });
+			const injected: string[] = [];
+			const runtime = makeRuntime({ nodeExecutionRepo });
+			runtime.setTaskAgentManager({
+				isExecutionSpawning: () => false,
+				isSessionAlive: () => false,
+				spawnWorkflowNodeAgentForExecution: async () => 'session-1',
+				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
+				rehydrate: async () => {},
+				injectSubSessionMessage: (_sessionId: string, message: string) => {
+					injected.push(message);
+				},
+			} as never);
+
+			await runtime.executeTick();
+			await runtime.stop();
+
+			expect(injected).toEqual([]);
+		});
+
 		test('multiple in_progress runs all rehydrated by fresh runtime', async () => {
 			const wfA = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-multi-a', name: 'Step A', agentId: AGENT },

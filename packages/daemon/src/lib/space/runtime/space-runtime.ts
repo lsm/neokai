@@ -435,7 +435,9 @@ export class SpaceRuntime {
 						);
 						if (active?.agentSessionId) return active.agentSessionId;
 
-						const latestWithSession = executions.filter((e) => e.agentSessionId !== null).at(-1);
+						const latestWithSession = executions
+							.filter((e) => e.status !== 'cancelled' && e.agentSessionId !== null)
+							.at(-1);
 						if (latestWithSession?.agentSessionId) {
 							log.info(
 								`SpaceRuntime: gate poll will wake idle session "${latestWithSession.agentSessionId}" ` +
