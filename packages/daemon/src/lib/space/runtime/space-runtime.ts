@@ -1426,8 +1426,9 @@ export class SpaceRuntime {
 			this.executorMeta.get(run.id)?.workflow;
 		if (!workflow) {
 			log.warn(
-				`SpaceRuntime.ensurePollsForRun: cannot ensure gate polls for run ${run.id} — workflow ${run.workflowId} not found`
+				`SpaceRuntime.ensurePollsForRun: stopping gate polls for run ${run.id} — workflow ${run.workflowId} not found`
 			);
+			this.pollManager.stopPolls(run.id);
 			return;
 		}
 		const pollGateCount = workflow.gates?.filter((gate) => gate.poll).length ?? 0;

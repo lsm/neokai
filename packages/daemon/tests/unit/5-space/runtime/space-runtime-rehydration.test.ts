@@ -353,6 +353,69 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 			expect(runtime.getPollPrUrlForRun(run.id)).toBe('https://github.com/acme/widgets/pull/456');
 		});
 
+		test('ensurePollsForRun stops existing polls when workflow lookup fails', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Missing Workflow Poll-${Date.now()}-${Math.random()}`,
+				description: 'Test',
+				nodes: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT },
+				],
+				transitions: [],
+				channels: [{ id: 'channel-missing', from: 'Step A', to: 'Step B', gateId: 'gate-missing' }],
+				gates: [
+					{
+						id: 'gate-missing',
+						resetOnCycle: false,
+						poll: { intervalMs: 60_000, script: 'printf poll', target: 'from' },
+					},
+				],
+				startNodeId: STEP_A,
+				endNodeId: STEP_B,
+				rules: [],
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+			const run = workflowRunRepo.transitionStatus(
+				workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Missing Workflow Poll Run',
+				}).id,
+				'in_progress'
+			);
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Missing Workflow Poll Run',
+				description: '',
+				workflowRunId: run.id,
+				status: 'in_progress',
+			});
+			const runtime = makeRuntime();
+			runtime.setTaskAgentManager({
+				isExecutionSpawning: () => false,
+				isSessionAlive: () => true,
+				spawnWorkflowNodeAgentForExecution: async () => 'session-1',
+				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
+				rehydrate: async () => {},
+				injectSubSessionMessage: () => {},
+			} as never);
+
+			await runtime.executeTick();
+			expect(runtime.isGatePollActive(run.id, 'gate-missing')).toBe(true);
+
+			workflowManager.deleteWorkflow(workflow.id);
+			(runtime as unknown as { executorMeta: Map<string, unknown> }).executorMeta.delete(run.id);
+			await (runtime as unknown as { ensurePollsForRun: (r: typeof run) => Promise<void> })[
+				'ensurePollsForRun'
+			](run);
+
+			expect(runtime.isGatePollActive(run.id, 'gate-missing')).toBe(false);
+			await runtime.stop();
+		});
+
 		test('multiple in_progress runs all rehydrated by fresh runtime', async () => {
 			const wfA = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-multi-a', name: 'Step A', agentId: AGENT },
