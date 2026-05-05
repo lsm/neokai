@@ -480,7 +480,7 @@ export class RoomRuntimeService {
 				);
 
 				const messageId = generateUUID();
-				const sdkUserMessage: SDKUserMessage & { isSynthetic?: boolean } = {
+				const sdkUserMessage: SDKUserMessage = {
 					type: 'user' as const,
 					uuid: messageId as UUID,
 					session_id: sessionId,

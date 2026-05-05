@@ -485,6 +485,45 @@ describe('node-agent-tools: send_message', () => {
 		expect(data.error).toContain('No channel topology declared');
 	});
 
+	test('delivers space-agent target through send_message tool handler', async () => {
+		const spaceMessages: Array<{ spaceId: string; message: string }> = [];
+		const agentMessageRouter = new AgentMessageRouter({
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunId: ctx.workflowRunId,
+			workflowChannels: [],
+			messageInjector: async () => {},
+			spaceId: ctx.spaceId,
+			taskId: ctx.parentTaskId,
+			taskNumber: 42,
+			spaceAgentInjector: async (spaceId, message) => {
+				spaceMessages.push({ spaceId, message });
+			},
+		});
+		const config = makeConfig(ctx, { agentMessageRouter });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'space-agent',
+			message: 'Need space-level judgment',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.delivered).toEqual([
+			{ agentName: 'space-agent', sessionId: `space:chat:${ctx.spaceId}` },
+		]);
+		expect(spaceMessages).toEqual([
+			{
+				spaceId: ctx.spaceId,
+				message:
+					'─── Message from coder (task #42) ───\n\n' +
+					'Need space-level judgment\n\n' +
+					'─── Reply ───\n' +
+					`To reply, use: send_message_to_task with task_id="${ctx.parentTaskId}" and target node "coder"`,
+			},
+		]);
+	});
+
 	test('broadcast (*) succeeds and delivers to all permitted targets', async () => {
 		const injected: string[] = [];
 		const config = makeConfig(ctx, {
