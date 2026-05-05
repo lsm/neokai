@@ -20,6 +20,8 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -244,6 +246,245 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 			expect(freshRuntime.getActiveGatePollCount()).toBe(1);
 			expect(freshRuntime.isGatePollActive(run.id, 'gate-polled')).toBe(true);
 			await freshRuntime.stop();
+		});
+
+		test('fresh runtime restarts gate polls for a review-pending task', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Review Polled Workflow-${Date.now()}-${Math.random()}`,
+				description: 'Test',
+				nodes: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT },
+				],
+				transitions: [],
+				channels: [{ id: 'channel-review', from: 'Step A', to: 'Step B', gateId: 'gate-review' }],
+				gates: [
+					{
+						id: 'gate-review',
+						resetOnCycle: false,
+						poll: { intervalMs: 60_000, script: 'printf poll', target: 'from' },
+					},
+				],
+				startNodeId: STEP_A,
+				endNodeId: STEP_B,
+				rules: [],
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+
+			const pendingRun = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Review Polled Run',
+			});
+			const run = workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Review Polled Run',
+				description: '',
+				workflowRunId: run.id,
+				status: 'review',
+			});
+
+			const freshRuntime = makeRuntime();
+			freshRuntime.setTaskAgentManager({
+				isExecutionSpawning: () => false,
+				isSessionAlive: () => true,
+				spawnWorkflowNodeAgentForExecution: async () => 'session-1',
+				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
+				rehydrate: async () => {},
+				injectSubSessionMessage: () => {},
+			} as never);
+
+			await freshRuntime.executeTick();
+
+			expect(freshRuntime.getExecutor(run.id)).toBeDefined();
+			expect(freshRuntime.isGatePollActive(run.id, 'gate-review')).toBe(true);
+			await freshRuntime.stop();
+		});
+
+		test('poll context resolves most recently updated PR URL from gate data', () => {
+			const run = workflowRunRepo.transitionStatus(
+				workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: 'workflow-gate-pr',
+					title: 'Gate Data PR Run',
+				}).id,
+				'in_progress'
+			);
+			const gateDataRepo = new GateDataRepository(db);
+			gateDataRepo.set(run.id, 'z-older-gate', {
+				pr_url: 'https://github.com/acme/widgets/pull/1',
+			});
+			gateDataRepo.set(run.id, 'a-newer-gate', {
+				pr_url: 'https://github.com/acme/widgets/pull/123',
+			});
+
+			const runtime = makeRuntime({ gateDataRepo });
+
+			expect(runtime.getPollPrUrlForRun(run.id)).toBe('https://github.com/acme/widgets/pull/123');
+		});
+
+		test('poll context falls back to artifact PR URL when gate data has no PR URL', () => {
+			const run = workflowRunRepo.transitionStatus(
+				workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: 'workflow-artifact-pr',
+					title: 'Artifact PR Run',
+				}).id,
+				'in_progress'
+			);
+			const gateDataRepo = new GateDataRepository(db);
+			gateDataRepo.set(run.id, 'code-ready-gate', { unrelated: 'value' });
+			const artifactRepo = new WorkflowRunArtifactRepository(db);
+			artifactRepo.upsert({
+				id: 'artifact-pr-url',
+				runId: run.id,
+				nodeId: STEP_A,
+				artifactType: 'result',
+				artifactKey: 'pr',
+				data: { pr_url: 'https://github.com/acme/widgets/pull/456' },
+			});
+
+			const runtime = makeRuntime({ gateDataRepo, artifactRepo });
+
+			expect(runtime.getPollPrUrlForRun(run.id)).toBe('https://github.com/acme/widgets/pull/456');
+		});
+
+		test('ensurePollsForRun stops existing polls when workflow lookup fails', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Missing Workflow Poll-${Date.now()}-${Math.random()}`,
+				description: 'Test',
+				nodes: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT },
+				],
+				transitions: [],
+				channels: [{ id: 'channel-missing', from: 'Step A', to: 'Step B', gateId: 'gate-missing' }],
+				gates: [
+					{
+						id: 'gate-missing',
+						resetOnCycle: false,
+						poll: { intervalMs: 60_000, script: 'printf poll', target: 'from' },
+					},
+				],
+				startNodeId: STEP_A,
+				endNodeId: STEP_B,
+				rules: [],
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+			const run = workflowRunRepo.transitionStatus(
+				workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Missing Workflow Poll Run',
+				}).id,
+				'in_progress'
+			);
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Missing Workflow Poll Run',
+				description: '',
+				workflowRunId: run.id,
+				status: 'in_progress',
+			});
+			const runtime = makeRuntime();
+			runtime.setTaskAgentManager({
+				isExecutionSpawning: () => false,
+				isSessionAlive: () => true,
+				spawnWorkflowNodeAgentForExecution: async () => 'session-1',
+				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
+				rehydrate: async () => {},
+				injectSubSessionMessage: () => {},
+			} as never);
+
+			await runtime.executeTick();
+			expect(runtime.isGatePollActive(run.id, 'gate-missing')).toBe(true);
+
+			workflowManager.deleteWorkflow(workflow.id);
+			(runtime as unknown as { executorMeta: Map<string, unknown> }).executorMeta.delete(run.id);
+			await (runtime as unknown as { ensurePollsForRun: (r: typeof run) => Promise<void> })[
+				'ensurePollsForRun'
+			](run);
+
+			expect(runtime.isGatePollActive(run.id, 'gate-missing')).toBe(false);
+			await runtime.stop();
+		});
+
+		test('gate poll session resolver ignores cancelled fallback sessions', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Cancelled Fallback Poll-${Date.now()}-${Math.random()}`,
+				description: 'Test',
+				nodes: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT },
+				],
+				transitions: [],
+				channels: [
+					{ id: 'channel-cancelled', from: 'Step A', to: 'Step B', gateId: 'gate-cancelled' },
+				],
+				gates: [
+					{
+						id: 'gate-cancelled',
+						resetOnCycle: false,
+						poll: { intervalMs: 60_000, script: 'printf poll', target: 'from' },
+					},
+				],
+				startNodeId: STEP_A,
+				endNodeId: STEP_B,
+				rules: [],
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+			const run = workflowRunRepo.transitionStatus(
+				workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Cancelled Fallback Poll Run',
+				}).id,
+				'in_progress'
+			);
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Cancelled Fallback Poll Run',
+				description: '',
+				workflowRunId: run.id,
+				status: 'in_progress',
+			});
+			const nodeExecutionRepo = new NodeExecutionRepository(db);
+			const execution = nodeExecutionRepo.create({
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				agentName: 'agent',
+				agentId: AGENT,
+				agentSessionId: 'session-cancelled',
+				status: 'idle',
+			});
+			nodeExecutionRepo.update(execution.id, { status: 'cancelled' });
+			const injected: string[] = [];
+			const runtime = makeRuntime({ nodeExecutionRepo });
+			runtime.setTaskAgentManager({
+				isExecutionSpawning: () => false,
+				isSessionAlive: () => false,
+				spawnWorkflowNodeAgentForExecution: async () => 'session-1',
+				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
+				rehydrate: async () => {},
+				injectSubSessionMessage: (_sessionId: string, message: string) => {
+					injected.push(message);
+				},
+			} as never);
+
+			await runtime.executeTick();
+			await runtime.stop();
+
+			expect(injected).toEqual([]);
 		});
 
 		test('multiple in_progress runs all rehydrated by fresh runtime', async () => {

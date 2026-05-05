@@ -98,6 +98,8 @@ export interface SpaceRuntimeConfig {
 	taskRepo: SpaceTaskRepository;
 	/** Node execution repository for workflow-internal execution state */
 	nodeExecutionRepo: NodeExecutionRepository;
+	/** Optional gate data repository used to resolve PR URLs written through gated channels. */
+	gateDataRepo?: GateDataRepository;
 	/** Optional reactive DB invalidation hooks for task LiveQuery surfaces */
 	reactiveDb?: ReactiveDatabase;
 	/**
@@ -431,29 +433,26 @@ export class SpaceRuntime {
 						const active = executions.find(
 							(e) => e.status !== 'cancelled' && e.status !== 'idle' && e.agentSessionId !== null
 						);
-						return active?.agentSessionId ?? null;
+						if (active?.agentSessionId) return active.agentSessionId;
+
+						const latestWithSession = executions
+							.filter((e) => e.status !== 'cancelled' && e.agentSessionId !== null)
+							.at(-1);
+						if (latestWithSession?.agentSessionId) {
+							log.info(
+								`SpaceRuntime: gate poll will wake idle session "${latestWithSession.agentSessionId}" ` +
+									`for run "${runId}" node "${nodeId}"`
+							);
+							return latestWithSession.agentSessionId;
+						}
+
+						return null;
 					},
 				},
 				// PR URL resolver: refreshes PR context on each poll tick so polls
 				// discover PR URLs that appear after the run starts.
 				{
-					getPrUrlForRun: async (runId) => {
-						if (!this.config.artifactRepo) return '';
-						try {
-							const artifacts = this.config.artifactRepo.listByRun(runId);
-							for (let i = artifacts.length - 1; i >= 0; i--) {
-								const data = artifacts[i]?.data;
-								if (!data) continue;
-								const candidate =
-									(typeof data.prUrl === 'string' && data.prUrl) ||
-									(typeof data.pr_url === 'string' && data.pr_url);
-								if (candidate) return candidate;
-							}
-						} catch {
-							// Swallow - PR URL resolution is best-effort
-						}
-						return '';
-					},
+					getPrUrlForRun: async (runId) => this.resolvePrUrlForRun(runId),
 				},
 				// Workflow definition provider: enables mid-run poll config pickup
 				// by re-reading the latest workflow definition from the DB.
@@ -1199,6 +1198,11 @@ export class SpaceRuntime {
 		return this.pollManager?.isPollActive(runId, gateId) ?? false;
 	}
 
+	/** @internal — exposed only for unit tests/diagnostics. */
+	getPollPrUrlForRun(runId: string): string {
+		return this.resolvePrUrlForRun(runId);
+	}
+
 	/**
 	 * Reopen or resume a workflow-backed task as one lifecycle operation.
 	 *
@@ -1422,7 +1426,18 @@ export class SpaceRuntime {
 		const workflow =
 			this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ??
 			this.executorMeta.get(run.id)?.workflow;
-		if (!workflow?.gates?.some((gate) => gate.poll)) {
+		if (!workflow) {
+			log.warn(
+				`SpaceRuntime.ensurePollsForRun: stopping gate polls for run ${run.id} — workflow ${run.workflowId} not found`
+			);
+			this.pollManager.stopPolls(run.id);
+			return;
+		}
+		const pollGateCount = workflow.gates?.filter((gate) => gate.poll).length ?? 0;
+		if (pollGateCount === 0) {
+			log.info(
+				`SpaceRuntime.ensurePollsForRun: stopping gate polls for run ${run.id} — workflow has no polled gates`
+			);
 			this.pollManager.stopPolls(run.id);
 			return;
 		}
@@ -1442,15 +1457,27 @@ export class SpaceRuntime {
 			canonicalTask.status === 'cancelled' ||
 			canonicalTask.status === 'archived'
 		) {
+			log.info(
+				`SpaceRuntime.ensurePollsForRun: not starting gate polls for run ${run.id} — task ${canonicalTask.id} is ${canonicalTask.status}`
+			);
 			return;
 		}
 
 		const space = knownSpace ?? (await this.config.spaceManager.getSpace(run.spaceId));
-		if (!space) return;
+		if (!space) {
+			log.warn(
+				`SpaceRuntime.ensurePollsForRun: cannot ensure gate polls for run ${run.id} — space ${run.spaceId} not found`
+			);
+			return;
+		}
 
 		const pollContext = this.buildPollScriptContext(canonicalTask, run, space.id);
 		if (!pollContext) return;
 
+		log.info(
+			`SpaceRuntime.ensurePollsForRun: starting ${pollGateCount} gate poll(s) for run ${run.id} ` +
+				`(runStatus=${run.status}, taskStatus=${canonicalTask.status}, prUrl=${pollContext.PR_URL ? 'present' : 'missing'})`
+		);
 		// GatePollManager.startPolls replaces activePolls entries but does not clear
 		// any existing interval for the same run/gate key. Stop first so this helper
 		// is idempotent across rehydration + recovery paths in the same tick.
@@ -1480,10 +1507,27 @@ export class SpaceRuntime {
 			// 'blocked' runs are included so a human-gate-blocked run gets its
 			// executor reloaded on restart, allowing it to advance once the gate is resolved.
 			const activeRuns = this.config.workflowRunRepo.getRehydratableRuns(space.id);
+			const reviewRuns = this.config.workflowRunRepo
+				.listBySpace(space.id)
+				.filter(
+					(run) =>
+						!activeRuns.some((activeRun) => activeRun.id === run.id) &&
+						run.status !== 'done' &&
+						run.status !== 'cancelled' &&
+						this.config.taskRepo.listByWorkflowRun(run.id).some((task) => task.status === 'review')
+				);
+			if (reviewRuns.length > 0) {
+				log.info(
+					`SpaceRuntime.rehydrateExecutors: found ${reviewRuns.length} review-pending run(s) with non-terminal status in space ${space.id}`
+				);
+			}
+			activeRuns.push(...reviewRuns);
 
 			for (const run of activeRuns) {
-				// Skip if executor already registered (e.g. called twice)
-				if (this.executors.has(run.id)) continue;
+				if (this.executors.has(run.id)) {
+					await this.ensurePollsForRun(run, space);
+					continue;
+				}
 				const registered = await this.ensureExecutorRegistered(run, space);
 				if (registered) {
 					await this.ensurePollsForRun(run, space);
@@ -3438,27 +3482,7 @@ export class SpaceRuntime {
 		run: SpaceWorkflowRun,
 		spaceId: string
 	): PollScriptContext | null {
-		// Resolve PR URL from artifacts (same pattern as dispatchPostApproval)
-		let prUrl = '';
-		if (this.config.artifactRepo) {
-			try {
-				const artifacts = this.config.artifactRepo.listByRun(run.id);
-				for (let i = artifacts.length - 1; i >= 0; i--) {
-					const data = artifacts[i]?.data;
-					if (!data) continue;
-					const candidate =
-						(typeof data.prUrl === 'string' && data.prUrl) ||
-						(typeof data.pr_url === 'string' && data.pr_url);
-					if (candidate) {
-						prUrl = candidate;
-						break;
-					}
-				}
-			} catch {
-				// Swallow — PR URL is best-effort for polls
-			}
-		}
-
+		const prUrl = this.resolvePrUrlForRun(run.id);
 		const prCtx = extractPrContext(prUrl);
 
 		return {
@@ -3471,6 +3495,42 @@ export class SpaceRuntime {
 			REPO_NAME: prCtx.REPO_NAME,
 			WORKFLOW_RUN_ID: run.id,
 		};
+	}
+
+	private resolvePrUrlForRun(runId: string): string {
+		const fromData = (data: Record<string, unknown> | undefined): string =>
+			(typeof data?.prUrl === 'string' && data.prUrl) ||
+			(typeof data?.pr_url === 'string' && data.pr_url) ||
+			'';
+
+		try {
+			const gateDataRepo = this.config.gateDataRepo ?? new GateDataRepository(this.config.db);
+			const gateRecords = gateDataRepo.listByRun(runId).sort((a, b) => b.updatedAt - a.updatedAt);
+			for (const record of gateRecords) {
+				const candidate = fromData(record.data);
+				if (candidate) return candidate;
+			}
+		} catch (err) {
+			log.warn(
+				`SpaceRuntime.resolvePrUrlForRun: failed to read gate data for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+			);
+		}
+
+		if (this.config.artifactRepo) {
+			try {
+				const artifacts = this.config.artifactRepo.listByRun(runId);
+				for (let i = artifacts.length - 1; i >= 0; i--) {
+					const candidate = fromData(artifacts[i]?.data);
+					if (candidate) return candidate;
+				}
+			} catch (err) {
+				log.warn(
+					`SpaceRuntime.resolvePrUrlForRun: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
+		}
+
+		return '';
 	}
 
 	private resolveCompletionSummary(runId: string, workflow: SpaceWorkflow): string | undefined {
