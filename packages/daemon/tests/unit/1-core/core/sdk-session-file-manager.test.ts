@@ -23,6 +23,7 @@ import {
 	messageUuidExistsInSessionFile,
 	findSDKSessionFileGlobally,
 	migrateSDKSessionFile,
+	sanitizeAssistantUsageInSDKSessionFile,
 } from '../../../../src/lib/sdk-session-file-manager';
 import type { Database } from '../../../../src/storage/database';
 
@@ -78,6 +79,114 @@ describe('SDK Session File Manager', () => {
 		test('should handle dots and slashes in workspace path', () => {
 			const path = getSDKSessionFilePath('/Users/test/.hidden/project', 'session-123');
 			expect(path).toContain('projects/-Users-test--hidden-project');
+		});
+	});
+
+	describe('sanitizeAssistantUsageInSDKSessionFile', () => {
+		test('adds default usage to legacy assistant messages', () => {
+			const messages = [
+				JSON.stringify({
+					type: 'user',
+					uuid: 'user-1',
+					message: { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+				}),
+				JSON.stringify({
+					type: 'assistant',
+					uuid: 'assistant-1',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'Hi' }] },
+				}),
+			];
+			writeFileSync(testSessionFile, `${messages.join('\n')}\n`, 'utf-8');
+
+			const result = sanitizeAssistantUsageInSDKSessionFile(testWorkspacePath, testSdkSessionId);
+
+			expect(result.success).toBe(true);
+			expect(result.sanitizedCount).toBe(1);
+			const lines = readFileSync(testSessionFile, 'utf-8').trim().split('\n');
+			const assistant = JSON.parse(lines[1]);
+			expect(assistant.message.usage).toEqual({ input_tokens: 0, output_tokens: 0 });
+		});
+
+		test('preserves existing usage fields while filling missing token counts', () => {
+			writeFileSync(
+				testSessionFile,
+				`${JSON.stringify({
+					type: 'assistant',
+					uuid: 'assistant-1',
+					message: {
+						role: 'assistant',
+						content: [{ type: 'text', text: 'Hi' }],
+						usage: { input_tokens: 42, cache_creation_input_tokens: 7 },
+					},
+				})}\n`,
+				'utf-8'
+			);
+
+			const result = sanitizeAssistantUsageInSDKSessionFile(testWorkspacePath, testSdkSessionId);
+
+			expect(result.success).toBe(true);
+			expect(result.sanitizedCount).toBe(1);
+			const assistant = JSON.parse(readFileSync(testSessionFile, 'utf-8').trim());
+			expect(assistant.message.usage).toEqual({
+				input_tokens: 42,
+				cache_creation_input_tokens: 7,
+				output_tokens: 0,
+			});
+		});
+
+		test('does not rewrite file when all assistant messages already have valid usage', () => {
+			const original = `${JSON.stringify({
+				type: 'assistant',
+				uuid: 'assistant-1',
+				message: {
+					role: 'assistant',
+					content: [{ type: 'text', text: 'Hi' }],
+					usage: { input_tokens: 10, output_tokens: 5 },
+				},
+			})}\n`;
+			writeFileSync(testSessionFile, original, 'utf-8');
+			const before = readFileSync(testSessionFile, 'utf-8');
+
+			const result = sanitizeAssistantUsageInSDKSessionFile(testWorkspacePath, testSdkSessionId);
+
+			expect(result.success).toBe(true);
+			expect(result.sanitizedCount).toBe(0);
+			expect(readFileSync(testSessionFile, 'utf-8')).toBe(before);
+		});
+
+		test('replaces non-numeric and invalid token values with 0', () => {
+			writeFileSync(
+				testSessionFile,
+				`${JSON.stringify({
+					type: 'assistant',
+					uuid: 'assistant-1',
+					message: {
+						role: 'assistant',
+						content: [{ type: 'text', text: 'Hi' }],
+						usage: { input_tokens: 'not-a-number', output_tokens: Number.NaN },
+					},
+				})}\n`,
+				'utf-8'
+			);
+
+			const result = sanitizeAssistantUsageInSDKSessionFile(testWorkspacePath, testSdkSessionId);
+
+			expect(result.success).toBe(true);
+			expect(result.sanitizedCount).toBe(1);
+			const assistant = JSON.parse(readFileSync(testSessionFile, 'utf-8').trim());
+			expect(assistant.message.usage.input_tokens).toBe(0);
+			expect(assistant.message.usage.output_tokens).toBe(0);
+		});
+
+		test('does not rewrite non-existent session files', () => {
+			const result = sanitizeAssistantUsageInSDKSessionFile(
+				testWorkspacePath,
+				'nonexistent-session'
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.filePath).toBeNull();
+			expect(result.sanitizedCount).toBe(0);
 		});
 	});
 
