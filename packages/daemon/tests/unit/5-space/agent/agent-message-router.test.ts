@@ -373,6 +373,51 @@ describe('AgentMessageRouter: built-in inter-level targets', () => {
 		]);
 	});
 
+	test('routes target space-agent to a real peer before built-in escalation', async () => {
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[makeResolvedChannel('coder', 'space-agent')]
+		);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		seedPeerTask(
+			ctx.db,
+			ctx.spaceId,
+			workflowRunId,
+			ctx.nodeId,
+			'space-agent',
+			ctx.reviewerSessionId
+		);
+		const injected: Array<{ sessionId: string; message: string }> = [];
+		const spaceMessages: Array<{ spaceId: string; message: string }> = [];
+		const router = makeRouter(ctx, workflowRunId, injected, runChannels, {
+			spaceId: ctx.spaceId,
+			taskId: 'task-123',
+			taskNumber: 236,
+			spaceAgentInjector: async (spaceId, message) => {
+				spaceMessages.push({ spaceId, message });
+			},
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'space-agent',
+			message: 'Peer handoff',
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.delivered).toEqual([
+			{ agentName: 'space-agent', sessionId: ctx.reviewerSessionId },
+		]);
+		expect(injected).toEqual([
+			{
+				sessionId: ctx.reviewerSessionId,
+				message: '─── Message from coder ───\n\nPeer handoff',
+			},
+		]);
+		expect(spaceMessages).toEqual([]);
+	});
 	test('uses an envelope when delivering node messages to the Task Agent', async () => {
 		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
 			ctx.db,
