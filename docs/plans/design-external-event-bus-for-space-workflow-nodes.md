@@ -560,6 +560,12 @@ interface PendingDelivery {
   deliveryKey: string;
 }
 
+interface QueuedDeliveryFailure {
+  eventId: string;
+  deliveryKey: string;
+  reason: 'pending_queue_overflow' | 'run_terminal_cleanup';
+}
+
 interface WatchedRepoLookup {
   listWatchedRepos(spaceId: string): { owner: string; repo: string; enabled: boolean }[];
 }
@@ -833,14 +839,25 @@ class EventRouter {
       }
     }
 
-    // Clean up in-memory pending queue for this run. Keys are JSON tuples, so parse
-    // structurally rather than prefix-matching delimiter-joined strings.
-    for (const key of this.pendingQueue.keys()) {
+    // Clean up in-memory pending queue for this terminal run. Queued deliveries
+    // were already registered in ExternalEventStore, so dropping the in-memory
+    // queue must also mark each queued delivery terminally failed; otherwise the
+    // source event can never reach a terminal all-deliveries state.
+    const terminalQueueFailures: QueuedDeliveryFailure[] = [];
+    for (const [key, queue] of this.pendingQueue.entries()) {
       const [keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string];
       if (keyWorkflowRunId === workflowRunId) {
+        for (const pending of queue) {
+          terminalQueueFailures.push({
+            eventId: pending.event.id,
+            deliveryKey: pending.deliveryKey,
+            reason: 'run_terminal_cleanup',
+          });
+        }
         this.pendingQueue.delete(key);
       }
     }
+    this.markQueuedDeliveriesFailed(terminalQueueFailures);
 
     // Clean up pending deliveries and retry counts for this run.
     // Delivery keys are JSON tuples: [dedupeKey, taskId, nodeId, agentName, workflowRunId]
@@ -1026,7 +1043,10 @@ class EventRouter {
     queue.push({ event, deliveryKey });
     if (queue.length > 50) {
       const dropped = queue.shift();
-      if (dropped) this.pendingDeliveries.delete(dropped.deliveryKey);
+      if (dropped) {
+        this.pendingDeliveries.delete(dropped.deliveryKey);
+        this.markQueuedDeliveryFailed(dropped.event.id, dropped.deliveryKey, 'pending_queue_overflow');
+      }
       log.warn('EventRouter: pending external event queue exceeded limit; dropped oldest event', {
         workflowRunId: sub.workflowRunId,
         taskId: sub.taskId,
@@ -1035,6 +1055,22 @@ class EventRouter {
       });
     }
     this.pendingQueue.set(key, queue);
+  }
+
+  private markQueuedDeliveryFailed(
+    eventId: string,
+    deliveryKey: string,
+    reason: QueuedDeliveryFailure['reason'],
+  ): void {
+    this.eventStore.markDeliveryFailed(eventId, deliveryKey, { terminal: true, reason });
+    this.eventStore.markEventFailedIfAllDeliveriesTerminal(eventId);
+  }
+
+  private markQueuedDeliveriesFailed(failures: QueuedDeliveryFailure[]): void {
+    for (const failure of failures) {
+      this.pendingDeliveries.delete(failure.deliveryKey);
+      this.markQueuedDeliveryFailed(failure.eventId, failure.deliveryKey, failure.reason);
+    }
   }
 
   /**
@@ -1279,6 +1315,17 @@ When an event matches a subscription whose node execution is `idle` (agent sessi
 2. The existing defer mechanism handles waking: if idle → enqueue immediately; if busy → persist as deferred, replay after current turn.
 3. No new wake mechanism needed — the existing `SessionNotificationSink` pattern already solves this.
 
+### Terminal run cleanup
+
+When a workflow run transitions to `done` or `cancelled`, `clearRunInterests(workflowRunId)` removes subscriptions, retry timers, and in-memory pending queues. Any queued delivery removed during this terminal cleanup was already registered in `space_external_event_deliveries`, so cleanup must mark it terminally failed before deleting the queue entry:
+
+1. Collect each queued `{ eventId, deliveryKey }` for the terminal run.
+2. Call `markDeliveryFailed(eventId, deliveryKey, { terminal: true, reason: 'run_terminal_cleanup' })`.
+3. Call `markEventFailedIfAllDeliveriesTerminal(eventId)` so the source event can advance once all remaining deliveries are terminal.
+4. Only then delete the in-memory queue and pending markers.
+
+This keeps run teardown from leaving non-terminal delivery rows for nodes that can no longer be started.
+
 ### Queue for not-yet-started nodes
 
 When a node execution is `pending` (no session yet):
@@ -1287,7 +1334,7 @@ When a node execution is `pending` (no session yet):
 2. When `TaskAgentManager` creates the node's session, it calls `eventRouter.flushQueuedDeliveriesForSession(sub, sessionId)`.
 3. Queued events are injected through the same prepared-delivery path as live events, so successful flush marks the per-subscription delivery delivered and advances the source event only when all expected deliveries are terminal.
 4. If flush injection fails, the router clears the stale pending marker and schedules a normal delivery retry so the queued event is not silently lost.
-5. Queue is bounded: max 50 events per execution, oldest dropped (with a warning log).
+5. Queue is bounded: max 50 events per execution, oldest dropped (with a warning log). Because expected delivery rows are registered before queueing, overflow eviction must call `markDeliveryFailed(..., { terminal: true, reason: 'pending_queue_overflow' })` and then `markEventFailedIfAllDeliveriesTerminal(event.id)`; otherwise the evicted delivery row can block event terminalization forever.
 
 **Known limitation — daemon restart**: The in-memory per-node pending queue is lost on daemon restart. For v1, this is accepted as a known delivery gap:
 - The bus-level `ExternalEventStore` preserves the source event and can re-emit retryable states, but the per-node in-memory queue itself is not durable.
@@ -1615,7 +1662,7 @@ V1 needs one core event-store table plus workflow type additions:
    );
    ```
 
-   `EventRouter` calls `registerExpectedDelivery(...)` for every scope-matched subscription before attempting any injection. This registration must be idempotent for the `(event_id, delivery_key)` primary key: use `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING`, or an equivalent upsert that never downgrades an existing terminal row. Retryable source duplicates and router retries can prepare the same delivery more than once, so duplicate expected-delivery rows are normal and must not become preparation failures. After idempotent registration, the router skips already-terminal delivery rows and only attempts pending/retryable rows. It then records `delivered` after successful `injectMessage` and calls `markEventDeliveredIfAllDeliveriesTerminal(event.id)` so source-level dedup can stop re-emitting already-delivered events after restart or in-memory TTL eviction. When retry budget is exhausted it records terminal delivery failure and calls `markEventFailedIfAllDeliveriesTerminal(event.id)` so duplicate source observations do not restart an exhausted retry loop.
+   `EventRouter` calls `registerExpectedDelivery(...)` for every scope-matched subscription before attempting any injection. This registration must be idempotent for the `(event_id, delivery_key)` primary key: use `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING`, or an equivalent upsert that never downgrades an existing terminal row. Retryable source duplicates and router retries can prepare the same delivery more than once, so duplicate expected-delivery rows are normal and must not become preparation failures. After idempotent registration, the router skips already-terminal delivery rows and only attempts pending/retryable rows. It then records `delivered` after successful `injectMessage` and calls `markEventDeliveredIfAllDeliveriesTerminal(event.id)` so source-level dedup can stop re-emitting already-delivered events after restart or in-memory TTL eviction. When retry budget is exhausted, pending-node queue overflow evicts an expected delivery, or terminal run cleanup drops queued deliveries, the router records terminal delivery failure and calls `markEventFailedIfAllDeliveriesTerminal(event.id)` so duplicate source observations do not restart an exhausted or impossible delivery.
 
 3. **Adapter-owned GitHub configuration**: reuse or migrate the existing `space_github_watched_repos` table behind `GitHubEventAdapterRepository`. This table remains source-specific and should not be queried by EventRouter except through cache invalidation hooks for repo-scoped matching.
 
