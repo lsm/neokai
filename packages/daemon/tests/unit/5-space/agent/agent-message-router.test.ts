@@ -373,6 +373,45 @@ describe('AgentMessageRouter: built-in inter-level targets', () => {
 		]);
 	});
 
+	test('delivers array target space-agent to the built-in Space Agent', async () => {
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[]
+		);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		const spaceMessages: Array<{ spaceId: string; message: string }> = [];
+		const router = makeRouter(ctx, workflowRunId, [], runChannels, {
+			spaceId: ctx.spaceId,
+			taskId: 'task-123',
+			taskNumber: 236,
+			spaceAgentInjector: async (spaceId, message) => {
+				spaceMessages.push({ spaceId, message });
+			},
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: ['space-agent'],
+			message: 'Array escalation',
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.delivered).toEqual([
+			{ agentName: 'space-agent', sessionId: `space:chat:${ctx.spaceId}` },
+		]);
+		expect(spaceMessages).toEqual([
+			{
+				spaceId: ctx.spaceId,
+				message:
+					'─── Message from coder (task #236) ───\n\n' +
+					'Array escalation\n\n' +
+					'─── Reply ───\n' +
+					'To reply, use: send_message_to_task with task_id="task-123" and target node "coder"',
+			},
+		]);
+	});
 	test('routes target space-agent to a real peer before built-in escalation', async () => {
 		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
 			ctx.db,

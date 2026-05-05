@@ -254,6 +254,16 @@ export class AgentMessageRouter {
 			}
 		}
 
+		const shouldUseBuiltInSpaceAgent = (targetName: string): boolean =>
+			targetName === 'space-agent' &&
+			Boolean(spaceAgentInjector && spaceId) &&
+			!peers.some((peer) => peer.agentName === targetName) &&
+			!(nodeGroups && nodeGroups[targetName]) &&
+			!allDeclaredAgentNames.has(targetName);
+
+		const resolveBuiltInTarget = (targetName: string): string =>
+			shouldUseBuiltInSpaceAgent(targetName) ? BUILT_IN_SPACE_AGENT_TARGET : targetName;
+
 		// --- Resolve target agent names ---
 		let targetAgentNames: string[];
 
@@ -270,8 +280,10 @@ export class AgentMessageRouter {
 			}
 			targetAgentNames = permittedNodes;
 		} else if (Array.isArray(target)) {
-			// Multicast: explicit list of agent names
-			targetAgentNames = target;
+			// Multicast: explicit list of agent names. Preserve real peers named
+			// "space-agent" but normalize unresolved entries to the built-in
+			// escalation sentinel so arrays behave like single-string targets.
+			targetAgentNames = target.map(resolveBuiltInTarget);
 		} else if (target === 'task-agent' && taskAgentRouter) {
 			targetAgentNames = ['task-agent'];
 		} else {
@@ -294,7 +306,7 @@ export class AgentMessageRouter {
 				// Agent is declared in a node_execution but hasn't spawned a session yet.
 				// Route through activation/queue path below.
 				targetAgentNames = [target];
-			} else if (target === 'space-agent' && spaceAgentInjector && spaceId) {
+			} else if (shouldUseBuiltInSpaceAgent(target)) {
 				// Built-in Space Agent escalation is only used after normal peer/node
 				// resolution fails so a real workflow agent named "space-agent" remains
 				// reachable via send_message.
