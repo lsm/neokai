@@ -25,7 +25,7 @@ External Event Sources (GitHub webhook, polling, future: Slack, CI)
 │  EventIngestion     │  Normalize → validate → publish to EventBus
 │  (adapter per source│
 └────────┬────────────┘
-         │ publish(event) → hub.emit('space.externalEvent.published', { event })
+         │ publish(event) → hub.emit('space.externalEvent.published', { sessionId: 'global', event })
          ▼
 ┌─────────────────────┐
 │  EventBus           │  In-memory, backed by TypedHub. External topic is payload data.
@@ -284,7 +284,26 @@ export interface EventPublisher {
 export const EXTERNAL_EVENT_PUBLISHED_METHOD = 'space.externalEvent.published';
 
 export interface EventBusHubEventMap {
-  'space.externalEvent.published': { spaceId: string; event: ExternalEvent };
+  'space.externalEvent.published': {
+    /** Fixed channel required by BaseEventData/TypedHub routing. */
+    sessionId: 'global';
+    spaceId: string;
+    event: ExternalEvent;
+  };
+}
+```
+
+The `sessionId: 'global'` field is required because EventBus is backed by TypedHub/DaemonHub, whose payloads satisfy `BaseEventData` for channel routing. External event delivery is still space-scoped by `spaceId`; the fixed session channel is only the transport channel for bus subscribers.
+
+```typescript
+class EventBus implements EventPublisher {
+  async publish(event: ExternalEvent): Promise<void> {
+    await this.hub.emit(EXTERNAL_EVENT_PUBLISHED_METHOD, {
+      sessionId: 'global',
+      spaceId: event.spaceId,
+      event,
+    });
+  }
 }
 ```
 
