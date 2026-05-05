@@ -28,6 +28,7 @@ import {
 } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope.ts';
 
 // ---------------------------------------------------------------------------
 // DB + space setup helpers
@@ -1599,6 +1600,33 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		return created;
 	}
 
+	function spaceAgentToTaskEnvelope(task: SpaceTask, message: string): string {
+		return formatAgentMessage({
+			fromLevel: 'space-agent',
+			fromAgentName: 'Space Agent',
+			toLevel: 'task-agent',
+			body: message,
+			taskId: task.id,
+			taskNumber: task.taskNumber,
+		});
+	}
+
+	function spaceAgentToNodeEnvelope(
+		task: SpaceTask,
+		message: string,
+		nodeId?: string | null
+	): string {
+		return formatAgentMessage({
+			fromLevel: 'space-agent',
+			fromAgentName: 'Space Agent',
+			toLevel: 'node-agent',
+			body: message,
+			taskId: task.id,
+			taskNumber: task.taskNumber,
+			nodeId,
+		});
+	}
+
 	interface FakePendingMessageQueue {
 		enqueued: Array<{
 			workflowRunId: string;
@@ -1694,7 +1722,9 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.target).toBe('task-agent');
 		expect(tam.ensureCalls).toEqual([task.id]);
-		expect(tam.taskAgentInjects).toEqual([{ taskId: task.id, message: 'kick off work' }]);
+		expect(tam.taskAgentInjects).toEqual([
+			{ taskId: task.id, message: spaceAgentToTaskEnvelope(task, 'kick off work') },
+		]);
 		// task-agent session id is now recorded on the task
 		const refreshed = ctx.taskRepo.getTask(task.id);
 		expect(refreshed?.taskAgentSessionId).toBeTruthy();
@@ -1712,7 +1742,9 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 		expect(tam.ensureCalls).toEqual([task.id]);
-		expect(tam.taskAgentInjects).toEqual([{ taskId: task.id, message: 'please revisit' }]);
+		expect(tam.taskAgentInjects).toEqual([
+			{ taskId: task.id, message: spaceAgentToTaskEnvelope(task, 'please revisit') },
+		]);
 	});
 
 	test('returns an error when the task is archived', async () => {
@@ -1757,7 +1789,9 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 		expect(parsed.task_id).toBe(taskB.id);
-		expect(tam.taskAgentInjects).toEqual([{ taskId: taskB.id, message: 'hi B' }]);
+		expect(tam.taskAgentInjects).toEqual([
+			{ taskId: taskB.id, message: spaceAgentToTaskEnvelope(taskB, 'hi B') },
+		]);
 	});
 
 	test('returns an error when task_number does not match any task in this space', async () => {
@@ -1813,7 +1847,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(tam.subSessionInjects).toEqual([
 			{
 				sessionId: 'coder-session-live',
-				message: 'refactor the parser',
+				message: spaceAgentToNodeEnvelope(task, 'refactor the parser', 'coder'),
 				isSyntheticMessage: true,
 			},
 		]);
@@ -1857,7 +1891,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(tam.subSessionInjects).toEqual([
 			{
 				sessionId: 'reviewer-b-session',
-				message: 'please re-review',
+				message: spaceAgentToNodeEnvelope(task, 'please re-review', 'reviewer-2'),
 				isSyntheticMessage: true,
 			},
 		]);
@@ -1904,7 +1938,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(tam.subSessionInjects).toEqual([
 			{
 				sessionId: 'reviewer-session-newly-restored',
-				message: 'please re-review',
+				message: spaceAgentToNodeEnvelope(task, 'please re-review', 'reviewer'),
 				isSyntheticMessage: true,
 			},
 		]);
@@ -1993,7 +2027,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 				sourceAgentName: undefined,
 				targetKind: 'node_agent',
 				targetAgentName: 'reviewer',
-				message: 'please review this PR',
+				message: spaceAgentToNodeEnvelope(task, 'please review this PR', 'reviewer'),
 			},
 		]);
 	});
@@ -2062,7 +2096,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(tam.subSessionInjects).toEqual([
 			{
 				sessionId: 'reviewer-session-1',
-				message: 'please look again',
+				message: spaceAgentToNodeEnvelope(task, 'please look again', 'Reviewer'),
 				isSyntheticMessage: true,
 			},
 		]);
@@ -2081,7 +2115,9 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 		expect(parsed.task_id).toBe(taskA.id);
-		expect(tam.taskAgentInjects).toEqual([{ taskId: taskA.id, message: 'hello' }]);
+		expect(tam.taskAgentInjects).toEqual([
+			{ taskId: taskA.id, message: spaceAgentToTaskEnvelope(taskA, 'hello') },
+		]);
 	});
 
 	test('falls back to activateNode when a previously-live session rejects injection', async () => {
@@ -2122,7 +2158,11 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(parsed.activated).toBe(true);
 		expect(activateCalls).toEqual([[run.id, wf.startNodeId]]);
 		expect(tam.subSessionInjects).toEqual([
-			{ sessionId: 'coder-new', message: 'retry', isSyntheticMessage: true },
+			{
+				sessionId: 'coder-new',
+				message: spaceAgentToNodeEnvelope(task, 'retry', 'coder'),
+				isSyntheticMessage: true,
+			},
 		]);
 	});
 
