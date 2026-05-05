@@ -877,6 +877,38 @@ class EventRouter {
         return resolved.taskId === sub.taskId;
       }
     }
+  /**
+   * Schedule a retry for failed delivery with exponential backoff.
+   * Retries are bounded by MAX_RETRIES; after that, the event is dropped.
+   */
+  private scheduleRetry(event: ExternalEvent, sub: Subscription, dedupeKey: string): void {
+    const retries = (this.retryCounts.get(dedupeKey) ?? 0) + 1;
+    if (retries > EventRouter.MAX_RETRIES) {
+      log.warn(`Max retries exceeded for event ${dedupeKey}, dropping`);
+      this.retryCounts.delete(dedupeKey);
+      return;
+    }
+
+    this.retryCounts.set(dedupeKey, retries);
+    const backoff = EventRouter.RETRY_BACKOFF_MS * Math.pow(2, retries - 1);
+
+    setTimeout(() => {
+      // Re-check if delivered while waiting (another delivery might have succeeded)
+      if (this.delivered.has(dedupeKey)) {
+        this.retryCounts.delete(dedupeKey);
+        return;
+      }
+      // Use try/catch to prevent unhandled promise rejections in retry path (P2 fix)
+      this.deliverToSubscription(event, sub).catch((err) => {
+        log.warn('EventRouter: retry delivery failed', {
+          error: err,
+          retries,
+          dedupeKey,
+          workflowRunId: sub.workflowRunId,
+        });
+      });
+    }, backoff);
+  }
   }
 }
 ```
@@ -1278,31 +1310,6 @@ export function validateGlobPattern(pattern: string): { valid: boolean; reason?:
         valid: false,
         reason: `Segment "${segment}" contains invalid characters. Use alphanumeric, dash, underscore, dot, or segment-local "*" wildcard.`,
       };
-
-  /**
-   * Schedule a retry for failed delivery with exponential backoff.
-   * Retries are bounded by MAX_RETRIES; after that, the event is dropped.
-   */
-  private scheduleRetry(event: ExternalEvent, sub: Subscription, dedupeKey: string): void {
-    const retries = (this.retryCounts.get(dedupeKey) ?? 0) + 1;
-    if (retries > EventRouter.MAX_RETRIES) {
-      log.warn(`Max retries exceeded for event ${dedupeKey}, dropping`);
-      this.retryCounts.delete(dedupeKey);
-      return;
-    }
-
-    this.retryCounts.set(dedupeKey, retries);
-    const backoff = EventRouter.RETRY_BACKOFF_MS * Math.pow(2, retries - 1);
-
-    setTimeout(() => {
-      // Re-check if delivered while waiting (another delivery might have succeeded)
-      if (this.delivered.has(dedupeKey)) {
-        this.retryCounts.delete(dedupeKey);
-        return;
-      }
-      void this.deliverToSubscription(event, sub);
-    }, backoff);
-  }
 
     }
   }
