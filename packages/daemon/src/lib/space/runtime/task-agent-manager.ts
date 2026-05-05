@@ -84,6 +84,7 @@ import {
 	validateTaskAllowsSpawn,
 } from './workflow-node-execution-validation';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
+import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
 import { AgentMessageRouter } from './agent-message-router';
@@ -3129,6 +3130,10 @@ export class TaskAgentManager {
 		// --- Store in map before streaming start
 		this.taskAgentSessions.set(taskId, agentSession);
 
+		// Old SDK transcripts may lack assistant message usage. Sanitize only during
+		// rehydration, before the SDK reads JSONL history while resuming.
+		this.sanitizeSDKSessionTranscriptForRehydration(agentSession, rehydrateWorkspacePath);
+
 		// --- Restart the streaming query (SDK resumes from conversation history in DB)
 		await agentSession.startStreamingQuery();
 		await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
@@ -3258,6 +3263,29 @@ export class TaskAgentManager {
 	 * Returns the rehydrated AgentSession, or null if the session cannot be found
 	 * in the DB or its parent context is missing.
 	 */
+	private sanitizeSDKSessionTranscriptForRehydration(
+		agentSession: AgentSession,
+		workspacePath: string
+	): void {
+		const session = agentSession.getSessionData();
+		if (!session.sdkSessionId) return;
+
+		const result = sanitizeAssistantUsageInSDKSessionFile(workspacePath, session.sdkSessionId);
+		if (!result.success) {
+			log.warn(
+				`TaskAgentManager.rehydrate: failed to sanitize SDK transcript for session ${session.id} ` +
+					`(sdkSessionId=${session.sdkSessionId}): ${result.errors.join('; ')}`
+			);
+			return;
+		}
+		if (result.sanitizedCount > 0) {
+			log.info(
+				`TaskAgentManager.rehydrate: sanitized ${result.sanitizedCount} assistant message(s) ` +
+					`in SDK transcript for session ${session.id}`
+			);
+		}
+	}
+
 	private async rehydrateSubSession(subSessionId: string): Promise<AgentSession | null> {
 		log.warn(`TaskAgentManager: rehydrating ghost sub-session ${subSessionId} from DB...`);
 
@@ -3420,6 +3448,10 @@ export class TaskAgentManager {
 					`starting query only after runtime provisioning is complete`
 			);
 		}
+
+		// Old SDK transcripts may lack assistant message usage. Sanitize only during
+		// rehydration, before the SDK reads JSONL history while resuming.
+		this.sanitizeSDKSessionTranscriptForRehydration(agentSession, workspacePath);
 
 		// --- Restart the streaming query (idempotent if already running)
 		await agentSession.startStreamingQuery();

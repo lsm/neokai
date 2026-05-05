@@ -306,8 +306,107 @@ interface SDKFileMessage {
 			tool_use_id?: string;
 			[key: string]: unknown;
 		}>;
+		usage?: {
+			input_tokens?: unknown;
+			output_tokens?: unknown;
+			[key: string]: unknown;
+		};
+		[key: string]: unknown;
 	};
 	[key: string]: unknown;
+}
+
+export interface SDKSessionUsageSanitizationResult {
+	success: boolean;
+	filePath: string | null;
+	sanitizedCount: number;
+	errors: string[];
+}
+
+function isFiniteTokenCount(value: unknown): value is number {
+	return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+/**
+ * Sanitize legacy Claude SDK JSONL transcripts before daemon-restart resume.
+ *
+ * Older SDK versions persisted assistant messages without message.usage. Current
+ * SDK readMessages expects usage.input_tokens to exist and can crash before our
+ * normal query error handling runs. This function performs the smallest safe
+ * mutation: assistant messages get a usage object and numeric input/output token
+ * counts, preserving any other SDK-owned fields.
+ */
+export function sanitizeAssistantUsageInSDKSessionFile(
+	workspacePath: string,
+	sdkSessionId: string
+): SDKSessionUsageSanitizationResult {
+	const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
+	const result: SDKSessionUsageSanitizationResult = {
+		success: true,
+		filePath: sessionFile,
+		sanitizedCount: 0,
+		errors: [],
+	};
+
+	if (!existsSync(sessionFile)) {
+		result.filePath = null;
+		return result;
+	}
+
+	try {
+		const content = readFileSync(sessionFile, 'utf-8');
+		const lines = content.split('\n');
+		let changed = false;
+
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			if (!line.trim()) continue;
+
+			let message: SDKFileMessage;
+			try {
+				message = JSON.parse(line) as SDKFileMessage;
+			} catch (parseError) {
+				result.errors.push(`Failed to parse line ${i}: ${parseError}`);
+				continue;
+			}
+
+			if (message.type !== 'assistant' || !message.message) continue;
+
+			const existingUsage =
+				message.message.usage && typeof message.message.usage === 'object'
+					? message.message.usage
+					: {};
+			const nextUsage = {
+				...existingUsage,
+				input_tokens: isFiniteTokenCount(existingUsage.input_tokens)
+					? existingUsage.input_tokens
+					: 0,
+				output_tokens: isFiniteTokenCount(existingUsage.output_tokens)
+					? existingUsage.output_tokens
+					: 0,
+			};
+
+			if (
+				message.message.usage !== existingUsage ||
+				nextUsage.input_tokens !== existingUsage.input_tokens ||
+				nextUsage.output_tokens !== existingUsage.output_tokens
+			) {
+				message.message.usage = nextUsage;
+				lines[i] = JSON.stringify(message);
+				result.sanitizedCount++;
+				changed = true;
+			}
+		}
+
+		if (changed) {
+			writeFileSync(sessionFile, lines.join('\n'), 'utf-8');
+		}
+	} catch (error) {
+		result.success = false;
+		result.errors.push(`Sanitization error: ${error}`);
+	}
+
+	return result;
 }
 
 /**
