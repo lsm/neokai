@@ -995,11 +995,12 @@ class GitHubEventAdapter implements EventAdapter {
       // original GitHub action so users can filter created/edited/deleted/etc.
       const topic = `github/${repoOwner}/${repoName}/${mapEventType(event.eventType, event.action)}`;
 
-      // Publish to bus
+      // Publish to bus. Preserve the upstream occurrence time for ordering,
+      // queue TTL, and latency diagnostics; only ingestedAt is "now".
       await publisher.publish({
         id: crypto.randomUUID(),
         topic,
-        occurredAt: Date.now(),
+        occurredAt: new Date(event.occurredAt).getTime(),
         ingestedAt: Date.now(),
         source: 'github',
         prNumber: event.prNumber,
