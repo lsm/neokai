@@ -181,7 +181,7 @@ export interface WorkflowNodeAgent {
 
 **`task` scope** is the critical innovation. The router resolves the task's context at match time:
 
-1. The task's `SpaceTask` record has `workflowRunId` and (via `workflow_run_artifacts` or gate data) an associated PR number and branch name.
+1. The task's `SpaceTask` record has `workflowRunId` and (via `space_workflow_run_artifacts` where `key = 'pr_url'` matches the event's `prUrl`, or gate data with `branch_name`) an associated PR number and branch name.
 2. The router queries the same `SpacePrTaskResolver` that `SpaceGitHubService` already uses to match PR numbers to tasks.
 3. For a `task`-scoped subscription, the router checks: does this event's PR number / branch match the node execution's parent task?
 4. The node author never specifies a PR number — it's implicit from the task context.
