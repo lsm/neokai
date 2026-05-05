@@ -99,8 +99,14 @@ import {
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
+import { formatAgentMessage } from '../agent-message-envelope';
 
 const log = new Logger('task-agent-manager');
+const AGENT_MESSAGE_ENVELOPE_PREFIX = '─── Message from ';
+
+function hasAgentMessageEnvelope(message: string): boolean {
+	return message.startsWith(AGENT_MESSAGE_ENVELOPE_PREFIX);
+}
 
 // ---------------------------------------------------------------------------
 // Config
@@ -1601,7 +1607,18 @@ export class TaskAgentManager {
 
 		for (const row of pending) {
 			const isSyntheticMessage = row.sourceAgentName !== 'human';
-			const message = isSyntheticMessage ? row.message : `[Message from human]: ${row.message}`;
+			const message = isSyntheticMessage
+				? hasAgentMessageEnvelope(row.message)
+					? row.message
+					: formatAgentMessage({
+							fromLevel: row.sourceAgentName === 'task-agent' ? 'task-agent' : 'node-agent',
+							fromAgentName: row.sourceAgentName,
+							toLevel: 'node-agent',
+							body: row.message,
+							taskId: row.taskId,
+							nodeId: targetAgentName,
+						})
+				: `[Message from human]: ${row.message}`;
 			try {
 				await this.injectSubSessionMessage(sessionId, message, isSyntheticMessage);
 				repo.markDelivered(row.id, sessionId);
