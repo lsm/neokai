@@ -544,6 +544,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 114: Add 'draft' to space_tasks status CHECK constraint.
 	runMigration114(db);
+
+	// Migration 115: Add task_agent_config column to spaces table.
+	//   Stores per-space Task Agent overrides (model and custom prompt) as JSON.
+	runMigration115(db);
 }
 
 /**
@@ -7909,4 +7913,20 @@ function addDraftToStatusCheck(createSql: string): string {
 		throw new Error('Unable to add draft to space_tasks.status CHECK constraint');
 	}
 	return result;
+}
+
+/**
+ * Migration 115: Add `task_agent_config` column to `spaces` table.
+ *
+ * Stores per-space Task Agent overrides (model and custom prompt) as JSON.
+ * Nullable — null means no overrides (use code defaults).
+ */
+export function runMigration115(db: BunDatabase): void {
+	if (!tableExists(db, 'spaces')) return;
+
+	// Idempotent: skip if column already exists.
+	const columns = tableColumnNames(db, 'spaces');
+	if (columns.includes('task_agent_config')) return;
+
+	db.exec(`ALTER TABLE spaces ADD COLUMN task_agent_config TEXT DEFAULT NULL`);
 }

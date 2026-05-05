@@ -27,6 +27,7 @@ let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockSpaceId: ReturnType<typeof signal<string | null>>;
+let mockSpace: ReturnType<typeof signal<any>>;
 
 const mockDeleteAgent = vi.fn();
 const mockCreateAgent = vi.fn();
@@ -39,6 +40,7 @@ vi.mock('../../../lib/space-store', () => ({
 			workflows: mockWorkflows,
 			loading: mockLoading,
 			spaceId: mockSpaceId,
+			space: mockSpace,
 			deleteAgent: mockDeleteAgent,
 			createAgent: mockCreateAgent,
 			updateAgent: mockUpdateAgent,
@@ -64,6 +66,21 @@ vi.mock('../../../lib/toast', () => ({
 
 vi.mock('../../../lib/utils', () => ({
 	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
+}));
+
+// Mock WorkflowModelSelect (used by TaskAgentCard)
+vi.mock('../visual-editor/WorkflowModelSelect', () => ({
+	WorkflowModelSelect: ({ value, onChange, testId, className }) => (
+		<select
+			data-testid={testId}
+			value={value ?? ''}
+			onChange={(e) => onChange(e.target.value || undefined)}
+			class={className}
+		>
+			<option value="">-- No override --</option>
+			<option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+		</select>
+	),
 }));
 
 // Mock SpaceAgentEditor so tests don't need to set up all of its dependencies
@@ -178,6 +195,7 @@ mockAgents = signal<SpaceAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockLoading = signal(false);
 mockSpaceId = signal<string | null>('space-1');
+mockSpace = signal<any>({ id: 'space-1', defaultModel: undefined, taskAgentConfig: undefined });
 
 import { SpaceAgentList } from '../SpaceAgentList';
 
@@ -274,8 +292,13 @@ describe('SpaceAgentList', () => {
 
 	it('does not render model span when model is not set', () => {
 		mockAgents.value = [makeAgent({ model: undefined })];
-		const { queryByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-		expect(queryByText('claude-sonnet-4-6')).toBeNull();
+		const { container } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		// The TaskAgentCard shows the resolved model, so check within custom agent cards only.
+		const agentCards = container.querySelectorAll('.bg-dark-850.border.border-dark-700');
+		for (const card of agentCards) {
+			const modelSpans = card.querySelectorAll('span.text-xs.text-gray-500.font-mono');
+			expect(modelSpans.length).toBe(0);
+		}
 	});
 
 	it('renders description preview', () => {

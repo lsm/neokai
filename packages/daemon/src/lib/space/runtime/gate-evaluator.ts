@@ -21,7 +21,7 @@
  * point. `isChannelOpen()` remains synchronous (no script execution).
  */
 
-import type { Gate, GateField, GateFieldCheck, GateScript, Channel } from '@neokai/shared';
+import type { Channel, Gate, GateField, GateFieldCheck, GateScript } from '@neokai/shared';
 import {
 	deepMergeWithDepthLimit,
 	type GateScriptContext,
@@ -241,6 +241,47 @@ export function validateGateScript(script: unknown): string[] {
 }
 
 /**
+ * Validates a gate poll configuration.
+ *
+ * @param poll  The poll object to validate.
+ * @returns Array of human-readable error strings. Empty array = valid.
+ */
+export function validateGatePoll(poll: unknown): string[] {
+	const errors: string[] = [];
+
+	if (poll === undefined || poll === null) {
+		return errors;
+	}
+
+	if (typeof poll !== 'object') {
+		errors.push(`poll: expected object, got ${typeof poll}`);
+		return errors;
+	}
+
+	const p = poll as Record<string, unknown>;
+
+	if (typeof p.intervalMs !== 'number' || !Number.isFinite(p.intervalMs) || p.intervalMs < 10_000) {
+		errors.push(
+			`poll.intervalMs: must be a finite number >= 10000 (10 seconds), got ${p.intervalMs}`
+		);
+	}
+
+	if (typeof p.script !== 'string' || p.script.trim().length === 0) {
+		errors.push('poll.script: expected non-empty string');
+	}
+
+	if (p.target !== 'from' && p.target !== 'to') {
+		errors.push(`poll.target: expected "from" or "to", got ${JSON.stringify(p.target)}`);
+	}
+
+	if (p.messageTemplate !== undefined && typeof p.messageTemplate !== 'string') {
+		errors.push(`poll.messageTemplate: expected string, got ${typeof p.messageTemplate}`);
+	}
+
+	return errors;
+}
+
+/**
  * Validates a gate definition for creation or modification.
  *
  * This validator enforces structural rules on new/updated gates:
@@ -271,6 +312,7 @@ export function validateGate(gate: unknown): string[] {
 	errors.push(...validateGateColor(g.color));
 	errors.push(...validateGateLabel(g.label));
 	errors.push(...validateGateScript(g.script));
+	errors.push(...validateGatePoll(g.poll));
 
 	// Validate fields when present (validateGateFields handles non-array gracefully)
 	if (g.fields !== undefined && g.fields !== null) {
@@ -278,6 +320,8 @@ export function validateGate(gate: unknown): string[] {
 	}
 
 	// At least one of fields (non-empty array) or script must be present
+	// Note: poll does NOT count as a gate check mechanism — it is a side-channel
+	// for message injection only. A gate still needs fields or a script.
 	const hasFields = Array.isArray(g.fields) && g.fields.length > 0;
 	const hasScript = g.script !== undefined && g.script !== null;
 	if (!hasFields && !hasScript) {

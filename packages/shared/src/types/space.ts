@@ -48,6 +48,20 @@ export interface SpaceConfig {
 }
 
 /**
+ * Per-space overrides for the built-in Task Agent.
+ *
+ * The Task Agent is not a seeded SpaceAgent — it has no row in the `space_agents`
+ * table. Its prompt is generated in code at `task-agent.ts`. This config allows
+ * per-space customization of model and prompt additions without mutating code.
+ */
+export interface TaskAgentConfig {
+	/** Model override for the Task Agent. Falls back to `space.defaultModel` then `DEFAULT_TASK_AGENT_MODEL`. */
+	model?: string;
+	/** Custom prompt additions appended after the contract sections (similar to SpaceAgent.customPrompt). */
+	customPrompt?: string;
+}
+
+/**
  * A Space — a workspace-first context for multi-agent workflows.
  * Unlike Rooms, a Space has a single required workspace path and is
  * designed around workflow execution with customizable agents.
@@ -86,6 +100,8 @@ export interface Space {
 	autonomyLevel?: SpaceAutonomyLevel;
 	/** Runtime configuration (maxConcurrentTasks, taskTimeoutMs, etc.) */
 	config?: SpaceConfig;
+	/** Per-space overrides for the built-in Task Agent (model and custom prompt). */
+	taskAgentConfig?: TaskAgentConfig;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
@@ -128,6 +144,8 @@ export interface CreateSpaceParams {
 	autonomyLevel?: SpaceAutonomyLevel;
 	/** Runtime configuration */
 	config?: SpaceConfig;
+	/** Per-space overrides for the built-in Task Agent */
+	taskAgentConfig?: TaskAgentConfig;
 }
 
 /**
@@ -142,6 +160,8 @@ export interface UpdateSpaceParams {
 	allowedModels?: string[];
 	autonomyLevel?: SpaceAutonomyLevel;
 	config?: SpaceConfig;
+	/** Per-space overrides for the built-in Task Agent. Pass null to clear. */
+	taskAgentConfig?: TaskAgentConfig | null;
 }
 
 // ============================================================================
@@ -863,6 +883,49 @@ export interface GateScript {
 	timeoutMs?: number;
 }
 
+/**
+ * Gate Poll — periodic script execution that injects messages into workflow
+ * node sessions when script output changes.
+ *
+ * When a gate has `poll` defined, the runtime starts a timer at `intervalMs`
+ * once the workflow run becomes `in_progress`. On each tick, the script is
+ * executed in the same sandboxed environment as gate scripts, with additional
+ * context variables (TASK_ID, PR_URL, etc.) injected as environment variables.
+ *
+ * If the script's stdout changes AND is non-empty, a message is injected into
+ * the target node's agent session using `TaskAgentManager.injectSubSessionMessage()`.
+ * The message is formatted using `messageTemplate` (default: raw output).
+ *
+ * Polling stops when the workflow run reaches a terminal state (`done`,
+ * `cancelled`, or `blocked`).
+ */
+export interface GatePoll {
+	/** Poll interval in milliseconds (minimum 10_000 / 10 seconds) */
+	intervalMs: number;
+	/**
+	 * Script to execute periodically. Runs in a sandboxed environment using
+	 * the same infrastructure as gate scripts (bash interpreter only).
+	 * Context is provided via environment variables — never hardcoded.
+	 *
+	 * Available env vars: TASK_ID, TASK_TITLE, SPACE_ID, PR_URL, PR_NUMBER,
+	 * REPO_OWNER, REPO_NAME, WORKFLOW_RUN_ID
+	 */
+	script: string;
+	/**
+	 * Which side of the gate's channel to inject the message into.
+	 * - `'from'` — inject into the source node's agent session
+	 * - `'to'` — inject into the target node's agent session
+	 */
+	target: 'from' | 'to';
+	/**
+	 * Optional template wrapping script output. Use `{{output}}` as placeholder.
+	 * When omitted, the raw script stdout is used as the message body.
+	 *
+	 * Example: `"New PR review comment:\n{{output}}"`
+	 */
+	messageTemplate?: string;
+}
+
 export interface Gate {
 	/** Unique identifier */
 	id: string;
@@ -888,6 +951,13 @@ export interface Gate {
 	 * Undefined = no approval needed beyond validation.
 	 */
 	requiredLevel?: SpaceAutonomyLevel;
+	/**
+	 * Optional poll configuration for periodic script execution and message injection.
+	 * When defined, the runtime starts a timer that executes the script at the
+	 * specified interval and injects messages into the target node when output changes.
+	 * Undefined = no polling (default, backward compatible).
+	 */
+	poll?: GatePoll;
 }
 
 /**

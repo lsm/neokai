@@ -6,6 +6,8 @@
  * - computeWorkflowHash returns a stable hex string for identical workflows
  * - workflowsMatchFingerprint returns true/false correctly
  * - Layout coordinates and agent UUIDs do NOT affect the hash
+ * - Gate poll fields are included in the fingerprint
+ * - Channel gateId and maxCycles are included in the fingerprint
  */
 
 import { describe, it, expect } from 'bun:test';
@@ -64,7 +66,7 @@ describe('buildWorkflowFingerprint', () => {
 		expect(fp.nodeNames).toEqual(['Coder', 'Reviewer']);
 	});
 
-	it('returns sorted channel topology strings', () => {
+	it('returns sorted channel JSON serializations', () => {
 		const wf = makeWorkflow({
 			channels: [
 				{ id: 'ch2', from: 'Reviewer', to: 'Coder' },
@@ -72,7 +74,12 @@ describe('buildWorkflowFingerprint', () => {
 			],
 		});
 		const fp = buildWorkflowFingerprint(wf);
-		expect(fp.channels).toEqual(['Coder->Reviewer', 'Reviewer->Coder']);
+		expect(fp.channels).toHaveLength(2);
+		// Sorted alphabetically: Coder->... comes before Reviewer->...
+		const parsed0 = JSON.parse(fp.channels[0]);
+		const parsed1 = JSON.parse(fp.channels[1]);
+		expect(parsed0.from).toBe('Coder');
+		expect(parsed1.from).toBe('Reviewer');
 	});
 
 	it('sorts fan-out targets within a channel', () => {
@@ -80,16 +87,60 @@ describe('buildWorkflowFingerprint', () => {
 			channels: [{ id: 'ch1', from: 'Coder', to: ['QA', 'Reviewer'] }],
 		});
 		const fp = buildWorkflowFingerprint(wf);
-		// Both orderings of to should produce the same string
 		const wf2 = makeWorkflow({
 			channels: [{ id: 'ch1', from: 'Coder', to: ['Reviewer', 'QA'] }],
 		});
 		const fp2 = buildWorkflowFingerprint(wf2);
 		expect(fp.channels).toEqual(fp2.channels);
-		expect(fp.channels[0]).toBe('Coder->QA,Reviewer');
+		// Verify the "to" array is sorted
+		const parsed = JSON.parse(fp.channels[0]);
+		expect(parsed.to).toEqual(['QA', 'Reviewer']);
 	});
 
-	it('returns sorted gate serializations', () => {
+	it('includes channel gateId and maxCycles in serialization', () => {
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch1', from: 'Coder', to: 'Reviewer', gateId: 'gate-1', maxCycles: 3 }],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.channels[0]);
+		expect(parsed.gateId).toBe('gate-1');
+		expect(parsed.maxCycles).toBe(3);
+	});
+
+	it('uses null for missing channel gateId and maxCycles', () => {
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch1', from: 'Coder', to: 'Reviewer' }],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.channels[0]);
+		expect(parsed.gateId).toBeNull();
+		expect(parsed.maxCycles).toBeNull();
+	});
+
+	it('normalizes single-target channel to arrays to strings', () => {
+		const wf1 = makeWorkflow({
+			channels: [{ id: 'ch1', from: 'Coder', to: 'Reviewer' }],
+		});
+		const wf2 = makeWorkflow({
+			channels: [{ id: 'ch1', from: 'Coder', to: ['Reviewer'] }],
+		});
+		expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
+		// Verify the normalized form is a string, not an array
+		const fp = buildWorkflowFingerprint(wf1);
+		const parsed = JSON.parse(fp.channels[0]);
+		expect(parsed.to).toBe('Reviewer');
+	});
+
+	it('keeps multi-target channel to as sorted array', () => {
+		const wf = makeWorkflow({
+			channels: [{ id: 'ch1', from: 'Coder', to: ['Reviewer', 'QA'] }],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.channels[0]);
+		expect(parsed.to).toEqual(['QA', 'Reviewer']); // sorted
+	});
+
+	it('returns sorted gate JSON serializations', () => {
 		const wf = makeWorkflow({
 			gates: [
 				{ id: 'gate-z', resetOnCycle: false },
@@ -97,10 +148,11 @@ describe('buildWorkflowFingerprint', () => {
 			],
 		});
 		const fp = buildWorkflowFingerprint(wf);
-		// Both gates serialized in sorted order by their id prefix
 		expect(fp.gates).toHaveLength(2);
-		expect(fp.gates[0]).toMatch(/^gate-a\|/);
-		expect(fp.gates[1]).toMatch(/^gate-z\|/);
+		const parsed0 = JSON.parse(fp.gates[0]);
+		const parsed1 = JSON.parse(fp.gates[1]);
+		expect(parsed0.id).toBe('gate-a');
+		expect(parsed1.id).toBe('gate-z');
 	});
 
 	it('uses empty string for missing description/instructions', () => {
@@ -158,7 +210,7 @@ describe('buildWorkflowFingerprint', () => {
 		expect(fp.completionAutonomyLevel).toBe(5);
 	});
 
-	it('serializes gate fields with name, type, and check op', () => {
+	it('serializes gate fields with name, type, and full check object', () => {
 		const wf = makeWorkflow({
 			gates: [
 				{
@@ -169,7 +221,10 @@ describe('buildWorkflowFingerprint', () => {
 			],
 		});
 		const fp = buildWorkflowFingerprint(wf);
-		expect(fp.gates[0]).toContain('approved:boolean:exists');
+		const parsed = JSON.parse(fp.gates[0]);
+		expect(parsed.fields[0].name).toBe('approved');
+		expect(parsed.fields[0].type).toBe('boolean');
+		expect(parsed.fields[0].check).toEqual({ op: 'exists' });
 	});
 
 	it('includes requiredLevel in gate serialization', () => {
@@ -177,7 +232,18 @@ describe('buildWorkflowFingerprint', () => {
 			gates: [{ id: 'gate-1', resetOnCycle: false, requiredLevel: 3 }],
 		});
 		const fp = buildWorkflowFingerprint(wf);
-		expect(fp.gates[0]).toMatch(/^gate-1\|3\|/);
+		const parsed = JSON.parse(fp.gates[0]);
+		expect(parsed.id).toBe('gate-1');
+		expect(parsed.requiredLevel).toBe(3);
+	});
+
+	it('defaults requiredLevel to 0 when absent', () => {
+		const wf = makeWorkflow({
+			gates: [{ id: 'gate-1', resetOnCycle: false }],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.gates[0]);
+		expect(parsed.requiredLevel).toBe(0);
 	});
 
 	it('includes resetOnCycle in gate serialization', () => {
@@ -187,8 +253,288 @@ describe('buildWorkflowFingerprint', () => {
 		const wfTrue = makeWorkflow({
 			gates: [{ id: 'gate-1', resetOnCycle: true }],
 		});
-		expect(buildWorkflowFingerprint(wfFalse).gates[0]).toContain('|false|');
-		expect(buildWorkflowFingerprint(wfTrue).gates[0]).toContain('|true|');
+		const parsedFalse = JSON.parse(buildWorkflowFingerprint(wfFalse).gates[0]);
+		const parsedTrue = JSON.parse(buildWorkflowFingerprint(wfTrue).gates[0]);
+		expect(parsedFalse.resetOnCycle).toBe(false);
+		expect(parsedTrue.resetOnCycle).toBe(true);
+	});
+
+	it('includes gate script source in serialization', () => {
+		const wf = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					script: { interpreter: 'bash', source: 'echo "hello world"' },
+				},
+			],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.gates[0]);
+		expect(parsed.script).toBe('echo "hello world"');
+	});
+
+	it('uses null for gate script when absent', () => {
+		const wf = makeWorkflow({
+			gates: [{ id: 'gate-1', resetOnCycle: false }],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.gates[0]);
+		expect(parsed.script).toBeNull();
+	});
+
+	it('includes full gate script source (no truncation)', () => {
+		const longScript = 'a'.repeat(100);
+		const wf = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					script: { interpreter: 'bash', source: longScript },
+				},
+			],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.gates[0]);
+		expect(parsed.script).toBe(longScript);
+		expect(parsed.script).toHaveLength(100);
+	});
+
+	it('includes gate poll in serialization when present', () => {
+		const wf = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					poll: {
+						intervalMs: 30_000,
+						target: 'to' as const,
+						script: 'gh pr view --json mergeable',
+						messageTemplate: 'PR update: {{output}}',
+					},
+				},
+			],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.gates[0]);
+		expect(parsed.poll).toEqual({
+			intervalMs: 30_000,
+			target: 'to',
+			messageTemplate: 'PR update: {{output}}',
+			script: 'gh pr view --json mergeable',
+		});
+	});
+
+	it('uses null for gate poll when absent', () => {
+		const wf = makeWorkflow({
+			gates: [{ id: 'gate-1', resetOnCycle: false }],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.gates[0]);
+		expect(parsed.poll).toBeNull();
+	});
+
+	it('uses empty string for missing poll messageTemplate', () => {
+		const wf = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					poll: {
+						intervalMs: 10_000,
+						target: 'from' as const,
+						script: 'echo test',
+					},
+				},
+			],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.gates[0]);
+		expect(parsed.poll.messageTemplate).toBe('');
+	});
+
+	it('includes full poll script (no truncation)', () => {
+		const longScript = 'x'.repeat(100);
+		const wf = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					poll: {
+						intervalMs: 10_000,
+						target: 'to' as const,
+						script: longScript,
+					},
+				},
+			],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.gates[0]);
+		expect(parsed.poll.script).toBe(longScript);
+		expect(parsed.poll.script).toHaveLength(100);
+	});
+
+	it('excludes writers from gate field serialization', () => {
+		const wf = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{ name: 'approved', type: 'boolean', writers: ['Coder'], check: { op: 'exists' } },
+					],
+				},
+			],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.gates[0]);
+		// writers are not included in the fingerprint (agent-specific)
+		expect(parsed.fields[0].writers).toBeUndefined();
+		expect(parsed.fields[0].name).toBe('approved');
+	});
+
+	it('sorts gate fields by name for canonical ordering', () => {
+		const wf = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{ name: 'zebra', type: 'boolean', writers: [], check: { op: 'exists' } },
+						{ name: 'alpha', type: 'boolean', writers: [], check: { op: 'exists' } },
+						{ name: 'middle', type: 'boolean', writers: [], check: { op: 'exists' } },
+					],
+				},
+			],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.gates[0]);
+		expect(parsed.fields.map((f: { name: string }) => f.name)).toEqual([
+			'alpha',
+			'middle',
+			'zebra',
+		]);
+	});
+
+	it('produces same hash regardless of gate field insertion order', () => {
+		const wf1 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{ name: 'b_field', type: 'boolean', writers: [], check: { op: 'exists' } },
+						{ name: 'a_field', type: 'boolean', writers: [], check: { op: 'exists' } },
+					],
+				},
+			],
+		});
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{ name: 'a_field', type: 'boolean', writers: [], check: { op: 'exists' } },
+						{ name: 'b_field', type: 'boolean', writers: [], check: { op: 'exists' } },
+					],
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
+	});
+
+	it('sorts duplicate-name gate fields by type then check for total ordering', () => {
+		const wf1 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{ name: 'dup', type: 'boolean', writers: [], check: { op: 'exists' } },
+						{ name: 'dup', type: 'map', writers: [], check: { op: 'count', match: 'yes', min: 1 } },
+						{ name: 'dup', type: 'boolean', writers: [], check: { op: '==', value: true } },
+					],
+				},
+			],
+		});
+		// Same fields in different insertion order
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{ name: 'dup', type: 'map', writers: [], check: { op: 'count', match: 'yes', min: 1 } },
+						{ name: 'dup', type: 'boolean', writers: [], check: { op: '==', value: true } },
+						{ name: 'dup', type: 'boolean', writers: [], check: { op: 'exists' } },
+					],
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
+	});
+
+	it('serializes check objects with deterministic key ordering', () => {
+		const wf = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{
+							name: 'votes',
+							type: 'map',
+							writers: [],
+							check: { op: 'count', match: 'approved', min: 3 },
+						},
+					],
+				},
+			],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		const parsed = JSON.parse(fp.gates[0]);
+		// Keys should be in fixed order: op, match, min
+		expect(Object.keys(parsed.fields[0].check)).toEqual(['op', 'match', 'min']);
+		expect(parsed.fields[0].check).toEqual({ op: 'count', match: 'approved', min: 3 });
+	});
+
+	it('produces same hash for scalar checks regardless of key insertion order', () => {
+		// Simulate a check object parsed from JSON with different key ordering
+		const checkObj = JSON.parse('{"value":true,"op":"=="}') as { op: string; value: unknown };
+		const wf1 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: [],
+							check: { op: '==', value: true },
+						},
+					],
+				},
+			],
+		});
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: [],
+							check: checkObj as any,
+						},
+					],
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
 	});
 });
 
@@ -261,6 +607,26 @@ describe('computeWorkflowHash', () => {
 	it('DOES change when channel topology changes', () => {
 		const wf1 = makeWorkflow({ channels: [{ id: 'c1', from: 'Coder', to: 'Reviewer' }] });
 		const wf2 = makeWorkflow({ channels: [{ id: 'c1', from: 'Reviewer', to: 'Coder' }] });
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when channel gateId changes', () => {
+		const wf1 = makeWorkflow({
+			channels: [{ id: 'c1', from: 'Coder', to: 'Reviewer' }],
+		});
+		const wf2 = makeWorkflow({
+			channels: [{ id: 'c1', from: 'Coder', to: 'Reviewer', gateId: 'gate-1' }],
+		});
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when channel maxCycles changes', () => {
+		const wf1 = makeWorkflow({
+			channels: [{ id: 'c1', from: 'Coder', to: 'Reviewer', maxCycles: 3 }],
+		});
+		const wf2 = makeWorkflow({
+			channels: [{ id: 'c1', from: 'Coder', to: 'Reviewer', maxCycles: 5 }],
+		});
 		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
 	});
 
@@ -367,6 +733,124 @@ describe('computeWorkflowHash', () => {
 		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
 	});
 
+	it('DOES change when gate poll is added', () => {
+		const wf1 = makeWorkflow({
+			gates: [{ id: 'gate-1', resetOnCycle: false }],
+		});
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					poll: {
+						intervalMs: 30_000,
+						target: 'to',
+						script: 'gh pr checks',
+					},
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when gate poll intervalMs changes', () => {
+		const wf1 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					poll: { intervalMs: 10_000, target: 'to', script: 'echo 1' },
+				},
+			],
+		});
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					poll: { intervalMs: 30_000, target: 'to', script: 'echo 1' },
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when gate poll target changes', () => {
+		const wf1 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					poll: { intervalMs: 10_000, target: 'from', script: 'echo 1' },
+				},
+			],
+		});
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					poll: { intervalMs: 10_000, target: 'to', script: 'echo 1' },
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when gate poll script changes', () => {
+		const wf1 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					poll: { intervalMs: 10_000, target: 'to', script: 'echo old' },
+				},
+			],
+		});
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					poll: { intervalMs: 10_000, target: 'to', script: 'echo new' },
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when gate poll messageTemplate changes', () => {
+		const wf1 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					poll: {
+						intervalMs: 10_000,
+						target: 'to',
+						script: 'echo 1',
+						messageTemplate: 'Old: {{output}}',
+					},
+				},
+			],
+		});
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					poll: {
+						intervalMs: 10_000,
+						target: 'to',
+						script: 'echo 1',
+						messageTemplate: 'New: {{output}}',
+					},
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
 	it('DOES change when a node agent customPrompt changes', () => {
 		const wf1 = makeWorkflow({
 			nodes: [
@@ -414,6 +898,42 @@ describe('computeWorkflowHash', () => {
 	it('does NOT change when tags differ', () => {
 		const wf1 = makeWorkflow({ tags: ['coding'] });
 		const wf2 = makeWorkflow({ tags: ['coding', 'default'] });
+		expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
+	});
+
+	it('does NOT change when gate label/color/description differ', () => {
+		const wf1 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					description: 'Old desc',
+					label: 'Old label',
+					color: '#ff0000',
+				},
+			],
+		});
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					description: 'New desc',
+					label: 'New label',
+					color: '#00ff00',
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
+	});
+
+	it('does NOT change when channel label differs', () => {
+		const wf1 = makeWorkflow({
+			channels: [{ id: 'c1', from: 'Coder', to: 'Reviewer', label: 'Old label' }],
+		});
+		const wf2 = makeWorkflow({
+			channels: [{ id: 'c1', from: 'Coder', to: 'Reviewer', label: 'New label' }],
+		});
 		expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
 	});
 });

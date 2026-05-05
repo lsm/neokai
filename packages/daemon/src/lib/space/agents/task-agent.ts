@@ -581,10 +581,12 @@ export interface TaskAgentSessionConfig {
 export function createTaskAgentInit(config: TaskAgentSessionConfig): AgentSessionInit {
 	const { task, space, workflow, workflowRun, sessionId, workspacePath } = config;
 
-	const model = space.defaultModel ?? DEFAULT_TASK_AGENT_MODEL;
+	// Model resolution: task-agent-specific override → space default → hardcoded default.
+	const taskAgentConfig = space.taskAgentConfig;
+	const model = taskAgentConfig?.model ?? space.defaultModel ?? DEFAULT_TASK_AGENT_MODEL;
 	const provider = inferProviderForModel(model);
 
-	const systemPromptText = buildTaskAgentSystemPrompt({
+	let systemPromptText = buildTaskAgentSystemPrompt({
 		task,
 		space,
 		workflow: workflow ?? undefined,
@@ -596,6 +598,11 @@ export function createTaskAgentInit(config: TaskAgentSessionConfig): AgentSessio
 		// The caller must provide agent context via buildTaskAgentInitialMessage() instead.
 		availableAgents: [],
 	});
+
+	// Append custom prompt additions if configured.
+	if (taskAgentConfig?.customPrompt) {
+		systemPromptText += '\n\n## Custom Instructions\n\n' + taskAgentConfig.customPrompt;
+	}
 
 	return {
 		sessionId,
