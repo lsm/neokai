@@ -497,25 +497,33 @@ describe('AnthropicToCodexBridgeProvider', () => {
 					max_tokens: 128,
 					messages: [{ role: 'user', content: 'hi' }],
 				});
-				const fetchLocal = async (baseUrl: unknown) => {
-					const resp = await originalFetch(`${baseUrl}/v1/messages`, {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body,
-					});
-					await resp.text();
+				const fetchLocal = async (baseUrl: unknown): Promise<number> => {
+					try {
+						const resp = await originalFetch(`${baseUrl}/v1/messages`, {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body,
+						});
+						await resp.text();
+						return resp.status;
+					} catch {
+						return 0;
+					}
 				};
 
 				const firstCfg = p.buildSdkConfig('gpt-5.3-codex', {
 					workspacePath: '/tmp/workspace-auth-change',
 				});
-				await fetchLocal(firstCfg.envVars.ANTHROPIC_BASE_URL);
+				const firstBaseUrl = firstCfg.envVars.ANTHROPIC_BASE_URL;
+				await fetchLocal(firstBaseUrl);
 
 				env.OPENAI_API_KEY = 'sk-second';
 				const secondCfg = p.buildSdkConfig('gpt-5.3-codex', {
 					workspacePath: '/tmp/workspace-auth-change',
 				});
-				await fetchLocal(secondCfg.envVars.ANTHROPIC_BASE_URL);
+				const secondBaseUrl = secondCfg.envVars.ANTHROPIC_BASE_URL;
+				await fetchLocal(secondBaseUrl);
+				expect(await fetchLocal(firstBaseUrl)).toBe(0);
 
 				env.OPENAI_API_KEY = undefined;
 				writeNeokaiAuth(neokaiDir, {
@@ -527,7 +535,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
 				const oauthCfg = p.buildSdkConfig('gpt-5.3-codex', {
 					workspacePath: '/tmp/workspace-auth-change',
 				});
-				await fetchLocal(oauthCfg.envVars.ANTHROPIC_BASE_URL);
+				const oauthBaseUrl = oauthCfg.envVars.ANTHROPIC_BASE_URL;
+				await fetchLocal(oauthBaseUrl);
+				expect(await fetchLocal(secondBaseUrl)).toBe(0);
 
 				expect(capturedRequests).toMatchObject([
 					{

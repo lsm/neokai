@@ -585,7 +585,6 @@ export class ProviderService {
 		};
 
 		clear('ANTHROPIC_AUTH_TOKEN');
-		clear('CLAUDE_CODE_OAUTH_TOKEN');
 
 		// Preserve user's custom ANTHROPIC_BASE_URL from environment/settings.json
 		if (process.env.ANTHROPIC_BASE_URL !== undefined) {

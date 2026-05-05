@@ -569,15 +569,13 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		const authKey = this.bridgeAuthCacheKey(auth);
 		const bridgeKey = adapter === 'responses' ? `responses:${authKey}` : `codex:${workspace}`;
 		let bridgeServer = this.bridgeServers.get(bridgeKey);
-		if (
-			adapter === 'responses' &&
-			bridgeServer &&
-			this.bridgeServerAuthKeys.get(bridgeKey) !== authKey
-		) {
-			bridgeServer.stop();
-			this.bridgeServers.delete(bridgeKey);
-			this.bridgeServerAuthKeys.delete(bridgeKey);
-			bridgeServer = undefined;
+		if (adapter === 'responses') {
+			for (const [key, server] of this.bridgeServers) {
+				if (!key.startsWith('responses:') || key === bridgeKey) continue;
+				server.stop();
+				this.bridgeServers.delete(key);
+				this.bridgeServerAuthKeys.delete(key);
+			}
 		}
 		// Resolve alias (e.g. 'codex' → 'gpt-5.3-codex') so ANTHROPIC_DEFAULT_*_MODEL
 		// receives real OpenAI model IDs that the bridge can forward upstream.

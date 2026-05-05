@@ -729,10 +729,11 @@ describe('ProviderService', () => {
 			expect(original).toEqual({});
 		});
 
-		it('should clear leaked GLM routing vars for anthropic model', () => {
+		it('should clear leaked GLM routing vars for anthropic model without clearing OAuth auth', () => {
 			process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';
 			process.env.API_TIMEOUT_MS = '120000';
 			process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-4';
+			process.env.CLAUDE_CODE_OAUTH_TOKEN = 'user-oauth-token';
 
 			const original = service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
 
@@ -742,6 +743,7 @@ describe('ProviderService', () => {
 			expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
 			expect(process.env.API_TIMEOUT_MS).toBeUndefined();
 			expect(process.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('user-oauth-token');
 		});
 
 		it('should apply GLM env vars and return original values', () => {
