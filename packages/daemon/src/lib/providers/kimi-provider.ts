@@ -1,13 +1,14 @@
 /**
  * Kimi Provider - Moonshot AI（月之暗面）
  *
- * Kimi exposes a native Anthropic-compatible API at
- * https://api.kimi.com/coding — designed specifically for coding agents.
+ * Kimi Code exposes a native Anthropic-compatible API at
+ * https://api.kimi.com/coding/ — designed for coding agents.
  *
- * No bridge server or protocol translation is needed — the Anthropic SDK
- * communicates directly with Kimi's Anthropic-compatible endpoint.
+ * The API uses a single fixed model ID `kimi-for-coding` that automatically
+ * maps to the latest Kimi flagship model, so no bridge server or protocol
+ * translation is needed.
  *
- * API Documentation: https://platform.kimi.com/docs
+ * API Documentation: https://www.kimi.com/code/docs/
  */
 
 import type {
@@ -21,7 +22,7 @@ import type {
 import type { ModelInfo } from '@neokai/shared';
 
 function normalizeBaseUrl(url: string): string {
-	return url.trim().replace(/\/$/, '');
+	return url.trim().replace(/\/+$/, '');
 }
 
 export class KimiProvider implements Provider {
@@ -30,51 +31,32 @@ export class KimiProvider implements Provider {
 
 	readonly capabilities: ProviderCapabilities = {
 		streaming: true,
-		extendedThinking: false,
+		extendedThinking: true,
 		maxContextWindow: 262144,
 		functionCalling: true,
 		vision: false,
 	};
 
-	/** Default Anthropic-compatible base URL (Kimi For Coding). */
+	/** Anthropic-compatible base URL for Kimi Code. */
 	static readonly BASE_URL = 'https://api.kimi.com/coding';
-	/** Moonshot platform Anthropic-compatible base URL (China region). */
-	static readonly BASE_URL_MOONSHOT_CN = 'https://api.moonshot.cn/anthropic';
-	/** Moonshot platform Anthropic-compatible base URL (international). */
-	static readonly BASE_URL_MOONSHOT_AI = 'https://api.moonshot.ai/anthropic';
-	static readonly DEFAULT_MODEL = 'kimi-k2.5';
+	/** OpenAI-compatible base URL for Kimi Code. */
+	static readonly OPENAI_BASE_URL = 'https://api.kimi.com/coding/v1';
+	/**
+	 * Fixed model ID that automatically maps to the latest Kimi flagship model.
+	 * See https://www.kimi.com/code/docs/ — "统一使用模型 ID kimi-for-coding"
+	 */
+	static readonly DEFAULT_MODEL = 'kimi-for-coding';
 
 	static readonly MODELS: ModelInfo[] = [
 		{
-			id: 'kimi-k2',
-			name: 'Kimi K2',
+			id: 'kimi-for-coding',
+			name: 'Kimi For Coding',
 			alias: 'kimi',
 			family: 'kimi',
 			provider: 'kimi',
-			contextWindow: 131072,
-			description: 'Kimi K2 open frontier model with 128K context',
-			releaseDate: '',
-			available: true,
-		},
-		{
-			id: 'kimi-k2.5',
-			name: 'Kimi K2.5',
-			alias: 'kimi-k25',
-			family: 'kimi',
-			provider: 'kimi',
 			contextWindow: 262144,
-			description: 'Kimi K2.5 trillion-parameter model with 256K context',
-			releaseDate: '',
-			available: true,
-		},
-		{
-			id: 'kimi-k2.6',
-			name: 'Kimi K2.6',
-			alias: 'kimi-k26',
-			family: 'kimi',
-			provider: 'kimi',
-			contextWindow: 262144,
-			description: 'Kimi K2.6 latest model with Agent Swarm support',
+			description:
+				'Kimi Code model (auto-upgrades to latest flagship). Fixed model ID for all requests.',
 			releaseDate: '',
 			available: true,
 		},
@@ -100,7 +82,7 @@ export class KimiProvider implements Provider {
 
 	ownsModel(modelId: string): boolean {
 		const id = modelId.toLowerCase();
-		return id === 'kimi' || id.startsWith('kimi-') || id.startsWith('moonshot-');
+		return id === 'kimi' || id === 'kimi-for-coding' || id.startsWith('moonshot-');
 	}
 
 	getModelForTier(_tier: ModelTier): string | undefined {
@@ -114,11 +96,10 @@ export class KimiProvider implements Provider {
 		}
 
 		const baseUrl = normalizeBaseUrl(sessionConfig?.baseUrl || KimiProvider.BASE_URL);
-		const normalizedModelId = modelId.toLowerCase();
-		const routingModelId =
-			this.ownsModel(modelId) && normalizedModelId !== 'kimi'
-				? normalizedModelId
-				: KimiProvider.DEFAULT_MODEL;
+		// All Kimi Code requests use the fixed model ID; normalize aliases
+		const routingModelId = this.ownsModel(modelId)
+			? KimiProvider.DEFAULT_MODEL
+			: KimiProvider.DEFAULT_MODEL;
 
 		return {
 			envVars: {
@@ -154,6 +135,6 @@ export class KimiProvider implements Provider {
 	}
 
 	async shutdown(): Promise<void> {
-		// No resources to clean up — direct API connection, no bridge server.
+		// No resources to clean up — direct API connection.
 	}
 }
