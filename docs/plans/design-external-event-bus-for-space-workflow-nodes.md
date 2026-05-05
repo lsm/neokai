@@ -517,7 +517,13 @@ class EventRouter {
     nodeExecutions: NodeExecution[],
   ): void {
     // Build the desired set of subscriptions from current node execution states.
-    const desiredSubs = new Map<string, Subscription>();  // key: `${taskId}:${nodeId}:${agentName}:${topic}:${scope}`
+    // Use a structured tuple key encoded with JSON.stringify rather than a
+    // delimiter-joined string: task ids, node ids, agent names, topics, and scopes
+    // are free-form enough that ':' or other delimiters can appear in valid input.
+    const makeSubscriptionKey = (sub: Pick<Subscription, 'taskId' | 'nodeId' | 'agentName' | 'interest'>) =>
+      JSON.stringify([sub.taskId, sub.nodeId, sub.agentName, sub.interest.topic, sub.interest.scope]);
+
+    const desiredSubs = new Map<string, Subscription>();
 
     for (const node of workflow.nodes) {
       for (const agent of node.agents) {
@@ -528,13 +534,11 @@ class EventRouter {
         );
         if (!exec || !isReceivingStatus(exec.status)) continue;
 
-        const subKey = `${taskId}:${node.id}:${agent.name}`;
         for (const interest of agent.eventInterests) {
           // Include taskId, topic, and scope in key — the same run can contain
           // multiple tasks, and the same agent can subscribe to the same topic
           // with different scopes (e.g., both 'task' and 'repo' scope).
-          const fullKey = `${subKey}:${interest.topic}:${interest.scope}`;
-          desiredSubs.set(fullKey, {
+          const sub: Subscription = {
             workflowRunId,
             taskId,
             nodeId: node.id,
@@ -542,7 +546,8 @@ class EventRouter {
             interest,
             agentSessionId: exec.agentSessionId,
             spaceId,
-          });
+          };
+          desiredSubs.set(makeSubscriptionKey(sub), sub);
         }
       }
     }
@@ -552,32 +557,29 @@ class EventRouter {
     // subscriptions from the same run.
     const currentRunSubs = this.activeRuns.get(workflowRunId) ?? new Set<Subscription>();
     const currentTaskSubs = [...currentRunSubs].filter(sub => sub.taskId === taskId);
-    const currentKeys = new Set<string>();
+    const currentSubsByKey = new Map<string, Subscription>();
     for (const sub of currentTaskSubs) {
-      currentKeys.add(`${sub.taskId}:${sub.nodeId}:${sub.agentName}:${sub.interest.topic}:${sub.interest.scope}`);
+      currentSubsByKey.set(makeSubscriptionKey(sub), sub);
     }
     const desiredKeys = new Set(desiredSubs.keys());
 
     // Remove this task's subscriptions no longer in the desired set (e.g. node went cancelled).
-    for (const key of currentKeys) {
+    for (const [key, sub] of currentSubsByKey) {
       if (!desiredKeys.has(key)) {
-        const [subTaskId, nodeId, agentName, ...rest] = key.split(':');
-        const scope = rest.pop()!;
-        const topic = rest.join(':');
         this.topicTrie.remove(
           v => v.workflowRunId === workflowRunId
-            && v.taskId === subTaskId
-            && v.nodeId === nodeId
-            && v.agentName === agentName
-            && v.interest.topic === topic
-            && v.interest.scope === scope,
+            && v.taskId === sub.taskId
+            && v.nodeId === sub.nodeId
+            && v.agentName === sub.agentName
+            && v.interest.topic === sub.interest.topic
+            && v.interest.scope === sub.interest.scope,
         );
       }
     }
 
     // Add new subscriptions not currently in the trie.
     for (const [key, sub] of desiredSubs) {
-      if (!currentKeys.has(key)) {
+      if (!currentSubsByKey.has(key)) {
         this.topicTrie.insert(sub.interest.topic, sub);
       }
     }
