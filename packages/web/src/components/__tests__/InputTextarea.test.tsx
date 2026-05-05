@@ -251,6 +251,30 @@ describe('InputTextarea', () => {
 			) as HTMLButtonElement;
 			expect(sendButton?.disabled).toBe(true);
 		});
+
+		it('should show stop button when agent is working and content is empty', () => {
+			const onStop = vi.fn(() => {});
+			const { container } = render(
+				<InputTextarea
+					content=""
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					isAgentWorking={true}
+					onStop={onStop}
+				/>
+			);
+
+			const sendButton = container.querySelector('[data-testid="send-button"]');
+			const stopButton = container.querySelector(
+				'[data-testid="stop-button"]'
+			) as HTMLButtonElement;
+			expect(sendButton).toBeNull();
+			expect(stopButton).toBeTruthy();
+
+			fireEvent.click(stopButton);
+			expect(onStop).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	describe('Keyboard Events', () => {
