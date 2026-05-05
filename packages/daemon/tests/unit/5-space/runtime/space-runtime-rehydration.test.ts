@@ -20,6 +20,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -244,6 +245,81 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 			expect(freshRuntime.getActiveGatePollCount()).toBe(1);
 			expect(freshRuntime.isGatePollActive(run.id, 'gate-polled')).toBe(true);
 			await freshRuntime.stop();
+		});
+
+		test('fresh runtime restarts gate polls for a review-pending task', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Review Polled Workflow-${Date.now()}-${Math.random()}`,
+				description: 'Test',
+				nodes: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT },
+				],
+				transitions: [],
+				channels: [{ id: 'channel-review', from: 'Step A', to: 'Step B', gateId: 'gate-review' }],
+				gates: [
+					{
+						id: 'gate-review',
+						resetOnCycle: false,
+						poll: { intervalMs: 60_000, script: 'printf poll', target: 'from' },
+					},
+				],
+				startNodeId: STEP_A,
+				endNodeId: STEP_B,
+				rules: [],
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+
+			const pendingRun = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Review Polled Run',
+			});
+			const run = workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Review Polled Run',
+				description: '',
+				workflowRunId: run.id,
+				status: 'review',
+			});
+
+			const freshRuntime = makeRuntime();
+			freshRuntime.setTaskAgentManager({
+				isExecutionSpawning: () => false,
+				isSessionAlive: () => true,
+				spawnWorkflowNodeAgentForExecution: async () => 'session-1',
+				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
+				rehydrate: async () => {},
+				injectSubSessionMessage: () => {},
+			} as never);
+
+			await freshRuntime.executeTick();
+
+			expect(freshRuntime.getExecutor(run.id)).toBeDefined();
+			expect(freshRuntime.isGatePollActive(run.id, 'gate-review')).toBe(true);
+			await freshRuntime.stop();
+		});
+
+		test('poll context resolves PR URL from gate data when no artifact exists', () => {
+			const run = workflowRunRepo.transitionStatus(
+				workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: 'workflow-gate-pr',
+					title: 'Gate Data PR Run',
+				}).id,
+				'in_progress'
+			);
+			new GateDataRepository(db).set(run.id, 'code-ready-gate', {
+				pr_url: 'https://github.com/acme/widgets/pull/123',
+			});
+
+			const runtime = makeRuntime({ gateDataRepo: new GateDataRepository(db) });
+
+			expect(runtime.getPollPrUrlForRun(run.id)).toBe('https://github.com/acme/widgets/pull/123');
 		});
 
 		test('multiple in_progress runs all rehydrated by fresh runtime', async () => {

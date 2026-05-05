@@ -281,6 +281,7 @@ export class GatePollManager {
 		});
 
 		if (polledGates.length === 0) {
+			log.info(`GatePollManager: no polled gates configured for run "${runId}"`);
 			return;
 		}
 
@@ -734,9 +735,9 @@ export class GatePollManager {
 			const sessionId = this.sessionResolver.getActiveSessionForNode(runId, targetNodeId);
 
 			if (!sessionId) {
-				log.debug(
-					`GatePollManager: no active session for node "${targetNodeId}" in run "${runId}" — ` +
-						`skipping message injection for poll "${gateId}"`
+				log.warn(
+					`GatePollManager: no resumable session for node "${targetNodeId}" in run "${runId}" — ` +
+						`will retry message injection for poll "${gateId}" on the next tick`
 				);
 				return;
 			}

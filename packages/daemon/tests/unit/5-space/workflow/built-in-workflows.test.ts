@@ -2019,6 +2019,7 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(gate.script).toBeDefined();
 		expect(gate.script!.interpreter).toBe('bash');
 		expect(gate.script!.timeoutMs).toBe(30000);
+		expect(gate.poll?.target).toBe('from');
 		expect(gate.resetOnCycle).toBe(true);
 	});
 

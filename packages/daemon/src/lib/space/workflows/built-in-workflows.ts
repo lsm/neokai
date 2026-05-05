@@ -80,7 +80,7 @@ const PR_INLINE_COMMENTS_POLL: GatePoll = {
 		'QUERY="query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved comments(last:1){nodes{author{login} body url}}}}}}}"',
 		'gh api graphql -f query="$QUERY" -f owner="$REPO_OWNER" -f name="$REPO_NAME" -F number="$PR_NUMBER" --jq \'[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[0] | "- **" + .author.login + "**: " + .body + "\\n  " + .url] | join("\\n\\n")\'',
 	].join('\n'),
-	target: 'to',
+	target: 'from',
 	messageTemplate: 'Unresolved PR review comments:\n{{output}}',
 };
 
