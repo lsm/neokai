@@ -78,7 +78,7 @@ Pattern validation (enforced at workflow create/update time):
 - Must be non-empty.
 - Must not contain `..` segments.
 - Must not contain empty segments (no double slashes).
-- Must have at least 4 segments (`source/owner/repo/resource.action`) so it can match real event topics.
+- Must have exactly 4 segments (`source/owner/repo/resource.action`) so it can match real event topics.
 - Each segment may contain alphanumeric, dash, underscore, dot, and `*`; `*` must stay within a single segment and cannot cross `/` boundaries.
 - Max 10 interests per agent slot.
 
@@ -643,6 +643,8 @@ class EventRouter {
     // Dedup check — include taskId and nodeId to handle multi-task runs and
     // cases where the same agent name appears in multiple nodes within the same
     // run. Each task/node/agent subscription is deduped independently.
+    // Evict before checking so DEDUP_TTL_MS is actually enforced during long runs.
+    this.evictStaleDedup();
     const dedupeKey = `${event.dedupeKey}:${sub.taskId}:${sub.nodeId}:${sub.agentName}:${sub.workflowRunId}`;
     if (this.delivered.has(dedupeKey)) return;
 
@@ -1039,7 +1041,7 @@ No new tables required for V1. Event interests are stored as part of the workflo
 1. Add `EventInterest` interface to `packages/shared/src/types/space.ts`.
 2. Add `eventInterests?: EventInterest[]` to `WorkflowNodeAgent`.
 3. Add validation in the workflow create/update path (Zod schema or manual validation):
-   - `topic` must pass `validateGlobPattern()` (non-empty, at least 4 segments, no `..` segments, no double slashes, valid characters including segment-local `*`).
+   - `topic` must pass `validateGlobPattern()` (non-empty, exactly 4 segments, no `..` segments, no double slashes, valid characters including segment-local `*`).
    - `scope` must be one of `'task' | 'repo' | 'global'`.
    - Max 10 interests per agent slot (prevent abuse).
    - `validateGlobPattern()` is the single source of truth — called at workflow create/update and again at trie insertion time as a safety net.
@@ -1067,10 +1069,11 @@ packages/daemon/src/lib/space/runtime/event-bus/
  * Rejects patterns that could corrupt the trie or match unintended topics.
  * Called at workflow create/update time and again at trie insertion time.
  *
- * Requires at least 4 segments because all event topics have the format
- * `{source}/{owner}/{repo}/{resource}.{action}` (4 segments minimum).
- * Patterns like `github/*` would pass validation but never match any event,
- * creating silent misconfigurations.
+ * Requires exactly 4 segments because all v1 event topics have the format
+ * `{source}/{owner}/{repo}/{resource}.{action}`.
+ * Patterns like `github/*` (too shallow) or `github/*/*/pull_request/review_*`
+ * (too deep) would pass validation but never match any event, creating silent
+ * misconfigurations.
  */
 export function validateGlobPattern(pattern: string): { valid: boolean; reason?: string } {
   if (!pattern || pattern.trim().length === 0) {
@@ -1079,10 +1082,10 @@ export function validateGlobPattern(pattern: string): { valid: boolean; reason?:
 
   const segments = pattern.split('/');
 
-  if (segments.length < 4) {
+  if (segments.length !== 4) {
     return {
       valid: false,
-      reason: `Topic pattern must have at least 4 segments (source/owner/repo/resource.action); got ${segments.length}. Example: 'github/*/*/pull_request.review_submitted'`,
+      reason: `Topic pattern must have exactly 4 segments (source/owner/repo/resource.action); got ${segments.length}. Example: 'github/*/*/pull_request.review_submitted'`,
     };
   }
 
