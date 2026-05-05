@@ -766,35 +766,43 @@ class EventRouter {
     // reaches the event bus. Therefore, we must handle retries here.
     this.pendingDeliveries.add(dedupeKey);
 
-    // Resolve session — re-read from nodeExecutionRepo for latest state
-    const sessionId = await this.resolveSession(sub);
-    if (!sessionId) {
-      // Session not active — queue for later delivery
-      this.queueForDelivery(event, sub);
-      return; // Pending remains until queue is drained
-    }
-
-    // Format and inject.
-    // NOTE: There is a TOCTOU race — the session could complete between our
-    // resolveSession call and injectMessage. This is safe: injectMessage on a
-    // completed/absent session returns a caught error (logged as a warning).
-    const message = this.formatEventMessage(event);
     try {
-      await this.sessionFactory.injectMessage(sessionId, message, {
-        deliveryMode: 'defer',
-      });
+      // Resolve session — re-read from nodeExecutionRepo for latest state
+      const sessionId = await this.resolveSession(sub);
+      if (!sessionId) {
+        // Session not active — queue for later delivery
+        this.queueForDelivery(event, sub);
+        return; // Pending remains until queue is drained
+      }
 
-      // Success: mark as delivered, remove pending
-      this.delivered.set(dedupeKey, Date.now());
-      this.pendingDeliveries.delete(dedupeKey);
+      // Format and inject.
+      // NOTE: There is a TOCTOU race — the session could complete between our
+      // resolveSession call and injectMessage. This is safe: injectMessage on a
+      // completed/absent session returns a caught error (logged as a warning).
+      const message = this.formatEventMessage(event);
+      try {
+        await this.sessionFactory.injectMessage(sessionId, message, {
+          deliveryMode: 'defer',
+        });
+
+        // Success: mark as delivered, remove pending
+        this.delivered.set(dedupeKey, Date.now());
+        this.pendingDeliveries.delete(dedupeKey);
+      } catch (err) {
+        log.warn(`Failed to deliver event to ${sub.agentName}`, { error: err });
+
+        // Failure: remove pending so it can be retried
+        this.pendingDeliveries.delete(dedupeKey);
+
+        // Schedule retry with backoff if we haven't exceeded max retries
+        this.scheduleRetry(event, sub, dedupeKey);
+      }
     } catch (err) {
-      log.warn(`Failed to deliver event to ${sub.agentName}`, { error: err });
-
-      // Failure: remove pending so it can be retried
+      // Session resolution failed (transient DB/repo error) — clear pending
+      // so this event can be retried, but don't schedule retry here
+      // because scheduleRetry will be called by the caller's retry logic.
+      log.warn(`Session resolution failed for ${sub.agentName}`, { error: err });
       this.pendingDeliveries.delete(dedupeKey);
-
-      // Schedule retry with backoff if we haven't exceeded max retries
-      this.scheduleRetry(event, sub, dedupeKey);
     }
   }
 
@@ -902,13 +910,15 @@ class EventRouter {
         return;
       }
       // Use try/catch to prevent unhandled promise rejections in retry path (P2 fix)
-      // Also reset retry state on successful delivery (P2 #4 fix)
       this.deliverToSubscription(event, sub)
         .then(() => {
           // Success: clear retry state so this key can be retried fresh if needed later
           this.retryCounts.delete(dedupeKey);
+          this.pendingDeliveries.delete(dedupeKey);
         })
         .catch((err) => {
+          // Don't clear retryCounts on failure — preserve count for retry logic
+          // (The caller's scheduleRetry already incremented the count before setTimeout)
           log.warn('EventRouter: retry delivery failed', {
             error: err,
             retries,
