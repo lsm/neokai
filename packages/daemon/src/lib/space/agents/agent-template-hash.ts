@@ -7,10 +7,11 @@
  * `SpaceAgent` rows by `seedPresetAgents()`.
  *
  * The fingerprint covers `name` (lowercased, trimmed), `description`, the
- * `tools` array (sorted), `customPrompt`, and `thinkingLevel`. Runtime/identity fields like
- * `id`, `spaceId`, `model`, `provider`, `createdAt`, `updatedAt` are NOT
- * included — they vary per-space (or per-row) and have nothing to do with
- * what the preset definition says the agent should look like.
+ * `tools` array (sorted), and `customPrompt`. Runtime/identity fields like
+ * `id`, `spaceId`, `model`, `provider`, `thinkingLevel`, `createdAt`,
+ * `updatedAt` are NOT included — they vary per-space (or are user
+ * preferences) and have nothing to do with what the preset definition says
+ * the agent should look like.
  */
 
 /**
@@ -23,7 +24,6 @@ export interface AgentTemplateInput {
 	name: string;
 	description: string;
 	tools: string[];
-	thinkingLevel?: import('@neokai/shared').ThinkingLevel;
 	customPrompt: string;
 }
 
@@ -40,8 +40,6 @@ export interface AgentTemplateFingerprint {
 	description: string;
 	/** Tools sorted alphabetically for stability across array orderings. */
 	tools: string[];
-	/** Thinking-level override for the preset, or null when it inherits the app default. */
-	thinkingLevel: import('@neokai/shared').ThinkingLevel | null;
 	/** Custom prompt verbatim — case + whitespace are part of the identity. */
 	customPrompt: string;
 }
@@ -55,7 +53,6 @@ export function buildAgentTemplateFingerprint(agent: AgentTemplateInput): AgentT
 		name: (agent.name ?? '').trim().toLowerCase(),
 		description: agent.description ?? '',
 		tools: [...(agent.tools ?? [])].sort(),
-		thinkingLevel: agent.thinkingLevel ?? null,
 		customPrompt: agent.customPrompt ?? '',
 	};
 }

@@ -63,7 +63,6 @@ describe('buildAgentTemplateFingerprint', () => {
 			name: '',
 			description: '',
 			tools: [],
-			thinkingLevel: null,
 			customPrompt: '',
 		});
 	});

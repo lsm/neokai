@@ -12,7 +12,6 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
-import { runMigration117 as runMigration117External } from './m117-backfill-agent-thinking-template-hashes';
 
 /**
  * Run all database migrations
@@ -552,9 +551,6 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 116: Add thinking_level to space_agents for per-agent thinking overrides.
 	runMigration116(db);
-
-	// Migration 117: Backfill agent template hashes after adding thinking_level to fingerprints.
-	runMigration117(db);
 }
 
 /**
@@ -7416,13 +7412,6 @@ export function runMigration105(db: BunDatabase): void {
  */
 export function runMigration106(db: BunDatabase): void {
 	runMigration106External(db);
-}
-
-/**
- * Migration 117 — delegated to m117-backfill-agent-thinking-template-hashes.ts.
- */
-export function runMigration117(db: BunDatabase): void {
-	runMigration117External(db);
 }
 
 /**
