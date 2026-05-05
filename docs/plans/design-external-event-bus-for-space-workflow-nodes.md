@@ -67,16 +67,19 @@ github/lsm/neokai/pull_request.review_*     ← prefix wildcard: all review even
 ### Matching rules
 
 Subscriptions use glob-style patterns:
-- `*` matches any single path segment (no slashes)
-- Literal segments match exactly (case-insensitive)
+- `*` matches any sequence of characters inside one path segment (no slashes).
+  - A whole-segment `*` matches any single segment (e.g., owner or repo).
+  - A segment-local wildcard also works inside dotted resource/action segments (e.g., `pull_request.*`, `pull_request.review_*`, `*.*`).
+- Literal characters match exactly (case-insensitive).
 
-> **V1 scope note:** The `**` (multi-segment) wildcard is deferred to a follow-up. All v1 use cases are covered by single-segment `*` wildcards at the `owner`, `repo`, or `action` position (e.g., `github/*/*/pull_request.review_submitted`). Adding `**` support requires a depth-bounded recursive trie walk and is not justified by current subscription patterns.
+> **V1 scope note:** The `**` (multi-segment) wildcard is deferred to a follow-up. All v1 use cases are covered by segment-local `*` wildcards at the `owner`, `repo`, or `action` position (e.g., `github/*/*/pull_request.review_submitted`, `github/*/*/pull_request.*`). Adding `**` support requires a depth-bounded recursive trie walk and is not justified by current subscription patterns.
 
 Pattern validation (enforced at workflow create/update time):
 - Must be non-empty.
 - Must not contain `..` segments.
 - Must not contain empty segments (no double slashes).
-- Each segment must be a literal string or `*`.
+- Must have at least 4 segments (`source/owner/repo/resource.action`) so it can match real event topics.
+- Each segment may contain alphanumeric, dash, underscore, dot, and `*`; `*` must stay within a single segment and cannot cross `/` boundaries.
 - Max 10 interests per agent slot.
 
 We implement matching via a **trie-based prefix index** (see §4), not regex.
@@ -350,25 +353,23 @@ For O(1)-ish lookup, we maintain a **topic trie**:
 ```
 root
   └── github
-      └── *                    ← matches any owner
-          └── *                ← matches any repo
-              ├── pull_request
-              │   ├── *        ← all PR actions
-              │   │   └── [subscriptions: coder(task), ...]
-              │   ├── review_submitted
-              │   │   └── [subscriptions: coder(task)]
-              │   └── comment_created
-              │       └── [subscriptions: coder(task)]
-              └── check_suite
-                  └── completed
-                      └── [subscriptions: ci-monitor(repo)]
+      └── *                          ← matches any owner
+          └── *                      ← matches any repo
+              ├── pull_request.*     ← all PR actions
+              │   └── [subscriptions: coder(task), ...]
+              ├── pull_request.review_submitted
+              │   └── [subscriptions: coder(task)]
+              ├── pull_request.comment_created
+              │   └── [subscriptions: coder(task)]
+              └── check_suite.completed
+                  └── [subscriptions: ci-monitor(repo)]
 ```
 
-The trie maps topic segments to `Set<Subscription>` at leaf nodes. Wildcard segments (`*`) match any single segment at that depth.
+The trie maps topic segments to `Set<Subscription>` at leaf nodes. Each node stores exact children separately from segment-local glob children. A glob segment may be a whole-segment wildcard (`*`) or a dotted segment wildcard (`pull_request.*`, `pull_request.review_*`, `*.*`).
 
 **Build cost**: O(n × k) where n = number of subscriptions, k = topic depth (typically 4-5). Built once when a workflow run starts.
 
-**Lookup cost**: The trie walks both exact-match and wildcard branches at each level. With k levels, this produces at most 2^k paths. At each leaf, m subscriptions are collected. Total cost per lookup is O(2^k × m) where m is the total number of matching subscriptions across all leaves. Since k is small and bounded (4–5 topic segments), 2^k is a small constant (16–32). The real benefit over linear scan is that non-matching subscriptions are never visited — only subscriptions whose pattern segments align with the event's topic are collected.
+**Lookup cost**: The trie walks the exact branch (O(1)) and any glob-child branches at each level. With k bounded to 4–5 segments and max 10 interests per agent slot, the number of glob branches is small. In the common case this remains effectively O(2^k × m), where m is the total number of matching subscriptions across collected leaves. The real benefit over linear scan is that non-matching subscriptions are never visited — only subscriptions whose pattern segments align with the event's topic are collected.
 
 ### Subscription index lifecycle
 
@@ -383,6 +384,8 @@ The index is **per-SpaceRuntime instance** and updated via two distinct operatio
 ```typescript
 interface Subscription {
   workflowRunId: string;
+  /** The specific SpaceTask this node execution belongs to. Used for `task` scope. */
+  taskId: string;
   nodeId: string;
   agentName: string;
   interest: EventInterest;    // from the workflow definition
@@ -470,11 +473,13 @@ class EventRouter {
   registerRunInterests(
     spaceId: string,
     workflowRunId: string,
+    /** The task whose tick/session activation is being processed. */
+    taskId: string,
     workflow: SpaceWorkflow,
     nodeExecutions: NodeExecution[],
   ): void {
     // Build the desired set of subscriptions from current node execution states.
-    const desiredSubs = new Map<string, Subscription>();  // key: `${nodeId}:${agentName}`
+    const desiredSubs = new Map<string, Subscription>();  // key: `${taskId}:${nodeId}:${agentName}:${topic}:${scope}`
 
     for (const node of workflow.nodes) {
       for (const agent of node.agents) {
@@ -485,13 +490,15 @@ class EventRouter {
         );
         if (!exec || !isReceivingStatus(exec.status)) continue;
 
-        const subKey = `${node.id}:${agent.name}`;
+        const subKey = `${taskId}:${node.id}:${agent.name}`;
         for (const interest of agent.eventInterests) {
-          // Include topic AND scope in key — same agent can subscribe to the same topic
-          // with different scopes (e.g., both 'task' and 'repo' scope for the same pattern).
+          // Include taskId, topic, and scope in key — the same run can contain
+          // multiple tasks, and the same agent can subscribe to the same topic
+          // with different scopes (e.g., both 'task' and 'repo' scope).
           const fullKey = `${subKey}:${interest.topic}:${interest.scope}`;
           desiredSubs.set(fullKey, {
             workflowRunId,
+            taskId,
             nodeId: node.id,
             agentName: agent.name,
             interest,
@@ -502,22 +509,26 @@ class EventRouter {
       }
     }
 
-    // Diff against current subscriptions for this run.
-    const currentSubs = this.activeRuns.get(workflowRunId) ?? new Set<Subscription>();
+    // Diff against current subscriptions for THIS task only. A workflow run can
+    // contain multiple tasks, so refreshing task A must not remove task B's
+    // subscriptions from the same run.
+    const currentRunSubs = this.activeRuns.get(workflowRunId) ?? new Set<Subscription>();
+    const currentTaskSubs = [...currentRunSubs].filter(sub => sub.taskId === taskId);
     const currentKeys = new Set<string>();
-    for (const sub of currentSubs) {
-      currentKeys.add(`${sub.nodeId}:${sub.agentName}:${sub.interest.topic}:${sub.interest.scope}`);
+    for (const sub of currentTaskSubs) {
+      currentKeys.add(`${sub.taskId}:${sub.nodeId}:${sub.agentName}:${sub.interest.topic}:${sub.interest.scope}`);
     }
     const desiredKeys = new Set(desiredSubs.keys());
 
-    // Remove subscriptions no longer in the desired set (e.g. node went cancelled).
+    // Remove this task's subscriptions no longer in the desired set (e.g. node went cancelled).
     for (const key of currentKeys) {
       if (!desiredKeys.has(key)) {
-        const [nodeId, agentName, ...rest] = key.split(':');
+        const [subTaskId, nodeId, agentName, ...rest] = key.split(':');
         const scope = rest.pop()!;
         const topic = rest.join(':');
         this.topicTrie.remove(
           v => v.workflowRunId === workflowRunId
+            && v.taskId === subTaskId
             && v.nodeId === nodeId
             && v.agentName === agentName
             && v.interest.topic === topic
@@ -533,8 +544,10 @@ class EventRouter {
       }
     }
 
-    // Replace active run set with the new desired set.
-    this.activeRuns.set(workflowRunId, new Set(desiredSubs.values()));
+    // Replace only this task's active subscriptions while preserving other tasks
+    // in the same workflow run.
+    const preservedOtherTaskSubs = [...currentRunSubs].filter(sub => sub.taskId !== taskId);
+    this.activeRuns.set(workflowRunId, new Set([...preservedOtherTaskSubs, ...desiredSubs.values()]));
   }
 
   /**
@@ -585,7 +598,7 @@ class EventRouter {
     this.activeRuns.delete(workflowRunId);
 
     // Also clean up dedup entries for this run.
-    // Delivery keys are: `${event.dedupeKey}:${sub.nodeId}:${sub.agentName}:${workflowRunId}`
+    // Delivery keys are: `${event.dedupeKey}:${sub.taskId}:${sub.nodeId}:${sub.agentName}:${workflowRunId}`
     // The run ID is the final segment — match with suffix `:${workflowRunId}`.
     const suffix = `:${workflowRunId}`;
     for (const key of this.delivered.keys()) {
@@ -595,8 +608,8 @@ class EventRouter {
     }
 
     // Clean up in-memory pending queue for this run.
-    // Keys are `${workflowRunId}:${nodeId}:${agentName}` — use the delimiter
-    // to avoid false prefix matches (e.g., run "abc1" matching "abc10:*").
+    // Keys are `${workflowRunId}:${taskId}:${nodeId}:${agentName}` — use the
+    // delimiter to avoid false prefix matches (e.g., run "abc1" matching "abc10:*").
     const runPrefix = `${workflowRunId}:`;
     for (const [key, events] of this.pendingQueue.entries()) {
       if (key.startsWith(runPrefix)) {
@@ -621,10 +634,10 @@ class EventRouter {
     // Scope check
     if (!this.passesScopeCheck(event, sub)) return;
 
-    // Dedup check — include nodeId to handle cases where the same agent name
-    // appears in multiple nodes within the same run (e.g., two "Reviewer" agents
-    // in different nodes). Each node-execution is deduped independently.
-    const dedupeKey = `${event.dedupeKey}:${sub.nodeId}:${sub.agentName}:${sub.workflowRunId}`;
+    // Dedup check — include taskId and nodeId to handle multi-task runs and
+    // cases where the same agent name appears in multiple nodes within the same
+    // run. Each task/node/agent subscription is deduped independently.
+    const dedupeKey = `${event.dedupeKey}:${sub.taskId}:${sub.nodeId}:${sub.agentName}:${sub.workflowRunId}`;
     if (this.delivered.has(dedupeKey)) return;
 
     // Mark dedup BEFORE session resolution / queueing. This prevents the same
@@ -684,31 +697,26 @@ class EventRouter {
         // of re-running the resolver, which could match a historical task outside
         // this run (SpacePrTaskResolver searches ALL tasks in the space).
         //
-        // We constrain matching to tasks within THIS workflow run only:
-        // 1. Load all non-archived tasks for this run.
-        // 2. Check if the event's routed taskId is among them.
+        // We constrain matching to the subscription's OWN task, not merely any
+        // task in the same workflow run. This prevents cross-task leakage in
+        // multi-task runs (e.g., two PR tasks sharing a workflowRunId).
         if (!event.prNumber) return false;
 
         // Optimization: the adapter includes the routed taskId in ExternalEvent.payload.
-        // Use it for a direct membership check — no resolver call needed.
+        // Use it for a direct equality check against this subscription's task.
         const routedTaskId = event.payload?.taskId as string | undefined;
         if (routedTaskId) {
-          const tasks = this.taskRepo.listByWorkflowRun(sub.workflowRunId);
-          return tasks.some(t => t.id === routedTaskId);
+          return routedTaskId === sub.taskId;
         }
 
         // Fallback (should rarely happen): if the adapter didn't include taskId,
-        // load run tasks and check if any references the event's PR number.
-        const tasks = this.taskRepo.listByWorkflowRun(sub.workflowRunId);
-        for (const task of tasks) {
-          const resolved = this.prResolver.resolve(sub.spaceId, {
-            repoOwner: event.repoOwner ?? '',
-            repoName: event.repoName ?? '',
-            prNumber: event.prNumber,
-          } as any);
-          if (resolved.taskId === task.id) return true;
-        }
-        return false;
+        // resolve by PR and require that the resolver points to THIS task.
+        const resolved = this.prResolver.resolve(sub.spaceId, {
+          repoOwner: event.repoOwner ?? '',
+          repoName: event.repoName ?? '',
+          prNumber: event.prNumber,
+        } as any);
+        return resolved.taskId === sub.taskId;
       }
     }
   }
@@ -737,7 +745,7 @@ Event arrives → Match subscriptions → Scope check → Dedup check → Sessio
 
 ### Deduplication
 
-- **Key**: `(event.dedupeKey, subscription.nodeId, subscription.agentName, subscription.workflowRunId)` — includes `nodeId` to handle cases where the same agent name appears in multiple nodes within the same run.
+- **Key**: `(event.dedupeKey, subscription.taskId, subscription.nodeId, subscription.agentName, subscription.workflowRunId)` — includes `taskId` to isolate multi-task runs and `nodeId` to handle cases where the same agent name appears in multiple nodes within the same run.
 - **Storage**: In-memory `Map<string, number>` (timestamp). Evicted when the workflow run completes.
 - **Guarantee**: Same external event is never delivered twice to the same node agent within a run.
 - The upstream `SpaceGitHubService` already deduplicates by `(spaceId, dedupeKey)` — this is an additional per-node dedup.
@@ -754,7 +762,7 @@ When an event matches a subscription whose node execution is `idle` (agent sessi
 
 When a node execution is `pending` (no session yet):
 
-1. The event is queued in an in-memory `Map<string, ExternalEvent[]>` keyed by `${workflowRunId}:${nodeId}:${agentName}`.
+1. The event is queued in an in-memory `Map<string, ExternalEvent[]>` keyed by `${workflowRunId}:${taskId}:${nodeId}:${agentName}`.
 2. When `TaskAgentManager` creates the node's session, it checks for queued events.
 3. Queued events are injected as initial context in the session's first turn.
 4. Queue is bounded: max 50 events per execution, oldest dropped (with a warning log).
@@ -784,17 +792,19 @@ class TopicTrie<T> {
 
   /**
    * Insert a value at a glob pattern.
-   * Pattern segments: literal match or '*' for wildcard.
+   * Pattern segments may contain segment-local `*` wildcards, e.g.
+   * `github/*/*/pull_request.*` or `github/*/*/pull_request.review_*`.
    */
   insert(pattern: string, value: T): void {
     const segments = pattern.split('/');
     let node = this.root;
     for (const segment of segments) {
-      const key = segment === '*' ? '__wildcard__' : segment.toLowerCase();
-      if (!node.children.has(key)) {
-        node.children.set(key, new TrieNode());
+      const key = segment.toLowerCase();
+      const children = key.includes('*') ? node.globChildren : node.exactChildren;
+      if (!children.has(key)) {
+        children.set(key, new TrieNode());
       }
-      node = node.children.get(key)!;
+      node = children.get(key)!;
     }
     if (!node.values) node.values = [];
     node.values.push(value);
@@ -820,13 +830,16 @@ class TopicTrie<T> {
 
       const segment = segments[depth].toLowerCase();
 
-      // Exact match
-      const exact = node.children.get(segment);
+      // Exact branch: O(1)
+      const exact = node.exactChildren.get(segment);
       if (exact) walk(exact, depth + 1);
 
-      // Wildcard match
-      const wildcard = node.children.get('__wildcard__');
-      if (wildcard) walk(wildcard, depth + 1);
+      // Glob branches: only patterns that contain segment-local '*'
+      for (const [patternSegment, child] of node.globChildren.entries()) {
+        if (segmentMatches(patternSegment, segment)) {
+          walk(child, depth + 1);
+        }
+      }
     };
 
     walk(this.root, 0);
@@ -841,7 +854,10 @@ class TopicTrie<T> {
       if (node.values) {
         node.values = node.values.filter(v => !predicate(v));
       }
-      for (const child of node.children.values()) {
+      for (const child of node.exactChildren.values()) {
+        clean(child);
+      }
+      for (const child of node.globChildren.values()) {
         clean(child);
       }
     };
@@ -849,8 +865,26 @@ class TopicTrie<T> {
   }
 }
 
+function segmentMatches(pattern: string, segment: string): boolean {
+  if (pattern === segment) return true;
+  if (!pattern.includes('*')) return false;
+
+  // Segment-local glob: '*' matches any characters except '/'. Because callers
+  // split on '/', the segment input never contains '/'. Escape other regex chars.
+  const regex = new RegExp(
+    '^' + pattern.split('*').map(escapeRegex).join('[^/]*') + '$',
+    'i',
+  );
+  return regex.test(segment);
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 class TrieNode<T> {
-  children: Map<string, TrieNode<T>> = new Map();
+  exactChildren: Map<string, TrieNode<T>> = new Map();
+  globChildren: Map<string, TrieNode<T>> = new Map();
   values?: T[];
 }
 ```
@@ -892,7 +926,7 @@ function isReceivingStatus(status: NodeExecutionStatus): boolean {
 
 **Complexity**:
 - Insert: O(k) where k = segment count (~4-5)
-- Lookup: O(2^k × m) — walks at most 2^k paths (exact + wildcard at each level), collects m total matching subscriptions from leaves. Since k is bounded (4–5), 2^k is a small constant.
+- Lookup: Effectively O(2^k × m) in the common case — walks exact + matching glob branches at each level, collects m total matching subscriptions from leaves. Since k is bounded (4–5) and per-agent interest count is capped, glob branching stays small.
 - Memory: O(n × k) where n = number of subscriptions
 
 ## 7. Wiring the GitHub Adapter
@@ -985,23 +1019,23 @@ function mapEventType(kind: string, action: string): string {
 
 For `task` scope, we already have the `taskId` from `space.githubEvent.routed`. The router can short-circuit:
 
-1. Look up which node executions in that task's run have `eventInterests` matching the event.
-2. Only check scope for those nodes — skip the full trie walk for nodes that don't care about this event type.
+1. Look up subscriptions whose `sub.taskId` equals the routed event `taskId` and whose `eventInterests` match the topic.
+2. Only deliver to those task-owned subscriptions — nodes attached to other tasks in the same workflow run do not pass `task` scope.
 
-This optimization turns the common case (one coder node interested in review comments) into a direct map lookup: `taskId → workflowRunId → nodeExecutions → filter by interest topic match`.
+This optimization turns the common case (one coder node interested in review comments) into a direct map lookup: `taskId → subscriptions → filter by interest topic match`.
 
 ## 8. Migration Path
 
 ### DB schema changes
 
-None required for V1. Event interests are stored as part of the workflow definition JSON in `space_workflows.nodes[].agents[].eventInterests`. The existing JSON serialization of workflow nodes already supports arbitrary fields.
+No new tables required for V1. Event interests are stored as part of the workflow definition JSON in `space_workflows.nodes[].agents[].eventInterests`. The existing JSON serialization of workflow nodes already supports arbitrary fields. Task-scoped delivery uses the current `SpaceTask.id` passed into `registerRunInterests(...)` by the runtime and the routed `taskId` already emitted by `space.githubEvent.routed`; no node-execution schema change is required.
 
 ### Type changes
 
 1. Add `EventInterest` interface to `packages/shared/src/types/space.ts`.
 2. Add `eventInterests?: EventInterest[]` to `WorkflowNodeAgent`.
 3. Add validation in the workflow create/update path (Zod schema or manual validation):
-   - `topic` must pass `validateGlobPattern()` (non-empty, no `..` segments, no double slashes, valid characters).
+   - `topic` must pass `validateGlobPattern()` (non-empty, at least 4 segments, no `..` segments, no double slashes, valid characters including segment-local `*`).
    - `scope` must be one of `'task' | 'repo' | 'global'`.
    - Max 10 interests per agent slot (prevent abuse).
    - `validateGlobPattern()` is the single source of truth — called at workflow create/update and again at trie insertion time as a safety net.
@@ -1055,10 +1089,13 @@ export function validateGlobPattern(pattern: string): { valid: boolean; reason?:
     if (segment === '..') {
       return { valid: false, reason: 'Topic pattern must not contain ".." segments' };
     }
-    if (segment !== '*' && !/^[a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*$/.test(segment)) {
+    if (segment === '**') {
+      return { valid: false, reason: 'Multi-segment "**" wildcard is not supported in v1' };
+    }
+    if (!/^[a-zA-Z0-9_.*-]+$/.test(segment)) {
       return {
         valid: false,
-        reason: `Segment "${segment}" contains invalid characters. Use alphanumeric, dash, underscore, or dot. Use "*" for wildcard.`,
+        reason: `Segment "${segment}" contains invalid characters. Use alphanumeric, dash, underscore, dot, or segment-local "*" wildcard.`,
       };
     }
   }
@@ -1082,6 +1119,7 @@ if (this.eventRouter) {
   this.eventRouter.registerRunInterests(
     spaceId,
     workflowRunId,
+    taskId, // current task whose tick/session activation is being processed
     workflow,
     activeNodeExecutions,
   );
