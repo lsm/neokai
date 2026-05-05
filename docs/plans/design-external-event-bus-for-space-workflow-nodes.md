@@ -320,6 +320,29 @@ export interface PublishResult {
   state: 'published' | 'duplicate_terminal' | 'retryable_duplicate' | 'ignored';
 }
 
+export interface ExternalEventStore {
+  store(event: ExternalEvent): { event: ExternalEvent; duplicate: boolean; terminal: boolean };
+  registerExpectedDelivery(
+    eventId: string,
+    deliveryKey: string,
+    target: { workflowRunId: string; taskId: string; nodeId: string; agentName: string },
+  ): void;
+  markDeliveryDelivered(eventId: string, deliveryKey: string): void;
+  markDeliveryFailed(
+    eventId: string,
+    deliveryKey: string,
+    failure: { terminal: boolean; reason: string },
+  ): void;
+  markEventDeliveredIfAllDeliveriesTerminal(eventId: string): void;
+  markEventFailedIfAllDeliveriesTerminal(eventId: string): void;
+  markEventFailed(eventId: string, failure: { terminal: boolean; reason: string }): void;
+}
+
+export interface EventTaskResolver {
+  /** Enrich a normalized event with routedTaskId when a trusted task association exists. */
+  enrich(event: ExternalEvent): Promise<ExternalEvent>;
+}
+
 /**
  * TypedHub/MessageHub method used by EventBus.
  *
@@ -555,6 +578,9 @@ class EventRouter {
   // Retry tracking: dedupeKey → retry count / scheduled timer
   private retryCounts: Map<string, number> = new Map();
   private retryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  // Event-level retry tracking for failures before expected delivery rows exist
+  private eventRetryCounts: Map<string, number> = new Map();
+  private eventRetryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private static readonly MAX_RETRIES = 3;
   private static readonly RETRY_BACKOFF_MS = 1000; // 1s base, exponential backoff
 
@@ -828,6 +854,15 @@ class EventRouter {
         this.retryTimers.delete(key);
       }
     }
+
+    // Event-level preparation retries may cover multiple subscriptions in the run.
+    for (const [key, timer] of this.eventRetryTimers.entries()) {
+      if (key.includes(`:${workflowRunId}:`)) {
+        clearTimeout(timer);
+        this.eventRetryTimers.delete(key);
+        this.eventRetryCounts.delete(key);
+      }
+    }
   }
 
   private async handleEvent(event: ExternalEvent): Promise<void> {
@@ -841,10 +876,11 @@ class EventRouter {
     // successful subscription from marking the source event terminal while other
     // matched subscriptions have not yet been attempted.
     const eligible: Subscription[] = [];
+    let preparationFailed = false;
     for (const sub of matched) {
+      const deliveryKey = this.makeDeliveryKey(event, sub);
       try {
         if (!this.passesScopeCheck(event, sub)) continue;
-        const deliveryKey = this.makeDeliveryKey(event, sub);
         this.eventStore.registerExpectedDelivery(event.id, deliveryKey, {
           workflowRunId: sub.workflowRunId,
           taskId: sub.taskId,
@@ -853,7 +889,8 @@ class EventRouter {
         });
         eligible.push(sub);
       } catch (err) {
-        log.warn('EventRouter: failed to prepare external event delivery', {
+        preparationFailed = true;
+        log.warn('EventRouter: failed to prepare external event delivery; scheduling retry', {
           error: err,
           spaceId: event.spaceId,
           topic: event.topic,
@@ -863,12 +900,23 @@ class EventRouter {
           nodeId: sub.nodeId,
           agentName: sub.agentName,
         });
+        this.pendingDeliveries.delete(deliveryKey);
       }
     }
 
-    // 3. Deliver each prepared subscription. Isolate failures per subscription
-    // so one bad repo/task lookup or injection does not prevent other interested
-    // nodes from receiving the same event.
+    if (preparationFailed) {
+      this.scheduleEventRetry(event, matched);
+    }
+
+    // If any matched subscription failed during scope/registration preparation,
+    // do not partially deliver this event in the same pass. Otherwise the prepared
+    // subscriptions could all succeed and mark the source event terminal while the
+    // failed subscription was never registered. The retry path will re-run matching,
+    // scope checks, and expected-delivery registration for the whole event.
+    if (preparationFailed) return;
+
+    // 3. Deliver each prepared subscription. Isolate injection failures per
+    // subscription after the complete expected-delivery set has been registered.
     for (const sub of eligible) {
       try {
         await this.deliverToSubscription(event, sub);
@@ -917,24 +965,8 @@ class EventRouter {
         return;
       }
 
-      // Format and inject.
-      // NOTE: There is a TOCTOU race — the session could complete between our
-      // resolveSession call and injectMessage. This is safe: injectMessage on a
-      // completed/absent session returns a caught error (logged as a warning).
-      const message = this.formatEventMessage(event);
       try {
-        await this.sessionFactory.injectMessage(sessionId, message, {
-          deliveryMode: 'defer',
-        });
-
-        // Success: mark as delivered both in-memory and persistently, then
-        // advance the source event to terminal delivered only when all expected
-        // per-subscription deliveries are terminal. This keeps source-level dedup
-        // from re-emitting already-delivered events after restart/TTL expiry.
-        this.delivered.set(dedupeKey, Date.now());
-        this.eventStore.markDeliveryDelivered(event.id, dedupeKey);
-        this.eventStore.markEventDeliveredIfAllDeliveriesTerminal(event.id);
-        this.pendingDeliveries.delete(dedupeKey);
+        await this.injectPreparedDelivery(event, sub, dedupeKey, sessionId);
       } catch (err) {
         log.warn(`Failed to deliver event to ${sub.agentName}`, { error: err });
 
@@ -951,6 +983,31 @@ class EventRouter {
       this.pendingDeliveries.delete(dedupeKey);
       this.scheduleRetry(event, sub, dedupeKey);
     }
+  }
+
+  private async injectPreparedDelivery(
+    event: ExternalEvent,
+    sub: Subscription,
+    dedupeKey: string,
+    sessionId: string,
+  ): Promise<void> {
+    // Format and inject.
+    // NOTE: There is a TOCTOU race — the session could complete between our
+    // resolveSession call and injectMessage. This is safe: injectMessage on a
+    // completed/absent session returns a caught error (logged as a warning).
+    const message = this.formatEventMessage(event);
+    await this.sessionFactory.injectMessage(sessionId, message, {
+      deliveryMode: 'defer',
+    });
+
+    // Success: mark as delivered both in-memory and persistently, then advance
+    // the source event to terminal delivered only when all expected per-subscription
+    // deliveries are terminal. This keeps source-level dedup from re-emitting
+    // already-delivered events after restart/TTL expiry.
+    this.delivered.set(dedupeKey, Date.now());
+    this.eventStore.markDeliveryDelivered(event.id, dedupeKey);
+    this.eventStore.markEventDeliveredIfAllDeliveriesTerminal(event.id);
+    this.pendingDeliveries.delete(dedupeKey);
   }
 
   private queueForDelivery(event: ExternalEvent, sub: Subscription, deliveryKey: string): void {
@@ -972,20 +1029,47 @@ class EventRouter {
 
   /**
    * Drain queued events for a subscription when the node's session is created.
-   * Clears pendingDeliveries markers so events can be re-queued if needed later.
+   * Clears pendingDeliveries markers before reinjection so a failed flush can be
+   * retried or re-queued instead of being permanently blocked by stale pending keys.
    */
-  private drainQueue(sub: Subscription): ExternalEvent[] {
+  drainQueueForSession(sub: Subscription): PendingDelivery[] {
     const key = this.makePendingQueueKey(sub);
     const queue = this.pendingQueue.get(key) ?? [];
     this.pendingQueue.delete(key);
 
-    // Clear pendingDeliveries for ALL events in the drained queue. Use the queued
+    // Clear pendingDeliveries for ALL drained events because queueForDelivery keeps
+    // each delivery key marked pending while the node has no session. Use the queued
     // wrapper's stored deliveryKey instead of recomputing from the wrapper object.
     for (const pending of queue) {
       this.pendingDeliveries.delete(pending.deliveryKey);
     }
 
-    return queue.map((pending) => pending.event);
+    return queue;
+  }
+
+  /**
+   * Called by TaskAgentManager immediately after it creates/binds a node session.
+   * Flushes pending-node events through the same injection path as live delivery,
+   * preserving delivery state, retry, and terminal event advancement semantics.
+   */
+  async flushQueuedDeliveriesForSession(sub: Subscription, sessionId: string): Promise<void> {
+    const queued = this.drainQueueForSession(sub);
+    for (const pending of queued) {
+      try {
+        await this.injectPreparedDelivery(pending.event, sub, pending.deliveryKey, sessionId);
+      } catch (err) {
+        log.warn('EventRouter: failed to flush queued external event delivery', {
+          error: err,
+          eventId: pending.event.id,
+          workflowRunId: sub.workflowRunId,
+          taskId: sub.taskId,
+          nodeId: sub.nodeId,
+          agentName: sub.agentName,
+        });
+        this.pendingDeliveries.delete(pending.deliveryKey);
+        this.scheduleRetry(pending.event, sub, pending.deliveryKey);
+      }
+    }
   }
 
   private passesScopeCheck(event: ExternalEvent, sub: Subscription): boolean {
@@ -1012,10 +1096,50 @@ class EventRouter {
         // router uses that trusted enrichment directly and never performs broad
         // PR/task scans during delivery. This prevents cross-task leakage in
         // multi-task runs and keeps task/gate/workflow schema access out of
-        // source adapters and delivery hot paths.
+        // source adapters and delivery hot paths. If routedTaskId is absent, the
+        // event has no associated task, so the scope check returns false.
         return event.routedTaskId === sub.taskId;
       }
     }
+  }
+
+  /**
+   * Schedule an event-level retry for failures before expected delivery rows exist
+   * (for example transient watched-repo lookup or delivery-row insert failures).
+   * This reruns full matching/preparation instead of allowing partial delivery to
+   * mark the source event terminal while an unregistered subscription missed it.
+   */
+  private scheduleEventRetry(event: ExternalEvent, matched: Subscription[]): void {
+    const retryKey = `${event.id}:${matched.map((sub) => sub.workflowRunId).sort().join(',')}:prepare`;
+    const retries = (this.eventRetryCounts.get(retryKey) ?? 0) + 1;
+    if (retries > EventRouter.MAX_RETRIES) {
+      log.warn('EventRouter: max preparation retries exceeded; marking event failed', {
+        eventId: event.id,
+        topic: event.topic,
+      });
+      this.eventRetryCounts.delete(retryKey);
+      const existingTimer = this.eventRetryTimers.get(retryKey);
+      if (existingTimer) clearTimeout(existingTimer);
+      this.eventRetryTimers.delete(retryKey);
+      this.eventStore.markEventFailed(event.id, {
+        terminal: true,
+        reason: 'delivery_preparation_failed',
+      });
+      return;
+    }
+
+    this.eventRetryCounts.set(retryKey, retries);
+    const backoff = EventRouter.RETRY_BACKOFF_MS * Math.pow(2, retries - 1);
+    const existingTimer = this.eventRetryTimers.get(retryKey);
+    if (existingTimer) clearTimeout(existingTimer);
+
+    const timer = setTimeout(() => {
+      this.eventRetryTimers.delete(retryKey);
+      void this.handleEvent(event).catch((err) => {
+        log.warn('EventRouter: event preparation retry failed', { error: err, eventId: event.id });
+      });
+    }, backoff);
+    this.eventRetryTimers.set(retryKey, timer);
   }
 
   /**
@@ -1150,9 +1274,10 @@ When an event matches a subscription whose node execution is `idle` (agent sessi
 When a node execution is `pending` (no session yet):
 
 1. The event is queued in an in-memory `Map<string, ExternalEvent[]>` keyed by a JSON tuple `[workflowRunId, taskId, nodeId, agentName]` so free-form identifiers cannot collide by containing delimiter characters.
-2. When `TaskAgentManager` creates the node's session, it checks for queued events.
-3. Queued events are injected as initial context in the session's first turn.
-4. Queue is bounded: max 50 events per execution, oldest dropped (with a warning log).
+2. When `TaskAgentManager` creates the node's session, it calls `eventRouter.flushQueuedDeliveriesForSession(sub, sessionId)`.
+3. Queued events are injected through the same prepared-delivery path as live events, so successful flush marks the per-subscription delivery delivered and advances the source event only when all expected deliveries are terminal.
+4. If flush injection fails, the router clears the stale pending marker and schedules a normal delivery retry so the queued event is not silently lost.
+5. Queue is bounded: max 50 events per execution, oldest dropped (with a warning log).
 
 **Known limitation — daemon restart**: The in-memory per-node pending queue is lost on daemon restart. For v1, this is accepted as a known delivery gap:
 - The bus-level `ExternalEventStore` preserves the source event and can re-emit retryable states, but the per-node in-memory queue itself is not durable.
@@ -1490,7 +1615,7 @@ V1 needs one core event-store table plus workflow type additions:
 
 1. Add `EventInterest` interface to `packages/shared/src/types/space.ts`.
 2. Add `eventInterests?: EventInterest[]` to `WorkflowNodeAgent`.
-3. Add `ExternalEvent`, `EventAdapter`, `HttpEventAdapter`, `RpcEventAdapter`, and `EventPublisher` types under `packages/daemon/src/lib/space/runtime/event-bus/`.
+3. Add `ExternalEvent`, `EventAdapter`, `HttpEventAdapter`, `RpcEventAdapter`, `EventPublisher`, `ExternalEventStore`, and `EventTaskResolver` types under `packages/daemon/src/lib/space/runtime/event-bus/`.
 4. Add validation in the workflow create/update path (Zod schema or manual validation):
    - `topic` must pass `validateGlobPattern()` (non-empty, exactly 4 segments, no `..` segments, no double slashes, valid characters including segment-local `*`).
    - `scope` must be one of `'task' | 'repo' | 'global'`.
@@ -1704,7 +1829,7 @@ Direct injection via `sessionFactory.injectMessage()` is simpler and semanticall
 
 ### Why trie-based matching instead of regex?
 
-1. **Performance**: Trie lookup is O(k) per event regardless of subscription count. Regex matching is O(n) per event where n = number of subscriptions.
+1. **Performance**: Trie lookup walks O(2^k) paths and collects matching subscriptions from each leaf; non-matching subscriptions are never visited. Regex matching is O(n) per event where n = number of subscriptions.
 2. **Composability**: Trie supports incremental add/remove (subscriptions change as nodes activate/deactivate). Regex requires rebuilding the full pattern.
 3. **Debuggability**: Trie structure can be inspected and visualized. Regex patterns are opaque.
 
