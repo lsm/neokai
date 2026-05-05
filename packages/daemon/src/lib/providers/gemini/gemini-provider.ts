@@ -321,7 +321,8 @@ export class GeminiOAuthProvider implements Provider {
 		});
 
 		const callbackPort = server.port ?? 0;
-		const redirectUri = `http://localhost:${callbackPort}/callback`;
+		// Match Gemini CLI's loopback redirect path for the default desktop client.
+		const redirectUri = `http://127.0.0.1:${callbackPort}/oauth2callback`;
 
 		// Build the auth URL with the local callback redirect URI.
 		// If URL generation fails (e.g. missing OAuth env vars), stop the
