@@ -1197,6 +1197,68 @@ describe('TaskAgentManager.tryResumeNodeAgentSession', () => {
 		);
 	});
 
+	test('does not drain Space Agent escalation rows into node-session flush', async () => {
+		const pendingRepo = new PendingAgentMessageRepository(ctx.bunDb);
+
+		const wfRunId = 'run-resume-space-agent-kind-filter-1';
+		const wfId = 'wf-resume-space-agent-kind-filter-1';
+		const nodeId = 'node-resume-space-agent-kind-filter-1';
+		seedWorkflowRun(ctx, wfRunId, wfId, nodeId);
+
+		const parentTask = await ctx.taskManager.createTask({
+			title: 'Parent task for Space Agent kind filtering',
+			description: '',
+			taskType: 'coding',
+			status: 'in_progress',
+			workflowRunId: wfRunId,
+		});
+		const taskAgentSessionId = `space:${ctx.spaceId}:task:${parentTask.id}`;
+		ctx.taskRepo.updateTask(parentTask.id, { taskAgentSessionId, status: 'in_progress' });
+		ctx.mockDb.createSession({ id: taskAgentSessionId, type: 'space_task_agent' });
+
+		const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:space-agent-kind-filter-exec`;
+		const execution = ctx.nodeExecutionRepo.create({
+			workflowRunId: wfRunId,
+			workflowNodeId: nodeId,
+			agentName: 'space-agent',
+			agentId: null,
+			status: 'in_progress',
+		});
+		ctx.nodeExecutionRepo.updateSessionId(execution.id, subSessionId);
+		ctx.mockDb.createSession({ id: subSessionId, type: 'worker' });
+
+		const manager = makeManagerWithPendingRepo(ctx, pendingRepo);
+		await manager.injectSubSessionMessage(subSessionId, 'prime session');
+
+		pendingRepo.enqueue({
+			workflowRunId: wfRunId,
+			spaceId: ctx.spaceId,
+			taskId: parentTask.id,
+			sourceAgentName: 'task-agent',
+			targetKind: 'space_agent',
+			targetAgentName: 'space-agent',
+			message: 'escalation should stay queued',
+		});
+
+		const savedMessages: unknown[] = [];
+		const originalSave = ctx.mockDb.saveUserMessage;
+		ctx.mockDb.saveUserMessage = (
+			_sid: string,
+			msg: unknown,
+			status: string
+		): ReturnType<typeof ctx.mockDb.saveUserMessage> => {
+			savedMessages.push(msg);
+			return originalSave.call(ctx.mockDb, _sid, msg, status);
+		};
+
+		await manager.flushPendingMessagesForTarget(wfRunId, 'space-agent', subSessionId);
+
+		ctx.mockDb.saveUserMessage = originalSave;
+
+		expect(JSON.stringify(savedMessages)).not.toContain('escalation should stay queued');
+		expect(pendingRepo.listPendingForTarget(wfRunId, 'space-agent')).toHaveLength(1);
+	});
+
 	test('wraps legacy Space Agent pending messages with an envelope on flush', async () => {
 		const pendingRepo = new PendingAgentMessageRepository(ctx.bunDb);
 		const injected: Array<{ spaceId: string; message: string }> = [];

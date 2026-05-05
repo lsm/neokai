@@ -180,6 +180,7 @@ interface CapturedSessionArgs {
 function buildManager(opts: {
 	registryMcpServers?: Record<string, McpServerConfig>;
 	hasAppMcpManager?: boolean;
+	spaceAgentInjector?: (spaceId: string, message: string) => Promise<void>;
 }): {
 	manager: TaskAgentManager;
 	createdSessions: Map<string, MockAgentSession>;
@@ -195,7 +196,7 @@ function buildManager(opts: {
 	/** Seed a session in the mock DB (used to simulate sessions that existed before restart). */
 	seedSession: (id: string, type: string) => void;
 } {
-	const { registryMcpServers = {}, hasAppMcpManager = true } = opts;
+	const { registryMcpServers = {}, hasAppMcpManager = true, spaceAgentInjector } = opts;
 	const bunDb = makeDb();
 	const spaceId = 'space-mcp-test';
 	seedSpaceRow(bunDb, spaceId);
@@ -304,6 +305,7 @@ function buildManager(opts: {
 		skillsManager: mockSkillsManager,
 		appMcpServerRepo: mockAppMcpServerRepo,
 		nodeExecutionRepo,
+		spaceAgentInjector,
 	});
 
 	return {
@@ -715,6 +717,150 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 			.channelResolver;
 		expect(resolver).toBeDefined();
 		expect(resolver.isEmpty()).toBe(true);
+	});
+
+	test('buildNodeAgentMcpServerForSession derives Space Agent capability from router topology', () => {
+		const { manager, fromInitSpy, bunDb, space, nodeExecutionRepo } = buildManager({
+			spaceAgentInjector: async () => {},
+		});
+		spies.push(fromInitSpy);
+
+		const workflowRepo = new SpaceWorkflowRepository(bunDb);
+		const workflow = workflowRepo.createWorkflow({
+			spaceId: space.id,
+			name: 'Space Agent capability workflow',
+			description: '',
+			nodes: [
+				{ id: 'coding', name: 'Coding', agents: [{ agentId: 'agent-coder', name: 'coder' }] },
+			],
+			transitions: [],
+			startNodeId: 'coding',
+			rules: [],
+			completionAutonomyLevel: 3,
+		});
+		const workflowRun = new SpaceWorkflowRunRepository(bunDb).createRun({
+			spaceId: space.id,
+			workflowId: workflow.id,
+			title: 'Capability run',
+		});
+		nodeExecutionRepo.create({
+			workflowRunId: workflowRun.id,
+			workflowNodeId: 'coding',
+			agentName: 'coder',
+			agentSessionId: 'sub-session-coder',
+			status: 'in_progress',
+		});
+
+		let capturedConfig: Record<string, unknown> | null = null;
+		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
+			(config) => {
+				capturedConfig = config as unknown as Record<string, unknown>;
+				return { server: {}, cleanup: () => {} } as unknown as ReturnType<
+					typeof nodeAgentToolsModule.createNodeAgentMcpServer
+				>;
+			}
+		);
+		spies.push(mcpServerSpy);
+
+		const mgr = manager as unknown as {
+			buildNodeAgentMcpServerForSession(
+				taskId: string,
+				subSessionId: string,
+				agentName: string,
+				spaceId: string,
+				workflowRunId: string,
+				workspacePath: string,
+				workflowNodeIdHint?: string
+			): unknown;
+		};
+		mgr.buildNodeAgentMcpServerForSession(
+			'task-1',
+			'sub-session-coder',
+			'coder',
+			space.id,
+			workflowRun.id,
+			space.workspacePath,
+			'coding'
+		);
+
+		expect(capturedConfig!['canMessageSpaceAgent']).toBe(true);
+	});
+
+	test('buildNodeAgentMcpServerForSession hides built-in Space Agent when topology shadows it', () => {
+		const { manager, fromInitSpy, bunDb, space, nodeExecutionRepo } = buildManager({
+			spaceAgentInjector: async () => {},
+		});
+		spies.push(fromInitSpy);
+
+		const workflowRepo = new SpaceWorkflowRepository(bunDb);
+		const workflow = workflowRepo.createWorkflow({
+			spaceId: space.id,
+			name: 'Shadowed Space Agent capability workflow',
+			description: '',
+			nodes: [
+				{ id: 'coding', name: 'Coding', agents: [{ agentId: 'agent-coder', name: 'coder' }] },
+				{
+					id: 'shadow-node',
+					name: 'space-agent',
+					agents: [{ agentId: 'agent-shadow-node', name: 'shadow-node-agent' }],
+				},
+				{
+					id: 'shadow-slot-node',
+					name: 'Shadow Slot',
+					agents: [{ agentId: 'agent-shadow-slot', name: 'space-agent' }],
+				},
+			],
+			transitions: [],
+			startNodeId: 'coding',
+			rules: [],
+			completionAutonomyLevel: 3,
+		});
+		const workflowRun = new SpaceWorkflowRunRepository(bunDb).createRun({
+			spaceId: space.id,
+			workflowId: workflow.id,
+			title: 'Shadowed capability run',
+		});
+		nodeExecutionRepo.create({
+			workflowRunId: workflowRun.id,
+			workflowNodeId: 'coding',
+			agentName: 'coder',
+			agentSessionId: 'sub-session-coder',
+			status: 'in_progress',
+		});
+
+		let capturedConfig: Record<string, unknown> | null = null;
+		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
+			(config) => {
+				capturedConfig = config as unknown as Record<string, unknown>;
+				return { server: {}, cleanup: () => {} } as unknown as ReturnType<
+					typeof nodeAgentToolsModule.createNodeAgentMcpServer
+				>;
+			}
+		);
+		spies.push(mcpServerSpy);
+
+		const mgr = manager as unknown as {
+			buildNodeAgentMcpServerForSession(
+				taskId: string,
+				subSessionId: string,
+				agentName: string,
+				spaceId: string,
+				workflowRunId: string,
+				workspacePath: string,
+				workflowNodeIdHint?: string
+			): unknown;
+		};
+		mgr.buildNodeAgentMcpServerForSession(
+			'task-1',
+			'sub-session-coder',
+			'coder',
+			space.id,
+			workflowRun.id,
+			space.workspacePath,
+			'coding'
+		);
+
+		expect(capturedConfig!['canMessageSpaceAgent']).toBe(false);
 	});
 
 	test('buildNodeAgentMcpServerForSession passes correct mySessionId, myAgentName, and taskId', () => {
