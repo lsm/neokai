@@ -6,6 +6,7 @@
  * contexts for orchestrating custom agents and automated pipelines.
  */
 
+import type { ThinkingLevel } from '../types';
 import type { McpServerConfig } from './sdk-config';
 
 // ============================================================================
@@ -57,6 +58,8 @@ export interface SpaceConfig {
 export interface TaskAgentConfig {
 	/** Model override for the Task Agent. Falls back to `space.defaultModel` then `DEFAULT_TASK_AGENT_MODEL`. */
 	model?: string;
+	/** Thinking-level override for the Task Agent. Falls back to the app default when unset. */
+	thinkingLevel?: ThinkingLevel;
 	/** Custom prompt additions appended after the contract sections (similar to SpaceAgent.customPrompt). */
 	customPrompt?: string;
 }
@@ -681,6 +684,8 @@ export interface SpaceAgent {
 	description?: string;
 	/** Model ID override (e.g., 'claude-haiku-4-5') — uses space default if unset */
 	model?: string;
+	/** Thinking-level override — uses app default if unset */
+	thinkingLevel?: ThinkingLevel;
 	/** Provider name override (e.g., 'anthropic', 'openai') */
 	provider?: string;
 	/**
@@ -721,6 +726,7 @@ export interface CreateSpaceAgentParams {
 	name: string;
 	description?: string;
 	model?: string;
+	thinkingLevel?: ThinkingLevel;
 	provider?: string;
 	/** Operator-supplied custom prompt appended after the NeoKai contract; null when not set */
 	customPrompt?: string | null;
@@ -746,6 +752,7 @@ export interface UpdateSpaceAgentParams {
 	name?: string;
 	description?: string | null;
 	model?: string | null;
+	thinkingLevel?: ThinkingLevel | null;
 	provider?: string | null;
 	/** Operator-supplied custom prompt; null clears */
 	customPrompt?: string | null;
@@ -1073,6 +1080,11 @@ export interface WorkflowNodeAgent {
 	 * When absent, the assigned SpaceAgent model is used.
 	 */
 	model?: string;
+	/**
+	 * Optional thinking-level override for this agent slot.
+	 * When absent, the assigned SpaceAgent thinking level is used.
+	 */
+	thinkingLevel?: ThinkingLevel;
 	/**
 	 * Optional custom-prompt expansion for this agent slot.
 	 * Always appended to the agent's `customPrompt` (never replaces it).
@@ -1524,6 +1536,8 @@ export interface ExportedWorkflowNodeAgent {
 	name: string;
 	/** Optional model override for this agent slot. */
 	model?: string;
+	/** Optional thinking-level override for this agent slot. */
+	thinkingLevel?: ThinkingLevel;
 	/**
 	 * Optional system-prompt override for this agent slot.
 	 * Accepts both plain strings (legacy export format) and `{ mode, value }` objects.
@@ -1600,6 +1614,8 @@ export interface ExportedSpaceAgent {
 	description?: string;
 	/** Model ID override */
 	model?: string;
+	/** Thinking-level override */
+	thinkingLevel?: ThinkingLevel;
 	/** Provider name override */
 	provider?: string;
 	/** System prompt — persona and constraints for this agent */

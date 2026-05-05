@@ -56,6 +56,8 @@ export interface WorkflowTemplateStep {
 	systemPrompt?: string;
 	/** Optional model override for single-agent templates. */
 	model?: string;
+	/** Optional thinking-level override for single-agent templates. */
+	thinkingLevel?: import('@neokai/shared').ThinkingLevel;
 	/** Optional default node instructions. */
 	instructions?: string;
 }
@@ -69,6 +71,8 @@ export interface WorkflowTemplateAgentSlot {
 	agentId?: string;
 	/** Optional model override for this slot. */
 	model?: string;
+	/** Optional thinking-level override for this slot. */
+	thinkingLevel?: import('@neokai/shared').ThinkingLevel;
 	/** Optional default slot system prompt. */
 	systemPrompt?: string;
 	/** Optional default slot instructions. */
@@ -258,6 +262,7 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 					agentId: assigned?.id ?? '',
 					name: slot.name?.trim() || `${capitalizeRole(slot.role)} ${slotIndex + 1}`,
 					model: slot.model?.trim() || undefined,
+					thinkingLevel: slot.thinkingLevel,
 					customPrompt: slot.systemPrompt?.trim() ? { value: slot.systemPrompt.trim() } : undefined,
 				};
 			});
@@ -295,12 +300,16 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 					agentId: assigned?.id ?? '',
 					name: resolvedRoleName,
 					model: step.model?.trim() || undefined,
+					thinkingLevel: step.thinkingLevel,
 					customPrompt: resolvedCustomPrompt,
 				},
 			],
-			// Keep legacy top-level fields in sync for single-slot UI paths.
-			model: step.model?.trim() || undefined,
-			customPrompt: resolvedCustomPrompt,
+			// Step-level model/thinkingLevel/customPrompt left undefined to avoid
+			// duplicating slot values. The NodeConfigPanel fallback
+			// (slot.field ?? step.field) reads from the slot when present.
+			model: undefined,
+			thinkingLevel: undefined,
+			customPrompt: undefined,
 		};
 	});
 }

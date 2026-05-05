@@ -608,6 +608,26 @@ describe('createCustomAgentInit', () => {
 		);
 		expect(fallback.model).toBe('claude-sonnet-4-6');
 	});
+
+	it('applies thinking level precedence slot > agent > app default', () => {
+		const slot = createCustomAgentInit(
+			makeConfig({
+				customAgent: makeAgent({ thinkingLevel: 'think8k' }),
+				slotOverrides: { thinkingLevel: 'think32k' },
+			})
+		);
+		expect(slot.thinkingLevel).toBe('think32k');
+
+		const agent = createCustomAgentInit(
+			makeConfig({ customAgent: makeAgent({ thinkingLevel: 'think16k' }) })
+		);
+		expect(agent.thinkingLevel).toBe('think16k');
+
+		const fallback = createCustomAgentInit(
+			makeConfig({ customAgent: makeAgent({ thinkingLevel: undefined }) })
+		);
+		expect(fallback.thinkingLevel).toBeUndefined();
+	});
 });
 
 describe('resolveAgentInit', () => {

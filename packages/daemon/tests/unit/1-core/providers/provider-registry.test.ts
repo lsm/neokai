@@ -320,7 +320,7 @@ describe('ProviderRegistry', () => {
 	describe('initializeProviders — all built-in providers registered', () => {
 		// Outer beforeEach already resets registry+factory; no per-test resets needed.
 
-		it('should register exactly nine built-in providers', () => {
+		it('should register exactly ten built-in providers', () => {
 			const reg = initializeProviders();
 
 			const ids = reg
@@ -334,6 +334,7 @@ describe('ProviderRegistry', () => {
 					'anthropic-copilot',
 					'glm',
 					'google-gemini-oauth',
+					'kimi',
 					'minimax',
 					'ollama',
 					'ollama-cloud',
@@ -355,6 +356,11 @@ describe('ProviderRegistry', () => {
 		it('should include minimax provider', () => {
 			const reg = initializeProviders();
 			expect(reg.has('minimax')).toBe(true);
+		});
+
+		it('should include kimi provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('kimi')).toBe(true);
 		});
 
 		it('should include openrouter provider', () => {
@@ -388,13 +394,13 @@ describe('ProviderRegistry', () => {
 			const reg2 = initializeProviders();
 			// The global singleton must be the same reference — not a new instance
 			expect(reg1).toBe(reg2);
-			expect(reg2.size).toBe(9);
+			expect(reg2.size).toBe(10);
 		});
 
 		it('should use the global registry singleton', () => {
 			initializeProviders();
 			const globalReg = getProviderRegistry();
-			expect(globalReg.size).toBe(9);
+			expect(globalReg.size).toBe(10);
 		});
 	});
 
@@ -500,6 +506,41 @@ describe('inferProviderForModel', () => {
 
 	it('maps bare minimax to minimax', () => {
 		expect(inferProviderForModel('minimax')).toBe('minimax');
+	});
+
+	it('maps Kimi/Moonshot model IDs to kimi', () => {
+		expect(inferProviderForModel('moonshot-v1-32k')).toBe('kimi');
+		expect(inferProviderForModel('Moonshot-v1-32k')).toBe('kimi');
+		expect(inferProviderForModel('kimi-for-coding')).toBe('kimi');
+		expect(inferProviderForModel('Kimi')).toBe('kimi');
+		expect(inferProviderForModel('kimi')).toBe('kimi');
+	});
+
+	it('does not hijack Ollama tags with kimi/moonshot prefixes', () => {
+		// Ollama tags contain ':' — must fall through to Ollama routing
+		expect(inferProviderForModel('kimi-k2:latest')).not.toBe('kimi');
+		expect(inferProviderForModel('moonshot-v1:latest')).not.toBe('kimi');
+	});
+
+	it('maps Kimi/Moonshot model IDs before registry fallback providers', () => {
+		try {
+			getProviderRegistry().register(
+				new (class extends MockProvider {
+					readonly id = 'anthropic' as const;
+					readonly displayName = 'Anthropic';
+					ownsModel(): boolean {
+						return true;
+					}
+				})()
+			);
+
+			expect(inferProviderForModel('moonshot-v1-32k')).toBe('kimi');
+			expect(inferProviderForModel('Moonshot-v1-32k')).toBe('kimi');
+			expect(inferProviderForModel('kimi-for-coding')).toBe('kimi');
+			expect(inferProviderForModel('Kimi')).toBe('kimi');
+		} finally {
+			resetProviderRegistry();
+		}
 	});
 
 	it('maps OpenRouter provider/model refs to openrouter', () => {

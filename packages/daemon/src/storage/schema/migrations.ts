@@ -548,6 +548,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 115: Add task_agent_config column to spaces table.
 	//   Stores per-space Task Agent overrides (model and custom prompt) as JSON.
 	runMigration115(db);
+
+	// Migration 116: Add thinking_level to space_agents for per-agent thinking overrides.
+	runMigration116(db);
 }
 
 /**
@@ -7929,4 +7932,18 @@ export function runMigration115(db: BunDatabase): void {
 	if (columns.includes('task_agent_config')) return;
 
 	db.exec(`ALTER TABLE spaces ADD COLUMN task_agent_config TEXT DEFAULT NULL`);
+}
+
+/**
+ * Migration 116: Add `thinking_level` column to `space_agents` table.
+ *
+ * Nullable — null means use the app default unless a workflow node slot overrides it.
+ */
+export function runMigration116(db: BunDatabase): void {
+	if (!tableExists(db, 'space_agents')) return;
+
+	const columns = tableColumnNames(db, 'space_agents');
+	if (columns.includes('thinking_level')) return;
+
+	db.exec(`ALTER TABLE space_agents ADD COLUMN thinking_level TEXT DEFAULT NULL`);
 }

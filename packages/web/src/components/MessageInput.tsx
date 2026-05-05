@@ -86,6 +86,10 @@ interface MessageInputProps {
 	leadingPaddingClass?: string;
 	/** Emits whether the current draft has non-whitespace content */
 	onDraftActiveChange?: (hasDraft: boolean) => void;
+	/** Whether the backing agent/session is currently processing or queued. */
+	isProcessing?: boolean;
+	/** Whether this session supports queueing draft text for the next turn via Tab. */
+	canQueueMessages?: boolean;
 }
 
 interface QueuedOverlayMessage {
@@ -112,6 +116,8 @@ export default function MessageInput({
 	leadingElement,
 	leadingPaddingClass,
 	onDraftActiveChange,
+	isProcessing,
+	canQueueMessages = true,
 }: MessageInputProps) {
 	// Cache touch device detection — computed once on first render, stable thereafter.
 	// Using useRef (not a module constant) so tests can mock matchMedia before render.
@@ -250,7 +256,7 @@ export default function MessageInput({
 		setAgentMentionSelectedIndex(0);
 	}, []);
 
-	const agentWorking = isAgentWorking.value;
+	const agentWorking = isProcessing ?? isAgentWorking.value;
 	const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuedOverlayMessage[]>([]);
 	const [queuedForNextTurn, setQueuedForNextTurn] = useState<QueuedOverlayMessage[]>([]);
 
@@ -433,7 +439,7 @@ export default function MessageInput({
 				return;
 			}
 
-			if (e.key === 'Tab' && !e.shiftKey && agentWorking) {
+			if (e.key === 'Tab' && !e.shiftKey && agentWorking && canQueueMessages) {
 				e.preventDefault();
 				void handleSubmit('defer');
 				return;
@@ -459,6 +465,7 @@ export default function MessageInput({
 			cmdHandleKeyDown,
 			handleSubmit,
 			agentWorking,
+			canQueueMessages,
 			showAgentMentionAutocomplete,
 			filteredAgentMentionCandidates,
 			agentMentionSelectedIndex,
@@ -675,6 +682,7 @@ export default function MessageInput({
 							onReferenceSelect={referenceAutocomplete.handleSelect}
 							onReferenceClose={referenceAutocomplete.close}
 							isAgentWorking={agentWorking}
+							canQueueMessages={canQueueMessages}
 							onStop={handleInterrupt}
 							onPaste={disabled ? undefined : handlePaste}
 							textareaRef={textareaInputRef}

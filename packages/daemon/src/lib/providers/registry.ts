@@ -259,6 +259,21 @@ export function resetProviderRegistry(): void {
  * test-interference from re-registering providers.
  */
 export function inferProviderForModel(modelId: string): ProviderIdStr {
+	const normalizedModelId = modelId.toLowerCase();
+
+	// Route canonical Kimi/Moonshot IDs before live registry lookup because the
+	// Anthropic provider intentionally claims unknown model IDs as a fallback.
+	// Exclude IDs containing ':' so Ollama tags like kimi-k2:latest or
+	// moonshot-v1:latest fall through to Ollama routing.
+	if (
+		!normalizedModelId.includes(':') &&
+		(normalizedModelId.startsWith('moonshot-') ||
+			normalizedModelId.startsWith('kimi-') ||
+			normalizedModelId === 'kimi')
+	) {
+		return 'kimi';
+	}
+
 	// Live registry lookup (populated at daemon startup, empty in unit tests)
 	const fromRegistry = getProviderRegistry().findProviderForModel(modelId)?.id;
 	if (fromRegistry) return fromRegistry as ProviderIdStr;

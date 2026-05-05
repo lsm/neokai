@@ -11,6 +11,7 @@
 import type {
 	NodeExecutionStatus,
 	SpaceAgent,
+	ThinkingLevel,
 	WorkflowChannel,
 	WorkflowNodeAgent,
 	WorkflowNodeAgentOverride,
@@ -32,8 +33,12 @@ export interface NodeDraft {
 	agentId: string;
 	/** Single-agent model override. Ignored when agents[] is present. */
 	model?: string;
+	/** Single-agent thinking-level override. Ignored when agents[] is present. */
+	thinkingLevel?: ThinkingLevel;
 	/** Single-agent custom prompt override. Ignored when agents[] is present. */
 	customPrompt?: WorkflowNodeAgentOverride;
+	/** Single-agent disabled skills. Ignored when agents[] is present. */
+	disabledSkillIds?: string[];
 	/** Multiple agents for parallel execution. When non-empty, takes precedence over agentId. */
 	agents?: WorkflowNodeAgent[];
 	/** Directed messaging topology between agents. */

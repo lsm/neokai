@@ -182,6 +182,23 @@ describe('MessageInput queue mode', () => {
 		expect(onSend).not.toHaveBeenCalled();
 	});
 
+	it('does not queue on Tab when queue shortcuts are disabled', async () => {
+		mockDraftContent = 'send immediately only';
+		mockAgentWorking.value = true;
+		const onSend = vi.fn(async () => {});
+
+		const { container } = render(
+			<MessageInput sessionId="session-1" onSend={onSend} canQueueMessages={false} />
+		);
+		const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+
+		await act(async () => {
+			fireEvent.keyDown(textarea, { key: 'Tab' });
+		});
+
+		expect(onSend).not.toHaveBeenCalled();
+	});
+
 	it('does not queue on Shift+Tab while agent is working', async () => {
 		mockDraftContent = 'shift tab should not queue';
 		mockAgentWorking.value = true;

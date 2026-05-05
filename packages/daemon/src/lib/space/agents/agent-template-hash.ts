@@ -8,9 +8,10 @@
  *
  * The fingerprint covers `name` (lowercased, trimmed), `description`, the
  * `tools` array (sorted), and `customPrompt`. Runtime/identity fields like
- * `id`, `spaceId`, `model`, `provider`, `createdAt`, `updatedAt` are NOT
- * included — they vary per-space (or per-row) and have nothing to do with
- * what the preset definition says the agent should look like.
+ * `id`, `spaceId`, `model`, `provider`, `thinkingLevel`, `createdAt`,
+ * `updatedAt` are NOT included — they vary per-space (or are user
+ * preferences) and have nothing to do with what the preset definition says
+ * the agent should look like.
  */
 
 /**

@@ -11,7 +11,6 @@ import { navigateToSpace } from '../lib/router.ts';
 import { cn, getRelativeTime } from '../lib/utils.ts';
 import type { SpaceSessionSummary, SpaceWithTasks } from '../lib/space-store.ts';
 import type { SpaceTask } from '@neokai/shared';
-import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
 import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
 
@@ -157,7 +156,6 @@ export function SpacesPage() {
 				class={`flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default} px-4 py-2.5 relative z-10`}
 			>
 				<div class="flex items-center gap-3">
-					<MobileMenuButton />
 					<div class="flex-1 min-w-0 flex items-center justify-between">
 						<h1 class="text-sm font-semibold text-gray-100">Spaces</h1>
 						<div class="flex items-center gap-3">

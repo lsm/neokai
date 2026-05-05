@@ -45,6 +45,10 @@ import type {
 	ProviderAuthResponse,
 	ListProviderAuthStatusResponse,
 	ProviderRefreshResponse,
+	ListGeminiAccountsResponse,
+	StartGeminiOAuthResponse,
+	CompleteGeminiOAuthResponse,
+	RemoveGeminiAccountResponse,
 } from '@neokai/shared/provider';
 import { connectionManager } from './connection-manager.ts';
 import { ConnectionNotReadyError } from './errors.ts';
@@ -156,6 +160,38 @@ export async function logoutProvider(
 export async function refreshProvider(providerId: string): Promise<ProviderRefreshResponse> {
 	const hub = getHubOrThrow();
 	return await hub.request<ProviderRefreshResponse>('auth.refresh', { providerId });
+}
+
+// ==================== Gemini OAuth Account Management ====================
+
+export async function listGeminiAccounts(): Promise<ListGeminiAccountsResponse> {
+	const hub = getHubOrThrow();
+	return await hub.request<ListGeminiAccountsResponse>('auth.gemini.accounts', {});
+}
+
+export async function startGeminiOAuth(accountId?: string): Promise<StartGeminiOAuthResponse> {
+	const hub = getHubOrThrow();
+	return await hub.request<StartGeminiOAuthResponse>('auth.gemini.startOAuth', {
+		accountId,
+	});
+}
+
+export async function completeGeminiOAuth(
+	authCode: string,
+	flowId: string
+): Promise<CompleteGeminiOAuthResponse> {
+	const hub = getHubOrThrow();
+	return await hub.request<CompleteGeminiOAuthResponse>('auth.gemini.completeOAuth', {
+		authCode,
+		flowId,
+	});
+}
+
+export async function removeGeminiAccount(accountId: string): Promise<RemoveGeminiAccountResponse> {
+	const hub = getHubOrThrow();
+	return await hub.request<RemoveGeminiAccountResponse>('auth.gemini.removeAccount', {
+		accountId,
+	});
 }
 
 // ==================== Settings Operations ====================
