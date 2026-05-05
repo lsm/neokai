@@ -3,11 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ChatComposerProps } from '../ChatComposer';
 
 vi.mock('../MessageInput.tsx', () => ({
-	default: (props: { disabled?: boolean; placeholder?: string }) => (
+	default: (props: { disabled?: boolean; placeholder?: string; isProcessing?: boolean }) => (
 		<div
 			data-testid="mock-message-input"
 			data-disabled={String(props.disabled)}
 			data-placeholder={props.placeholder}
+			data-is-processing={String(props.isProcessing)}
 		/>
 	),
 }));
@@ -92,5 +93,11 @@ describe('ChatComposer', () => {
 		expect(getByTestId(CHAT_COMPOSER_READABILITY_SCRIM_TEST_ID)).toBeTruthy();
 		expect(queryByTestId('mock-message-input')).toBeNull();
 		expect(getByTestId('mock-session-status-bar')).toBeTruthy();
+	});
+
+	it('passes processing state to MessageInput so the stop button can render', () => {
+		const { getByTestId } = render(<ChatComposer {...baseProps({ isProcessing: true })} />);
+
+		expect(getByTestId('mock-message-input').dataset.isProcessing).toBe('true');
 	});
 });
