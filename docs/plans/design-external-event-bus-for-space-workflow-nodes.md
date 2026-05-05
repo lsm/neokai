@@ -977,20 +977,29 @@ class TopicTrie<T> {
   }
 
   /**
-   * Remove all values matching a predicate.
+   * Remove all values matching a predicate and prune empty child branches.
    */
   remove(predicate: (value: T) => boolean): void {
-    const clean = (node: TrieNode<T>) => {
+    const clean = (node: TrieNode<T>): boolean => {
       if (node.values) {
         node.values = node.values.filter(v => !predicate(v));
+        if (node.values.length === 0) node.values = undefined;
       }
-      for (const child of node.exactChildren.values()) {
-        clean(child);
+
+      for (const [segment, child] of node.exactChildren.entries()) {
+        if (clean(child)) {
+          node.exactChildren.delete(segment);
+        }
       }
-      for (const child of node.globChildren.values()) {
-        clean(child);
+      for (const [segment, child] of node.globChildren.entries()) {
+        if (clean(child)) {
+          node.globChildren.delete(segment);
+        }
       }
+
+      return !node.values && node.exactChildren.size === 0 && node.globChildren.size === 0;
     };
+
     clean(this.root);
   }
 }
