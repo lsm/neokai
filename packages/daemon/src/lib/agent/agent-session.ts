@@ -480,11 +480,13 @@ export class AgentSession
 				hasUpdates = true;
 			}
 
-			if (init.thinkingLevel !== undefined && session.config.thinkingLevel !== init.thinkingLevel) {
-				const nextConfig: SessionConfig = {
-					...session.config,
-					thinkingLevel: init.thinkingLevel,
-				};
+			if (session.config.thinkingLevel !== init.thinkingLevel) {
+				const nextConfig: SessionConfig = { ...session.config };
+				if (init.thinkingLevel === undefined) {
+					delete nextConfig.thinkingLevel;
+				} else {
+					nextConfig.thinkingLevel = init.thinkingLevel;
+				}
 				updates.config = nextConfig;
 				session = { ...session, config: nextConfig };
 				hasUpdates = true;

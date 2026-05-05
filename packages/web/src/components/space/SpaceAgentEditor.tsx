@@ -211,7 +211,7 @@ export function SpaceAgentEditor({
 		setSaveError(null);
 
 		try {
-			const params = {
+			const baseParams = {
 				name: name.trim(),
 				description: description.trim() || undefined,
 				model: model.trim(),
@@ -220,9 +220,15 @@ export function SpaceAgentEditor({
 			};
 
 			if (isEdit && agent) {
-				await spaceStore.updateAgent(agent.id, params);
+				await spaceStore.updateAgent(agent.id, {
+					...baseParams,
+					thinkingLevel: thinkingLevel || null,
+				});
 			} else {
-				await spaceStore.createAgent(params);
+				await spaceStore.createAgent({
+					...baseParams,
+					thinkingLevel: thinkingLevel || undefined,
+				});
 			}
 
 			onSave();
