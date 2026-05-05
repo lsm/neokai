@@ -102,16 +102,40 @@ import { SpaceTaskManager } from '../managers/space-task-manager';
 import { formatAgentMessage, type AgentMessageLevel } from '../agent-message-envelope';
 
 const log = new Logger('task-agent-manager');
-const AGENT_MESSAGE_ENVELOPE_PREFIX = '─── Message from ';
-
-function hasAgentMessageEnvelope(message: string): boolean {
-	return message.startsWith(AGENT_MESSAGE_ENVELOPE_PREFIX);
-}
+const AGENT_MESSAGE_ENVELOPE_HEADER = /^─── Message from ([^\n]+) ───\n\n/;
+const AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = '\n\n─── Reply ───\nTo reply, use: ';
 
 function pendingSourceLevel(sourceAgentName: string): AgentMessageLevel {
 	if (sourceAgentName === 'task-agent') return 'task-agent';
 	if (sourceAgentName === 'space-agent') return 'space-agent';
 	return 'node-agent';
+}
+
+function expectedEnvelopeSenderName(sourceAgentName: string): string {
+	return sourceAgentName === 'space-agent' ? 'Space Agent' : sourceAgentName;
+}
+
+function hasAgentMessageEnvelope(
+	message: string,
+	sourceAgentName: string,
+	toLevel: AgentMessageLevel
+): boolean {
+	const match = message.match(AGENT_MESSAGE_ENVELOPE_HEADER);
+	if (!match) return false;
+
+	const fromLevel = pendingSourceLevel(sourceAgentName);
+	const expectedSender = expectedEnvelopeSenderName(sourceAgentName);
+	const headerSender = match[1];
+	if (headerSender !== expectedSender && !headerSender.startsWith(`${expectedSender} (task #`)) {
+		return false;
+	}
+
+	// Node-agent → node-agent envelopes intentionally have no reply block. All
+	// inter-level envelopes include reply guidance, so require it before trusting
+	// a queued message as already wrapped. This prevents legacy raw bodies that
+	// happen to start with the envelope prefix from spoofing attribution.
+	if (fromLevel === 'node-agent' && toLevel === 'node-agent') return true;
+	return message.includes(AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK);
 }
 
 // ---------------------------------------------------------------------------
@@ -1616,7 +1640,7 @@ export class TaskAgentManager {
 		for (const row of pending) {
 			const isSyntheticMessage = row.sourceAgentName !== 'human';
 			const message = isSyntheticMessage
-				? hasAgentMessageEnvelope(row.message)
+				? hasAgentMessageEnvelope(row.message, row.sourceAgentName, 'node-agent')
 					? row.message
 					: formatAgentMessage({
 							fromLevel: pendingSourceLevel(row.sourceAgentName),
@@ -1703,7 +1727,7 @@ export class TaskAgentManager {
 		);
 
 		for (const row of pending) {
-			const message = hasAgentMessageEnvelope(row.message)
+			const message = hasAgentMessageEnvelope(row.message, row.sourceAgentName, 'space-agent')
 				? row.message
 				: formatAgentMessage({
 						fromLevel: pendingSourceLevel(row.sourceAgentName),
