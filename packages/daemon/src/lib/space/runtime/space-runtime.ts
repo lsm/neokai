@@ -1446,6 +1446,10 @@ export class SpaceRuntime {
 		const pollContext = this.buildPollScriptContext(canonicalTask, run, space.id);
 		if (!pollContext) return;
 
+		// GatePollManager.startPolls replaces activePolls entries but does not clear
+		// any existing interval for the same run/gate key. Stop first so this helper
+		// is idempotent across rehydration + recovery paths in the same tick.
+		this.pollManager.stopPolls(run.id);
 		this.pollManager.startPolls(run.id, workflow, space.workspacePath, space.id, pollContext);
 	}
 
