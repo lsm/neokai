@@ -338,11 +338,25 @@ describe('Gemini Auth RPC Handlers', () => {
 		});
 
 		it('handles re-auth flow when accountId provided', async () => {
-			// The re-auth path calls updateAccount, then loadAccounts to get updated record
+			// First loadAccounts: email verification (must match mockFetchUserInfo's 'test@gmail.com')
 			mockLoadAccounts.mockImplementationOnce(async () => [
 				{
 					id: 'acc-to-reauth',
-					email: 'reauth@gmail.com',
+					email: 'test@gmail.com',
+					refresh_token: 'old-rt',
+					added_at: Date.now() - 86_400_000,
+					last_used_at: 0,
+					daily_request_count: 0,
+					daily_limit: 1500,
+					status: 'invalid',
+					cooldown_until: 0,
+				},
+			]);
+			// Second loadAccounts: after updateAccount, get updated record
+			mockLoadAccounts.mockImplementationOnce(async () => [
+				{
+					id: 'acc-to-reauth',
+					email: 'test@gmail.com',
 					refresh_token: 'new-rt',
 					added_at: Date.now() - 86_400_000,
 					last_used_at: 0,
@@ -378,6 +392,43 @@ describe('Gemini Auth RPC Handlers', () => {
 				cooldown_until: 0,
 			});
 			expect(mockPersistAddAccount).not.toHaveBeenCalled();
+		});
+
+		it('returns error when re-auth email does not match target account', async () => {
+			// loadAccounts returns account with different email than mockFetchUserInfo will return
+			mockLoadAccounts.mockImplementationOnce(async () => [
+				{
+					id: 'acc-to-reauth',
+					email: 'other@gmail.com', // different from mockFetchUserInfo's 'test@gmail.com'
+					refresh_token: 'old-rt',
+					added_at: Date.now() - 86_400_000,
+					last_used_at: 0,
+					daily_request_count: 0,
+					daily_limit: 1500,
+					status: 'invalid',
+					cooldown_until: 0,
+				},
+			]);
+
+			const startHandler = messageHubData.handlers.get('auth.gemini.startOAuth');
+			const completeHandler = messageHubData.handlers.get('auth.gemini.completeOAuth');
+
+			const startResult = (await startHandler!({ accountId: 'acc-to-reauth' }, {})) as {
+				success: boolean;
+				flowId?: string;
+			};
+			const flowId = startResult.flowId!;
+
+			const completeResult = (await completeHandler!({ authCode: 'code', flowId }, {})) as {
+				success: boolean;
+				error?: string;
+			};
+
+			expect(completeResult.success).toBe(false);
+			expect(completeResult.error).toContain('does not match');
+			expect(completeResult.error).toContain('test@gmail.com');
+			expect(completeResult.error).toContain('other@gmail.com');
+			expect(mockUpdateAccount).not.toHaveBeenCalled();
 		});
 
 		it('returns specific error for duplicate email', async () => {

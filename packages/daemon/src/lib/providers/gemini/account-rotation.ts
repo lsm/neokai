@@ -236,6 +236,19 @@ export class AccountRotationManager {
 	}
 
 	/**
+	 * Force-reload accounts from storage, bypassing the initialized guard.
+	 *
+	 * Use this when accounts are modified externally (e.g., added or re-authed
+	 * via the UI) so the in-memory pool picks up the latest data without
+	 * requiring a daemon restart.
+	 */
+	async reload(): Promise<void> {
+		this.accounts = await this.storage.load();
+		this.resetDayCountersIfNeeded();
+		log.info(`Reloaded ${this.accounts.length} Google OAuth accounts`);
+	}
+
+	/**
 	 * Get all accounts with their current status.
 	 */
 	getAccounts(): GoogleOAuthAccount[] {

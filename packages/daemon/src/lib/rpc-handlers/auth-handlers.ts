@@ -326,9 +326,7 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
 	 */
 	messageHub.onRequest(
 		'auth.gemini.completeOAuth',
-		async (
-			req: CompleteGeminiOAuthRequest & { flowId?: string }
-		): Promise<CompleteGeminiOAuthResponse> => {
+		async (req: CompleteGeminiOAuthRequest): Promise<CompleteGeminiOAuthResponse> => {
 			const { authCode, flowId } = req;
 			if (!authCode) {
 				return { success: false, error: 'Authorization code is required' };
@@ -367,20 +365,33 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
 
 				const userInfo = await fetchUserInfo(tokenResponse.access_token);
 
-				// Helper to sync the rotation manager with the updated account list
+				// Helper to sync the rotation manager with the updated account list.
+				// Uses reload() (not initialize()) to bypass the one-time initialized guard
+				// so the in-memory pool picks up changes immediately.
 				const syncRotationManager = async () => {
 					const registry = getProviderRegistry();
 					const provider = registry.get('google-gemini-oauth');
 					if (provider && 'getRotationManager' in provider) {
 						const rm = (
-							provider as { getRotationManager: () => { initialize: () => Promise<void> } }
+							provider as { getRotationManager: () => { reload: () => Promise<void> } }
 						).getRotationManager();
-						await rm.initialize();
+						await rm.reload();
 					}
 				};
 
 				// If this is a re-auth flow, update the existing account
 				if (flow.reauthAccountId) {
+					// Verify the authenticated email matches the target account
+					const existingAccounts = await loadAccounts();
+					const targetAccount = existingAccounts.find((a) => a.id === flow.reauthAccountId);
+					if (targetAccount && targetAccount.email !== userInfo.email) {
+						pendingFlows.delete(flowId);
+						return {
+							success: false,
+							error: `Authenticated email (${userInfo.email}) does not match account email (${targetAccount.email}). Please use the correct Google account.`,
+						};
+					}
+
 					await updateAccount(flow.reauthAccountId, {
 						refresh_token: tokenResponse.refresh_token,
 						status: 'active',

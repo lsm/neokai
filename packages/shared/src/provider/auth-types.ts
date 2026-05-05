@@ -175,6 +175,8 @@ export interface StartGeminiOAuthResponse {
 export interface CompleteGeminiOAuthRequest {
 	/** The authorization code from Google */
 	authCode: string;
+	/** Flow ID returned by startOAuth, used to look up the stored PKCE verifier */
+	flowId: string;
 }
 
 /**

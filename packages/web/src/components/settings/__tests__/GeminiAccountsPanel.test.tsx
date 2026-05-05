@@ -127,7 +127,7 @@ describe('GeminiAccountsPanel', () => {
 		mockStartGeminiOAuth.mockResolvedValue({
 			success: true,
 			authUrl: 'https://mock-oauth.url',
-			message: 'flow-123',
+			flowId: 'flow-123',
 		});
 		mockCompleteGeminiOAuth.mockResolvedValue({ success: true });
 		mockRemoveGeminiAccount.mockResolvedValue({ success: true });
@@ -328,7 +328,7 @@ describe('GeminiAccountsPanel', () => {
 			mockStartGeminiOAuth.mockResolvedValue({
 				success: true,
 				authUrl: 'https://auth.url',
-				message: 'flow-123',
+				flowId: 'flow-123',
 			});
 
 			const { container, getByTestId } = render(<GeminiAccountsPanel />);
@@ -370,12 +370,36 @@ describe('GeminiAccountsPanel', () => {
 			});
 		});
 
+		it('shows error toast when flowId is missing from response', async () => {
+			mockListGeminiAccounts.mockResolvedValue({ accounts: [] });
+			mockStartGeminiOAuth.mockResolvedValue({
+				success: true,
+				authUrl: 'https://auth.url',
+				// flowId is missing
+			});
+
+			const { container } = render(<GeminiAccountsPanel />);
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('Add Google Account');
+			});
+
+			const addButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Add Google Account')
+			);
+			addButton?.click();
+
+			await waitFor(() => {
+				expect(mockToastError).toHaveBeenCalledWith('Failed to start OAuth flow');
+			});
+		});
+
 		it('closes modal on cancel and reloads accounts', async () => {
 			mockListGeminiAccounts.mockResolvedValue({ accounts: [] });
 			mockStartGeminiOAuth.mockResolvedValue({
 				success: true,
 				authUrl: 'https://auth.url',
-				message: 'flow-123',
+				flowId: 'flow-123',
 			});
 
 			const { container, getByTestId, queryByTestId } = render(<GeminiAccountsPanel />);
