@@ -565,7 +565,12 @@ interface PendingDelivery {
 interface QueuedDeliveryFailure {
   eventId: string;
   deliveryKey: string;
-  reason: 'pending_queue_overflow' | 'run_terminal_cleanup' | 'run_terminal_retry_cancelled';
+  reason:
+    | 'pending_queue_overflow'
+    | 'run_terminal_cleanup'
+    | 'run_terminal_retry_cancelled'
+    | 'node_execution_cancelled'
+    | 'subscription_inactive_retry_skipped';
 }
 
 interface EventRetryState {
@@ -823,6 +828,72 @@ class EventRouter {
           && v.nodeId === nodeId,
       );
     }
+
+    // Node cancellation is terminal for this node's already-registered deliveries
+    // even if the workflow run continues. Fail queued/retrying rows immediately so
+    // they do not block event terminalization until full run teardown.
+    this.failPendingStateForExecution(workflowRunId, taskId, nodeId, agentName, 'node_execution_cancelled');
+  }
+
+  private failPendingStateForExecution(
+    workflowRunId: string,
+    taskId: string,
+    nodeId: string,
+    agentName: string,
+    reason: QueuedDeliveryFailure['reason'],
+  ): void {
+    const queueKey = JSON.stringify([workflowRunId, taskId, nodeId, agentName]);
+    const queuedFailures: QueuedDeliveryFailure[] = [];
+    const queue = this.pendingQueue.get(queueKey) ?? [];
+    for (const pending of queue) {
+      queuedFailures.push({ eventId: pending.event.id, deliveryKey: pending.deliveryKey, reason });
+    }
+    this.pendingQueue.delete(queueKey);
+    this.markQueuedDeliveriesFailed(queuedFailures);
+
+    for (const key of this.pendingDeliveries.keys()) {
+      const [, keyTaskId, keyNodeId, keyAgentName, keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string, string];
+      if (
+        keyWorkflowRunId === workflowRunId
+        && keyTaskId === taskId
+        && keyNodeId === nodeId
+        && keyAgentName === agentName
+      ) {
+        this.pendingDeliveries.delete(key);
+      }
+    }
+
+    for (const key of this.retryCounts.keys()) {
+      const [, keyTaskId, keyNodeId, keyAgentName, keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string, string];
+      if (
+        keyWorkflowRunId === workflowRunId
+        && keyTaskId === taskId
+        && keyNodeId === nodeId
+        && keyAgentName === agentName
+      ) {
+        this.retryCounts.delete(key);
+      }
+    }
+
+    const retryFailures: QueuedDeliveryFailure[] = [];
+    for (const [key, timer] of this.retryTimers.entries()) {
+      const [, keyTaskId, keyNodeId, keyAgentName, keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string, string];
+      if (
+        keyWorkflowRunId === workflowRunId
+        && keyTaskId === taskId
+        && keyNodeId === nodeId
+        && keyAgentName === agentName
+      ) {
+        clearTimeout(timer);
+        this.retryTimers.delete(key);
+        retryFailures.push({
+          eventId: this.eventStore.getEventIdForDeliveryKey(key),
+          deliveryKey: key,
+          reason,
+        });
+      }
+    }
+    this.markQueuedDeliveriesFailed(retryFailures);
   }
 
   /**
@@ -1310,6 +1381,11 @@ class EventRouter {
       if (!stillActive) {
         this.retryCounts.delete(deliveryKey);
         this.pendingDeliveries.delete(deliveryKey);
+        this.eventStore.markDeliveryFailed(event.id, deliveryKey, {
+          terminal: true,
+          reason: 'subscription_inactive_retry_skipped',
+        });
+        this.eventStore.markEventFailedIfAllDeliveriesTerminal(event.id);
         return;
       }
 
@@ -1385,6 +1461,17 @@ When an event matches a subscription whose node execution is `idle` (agent sessi
 1. Call `sessionFactory.injectMessage(sessionId, message, { deliveryMode: 'defer' })`.
 2. The existing defer mechanism handles waking: if idle → enqueue immediately; if busy → persist as deferred, replay after current turn.
 3. No new wake mechanism needed — the existing `SessionNotificationSink` pattern already solves this.
+
+### Node cancellation cleanup
+
+When a node execution transitions to `cancelled`, `unregisterExecution(workflowRunId, taskId, nodeId, agentName)` removes that node's subscriptions from `activeRuns` and the topic trie. Because expected delivery rows may already exist for queued or retrying deliveries owned by that node, cancellation must also call `failPendingStateForExecution(...)`:
+
+1. Remove queued pending-node deliveries for the exact `[workflowRunId, taskId, nodeId, agentName]` key and mark them terminally failed with reason `node_execution_cancelled`.
+2. Cancel per-delivery retry timers for the same tuple, look up each event id from the delivery store, and mark them terminally failed with reason `node_execution_cancelled`.
+3. Clear matching `pendingDeliveries` and retry counts.
+4. Call `markEventFailedIfAllDeliveriesTerminal(eventId)` for each failure so long-running runs do not keep source events retryable until full run teardown.
+
+If a retry timer fires after its subscription has already been removed by another path, the inactive-subscription branch must also mark that delivery terminally failed with reason `subscription_inactive_retry_skipped` before returning.
 
 ### Terminal run cleanup
 
@@ -1734,7 +1821,7 @@ V1 needs one core event-store table plus workflow type additions:
    );
    ```
 
-   `EventRouter` calls `registerExpectedDelivery(...)` for every scope-matched subscription before attempting any injection. This registration must be idempotent for the `(event_id, delivery_key)` primary key: use `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING`, or an equivalent upsert that never downgrades an existing terminal row. Retryable source duplicates and router retries can prepare the same delivery more than once, so duplicate expected-delivery rows are normal and must not become preparation failures. After idempotent registration, the router skips already-terminal delivery rows and only attempts pending/retryable rows. It then records `delivered` after successful `injectMessage` and calls `markEventDeliveredIfAllDeliveriesTerminal(event.id)` so source-level dedup can stop re-emitting already-delivered events after restart or in-memory TTL eviction. When retry budget is exhausted, pending-node queue overflow evicts an expected delivery, terminal run cleanup drops queued deliveries, or terminal run cleanup cancels per-delivery retry timers, the router records terminal delivery failure and calls `markEventFailedIfAllDeliveriesTerminal(event.id)` so duplicate source observations do not restart an exhausted or impossible delivery.
+   `EventRouter` calls `registerExpectedDelivery(...)` for every scope-matched subscription before attempting any injection. This registration must be idempotent for the `(event_id, delivery_key)` primary key: use `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING`, or an equivalent upsert that never downgrades an existing terminal row. Retryable source duplicates and router retries can prepare the same delivery more than once, so duplicate expected-delivery rows are normal and must not become preparation failures. After idempotent registration, the router skips already-terminal delivery rows and only attempts pending/retryable rows. It then records `delivered` after successful `injectMessage` and calls `markEventDeliveredIfAllDeliveriesTerminal(event.id)` so source-level dedup can stop re-emitting already-delivered events after restart or in-memory TTL eviction. When retry budget is exhausted, pending-node queue overflow evicts an expected delivery, node cancellation removes queued/retrying deliveries, a retry fires for an inactive subscription, terminal run cleanup drops queued deliveries, or terminal run cleanup cancels per-delivery retry timers, the router records terminal delivery failure and calls `markEventFailedIfAllDeliveriesTerminal(event.id)` so duplicate source observations do not restart an exhausted or impossible delivery.
 
 3. **Adapter-owned GitHub configuration**: reuse or migrate the existing `space_github_watched_repos` table behind `GitHubEventAdapterRepository`. This table remains source-specific and should not be queried by EventRouter except through cache invalidation hooks for repo-scoped matching.
 
