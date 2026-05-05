@@ -633,6 +633,43 @@ describe('openai-responses-bridge server', () => {
 		});
 	});
 
+	it('normalizes OpenAI prompt/completion token usage fields', async () => {
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async () =>
+				sse([
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: 'hello' },
+					},
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: { usage: { prompt_tokens: 11, completion_tokens: 2 }, output: [] },
+						},
+					},
+				]),
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'Say hello.' }],
+			}),
+		});
+
+		const events = await readSSEEvents(resp.body);
+		expect(messageDeltaEvent(events)).toMatchObject({
+			type: 'message_delta',
+			usage: { input_tokens: 11, output_tokens: 2 },
+		});
+	});
+
 	it('returns an Anthropic 502 error when the upstream request fails', async () => {
 		server = createOpenAIResponsesBridgeServer({
 			auth: { source: 'api_key', apiKey: 'sk-test' },
