@@ -1009,8 +1009,8 @@ class EventRouter {
     await this.handleEventForSubscriptions(event, matched);
   }
 
-  private async handleEventForSubscriptions(event: ExternalEvent, matched: Subscription[]): Promise<void> {
-    if (matched.length === 0) return;
+  private async handleEventForSubscriptions(event: ExternalEvent, matched: Subscription[]): Promise<boolean> {
+    if (matched.length === 0) return true;
 
     // 2. First compute all scoped deliveries and persist them as expected
     // pending deliveries before attempting injection. This prevents the first
@@ -1057,7 +1057,7 @@ class EventRouter {
     // subscriptions could all succeed and mark the source event terminal while the
     // failed subscription was never registered. The retry path will re-run matching,
     // scope checks, and expected-delivery registration for the whole event.
-    if (preparationFailed) return;
+    if (preparationFailed) return false;
 
     // 3. Deliver each prepared subscription. Isolate injection failures per
     // subscription after the complete expected-delivery set has been registered.
@@ -1077,6 +1077,8 @@ class EventRouter {
         });
       }
     }
+
+    return true;
   }
 
   private async deliverToSubscription(event: ExternalEvent, sub: Subscription): Promise<void> {
@@ -1271,9 +1273,11 @@ class EventRouter {
    * (for example transient watched-repo lookup or delivery-row insert failures).
    * This reruns full matching/preparation instead of allowing partial delivery to
    * mark the source event terminal while an unregistered subscription missed it.
-   * The event-level retry count is cleared after a resolved retry pass so later
-   * independent preparation errors get a fresh budget and this map does not leak
-   * state across retryable source re-emissions of the same non-terminal event.
+   * handleEventForSubscriptions returns false when preparation failed and another
+   * retry was scheduled. In that case the retry count/state must be preserved so
+   * persistent preparation failures continue toward MAX_RETRIES. Counts are cleared
+   * only after a prepared retry pass, so later independent preparation errors get a
+   * fresh budget and this map does not leak state across retryable re-emissions.
    */
   private scheduleEventRetry(
     event: ExternalEvent,
@@ -1313,8 +1317,15 @@ class EventRouter {
       this.eventRetryTimers.delete(retryKey);
       const retryState = this.eventRetryState.get(retryKey) ?? { event, matched };
       void this.handleEventForSubscriptions(retryState.event, retryState.matched)
-        .then(() => {
-          // A resolved retry pass either prepared the complete expected-delivery
+        .then((prepared) => {
+          if (!prepared) {
+            // handleEventForSubscriptions scheduled the next preparation retry.
+            // Preserve count/state so persistent preparation failures continue
+            // toward MAX_RETRIES instead of restarting from attempt 1 forever.
+            return;
+          }
+
+          // A prepared retry pass either registered the complete expected-delivery
           // set for the still-active matched subscriptions or found no matching
           // work left. Clear event-level retry state so a later independent
           // transient error gets a full budget and this map does not leak state.
