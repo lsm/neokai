@@ -194,6 +194,14 @@ export class AgentMessageRouter {
 		const fromNodeName = resolveNodeName(fromAgentName);
 		const requestedTargets =
 			target === '*' ? ['*'] : Array.isArray(target) ? [...target] : [target];
+		if (requestedTargets.includes(BUILT_IN_SPACE_AGENT_TARGET)) {
+			return {
+				success: false,
+				delivered: [],
+				failed: [],
+				reason: 'Invalid target: reserved internal target name is not allowed.',
+			};
+		}
 		const wantsTaskAgent = target !== '*' && requestedTargets.includes('task-agent');
 		const wantsSpaceAgent = target !== '*' && requestedTargets.includes('space-agent');
 

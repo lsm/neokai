@@ -458,6 +458,46 @@ describe('AgentMessageRouter: built-in inter-level targets', () => {
 		expect(spaceMessages).toEqual([]);
 	});
 
+	test('rejects reserved built-in Space Agent sentinel in multicast targets', async () => {
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[makeResolvedChannel('coder', 'space-agent')]
+		);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		seedPeerTask(
+			ctx.db,
+			ctx.spaceId,
+			workflowRunId,
+			ctx.nodeId,
+			'space-agent',
+			ctx.reviewerSessionId
+		);
+		const injected: Array<{ sessionId: string; message: string }> = [];
+		const spaceMessages: Array<{ spaceId: string; message: string }> = [];
+		const router = makeRouter(ctx, workflowRunId, injected, runChannels, {
+			spaceId: ctx.spaceId,
+			taskId: 'task-123',
+			taskNumber: 236,
+			spaceAgentInjector: async (spaceId, message) => {
+				spaceMessages.push({ spaceId, message });
+			},
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: ['\0space-agent'],
+			message: 'Sentinel bypass attempt',
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.reason).toContain('reserved internal target name');
+		expect(result.delivered).toEqual([]);
+		expect(injected).toEqual([]);
+		expect(spaceMessages).toEqual([]);
+	});
+
 	test('does not route a sender named space-agent to the built-in Space Agent', async () => {
 		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
 			ctx.db,
