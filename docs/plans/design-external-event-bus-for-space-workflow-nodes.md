@@ -298,8 +298,13 @@ export interface HttpEventAdapter extends EventAdapter {
  * GitHub uses this for watch/list/poll operations; future adapters can expose
  * source-specific configuration without adding core RPC handler dependencies.
  */
+export interface EventAdapterContext {
+  /** Notify core services that source configuration changed for a space. */
+  onSourceConfigChanged(change: { source: string; spaceId?: string; kind: 'watched_repo_changed' }): void;
+}
+
 export interface RpcEventAdapter extends EventAdapter {
-  registerRpcHandlers(hub: MessageHub, publisher: EventPublisher): void;
+  registerRpcHandlers(hub: MessageHub, publisher: EventPublisher, context: EventAdapterContext): void;
 }
 
 /**
@@ -418,8 +423,16 @@ class GitHubEventAdapter implements HttpEventAdapter, RpcEventAdapter {
     if (this.pollTimer) clearInterval(this.pollTimer);
   }
 
-  registerRpcHandlers(hub: MessageHub, publisher: EventPublisher): void {
-    hub.onRequest('space.github.watchRepo', async (data) => this.watchRepo(data));
+  registerRpcHandlers(hub: MessageHub, publisher: EventPublisher, context: EventAdapterContext): void {
+    hub.onRequest('space.github.watchRepo', async (data) => {
+      const watchedRepo = await this.watchRepo(data);
+      context.onSourceConfigChanged({
+        source: this.sourceId,
+        spaceId: watchedRepo.spaceId,
+        kind: 'watched_repo_changed',
+      });
+      return watchedRepo;
+    });
     hub.onRequest('space.github.listWatchedRepos', async (data) => this.listWatchedRepos(data));
     hub.onRequest('space.github.pollOnce', async () => ({ count: await this.pollOnce() }));
   }
@@ -589,9 +602,9 @@ class EventRouter {
 
   /**
    * Invalidate the watched-repo cache for a given space (or all spaces).
-   * Called when watched repos change via the `space.github.watchRepo` RPC path
-   * (enabling/disabling repos). Without this, `repo`-scoped matching grows stale
-   * until process restart.
+   * Called from EventAdapterContext.onSourceConfigChanged when a source adapter
+   * changes watched-repo configuration (for example `space.github.watchRepo`).
+   * Without this, `repo`-scoped matching grows stale until process restart.
    */
   invalidateWatchedRepoCache(spaceId?: string): void {
     if (spaceId) {
@@ -1574,18 +1587,26 @@ const eventTaskResolver = new EventTaskResolver(db);
 const eventBus = new EventBus(daemonHub, externalEventStore, eventTaskResolver);
 const eventRouter = new EventRouter(eventBus, ...dependencies);
 
+const adapterContext: EventAdapterContext = {
+  onSourceConfigChanged(change) {
+    if (change.kind === 'watched_repo_changed') {
+      eventRouter.invalidateWatchedRepoCache(change.spaceId);
+    }
+  },
+};
+
 const adapters: EventAdapter[] = [
   new GitHubEventAdapter(new GitHubEventAdapterRepository(db), process.env.GITHUB_TOKEN),
 ];
 
 for (const adapter of adapters) {
   if ('routes' in adapter) routeRegistry.register(adapter.routes, eventBus);
-  if ('registerRpcHandlers' in adapter) adapter.registerRpcHandlers(messageHub, eventBus);
+  if ('registerRpcHandlers' in adapter) adapter.registerRpcHandlers(messageHub, eventBus, adapterContext);
   await adapter.start(eventBus);
 }
 ```
 
-Repo-scoped matching still needs watched-repo cache invalidation. Instead of coupling the RPC handler to `EventRouter`, the GitHub adapter emits a source-config-changed event (or invokes a narrow callback) after watch/unwatch changes; the EventRouter invalidates only the affected space.
+Repo-scoped matching cache invalidation is explicit: `watchRepo` changes call `EventAdapterContext.onSourceConfigChanged(...)`, and daemon startup wires that callback to `eventRouter.invalidateWatchedRepoCache(spaceId)`. This keeps source configuration owned by the adapter while ensuring `repo`-scoped subscriptions observe newly watched or unwatched repos without process restart.
 
 ### Phased rollout
 
