@@ -136,6 +136,7 @@ function buildAgentCreateParams(
 	const params: CreateSpaceAgentParams = { spaceId, name };
 	if (exported.description !== undefined) params.description = exported.description;
 	if (exported.model !== undefined) params.model = exported.model;
+	if (exported.thinkingLevel !== undefined) params.thinkingLevel = exported.thinkingLevel;
 	if (exported.provider !== undefined) params.provider = exported.provider;
 	// Combine legacy systemPrompt + instructions into customPrompt, joining with \n\n when both present
 	const parts = [exported.systemPrompt, exported.instructions].filter(
@@ -189,6 +190,7 @@ export function buildWorkflowCreateParams(
 				agentId: string;
 				name: string;
 				model?: string;
+				thinkingLevel?: import('@neokai/shared').ThinkingLevel;
 				customPrompt?: import('@neokai/shared').WorkflowNodeAgentOverride;
 				disabledSkillIds?: string[];
 				extraMcpServers?: import('@neokai/shared').WorkflowNodeAgent['extraMcpServers'];
@@ -199,6 +201,7 @@ export function buildWorkflowCreateParams(
 				name: a.name,
 			};
 			if (typeof a.model === 'string' && a.model.trim()) entry.model = a.model.trim();
+			if (a.thinkingLevel !== undefined) entry.thinkingLevel = a.thinkingLevel;
 			// Normalize overrides: combine legacy systemPrompt + instructions into customPrompt.
 			// Plain strings (legacy) are normalized to { value }; both fields are joined with \n\n.
 			const normalizedSP = normalizeOverride(a.systemPrompt);

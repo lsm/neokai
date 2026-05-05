@@ -170,6 +170,7 @@ export function setupSpaceHandlers(
 					workspacePath: space.workspacePath,
 					config: {
 						model: space.defaultModel,
+						thinkingLevel: space.taskAgentConfig?.thinkingLevel,
 					},
 					sessionType: 'space_chat',
 					spaceId: space.id,

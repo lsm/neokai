@@ -18,13 +18,27 @@
 
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import { useComputed } from '@preact/signals';
-import type { Gate, SpaceAgent, WorkflowChannel, WorkflowNodeAgent } from '@neokai/shared';
+import type {
+	Gate,
+	SpaceAgent,
+	ThinkingLevel,
+	WorkflowChannel,
+	WorkflowNodeAgent,
+} from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import { isMultiAgentNode, extractOverrideValue, buildOverride } from '../WorkflowNodeCard';
 import { WorkflowModelSelect } from './WorkflowModelSelect';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { GateEditorPanel } from './GateEditorPanel';
 import { skillsStore } from '../../../lib/skills-store';
+
+const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
+	{ value: '', label: 'Inherit' },
+	{ value: 'auto', label: 'Auto' },
+	{ value: 'think8k', label: 'Think 8k' },
+	{ value: 'think16k', label: 'Think 16k' },
+	{ value: 'think32k', label: 'Think 32k' },
+];
 
 // ============================================================================
 // Props
@@ -194,6 +208,14 @@ function AgentsSection({
 		);
 	}
 
+	function updateAgentThinkingLevel(role: string, thinkingLevel: '' | ThinkingLevel) {
+		updateAgents(
+			nodeAgents.map((a) =>
+				a.name === role ? { ...a, thinkingLevel: thinkingLevel || undefined } : a
+			)
+		);
+	}
+
 	const updateSingleAgentId = useCallback(
 		(newAgentId: string) => {
 			if (singleSlot) {
@@ -250,6 +272,7 @@ function AgentsSection({
 								agentId: primaryAgentId,
 								name: buildUniqueRole(primaryBaseRole),
 								model: selectedSingleModel,
+								thinkingLevel: singleSlot?.thinkingLevel,
 								customPrompt: selectedSingleCustomPrompt,
 							};
 
@@ -423,6 +446,27 @@ function AgentsSection({
 									onChange={(model) => updateAgentModel(sa.name, model)}
 								/>
 							</div>
+							<div class="space-y-1">
+								<label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-500">
+									Thinking
+								</label>
+								<select
+									value={sa.thinkingLevel ?? ''}
+									onChange={(e) =>
+										updateAgentThinkingLevel(
+											sa.name,
+											(e.currentTarget as HTMLSelectElement).value as '' | ThinkingLevel
+										)
+									}
+									class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500"
+								>
+									{THINKING_LEVEL_OPTIONS.map((option) => (
+										<option key={option.value || 'inherit'} value={option.value}>
+											{option.label}
+										</option>
+									))}
+								</select>
+							</div>
 							<button
 								type="button"
 								data-testid="edit-slot-prompts-button"
@@ -431,6 +475,30 @@ function AgentsSection({
 							>
 								Edit Prompts
 							</button>
+							{singleSlot && (
+								<div class="space-y-1">
+									<label class="text-xs font-medium text-gray-400">
+										Thinking Level{' '}
+										<span class="font-normal text-gray-600">(optional override)</span>
+									</label>
+									<select
+										value={singleSlot.thinkingLevel ?? ''}
+										onChange={(e) =>
+											updateAgentThinkingLevel(
+												singleSlot.name,
+												(e.currentTarget as HTMLSelectElement).value as '' | ThinkingLevel
+											)
+										}
+										class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
+									>
+										{THINKING_LEVEL_OPTIONS.map((option) => (
+											<option key={option.value || 'inherit'} value={option.value}>
+												{option.label}
+											</option>
+										))}
+									</select>
+								</div>
+							)}
 							<SlotSkillsToggle
 								disabledSkillIds={sa.disabledSkillIds}
 								onChange={(disabledSkillIds) => {
@@ -787,6 +855,29 @@ export function NodeConfigPanel({
 							value={slot.model}
 							onChange={(model) => updateSlot({ ...slot, model: model || undefined })}
 						/>
+					</div>
+					<div class="space-y-1">
+						<label class="text-xs font-medium text-gray-400">
+							Thinking Level <span class="font-normal text-gray-600">(optional override)</span>
+						</label>
+						<select
+							value={slot.thinkingLevel ?? ''}
+							onChange={(e) =>
+								updateSlot({
+									...slot,
+									thinkingLevel:
+										((e.currentTarget as HTMLSelectElement).value as '' | ThinkingLevel) ||
+										undefined,
+								})
+							}
+							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
+						>
+							{THINKING_LEVEL_OPTIONS.map((option) => (
+								<option key={option.value || 'inherit'} value={option.value}>
+									{option.label}
+								</option>
+							))}
+						</select>
 					</div>
 					<CustomPromptEditor
 						customPrompt={slot.customPrompt}

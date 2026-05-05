@@ -3469,6 +3469,7 @@ export class TaskAgentManager {
 		}
 		return {
 			model: slot.model,
+			thinkingLevel: slot.thinkingLevel,
 			customPrompt: slotCustomPrompt,
 			disabledSkillIds: slot.disabledSkillIds,
 			extraMcpServers: slot.extraMcpServers,

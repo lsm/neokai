@@ -21,7 +21,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { spaceStore } from '../../lib/space-store';
 import { KNOWN_TOOLS } from '@neokai/shared';
-import type { SpaceAgent } from '@neokai/shared';
+import type { SpaceAgent, ThinkingLevel } from '@neokai/shared';
 import type { SpaceAgentTemplate } from '../../lib/space-store';
 import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect';
 
@@ -36,6 +36,14 @@ const TOOL_PRESETS: Record<string, ToolName[]> = {
 	'Full Coding': ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'],
 	'Read Only': ['Read', 'Grep', 'Glob'],
 };
+
+const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
+	{ value: '', label: 'Use app default' },
+	{ value: 'auto', label: 'Auto' },
+	{ value: 'think8k', label: 'Think 8k' },
+	{ value: 'think16k', label: 'Think 16k' },
+	{ value: 'think32k', label: 'Think 32k' },
+];
 
 // ============================================================================
 // Pure helpers (module-level to avoid re-creation on each render)
@@ -129,6 +137,9 @@ export function SpaceAgentEditor({
 	const [name, setName] = useState(agent?.name ?? '');
 	const [description, setDescription] = useState(agent?.description ?? '');
 	const [model, setModel] = useState(agent?.model ?? '');
+	const [thinkingLevel, setThinkingLevel] = useState<'' | ThinkingLevel>(
+		agent?.thinkingLevel ?? ''
+	);
 	const [tools, setTools] = useState<string[]>(agent?.tools ?? [...TOOL_PRESETS['Full Coding']]);
 	const [customPrompt, setCustomPrompt] = useState(agent?.customPrompt ?? '');
 	const [activePreset, setActivePreset] = useState<string>(() => detectPreset(agent?.tools));
@@ -319,6 +330,27 @@ export function SpaceAgentEditor({
 						}`}
 					/>
 					{errors['model'] && <p class="mt-1 text-xs text-red-400">{errors['model']}</p>}
+				</div>
+
+				{/* Thinking Level */}
+				<div>
+					<label class="block text-sm font-medium text-gray-300 mb-1.5">
+						Thinking Level
+						<span class="text-gray-500 text-xs ml-2">(optional override)</span>
+					</label>
+					<select
+						value={thinkingLevel}
+						onChange={(e) =>
+							setThinkingLevel((e.target as HTMLSelectElement).value as '' | ThinkingLevel)
+						}
+						class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100 focus:outline-none focus:border-blue-500"
+					>
+						{THINKING_LEVEL_OPTIONS.map((option) => (
+							<option key={option.value || 'default'} value={option.value}>
+								{option.label}
+							</option>
+						))}
+					</select>
 				</div>
 
 				{/* Tools */}

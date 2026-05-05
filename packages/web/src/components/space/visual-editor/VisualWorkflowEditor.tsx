@@ -83,12 +83,14 @@ function buildTemplateCanvasSignature(
 			name: node.step.name,
 			agentId: node.step.agentId ?? null,
 			model: node.step.model ?? null,
+			thinkingLevel: node.step.thinkingLevel ?? null,
 			customPrompt: node.step.customPrompt ?? null,
 			agents:
 				node.step.agents?.map((agent) => ({
 					agentId: agent.agentId ?? null,
 					name: agent.name ?? '',
 					model: agent.model ?? null,
+					thinkingLevel: agent.thinkingLevel ?? null,
 					customPrompt: agent.customPrompt ?? null,
 				})) ?? [],
 			nodeChannels:

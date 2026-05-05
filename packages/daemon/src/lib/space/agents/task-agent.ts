@@ -613,5 +613,6 @@ export function createTaskAgentInit(config: TaskAgentSessionConfig): AgentSessio
 		type: 'space_task_agent',
 		model,
 		provider,
+		thinkingLevel: taskAgentConfig?.thinkingLevel,
 	};
 }

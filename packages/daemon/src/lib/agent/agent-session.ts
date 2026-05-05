@@ -146,6 +146,9 @@ export interface AgentSessionInit {
 	/** Provider ID for this session — if omitted, auto-detected from model or falls back to Anthropic */
 	provider?: string;
 
+	/** Thinking level for extended thinking — if omitted, global settings apply */
+	thinkingLevel?: import('@neokai/shared').ThinkingLevel;
+
 	/** Enable coordinator mode — main agent orchestrates specialist sub-agents */
 	coordinatorMode?: boolean;
 
@@ -477,6 +480,16 @@ export class AgentSession
 				hasUpdates = true;
 			}
 
+			if (init.thinkingLevel !== undefined && session.config.thinkingLevel !== init.thinkingLevel) {
+				const nextConfig: SessionConfig = {
+					...session.config,
+					thinkingLevel: init.thinkingLevel,
+				};
+				updates.config = nextConfig;
+				session = { ...session, config: nextConfig };
+				hasUpdates = true;
+			}
+
 			// Non-worker sessions should never run with a worktree path from stale persisted state.
 			if (init.type && init.type !== 'worker' && session.worktree) {
 				updates.worktree = undefined;
@@ -579,6 +592,7 @@ export class AgentSession
 		const config: SessionConfig = {
 			model: init.model ?? defaultModel,
 			provider: init.provider as Provider | undefined,
+			thinkingLevel: init.thinkingLevel,
 			maxTokens: 4096,
 			temperature: 1.0,
 			// Pass through system prompt from init

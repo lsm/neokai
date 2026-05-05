@@ -226,6 +226,7 @@ export class SpaceAgentManager {
 		const updated = this.repo.update(agentId, {
 			description: preset.description,
 			tools: preset.tools,
+			thinkingLevel: preset.thinkingLevel ?? null,
 			customPrompt: preset.customPrompt,
 			templateHash,
 		});
