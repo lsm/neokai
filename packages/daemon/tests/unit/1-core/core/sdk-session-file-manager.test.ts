@@ -134,6 +134,50 @@ describe('SDK Session File Manager', () => {
 			});
 		});
 
+		test('does not rewrite file when all assistant messages already have valid usage', () => {
+			const original = `${JSON.stringify({
+				type: 'assistant',
+				uuid: 'assistant-1',
+				message: {
+					role: 'assistant',
+					content: [{ type: 'text', text: 'Hi' }],
+					usage: { input_tokens: 10, output_tokens: 5 },
+				},
+			})}\n`;
+			writeFileSync(testSessionFile, original, 'utf-8');
+			const before = readFileSync(testSessionFile, 'utf-8');
+
+			const result = sanitizeAssistantUsageInSDKSessionFile(testWorkspacePath, testSdkSessionId);
+
+			expect(result.success).toBe(true);
+			expect(result.sanitizedCount).toBe(0);
+			expect(readFileSync(testSessionFile, 'utf-8')).toBe(before);
+		});
+
+		test('replaces non-numeric and invalid token values with 0', () => {
+			writeFileSync(
+				testSessionFile,
+				`${JSON.stringify({
+					type: 'assistant',
+					uuid: 'assistant-1',
+					message: {
+						role: 'assistant',
+						content: [{ type: 'text', text: 'Hi' }],
+						usage: { input_tokens: 'not-a-number', output_tokens: Number.NaN },
+					},
+				})}\n`,
+				'utf-8'
+			);
+
+			const result = sanitizeAssistantUsageInSDKSessionFile(testWorkspacePath, testSdkSessionId);
+
+			expect(result.success).toBe(true);
+			expect(result.sanitizedCount).toBe(1);
+			const assistant = JSON.parse(readFileSync(testSessionFile, 'utf-8').trim());
+			expect(assistant.message.usage.input_tokens).toBe(0);
+			expect(assistant.message.usage.output_tokens).toBe(0);
+		});
+
 		test('does not rewrite non-existent session files', () => {
 			const result = sanitizeAssistantUsageInSDKSessionFile(
 				testWorkspacePath,
