@@ -383,7 +383,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 	// buildSdkConfig() — workspace isolation
 	// -------------------------------------------------------------------------
 
-	describe('buildSdkConfig() workspace isolation', () => {
+	describe('buildSdkConfig() bridge server routing', () => {
 		beforeEach(() => {
 			provider = makeProvider(
 				{ OPENAI_API_KEY: 'sk-placeholder' },
@@ -393,14 +393,34 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			);
 		});
 
-		it('starts separate bridge servers for different workspace paths', () => {
+		it('shares the Responses bridge server across workspace paths with the same auth', () => {
 			const cfgA = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/workspace-a' });
 			const cfgB = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/workspace-b' });
 
 			const urlA = cfgA.envVars.ANTHROPIC_BASE_URL as string;
 			const urlB = cfgB.envVars.ANTHROPIC_BASE_URL as string;
-			expect(urlA).not.toBe(urlB);
-			expect(new URL(urlA).port).not.toBe(new URL(urlB).port);
+			expect(urlA).toBe(urlB);
+			expect(new URL(urlA).port).toBe(new URL(urlB).port);
+		});
+
+		it('keeps Codex adapter bridge servers scoped by workspace path', () => {
+			const p = makeProvider(
+				{ OPENAI_API_KEY: 'sk-placeholder', NEOKAI_OPENAI_BRIDGE_ADAPTER: 'codex' },
+				undefined,
+				undefined,
+				fakeCodexFound
+			);
+			try {
+				const cfgA = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/workspace-a' });
+				const cfgB = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/workspace-b' });
+
+				const urlA = cfgA.envVars.ANTHROPIC_BASE_URL as string;
+				const urlB = cfgB.envVars.ANTHROPIC_BASE_URL as string;
+				expect(urlA).not.toBe(urlB);
+				expect(new URL(urlA).port).not.toBe(new URL(urlB).port);
+			} finally {
+				p.stopAllBridgeServers();
+			}
 		});
 
 		it('reuses the same bridge server for the same workspace path', () => {
@@ -477,25 +497,33 @@ describe('AnthropicToCodexBridgeProvider', () => {
 					max_tokens: 128,
 					messages: [{ role: 'user', content: 'hi' }],
 				});
-				const fetchLocal = async (baseUrl: unknown) => {
-					const resp = await originalFetch(`${baseUrl}/v1/messages`, {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body,
-					});
-					await resp.text();
+				const fetchLocal = async (baseUrl: unknown): Promise<number> => {
+					try {
+						const resp = await originalFetch(`${baseUrl}/v1/messages`, {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body,
+						});
+						await resp.text();
+						return resp.status;
+					} catch {
+						return 0;
+					}
 				};
 
 				const firstCfg = p.buildSdkConfig('gpt-5.3-codex', {
 					workspacePath: '/tmp/workspace-auth-change',
 				});
-				await fetchLocal(firstCfg.envVars.ANTHROPIC_BASE_URL);
+				const firstBaseUrl = firstCfg.envVars.ANTHROPIC_BASE_URL;
+				await fetchLocal(firstBaseUrl);
 
 				env.OPENAI_API_KEY = 'sk-second';
 				const secondCfg = p.buildSdkConfig('gpt-5.3-codex', {
 					workspacePath: '/tmp/workspace-auth-change',
 				});
-				await fetchLocal(secondCfg.envVars.ANTHROPIC_BASE_URL);
+				const secondBaseUrl = secondCfg.envVars.ANTHROPIC_BASE_URL;
+				await fetchLocal(secondBaseUrl);
+				expect(await fetchLocal(firstBaseUrl)).toBe(0);
 
 				env.OPENAI_API_KEY = undefined;
 				writeNeokaiAuth(neokaiDir, {
@@ -507,7 +535,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
 				const oauthCfg = p.buildSdkConfig('gpt-5.3-codex', {
 					workspacePath: '/tmp/workspace-auth-change',
 				});
-				await fetchLocal(oauthCfg.envVars.ANTHROPIC_BASE_URL);
+				const oauthBaseUrl = oauthCfg.envVars.ANTHROPIC_BASE_URL;
+				await fetchLocal(oauthBaseUrl);
+				expect(await fetchLocal(secondBaseUrl)).toBe(0);
 
 				expect(capturedRequests).toMatchObject([
 					{
@@ -533,11 +563,14 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			}
 		});
 
-		it('returns isAnthropicCompatible=true and a placeholder API key', () => {
+		it('returns isAnthropicCompatible=true and clears OAuth token precedence', () => {
 			const cfg = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-compat' });
 			expect(cfg.isAnthropicCompatible).toBe(true);
 			expect(cfg.envVars.ANTHROPIC_API_KEY).toBe('codex-bridge-default');
-			expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+			expect(cfg.envVars.CLAUDE_CODE_OAUTH_TOKEN).toBe('');
+			expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(
+				/^http:\/\/127\.0\.0\.1:\d+\/_neokai\/session\/default$/
+			);
 		});
 
 		it('buildSdkConfig() uses cached API key resolved by prior getApiKey() call', async () => {
@@ -552,7 +585,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
 				// buildSdkConfig() is synchronous but should use the cached key
 				const cfg = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/file-auth-ws' });
 				expect(cfg.isAnthropicCompatible).toBe(true);
-				expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+				expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(
+					/^http:\/\/127\.0\.0\.1:\d+\/_neokai\/session\/default$/
+				);
 				p.stopAllBridgeServers();
 			} finally {
 				rmSync(tmpDir, { recursive: true, force: true });
@@ -574,7 +609,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
 				await p.getApiKey(); // populates cachedApiKey
 				const cfg = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/empty-env-ws' });
 				expect(cfg.isAnthropicCompatible).toBe(true);
-				expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+				expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(
+					/^http:\/\/127\.0\.0\.1:\d+\/_neokai\/session\/default$/
+				);
 				p.stopAllBridgeServers();
 			} finally {
 				rmSync(tmpDir, { recursive: true, force: true });

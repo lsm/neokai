@@ -101,6 +101,23 @@ class ThrowingMockProvider extends MockProvider {
 	}
 }
 
+class BridgeMockProvider extends MockProvider {
+	constructor() {
+		super('bridge', 'Bridge Provider', true, 'bridge-');
+	}
+
+	buildSdkConfig(): ProviderSdkConfig {
+		return {
+			envVars: {
+				ANTHROPIC_BASE_URL: 'http://127.0.0.1:12345',
+				ANTHROPIC_API_KEY: 'bridge-session-key',
+				CLAUDE_CODE_OAUTH_TOKEN: '',
+			},
+			isAnthropicCompatible: true,
+		};
+	}
+}
+
 // GLM-like provider for testing
 class GlmMockProvider extends MockProvider {
 	readonly id = 'glm' as const;
@@ -712,10 +729,11 @@ describe('ProviderService', () => {
 			expect(original).toEqual({});
 		});
 
-		it('should clear leaked GLM routing vars for anthropic model', () => {
+		it('should clear leaked GLM routing vars for anthropic model without clearing OAuth auth', () => {
 			process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';
 			process.env.API_TIMEOUT_MS = '120000';
 			process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-4';
+			process.env.CLAUDE_CODE_OAUTH_TOKEN = 'user-oauth-token';
 
 			const original = service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
 
@@ -725,6 +743,7 @@ describe('ProviderService', () => {
 			expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
 			expect(process.env.API_TIMEOUT_MS).toBeUndefined();
 			expect(process.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('user-oauth-token');
 		});
 
 		it('should apply GLM env vars and return original values', () => {
@@ -777,6 +796,20 @@ describe('ProviderService', () => {
 			});
 
 			service.restoreEnvVars(original);
+		});
+
+		it('clears CLAUDE_CODE_OAUTH_TOKEN when provider returns empty-string sentinel, restores on restoreEnvVars', () => {
+			registry.register(new BridgeMockProvider());
+			process.env.CLAUDE_CODE_OAUTH_TOKEN = 'real-oauth-token';
+
+			const original = service.applyEnvVarsToProcess('bridge-model', 'bridge');
+
+			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+			expect(original.CLAUDE_CODE_OAUTH_TOKEN).toBe('real-oauth-token');
+			expect(process.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:12345');
+
+			service.restoreEnvVars(original);
+			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('real-oauth-token');
 		});
 
 		it('blanks ANTHROPIC_API_KEY when provider returns empty-string sentinel, restores on restoreEnvVars', () => {
