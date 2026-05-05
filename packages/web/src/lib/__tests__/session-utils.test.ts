@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isUserSession } from '../session-utils';
+import { getModelLabel, isUserSession } from '../session-utils';
 import type { Session } from '@neokai/shared';
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -21,6 +21,17 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 		...overrides,
 	} as Session;
 }
+
+describe('getModelLabel', () => {
+	it('formats Moonshot model IDs', () => {
+		expect(getModelLabel('moonshot-v1-32k')).toBe('Moonshot v1 32k');
+		expect(getModelLabel('moonshot-v1-128k')).toBe('Moonshot v1 128k');
+	});
+
+	it('formats Kimi model IDs', () => {
+		expect(getModelLabel('kimi-for-coding')).toBe('Kimi for coding');
+	});
+});
 
 describe('isUserSession', () => {
 	it('should return true for worker sessions', () => {

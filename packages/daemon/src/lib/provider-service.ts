@@ -177,6 +177,9 @@ export class ProviderService {
 		if (providerId === 'minimax') {
 			return process.env.MINIMAX_API_KEY;
 		}
+		if (providerId === 'kimi') {
+			return process.env.KIMI_API_KEY || process.env.MOONSHOT_API_KEY;
+		}
 		if (providerId === 'openrouter') {
 			return process.env.OPENROUTER_API_KEY;
 		}

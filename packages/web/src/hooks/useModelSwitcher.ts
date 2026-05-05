@@ -47,6 +47,7 @@ export const MODEL_FAMILY_ICONS: Record<string, string> = {
 	sonnet: '💎',
 	haiku: '⚡',
 	glm: '🌐',
+	kimi: '🌙',
 	minimax: '🔥',
 	openrouter: '🧭',
 	gpt: '🔮',
@@ -69,7 +70,8 @@ export const PROVIDER_ORDER: Record<string, number> = {
 	'anthropic-codex': 2,
 	openrouter: 3,
 	glm: 4,
-	minimax: 5,
+	kimi: 5,
+	minimax: 6,
 };
 
 /** Model family sort order (exported for shared use) */
@@ -78,10 +80,11 @@ export const FAMILY_ORDER: Record<string, number> = {
 	sonnet: 1,
 	haiku: 2,
 	glm: 3,
-	minimax: 4,
-	openrouter: 5,
-	gpt: 6,
-	gemini: 7,
+	kimi: 4,
+	minimax: 5,
+	openrouter: 6,
+	gpt: 7,
+	gemini: 8,
 };
 
 /** Raw model shape returned by the `models.list` RPC */
@@ -112,6 +115,8 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
 			family = 'haiku';
 		} else if (mid.startsWith('glm-')) {
 			family = 'glm';
+		} else if (mid.startsWith('moonshot-') || mid.startsWith('kimi-') || mid === 'kimi') {
+			family = 'kimi';
 		} else if (mid.startsWith('minimax-')) {
 			family = 'minimax';
 		} else if (mid === 'openrouter/auto') {
@@ -173,6 +178,7 @@ export function groupModelsByProvider(models: ModelInfo[]): Map<string, ModelInf
 export const PROVIDER_LABELS: Record<string, string> = {
 	anthropic: 'Anthropic',
 	glm: 'GLM',
+	kimi: 'Kimi',
 	minimax: 'MiniMax',
 	openrouter: 'OpenRouter',
 	'anthropic-copilot': 'Copilot',

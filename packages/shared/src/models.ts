@@ -10,6 +10,7 @@
  * Model family type
  * - opus, sonnet, haiku: Anthropic Claude models
  * - glm: GLM (智谱AI) models
+ * - kimi: Kimi (Moonshot AI) models
  * - Additional families can be added for new providers
  */
 export type ModelFamily = 'opus' | 'sonnet' | 'haiku' | 'glm' | string;
