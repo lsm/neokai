@@ -1122,6 +1122,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
  */
 export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 	const handlers = createNodeAgentToolHandlers(config);
+	const spaceAgentGuidance = config.canMessageSpaceAgent
+		? " Use target 'space-agent' to escalate blockers or request human/space-level judgment."
+		: '';
 
 	const tools = [
 		tool(
@@ -1174,7 +1177,8 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 				"Use agent name for DM (e.g. 'coder'), node name for fan-out, or '*' for broadcast. " +
 				'Validates against declared channel topology — returns an error with available targets if not permitted. ' +
 				'When the target channel is gated, the optional `data` payload is automatically merged into the gate ' +
-				"and gate re-evaluation fires — no separate gate write needed. Use target 'space-agent' to escalate blockers or request human/space-level judgment.",
+				'and gate re-evaluation fires — no separate gate write needed.' +
+				spaceAgentGuidance,
 			SendMessageSchema.shape,
 			(args) => handlers.send_message(args)
 		),

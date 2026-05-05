@@ -1885,6 +1885,24 @@ describe('node-agent-tools: createNodeAgentMcpServer', () => {
 		expect(server).toBeDefined();
 		expect(typeof server).toBe('object');
 	});
+
+	test('gates Space Agent guidance in send_message tool description by capability', () => {
+		const unavailableServer = createNodeAgentMcpServer(makeConfig(ctx));
+		const unavailableTools = (unavailableServer as any).instance._registeredTools as Record<
+			string,
+			{ description: string }
+		>;
+		expect(unavailableTools.send_message.description).not.toContain("target 'space-agent'");
+
+		const availableServer = createNodeAgentMcpServer(
+			makeConfig(ctx, { canMessageSpaceAgent: true })
+		);
+		const availableTools = (availableServer as any).instance._registeredTools as Record<
+			string,
+			{ description: string }
+		>;
+		expect(availableTools.send_message.description).toContain("target 'space-agent'");
+	});
 });
 
 describe('node-agent-tools: system prompt uses only visible prompt text', () => {
