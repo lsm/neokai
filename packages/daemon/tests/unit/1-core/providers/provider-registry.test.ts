@@ -514,6 +514,25 @@ describe('inferProviderForModel', () => {
 		expect(inferProviderForModel('kimi')).toBe('kimi');
 	});
 
+	it('maps Kimi/Moonshot model IDs before registry fallback providers', () => {
+		try {
+			getProviderRegistry().register(
+				new (class extends MockProvider {
+					readonly id = 'anthropic' as const;
+					readonly displayName = 'Anthropic';
+					ownsModel(): boolean {
+						return true;
+					}
+				})()
+			);
+
+			expect(inferProviderForModel('moonshot-v1-32k')).toBe('kimi');
+			expect(inferProviderForModel('kimi-k2.6')).toBe('kimi');
+		} finally {
+			resetProviderRegistry();
+		}
+	});
+
 	it('maps OpenRouter provider/model refs to openrouter', () => {
 		expect(inferProviderForModel('openrouter/auto')).toBe('openrouter');
 		expect(inferProviderForModel('anthropic/claude-sonnet-4.6')).toBe('openrouter');

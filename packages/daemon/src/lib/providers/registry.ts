@@ -259,15 +259,18 @@ export function resetProviderRegistry(): void {
  * test-interference from re-registering providers.
  */
 export function inferProviderForModel(modelId: string): ProviderIdStr {
+	// Route Kimi/Moonshot aliases before live registry lookup because the Anthropic
+	// provider intentionally claims unknown model IDs as a fallback.
+	if (modelId.startsWith('moonshot-') || modelId.startsWith('kimi-') || modelId === 'kimi') {
+		return 'kimi';
+	}
+
 	// Live registry lookup (populated at daemon startup, empty in unit tests)
 	const fromRegistry = getProviderRegistry().findProviderForModel(modelId)?.id;
 	if (fromRegistry) return fromRegistry as ProviderIdStr;
 	// Static fallback when registry is empty
 	if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
 	if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
-	if (modelId.startsWith('moonshot-') || modelId.startsWith('kimi-') || modelId === 'kimi') {
-		return 'kimi';
-	}
 	if (modelId === 'ollama') return 'ollama';
 	if (modelId === 'ollama-cloud') return 'ollama-cloud';
 	if (modelId.endsWith(':cloud')) return 'ollama-cloud';

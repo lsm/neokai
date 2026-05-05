@@ -31,7 +31,7 @@ describe('KimiProvider', () => {
 			expect(provider.capabilities).toEqual({
 				streaming: true,
 				extendedThinking: false,
-				maxContextWindow: 128000,
+				maxContextWindow: 131072,
 				functionCalling: true,
 				vision: false,
 			});

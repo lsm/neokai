@@ -232,6 +232,46 @@ function parseSseDataLine(line: string): OpenAIChatChunk | 'done' | null {
 	}
 }
 
+function applyOpenAIChunk(
+	chunk: OpenAIChatChunk,
+	state: {
+		outputText: string;
+		startedText: boolean;
+		finishReason: string | null | undefined;
+		finalPromptTokens: number | undefined;
+		finalOutputTokens: number | undefined;
+		toolCalls: Map<number, AccumulatedToolCall>;
+	},
+	send: (chunk: string) => void,
+	blockIndex: number
+): void {
+	if (chunk.error) throw new Error(chunk.error.message || 'Kimi stream error');
+	state.finalPromptTokens = chunk.usage?.prompt_tokens ?? state.finalPromptTokens;
+	state.finalOutputTokens = chunk.usage?.completion_tokens ?? state.finalOutputTokens;
+	for (const choice of chunk.choices ?? []) {
+		state.finishReason = choice.finish_reason ?? state.finishReason;
+		const text = choice.delta?.content ?? '';
+		if (text) {
+			if (!state.startedText) {
+				send(contentBlockStartTextSSE(blockIndex));
+				state.startedText = true;
+			}
+			state.outputText += text;
+			send(textDeltaSSE(blockIndex, text));
+		}
+		for (const deltaToolCall of choice.delta?.tool_calls ?? []) {
+			const index = deltaToolCall.index ?? 0;
+			const accumulated = state.toolCalls.get(index) ?? { id: '', name: '', arguments: '' };
+			if (deltaToolCall.id) accumulated.id = deltaToolCall.id;
+			if (deltaToolCall.function?.name) accumulated.name += deltaToolCall.function.name;
+			if (deltaToolCall.function?.arguments) {
+				accumulated.arguments += deltaToolCall.function.arguments;
+			}
+			state.toolCalls.set(index, accumulated);
+		}
+	}
+}
+
 function emitToolCall(params: {
 	send: (chunk: string) => void;
 	toolCall: AccumulatedToolCall;
@@ -252,13 +292,15 @@ async function streamOpenAIToAnthropic(params: {
 	const { openAIResponse, controller, model, inputTokens } = params;
 	const encoder = new TextEncoder();
 	const send = (chunk: string) => controller.enqueue(encoder.encode(chunk));
-	let outputText = '';
-	let startedText = false;
 	let nextBlockIndex = 0;
-	let finishReason: string | null | undefined;
-	let finalPromptTokens: number | undefined;
-	let finalOutputTokens: number | undefined;
-	const toolCalls = new Map<number, AccumulatedToolCall>();
+	const state = {
+		outputText: '',
+		startedText: false,
+		finishReason: undefined as string | null | undefined,
+		finalPromptTokens: undefined as number | undefined,
+		finalOutputTokens: undefined as number | undefined,
+		toolCalls: new Map<number, AccumulatedToolCall>(),
+	};
 
 	try {
 		send(
@@ -283,57 +325,39 @@ async function streamOpenAIToAnthropic(params: {
 					done = true;
 					break;
 				}
-				if (chunk.error) throw new Error(chunk.error.message || 'Kimi stream error');
-				finalPromptTokens = chunk.usage?.prompt_tokens ?? finalPromptTokens;
-				finalOutputTokens = chunk.usage?.completion_tokens ?? finalOutputTokens;
-				for (const choice of chunk.choices ?? []) {
-					finishReason = choice.finish_reason ?? finishReason;
-					const text = choice.delta?.content ?? '';
-					if (text) {
-						if (!startedText) {
-							send(contentBlockStartTextSSE(nextBlockIndex));
-							startedText = true;
-						}
-						outputText += text;
-						send(textDeltaSSE(nextBlockIndex, text));
-					}
-					for (const deltaToolCall of choice.delta?.tool_calls ?? []) {
-						const index = deltaToolCall.index ?? 0;
-						const accumulated = toolCalls.get(index) ?? { id: '', name: '', arguments: '' };
-						if (deltaToolCall.id) accumulated.id = deltaToolCall.id;
-						if (deltaToolCall.function?.name) accumulated.name += deltaToolCall.function.name;
-						if (deltaToolCall.function?.arguments) {
-							accumulated.arguments += deltaToolCall.function.arguments;
-						}
-						toolCalls.set(index, accumulated);
-					}
-				}
+				applyOpenAIChunk(chunk, state, send, nextBlockIndex);
 			}
 		}
+		const tail = parseSseDataLine(buffer);
+		if (tail && tail !== 'done') {
+			applyOpenAIChunk(tail, state, send, nextBlockIndex);
+		}
 
-		if (startedText) {
+		if (state.startedText) {
 			send(contentBlockStopSSE(nextBlockIndex));
 			nextBlockIndex += 1;
 		}
-		const completedToolCalls = Array.from(toolCalls.values()).filter((toolCall) => toolCall.name);
+		const completedToolCalls = Array.from(state.toolCalls.values()).filter(
+			(toolCall) => toolCall.name
+		);
 		for (const toolCall of completedToolCalls) {
 			emitToolCall({ send, toolCall, index: nextBlockIndex });
 			nextBlockIndex += 1;
 		}
-		if (!startedText && completedToolCalls.length === 0) {
+		if (!state.startedText && completedToolCalls.length === 0) {
 			send(contentBlockStartTextSSE(nextBlockIndex));
 			send(contentBlockStopSSE(nextBlockIndex));
 		}
 		const stopReason =
 			completedToolCalls.length > 0
 				? 'tool_use'
-				: finishReason === 'length'
+				: state.finishReason === 'length'
 					? 'max_tokens'
 					: 'end_turn';
 		send(
 			messageDeltaSSE(stopReason, {
-				inputTokens: finalPromptTokens ?? inputTokens,
-				outputTokens: finalOutputTokens ?? estimateTokens(outputText),
+				inputTokens: state.finalPromptTokens ?? inputTokens,
+				outputTokens: state.finalOutputTokens ?? estimateTokens(state.outputText),
 			})
 		);
 		send(messageStopSSE());

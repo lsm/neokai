@@ -142,6 +142,11 @@ describe('useModelSwitcher', () => {
 			expect(MODEL_FAMILY_ICONS.openrouter).toBeDefined();
 			expect(typeof MODEL_FAMILY_ICONS.openrouter).toBe('string');
 		});
+
+		it('should have kimi icon for Kimi models', () => {
+			expect(MODEL_FAMILY_ICONS.kimi).toBeDefined();
+			expect(typeof MODEL_FAMILY_ICONS.kimi).toBe('string');
+		});
 	});
 
 	describe('getModelFamilyIcon', () => {
@@ -150,6 +155,7 @@ describe('useModelSwitcher', () => {
 			expect(getModelFamilyIcon('sonnet')).toBe(MODEL_FAMILY_ICONS.sonnet);
 			expect(getModelFamilyIcon('haiku')).toBe(MODEL_FAMILY_ICONS.haiku);
 			expect(getModelFamilyIcon('glm')).toBe(MODEL_FAMILY_ICONS.glm);
+			expect(getModelFamilyIcon('kimi')).toBe(MODEL_FAMILY_ICONS.kimi);
 			expect(getModelFamilyIcon('openrouter')).toBe(MODEL_FAMILY_ICONS.openrouter);
 			expect(getModelFamilyIcon('gpt')).toBe(MODEL_FAMILY_ICONS.gpt);
 			expect(getModelFamilyIcon('gemini')).toBe(MODEL_FAMILY_ICONS.gemini);
@@ -165,6 +171,7 @@ describe('useModelSwitcher', () => {
 		it('should return correct label for known providers', () => {
 			expect(getProviderLabel('anthropic')).toBe('Anthropic');
 			expect(getProviderLabel('glm')).toBe('GLM');
+			expect(getProviderLabel('kimi')).toBe('Kimi');
 			expect(getProviderLabel('minimax')).toBe('MiniMax');
 			expect(getProviderLabel('openrouter')).toBe('OpenRouter');
 			expect(getProviderLabel('anthropic-copilot')).toBe('Copilot');
@@ -284,6 +291,47 @@ describe('useModelSwitcher', () => {
 			const glmModel = result.current.availableModels.find((m) => m.id === 'glm-4-plus');
 			expect(glmModel?.provider).toBe('glm');
 			expect(glmModel?.family).toBe('glm');
+		});
+
+		it('should detect kimi family and provider for Moonshot models', async () => {
+			const mockHub = {
+				request: vi
+					.fn()
+					.mockResolvedValueOnce({
+						currentModel: 'moonshot-v1-32k',
+						modelInfo: null,
+					})
+					.mockResolvedValueOnce({
+						models: [
+							{
+								id: 'moonshot-v1-32k',
+								display_name: 'Moonshot v1 32K',
+								description: '',
+								provider: 'kimi',
+							},
+							{
+								id: 'kimi-k2.6',
+								display_name: 'Kimi K2.6',
+								description: '',
+								provider: 'kimi',
+							},
+						],
+					}),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+
+			const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+			await waitFor(() => {
+				expect(result.current.loading).toBe(false);
+			});
+
+			const moonshotModel = result.current.availableModels.find((m) => m.id === 'moonshot-v1-32k');
+			const kimiModel = result.current.availableModels.find((m) => m.id === 'kimi-k2.6');
+			expect(moonshotModel?.provider).toBe('kimi');
+			expect(moonshotModel?.family).toBe('kimi');
+			expect(kimiModel?.provider).toBe('kimi');
+			expect(kimiModel?.family).toBe('kimi');
 		});
 
 		it('should detect gpt family and anthropic-copilot provider for Copilot GPT models', async () => {

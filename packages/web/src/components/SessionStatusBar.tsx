@@ -45,6 +45,7 @@ const PROVIDER_DOT_COLORS: Record<string, { color: string; ring?: boolean }> = {
 	'anthropic-codex': { color: '#FFFFFF', ring: true }, // OpenAI white (ring for visibility)
 	openrouter: { color: '#007CF0' }, // OpenRouter blue
 	glm: { color: '#7DD3FC' }, // ChatGLM light blue
+	kimi: { color: '#B197FC' }, // Kimi/Moonshot lavender
 	minimax: { color: '#FCA5A5' }, // MiniMax light red
 };
 

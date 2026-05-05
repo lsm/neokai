@@ -898,6 +898,21 @@ describe('SessionStatusBar', () => {
 			expect((badge as HTMLElement)?.style.backgroundColor).toBe('#FCA5A5');
 		});
 
+		it('should show lavender dot for kimi provider', () => {
+			const kimiModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: 'kimi',
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={kimiModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.getAttribute('title')).toBe('Kimi');
+			expect(badge?.getAttribute('aria-label')).toBe('Kimi');
+			expect((badge as HTMLElement)?.style.backgroundColor).toBe('#B197FC');
+		});
+
 		it('should show gray dot for unknown provider using getProviderLabel fallback', () => {
 			const unknownProvider = 'some-unknown-provider';
 			const unknownModelInfo: ModelInfo = {
@@ -921,6 +936,7 @@ describe('SessionStatusBar', () => {
 				'anthropic-copilot',
 				'anthropic-codex',
 				'glm',
+				'kimi',
 				'minimax',
 			];
 			for (const provider of knownProviders) {
