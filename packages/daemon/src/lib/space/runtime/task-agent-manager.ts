@@ -99,13 +99,19 @@ import {
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
-import { formatAgentMessage } from '../agent-message-envelope';
+import { formatAgentMessage, type AgentMessageLevel } from '../agent-message-envelope';
 
 const log = new Logger('task-agent-manager');
 const AGENT_MESSAGE_ENVELOPE_PREFIX = '─── Message from ';
 
 function hasAgentMessageEnvelope(message: string): boolean {
 	return message.startsWith(AGENT_MESSAGE_ENVELOPE_PREFIX);
+}
+
+function pendingSourceLevel(sourceAgentName: string): AgentMessageLevel {
+	if (sourceAgentName === 'task-agent') return 'task-agent';
+	if (sourceAgentName === 'space-agent') return 'space-agent';
+	return 'node-agent';
 }
 
 // ---------------------------------------------------------------------------
@@ -1611,7 +1617,7 @@ export class TaskAgentManager {
 				? hasAgentMessageEnvelope(row.message)
 					? row.message
 					: formatAgentMessage({
-							fromLevel: row.sourceAgentName === 'task-agent' ? 'task-agent' : 'node-agent',
+							fromLevel: pendingSourceLevel(row.sourceAgentName),
 							fromAgentName: row.sourceAgentName,
 							toLevel: 'node-agent',
 							body: row.message,
@@ -1698,7 +1704,7 @@ export class TaskAgentManager {
 			const message = hasAgentMessageEnvelope(row.message)
 				? row.message
 				: formatAgentMessage({
-						fromLevel: row.sourceAgentName === 'task-agent' ? 'task-agent' : 'node-agent',
+						fromLevel: pendingSourceLevel(row.sourceAgentName),
 						fromAgentName: row.sourceAgentName,
 						toLevel: 'space-agent',
 						body: row.message,
