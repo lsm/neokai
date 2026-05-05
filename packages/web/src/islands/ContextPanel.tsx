@@ -28,6 +28,7 @@ import { borderColors } from '../lib/design-tokens.ts';
 import { cn } from '../lib/utils.ts';
 import { Button } from '../components/ui/Button.tsx';
 import { NavIconButton } from '../components/ui/NavIconButton.tsx';
+import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
 import { DaemonStatusIndicator } from '../components/DaemonStatusIndicator.tsx';
 import { MAIN_NAV_ITEMS, SETTINGS_NAV_ITEM } from '../lib/nav-config.tsx';
 import { SessionList } from './SessionList.tsx';
@@ -155,6 +156,7 @@ function SectionIcon({ type }: { type: string }) {
 
 export function ContextPanel() {
 	const [creatingSession, setCreatingSession] = useState(false);
+	const [createSpaceOpen, setCreateSpaceOpen] = useState(false);
 
 	const navSection = navSectionSignal.value;
 	const isPanelOpen = contextPanelOpenSignal.value;
@@ -300,7 +302,7 @@ export function ContextPanel() {
 	};
 
 	const handleCreateSpace = () => {
-		navigateToSpaces();
+		setCreateSpaceOpen(true);
 		contextPanelOpenSignal.value = false;
 	};
 
@@ -313,7 +315,10 @@ export function ContextPanel() {
 
 	// On the spaces list view (no space selected), hide the panel completely so
 	// SpacesPage fills the viewport. BottomTabBar owns mobile global navigation.
-	if (navSection === 'spaces' && !isSpaceDetail) return null;
+	if (navSection === 'spaces' && !isSpaceDetail) {
+		contextPanelOpenSignal.value = false;
+		return null;
+	}
 
 	const activeSpaces = spaceStore.spacesWithTasks.value.filter(
 		(space) => space.status === 'active'
@@ -415,8 +420,6 @@ export function ContextPanel() {
 		</div>
 	);
 
-	const hideDesktopPanel = false;
-
 	return (
 		<>
 			{/* Mobile backdrop */}
@@ -438,7 +441,6 @@ export function ContextPanel() {
 					z-40 md:z-auto
 					max-md:transition-transform max-md:duration-300 max-md:ease-in-out
 					${isPanelOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full'}
-					${hideDesktopPanel ? 'md:hidden' : ''}
 					overflow-hidden
 				`}
 			>
@@ -630,6 +632,7 @@ export function ContextPanel() {
 					)}
 				</div>
 			</div>
+			<SpaceCreateDialog isOpen={createSpaceOpen} onClose={() => setCreateSpaceOpen(false)} />
 		</>
 	);
 }
