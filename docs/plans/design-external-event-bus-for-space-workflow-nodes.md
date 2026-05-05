@@ -453,7 +453,14 @@ class EventRouter {
     this.eventBus.subscribe(EXTERNAL_EVENT_PUBLISHED_METHOD, ({ spaceId, event }) => {
       // Defense in depth: payload spaceId and event.spaceId must agree.
       if (event.spaceId !== spaceId) return;
-      void this.handleEvent(event);
+      void this.handleEvent(event).catch((err) => {
+        log.warn('EventRouter: failed to route external event', {
+          error: err,
+          spaceId,
+          topic: event.topic,
+          eventId: event.id,
+        });
+      });
     });
   }
 
@@ -660,9 +667,24 @@ class EventRouter {
 
     if (matched.length === 0) return;
 
-    // 2. For each matched subscription, check scope and deliver
+    // 2. For each matched subscription, check scope and deliver.
+    // Isolate failures per subscription so one bad repo/task lookup or injection
+    // does not prevent other interested nodes from receiving the same event.
     for (const sub of matched) {
-      await this.deliverToSubscription(event, sub);
+      try {
+        await this.deliverToSubscription(event, sub);
+      } catch (err) {
+        log.warn('EventRouter: failed to deliver external event to subscription', {
+          error: err,
+          spaceId: event.spaceId,
+          topic: event.topic,
+          eventId: event.id,
+          workflowRunId: sub.workflowRunId,
+          taskId: sub.taskId,
+          nodeId: sub.nodeId,
+          agentName: sub.agentName,
+        });
+      }
     }
   }
 
