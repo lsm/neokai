@@ -49,8 +49,9 @@ Examples:
 github/lsm/neokai/pull_request.review_submitted
 github/lsm/neokai/pull_request.comment_created
 github/lsm/neokai/pull_request.synchronize
-github/lsm/neokai/check_suite.completed
+github/lsm/neokai/pull_request.closed
 github/lsm/neokai/issues.opened
+# Future CI adapter (Phase 3): github/lsm/neokai/check_suite.completed
 github/lsm/neokai/pull_request.*            ← wildcard: all PR events for this repo
 github/lsm/neokai/*.*                       ← wildcard: all events for this repo
 github/lsm/neokai/pull_request.review_*     ← prefix wildcard: all review events
@@ -60,7 +61,7 @@ github/lsm/neokai/pull_request.review_*     ← prefix wildcard: all review even
 
 1. `source` — adapter identifier (`github`, `slack`, `ci`). Lowercase, no slashes.
 2. `owner/repo` — from the event's repository context. Both lowercase for case-insensitive matching.
-3. `resource` — the GitHub resource type: `pull_request`, `issue`, `check_suite`, `pull_request_review`, etc.
+3. `resource` — the event resource type. V1 GitHub adapter emits PR-related resources (`pull_request`, `pull_request.comment`, `pull_request.review`, `pull_request.review_comment`). CI resources such as `check_suite` are Phase 3/future adapter scope.
 4. `action` — the specific action: `opened`, `review_submitted`, `comment_created`, `completed`, etc.
 5. All v1 topics use exactly 4 path segments. For resources without a natural `owner/repo` (e.g. a future Slack message), use a source-specific scope pair to preserve the same depth: `{source}/{workspace}/{channel}/{resource}.{action}` (for example, `slack/acme/eng/messages.created`). Adapters that do not have both scope levels should use a reserved placeholder segment such as `_` rather than emitting 3-segment topics.
 
@@ -94,7 +95,7 @@ We implement matching via a **trie-based prefix index** (see §4), not regex.
 export interface EventInterest {
   /**
    * Glob pattern matching event topics.
-   * Examples: 'github/*/*/pull_request.*', 'ci/*/*/check_suite.completed'
+   * Examples: 'github/*/*/pull_request.*', 'github/*/*/pull_request.review_*'
    */
   topic: string;
 
@@ -159,15 +160,15 @@ export interface WorkflowNodeAgent {
     },
     {
       "id": "monitor",
-      "name": "CI Monitor",
+      "name": "PR Monitor",
       "agents": [{
         "agentId": "...",
-        "name": "ci-monitor",
+        "name": "pr-monitor",
         "eventInterests": [
           {
-            "topic": "github/*/*/check_suite.completed",
+            "topic": "github/*/*/pull_request.*",
             "scope": "repo",
-            "label": "All CI completions in the repo"
+            "label": "All PR activity in the repo"
           }
         ]
       }]
@@ -304,9 +305,9 @@ class GitHubEventAdapter implements EventAdapter {
 
 The adapter subscribes to the existing `space.githubEvent.routed` DaemonHub event (already emitted by `SpaceGitHubService.appendTaskActivity`). It converts the event to `ExternalEvent` format and publishes to the bus.
 
-**Note — `action` field gap:** The current `space.githubEvent.routed` payload emitted by `appendTaskActivity` only includes `{ repo, prNumber, eventType, summary, externalUrl }`. It does NOT include `action`. The adapter needs the action to construct proper topics (e.g., `pull_request.review_submitted` vs `pull_request.opened`).
+**Note — normalized field gap:** The current `space.githubEvent.routed` payload emitted by `appendTaskActivity` only includes `{ repo, prNumber, eventType, summary, externalUrl }`. It does NOT include the stable dedupe identifiers or the full normalized GitHub fields needed for topic construction and fallback task resolution.
 
-**Fix:** Extend the `appendTaskActivity` payload in `SpaceGitHubService` to include `action`:
+**Fix:** Extend the `appendTaskActivity` payload in `SpaceGitHubService` to include the normalized fields consumed by the adapter:
 
 ```typescript
 // In space-github.ts, appendTaskActivity():
@@ -317,20 +318,26 @@ this.daemonHub?.emit('space.githubEvent.routed', {
         repo: `${event.repoOwner}/${event.repoName}`,
         prNumber: event.prNumber,
         eventType: event.eventType,
-        action: event.action,           // ← ADD THIS
+        action: event.action,
+        source: event.source,
         summary: event.summary,
+        prUrl: event.prUrl,
         externalUrl: event.externalUrl,
-        rawPayload: event.rawPayload,   // ← ADD THIS (for adapter consumers)
-        dedupeKey: event.dedupeKey,    // ← ADD THIS (for adapter deduplication)
-        deliveryId: event.deliveryId, // ← ADD THIS (unique GitHub delivery ID)
+        externalId: event.externalId,
+        actor: event.actor,
+        body: event.body,
+        occurredAt: event.occurredAt,
+        rawPayload: event.rawPayload,
+        dedupeKey: event.dedupeKey,
+        deliveryId: event.deliveryId,
     },
 });
 ```
 
-This is a four-field addition to `appendTaskActivity` — `action`, `rawPayload`, `dedupeKey`, and `deliveryId` are all already available on the `NormalizedSpaceGitHubEvent` at the call site. This is the only change to existing code.
+This is a payload-contract extension to `appendTaskActivity` using fields already available on the `NormalizedSpaceGitHubEvent` at the call site. `dedupeKey` and `deliveryId` are required for stable upstream event identity; `prUrl` and the other normalized fields keep the `SpacePrTaskResolver` fallback functional if `taskId` is absent.
 
 **Why this approach:**
-- Minimal change to the existing `SpaceGitHubService` — four additional fields (`action`, `deliveryId`, `dedupeKey`, `rawPayload`) in an existing DaemonHub emission.
+- Minimal change to the existing `SpaceGitHubService` — additional normalized fields in an existing DaemonHub emission, with no changes to ingestion/dedup/routing behavior.
 - The existing PR-to-task resolution (`SpacePrTaskResolver`) continues to work.
 - The existing Task Agent injection continues to work (we don't replace it, we supplement it).
 - The adapter is purely additive: it converts an already-normalized event into bus format.
@@ -361,8 +368,8 @@ root
               │   └── [subscriptions: coder(task)]
               ├── pull_request.comment_created
               │   └── [subscriptions: coder(task)]
-              └── check_suite.completed
-                  └── [subscriptions: ci-monitor(repo)]
+              └── pull_request.review_comment_created
+                  └── [subscriptions: coder(task)]
 ```
 
 The trie maps topic segments to `Set<Subscription>` at leaf nodes. Each node stores exact children separately from segment-local glob children. A glob segment may be a whole-segment wildcard (`*`) or a dotted segment wildcard (`pull_request.*`, `pull_request.review_*`, `*.*`).
@@ -718,12 +725,28 @@ class EventRouter {
         }
 
         // Fallback (should rarely happen): if the adapter didn't include taskId,
-        // resolve by PR and require that the resolver points to THIS task.
+        // resolve with the full normalized GitHub shape. SpacePrTaskResolver's
+        // primary queries use prUrl, so passing only owner/repo/prNumber would
+        // make this fallback ineffective for older routed payloads.
+        if (event.source !== 'github') return false;
         const resolved = this.prResolver.resolve(sub.spaceId, {
+          deliveryId: event.payload?.deliveryId as string | undefined,
+          dedupeKey: event.dedupeKey,
+          source: 'webhook',
+          eventType: event.payload?.eventType as string,
+          action: event.payload?.action as string,
           repoOwner: event.repoOwner ?? '',
           repoName: event.repoName ?? '',
           prNumber: event.prNumber,
-        } as any);
+          prUrl: (event.payload?.prUrl as string | undefined) ?? event.externalUrl,
+          actor: event.payload?.actor as string | undefined,
+          body: event.payload?.body as string | undefined,
+          summary: event.summary,
+          externalUrl: event.externalUrl,
+          externalId: event.payload?.externalId as string | undefined,
+          occurredAt: (event.payload?.occurredAt as string | undefined) ?? new Date(event.occurredAt).toISOString(),
+          rawPayload: event.payload?.rawPayload,
+        } as NormalizedSpaceGitHubEvent);
         return resolved.taskId === sub.taskId;
       }
     }
@@ -941,7 +964,7 @@ function isReceivingStatus(status: NodeExecutionStatus): boolean {
 
 ### Changes to existing code
 
-**Four-field addition.** The `appendTaskActivity` method in `space-github.ts` must include `action`, `rawPayload`, `dedupeKey`, and `deliveryId` in the `space.githubEvent.routed` DaemonHub payload. The adapter requires `dedupeKey` as the stable upstream event identity for per-subscription deduplication, and `deliveryId` preserves the unique GitHub delivery identifier used to build that identity. This is the only change to existing code. All other existing behavior (webhook handling, polling, normalization, Task Agent injection) remains unchanged.
+**Routed payload contract extension.** The `appendTaskActivity` method in `space-github.ts` must include the normalized fields consumed by the adapter in the `space.githubEvent.routed` DaemonHub payload, including `action`, `source`, `prUrl`, `externalId`, `actor`, `body`, `occurredAt`, `rawPayload`, `dedupeKey`, and `deliveryId`. The adapter requires `dedupeKey` as the stable upstream event identity for per-subscription deduplication, `deliveryId` preserves the unique GitHub delivery identifier used to build that identity, and `prUrl` keeps the `SpacePrTaskResolver` fallback functional. This is the only change to existing code. All other existing behavior (webhook handling, polling, normalization, Task Agent injection) remains unchanged.
 
 ```
 SpaceGitHubService.handleWebhook()
@@ -985,10 +1008,17 @@ class GitHubEventAdapter implements EventAdapter {
         summary: event.summary,
         externalUrl: event.externalUrl,
         payload: {
-          // Full normalized event for adapter consumers
+          // Full normalized event for adapter consumers and resolver fallback
           eventType: event.eventType,
           action: event.action,
+          source: event.source,
           taskId,
+          prUrl: event.prUrl,
+          deliveryId: event.deliveryId,
+          externalId: event.externalId,
+          actor: event.actor,
+          body: event.body,
+          occurredAt: event.occurredAt,
           rawPayload: event.rawPayload,   // Include original webhook/polling payload
         },
         dedupeKey: event.dedupeKey,  // Use upstream identity (includes deliveryId); avoids collapsing distinct events that share repo/pr/action/url
