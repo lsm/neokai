@@ -803,7 +803,10 @@ class EventRouter {
     const queue = this.pendingQueue.get(key) ?? [];
     queue.push(event);
     if (queue.length > 50) {
-      queue.shift();
+      const evicted = queue.shift()!;
+      // Clear pending marker for evicted event so it can be re-queued if needed
+      const evictedKey = this.makeDeliveryKey(evicted, sub);
+      this.pendingDeliveries.delete(evictedKey);
       log.warn('EventRouter: pending external event queue exceeded limit; dropped oldest event', {
         workflowRunId: sub.workflowRunId,
         taskId: sub.taskId,
@@ -899,14 +902,20 @@ class EventRouter {
         return;
       }
       // Use try/catch to prevent unhandled promise rejections in retry path (P2 fix)
-      this.deliverToSubscription(event, sub).catch((err) => {
-        log.warn('EventRouter: retry delivery failed', {
-          error: err,
-          retries,
-          dedupeKey,
-          workflowRunId: sub.workflowRunId,
+      // Also reset retry state on successful delivery (P2 #4 fix)
+      this.deliverToSubscription(event, sub)
+        .then(() => {
+          // Success: clear retry state so this key can be retried fresh if needed later
+          this.retryCounts.delete(dedupeKey);
+        })
+        .catch((err) => {
+          log.warn('EventRouter: retry delivery failed', {
+            error: err,
+            retries,
+            dedupeKey,
+            workflowRunId: sub.workflowRunId,
+          });
         });
-      });
     }, backoff);
   }
   }
