@@ -848,7 +848,7 @@ describe('list_peers — peer discovery with channel info', () => {
 
 		const result = parse(await handlers.list_peers({}));
 		expect(result.channelTopologyDeclared).toBe(false);
-		expect(result.permittedTargets as string[]).toEqual(['task-agent', 'space-agent']);
+		expect(result.permittedTargets as string[]).toEqual(['task-agent']);
 	});
 
 	test('returns empty peers when no tasks with sessions exist', async () => {
@@ -1271,7 +1271,7 @@ describe('Step with no channels declared', () => {
 
 		const result = parse(await handlers.list_peers({}));
 		expect(result.channelTopologyDeclared).toBe(false);
-		expect(result.permittedTargets as string[]).toEqual(['task-agent', 'space-agent']);
+		expect(result.permittedTargets as string[]).toEqual(['task-agent']);
 	});
 });
 
