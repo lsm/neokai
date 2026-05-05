@@ -1126,6 +1126,57 @@ describe('TaskAgentManager.tryResumeNodeAgentSession', () => {
 				'To reply, use: send_message with target "task-agent"'
 		);
 	});
+
+	test('wraps legacy Space Agent pending messages with an envelope on flush', async () => {
+		const pendingRepo = new PendingAgentMessageRepository(ctx.bunDb);
+		const injected: Array<{ spaceId: string; message: string }> = [];
+
+		const wfRunId = 'run-resume-legacy-space-pending-1';
+		const wfId = 'wf-resume-legacy-space-pending-1';
+		const nodeId = 'node-resume-legacy-space-pending-1';
+		seedWorkflowRun(ctx, wfRunId, wfId, nodeId);
+
+		const parentTask = await ctx.taskManager.createTask({
+			title: 'Parent task for legacy Space Agent pending delivery',
+			description: '',
+			taskType: 'coding',
+			status: 'in_progress',
+			workflowRunId: wfRunId,
+		});
+
+		pendingRepo.enqueue({
+			workflowRunId: wfRunId,
+			spaceId: ctx.spaceId,
+			taskId: parentTask.id,
+			sourceAgentName: 'task-agent',
+			targetKind: 'space_agent',
+			targetAgentName: 'space-agent',
+			message: 'legacy escalation body',
+		});
+
+		const existingConfig = (ctx.manager as unknown as { config: Record<string, unknown> }).config;
+		const manager = new TaskAgentManager({
+			...existingConfig,
+			pendingMessageRepo: pendingRepo,
+			spaceAgentInjector: async (spaceId, message) => {
+				injected.push({ spaceId, message });
+			},
+		} as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
+
+		await manager.flushPendingMessagesForSpaceAgent(ctx.spaceId, wfRunId);
+
+		expect(injected).toEqual([
+			{
+				spaceId: ctx.spaceId,
+				message:
+					'─── Message from task-agent ───\n\n' +
+					'legacy escalation body\n\n' +
+					'─── Reply ───\n' +
+					`To reply, use: send_message_to_task with task_id="${parentTask.id}"`,
+			},
+		]);
+		expect(pendingRepo.listPendingForTarget(wfRunId, 'space-agent')).toHaveLength(0);
+	});
 	test('flushes human-originated pending messages as non-synthetic', async () => {
 		const pendingRepo = new PendingAgentMessageRepository(ctx.bunDb);
 

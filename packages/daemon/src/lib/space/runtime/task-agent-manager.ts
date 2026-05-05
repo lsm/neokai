@@ -1695,8 +1695,17 @@ export class TaskAgentManager {
 		);
 
 		for (const row of pending) {
+			const message = hasAgentMessageEnvelope(row.message)
+				? row.message
+				: formatAgentMessage({
+						fromLevel: row.sourceAgentName === 'task-agent' ? 'task-agent' : 'node-agent',
+						fromAgentName: row.sourceAgentName,
+						toLevel: 'space-agent',
+						body: row.message,
+						taskId: row.taskId,
+					});
 			try {
-				await inject(spaceId, row.message);
+				await inject(spaceId, message);
 				repo.markDelivered(row.id, spaceChatSessionId);
 				this.emitPendingDelivered(row.id, spaceChatSessionId, row);
 			} catch (err) {
