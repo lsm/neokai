@@ -6,6 +6,7 @@
  * Column mapping:
  *   SpaceAgent.customPrompt   ↔  custom_prompt column (nullable text)
  *   SpaceAgent.tools          ↔  tools column (JSON string array; '[]' or null → undefined)
+ *   SpaceAgent.thinkingLevel  ↔  thinking_level column (nullable text)
  *   SpaceAgent.templateName   ↔  template_name column (nullable text; null for user-created agents)
  *   SpaceAgent.templateHash   ↔  template_hash column (nullable text; null for user-created agents)
  */
@@ -28,9 +29,9 @@ export class SpaceAgentRepository {
 		this.db
 			.prepare(
 				`INSERT INTO space_agents
-					(id, space_id, name, description, model, provider, tools, custom_prompt,
+					(id, space_id, name, description, model, thinking_level, provider, tools, custom_prompt,
 					 template_name, template_hash, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				id,
@@ -38,6 +39,7 @@ export class SpaceAgentRepository {
 				params.name,
 				params.description ?? '',
 				params.model ?? null,
+				params.thinkingLevel ?? null,
 				params.provider ?? null,
 				params.tools && params.tools.length > 0 ? JSON.stringify(params.tools) : '[]',
 				params.customPrompt ?? null,
@@ -121,6 +123,10 @@ export class SpaceAgentRepository {
 			fields.push('model = ?');
 			values.push(params.model ?? null);
 		}
+		if (params.thinkingLevel !== undefined) {
+			fields.push('thinking_level = ?');
+			values.push(params.thinkingLevel ?? null);
+		}
 		if (params.provider !== undefined) {
 			fields.push('provider = ?');
 			values.push(params.provider ?? null);
@@ -193,6 +199,8 @@ export class SpaceAgentRepository {
 			name: row.name as string,
 			description: (row.description as string) || undefined,
 			model: (row.model as string | null) ?? undefined,
+			thinkingLevel:
+				(row.thinking_level as SpaceAgent['thinkingLevel'] | null | undefined) ?? undefined,
 			provider: (row.provider as string | null) ?? undefined,
 			customPrompt: (row.custom_prompt as string | null) ?? null,
 			tools,

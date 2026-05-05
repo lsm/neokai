@@ -20,11 +20,12 @@ import { act, renderHook } from '@testing-library/preact';
 // Hoisted mock for useMessageHub
 // ---------------------------------------------------------------------------
 
-const { mockRequest, mockOnEvent, mockIsConnected } = vi.hoisted(() => ({
+const { mockRequest, mockOnEvent, mockGetHub, mockIsConnected } = vi.hoisted(() => ({
 	mockRequest: vi.fn().mockResolvedValue(undefined),
 	mockOnEvent: vi.fn<(method: string, handler: (event: unknown) => void) => () => void>(
 		() => () => {}
 	),
+	mockGetHub: vi.fn(),
 	mockIsConnected: { value: true },
 }));
 
@@ -32,6 +33,7 @@ vi.mock('../useMessageHub', () => ({
 	useMessageHub: () => ({
 		request: mockRequest,
 		onEvent: mockOnEvent,
+		getHub: mockGetHub,
 		get isConnected() {
 			return mockIsConnected.value;
 		},
@@ -62,7 +64,9 @@ describe('useSpaceTaskMessages', () => {
 	beforeEach(() => {
 		mockRequest.mockReset();
 		mockOnEvent.mockReset();
+		mockGetHub.mockReset();
 		mockRequest.mockResolvedValue(undefined);
+		mockGetHub.mockReturnValue({ request: mockRequest, onConnection: vi.fn(() => () => {}) });
 		mockIsConnected.value = true;
 		eventHandlers = {};
 		mockOnEvent.mockImplementation((method: string, handler: EventHandler) => {
@@ -195,6 +199,48 @@ describe('useSpaceTaskMessages', () => {
 				await Promise.resolve();
 			});
 
+			expect(result.current.isLoading).toBe(false);
+		});
+
+		it('re-subscribes and waits for a fresh snapshot after reconnect', () => {
+			let connectionHandler: ((state: string) => void) | null = null;
+			mockGetHub.mockReturnValue({
+				request: mockRequest,
+				onConnection: vi.fn((handler: (state: string) => void) => {
+					connectionHandler = handler;
+					return () => {};
+				}),
+			});
+
+			const { result } = renderHook(() => useSpaceTaskMessages('task-1'));
+			const firstSubId = lastSubscribeSubId();
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: firstSubId,
+					rows: [{ id: 'msg-1', taskId: 'task-1', createdAt: 1 }],
+					version: 1,
+				});
+			});
+			expect(result.current.isLoading).toBe(false);
+			expect(result.current.rows).toHaveLength(1);
+
+			act(() => {
+				connectionHandler?.('connected');
+			});
+
+			expect(
+				mockRequest.mock.calls.filter(([method]) => method === 'liveQuery.subscribe')
+			).toHaveLength(2);
+			expect(result.current.isLoading).toBe(true);
+			expect(result.current.rows).toHaveLength(1);
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: firstSubId,
+					rows: [{ id: 'msg-1', taskId: 'task-1', createdAt: 1 }],
+					version: 2,
+				});
+			});
 			expect(result.current.isLoading).toBe(false);
 		});
 	});

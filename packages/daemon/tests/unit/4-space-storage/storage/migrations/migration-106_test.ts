@@ -41,6 +41,7 @@ interface AgentRow {
 	description: string | null;
 	tools: string | null;
 	custom_prompt: string | null;
+	thinking_level: string | null;
 }
 
 function insertSpace(db: BunDatabase, id: string): void {
@@ -60,6 +61,7 @@ function insertAgent(
 		description?: string;
 		tools?: string[];
 		customPrompt?: string | null;
+		thinkingLevel?: string | null;
 		templateName?: string | null;
 		templateHash?: string | null;
 	}
@@ -67,8 +69,8 @@ function insertAgent(
 	const now = Date.now();
 	db.prepare(
 		`INSERT INTO space_agents (
-			id, space_id, name, description, tools, custom_prompt, template_name, template_hash, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			id, space_id, name, description, tools, custom_prompt, thinking_level, template_name, template_hash, created_at, updated_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	).run(
 		opts.id,
 		opts.spaceId,
@@ -76,6 +78,7 @@ function insertAgent(
 		opts.description ?? '',
 		JSON.stringify(opts.tools ?? []),
 		opts.customPrompt ?? null,
+		opts.thinkingLevel ?? null,
 		opts.templateName ?? null,
 		opts.templateHash ?? null,
 		now,
@@ -86,7 +89,7 @@ function insertAgent(
 function readAgent(db: BunDatabase, id: string): AgentRow | undefined {
 	return db
 		.prepare(
-			`SELECT id, name, template_name, template_hash, description, tools, custom_prompt
+			`SELECT id, name, template_name, template_hash, description, tools, custom_prompt, thinking_level
 			   FROM space_agents WHERE id = ?`
 		)
 		.get(id) as AgentRow | undefined;

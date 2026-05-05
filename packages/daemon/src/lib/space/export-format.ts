@@ -77,10 +77,13 @@ const declarativeToolGuardSchema = z.object({
 	reason: z.string().min(1),
 });
 
+const thinkingLevelSchema = z.enum(['auto', 'think8k', 'think16k', 'think32k']);
+
 const exportedWorkflowNodeAgentSchema = z.object({
 	agentRef: z.string().min(1),
 	name: z.string().min(1),
 	model: z.string().min(1).optional(),
+	thinkingLevel: thinkingLevelSchema.optional(),
 	systemPrompt: overrideOrStringSchema.optional(),
 	instructions: overrideOrStringSchema.optional(),
 	/** IDs of globally-enabled skills disabled for this slot. */
@@ -130,6 +133,7 @@ const exportedAgentBaseSchema = z.object({
 	name: z.string().min(1),
 	description: z.string().optional(),
 	model: z.string().optional(),
+	thinkingLevel: thinkingLevelSchema.optional(),
 	provider: z.string().optional(),
 	systemPrompt: z.string().optional(),
 	instructions: z.string().optional(),
@@ -204,6 +208,7 @@ export function exportAgent(agent: SpaceAgent): ExportedSpaceAgent {
 	};
 	if (agent.description !== undefined) exported.description = agent.description;
 	if (agent.model !== undefined) exported.model = agent.model;
+	if (agent.thinkingLevel !== undefined) exported.thinkingLevel = agent.thinkingLevel;
 	if (agent.provider !== undefined) exported.provider = agent.provider;
 	if (agent.customPrompt !== null && agent.customPrompt !== undefined)
 		exported.systemPrompt = agent.customPrompt;
@@ -253,6 +258,7 @@ export function exportWorkflow(
 				name: a.name,
 			};
 			if (a.model !== undefined) entry.model = a.model;
+			if (a.thinkingLevel !== undefined) entry.thinkingLevel = a.thinkingLevel;
 			if (a.customPrompt !== undefined) entry.systemPrompt = a.customPrompt;
 			if (a.disabledSkillIds !== undefined) entry.disabledSkillIds = a.disabledSkillIds;
 			if (a.extraMcpServers !== undefined) entry.extraMcpServers = a.extraMcpServers;

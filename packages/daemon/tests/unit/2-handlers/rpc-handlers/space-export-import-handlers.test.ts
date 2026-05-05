@@ -59,6 +59,7 @@ function createSchema(db: Database): void {
 			description TEXT NOT NULL DEFAULT '',
 			model TEXT,
 			provider TEXT,
+			thinking_level TEXT DEFAULT NULL,
 			tools TEXT NOT NULL DEFAULT '[]',
 			custom_prompt TEXT,
 			template_name TEXT DEFAULT NULL,
@@ -1058,6 +1059,44 @@ describe('Space Export/Import RPC Handlers', () => {
 				const agent = agentRepo.getById(existing.id)!;
 				expect(agent.customPrompt).toBeNull();
 			});
+
+			it('replaces thinkingLevel when present in exported agent', async () => {
+				const existing = agentRepo.create({
+					spaceId: SPACE_ID,
+					name: 'Coder',
+					thinkingLevel: 'think8k',
+				});
+
+				const bundle = makeBundle([{ name: 'Coder', thinkingLevel: 'think16k' }], []);
+
+				await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle,
+					conflictResolution: { agents: { Coder: 'replace' } },
+				});
+
+				const agent = agentRepo.getById(existing.id)!;
+				expect(agent.thinkingLevel).toBe('think16k');
+			});
+
+			it('clears thinkingLevel when not present in exported agent', async () => {
+				const existing = agentRepo.create({
+					spaceId: SPACE_ID,
+					name: 'Coder',
+					thinkingLevel: 'think16k',
+				});
+
+				const bundle = makeBundle([{ name: 'Coder', role: 'coder' }], []);
+
+				await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle,
+					conflictResolution: { agents: { Coder: 'replace' } },
+				});
+
+				const agent = agentRepo.getById(existing.id)!;
+				expect(agent.thinkingLevel).toBeUndefined();
+			});
 		});
 	});
 
@@ -1507,7 +1546,13 @@ describe('multi-agent step import', () => {
 
 // ─── Bundle builder helpers ───────────────────────────────────────────────────
 
-type BundleAgent = { name: string; customPrompt?: string; model?: string; role?: string };
+type BundleAgent = {
+	name: string;
+	customPrompt?: string;
+	model?: string;
+	thinkingLevel?: 'auto' | 'think8k' | 'think16k' | 'think32k';
+	role?: string;
+};
 type BundleWorkflow = {
 	name: string;
 	nodes: Array<{ agentRef: string; name: string }>;
@@ -1524,6 +1569,7 @@ function makeBundle(agents: BundleAgent[], workflows: BundleWorkflow[]): object 
 			name: a.name,
 			...(a.customPrompt ? { systemPrompt: a.customPrompt } : {}),
 			...(a.model ? { model: a.model } : {}),
+			...(a.thinkingLevel ? { thinkingLevel: a.thinkingLevel } : {}),
 		})),
 		workflows: workflows.map((w) => ({
 			version: 1,

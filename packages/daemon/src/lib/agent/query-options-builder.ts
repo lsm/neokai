@@ -547,8 +547,11 @@ export class QueryOptionsBuilder {
 			result.resumeSessionAt = resumeSessionAt;
 		}
 
-		// Add thinking configuration based on thinkingLevel config
-		const thinkingLevel = (this.ctx.session.config.thinkingLevel || 'auto') as ThinkingLevel;
+		// Add thinking configuration based on the session override, falling back to the app default.
+		const globalSettings = this.ctx.settingsManager.getGlobalSettings();
+		const thinkingLevel = (this.ctx.session.config.thinkingLevel ??
+			globalSettings.thinkingLevel ??
+			'auto') as ThinkingLevel;
 		result.thinking = this.thinkingLevelToThinkingConfig(thinkingLevel);
 
 		return result as Options;
