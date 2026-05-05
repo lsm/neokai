@@ -376,6 +376,13 @@ describe('CODING_WORKFLOW template', () => {
 		expect(prField.check.op).toBe('exists');
 	});
 
+	test('code-ready-gate PR comment poll preserves GraphQL variable names for gh', () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
+		expect(gate.poll?.script).toContain("QUERY='query($owner:String!,$name:String!,$number:Int!)");
+		expect(gate.poll?.script).toContain('repository(owner:$owner,name:$name)');
+		expect(gate.poll?.script).toContain('pullRequest(number:$number)');
+	});
+
 	test('code-ready-gate has a bash script that checks PR mergeability and outputs pr_url', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
 		expect(gate.script).toBeDefined();
@@ -2019,6 +2026,7 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(gate.script).toBeDefined();
 		expect(gate.script!.interpreter).toBe('bash');
 		expect(gate.script!.timeoutMs).toBe(30000);
+		expect(gate.poll?.target).toBe('from');
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
