@@ -449,8 +449,10 @@ class EventRouter {
   // track which runs have active subscriptions (for lifecycle management)
   private activeRuns: Map<string, Set<Subscription>> = new Map();
 
-  // dedup: (dedupeKey, agentSessionId) → timestamp
+  // dedup: JSON tuple (dedupeKey, taskId, nodeId, agentName, workflowRunId) → timestamp
   private delivered: Map<string, number> = new Map();
+  // pending delivery queue: JSON tuple (workflowRunId, taskId, nodeId, agentName) → events
+  private pendingQueue: Map<string, ExternalEvent[]> = new Map();
   // TTL for dedup entries — entries older than this are evicted on next access
   private static readonly DEDUP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -509,6 +511,17 @@ class EventRouter {
     } else {
       this.watchedRepoCache.clear();
     }
+  }
+
+  private makeDeliveryKey(event: ExternalEvent, sub: Subscription): string {
+    // Use a structured tuple key: event.dedupeKey and workflow/node/agent ids are
+    // free-form strings and can contain ':', '/', or other delimiter characters.
+    return JSON.stringify([event.dedupeKey, sub.taskId, sub.nodeId, sub.agentName, sub.workflowRunId]);
+  }
+
+  private makePendingQueueKey(sub: Pick<Subscription, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>): string {
+    // Same collision-safe shape as subscription/delivery keys.
+    return JSON.stringify([sub.workflowRunId, sub.taskId, sub.nodeId, sub.agentName]);
   }
 
   /** Evict stale dedup entries (called periodically or on demand). */
@@ -662,22 +675,20 @@ class EventRouter {
     this.topicTrie.remove(v => v.workflowRunId === workflowRunId);
     this.activeRuns.delete(workflowRunId);
 
-    // Also clean up dedup entries for this run.
-    // Delivery keys are: `${event.dedupeKey}:${sub.taskId}:${sub.nodeId}:${sub.agentName}:${workflowRunId}`
-    // The run ID is the final segment — match with suffix `:${workflowRunId}`.
-    const suffix = `:${workflowRunId}`;
+    // Also clean up dedup entries for this run. Keys are JSON tuples, so parse
+    // structurally rather than suffix-matching delimiter-joined strings.
     for (const key of this.delivered.keys()) {
-      if (key.endsWith(suffix)) {
+      const [, , , , keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string, string];
+      if (keyWorkflowRunId === workflowRunId) {
         this.delivered.delete(key);
       }
     }
 
-    // Clean up in-memory pending queue for this run.
-    // Keys are `${workflowRunId}:${taskId}:${nodeId}:${agentName}` — use the
-    // delimiter to avoid false prefix matches (e.g., run "abc1" matching "abc10:*").
-    const runPrefix = `${workflowRunId}:`;
-    for (const [key, events] of this.pendingQueue.entries()) {
-      if (key.startsWith(runPrefix)) {
+    // Clean up in-memory pending queue for this run. Keys are JSON tuples, so parse
+    // structurally rather than prefix-matching delimiter-joined strings.
+    for (const key of this.pendingQueue.keys()) {
+      const [keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string];
+      if (keyWorkflowRunId === workflowRunId) {
         this.pendingQueue.delete(key);
       }
     }
@@ -719,7 +730,7 @@ class EventRouter {
     // run. Each task/node/agent subscription is deduped independently.
     // Evict before checking so DEDUP_TTL_MS is actually enforced during long runs.
     this.evictStaleDedup();
-    const dedupeKey = `${event.dedupeKey}:${sub.taskId}:${sub.nodeId}:${sub.agentName}:${sub.workflowRunId}`;
+    const dedupeKey = this.makeDeliveryKey(event, sub);
     if (this.delivered.has(dedupeKey)) return;
 
     // Mark dedup BEFORE session resolution / queueing. This prevents the same
@@ -757,6 +768,22 @@ class EventRouter {
       // this run. A fresh event will arrive via the next poll cycle if the
       // underlying external event is still relevant.
     }
+  }
+
+  private queueForDelivery(event: ExternalEvent, sub: Subscription): void {
+    const key = this.makePendingQueueKey(sub);
+    const queue = this.pendingQueue.get(key) ?? [];
+    queue.push(event);
+    if (queue.length > 50) {
+      queue.shift();
+      log.warn('EventRouter: pending external event queue exceeded limit; dropped oldest event', {
+        workflowRunId: sub.workflowRunId,
+        taskId: sub.taskId,
+        nodeId: sub.nodeId,
+        agentName: sub.agentName,
+      });
+    }
+    this.pendingQueue.set(key, queue);
   }
 
   private passesScopeCheck(event: ExternalEvent, sub: Subscription): boolean {
@@ -848,7 +875,7 @@ Event arrives → Match subscriptions → Scope check → Dedup check → Sessio
 
 ### Deduplication
 
-- **Key**: `(event.dedupeKey, subscription.taskId, subscription.nodeId, subscription.agentName, subscription.workflowRunId)` — includes `taskId` to isolate multi-task runs and `nodeId` to handle cases where the same agent name appears in multiple nodes within the same run.
+- **Key**: JSON tuple `[event.dedupeKey, subscription.taskId, subscription.nodeId, subscription.agentName, subscription.workflowRunId]` — includes `taskId` to isolate multi-task runs and `nodeId` to handle cases where the same agent name appears in multiple nodes within the same run. The tuple is encoded structurally rather than delimiter-joined because `dedupeKey`, workflow identifiers, node IDs, and agent names are free-form strings.
 - **Storage**: In-memory `Map<string, number>` (timestamp). Evicted when the workflow run completes.
 - **Guarantee**: Same external event is never delivered twice to the same node agent within a run.
 - The upstream `SpaceGitHubService` already deduplicates by `(spaceId, dedupeKey)` — this is an additional per-node dedup.
@@ -865,7 +892,7 @@ When an event matches a subscription whose node execution is `idle` (agent sessi
 
 When a node execution is `pending` (no session yet):
 
-1. The event is queued in an in-memory `Map<string, ExternalEvent[]>` keyed by `${workflowRunId}:${taskId}:${nodeId}:${agentName}`.
+1. The event is queued in an in-memory `Map<string, ExternalEvent[]>` keyed by a JSON tuple `[workflowRunId, taskId, nodeId, agentName]` so free-form identifiers cannot collide by containing delimiter characters.
 2. When `TaskAgentManager` creates the node's session, it checks for queued events.
 3. Queued events are injected as initial context in the session's first turn.
 4. Queue is bounded: max 50 events per execution, oldest dropped (with a warning log).
