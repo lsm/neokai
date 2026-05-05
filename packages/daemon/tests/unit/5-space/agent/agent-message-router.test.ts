@@ -457,6 +457,36 @@ describe('AgentMessageRouter: built-in inter-level targets', () => {
 		]);
 		expect(spaceMessages).toEqual([]);
 	});
+
+	test('does not route a sender named space-agent to the built-in Space Agent', async () => {
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[]
+		);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'space-agent', ctx.coderSessionId);
+		const spaceMessages: Array<{ spaceId: string; message: string }> = [];
+		const router = makeRouter(ctx, workflowRunId, [], runChannels, {
+			spaceId: ctx.spaceId,
+			taskId: 'task-123',
+			taskNumber: 236,
+			spaceAgentInjector: async (spaceId, message) => {
+				spaceMessages.push({ spaceId, message });
+			},
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'space-agent',
+			fromSessionId: ctx.coderSessionId,
+			target: 'space-agent',
+			message: 'Do not escalate this self-target',
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.reason).toContain("Unknown target 'space-agent'");
+		expect(spaceMessages).toEqual([]);
+	});
+
 	test('uses an envelope when delivering node messages to the Task Agent', async () => {
 		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
 			ctx.db,

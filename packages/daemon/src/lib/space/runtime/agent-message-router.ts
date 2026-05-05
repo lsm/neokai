@@ -256,6 +256,7 @@ export class AgentMessageRouter {
 
 		const shouldUseBuiltInSpaceAgent = (targetName: string): boolean =>
 			targetName === 'space-agent' &&
+			targetName !== fromAgentName &&
 			Boolean(spaceAgentInjector && spaceId) &&
 			!peers.some((peer) => peer.agentName === targetName) &&
 			!(nodeGroups && nodeGroups[targetName]) &&
