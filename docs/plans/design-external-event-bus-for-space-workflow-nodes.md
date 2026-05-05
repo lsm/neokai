@@ -25,11 +25,11 @@ External Event Sources (GitHub webhook, polling, future: Slack, CI)
 │  EventIngestion     │  Normalize → validate → publish to EventBus
 │  (adapter per source│
 └────────┬────────────┘
-         │ publish(topic, payload)
+         │ publish(event) → hub.emit('space.externalEvent.published', { event })
          ▼
 ┌─────────────────────┐
-│  EventBus           │  In-memory, backed by TypedHub. Namespaced topics.
-│  (singleton)        │  O(1) subscriber lookup by topic pattern.
+│  EventBus           │  In-memory, backed by TypedHub. External topic is payload data.
+│  (singleton)        │  Fixed TypedHub-safe method; router trie matches event.topic.
 └────────┬────────────┘
          │
          ▼
@@ -269,6 +269,20 @@ export interface EventAdapter {
 export interface EventPublisher {
   publish(event: ExternalEvent): Promise<void>;
 }
+
+/**
+ * TypedHub/MessageHub method used by EventBus.
+ *
+ * IMPORTANT: raw external topics (e.g. `github/lsm/neokai/pull_request.opened`)
+ * are NOT used as TypedHub method names because MessageHub validates methods
+ * with `[a-zA-Z0-9._-]`, requires a dot, and rejects `/` and `*`.
+ * The external topic stays in `ExternalEvent.topic` and is matched by EventRouter.
+ */
+export const EXTERNAL_EVENT_PUBLISHED_METHOD = 'space.externalEvent.published';
+
+export interface EventBusHubEventMap {
+  'space.externalEvent.published': { event: ExternalEvent };
+}
 ```
 
 ### GitHub adapter
@@ -347,11 +361,12 @@ This is a payload-contract extension to `appendTaskActivity` using fields alread
 
 ### Architecture
 
-The `EventRouter` subscribes to all topics on the `EventBus`. When an event arrives, it:
+The `EventRouter` subscribes to the fixed TypedHub-safe EventBus method (`space.externalEvent.published`). When an event arrives, it:
 
-1. Looks up all active node executions that have `eventInterests`.
-2. For each matching interest, checks scope.
-3. Delivers the event to the matching node's agent session.
+1. Reads the external topic from `event.topic` in the payload.
+2. Looks up all active node executions that have `eventInterests` matching that payload topic.
+3. For each matching interest, checks scope.
+4. Delivers the event to the matching node's agent session.
 
 ### Trie-based subscription index
 
@@ -430,8 +445,9 @@ class EventRouter {
     private readonly prResolver: SpacePrTaskResolver,
     private readonly spaceGitHubRepo: SpaceGitHubRepository,
   ) {
-    // Subscribe to ALL events on the bus
-    this.eventBus.subscribe('*', this.handleEvent.bind(this));
+    // Subscribe to the fixed TypedHub-safe method. External topic matching happens
+    // inside handleEvent via event.topic, not via the hub method name.
+    this.eventBus.subscribe(EXTERNAL_EVENT_PUBLISHED_METHOD, ({ event }) => this.handleEvent(event));
   }
 
   /** Check if a repo is watched for a given space. Uses cached data. */
@@ -809,7 +825,7 @@ If persistent queuing is needed in a future iteration, events can be persisted t
 
 - **Rate limiting**: If a single node receives > 10 events per minute, subsequent events are coalesced into a digest message: "N additional events received in the last minute. Summary: ..."
 - **Event TTL**: Events older than 5 minutes are dropped from the queue (they're likely stale for an agent's decision-making).
-- **Bus overflow**: The `EventBus` uses TypedHub's async-everywhere design — slow consumers don't block publishers. Handlers run via `queueMicrotask`.
+- **Bus overflow**: The `EventBus` uses TypedHub's async-everywhere design with the fixed method `space.externalEvent.published` — slow consumers don't block publishers. Handlers run via `queueMicrotask`; external slash/glob topics remain payload data and are never used as MessageHub method names.
 
 ## 6. Topic Trie Implementation
 
@@ -1208,7 +1224,7 @@ await githubAdapter.start(eventBus);
 
 | Existing system | Relationship |
 |---|---|
-| **DaemonHub / TypedHub** | `EventBus` is a TypedHub participant on the shared `InProcessTransportBus`. The bus uses the same async-everywhere, session-scoped routing that DaemonHub uses. |
+| **DaemonHub / TypedHub** | `EventBus` is a TypedHub participant on the shared `InProcessTransportBus`. It publishes all external events through the fixed valid method `space.externalEvent.published`; slash-delimited external topics stay in `ExternalEvent.topic` and are matched by the router trie. |
 | **GitHubService** (Room pipeline) | Unchanged. Continues routing to Rooms. The event bus is additive. |
 | **SpaceGitHubService** (Space pipeline) | Unchanged. Continues injecting into Task Agent. The GitHub adapter subscribes to `space.githubEvent.routed` as an additional consumer. |
 | **SessionNotificationSink** | The event bus uses the same `sessionFactory.injectMessage()` with `deliveryMode: 'defer'` pattern. |
@@ -1225,7 +1241,7 @@ TypedHub provides:
 - Already wired into the daemon's lifecycle.
 - No new dependency.
 
-Using TypedHub as the backing transport means the EventBus inherits all of these properties for free.
+Using TypedHub as the backing transport means the EventBus inherits all of these properties for free. The bus does **not** use external topic strings as TypedHub method names: raw topics contain `/` and glob `*`, which violate MessageHub method validation. Instead, EventBus publishes every external event under the fixed valid method `space.externalEvent.published` and places the external topic in `ExternalEvent.topic` for trie matching.
 
 ### Why not route through AgentMessageRouter?
 
