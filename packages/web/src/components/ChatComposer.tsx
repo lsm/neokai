@@ -192,6 +192,7 @@ export function ChatComposer({
 							leadingPaddingClass={inputLeadingPaddingClass}
 							onDraftActiveChange={onDraftActiveChange}
 							isProcessing={isProcessing}
+							canQueueMessages={!inputLeadingElement}
 						/>
 					)
 				)}
