@@ -306,7 +306,7 @@ describe('SpaceRuntime', () => {
 			expect(recoveredRun.failureReason).toBeUndefined();
 		});
 
-		test('reopening a blocked workflow task restarts gate polls', async () => {
+		test('reopening a blocked workflow task does not resurrect removed gate polls', async () => {
 			runtime.setTaskAgentManager({
 				isExecutionSpawning: () => false,
 				isSessionAlive: () => true,
@@ -343,12 +343,63 @@ describe('SpaceRuntime', () => {
 
 			workflowRunRepo.transitionStatus(run.id, 'blocked');
 			taskRepo.updateTask(task.id, { status: 'blocked', blockReason: 'human_input_requested' });
-			runtime.stop();
-			expect(runtime.isGatePollActive(run.id, 'recover-gate')).toBe(false);
+			workflowManager.updateWorkflow(workflow.id, { gates: [] });
 
 			await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'open');
 
-			expect(runtime.isGatePollActive(run.id, 'recover-gate')).toBe(true);
+			expect(runtime.isGatePollActive(run.id, 'recover-gate')).toBe(false);
+			expect(runtime.getActiveGatePollCount()).toBe(0);
+			await runtime.stop();
+		});
+
+		test('reopening a blocked workflow task restarts gate polls from latest workflow config', async () => {
+			runtime.setTaskAgentManager({
+				isExecutionSpawning: () => false,
+				isSessionAlive: () => true,
+				spawnWorkflowNodeAgentForExecution: async () => 'session-1',
+				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
+				rehydrate: async () => {},
+				injectSubSessionMessage: () => {},
+			} as never);
+
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+				],
+				[],
+				{
+					channels: [
+						{ id: 'recover-polled-channel-2', from: 'Plan', to: 'Code', gateId: 'recover-gate-2' },
+					],
+					gates: [
+						{
+							id: 'recover-gate-2',
+							resetOnCycle: false,
+							poll: { intervalMs: 60_000, script: 'printf poll', target: 'to' },
+						},
+					],
+				}
+			);
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Recover poll latest'
+			);
+			const task = tasks[0];
+
+			workflowRunRepo.transitionStatus(run.id, 'blocked');
+			taskRepo.updateTask(task.id, { status: 'blocked', blockReason: 'human_input_requested' });
+			runtime.stop();
+			expect(runtime.isGatePollActive(run.id, 'recover-gate-2')).toBe(false);
+
+			await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'open');
+
+			expect(runtime.isGatePollActive(run.id, 'recover-gate-2')).toBe(true);
+			expect(runtime.getActiveGatePollCount()).toBe(1);
 			await runtime.stop();
 		});
 

@@ -1419,8 +1419,13 @@ export class SpaceRuntime {
 		if (!this.pollManager) return;
 		if (run.status === 'done' || run.status === 'cancelled') return;
 
-		const workflow = this.executorMeta.get(run.id)?.workflow;
-		if (!workflow?.gates?.some((gate) => gate.poll)) return;
+		const workflow =
+			this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ??
+			this.executorMeta.get(run.id)?.workflow;
+		if (!workflow?.gates?.some((gate) => gate.poll)) {
+			this.pollManager.stopPolls(run.id);
+			return;
+		}
 
 		const canonicalTask = this.pickCanonicalTaskForRun(
 			run,
