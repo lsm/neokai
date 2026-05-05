@@ -555,6 +555,7 @@ class EventRouter {
     private readonly taskRepo: SpaceTaskRepository,
     private readonly spaceTaskManager: SpaceTaskManager,
     private readonly sessionFactory: SessionFactory,
+    private readonly eventStore: ExternalEventStore,
     private readonly watchedRepoLookup: WatchedRepoLookup,
   ) {
     // Subscribe to the fixed TypedHub-safe method. External topic matching happens
@@ -696,9 +697,23 @@ class EventRouter {
       }
     }
 
-    // Add new subscriptions not currently in the trie.
+    // Add new subscriptions not currently in the trie. Revalidate here as a
+    // safety net for legacy/malformed workflow rows that predate create/update
+    // validation.
     for (const [key, sub] of desiredSubs) {
       if (!currentSubsByKey.has(key)) {
+        const validation = validateGlobPattern(sub.interest.topic);
+        if (!validation.valid) {
+          log.warn('EventRouter: skipping invalid event interest topic', {
+            workflowRunId,
+            taskId: sub.taskId,
+            nodeId: sub.nodeId,
+            agentName: sub.agentName,
+            topic: sub.interest.topic,
+            reason: validation.reason,
+          });
+          continue;
+        }
         this.topicTrie.insert(sub.interest.topic, sub);
       }
     }
@@ -870,8 +885,13 @@ class EventRouter {
           deliveryMode: 'defer',
         });
 
-        // Success: mark as delivered, remove pending
+        // Success: mark as delivered both in-memory and persistently, then
+        // advance the source event to terminal delivered only when all expected
+        // per-subscription deliveries are terminal. This keeps source-level dedup
+        // from re-emitting already-delivered events after restart/TTL expiry.
         this.delivered.set(dedupeKey, Date.now());
+        this.eventStore.markDeliveryDelivered(event.id, dedupeKey);
+        this.eventStore.markEventDeliveredIfAllDeliveriesTerminal(event.id);
         this.pendingDeliveries.delete(dedupeKey);
       } catch (err) {
         log.warn(`Failed to deliver event to ${sub.agentName}`, { error: err });
@@ -1058,12 +1078,13 @@ Dedup happens at two different layers, each with a different key and responsibil
    - Retryable duplicates (`published`, `routed`, `delivery_failed`) are re-emitted so transient delivery failures can retry.
    - This replaces `SpaceGitHubService.storeEvent()` as the authoritative dedup path for new external-event delivery.
 
-2. **Per-subscription delivery dedup** — in-memory JSON tuple `[event.dedupeKey, subscription.taskId, subscription.nodeId, subscription.agentName, subscription.workflowRunId]`.
+2. **Per-subscription delivery dedup** — JSON tuple `[event.dedupeKey, subscription.taskId, subscription.nodeId, subscription.agentName, subscription.workflowRunId]`.
    - Purpose: prevent the same external event from being delivered twice to the same node agent within a run.
    - The tuple includes `taskId` to isolate multi-task runs and `nodeId` to handle cases where the same agent name appears in multiple nodes within the same run.
    - The tuple is encoded structurally rather than delimiter-joined because `dedupeKey`, workflow identifiers, node IDs, and agent names are free-form strings.
+   - It is tracked in-memory for fast duplicate suppression and persisted in `space_external_event_deliveries` after successful injection.
 
-The EventRouter marks per-subscription delivery as `delivered` only after successful injection. Failed injection/session-resolution paths remove `pendingDeliveries` and schedule retry rather than relying on adapters to re-publish the same event.
+The EventRouter marks per-subscription delivery as `delivered` only after successful injection, updates `ExternalEventStore` with the successful delivery key, and advances the source event to terminal `delivered` only once all expected deliveries are terminal. Failed injection/session-resolution paths remove `pendingDeliveries` and schedule retry rather than relying on adapters to re-publish the same event.
 
 ### Wake-on-idle
 
@@ -1389,11 +1410,30 @@ V1 needs one core event-store table plus workflow type additions:
    );
    ```
 
-   `state` values are `published`, `routed`, `delivered`, `delivery_failed`, `ignored`, and `ambiguous`. Duplicate handling depends on state: terminal states short-circuit; retryable states can re-emit.
+   `state` values are `published`, `routed`, `delivered`, `delivery_failed`, `ignored`, and `ambiguous`. Duplicate handling depends on state: terminal states short-circuit; retryable states can re-emit. `delivered` is written only after expected per-subscription deliveries are terminal, not merely after publication.
 
-2. **Adapter-owned GitHub configuration**: reuse or migrate the existing `space_github_watched_repos` table behind `GitHubEventAdapterRepository`. This table remains source-specific and should not be queried by EventRouter except through cache invalidation hooks for repo-scoped matching.
+2. **Core bus delivery store** (`space_external_event_deliveries`): persistent per-subscription delivery lifecycle used by EventRouter to advance source events to terminal delivered.
 
-3. **No node-execution schema change**: event interests are stored as part of the workflow definition JSON in `space_workflows.nodes[].agents[].eventInterests`.
+   ```sql
+   CREATE TABLE space_external_event_deliveries (
+     event_id TEXT NOT NULL,
+     delivery_key TEXT NOT NULL,
+     workflow_run_id TEXT NOT NULL,
+     task_id TEXT NOT NULL,
+     node_id TEXT NOT NULL,
+     agent_name TEXT NOT NULL,
+     state TEXT NOT NULL DEFAULT 'pending',
+     delivered_at INTEGER,
+     updated_at INTEGER NOT NULL,
+     PRIMARY KEY(event_id, delivery_key)
+   );
+   ```
+
+   `EventRouter` records `delivered` after successful `injectMessage` and calls `markEventDeliveredIfAllDeliveriesTerminal(event.id)` so source-level dedup can stop re-emitting already-delivered events after restart or in-memory TTL eviction.
+
+3. **Adapter-owned GitHub configuration**: reuse or migrate the existing `space_github_watched_repos` table behind `GitHubEventAdapterRepository`. This table remains source-specific and should not be queried by EventRouter except through cache invalidation hooks for repo-scoped matching.
+
+4. **No node-execution schema change**: event interests are stored as part of the workflow definition JSON in `space_workflows.nodes[].agents[].eventInterests`.
 
 ### Type changes
 
@@ -1635,8 +1675,8 @@ This is exactly the behavior we want for external events.
 ### Unit tests
 
 1. **TopicTrie**: Insert patterns, verify lookup returns correct values for exact and wildcard matches.
-2. **EventRouter**: Given subscriptions and events, verify scope filtering, dedup, and delivery.
-3. **ExternalEventStore**: Verify terminal duplicates are short-circuited and retryable duplicates are re-emitted.
+2. **EventRouter**: Given subscriptions and events, verify scope filtering, topic validation before trie insertion, dedup, and delivery.
+3. **ExternalEventStore**: Verify terminal duplicates are short-circuited, retryable duplicates are re-emitted, and successful per-subscription delivery advances the source event to terminal `delivered` only after all expected deliveries are terminal.
 4. **EventTaskResolver**: Given GitHub PR metadata, verify correct task enrichment and ambiguous/unknown states.
 5. **GitHubEventAdapter**: Given webhook and polling payloads, verify signature handling, topic construction, dedupe keys, and `ExternalEvent` construction without querying Space tasks.
 6. **Scope resolution**: Test `task` scope with enriched `routedTaskId` and various task/PR associations.
