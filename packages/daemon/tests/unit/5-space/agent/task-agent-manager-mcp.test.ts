@@ -180,6 +180,7 @@ interface CapturedSessionArgs {
 function buildManager(opts: {
 	registryMcpServers?: Record<string, McpServerConfig>;
 	hasAppMcpManager?: boolean;
+	spaceAgentInjector?: (spaceId: string, message: string) => Promise<void>;
 }): {
 	manager: TaskAgentManager;
 	createdSessions: Map<string, MockAgentSession>;
@@ -195,7 +196,7 @@ function buildManager(opts: {
 	/** Seed a session in the mock DB (used to simulate sessions that existed before restart). */
 	seedSession: (id: string, type: string) => void;
 } {
-	const { registryMcpServers = {}, hasAppMcpManager = true } = opts;
+	const { registryMcpServers = {}, hasAppMcpManager = true, spaceAgentInjector } = opts;
 	const bunDb = makeDb();
 	const spaceId = 'space-mcp-test';
 	seedSpaceRow(bunDb, spaceId);
@@ -304,6 +305,7 @@ function buildManager(opts: {
 		skillsManager: mockSkillsManager,
 		appMcpServerRepo: mockAppMcpServerRepo,
 		nodeExecutionRepo,
+		spaceAgentInjector,
 	});
 
 	return {

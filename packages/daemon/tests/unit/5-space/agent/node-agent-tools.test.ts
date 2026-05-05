@@ -330,7 +330,8 @@ describe('node-agent-tools: list_peers', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.channelTopologyDeclared).toBe(false);
-		expect(data.permittedTargets).toEqual(['task-agent']);
+		expect(data.permittedTargets).toEqual(['task-agent', 'space-agent']);
+		expect(data.message).toContain('Use "space-agent"');
 	});
 
 	test('reports permitted targets when channels declared', async () => {
@@ -342,7 +343,7 @@ describe('node-agent-tools: list_peers', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.channelTopologyDeclared).toBe(true);
-		expect(data.permittedTargets).toEqual(['reviewer', 'task-agent']);
+		expect(data.permittedTargets).toEqual(['reviewer', 'task-agent', 'space-agent']);
 	});
 
 	test('returns empty peer list when no peers in the run', async () => {
@@ -458,7 +459,7 @@ describe('node-agent-tools: send_message', () => {
 		expect(data.delivered[0].sessionId).toBe(ctx.reviewerSessionId);
 		expect(data.delivered[0].agentName).toBe('reviewer');
 		expect(injected).toHaveLength(1);
-		expect(injected[0].message).toBe('[Message from coder]: LGTM!');
+		expect(injected[0].message).toBe('─── Message from coder ───\n\nLGTM!');
 	});
 
 	test('point-to-point fails when channel not declared', async () => {
@@ -483,6 +484,45 @@ describe('node-agent-tools: send_message', () => {
 		// With no declared channels, send_message is unavailable.
 		expect(data.success).toBe(false);
 		expect(data.error).toContain('No channel topology declared');
+	});
+
+	test('delivers space-agent target through send_message tool handler', async () => {
+		const spaceMessages: Array<{ spaceId: string; message: string }> = [];
+		const agentMessageRouter = new AgentMessageRouter({
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunId: ctx.workflowRunId,
+			workflowChannels: [],
+			messageInjector: async () => {},
+			spaceId: ctx.spaceId,
+			taskId: ctx.parentTaskId,
+			taskNumber: 42,
+			spaceAgentInjector: async (spaceId, message) => {
+				spaceMessages.push({ spaceId, message });
+			},
+		});
+		const config = makeConfig(ctx, { agentMessageRouter });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'space-agent',
+			message: 'Need space-level judgment',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.delivered).toEqual([
+			{ agentName: 'space-agent', sessionId: `space:chat:${ctx.spaceId}` },
+		]);
+		expect(spaceMessages).toEqual([
+			{
+				spaceId: ctx.spaceId,
+				message:
+					'─── Message from coder (task #42) ───\n\n' +
+					'Need space-level judgment\n\n' +
+					'─── Reply ───\n' +
+					`To reply, use: send_message_to_task with task_id="${ctx.parentTaskId}" and target node "coder"`,
+			},
+		]);
 	});
 
 	test('broadcast (*) succeeds and delivers to all permitted targets', async () => {
@@ -1584,6 +1624,11 @@ describe('node-agent-tools: list_reachable_agents', () => {
 		expect(data.success).toBe(true);
 		expect(data.reachabilityDeclared).toBe(false);
 		expect(data.crossNodeTargets).toHaveLength(0);
+		expect(data.spaceAgent).toEqual({
+			target: 'space-agent',
+			description: 'Space-level escalation target. Use to request human/space-level judgment.',
+		});
+		expect(data.message).toContain('space-agent escalation target');
 	});
 
 	test('returns cross-node targets for channels to roles not in current group', async () => {
@@ -3079,7 +3124,7 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
 		const pending = pendingMessageRepo.listPendingForTarget(isolatedRunId, 'reviewer');
 		expect(pending).toHaveLength(1);
 		expect(pending[0].sourceAgentName).toBe('coder');
-		expect(pending[0].message).toBe('code is ready for review');
+		expect(pending[0].message).toBe('─── Message from coder ───\n\ncode is ready for review');
 		expect(pending[0].targetKind).toBe('node_agent');
 	});
 

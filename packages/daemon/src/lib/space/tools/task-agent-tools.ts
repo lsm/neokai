@@ -34,6 +34,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { DaemonHub } from '../../daemon-hub';
 import { Logger } from '../../logger';
+import { formatAgentMessage } from '../agent-message-envelope';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
@@ -220,6 +221,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			.map((v) => normalizeAgentNameToken(v))
 			.filter((v) => v.length > 0)
 	);
+	const taskNumber = taskRepo.getTask(taskId)?.taskNumber ?? null;
 
 	/** Reserved agent name used by Task Agent to escalate directly to the Space Agent. */
 	const SPACE_AGENT_TARGET = 'space-agent';
@@ -661,13 +663,21 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 
 			// Best-effort delivery: attempt all targets, aggregate errors.
 			for (const targetAgentName of targetAgentNames) {
-				const prefixedMessage = `[Message from task-agent]: ${message}`;
-
 				// --- Space Agent escalation path --------------------------------
 				if (targetAgentName === SPACE_AGENT_TARGET) {
 					if (spaceAgentInjector) {
 						try {
-							await spaceAgentInjector(space.id, prefixedMessage);
+							await spaceAgentInjector(
+								space.id,
+								formatAgentMessage({
+									fromLevel: 'task-agent',
+									fromAgentName: 'task-agent',
+									toLevel: 'space-agent',
+									body: message,
+									taskId,
+									taskNumber,
+								})
+							);
 							delivered.push({
 								agentName: targetAgentName,
 								sessionId: `space:chat:${space.id}`,
@@ -682,7 +692,14 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 									taskId,
 									targetKind: 'space_agent',
 									targetAgentName: SPACE_AGENT_TARGET,
-									message,
+									message: formatAgentMessage({
+										fromLevel: 'task-agent',
+										fromAgentName: 'task-agent',
+										toLevel: 'space-agent',
+										body: message,
+										taskId,
+										taskNumber,
+									}),
 									idempotencyKey,
 								});
 								queued.push({
@@ -708,7 +725,14 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 							taskId,
 							targetKind: 'space_agent',
 							targetAgentName: SPACE_AGENT_TARGET,
-							message,
+							message: formatAgentMessage({
+								fromLevel: 'task-agent',
+								fromAgentName: 'task-agent',
+								toLevel: 'space-agent',
+								body: message,
+								taskId,
+								taskNumber,
+							}),
 							idempotencyKey,
 						});
 						queued.push({
@@ -756,7 +780,15 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 							taskId,
 							targetKind: 'node_agent',
 							targetAgentName,
-							message,
+							message: formatAgentMessage({
+								fromLevel: 'task-agent',
+								fromAgentName: 'task-agent',
+								toLevel: 'node-agent',
+								body: message,
+								taskId,
+								taskNumber,
+								nodeId: targetAgentName,
+							}),
 							idempotencyKey,
 						});
 						queued.push({
@@ -811,7 +843,19 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				// Deliver directly to the live session. injectSubSessionMessage calls
 				// ensureQueryStarted() so an idle session is automatically restarted.
 				try {
-					await messageInjector(liveSession.session.id, prefixedMessage, true);
+					await messageInjector(
+						liveSession.session.id,
+						formatAgentMessage({
+							fromLevel: 'task-agent',
+							fromAgentName: 'task-agent',
+							toLevel: 'node-agent',
+							body: message,
+							taskId,
+							taskNumber,
+							nodeId: targetAgentName,
+						}),
+						true
+					);
 					delivered.push({ agentName: targetAgentName, sessionId: liveSession.session.id });
 				} catch (err) {
 					const errMsg = err instanceof Error ? err.message : String(err);
