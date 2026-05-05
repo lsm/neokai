@@ -62,7 +62,7 @@ github/lsm/neokai/pull_request.review_*     ← prefix wildcard: all review even
 2. `owner/repo` — from the event's repository context. Both lowercase for case-insensitive matching.
 3. `resource` — the GitHub resource type: `pull_request`, `issue`, `check_suite`, `pull_request_review`, etc.
 4. `action` — the specific action: `opened`, `review_submitted`, `comment_created`, `completed`, etc.
-5. For resources without a natural `owner/repo` (e.g. a Slack message), the convention is `{source}/{workspace}/{channel}.{action}`.
+5. All v1 topics use exactly 4 path segments. For resources without a natural `owner/repo` (e.g. a future Slack message), use a source-specific scope pair to preserve the same depth: `{source}/{workspace}/{channel}/{resource}.{action}` (for example, `slack/acme/eng/messages.created`). Adapters that do not have both scope levels should use a reserved placeholder segment such as `_` rather than emitting 3-segment topics.
 
 ### Matching rules
 
@@ -78,7 +78,7 @@ Pattern validation (enforced at workflow create/update time):
 - Must be non-empty.
 - Must not contain `..` segments.
 - Must not contain empty segments (no double slashes).
-- Must have exactly 4 segments (`source/owner/repo/resource.action`) so it can match real event topics.
+- Must have exactly 4 segments (`source/scope1/scope2/resource.action`) so it can match real event topics.
 - Each segment may contain alphanumeric, dash, underscore, dot, and `*`; `*` must stay within a single segment and cannot cross `/` boundaries.
 - Max 10 interests per agent slot.
 
@@ -941,7 +941,7 @@ function isReceivingStatus(status: NodeExecutionStatus): boolean {
 
 ### Changes to existing code
 
-**Two-field addition.** The `appendTaskActivity` method in `space-github.ts` must include `action: event.action` and `rawPayload: event.rawPayload` in the `space.githubEvent.routed` DaemonHub payload. This is the only change to existing code. All other existing behavior (webhook handling, polling, normalization, Task Agent injection) remains unchanged.
+**Four-field addition.** The `appendTaskActivity` method in `space-github.ts` must include `action`, `rawPayload`, `dedupeKey`, and `deliveryId` in the `space.githubEvent.routed` DaemonHub payload. The adapter requires `dedupeKey` as the stable upstream event identity for per-subscription deduplication, and `deliveryId` preserves the unique GitHub delivery identifier used to build that identity. This is the only change to existing code. All other existing behavior (webhook handling, polling, normalization, Task Agent injection) remains unchanged.
 
 ```
 SpaceGitHubService.handleWebhook()
@@ -1070,7 +1070,9 @@ packages/daemon/src/lib/space/runtime/event-bus/
  * Called at workflow create/update time and again at trie insertion time.
  *
  * Requires exactly 4 segments because all v1 event topics have the format
- * `{source}/{owner}/{repo}/{resource}.{action}`.
+ * `{source}/{scope1}/{scope2}/{resource}.{action}`. For GitHub, scope1/scope2
+ * are owner/repo; for future non-repo adapters, they are source-specific scope
+ * segments such as workspace/channel.
  * Patterns like `github/*` (too shallow) or `github/*/*/pull_request/review_*`
  * (too deep) would pass validation but never match any event, creating silent
  * misconfigurations.
@@ -1085,7 +1087,7 @@ export function validateGlobPattern(pattern: string): { valid: boolean; reason?:
   if (segments.length !== 4) {
     return {
       valid: false,
-      reason: `Topic pattern must have exactly 4 segments (source/owner/repo/resource.action); got ${segments.length}. Example: 'github/*/*/pull_request.review_submitted'`,
+      reason: `Topic pattern must have exactly 4 segments (source/scope1/scope2/resource.action); got ${segments.length}. Example: 'github/*/*/pull_request.review_submitted'`,
     };
   }
 
