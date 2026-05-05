@@ -1117,8 +1117,9 @@ describe('TaskAgentManager.tryResumeNodeAgentSession', () => {
 
 		const delivered = savedMessages.find((msg) =>
 			JSON.stringify(msg).includes('please handle this')
-		) as { isSynthetic?: boolean } | undefined;
+		) as { isSynthetic?: boolean; message?: { content?: Array<{ text?: string }> } } | undefined;
 		expect(delivered?.isSynthetic).toBe(false);
+		expect(delivered?.message?.content?.[0]?.text).toBe('[Message from human]: please handle this');
 	});
 });
 

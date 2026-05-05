@@ -1601,8 +1601,9 @@ export class TaskAgentManager {
 
 		for (const row of pending) {
 			const isSyntheticMessage = row.sourceAgentName !== 'human';
+			const message = isSyntheticMessage ? row.message : `[Message from human]: ${row.message}`;
 			try {
-				await this.injectSubSessionMessage(sessionId, row.message, isSyntheticMessage);
+				await this.injectSubSessionMessage(sessionId, message, isSyntheticMessage);
 				repo.markDelivered(row.id, sessionId);
 				this.emitPendingDelivered(row.id, sessionId, row);
 			} catch (err) {
