@@ -1189,6 +1189,16 @@ export class SpaceRuntime {
 		return this.executors.get(runId);
 	}
 
+	/** @internal — exposed only for unit tests/diagnostics. */
+	getActiveGatePollCount(): number {
+		return this.pollManager?.activePollCount ?? 0;
+	}
+
+	/** @internal — exposed only for unit tests/diagnostics. */
+	isGatePollActive(runId: string, gateId: string): boolean {
+		return this.pollManager?.isPollActive(runId, gateId) ?? false;
+	}
+
 	/**
 	 * Reopen or resume a workflow-backed task as one lifecycle operation.
 	 *
@@ -1395,6 +1405,37 @@ export class SpaceRuntime {
 	}
 
 	/**
+	 * Restart gate polls for a workflow run restored from persisted state.
+	 *
+	 * GatePollManager keeps timers in memory, so a daemon restart loses them even
+	 * though the workflow run and definition remain in the database. Rehydration
+	 * must therefore recreate poll timers after the executor and metadata are back.
+	 */
+	private startRehydratedGatePolls(run: SpaceWorkflowRun, space: Space): void {
+		if (!this.pollManager) return;
+		if (run.status === 'done' || run.status === 'cancelled' || run.status === 'blocked') return;
+
+		const workflow = this.executorMeta.get(run.id)?.workflow;
+		if (!workflow?.gates?.some((gate) => gate.poll)) return;
+
+		const canonicalTask = this.pickCanonicalTaskForRun(
+			run,
+			this.config.taskRepo.listByWorkflowRun(run.id)
+		);
+		if (!canonicalTask) {
+			log.warn(
+				`SpaceRuntime.rehydrateExecutors: cannot restart gate polls for run ${run.id} — no canonical task found`
+			);
+			return;
+		}
+
+		const pollContext = this.buildPollScriptContext(canonicalTask, run, space.id);
+		if (!pollContext) return;
+
+		this.pollManager.startPolls(run.id, workflow, space.workspacePath, space.id, pollContext);
+	}
+
+	/**
 	 * Rehydrates WorkflowExecutors from the DB for all in-progress workflow runs,
 	 * then rehydrates Task Agent sessions if a TaskAgentManager is configured.
 	 *
@@ -1420,7 +1461,10 @@ export class SpaceRuntime {
 			for (const run of activeRuns) {
 				// Skip if executor already registered (e.g. called twice)
 				if (this.executors.has(run.id)) continue;
-				await this.ensureExecutorRegistered(run, space);
+				const registered = await this.ensureExecutorRegistered(run, space);
+				if (registered) {
+					this.startRehydratedGatePolls(run, space);
+				}
 			}
 		}
 
