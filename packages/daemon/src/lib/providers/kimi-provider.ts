@@ -115,7 +115,7 @@ export class KimiProvider implements Provider {
 		const normalizedModelId = modelId.toLowerCase();
 		const routingModelId =
 			this.ownsModel(modelId) && normalizedModelId !== 'kimi'
-				? modelId
+				? normalizedModelId
 				: KimiProvider.DEFAULT_MODEL;
 
 		return {

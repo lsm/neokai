@@ -143,6 +143,26 @@ describe('KimiProvider', () => {
 			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('moonshot-v1-32k');
 		});
 
+		it('should lowercase mixed-case moonshot model IDs for routing', () => {
+			process.env.KIMI_API_KEY = 'test-key';
+
+			const config = provider.buildSdkConfig('Moonshot-v1-32k');
+
+			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('moonshot-v1-32k');
+			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('moonshot-v1-32k');
+			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('moonshot-v1-32k');
+		});
+
+		it('should lowercase mixed-case kimi alias model IDs for routing', () => {
+			process.env.KIMI_API_KEY = 'test-key';
+
+			const config = provider.buildSdkConfig('Kimi-k2.6');
+
+			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('kimi-k2.6');
+			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-k2.6');
+			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('kimi-k2.6');
+		});
+
 		it('should use session config API key and base URL overrides', async () => {
 			process.env.KIMI_API_KEY = 'env-key';
 			const customProvider = new KimiProvider(process.env);
