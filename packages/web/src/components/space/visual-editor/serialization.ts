@@ -293,6 +293,10 @@ function buildWorkflowFields(state: VisualEditorState): {
 						{
 							agentId: node.step.agentId,
 							name: deriveSingleAgentRoleName(node, i),
+							model: node.step.model,
+							thinkingLevel: node.step.thinkingLevel,
+							customPrompt: node.step.customPrompt,
+							disabledSkillIds: node.step.disabledSkillIds,
 						},
 					]
 				: [];
