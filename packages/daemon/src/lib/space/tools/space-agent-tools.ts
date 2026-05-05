@@ -38,6 +38,7 @@ import type { DaemonHub } from '../../daemon-hub';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
+import { formatAgentMessage } from '../agent-message-envelope';
 import { canTransition } from '../runtime/workflow-run-status-machine';
 function normalizeAgentNameToken(value: string): string {
 	return value.trim().toLowerCase();
@@ -188,6 +189,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			.map((v) => normalizeAgentNameToken(v))
 			.filter((v) => v.length > 0)
 	);
+	const outboundSenderName = myAgentName ?? 'space-agent';
+	const outboundSenderLevel = outboundSenderName === 'task-agent' ? 'task-agent' : 'space-agent';
+	const outboundSenderDisplayName =
+		outboundSenderName === 'space-agent' ? 'Space Agent' : outboundSenderName;
 
 	return {
 		/**
@@ -574,7 +579,18 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			if (!args.node_id) {
 				try {
 					await taskAgentManager.ensureTaskAgentSession(task.id);
-					await taskAgentManager.injectTaskAgentMessage(task.id, args.message);
+					await taskAgentManager.injectTaskAgentMessage(
+						task.id,
+						formatAgentMessage({
+							fromLevel: outboundSenderLevel,
+							fromAgentName: outboundSenderDisplayName,
+							toLevel: 'task-agent',
+							body: args.message,
+							taskId: task.id,
+							taskNumber: task.taskNumber,
+						}),
+						true
+					);
 					return jsonResult({ success: true, task_id: task.id, target: 'task-agent' });
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
@@ -605,7 +621,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				try {
 					await taskAgentManager.injectSubSessionMessage(
 						resolved.agentSessionId,
-						args.message,
+						formatAgentMessage({
+							fromLevel: outboundSenderLevel,
+							fromAgentName: outboundSenderDisplayName,
+							toLevel: 'node-agent',
+							body: args.message,
+							taskId: task.id,
+							taskNumber: task.taskNumber,
+							nodeId: resolved.agentName,
+						}),
 						true
 					);
 					return jsonResult({
@@ -644,7 +668,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			const sessionIdAfter = refreshedExecution?.agentSessionId ?? null;
 			if (sessionIdAfter) {
 				try {
-					await taskAgentManager.injectSubSessionMessage(sessionIdAfter, args.message, true);
+					await taskAgentManager.injectSubSessionMessage(
+						sessionIdAfter,
+						formatAgentMessage({
+							fromLevel: outboundSenderLevel,
+							fromAgentName: outboundSenderDisplayName,
+							toLevel: 'node-agent',
+							body: args.message,
+							taskId: task.id,
+							taskNumber: task.taskNumber,
+							nodeId: resolved.agentName,
+						}),
+						true
+					);
 					return jsonResult({
 						success: true,
 						task_id: task.id,
@@ -668,10 +704,18 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					workflowRunId: task.workflowRunId,
 					spaceId,
 					taskId: task.id,
-					sourceAgentName: myAgentName,
+					sourceAgentName: outboundSenderName,
 					targetKind: 'node_agent',
 					targetAgentName: resolved.agentName,
-					message: args.message,
+					message: formatAgentMessage({
+						fromLevel: outboundSenderLevel,
+						fromAgentName: outboundSenderDisplayName,
+						toLevel: 'node-agent',
+						body: args.message,
+						taskId: task.id,
+						taskNumber: task.taskNumber,
+						nodeId: resolved.agentName,
+					}),
 				});
 				queuedMessageId = record.id;
 			}

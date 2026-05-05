@@ -46,7 +46,10 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+import {
+	isReservedWorkflowAgentName,
+	type SpaceWorkflowManager,
+} from '../managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import { evaluateGate, type GateEvalResult, type GateScriptExecutorFn } from './gate-evaluator';
@@ -416,6 +419,9 @@ export class ChannelRouter {
 					}
 				}
 				continue;
+			}
+			if (isReservedWorkflowAgentName(agentName)) {
+				throw new ActivationError(`Agent name "${agentName}" is reserved for a built-in agent`);
 			}
 			this.config.nodeExecutionRepo.createOrIgnore({
 				workflowRunId: runId,

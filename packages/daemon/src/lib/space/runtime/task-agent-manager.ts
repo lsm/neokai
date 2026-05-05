@@ -99,8 +99,44 @@ import {
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
+import { formatAgentMessage, type AgentMessageLevel } from '../agent-message-envelope';
 
 const log = new Logger('task-agent-manager');
+const AGENT_MESSAGE_ENVELOPE_HEADER = /^─── Message from ([^\n]+) ───\n\n/;
+const AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = '\n\n─── Reply ───\nTo reply, use: ';
+
+function pendingSourceLevel(sourceAgentName: string): AgentMessageLevel {
+	if (sourceAgentName === 'task-agent') return 'task-agent';
+	if (sourceAgentName === 'space-agent') return 'space-agent';
+	return 'node-agent';
+}
+
+function expectedEnvelopeSenderName(sourceAgentName: string): string {
+	return sourceAgentName === 'space-agent' ? 'Space Agent' : sourceAgentName;
+}
+
+function hasAgentMessageEnvelope(
+	message: string,
+	sourceAgentName: string,
+	toLevel: AgentMessageLevel
+): boolean {
+	const match = message.match(AGENT_MESSAGE_ENVELOPE_HEADER);
+	if (!match) return false;
+
+	const fromLevel = pendingSourceLevel(sourceAgentName);
+	const expectedSender = expectedEnvelopeSenderName(sourceAgentName);
+	const headerSender = match[1];
+	if (headerSender !== expectedSender && !headerSender.startsWith(`${expectedSender} (task #`)) {
+		return false;
+	}
+
+	// Node-agent → node-agent envelopes intentionally have no reply block. All
+	// inter-level envelopes include reply guidance, so require it before trusting
+	// a queued message as already wrapped. This prevents legacy raw bodies that
+	// happen to start with the envelope prefix from spoofing attribution.
+	if (fromLevel === 'node-agent' && toLevel === 'node-agent') return true;
+	return message.includes(AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK);
+}
 
 // ---------------------------------------------------------------------------
 // Config
@@ -1592,7 +1628,9 @@ export class TaskAgentManager {
 		// Expire stale rows first so we don't deliver messages that have exceeded their TTL.
 		repo.expireStale(workflowRunId);
 
-		const pending = repo.listPendingForTarget(workflowRunId, targetAgentName);
+		const pending = repo
+			.listPendingForTarget(workflowRunId, targetAgentName)
+			.filter((row) => row.targetKind === 'node_agent');
 		if (pending.length === 0) return;
 
 		log.info(
@@ -1600,10 +1638,21 @@ export class TaskAgentManager {
 		);
 
 		for (const row of pending) {
-			const prefixed = `[Message from ${row.sourceAgentName}]: ${row.message}`;
 			const isSyntheticMessage = row.sourceAgentName !== 'human';
+			const message = isSyntheticMessage
+				? hasAgentMessageEnvelope(row.message, row.sourceAgentName, 'node-agent')
+					? row.message
+					: formatAgentMessage({
+							fromLevel: pendingSourceLevel(row.sourceAgentName),
+							fromAgentName: row.sourceAgentName,
+							toLevel: 'node-agent',
+							body: row.message,
+							taskId: row.taskId,
+							nodeId: targetAgentName,
+						})
+				: `[Message from human]: ${row.message}`;
 			try {
-				await this.injectSubSessionMessage(sessionId, prefixed, isSyntheticMessage);
+				await this.injectSubSessionMessage(sessionId, message, isSyntheticMessage);
 				repo.markDelivered(row.id, sessionId);
 				this.emitPendingDelivered(row.id, sessionId, row);
 			} catch (err) {
@@ -1678,9 +1727,17 @@ export class TaskAgentManager {
 		);
 
 		for (const row of pending) {
-			const prefixed = `[Message from ${row.sourceAgentName}]: ${row.message}`;
+			const message = hasAgentMessageEnvelope(row.message, row.sourceAgentName, 'space-agent')
+				? row.message
+				: formatAgentMessage({
+						fromLevel: pendingSourceLevel(row.sourceAgentName),
+						fromAgentName: row.sourceAgentName,
+						toLevel: 'space-agent',
+						body: row.message,
+						taskId: row.taskId,
+					});
 			try {
-				await inject(spaceId, prefixed);
+				await inject(spaceId, message);
 				repo.markDelivered(row.id, spaceChatSessionId);
 				this.emitPendingDelivered(row.id, spaceChatSessionId, row);
 			} catch (err) {
@@ -1719,7 +1776,11 @@ export class TaskAgentManager {
 	 * Inject a message into a Task Agent session.
 	 * Used by Space Agent's `send_message_to_task` tool.
 	 */
-	async injectTaskAgentMessage(taskId: string, message: string): Promise<void> {
+	async injectTaskAgentMessage(
+		taskId: string,
+		message: string,
+		isSyntheticMessage = false
+	): Promise<void> {
 		let session = this.taskAgentSessions.get(taskId);
 		if (!session) {
 			const task = this.config.taskRepo.getTask(taskId);
@@ -1733,9 +1794,13 @@ export class TaskAgentManager {
 		if (!session) {
 			throw new Error(`Task Agent session not found for task ${taskId}`);
 		}
-		// Human-initiated message — not synthetic. isSyntheticMessage=false so the
-		// compact thread feed can distinguish this from agent→agent task injections.
-		await this.injectMessageIntoSession(session, message, 'immediate', undefined, false);
+		await this.injectMessageIntoSession(
+			session,
+			message,
+			'immediate',
+			undefined,
+			isSyntheticMessage
+		);
 	}
 
 	/**
@@ -4183,15 +4248,17 @@ export class TaskAgentManager {
 			nodeGroups,
 			taskAgentRouter: async (message) => {
 				const ensuredTask = await this.ensureTaskAgentSession(taskId);
-				await this.injectTaskAgentMessage(taskId, message);
+				await this.injectTaskAgentMessage(taskId, message, true);
 				return { sessionId: ensuredTask.taskAgentSessionId ?? '' };
 			},
+			spaceAgentInjector: this.config.spaceAgentInjector,
 			// Wire up the pending-message queue so node agents can queue messages for
 			// peers that haven't spawned yet (declared but inactive). The queue is
 			// drained by flushPendingMessagesForTarget() when the target session activates.
 			pendingMessageRepo: this.config.pendingMessageRepo,
 			spaceId,
 			taskId,
+			taskNumber: this.config.taskRepo.getTask(taskId)?.taskNumber ?? null,
 			// Auto-resume + lazy-activation callback fired when a message is queued
 			// for an inactive peer:
 			//
@@ -4401,7 +4468,7 @@ export class TaskAgentManager {
 			return { injected: false };
 		}
 		try {
-			await this.injectTaskAgentMessage(taskId, message);
+			await this.injectTaskAgentMessage(taskId, message, true);
 		} catch (err) {
 			log.warn(
 				`TaskAgentManager.injectIntoTaskAgent: failed for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`

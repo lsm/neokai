@@ -71,6 +71,8 @@ export class SessionNotificationSink implements NotificationSink {
 		try {
 			await this.sessionFactory.injectMessage(this.sessionId, message, {
 				deliveryMode: 'defer',
+				origin: 'system',
+				isSyntheticMessage: true,
 			});
 		} catch (err) {
 			// Session not found or unavailable — log warning, do not propagate.

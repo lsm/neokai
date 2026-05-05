@@ -21,6 +21,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
+	CreateNodeExecutionParams,
 	NodeExecution,
 	Space,
 	SpaceApprovalSource,
@@ -45,7 +46,10 @@ import { Logger } from '../../logger';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
 import { isValidSpaceTaskTransition, SpaceTaskManager } from '../managers/space-task-manager';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+import {
+	isReservedWorkflowAgentName,
+	type SpaceWorkflowManager,
+} from '../managers/space-workflow-manager';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { CompletionDetector } from './completion-detector';
 import {
@@ -323,6 +327,13 @@ export class SpaceRuntime {
 			this.sdkMessageRepo = new SDKMessageRepository(this.config.db);
 		}
 		return this.sdkMessageRepo;
+	}
+
+	private createNodeExecutionOrIgnore(params: CreateNodeExecutionParams): NodeExecution {
+		if (isReservedWorkflowAgentName(params.agentName)) {
+			throw new Error(`Agent name "${params.agentName}" is reserved for a built-in agent`);
+		}
+		return this.config.nodeExecutionRepo.createOrIgnore(params);
 	}
 
 	/**
@@ -1130,7 +1141,7 @@ export class SpaceRuntime {
 
 			startAgents = resolveNodeAgents(startNode);
 			for (const agentEntry of startAgents) {
-				this.config.nodeExecutionRepo.createOrIgnore({
+				this.createNodeExecutionOrIgnore({
 					workflowRunId: run.id,
 					workflowNodeId: startNode.id,
 					agentName: agentEntry.name,
@@ -1305,7 +1316,7 @@ export class SpaceRuntime {
 					);
 				}
 				for (const agentEntry of resolveNodeAgents(startNode)) {
-					this.config.nodeExecutionRepo.createOrIgnore({
+					this.createNodeExecutionOrIgnore({
 						workflowRunId: run.id,
 						workflowNodeId: startNode.id,
 						agentName: agentEntry.name,
@@ -1908,7 +1919,7 @@ export class SpaceRuntime {
 						}
 						continue;
 					}
-					this.config.nodeExecutionRepo.createOrIgnore({
+					this.createNodeExecutionOrIgnore({
 						workflowRunId: run.id,
 						workflowNodeId: targetNode.id,
 						agentName: agentEntry.name,
@@ -2908,7 +2919,7 @@ export class SpaceRuntime {
 							`Queued workflow handoff target "${targetAgentName}" is not declared in workflow "${meta.workflow.id}"`
 						);
 					}
-					execution = this.config.nodeExecutionRepo.createOrIgnore({
+					execution = this.createNodeExecutionOrIgnore({
 						workflowRunId: runId,
 						workflowNodeId: resolved.nodeId,
 						agentName: resolved.agentName,
