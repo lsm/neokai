@@ -204,7 +204,7 @@ export type { RuntimeState } from './types/neo';
  * - 'anthropic': Default Claude API provider
  * - 'glm': GLM (智谱AI) via Anthropic-compatible API
  * - 'minimax': MiniMax via Anthropic-compatible API
- * - 'kimi': Kimi (Moonshot AI) via OpenAI-compatible chat completions bridge
+ * - 'kimi': Kimi (Moonshot AI) via Anthropic-compatible API
  * - 'openrouter': OpenRouter Anthropic-compatible API gateway
  * - 'ollama': Local Ollama through the native /api/chat endpoint
  * - 'ollama-cloud': Ollama Cloud through the native /api/chat endpoint

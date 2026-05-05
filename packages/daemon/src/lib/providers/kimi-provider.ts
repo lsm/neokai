@@ -96,10 +96,8 @@ export class KimiProvider implements Provider {
 		}
 
 		const baseUrl = normalizeBaseUrl(sessionConfig?.baseUrl || KimiProvider.BASE_URL);
-		// All Kimi Code requests use the fixed model ID; normalize aliases
-		const routingModelId = this.ownsModel(modelId)
-			? KimiProvider.DEFAULT_MODEL
-			: KimiProvider.DEFAULT_MODEL;
+		// All Kimi Code requests use the fixed model ID
+		const routingModelId = KimiProvider.DEFAULT_MODEL;
 
 		return {
 			envVars: {

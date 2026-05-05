@@ -293,25 +293,19 @@ describe('useModelSwitcher', () => {
 			expect(glmModel?.family).toBe('glm');
 		});
 
-		it('should detect kimi family and provider for Moonshot models', async () => {
+		it('should detect kimi family and provider for Kimi models', async () => {
 			const mockHub = {
 				request: vi
 					.fn()
 					.mockResolvedValueOnce({
-						currentModel: 'moonshot-v1-32k',
+						currentModel: 'kimi-for-coding',
 						modelInfo: null,
 					})
 					.mockResolvedValueOnce({
 						models: [
 							{
-								id: 'moonshot-v1-32k',
-								display_name: 'Moonshot v1 32K',
-								description: '',
-								provider: 'kimi',
-							},
-							{
-								id: 'kimi-k2.6',
-								display_name: 'Kimi K2.6',
+								id: 'kimi-for-coding',
+								display_name: 'Kimi For Coding',
 								description: '',
 								provider: 'kimi',
 							},
@@ -326,10 +320,7 @@ describe('useModelSwitcher', () => {
 				expect(result.current.loading).toBe(false);
 			});
 
-			const moonshotModel = result.current.availableModels.find((m) => m.id === 'moonshot-v1-32k');
-			const kimiModel = result.current.availableModels.find((m) => m.id === 'kimi-k2.6');
-			expect(moonshotModel?.provider).toBe('kimi');
-			expect(moonshotModel?.family).toBe('kimi');
+			const kimiModel = result.current.availableModels.find((m) => m.id === 'kimi-for-coding');
 			expect(kimiModel?.provider).toBe('kimi');
 			expect(kimiModel?.family).toBe('kimi');
 		});
@@ -1197,7 +1188,7 @@ describe('mapRawModelsToModelInfos', () => {
 			{ id: 'gemini-3-pro', display_name: 'Gemini', description: '', provider: 'anthropic' },
 			{ id: 'gpt-5.4', display_name: 'GPT', description: '', provider: 'anthropic' },
 			{ id: 'openrouter/auto', display_name: 'OpenRouter', description: '', provider: 'anthropic' },
-			{ id: 'moonshot-v1-32k', display_name: 'Moonshot', description: '', provider: 'anthropic' },
+			{ id: 'kimi-for-coding', display_name: 'Kimi', description: '', provider: 'anthropic' },
 		]);
 
 		expect(result.map((model) => model.family)).toEqual(['kimi', 'openrouter', 'gpt', 'gemini']);

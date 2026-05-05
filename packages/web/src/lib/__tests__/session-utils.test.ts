@@ -27,6 +27,10 @@ describe('getModelLabel', () => {
 		expect(getModelLabel('moonshot-v1-32k')).toBe('Moonshot v1 32k');
 		expect(getModelLabel('moonshot-v1-128k')).toBe('Moonshot v1 128k');
 	});
+
+	it('formats Kimi model IDs', () => {
+		expect(getModelLabel('kimi-for-coding')).toBe('Kimi for coding');
+	});
 });
 
 describe('isUserSession', () => {
