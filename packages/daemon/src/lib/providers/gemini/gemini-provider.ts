@@ -26,7 +26,6 @@ import type { ModelInfo } from '@neokai/shared';
 import { createLogger } from '@neokai/shared/logger';
 import {
 	buildAuthUrlWithRedirect,
-	getOAuthClientId,
 	exchangeAuthCode,
 	fetchUserInfo,
 	loadAccounts,
@@ -127,14 +126,7 @@ export class GeminiOAuthProvider implements Provider {
 	async isAvailable(): Promise<boolean> {
 		try {
 			const accounts = await loadAccounts();
-			if (!accounts.some((a) => a.status !== 'invalid')) return false;
-			// Verify OAuth client env vars are configured
-			try {
-				getOAuthClientId();
-				return true;
-			} catch {
-				return false;
-			}
+			return accounts.some((a) => a.status !== 'invalid');
 		} catch {
 			return false;
 		}
