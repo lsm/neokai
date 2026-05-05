@@ -188,13 +188,13 @@ export interface WorkflowNodeAgent {
 
 **`repo` scope** filters to events from any of the space's watched repositories (`space_github_watched_repos`). The node author doesn't need to know repo names.
 
-**`global` scope** passes through all events matching the topic pattern. Use sparingly (e.g. a "global monitor" node).
+**`global` scope** passes through all events in the same space matching the topic pattern. It is never cross-space: the router requires `event.spaceId === subscription.spaceId` before any scope-specific logic runs. Use sparingly (e.g. a space-local "global monitor" node).
 
 ### Auto-scoping resolution at runtime
 
 When an event arrives, the router:
 
-1. Extracts `prNumber` and `repoOwner/repoName` from the event payload.
+1. Verifies `event.spaceId` matches the subscription's `spaceId`, then extracts `prNumber` and `repoOwner/repoName` from the event payload.
 2. For each active node execution with `eventInterests`:
    a. Compiles the interest's `topic` glob against the event's topic.
    b. If matched, checks scope:
@@ -214,6 +214,8 @@ When an event arrives, the router:
 export interface ExternalEvent {
   /** Unique event ID (UUID) */
   id: string;
+  /** Space this event was routed for. Required to prevent cross-space delivery. */
+  spaceId: string;
   /** Fully qualified topic: 'github/owner/repo/resource.action' */
   topic: string;
   /** Timestamp when the event occurred (epoch ms) */
@@ -281,7 +283,7 @@ export interface EventPublisher {
 export const EXTERNAL_EVENT_PUBLISHED_METHOD = 'space.externalEvent.published';
 
 export interface EventBusHubEventMap {
-  'space.externalEvent.published': { event: ExternalEvent };
+  'space.externalEvent.published': { spaceId: string; event: ExternalEvent };
 }
 ```
 
@@ -327,6 +329,7 @@ The adapter subscribes to the existing `space.githubEvent.routed` DaemonHub even
 // In space-github.ts, appendTaskActivity():
 this.daemonHub?.emit('space.githubEvent.routed', {
     sessionId: 'global',
+    spaceId,
     taskId,
     event: {
         repo: `${event.repoOwner}/${event.repoName}`,
@@ -348,7 +351,7 @@ this.daemonHub?.emit('space.githubEvent.routed', {
 });
 ```
 
-This is a payload-contract extension to `appendTaskActivity` using fields already available on the `NormalizedSpaceGitHubEvent` at the call site. `dedupeKey` and `deliveryId` are required for stable upstream event identity; `prUrl` and the other normalized fields keep the `SpacePrTaskResolver` fallback functional if `taskId` is absent.
+This is a payload-contract extension to `appendTaskActivity` using fields already available on the `NormalizedSpaceGitHubEvent` at the call site plus the enclosing `spaceId`. `dedupeKey` and `deliveryId` are required for stable upstream event identity; `prUrl` and the other normalized fields keep the `SpacePrTaskResolver` fallback functional if `taskId` is absent; `spaceId` prevents cross-space delivery on the shared daemon event stream.
 
 **Why this approach:**
 - Minimal change to the existing `SpaceGitHubService` — additional normalized fields in an existing DaemonHub emission, with no changes to ingestion/dedup/routing behavior.
@@ -447,7 +450,11 @@ class EventRouter {
   ) {
     // Subscribe to the fixed TypedHub-safe method. External topic matching happens
     // inside handleEvent via event.topic, not via the hub method name.
-    this.eventBus.subscribe(EXTERNAL_EVENT_PUBLISHED_METHOD, ({ event }) => this.handleEvent(event));
+    this.eventBus.subscribe(EXTERNAL_EVENT_PUBLISHED_METHOD, ({ spaceId, event }) => {
+      // Defense in depth: payload spaceId and event.spaceId must agree.
+      if (event.spaceId !== spaceId) return;
+      void this.handleEvent(event);
+    });
   }
 
   /** Check if a repo is watched for a given space. Uses cached data. */
@@ -709,6 +716,11 @@ class EventRouter {
   }
 
   private passesScopeCheck(event: ExternalEvent, sub: Subscription): boolean {
+    // All scopes are bounded to the subscription's space. EventBus is a shared
+    // daemon-wide stream, so even `global` means "global within this space", not
+    // cross-space delivery.
+    if (event.spaceId !== sub.spaceId) return false;
+
     switch (sub.interest.scope) {
       case 'global':
         return true;
@@ -1003,7 +1015,7 @@ The GitHub adapter subscribes to `space.githubEvent.routed` and converts it:
 class GitHubEventAdapter implements EventAdapter {
   async start(publisher: EventPublisher): Promise<void> {
     this.daemonHub.on('space.githubEvent.routed', async (data) => {
-      const { event, taskId } = data;
+      const { event, spaceId, taskId } = data;
       const [repoOwner, repoName] = event.repo.split('/');
 
       // Construct topic from event.
@@ -1013,8 +1025,9 @@ class GitHubEventAdapter implements EventAdapter {
 
       // Publish to bus. Preserve the upstream occurrence time for ordering,
       // queue TTL, and latency diagnostics; only ingestedAt is "now".
-      await publisher.publish({
+      const externalEvent: ExternalEvent = {
         id: crypto.randomUUID(),
+        spaceId,
         topic,
         occurredAt: new Date(event.occurredAt).getTime(),
         ingestedAt: Date.now(),
@@ -1039,7 +1052,9 @@ class GitHubEventAdapter implements EventAdapter {
           rawPayload: event.rawPayload,   // Include original webhook/polling payload
         },
         dedupeKey: event.dedupeKey,  // Use upstream identity (includes deliveryId); avoids collapsing distinct events that share repo/pr/action/url
-      });
+      };
+
+      await publisher.publish(externalEvent);
     });
   }
 }
