@@ -77,6 +77,7 @@ export class KimiProvider implements Provider {
 	private readonly env: NodeJS.ProcessEnv;
 	private readonly fetchImpl: typeof fetch;
 	private readonly bridgeServers = new Map<string, KimiBridgeServer>();
+	private readonly bridgeAuthToken = `kimi-bridge-${crypto.randomUUID()}`;
 
 	constructor(env: NodeJS.ProcessEnv = process.env, fetchImpl: typeof fetch = fetch) {
 		this.env = env;
@@ -121,7 +122,7 @@ export class KimiProvider implements Provider {
 		return {
 			envVars: {
 				ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridge.port}`,
-				ANTHROPIC_AUTH_TOKEN: 'kimi-bridge',
+				ANTHROPIC_AUTH_TOKEN: this.bridgeAuthToken,
 				ANTHROPIC_API_KEY: '',
 				API_TIMEOUT_MS: '3000000',
 				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
@@ -163,6 +164,7 @@ export class KimiProvider implements Provider {
 		const bridge = createKimiAnthropicBridgeServer({
 			baseUrl,
 			apiKey,
+			authToken: this.bridgeAuthToken,
 			fetchImpl: this.fetchImpl,
 		});
 		this.bridgeServers.set(key, bridge);

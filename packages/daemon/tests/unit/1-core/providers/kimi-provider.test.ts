@@ -112,7 +112,7 @@ describe('KimiProvider', () => {
 			const config = provider.buildSdkConfig('moonshot-v1-128k');
 
 			expect(config.envVars.ANTHROPIC_BASE_URL).toStartWith('http://127.0.0.1:');
-			expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('kimi-bridge');
+			expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toStartWith('kimi-bridge-');
 			expect(config.envVars.ANTHROPIC_API_KEY).toBe('');
 			expect(config.envVars.API_TIMEOUT_MS).toBe('3000000');
 			expect(config.envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');

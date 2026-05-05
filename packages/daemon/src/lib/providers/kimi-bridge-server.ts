@@ -27,6 +27,7 @@ export type KimiBridgeServer = {
 export type KimiBridgeConfig = {
 	baseUrl: string;
 	apiKey: string;
+	authToken: string;
 	fetchImpl?: typeof fetch;
 };
 
@@ -185,7 +186,7 @@ function toOpenAIToolChoice(
 		case 'none':
 			return 'none';
 		case 'any':
-			return 'required';
+			return 'auto';
 		case 'tool':
 			return { type: 'function', function: { name: toolChoice.name } };
 	}
@@ -371,12 +372,20 @@ async function streamOpenAIToAnthropic(params: {
 export function createKimiAnthropicBridgeServer(config: KimiBridgeConfig): KimiBridgeServer {
 	const fetchImpl = config.fetchImpl ?? fetch;
 	const baseUrl = config.baseUrl.replace(/\/$/, '');
+	const authToken = config.authToken;
 	const server = Bun.serve({
+		hostname: '127.0.0.1',
 		port: 0,
 		idleTimeout: 0,
 		async fetch(req: Request): Promise<Response> {
 			const url = new URL(req.url);
 			if (url.pathname === '/health' || url.pathname === '/v1/health') return new Response('ok');
+			const authHeader = req.headers.get('Authorization') ?? '';
+			const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+			const reqToken = req.headers.get('x-api-key') ?? bearerToken;
+			if (reqToken !== authToken) {
+				return sendJsonError(401, 'authentication_error', 'Invalid or missing auth token');
+			}
 			if (url.pathname === '/v1/models' && req.method === 'GET') {
 				return new Response(
 					JSON.stringify({ data: [{ id: 'default', type: 'model', display_name: 'Kimi' }] }),
