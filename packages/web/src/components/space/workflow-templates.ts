@@ -304,10 +304,12 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 					customPrompt: resolvedCustomPrompt,
 				},
 			],
-			// Keep legacy top-level fields in sync for single-slot UI paths.
-			model: step.model?.trim() || undefined,
-			thinkingLevel: step.thinkingLevel,
-			customPrompt: resolvedCustomPrompt,
+			// Step-level model/thinkingLevel/customPrompt left undefined to avoid
+			// duplicating slot values. The NodeConfigPanel fallback
+			// (slot.field ?? step.field) reads from the slot when present.
+			model: undefined,
+			thinkingLevel: undefined,
+			customPrompt: undefined,
 		};
 	});
 }
