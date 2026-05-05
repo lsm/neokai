@@ -799,10 +799,11 @@ class EventRouter {
       }
     } catch (err) {
       // Session resolution failed (transient DB/repo error) — clear pending
-      // so this event can be retried, but don't schedule retry here
-      // because scheduleRetry will be called by the caller's retry logic.
+      // so this event can be retried. Also schedule retry because
+      // upstream SpaceGitHubService.ingest() short-circuits duplicates.
       log.warn(`Session resolution failed for ${sub.agentName}`, { error: err });
       this.pendingDeliveries.delete(dedupeKey);
+      this.scheduleRetry(event, sub, dedupeKey);
     }
   }
 
@@ -823,6 +824,24 @@ class EventRouter {
       });
     }
     this.pendingQueue.set(key, queue);
+  }
+
+  /**
+   * Drain queued events for a subscription when the node's session is created.
+   * Clears pendingDeliveries markers so events can be re-queued if needed later.
+   */
+  private drainQueue(sub: Subscription): ExternalEvent[] {
+    const key = this.makePendingQueueKey(sub);
+    const queue = this.pendingQueue.get(key) ?? [];
+    this.pendingQueue.delete(key);
+
+    // Clear pendingDeliveries for ALL events in the drained queue
+    for (const event of queue) {
+      const eventKey = this.makeDeliveryKey(event, sub);
+      this.pendingDeliveries.delete(eventKey);
+    }
+
+    return queue;
   }
 
   private passesScopeCheck(event: ExternalEvent, sub: Subscription): boolean {
