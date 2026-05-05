@@ -378,6 +378,9 @@ function AgentsSection({
 									},
 								],
 								agentId: '',
+								model: undefined,
+								thinkingLevel: undefined,
+								customPrompt: undefined,
 							});
 						}
 					}}
