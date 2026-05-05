@@ -322,11 +322,20 @@ export interface PublishResult {
 
 export interface ExternalEventStore {
   store(event: ExternalEvent): { event: ExternalEvent; duplicate: boolean; terminal: boolean };
+  /**
+   * Idempotently register the delivery row expected for an event/subscription.
+   * Must be implemented as INSERT OR IGNORE / ON CONFLICT DO NOTHING (or an
+   * equivalent upsert that preserves terminal state) because retryable source
+   * duplicates and router retries can prepare the same (eventId, deliveryKey)
+   * multiple times before delivery succeeds.
+   */
   registerExpectedDelivery(
     eventId: string,
     deliveryKey: string,
     target: { workflowRunId: string; taskId: string; nodeId: string; agentName: string },
   ): void;
+  /** Returns true when the delivery row is already terminal and should be skipped. */
+  isDeliveryTerminal(eventId: string, deliveryKey: string): boolean;
   markDeliveryDelivered(eventId: string, deliveryKey: string): void;
   markDeliveryFailed(
     eventId: string,
@@ -575,7 +584,7 @@ class EventRouter {
 
   // Track pending deliveries to prevent duplicate queueing while allowing retries
   private pendingDeliveries: Set<string> = new Set();
-  // Retry tracking: dedupeKey → retry count / scheduled timer
+  // Retry tracking: deliveryKey → retry count / scheduled timer
   private retryCounts: Map<string, number> = new Map();
   private retryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   // Event-level retry tracking for failures before expected delivery rows exist
@@ -887,6 +896,7 @@ class EventRouter {
           nodeId: sub.nodeId,
           agentName: sub.agentName,
         });
+        if (this.eventStore.isDeliveryTerminal(event.id, deliveryKey)) continue;
         eligible.push(sub);
       } catch (err) {
         preparationFailed = true;
@@ -1144,21 +1154,21 @@ class EventRouter {
 
   /**
    * Schedule a retry for failed delivery with exponential backoff.
-   * Retries are bounded by MAX_RETRIES; after that, the event is dropped.
+   * Retries are bounded by MAX_RETRIES; after that, the delivery is marked failed.
    */
-  private scheduleRetry(event: ExternalEvent, sub: Subscription, dedupeKey: string): void {
-    const retries = (this.retryCounts.get(dedupeKey) ?? 0) + 1;
+  private scheduleRetry(event: ExternalEvent, sub: Subscription, deliveryKey: string): void {
+    const retries = (this.retryCounts.get(deliveryKey) ?? 0) + 1;
     if (retries > EventRouter.MAX_RETRIES) {
-      log.warn(`Max retries exceeded for event ${dedupeKey}, marking delivery failed`);
-      this.retryCounts.delete(dedupeKey);
-      const existingTimer = this.retryTimers.get(dedupeKey);
+      log.warn(`Max retries exceeded for event ${deliveryKey}, marking delivery failed`);
+      this.retryCounts.delete(deliveryKey);
+      const existingTimer = this.retryTimers.get(deliveryKey);
       if (existingTimer) clearTimeout(existingTimer);
-      this.retryTimers.delete(dedupeKey);
-      this.pendingDeliveries.delete(dedupeKey);
+      this.retryTimers.delete(deliveryKey);
+      this.pendingDeliveries.delete(deliveryKey);
 
       // Persist terminal failure so source-level dedup stops re-emitting this
       // delivery after restart or future polling of the same upstream event.
-      this.eventStore.markDeliveryFailed(event.id, dedupeKey, {
+      this.eventStore.markDeliveryFailed(event.id, deliveryKey, {
         terminal: true,
         reason: 'max_retries_exceeded',
       });
@@ -1166,18 +1176,18 @@ class EventRouter {
       return;
     }
 
-    this.retryCounts.set(dedupeKey, retries);
+    this.retryCounts.set(deliveryKey, retries);
     const backoff = EventRouter.RETRY_BACKOFF_MS * Math.pow(2, retries - 1);
 
-    const existingTimer = this.retryTimers.get(dedupeKey);
+    const existingTimer = this.retryTimers.get(deliveryKey);
     if (existingTimer) clearTimeout(existingTimer);
 
     const timer = setTimeout(() => {
-      this.retryTimers.delete(dedupeKey);
+      this.retryTimers.delete(deliveryKey);
 
       // Re-check if delivered while waiting (another delivery might have succeeded)
-      if (this.delivered.has(dedupeKey)) {
-        this.retryCounts.delete(dedupeKey);
+      if (this.delivered.has(deliveryKey) || this.eventStore.isDeliveryTerminal(event.id, deliveryKey)) {
+        this.retryCounts.delete(deliveryKey);
         return;
       }
 
@@ -1191,8 +1201,8 @@ class EventRouter {
           && active.interest.scope === sub.interest.scope,
       );
       if (!stillActive) {
-        this.retryCounts.delete(dedupeKey);
-        this.pendingDeliveries.delete(dedupeKey);
+        this.retryCounts.delete(deliveryKey);
+        this.pendingDeliveries.delete(deliveryKey);
         return;
       }
 
@@ -1201,9 +1211,9 @@ class EventRouter {
         .then(() => {
           // deliverToSubscription catches injection failures and may schedule a
           // follow-up retry, so only clear retry state if delivery is now marked.
-          if (this.delivered.has(dedupeKey)) {
-            this.retryCounts.delete(dedupeKey);
-            this.pendingDeliveries.delete(dedupeKey);
+          if (this.delivered.has(deliveryKey) || this.eventStore.isDeliveryTerminal(event.id, deliveryKey)) {
+            this.retryCounts.delete(deliveryKey);
+            this.pendingDeliveries.delete(deliveryKey);
           }
         })
         .catch((err) => {
@@ -1211,13 +1221,13 @@ class EventRouter {
           log.warn('EventRouter: retry delivery failed', {
             error: err,
             retries,
-            dedupeKey,
+            deliveryKey,
             workflowRunId: sub.workflowRunId,
           });
         });
     }, backoff);
 
-    this.retryTimers.set(dedupeKey, timer);
+    this.retryTimers.set(deliveryKey, timer);
   }
 }
 ```
@@ -1605,7 +1615,7 @@ V1 needs one core event-store table plus workflow type additions:
    );
    ```
 
-   `EventRouter` calls `registerExpectedDelivery(...)` for every scope-matched subscription before attempting any injection. It then records `delivered` after successful `injectMessage` and calls `markEventDeliveredIfAllDeliveriesTerminal(event.id)` so source-level dedup can stop re-emitting already-delivered events after restart or in-memory TTL eviction. When retry budget is exhausted it records terminal delivery failure and calls `markEventFailedIfAllDeliveriesTerminal(event.id)` so duplicate source observations do not restart an exhausted retry loop.
+   `EventRouter` calls `registerExpectedDelivery(...)` for every scope-matched subscription before attempting any injection. This registration must be idempotent for the `(event_id, delivery_key)` primary key: use `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING`, or an equivalent upsert that never downgrades an existing terminal row. Retryable source duplicates and router retries can prepare the same delivery more than once, so duplicate expected-delivery rows are normal and must not become preparation failures. After idempotent registration, the router skips already-terminal delivery rows and only attempts pending/retryable rows. It then records `delivered` after successful `injectMessage` and calls `markEventDeliveredIfAllDeliveriesTerminal(event.id)` so source-level dedup can stop re-emitting already-delivered events after restart or in-memory TTL eviction. When retry budget is exhausted it records terminal delivery failure and calls `markEventFailedIfAllDeliveriesTerminal(event.id)` so duplicate source observations do not restart an exhausted retry loop.
 
 3. **Adapter-owned GitHub configuration**: reuse or migrate the existing `space_github_watched_repos` table behind `GitHubEventAdapterRepository`. This table remains source-specific and should not be queried by EventRouter except through cache invalidation hooks for repo-scoped matching.
 
