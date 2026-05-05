@@ -188,6 +188,7 @@ function AgentsSection({
 				model: survivor?.model,
 				thinkingLevel: survivor?.thinkingLevel,
 				customPrompt: survivor?.customPrompt,
+				disabledSkillIds: survivor?.disabledSkillIds,
 				channels: undefined,
 			});
 		} else {

@@ -538,6 +538,7 @@ export function setupSpaceExportImportHandlers(
 						const updated = agentRepo.update(existing.id, {
 							description: exportedAgent.description ?? null,
 							model: exportedAgent.model ?? null,
+							thinkingLevel: exportedAgent.thinkingLevel ?? null,
 							provider: exportedAgent.provider ?? null,
 							customPrompt: replaceParts.length > 0 ? replaceParts.join('\n\n') : null,
 							tools: exportedAgent.tools ?? null,

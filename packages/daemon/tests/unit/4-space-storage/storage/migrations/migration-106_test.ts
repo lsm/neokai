@@ -27,7 +27,7 @@ import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
-import { runMigration106 } from '../../../../../src/storage/schema/migrations.ts';
+import { runMigration106, runMigration117 } from '../../../../../src/storage/schema/migrations.ts';
 import { SpaceAgentRepository } from '../../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../../../src/lib/space/managers/space-agent-manager.ts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
@@ -41,6 +41,7 @@ interface AgentRow {
 	description: string | null;
 	tools: string | null;
 	custom_prompt: string | null;
+	thinking_level: string | null;
 }
 
 function insertSpace(db: BunDatabase, id: string): void {
@@ -60,6 +61,7 @@ function insertAgent(
 		description?: string;
 		tools?: string[];
 		customPrompt?: string | null;
+		thinkingLevel?: string | null;
 		templateName?: string | null;
 		templateHash?: string | null;
 	}
@@ -67,8 +69,8 @@ function insertAgent(
 	const now = Date.now();
 	db.prepare(
 		`INSERT INTO space_agents (
-			id, space_id, name, description, tools, custom_prompt, template_name, template_hash, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			id, space_id, name, description, tools, custom_prompt, thinking_level, template_name, template_hash, created_at, updated_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	).run(
 		opts.id,
 		opts.spaceId,
@@ -76,6 +78,7 @@ function insertAgent(
 		opts.description ?? '',
 		JSON.stringify(opts.tools ?? []),
 		opts.customPrompt ?? null,
+		opts.thinkingLevel ?? null,
 		opts.templateName ?? null,
 		opts.templateHash ?? null,
 		now,
@@ -86,7 +89,7 @@ function insertAgent(
 function readAgent(db: BunDatabase, id: string): AgentRow | undefined {
 	return db
 		.prepare(
-			`SELECT id, name, template_name, template_hash, description, tools, custom_prompt
+			`SELECT id, name, template_name, template_hash, description, tools, custom_prompt, thinking_level
 			   FROM space_agents WHERE id = ?`
 		)
 		.get(id) as AgentRow | undefined;
@@ -99,6 +102,23 @@ function readAgentTimestamps(
 	return db.prepare(`SELECT created_at, updated_at FROM space_agents WHERE id = ?`).get(id) as
 		| { created_at: number; updated_at: number }
 		| undefined;
+}
+
+function computeLegacyAgentTemplateHash(input: {
+	name: string;
+	description: string;
+	tools: string[];
+	customPrompt: string;
+}): string {
+	const fingerprint = {
+		name: (input.name ?? '').trim().toLowerCase(),
+		description: input.description ?? '',
+		tools: [...(input.tools ?? [])].sort(),
+		customPrompt: input.customPrompt ?? '',
+	};
+	const hasher = new Bun.CryptoHasher('sha256');
+	hasher.update(JSON.stringify(fingerprint));
+	return hasher.digest('hex');
 }
 
 describe('Migration 106: backfill preset agent template tracking', () => {
@@ -331,5 +351,92 @@ describe('Migration 106: backfill preset agent template tracking', () => {
 		expect(after.custom_prompt).toBe(customizedPrompt);
 		expect(after).toEqual(before);
 		expect(afterTimestamps).toEqual(beforeTimestamps);
+	});
+
+	test('migration 117 restamps preset template hashes with thinkingLevel fingerprint shape', () => {
+		const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
+		if (!coder) throw new Error('Coder preset missing');
+		const legacyHash = computeLegacyAgentTemplateHash({
+			name: coder.name,
+			description: coder.description,
+			tools: coder.tools,
+			customPrompt: coder.customPrompt,
+		});
+
+		insertAgent(db, {
+			id: 'coder-agent',
+			spaceId: 'sp-1',
+			name: 'Coder',
+			description: coder.description,
+			tools: coder.tools,
+			customPrompt: coder.customPrompt,
+			templateName: 'Coder',
+			templateHash: legacyHash,
+		});
+
+		runMigration117(db);
+
+		const after = readAgent(db, 'coder-agent')!;
+		expect(after.template_hash).toBe(computeAgentTemplateHash(coder));
+		expect(after.template_hash).not.toBe(legacyHash);
+	});
+
+	test('migration 117 hashes customized row values instead of live preset values', () => {
+		const reviewer = getPresetAgentTemplates().find((p) => p.name === 'Reviewer');
+		if (!reviewer) throw new Error('Reviewer preset missing');
+		const customizedPrompt = `${reviewer.customPrompt}\n\nUser-specific review policy.`;
+		const legacyHash = computeLegacyAgentTemplateHash({
+			name: reviewer.name,
+			description: reviewer.description,
+			tools: reviewer.tools,
+			customPrompt: customizedPrompt,
+		});
+
+		insertAgent(db, {
+			id: 'customized-reviewer-117',
+			spaceId: 'sp-1',
+			name: 'Reviewer',
+			description: reviewer.description,
+			tools: reviewer.tools,
+			customPrompt: customizedPrompt,
+			templateName: 'Reviewer',
+			templateHash: legacyHash,
+		});
+
+		runMigration117(db);
+
+		const after = readAgent(db, 'customized-reviewer-117')!;
+		expect(after.custom_prompt).toBe(customizedPrompt);
+		expect(after.template_hash).toBe(
+			computeAgentTemplateHash({ ...reviewer, customPrompt: customizedPrompt })
+		);
+		expect(after.template_hash).not.toBe(computeAgentTemplateHash(reviewer));
+	});
+
+	test('migration 117 includes existing thinking_level values in restamped hashes', () => {
+		insertAgent(db, {
+			id: 'thinking-coder',
+			spaceId: 'sp-1',
+			name: 'Coder',
+			description: 'custom description',
+			tools: ['Read'],
+			customPrompt: 'custom prompt',
+			thinkingLevel: 'think16k',
+			templateName: 'Coder',
+			templateHash: 'legacy-hash',
+		});
+
+		runMigration117(db);
+
+		const after = readAgent(db, 'thinking-coder')!;
+		expect(after.template_hash).toBe(
+			computeAgentTemplateHash({
+				name: 'Coder',
+				description: 'custom description',
+				tools: ['Read'],
+				thinkingLevel: 'think16k',
+				customPrompt: 'custom prompt',
+			})
+		);
 	});
 });
