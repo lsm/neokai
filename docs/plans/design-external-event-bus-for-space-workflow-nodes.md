@@ -61,7 +61,7 @@ github/lsm/neokai/pull_request.review_*     ← prefix wildcard: all review even
 
 1. `source` — adapter identifier (`github`, `slack`, `ci`). Lowercase, no slashes.
 2. `owner/repo` — from the event's repository context. Both lowercase for case-insensitive matching.
-3. `resource` — the event resource type. V1 GitHub adapter emits PR-related resources (`pull_request`, `pull_request.comment`, `pull_request.review`, `pull_request.review_comment`). CI resources such as `check_suite` are Phase 3/future adapter scope.
+3. `resource.action` — the fourth path segment is always one dotted pair. For V1 GitHub PR events, `resource` is `pull_request`; review/comment variants are encoded in `action` (`review_submitted`, `comment_created`, `review_comment_created`) so examples like `pull_request.review_submitted` remain canonical. CI resources such as `check_suite` are Phase 3/future adapter scope.
 4. `action` — the specific action: `opened`, `review_submitted`, `comment_created`, `completed`, etc.
 5. All v1 topics use exactly 4 path segments. For resources without a natural `owner/repo` (e.g. a future Slack message), use a source-specific scope pair to preserve the same depth: `{source}/{workspace}/{channel}/{resource}.{action}` (for example, `slack/acme/eng/messages.created`). Adapters that do not have both scope levels should use a reserved placeholder segment such as `_` rather than emitting 3-segment topics.
 
@@ -80,6 +80,7 @@ Pattern validation (enforced at workflow create/update time):
 - Must not contain `..` segments.
 - Must not contain empty segments (no double slashes).
 - Must have exactly 4 segments (`source/scope1/scope2/resource.action`) so it can match real event topics.
+- The 4th segment must contain a `resource.action` separator (`.`) with non-empty resource and action sides, allowing segment-local wildcards such as `pull_request.*`, `*.created`, and `*.*`.
 - Each segment may contain alphanumeric, dash, underscore, dot, and `*`; `*` must stay within a single segment and cannot cross `/` boundaries.
 - Max 10 interests per agent slot.
 
@@ -1093,6 +1094,8 @@ The `SpaceGitHubService` already normalizes to `SpaceGitHubEventKind` (`issue_co
 | `pull_request_review_comment` | `pull_request.review_comment_${action}` (created, edited, deleted) |
 | `pull_request` | `pull_request.${action}` (opened, synchronize, closed, etc.) |
 
+These return values are the complete fourth path segment (`resource.action`). For V1 PR events the resource side is always `pull_request`; `comment_*`, `review_*`, and `review_comment_*` are action names, not nested resource segments. The adapter must not emit doubled resource names such as `pull_request.review.review_submitted`.
+
 ```typescript
 function mapEventType(kind: string, action: string): string {
   switch (kind) {
@@ -1191,6 +1194,15 @@ export function validateGlobPattern(pattern: string): { valid: boolean; reason?:
         reason: `Segment "${segment}" contains invalid characters. Use alphanumeric, dash, underscore, dot, or segment-local "*" wildcard.`,
       };
     }
+  }
+
+  const resourceAction = segments[3];
+  const dotIndex = resourceAction.indexOf('.');
+  if (dotIndex <= 0 || dotIndex === resourceAction.length - 1) {
+    return {
+      valid: false,
+      reason: `Topic pattern fourth segment must be resource.action; got "${resourceAction}". Example: 'pull_request.review_submitted'`,
+    };
   }
 
   return { valid: true };
