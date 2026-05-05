@@ -382,7 +382,7 @@ export function createKimiAnthropicBridgeServer(config: KimiBridgeConfig): KimiB
 			if (url.pathname === '/health' || url.pathname === '/v1/health') return new Response('ok');
 			const authHeader = req.headers.get('Authorization') ?? '';
 			const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
-			const reqToken = req.headers.get('x-api-key') ?? bearerToken;
+			const reqToken = req.headers.get('x-api-key') || bearerToken;
 			if (reqToken !== authToken) {
 				return sendJsonError(401, 'authentication_error', 'Invalid or missing auth token');
 			}
