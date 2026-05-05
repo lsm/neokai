@@ -9,6 +9,7 @@ import {
 } from '../../lib/api-helpers.ts';
 import { SettingsSection } from './SettingsSection.tsx';
 import { OAuthModal } from './OAuthModal.tsx';
+import { GeminiAccountsPanel } from './GeminiAccountsPanel.tsx';
 import { Button } from '../ui/Button.tsx';
 
 interface OAuthFlowState {
@@ -164,6 +165,10 @@ export function ProvidersSettings() {
 		);
 	}
 
+	// Separate Gemini OAuth provider from other providers for custom UI
+	const geminiProvider = providers.find((p) => p.id === 'google-gemini-oauth');
+	const otherProviders = providers.filter((p) => p.id !== 'google-gemini-oauth');
+
 	return (
 		<>
 			<SettingsSection title="Providers">
@@ -172,11 +177,40 @@ export function ProvidersSettings() {
 						Configure authentication for AI providers. Each provider may use OAuth or API keys.
 					</p>
 
-					{providers.length === 0 ? (
+					{/* Gemini OAuth section with account management */}
+					{geminiProvider && (
+						<div class="p-4 bg-dark-800/50 rounded-lg border border-dark-700">
+							<div class="flex items-center justify-between mb-3">
+								<div class="flex items-center gap-2">
+									<span class="text-sm font-medium text-gray-200">
+										{geminiProvider.displayName}
+									</span>
+									{geminiProvider.isAuthenticated && (
+										<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-green-900/50 text-green-400">
+											OAuth
+										</span>
+									)}
+									{!geminiProvider.isAuthenticated && (
+										<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-gray-800 text-gray-400">
+											No accounts
+										</span>
+									)}
+								</div>
+							</div>
+							{geminiProvider.error && (
+								<p class="text-xs text-red-400 mb-2">{geminiProvider.error}</p>
+							)}
+							<GeminiAccountsPanel />
+						</div>
+					)}
+
+					{/* Other providers */}
+					{otherProviders.length === 0 && !geminiProvider && (
 						<div class="text-gray-500 text-sm">No providers available</div>
-					) : (
+					)}
+					{otherProviders.length > 0 && (
 						<div class="space-y-3">
-							{providers.map((provider) => (
+							{otherProviders.map((provider) => (
 								<div
 									key={provider.id}
 									class="flex items-center justify-between p-3 bg-dark-800 rounded-lg border border-dark-700"
@@ -247,7 +281,7 @@ export function ProvidersSettings() {
 				</div>
 			</SettingsSection>
 
-			{/* OAuth Modal */}
+			{/* OAuth Modal (for non-Gemini providers) */}
 			{oauthFlow && (
 				<OAuthModal
 					providerName={oauthFlow.providerName}
