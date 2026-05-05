@@ -437,6 +437,11 @@ interface Subscription {
   agentSessionId: string | null; // resolved at delivery time
   spaceId: string;
 }
+
+interface PendingDelivery {
+  event: ExternalEvent;
+  deliveryKey: string;
+}
 ```
 
 ### EventRouter implementation sketch
@@ -451,8 +456,8 @@ class EventRouter {
 
   // dedup: JSON tuple (dedupeKey, taskId, nodeId, agentName, workflowRunId) → timestamp
   private delivered: Map<string, number> = new Map();
-  // pending delivery queue: JSON tuple (workflowRunId, taskId, nodeId, agentName) → events
-  private pendingQueue: Map<string, ExternalEvent[]> = new Map();
+  // pending delivery queue: JSON tuple (workflowRunId, taskId, nodeId, agentName) → events plus delivery keys
+  private pendingQueue: Map<string, PendingDelivery[]> = new Map();
   // TTL for dedup entries — entries older than this are evicted on next access
   private static readonly DEDUP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -755,6 +760,7 @@ class EventRouter {
     const dedupeKey = this.makeDeliveryKey(event, sub);
     if (this.delivered.has(dedupeKey)) return;
 
+<<<<<<< HEAD
     // Check if pending (prevents duplicate queueing while allowing retries on failure)
     if (this.pendingDeliveries.has(dedupeKey)) return;
 
@@ -804,18 +810,52 @@ class EventRouter {
       log.warn(`Session resolution failed for ${sub.agentName}`, { error: err });
       this.pendingDeliveries.delete(dedupeKey);
       this.scheduleRetry(event, sub, dedupeKey);
+=======
+    // Resolve session — re-read from nodeExecutionRepo for latest state
+    const sessionId = await this.resolveSession(sub);
+    if (!sessionId) {
+      // Session not active — queue for later delivery. Mark dedup only after the
+      // event is safely queued; the pending entry carries the same delivery key
+      // and the key is cleared if the eventual flush/injection fails.
+      this.queueForDelivery(event, sub, dedupeKey);
+      this.delivered.set(dedupeKey, Date.now());
+      return;
+    }
+
+    // Format and inject.
+    // Do NOT mark delivered before injectMessage succeeds: SpaceGitHubService
+    // suppresses repeat routing for the same upstream dedupeKey, so pre-marking
+    // would permanently lose the event for this subscription after transient
+    // injection failures or session teardown races.
+    const message = this.formatEventMessage(event);
+    try {
+      await this.sessionFactory.injectMessage(sessionId, message, {
+        deliveryMode: 'defer',
+      });
+      this.delivered.set(dedupeKey, Date.now());
+    } catch (err) {
+      log.warn(`Failed to deliver event to ${sub.agentName}; leaving undelivered for retry`, { error: err });
+      // Leave the dedupe key unset so a retry path (for example a re-emitted bus
+      // event or pending queue flush retry) can attempt delivery again.
+      throw err;
+>>>>>>> f60b5780a (Address review: close passesScopeCheck before scheduleRetry, fix restart claim, mark issues.opened out-of-scope)
     }
   }
 
-  private queueForDelivery(event: ExternalEvent, sub: Subscription): void {
+  private queueForDelivery(event: ExternalEvent, sub: Subscription, deliveryKey: string): void {
     const key = this.makePendingQueueKey(sub);
     const queue = this.pendingQueue.get(key) ?? [];
-    queue.push(event);
+    queue.push({ event, deliveryKey });
     if (queue.length > 50) {
+<<<<<<< HEAD
       const evicted = queue.shift()!;
       // Clear pending marker for evicted event so it can be re-queued if needed
       const evictedKey = this.makeDeliveryKey(evicted, sub);
       this.pendingDeliveries.delete(evictedKey);
+=======
+      const dropped = queue.shift();
+      if (dropped) this.delivered.delete(dropped.deliveryKey);
+>>>>>>> f60b5780a (Address review: close passesScopeCheck before scheduleRetry, fix restart claim, mark issues.opened out-of-scope)
       log.warn('EventRouter: pending external event queue exceeded limit; dropped oldest event', {
         workflowRunId: sub.workflowRunId,
         taskId: sub.taskId,
@@ -967,15 +1007,17 @@ Event arrives → Match subscriptions → Scope check → Dedup check → Sessio
                                                     injectMessage   injectMessage  pending_events
                                                           │              │              │
                                                           ▼              ▼              ▼
-                                                    Mark delivered  Mark delivered  Await session
-                                                                                     start
+                                                    Mark delivered  Mark delivered  Mark queued
+                                                                                     delivered
+                                                                                     after flush
 ```
 
 ### Deduplication
 
 - **Key**: JSON tuple `[event.dedupeKey, subscription.taskId, subscription.nodeId, subscription.agentName, subscription.workflowRunId]` — includes `taskId` to isolate multi-task runs and `nodeId` to handle cases where the same agent name appears in multiple nodes within the same run. The tuple is encoded structurally rather than delimiter-joined because `dedupeKey`, workflow identifiers, node IDs, and agent names are free-form strings.
 - **Storage**: In-memory `Map<string, number>` (timestamp). Evicted when the workflow run completes.
-- **Guarantee**: Same external event is never delivered twice to the same node agent within a run.
+- **Guarantee**: Same external event is never delivered twice to the same node agent within a run after successful injection or durable in-memory queueing.
+- **Retry behavior**: Live/idle session injection marks the key only after `injectMessage` succeeds. If injection throws, the key remains unset so the subscription can be retried; this is required because upstream `SpaceGitHubService.storeEvent` suppresses duplicate upstream dedupe keys and will not necessarily re-route the same event.
 - The upstream `SpaceGitHubService` already deduplicates by `(spaceId, dedupeKey)` — this is an additional per-node dedup.
 
 ### Wake-on-idle
