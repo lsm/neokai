@@ -330,7 +330,8 @@ describe('node-agent-tools: list_peers', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.channelTopologyDeclared).toBe(false);
-		expect(data.permittedTargets).toEqual(['task-agent', 'space-agent']);
+		expect(data.permittedTargets).toEqual(['task-agent']);
+		expect(data.message).not.toContain('Use "space-agent"');
 	});
 
 	test('reports permitted targets when channels declared', async () => {
@@ -342,7 +343,17 @@ describe('node-agent-tools: list_peers', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.channelTopologyDeclared).toBe(true);
-		expect(data.permittedTargets).toEqual(['reviewer', 'task-agent', 'space-agent']);
+		expect(data.permittedTargets).toEqual(['reviewer', 'task-agent']);
+	});
+
+	test('advertises space-agent only when the built-in Space Agent route is available', async () => {
+		const config = makeConfig(ctx, { canMessageSpaceAgent: true });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.permittedTargets).toEqual(['task-agent', 'space-agent']);
+		expect(data.message).toContain('Use "space-agent"');
 	});
 
 	test('returns empty peer list when no peers in the run', async () => {

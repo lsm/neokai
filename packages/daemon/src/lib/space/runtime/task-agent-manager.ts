@@ -4387,6 +4387,7 @@ export class TaskAgentManager {
 			myAgentNameAliases: agentNameAliases,
 			taskId,
 			spaceId,
+			canMessageSpaceAgent: Boolean(this.config.spaceAgentInjector),
 			channelResolver,
 			workflowRunId,
 			workflowNodeId,

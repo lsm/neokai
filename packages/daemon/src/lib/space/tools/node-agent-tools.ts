@@ -112,6 +112,12 @@ export interface NodeAgentToolsConfig {
 	/** Space ID — used for event emission. */
 	spaceId: string;
 	/**
+	 * Whether this session can reach the built-in Space Agent chat target.
+	 * Must match AgentMessageRouter's built-in route availability to avoid
+	 * advertising a target that send_message cannot deliver to.
+	 */
+	canMessageSpaceAgent?: boolean;
+	/**
 	 * Pre-built channel resolver for this sub-session's topology.
 	 * Created by TaskAgentManager at session spawn time from the workflow run config.
 	 * An empty resolver (no channels) means send_message is unavailable for this session.
@@ -236,6 +242,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		myAgentName,
 		myAgentNameAliases,
 		spaceId,
+		canMessageSpaceAgent = false,
 		channelResolver,
 		workflowRunId,
 		workflowNodeId,
@@ -469,7 +476,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				...topologyTargets,
 				...crossNodePeers.map((p) => p.agentName),
 			]);
-			const permittedTargets = [...permittedTargetSet, 'task-agent', 'space-agent'];
+			const permittedTargets = [
+				...permittedTargetSet,
+				'task-agent',
+				...(canMessageSpaceAgent ? ['space-agent'] : []),
+			];
 			const channelTopologyDeclared = !resolver.isEmpty();
 
 			return jsonResult({
@@ -482,8 +493,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				message:
 					`Found ${peers.length} peer(s). ` +
 					`Permitted direct targets via send_message: ${permittedTargets.join(', ')}. ` +
-					`Use "task-agent" to reach the workflow coordinator. ` +
-					`Use "space-agent" to escalate blockers or request human/space-level judgment.`,
+					`Use "task-agent" to reach the workflow coordinator.` +
+					(canMessageSpaceAgent
+						? ` Use "space-agent" to escalate blockers or request human/space-level judgment.`
+						: ''),
 			});
 		},
 
