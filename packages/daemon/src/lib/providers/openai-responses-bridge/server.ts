@@ -465,6 +465,17 @@ function readUsageNumber(record: Record<string, unknown> | undefined, key: strin
 	return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function readFirstUsageNumber(
+	record: Record<string, unknown> | undefined,
+	keys: string[]
+): number | null {
+	for (const key of keys) {
+		const value = readUsageNumber(record, key);
+		if (value !== null) return value;
+	}
+	return null;
+}
+
 function responseUsage(response: Record<string, unknown> | undefined): {
 	inputTokens?: number | null;
 	outputTokens: number;
@@ -475,8 +486,14 @@ function responseUsage(response: Record<string, unknown> | undefined): {
 			? (usage as Record<string, unknown>)
 			: undefined;
 	return {
-		inputTokens: readUsageNumber(usageRecord, 'input_tokens'),
-		outputTokens: readUsageNumber(usageRecord, 'output_tokens') ?? 0,
+		inputTokens: readFirstUsageNumber(usageRecord, [
+			'input_tokens',
+			'prompt_tokens',
+			'inputTokens',
+		]),
+		outputTokens:
+			readFirstUsageNumber(usageRecord, ['output_tokens', 'completion_tokens', 'outputTokens']) ??
+			0,
 	};
 }
 
