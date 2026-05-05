@@ -444,33 +444,31 @@ export function ContextPanel() {
 					overflow-hidden
 				`}
 			>
-				{/* Mobile nav strip - replaces NavRail on mobile outside in-space spaces. */}
-				{!isSpaceDetail && (
-					<div
-						class={`flex items-center gap-1 px-2 py-2 border-b ${borderColors.ui.default} md:hidden`}
-					>
-						{MAIN_NAV_ITEMS.map((item) => (
-							<NavIconButton
-								key={item.id}
-								active={navSection === item.id}
-								onClick={() => handleMobileNavClick(item.id)}
-								label={item.label}
-							>
-								{item.icon}
-							</NavIconButton>
-						))}
-						<div class="ml-auto flex items-center gap-1">
-							<DaemonStatusIndicator />
-							<NavIconButton
-								active={navSection === SETTINGS_NAV_ITEM.id}
-								onClick={() => handleMobileNavClick(SETTINGS_NAV_ITEM.id)}
-								label={SETTINGS_NAV_ITEM.label}
-							>
-								{SETTINGS_NAV_ITEM.icon}
-							</NavIconButton>
-						</div>
+				{/* Mobile nav strip - replaces NavRail on mobile. */}
+				<div
+					class={`flex items-center gap-1 px-2 py-2 border-b ${borderColors.ui.default} md:hidden`}
+				>
+					{MAIN_NAV_ITEMS.map((item) => (
+						<NavIconButton
+							key={item.id}
+							active={navSection === item.id}
+							onClick={() => handleMobileNavClick(item.id)}
+							label={item.label}
+						>
+							{item.icon}
+						</NavIconButton>
+					))}
+					<div class="ml-auto flex items-center gap-1">
+						<DaemonStatusIndicator />
+						<NavIconButton
+							active={navSection === SETTINGS_NAV_ITEM.id}
+							onClick={() => handleMobileNavClick(SETTINGS_NAV_ITEM.id)}
+							label={SETTINGS_NAV_ITEM.label}
+						>
+							{SETTINGS_NAV_ITEM.icon}
+						</NavIconButton>
 					</div>
-				)}
+				</div>
 
 				{/* Header */}
 				<div class={`px-4 h-[65px] flex items-center border-b ${borderColors.ui.default}`}>

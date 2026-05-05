@@ -255,6 +255,20 @@ describe('ContextPanel', () => {
 		expect(mockContextPanelOpenSignal.value).toBe(false);
 	});
 
+	it('keeps global mobile navigation available in the in-space switcher', () => {
+		render(<ContextPanel />);
+
+		fireEvent.click(screen.getByLabelText('Spaces'));
+		fireEvent.click(screen.getByLabelText('Chats'));
+		fireEvent.click(screen.getByLabelText('Inbox'));
+		fireEvent.click(screen.getByLabelText('Settings'));
+
+		expect(mockNavigateToSpaces).toHaveBeenCalledTimes(1);
+		expect(mockNavigateToSessions).toHaveBeenCalledTimes(1);
+		expect(mockNavigateToInbox).toHaveBeenCalledTimes(1);
+		expect(mockNavigateToSettings).toHaveBeenCalledTimes(1);
+	});
+
 	it('opens the create space dialog directly from the mobile switcher', () => {
 		render(<ContextPanel />);
 
