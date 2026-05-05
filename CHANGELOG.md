@@ -2,6 +2,35 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.19.0] - 2026-05-05
+
+A release adding Google Gemini OAuth, Kimi Moonshot provider, gate poll mechanism, configurable thinking levels, and node-to-Space-Agent messaging. 21 commits since v0.18.0.
+
+### Added
+
+- **Google Gemini OAuth provider**: Account rotation with UI management in provider settings
+- **Kimi Moonshot provider**: OpenAI-compatible bridge with auth-secured localhost proxy
+- **Gate poll mechanism**: Periodic script execution and node message injection for workflow nodes
+- **Configurable thinking levels**: Per-agent thinking budget in space settings
+- **Default model picker**: Space Settings and Task Agent editor now expose model selection
+- **Node-to-Space-Agent messaging**: Workflow nodes can escalate to the built-in Space Agent with runtime envelopes and attribution
+- **Mobile space navigation redesign**: Improved mobile layout for Spaces
+
+### Changed
+
+- **OpenAI bridge session routing refactor**: Cleaner session management for OpenAI-compatible providers
+- **OpenRouter**: Use `/models/user` endpoint and filter system models
+- **Mid-run gate poll config pickup**: Gate poll config changes take effect without restart
+
+### Fixed
+
+- **SDK**: Transcript usage rehydration sanitization for legacy JSONL
+- **Gemini OAuth**: Default credentials so setup works without env vars
+- **OpenAI**: Response usage normalization
+- **Chat UX**: Composer stop button state; task thread refresh after reconnect
+- **Gate poll**: PR comment notifications; rehydration after restart; template hash includes gate poll to prevent drift
+- **Space Agent**: Gated peer discoverability and reachability when no injector configured
+
 ## [0.18.0] - 2026-05-03
 
 A release adding Ollama provider support, Space GitHub PR ingestion, draft task status, and significant workflow and bridge reliability improvements. 37 commits since v0.17.0.
