@@ -101,6 +101,23 @@ class ThrowingMockProvider extends MockProvider {
 	}
 }
 
+class BridgeMockProvider extends MockProvider {
+	constructor() {
+		super('bridge', 'Bridge Provider', true, 'bridge-');
+	}
+
+	buildSdkConfig(): ProviderSdkConfig {
+		return {
+			envVars: {
+				ANTHROPIC_BASE_URL: 'http://127.0.0.1:12345',
+				ANTHROPIC_API_KEY: 'bridge-session-key',
+				CLAUDE_CODE_OAUTH_TOKEN: '',
+			},
+			isAnthropicCompatible: true,
+		};
+	}
+}
+
 // GLM-like provider for testing
 class GlmMockProvider extends MockProvider {
 	readonly id = 'glm' as const;
@@ -777,6 +794,20 @@ describe('ProviderService', () => {
 			});
 
 			service.restoreEnvVars(original);
+		});
+
+		it('clears CLAUDE_CODE_OAUTH_TOKEN when provider returns empty-string sentinel, restores on restoreEnvVars', () => {
+			registry.register(new BridgeMockProvider());
+			process.env.CLAUDE_CODE_OAUTH_TOKEN = 'real-oauth-token';
+
+			const original = service.applyEnvVarsToProcess('bridge-model', 'bridge');
+
+			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+			expect(original.CLAUDE_CODE_OAUTH_TOKEN).toBe('real-oauth-token');
+			expect(process.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:12345');
+
+			service.restoreEnvVars(original);
+			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('real-oauth-token');
 		});
 
 		it('blanks ANTHROPIC_API_KEY when provider returns empty-string sentinel, restores on restoreEnvVars', () => {

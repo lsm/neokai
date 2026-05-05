@@ -38,6 +38,7 @@ import {
 } from './codex-anthropic-bridge/server.js';
 import {
 	type OpenAIResponsesBridgeAuth,
+	type OpenAIResponsesBridgeServer,
 	createOpenAIResponsesBridgeServer,
 } from './openai-responses-bridge/server.js';
 import { getCodexBridgeModelInfos } from './codex-anthropic-bridge/model-context-windows.js';
@@ -229,8 +230,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		vision: false,
 	};
 
-	/** Per-adapter/per-workspace bridge servers. */
-	private readonly bridgeServers = new Map<string, BridgeServer>();
+	/** Per-adapter bridge servers. Codex remains workspace-scoped; Responses is shared by auth. */
+	private readonly bridgeServers = new Map<string, BridgeServer | OpenAIResponsesBridgeServer>();
 	private readonly bridgeServerAuthKeys = new Map<string, string>();
 
 	/** Path to NeoKai's own auth store. */
@@ -565,8 +566,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		const fileAuth = this.cachedCredentials ? this.toBridgeAuth(this.cachedCredentials) : undefined;
 		const auth = envAuth ?? this.cachedBridgeAuth ?? fileAuth ?? undefined;
 		const adapter = this.selectBridgeAdapter();
-		const bridgeKey = `${adapter}:${workspace}`;
 		const authKey = this.bridgeAuthCacheKey(auth);
+		const bridgeKey = adapter === 'responses' ? `responses:${authKey}` : `codex:${workspace}`;
 		let bridgeServer = this.bridgeServers.get(bridgeKey);
 		if (
 			adapter === 'responses' &&
@@ -610,14 +611,21 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			this.bridgeServers.set(bridgeKey, bridgeServer);
 			this.bridgeServerAuthKeys.set(bridgeKey, authKey);
 			logger.info(
-				`AnthropicToCodexBridgeProvider: ${adapter} bridge server started on port ${bridgeServer.port} for workspace=${workspace}`
+				`AnthropicToCodexBridgeProvider: ${adapter} bridge server started on port ${bridgeServer.port} for key=${bridgeKey}`
 			);
 		}
 
+		const bridgeBaseUrl =
+			adapter === 'responses'
+				? (bridgeServer as OpenAIResponsesBridgeServer).baseUrlForSession?.(sessionId) ||
+					`http://127.0.0.1:${bridgeServer.port}`
+				: `http://127.0.0.1:${bridgeServer.port}`;
+
 		return {
 			envVars: {
-				ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridgeServer.port}`,
+				ANTHROPIC_BASE_URL: bridgeBaseUrl,
 				ANTHROPIC_API_KEY: `codex-bridge-${sessionId}`,
+				CLAUDE_CODE_OAUTH_TOKEN: '',
 				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
 				// Map SDK model tiers to Codex model IDs so the Claude Agent SDK
 				// subprocess never falls back to Anthropic model names (e.g.

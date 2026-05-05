@@ -34,6 +34,7 @@ const logger = new Logger('openai-responses-bridge-server');
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_CHATGPT_CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex';
 const DEFAULT_RESPONSE_CONTINUATION_TTL_MS = 5 * 60 * 1000;
+const SESSION_ROUTE_PREFIX = '/_neokai/session/';
 
 export type OpenAIResponsesBridgeAuth = {
 	apiKey: string;
@@ -57,6 +58,7 @@ export type OpenAIResponsesBridgeModel = {
 
 export type OpenAIResponsesBridgeServer = {
 	port: number;
+	baseUrlForSession?(sessionId: string): string;
 	stop(): void;
 };
 
@@ -149,16 +151,34 @@ function generateMsgId(): string {
 	return `msg_${Math.random().toString(36).slice(2, 14)}`;
 }
 
-function extractSessionId(req: Request): string {
+function extractSessionId(req: Request): { sessionId: string; pathname: string } {
+	const url = new URL(req.url);
+	if (url.pathname.startsWith(SESSION_ROUTE_PREFIX)) {
+		const remainder = url.pathname.slice(SESSION_ROUTE_PREFIX.length);
+		const slashIndex = remainder.indexOf('/');
+		if (slashIndex > 0) {
+			const encodedSessionId = remainder.slice(0, slashIndex);
+			try {
+				return {
+					sessionId: decodeURIComponent(encodedSessionId),
+					pathname: remainder.slice(slashIndex) || '/',
+				};
+			} catch {
+				// Fall back to legacy auth-header parsing below for malformed route IDs.
+			}
+		}
+	}
+
 	const auth =
 		req.headers.get('Authorization') ??
 		req.headers.get('authorization') ??
 		req.headers.get('x-api-key') ??
 		'';
 	const token = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7) : auth;
-	if (token.startsWith('codex-bridge-')) return token.slice('codex-bridge-'.length);
-	logger.warn('openai-responses: no session ID in bridge auth header, using default');
-	return 'default';
+	if (token.startsWith('codex-bridge-')) {
+		return { sessionId: token.slice('codex-bridge-'.length), pathname: url.pathname };
+	}
+	return { sessionId: 'default', pathname: url.pathname };
 }
 
 function continuationKey(sessionId: string, callId: string): string {
@@ -904,23 +924,22 @@ export function createOpenAIResponsesBridgeServer(
 		port: 0,
 		idleTimeout: 0,
 		async fetch(req: Request): Promise<Response> {
-			const url = new URL(req.url);
+			const route = extractSessionId(req);
 
-			if (url.pathname === '/health' || url.pathname === '/v1/health') {
+			if (route.pathname === '/health' || route.pathname === '/v1/health') {
 				return new Response('ok');
 			}
 
-			if (url.pathname === '/v1/models' && req.method === 'GET') {
+			if (route.pathname === '/v1/models' && req.method === 'GET') {
 				return new Response(JSON.stringify(modelsResponse), {
 					headers: { 'Content-Type': 'application/json' },
 				});
 			}
 
-			if (url.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
+			if (route.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
 				try {
 					const body = (await req.json()) as AnthropicRequest;
-					const sessionId = extractSessionId(req);
-					const continuation = resolveContinuation(sessionId, body.messages, continuations);
+					const continuation = resolveContinuation(route.sessionId, body.messages, continuations);
 					const inputTokens = continuation
 						? estimateResponsesPayloadTokens(body, continuation.input)
 						: estimateAnthropicInputTokens(body);
@@ -932,7 +951,7 @@ export function createOpenAIResponsesBridgeServer(
 				}
 			}
 
-			if (url.pathname !== '/v1/messages' || req.method !== 'POST') {
+			if (route.pathname !== '/v1/messages' || req.method !== 'POST') {
 				return sendJsonError(501, 'api_error', 'Not implemented');
 			}
 
@@ -959,7 +978,7 @@ export function createOpenAIResponsesBridgeServer(
 			}
 
 			const model = resolveModelId(body.model, config.modelAliases);
-			const sessionId = extractSessionId(req);
+			const sessionId = route.sessionId;
 			const resolvedContinuation = isChatgptOAuth
 				? undefined
 				: resolveContinuation(sessionId, body.messages, continuations);
@@ -1067,6 +1086,8 @@ export function createOpenAIResponsesBridgeServer(
 	logger.info(`openai-responses: HTTP server listening on port ${port}`);
 	return {
 		port,
+		baseUrlForSession: (sessionId: string) =>
+			`http://127.0.0.1:${port}${SESSION_ROUTE_PREFIX}${encodeURIComponent(sessionId)}`,
 		stop: () => {
 			for (const continuation of continuations.values()) {
 				clearTimeout(continuation.cleanupTimer);

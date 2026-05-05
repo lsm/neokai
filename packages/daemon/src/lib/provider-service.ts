@@ -80,6 +80,7 @@ export interface ProviderEnvVars {
 	ANTHROPIC_DEFAULT_OPUS_MODEL?: string; // Map opus tier to provider model
 	API_TIMEOUT_MS?: string;
 	CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
+	CLAUDE_CODE_OAUTH_TOKEN?: string;
 	[key: string]: string | undefined; // Index signature for SDK env option compatibility
 }
 
@@ -98,6 +99,7 @@ export interface OriginalEnvVars {
 	ANTHROPIC_DEFAULT_SONNET_MODEL?: string;
 	ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
 	ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
+	CLAUDE_CODE_OAUTH_TOKEN?: string;
 	CLAUDE_AGENT_SDK_CLIENT_APP?: string;
 	/** Daemon's listening PORT — cleared from subprocess env to prevent kill-chain via lsof */
 	PORT?: string;
@@ -504,6 +506,14 @@ export class ProviderService {
 		const original: OriginalEnvVars = {};
 
 		// Save and set each env var
+		if (envVars.CLAUDE_CODE_OAUTH_TOKEN !== undefined) {
+			original.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			if (envVars.CLAUDE_CODE_OAUTH_TOKEN === '') {
+				delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			} else {
+				process.env.CLAUDE_CODE_OAUTH_TOKEN = envVars.CLAUDE_CODE_OAUTH_TOKEN;
+			}
+		}
 		if (envVars.ANTHROPIC_AUTH_TOKEN !== undefined) {
 			original.ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_AUTH_TOKEN;
 			process.env.ANTHROPIC_AUTH_TOKEN = envVars.ANTHROPIC_AUTH_TOKEN;
@@ -575,6 +585,7 @@ export class ProviderService {
 		};
 
 		clear('ANTHROPIC_AUTH_TOKEN');
+		clear('CLAUDE_CODE_OAUTH_TOKEN');
 
 		// Preserve user's custom ANTHROPIC_BASE_URL from environment/settings.json
 		if (process.env.ANTHROPIC_BASE_URL !== undefined) {
@@ -695,6 +706,13 @@ export class ProviderService {
 				process.env.ANTHROPIC_AUTH_TOKEN = original.ANTHROPIC_AUTH_TOKEN;
 			} else {
 				delete process.env.ANTHROPIC_AUTH_TOKEN;
+			}
+		}
+		if (Object.prototype.hasOwnProperty.call(original, 'CLAUDE_CODE_OAUTH_TOKEN')) {
+			if (original.CLAUDE_CODE_OAUTH_TOKEN !== undefined) {
+				process.env.CLAUDE_CODE_OAUTH_TOKEN = original.CLAUDE_CODE_OAUTH_TOKEN;
+			} else {
+				delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
 			}
 		}
 		if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_BASE_URL')) {
