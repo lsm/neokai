@@ -825,17 +825,26 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					target: 'task-agent',
 					description: 'Workflow coordinator. Use to escalate blockers or request human input.',
 				},
-				spaceAgent: {
-					target: 'space-agent',
-					description: 'Space-level escalation target. Use to request human/space-level judgment.',
-				},
+				...(canMessageSpaceAgent
+					? {
+							spaceAgent: {
+								target: 'space-agent',
+								description:
+									'Space-level escalation target. Use to request human/space-level judgment.',
+							},
+						}
+					: {}),
 				reachabilityDeclared,
 				message:
-					`You can reach ${totalReachable} target(s) plus the task-agent coordinator and space-agent escalation target. ` +
+					`You can reach ${totalReachable} target(s) plus the task-agent coordinator` +
+					(canMessageSpaceAgent ? ` and space-agent escalation target` : '') +
+					`. ` +
 					`Within-node peers: ${withinNodePeers.length > 0 ? withinNodePeers.map((p) => p.agentName).join(', ') : 'none'}.` +
 					crossNodeSummary +
-					` Send to "task-agent" to reach the workflow coordinator. ` +
-					`Use target 'space-agent' to escalate blockers or request human/space-level judgment.`,
+					` Send to "task-agent" to reach the workflow coordinator.` +
+					(canMessageSpaceAgent
+						? ` Use target 'space-agent' to escalate blockers or request human/space-level judgment.`
+						: ''),
 			});
 		},
 

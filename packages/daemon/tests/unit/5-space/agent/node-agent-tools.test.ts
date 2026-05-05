@@ -1634,6 +1634,21 @@ describe('node-agent-tools: list_reachable_agents', () => {
 		expect(data.success).toBe(true);
 		expect(data.reachabilityDeclared).toBe(false);
 		expect(data.crossNodeTargets).toHaveLength(0);
+		expect(data.spaceAgent).toBeUndefined();
+		expect(data.message).not.toContain('space-agent escalation target');
+	});
+
+	test('includes space-agent in reachable agents only when the built-in route is available', async () => {
+		const config = makeConfig(ctx, { canMessageSpaceAgent: true });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_reachable_agents({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.spaceAgent).toEqual({
+			target: 'space-agent',
+			description: 'Space-level escalation target. Use to request human/space-level judgment.',
+		});
+		expect(data.message).toContain('space-agent escalation target');
 	});
 
 	test('returns cross-node targets for channels to roles not in current group', async () => {
