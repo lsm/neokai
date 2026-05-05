@@ -1191,6 +1191,17 @@ describe('mapRawModelsToModelInfos', () => {
 		expect(result[1].family).toBe('sonnet');
 		expect(result[2].family).toBe('haiku');
 	});
+
+	it('sorts Kimi, OpenRouter, GPT, and Gemini families without order collisions', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'gemini-3-pro', display_name: 'Gemini', description: '', provider: 'anthropic' },
+			{ id: 'gpt-5.4', display_name: 'GPT', description: '', provider: 'anthropic' },
+			{ id: 'openrouter/auto', display_name: 'OpenRouter', description: '', provider: 'anthropic' },
+			{ id: 'moonshot-v1-32k', display_name: 'Moonshot', description: '', provider: 'anthropic' },
+		]);
+
+		expect(result.map((model) => model.family)).toEqual(['kimi', 'openrouter', 'gpt', 'gemini']);
+	});
 });
 
 // Helper to create a minimal ModelInfo

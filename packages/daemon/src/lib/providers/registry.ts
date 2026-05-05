@@ -259,9 +259,15 @@ export function resetProviderRegistry(): void {
  * test-interference from re-registering providers.
  */
 export function inferProviderForModel(modelId: string): ProviderIdStr {
+	const normalizedModelId = modelId.toLowerCase();
+
 	// Route Kimi/Moonshot aliases before live registry lookup because the Anthropic
 	// provider intentionally claims unknown model IDs as a fallback.
-	if (modelId.startsWith('moonshot-') || modelId.startsWith('kimi-') || modelId === 'kimi') {
+	if (
+		normalizedModelId.startsWith('moonshot-') ||
+		normalizedModelId.startsWith('kimi-') ||
+		normalizedModelId === 'kimi'
+	) {
 		return 'kimi';
 	}
 

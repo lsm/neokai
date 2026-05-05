@@ -510,7 +510,9 @@ describe('inferProviderForModel', () => {
 
 	it('maps Kimi/Moonshot model IDs to kimi', () => {
 		expect(inferProviderForModel('moonshot-v1-32k')).toBe('kimi');
+		expect(inferProviderForModel('Moonshot-v1-32k')).toBe('kimi');
 		expect(inferProviderForModel('kimi-k2.6')).toBe('kimi');
+		expect(inferProviderForModel('Kimi')).toBe('kimi');
 		expect(inferProviderForModel('kimi')).toBe('kimi');
 	});
 
@@ -527,7 +529,9 @@ describe('inferProviderForModel', () => {
 			);
 
 			expect(inferProviderForModel('moonshot-v1-32k')).toBe('kimi');
+			expect(inferProviderForModel('Moonshot-v1-32k')).toBe('kimi');
 			expect(inferProviderForModel('kimi-k2.6')).toBe('kimi');
+			expect(inferProviderForModel('Kimi')).toBe('kimi');
 		} finally {
 			resetProviderRegistry();
 		}

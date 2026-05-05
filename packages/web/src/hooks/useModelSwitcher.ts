@@ -83,8 +83,8 @@ export const FAMILY_ORDER: Record<string, number> = {
 	kimi: 4,
 	minimax: 5,
 	openrouter: 6,
-	gpt: 6,
-	gemini: 7,
+	gpt: 7,
+	gemini: 8,
 };
 
 /** Raw model shape returned by the `models.list` RPC */
