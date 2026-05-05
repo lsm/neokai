@@ -50,6 +50,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			description TEXT NOT NULL DEFAULT '',
 			model TEXT,
 			tools TEXT NOT NULL DEFAULT '[]',
+			thinking_level TEXT DEFAULT NULL,
 			system_prompt TEXT NOT NULL DEFAULT '',
 			instructions TEXT,
 			provider TEXT,

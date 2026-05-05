@@ -309,8 +309,7 @@ describe('visualStateToCreateParams', () => {
 		expect(params.nodes![1].agents[0].name).toBe('step-2');
 	});
 
-	it('produces agents array (model/customPrompt on WorkflowNodeAgent)', () => {
-		// model and customPrompt are NodeDraft/WorkflowNodeAgent fields
+	it('preserves shorthand single-agent overrides on WorkflowNodeAgent', () => {
 		const params = visualStateToCreateParams(
 			makeState({
 				nodes: [
@@ -320,6 +319,10 @@ describe('visualStateToCreateParams', () => {
 							id: 's1',
 							name: 'Step 1',
 							agentId: 'a1',
+							model: 'claude-opus-4-6',
+							thinkingLevel: 'think16k',
+							customPrompt: { value: 'Use extra scrutiny.' },
+							disabledSkillIds: ['skill-1'],
 						},
 						position: { x: 50, y: 50 },
 					},
@@ -328,8 +331,16 @@ describe('visualStateToCreateParams', () => {
 			'space-1',
 			'My Workflow'
 		);
-		expect(params.nodes![0].agents).toHaveLength(1);
-		expect(params.nodes![0].agents[0].agentId).toBe('a1');
+		expect(params.nodes![0].agents).toEqual([
+			{
+				agentId: 'a1',
+				name: 'step-1',
+				model: 'claude-opus-4-6',
+				thinkingLevel: 'think16k',
+				customPrompt: { value: 'Use extra scrutiny.' },
+				disabledSkillIds: ['skill-1'],
+			},
+		]);
 	});
 
 	it('nodes have no instructions field (removed from schema)', () => {

@@ -18,13 +18,27 @@
 
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import { useComputed } from '@preact/signals';
-import type { Gate, SpaceAgent, WorkflowChannel, WorkflowNodeAgent } from '@neokai/shared';
+import type {
+	Gate,
+	SpaceAgent,
+	ThinkingLevel,
+	WorkflowChannel,
+	WorkflowNodeAgent,
+} from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import { isMultiAgentNode, extractOverrideValue, buildOverride } from '../WorkflowNodeCard';
 import { WorkflowModelSelect } from './WorkflowModelSelect';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { GateEditorPanel } from './GateEditorPanel';
 import { skillsStore } from '../../../lib/skills-store';
+
+const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
+	{ value: '', label: 'Inherit' },
+	{ value: 'auto', label: 'Auto' },
+	{ value: 'think8k', label: 'Think 8k' },
+	{ value: 'think16k', label: 'Think 16k' },
+	{ value: 'think32k', label: 'Think 32k' },
+];
 
 // ============================================================================
 // Props
@@ -142,6 +156,7 @@ function AgentsSection({
 	const singleSlot = nodeAgents.length === 1 ? nodeAgents[0] : undefined;
 	const selectedSingleAgentId = singleSlot?.agentId ?? step.agentId;
 	const selectedSingleModel = singleSlot?.model ?? step.model;
+	const selectedSingleThinkingLevel = singleSlot?.thinkingLevel ?? step.thinkingLevel;
 	const selectedSingleCustomPrompt = singleSlot?.customPrompt ?? step.customPrompt;
 
 	function updateAgents(next: WorkflowNodeAgent[]) {
@@ -151,10 +166,7 @@ function AgentsSection({
 	function addAgent(agentId: string) {
 		if (!agentId) return;
 		const agentInfo = agents.find((a) => a.id === agentId);
-		// Use agent name as the base role name for the slot
 		const baseRole = agentInfo?.name?.trim() || agentId;
-		// Ensure the slot role is unique within this node. When the same agent is added
-		// multiple times, append a numeric suffix to distinguish the slots.
 		const usedRoles = new Set(nodeAgents.map((a) => a.name));
 		let role = baseRole;
 		for (let i = 2; usedRoles.has(role); i++) {
@@ -168,15 +180,15 @@ function AgentsSection({
 		const removed = nodeAgents.find((a) => a.name === role);
 		const next = nodeAgents.filter((a) => a.name !== role);
 		if (next.length <= 1) {
-			// Switch back to single-agent mode when <=1 slots remain.
-			// Preserve model/customPrompt from the surviving slot when present.
 			const survivor = next[0] ?? removed;
 			onUpdate({
 				...step,
 				agents: undefined,
 				agentId: survivor?.agentId ?? '',
 				model: survivor?.model,
+				thinkingLevel: survivor?.thinkingLevel,
 				customPrompt: survivor?.customPrompt,
+				disabledSkillIds: survivor?.disabledSkillIds,
 				channels: undefined,
 			});
 		} else {
@@ -191,6 +203,14 @@ function AgentsSection({
 	function updateAgentModel(role: string, model: string | undefined) {
 		updateAgents(
 			nodeAgents.map((a) => (a.name === role ? { ...a, model: model || undefined } : a))
+		);
+	}
+
+	function updateAgentThinkingLevel(role: string, thinkingLevel: '' | ThinkingLevel) {
+		updateAgents(
+			nodeAgents.map((a) =>
+				a.name === role ? { ...a, thinkingLevel: thinkingLevel || undefined } : a
+			)
 		);
 	}
 
@@ -216,11 +236,26 @@ function AgentsSection({
 		[singleSlot, step, onUpdate]
 	);
 
-	// All agents are available; same agent may be added multiple times with different roles.
+	const updateSingleThinkingLevel = useCallback(
+		(thinkingLevel: '' | ThinkingLevel) => {
+			if (singleSlot) {
+				updateAgentThinkingLevel(singleSlot.name, thinkingLevel);
+				return;
+			}
+			onUpdate({ ...step, thinkingLevel: thinkingLevel || undefined });
+		},
+		[singleSlot, step, onUpdate]
+	);
+
 	const availableAgents = agents;
 
+	const thinkingSelectOptions = THINKING_LEVEL_OPTIONS.map((option) => (
+		<option key={option.value || 'inherit'} value={option.value}>
+			{option.label}
+		</option>
+	));
+
 	if (!multi) {
-		// Single-agent mode
 		return (
 			<div class="space-y-1.5">
 				<div class="flex items-center justify-between">
@@ -250,6 +285,7 @@ function AgentsSection({
 								agentId: primaryAgentId,
 								name: buildUniqueRole(primaryBaseRole),
 								model: selectedSingleModel,
+								thinkingLevel: selectedSingleThinkingLevel,
 								customPrompt: selectedSingleCustomPrompt,
 							};
 
@@ -264,6 +300,7 @@ function AgentsSection({
 								agents: [primarySlot, secondarySlot],
 								agentId: '',
 								model: undefined,
+								thinkingLevel: undefined,
 								customPrompt: undefined,
 								channels: undefined,
 							});
@@ -296,6 +333,22 @@ function AgentsSection({
 						onChange={updateSingleModel}
 					/>
 				</div>
+				<div class="space-y-1">
+					<label class="text-xs font-medium text-gray-400">
+						Thinking Level <span class="font-normal text-gray-600">(optional override)</span>
+					</label>
+					<select
+						value={selectedSingleThinkingLevel ?? ''}
+						onChange={(e) =>
+							updateSingleThinkingLevel(
+								(e.currentTarget as HTMLSelectElement).value as '' | ThinkingLevel
+							)
+						}
+						class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
+					>
+						{thinkingSelectOptions}
+					</select>
+				</div>
 				<SlotSkillsToggle
 					disabledSkillIds={singleSlot?.disabledSkillIds}
 					onChange={(disabledSkillIds) => {
@@ -312,8 +365,6 @@ function AgentsSection({
 								)
 							);
 						} else {
-							// No slot yet — store on step level via a synthetic slot
-							// We just update the step; actual agent slot will pick this up
 							onUpdate({
 								...step,
 								agents: [
@@ -321,11 +372,15 @@ function AgentsSection({
 										agentId: selectedSingleAgentId || '',
 										name: step.name || 'agent',
 										model: selectedSingleModel,
+										thinkingLevel: selectedSingleThinkingLevel,
 										customPrompt: selectedSingleCustomPrompt,
 										disabledSkillIds: disabledSkillIds.length > 0 ? disabledSkillIds : undefined,
 									},
 								],
 								agentId: '',
+								model: undefined,
+								thinkingLevel: undefined,
+								customPrompt: undefined,
 							});
 						}
 					}}
@@ -342,7 +397,6 @@ function AgentsSection({
 		);
 	}
 
-	// Multi-agent mode
 	return (
 		<div class="space-y-2">
 			<div class="flex items-center justify-between">
@@ -360,7 +414,6 @@ function AgentsSection({
 							class="rounded p-2 space-y-1 border bg-dark-800 border-dark-600"
 							data-testid="agent-entry"
 						>
-							{/* Header: role input + remove button */}
 							<div class="flex items-center gap-1">
 								<input
 									type="text"
@@ -422,6 +475,23 @@ function AgentsSection({
 									value={sa.model}
 									onChange={(model) => updateAgentModel(sa.name, model)}
 								/>
+							</div>
+							<div class="space-y-1">
+								<label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-500">
+									Thinking
+								</label>
+								<select
+									value={sa.thinkingLevel ?? ''}
+									onChange={(e) =>
+										updateAgentThinkingLevel(
+											sa.name,
+											(e.currentTarget as HTMLSelectElement).value as '' | ThinkingLevel
+										)
+									}
+									class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500"
+								>
+									{thinkingSelectOptions}
+								</select>
 							</div>
 							<button
 								type="button"
@@ -787,6 +857,29 @@ export function NodeConfigPanel({
 							value={slot.model}
 							onChange={(model) => updateSlot({ ...slot, model: model || undefined })}
 						/>
+					</div>
+					<div class="space-y-1">
+						<label class="text-xs font-medium text-gray-400">
+							Thinking Level <span class="font-normal text-gray-600">(optional override)</span>
+						</label>
+						<select
+							value={slot.thinkingLevel ?? ''}
+							onChange={(e) =>
+								updateSlot({
+									...slot,
+									thinkingLevel:
+										((e.currentTarget as HTMLSelectElement).value as '' | ThinkingLevel) ||
+										undefined,
+								})
+							}
+							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
+						>
+							{THINKING_LEVEL_OPTIONS.map((option) => (
+								<option key={option.value || 'inherit'} value={option.value}>
+									{option.label}
+								</option>
+							))}
+						</select>
 					</div>
 					<CustomPromptEditor
 						customPrompt={slot.customPrompt}

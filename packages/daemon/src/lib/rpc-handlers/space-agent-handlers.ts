@@ -46,6 +46,7 @@ export function setupSpaceAgentHandlers(
 			name: string;
 			description?: string;
 			model?: string;
+			thinkingLevel?: import('@neokai/shared').ThinkingLevel;
 			provider?: string;
 			customPrompt?: string | null;
 		};
@@ -58,6 +59,7 @@ export function setupSpaceAgentHandlers(
 			name: params.name,
 			description: params.description,
 			model: params.model,
+			thinkingLevel: params.thinkingLevel,
 			provider: params.provider,
 			customPrompt: params.customPrompt,
 		});
@@ -104,6 +106,7 @@ export function setupSpaceAgentHandlers(
 			name?: string;
 			description?: string | null;
 			model?: string | null;
+			thinkingLevel?: import('@neokai/shared').ThinkingLevel | null;
 			provider?: string | null;
 			customPrompt?: string | null;
 		};
@@ -115,6 +118,7 @@ export function setupSpaceAgentHandlers(
 			name: updateFields.name,
 			description: updateFields.description,
 			model: updateFields.model,
+			thinkingLevel: updateFields.thinkingLevel,
 			provider: updateFields.provider,
 			customPrompt: updateFields.customPrompt,
 		});

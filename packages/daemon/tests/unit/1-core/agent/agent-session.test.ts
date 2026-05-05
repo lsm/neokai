@@ -2092,6 +2092,73 @@ describe('AgentSession', () => {
 			expect(agentSession.getSessionData().workspacePath).toBe('/new/workspace');
 		});
 
+		it('should clear stale thinking level when init omits override', () => {
+			const existingSession = {
+				id: 'space:agent:test',
+				title: 'Space Agent',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active' as const,
+				config: {
+					model: 'default',
+					thinkingLevel: 'think16k' as const,
+					maxTokens: 8192,
+					temperature: 1,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+				type: 'coder' as const,
+			} as Session;
+
+			const init = {
+				sessionId: 'space:agent:test',
+				workspacePath: '/test/workspace',
+				type: 'coder' as const,
+				model: 'default',
+			};
+
+			const mockDb = {
+				getSession: mock(() => existingSession),
+				createSession: mock(() => {}),
+				updateSession: mock(() => {}),
+				getMessagesByStatus: mock(() => []),
+			} as unknown as Database;
+
+			const mockMessageHub = {} as MessageHub;
+			const mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+			const mockGetApiKey = mock(async () => 'test-key');
+
+			const agentSession = AgentSession.fromInit(
+				init,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey,
+				'default'
+			);
+
+			expect(agentSession.getSessionData().config.thinkingLevel).toBeUndefined();
+			expect(
+				(mockDb as unknown as { updateSession: ReturnType<typeof mock> }).updateSession.mock
+					.calls[0]
+			).toEqual([
+				'space:agent:test',
+				expect.objectContaining({
+					config: expect.not.objectContaining({ thinkingLevel: expect.anything() }),
+				}),
+			]);
+		});
+
 		it('should clear stale worktree when loading existing room session', () => {
 			const existingSession = {
 				id: 'room:test',

@@ -192,6 +192,21 @@ describe('createTaskAgentInit', () => {
 		});
 	});
 
+	describe('thinking level resolution', () => {
+		test('uses task agent thinking override when set', () => {
+			const config = makeConfig({
+				space: makeSpace({ taskAgentConfig: { thinkingLevel: 'think16k' } }),
+			});
+			const init = createTaskAgentInit(config);
+			expect(init.thinkingLevel).toBe('think16k');
+		});
+
+		test('leaves thinking level unset when no override is configured', () => {
+			const init = createTaskAgentInit(makeConfig());
+			expect(init.thinkingLevel).toBeUndefined();
+		});
+	});
+
 	describe('system prompt', () => {
 		test('systemPrompt is a string', () => {
 			const init = createTaskAgentInit(makeConfig());

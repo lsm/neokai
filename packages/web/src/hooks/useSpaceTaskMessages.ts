@@ -123,7 +123,7 @@ export function useSpaceTaskMessages(
 	taskId: string | null,
 	variant: SpaceTaskMessagesQueryVariant = 'compact'
 ): UseSpaceTaskMessagesResult {
-	const { request, onEvent, isConnected } = useMessageHub();
+	const { request, onEvent, getHub, isConnected } = useMessageHub();
 	const [rows, setRows] = useState<SpaceTaskThreadMessageRow[]>([]);
 	const [activeTurnSummaries, setActiveTurnSummaries] = useState<ActiveTurnSummary[]>([]);
 	/**
@@ -176,26 +176,42 @@ export function useSpaceTaskMessages(
 			}
 		});
 
-		request('liveQuery.subscribe', {
-			queryName,
-			params: [taskId],
-			subscriptionId,
-		}).catch(() => {
-			// Release the loading gate on subscribe failure so consumers can
-			// surface the empty state (or, more likely, the reconnecting state
-			// once the websocket drops) rather than stalling forever.
-			if (activeSubIdRef.current === subscriptionId) {
-				setLoadedForTaskId(taskId);
-			}
+		const subscribe = () => {
+			const hub = getHub();
+			if (!hub) return;
+			hub
+				.request('liveQuery.subscribe', {
+					queryName,
+					params: [taskId],
+					subscriptionId,
+				})
+				.catch(() => {
+					// Release the loading gate on subscribe failure so consumers can
+					// surface the empty state (or, more likely, the reconnecting state
+					// once the websocket drops) rather than stalling forever.
+					if (activeSubIdRef.current === subscriptionId) {
+						setLoadedForTaskId(taskId);
+					}
+				});
+		};
+
+		const unsubReconnect = getHub()?.onConnection((state) => {
+			if (state !== 'connected') return;
+			if (activeSubIdRef.current !== subscriptionId) return;
+			setLoadedForTaskId(null);
+			subscribe();
 		});
+
+		subscribe();
 
 		return () => {
 			unsubSnapshot();
 			unsubDelta();
+			unsubReconnect?.();
 			activeSubIdRef.current = null;
 			Promise.resolve(request('liveQuery.unsubscribe', { subscriptionId })).catch(() => {});
 		};
-	}, [taskId, isConnected, onEvent, request, queryName]);
+	}, [taskId, isConnected, onEvent, request, getHub, queryName]);
 
 	const sortedRows = useMemo(() => sortRows(rows), [rows]);
 
