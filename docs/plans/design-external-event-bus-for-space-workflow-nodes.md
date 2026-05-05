@@ -456,6 +456,13 @@ class EventRouter {
   // TTL for dedup entries — entries older than this are evicted on next access
   private static readonly DEDUP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
+  // Track pending deliveries to prevent duplicate queueing while allowing retries
+  private pendingDeliveries: Set<string> = new Set();
+  // Retry tracking: dedupeKey → retry count
+  private retryCounts: Map<string, number> = new Map();
+  private static readonly MAX_RETRIES = 3;
+  private static readonly RETRY_BACKOFF_MS = 1000; // 1s base, exponential backoff
+
   // Cache: spaceId → Set of "owner/repo" strings for watched repos
   // Invalidated via invalidateWatchedRepoCache() when repos are added/removed
   // through the `space.github.watchRepo` RPC path.
@@ -692,6 +699,21 @@ class EventRouter {
         this.pendingQueue.delete(key);
       }
     }
+
+    // Clean up pending deliveries and retry counts for this run.
+    // Delivery keys are JSON tuples: [dedupeKey, taskId, nodeId, agentName, workflowRunId]
+    for (const key of this.pendingDeliveries.keys()) {
+      const [, , , , keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string, string];
+      if (keyWorkflowRunId === workflowRunId) {
+        this.pendingDeliveries.delete(key);
+      }
+    }
+    for (const key of this.retryCounts.keys()) {
+      const [, , , , keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string, string];
+      if (keyWorkflowRunId === workflowRunId) {
+        this.retryCounts.delete(key);
+      }
+    }
   }
 
   private async handleEvent(event: ExternalEvent): Promise<void> {
@@ -733,40 +755,46 @@ class EventRouter {
     const dedupeKey = this.makeDeliveryKey(event, sub);
     if (this.delivered.has(dedupeKey)) return;
 
-    // Mark dedup BEFORE session resolution / queueing. This prevents the same
-    // event from being queued multiple times for inactive sessions — if the
-    // event arrives again before the queued delivery is flushed, the dedup
-    // check above will catch it. The tradeoff is that if injection fails (e.g.
-    // session crashes during delivery), the event will not be retried; this is
-    // acceptable because the upstream SpaceGitHubService re-polls on restart
-    // and will generate a fresh event.
-    this.delivered.set(dedupeKey, Date.now());
+    // Check if pending (prevents duplicate queueing while allowing retries on failure)
+    if (this.pendingDeliveries.has(dedupeKey)) return;
+
+    // Mark as pending to prevent duplicate queueing. Unlike the previous design,
+    // we do NOT mark as delivered until after successful injection. This allows
+    // retrying failed injections without waiting for dedup TTL expiry.
+    // Note: The upstream SpaceGitHubService.ingest() short-circuits duplicates
+    // via storeEvent(), so re-polling does NOT generate a fresh event that
+    // reaches the event bus. Therefore, we must handle retries here.
+    this.pendingDeliveries.add(dedupeKey);
 
     // Resolve session — re-read from nodeExecutionRepo for latest state
     const sessionId = await this.resolveSession(sub);
     if (!sessionId) {
       // Session not active — queue for later delivery
       this.queueForDelivery(event, sub);
-      return;
+      return; // Pending remains until queue is drained
     }
 
     // Format and inject.
     // NOTE: There is a TOCTOU race — the session could complete between our
     // resolveSession call and injectMessage. This is safe: injectMessage on a
-    // completed/absent session returns a caught error (logged as a warning),
-    // and the dedup map prevents re-delivery if the same event arrives again
-    // after the session restarts. No data loss or corruption occurs.
+    // completed/absent session returns a caught error (logged as a warning).
     const message = this.formatEventMessage(event);
     try {
       await this.sessionFactory.injectMessage(sessionId, message, {
         deliveryMode: 'defer',
       });
+
+      // Success: mark as delivered, remove pending
+      this.delivered.set(dedupeKey, Date.now());
+      this.pendingDeliveries.delete(dedupeKey);
     } catch (err) {
       log.warn(`Failed to deliver event to ${sub.agentName}`, { error: err });
-      // Session may have completed between resolution and injection.
-      // The event is already dedup-marked so it won't be re-delivered for
-      // this run. A fresh event will arrive via the next poll cycle if the
-      // underlying external event is still relevant.
+
+      // Failure: remove pending so it can be retried
+      this.pendingDeliveries.delete(dedupeKey);
+
+      // Schedule retry with backoff if we haven't exceeded max retries
+      this.scheduleRetry(event, sub, dedupeKey);
     }
   }
 
@@ -1250,6 +1278,32 @@ export function validateGlobPattern(pattern: string): { valid: boolean; reason?:
         valid: false,
         reason: `Segment "${segment}" contains invalid characters. Use alphanumeric, dash, underscore, dot, or segment-local "*" wildcard.`,
       };
+
+  /**
+   * Schedule a retry for failed delivery with exponential backoff.
+   * Retries are bounded by MAX_RETRIES; after that, the event is dropped.
+   */
+  private scheduleRetry(event: ExternalEvent, sub: Subscription, dedupeKey: string): void {
+    const retries = (this.retryCounts.get(dedupeKey) ?? 0) + 1;
+    if (retries > EventRouter.MAX_RETRIES) {
+      log.warn(`Max retries exceeded for event ${dedupeKey}, dropping`);
+      this.retryCounts.delete(dedupeKey);
+      return;
+    }
+
+    this.retryCounts.set(dedupeKey, retries);
+    const backoff = EventRouter.RETRY_BACKOFF_MS * Math.pow(2, retries - 1);
+
+    setTimeout(() => {
+      // Re-check if delivered while waiting (another delivery might have succeeded)
+      if (this.delivered.has(dedupeKey)) {
+        this.retryCounts.delete(dedupeKey);
+        return;
+      }
+      void this.deliverToSubscription(event, sub);
+    }, backoff);
+  }
+
     }
   }
 
@@ -1259,6 +1313,17 @@ export function validateGlobPattern(pattern: string): { valid: boolean; reason?:
     return {
       valid: false,
       reason: `Topic pattern fourth segment must be resource.action; got "${resourceAction}". Example: 'pull_request.review_submitted'`,
+    };
+  }
+
+  // Enforce exactly one dot in the 4th segment (resource.action pair).
+  // Patterns like `pull_request.review.submitted` (two dots) are invalid
+  // because V1 topics use exactly one dot to separate resource from action.
+  const dotCount = (resourceAction.match(/\./g) || []).length;
+  if (dotCount !== 1) {
+    return {
+      valid: false,
+      reason: `Topic pattern fourth segment must contain exactly one dot (resource.action), got ${dotCount} dots in "${resourceAction}". Example: 'pull_request.review_submitted'`,
     };
   }
 
