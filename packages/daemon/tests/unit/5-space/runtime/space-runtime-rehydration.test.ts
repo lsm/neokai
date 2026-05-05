@@ -304,6 +304,64 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 			expect(freshRuntime.executorCount).toBe(1);
 			expect(freshRuntime.getExecutor(pendingRun.id)).toBeDefined();
 		});
+
+		test('fresh runtime restarts gate polls for a rehydrated blocked run with a non-terminal task', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Blocked Polled Workflow-${Date.now()}-${Math.random()}`,
+				description: 'Test',
+				nodes: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT },
+				],
+				transitions: [],
+				channels: [{ id: 'channel-blocked', from: 'Step A', to: 'Step B', gateId: 'gate-blocked' }],
+				gates: [
+					{
+						id: 'gate-blocked',
+						resetOnCycle: false,
+						poll: { intervalMs: 60_000, script: 'printf poll', target: 'to' },
+					},
+				],
+				startNodeId: STEP_A,
+				endNodeId: STEP_B,
+				rules: [],
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+			const pendingRun = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Blocked Polled Run',
+			});
+			const inProgressRun = workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
+			const blockedRun = workflowRunRepo.transitionStatus(inProgressRun.id, 'blocked');
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Blocked Polled Run',
+				description: '',
+				workflowRunId: blockedRun.id,
+				status: 'blocked',
+			});
+
+			const freshRuntime = makeRuntime();
+			freshRuntime.setTaskAgentManager({
+				isExecutionSpawning: () => false,
+				isSessionAlive: () => true,
+				spawnWorkflowNodeAgentForExecution: async () => 'session-1',
+				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
+				rehydrate: async () => {},
+				injectSubSessionMessage: () => {},
+			} as never);
+
+			await freshRuntime.executeTick();
+			await freshRuntime.executeTick();
+
+			expect(freshRuntime.getExecutor(blockedRun.id)).toBeDefined();
+			expect(freshRuntime.isGatePollActive(blockedRun.id, 'gate-blocked')).toBe(true);
+			await freshRuntime.stop();
+		});
 	});
 
 	// -------------------------------------------------------------------------

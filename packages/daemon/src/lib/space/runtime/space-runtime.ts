@@ -1351,6 +1351,9 @@ export class SpaceRuntime {
 
 		const recovered = recoverTx();
 		await this.ensureExecutorRegistered(recovered.run);
+		await this.ensurePollsForRun(
+			this.config.workflowRunRepo.getRun(recovered.run.id) ?? recovered.run
+		);
 		for (const sessionId of liveSessionIds) {
 			const prepared =
 				(await this.config.taskAgentManager?.prepareSubSessionForWorkflowResume(sessionId)) ?? true;
@@ -1405,15 +1408,16 @@ export class SpaceRuntime {
 	}
 
 	/**
-	 * Restart gate polls for a workflow run restored from persisted state.
+	 * Ensure gate polls are running for an active workflow-backed task.
 	 *
-	 * GatePollManager keeps timers in memory, so a daemon restart loses them even
-	 * though the workflow run and definition remain in the database. Rehydration
-	 * must therefore recreate poll timers after the executor and metadata are back.
+	 * GatePollManager keeps timers in memory, so daemon restarts and blocked/manual
+	 * recovery transitions must recreate them from persisted run + workflow state.
+	 * Polls are proactive and should remain active for any non-terminal task; only
+	 * done/cancelled/archived tasks should have polls stopped.
 	 */
-	private startRehydratedGatePolls(run: SpaceWorkflowRun, space: Space): void {
+	private async ensurePollsForRun(run: SpaceWorkflowRun, knownSpace?: Space): Promise<void> {
 		if (!this.pollManager) return;
-		if (run.status === 'done' || run.status === 'cancelled' || run.status === 'blocked') return;
+		if (run.status === 'done' || run.status === 'cancelled') return;
 
 		const workflow = this.executorMeta.get(run.id)?.workflow;
 		if (!workflow?.gates?.some((gate) => gate.poll)) return;
@@ -1424,10 +1428,20 @@ export class SpaceRuntime {
 		);
 		if (!canonicalTask) {
 			log.warn(
-				`SpaceRuntime.rehydrateExecutors: cannot restart gate polls for run ${run.id} — no canonical task found`
+				`SpaceRuntime.ensurePollsForRun: cannot restart gate polls for run ${run.id} — no canonical task found`
 			);
 			return;
 		}
+		if (
+			canonicalTask.status === 'done' ||
+			canonicalTask.status === 'cancelled' ||
+			canonicalTask.status === 'archived'
+		) {
+			return;
+		}
+
+		const space = knownSpace ?? (await this.config.spaceManager.getSpace(run.spaceId));
+		if (!space) return;
 
 		const pollContext = this.buildPollScriptContext(canonicalTask, run, space.id);
 		if (!pollContext) return;
@@ -1463,7 +1477,7 @@ export class SpaceRuntime {
 				if (this.executors.has(run.id)) continue;
 				const registered = await this.ensureExecutorRegistered(run, space);
 				if (registered) {
-					this.startRehydratedGatePolls(run, space);
+					await this.ensurePollsForRun(run, space);
 				}
 			}
 		}
@@ -3359,6 +3373,8 @@ export class SpaceRuntime {
 			// Clear dedup so a re-block can be notified again.
 			this.notifiedTaskSet.delete(`${canonicalTask.id}:blocked`);
 
+			await this.ensurePollsForRun(this.config.workflowRunRepo.getRun(runId) ?? run);
+
 			await this.safeNotify({
 				kind: 'task_retry',
 				spaceId: meta.spaceId,
@@ -3526,12 +3542,10 @@ export class SpaceRuntime {
 		for (const [runId] of this.executors) {
 			const run = this.config.workflowRunRepo.getRun(runId);
 
-			// Blocked runs keep their executor so they remain rehydratable and can
-			// be retried (blocked → in_progress). Stop polls only — do not remove
-			// the executor or prune dedup keys (processRunTick handles dedup clearing
-			// when it observes canonicalTask.status !== 'blocked').
+			// Blocked runs keep their executor and proactive gate polls so they remain
+			// rehydratable and poll timers can detect external conditions that may help
+			// unblock the run. Do not remove the executor or prune dedup keys here.
 			if (run?.status === 'blocked') {
-				this.pollManager?.stopPolls(runId);
 				continue;
 			}
 
