@@ -405,7 +405,13 @@ class GitHubEventAdapter implements HttpEventAdapter, RpcEventAdapter {
 
   async start(publisher: EventPublisher): Promise<void> {
     this.publisher = publisher;
-    this.pollTimer = setInterval(() => void this.pollOnce(), GITHUB_POLL_INTERVAL_MS);
+    this.pollTimer = setInterval(() => {
+      void this.pollOnce().catch((err) => {
+        log.warn('GitHubEventAdapter: polling failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }, GITHUB_POLL_INTERVAL_MS);
   }
 
   async stop(): Promise<void> {
@@ -533,8 +539,9 @@ class EventRouter {
 
   // Track pending deliveries to prevent duplicate queueing while allowing retries
   private pendingDeliveries: Set<string> = new Set();
-  // Retry tracking: dedupeKey → retry count
+  // Retry tracking: dedupeKey → retry count / scheduled timer
   private retryCounts: Map<string, number> = new Map();
+  private retryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private static readonly MAX_RETRIES = 3;
   private static readonly RETRY_BACKOFF_MS = 1000; // 1s base, exponential backoff
 
@@ -749,9 +756,8 @@ class EventRouter {
    * remain active so queued/arriving events can be delivered upon resume.
    */
   clearRunInterests(workflowRunId: string): void {
-    const runSubs = this.activeRuns.get(workflowRunId);
-    if (!runSubs) return;
-
+    // Always run cleanup, even if activeRuns no longer has this run, so retry
+    // timers/pending state cannot survive a terminal transition.
     this.topicTrie.remove(v => v.workflowRunId === workflowRunId);
     this.activeRuns.delete(workflowRunId);
 
@@ -785,6 +791,13 @@ class EventRouter {
       const [, , , , keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string, string];
       if (keyWorkflowRunId === workflowRunId) {
         this.retryCounts.delete(key);
+      }
+    }
+    for (const [key, timer] of this.retryTimers.entries()) {
+      const [, , , , keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string, string];
+      if (keyWorkflowRunId === workflowRunId) {
+        clearTimeout(timer);
+        this.retryTimers.delete(key);
       }
     }
   }
@@ -952,28 +965,54 @@ class EventRouter {
     if (retries > EventRouter.MAX_RETRIES) {
       log.warn(`Max retries exceeded for event ${dedupeKey}, dropping`);
       this.retryCounts.delete(dedupeKey);
+      const existingTimer = this.retryTimers.get(dedupeKey);
+      if (existingTimer) clearTimeout(existingTimer);
+      this.retryTimers.delete(dedupeKey);
       return;
     }
 
     this.retryCounts.set(dedupeKey, retries);
     const backoff = EventRouter.RETRY_BACKOFF_MS * Math.pow(2, retries - 1);
 
-    setTimeout(() => {
+    const existingTimer = this.retryTimers.get(dedupeKey);
+    if (existingTimer) clearTimeout(existingTimer);
+
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(dedupeKey);
+
       // Re-check if delivered while waiting (another delivery might have succeeded)
       if (this.delivered.has(dedupeKey)) {
         this.retryCounts.delete(dedupeKey);
         return;
       }
-      // Use try/catch to prevent unhandled promise rejections in retry path (P2 fix)
+
+      // Do not retry after the run/subscription has been torn down.
+      const runSubs = this.activeRuns.get(sub.workflowRunId);
+      const stillActive = runSubs && [...runSubs].some((active) =>
+        active.taskId === sub.taskId
+          && active.nodeId === sub.nodeId
+          && active.agentName === sub.agentName
+          && active.interest.topic === sub.interest.topic
+          && active.interest.scope === sub.interest.scope,
+      );
+      if (!stillActive) {
+        this.retryCounts.delete(dedupeKey);
+        this.pendingDeliveries.delete(dedupeKey);
+        return;
+      }
+
+      // Use .catch to prevent unhandled promise rejections in retry path.
       this.deliverToSubscription(event, sub)
         .then(() => {
-          // Success: clear retry state so this key can be retried fresh if needed later
-          this.retryCounts.delete(dedupeKey);
-          this.pendingDeliveries.delete(dedupeKey);
+          // deliverToSubscription catches injection failures and may schedule a
+          // follow-up retry, so only clear retry state if delivery is now marked.
+          if (this.delivered.has(dedupeKey)) {
+            this.retryCounts.delete(dedupeKey);
+            this.pendingDeliveries.delete(dedupeKey);
+          }
         })
         .catch((err) => {
-          // Don't clear retryCounts on failure — preserve count for retry logic
-          // (The caller's scheduleRetry already incremented the count before setTimeout)
+          // Don't clear retryCounts on failure — preserve count for retry logic.
           log.warn('EventRouter: retry delivery failed', {
             error: err,
             retries,
@@ -982,6 +1021,8 @@ class EventRouter {
           });
         });
     }, backoff);
+
+    this.retryTimers.set(dedupeKey, timer);
   }
 }
 ```
