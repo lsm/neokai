@@ -347,6 +347,7 @@ export interface ExternalEventStore {
   markEventDeliveredIfAllDeliveriesTerminal(eventId: string): void;
   markEventFailedIfAllDeliveriesTerminal(eventId: string): void;
   markEventFailed(eventId: string, failure: { terminal: boolean; reason: string }): void;
+  markEventIgnored(eventId: string, reason: 'no_matching_subscriptions' | 'no_scope_eligible_subscriptions'): void;
 }
 
 export interface EventTaskResolver {
@@ -1010,7 +1011,10 @@ class EventRouter {
   }
 
   private async handleEventForSubscriptions(event: ExternalEvent, matched: Subscription[]): Promise<boolean> {
-    if (matched.length === 0) return true;
+    if (matched.length === 0) {
+      this.eventStore.markEventIgnored(event.id, 'no_matching_subscriptions');
+      return true;
+    }
 
     // 2. First compute all scoped deliveries and persist them as expected
     // pending deliveries before attempting injection. This prevents the first
@@ -1058,6 +1062,15 @@ class EventRouter {
     // failed subscription was never registered. The retry path will re-run matching,
     // scope checks, and expected-delivery registration for the whole event.
     if (preparationFailed) return false;
+
+    // No prepared, non-terminal delivery remains for this event. Mark the source
+    // event terminal so retryable source duplicates (webhook + polling, adapter
+    // retries, etc.) do not re-emit and re-route indefinitely when every matched
+    // subscription is out of scope or already terminal.
+    if (eligible.length === 0) {
+      this.eventStore.markEventIgnored(event.id, 'no_scope_eligible_subscriptions');
+      return true;
+    }
 
     // 3. Deliver each prepared subscription. Isolate injection failures per
     // subscription after the complete expected-delivery set has been registered.
@@ -1463,7 +1476,7 @@ Dedup happens at two different layers, each with a different key and responsibil
    - The tuple is encoded structurally rather than delimiter-joined because `dedupeKey`, workflow identifiers, node IDs, and agent names are free-form strings.
    - It is tracked in-memory for fast duplicate suppression and persisted in `space_external_event_deliveries` after successful injection.
 
-The EventRouter marks per-subscription delivery as `delivered` only after successful injection, updates `ExternalEventStore` with the successful delivery key, and advances the source event to terminal `delivered` only once all expected deliveries are terminal. Failed injection/session-resolution paths remove `pendingDeliveries` and schedule retry rather than relying on adapters to re-publish the same event.
+The EventRouter marks per-subscription delivery as `delivered` only after successful injection, updates `ExternalEventStore` with the successful delivery key, and advances the source event to terminal `delivered` only once all expected deliveries are terminal. Failed injection/session-resolution paths remove `pendingDeliveries` and schedule retry rather than relying on adapters to re-publish the same event. If trie lookup finds no matching subscriptions, or if all matched subscriptions are out of scope/already terminal and no preparation retry is pending, the router marks the source event terminal `ignored` so webhook+polling duplicates do not churn through routing forever.
 
 ### Wake-on-idle
 
@@ -1813,7 +1826,7 @@ V1 needs one core event-store table plus workflow type additions:
    );
    ```
 
-   `state` values are `published`, `routed`, `delivered`, `delivery_failed`, `failed`, `ignored`, and `ambiguous`. Duplicate handling depends on state: terminal states (`delivered`, `failed`, `ignored`, `ambiguous`) short-circuit; retryable states can re-emit. `delivered` is written only after expected per-subscription deliveries are terminal, and `failed` is written only after retry budgets are exhausted for all retryable deliveries.
+   `state` values are `published`, `routed`, `delivered`, `delivery_failed`, `failed`, `ignored`, and `ambiguous`. Duplicate handling depends on state: terminal states (`delivered`, `failed`, `ignored`, `ambiguous`) short-circuit; retryable states can re-emit. `delivered` is written only after expected per-subscription deliveries are terminal, `failed` is written only after retry budgets are exhausted for all retryable deliveries, and `ignored` is written when routing finds no matching subscriptions or no eligible non-terminal delivery after scope checks.
 
 2. **Core bus delivery store** (`space_external_event_deliveries`): persistent per-subscription delivery lifecycle used by EventRouter to advance source events to terminal delivered.
 
