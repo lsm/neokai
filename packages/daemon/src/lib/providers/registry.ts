@@ -265,6 +265,9 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
 	// Static fallback when registry is empty
 	if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
 	if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
+	if (modelId.startsWith('moonshot-') || modelId.startsWith('kimi-') || modelId === 'kimi') {
+		return 'kimi';
+	}
 	if (modelId === 'ollama') return 'ollama';
 	if (modelId === 'ollama-cloud') return 'ollama-cloud';
 	if (modelId.endsWith(':cloud')) return 'ollama-cloud';

@@ -239,6 +239,8 @@ describe('ProviderService', () => {
 			GLM_API_KEY: process.env.GLM_API_KEY,
 			ZHIPU_API_KEY: process.env.ZHIPU_API_KEY,
 			OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+			KIMI_API_KEY: process.env.KIMI_API_KEY,
+			MOONSHOT_API_KEY: process.env.MOONSHOT_API_KEY,
 			API_TIMEOUT_MS: process.env.API_TIMEOUT_MS,
 			CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:
 				process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
@@ -259,6 +261,8 @@ describe('ProviderService', () => {
 		delete process.env.GLM_API_KEY;
 		delete process.env.ZHIPU_API_KEY;
 		delete process.env.OPENROUTER_API_KEY;
+		delete process.env.KIMI_API_KEY;
+		delete process.env.MOONSHOT_API_KEY;
 		delete process.env.API_TIMEOUT_MS;
 		delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
 		delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
@@ -335,6 +339,20 @@ describe('ProviderService', () => {
 			process.env.OPENROUTER_API_KEY = 'sk-or-test';
 			const key = service.getProviderApiKey('openrouter');
 			expect(key).toBe('sk-or-test');
+		});
+
+		it('should return KIMI_API_KEY for kimi provider', () => {
+			registry.register(new MockProvider('kimi', 'Kimi', true, 'moonshot-'));
+			process.env.KIMI_API_KEY = 'kimi-key';
+			const key = service.getProviderApiKey('kimi');
+			expect(key).toBe('kimi-key');
+		});
+
+		it('should return MOONSHOT_API_KEY for kimi if no KIMI_API_KEY', () => {
+			registry.register(new MockProvider('kimi', 'Kimi', true, 'moonshot-'));
+			process.env.MOONSHOT_API_KEY = 'moonshot-key';
+			const key = service.getProviderApiKey('kimi');
+			expect(key).toBe('moonshot-key');
 		});
 
 		it('should return undefined for unknown provider', () => {

@@ -9,6 +9,7 @@
 
 import { AnthropicProvider } from './anthropic-provider.js';
 import { GlmProvider } from './glm-provider.js';
+import { KimiProvider } from './kimi-provider.js';
 import { MinimaxProvider } from './minimax-provider.js';
 import { OpenRouterProvider } from './openrouter-provider.js';
 import { OllamaProvider } from './ollama-provider.js';
@@ -51,6 +52,9 @@ export function initializeProviders(): ProviderRegistry {
 
 	// Register GLM provider (will be available if API key is set)
 	registry.register(new GlmProvider());
+
+	// Register Kimi provider (will be available if KIMI_API_KEY or MOONSHOT_API_KEY is set)
+	registry.register(new KimiProvider());
 
 	// Register MiniMax provider (will be available if MINIMAX_API_KEY is set)
 	registry.register(new MinimaxProvider());
