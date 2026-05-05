@@ -593,7 +593,8 @@ class EventRouter {
   // Retry tracking: deliveryKey → retry count / scheduled timer
   private retryCounts: Map<string, number> = new Map();
   private retryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
-  // Event-level retry tracking for failures before expected delivery rows exist
+  // Event-level retry tracking for failures before expected delivery rows exist.
+  // Retry keys are JSON tuples: [event.id, sorted workflowRunIds, 'prepare'].
   private eventRetryCounts: Map<string, number> = new Map();
   private eventRetryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private static readonly MAX_RETRIES = 3;
@@ -881,9 +882,12 @@ class EventRouter {
       }
     }
 
-    // Event-level preparation retries may cover multiple subscriptions in the run.
+    // Event-level preparation retries may cover multiple runs. Retry keys are
+    // JSON tuples, so parse the workflowRunIds array structurally instead of using
+    // substring matching (comma-separated run ids are not colon-delimited).
     for (const [key, timer] of this.eventRetryTimers.entries()) {
-      if (key.includes(`:${workflowRunId}:`)) {
+      const [, keyWorkflowRunIds] = JSON.parse(key) as [string, string[], 'prepare'];
+      if (keyWorkflowRunIds.includes(workflowRunId)) {
         clearTimeout(timer);
         this.eventRetryTimers.delete(key);
         this.eventRetryCounts.delete(key);
@@ -927,7 +931,9 @@ class EventRouter {
           nodeId: sub.nodeId,
           agentName: sub.agentName,
         });
-        this.pendingDeliveries.delete(deliveryKey);
+        // Do not clear pendingDeliveries here: preparation does not acquire that
+        // guard. The same delivery may already be pending from an earlier queue or
+        // retry pass, and dropping the guard would allow duplicate queue/injection.
       }
     }
 
@@ -1159,7 +1165,11 @@ class EventRouter {
    * state across retryable source re-emissions of the same non-terminal event.
    */
   private scheduleEventRetry(event: ExternalEvent, matched: Subscription[]): void {
-    const retryKey = `${event.id}:${matched.map((sub) => sub.workflowRunId).sort().join(',')}:prepare`;
+    const retryKey = JSON.stringify([
+      event.id,
+      [...new Set(matched.map((sub) => sub.workflowRunId))].sort(),
+      'prepare',
+    ]);
     const retries = (this.eventRetryCounts.get(retryKey) ?? 0) + 1;
     if (retries > EventRouter.MAX_RETRIES) {
       log.warn('EventRouter: max preparation retries exceeded; marking event failed', {
