@@ -490,6 +490,42 @@ describe('Gemini Auth RPC Handlers', () => {
 			expect(completeResult.success).toBe(false);
 			expect(completeResult.error).toContain('invalid_grant');
 		});
+
+		it('flow survives exchange error — retry with fresh code succeeds', async () => {
+			// First attempt: exchange fails (e.g., bad/expired auth code)
+			mockExchangeAuthCode.mockImplementationOnce(async () => {
+				throw new Error('Token exchange failed (400): invalid_grant');
+			});
+
+			const startHandler = messageHubData.handlers.get('auth.gemini.startOAuth');
+			const completeHandler = messageHubData.handlers.get('auth.gemini.completeOAuth');
+
+			// Start flow once
+			const startResult = (await startHandler!({}, {})) as {
+				success: boolean;
+				flowId?: string;
+			};
+			expect(startResult.success).toBe(true);
+			const flowId = startResult.flowId!;
+
+			// First attempt fails
+			const firstAttempt = (await completeHandler!({ authCode: 'bad-code', flowId }, {})) as {
+				success: boolean;
+				error?: string;
+			};
+			expect(firstAttempt.success).toBe(false);
+
+			// Flow must still be alive — second attempt with a valid code must succeed
+			// (mockExchangeAuthCode is back to its default implementation)
+			const secondAttempt = (await completeHandler!({ authCode: 'good-code', flowId }, {})) as {
+				success: boolean;
+				account?: { email: string };
+			};
+
+			expect(secondAttempt.success).toBe(true);
+			expect(secondAttempt.account?.email).toBe('test@gmail.com');
+			expect(mockExchangeAuthCode).toHaveBeenLastCalledWith('good-code', 'mock-code-verifier');
+		});
 	});
 
 	describe('auth.gemini.removeAccount', () => {

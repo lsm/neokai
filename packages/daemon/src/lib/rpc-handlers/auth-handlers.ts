@@ -429,7 +429,11 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
 					account: accountToInfo(account),
 				};
 			} catch (error) {
-				pendingFlows.delete(flowId);
+				// Do NOT delete the flow here — the PKCE code verifier is still valid.
+				// The exchange may have failed due to a bad/expired auth code or a
+				// transient network error. Keeping the flow alive lets the user visit
+				// the auth URL again (getting a fresh single-use code) and retry with
+				// the same flowId rather than having to restart the whole OAuth flow.
 				log.error('Gemini OAuth code exchange failed:', error);
 				return {
 					success: false,

@@ -268,7 +268,18 @@ export function AddGoogleAccountModal({
 							</div>
 						</div>
 						<div class="flex items-center gap-3">
-							<Button variant="primary" size="sm" onClick={() => setStep('code')}>
+							<Button
+								variant="primary"
+								size="sm"
+								onClick={() => {
+									// Return to the URL step so the user opens the auth URL
+									// again and retrieves a fresh single-use code. The same
+									// flowId / PKCE verifier is reused — only the auth code
+									// needs to be re-fetched from Google.
+									setAuthCode('');
+									setStep('url');
+								}}
+							>
 								Try Again
 							</Button>
 							<Button variant="ghost" size="sm" onClick={onCancel}>
