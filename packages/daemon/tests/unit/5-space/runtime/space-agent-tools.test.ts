@@ -2024,10 +2024,77 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 				workflowRunId: run.id,
 				spaceId: ctx.spaceId,
 				taskId: task.id,
-				sourceAgentName: undefined,
+				sourceAgentName: 'space-agent',
 				targetKind: 'node_agent',
 				targetAgentName: 'reviewer',
 				message: spaceAgentToNodeEnvelope(task, 'please review this PR', 'reviewer'),
+			},
+		]);
+	});
+
+	test('queued task-agent messages preserve task-agent sender identity', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'WF Task Agent Queued'
+		);
+		const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Queued');
+		const task = tasks[0];
+		ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: run.id,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const fakeQueue = makeFakePendingMessageQueue();
+		const handlers = createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			taskAgentManager: tam.manager,
+			myAgentName: 'task-agent',
+			activateNode: async () => {},
+			pendingMessageQueue: {
+				enqueue(input) {
+					fakeQueue.enqueued.push(input);
+					return { record: { id: 'pending-message-task-agent' }, deduped: false };
+				},
+			},
+		});
+
+		const result = await handlers.send_message_to_task({
+			task_id: task.id,
+			node_id: 'reviewer',
+			message: 'task agent queued reminder',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(fakeQueue.enqueued).toEqual([
+			{
+				workflowRunId: run.id,
+				spaceId: ctx.spaceId,
+				taskId: task.id,
+				sourceAgentName: 'task-agent',
+				targetKind: 'node_agent',
+				targetAgentName: 'reviewer',
+				message: formatAgentMessage({
+					fromLevel: 'task-agent',
+					fromAgentName: 'task-agent',
+					toLevel: 'node-agent',
+					body: 'task agent queued reminder',
+					taskId: task.id,
+					taskNumber: task.taskNumber,
+					nodeId: 'reviewer',
+				}),
 			},
 		]);
 	});

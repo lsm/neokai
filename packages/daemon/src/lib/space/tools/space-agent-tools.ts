@@ -189,6 +189,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			.map((v) => normalizeAgentNameToken(v))
 			.filter((v) => v.length > 0)
 	);
+	const outboundSenderName = myAgentName ?? 'space-agent';
+	const outboundSenderLevel = outboundSenderName === 'task-agent' ? 'task-agent' : 'space-agent';
+	const outboundSenderDisplayName =
+		outboundSenderName === 'space-agent' ? 'Space Agent' : outboundSenderName;
 
 	return {
 		/**
@@ -578,8 +582,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					await taskAgentManager.injectTaskAgentMessage(
 						task.id,
 						formatAgentMessage({
-							fromLevel: 'space-agent',
-							fromAgentName: 'Space Agent',
+							fromLevel: outboundSenderLevel,
+							fromAgentName: outboundSenderDisplayName,
 							toLevel: 'task-agent',
 							body: args.message,
 							taskId: task.id,
@@ -618,8 +622,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					await taskAgentManager.injectSubSessionMessage(
 						resolved.agentSessionId,
 						formatAgentMessage({
-							fromLevel: 'space-agent',
-							fromAgentName: 'Space Agent',
+							fromLevel: outboundSenderLevel,
+							fromAgentName: outboundSenderDisplayName,
 							toLevel: 'node-agent',
 							body: args.message,
 							taskId: task.id,
@@ -667,8 +671,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					await taskAgentManager.injectSubSessionMessage(
 						sessionIdAfter,
 						formatAgentMessage({
-							fromLevel: 'space-agent',
-							fromAgentName: 'Space Agent',
+							fromLevel: outboundSenderLevel,
+							fromAgentName: outboundSenderDisplayName,
 							toLevel: 'node-agent',
 							body: args.message,
 							taskId: task.id,
@@ -700,12 +704,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					workflowRunId: task.workflowRunId,
 					spaceId,
 					taskId: task.id,
-					sourceAgentName: myAgentName,
+					sourceAgentName: outboundSenderName,
 					targetKind: 'node_agent',
 					targetAgentName: resolved.agentName,
 					message: formatAgentMessage({
-						fromLevel: 'space-agent',
-						fromAgentName: 'Space Agent',
+						fromLevel: outboundSenderLevel,
+						fromAgentName: outboundSenderDisplayName,
 						toLevel: 'node-agent',
 						body: args.message,
 						taskId: task.id,
