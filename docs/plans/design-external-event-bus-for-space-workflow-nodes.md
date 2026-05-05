@@ -336,6 +336,8 @@ export interface ExternalEventStore {
   ): void;
   /** Returns true when the delivery row is already terminal and should be skipped. */
   isDeliveryTerminal(eventId: string, deliveryKey: string): boolean;
+  /** Looks up the source event id for a registered delivery key. */
+  getEventIdForDeliveryKey(deliveryKey: string): string;
   markDeliveryDelivered(eventId: string, deliveryKey: string): void;
   markDeliveryFailed(
     eventId: string,
@@ -563,7 +565,12 @@ interface PendingDelivery {
 interface QueuedDeliveryFailure {
   eventId: string;
   deliveryKey: string;
-  reason: 'pending_queue_overflow' | 'run_terminal_cleanup';
+  reason: 'pending_queue_overflow' | 'run_terminal_cleanup' | 'run_terminal_retry_cancelled';
+}
+
+interface EventRetryState {
+  event: ExternalEvent;
+  matched: Subscription[];
 }
 
 interface WatchedRepoLookup {
@@ -597,6 +604,7 @@ class EventRouter {
   // Retry keys are JSON tuples: [event.id, sorted workflowRunIds, 'prepare'].
   private eventRetryCounts: Map<string, number> = new Map();
   private eventRetryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private eventRetryState: Map<string, EventRetryState> = new Map();
   private static readonly MAX_RETRIES = 3;
   private static readonly RETRY_BACKOFF_MS = 1000; // 1s base, exponential backoff
 
@@ -874,23 +882,52 @@ class EventRouter {
         this.retryCounts.delete(key);
       }
     }
+    // Cancel per-delivery retry timers for this terminal run. These deliveries
+    // were already registered, so cancellation must terminally fail them before
+    // dropping retry bookkeeping; otherwise their rows can block event terminalization.
+    const retryCancellationFailures: QueuedDeliveryFailure[] = [];
     for (const [key, timer] of this.retryTimers.entries()) {
       const [, , , , keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string, string];
       if (keyWorkflowRunId === workflowRunId) {
         clearTimeout(timer);
         this.retryTimers.delete(key);
+        retryCancellationFailures.push({
+          eventId: this.eventStore.getEventIdForDeliveryKey(key),
+          deliveryKey: key,
+          reason: 'run_terminal_retry_cancelled',
+        });
       }
     }
+    this.markQueuedDeliveriesFailed(retryCancellationFailures);
 
-    // Event-level preparation retries may cover multiple runs. Retry keys are
-    // JSON tuples, so parse the workflowRunIds array structurally instead of using
-    // substring matching (comma-separated run ids are not colon-delimited).
+    // Event-level preparation retries may cover multiple runs. If a retry includes
+    // both this terminal run and still-active runs, cancel the old shared timer and
+    // reschedule retry state for surviving runs instead of dropping their retry path.
     for (const [key, timer] of this.eventRetryTimers.entries()) {
-      const [, keyWorkflowRunIds] = JSON.parse(key) as [string, string[], 'prepare'];
-      if (keyWorkflowRunIds.includes(workflowRunId)) {
+      const [eventId, keyWorkflowRunIds] = JSON.parse(key) as [string, string[], 'prepare'];
+      if (!keyWorkflowRunIds.includes(workflowRunId)) continue;
+
+      const remainingRunIds = keyWorkflowRunIds.filter(runId => runId !== workflowRunId);
+      if (remainingRunIds.length === 0) {
         clearTimeout(timer);
         this.eventRetryTimers.delete(key);
         this.eventRetryCounts.delete(key);
+        this.eventRetryState.delete(key);
+        continue;
+      }
+
+      const retryState = this.eventRetryState.get(key);
+      const retryCount = this.eventRetryCounts.get(key) ?? 0;
+      clearTimeout(timer);
+      this.eventRetryTimers.delete(key);
+      this.eventRetryCounts.delete(key);
+      this.eventRetryState.delete(key);
+
+      if (retryState) {
+        const remainingMatched = retryState.matched.filter(sub => sub.workflowRunId !== workflowRunId);
+        if (remainingMatched.length > 0) {
+          this.scheduleEventRetry(retryState.event, remainingMatched, { retryCountOverride: retryCount });
+        }
       }
     }
   }
@@ -898,7 +935,10 @@ class EventRouter {
   private async handleEvent(event: ExternalEvent): Promise<void> {
     // 1. Look up matching subscriptions via trie
     const matched = this.topicTrie.lookup(event.topic);
+    await this.handleEventForSubscriptions(event, matched);
+  }
 
+  private async handleEventForSubscriptions(event: ExternalEvent, matched: Subscription[]): Promise<void> {
     if (matched.length === 0) return;
 
     // 2. First compute all scoped deliveries and persist them as expected
@@ -1164,13 +1204,17 @@ class EventRouter {
    * independent preparation errors get a fresh budget and this map does not leak
    * state across retryable source re-emissions of the same non-terminal event.
    */
-  private scheduleEventRetry(event: ExternalEvent, matched: Subscription[]): void {
+  private scheduleEventRetry(
+    event: ExternalEvent,
+    matched: Subscription[],
+    options: { retryCountOverride?: number } = {},
+  ): void {
     const retryKey = JSON.stringify([
       event.id,
       [...new Set(matched.map((sub) => sub.workflowRunId))].sort(),
       'prepare',
     ]);
-    const retries = (this.eventRetryCounts.get(retryKey) ?? 0) + 1;
+    const retries = options.retryCountOverride ?? ((this.eventRetryCounts.get(retryKey) ?? 0) + 1);
     if (retries > EventRouter.MAX_RETRIES) {
       log.warn('EventRouter: max preparation retries exceeded; marking event failed', {
         eventId: event.id,
@@ -1180,6 +1224,7 @@ class EventRouter {
       const existingTimer = this.eventRetryTimers.get(retryKey);
       if (existingTimer) clearTimeout(existingTimer);
       this.eventRetryTimers.delete(retryKey);
+      this.eventRetryState.delete(retryKey);
       this.eventStore.markEventFailed(event.id, {
         terminal: true,
         reason: 'delivery_preparation_failed',
@@ -1188,22 +1233,25 @@ class EventRouter {
     }
 
     this.eventRetryCounts.set(retryKey, retries);
+    this.eventRetryState.set(retryKey, { event, matched });
     const backoff = EventRouter.RETRY_BACKOFF_MS * Math.pow(2, retries - 1);
     const existingTimer = this.eventRetryTimers.get(retryKey);
     if (existingTimer) clearTimeout(existingTimer);
 
     const timer = setTimeout(() => {
       this.eventRetryTimers.delete(retryKey);
-      void this.handleEvent(event)
+      const retryState = this.eventRetryState.get(retryKey) ?? { event, matched };
+      void this.handleEventForSubscriptions(retryState.event, retryState.matched)
         .then(() => {
-          // A resolved handleEvent means the retry pass either prepared the complete
-          // expected-delivery set or found no matching work left. Clear the event-level
-          // preparation retry count so a later independent transient error gets a full
-          // retry budget and this map does not leak state for non-terminal re-emits.
+          // A resolved retry pass either prepared the complete expected-delivery
+          // set for the still-active matched subscriptions or found no matching
+          // work left. Clear event-level retry state so a later independent
+          // transient error gets a full budget and this map does not leak state.
           this.eventRetryCounts.delete(retryKey);
+          this.eventRetryState.delete(retryKey);
         })
         .catch((err) => {
-          // Keep the count on failure so the next scheduled retry continues the
+          // Keep count/state on failure so the next scheduled retry continues the
           // same preparation-failure budget instead of starting over.
           log.warn('EventRouter: event preparation retry failed', { error: err, eventId: event.id });
         });
@@ -1340,14 +1388,15 @@ When an event matches a subscription whose node execution is `idle` (agent sessi
 
 ### Terminal run cleanup
 
-When a workflow run transitions to `done` or `cancelled`, `clearRunInterests(workflowRunId)` removes subscriptions, retry timers, and in-memory pending queues. Any queued delivery removed during this terminal cleanup was already registered in `space_external_event_deliveries`, so cleanup must mark it terminally failed before deleting the queue entry:
+When a workflow run transitions to `done` or `cancelled`, `clearRunInterests(workflowRunId)` removes subscriptions, retry timers, and in-memory pending queues. Any queued delivery or backoff retry removed during this terminal cleanup was already registered in `space_external_event_deliveries`, so cleanup must mark it terminally failed before deleting the in-memory state:
 
-1. Collect each queued `{ eventId, deliveryKey }` for the terminal run.
-2. Call `markDeliveryFailed(eventId, deliveryKey, { terminal: true, reason: 'run_terminal_cleanup' })`.
-3. Call `markEventFailedIfAllDeliveriesTerminal(eventId)` so the source event can advance once all remaining deliveries are terminal.
-4. Only then delete the in-memory queue and pending markers.
+1. Collect each queued `{ eventId, deliveryKey }` for the terminal run and fail it with reason `run_terminal_cleanup`.
+2. Collect each per-delivery retry timer for the terminal run, look up its source event id from the delivery store, and fail it with reason `run_terminal_retry_cancelled`.
+3. For each failure, call `markDeliveryFailed(eventId, deliveryKey, { terminal: true, reason })` and then `markEventFailedIfAllDeliveriesTerminal(eventId)` so the source event can advance once all remaining deliveries are terminal.
+4. Only then delete the in-memory queue, pending markers, retry counts, and timers.
+5. Event-level preparation retries can span multiple workflow runs. If one run terminates while others remain active, cancel the old shared timer and reschedule a retry for the surviving matched subscriptions with the existing retry count. Cancel without rescheduling only when no matched runs remain.
 
-This keeps run teardown from leaving non-terminal delivery rows for nodes that can no longer be started.
+This keeps run teardown from leaving non-terminal delivery rows for nodes that can no longer be started while preserving retry paths for still-active runs.
 
 ### Queue for not-yet-started nodes
 
@@ -1685,7 +1734,7 @@ V1 needs one core event-store table plus workflow type additions:
    );
    ```
 
-   `EventRouter` calls `registerExpectedDelivery(...)` for every scope-matched subscription before attempting any injection. This registration must be idempotent for the `(event_id, delivery_key)` primary key: use `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING`, or an equivalent upsert that never downgrades an existing terminal row. Retryable source duplicates and router retries can prepare the same delivery more than once, so duplicate expected-delivery rows are normal and must not become preparation failures. After idempotent registration, the router skips already-terminal delivery rows and only attempts pending/retryable rows. It then records `delivered` after successful `injectMessage` and calls `markEventDeliveredIfAllDeliveriesTerminal(event.id)` so source-level dedup can stop re-emitting already-delivered events after restart or in-memory TTL eviction. When retry budget is exhausted, pending-node queue overflow evicts an expected delivery, or terminal run cleanup drops queued deliveries, the router records terminal delivery failure and calls `markEventFailedIfAllDeliveriesTerminal(event.id)` so duplicate source observations do not restart an exhausted or impossible delivery.
+   `EventRouter` calls `registerExpectedDelivery(...)` for every scope-matched subscription before attempting any injection. This registration must be idempotent for the `(event_id, delivery_key)` primary key: use `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING`, or an equivalent upsert that never downgrades an existing terminal row. Retryable source duplicates and router retries can prepare the same delivery more than once, so duplicate expected-delivery rows are normal and must not become preparation failures. After idempotent registration, the router skips already-terminal delivery rows and only attempts pending/retryable rows. It then records `delivered` after successful `injectMessage` and calls `markEventDeliveredIfAllDeliveriesTerminal(event.id)` so source-level dedup can stop re-emitting already-delivered events after restart or in-memory TTL eviction. When retry budget is exhausted, pending-node queue overflow evicts an expected delivery, terminal run cleanup drops queued deliveries, or terminal run cleanup cancels per-delivery retry timers, the router records terminal delivery failure and calls `markEventFailedIfAllDeliveriesTerminal(event.id)` so duplicate source observations do not restart an exhausted or impossible delivery.
 
 3. **Adapter-owned GitHub configuration**: reuse or migrate the existing `space_github_watched_repos` table behind `GitHubEventAdapterRepository`. This table remains source-specific and should not be queried by EventRouter except through cache invalidation hooks for repo-scoped matching.
 
