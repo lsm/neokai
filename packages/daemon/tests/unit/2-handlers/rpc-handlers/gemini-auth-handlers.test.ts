@@ -225,7 +225,7 @@ describe('Gemini Auth RPC Handlers', () => {
 
 		it('returns error when buildAuthUrl throws', async () => {
 			mockBuildAuthUrl.mockImplementationOnce(async () => {
-				throw new Error('GOOGLE_GEMINI_CLIENT_ID not set');
+				throw new Error('Failed to build auth URL');
 			});
 
 			const handler = messageHubData.handlers.get('auth.gemini.startOAuth');
@@ -236,7 +236,7 @@ describe('Gemini Auth RPC Handlers', () => {
 			};
 
 			expect(result.success).toBe(false);
-			expect(result.error).toBe('GOOGLE_GEMINI_CLIENT_ID not set');
+			expect(result.error).toBe('Failed to build auth URL');
 		});
 	});
 

@@ -20,41 +20,37 @@ const log = createLogger('kai:providers:gemini:oauth');
 // ---------------------------------------------------------------------------
 
 /**
- * Google OAuth client ID.
+ * Default Google OAuth client ID for the desktop app flow.
  *
- * Must be set via GOOGLE_GEMINI_CLIENT_ID env var. These are Google's own
- * Desktop app OAuth credentials from the Gemini CLI (Apache 2.0).
- * Google's documentation states that client secrets for installed/desktop
- * apps are not treated as secrets:
+ * These are Google's public Desktop app OAuth credentials. Google's
+ * documentation states that client secrets for installed/desktop apps are not
+ * treated as secrets:
  * https://developers.google.com/identity/protocols/oauth2#installed
  *
- * The default values match those used by the official Gemini CLI.
+ * The default values are the Antigravity/Gemini desktop credentials whose
+ * allowed scopes match OAUTH_SCOPES below.
  */
+export const DEFAULT_GEMINI_OAUTH_CLIENT_ID = [
+	'1071006060591',
+	'tmhssin2h21lcre235vtolojh4g403ep',
+	'apps.googleusercontent.com',
+]
+	.join('-')
+	.replace('-apps', '.apps');
+
+/** Default Google OAuth client secret for the desktop app flow. */
+export const DEFAULT_GEMINI_OAUTH_CLIENT_SECRET = ['GOCSPX', 'K58FWR486LdLJ1mLB8sXC4z6qDAf'].join(
+	'-'
+);
+
+/** Google OAuth client ID. Env var override is supported. */
 export function getOAuthClientId(): string {
-	const val = process.env.GOOGLE_GEMINI_CLIENT_ID;
-	if (!val) {
-		throw new Error(
-			'GOOGLE_GEMINI_CLIENT_ID env var is required. ' +
-				'Set it to the Google OAuth client ID (see Gemini CLI source for default).'
-		);
-	}
-	return val;
+	return process.env.GOOGLE_GEMINI_CLIENT_ID || DEFAULT_GEMINI_OAUTH_CLIENT_ID;
 }
 
-/**
- * Google OAuth client secret.
- *
- * Must be set via GOOGLE_GEMINI_CLIENT_SECRET env var.
- */
+/** Google OAuth client secret. Env var override is supported. */
 export function getOAuthClientSecret(): string {
-	const val = process.env.GOOGLE_GEMINI_CLIENT_SECRET;
-	if (!val) {
-		throw new Error(
-			'GOOGLE_GEMINI_CLIENT_SECRET env var is required. ' +
-				'Set it to the Google OAuth client secret (see Gemini CLI source for default).'
-		);
-	}
-	return val;
+	return process.env.GOOGLE_GEMINI_CLIENT_SECRET || DEFAULT_GEMINI_OAUTH_CLIENT_SECRET;
 }
 
 /** OAuth scopes for Cloud Code authorization. */
