@@ -1169,7 +1169,7 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 		// Queued record is persisted.
 		const pending = pendingRepo.listPendingForTarget(run.id, 'reviewer');
 		expect(pending).toHaveLength(1);
-		expect(pending[0].message).toBe('ping');
+		expect(pending[0].message).toContain('ping');
 
 		// Observability: onMessageQueued hook fires + DaemonHub event is emitted.
 		expect(queuedRecords).toHaveLength(1);
@@ -1275,7 +1275,7 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 		// Pending row persisted for the eventual flush.
 		const pending = pendingRepo.listPendingForTarget(run.id, 'step-two');
 		expect(pending).toHaveLength(1);
-		expect(pending[0].message).toBe('kick off step-two');
+		expect(pending[0].message).toContain('kick off step-two');
 	});
 
 	test('does not call ensureWorkflowNodeActivationForAgent when target already has a node_execution row', async () => {
@@ -1465,7 +1465,8 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 
 		// The coder got the message right away.
 		expect(delivered).toHaveLength(1);
-		expect(delivered[0].message).toBe('[Message from task-agent]: hi all');
+		expect(delivered[0].message).toContain('─── Message from task-agent');
+		expect(delivered[0].message).toContain('hi all');
 		expect(delivered[0].isSyntheticMessage).toBe(true);
 
 		// The reviewer message is queued.
@@ -1515,7 +1516,7 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 
 		const pending = pendingRepo.listPendingForTarget(run.id, 'reviewer');
 		expect(pending).toHaveLength(1);
-		expect(pending[0].message).toBe('v1');
+		expect(pending[0].message).toContain('v1');
 	});
 
 	test('escalates to Space Agent via spaceAgentInjector', async () => {
@@ -1544,7 +1545,8 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 
 		expect(injectorCalls).toHaveLength(1);
 		expect(injectorCalls[0].spaceId).toBe(ctx.spaceId);
-		expect(injectorCalls[0].message).toBe('[Message from task-agent]: need your help with scope');
+		expect(injectorCalls[0].message).toContain('─── Message from task-agent');
+		expect(injectorCalls[0].message).toContain('need your help with scope');
 	});
 
 	test('queues for Space Agent when injector fails + pendingMessageRepo is configured', async () => {
@@ -1578,7 +1580,7 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 
 		const pending = pendingRepo.listPendingForTarget(run.id, 'space-agent');
 		expect(pending).toHaveLength(1);
-		expect(pending[0].message).toBe('queue me');
+		expect(pending[0].message).toContain('queue me');
 		expect(pending[0].targetKind).toBe('space_agent');
 	});
 

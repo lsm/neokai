@@ -346,7 +346,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			if (!taskAgentManagerForGithub) {
 				throw new Error('TaskAgentManager is not ready for Space GitHub notification delivery');
 			}
-			return taskAgentManagerForGithub.injectTaskAgentMessage(taskId, message);
+			return taskAgentManagerForGithub.injectTaskAgentMessage(taskId, message, true);
 		},
 		process.env.GITHUB_TOKEN,
 		() => reactiveDb.notifyChange('space_github_events')

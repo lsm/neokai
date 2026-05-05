@@ -320,7 +320,7 @@ describe('channel direction enforcement', () => {
 		expect(data.success).toBe(true);
 		expect(messages).toHaveLength(1);
 		expect(messages[0].sessionId).toBe('session-reviewer');
-		expect(messages[0].message).toContain('[Message from coder]');
+		expect(messages[0].message).toContain('─── Message from coder ───');
 		expect(messages[0].message).toContain('please review');
 	});
 
@@ -412,11 +412,11 @@ describe('bidirectional point-to-point A↔B', () => {
 		const bobReceived = messages.filter((m) => m.sessionId === 'session-bob');
 
 		expect(aliceReceived).toHaveLength(1);
-		expect(aliceReceived[0].message).toContain('[Message from bob]');
+		expect(aliceReceived[0].message).toContain('─── Message from bob ───');
 		expect(aliceReceived[0].message).toContain('hello alice');
 
 		expect(bobReceived).toHaveLength(1);
-		expect(bobReceived[0].message).toContain('[Message from alice]');
+		expect(bobReceived[0].message).toContain('─── Message from alice ───');
 		expect(bobReceived[0].message).toContain('hello bob');
 	});
 
@@ -512,7 +512,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 
 		// All messages attributed to hub
 		messages.forEach((m) => {
-			expect(m.message).toContain('[Message from hub]');
+			expect(m.message).toContain('─── Message from hub ───');
 			expect(m.message).toContain('broadcast task');
 		});
 	});

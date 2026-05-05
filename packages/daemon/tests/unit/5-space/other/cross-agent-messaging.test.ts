@@ -509,7 +509,7 @@ describe('send_message — point-to-point (target: role)', () => {
 		expect(result.success).toBe(true);
 		expect(cfg.injectedMessages).toHaveLength(1);
 		expect(cfg.injectedMessages[0].sessionId).toBe('sess-reviewer');
-		expect(cfg.injectedMessages[0].message).toContain('[Message from coder]');
+		expect(cfg.injectedMessages[0].message).toContain('─── Message from coder ───');
 		expect(cfg.injectedMessages[0].message).toContain('LGTM');
 	});
 
@@ -848,7 +848,7 @@ describe('list_peers — peer discovery with channel info', () => {
 
 		const result = parse(await handlers.list_peers({}));
 		expect(result.channelTopologyDeclared).toBe(false);
-		expect(result.permittedTargets as string[]).toEqual(['task-agent']);
+		expect(result.permittedTargets as string[]).toEqual(['task-agent', 'space-agent']);
 	});
 
 	test('returns empty peers when no tasks with sessions exist', async () => {
@@ -1271,7 +1271,7 @@ describe('Step with no channels declared', () => {
 
 		const result = parse(await handlers.list_peers({}));
 		expect(result.channelTopologyDeclared).toBe(false);
-		expect(result.permittedTargets as string[]).toEqual(['task-agent']);
+		expect(result.permittedTargets as string[]).toEqual(['task-agent', 'space-agent']);
 	});
 });
 
@@ -1279,13 +1279,13 @@ describe('Step with no channels declared', () => {
 // 10. Message attribution — sender identity prefix
 // ===========================================================================
 
-describe('send_message — sender attribution prefix', () => {
+describe('send_message — sender attribution envelope', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
 	});
 
-	test('injected message includes [Message from <role>] prefix', async () => {
+	test('injected message includes sender envelope', async () => {
 		ctx = makeStepCtx([
 			{ sessionId: 'sess-coder', agentName: 'coder' },
 			{ sessionId: 'sess-reviewer', agentName: 'reviewer' },
@@ -1297,7 +1297,7 @@ describe('send_message — sender attribution prefix', () => {
 
 		await handlers.send_message({ target: 'reviewer', message: 'Here is my patch' });
 
-		expect(cfg.injectedMessages[0].message).toBe('[Message from coder]: Here is my patch');
+		expect(cfg.injectedMessages[0].message).toBe('─── Message from coder ───\n\nHere is my patch');
 	});
 });
 

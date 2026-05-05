@@ -205,7 +205,7 @@ describe('send_message with ChannelRouter injected', () => {
 		expect(data.success).toBe(true);
 		expect(data.delivered).toHaveLength(1);
 		expect(data.delivered[0].sessionId).toBe(ctx.reviewerSessionId);
-		expect(injected[0].message).toBe('[Message from coder]: hello via router');
+		expect(injected[0].message).toBe('─── Message from coder ───\n\nhello via router');
 	});
 
 	test('unknown target → clear error from ChannelRouter', async () => {
@@ -276,7 +276,7 @@ describe('send_message with ChannelRouter injected', () => {
 		expect(data.success).toBe(true);
 		expect(data.delivered).toHaveLength(1);
 		expect(data.delivered[0].sessionId).toBe(ctx.reviewerSessionId);
-		expect(injected[0].message).toBe('[Message from coder]: broadcast via router');
+		expect(injected[0].message).toBe('─── Message from coder ───\n\nbroadcast via router');
 	});
 });
 
@@ -315,7 +315,7 @@ describe('send_message without ChannelRouter (legacy path)', () => {
 		expect(data.success).toBe(true);
 		expect(data.delivered).toHaveLength(1);
 		expect(data.delivered[0].sessionId).toBe(ctx.reviewerSessionId);
-		expect(injected[0].message).toBe('[Message from coder]: legacy DM');
+		expect(injected[0].message).toBe('─── Message from coder ───\n\nlegacy DM');
 	});
 
 	test("broadcast '*' → broadcast via legacy path", async () => {
@@ -402,8 +402,8 @@ describe('both paths produce same behavior for role-based DM', () => {
 		expect(routerData.delivered[0].sessionId).toBe(ctx.reviewerSessionId);
 
 		// Both should inject the same prefixed message
-		expect(injectedLegacy[0].message).toBe('[Message from coder]: test message');
-		expect(injectedRouter[0].message).toBe('[Message from coder]: test message');
+		expect(injectedLegacy[0].message).toBe('─── Message from coder ───\n\ntest message');
+		expect(injectedRouter[0].message).toBe('─── Message from coder ───\n\ntest message');
 	});
 });
 
@@ -466,7 +466,7 @@ describe('send_message: node name→fan-out via AgentMessageRouter', () => {
 		// Both injections should carry the sender prefix
 		expect(injected).toHaveLength(2);
 		expect(
-			injected.every((i) => i.message === '[Message from coder]: fan-out to review node')
+			injected.every((i) => i.message === '─── Message from coder ───\n\nfan-out to review node')
 		).toBe(true);
 	});
 
@@ -542,7 +542,7 @@ describe('send_message: cross-node delivery', () => {
 		expect(data.success).toBe(true);
 		expect(data.delivered).toHaveLength(1);
 		expect(data.delivered[0].sessionId).toBe(ctx.reviewerSessionId);
-		expect(injected[0].message).toBe('[Message from coder]: cross-node message from coder');
+		expect(injected[0].message).toBe('─── Message from coder ───\n\ncross-node message from coder');
 	});
 
 	test('cross-node delivery via fan-out: coder fans out to all agents across nodes', async () => {
@@ -670,6 +670,8 @@ describe('send_message: gate blocked via topology', () => {
 
 		expect(data.success).toBe(true);
 		expect(injected).toHaveLength(1);
-		expect(injected[0].message).toBe('[Message from coder]: gate open — allowed by topology');
+		expect(injected[0].message).toBe(
+			'─── Message from coder ───\n\ngate open — allowed by topology'
+		);
 	});
 });

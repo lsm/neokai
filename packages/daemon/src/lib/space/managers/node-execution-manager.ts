@@ -16,7 +16,13 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import type { NodeExecution, NodeExecutionStatus, UpdateNodeExecutionParams } from '@neokai/shared';
+import type {
+	CreateNodeExecutionParams,
+	NodeExecution,
+	NodeExecutionStatus,
+	UpdateNodeExecutionParams,
+} from '@neokai/shared';
+import { isReservedWorkflowAgentName } from './space-workflow-manager';
 
 /**
  * Valid node execution status transitions.
@@ -107,6 +113,22 @@ export class NodeExecutionManager {
 	}
 
 	/**
+	 * Create a node execution after validating reserved built-in agent names.
+	 */
+	create(params: CreateNodeExecutionParams): NodeExecution {
+		this.assertAgentNameAllowed(params.agentName);
+		return this.repo.create(params);
+	}
+
+	/**
+	 * Create a node execution if absent after validating reserved built-in agent names.
+	 */
+	createOrIgnore(params: CreateNodeExecutionParams): NodeExecution {
+		this.assertAgentNameAllowed(params.agentName);
+		return this.repo.createOrIgnore(params);
+	}
+
+	/**
 	 * Update a node execution with partial updates.
 	 */
 	update(id: string, params: UpdateNodeExecutionParams): NodeExecution | null {
@@ -158,5 +180,11 @@ export class NodeExecutionManager {
 	 */
 	deleteByWorkflowRun(workflowRunId: string): void {
 		this.repo.deleteByWorkflowRun(workflowRunId);
+	}
+
+	private assertAgentNameAllowed(agentName: string): void {
+		if (isReservedWorkflowAgentName(agentName)) {
+			throw new Error(`Agent name "${agentName}" is reserved for a built-in agent`);
+		}
 	}
 }

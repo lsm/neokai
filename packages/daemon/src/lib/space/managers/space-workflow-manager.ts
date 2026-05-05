@@ -25,6 +25,15 @@ import { Logger } from '../../logger';
 import { validatePostApproval } from '../workflows/post-approval-validator';
 
 const logger = new Logger('SpaceWorkflowManager');
+const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
+
+function normalizeWorkflowAgentName(name: string): string {
+	return name.trim().toLowerCase();
+}
+
+export function isReservedWorkflowAgentName(name: string): boolean {
+	return RESERVED_WORKFLOW_AGENT_NAMES.has(normalizeWorkflowAgentName(name));
+}
 
 // ---------------------------------------------------------------------------
 // Dependency interfaces
@@ -363,6 +372,11 @@ export class SpaceWorkflowManager {
 			if (!entry.name || !entry.name.trim()) {
 				throw new WorkflowValidationError(
 					`node[${index}].agents[${j}]: name must be a non-empty string`
+				);
+			}
+			if (isReservedWorkflowAgentName(entry.name)) {
+				throw new WorkflowValidationError(
+					`node[${index}].agents[${j}]: name "${entry.name}" is reserved for a built-in agent`
 				);
 			}
 			if (seenNames.has(entry.name)) {

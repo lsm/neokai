@@ -73,7 +73,11 @@ export interface TaskAgentManagerInterface {
 	/** Ensure a Task Agent session exists for the given task and return latest task snapshot. */
 	ensureTaskAgentSession(taskId: string): Promise<import('@neokai/shared').SpaceTask>;
 	/** Inject a message into the Task Agent session for the given task. */
-	injectTaskAgentMessage(taskId: string, message: string): Promise<void>;
+	injectTaskAgentMessage(
+		taskId: string,
+		message: string,
+		isSyntheticMessage?: boolean
+	): Promise<void>;
 	/** Returns the live AgentSession for the given task, or undefined if not spawned. */
 	getTaskAgent(taskId: string): AgentSession | undefined;
 	/**

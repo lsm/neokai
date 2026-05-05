@@ -489,6 +489,9 @@ export class RoomRuntimeService {
 						role: 'user' as const,
 						content: [{ type: 'text' as const, text: message }],
 					},
+					...(opts?.isSyntheticMessage !== undefined
+						? { isSynthetic: opts.isSyntheticMessage }
+						: {}),
 				};
 
 				// Defer-mode semantics:

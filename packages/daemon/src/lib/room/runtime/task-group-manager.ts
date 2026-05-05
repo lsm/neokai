@@ -57,7 +57,11 @@ export interface SessionFactory {
 	injectMessage(
 		sessionId: string,
 		message: string,
-		opts?: { deliveryMode?: MessageDeliveryMode; origin?: MessageOrigin }
+		opts?: {
+			deliveryMode?: MessageDeliveryMode;
+			origin?: MessageOrigin;
+			isSyntheticMessage?: boolean;
+		}
 	): Promise<void>;
 	hasSession(sessionId: string): boolean;
 	/**

@@ -469,7 +469,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				...topologyTargets,
 				...crossNodePeers.map((p) => p.agentName),
 			]);
-			const permittedTargets = [...permittedTargetSet, 'task-agent'];
+			const permittedTargets = [...permittedTargetSet, 'task-agent', 'space-agent'];
 			const channelTopologyDeclared = !resolver.isEmpty();
 
 			return jsonResult({
@@ -482,7 +482,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				message:
 					`Found ${peers.length} peer(s). ` +
 					`Permitted direct targets via send_message: ${permittedTargets.join(', ')}. ` +
-					`Use "task-agent" to escalate blockers or request human input.`,
+					`Use "task-agent" to reach the workflow coordinator. ` +
+					`Use "space-agent" to escalate blockers or request human/space-level judgment.`,
 			});
 		},
 
@@ -507,7 +508,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			let gateWriteResult: { gateId: string; gateOpen: boolean } | null = null;
 			if (data && workflow) {
 				const targetName = Array.isArray(target) ? null : target;
-				if (targetName && targetName !== '*' && targetName !== 'task-agent') {
+				if (
+					targetName &&
+					targetName !== '*' &&
+					targetName !== 'task-agent' &&
+					targetName !== 'space-agent'
+				) {
 					const node = workflow.nodes.find((n) => n.id === workflowNodeId);
 					const myNodeName = node?.name ?? myAgentName;
 					const fromRefs = new Set([myAgentName, myNodeName]);
@@ -806,12 +812,17 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					target: 'task-agent',
 					description: 'Workflow coordinator. Use to escalate blockers or request human input.',
 				},
+				spaceAgent: {
+					target: 'space-agent',
+					description: 'Space-level escalation target. Use to request human/space-level judgment.',
+				},
 				reachabilityDeclared,
 				message:
-					`You can reach ${totalReachable} target(s) plus the task-agent coordinator. ` +
+					`You can reach ${totalReachable} target(s) plus the task-agent coordinator and space-agent escalation target. ` +
 					`Within-node peers: ${withinNodePeers.length > 0 ? withinNodePeers.map((p) => p.agentName).join(', ') : 'none'}.` +
 					crossNodeSummary +
-					` Send to "task-agent" to escalate blockers or request human input.`,
+					` Send to "task-agent" to reach the workflow coordinator.` +
+					` Use target 'space-agent' to escalate blockers or request human/space-level judgment.`,
 			});
 		},
 
@@ -1141,7 +1152,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 				"Use agent name for DM (e.g. 'coder'), node name for fan-out, or '*' for broadcast. " +
 				'Validates against declared channel topology — returns an error with available targets if not permitted. ' +
 				'When the target channel is gated, the optional `data` payload is automatically merged into the gate ' +
-				'and gate re-evaluation fires — no separate gate write needed.',
+				"and gate re-evaluation fires — no separate gate write needed. Use target 'space-agent' to escalate blockers or request human/space-level judgment.",
 			SendMessageSchema.shape,
 			(args) => handlers.send_message(args)
 		),
