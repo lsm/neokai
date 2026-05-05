@@ -98,6 +98,8 @@ interface PresetDefinition {
 	name: string;
 	description: string;
 	tools: string[];
+	/** Thinking-level override for sessions created from this preset; unset inherits app default. */
+	thinkingLevel?: import('@neokai/shared').ThinkingLevel;
 	/** Combined operator-supplied prompt (persona + operating procedure). */
 	customPrompt: string;
 }
@@ -364,6 +366,7 @@ export async function seedPresetAgents(
 			name: preset.name,
 			description: preset.description,
 			tools: preset.tools,
+			thinkingLevel: preset.thinkingLevel,
 			customPrompt: preset.customPrompt,
 			templateName: preset.name,
 			templateHash,

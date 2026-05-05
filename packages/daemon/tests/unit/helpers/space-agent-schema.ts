@@ -33,8 +33,8 @@ export function createSpaceAgentSchema(db: Database): void {
 	`);
 	db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
 
-	// Keep in sync with space-test-db.ts (post-M105 schema — template_name /
-	// template_hash columns added for preset-agent drift detection).
+	// Keep in sync with space-test-db.ts (post-M116 schema — thinking_level
+	// column added for per-agent thinking overrides).
 	db.exec(`
 		CREATE TABLE space_agents (
 			id TEXT PRIMARY KEY,
@@ -43,6 +43,7 @@ export function createSpaceAgentSchema(db: Database): void {
 			description TEXT NOT NULL DEFAULT '',
 			model TEXT,
 			tools TEXT NOT NULL DEFAULT '[]',
+			thinking_level TEXT DEFAULT NULL,
 			custom_prompt TEXT,
 			provider TEXT,
 			template_name TEXT DEFAULT NULL,

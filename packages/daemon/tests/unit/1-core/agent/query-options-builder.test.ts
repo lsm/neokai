@@ -311,13 +311,19 @@ describe('QueryOptionsBuilder', () => {
 			expect(result).toBeDefined();
 		});
 
-		it('should use auto as default thinking level', async () => {
+		it('should use global thinking level when session has no override', async () => {
+			mockSettingsManager.getGlobalSettings = mock(() => ({ thinkingLevel: 'think16k' })) as never;
 			const options = await builder.build();
 			const result = builder.addSessionStateOptions(options);
 
-			// auto should not set maxThinkingTokens (undefined in map)
-			// The exact behavior depends on THINKING_LEVEL_TOKENS values
-			expect(result).toBeDefined();
+			expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+		});
+
+		it('should use auto as default thinking level when no session or global override exists', async () => {
+			const options = await builder.build();
+			const result = builder.addSessionStateOptions(options);
+
+			expect(result.thinking).toEqual({ type: 'adaptive' });
 		});
 	});
 

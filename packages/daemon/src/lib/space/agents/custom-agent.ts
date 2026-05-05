@@ -76,6 +76,8 @@ export interface SlotResolutionContext {
 export interface SlotOverrides {
 	/** Override the agent's default model for this slot */
 	model?: string;
+	/** Override the agent's default thinking level for this slot */
+	thinkingLevel?: SpaceAgent['thinkingLevel'];
 	/** Expansion text appended to the agent's customPrompt for this slot */
 	customPrompt?: string;
 	/** IDs of globally-enabled skills to disable for this slot */
@@ -425,6 +427,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		: {};
 	const model =
 		slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
+	const thinkingLevel = slotOverrides?.thinkingLevel ?? customAgent.thinkingLevel;
 	const provider = inferProviderForModel(model);
 
 	const resolvedPrompt = resolveCustomAgentPrompt(customAgent, slotOverrides);
@@ -466,6 +469,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 			promptProvenance,
 			model,
 			provider,
+			thinkingLevel,
 			agent: agentKey,
 			agents: { [agentKey]: agentDef },
 			...customToolPermissions,
@@ -489,6 +493,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		promptProvenance,
 		model,
 		provider,
+		thinkingLevel,
 		...customToolPermissions,
 		skillOverrides,
 		mcpServers: extraMcpServers,

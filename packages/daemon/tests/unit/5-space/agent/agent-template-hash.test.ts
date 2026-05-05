@@ -59,7 +59,12 @@ describe('buildAgentTemplateFingerprint', () => {
 			tools: undefined as unknown as string[],
 			customPrompt: undefined as unknown as string,
 		});
-		expect(fp).toEqual({ name: '', description: '', tools: [], customPrompt: '' });
+		expect(fp).toEqual({
+			name: '',
+			description: '',
+			tools: [],
+			customPrompt: '',
+		});
 	});
 
 	it('does not mutate the caller-supplied tools array', () => {
