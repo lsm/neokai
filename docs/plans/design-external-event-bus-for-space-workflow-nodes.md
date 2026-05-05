@@ -551,8 +551,10 @@ class EventRouter {
   }
 
   /**
-   * Unregister subscriptions for a specific node execution.
+   * Unregister subscriptions for a specific task-owned node execution.
    * Called when a node execution transitions to `cancelled` state.
+   * Includes taskId so cancelling one task's node does not remove another
+   * task's subscriptions when both tasks share the same workflowRunId/node/agent.
    *
    * Only `cancelled` nodes are removed from the subscription index.
    * All other states (`pending`, `in_progress`, `idle`, `waiting_rebind`,
@@ -565,6 +567,7 @@ class EventRouter {
    */
   unregisterExecution(
     workflowRunId: string,
+    taskId: string,
     nodeId: string,
     agentName: string,
   ): void {
@@ -572,12 +575,15 @@ class EventRouter {
     if (!runSubs) return;
 
     const toRemove = [...runSubs].filter(
-      s => s.nodeId === nodeId && s.agentName === agentName,
+      s => s.taskId === taskId && s.nodeId === nodeId && s.agentName === agentName,
     );
     for (const sub of toRemove) {
       runSubs.delete(sub);
       this.topicTrie.remove(
-        v => v.workflowRunId === workflowRunId && v.agentName === agentName && v.nodeId === nodeId,
+        v => v.workflowRunId === workflowRunId
+          && v.taskId === taskId
+          && v.agentName === agentName
+          && v.nodeId === nodeId,
       );
     }
   }
@@ -960,10 +966,8 @@ class GitHubEventAdapter implements EventAdapter {
       const [repoOwner, repoName] = event.repo.split('/');
 
       // Construct topic from event.
-      // mapEventType returns the full resource.action string from the table below.
-      // For most SpaceGitHubEventKinds, the mapping already includes the action
-      // (e.g., pull_request_review → "pull_request.review_submitted").
-      // For plain pull_request events, the action is appended from event.action.
+      // mapEventType returns the full resource.action string and preserves the
+      // original GitHub action so users can filter created/edited/deleted/etc.
       const topic = `github/${repoOwner}/${repoName}/${mapEventType(event.eventType, event.action)}`;
 
       // Publish to bus
@@ -998,17 +1002,17 @@ The `SpaceGitHubService` already normalizes to `SpaceGitHubEventKind` (`issue_co
 
 | SpaceGitHubEventKind | `mapEventType(kind, action)` returns |
 |---|---|
-| `issue_comment` | `pull_request.comment_created` (PR comments only, already filtered) |
-| `pull_request_review` | `pull_request.review_submitted` |
-| `pull_request_review_comment` | `pull_request.review_comment_created` |
+| `issue_comment` | `pull_request.comment_${action}` (PR comments only; created, edited, deleted) |
+| `pull_request_review` | `pull_request.review_${action}` (submitted, edited, dismissed) |
+| `pull_request_review_comment` | `pull_request.review_comment_${action}` (created, edited, deleted) |
 | `pull_request` | `pull_request.${action}` (opened, synchronize, closed, etc.) |
 
 ```typescript
 function mapEventType(kind: string, action: string): string {
   switch (kind) {
-    case 'issue_comment': return 'pull_request.comment_created';
-    case 'pull_request_review': return 'pull_request.review_submitted';
-    case 'pull_request_review_comment': return 'pull_request.review_comment_created';
+    case 'issue_comment': return `pull_request.comment_${action}`;
+    case 'pull_request_review': return `pull_request.review_${action}`;
+    case 'pull_request_review_comment': return `pull_request.review_comment_${action}`;
     case 'pull_request': return `pull_request.${action}`;
     default: return `${kind}.${action}`;
   }
