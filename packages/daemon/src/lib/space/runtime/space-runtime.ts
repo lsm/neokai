@@ -3502,9 +3502,9 @@ export class SpaceRuntime {
 
 		try {
 			const gateDataRepo = this.config.gateDataRepo ?? new GateDataRepository(this.config.db);
-			const gateRecords = gateDataRepo.listByRun(runId);
-			for (let i = gateRecords.length - 1; i >= 0; i--) {
-				const candidate = fromData(gateRecords[i]?.data);
+			const gateRecords = gateDataRepo.listByRun(runId).sort((a, b) => b.updatedAt - a.updatedAt);
+			for (const record of gateRecords) {
+				const candidate = fromData(record.data);
 				if (candidate) return candidate;
 			}
 		} catch (err) {

@@ -21,6 +21,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -304,7 +305,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 			await freshRuntime.stop();
 		});
 
-		test('poll context resolves PR URL from gate data when no artifact exists', () => {
+		test('poll context resolves most recently updated PR URL from gate data', () => {
 			const run = workflowRunRepo.transitionStatus(
 				workflowRunRepo.createRun({
 					spaceId: SPACE_ID,
@@ -313,13 +314,43 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 				}).id,
 				'in_progress'
 			);
-			new GateDataRepository(db).set(run.id, 'code-ready-gate', {
+			const gateDataRepo = new GateDataRepository(db);
+			gateDataRepo.set(run.id, 'z-older-gate', {
+				pr_url: 'https://github.com/acme/widgets/pull/1',
+			});
+			gateDataRepo.set(run.id, 'a-newer-gate', {
 				pr_url: 'https://github.com/acme/widgets/pull/123',
 			});
 
-			const runtime = makeRuntime({ gateDataRepo: new GateDataRepository(db) });
+			const runtime = makeRuntime({ gateDataRepo });
 
 			expect(runtime.getPollPrUrlForRun(run.id)).toBe('https://github.com/acme/widgets/pull/123');
+		});
+
+		test('poll context falls back to artifact PR URL when gate data has no PR URL', () => {
+			const run = workflowRunRepo.transitionStatus(
+				workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: 'workflow-artifact-pr',
+					title: 'Artifact PR Run',
+				}).id,
+				'in_progress'
+			);
+			const gateDataRepo = new GateDataRepository(db);
+			gateDataRepo.set(run.id, 'code-ready-gate', { unrelated: 'value' });
+			const artifactRepo = new WorkflowRunArtifactRepository(db);
+			artifactRepo.upsert({
+				id: 'artifact-pr-url',
+				runId: run.id,
+				nodeId: STEP_A,
+				artifactType: 'result',
+				artifactKey: 'pr',
+				data: { pr_url: 'https://github.com/acme/widgets/pull/456' },
+			});
+
+			const runtime = makeRuntime({ gateDataRepo, artifactRepo });
+
+			expect(runtime.getPollPrUrlForRun(run.id)).toBe('https://github.com/acme/widgets/pull/456');
 		});
 
 		test('multiple in_progress runs all rehydrated by fresh runtime', async () => {
