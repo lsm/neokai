@@ -386,7 +386,7 @@ class EventBus implements EventPublisher {
 The EventBus owns cross-cutting behavior that applies to every adapter:
 
 1. **Validation** — all topics must satisfy the four-segment topic contract before publication.
-2. **Source-level dedup** — a persistent `ExternalEventStore` tracks `(spaceId, source, dedupeKey)` and delivery state. Terminal duplicates (`delivered`, `ignored`, `ambiguous`) are short-circuited; retryable states (`published`, `routed`, `delivery_failed`) are re-emitted so delivery can retry.
+2. **Source-level dedup** — a persistent `ExternalEventStore` tracks `(spaceId, source, dedupeKey)` and delivery state. Terminal duplicates (`delivered`, `failed`, `ignored`, `ambiguous`) are short-circuited; retryable states (`published`, `routed`, `delivery_failed`) are re-emitted so delivery can retry.
 3. **Task enrichment** — `EventTaskResolver` enriches events with `routedTaskId` for task-scoped matching. For GitHub PR events, it uses PR URL/number/branch fields that were normalized by the adapter. For future Slack/CI events, source-specific resolver plugins can be registered without changing adapters.
 4. **Publication** — only enriched, deduped events are emitted on `space.externalEvent.published`.
 
@@ -836,10 +836,40 @@ class EventRouter {
 
     if (matched.length === 0) return;
 
-    // 2. For each matched subscription, check scope and deliver.
-    // Isolate failures per subscription so one bad repo/task lookup or injection
-    // does not prevent other interested nodes from receiving the same event.
+    // 2. First compute all scoped deliveries and persist them as expected
+    // pending deliveries before attempting injection. This prevents the first
+    // successful subscription from marking the source event terminal while other
+    // matched subscriptions have not yet been attempted.
+    const eligible: Subscription[] = [];
     for (const sub of matched) {
+      try {
+        if (!this.passesScopeCheck(event, sub)) continue;
+        const deliveryKey = this.makeDeliveryKey(event, sub);
+        this.eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+          workflowRunId: sub.workflowRunId,
+          taskId: sub.taskId,
+          nodeId: sub.nodeId,
+          agentName: sub.agentName,
+        });
+        eligible.push(sub);
+      } catch (err) {
+        log.warn('EventRouter: failed to prepare external event delivery', {
+          error: err,
+          spaceId: event.spaceId,
+          topic: event.topic,
+          eventId: event.id,
+          workflowRunId: sub.workflowRunId,
+          taskId: sub.taskId,
+          nodeId: sub.nodeId,
+          agentName: sub.agentName,
+        });
+      }
+    }
+
+    // 3. Deliver each prepared subscription. Isolate failures per subscription
+    // so one bad repo/task lookup or injection does not prevent other interested
+    // nodes from receiving the same event.
+    for (const sub of eligible) {
       try {
         await this.deliverToSubscription(event, sub);
       } catch (err) {
@@ -858,8 +888,7 @@ class EventRouter {
   }
 
   private async deliverToSubscription(event: ExternalEvent, sub: Subscription): Promise<void> {
-    // Scope check
-    if (!this.passesScopeCheck(event, sub)) return;
+    // Scope was checked and registered in handleEvent before this method is called.
 
     // Dedup check — include taskId and nodeId to handle multi-task runs and
     // cases where the same agent name appears in multiple nodes within the same
@@ -996,11 +1025,20 @@ class EventRouter {
   private scheduleRetry(event: ExternalEvent, sub: Subscription, dedupeKey: string): void {
     const retries = (this.retryCounts.get(dedupeKey) ?? 0) + 1;
     if (retries > EventRouter.MAX_RETRIES) {
-      log.warn(`Max retries exceeded for event ${dedupeKey}, dropping`);
+      log.warn(`Max retries exceeded for event ${dedupeKey}, marking delivery failed`);
       this.retryCounts.delete(dedupeKey);
       const existingTimer = this.retryTimers.get(dedupeKey);
       if (existingTimer) clearTimeout(existingTimer);
       this.retryTimers.delete(dedupeKey);
+      this.pendingDeliveries.delete(dedupeKey);
+
+      // Persist terminal failure so source-level dedup stops re-emitting this
+      // delivery after restart or future polling of the same upstream event.
+      this.eventStore.markDeliveryFailed(event.id, dedupeKey, {
+        terminal: true,
+        reason: 'max_retries_exceeded',
+      });
+      this.eventStore.markEventFailedIfAllDeliveriesTerminal(event.id);
       return;
     }
 
@@ -1423,7 +1461,7 @@ V1 needs one core event-store table plus workflow type additions:
    );
    ```
 
-   `state` values are `published`, `routed`, `delivered`, `delivery_failed`, `ignored`, and `ambiguous`. Duplicate handling depends on state: terminal states short-circuit; retryable states can re-emit. `delivered` is written only after expected per-subscription deliveries are terminal, not merely after publication.
+   `state` values are `published`, `routed`, `delivered`, `delivery_failed`, `failed`, `ignored`, and `ambiguous`. Duplicate handling depends on state: terminal states (`delivered`, `failed`, `ignored`, `ambiguous`) short-circuit; retryable states can re-emit. `delivered` is written only after expected per-subscription deliveries are terminal, and `failed` is written only after retry budgets are exhausted for all retryable deliveries.
 
 2. **Core bus delivery store** (`space_external_event_deliveries`): persistent per-subscription delivery lifecycle used by EventRouter to advance source events to terminal delivered.
 
@@ -1442,7 +1480,7 @@ V1 needs one core event-store table plus workflow type additions:
    );
    ```
 
-   `EventRouter` records `delivered` after successful `injectMessage` and calls `markEventDeliveredIfAllDeliveriesTerminal(event.id)` so source-level dedup can stop re-emitting already-delivered events after restart or in-memory TTL eviction.
+   `EventRouter` calls `registerExpectedDelivery(...)` for every scope-matched subscription before attempting any injection. It then records `delivered` after successful `injectMessage` and calls `markEventDeliveredIfAllDeliveriesTerminal(event.id)` so source-level dedup can stop re-emitting already-delivered events after restart or in-memory TTL eviction. When retry budget is exhausted it records terminal delivery failure and calls `markEventFailedIfAllDeliveriesTerminal(event.id)` so duplicate source observations do not restart an exhausted retry loop.
 
 3. **Adapter-owned GitHub configuration**: reuse or migrate the existing `space_github_watched_repos` table behind `GitHubEventAdapterRepository`. This table remains source-specific and should not be queried by EventRouter except through cache invalidation hooks for repo-scoped matching.
 
@@ -1697,7 +1735,7 @@ This is exactly the behavior we want for external events.
 
 1. **TopicTrie**: Insert patterns, verify lookup returns correct values for exact and wildcard matches.
 2. **EventRouter**: Given subscriptions and events, verify scope filtering, topic validation before trie insertion, dedup, and delivery.
-3. **ExternalEventStore**: Verify terminal duplicates are short-circuited, retryable duplicates are re-emitted, and successful per-subscription delivery advances the source event to terminal `delivered` only after all expected deliveries are terminal.
+3. **ExternalEventStore**: Verify terminal duplicates are short-circuited, retryable duplicates are re-emitted, expected deliveries are registered before injection, successful per-subscription delivery advances the source event to terminal `delivered` only after all expected deliveries are terminal, and retry exhaustion advances to terminal `failed`.
 4. **EventTaskResolver**: Given GitHub PR metadata, verify correct task enrichment and ambiguous/unknown states.
 5. **GitHubEventAdapter**: Given webhook and polling payloads, verify signature handling, topic construction, dedupe keys, and `ExternalEvent` construction without querying Space tasks.
 6. **Scope resolution**: Test `task` scope with enriched `routedTaskId` and various task/PR associations.
