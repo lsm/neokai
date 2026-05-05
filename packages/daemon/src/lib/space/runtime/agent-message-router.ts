@@ -20,6 +20,7 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { WorkflowChannel } from '@neokai/shared';
 import { ChannelResolver } from './channel-resolver';
+import { formatAgentMessage } from '../agent-message-envelope';
 import { ActivationError, ChannelGateBlockedError, type ChannelRouter } from './channel-router';
 
 export interface AgentMessageRouterConfig {
@@ -47,6 +48,13 @@ export interface AgentMessageRouterConfig {
 	 * Used when a node agent explicitly targets `task-agent`.
 	 */
 	taskAgentRouter?: (message: string) => Promise<{ sessionId: string }>;
+	/**
+	 * Optional injector for routing messages to the Space Agent chat session.
+	 * Used when a node agent explicitly targets `space-agent`.
+	 */
+	spaceAgentInjector?: (spaceId: string, message: string) => Promise<void>;
+	/** Space-scoped task number for message envelopes. */
+	taskNumber?: number | null;
 	/**
 	 * Optional persistent queue for messages whose target session is not yet active.
 	 * When provided, a message whose target is declared in the workflow topology or
@@ -160,9 +168,11 @@ export class AgentMessageRouter {
 			channelRouter,
 			nodeGroups,
 			taskAgentRouter,
+			spaceAgentInjector,
 			pendingMessageRepo,
 			spaceId,
 			taskId,
+			taskNumber,
 			activateTargetSession,
 			onMessageQueued,
 		} = this.config;
@@ -184,9 +194,14 @@ export class AgentMessageRouter {
 		const requestedTargets =
 			target === '*' ? ['*'] : Array.isArray(target) ? [...target] : [target];
 		const wantsTaskAgent = target !== '*' && requestedTargets.includes('task-agent');
+		const wantsSpaceAgent = target !== '*' && requestedTargets.includes('space-agent');
 
-		// Channel topology required
-		if (resolver.isEmpty() && !(wantsTaskAgent && taskAgentRouter)) {
+		// Channel topology required except for built-in inter-level targets.
+		if (
+			resolver.isEmpty() &&
+			!(wantsTaskAgent && taskAgentRouter) &&
+			!(wantsSpaceAgent && spaceAgentInjector && spaceId)
+		) {
 			return {
 				success: false,
 				delivered: [],
@@ -258,6 +273,8 @@ export class AgentMessageRouter {
 			targetAgentNames = target;
 		} else if (target === 'task-agent' && taskAgentRouter) {
 			targetAgentNames = ['task-agent'];
+		} else if (target === 'space-agent' && spaceAgentInjector && spaceId) {
+			targetAgentNames = ['space-agent'];
 		} else {
 			// Single target: try to resolve by agent name or node name.
 			// Resolution order:
@@ -297,6 +314,7 @@ export class AgentMessageRouter {
 						...new Set([...knownAgentNames, ...nodeNames, ...allDeclaredAgentNames]),
 					].sort();
 					if (taskAgentRouter) allTargets.push('task-agent');
+					if (spaceAgentInjector && spaceId) allTargets.push('space-agent');
 					return {
 						success: false,
 						delivered: [],
@@ -312,7 +330,9 @@ export class AgentMessageRouter {
 		}
 
 		// --- Authorization check (translate slot names → node names for canSend) ---
-		const topologyTargets = targetAgentNames.filter((r) => r !== 'task-agent');
+		const topologyTargets = targetAgentNames.filter(
+			(r) => r !== 'task-agent' && r !== 'space-agent'
+		);
 		const unauthorized = topologyTargets.filter(
 			(r) => !resolver.canSend(fromNodeName, resolveNodeName(r))
 		);
@@ -336,7 +356,7 @@ export class AgentMessageRouter {
 		const activatedTargets = new Set<string>();
 		if (channelRouter) {
 			for (const agentName of targetAgentNames) {
-				if (agentName === 'task-agent') continue;
+				if (agentName === 'task-agent' || agentName === 'space-agent') continue;
 				try {
 					const routed = await channelRouter.deliverMessage(
 						workflowRunId,
@@ -381,7 +401,7 @@ export class AgentMessageRouter {
 		if (activateTargetSession) {
 			const refreshed = new Map(peers.map((peer) => [`${peer.agentName}:${peer.sessionId}`, peer]));
 			for (const agentName of targetAgentNames) {
-				if (agentName === 'task-agent') continue;
+				if (agentName === 'task-agent' || agentName === 'space-agent') continue;
 				if (peers.some((peer) => peer.agentName === agentName)) continue;
 				try {
 					const activatedSessions = await activateTargetSession(agentName);
@@ -416,13 +436,45 @@ export class AgentMessageRouter {
 					notFound.push(agentName);
 					continue;
 				}
-				const prefixedMessage = `[Message from ${fromAgentName}]: ${message}${dataAppendix}`;
+				const envelopedMessage = formatAgentMessage({
+					fromLevel: 'node-agent',
+					fromAgentName,
+					toLevel: 'task-agent',
+					body: `${message}${dataAppendix}`,
+					taskId,
+					taskNumber,
+					nodeId: fromAgentName,
+				});
 				try {
-					const routed = await taskAgentRouter(prefixedMessage);
+					const routed = await taskAgentRouter(envelopedMessage);
 					delivered.push({ agentName, sessionId: routed.sessionId });
 				} catch (err) {
 					const errMsg = err instanceof Error ? err.message : String(err);
 					failed.push({ agentName, sessionId: 'task-agent', error: errMsg });
+				}
+				continue;
+			}
+
+			if (agentName === 'space-agent') {
+				if (!spaceAgentInjector || !spaceId) {
+					notFound.push(agentName);
+					continue;
+				}
+				const envelopedMessage = formatAgentMessage({
+					fromLevel: 'node-agent',
+					fromAgentName,
+					toLevel: 'space-agent',
+					body: `${message}${dataAppendix}`,
+					taskId,
+					taskNumber,
+					nodeId: fromAgentName,
+				});
+				try {
+					await spaceAgentInjector(spaceId, envelopedMessage);
+					delivered.push({ agentName, sessionId: `space:chat:${spaceId}` });
+				} catch (err) {
+					const errMsg = err instanceof Error ? err.message : String(err);
+					failed.push({ agentName, sessionId: `space:chat:${spaceId}`, error: errMsg });
 				}
 				continue;
 			}
@@ -460,9 +512,17 @@ export class AgentMessageRouter {
 					// Audited (Task #139): onMessageQueued below covers all
 					// queuing paths. No independent activation gap exists —
 					// every branch that enqueues also fires the callback.
-					// Queue the message (without the "[Message from X]:" prefix — flushPendingMessages
-					// adds it at delivery time so the source name is always accurate).
-					const rawMessage = `${message}${dataAppendix}`;
+					// Queue the already-enveloped message; flushPendingMessagesForTarget injects it
+					// as-is so queued delivery matches direct delivery.
+					const rawMessage = formatAgentMessage({
+						fromLevel: 'node-agent',
+						fromAgentName,
+						toLevel: 'node-agent',
+						body: `${message}${dataAppendix}`,
+						taskId,
+						taskNumber,
+						nodeId: fromAgentName,
+					});
 					try {
 						const { record, deduped } = pendingMessageRepo.enqueue({
 							workflowRunId,
@@ -509,9 +569,17 @@ export class AgentMessageRouter {
 			}
 
 			for (const member of agentSessions) {
-				const prefixedMessage = `[Message from ${fromAgentName}]: ${message}${dataAppendix}`;
+				const envelopedMessage = formatAgentMessage({
+					fromLevel: 'node-agent',
+					fromAgentName,
+					toLevel: 'node-agent',
+					body: `${message}${dataAppendix}`,
+					taskId,
+					taskNumber,
+					nodeId: fromAgentName,
+				});
 				try {
-					await messageInjector(member.sessionId, prefixedMessage);
+					await messageInjector(member.sessionId, envelopedMessage);
 					delivered.push({ agentName, sessionId: member.sessionId });
 				} catch (err) {
 					const errMsg = err instanceof Error ? err.message : String(err);

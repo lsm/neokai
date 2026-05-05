@@ -1600,10 +1600,8 @@ export class TaskAgentManager {
 		);
 
 		for (const row of pending) {
-			const prefixed = `[Message from ${row.sourceAgentName}]: ${row.message}`;
-			const isSyntheticMessage = row.sourceAgentName !== 'human';
 			try {
-				await this.injectSubSessionMessage(sessionId, prefixed, isSyntheticMessage);
+				await this.injectSubSessionMessage(sessionId, row.message, true);
 				repo.markDelivered(row.id, sessionId);
 				this.emitPendingDelivered(row.id, sessionId, row);
 			} catch (err) {
@@ -1678,9 +1676,8 @@ export class TaskAgentManager {
 		);
 
 		for (const row of pending) {
-			const prefixed = `[Message from ${row.sourceAgentName}]: ${row.message}`;
 			try {
-				await inject(spaceId, prefixed);
+				await inject(spaceId, row.message);
 				repo.markDelivered(row.id, spaceChatSessionId);
 				this.emitPendingDelivered(row.id, spaceChatSessionId, row);
 			} catch (err) {
@@ -1719,7 +1716,11 @@ export class TaskAgentManager {
 	 * Inject a message into a Task Agent session.
 	 * Used by Space Agent's `send_message_to_task` tool.
 	 */
-	async injectTaskAgentMessage(taskId: string, message: string): Promise<void> {
+	async injectTaskAgentMessage(
+		taskId: string,
+		message: string,
+		isSyntheticMessage = false
+	): Promise<void> {
 		let session = this.taskAgentSessions.get(taskId);
 		if (!session) {
 			const task = this.config.taskRepo.getTask(taskId);
@@ -1733,9 +1734,13 @@ export class TaskAgentManager {
 		if (!session) {
 			throw new Error(`Task Agent session not found for task ${taskId}`);
 		}
-		// Human-initiated message — not synthetic. isSyntheticMessage=false so the
-		// compact thread feed can distinguish this from agent→agent task injections.
-		await this.injectMessageIntoSession(session, message, 'immediate', undefined, false);
+		await this.injectMessageIntoSession(
+			session,
+			message,
+			'immediate',
+			undefined,
+			isSyntheticMessage
+		);
 	}
 
 	/**
@@ -4183,15 +4188,17 @@ export class TaskAgentManager {
 			nodeGroups,
 			taskAgentRouter: async (message) => {
 				const ensuredTask = await this.ensureTaskAgentSession(taskId);
-				await this.injectTaskAgentMessage(taskId, message);
+				await this.injectTaskAgentMessage(taskId, message, true);
 				return { sessionId: ensuredTask.taskAgentSessionId ?? '' };
 			},
+			spaceAgentInjector: this.config.spaceAgentInjector,
 			// Wire up the pending-message queue so node agents can queue messages for
 			// peers that haven't spawned yet (declared but inactive). The queue is
 			// drained by flushPendingMessagesForTarget() when the target session activates.
 			pendingMessageRepo: this.config.pendingMessageRepo,
 			spaceId,
 			taskId,
+			taskNumber: this.config.taskRepo.getTask(taskId)?.taskNumber ?? null,
 			// Auto-resume + lazy-activation callback fired when a message is queued
 			// for an inactive peer:
 			//
@@ -4401,7 +4408,7 @@ export class TaskAgentManager {
 			return { injected: false };
 		}
 		try {
-			await this.injectTaskAgentMessage(taskId, message);
+			await this.injectTaskAgentMessage(taskId, message, true);
 		} catch (err) {
 			log.warn(
 				`TaskAgentManager.injectIntoTaskAgent: failed for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`

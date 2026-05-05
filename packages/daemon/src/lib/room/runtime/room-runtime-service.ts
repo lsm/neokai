@@ -480,7 +480,7 @@ export class RoomRuntimeService {
 				);
 
 				const messageId = generateUUID();
-				const sdkUserMessage: SDKUserMessage = {
+				const sdkUserMessage: SDKUserMessage & { isSynthetic?: boolean } = {
 					type: 'user' as const,
 					uuid: messageId as UUID,
 					session_id: sessionId,
@@ -489,6 +489,9 @@ export class RoomRuntimeService {
 						role: 'user' as const,
 						content: [{ type: 'text' as const, text: message }],
 					},
+					...(opts?.isSyntheticMessage !== undefined
+						? { isSynthetic: opts.isSyntheticMessage }
+						: {}),
 				};
 
 				// Defer-mode semantics:

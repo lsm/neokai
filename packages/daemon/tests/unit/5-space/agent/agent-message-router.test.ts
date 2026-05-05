@@ -214,7 +214,7 @@ describe('AgentMessageRouter: agent name (role) target → DM', () => {
 		expect(result.delivered[0].sessionId).toBe(ctx.reviewerSessionId);
 		expect(result.delivered[0].agentName).toBe('reviewer');
 		expect(injected).toHaveLength(1);
-		expect(injected[0].message).toBe('[Message from coder]: LGTM!');
+		expect(injected[0].message).toBe('─── Message from coder ───\n\nLGTM!');
 	});
 });
 
@@ -319,6 +319,94 @@ describe('AgentMessageRouter: broadcast * → all permitted targets', () => {
 
 		expect(result.success).toBe(false);
 		expect(result.reason).toContain("No permitted targets for agent 'coder'");
+	});
+});
+
+describe('AgentMessageRouter: built-in inter-level targets', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('delivers node messages to the Space Agent without declared topology', async () => {
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[]
+		);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		const spaceMessages: Array<{ spaceId: string; message: string }> = [];
+		const router = makeRouter(ctx, workflowRunId, [], runChannels, {
+			spaceId: ctx.spaceId,
+			taskId: 'task-123',
+			taskNumber: 236,
+			spaceAgentInjector: async (spaceId, message) => {
+				spaceMessages.push({ spaceId, message });
+			},
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'space-agent',
+			message: 'Blocked on product decision',
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.delivered).toEqual([
+			{ agentName: 'space-agent', sessionId: `space:chat:${ctx.spaceId}` },
+		]);
+		expect(spaceMessages).toEqual([
+			{
+				spaceId: ctx.spaceId,
+				message:
+					'─── Message from coder (task #236) ───\n\n' +
+					'Blocked on product decision\n\n' +
+					'─── Reply ───\n' +
+					'To reply, use: send_message_to_task with task_id="task-123" and target node "coder"',
+			},
+		]);
+	});
+
+	test('uses an envelope when delivering node messages to the Task Agent', async () => {
+		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+			ctx.db,
+			ctx.spaceId,
+			[]
+		);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		const taskMessages: string[] = [];
+		const router = makeRouter(ctx, workflowRunId, [], runChannels, {
+			taskId: 'task-123',
+			taskNumber: 236,
+			taskAgentRouter: async (message) => {
+				taskMessages.push(message);
+				return { sessionId: ctx.taskAgentSessionId };
+			},
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'task-agent',
+			message: 'Need coordination',
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.delivered).toEqual([
+			{ agentName: 'task-agent', sessionId: ctx.taskAgentSessionId },
+		]);
+		expect(taskMessages).toEqual([
+			'─── Message from coder (task #236) ───\n\n' +
+				'Need coordination\n\n' +
+				'─── Reply ───\n' +
+				'To reply, use: send_message with target "coder"',
+		]);
 	});
 });
 
@@ -839,7 +927,7 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
 		const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
 		expect(pending).toHaveLength(1);
 		expect(pending[0].sourceAgentName).toBe('coder');
-		expect(pending[0].message).toBe('code ready');
+		expect(pending[0].message).toBe('─── Message from coder ───\n\ncode ready');
 		expect(pending[0].targetKind).toBe('node_agent');
 	});
 
@@ -1432,7 +1520,7 @@ describe('AgentMessageRouter: onMessageQueued callback fires for non-deduped enq
 		expect(pending).toHaveLength(1);
 		expect(pending[0].maxAttempts).toBe(3);
 		expect(pending[0].idempotencyKey).toBe(
-			JSON.stringify([ctx.coderSessionId, 'reviewer', 'same handoff'])
+			JSON.stringify([ctx.coderSessionId, 'reviewer', '─── Message from coder ───\n\nsame handoff'])
 		);
 		expect(pending[0].expiresAt - pending[0].createdAt).toBeLessThanOrEqual(60_000);
 		expect(resumedAgents).toEqual(['reviewer']);

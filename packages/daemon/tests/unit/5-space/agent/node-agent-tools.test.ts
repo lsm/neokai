@@ -330,7 +330,7 @@ describe('node-agent-tools: list_peers', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.channelTopologyDeclared).toBe(false);
-		expect(data.permittedTargets).toEqual(['task-agent']);
+		expect(data.permittedTargets).toEqual(['task-agent', 'space-agent']);
 	});
 
 	test('reports permitted targets when channels declared', async () => {
@@ -342,7 +342,7 @@ describe('node-agent-tools: list_peers', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.channelTopologyDeclared).toBe(true);
-		expect(data.permittedTargets).toEqual(['reviewer', 'task-agent']);
+		expect(data.permittedTargets).toEqual(['reviewer', 'task-agent', 'space-agent']);
 	});
 
 	test('returns empty peer list when no peers in the run', async () => {
@@ -458,7 +458,7 @@ describe('node-agent-tools: send_message', () => {
 		expect(data.delivered[0].sessionId).toBe(ctx.reviewerSessionId);
 		expect(data.delivered[0].agentName).toBe('reviewer');
 		expect(injected).toHaveLength(1);
-		expect(injected[0].message).toBe('[Message from coder]: LGTM!');
+		expect(injected[0].message).toBe('─── Message from coder ───\n\nLGTM!');
 	});
 
 	test('point-to-point fails when channel not declared', async () => {
@@ -3079,7 +3079,7 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
 		const pending = pendingMessageRepo.listPendingForTarget(isolatedRunId, 'reviewer');
 		expect(pending).toHaveLength(1);
 		expect(pending[0].sourceAgentName).toBe('coder');
-		expect(pending[0].message).toBe('code is ready for review');
+		expect(pending[0].message).toBe('─── Message from coder ───\n\ncode is ready for review');
 		expect(pending[0].targetKind).toBe('node_agent');
 	});
 
