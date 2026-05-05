@@ -330,8 +330,8 @@ describe('node-agent-tools: list_peers', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.channelTopologyDeclared).toBe(false);
-		expect(data.permittedTargets).toEqual(['task-agent']);
-		expect(data.message).not.toContain('Use "space-agent"');
+		expect(data.permittedTargets).toEqual(['task-agent', 'space-agent']);
+		expect(data.message).toContain('Use "space-agent"');
 	});
 
 	test('reports permitted targets when channels declared', async () => {
@@ -343,17 +343,7 @@ describe('node-agent-tools: list_peers', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.channelTopologyDeclared).toBe(true);
-		expect(data.permittedTargets).toEqual(['reviewer', 'task-agent']);
-	});
-
-	test('advertises space-agent only when the built-in Space Agent route is available', async () => {
-		const config = makeConfig(ctx, { canMessageSpaceAgent: true });
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.list_peers({});
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.permittedTargets).toEqual(['task-agent', 'space-agent']);
-		expect(data.message).toContain('Use "space-agent"');
+		expect(data.permittedTargets).toEqual(['reviewer', 'task-agent', 'space-agent']);
 	});
 
 	test('returns empty peer list when no peers in the run', async () => {
@@ -1634,16 +1624,6 @@ describe('node-agent-tools: list_reachable_agents', () => {
 		expect(data.success).toBe(true);
 		expect(data.reachabilityDeclared).toBe(false);
 		expect(data.crossNodeTargets).toHaveLength(0);
-		expect(data.spaceAgent).toBeUndefined();
-		expect(data.message).not.toContain('space-agent escalation target');
-	});
-
-	test('includes space-agent in reachable agents only when the built-in route is available', async () => {
-		const config = makeConfig(ctx, { canMessageSpaceAgent: true });
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.list_reachable_agents({});
-		const data = JSON.parse(result.content[0].text);
-
 		expect(data.spaceAgent).toEqual({
 			target: 'space-agent',
 			description: 'Space-level escalation target. Use to request human/space-level judgment.',
@@ -1884,24 +1864,6 @@ describe('node-agent-tools: createNodeAgentMcpServer', () => {
 		// Server should be an object with a server property (MCP SDK server)
 		expect(server).toBeDefined();
 		expect(typeof server).toBe('object');
-	});
-
-	test('gates Space Agent guidance in send_message tool description by capability', () => {
-		const unavailableServer = createNodeAgentMcpServer(makeConfig(ctx));
-		const unavailableTools = (unavailableServer as any).instance._registeredTools as Record<
-			string,
-			{ description: string }
-		>;
-		expect(unavailableTools.send_message.description).not.toContain("target 'space-agent'");
-
-		const availableServer = createNodeAgentMcpServer(
-			makeConfig(ctx, { canMessageSpaceAgent: true })
-		);
-		const availableTools = (availableServer as any).instance._registeredTools as Record<
-			string,
-			{ description: string }
-		>;
-		expect(availableTools.send_message.description).toContain("target 'space-agent'");
 	});
 });
 

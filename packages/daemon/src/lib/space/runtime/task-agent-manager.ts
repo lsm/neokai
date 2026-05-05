@@ -4165,40 +4165,6 @@ export class TaskAgentManager {
 		});
 	}
 
-	private canMessageBuiltInSpaceAgent(ctx: {
-		agentName: string;
-		subSessionId: string;
-		spaceId: string;
-		nodeExecutions: NodeExecution[];
-		nodeGroups?: Record<string, string[]>;
-	}): boolean {
-		if (!this.config.spaceAgentInjector || !ctx.spaceId || ctx.agentName === 'space-agent') {
-			return false;
-		}
-
-		const peers = ctx.nodeExecutions.filter(
-			(execution) => execution.agentSessionId && execution.agentSessionId !== ctx.subSessionId
-		);
-		if (peers.some((peer) => peer.agentName === 'space-agent')) return false;
-		if (ctx.nodeGroups?.['space-agent']) return false;
-
-		const declaredAgentNames = new Set(
-			ctx.nodeExecutions
-				.filter((execution) => execution.agentSessionId !== ctx.subSessionId)
-				.map((execution) => execution.agentName)
-		);
-		if (ctx.nodeGroups) {
-			for (const slots of Object.values(ctx.nodeGroups)) {
-				for (const slot of slots) {
-					if (slot === ctx.agentName) continue;
-					declaredAgentNames.add(slot);
-				}
-			}
-		}
-
-		return !declaredAgentNames.has('space-agent');
-	}
-
 	/**
 	 * Build a node agent MCP server for a newly spawned sub-session.
 	 * Called from the `buildNodeAgentMcpServer` callback passed to createTaskAgentMcpServer().
@@ -4332,13 +4298,6 @@ export class TaskAgentManager {
 		const agentNameAliases = execution
 			? this.buildAgentNameAliasesForExecution(workflow, execution)
 			: this.agentNameVariants(agentName);
-		const canMessageSpaceAgent = this.canMessageBuiltInSpaceAgent({
-			agentName,
-			subSessionId,
-			spaceId,
-			nodeExecutions,
-			nodeGroups,
-		});
 
 		// End-node tool contract:
 		//   `save_artifact`      — persist typed data to artifact store (available to all node agents).
@@ -4454,7 +4413,6 @@ export class TaskAgentManager {
 			myAgentNameAliases: agentNameAliases,
 			taskId,
 			spaceId,
-			canMessageSpaceAgent,
 			channelResolver,
 			workflowRunId,
 			workflowNodeId,

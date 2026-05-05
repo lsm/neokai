@@ -142,7 +142,6 @@ export interface AgentMessageResult {
 import { Logger } from '../../logger';
 
 const log = new Logger('agent-message-router');
-const BUILT_IN_SPACE_AGENT_TARGET = '\0space-agent';
 
 export class AgentMessageRouter {
 	constructor(private readonly config: AgentMessageRouterConfig) {}
@@ -194,14 +193,6 @@ export class AgentMessageRouter {
 		const fromNodeName = resolveNodeName(fromAgentName);
 		const requestedTargets =
 			target === '*' ? ['*'] : Array.isArray(target) ? [...target] : [target];
-		if (requestedTargets.includes(BUILT_IN_SPACE_AGENT_TARGET)) {
-			return {
-				success: false,
-				delivered: [],
-				failed: [],
-				reason: 'Invalid target: reserved internal target name is not allowed.',
-			};
-		}
 		const wantsTaskAgent = target !== '*' && requestedTargets.includes('task-agent');
 		const wantsSpaceAgent = target !== '*' && requestedTargets.includes('space-agent');
 
@@ -262,17 +253,6 @@ export class AgentMessageRouter {
 			}
 		}
 
-		const shouldUseBuiltInSpaceAgent = (targetName: string): boolean =>
-			targetName === 'space-agent' &&
-			targetName !== fromAgentName &&
-			Boolean(spaceAgentInjector && spaceId) &&
-			!peers.some((peer) => peer.agentName === targetName) &&
-			!(nodeGroups && nodeGroups[targetName]) &&
-			!allDeclaredAgentNames.has(targetName);
-
-		const resolveBuiltInTarget = (targetName: string): string =>
-			shouldUseBuiltInSpaceAgent(targetName) ? BUILT_IN_SPACE_AGENT_TARGET : targetName;
-
 		// --- Resolve target agent names ---
 		let targetAgentNames: string[];
 
@@ -289,12 +269,13 @@ export class AgentMessageRouter {
 			}
 			targetAgentNames = permittedNodes;
 		} else if (Array.isArray(target)) {
-			// Multicast: explicit list of agent names. Preserve real peers named
-			// "space-agent" but normalize unresolved entries to the built-in
-			// escalation sentinel so arrays behave like single-string targets.
-			targetAgentNames = target.map(resolveBuiltInTarget);
+			// Multicast: explicit list of agent names. Built-in names are reserved and
+			// are handled unconditionally by the delivery branch below.
+			targetAgentNames = target;
 		} else if (target === 'task-agent' && taskAgentRouter) {
 			targetAgentNames = ['task-agent'];
+		} else if (target === 'space-agent' && spaceAgentInjector && spaceId) {
+			targetAgentNames = ['space-agent'];
 		} else {
 			// Single target: try to resolve by agent name or node name.
 			// Resolution order:
@@ -315,11 +296,6 @@ export class AgentMessageRouter {
 				// Agent is declared in a node_execution but hasn't spawned a session yet.
 				// Route through activation/queue path below.
 				targetAgentNames = [target];
-			} else if (shouldUseBuiltInSpaceAgent(target)) {
-				// Built-in Space Agent escalation is only used after normal peer/node
-				// resolution fails so a real workflow agent named "space-agent" remains
-				// reachable via send_message.
-				targetAgentNames = [BUILT_IN_SPACE_AGENT_TARGET];
 			} else {
 				// Check if the target is a topology-declared node that hasn't been activated yet.
 				// This handles the case where the caller uses a node name that hasn't been seen yet.
@@ -356,7 +332,7 @@ export class AgentMessageRouter {
 
 		// --- Authorization check (translate slot names → node names for canSend) ---
 		const topologyTargets = targetAgentNames.filter(
-			(r) => r !== 'task-agent' && r !== BUILT_IN_SPACE_AGENT_TARGET
+			(r) => r !== 'task-agent' && r !== 'space-agent'
 		);
 		const unauthorized = topologyTargets.filter(
 			(r) => !resolver.canSend(fromNodeName, resolveNodeName(r))
@@ -381,7 +357,7 @@ export class AgentMessageRouter {
 		const activatedTargets = new Set<string>();
 		if (channelRouter) {
 			for (const agentName of targetAgentNames) {
-				if (agentName === 'task-agent' || agentName === BUILT_IN_SPACE_AGENT_TARGET) continue;
+				if (agentName === 'task-agent' || agentName === 'space-agent') continue;
 				try {
 					const routed = await channelRouter.deliverMessage(
 						workflowRunId,
@@ -426,7 +402,7 @@ export class AgentMessageRouter {
 		if (activateTargetSession) {
 			const refreshed = new Map(peers.map((peer) => [`${peer.agentName}:${peer.sessionId}`, peer]));
 			for (const agentName of targetAgentNames) {
-				if (agentName === 'task-agent' || agentName === BUILT_IN_SPACE_AGENT_TARGET) continue;
+				if (agentName === 'task-agent' || agentName === 'space-agent') continue;
 				if (peers.some((peer) => peer.agentName === agentName)) continue;
 				try {
 					const activatedSessions = await activateTargetSession(agentName);
@@ -480,10 +456,9 @@ export class AgentMessageRouter {
 				continue;
 			}
 
-			if (agentName === BUILT_IN_SPACE_AGENT_TARGET) {
-				const builtInAgentName = 'space-agent';
+			if (agentName === 'space-agent') {
 				if (!spaceAgentInjector || !spaceId) {
-					notFound.push(builtInAgentName);
+					notFound.push(agentName);
 					continue;
 				}
 				const envelopedMessage = formatAgentMessage({
@@ -497,11 +472,11 @@ export class AgentMessageRouter {
 				});
 				try {
 					await spaceAgentInjector(spaceId, envelopedMessage);
-					delivered.push({ agentName: builtInAgentName, sessionId: `space:chat:${spaceId}` });
+					delivered.push({ agentName, sessionId: `space:chat:${spaceId}` });
 				} catch (err) {
 					const errMsg = err instanceof Error ? err.message : String(err);
 					failed.push({
-						agentName: builtInAgentName,
+						agentName,
 						sessionId: `space:chat:${spaceId}`,
 						error: errMsg,
 					});

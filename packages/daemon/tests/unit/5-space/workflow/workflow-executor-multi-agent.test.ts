@@ -16,6 +16,7 @@ import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { NodeExecutionManager } from '../../../../src/lib/space/managers/node-execution-manager.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
@@ -605,6 +606,54 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 		} catch {
 			/* ignore */
 		}
+	});
+
+	test('rejects reserved built-in agent names in workflow declarations', () => {
+		const reservedNode = {
+			id: STEP_A,
+			name: 'Reserved Names',
+			agents: [{ agentId: AGENT_CODER, name: ' Space-Agent ' }],
+		};
+
+		expect(() =>
+			workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Reserved Name Workflow ${Date.now()}`,
+				nodes: [reservedNode],
+				transitions: [],
+				startNodeId: STEP_A,
+				rules: [],
+				tags: [],
+				completionAutonomyLevel: 3,
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('rejects reserved built-in agent names during node execution creation', () => {
+		const nodeExecutionManager = new NodeExecutionManager(db);
+		const workflow = new SpaceWorkflowRepository(db).createWorkflow({
+			spaceId: SPACE_ID,
+			name: `Node Execution Reserved Name ${Date.now()}`,
+			nodes: [{ id: STEP_A, name: 'Step', agents: [{ agentId: AGENT_CODER, name: 'coder' }] }],
+			transitions: [],
+			startNodeId: STEP_A,
+			rules: [],
+			completionAutonomyLevel: 3,
+		});
+		const run = workflowRunRepo.createRun({
+			spaceId: SPACE_ID,
+			workflowId: workflow.id,
+			title: 'Reserved node execution run',
+		});
+
+		expect(() =>
+			nodeExecutionManager.create({
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				agentName: 'TASK-AGENT',
+				status: 'pending',
+			})
+		).toThrow('reserved for a built-in agent');
 	});
 
 	test('channels for start step are stored in run config after startWorkflowRun()', async () => {
