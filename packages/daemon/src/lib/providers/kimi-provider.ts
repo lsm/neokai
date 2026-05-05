@@ -112,8 +112,11 @@ export class KimiProvider implements Provider {
 
 		const upstreamBaseUrl = normalizeBaseUrl(sessionConfig?.baseUrl || KimiProvider.BASE_URL);
 		const bridge = this.getOrCreateBridge(upstreamBaseUrl, apiKey);
+		const normalizedModelId = modelId.toLowerCase();
 		const routingModelId =
-			this.ownsModel(modelId) && modelId !== 'kimi' ? modelId : KimiProvider.DEFAULT_MODEL;
+			this.ownsModel(modelId) && normalizedModelId !== 'kimi'
+				? modelId
+				: KimiProvider.DEFAULT_MODEL;
 
 		return {
 			envVars: {
