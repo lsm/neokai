@@ -2,8 +2,21 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/preact';
 import type { ChatComposerProps } from '../../ChatComposer';
 
-// Mock useModelSwitcher — avoids real WebSocket/RPC calls in unit tests
+// Mock useTargetSessionContext — avoids real WebSocket/RPC calls in unit tests
 vi.mock('../../../hooks', () => ({
+	useTargetSessionContext: () => ({
+		targetSessionId: 'target-session-id',
+		currentModel: 'claude-sonnet-4-6',
+		currentModelInfo: null,
+		availableModels: [],
+		modelSwitching: false,
+		modelLoading: false,
+		thinkingLevel: 'auto',
+		isProcessing: false,
+		isStarted: true,
+		switchModel: vi.fn(async () => {}),
+		setThinkingLevel: vi.fn(async () => {}),
+	}),
 	useModelSwitcher: () => ({
 		currentModel: 'claude-sonnet-4-6',
 		currentModelInfo: null,
@@ -27,6 +40,7 @@ vi.mock('../../ChatComposer', () => ({
 				data-session-id={props.sessionId}
 				data-is-waiting={String(props.isWaitingForInput)}
 				data-placeholder={props.inputPlaceholder}
+				data-thinking-level={props.thinkingLevel}
 			>
 				{props.inputLeadingElement}
 			</div>
@@ -52,6 +66,19 @@ const targets = [
 	{ id: 'task-agent', kind: 'task_agent' as const, label: 'Task Agent' },
 ];
 
+const activityMembers = [
+	{
+		id: 'member-1',
+		sessionId: 'coder-session-id',
+		kind: 'node_agent' as const,
+		label: 'Coder',
+		role: 'coder',
+		state: 'active' as const,
+		processingStatus: 'idle' as const,
+		messageCount: 0,
+	},
+];
+
 function renderComposer(overrides: Partial<Parameters<typeof TaskSessionChatComposer>[0]> = {}) {
 	const onSend = vi.fn().mockResolvedValue(true);
 	const onTargetSelect = vi.fn();
@@ -64,9 +91,9 @@ function renderComposer(overrides: Partial<Parameters<typeof TaskSessionChatComp
 			hasTaskAgentSession={true}
 			canSend={true}
 			isSending={false}
-			isProcessing={false}
 			autoScroll={true}
 			errorMessage={null}
+			activityMembers={activityMembers}
 			onAutoScrollChange={vi.fn()}
 			onTargetSelect={onTargetSelect}
 			onSend={onSend}
@@ -102,9 +129,9 @@ describe('TaskSessionChatComposer', () => {
 		expect(queryByTestId('task-composer-readability-scrim')).toBeNull();
 	});
 
-	it('passes sessionId to ChatComposer', () => {
+	it('passes target sessionId to ChatComposer', () => {
 		renderComposer({ sessionId: 'my-session' });
-		expect(lastChatComposerProps?.sessionId).toBe('my-session');
+		expect(lastChatComposerProps?.sessionId).toBe('target-session-id');
 	});
 
 	it('passes agentMentionCandidates to ChatComposer', () => {
@@ -147,11 +174,6 @@ describe('TaskSessionChatComposer', () => {
 		expect(lastChatComposerProps?.inputPlaceholder).toBe('Message task agent (auto-start)...');
 	});
 
-	it('forwards isProcessing to ChatComposer', () => {
-		renderComposer({ isProcessing: true });
-		expect(lastChatComposerProps?.isProcessing).toBe(true);
-	});
-
 	it('forwards auto-scroll state to ChatComposer', () => {
 		const onAutoScrollChange = vi.fn();
 		renderComposer({ autoScroll: false, onAutoScrollChange });
@@ -174,5 +196,26 @@ describe('TaskSessionChatComposer', () => {
 		fireEvent.click(getByTestId('task-composer-target-trigger'));
 		fireEvent.click(getAllByTestId('task-composer-target-option')[1]);
 		expect(onTargetSelect).toHaveBeenCalledWith('task-agent');
+	});
+
+	it('passes thinkingLevel to ChatComposer', () => {
+		renderComposer();
+		expect(lastChatComposerProps?.thinkingLevel).toBe('auto');
+	});
+
+	it('passes disabled session features to ChatComposer', () => {
+		renderComposer();
+		expect(lastChatComposerProps?.features).toEqual({
+			coordinator: false,
+			worktree: false,
+			rewind: false,
+			archive: false,
+			sessionInfo: false,
+		});
+	});
+
+	it('wires onOpenTools to ChatComposer', () => {
+		renderComposer();
+		expect(typeof lastChatComposerProps?.onOpenTools).toBe('function');
 	});
 });

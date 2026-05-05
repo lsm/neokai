@@ -1,11 +1,12 @@
-import type { MessageDeliveryMode, MessageImage } from '@neokai/shared';
+import type { MessageDeliveryMode, MessageImage, SpaceTaskActivityMember } from '@neokai/shared';
 import type { Ref } from 'preact';
 import { useMemo, useState } from 'preact/hooks';
 import { ChatComposer } from '../ChatComposer.tsx';
-import { useModelSwitcher } from '../../hooks';
+import { useTargetSessionContext } from '../../hooks';
 import { cn } from '../../lib/utils.ts';
 import { getAgentColor } from './thread/space-task-thread-agent-colors';
 import { agentInitial } from './thread/minimal/minimal-mock-data';
+import { TaskToolsModal } from './TaskToolsModal.tsx';
 
 export interface TaskComposerTarget {
 	id: string;
@@ -25,9 +26,13 @@ interface TaskSessionChatComposerProps {
 	hasTaskAgentSession: boolean;
 	canSend: boolean;
 	isSending: boolean;
-	isProcessing: boolean;
+	/** @deprecated isProcessing is now computed from the targeted agent's activity */
+	isProcessing?: boolean;
 	autoScroll: boolean;
 	errorMessage?: string | null;
+	activityMembers: SpaceTaskActivityMember[];
+	/** Workflow-defined default model per agent name (agentName -> modelId) */
+	defaultAgentModels?: Map<string, string>;
 	onAutoScrollChange: (enabled: boolean) => void;
 	onTargetSelect: (targetId: string) => void;
 	onDraftActiveChange?: (hasDraft: boolean) => void;
@@ -43,30 +48,45 @@ export function TaskSessionChatComposer({
 	hasTaskAgentSession,
 	canSend,
 	isSending,
-	isProcessing,
+	isProcessing: _isProcessingProp,
 	autoScroll,
 	errorMessage,
+	activityMembers,
+	defaultAgentModels,
 	onAutoScrollChange,
 	onTargetSelect,
 	onDraftActiveChange,
 	onComposerRef,
 	onSend,
 }: TaskSessionChatComposerProps) {
-	const {
-		currentModel,
-		currentModelInfo,
-		availableModels,
-		switching: modelSwitching,
-		loading: modelLoading,
-		switchModel,
-	} = useModelSwitcher(sessionId);
 	const [targetMenuOpen, setTargetMenuOpen] = useState(false);
+	const [toolsModalOpen, setToolsModalOpen] = useState(false);
+
 	const selectedTarget = useMemo(
 		() => targets.find((target) => target.id === selectedTargetId) ?? targets[0] ?? null,
 		[targets, selectedTargetId]
 	);
 	const selectedTargetColor = selectedTarget ? getAgentColor(selectedTarget.label) : '#66A7FF';
 	const selectedTargetInitial = selectedTarget ? agentInitial(selectedTarget.label) : 'A';
+
+	const {
+		targetSessionId,
+		currentModel,
+		currentModelInfo,
+		availableModels,
+		modelSwitching,
+		modelLoading,
+		thinkingLevel,
+		isProcessing: targetIsProcessing,
+		isStarted,
+		switchModel,
+		setThinkingLevel: _setThinkingLevel,
+	} = useTargetSessionContext({
+		selectedTarget,
+		activityMembers,
+		taskAgentSessionId: sessionId || null,
+		defaultAgentModels,
+	});
 
 	// Return the boolean so MessageInput can restore the draft when sending fails
 	const handleSend = async (
@@ -77,12 +97,21 @@ export function TaskSessionChatComposer({
 		return onSend(content, selectedTarget);
 	};
 
+	const handleOpenTools = () => {
+		setToolsModalOpen(true);
+	};
+
+	const isNotStarted = selectedTarget?.kind === 'node_agent' && !isStarted;
+
 	const targetPicker =
 		targets.length > 0 ? (
 			<div class="relative">
 				<button
 					type="button"
-					class="group inline-flex h-9 w-9 items-center justify-center rounded-full border border-dark-900/30 text-sm font-bold text-dark-950 shadow-sm ring-1 ring-white/10 transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-400/70 active:scale-95"
+					class={cn(
+						'group inline-flex h-9 w-9 items-center justify-center rounded-full border border-dark-900/30 text-sm font-bold text-dark-950 shadow-sm ring-1 ring-white/10 transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-400/70 active:scale-95',
+						isNotStarted && 'ring-amber-400/40'
+					)}
 					style={{ backgroundColor: selectedTargetColor }}
 					onClick={() => setTargetMenuOpen((open) => !open)}
 					data-testid="task-composer-target-trigger"
@@ -137,10 +166,34 @@ export function TaskSessionChatComposer({
 
 	return (
 		<div ref={onComposerRef} class="relative z-10" data-testid="task-session-chat-composer">
+			{isNotStarted && (
+				<div class="px-3 pb-1">
+					<div class="flex items-center gap-1.5 rounded border border-amber-500/20 bg-amber-500/10 px-2 py-1">
+						<svg
+							class="w-3 h-3 text-amber-400 flex-shrink-0"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+						>
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth={2}
+								d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+							/>
+						</svg>
+						<span class="text-[11px] text-amber-300">
+							{selectedTarget?.label} hasn't started yet — model and thinking pre-configuration will
+							apply when the session spawns.
+						</span>
+					</div>
+				</div>
+			)}
 			<ChatComposer
-				sessionId={sessionId}
+				sessionId={targetSessionId ?? sessionId}
 				readonly={false}
-				isProcessing={isProcessing}
+				isProcessing={targetIsProcessing}
+				thinkingLevel={thinkingLevel}
 				features={{
 					coordinator: false,
 					worktree: false,
@@ -166,7 +219,7 @@ export function TaskSessionChatComposer({
 				onCoordinatorModeChange={() => {}}
 				onSandboxModeChange={() => {}}
 				onSend={handleSend}
-				onOpenTools={() => {}}
+				onOpenTools={handleOpenTools}
 				onEnterRewindMode={() => {}}
 				onExitRewindMode={() => {}}
 				agentMentionCandidates={mentionCandidates}
@@ -185,6 +238,12 @@ export function TaskSessionChatComposer({
 				inputLeadingPaddingClass="pl-12"
 				onDraftActiveChange={onDraftActiveChange}
 				errorMessage={errorMessage}
+			/>
+			<TaskToolsModal
+				isOpen={toolsModalOpen}
+				onClose={() => setToolsModalOpen(false)}
+				sessionId={targetSessionId}
+				agentLabel={selectedTarget?.label ?? 'Agent'}
 			/>
 		</div>
 	);

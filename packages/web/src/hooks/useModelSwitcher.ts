@@ -262,18 +262,21 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 			const hub = connectionManager.getHubIfConnected();
 			if (!hub) return;
 
-			// Fetch current model
-			const { currentModel: modelId, modelInfo } = (await hub.request('session.model.get', {
-				sessionId,
-			})) as {
-				currentModel: string;
-				modelInfo: ModelInfo | null;
-			};
+			// Fetch current model (best effort — session may not exist yet)
+			try {
+				const { currentModel: modelId, modelInfo } = (await hub.request('session.model.get', {
+					sessionId,
+				})) as {
+					currentModel: string;
+					modelInfo: ModelInfo | null;
+				};
+				setCurrentModel(modelId);
+				setCurrentModelInfo(modelInfo);
+			} catch {
+				// Session not found or not started yet — keep defaults
+			}
 
-			setCurrentModel(modelId);
-			setCurrentModelInfo(modelInfo);
-
-			// Fetch available models (includes all providers for cross-provider switching)
+			// Fetch available models (independent of session state)
 			const { models } = (await hub.request('models.list', {
 				useCache: true,
 			})) as { models: RawModelEntry[] };
