@@ -1154,6 +1154,9 @@ class EventRouter {
    * (for example transient watched-repo lookup or delivery-row insert failures).
    * This reruns full matching/preparation instead of allowing partial delivery to
    * mark the source event terminal while an unregistered subscription missed it.
+   * The event-level retry count is cleared after a resolved retry pass so later
+   * independent preparation errors get a fresh budget and this map does not leak
+   * state across retryable source re-emissions of the same non-terminal event.
    */
   private scheduleEventRetry(event: ExternalEvent, matched: Subscription[]): void {
     const retryKey = `${event.id}:${matched.map((sub) => sub.workflowRunId).sort().join(',')}:prepare`;
@@ -1181,9 +1184,19 @@ class EventRouter {
 
     const timer = setTimeout(() => {
       this.eventRetryTimers.delete(retryKey);
-      void this.handleEvent(event).catch((err) => {
-        log.warn('EventRouter: event preparation retry failed', { error: err, eventId: event.id });
-      });
+      void this.handleEvent(event)
+        .then(() => {
+          // A resolved handleEvent means the retry pass either prepared the complete
+          // expected-delivery set or found no matching work left. Clear the event-level
+          // preparation retry count so a later independent transient error gets a full
+          // retry budget and this map does not leak state for non-terminal re-emits.
+          this.eventRetryCounts.delete(retryKey);
+        })
+        .catch((err) => {
+          // Keep the count on failure so the next scheduled retry continues the
+          // same preparation-failure budget instead of starting over.
+          log.warn('EventRouter: event preparation retry failed', { error: err, eventId: event.id });
+        });
     }, backoff);
     this.eventRetryTimers.set(retryKey, timer);
   }
