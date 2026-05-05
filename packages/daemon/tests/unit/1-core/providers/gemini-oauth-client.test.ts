@@ -10,6 +10,10 @@ import {
 	fetchUserInfo,
 	validateRefreshToken,
 	createAccount,
+	getOAuthClientId,
+	getOAuthClientSecret,
+	DEFAULT_GEMINI_OAUTH_CLIENT_ID,
+	DEFAULT_GEMINI_OAUTH_CLIENT_SECRET,
 	type GoogleTokenResponse,
 	type GoogleUserInfo,
 	type OAuthClientDeps,
@@ -53,6 +57,21 @@ describe('Google Gemini OAuth Client', () => {
 		} else {
 			delete process.env.GOOGLE_GEMINI_CLIENT_SECRET;
 		}
+	});
+
+	describe('OAuth credentials', () => {
+		it('uses default public desktop app credentials when env vars are unset', () => {
+			delete process.env.GOOGLE_GEMINI_CLIENT_ID;
+			delete process.env.GOOGLE_GEMINI_CLIENT_SECRET;
+
+			expect(getOAuthClientId()).toBe(DEFAULT_GEMINI_OAUTH_CLIENT_ID);
+			expect(getOAuthClientSecret()).toBe(DEFAULT_GEMINI_OAUTH_CLIENT_SECRET);
+		});
+
+		it('uses env var credentials when provided', () => {
+			expect(getOAuthClientId()).toBe('test-client-id');
+			expect(getOAuthClientSecret()).toBe('test-client-secret');
+		});
 	});
 
 	describe('buildAuthUrl', () => {
