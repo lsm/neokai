@@ -59,6 +59,18 @@ export function getModelLabel(modelId: string | null | undefined): string {
 		return `GLM ${rest.charAt(0).toUpperCase() + rest.slice(1)}`;
 	}
 
+	// Kimi models: kimi-for-coding → Kimi For Coding
+	if (lower.startsWith('kimi-')) {
+		const rest = modelId.slice('kimi-'.length).replace(/-/g, ' ');
+		return `Kimi ${rest}`;
+	}
+
+	// Moonshot models: moonshot-v1-32k → Moonshot v1 32k
+	if (lower.startsWith('moonshot-')) {
+		const rest = modelId.slice('moonshot-'.length).replace(/-/g, ' ');
+		return `Moonshot ${rest}`;
+	}
+
 	// Unknown models: clean up dashes and camelCase for readability
 	return modelId.replace(/-/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2');
 }
