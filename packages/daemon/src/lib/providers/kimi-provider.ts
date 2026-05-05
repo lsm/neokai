@@ -1,9 +1,11 @@
 /**
  * Kimi Provider - Moonshot AI（月之暗面）
  *
- * Moonshot exposes an OpenAI-compatible API at https://api.moonshot.cn/v1.
- * NeoKai routes Claude Agent SDK Anthropic Messages requests through a small
- * local bridge that translates to OpenAI chat completions.
+ * Kimi exposes a native Anthropic-compatible API at
+ * https://api.kimi.com/coding — designed specifically for coding agents.
+ *
+ * No bridge server or protocol translation is needed — the Anthropic SDK
+ * communicates directly with Kimi's Anthropic-compatible endpoint.
  *
  * API Documentation: https://platform.kimi.com/docs
  */
@@ -17,7 +19,6 @@ import type {
 	ModelTier,
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
-import { createKimiAnthropicBridgeServer, type KimiBridgeServer } from './kimi-bridge-server.js';
 
 function normalizeBaseUrl(url: string): string {
 	return url.trim().replace(/\/$/, '');
@@ -30,58 +31,59 @@ export class KimiProvider implements Provider {
 	readonly capabilities: ProviderCapabilities = {
 		streaming: true,
 		extendedThinking: false,
-		maxContextWindow: 131072,
+		maxContextWindow: 262144,
 		functionCalling: true,
 		vision: false,
 	};
 
-	static readonly BASE_URL = 'https://api.moonshot.cn/v1';
-	static readonly DEFAULT_MODEL = 'moonshot-v1-32k';
+	/** Default Anthropic-compatible base URL (Kimi For Coding). */
+	static readonly BASE_URL = 'https://api.kimi.com/coding';
+	/** Moonshot platform Anthropic-compatible base URL (China region). */
+	static readonly BASE_URL_MOONSHOT_CN = 'https://api.moonshot.cn/anthropic';
+	/** Moonshot platform Anthropic-compatible base URL (international). */
+	static readonly BASE_URL_MOONSHOT_AI = 'https://api.moonshot.ai/anthropic';
+	static readonly DEFAULT_MODEL = 'kimi-k2.5';
 
 	static readonly MODELS: ModelInfo[] = [
 		{
-			id: 'moonshot-v1-8k',
-			name: 'Moonshot v1 8K',
-			alias: 'kimi-8k',
-			family: 'kimi',
-			provider: 'kimi',
-			contextWindow: 8192,
-			description: 'Kimi / Moonshot OpenAI-compatible chat model with 8K context',
-			releaseDate: '',
-			available: true,
-		},
-		{
-			id: 'moonshot-v1-32k',
-			name: 'Moonshot v1 32K',
+			id: 'kimi-k2',
+			name: 'Kimi K2',
 			alias: 'kimi',
 			family: 'kimi',
 			provider: 'kimi',
-			contextWindow: 32768,
-			description: 'Kimi / Moonshot OpenAI-compatible chat model with 32K context',
+			contextWindow: 131072,
+			description: 'Kimi K2 open frontier model with 128K context',
 			releaseDate: '',
 			available: true,
 		},
 		{
-			id: 'moonshot-v1-128k',
-			name: 'Moonshot v1 128K',
-			alias: 'kimi-128k',
+			id: 'kimi-k2.5',
+			name: 'Kimi K2.5',
+			alias: 'kimi-k25',
 			family: 'kimi',
 			provider: 'kimi',
-			contextWindow: 131072,
-			description: 'Kimi / Moonshot OpenAI-compatible chat model with 128K context',
+			contextWindow: 262144,
+			description: 'Kimi K2.5 trillion-parameter model with 256K context',
+			releaseDate: '',
+			available: true,
+		},
+		{
+			id: 'kimi-k2.6',
+			name: 'Kimi K2.6',
+			alias: 'kimi-k26',
+			family: 'kimi',
+			provider: 'kimi',
+			contextWindow: 262144,
+			description: 'Kimi K2.6 latest model with Agent Swarm support',
 			releaseDate: '',
 			available: true,
 		},
 	];
 
 	private readonly env: NodeJS.ProcessEnv;
-	private readonly fetchImpl: typeof fetch;
-	private readonly bridgeServers = new Map<string, KimiBridgeServer>();
-	private readonly bridgeAuthToken = `kimi-bridge-${crypto.randomUUID()}`;
 
-	constructor(env: NodeJS.ProcessEnv = process.env, fetchImpl: typeof fetch = fetch) {
+	constructor(env: NodeJS.ProcessEnv = process.env) {
 		this.env = env;
-		this.fetchImpl = fetchImpl;
 	}
 
 	isAvailable(): boolean {
@@ -98,7 +100,7 @@ export class KimiProvider implements Provider {
 
 	ownsModel(modelId: string): boolean {
 		const id = modelId.toLowerCase();
-		return id === 'kimi' || id.startsWith('moonshot-') || id.startsWith('kimi-');
+		return id === 'kimi' || id.startsWith('kimi-') || id.startsWith('moonshot-');
 	}
 
 	getModelForTier(_tier: ModelTier): string | undefined {
@@ -111,8 +113,7 @@ export class KimiProvider implements Provider {
 			throw new Error('Kimi API key not configured. Set KIMI_API_KEY or MOONSHOT_API_KEY.');
 		}
 
-		const upstreamBaseUrl = normalizeBaseUrl(sessionConfig?.baseUrl || KimiProvider.BASE_URL);
-		const bridge = this.getOrCreateBridge(upstreamBaseUrl, apiKey);
+		const baseUrl = normalizeBaseUrl(sessionConfig?.baseUrl || KimiProvider.BASE_URL);
 		const normalizedModelId = modelId.toLowerCase();
 		const routingModelId =
 			this.ownsModel(modelId) && normalizedModelId !== 'kimi'
@@ -121,8 +122,8 @@ export class KimiProvider implements Provider {
 
 		return {
 			envVars: {
-				ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridge.port}`,
-				ANTHROPIC_AUTH_TOKEN: this.bridgeAuthToken,
+				ANTHROPIC_BASE_URL: baseUrl,
+				ANTHROPIC_AUTH_TOKEN: apiKey,
 				ANTHROPIC_API_KEY: '',
 				API_TIMEOUT_MS: '3000000',
 				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
@@ -153,21 +154,6 @@ export class KimiProvider implements Provider {
 	}
 
 	async shutdown(): Promise<void> {
-		for (const bridge of this.bridgeServers.values()) bridge.stop();
-		this.bridgeServers.clear();
-	}
-
-	private getOrCreateBridge(baseUrl: string, apiKey: string): KimiBridgeServer {
-		const key = `${baseUrl}\u0000${apiKey}`;
-		const existingBridge = this.bridgeServers.get(key);
-		if (existingBridge) return existingBridge;
-		const bridge = createKimiAnthropicBridgeServer({
-			baseUrl,
-			apiKey,
-			authToken: this.bridgeAuthToken,
-			fetchImpl: this.fetchImpl,
-		});
-		this.bridgeServers.set(key, bridge);
-		return bridge;
+		// No resources to clean up — direct API connection, no bridge server.
 	}
 }

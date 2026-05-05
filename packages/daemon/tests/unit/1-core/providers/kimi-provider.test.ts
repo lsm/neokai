@@ -31,7 +31,7 @@ describe('KimiProvider', () => {
 			expect(provider.capabilities).toEqual({
 				streaming: true,
 				extendedThinking: false,
-				maxContextWindow: 131072,
+				maxContextWindow: 262144,
 				functionCalling: true,
 				vision: false,
 			});
@@ -66,11 +66,7 @@ describe('KimiProvider', () => {
 
 			const models = await provider.getModels();
 
-			expect(models.map((m) => m.id)).toEqual([
-				'moonshot-v1-8k',
-				'moonshot-v1-32k',
-				'moonshot-v1-128k',
-			]);
+			expect(models.map((m) => m.id)).toEqual(['kimi-k2', 'kimi-k2.5', 'kimi-k2.6']);
 			expect(models.every((m) => m.provider === 'kimi')).toBe(true);
 		});
 
@@ -81,12 +77,12 @@ describe('KimiProvider', () => {
 	});
 
 	describe('ownsModel', () => {
-		it('should own moonshot and kimi model IDs', () => {
-			expect(provider.ownsModel('moonshot-v1-8k')).toBe(true);
-			expect(provider.ownsModel('moonshot-v1-32k')).toBe(true);
-			expect(provider.ownsModel('moonshot-v1-128k')).toBe(true);
-			expect(provider.ownsModel('kimi')).toBe(true);
+		it('should own kimi and moonshot model IDs', () => {
+			expect(provider.ownsModel('kimi-k2')).toBe(true);
+			expect(provider.ownsModel('kimi-k2.5')).toBe(true);
 			expect(provider.ownsModel('kimi-k2.6')).toBe(true);
+			expect(provider.ownsModel('kimi')).toBe(true);
+			expect(provider.ownsModel('moonshot-v1-32k')).toBe(true);
 		});
 
 		it('should not own other provider models', () => {
@@ -98,27 +94,27 @@ describe('KimiProvider', () => {
 
 	describe('getModelForTier', () => {
 		it('should map all tiers to default Kimi model', () => {
-			expect(provider.getModelForTier('haiku')).toBe('moonshot-v1-32k');
-			expect(provider.getModelForTier('sonnet')).toBe('moonshot-v1-32k');
-			expect(provider.getModelForTier('opus')).toBe('moonshot-v1-32k');
-			expect(provider.getModelForTier('default')).toBe('moonshot-v1-32k');
+			expect(provider.getModelForTier('haiku')).toBe('kimi-k2.5');
+			expect(provider.getModelForTier('sonnet')).toBe('kimi-k2.5');
+			expect(provider.getModelForTier('opus')).toBe('kimi-k2.5');
+			expect(provider.getModelForTier('default')).toBe('kimi-k2.5');
 		});
 	});
 
 	describe('buildSdkConfig', () => {
-		it('should build bridge config for moonshot-v1-128k', () => {
+		it('should build direct-connect config for kimi-k2.6', () => {
 			process.env.KIMI_API_KEY = 'test-key';
 
-			const config = provider.buildSdkConfig('moonshot-v1-128k');
+			const config = provider.buildSdkConfig('kimi-k2.6');
 
-			expect(config.envVars.ANTHROPIC_BASE_URL).toStartWith('http://127.0.0.1:');
-			expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toStartWith('kimi-bridge-');
+			expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.kimi.com/coding');
+			expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('test-key');
 			expect(config.envVars.ANTHROPIC_API_KEY).toBe('');
 			expect(config.envVars.API_TIMEOUT_MS).toBe('3000000');
 			expect(config.envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
-			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('moonshot-v1-128k');
-			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('moonshot-v1-128k');
-			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('moonshot-v1-128k');
+			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('kimi-k2.6');
+			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-k2.6');
+			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('kimi-k2.6');
 			expect(config.isAnthropicCompatible).toBe(true);
 			expect(config.apiVersion).toBe('v1');
 		});
@@ -128,9 +124,9 @@ describe('KimiProvider', () => {
 
 			const config = provider.buildSdkConfig('default');
 
-			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('moonshot-v1-32k');
-			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('moonshot-v1-32k');
-			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('moonshot-v1-32k');
+			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('kimi-k2.5');
+			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-k2.5');
+			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('kimi-k2.5');
 		});
 
 		it('should fall back to default Kimi model for mixed-case Kimi alias', () => {
@@ -138,65 +134,50 @@ describe('KimiProvider', () => {
 
 			const config = provider.buildSdkConfig('Kimi');
 
-			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('moonshot-v1-32k');
-			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('moonshot-v1-32k');
-			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('moonshot-v1-32k');
+			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('kimi-k2.5');
+			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-k2.5');
+			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('kimi-k2.5');
 		});
 
-		it('should lowercase mixed-case moonshot model IDs for routing', () => {
+		it('should lowercase mixed-case model IDs for routing', () => {
 			process.env.KIMI_API_KEY = 'test-key';
 
-			const config = provider.buildSdkConfig('Moonshot-v1-32k');
-
-			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('moonshot-v1-32k');
-			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('moonshot-v1-32k');
-			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('moonshot-v1-32k');
-		});
-
-		it('should lowercase mixed-case kimi alias model IDs for routing', () => {
-			process.env.KIMI_API_KEY = 'test-key';
-
-			const config = provider.buildSdkConfig('Kimi-k2.6');
+			const config = provider.buildSdkConfig('Kimi-K2.6');
 
 			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('kimi-k2.6');
 			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-k2.6');
 			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('kimi-k2.6');
 		});
 
-		it('should use session config API key and base URL overrides', async () => {
+		it('should use session config API key and base URL overrides', () => {
 			process.env.KIMI_API_KEY = 'env-key';
-			const customProvider = new KimiProvider(process.env);
 
-			const config = customProvider.buildSdkConfig('moonshot-v1-8k', {
+			const config = provider.buildSdkConfig('kimi-k2', {
 				apiKey: 'session-key',
-				baseUrl: 'https://custom.example.com/v1/',
+				baseUrl: 'https://api.moonshot.cn/anthropic',
 			});
 
-			expect(config.envVars.ANTHROPIC_BASE_URL).toStartWith('http://127.0.0.1:');
-			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('moonshot-v1-8k');
-			await customProvider.shutdown();
+			expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.cn/anthropic');
+			expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('session-key');
+			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-k2');
 		});
 
 		it('should throw when no API key is configured', () => {
-			expect(() => provider.buildSdkConfig('moonshot-v1-32k')).toThrow(
-				'Kimi API key not configured'
-			);
+			expect(() => provider.buildSdkConfig('kimi-k2.5')).toThrow('Kimi API key not configured');
 		});
 	});
 
 	describe('translateModelIdForSdk', () => {
 		it('should translate Kimi models to default', () => {
-			expect(provider.translateModelIdForSdk('moonshot-v1-32k')).toBe('default');
+			expect(provider.translateModelIdForSdk('kimi-k2.5')).toBe('default');
 		});
 	});
 
 	describe('static models', () => {
 		it('should have correct static model definitions', () => {
-			expect(KimiProvider.BASE_URL).toBe('https://api.moonshot.cn/v1');
+			expect(KimiProvider.BASE_URL).toBe('https://api.kimi.com/coding');
 			expect(KimiProvider.MODELS).toHaveLength(3);
-			expect(KimiProvider.MODELS.find((m) => m.id === 'moonshot-v1-128k')?.contextWindow).toBe(
-				131072
-			);
+			expect(KimiProvider.MODELS.find((m) => m.id === 'kimi-k2.6')?.contextWindow).toBe(262144);
 		});
 	});
 });
