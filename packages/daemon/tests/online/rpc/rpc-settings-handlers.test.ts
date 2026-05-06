@@ -189,11 +189,11 @@ describe('Settings RPC Handlers', () => {
 			expect(result.settings.thinkingLevel).toBe('think32k');
 		});
 
-		test('can be reset to auto', async () => {
+		test('can be reset to off', async () => {
 			await updateGlobalSettings({ thinkingLevel: 'think16k' });
-			const result = await updateGlobalSettings({ thinkingLevel: 'auto' });
+			const result = await updateGlobalSettings({ thinkingLevel: 'off' });
 			expect(result.success).toBe(true);
-			expect(result.settings.thinkingLevel).toBe('auto');
+			expect(result.settings.thinkingLevel).toBe('off');
 		});
 
 		test('persists after update', async () => {
@@ -277,7 +277,7 @@ describe('Settings RPC Handlers', () => {
 				workspacePath: '/test/settings-override',
 				config: {
 					model: 'haiku',
-					thinkingLevel: 'auto',
+					thinkingLevel: 'off',
 					autoScroll: true,
 				},
 			})) as {
@@ -289,7 +289,7 @@ describe('Settings RPC Handlers', () => {
 			daemon.trackSession(result.sessionId);
 
 			expect(result.session.config.model).toBe('haiku');
-			expect(result.session.config.thinkingLevel).toBe('auto');
+			expect(result.session.config.thinkingLevel).toBe('off');
 			expect(result.session.config.autoScroll).toBe(true);
 		});
 	});

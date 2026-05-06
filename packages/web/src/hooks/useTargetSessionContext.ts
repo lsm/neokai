@@ -164,8 +164,8 @@ export function useTargetSessionContext({
 			modelSwitcher.availableModels.find((m) => m.id === effectiveCurrentModel) ??
 			null);
 
-	// Thinking level — default to auto.
-	const [thinkingLevel, setLocalThinkingLevel] = useState<ThinkingLevel>('auto');
+	// Thinking level — default to off.
+	const [thinkingLevel, setLocalThinkingLevel] = useState<ThinkingLevel>('off');
 
 	// Load the live thinking level from the session whenever the target
 	// session changes (e.g. switching to a different started agent).
@@ -199,7 +199,7 @@ export function useTargetSessionContext({
 	useEffect(() => {
 		if (!selectedTarget || isStarted) return;
 		const entry = preConfiguredThinking.get(selectedTarget.id);
-		const level = entry && entry.taskId === taskId ? entry.level : 'auto';
+		const level = entry && entry.taskId === taskId ? entry.level : 'off';
 		setLocalThinkingLevel(level);
 	}, [selectedTarget?.id, isStarted, preConfiguredThinking, taskId]);
 

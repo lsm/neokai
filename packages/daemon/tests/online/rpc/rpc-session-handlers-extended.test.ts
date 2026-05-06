@@ -218,7 +218,19 @@ describe('Session RPC Handlers - Extended', () => {
 			expect(result.thinkingLevel).toBe('think8k');
 		});
 
-		test('should default to auto for invalid level', async () => {
+		test('should set think24k thinking level', async () => {
+			const sessionId = await createSession('/test/session-thinking-24k');
+
+			const result = (await daemon.messageHub.request('session.thinking.set', {
+				sessionId,
+				level: 'think24k',
+			})) as { success: boolean; thinkingLevel: string };
+
+			expect(result.success).toBe(true);
+			expect(result.thinkingLevel).toBe('think24k');
+		});
+
+		test('should default to off for invalid level', async () => {
 			const sessionId = await createSession('/test/session-thinking-invalid');
 
 			const result = (await daemon.messageHub.request('session.thinking.set', {
@@ -226,7 +238,7 @@ describe('Session RPC Handlers - Extended', () => {
 				level: 'invalid',
 			})) as { thinkingLevel: string };
 
-			expect(result.thinkingLevel).toBe('auto');
+			expect(result.thinkingLevel).toBe('off');
 		});
 
 		test('should error for non-existent session', async () => {

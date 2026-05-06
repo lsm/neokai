@@ -32,6 +32,7 @@ export class KimiProvider implements Provider {
 	readonly capabilities: ProviderCapabilities = {
 		streaming: true,
 		extendedThinking: true,
+		thinkingModes: 'on',
 		maxContextWindow: 262144,
 		functionCalling: true,
 		vision: false,

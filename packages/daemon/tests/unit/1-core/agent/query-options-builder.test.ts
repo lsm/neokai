@@ -303,15 +303,11 @@ describe('QueryOptionsBuilder', () => {
 		});
 
 		it('should add thinking tokens based on thinkingLevel', async () => {
-			// Use 'ultrathink' which is a known valid thinking level
-			mockSession.config.thinkingLevel = 'ultrathink';
+			mockSession.config.thinkingLevel = 'think24k';
 			const options = await builder.build();
 			const result = builder.addSessionStateOptions(options);
 
-			// THINKING_LEVEL_TOKENS maps ultrathink to a specific value
-			// Note: if the level doesn't exist in the map, it returns undefined
-			// This test verifies the mechanism works
-			expect(result).toBeDefined();
+			expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 24000 });
 		});
 
 		it('should use global thinking level when session has no override', async () => {
@@ -322,11 +318,35 @@ describe('QueryOptionsBuilder', () => {
 			expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
 		});
 
-		it('should use auto as default thinking level when no session or global override exists', async () => {
+		it('should use off as default thinking level when no session or global override exists', async () => {
 			const options = await builder.build();
 			const result = builder.addSessionStateOptions(options);
 
-			expect(result.thinking).toEqual({ type: 'adaptive' });
+			expect(result.thinking).toBeUndefined();
+		});
+
+		it('should omit thinking config for providers with thinkingModes=off', async () => {
+			mockSession.config.provider = 'minimax';
+			mockSession.config.thinkingLevel = 'think32k';
+			// Pass minimal options directly — avoid build() because it instantiates
+			// the provider context and MiniMax lacks an API key in CI.
+			const result = builder.addSessionStateOptions(
+				{} as import('@anthropic-ai/claude-agent-sdk').Options
+			);
+
+			expect(result.thinking).toBeUndefined();
+		});
+
+		it('should preserve selected budget for providers with thinkingModes=on', async () => {
+			mockSession.config.provider = 'kimi';
+			mockSession.config.thinkingLevel = 'think8k';
+			// Pass minimal options directly — avoid build() because it instantiates
+			// the provider context and Kimi lacks an API key in CI.
+			const result = builder.addSessionStateOptions(
+				{} as import('@anthropic-ai/claude-agent-sdk').Options
+			);
+
+			expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
 		});
 	});
 
