@@ -25,7 +25,10 @@ import { SpaceTaskRepository } from '../../../storage/repositories/space-task-re
  */
 export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> = {
 	draft: ['open', 'archived'], // Only publish or archive
-	open: ['in_progress', 'blocked', 'done', 'cancelled'],
+	// `review` is allowed from `open` so that a review node can call
+	// `submit_for_approval` even when the task has not yet transitioned to
+	// `in_progress` (e.g. review-only workflow or runtime scheduling edge).
+	open: ['in_progress', 'blocked', 'review', 'done', 'cancelled'],
 	// `in_progress → approved` is the end-node `approve_task` path (PR 2/5 of
 	// the task-agent-as-post-approval-executor refactor). It replaces the
 	// `in_progress → done` shortcut that the completion-action pipeline used
@@ -42,7 +45,10 @@ export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStat
 	// and surfaces via `PendingPostApprovalBanner`.
 	approved: ['done', 'in_progress', 'archived'],
 	done: ['in_progress', 'archived'], // Reactivate or archive
-	blocked: ['open', 'in_progress', 'archived'], // Restart allowed + archive
+	// `review` is allowed from `blocked` so that a review node can call
+	// `submit_for_approval` after the task was parked in `blocked` (e.g.
+	// waiting for a dependency or a prior human-input gate).
+	blocked: ['open', 'in_progress', 'review', 'archived'], // Restart allowed + archive
 	cancelled: ['open', 'in_progress', 'done', 'archived'], // Restart, complete, or archive
 	archived: [], // True terminal state — no going back
 };

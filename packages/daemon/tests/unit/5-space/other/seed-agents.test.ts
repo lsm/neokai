@@ -290,6 +290,19 @@ describe('seedPresetAgents', () => {
 		expect(reviewer?.customPrompt).toMatch(/before human approval is granted/i);
 	});
 
+	it('Reviewer custom prompt prohibits space-agent merge bypass when submit_for_approval fails (Task #295)', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const reviewer = seeded.find((a) => a.name === 'Reviewer');
+
+		// If submit_for_approval fails, the reviewer must NOT escalate to
+		// space-agent to bypass the human approval gate.
+		expect(reviewer?.customPrompt).toMatch(/If `submit_for_approval` fails for any reason/i);
+		expect(reviewer?.customPrompt).toMatch(/Do NOT send a message to `space-agent`/i);
+		expect(reviewer?.customPrompt).toMatch(/advance the task to merge/i);
+		expect(reviewer?.customPrompt).toMatch(/human approval gate is mandatory/i);
+		expect(reviewer?.customPrompt).toMatch(/STOP/i);
+	});
+
 	it('Reviewer custom prompt includes own-PR detection', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const reviewer = seeded.find((a) => a.name === 'Reviewer');
