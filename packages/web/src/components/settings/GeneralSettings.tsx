@@ -3,6 +3,7 @@ import { globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import type { PermissionMode, ThinkingLevel } from '@neokai/shared';
+import { normalizeThinkingLevel } from '@neokai/shared';
 import {
 	SettingsSection,
 	SettingsRow,
@@ -39,7 +40,7 @@ export function GeneralSettings() {
 	);
 	const [localAutoScroll, setLocalAutoScroll] = useState(settings?.autoScroll ?? true);
 	const [localThinkingLevel, setLocalThinkingLevel] = useState<ThinkingLevel>(
-		settings?.thinkingLevel ?? 'off'
+		normalizeThinkingLevel(settings?.thinkingLevel)
 	);
 	const [localShowArchived, setLocalShowArchived] = useState(settings?.showArchived ?? false);
 	const [isUpdating, setIsUpdating] = useState(false);
@@ -50,7 +51,7 @@ export function GeneralSettings() {
 			setLocalModel(settings.model ?? 'sonnet');
 			setLocalPermissionMode(settings.permissionMode ?? 'default');
 			setLocalAutoScroll(settings.autoScroll ?? true);
-			setLocalThinkingLevel(settings.thinkingLevel ?? 'off');
+			setLocalThinkingLevel(normalizeThinkingLevel(settings.thinkingLevel));
 			setLocalShowArchived(settings.showArchived ?? false);
 		}
 	}, [settings]);

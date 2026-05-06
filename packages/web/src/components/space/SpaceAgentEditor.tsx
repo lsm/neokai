@@ -16,13 +16,13 @@
  * Validation: name required + unique, model required, at least one tool selected.
  */
 
-import { useState } from 'preact/hooks';
-import { Modal } from '../ui/Modal';
-import { Button } from '../ui/Button';
-import { spaceStore } from '../../lib/space-store';
-import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgent, ThinkingLevel } from '@neokai/shared';
+import { KNOWN_TOOLS, normalizeThinkingLevel } from '@neokai/shared';
+import { useState } from 'preact/hooks';
 import type { SpaceAgentTemplate } from '../../lib/space-store';
+import { spaceStore } from '../../lib/space-store';
+import { Button } from '../ui/Button';
+import { Modal } from '../ui/Modal';
 import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect';
 
 // ============================================================================
@@ -139,7 +139,7 @@ export function SpaceAgentEditor({
 	const [description, setDescription] = useState(agent?.description ?? '');
 	const [model, setModel] = useState(agent?.model ?? '');
 	const [thinkingLevel, setThinkingLevel] = useState<'' | ThinkingLevel>(
-		agent?.thinkingLevel ?? ''
+		agent?.thinkingLevel ? normalizeThinkingLevel(agent.thinkingLevel) : ''
 	);
 	const [tools, setTools] = useState<string[]>(agent?.tools ?? [...TOOL_PRESETS['Full Coding']]);
 	const [customPrompt, setCustomPrompt] = useState(agent?.customPrompt ?? '');

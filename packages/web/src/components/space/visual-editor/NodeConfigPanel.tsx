@@ -31,6 +31,7 @@ import { WorkflowModelSelect } from './WorkflowModelSelect';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { GateEditorPanel } from './GateEditorPanel';
 import { skillsStore } from '../../../lib/skills-store';
+import { normalizeThinkingLevel } from '@neokai/shared';
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
 	{ value: '', label: 'Inherit' },
@@ -40,6 +41,12 @@ const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }
 	{ value: 'think24k', label: 'Think 24k' },
 	{ value: 'think32k', label: 'Think 32k' },
 ];
+
+/** Normalize a node thinking level, returning undefined for empty/undefined values. */
+function safeNodeThinkingLevel(level: string | undefined): ThinkingLevel | undefined {
+	if (!level) return undefined;
+	return normalizeThinkingLevel(level);
+}
 
 // ============================================================================
 // Props
@@ -157,7 +164,9 @@ function AgentsSection({
 	const singleSlot = nodeAgents.length === 1 ? nodeAgents[0] : undefined;
 	const selectedSingleAgentId = singleSlot?.agentId ?? step.agentId;
 	const selectedSingleModel = singleSlot?.model ?? step.model;
-	const selectedSingleThinkingLevel = singleSlot?.thinkingLevel ?? step.thinkingLevel;
+	const selectedSingleThinkingLevel = safeNodeThinkingLevel(
+		singleSlot?.thinkingLevel ?? step.thinkingLevel
+	);
 	const selectedSingleCustomPrompt = singleSlot?.customPrompt ?? step.customPrompt;
 
 	function updateAgents(next: WorkflowNodeAgent[]) {
@@ -482,7 +491,7 @@ function AgentsSection({
 									Thinking
 								</label>
 								<select
-									value={sa.thinkingLevel ?? ''}
+									value={safeNodeThinkingLevel(sa.thinkingLevel) ?? ''}
 									onChange={(e) =>
 										updateAgentThinkingLevel(
 											sa.name,
@@ -864,7 +873,7 @@ export function NodeConfigPanel({
 							Thinking Level <span class="font-normal text-gray-600">(optional override)</span>
 						</label>
 						<select
-							value={slot.thinkingLevel ?? ''}
+							value={safeNodeThinkingLevel(slot.thinkingLevel) ?? ''}
 							onChange={(e) =>
 								updateSlot({
 									...slot,
