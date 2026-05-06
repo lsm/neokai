@@ -243,6 +243,7 @@ describe('Migration 118 — task_thread_messages projection', () => {
 		expect(triggerExists(db, 'trg_ttm_after_insert_github')).toBe(true);
 		expect(triggerExists(db, 'trg_ttm_after_update_github')).toBe(true);
 		expect(triggerExists(db, 'trg_ttm_after_delete_github')).toBe(true);
+		expect(triggerExists(db, 'trg_ttm_after_insert_space_task')).toBe(true);
 		expect(triggerExists(db, 'trg_ttm_after_update_space_task')).toBe(true);
 		expect(triggerExists(db, 'trg_ttm_after_delete_space_task')).toBe(true);
 		expect(triggerExists(db, 'trg_ttm_after_insert_node_exec')).toBe(true);
@@ -793,6 +794,67 @@ describe('Migration 118 — task_thread_messages projection', () => {
 
 		const rows = readProjection(db, taskId);
 		expect(rows[0].iteration).toBe(0);
+	});
+
+	// -------------------------------------------------------------------------
+	// space_tasks INSERT — project existing history when linkage is present
+	// -------------------------------------------------------------------------
+
+	test('space_tasks INSERT projects existing sdk_messages when task_agent_session_id is set', () => {
+		const sessionId = 'session-insert-task';
+		const taskId = 'task-insert-task';
+
+		insertSession(db, sessionId, 'space_task_agent', isoNow);
+		runMigration118(db);
+
+		// Messages exist before the task is created.
+		insertSdkMessage(db, { id: 'pre-msg-1', sessionId, isoNow });
+		insertSdkMessage(db, { id: 'pre-msg-2', sessionId, isoNow });
+
+		// Create the task with session linkage already present.
+		insertSpaceTask(db, { id: taskId, title: 'Insert', taskAgentSessionId: sessionId, now });
+
+		const rows = readProjection(db, taskId);
+		expect(rows).toHaveLength(2);
+		expect(rows.map((r) => r.source_id).sort()).toEqual(['pre-msg-1', 'pre-msg-2']);
+	});
+
+	test('space_tasks INSERT projects existing node-agent messages when workflow_run_id is set', () => {
+		const orchSessionId = 'orch-session-insert-task';
+		const nodeSessionId = 'node-session-insert-task';
+		const workflowRunId = 'wr-insert-task';
+		const taskId = 'task-insert-wr';
+
+		insertSession(db, orchSessionId, 'space_task_agent', isoNow);
+		insertSession(db, nodeSessionId, 'space_task_agent', isoNow);
+		runMigration118(db);
+
+		// Pre-stage a node_execution and messages before the task exists.
+		db.exec(`
+			INSERT INTO node_executions (
+				id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+				agent_session_id, status, result, created_at, started_at,
+				completed_at, updated_at
+			) VALUES (
+				'ne-insert', '${workflowRunId}', 'node-1', 'coder', NULL,
+				'${nodeSessionId}', 'in_progress', NULL, ${now}, ${now}, NULL, ${now}
+			)
+		`);
+		insertSdkMessage(db, { id: 'node-pre-msg', sessionId: nodeSessionId, isoNow });
+
+		// Create the task with workflow_run_id already present.
+		insertSpaceTask(db, {
+			id: taskId,
+			title: 'Insert WR',
+			taskAgentSessionId: orchSessionId,
+			workflowRunId,
+			now,
+		});
+
+		const rows = readProjection(db, taskId);
+		const nodeRows = rows.filter((r) => r.kind === 'node_agent');
+		expect(nodeRows).toHaveLength(1);
+		expect(nodeRows[0].source_id).toBe('node-pre-msg');
 	});
 
 	// -------------------------------------------------------------------------

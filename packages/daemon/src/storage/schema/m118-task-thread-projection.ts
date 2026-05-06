@@ -21,6 +21,8 @@
  * Maintenance is via SQLite triggers (no application-level hooks needed):
  *   - sdk_messages INSERT/UPDATE/DELETE → fan-out / refresh / clear.
  *   - space_github_events INSERT/UPDATE/DELETE → github leg.
+ *   - space_tasks INSERT → project existing sdk_messages / github events when
+ *     a task is created with session linkage already present.
  *   - space_tasks UPDATE (task_agent_session_id / workflow_run_id / title)
  *     → reproject when session linkage moves.
  *   - node_executions UPDATE (agent_session_id / workflow_run_id / agent_id /
@@ -350,6 +352,7 @@ const TRIGGER_NAMES: ReadonlyArray<string> = [
 	'trg_ttm_after_insert_github',
 	'trg_ttm_after_update_github',
 	'trg_ttm_after_delete_github',
+	'trg_ttm_after_insert_space_task',
 	'trg_ttm_after_update_space_task',
 	'trg_ttm_after_delete_space_task',
 	'trg_ttm_after_update_node_exec',
@@ -596,6 +599,99 @@ ${sdkSelectColumns({
 END
 `.trim();
 
+const TRG_AFTER_INSERT_SPACE_TASK = `
+CREATE TRIGGER trg_ttm_after_insert_space_task
+AFTER INSERT ON space_tasks
+WHEN NEW.task_agent_session_id IS NOT NULL OR NEW.workflow_run_id IS NOT NULL
+BEGIN
+  -- Orchestration leg: every sdk_message in the task agent session.
+  INSERT OR IGNORE INTO task_thread_messages
+  ${projectionColumns()}
+  SELECT
+${sdkSelectColumns({
+	taskId: 'NEW.id',
+	kind: `'task_agent'`,
+	role: `'task-agent'`,
+	label: `'Task Agent'`,
+	title: 'NEW.title',
+	nodeExecId: 'NULL',
+	sessionId: 'sm.session_id',
+	messageId: 'sm.id',
+	messageType: 'sm.message_type',
+	content: 'sm.sdk_message',
+	origin: 'sm.origin',
+	timestamp: 'sm.timestamp',
+})}
+  FROM sdk_messages sm
+  JOIN sessions s ON s.id = sm.session_id
+  WHERE NEW.task_agent_session_id IS NOT NULL
+    AND sm.session_id = NEW.task_agent_session_id
+    AND s.type = 'space_task_agent'
+    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'));
+
+  -- Node-agent leg: every sdk_message reached via the workflow_run_id linkage.
+  INSERT OR IGNORE INTO task_thread_messages
+  ${projectionColumns()}
+  SELECT
+${sdkSelectColumns({
+	taskId: 'NEW.id',
+	kind: `'node_agent'`,
+	role: 'ne.agent_name',
+	label: `COALESCE(sa.name, ne.agent_name, 'agent')`,
+	title: 'NEW.title',
+	nodeExecId: 'ne.id',
+	sessionId: 'sm.session_id',
+	messageId: 'sm.id',
+	messageType: 'sm.message_type',
+	content: 'sm.sdk_message',
+	origin: 'sm.origin',
+	timestamp: 'sm.timestamp',
+})}
+  FROM sdk_messages sm
+  JOIN node_executions ne ON ne.agent_session_id = sm.session_id
+  LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+  WHERE NEW.workflow_run_id IS NOT NULL
+    AND ne.workflow_run_id = NEW.workflow_run_id
+    AND ne.agent_session_id IS NOT NULL
+    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'));
+
+  -- GitHub leg: project events whose task_id maps to NEW.id.
+  INSERT OR IGNORE INTO task_thread_messages
+  ${projectionColumns()}
+  SELECT
+    NEW.id AS task_id,
+    'github' AS source,
+    ge.id AS source_id,
+    NULL AS session_id,
+    NULL AS node_execution_id,
+    'github' AS kind,
+    'github' AS role,
+    'GitHub' AS label,
+    NEW.title AS task_title,
+    'github_pr_activity' AS message_type,
+    json_object(
+      'type', 'user',
+      'uuid', ge.id,
+      'message', json_object(
+        'role', 'user',
+        'content', json_array(json_object(
+          'type', 'text',
+          'text', '[GitHub] ' || ge.summary || char(10) || ge.external_url
+        ))
+      )
+    ) AS content,
+    'system' AS origin,
+    ge.occurred_at AS created_at,
+    0 AS iteration,
+    NULL AS parent_tool_use_id,
+    0 AS is_terminal,
+    1 AS is_renderable
+  FROM space_github_events ge
+  WHERE ge.task_id = NEW.id
+    AND ge.state IN ('routed', 'delivered');
+END
+`.trim();
+
 const TRG_AFTER_DELETE_SPACE_TASK = `
 CREATE TRIGGER trg_ttm_after_delete_space_task
 AFTER DELETE ON space_tasks
@@ -788,6 +884,11 @@ const TRIGGER_DDL: ReadonlyArray<TriggerEntry> = [
 		name: 'trg_ttm_after_delete_github',
 		attachedTo: 'space_github_events',
 		ddl: TRG_AFTER_DELETE_GITHUB,
+	},
+	{
+		name: 'trg_ttm_after_insert_space_task',
+		attachedTo: 'space_tasks',
+		ddl: TRG_AFTER_INSERT_SPACE_TASK,
 	},
 	{
 		name: 'trg_ttm_after_update_space_task',

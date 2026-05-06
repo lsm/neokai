@@ -221,7 +221,12 @@ export class NodeExecutionRepository {
 			this.db
 				.prepare(`UPDATE node_executions SET ${fields.join(', ')} WHERE id = ?`)
 				.run(...values);
-			this.reactiveDb?.notifyChange('node_executions');
+			// Only invalidate LiveQuery when a projection-relevant field changed.
+			// The SQLite trigger is scoped to agent_session_id / workflow_run_id /
+			// agent_id / agent_name; status-only transitions are ignored.
+			if (params.agentSessionId !== undefined) {
+				this.reactiveDb?.notifyChange('node_executions');
+			}
 		}
 
 		return this.getById(id);
