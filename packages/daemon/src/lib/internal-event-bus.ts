@@ -120,7 +120,7 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 	 */
 	subscribe<K extends keyof TEventMap & string>(
 		event: K,
-		handler: InternalEventHandler<TEventMap[K]>,
+		handler: InternalEventHandler<TEventMap[K] & InternalEventPayload>,
 		options: SubscribeOptions
 	): () => void {
 		const eventKey = event;
@@ -179,7 +179,7 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 	 */
 	async publish<K extends keyof TEventMap & string>(
 		event: K,
-		data: TEventMap[K]
+		data: TEventMap[K] & InternalEventPayload
 	): Promise<PublishResult> {
 		const eventKey = event;
 		const sessionMap = this.handlers.get(eventKey);
@@ -188,7 +188,7 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 			return { delivered: 0, failures: [] };
 		}
 
-		const sessionId = (data as InternalEventPayload).sessionId;
+		const sessionId = data.sessionId;
 		const failures: HandlerFailure[] = [];
 		let delivered = 0;
 
@@ -246,7 +246,10 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 	 * Handler failures are silently swallowed; they are never thrown
 	 * and the caller cannot await them.
 	 */
-	publishAsync<K extends keyof TEventMap & string>(event: K, data: TEventMap[K]): void {
+	publishAsync<K extends keyof TEventMap & string>(
+		event: K,
+		data: TEventMap[K] & InternalEventPayload
+	): void {
 		// Defer to the next microtask so that synchronous handlers do not
 		// run on the caller's stack and `publishAsync` truly returns
 		// immediately.
