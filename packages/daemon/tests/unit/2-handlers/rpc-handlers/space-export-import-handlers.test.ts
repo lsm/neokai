@@ -2350,6 +2350,37 @@ describe('full export→import round-trip', () => {
 		expect(step.agents![0].agentId).toBe(importedAgentId);
 	});
 
+	it('disabled workflow export → import round-trip preserves disabled flag', async () => {
+		const agentSrc: SpaceAgent = {
+			id: 'src-dis',
+			spaceId: 'other-space',
+			name: 'Dis Agent',
+			customPrompt: null,
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+		const wfSrc: SpaceWorkflow = {
+			id: 'src-wf-dis',
+			spaceId: 'other-space',
+			name: 'Disabled Workflow',
+			nodes: [{ id: 'step-d', name: 'Code', agents: [{ agentId: 'src-dis', name: 'coder' }] }],
+			startNodeId: 'step-d',
+			tags: [],
+			disabled: true,
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+
+		const bundle = exportBundle([agentSrc], [wfSrc], 'Disabled Export');
+		const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+			spaceId: SPACE_ID,
+			bundle,
+		});
+
+		const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
+		expect(importedWf.disabled).toBe(true);
+	});
+
 	it('error: import with unknown agentRef in multi-agent step throws and rolls back', async () => {
 		const agentSrc: SpaceAgent = {
 			id: 'src-known',
