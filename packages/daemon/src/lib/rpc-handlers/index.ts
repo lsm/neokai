@@ -32,6 +32,8 @@ import type { GitHubService } from '../github/github-service';
 import { Logger } from '../logger';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { setupDialogHandlers } from './dialog-handlers';
+import { setupQuestionHandlers } from './question-handlers';
+import { setupLegacyInboxCompatHandlers } from './legacy-inbox-compat-handlers';
 // Space handlers
 import { setupSpaceHandlers } from './space-handlers';
 import { setupSpaceTaskHandlers, type SpaceTaskManagerFactory } from './space-task-handlers';
@@ -224,6 +226,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Dialog handlers (native OS dialogs)
 	setupDialogHandlers(deps.messageHub);
 
+	// Question handlers (AskUserQuestion respond / saveDraft / cancel)
+	setupQuestionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
+
 	// Reference handlers (@ mention system — search + resolve tasks, goals, files, folders)
 	const fileIndex = new FileIndex(deps.config.workspaceRoot);
 	fileIndex.init().catch((err) => {
@@ -280,6 +285,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.db,
 		neoPendingActions
 	);
+
+	// Legacy inbox compatibility shim — the web Inbox UI still calls these RPCs.
+	// Room infrastructure is retired; this delegates directly to TaskRepository.
+	setupLegacyInboxCompatHandlers(deps.messageHub, deps.db, deps.reactiveDb);
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase(), deps.reactiveDb);

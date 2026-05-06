@@ -174,12 +174,17 @@ export class GoalRepository {
 	 * the write lock and read already-written short_id values when it proceeds.
 	 * Counter values are never reused; a skipped value is cosmetic only.
 	 */
-	listGoals(roomId: string, status?: GoalStatus): RoomGoal[] {
-		let query = `SELECT * FROM goals WHERE room_id = ?`;
-		const params: SQLiteValue[] = [roomId];
+	listGoals(roomId?: string | null, status?: GoalStatus): RoomGoal[] {
+		let query = `SELECT * FROM goals`;
+		const params: SQLiteValue[] = [];
+
+		if (roomId) {
+			query += ` WHERE room_id = ?`;
+			params.push(roomId);
+		}
 
 		if (status) {
-			query += ` AND status = ?`;
+			query += params.length > 0 ? ` AND status = ?` : ` WHERE status = ?`;
 			params.push(status);
 		}
 
@@ -190,7 +195,7 @@ export class GoalRepository {
 		return rows.map((row) => {
 			const goal = this.rowToGoal(row);
 			if (!goal.shortId && this.shortIdAllocator) {
-				const shortId = this.shortIdAllocator.allocate('goal', roomId);
+				const shortId = this.shortIdAllocator.allocate('goal', goal.roomId);
 				this.db.prepare(`UPDATE goals SET short_id = ? WHERE id = ?`).run(shortId, goal.id);
 				return { ...goal, shortId };
 			}

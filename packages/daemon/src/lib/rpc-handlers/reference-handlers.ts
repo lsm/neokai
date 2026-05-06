@@ -357,13 +357,22 @@ async function resolveTask(
 	roomId: string | null,
 	deps: ReferenceHandlerDeps
 ): Promise<ResolvedReference | null> {
+	if (!roomId) {
+		return null;
+	}
+
 	// Support both UUID and short IDs (e.g. "t-42")
 	let task = deps.taskRepo.getTask(id);
-	if (!task && roomId) {
+	if (!task) {
 		task = deps.taskRepo.getTaskByShortId(roomId, id);
 	}
 
 	if (!task) {
+		return null;
+	}
+
+	// Confirm the task belongs to the session's room (prevent cross-room access via UUID)
+	if ((task as { roomId?: string }).roomId !== roomId) {
 		return null;
 	}
 
@@ -379,13 +388,22 @@ function resolveGoal(
 	roomId: string | null,
 	deps: ReferenceHandlerDeps
 ): ResolvedReference | null {
+	if (!roomId) {
+		return null;
+	}
+
 	// Support both UUID and short IDs (e.g. "g-7")
 	let goal = deps.goalRepo.getGoal(id);
-	if (!goal && roomId) {
+	if (!goal) {
 		goal = deps.goalRepo.getGoalByShortId(roomId, id);
 	}
 
 	if (!goal) {
+		return null;
+	}
+
+	// Confirm the goal belongs to the session's room (prevent cross-room access via UUID)
+	if ((goal as { roomId?: string }).roomId !== roomId) {
 		return null;
 	}
 
