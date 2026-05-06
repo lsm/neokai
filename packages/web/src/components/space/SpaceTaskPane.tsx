@@ -27,7 +27,8 @@ import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
-import { type TaskComposerTarget, TaskSessionChatComposer } from './TaskSessionChatComposer';
+import { TaskSessionChatComposer } from './TaskSessionChatComposer';
+import { type TaskComposerTarget } from '../../hooks';
 import { getTransitionActions } from './TaskStatusActions';
 import { useRunGateSummaries } from './use-run-gate-summaries.ts';
 
@@ -304,6 +305,24 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 		return nodeTargets.length > 0 ? [...nodeTargets, taskAgentTarget] : [taskAgentTarget];
 	}, [workflow, activityMembers, task.workflowRunId, taskAgentMember, nodeExecutions, spaceAgents]);
+
+	// Extract per-agent default models from the workflow definition so the
+	// composer can show the workflow-defined model as the default for agents
+	// that haven't started yet. Keyed by target ID (node:${nodeId}:${agentName})
+	// to avoid collisions when multiple nodes reuse the same agent slot name.
+	const defaultAgentModels = useMemo(() => {
+		const map = new Map<string, string>();
+		if (!workflow) return map;
+		for (const node of workflow.nodes) {
+			for (const agent of node.agents) {
+				if (agent.model) {
+					map.set(`node:${node.id}:${agent.name}`, agent.model);
+				}
+			}
+		}
+		return map;
+	}, [workflow]);
+
 	const mentionCandidates = composerTargets
 		.filter((target) => target.kind === 'node_agent' && target.agentName)
 		.map((target) => ({ id: target.id, name: target.agentName as string }));
@@ -335,7 +354,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		}
 		return labels;
 	}, [activityMembers]);
-	const isAgentActive = activeAgentLabels.size > 0;
 	const hasUnifiedWorkflowThread =
 		!!task.workflowRunId || !!agentSessionId || activityMembers.length > 0;
 	const showInlineComposer = !isTerminalTask;
@@ -959,9 +977,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								hasTaskAgentSession={!!agentSessionId}
 								canSend={canSendThreadMessage}
 								isSending={sendingThread}
-								isProcessing={isAgentActive}
 								autoScroll={autoScrollEnabled}
 								errorMessage={threadSendError}
+								activityMembers={activityMembers}
+								defaultAgentModels={defaultAgentModels}
+								taskId={task.id}
 								onAutoScrollChange={setAutoScrollEnabled}
 								onTargetSelect={(targetId) => {
 									setSelectedTargetId(targetId);

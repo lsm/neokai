@@ -703,6 +703,18 @@ export function setupSessionHandlers(
 		return { success: true, thinkingLevel };
 	});
 
+	messageHub.onRequest('session.thinking.get', async (data) => {
+		const { sessionId: targetSessionId } = data as { sessionId: string };
+
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		const thinkingLevel = agentSession.getSessionData().config.thinkingLevel ?? 'auto';
+		return { thinkingLevel };
+	});
+
 	// Handle listing available models
 	messageHub.onRequest('models.list', async (data) => {
 		try {

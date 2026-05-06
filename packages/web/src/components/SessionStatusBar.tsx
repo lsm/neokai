@@ -205,6 +205,7 @@ interface SessionStatusBarProps {
 	onSandboxModeChange: (enabled: boolean) => void;
 	// Thinking level
 	thinkingLevel?: ThinkingLevel;
+	onThinkingLevelChange?: (level: ThinkingLevel) => Promise<void> | void;
 }
 
 export default function SessionStatusBar({
@@ -230,6 +231,7 @@ export default function SessionStatusBar({
 	sandboxSwitching = false,
 	onSandboxModeChange,
 	thinkingLevel: thinkingLevelProp,
+	onThinkingLevelChange,
 }: SessionStatusBarProps) {
 	// Use useState + useSignalEffect to ensure component re-renders on signal change
 	// This is more explicit than relying on implicit signal tracking
@@ -341,13 +343,18 @@ export default function SessionStatusBar({
 			setThinkingLevel(level);
 			thinkingDropdown.close();
 
+			if (onThinkingLevelChange) {
+				await onThinkingLevelChange(level);
+				return;
+			}
+
 			// Persist to session config via RPC
 			await callIfConnected('session.thinking.set', {
 				sessionId: _sessionId,
 				level,
 			});
 		},
-		[_sessionId, callIfConnected, thinkingDropdown]
+		[_sessionId, callIfConnected, thinkingDropdown, onThinkingLevelChange]
 	);
 
 	// Get current model icon
