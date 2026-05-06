@@ -144,6 +144,12 @@ describe('useTargetSessionContext', () => {
 							description: '',
 							provider: 'anthropic',
 						},
+						{
+							id: 'claude-opus-4-5',
+							display_name: 'Claude Opus 4.5',
+							description: '',
+							provider: 'anthropic',
+						},
 					],
 				});
 			}
@@ -157,6 +163,9 @@ describe('useTargetSessionContext', () => {
 						provider: 'anthropic',
 					},
 				});
+			}
+			if (method === 'session.model.switch') {
+				return Promise.resolve({ success: true, model: 'claude-opus-4-5' });
 			}
 			return Promise.resolve({});
 		});
@@ -354,5 +363,184 @@ describe('useTargetSessionContext', () => {
 
 		expect(result.current.thinkingLevel).toBe('think32k');
 		expect(mockRequest).not.toHaveBeenCalledWith('session.thinking.set', expect.anything());
+	});
+
+	it('auto-applies pre-configured model and thinking when session spawns', async () => {
+		const notStartedTarget = {
+			id: 'node:n1:reviewer',
+			kind: 'node_agent' as const,
+			label: 'Reviewer',
+			agentName: 'reviewer',
+		};
+
+		const model: ModelInfo = {
+			id: 'claude-opus-4-5',
+			name: 'Opus 4.5',
+			family: 'opus',
+			provider: 'anthropic',
+			alias: 'opus',
+			contextWindow: 200000,
+			description: '',
+			releaseDate: '',
+			available: true,
+		};
+
+		const { result, rerender } = renderHook(
+			(props: { members: SpaceTaskActivityMember[] }) =>
+				useTargetSessionContext({
+					selectedTarget: notStartedTarget,
+					activityMembers: props.members,
+					taskAgentSessionId: 'task-sess-123',
+				}),
+			{ initialProps: { members: [] as SpaceTaskActivityMember[] } }
+		);
+
+		// Pre-configure model and thinking while agent is not started
+		await act(async () => {
+			await result.current.switchModel(model);
+		});
+		await act(async () => {
+			await result.current.setThinkingLevel('think16k');
+		});
+
+		expect(result.current.currentModel).toBe('claude-opus-4-5');
+		expect(result.current.thinkingLevel).toBe('think16k');
+		expect(mockRequest).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
+		expect(mockRequest).not.toHaveBeenCalledWith('session.thinking.set', expect.anything());
+
+		// Spawn the agent session
+		const spawnedMembers: SpaceTaskActivityMember[] = [
+			{
+				id: 'm-reviewer',
+				sessionId: 'reviewer-session',
+				kind: 'node_agent',
+				label: 'Reviewer',
+				role: 'reviewer',
+				state: 'active',
+				processingStatus: 'idle',
+				messageCount: 0,
+			},
+		];
+
+		rerender({ members: spawnedMembers });
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('session.model.switch', {
+				sessionId: 'reviewer-session',
+				model: 'claude-opus-4-5',
+				provider: 'anthropic',
+			});
+		});
+
+		expect(mockRequest).toHaveBeenCalledWith('session.thinking.set', {
+			sessionId: 'reviewer-session',
+			level: 'think16k',
+		});
+	});
+
+	it('retries auto-apply when pre-config persistence fails', async () => {
+		const notStartedTarget = {
+			id: 'node:n1:reviewer',
+			kind: 'node_agent' as const,
+			label: 'Reviewer',
+			agentName: 'reviewer',
+		};
+
+		const model: ModelInfo = {
+			id: 'claude-opus-4-5',
+			name: 'Opus 4.5',
+			family: 'opus',
+			provider: 'anthropic',
+			alias: 'opus',
+			contextWindow: 200000,
+			description: '',
+			releaseDate: '',
+			available: true,
+		};
+
+		// First call fails, second succeeds
+		let callCount = 0;
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'models.list') {
+				return Promise.resolve({
+					models: [
+						{
+							id: 'claude-opus-4-5',
+							display_name: 'Claude Opus 4.5',
+							description: '',
+							provider: 'anthropic',
+						},
+					],
+				});
+			}
+			if (method === 'session.model.get') {
+				return Promise.resolve({
+					currentModel: 'claude-sonnet-4-6',
+					modelInfo: {
+						id: 'claude-sonnet-4-6',
+						name: 'Claude Sonnet 4.6',
+						family: 'sonnet',
+						provider: 'anthropic',
+					},
+				});
+			}
+			if (method === 'session.model.switch') {
+				callCount++;
+				if (callCount === 1) {
+					return Promise.reject(new Error('Switch failed'));
+				}
+				return Promise.resolve({ success: true, model: 'claude-opus-4-5' });
+			}
+			return Promise.resolve({});
+		});
+
+		const { result, rerender } = renderHook(
+			(props: { members: SpaceTaskActivityMember[] }) =>
+				useTargetSessionContext({
+					selectedTarget: notStartedTarget,
+					activityMembers: props.members,
+					taskAgentSessionId: 'task-sess-123',
+				}),
+			{ initialProps: { members: [] as SpaceTaskActivityMember[] } }
+		);
+
+		await act(async () => {
+			await result.current.switchModel(model);
+		});
+
+		// Spawn session — first attempt fails
+		const spawnedMembers: SpaceTaskActivityMember[] = [
+			{
+				id: 'm-reviewer',
+				sessionId: 'reviewer-session',
+				kind: 'node_agent',
+				label: 'Reviewer',
+				role: 'reviewer',
+				state: 'active',
+				processingStatus: 'idle',
+				messageCount: 0,
+			},
+		];
+
+		rerender({ members: spawnedMembers });
+
+		// Wait for the first auto-apply attempt to run (may be preceded by a
+		// no-op run while switcherModels is still empty from the fresh
+		// useModelSwitcher instance).
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('session.model.switch', {
+				sessionId: 'reviewer-session',
+				model: 'claude-opus-4-5',
+				provider: 'anthropic',
+			});
+		});
+
+		// The first attempt fails, so the target is not marked as applied.
+		// A subsequent re-render should trigger a retry.
+		rerender({ members: [...spawnedMembers] });
+
+		await waitFor(() => {
+			expect(callCount).toBeGreaterThanOrEqual(2);
+		});
 	});
 });

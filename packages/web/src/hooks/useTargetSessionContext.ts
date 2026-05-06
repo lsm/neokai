@@ -84,9 +84,9 @@ export function useTargetSessionContext({
 	const isStarted = !!targetSessionId;
 
 	// Use the shared model switcher for the target session.
-	// When the agent hasn't started yet the sessionId is a dummy value,
-	// but models.list still loads the global catalogue.
-	const modelSwitcher = useModelSwitcher(targetSessionId ?? '__not_started__');
+	// When the agent hasn't started yet sessionId is null; useModelSwitcher
+	// skips session.model.get but still loads the global catalogue.
+	const modelSwitcher = useModelSwitcher(targetSessionId);
 
 	// In-memory pre-configuration for not-yet-started agents.
 	const [preConfiguredModel, setPreConfiguredModel] = useState<Map<string, string>>(new Map());
@@ -118,14 +118,17 @@ export function useTargetSessionContext({
 	const [thinkingLevel, setLocalThinkingLevel] = useState<ThinkingLevel>('auto');
 
 	useEffect(() => {
-		if (!isStarted && selectedTarget) {
-			setLocalThinkingLevel(preConfiguredThinking.get(selectedTarget.id) ?? 'auto');
-		} else if (isStarted) {
-			setLocalThinkingLevel('auto');
-		}
+		if (!selectedTarget) return;
+		setLocalThinkingLevel(preConfiguredThinking.get(selectedTarget.id) ?? 'auto');
 	}, [selectedTarget?.id, isStarted, preConfiguredThinking]);
 
+	// Destructure stable primitives from modelSwitcher to avoid effect re-runs
+	// caused by the switcher object identity changing every render.
+	const { availableModels: switcherModels, switchModel: switcherSwitchModel } = modelSwitcher;
+
 	// Auto-apply pre-configured settings when a session spawns.
+	// Only mark the target as applied after both operations succeed so that
+	// transient failures (e.g. missing hub connection) trigger a retry.
 	useEffect(() => {
 		if (!targetSessionId || !selectedTarget) return;
 		const targetId = selectedTarget.id;
@@ -135,29 +138,46 @@ export function useTargetSessionContext({
 		const preThinking = preConfiguredThinking.get(targetId);
 		if (!preModel && !preThinking) return;
 
-		appliedAutoConfigRef.current.add(targetId);
+		let modelPromise: Promise<unknown> = Promise.resolve();
+		let thinkingPromise: Promise<unknown> = Promise.resolve();
 
 		// Apply model switch
 		if (preModel) {
-			const modelInfo = modelSwitcher.availableModels.find((m) => m.id === preModel);
+			const modelInfo = switcherModels.find((m) => m.id === preModel);
 			if (modelInfo) {
-				modelSwitcher.switchModel(modelInfo).catch(() => {
-					// Best-effort; user can retry manually
-				});
+				modelPromise = switcherSwitchModel(modelInfo);
 			}
 		}
 
 		// Apply thinking level
 		if (preThinking) {
-			connectionManager
-				.getHubIfConnected()
-				?.request('session.thinking.set', {
+			const hub = connectionManager.getHubIfConnected();
+			if (hub) {
+				thinkingPromise = hub.request('session.thinking.set', {
 					sessionId: targetSessionId,
 					level: preThinking,
-				})
-				.catch(() => {});
+				});
+			}
 		}
-	}, [targetSessionId, selectedTarget, preConfiguredModel, preConfiguredThinking, modelSwitcher]);
+
+		Promise.all([modelPromise, thinkingPromise])
+			.then(() => {
+				appliedAutoConfigRef.current.add(targetId);
+				if (preThinking) {
+					setLocalThinkingLevel(preThinking);
+				}
+			})
+			.catch(() => {
+				// Leave unmarked so the effect retries on next render
+			});
+	}, [
+		targetSessionId,
+		selectedTarget,
+		preConfiguredModel,
+		preConfiguredThinking,
+		switcherModels,
+		switcherSwitchModel,
+	]);
 
 	// Derive processing state from the activity member that owns this session.
 	const isProcessing = useMemo(() => {

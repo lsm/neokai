@@ -2,21 +2,11 @@ import type { MessageDeliveryMode, MessageImage, SpaceTaskActivityMember } from 
 import type { Ref } from 'preact';
 import { useMemo, useState } from 'preact/hooks';
 import { ChatComposer } from '../ChatComposer.tsx';
-import { useTargetSessionContext } from '../../hooks';
+import { useTargetSessionContext, type TaskComposerTarget } from '../../hooks';
 import { cn } from '../../lib/utils.ts';
 import { getAgentColor } from './thread/space-task-thread-agent-colors';
 import { agentInitial } from './thread/minimal/minimal-mock-data';
 import { TaskToolsModal } from './TaskToolsModal.tsx';
-
-export interface TaskComposerTarget {
-	id: string;
-	kind: 'task_agent' | 'node_agent';
-	label: string;
-	agentName?: string;
-	nodeExecutionId?: string;
-	nodeName?: string;
-	state?: string;
-}
 
 interface TaskSessionChatComposerProps {
 	sessionId: string;

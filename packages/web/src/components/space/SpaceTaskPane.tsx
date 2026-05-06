@@ -27,7 +27,8 @@ import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
-import { type TaskComposerTarget, TaskSessionChatComposer } from './TaskSessionChatComposer';
+import { TaskSessionChatComposer } from './TaskSessionChatComposer';
+import { type TaskComposerTarget } from '../../hooks';
 import { getTransitionActions } from './TaskStatusActions';
 import { useRunGateSummaries } from './use-run-gate-summaries.ts';
 
