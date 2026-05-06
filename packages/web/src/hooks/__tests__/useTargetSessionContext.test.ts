@@ -857,4 +857,160 @@ describe('useTargetSessionContext', () => {
 			});
 		});
 	});
+
+	it('retries model auto-apply when model info is initially missing but thinking succeeds', async () => {
+		const notStartedTarget = {
+			id: 'node:n1:reviewer',
+			kind: 'node_agent' as const,
+			label: 'Reviewer',
+			agentName: 'reviewer',
+		};
+
+		const model: ModelInfo = {
+			id: 'claude-opus-4-5',
+			name: 'Opus 4.5',
+			family: 'opus',
+			provider: 'anthropic',
+			alias: 'opus',
+			contextWindow: 200000,
+			description: '',
+			releaseDate: '',
+			available: true,
+		};
+
+		// Start with empty models so switcherModels is empty when the session spawns
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'models.list') {
+				return Promise.resolve({ models: [] });
+			}
+			if (method === 'session.thinking.get') {
+				return Promise.resolve({ thinkingLevel: 'auto' });
+			}
+			if (method === 'session.thinking.set') {
+				return Promise.resolve({ success: true });
+			}
+			if (method === 'session.model.switch') {
+				return Promise.resolve({ success: true, model: 'claude-opus-4-5' });
+			}
+			return Promise.resolve({});
+		});
+
+		const { result, rerender } = renderHook(
+			(props: { members: SpaceTaskActivityMember[] }) =>
+				useTargetSessionContext({
+					taskId: 'task-1',
+					targets: [notStartedTarget],
+					selectedTarget: notStartedTarget,
+					activityMembers: props.members,
+					taskAgentSessionId: 'task-sess-123',
+				}),
+			{ initialProps: { members: [] as SpaceTaskActivityMember[] } }
+		);
+
+		// Pre-configure model and thinking while agent is not started
+		await act(async () => {
+			await result.current.switchModel(model);
+		});
+		await act(async () => {
+			await result.current.setThinkingLevel('think16k');
+		});
+
+		// Spawn the agent session — models.list returns empty, so model lookup fails
+		const spawnedMembersA: SpaceTaskActivityMember[] = [
+			{
+				id: 'm-reviewer',
+				sessionId: 'reviewer-session-a',
+				kind: 'node_agent',
+				label: 'Reviewer',
+				role: 'reviewer',
+				state: 'active',
+				processingStatus: 'idle',
+				messageCount: 0,
+			},
+		];
+
+		rerender({ members: spawnedMembersA });
+
+		// Wait a tick for effects to settle
+		await new Promise((r) => setTimeout(r, 10));
+
+		// Thinking should have been applied because hub is connected
+		expect(mockRequest).toHaveBeenCalledWith('session.thinking.set', {
+			sessionId: 'reviewer-session-a',
+			level: 'think16k',
+		});
+
+		// Model should NOT have been applied because switcherModels was empty
+		const modelSwitchCallsBefore = mockRequest.mock.calls.filter(
+			(call) => call[0] === 'session.model.switch'
+		);
+		expect(modelSwitchCallsBefore).toHaveLength(0);
+
+		// Now make models available and spawn a new session (different sessionId
+		// forces useModelSwitcher to reload models)
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'models.list') {
+				return Promise.resolve({
+					models: [
+						{
+							id: 'claude-opus-4-5',
+							display_name: 'Claude Opus 4.5',
+							description: '',
+							provider: 'anthropic',
+						},
+					],
+				});
+			}
+			if (method === 'session.model.get') {
+				return Promise.resolve({
+					currentModel: 'claude-sonnet-4-6',
+					modelInfo: {
+						id: 'claude-sonnet-4-6',
+						name: 'Claude Sonnet 4.6',
+						family: 'sonnet',
+						provider: 'anthropic',
+					},
+				});
+			}
+			if (method === 'session.thinking.get') {
+				return Promise.resolve({ thinkingLevel: 'auto' });
+			}
+			if (method === 'session.thinking.set') {
+				return Promise.resolve({ success: true });
+			}
+			if (method === 'session.model.switch') {
+				return Promise.resolve({ success: true, model: 'claude-opus-4-5' });
+			}
+			return Promise.resolve({});
+		});
+
+		const spawnedMembersB: SpaceTaskActivityMember[] = [
+			{
+				id: 'm-reviewer',
+				sessionId: 'reviewer-session-b',
+				kind: 'node_agent',
+				label: 'Reviewer',
+				role: 'reviewer',
+				state: 'active',
+				processingStatus: 'idle',
+				messageCount: 0,
+			},
+		];
+
+		rerender({ members: spawnedMembersB });
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('session.model.switch', {
+				sessionId: 'reviewer-session-b',
+				model: 'claude-opus-4-5',
+				provider: 'anthropic',
+			});
+		});
+
+		// thinking.set should NOT have been called again for the new session
+		const thinkingSetCallsForB = mockRequest.mock.calls.filter(
+			(call) => call[0] === 'session.thinking.set' && call[1]?.sessionId === 'reviewer-session-b'
+		);
+		expect(thinkingSetCallsForB).toHaveLength(0);
+	});
 });

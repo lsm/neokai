@@ -103,8 +103,11 @@ export function useTargetSessionContext({
 		Map<string, { level: ThinkingLevel; taskId: string }>
 	>(new Map());
 
-	// Track which targets we've already auto-applied so we don't loop.
-	const appliedAutoConfigRef = useRef<Set<string>>(new Set());
+	// Track which targets have had each specific config type successfully
+	// auto-applied, so we don't loop and so a missing model lookup doesn't
+	// permanently suppress retries for the thinking config (or vice versa).
+	const appliedModelRef = useRef<Set<string>>(new Set());
+	const appliedThinkingRef = useRef<Set<string>>(new Set());
 	// Track the last taskId we've seen so the auto-apply effect can skip the
 	// first render cycle after a task switch (React batches state updates, so
 	// the reset effect's new Maps won't be visible until the next commit).
@@ -115,7 +118,8 @@ export function useTargetSessionContext({
 	useEffect(() => {
 		setPreConfiguredModel(new Map());
 		setPreConfiguredThinking(new Map());
-		appliedAutoConfigRef.current = new Set();
+		appliedModelRef.current = new Set();
+		appliedThinkingRef.current = new Set();
 		lastTaskIdRef.current = taskId;
 	}, [taskId]);
 
@@ -187,10 +191,12 @@ export function useTargetSessionContext({
 	// Auto-apply pre-configured settings when any target's session spawns.
 	// Iterates over ALL targets so that background spawns (targets not currently
 	// selected) still receive their pending preconfiguration.
-	// Only marks a target as applied when at least one RPC was actually
-	// attempted and all attempts succeeded; if preconditions are missing
-	// (e.g. model info not yet loaded or hub disconnected) the target stays
-	// unmarked and the effect retries on the next render cycle.
+	//
+	// Each config type (model, thinking) is tracked independently via
+	// appliedModelRef / appliedThinkingRef. If a model lookup misses because
+	// switcherModels hasn't loaded yet, the model config stays unmarked while
+	// the thinking config can still be applied. The missing model will be
+	// retried on the next render cycle once models are available.
 	//
 	// Guard: skip the first render after taskId changes because React batches
 	// the reset-effect's state updates; without this guard the effect would
@@ -205,7 +211,6 @@ export function useTargetSessionContext({
 
 		for (const target of targets) {
 			const targetId = target.id;
-			if (appliedAutoConfigRef.current.has(targetId)) continue;
 
 			const preModel = preConfiguredModel.get(targetId);
 			const preThinking = preConfiguredThinking.get(targetId);
@@ -218,57 +223,54 @@ export function useTargetSessionContext({
 			const sessionId = resolveTargetSessionId(target, activityMembers, taskAgentSessionId);
 			if (!sessionId) continue;
 
-			let attempted = false;
 			const promises: Promise<unknown>[] = [];
 
 			// Apply model switch
-			if (preModelCurrent) {
+			if (preModelCurrent && !appliedModelRef.current.has(targetId)) {
 				const modelInfo = switcherModels.find(
 					(m) => m.id === preModelCurrent.id && m.provider === preModelCurrent.provider
 				);
 				if (modelInfo) {
-					attempted = true;
 					const hub = connectionManager.getHubIfConnected();
 					if (hub) {
 						promises.push(
-							hub.request('session.model.switch', {
-								sessionId,
-								model: modelInfo.id,
-								provider: modelInfo.provider,
-							})
+							hub
+								.request('session.model.switch', {
+									sessionId,
+									model: modelInfo.id,
+									provider: modelInfo.provider,
+								})
+								.then(() => {
+									appliedModelRef.current.add(targetId);
+								})
 						);
-					} else {
-						promises.push(Promise.reject(new Error('Not connected')));
 					}
 				}
 			}
 
 			// Apply thinking level
-			if (preThinkingCurrent) {
+			if (preThinkingCurrent && !appliedThinkingRef.current.has(targetId)) {
 				const hub = connectionManager.getHubIfConnected();
 				if (hub) {
-					attempted = true;
 					promises.push(
-						hub.request('session.thinking.set', {
-							sessionId,
-							level: preThinkingCurrent.level,
-						})
+						hub
+							.request('session.thinking.set', {
+								sessionId,
+								level: preThinkingCurrent.level,
+							})
+							.then(() => {
+								appliedThinkingRef.current.add(targetId);
+								if (target.id === selectedTarget?.id) {
+									setLocalThinkingLevel(preThinkingCurrent.level);
+								}
+							})
 					);
 				}
 			}
 
-			if (!attempted) continue;
+			if (promises.length === 0) continue;
 
-			Promise.all(promises)
-				.then(() => {
-					appliedAutoConfigRef.current.add(targetId);
-					if (preThinkingCurrent && target.id === selectedTarget?.id) {
-						setLocalThinkingLevel(preThinkingCurrent.level);
-					}
-				})
-				.catch(() => {
-					// Leave unmarked so the effect retries on next render
-				});
+			Promise.allSettled(promises);
 		}
 	}, [
 		taskId,
