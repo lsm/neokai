@@ -1,4 +1,5 @@
 import type { Session } from '@neokai/shared';
+import { normalizeThinkingLevel } from '@neokai/shared';
 import { Modal } from './ui/Modal.tsx';
 import { CopyButton } from './ui/CopyButton.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -121,7 +122,10 @@ export function SessionInfoModal({ isOpen, onClose, session }: SessionInfoModalP
 				<InfoSection title="Configuration">
 					<InfoRow label="Model" value={config?.model} />
 					<InfoRow label="Provider" value={config?.provider || 'anthropic'} />
-					<InfoRow label="Thinking Level" value={config?.thinkingLevel || 'off'} />
+					<InfoRow
+						label="Thinking Level"
+						value={normalizeThinkingLevel(config?.thinkingLevel) || 'off'}
+					/>
 					<InfoRow label="Query Mode" value={config?.queryMode || 'immediate'} />
 					<InfoRow label="Permission Mode" value={config?.permissionMode || 'default'} />
 				</InfoSection>

@@ -107,7 +107,7 @@ export function GeneralSettings() {
 			await updateGlobalSettings({ thinkingLevel: level });
 		} catch {
 			toast.error('Failed to update thinking level');
-			setLocalThinkingLevel(settings?.thinkingLevel ?? 'off');
+			setLocalThinkingLevel(normalizeThinkingLevel(settings?.thinkingLevel));
 		} finally {
 			setIsUpdating(false);
 		}
