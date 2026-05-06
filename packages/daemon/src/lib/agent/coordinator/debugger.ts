@@ -18,6 +18,8 @@ export const debuggerAgent: AgentDefinition = {
 		'TaskStop',
 		'EnterPlanMode',
 		'ExitPlanMode',
+		'NotebookEdit',
+		'ToolSearch',
 	],
 	model: 'sonnet',
 	prompt: `You are a debugging specialist. Your job is to reproduce issues, trace code paths, and find root causes.
