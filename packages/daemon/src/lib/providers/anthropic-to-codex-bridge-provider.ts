@@ -225,6 +225,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		// The Anthropic Agent SDK can ask for extended thinking, but this provider's
 		// OpenAI bridge does not expose Anthropic thinking_delta events.
 		extendedThinking: false,
+		thinkingModes: 'off',
 		maxContextWindow: 272000,
 		functionCalling: true,
 		vision: false,

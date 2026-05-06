@@ -35,7 +35,11 @@ import type {
 	ThinkingConfig,
 	ThinkingLevel,
 } from '@neokai/shared';
-import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
+import {
+	THINKING_LEVEL_TOKENS,
+	normalizeThinkingLevel,
+	PROVIDER_THINKING_MODES,
+} from '@neokai/shared';
 import type { McpServerConfig } from '@neokai/shared/types/sdk-config';
 import type { PermissionMode } from '@neokai/shared/types/settings';
 import { homedir } from 'os';
@@ -528,17 +532,29 @@ export class QueryOptionsBuilder {
 	}
 
 	/**
-	 * Convert ThinkingLevel enum to new thinking option
-	 * Maps the UI-friendly enum to SDK's new thinking API
+	 * Convert ThinkingLevel enum to SDK thinking option.
+	 * Maps the UI-friendly enum to SDK's new thinking API.
+	 * Provider-aware: returns undefined when thinking should be disabled.
 	 */
-	private thinkingLevelToThinkingConfig(level: ThinkingLevel): ThinkingConfig {
-		const tokens = THINKING_LEVEL_TOKENS[level];
-
-		if (tokens === undefined) {
-			// 'auto' mode
-			return { type: 'adaptive' };
+	private thinkingLevelToThinkingConfig(
+		level: ThinkingLevel,
+		thinkingModes: 'off' | 'on' | 'granular'
+	): ThinkingConfig | undefined {
+		// Providers without thinking support: never emit thinking config
+		if (thinkingModes === 'off') {
+			return undefined;
 		}
 
+		const tokens = THINKING_LEVEL_TOKENS[level];
+
+		// 'off' level: no thinking budget
+		if (tokens === undefined) {
+			return undefined;
+		}
+
+		// Preserve the selected budget for all providers that support thinking.
+		// `thinkingModes === 'on'` only affects which UI options are shown (binary
+		// on/off) — the daemon still respects the stored token budget.
 		return { type: 'enabled', budgetTokens: tokens };
 	}
 
@@ -562,12 +578,25 @@ export class QueryOptionsBuilder {
 			result.resumeSessionAt = resumeSessionAt;
 		}
 
+		// Resolve provider thinking mode so we can skip thinking config for
+		// providers that do not support it. Use the static map rather than
+		// instantiating a provider context to avoid API-key failures in CI.
+		const providerId = this.ctx.session.config.provider;
+		const thinkingModes =
+			PROVIDER_THINKING_MODES[providerId as keyof typeof PROVIDER_THINKING_MODES] ?? 'granular';
+
 		// Add thinking configuration based on the session override, falling back to the app default.
+		// Backward compatibility: legacy 'auto' is treated as 'off'.
 		const globalSettings = this.ctx.settingsManager.getGlobalSettings();
-		const thinkingLevel = (this.ctx.session.config.thinkingLevel ??
-			globalSettings.thinkingLevel ??
-			'auto') as ThinkingLevel;
-		result.thinking = this.thinkingLevelToThinkingConfig(thinkingLevel);
+		const thinkingLevel = normalizeThinkingLevel(
+			this.ctx.session.config.thinkingLevel ?? globalSettings.thinkingLevel
+		);
+		const thinkingConfig = this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
+		if (thinkingConfig) {
+			result.thinking = thinkingConfig;
+		} else {
+			delete (result as Record<string, unknown>).thinking;
+		}
 
 		return result as Options;
 	}
