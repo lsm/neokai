@@ -107,9 +107,13 @@ export function setupLegacyInboxCompatHandlers(
 				: 'Human has approved the PR. Merge it now by running `gh pr merge` (do NOT use --delete-branch). ' +
 					'After the merge completes, your work is done.';
 
+		// Room runtime is retired — we cannot resume a worker session automatically.
+		// Transition back to in_progress so the task remains visible and actionable
+		// rather than silently completing without the PR merge step being executed.
 		taskRepo.updateTask(taskId, {
-			status: 'completed',
+			status: 'in_progress',
 			result: message,
+			currentStep: 'Approved by human — merge PR and complete task',
 		});
 
 		log.info(`Task ${taskId} approved by human (legacy inbox)`);
