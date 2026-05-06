@@ -316,6 +316,25 @@ describe('InternalEventBus', () => {
 			// Give microtasks a chance to run
 			await new Promise((r) => setTimeout(r, 10));
 		});
+
+		it('should defer synchronous handlers so they do not run on the caller stack', async () => {
+			let handlerRan = false;
+			bus.subscribe(
+				'session.created',
+				() => {
+					handlerRan = true;
+				},
+				{ subscriberName: 'sync' }
+			);
+
+			bus.publishAsync('session.created', { sessionId: 's1', title: 'T1' });
+			// Handler should NOT have run yet — it is deferred to the next microtask.
+			expect(handlerRan).toBe(false);
+
+			// Drain microtasks
+			await new Promise((r) => queueMicrotask(r));
+			expect(handlerRan).toBe(true);
+		});
 	});
 
 	describe('diagnostics', () => {

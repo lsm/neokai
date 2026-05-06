@@ -236,15 +236,19 @@ export class InternalEventBus<
 
 	/**
 	 * Fire-and-forget publish.
-	 *	 *
+	 *
 	 * Schedules handlers asynchronously but returns immediately.
 	 * Handler failures are silently swallowed; they are never thrown
 	 * and the caller cannot await them.
 	 */
 	publishAsync<K extends keyof TEventMap & string>(event: K, data: TEventMap[K]): void {
-		// Intentionally not awaited — errors are swallowed.
-		this.publish(event, data).catch(() => {
-			// Swallow — publishAsync is explicit fire-and-forget.
+		// Defer to the next microtask so that synchronous handlers do not
+		// run on the caller's stack and `publishAsync` truly returns
+		// immediately.
+		queueMicrotask(() => {
+			this.publish(event, data).catch(() => {
+				// Swallow — publishAsync is explicit fire-and-forget.
+			});
 		});
 	}
 
