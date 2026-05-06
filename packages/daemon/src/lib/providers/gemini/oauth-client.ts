@@ -27,21 +27,25 @@ const log = createLogger('kai:providers:gemini:oauth');
  * treated as secrets:
  * https://developers.google.com/identity/protocols/oauth2#installed
  *
- * The default values are the Antigravity/Gemini desktop credentials whose
- * allowed scopes match OAUTH_SCOPES below.
+ * The default values are the Gemini CLI desktop credentials. Gemini CLI uses
+ * these credentials with `https://codeassist.google.com/authcode` for the
+ * manual code-entry flow and loopback redirects for browser callback flows.
  */
 export const DEFAULT_GEMINI_OAUTH_CLIENT_ID = [
-	'1071006060591',
-	'tmhssin2h21lcre235vtolojh4g403ep',
+	'681255809395',
+	'oo8ft2oprdrnp9e3aqf6av3hmdib135j',
 	'apps.googleusercontent.com',
 ]
 	.join('-')
 	.replace('-apps', '.apps');
 
-/** Default Google OAuth client secret for the desktop app flow. */
-export const DEFAULT_GEMINI_OAUTH_CLIENT_SECRET = ['GOCSPX', 'K58FWR486LdLJ1mLB8sXC4z6qDAf'].join(
-	'-'
-);
+/** Default Google OAuth client secret for the Gemini CLI desktop app flow. */
+export const DEFAULT_GEMINI_OAUTH_CLIENT_SECRET = [
+	'GOCSPX',
+	'4uHgMPm',
+	'1o7Sk',
+	'geV6Cu5clXFsxl',
+].join('-');
 
 /** Google OAuth client ID. Env var override is supported. */
 export function getOAuthClientId(): string {
