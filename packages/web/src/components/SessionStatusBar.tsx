@@ -19,7 +19,7 @@ import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import {
 	DEFAULT_WORKER_FEATURES,
 	THINKING_LEVEL_LABELS,
-	PROVIDER_THINKING_MODES,
+	getThinkingOptionsForProvider,
 } from '@neokai/shared';
 import { connectionState, type ConnectionState } from '../lib/state.ts';
 import ConnectionStatus from './ConnectionStatus.tsx';
@@ -333,25 +333,7 @@ export default function SessionStatusBar({
 	}, [thinkingLevelProp]);
 
 	// Provider-aware thinking options
-	const providerThinkingMode = currentModelInfo?.provider
-		? (PROVIDER_THINKING_MODES[currentModelInfo.provider as keyof typeof PROVIDER_THINKING_MODES] ??
-			'granular')
-		: 'granular';
-	const thinkingOptions =
-		providerThinkingMode === 'off'
-			? []
-			: providerThinkingMode === 'on'
-				? [
-						{ value: 'off' as ThinkingLevel, label: 'Off' },
-						{ value: 'think32k' as ThinkingLevel, label: 'On' },
-					]
-				: [
-						{ value: 'off' as ThinkingLevel, label: 'Off' },
-						{ value: 'think8k' as ThinkingLevel, label: 'Think 8k' },
-						{ value: 'think16k' as ThinkingLevel, label: 'Think 16k' },
-						{ value: 'think24k' as ThinkingLevel, label: 'Think 24k' },
-						{ value: 'think32k' as ThinkingLevel, label: 'Think 32k' },
-					];
+	const thinkingOptions = getThinkingOptionsForProvider(currentModelInfo?.provider);
 
 	// Auto-scroll toggle handler
 	const handleAutoScrollToggle = useCallback(() => {

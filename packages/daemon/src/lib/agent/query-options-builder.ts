@@ -33,7 +33,7 @@ import type {
 	AgentDefinition,
 } from '@neokai/shared';
 import { getCoordinatorAgents } from './coordinator-agents';
-import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
+import { THINKING_LEVEL_TOKENS, normalizeThinkingLevel } from '@neokai/shared';
 import type { PermissionMode } from '@neokai/shared/types/settings';
 import type { McpServerConfig } from '@neokai/shared/types/sdk-config';
 import type { AppMcpServerSourceType } from '@neokai/shared';
@@ -571,10 +571,9 @@ export class QueryOptionsBuilder {
 		// Add thinking configuration based on the session override, falling back to the app default.
 		// Backward compatibility: legacy 'auto' is treated as 'off'.
 		const globalSettings = this.ctx.settingsManager.getGlobalSettings();
-		const rawLevel = (this.ctx.session.config.thinkingLevel ??
-			globalSettings.thinkingLevel ??
-			'off') as string;
-		const thinkingLevel = (rawLevel === 'auto' ? 'off' : rawLevel) as ThinkingLevel;
+		const thinkingLevel = normalizeThinkingLevel(
+			this.ctx.session.config.thinkingLevel ?? globalSettings.thinkingLevel
+		);
 		const thinkingConfig = this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
 		if (thinkingConfig) {
 			result.thinking = thinkingConfig;

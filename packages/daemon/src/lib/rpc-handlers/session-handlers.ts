@@ -17,8 +17,8 @@ import type {
 	Session,
 	NeokaiActionMessage,
 	RuntimeMcpServerEntry,
-	ThinkingLevel,
 } from '@neokai/shared';
+import { normalizeThinkingLevel } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { generateUUID } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
@@ -683,16 +683,14 @@ export function setupSessionHandlers(
 			throw new Error('Session not found');
 		}
 
-		// Validate level (accept legacy 'auto' for backward compatibility)
-		const validLevels = ['off', 'auto', 'think8k', 'think16k', 'think24k', 'think32k'];
-		const rawLevel = validLevels.includes(level) ? level : 'off';
-		const thinkingLevel = rawLevel === 'auto' ? 'off' : rawLevel;
+		// Normalize level (accepts legacy 'auto' for backward compatibility)
+		const thinkingLevel = normalizeThinkingLevel(level);
 
 		// Update session config with new thinkingLevel
 		await sessionManager.updateSession(targetSessionId, {
 			config: {
 				...agentSession.getSessionData().config,
-				thinkingLevel: thinkingLevel as 'off' | 'think8k' | 'think16k' | 'think24k' | 'think32k',
+				thinkingLevel,
 			},
 		});
 
@@ -714,8 +712,9 @@ export function setupSessionHandlers(
 			throw new Error('Session not found');
 		}
 
-		const rawLevel = (agentSession.getSessionData().config.thinkingLevel ?? 'off') as string;
-		const thinkingLevel = (rawLevel === 'auto' ? 'off' : rawLevel) as ThinkingLevel;
+		const thinkingLevel = normalizeThinkingLevel(
+			agentSession.getSessionData().config.thinkingLevel
+		);
 		return { thinkingLevel };
 	});
 

@@ -1332,6 +1332,15 @@ describe('Session RPC Handlers', () => {
 			expect(result).toEqual({ success: true, thinkingLevel: 'think16k' });
 		});
 
+		it('sets thinking level to think24k', async () => {
+			const handler = messageHubData.handlers.get('session.thinking.set');
+			expect(handler).toBeDefined();
+
+			const result = await handler!({ sessionId: 'session-123', level: 'think24k' }, {});
+
+			expect(result).toEqual({ success: true, thinkingLevel: 'think24k' });
+		});
+
 		it('sets thinking level to think32k', async () => {
 			const handler = messageHubData.handlers.get('session.thinking.set');
 			expect(handler).toBeDefined();

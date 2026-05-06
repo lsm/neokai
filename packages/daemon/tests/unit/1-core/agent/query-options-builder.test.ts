@@ -300,15 +300,11 @@ describe('QueryOptionsBuilder', () => {
 		});
 
 		it('should add thinking tokens based on thinkingLevel', async () => {
-			// Use 'ultrathink' which is a known valid thinking level
-			mockSession.config.thinkingLevel = 'ultrathink';
+			mockSession.config.thinkingLevel = 'think24k';
 			const options = await builder.build();
 			const result = builder.addSessionStateOptions(options);
 
-			// THINKING_LEVEL_TOKENS maps ultrathink to a specific value
-			// Note: if the level doesn't exist in the map, it returns undefined
-			// This test verifies the mechanism works
-			expect(result).toBeDefined();
+			expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 24000 });
 		});
 
 		it('should use global thinking level when session has no override', async () => {
@@ -324,6 +320,24 @@ describe('QueryOptionsBuilder', () => {
 			const result = builder.addSessionStateOptions(options);
 
 			expect(result.thinking).toBeUndefined();
+		});
+
+		it('should omit thinking config for providers with thinkingModes=off', async () => {
+			mockSession.config.provider = 'minimax';
+			mockSession.config.thinkingLevel = 'think32k';
+			const options = await builder.build();
+			const result = builder.addSessionStateOptions(options);
+
+			expect(result.thinking).toBeUndefined();
+		});
+
+		it('should map any enabled level to max budget for providers with thinkingModes=on', async () => {
+			mockSession.config.provider = 'kimi';
+			mockSession.config.thinkingLevel = 'think8k';
+			const options = await builder.build();
+			const result = builder.addSessionStateOptions(options);
+
+			expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 31999 });
 		});
 	});
 
