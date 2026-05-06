@@ -98,6 +98,8 @@ export interface VisualEditorState {
 	completionAutonomyLevel?: SpaceAutonomyLevel;
 	/** Optional post-approval route configured on the workflow. */
 	postApproval?: PostApprovalRoute;
+	/** When true, the workflow is disabled and cannot be selected for new tasks. */
+	disabled?: boolean;
 }
 
 // ============================================================================
@@ -182,6 +184,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 		gates: workflow.gates ?? [],
 		completionAutonomyLevel: workflow.completionAutonomyLevel ?? (3 as SpaceAutonomyLevel),
 		postApproval: workflow.postApproval ? { ...workflow.postApproval } : undefined,
+		disabled: workflow.disabled,
 	};
 }
 
@@ -382,6 +385,7 @@ export function visualStateToCreateParams(
 		gates: fields.gates && fields.gates.length > 0 ? fields.gates : undefined,
 		completionAutonomyLevel: state.completionAutonomyLevel,
 		postApproval: state.postApproval,
+		disabled: state.disabled,
 	};
 }
 
@@ -408,5 +412,6 @@ export function visualStateToUpdateParams(
 		gates: fields.gates && fields.gates.length > 0 ? fields.gates : null,
 		completionAutonomyLevel: state.completionAutonomyLevel,
 		postApproval: state.postApproval ?? null,
+		disabled: state.disabled ?? null,
 	};
 }

@@ -455,6 +455,39 @@ describe('space-workflow-run-handlers', () => {
 			);
 		});
 
+		it('throws if provided workflowId is disabled', async () => {
+			const disabledWorkflow = { ...mockWorkflow, disabled: true };
+			setup({ singleWorkflow: disabledWorkflow });
+			await expect(
+				call('spaceWorkflowRun.start', {
+					spaceId: 'space-1',
+					title: 'Test',
+					workflowId: 'workflow-1',
+				})
+			).rejects.toThrow('Workflow is disabled: workflow-1');
+		});
+
+		it('auto-select skips disabled workflows', async () => {
+			const enabledWf = { ...mockWorkflow, id: 'wf-enabled', name: 'Enabled' };
+			const disabledWf = { ...mockWorkflow, id: 'wf-disabled', name: 'Disabled', disabled: true };
+			setup({ workflows: [disabledWf, enabledWf], singleWorkflow: enabledWf });
+			await call('spaceWorkflowRun.start', { spaceId: 'space-1', title: 'Auto' });
+			expect(runtime.startWorkflowRun).toHaveBeenCalledWith(
+				'space-1',
+				'wf-enabled',
+				'Auto',
+				undefined
+			);
+		});
+
+		it('auto-select throws when all workflows are disabled', async () => {
+			const disabledWf = { ...mockWorkflow, disabled: true };
+			setup({ workflows: [disabledWf], singleWorkflow: disabledWf });
+			await expect(
+				call('spaceWorkflowRun.start', { spaceId: 'space-1', title: 'Auto' })
+			).rejects.toThrow('No workflows found for space: space-1');
+		});
+
 		it('does not pass goalId to startWorkflowRun (removed)', async () => {
 			await call('spaceWorkflowRun.start', {
 				spaceId: 'space-1',

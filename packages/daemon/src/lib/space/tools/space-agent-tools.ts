@@ -254,6 +254,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 						error: `Workflow not found: ${args.workflow_id}`,
 					});
 				}
+				if (targetWorkflow.disabled) {
+					return jsonResult({
+						success: false,
+						error: `Workflow is disabled: ${args.workflow_id}`,
+					});
+				}
 
 				workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
@@ -317,7 +323,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		 * read it from structured tool logs for observability.
 		 */
 		async suggest_workflow(_args: { description: string }): Promise<ToolResult> {
-			const allWorkflows = workflowManager.listWorkflows(spaceId);
+			const allWorkflows = workflowManager.listWorkflows(spaceId).filter((w) => !w.disabled);
 			if (allWorkflows.length === 0) {
 				return jsonResult({
 					success: true,

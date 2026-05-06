@@ -153,6 +153,9 @@ const exportedWorkflowBaseSchema = z.object({
 	// the completionAutonomyLevel field. Import code falls back to a sensible
 	// default when the field is absent.
 	completionAutonomyLevel: z.number().int().min(1).max(5).optional(),
+	// Optional for backward compatibility with v1 exports that predate the
+	// disabled field. When absent the workflow is treated as enabled.
+	disabled: z.boolean().optional(),
 });
 
 const exportBundleBaseSchema = z.object({
@@ -293,6 +296,7 @@ export function exportWorkflow(
 	};
 	if (endNode !== undefined) result.endNode = endNode;
 	if (workflow.description !== undefined) result.description = workflow.description;
+	if (workflow.disabled) result.disabled = true;
 	// Export channels — strip `id` (space-specific) and convert to portable ExportedWorkflowChannel format
 	if (workflow.channels && workflow.channels.length > 0) {
 		const exportedChannels: ExportedWorkflowChannel[] = workflow.channels.map((ch) => {
