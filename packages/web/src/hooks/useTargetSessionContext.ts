@@ -194,7 +194,7 @@ export function useTargetSessionContext({
 
 	// Destructure stable primitives from modelSwitcher to avoid effect re-runs
 	// caused by the switcher object identity changing every render.
-	const { availableModels: switcherModels } = modelSwitcher;
+	const { availableModels: switcherModels, reload: reloadModelState } = modelSwitcher;
 
 	// Auto-apply pre-configured settings when any target's session spawns.
 	// Iterates over ALL targets so that background spawns (targets not currently
@@ -252,6 +252,11 @@ export function useTargetSessionContext({
 									const { success } = result as { success: boolean };
 									if (success) {
 										appliedModelRef.current.add(targetId);
+										// Refresh useModelSwitcher state so the UI shows the
+										// newly applied model instead of the stale initial one.
+										if (target.id === selectedTargetRef.current?.id) {
+											reloadModelState();
+										}
 									}
 								})
 						);
@@ -291,6 +296,7 @@ export function useTargetSessionContext({
 		preConfiguredModel,
 		preConfiguredThinking,
 		switcherModels,
+		reloadModelState,
 	]);
 
 	// Derive processing state from the activity member that owns this session.
