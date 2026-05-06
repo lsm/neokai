@@ -1072,6 +1072,9 @@ export class SpaceRuntime {
 		if (!workflow) {
 			throw new Error(`Workflow not found: ${workflowId}`);
 		}
+		if (workflow.disabled) {
+			throw new Error(`Workflow "${workflow.name}" is disabled and cannot be used for new runs.`);
+		}
 		if (!workflow.endNodeId) {
 			throw new Error(`Workflow "${workflowId}" is missing endNodeId and cannot be executed.`);
 		}
