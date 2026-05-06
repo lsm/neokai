@@ -446,6 +446,42 @@ describe('createEndNodeHandlers — submit_for_approval', () => {
 		expect(emittedTask.pendingCheckpointType).toBe('task_completion');
 	});
 
+	test('succeeds when task is in blocked status', async () => {
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'T',
+			description: '',
+			status: 'blocked',
+		});
+		const { onSubmitForApproval } = createEndNodeHandlers(makeDeps(ctx, task.id));
+
+		const out = await onSubmitForApproval({ reason: 'from blocked' });
+		const parsed = JSON.parse(out.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		const t = ctx.taskRepo.getTask(task.id);
+		expect(t?.status).toBe('review');
+		expect(t?.pendingCompletionReason).toBe('from blocked');
+	});
+
+	test('succeeds when task is in open status', async () => {
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'T',
+			description: '',
+			status: 'open',
+		});
+		const { onSubmitForApproval } = createEndNodeHandlers(makeDeps(ctx, task.id));
+
+		const out = await onSubmitForApproval({ reason: 'from open' });
+		const parsed = JSON.parse(out.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		const t = ctx.taskRepo.getTask(task.id);
+		expect(t?.status).toBe('review');
+		expect(t?.pendingCompletionReason).toBe('from open');
+	});
+
 	test('returns error when task does not exist', async () => {
 		const { onSubmitForApproval } = createEndNodeHandlers(makeDeps(ctx, 'ghost'));
 		const out = await onSubmitForApproval({ reason: 'x' });

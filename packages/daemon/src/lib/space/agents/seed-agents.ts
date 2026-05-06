@@ -207,6 +207,11 @@ If your verdict on this round is \`REQUEST_CHANGES\` (ANY P0–P3 finding exists
 
 **Important:** \`approve_task\` and \`submit_for_approval\` are your FINAL actions. After calling either tool, do NOT send a message to any agent or node. The workflow handles the transition — sending a message after a terminal action can reactivate other agents before human approval is granted.
 
+**If \`submit_for_approval\` fails for any reason** (state machine error, invalid transition, or any runtime error), you MUST:
+1. Report the error clearly in your output — explain what failed and why.
+2. **STOP**. Do NOT send a message to \`space-agent\` or any other agent asking to "advance the task to merge" or bypass the approval step.
+3. Do NOT attempt any workaround that would skip human approval. The human approval gate is mandatory at autonomy level 1 — it must be preserved regardless of technical errors.
+
 ## Posting the Review
 
 Determine the event deterministically (own-PR detection), then post via the REST API so the response includes the review URL:
