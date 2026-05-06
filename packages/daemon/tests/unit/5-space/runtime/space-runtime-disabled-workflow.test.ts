@@ -158,6 +158,15 @@ describe('SpaceRuntime — disabled workflow filtering', () => {
 		expect(run!.workflowId).toBe(enabledWf.id);
 	});
 
+	test('startWorkflowRun rejects disabled workflows', async () => {
+		const disabledWf = createWorkflow('Disabled', ['default'], true);
+		const runtime = buildRuntime();
+
+		await expect(runtime.startWorkflowRun(SPACE_ID, disabledWf.id, 'Test Run')).rejects.toThrow(
+			'disabled'
+		);
+	});
+
 	test('preferredWorkflowId pointing to disabled workflow falls through to auto-selection', async () => {
 		const enabledWf = createWorkflow('Enabled', ['default']);
 		const disabledWf = createWorkflow('Disabled', ['coding'], true);
