@@ -63,11 +63,30 @@ export function setupLegacyInboxCompatHandlers(
 		const tasks = taskRepo.listTasks(undefined, { status: 'review' });
 		const reviewTasks: Array<{ task: TaskSummary; roomId: string; roomTitle: string }> = [];
 
+		// Build a small room-name cache so the Inbox UI can still show room labels
+		// for legacy review tasks. The rooms table is preserved for compatibility reads.
+		const roomNames = new Map<string, string>();
+		const sqlite = db.getDatabase();
+		const roomIds = [...new Set(tasks.map((t) => t.roomId).filter(Boolean))];
+		if (roomIds.length > 0) {
+			try {
+				const placeholders = roomIds.map(() => '?').join(',');
+				const rows = sqlite
+					.query(`SELECT id, name FROM rooms WHERE id IN (${placeholders})`)
+					.all(...roomIds) as Array<{ id: string; name: string }>;
+				for (const row of rows) {
+					roomNames.set(row.id, row.name);
+				}
+			} catch {
+				// Best-effort: if the rooms table is gone, fall back to empty titles
+			}
+		}
+
 		for (const task of tasks) {
 			reviewTasks.push({
 				task: toTaskSummary(task),
 				roomId: task.roomId ?? '',
-				roomTitle: '',
+				roomTitle: task.roomId ? (roomNames.get(task.roomId) ?? '') : '',
 			});
 		}
 
