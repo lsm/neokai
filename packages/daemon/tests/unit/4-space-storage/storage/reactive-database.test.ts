@@ -626,4 +626,129 @@ describe('ReactiveDatabase', () => {
 			expect(events[0].versions).toHaveProperty('sdk_messages');
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// Derived projection fan-out (migration 118 + future projections)
+	// -------------------------------------------------------------------------
+	//
+	// SQLite triggers maintaining `task_thread_messages` from `sdk_messages` /
+	// `space_github_events` / `space_tasks` / `node_executions` write to the
+	// projection without going through the proxy. The reactive database compensates
+	// by fanning out a derived `task_thread_messages` change event whenever an
+	// upstream source table is incremented, so LiveQuery subscriptions reading
+	// from the projection re-evaluate.
+
+	describe('derived projection fan-out', () => {
+		test('notifyChange("sdk_messages") fans out a task_thread_messages event', () => {
+			const events: Array<{ tables: string[] }> = [];
+			reactiveDb.on('change', (data) => events.push(data));
+
+			reactiveDb.notifyChange('sdk_messages');
+
+			expect(events.length).toBe(2);
+			expect(events[0].tables).toEqual(['sdk_messages']);
+			expect(events[1].tables).toEqual(['task_thread_messages']);
+		});
+
+		test('notifyChange("space_github_events") fans out a task_thread_messages event', () => {
+			const events: Array<{ tables: string[] }> = [];
+			reactiveDb.on('change', (data) => events.push(data));
+
+			reactiveDb.notifyChange('space_github_events');
+
+			expect(events.length).toBe(2);
+			expect(events[0].tables).toEqual(['space_github_events']);
+			expect(events[1].tables).toEqual(['task_thread_messages']);
+		});
+
+		test('notifyChange("space_tasks") fans out a task_thread_messages event', () => {
+			const events: Array<{ tables: string[] }> = [];
+			reactiveDb.on('change', (data) => events.push(data));
+
+			reactiveDb.notifyChange('space_tasks');
+
+			expect(events.length).toBe(2);
+			expect(events[0].tables).toEqual(['space_tasks']);
+			expect(events[1].tables).toEqual(['task_thread_messages']);
+		});
+
+		test('notifyChange("node_executions") fans out a task_thread_messages event', () => {
+			const events: Array<{ tables: string[] }> = [];
+			reactiveDb.on('change', (data) => events.push(data));
+
+			reactiveDb.notifyChange('node_executions');
+
+			expect(events.length).toBe(2);
+			expect(events[0].tables).toEqual(['node_executions']);
+			expect(events[1].tables).toEqual(['task_thread_messages']);
+		});
+
+		test('emits change:task_thread_messages with monotonic version', () => {
+			const events: Array<{ table: string; version: number }> = [];
+			reactiveDb.on('change:task_thread_messages', (data) => events.push(data));
+
+			reactiveDb.notifyChange('sdk_messages');
+			reactiveDb.notifyChange('sdk_messages');
+
+			expect(events.length).toBe(2);
+			expect(events[0].version).toBe(1);
+			expect(events[1].version).toBe(2);
+		});
+
+		test('does not fan-out from unrelated tables', () => {
+			const events: Array<{ table: string }> = [];
+			reactiveDb.on('change:task_thread_messages', (data) => events.push(data));
+
+			reactiveDb.notifyChange('tasks');
+			reactiveDb.notifyChange('sessions');
+
+			expect(events.length).toBe(0);
+		});
+
+		test('transaction batching: derived event fired once on commit, even with multi writes', () => {
+			const perTableEvents: Array<{ table: string; version: number }> = [];
+			reactiveDb.on('change:task_thread_messages', (data) => perTableEvents.push(data));
+
+			reactiveDb.beginTransaction();
+			reactiveDb.notifyChange('sdk_messages');
+			reactiveDb.notifyChange('sdk_messages');
+			reactiveDb.notifyChange('sdk_messages');
+			expect(perTableEvents.length).toBe(0); // no events during txn
+			reactiveDb.commitTransaction();
+
+			// Single per-table event for task_thread_messages flushed at commit,
+			// even though three sdk_messages writes happened.
+			expect(perTableEvents.length).toBe(1);
+		});
+
+		test('transaction batching: aborted txn does not emit derived events', () => {
+			const events: unknown[] = [];
+			reactiveDb.on('change:task_thread_messages', () => events.push(1));
+
+			reactiveDb.beginTransaction();
+			reactiveDb.notifyChange('sdk_messages');
+			reactiveDb.abortTransaction();
+
+			expect(events.length).toBe(0);
+		});
+
+		test('proxy sdk_messages writes via facade fan-out the derived event', () => {
+			const session = makeSession('proxy-fanout-1');
+			db.createSession(session);
+			const sdkMessage = {
+				type: 'assistant',
+				uuid: `msg-${Date.now()}`,
+				message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+			} as unknown as Parameters<typeof reactiveDb.db.saveSDKMessage>[1];
+
+			const events: Array<{ table: string }> = [];
+			reactiveDb.on('change:task_thread_messages', (data) => events.push(data));
+
+			// saveSDKMessage routes through the proxy → incrementAndEmit → fan-out
+			reactiveDb.db.saveSDKMessage(session.id, sdkMessage, 'system');
+
+			expect(events.length).toBe(1);
+			expect(events[0].table).toBe('task_thread_messages');
+		});
+	});
 });

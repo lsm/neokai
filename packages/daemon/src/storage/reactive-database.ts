@@ -111,6 +111,23 @@ const METHOD_TABLE_MAP: Record<string, MethodMapping> = {
 	deleteInboxItemsForRepository: { table: 'inbox_items' },
 };
 
+/**
+ * Materialised projections that mirror upstream source tables via SQLite
+ * AFTER INSERT/UPDATE/DELETE triggers. When any source table changes the
+ * proxy must also bump the derived table's version so LiveQuery subscriptions
+ * reading from the projection re-evaluate.
+ *
+ * Fan-out is one-directional and shallow: derived tables are not themselves
+ * sources for further derivations. Order matters only for the emission
+ * timeline — the source change emits first, then the derived change(s).
+ */
+const DERIVED_TABLE_MAP: Record<string, ReadonlyArray<string>> = {
+	sdk_messages: ['task_thread_messages'],
+	space_github_events: ['task_thread_messages'],
+	node_executions: ['task_thread_messages'],
+	space_tasks: ['task_thread_messages'],
+};
+
 export function createReactiveDatabase(db: Database): ReactiveDatabase {
 	const emitter = new EventEmitter();
 	const tableVersions: Record<string, number> = {};
@@ -127,6 +144,17 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 
 		if (transactionDepth > 0) {
 			pendingTables.add(table);
+			// Fan-out: any derived projection mirroring this source must also
+			// re-version so LiveQuery subscriptions reading the projection
+			// re-evaluate. Increment now (so versions are consistent) but defer
+			// emission to the transaction flush.
+			const derived = DERIVED_TABLE_MAP[table];
+			if (derived) {
+				for (const derivedTable of derived) {
+					tableVersions[derivedTable] = getVersion(derivedTable) + 1;
+					pendingTables.add(derivedTable);
+				}
+			}
 			return;
 		}
 
@@ -139,6 +167,32 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 			scope,
 		};
 		emitter.emit('change', changeEvent);
+
+		// Fan-out: SQLite triggers from migration 118 keep the
+		// `task_thread_messages` projection in sync with `sdk_messages`,
+		// `space_github_events`, `node_executions`, and `space_tasks`. Trigger
+		// writes bypass the proxy, so we must emit a parallel change event for
+		// each derived projection — otherwise LiveQuery subscriptions reading
+		// the projection never re-evaluate.
+		const derived = DERIVED_TABLE_MAP[table];
+		if (derived) {
+			for (const derivedTable of derived) {
+				tableVersions[derivedTable] = getVersion(derivedTable) + 1;
+				const derivedVersion = tableVersions[derivedTable];
+				const derivedVersionEvent: TableVersionEvent = {
+					table: derivedTable,
+					version: derivedVersion,
+					scope,
+				};
+				emitter.emit(`change:${derivedTable}`, derivedVersionEvent);
+				const derivedChangeEvent: TableChangeEvent = {
+					tables: [derivedTable],
+					versions: { [derivedTable]: derivedVersion },
+					scope,
+				};
+				emitter.emit('change', derivedChangeEvent);
+			}
+		}
 	}
 
 	function flushPendingTables(): void {
