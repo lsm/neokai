@@ -265,39 +265,9 @@ describe('SessionLifecycle', () => {
 			);
 		});
 
-		it('room_chat session without workspacePath throws', async () => {
-			await expect(lifecycle.create({ sessionType: 'room_chat' })).rejects.toThrow(
-				"Room-scoped session (type: 'room_chat') must have explicit workspacePath"
-			);
-		});
-
-		it('planner session without workspacePath throws', async () => {
-			await expect(lifecycle.create({ sessionType: 'planner' })).rejects.toThrow(
-				"Room-scoped session (type: 'planner') must have explicit workspacePath"
-			);
-		});
-
-		it('coder session without workspacePath throws', async () => {
-			await expect(lifecycle.create({ sessionType: 'coder' })).rejects.toThrow(
-				"Room-scoped session (type: 'coder') must have explicit workspacePath"
-			);
-		});
-
-		it('leader session without workspacePath throws', async () => {
-			await expect(lifecycle.create({ sessionType: 'leader' })).rejects.toThrow(
-				"Room-scoped session (type: 'leader') must have explicit workspacePath"
-			);
-		});
-
-		it('general session without workspacePath throws', async () => {
-			await expect(lifecycle.create({ sessionType: 'general' })).rejects.toThrow(
-				"Room-scoped session (type: 'general') must have explicit workspacePath"
-			);
-		});
-
 		it('space_chat session without workspacePath throws', async () => {
 			await expect(lifecycle.create({ sessionType: 'space_chat' })).rejects.toThrow(
-				"Room-scoped session (type: 'space_chat') must have explicit workspacePath"
+				"Session type 'space_chat' requires explicit workspacePath"
 			);
 		});
 
@@ -354,18 +324,18 @@ describe('SessionLifecycle', () => {
 			);
 		});
 
-		it('should not use worktree choice flow for room_chat sessions', async () => {
+		it('should not use worktree choice flow for non-worker sessions', async () => {
 			(mockWorktreeManager.detectGitSupport as ReturnType<typeof mock>).mockResolvedValue({
 				isGitRepo: true,
 				isBare: false,
 				gitRoot: '/test/repo',
 			});
 
-			await lifecycle.create({ sessionType: 'room_chat', workspacePath: '/room/workspace' });
+			await lifecycle.create({ sessionType: 'space_chat', workspacePath: '/space/workspace' });
 
 			expect(mockDb.createSession).toHaveBeenCalledWith(
 				expect.objectContaining({
-					type: 'room_chat',
+					type: 'space_chat',
 					status: 'active',
 					metadata: expect.objectContaining({
 						worktreeChoice: undefined,
@@ -784,7 +754,7 @@ describe('SessionLifecycle', () => {
 		it('should force direct mode for non-worker sessions', async () => {
 			mockAgentSession.getSessionData.mockReturnValue({
 				id: 'test-id',
-				type: 'room_chat',
+				type: 'space_chat',
 				title: 'Test',
 				workspacePath: '/test',
 				status: 'pending_worktree_choice',
@@ -1563,7 +1533,7 @@ describe('SessionLifecycle - setWorkspace', () => {
 	});
 
 	it('throws when session is not a worker type', async () => {
-		const agentSession = makeAgentSession({ type: 'room_chat' });
+		const agentSession = makeAgentSession({ type: 'space_chat' });
 		(mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
 
 		await expect(lifecycle.setWorkspace(SESSION_ID, '/some/workspace', 'direct')).rejects.toThrow(
