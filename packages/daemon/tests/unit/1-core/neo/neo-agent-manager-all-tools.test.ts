@@ -36,12 +36,7 @@ import type {
 	NeoQueryWorkflowRunRepository,
 	NeoQuerySpaceTaskRepository,
 } from '../../../../src/lib/neo/tools/neo-query-tools';
-import type {
-	NeoActionToolsConfig,
-	NeoActionManagerFactory,
-	NeoActionGoalManager,
-	NeoActionTaskManager,
-} from '../../../../src/lib/neo/tools/neo-action-tools';
+import type { NeoActionToolsConfig } from '../../../../src/lib/neo/tools/neo-action-tools';
 import { PendingActionStore } from '../../../../src/lib/neo/security-tier';
 
 // ---------------------------------------------------------------------------
@@ -224,27 +219,7 @@ function makeMinimalQueryConfig(overrides: Partial<NeoToolsConfig> = {}): NeoToo
 function makeMinimalActionConfig(
 	overrides: Partial<NeoActionToolsConfig> = {}
 ): NeoActionToolsConfig {
-	const noopGoalManager: NeoActionGoalManager = {
-		createGoal: mock(async () => ({ id: 'g1', title: 'Goal 1' }) as never),
-		getGoal: mock(async () => null),
-		patchGoal: mock(async () => ({ id: 'g1', title: 'Goal 1' }) as never),
-		updateGoalStatus: mock(async () => ({ id: 'g1', title: 'Goal 1' }) as never),
-	};
-
-	const noopTaskManager: NeoActionTaskManager = {
-		createTask: mock(async () => ({ id: 't1', title: 'Task 1' }) as never),
-		getTask: mock(async () => null),
-		updateTaskFields: mock(async () => ({ id: 't1', title: 'Task 1' }) as never),
-		setTaskStatus: mock(async () => ({ id: 't1', title: 'Task 1' }) as never),
-	};
-
-	const noopManagerFactory: NeoActionManagerFactory = {
-		getGoalManager: mock(() => noopGoalManager),
-		getTaskManager: mock(() => noopTaskManager),
-	};
-
 	return {
-		managerFactory: noopManagerFactory,
 		pendingStore: new PendingActionStore(),
 		getSecurityMode: () => 'balanced',
 		...overrides,
