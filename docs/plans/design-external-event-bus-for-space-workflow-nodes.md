@@ -585,12 +585,32 @@ class GitHubEventExtension implements HttpExternalEventExtension, RpcExternalEve
     if (!normalized) return Response.json({ ignored: true });
 
     const targetSpaces = await this.resolveEnabledSpacesForWebhook(context, req, raw, normalized);
-    for (const spaceConfig of targetSpaces) {
-      if (!spaceConfig.enabled) continue;
-      await context.publisher.publish(toExternalEvent(spaceConfig.spaceId, normalized));
-    }
+    const results = await Promise.allSettled(
+      targetSpaces
+        .filter((spaceConfig) => spaceConfig.enabled)
+        .map(async (spaceConfig) => {
+          try {
+            await context.publisher.publish(toExternalEvent(spaceConfig.spaceId, normalized));
+            return { spaceId: spaceConfig.spaceId, ok: true };
+          } catch (err) {
+            log.warn('GitHubEventExtension: failed to publish webhook for space', {
+              spaceId: spaceConfig.spaceId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+            return { spaceId: spaceConfig.spaceId, ok: false };
+          }
+        }),
+    );
 
-    return Response.json({ message: 'Webhook received' });
+    const failed = results
+      .map((result) => result.status === 'fulfilled' ? result.value : { spaceId: 'unknown', ok: false })
+      .filter((result) => !result.ok);
+
+    return Response.json({
+      message: 'Webhook received',
+      published: results.length - failed.length,
+      failed: failed.length,
+    }, { status: failed.length > 0 ? 207 : 200 });
   }
 
   private async pollEnabledSpaces(): Promise<number> {
