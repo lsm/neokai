@@ -52,6 +52,8 @@ export interface ChatComposerProps {
 	agentMentionCandidates?: Array<{ id: string; name: string }>;
 	/** Override the default placeholder text in the message input */
 	inputPlaceholder?: string;
+	/** Optional callback to intercept thinking-level changes instead of letting SessionStatusBar call the RPC directly */
+	onThinkingLevelChange?: (level: ThinkingLevel) => Promise<void> | void;
 	inputLeadingElement?: ComponentChildren;
 	inputLeadingPaddingClass?: string;
 	onDraftActiveChange?: (hasDraft: boolean) => void;
@@ -98,6 +100,7 @@ export function ChatComposer({
 	inputLeadingElement,
 	inputLeadingPaddingClass,
 	onDraftActiveChange,
+	onThinkingLevelChange,
 	errorMessage,
 }: ChatComposerProps) {
 	return (
@@ -141,6 +144,7 @@ export function ChatComposer({
 					sandboxSwitching={sandboxSwitching}
 					onSandboxModeChange={onSandboxModeChange}
 					thinkingLevel={thinkingLevel}
+					onThinkingLevelChange={onThinkingLevelChange}
 				/>
 
 				{sessionStatus === 'archived' ? (

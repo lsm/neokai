@@ -249,7 +249,7 @@ export function useFilteredModelsForPicker(
  *
  * @param sessionId - Current session ID
  */
-export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
+export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResult {
 	const [currentModel, setCurrentModel] = useState<string>('');
 	const [currentModelInfo, setCurrentModelInfo] = useState<ModelInfo | null>(null);
 	const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
@@ -262,18 +262,23 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 			const hub = connectionManager.getHubIfConnected();
 			if (!hub) return;
 
-			// Fetch current model
-			const { currentModel: modelId, modelInfo } = (await hub.request('session.model.get', {
-				sessionId,
-			})) as {
-				currentModel: string;
-				modelInfo: ModelInfo | null;
-			};
+			// Fetch current model (skip when no sessionId; best effort otherwise)
+			if (sessionId) {
+				try {
+					const { currentModel: modelId, modelInfo } = (await hub.request('session.model.get', {
+						sessionId,
+					})) as {
+						currentModel: string;
+						modelInfo: ModelInfo | null;
+					};
+					setCurrentModel(modelId);
+					setCurrentModelInfo(modelInfo);
+				} catch {
+					// Session not found or not started yet — keep defaults
+				}
+			}
 
-			setCurrentModel(modelId);
-			setCurrentModelInfo(modelInfo);
-
-			// Fetch available models (includes all providers for cross-provider switching)
+			// Fetch available models (independent of session state)
 			const { models } = (await hub.request('models.list', {
 				useCache: true,
 			})) as { models: RawModelEntry[] };
