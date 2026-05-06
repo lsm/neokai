@@ -1488,27 +1488,31 @@ class ExternalEventRouter {
     }
   }
 
+  private makeEventRetryKey(event: ExternalEvent, matched: Subscription[]): string {
+    return JSON.stringify([
+      event.id,
+      [...new Set(matched.map((sub) => sub.workflowRunId))].sort(),
+      'prepare',
+    ]);
+  }
+
   /**
    * Schedule an event-level retry for failures before expected delivery rows exist
    * (for example transient watched-repo lookup or delivery-row insert failures).
    * This reruns full matching/preparation instead of allowing partial delivery to
    * mark the source event terminal while an unregistered subscription missed it.
    * handleEventForSubscriptions returns false when preparation failed and another
-   * retry was scheduled. In that case the retry count/state must be preserved so
-   * persistent preparation failures continue toward MAX_RETRIES. Counts are cleared
-   * only after a prepared retry pass, so later independent preparation errors get a
-   * fresh budget and this map does not leak state across retryable re-emissions.
+   * retry was scheduled. If the retry key is unchanged, the count/state is preserved
+   * so persistent preparation failures continue toward MAX_RETRIES. If current
+   * matching changed the retry key, the old key is cleared before returning because
+   * the newly scheduled retry owns the updated state.
    */
   private scheduleEventRetry(
     event: ExternalEvent,
     matched: Subscription[],
     options: { retryCountOverride?: number } = {},
   ): void {
-    const retryKey = JSON.stringify([
-      event.id,
-      [...new Set(matched.map((sub) => sub.workflowRunId))].sort(),
-      'prepare',
-    ]);
+    const retryKey = this.makeEventRetryKey(event, matched);
     const retries = options.retryCountOverride ?? ((this.eventRetryCounts.get(retryKey) ?? 0) + 1);
     if (retries > ExternalEventRouter.MAX_RETRIES) {
       log.warn('ExternalEventRouter: max preparation retries exceeded; marking event failed', {
@@ -1547,8 +1551,14 @@ class ExternalEventRouter {
         .then((prepared) => {
           if (!prepared) {
             // handleEventForSubscriptions scheduled the next preparation retry.
-            // Preserve count/state so persistent preparation failures continue
-            // toward MAX_RETRIES instead of restarting from attempt 1 forever.
+            // If matching changed while this timer was waiting, that retry is now
+            // stored under a different key. Clear this superseded key so stale
+            // counts/state do not leak or later exhaust a reappearing key early.
+            const nextRetryKey = this.makeEventRetryKey(retryState.event, currentMatched);
+            if (nextRetryKey !== retryKey) {
+              this.eventRetryCounts.delete(retryKey);
+              this.eventRetryState.delete(retryKey);
+            }
             return;
           }
 
