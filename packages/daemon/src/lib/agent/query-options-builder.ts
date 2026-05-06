@@ -552,12 +552,9 @@ export class QueryOptionsBuilder {
 			return undefined;
 		}
 
-		// Binary providers: any non-off level enables thinking with max budget
-		if (thinkingModes === 'on') {
-			return { type: 'enabled', budgetTokens: 31999 };
-		}
-
-		// Granular providers: use the exact token budget
+		// Preserve the selected budget for all providers that support thinking.
+		// `thinkingModes === 'on'` only affects which UI options are shown (binary
+		// on/off) — the daemon still respects the stored token budget.
 		return { type: 'enabled', budgetTokens: tokens };
 	}
 

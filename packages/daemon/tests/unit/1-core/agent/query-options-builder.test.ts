@@ -337,7 +337,7 @@ describe('QueryOptionsBuilder', () => {
 			expect(result.thinking).toBeUndefined();
 		});
 
-		it('should map any enabled level to max budget for providers with thinkingModes=on', async () => {
+		it('should preserve selected budget for providers with thinkingModes=on', async () => {
 			mockSession.config.provider = 'kimi';
 			mockSession.config.thinkingLevel = 'think8k';
 			// Pass minimal options directly — avoid build() because it instantiates
@@ -346,7 +346,7 @@ describe('QueryOptionsBuilder', () => {
 				{} as import('@anthropic-ai/claude-agent-sdk').Options
 			);
 
-			expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 31999 });
+			expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
 		});
 	});
 
