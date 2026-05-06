@@ -114,22 +114,32 @@ export class TaskRepository {
 	 * Use filter.includeArchived = true to include archived tasks.
 	 * Lazy backfill: any row missing short_id gets one assigned inline.
 	 */
-	listTasks(roomId: string, filter?: TaskFilter): NeoTask[] {
-		let query = `SELECT * FROM tasks WHERE room_id = ?`;
-		const params: SQLiteValue[] = [roomId];
+	listTasks(roomId?: string | null, filter?: TaskFilter): NeoTask[] {
+		let query = `SELECT * FROM tasks`;
+		const params: SQLiteValue[] = [];
+		let hasWhere = false;
+
+		if (roomId) {
+			query += ` WHERE room_id = ?`;
+			params.push(roomId);
+			hasWhere = true;
+		}
 
 		// Exclude archived tasks by default (status is the source of truth for archival)
 		if (!filter?.includeArchived) {
-			query += ` AND status != 'archived'`;
+			query += hasWhere ? ` AND status != 'archived'` : ` WHERE status != 'archived'`;
+			hasWhere = true;
 		}
 
 		if (filter?.status) {
-			query += ` AND status = ?`;
+			query += hasWhere ? ` AND status = ?` : ` WHERE status = ?`;
 			params.push(filter.status);
+			hasWhere = true;
 		}
 		if (filter?.priority) {
-			query += ` AND priority = ?`;
+			query += hasWhere ? ` AND priority = ?` : ` WHERE priority = ?`;
 			params.push(filter.priority);
+			hasWhere = true;
 		}
 		query += ` ORDER BY updated_at DESC`;
 
@@ -145,7 +155,7 @@ export class TaskRepository {
 		return rows.map((row) => {
 			const task = this.rowToTask(row);
 			if (!task.shortId && this.shortIdAllocator) {
-				const shortId = this.shortIdAllocator.allocate('task', roomId);
+				const shortId = this.shortIdAllocator.allocate('task', task.roomId);
 				this.db.prepare(`UPDATE tasks SET short_id = ? WHERE id = ?`).run(shortId, task.id);
 				return { ...task, shortId };
 			}

@@ -218,6 +218,18 @@ describe('Session RPC Handlers - Extended', () => {
 			expect(result.thinkingLevel).toBe('think8k');
 		});
 
+		test('should set think24k thinking level', async () => {
+			const sessionId = await createSession('/test/session-thinking-24k');
+
+			const result = (await daemon.messageHub.request('session.thinking.set', {
+				sessionId,
+				level: 'think24k',
+			})) as { success: boolean; thinkingLevel: string };
+
+			expect(result.success).toBe(true);
+			expect(result.thinkingLevel).toBe('think24k');
+		});
+
 		test('should default to off for invalid level', async () => {
 			const sessionId = await createSession('/test/session-thinking-invalid');
 

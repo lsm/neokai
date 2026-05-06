@@ -44,41 +44,8 @@ describe('isUserSession', () => {
 		expect(isUserSession(session)).toBe(true);
 	});
 
-	it('should return false for planner sessions', () => {
-		const session = makeSession({ type: 'planner' });
-		expect(isUserSession(session)).toBe(false);
-	});
-
-	it('should return false for coder sessions', () => {
-		const session = makeSession({ type: 'coder' });
-		expect(isUserSession(session)).toBe(false);
-	});
-
-	it('should return false for leader sessions', () => {
-		const session = makeSession({ type: 'leader' });
-		expect(isUserSession(session)).toBe(false);
-	});
-
-	it('should return false for general sessions', () => {
-		const session = makeSession({ type: 'general' });
-		expect(isUserSession(session)).toBe(false);
-	});
-
 	it('should return false for lobby sessions', () => {
 		const session = makeSession({ type: 'lobby' });
-		expect(isUserSession(session)).toBe(false);
-	});
-
-	it('should return false for room_chat sessions', () => {
-		const session = makeSession({ type: 'room_chat' });
-		expect(isUserSession(session)).toBe(false);
-	});
-
-	it('should return false for worker sessions with roomId', () => {
-		const session = makeSession({
-			type: 'worker',
-			context: { roomId: 'room-123' },
-		});
 		expect(isUserSession(session)).toBe(false);
 	});
 

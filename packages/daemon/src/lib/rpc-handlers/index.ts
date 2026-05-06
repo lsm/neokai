@@ -23,21 +23,17 @@ import { setupFileHandlers } from './file-handlers';
 import { setupSystemHandlers } from './system-handlers';
 import { setupAuthHandlers } from './auth-handlers';
 import { setupCommandHandlers } from './command-handlers';
-import { setupQuestionHandlers } from './question-handlers';
 import { registerMcpHandlers } from './mcp-handlers';
 import { registerSettingsHandlers } from './settings-handlers';
 import { setupConfigHandlers } from './config-handlers';
 import { setupTestHandlers } from './test-handlers';
 import { setupRewindHandlers } from './rewind-handlers';
-import { RoomManager } from '../room';
-import { setupGitHubHandlers } from './github-handlers';
 import type { GitHubService } from '../github/github-service';
-import { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { Logger } from '../logger';
-import { GoalManager } from '../room/managers/goal-manager';
-import { TaskManager } from '../room/managers/task-manager';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { setupDialogHandlers } from './dialog-handlers';
+import { setupQuestionHandlers } from './question-handlers';
+import { setupLegacyInboxCompatHandlers } from './legacy-inbox-compat-handlers';
 // Space handlers
 import { setupSpaceHandlers } from './space-handlers';
 import { setupSpaceTaskHandlers, type SpaceTaskManagerFactory } from './space-task-handlers';
@@ -91,7 +87,6 @@ import type { SkillsManager } from '../skills-manager';
 import { setupNeoHandlers } from './neo-handlers';
 import type { NeoAgentManager } from '../neo/neo-agent-manager';
 import { setupWorkspaceHandlers } from './workspace-handlers';
-import { setupLegacyInboxCompatHandlers } from './legacy-inbox-compat-handlers';
 import { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository';
 import { NeoActivityLogger } from '../neo/activity-logger';
 import { PendingActionStore } from '../neo/security-tier';
@@ -113,8 +108,6 @@ export interface RPCHandlerDependencies {
 	spaceAgentManager: SpaceAgentManager;
 	/**
 	 * Persistent job queue repository.
-	 * TODO: consumed by Milestones 2–5 handlers (session title generation,
-	 * GitHub polling, room tick, cleanup jobs).
 	 */
 	jobQueue: JobQueueRepository;
 	/**
@@ -167,10 +160,6 @@ export interface RPCHandlerSetupResult {
  * Returns a result with cleanup function and exposed services
  */
 export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
-	// Legacy Room manager is retained for old DB compatibility reads only.
-	// Public Room RPC handlers and runtime scheduling are intentionally not registered.
-	const roomManager = new RoomManager(deps.db.getDatabase(), deps.reactiveDb);
-
 	// setupSessionHandlers is registered below, after spaceRuntimeService is
 	// constructed, so session.create can synchronously attach space-agent-tools
 	// to ad-hoc Space sessions (avoids a race with query startup).
@@ -179,9 +168,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	setupFileHandlers(deps.messageHub, deps.sessionManager);
 	setupSystemHandlers(deps.messageHub, deps.sessionManager, deps.authManager, deps.config);
 	setupAuthHandlers(deps.messageHub, deps.authManager);
-	// Question handlers are registered after the dormant Room compatibility runtime
-	// is constructed below so old in-memory runtime sessions can still be resolved
-	// during a controlled migration window.
 	registerMcpHandlers(deps.messageHub, deps.sessionManager, deps.appMcpManager);
 	registerSettingsHandlers(
 		deps.messageHub,
@@ -237,64 +223,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		count: await spaceGithubRpc.pollOnce(),
 	}));
 
-	// Dormant Room runtime compatibility shell. It is not started and no room.tick
-	// jobs are seeded, so Room is not an active runtime surface. The instance is
-	// retained only for old internal call sites that still type against the service
-	// while the legacy schema/repositories remain readable.
-	const roomRuntimeService = new RoomRuntimeService({
-		// Use reactiveDb.db (proxied Database facade) so sdk_messages writes from
-		// room worker/leader sessions trigger LiveQuery invalidation immediately.
-		db: deps.reactiveDb.db,
-		messageHub: deps.messageHub,
-		daemonHub: deps.daemonHub,
-		getApiKey: () => deps.authManager.getCurrentApiKey(),
-		roomManager,
-		sessionManager: deps.sessionManager,
-		defaultWorkspacePath: undefined,
-		defaultModel: deps.config.defaultModel,
-		getGlobalSettings: () => deps.settingsManager.getGlobalSettings(),
-		settingsManager: deps.settingsManager,
-		appMcpManager: deps.appMcpManager,
-		reactiveDb: deps.reactiveDb,
-		jobQueue: deps.jobQueue,
-		jobProcessor: deps.jobProcessor,
-		skillsManager: deps.skillsManager,
-		appMcpServerRepo: deps.reactiveDb.db.appMcpServers,
-		roomSkillOverrideRepo: deps.reactiveDb.db.roomSkillOverrides,
-		dbPath: deps.db.getDatabasePath(),
-		disableGoalProcessing: deps.config.disableGoalProcessing,
-	});
-
-	// Wire question handlers now that roomRuntimeService is available.
-	// Pass its session lookup so question.respond reaches the correct live AgentSession
-	// (room worker/leader sessions are stored in RoomRuntimeService.agentSessions,
-	// not in SessionManager's cache).
-	setupQuestionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, (sessionId) =>
-		roomRuntimeService.getAgentSession(sessionId)
-	);
-
-	// Do not register legacy room.*, broader task.*, goal.*, or room.runtime.* RPC APIs.
-	// The active web Inbox still calls these three legacy task review methods,
-	// so keep only this narrow compatibility shim until the UI is migrated.
-	setupLegacyInboxCompatHandlers(
-		deps.messageHub,
-		roomManager,
-		deps.db,
-		deps.reactiveDb,
-		roomRuntimeService
-	);
-
-	// GitHub handlers
-	setupGitHubHandlers(
-		deps.messageHub,
-		deps.daemonHub,
-		deps.db,
-		roomManager,
-		deps.gitHubService ?? null
-	);
-
 	// Dialog handlers (native OS dialogs)
 	setupDialogHandlers(deps.messageHub);
+
+	// Question handlers (AskUserQuestion respond / saveDraft / cancel)
+	setupQuestionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 
 	// Reference handlers (@ mention system — search + resolve tasks, goals, files, folders)
 	const fileIndex = new FileIndex(deps.config.workspaceRoot);
@@ -310,7 +243,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		goalRepo: deps.db.getGoalRepo(),
 		workspaceRoot: deps.config.workspaceRoot,
 		fileIndex,
-		getRoomDefaultPath: (roomId: string) => roomManager.getRoom(roomId)?.defaultPath ?? undefined,
 	});
 
 	// LiveQuery subscribe/unsubscribe handlers
@@ -326,7 +258,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		daemonHub: deps.daemonHub,
 	});
 
-	// Per-room MCP enablement RPC handlers
+	// MCP enablement RPC handlers
 	setupAppMcpHandlers(deps.messageHub, deps.daemonHub, deps.db);
 
 	// Per-space MCP enablement RPC handlers + `.mcp.json` import refresh.
@@ -354,6 +286,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		neoPendingActions
 	);
 
+	// Legacy inbox compatibility shim — the web Inbox UI still calls these RPCs.
+	// Room infrastructure is retired; this delegates directly to TaskRepository.
+	setupLegacyInboxCompatHandlers(deps.messageHub, deps.db, deps.reactiveDb);
+
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase(), deps.reactiveDb);
 	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
@@ -379,7 +315,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// in app.ts (setupRPCHandlers runs first). The in-process neo-query server is merged
 	// with registry-sourced servers; in-process wins on name collision.
 	const neoToolsConfig: NeoToolsConfig = {
-		roomManager,
 		goalRepository: deps.db.getGoalRepo(),
 		taskRepository: deps.db.getTaskRepo(),
 		sessionManager: deps.sessionManager,
@@ -486,7 +421,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.messageHub,
 		deps.sessionManager,
 		deps.daemonHub,
-		roomManager,
 		deps.spaceManager,
 		spaceRuntimeService
 	);
@@ -587,24 +521,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Wire Neo action tools — must happen before neoAgentManager.provision() in app.ts.
 	// spaceRuntimeService.start() must be called first so getSharedRuntime() is available.
 	const neoActionToolsConfig: NeoActionToolsConfig = {
-		roomManager,
-		managerFactory: {
-			getGoalManager: (roomId: string) =>
-				new GoalManager(
-					deps.db.getDatabase(),
-					roomId,
-					deps.reactiveDb,
-					deps.db.getShortIdAllocator()
-				),
-			getTaskManager: (roomId: string) =>
-				new TaskManager(
-					deps.db.getDatabase(),
-					roomId,
-					deps.reactiveDb,
-					deps.db.getShortIdAllocator()
-				),
-		},
-		runtimeService: roomRuntimeService,
 		pendingStore: neoPendingActions,
 		workspaceRoot: undefined,
 		getSecurityMode: () => deps.neoAgentManager.getSecurityMode(),
@@ -659,24 +575,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		sessionManager: {
 			injectMessage: (sessionId: string, message: string) =>
 				deps.sessionManager.injectMessage(sessionId, message),
-			getActiveSessionForRoom: (roomId: string) => {
-				// Room sessions use a predictable ID: room:${roomId}.
-				// Verify the session exists before returning it so callers receive
-				// null (→ clean error) instead of injecting into a non-existent session.
-				const sessionId = `room:${roomId}`;
-				return deps.sessionManager.getSession(sessionId) !== null ? sessionId : null;
-			},
 			getActiveSessionForTask: (taskId: string) => {
 				// Look up the task agent session ID stored on the SpaceTask record.
 				const task = spaceTaskRepo.getTask(taskId);
 				return task?.taskAgentSessionId ?? null;
 			},
-			// Task #85: Neo `delete_room` must clean up each session's worktree
-			// and SDK `.jsonl` files before the room DB row is removed. It routes
-			// each session through the UI-only delete primitive; the narrowed
-			// `ui_neo_room_delete` trigger keeps the CI regression guard in play.
-			deleteSessionResources: (sessionId: string, trigger: 'ui_neo_room_delete') =>
-				deps.sessionManager.deleteSessionResources(sessionId, trigger),
+			deleteSessionResources: (sessionId: string, trigger: string) =>
+				deps.sessionManager.deleteSessionResources(sessionId, trigger as 'ui_session_delete'),
 		},
 	};
 	// Wire Neo activity logger — records every tool invocation for the Activity Feed.
@@ -758,9 +663,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	return {
 		cleanup: async () => {
 			unsubLiveQuery();
-			// Stops only the dormant compatibility shell if any legacy runtime
-			// sessions were attached during migration.
-			roomRuntimeService.stop();
 			await spaceRuntimeService.stop();
 			fileIndex.dispose();
 		},

@@ -469,88 +469,6 @@ describe('QueryOptionsBuilder', () => {
 		});
 	});
 
-	describe('room session restrictions', () => {
-		it('should preserve room MCP servers while enforcing strict MCP config', async () => {
-			mockSession.type = 'room_chat';
-			mockSession.config.mcpServers = {
-				'room-agent-tools': { command: 'test-command' },
-			};
-
-			const options = await builder.build();
-			expect(options.mcpServers).toEqual({
-				'room-agent-tools': { command: 'test-command' },
-			});
-			expect(options.strictMcpConfig).toBe(true);
-			expect(options.settingSources).toEqual([]);
-		});
-
-		it('should enforce room built-in tool allowlist including Bash', async () => {
-			mockSession.type = 'room_chat';
-			const options = await builder.build();
-			expect(options.tools).toEqual([
-				'Read',
-				'Glob',
-				'Grep',
-				'Bash',
-				'WebFetch',
-				'WebSearch',
-				'ToolSearch',
-				'AskUserQuestion',
-				'Skill',
-			]);
-			expect(options.allowedTools).toEqual(
-				expect.arrayContaining([
-					'Read',
-					'Glob',
-					'Grep',
-					'Bash',
-					'WebFetch',
-					'WebSearch',
-					'ToolSearch',
-					'AskUserQuestion',
-					'Skill',
-				])
-			);
-		});
-
-		it('should not include Write/Edit/NotebookEdit in room tool allowlist', async () => {
-			mockSession.type = 'room_chat';
-			const options = await builder.build();
-			expect(options.disallowedTools).toEqual(
-				expect.arrayContaining(['Edit', 'Write', 'NotebookEdit'])
-			);
-			expect(options.tools).not.toContain('Edit');
-			expect(options.tools).not.toContain('Write');
-			expect(options.tools).not.toContain('NotebookEdit');
-		});
-
-		it('should auto-allow wildcards for all configured MCP servers', async () => {
-			mockSession.type = 'room_chat';
-			mockSession.config.mcpServers = {
-				'room-agent-tools': { command: 'room-cmd' },
-				github: { command: 'github-cmd' },
-			};
-
-			const options = await builder.build();
-			expect(options.allowedTools).toEqual(
-				expect.arrayContaining(['room-agent-tools__*', 'github__*'])
-			);
-		});
-
-		it('should disable Claude Code preset system prompt for room sessions', async () => {
-			mockSession.type = 'room_chat';
-			const options = await builder.build();
-			expect(options.systemPrompt).toBeUndefined();
-		});
-
-		it('should preserve a custom string system prompt for room sessions', async () => {
-			mockSession.type = 'room_chat';
-			mockSession.config.systemPrompt = 'You are the Room Agent.';
-			const options = await builder.build();
-			expect(options.systemPrompt).toBe('You are the Room Agent.');
-		});
-	});
-
 	describe('space chat session restrictions', () => {
 		it('should preserve space MCP servers while enforcing strict MCP config', async () => {
 			mockSession.type = 'space_chat';
@@ -1380,9 +1298,9 @@ describe('QueryOptionsBuilder', () => {
 			const mockSkillsManager = {
 				getEnabledSkills: mock(() => [enabledSkills[1]]),
 			};
-			mockSession.type = 'room_chat';
+			mockSession.type = 'space_chat';
 			mockSession.config.mcpServers = {
-				'room-agent-tools': { command: 'room-cmd' },
+				'space-agent-tools': { command: 'space-cmd' },
 			};
 			const context: QueryOptionsBuilderContext = {
 				session: mockSession,
@@ -1395,7 +1313,7 @@ describe('QueryOptionsBuilder', () => {
 			const builder = new QueryOptionsBuilder(context);
 			const options = await builder.build();
 
-			// strictMcpConfig should be true for room_chat
+			// strictMcpConfig should be true for space_chat
 			expect(options.strictMcpConfig).toBe(true);
 			// Skill-injected server must be present in mcpServers so strictMcpConfig doesn't block it
 			expect(options.mcpServers!['test-search']).toEqual({
@@ -1403,8 +1321,8 @@ describe('QueryOptionsBuilder', () => {
 				args: ['-y', 'test-mcp'],
 				env: { TEST_API_KEY: 'test-key' },
 			});
-			// Original room server must still be present
-			expect(options.mcpServers!['room-agent-tools']).toEqual({ command: 'room-cmd' });
+			// Original space server must still be present
+			expect(options.mcpServers!['space-agent-tools']).toEqual({ command: 'space-cmd' });
 			// Skill MCP server wildcard should be auto-allowed
 			expect(options.allowedTools).toContain('test-search__*');
 		});
@@ -2125,27 +2043,21 @@ describe('QueryOptionsBuilder', () => {
 	// Task 7.1 regression: Skill/WebSearch/WebFetch tools must remain available after Skills registry changes
 	describe('regression: Skill, WebSearch, WebFetch tool availability (Task 7.1)', () => {
 		beforeEach(() => {
-			mockSession.type = 'room_chat';
+			mockSession.type = 'space_chat';
 		});
 
-		it('room_chat sessions include Skill in tools list', async () => {
-			const options = await new QueryOptionsBuilder(mockContext).build();
-			expect(options.tools).toContain('Skill');
-		});
-
-		it('room_chat sessions include WebSearch in tools list', async () => {
+		it('space_chat sessions include WebSearch in tools list', async () => {
 			const options = await new QueryOptionsBuilder(mockContext).build();
 			expect(options.tools).toContain('WebSearch');
 		});
 
-		it('room_chat sessions include WebFetch in tools list', async () => {
+		it('space_chat sessions include WebFetch in tools list', async () => {
 			const options = await new QueryOptionsBuilder(mockContext).build();
 			expect(options.tools).toContain('WebFetch');
 		});
 
-		it('room_chat allowedTools includes Skill, WebSearch, WebFetch', async () => {
+		it('space_chat allowedTools includes WebSearch, WebFetch', async () => {
 			const options = await new QueryOptionsBuilder(mockContext).build();
-			expect(options.allowedTools).toContain('Skill');
 			expect(options.allowedTools).toContain('WebSearch');
 			expect(options.allowedTools).toContain('WebFetch');
 		});

@@ -26,7 +26,6 @@
 		"@github/copilot-sdk": "0.3.0",
 		"@neokai/shared": "workspace:*",
 		"@openai/codex": "0.125.0",
-		"croner": "10.0.1",
 		"simple-git": "3.36.0",
 		"zod": "4.3.6"
 	},

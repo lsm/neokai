@@ -52,7 +52,6 @@ ROOM_FILES=()
 FEATURES_FILES=(
   auto-title.test.ts
   github-poll-job.test.ts
-  job-queue-crash-recovery.test.ts
   message-delivery-mode-queue.test.ts
   message-persistence.test.ts
 )

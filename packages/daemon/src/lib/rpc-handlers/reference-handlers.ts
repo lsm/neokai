@@ -12,7 +12,6 @@ import type {
 	ReferenceSearchResult,
 	ResolvedReference,
 } from '@neokai/shared';
-import type { NeoTask, RoomGoal } from '@neokai/shared/types/neo';
 import type { SessionManager } from '../session-manager';
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { ReactiveDatabase } from '../../storage/reactive-database';
@@ -45,13 +44,13 @@ const RESULTS_PER_CATEGORY = 10;
 // ============================================================================
 
 export interface TaskRepoForReference {
-	getTask(id: string): NeoTask | null;
-	getTaskByShortId(roomId: string, shortId: string): NeoTask | null;
+	getTask(id: string): unknown | null;
+	getTaskByShortId(roomId: string, shortId: string): unknown | null;
 }
 
 export interface GoalRepoForReference {
-	getGoal(id: string): RoomGoal | null;
-	getGoalByShortId(roomId: string, shortId: string): RoomGoal | null;
+	getGoal(id: string): unknown | null;
+	getGoalByShortId(roomId: string, shortId: string): unknown | null;
 }
 
 // ============================================================================
@@ -78,12 +77,6 @@ export interface ReferenceHandlerDeps {
 	workspaceRoot?: string;
 	/** File index for fast file/folder search (reference.search) */
 	fileIndex: FileIndex;
-	/**
-	 * Callback to resolve a room's defaultPath by room ID.
-	 * Used to resolve workspace path for `room:chat:*` synthetic session IDs,
-	 * which have no DB entry and thus no stored workspacePath.
-	 */
-	getRoomDefaultPath?: (roomId: string) => string | undefined;
 }
 
 // ============================================================================
@@ -217,14 +210,8 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
 		const requestedTypes: ReferenceType[] =
 			params.types && params.types.length > 0 ? params.types : ['task', 'goal', 'file', 'folder'];
 
-		// Resolve room context from session.
-		// The room agent route uses a synthetic session ID "room:chat:<roomId>"
-		// which has no DB entry — extract the roomId from it directly.
 		const session = sessionManager.getSessionFromDB(params.sessionId);
-		let roomId = session?.context?.roomId;
-		if (!roomId && params.sessionId.startsWith('room:chat:')) {
-			roomId = params.sessionId.slice('room:chat:'.length);
-		}
+		const roomId = session?.context?.roomId;
 
 		// Empty query with no room context: nothing to search.
 		// Empty query WITH room context: return all tasks/goals for the room.
@@ -343,8 +330,7 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
 /**
  * Resolve the workspace path and optional room ID for a given session ID.
  *
- * Falls back to the configured workspace root when the session cannot be loaded,
- * so file/folder resolution still works in standalone (non-room) contexts.
+ * Falls back to the configured workspace root when the session cannot be loaded.
  */
 async function resolveSessionContext(
 	sessionId: string,
@@ -352,21 +338,6 @@ async function resolveSessionContext(
 ): Promise<{ workspacePath: string | undefined; roomId: string | null }> {
 	const agentSession = await deps.sessionManager.getSessionAsync(sessionId);
 	if (!agentSession) {
-		// The room agent route uses a synthetic session ID "room:chat:<roomId>"
-		// which has no DB entry — extract the roomId from it and look up the
-		// room's defaultPath rather than falling back to the global workspaceRoot.
-		if (sessionId.startsWith('room:chat:')) {
-			const roomId = sessionId.slice('room:chat:'.length);
-			if (deps.getRoomDefaultPath) {
-				const roomPath = deps.getRoomDefaultPath(roomId);
-				if (roomPath) {
-					return { workspacePath: roomPath, roomId };
-				}
-				// Room not found (e.g. deleted while a reference request was in-flight) — warn and fall back.
-				log.warn(`resolveSessionContext: room ${roomId} not found, falling back to workspaceRoot`);
-			}
-			return { workspacePath: deps.workspaceRoot, roomId };
-		}
 		return { workspacePath: deps.workspaceRoot, roomId: null };
 	}
 
@@ -386,13 +357,9 @@ async function resolveTask(
 	roomId: string | null,
 	deps: ReferenceHandlerDeps
 ): Promise<ResolvedReference | null> {
-	if (!roomId) {
-		return null;
-	}
-
 	// Support both UUID and short IDs (e.g. "t-42")
 	let task = deps.taskRepo.getTask(id);
-	if (!task) {
+	if (!task && roomId) {
 		task = deps.taskRepo.getTaskByShortId(roomId, id);
 	}
 
@@ -400,8 +367,10 @@ async function resolveTask(
 		return null;
 	}
 
-	// Confirm the task belongs to the session's room (prevent cross-room access via UUID)
-	if (task.roomId !== roomId) {
+	// When a room context is present, confirm the task belongs to that room
+	// (prevent cross-room access via UUID). Without room context, UUID lookup
+	// is allowed for global sessions (e.g. neo, lobby).
+	if (roomId && (task as { roomId?: string }).roomId !== roomId) {
 		return null;
 	}
 
@@ -417,13 +386,9 @@ function resolveGoal(
 	roomId: string | null,
 	deps: ReferenceHandlerDeps
 ): ResolvedReference | null {
-	if (!roomId) {
-		return null;
-	}
-
 	// Support both UUID and short IDs (e.g. "g-7")
 	let goal = deps.goalRepo.getGoal(id);
-	if (!goal) {
+	if (!goal && roomId) {
 		goal = deps.goalRepo.getGoalByShortId(roomId, id);
 	}
 
@@ -431,8 +396,10 @@ function resolveGoal(
 		return null;
 	}
 
-	// Confirm the goal belongs to the session's room
-	if (goal.roomId !== roomId) {
+	// When a room context is present, confirm the goal belongs to that room
+	// (prevent cross-room access via UUID). Without room context, UUID lookup
+	// is allowed for global sessions (e.g. neo, lobby).
+	if (roomId && (goal as { roomId?: string }).roomId !== roomId) {
 		return null;
 	}
 
