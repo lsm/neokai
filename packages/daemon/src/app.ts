@@ -59,7 +59,7 @@ export interface DaemonAppContext {
 	settingsManager: SettingsManager;
 	stateManager: StateManager;
 	transport: WebSocketServerTransport;
-	eventBus: Awaited<ReturnType<typeof createDaemonHub>>;
+	daemonHub: Awaited<ReturnType<typeof createDaemonHub>>;
 	/**
 	 * GitHub service instance (null if not configured)
 	 */
@@ -219,8 +219,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	messageHub.registerTransport(transport);
 
 	// Initialize DaemonHub (TypedHub-based event coordination)
-	const eventBus = createDaemonHub('daemon');
-	await eventBus.initialize();
+	const daemonHub = createDaemonHub('daemon');
+	await daemonHub.initialize();
 
 	// Initialize application-level MCP and Skills managers before SessionManager
 	// so AgentSession can inject skills into SDK query options.
@@ -271,7 +271,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		messageHub,
 		authManager,
 		settingsManager,
-		eventBus,
+		daemonHub,
 		{
 			defaultModel: config.defaultModel,
 			maxTokens: config.maxTokens,
@@ -297,7 +297,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		authManager,
 		settingsManager,
 		config,
-		eventBus, // FIX: Listens to events instead of being called directly
+		daemonHub, // FIX: Listens to events instead of being called directly
 		db
 	);
 
@@ -315,7 +315,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		if (apiKey) {
 			gitHubService = createGitHubService({
 				db,
-				daemonHub: eventBus,
+				daemonHub,
 				config,
 				apiKey,
 				githubToken: process.env.GITHUB_TOKEN, // Optional GitHub token for polling
@@ -341,7 +341,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	let taskAgentManagerForGithub: TaskAgentManager | null = null;
 	const spaceGitHubService = new SpaceGitHubService(
 		db.getDatabase(),
-		eventBus,
+		daemonHub,
 		(taskId, message) => {
 			if (!taskAgentManagerForGithub) {
 				throw new Error('TaskAgentManager is not ready for Space GitHub notification delivery');
@@ -364,7 +364,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		authManager,
 		settingsManager,
 		config,
-		daemonHub: eventBus,
+		daemonHub,
 		db,
 		gitHubService: gitHubService ?? undefined,
 		spaceGitHubService,
@@ -703,7 +703,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		settingsManager,
 		stateManager,
 		transport,
-		eventBus,
+		daemonHub,
 		gitHubService,
 		spaceGitHubService,
 		reactiveDb,

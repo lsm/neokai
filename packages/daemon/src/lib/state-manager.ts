@@ -64,7 +64,7 @@ export class StateManager {
 		private authManager: AuthManager,
 		private settingsManager: SettingsManager,
 		private config: Config,
-		private eventBus: DaemonHub,
+		private daemonHub: DaemonHub,
 		private db?: Database
 	) {
 		this.setupHandlers();
@@ -81,7 +81,7 @@ export class StateManager {
 	 */
 	private setupEventListeners(): void {
 		// API connection state updates from ErrorManager
-		this.eventBus.on('api.connection', (data) => {
+		this.daemonHub.on('api.connection', (data) => {
 			this.apiConnectionState = data as import('@neokai/shared').ApiConnectionState;
 			this.broadcastSystemChange().catch((err: unknown) => {
 				this.logger.error('Failed to broadcast system state after API connection change:', err);
@@ -89,7 +89,7 @@ export class StateManager {
 		});
 
 		// Session created - cache and broadcast
-		this.eventBus.on('session.created', async (data) => {
+		this.daemonHub.on('session.created', async (data) => {
 			const { session } = data;
 
 			// Cache session and initial processing state
@@ -103,7 +103,7 @@ export class StateManager {
 		});
 
 		// Session updated - update cache from event data and broadcast immediately
-		this.eventBus.on('session.updated', async (data) => {
+		this.daemonHub.on('session.updated', async (data) => {
 			const { sessionId, session, processingState } = data;
 
 			// Update caches from event data (decoupled - no fetching)
@@ -127,7 +127,7 @@ export class StateManager {
 		});
 
 		// Session deleted - clear cache and broadcast
-		this.eventBus.on('session.deleted', async (data) => {
+		this.daemonHub.on('session.deleted', async (data) => {
 			const { sessionId } = data;
 
 			// Clear caches
@@ -141,17 +141,17 @@ export class StateManager {
 		});
 
 		// Auth events
-		this.eventBus.on('auth.changed', async () => {
+		this.daemonHub.on('auth.changed', async () => {
 			await this.broadcastSystemChange();
 		});
 
 		// Settings events
-		this.eventBus.on('settings.updated', async () => {
+		this.daemonHub.on('settings.updated', async () => {
 			await this.broadcastSettingsChange();
 		});
 
 		// Commands updated - cache and broadcast
-		this.eventBus.on(
+		this.daemonHub.on(
 			'commands.updated',
 			async (data: { sessionId: string; commands: string[] }) => {
 				this.commandsCache.set(data.sessionId, data.commands);
@@ -163,7 +163,7 @@ export class StateManager {
 		// Context data is persisted in session.metadata.lastContextInfo (by ContextTracker),
 		// so no separate cache needed here. The dedicated event provides a fast path
 		// for the frontend to update the context bar immediately.
-		this.eventBus.on(
+		this.daemonHub.on(
 			'context.updated',
 			async (data: { sessionId: string; contextInfo: ContextInfo }) => {
 				// Publish dedicated context.updated event (fast path for UI)
@@ -178,7 +178,7 @@ export class StateManager {
 
 		// Session error events - update error cache and broadcast via state.session
 		// This folds the separate session.error event into the unified session state
-		this.eventBus.on(
+		this.daemonHub.on(
 			'session.error',
 			async (data: { sessionId: string; error: string; details?: unknown }) => {
 				// Update error cache
@@ -194,7 +194,7 @@ export class StateManager {
 		);
 
 		// Clear error when session becomes idle or processing continues successfully
-		this.eventBus.on('session.errorClear', async (data: { sessionId: string }) => {
+		this.daemonHub.on('session.errorClear', async (data: { sessionId: string }) => {
 			this.errorCache.set(data.sessionId, null);
 			await this.broadcastSessionStateChange(data.sessionId);
 		});
@@ -209,40 +209,40 @@ export class StateManager {
 		// =====================================================================
 
 		// Task status changes — main real-time sync event
-		this.eventBus.on('room.task.update', (data) => {
+		this.daemonHub.on('room.task.update', (data) => {
 			this.messageHub.event('room.task.update', data, {
 				channel: data.sessionId, // 'room:${roomId}'
 			});
 		});
 
 		// Full room overview (sessions + tasks) — sent on join and after broad changes
-		this.eventBus.on('room.overview', (data) => {
+		this.daemonHub.on('room.overview', (data) => {
 			this.messageHub.event('room.overview', data, {
 				channel: data.sessionId, // 'room:${roomId}'
 			});
 		});
 
 		// Runtime state changes (running/paused/stopped)
-		this.eventBus.on('room.runtime.stateChanged', (data) => {
+		this.daemonHub.on('room.runtime.stateChanged', (data) => {
 			this.messageHub.event('room.runtime.stateChanged', data, {
 				channel: data.sessionId, // 'room:${roomId}'
 			});
 		});
 
 		// Goal lifecycle events
-		this.eventBus.on('goal.created', (data) => {
+		this.daemonHub.on('goal.created', (data) => {
 			this.messageHub.event('goal.created', data, {
 				channel: data.sessionId, // 'room:${roomId}'
 			});
 		});
 
-		this.eventBus.on('goal.completed', (data) => {
+		this.daemonHub.on('goal.completed', (data) => {
 			this.messageHub.event('goal.completed', data, {
 				channel: data.sessionId, // 'room:${roomId}'
 			});
 		});
 
-		this.eventBus.on('goal.progressUpdated', (data) => {
+		this.daemonHub.on('goal.progressUpdated', (data) => {
 			this.messageHub.event('goal.progressUpdated', data, {
 				channel: data.sessionId, // 'room:${roomId}'
 			});
@@ -265,120 +265,120 @@ export class StateManager {
 		// =====================================================================
 
 		// Space lifecycle events (global channel)
-		this.eventBus.on('space.created', (data) => {
+		this.daemonHub.on('space.created', (data) => {
 			this.messageHub.event('space.created', data, {
 				channel: data.sessionId, // 'global'
 			});
 		});
 
-		this.eventBus.on('space.updated', (data) => {
+		this.daemonHub.on('space.updated', (data) => {
 			this.messageHub.event('space.updated', data, {
 				channel: data.sessionId, // 'global'
 			});
 		});
 
-		this.eventBus.on('space.archived', (data) => {
+		this.daemonHub.on('space.archived', (data) => {
 			this.messageHub.event('space.archived', data, {
 				channel: data.sessionId, // 'global'
 			});
 		});
 
-		this.eventBus.on('space.deleted', (data) => {
+		this.daemonHub.on('space.deleted', (data) => {
 			this.messageHub.event('space.deleted', data, {
 				channel: data.sessionId, // 'global'
 			});
 		});
 
 		// Space task events (global channel)
-		this.eventBus.on('space.task.created', (data) => {
+		this.daemonHub.on('space.task.created', (data) => {
 			this.messageHub.event('space.task.created', data, {
 				channel: data.sessionId, // 'global'
 			});
 		});
 
-		this.eventBus.on('space.task.updated', (data) => {
+		this.daemonHub.on('space.task.updated', (data) => {
 			this.messageHub.event('space.task.updated', data, {
 				channel: data.sessionId, // 'global'
 			});
 		});
 
 		// Space workflow run events (global channel)
-		this.eventBus.on('space.workflowRun.created', (data) => {
+		this.daemonHub.on('space.workflowRun.created', (data) => {
 			this.messageHub.event('space.workflowRun.created', data, {
 				channel: data.sessionId, // 'global'
 			});
 		});
 
-		this.eventBus.on('space.workflowRun.updated', (data) => {
+		this.daemonHub.on('space.workflowRun.updated', (data) => {
 			this.messageHub.event('space.workflowRun.updated', data, {
 				channel: data.sessionId, // 'global'
 			});
 		});
 
-		this.eventBus.on('space.gateData.updated', (data) => {
+		this.daemonHub.on('space.gateData.updated', (data) => {
 			this.messageHub.event('space.gateData.updated', data, {
 				channel: data.sessionId, // 'global'
 			});
 		});
 
 		// Space agent events (space-scoped channel: 'space:${spaceId}')
-		this.eventBus.on('spaceAgent.created', (data) => {
+		this.daemonHub.on('spaceAgent.created', (data) => {
 			this.messageHub.event('spaceAgent.created', data, {
 				channel: data.sessionId, // 'space:${spaceId}'
 			});
 		});
 
-		this.eventBus.on('spaceAgent.updated', (data) => {
+		this.daemonHub.on('spaceAgent.updated', (data) => {
 			this.messageHub.event('spaceAgent.updated', data, {
 				channel: data.sessionId, // 'space:${spaceId}'
 			});
 		});
 
-		this.eventBus.on('spaceAgent.deleted', (data) => {
+		this.daemonHub.on('spaceAgent.deleted', (data) => {
 			this.messageHub.event('spaceAgent.deleted', data, {
 				channel: data.sessionId, // 'space:${spaceId}'
 			});
 		});
 
 		// Space session group events (space-scoped channel: 'space:${spaceId}')
-		this.eventBus.on('spaceSessionGroup.created', (data) => {
+		this.daemonHub.on('spaceSessionGroup.created', (data) => {
 			this.messageHub.event('spaceSessionGroup.created', data, {
 				channel: data.sessionId, // 'space:${spaceId}'
 			});
 		});
 
-		this.eventBus.on('spaceSessionGroup.memberAdded', (data) => {
+		this.daemonHub.on('spaceSessionGroup.memberAdded', (data) => {
 			this.messageHub.event('spaceSessionGroup.memberAdded', data, {
 				channel: data.sessionId, // 'space:${spaceId}'
 			});
 		});
 
-		this.eventBus.on('spaceSessionGroup.memberUpdated', (data) => {
+		this.daemonHub.on('spaceSessionGroup.memberUpdated', (data) => {
 			this.messageHub.event('spaceSessionGroup.memberUpdated', data, {
 				channel: data.sessionId, // 'space:${spaceId}'
 			});
 		});
 
-		this.eventBus.on('spaceSessionGroup.deleted', (data) => {
+		this.daemonHub.on('spaceSessionGroup.deleted', (data) => {
 			this.messageHub.event('spaceSessionGroup.deleted', data, {
 				channel: data.sessionId, // 'space:${spaceId}'
 			});
 		});
 
 		// Space workflow definition events (global channel)
-		this.eventBus.on('spaceWorkflow.created', (data) => {
+		this.daemonHub.on('spaceWorkflow.created', (data) => {
 			this.messageHub.event('spaceWorkflow.created', data, {
 				channel: data.sessionId, // 'global'
 			});
 		});
 
-		this.eventBus.on('spaceWorkflow.updated', (data) => {
+		this.daemonHub.on('spaceWorkflow.updated', (data) => {
 			this.messageHub.event('spaceWorkflow.updated', data, {
 				channel: data.sessionId, // 'global'
 			});
 		});
 
-		this.eventBus.on('spaceWorkflow.deleted', (data) => {
+		this.daemonHub.on('spaceWorkflow.deleted', (data) => {
 			this.messageHub.event('spaceWorkflow.deleted', data, {
 				channel: data.sessionId, // 'global'
 			});

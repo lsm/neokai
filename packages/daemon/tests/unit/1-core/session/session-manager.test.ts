@@ -23,7 +23,7 @@ describe('SessionManager', () => {
 	let mockMessageHub: MessageHub;
 	let mockAuthManager: AuthManager;
 	let mockSettingsManager: SettingsManager;
-	let mockEventBus: DaemonHub;
+	let mockDaemonHub: DaemonHub;
 	let mockJobQueue: JobQueueRepository;
 	let mockJobProcessor: JobQueueProcessor;
 	let config: Record<string, unknown>;
@@ -98,7 +98,7 @@ describe('SessionManager', () => {
 		} as unknown as SettingsManager;
 
 		// Event bus mocks - capture handlers for testing
-		mockEventBus = {
+		mockDaemonHub = {
 			on: mock((event: string, handler: (...args: unknown[]) => unknown) => {
 				eventHandlers.set(event, handler);
 				return () => eventHandlers.delete(event);
@@ -134,7 +134,7 @@ describe('SessionManager', () => {
 			mockMessageHub,
 			mockAuthManager,
 			mockSettingsManager,
-			mockEventBus,
+			mockDaemonHub,
 			config as Parameters<typeof SessionManager>[5],
 			mockJobQueue,
 			mockJobProcessor
@@ -156,7 +156,7 @@ describe('SessionManager', () => {
 		});
 
 		it('should setup event subscriptions', () => {
-			expect(mockEventBus.on).toHaveBeenCalledWith('message.persisted', expect.any(Function));
+			expect(mockDaemonHub.on).toHaveBeenCalledWith('message.persisted', expect.any(Function));
 		});
 
 		it('should have no active sessions initially', () => {
@@ -374,7 +374,7 @@ describe('SessionManager', () => {
 		it('should emit session.updated event', async () => {
 			await sessionManager.updateSession('test-id', { title: 'Updated' });
 
-			expect(mockEventBus.emit).toHaveBeenCalledWith(
+			expect(mockDaemonHub.emit).toHaveBeenCalledWith(
 				'session.updated',
 				expect.objectContaining({
 					sessionId: 'test-id',
@@ -640,10 +640,10 @@ describe('SessionManager', () => {
 			expect(mockDb.deleteMessagesAfter).not.toHaveBeenCalled();
 			expect(mockDb.deleteMessagesAtAndAfter).not.toHaveBeenCalled();
 			expect(cleanupSpy).toHaveBeenCalled();
-			expect(mockEventBus.emit).toHaveBeenCalledWith('session.errorClear', {
+			expect(mockDaemonHub.emit).toHaveBeenCalledWith('session.errorClear', {
 				sessionId: 'test-id',
 			});
-			expect(mockEventBus.emit).toHaveBeenCalledWith('session.reset', {
+			expect(mockDaemonHub.emit).toHaveBeenCalledWith('session.reset', {
 				sessionId: 'test-id',
 				session: expect.objectContaining({ id: 'test-id' }),
 				restartQuery: false,
@@ -715,7 +715,7 @@ describe('SessionManager', () => {
 
 				expect(result).toEqual({ success: true });
 				expect(freshSession).not.toBe(oldSession);
-				expect(mockEventBus.emit).toHaveBeenCalledWith('session.reset', {
+				expect(mockDaemonHub.emit).toHaveBeenCalledWith('session.reset', {
 					sessionId: 'test-id',
 					session: expect.objectContaining({ id: 'test-id' }),
 					restartQuery: true,
@@ -849,7 +849,7 @@ describe('SessionManager', () => {
 				});
 
 				// Should not call title generation
-				expect(mockEventBus.emit).not.toHaveBeenCalledWith(
+				expect(mockDaemonHub.emit).not.toHaveBeenCalledWith(
 					'session.updated',
 					expect.objectContaining({ source: 'title-generated' })
 				);

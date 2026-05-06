@@ -23,7 +23,7 @@ describe('StateManager', () => {
 	let mockAuthManager: AuthManager;
 	let mockSettingsManager: SettingsManager;
 	let mockConfig: Config;
-	let mockEventBus: DaemonHub;
+	let mockDaemonHub: DaemonHub;
 	let eventHandlers: Map<string, Function>;
 	let requestHandlers: Map<string, Function>;
 
@@ -74,7 +74,7 @@ describe('StateManager', () => {
 		} as unknown as Config;
 
 		// EventBus mock
-		mockEventBus = {
+		mockDaemonHub = {
 			on: mock((event: string, handler: Function) => {
 				eventHandlers.set(event, handler);
 				return () => {};
@@ -88,7 +88,7 @@ describe('StateManager', () => {
 			mockAuthManager,
 			mockSettingsManager,
 			mockConfig,
-			mockEventBus
+			mockDaemonHub
 		);
 	});
 
@@ -691,7 +691,7 @@ describe('StateManager', () => {
 			});
 
 			describe('goal.updated', () => {
-				it('is not forwarded via eventBus (removed in PR #695 — goal.updated is no longer emitted by goal RPC handlers)', () => {
+				it('is not forwarded via daemonHub (removed in PR #695 — goal.updated is no longer emitted by goal RPC handlers)', () => {
 					// goal.updated was removed when emitGoalUpdated was dropped from goal handlers.
 					// Verify no handler is registered for this event so CI fails loudly if it
 					// is re-introduced without a corresponding test update.

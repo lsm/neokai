@@ -1,14 +1,22 @@
 /**
  * DaemonHub - Type-safe event hub for daemon internal coordination
  *
- * Replaces EventBus with TypedHub for:
+ * Replaces the legacy `EventBus` (deleted from `packages/shared/src/event-bus.ts`)
+ * with a `TypedHub<DaemonEventMap>` over `MessageHub` for:
  * - Async-everywhere design (future cluster-ready)
  * - Same type-safe API
  * - Session-scoped subscriptions with O(1) lookup
  *
  * EVENT NAMING: Uses dots (.) instead of colons (:)
- * - EventBus: 'session:created'
+ * - Legacy EventBus: 'session:created'
  * - DaemonHub: 'session.created'
+ *
+ * NOTE: `DaemonHub` is the canonical daemon-internal event entry point today.
+ * The forthcoming `InternalEventBus` / `InternalCommandBus` / `InternalQueryBus`
+ * façades (see `docs/plans/internal-event-command-query-architecture.md`) will
+ * wrap this hub and split fact/command/query semantics. New production code
+ * must depend on `DaemonHub` (not the legacy `EventBus`) and should not
+ * introduce a new ad-hoc bus.
  */
 
 import { TypedHub, type BaseEventData } from '@neokai/shared';

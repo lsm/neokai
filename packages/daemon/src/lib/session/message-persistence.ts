@@ -52,7 +52,7 @@ export class MessagePersistence {
 		private sessionCache: SessionCache,
 		private db: Database,
 		private messageHub: MessageHub,
-		private eventBus: DaemonHub,
+		private daemonHub: DaemonHub,
 		private referenceResolver?: ReferenceResolver
 	) {
 		this.logger = new Logger('MessagePersistence');
@@ -235,7 +235,7 @@ export class MessagePersistence {
 			}
 
 			// Broadcast status update for queue-aware UI
-			await this.eventBus.emit('messages.statusChanged', {
+			await this.daemonHub.emit('messages.statusChanged', {
 				sessionId,
 				messageIds: [dbMessageId],
 				status: sendStatus,
@@ -252,7 +252,7 @@ export class MessagePersistence {
 			// Query start is handled above synchronously; the event remains for title
 			// generation, draft clearing, and legacy subscribers.
 			if (shouldDispatchToQuery) {
-				await this.eventBus.emit('message.persisted', {
+				await this.daemonHub.emit('message.persisted', {
 					sessionId,
 					messageId,
 					messageContent,

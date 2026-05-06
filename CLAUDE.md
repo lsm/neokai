@@ -146,6 +146,14 @@ Three-layer architecture:
 
 Initialization order matters: Router → MessageHub, then Transport → MessageHub.
 
+#### Daemon-internal events: use DaemonHub, not the legacy EventBus
+
+For daemon-internal pub/sub between services (SessionManager, StateManager, ErrorManager, lifecycle, etc.) use `DaemonHub` (`packages/daemon/src/lib/daemon-hub.ts`), which is a `TypedHub<DaemonEventMap>` over `MessageHub`.
+
+- **Do**: depend on `DaemonHub` (typed `emit`/`on`) for daemon-side events. Variables and constructor parameters typed as `DaemonHub` should be named `daemonHub`, never `eventBus`.
+- **Don't**: import or instantiate the legacy `EventBus` from `packages/shared/src/event-bus.ts`. That class has been removed; references in older code/comments are historical.
+- **Coming**: `InternalEventBus` / `InternalCommandBus` / `InternalQueryBus` façades will land in subsequent PRs (see `docs/plans/internal-event-command-query-architecture.md`). Until those exist, `DaemonHub` is the canonical entry point. New production code should not introduce a new ad-hoc bus.
+
 ### Skills System
 
 The Skills system extends agent capabilities with slash commands, plugins, and MCP servers. Skills are configured globally at the application level and are available to all sessions. Room-scoped skill override tables are retained in the schema for legacy database compatibility.

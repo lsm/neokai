@@ -13,7 +13,7 @@ import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 describe('ErrorManager', () => {
 	let errorManager: ErrorManager;
 	let mockMessageHub: MessageHub;
-	let mockEventBus: DaemonHub;
+	let mockDaemonHub: DaemonHub;
 	let publishSpy: ReturnType<typeof mock>;
 	let emitSpy: ReturnType<typeof mock>;
 
@@ -29,13 +29,13 @@ describe('ErrorManager', () => {
 
 		// Create mock DaemonHub (errors now emit via DaemonHub, not direct publish)
 		emitSpy = mock(async () => {});
-		mockEventBus = {
+		mockDaemonHub = {
 			emit: emitSpy,
 			on: mock(() => {}),
 			off: mock(() => {}),
 		} as unknown as DaemonHub;
 
-		errorManager = new ErrorManager(mockMessageHub, mockEventBus);
+		errorManager = new ErrorManager(mockMessageHub, mockDaemonHub);
 	});
 
 	describe('createError', () => {

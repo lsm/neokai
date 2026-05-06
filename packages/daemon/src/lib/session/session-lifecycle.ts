@@ -72,7 +72,7 @@ export class SessionLifecycle {
 		private db: Database,
 		private worktreeManager: WorktreeManager,
 		private sessionCache: SessionCache,
-		private eventBus: DaemonHub,
+		private daemonHub: DaemonHub,
 		private messageHub: MessageHub,
 		private config: SessionLifecycleConfig,
 		private toolsConfigManager: ToolsConfigManager,
@@ -269,7 +269,7 @@ export class SessionLifecycle {
 		this.sessionCache.set(sessionId, agentSession);
 
 		// Emit event via EventBus (StateManager will handle publishing to MessageHub)
-		await this.eventBus.emit('session.created', { sessionId, session });
+		await this.daemonHub.emit('session.created', { sessionId, session });
 
 		return sessionId;
 	}
@@ -410,7 +410,7 @@ export class SessionLifecycle {
 		agentSession.updateMetadata(updatedSession);
 
 		// Emit event for state synchronization
-		await this.eventBus.emit('session.updated', {
+		await this.daemonHub.emit('session.updated', {
 			sessionId,
 			session: updatedSession,
 		});
@@ -514,7 +514,7 @@ export class SessionLifecycle {
 		agentSession.updateMetadata(updatedSession);
 
 		// Emit event for state synchronization
-		await this.eventBus.emit('session.updated', {
+		await this.daemonHub.emit('session.updated', {
 			sessionId,
 			session: updatedSession,
 		});
@@ -535,7 +535,7 @@ export class SessionLifecycle {
 		}
 
 		// FIX: Emit event via EventBus - include data for decoupled state management
-		await this.eventBus.emit('session.updated', {
+		await this.daemonHub.emit('session.updated', {
 			sessionId,
 			source: 'update',
 			session: updates,
@@ -768,7 +768,7 @@ export class SessionLifecycle {
 					{ sessionId, reason: 'deleted' },
 					{ channel: 'global' }
 				);
-				await this.eventBus.emit('session.deleted', { sessionId });
+				await this.daemonHub.emit('session.deleted', { sessionId });
 				completedPhases.push('broadcast');
 			} catch (error) {
 				this.logger.error(`[SessionLifecycle] deleteResources: Failed to broadcast:`, error);
@@ -918,7 +918,7 @@ export class SessionLifecycle {
 			agentSession.updateMetadata(updatedSession);
 
 			// Broadcast updates - include session data for decoupled state management
-			await this.eventBus.emit('session.updated', {
+			await this.daemonHub.emit('session.updated', {
 				sessionId,
 				source: 'title-generated',
 				session: updatedSession,
@@ -944,7 +944,7 @@ export class SessionLifecycle {
 			agentSession.updateMetadata(fallbackSession);
 
 			// Include session data for decoupled state management
-			await this.eventBus.emit('session.updated', {
+			await this.daemonHub.emit('session.updated', {
 				sessionId,
 				source: 'title-generated',
 				session: fallbackSession,
