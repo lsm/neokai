@@ -1109,7 +1109,7 @@ describe('QueryOptionsBuilder', () => {
 				expect(result).toContain('Task');
 			});
 
-			it('appends missing agent tools to explicit array', () => {
+			it('appends missing agent tools to explicit array for non-native providers', () => {
 				const result = ensureAgentTools(
 					['Read', 'Write'],
 					{ Coordinator: { description: 'c', prompt: 'p' } },
@@ -1119,7 +1119,7 @@ describe('QueryOptionsBuilder', () => {
 				expect(result).toEqual(['Read', 'Write', 'Task', 'TaskOutput', 'TaskStop']);
 			});
 
-			it('does not duplicate existing agent tools in explicit array', () => {
+			it('does not duplicate existing agent tools in explicit array for non-native providers', () => {
 				const result = ensureAgentTools(
 					['Read', 'Task', 'TaskOutput', 'TaskStop'],
 					{ Coordinator: { description: 'c', prompt: 'p' } },
@@ -1127,6 +1127,26 @@ describe('QueryOptionsBuilder', () => {
 					'general'
 				);
 				expect(result).toEqual(['Read', 'Task', 'TaskOutput', 'TaskStop']);
+			});
+
+			it('preserves explicit array unchanged for Anthropic provider', () => {
+				const result = ensureAgentTools(
+					['Read', 'Write'],
+					{ Coordinator: { description: 'c', prompt: 'p' } },
+					'anthropic',
+					'general'
+				);
+				expect(result).toEqual(['Read', 'Write']);
+			});
+
+			it('preserves explicit array unchanged for anthropic-copilot provider', () => {
+				const result = ensureAgentTools(
+					['Read', 'Write'],
+					{ Coordinator: { description: 'c', prompt: 'p' } },
+					'anthropic-copilot',
+					'general'
+				);
+				expect(result).toEqual(['Read', 'Write']);
 			});
 
 			it('leaves space_chat sessions untouched even with agents', () => {

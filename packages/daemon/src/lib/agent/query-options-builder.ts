@@ -158,6 +158,9 @@ export function ensureAgentTools(
 	}
 
 	if (Array.isArray(tools)) {
+		if (NATIVE_AGENT_TOOL_PROVIDERS.includes(providerId)) {
+			return tools;
+		}
 		const missing = AGENT_INVOCATION_TOOLS.filter((t) => !(tools as string[]).includes(t));
 		if (missing.length > 0) {
 			return [...(tools as string[]), ...missing];
