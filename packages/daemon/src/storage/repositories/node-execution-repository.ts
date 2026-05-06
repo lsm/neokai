@@ -20,10 +20,14 @@ import type {
 	CreateNodeExecutionParams,
 	UpdateNodeExecutionParams,
 } from '@neokai/shared';
+import type { ReactiveDatabase } from '../reactive-database';
 import type { SQLiteValue } from '../types';
 
 export class NodeExecutionRepository {
-	constructor(private db: BunDatabase) {}
+	constructor(
+		private db: BunDatabase,
+		private reactiveDb?: ReactiveDatabase
+	) {}
 
 	/**
 	 * Create a new node execution record.
@@ -57,6 +61,7 @@ export class NodeExecutionRepository {
 				now
 			);
 
+		this.reactiveDb?.notifyChange('node_executions');
 		return this.getById(id)!;
 	}
 
@@ -100,7 +105,10 @@ export class NodeExecutionRepository {
 
 		// If the insert was ignored (duplicate), return the existing record.
 		const inserted = this.getById(id);
-		if (inserted) return inserted;
+		if (inserted) {
+			this.reactiveDb?.notifyChange('node_executions');
+			return inserted;
+		}
 
 		// Duplicate — find the existing record by unique key.
 		const existing = this.db
@@ -213,6 +221,7 @@ export class NodeExecutionRepository {
 			this.db
 				.prepare(`UPDATE node_executions SET ${fields.join(', ')} WHERE id = ?`)
 				.run(...values);
+			this.reactiveDb?.notifyChange('node_executions');
 		}
 
 		return this.getById(id);
@@ -238,6 +247,9 @@ export class NodeExecutionRepository {
 	 */
 	delete(id: string): boolean {
 		const result = this.db.prepare(`DELETE FROM node_executions WHERE id = ?`).run(id);
+		if (result.changes > 0) {
+			this.reactiveDb?.notifyChange('node_executions');
+		}
 		return result.changes > 0;
 	}
 
@@ -282,7 +294,12 @@ export class NodeExecutionRepository {
 	 * Delete all node executions for a workflow run
 	 */
 	deleteByWorkflowRun(workflowRunId: string): void {
-		this.db.prepare(`DELETE FROM node_executions WHERE workflow_run_id = ?`).run(workflowRunId);
+		const result = this.db
+			.prepare(`DELETE FROM node_executions WHERE workflow_run_id = ?`)
+			.run(workflowRunId);
+		if (result.changes > 0) {
+			this.reactiveDb?.notifyChange('node_executions');
+		}
 	}
 
 	/**

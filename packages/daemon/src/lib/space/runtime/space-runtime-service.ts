@@ -140,7 +140,8 @@ export class SpaceRuntimeService {
 	constructor(private readonly config: SpaceRuntimeServiceConfig) {
 		// Ensure nodeExecutionRepo is available — create from db if not provided.
 		this.nodeExecutionRepo =
-			this.config.nodeExecutionRepo ?? new NodeExecutionRepository(this.config.db);
+			this.config.nodeExecutionRepo ??
+			new NodeExecutionRepository(this.config.db, this.config.reactiveDb);
 		this.runtime = new SpaceRuntime({
 			...config,
 			nodeExecutionRepo: this.nodeExecutionRepo,

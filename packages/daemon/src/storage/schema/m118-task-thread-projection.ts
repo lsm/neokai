@@ -28,6 +28,8 @@
  *     workflow run / agent attribution changes.
  *   - space_tasks DELETE → cascading clear.
  *   - node_executions DELETE → clear node-leg projection rows.
+ *   - space_agents UPDATE OF name → refresh node-agent labels for projection
+ *     rows owned by executions of the renamed agent.
  *
  * The projection key `(task_id, source, source_id)` is unique so the same
  * source row can never produce duplicates, even if a task's session
@@ -107,7 +109,13 @@ function iterationExpr(jsonContentExpr: string): string {
 /**
  * Build the `is_renderable` boolean from the SDK message JSON.
  *
- * Mirrors the predicate inside the previous compact-feed CTE:
+ * Mirrors the predicate inside the previous compact-feed CTE with one
+ * alignment fix: user rows are non-renderable only when the content
+ * array contains **exclusively** tool_result blocks (no visible text).
+ * The original CTE inadvertently marked as non-renderable any user row
+ * that contained even a single tool_result block, including rows with
+ * mixed content (tool_result + text). That divergence is now corrected.
+ *
  *   - User rows whose content is exclusively tool_result blocks are non-
  *     renderable (they render as null in compact UI).
  *   - Assistant rows whose content array exists but lacks any tool_use,
@@ -347,6 +355,7 @@ const TRIGGER_NAMES: ReadonlyArray<string> = [
 	'trg_ttm_after_update_node_exec',
 	'trg_ttm_after_insert_node_exec',
 	'trg_ttm_after_delete_node_exec',
+	'trg_ttm_after_update_space_agent',
 ];
 
 /** Map each trigger DDL to the table it's attached to so we can skip
@@ -482,10 +491,18 @@ END
  * linkage may have moved. Drop every projection row keyed on the OLD task
  * id, then re-project from `sdk_messages` (orchestration leg + node-agent
  * leg) and `space_github_events`.
+ *
+ * The `WHEN` clause limits firing to the columns that affect projection
+ * content (session linkage, run linkage, title). Routine metadata changes
+ * such as `status` or `description` updates are ignored, avoiding a full
+ * re-projection on long-running tasks.
  */
 const TRG_AFTER_UPDATE_SPACE_TASK = `
 CREATE TRIGGER trg_ttm_after_update_space_task
 AFTER UPDATE ON space_tasks
+WHEN COALESCE(OLD.task_agent_session_id, '') IS NOT COALESCE(NEW.task_agent_session_id, '')
+   OR COALESCE(OLD.workflow_run_id, '') IS NOT COALESCE(NEW.workflow_run_id, '')
+   OR OLD.title IS NOT NEW.title
 BEGIN
   DELETE FROM task_thread_messages WHERE task_id = OLD.id;
 
@@ -669,8 +686,79 @@ const TRG_AFTER_DELETE_NODE_EXEC = `
 CREATE TRIGGER trg_ttm_after_delete_node_exec
 AFTER DELETE ON node_executions
 BEGIN
+  -- Step 1: drop projection rows that were attributed to this execution.
+  --
+  -- The projection picks one node_execution as the owner of any given
+  -- (task, sdk message) pair (first insert wins via the unique constraint),
+  -- so the rows tied to OLD.id may include messages whose underlying session
+  -- is still referenced by another live node_execution. We tear down first…
   DELETE FROM task_thread_messages
   WHERE source = 'sdk' AND node_execution_id = OLD.id;
+
+  -- Step 2: …then re-project from any surviving node_execution that still
+  -- references the same agent_session_id.
+  --
+  -- Sessions can be reused across executions: TaskAgentManager.createSubSession()
+  -- creates a fresh node_executions row pointing at an existing
+  -- agent_session_id whenever a named agent is re-activated within the same
+  -- task. Without this re-projection step, deleting one execution would orphan
+  -- still-valid messages even though another execution for that session
+  -- remains. The INSERT OR IGNORE guards against races and the WHEN clause
+  -- avoids touching the projection when there's no session to re-project from.
+  ${buildNodeAgentInsert({
+		tableSource: 'sdk_messages sm',
+		sessionRef: 'OLD.agent_session_id',
+		sdkShape: {
+			taskId: '',
+			kind: '',
+			role: '',
+			label: '',
+			title: '',
+			nodeExecId: '',
+			sessionId: 'sm.session_id',
+			messageId: 'sm.id',
+			messageType: 'sm.message_type',
+			content: 'sm.sdk_message',
+			origin: 'sm.origin',
+			timestamp: 'sm.timestamp',
+		},
+	})}
+  WHERE OLD.agent_session_id IS NOT NULL
+    AND ne.id != OLD.id
+    AND sm.session_id = OLD.agent_session_id
+    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'));
+END
+`.trim();
+
+/**
+ * `space_agents` UPDATE OF name — keep node-agent labels in sync with the
+ * (mutable) agent's display name. The projection materialises
+ * `COALESCE(sa.name, ne.agent_name, 'agent')` at write time, so without this
+ * trigger an existing projection row keeps its stale label after
+ * `SpaceAgentRepository.update({ name })` mutates the underlying agent.
+ *
+ * Scoped via `OF name` so updates to other columns are no-ops on the
+ * projection. The `WHEN` clause guards against UPDATEs that don't actually
+ * change the name (SQLite still fires the trigger otherwise). Only
+ * `kind = 'node_agent'` rows reference `space_agents`; other kinds use a
+ * literal label and are untouched here.
+ */
+const TRG_AFTER_UPDATE_SPACE_AGENT = `
+CREATE TRIGGER trg_ttm_after_update_space_agent
+AFTER UPDATE OF name ON space_agents
+WHEN COALESCE(OLD.name, '') IS NOT COALESCE(NEW.name, '')
+BEGIN
+  UPDATE task_thread_messages
+  SET label = COALESCE(
+    NEW.name,
+    (SELECT agent_name FROM node_executions WHERE id = task_thread_messages.node_execution_id),
+    'agent'
+  )
+  WHERE source = 'sdk'
+    AND kind = 'node_agent'
+    AND node_execution_id IN (
+      SELECT id FROM node_executions WHERE agent_id = NEW.id
+    );
 END
 `.trim();
 
@@ -717,6 +805,11 @@ const TRIGGER_DDL: ReadonlyArray<TriggerEntry> = [
 		name: 'trg_ttm_after_delete_node_exec',
 		attachedTo: 'node_executions',
 		ddl: TRG_AFTER_DELETE_NODE_EXEC,
+	},
+	{
+		name: 'trg_ttm_after_update_space_agent',
+		attachedTo: 'space_agents',
+		ddl: TRG_AFTER_UPDATE_SPACE_AGENT,
 	},
 ];
 

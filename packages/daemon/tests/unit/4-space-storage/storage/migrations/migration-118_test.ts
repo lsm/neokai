@@ -248,6 +248,7 @@ describe('Migration 118 — task_thread_messages projection', () => {
 		expect(triggerExists(db, 'trg_ttm_after_insert_node_exec')).toBe(true);
 		expect(triggerExists(db, 'trg_ttm_after_update_node_exec')).toBe(true);
 		expect(triggerExists(db, 'trg_ttm_after_delete_node_exec')).toBe(true);
+		expect(triggerExists(db, 'trg_ttm_after_update_space_agent')).toBe(true);
 	});
 
 	test('skips trigger creation when space_tasks is missing (partial schema)', () => {
@@ -489,6 +490,103 @@ describe('Migration 118 — task_thread_messages projection', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// node_executions DELETE — re-project when session is shared
+	// -------------------------------------------------------------------------
+
+	test('node_executions DELETE re-projects rows from a surviving execution sharing the session', () => {
+		const orchSessionId = 'orch-session-share';
+		const sharedSessionId = 'shared-node-session';
+		const workflowRunId = 'wr-share-1';
+		const taskId = 'task-share-1';
+
+		insertSession(db, orchSessionId, 'space_task_agent', isoNow);
+		insertSession(db, sharedSessionId, 'space_task_agent', isoNow);
+		insertSpaceTask(db, {
+			id: taskId,
+			title: 'Reused-session task',
+			taskAgentSessionId: orchSessionId,
+			workflowRunId,
+			now,
+		});
+		runMigration118(db);
+
+		// First execution claims the session and projects messages.
+		// TaskAgentManager re-uses the same agent_session_id across executions
+		// for a named agent — see task-agent-manager.ts createSubSession reuse
+		// path. We model that here with two node_executions pointing at the same
+		// session id.
+		db.exec(`
+			INSERT INTO node_executions (
+				id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+				agent_session_id, status, result, created_at, started_at,
+				completed_at, updated_at
+			) VALUES
+			('ne-1', '${workflowRunId}', 'node-1', 'coder', NULL,
+				'${sharedSessionId}', 'done', NULL, ${now}, ${now}, ${now}, ${now}),
+			('ne-2', '${workflowRunId}', 'node-1', 'coder', NULL,
+				'${sharedSessionId}', 'in_progress', NULL, ${now + 1}, ${now + 1}, NULL, ${now + 1})
+		`);
+
+		insertSdkMessage(db, { id: 'shared-msg-1', sessionId: sharedSessionId, isoNow });
+		insertSdkMessage(db, { id: 'shared-msg-2', sessionId: sharedSessionId, isoNow });
+
+		// First-insert wins on (task_id, source, source_id) — both rows are
+		// attributed to whichever node_execution was created first (ne-1).
+		const beforeDelete = readProjection(db, taskId);
+		expect(beforeDelete).toHaveLength(2);
+		expect(beforeDelete.every((r) => r.node_execution_id === 'ne-1')).toBe(true);
+
+		// Delete ne-1 — naive trigger would orphan both messages even though
+		// ne-2 still references the same session. With the re-projection step,
+		// the rows survive but are now attributed to ne-2.
+		db.exec(`DELETE FROM node_executions WHERE id = 'ne-1'`);
+
+		const afterDelete = readProjection(db, taskId);
+		expect(afterDelete).toHaveLength(2);
+		expect(afterDelete.every((r) => r.node_execution_id === 'ne-2')).toBe(true);
+		const sourceIds = afterDelete.map((r) => r.source_id).sort();
+		expect(sourceIds).toEqual(['shared-msg-1', 'shared-msg-2']);
+	});
+
+	test('node_executions DELETE drops rows when no surviving execution shares the session', () => {
+		const orchSessionId = 'orch-session-solo';
+		const soloSessionId = 'solo-node-session';
+		const workflowRunId = 'wr-solo-1';
+		const taskId = 'task-solo-1';
+
+		insertSession(db, orchSessionId, 'space_task_agent', isoNow);
+		insertSession(db, soloSessionId, 'space_task_agent', isoNow);
+		insertSpaceTask(db, {
+			id: taskId,
+			title: 'Single-execution task',
+			taskAgentSessionId: orchSessionId,
+			workflowRunId,
+			now,
+		});
+		runMigration118(db);
+
+		db.exec(`
+			INSERT INTO node_executions (
+				id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+				agent_session_id, status, result, created_at, started_at,
+				completed_at, updated_at
+			) VALUES
+			('ne-solo', '${workflowRunId}', 'node-1', 'coder', NULL,
+				'${soloSessionId}', 'done', NULL, ${now}, ${now}, ${now}, ${now})
+		`);
+
+		insertSdkMessage(db, { id: 'solo-msg-1', sessionId: soloSessionId, isoNow });
+		expect(readProjection(db, taskId)).toHaveLength(1);
+
+		db.exec(`DELETE FROM node_executions WHERE id = 'ne-solo'`);
+
+		// No surviving execution → re-projection finds no source row, so the
+		// projection ends up empty. (Hard-delete is the right behaviour when
+		// nothing else owns the session.)
+		expect(readProjection(db, taskId)).toHaveLength(0);
+	});
+
+	// -------------------------------------------------------------------------
 	// space_tasks DELETE trigger
 	// -------------------------------------------------------------------------
 
@@ -572,6 +670,37 @@ describe('Migration 118 — task_thread_messages projection', () => {
 		expect(rows[0].is_renderable).toBe(0);
 	});
 
+	test('is_renderable = 1 for user rows with mixed tool_result + text blocks', () => {
+		const sessionId = 'session-render-mix';
+		const taskId = 'task-render-mix';
+
+		insertSession(db, sessionId, 'space_task_agent', isoNow);
+		insertSpaceTask(db, { id: taskId, title: 'RenderMix', taskAgentSessionId: sessionId, now });
+		runMigration118(db);
+
+		insertSdkMessage(db, {
+			id: 'mixed-content',
+			sessionId,
+			isoNow,
+			messageType: 'user',
+			payload: {
+				type: 'user',
+				uuid: 'mixed-content',
+				message: {
+					role: 'user',
+					content: [
+						{ type: 'tool_result', tool_use_id: 't1', content: 'output' },
+						{ type: 'text', text: 'hello' },
+					],
+				},
+			},
+		});
+
+		const rows = readProjection(db, taskId);
+		expect(rows).toHaveLength(1);
+		expect(rows[0].is_renderable).toBe(1);
+	});
+
 	test('is_renderable = 1 for normal assistant/text rows', () => {
 		const sessionId = 'session-render-2';
 		const taskId = 'task-render-2';
@@ -652,5 +781,255 @@ describe('Migration 118 — task_thread_messages projection', () => {
 		rows = readProjection(db, taskId);
 		expect(rows).toHaveLength(1);
 		expect(rows[0].source_id).toBe('b-msg');
+	});
+
+	test('space_tasks UPDATE of unrelated columns is a no-op on the projection', () => {
+		const sessionId = 'session-noop-up';
+		const taskId = 'task-noop-up';
+
+		insertSession(db, sessionId, 'space_task_agent', isoNow);
+		insertSpaceTask(db, {
+			id: taskId,
+			title: 'NoopUp',
+			taskAgentSessionId: sessionId,
+			now,
+		});
+		runMigration118(db);
+
+		insertSdkMessage(db, { id: 'noop-up-msg', sessionId, isoNow });
+		const before = readProjection(db, taskId);
+		expect(before).toHaveLength(1);
+		expect(before[0].source_id).toBe('noop-up-msg');
+
+		// Change status — not in the WHEN clause, so trigger should be a no-op.
+		db.exec(`UPDATE space_tasks SET status = 'completed' WHERE id = '${taskId}'`);
+		const after = readProjection(db, taskId);
+		expect(after).toHaveLength(1);
+		expect(after[0].source_id).toBe('noop-up-msg');
+	});
+
+	// -------------------------------------------------------------------------
+	// space_agents UPDATE — node-agent label refresh
+	// -------------------------------------------------------------------------
+
+	test('space_agents UPDATE OF name refreshes labels on owned node-agent rows', () => {
+		const orchSessionId = 'orch-session-rename';
+		const nodeSessionId = 'node-session-rename';
+		const workflowRunId = 'wr-rename-1';
+		const taskId = 'task-rename-1';
+		const agentId = 'agent-rename';
+
+		insertSession(db, orchSessionId, 'space_task_agent', isoNow);
+		insertSession(db, nodeSessionId, 'space_task_agent', isoNow);
+		insertSpaceTask(db, {
+			id: taskId,
+			title: 'Rename leg',
+			taskAgentSessionId: orchSessionId,
+			workflowRunId,
+			now,
+		});
+		db.exec(
+			`INSERT INTO space_agents (id, space_id, name) VALUES ('${agentId}', 's1', 'Old Name')`
+		);
+		runMigration118(db);
+
+		// Bind a node_execution to the agent and a session, then push a message.
+		db.exec(`
+			INSERT INTO node_executions (
+				id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+				agent_session_id, status, result, created_at, started_at,
+				completed_at, updated_at
+			) VALUES (
+				'ne-rename', '${workflowRunId}', 'node-1', 'fallback', '${agentId}',
+				'${nodeSessionId}', 'in_progress', NULL, ${now}, ${now}, NULL, ${now}
+			)
+		`);
+		insertSdkMessage(db, { id: 'rename-msg-1', sessionId: nodeSessionId, isoNow });
+
+		// Initial projection picks up the original name.
+		let rows = readProjection(db, taskId);
+		expect(rows).toHaveLength(1);
+		expect(rows[0].label).toBe('Old Name');
+
+		// Rename the agent — trigger should refresh the label in place.
+		db.exec(`UPDATE space_agents SET name = 'New Name' WHERE id = '${agentId}'`);
+		rows = readProjection(db, taskId);
+		expect(rows).toHaveLength(1);
+		expect(rows[0].label).toBe('New Name');
+		expect(rows[0].source_id).toBe('rename-msg-1');
+	});
+
+	test('space_agents UPDATE OF name updates the projection in place (no row churn)', () => {
+		const orchSessionId = 'orch-session-stable';
+		const nodeSessionId = 'node-session-stable';
+		const workflowRunId = 'wr-stable-1';
+		const taskId = 'task-stable-1';
+		const agentId = 'agent-stable';
+
+		insertSession(db, orchSessionId, 'space_task_agent', isoNow);
+		insertSession(db, nodeSessionId, 'space_task_agent', isoNow);
+		insertSpaceTask(db, {
+			id: taskId,
+			title: 'Stable proj_id',
+			taskAgentSessionId: orchSessionId,
+			workflowRunId,
+			now,
+		});
+		db.exec(
+			`INSERT INTO space_agents (id, space_id, name) VALUES ('${agentId}', 's1', 'First Name')`
+		);
+		runMigration118(db);
+
+		db.exec(`
+			INSERT INTO node_executions (
+				id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+				agent_session_id, status, result, created_at, started_at,
+				completed_at, updated_at
+			) VALUES (
+				'ne-stable', '${workflowRunId}', 'node-1', 'fallback', '${agentId}',
+				'${nodeSessionId}', 'in_progress', NULL, ${now}, ${now}, NULL, ${now}
+			)
+		`);
+		insertSdkMessage(db, { id: 'stable-msg-1', sessionId: nodeSessionId, isoNow });
+
+		const before = db
+			.prepare(
+				`SELECT proj_id, label FROM task_thread_messages WHERE task_id = ? AND source_id = ?`
+			)
+			.get(taskId, 'stable-msg-1') as { proj_id: number; label: string };
+		expect(before.label).toBe('First Name');
+
+		// Rename — projection should refresh in place. The proj_id stays the same
+		// (UPDATE not DELETE+INSERT) so existing LiveQuery readers don't see a
+		// row churn — just a cell-level update.
+		db.exec(`UPDATE space_agents SET name = 'Second Name' WHERE id = '${agentId}'`);
+		const after = db
+			.prepare(
+				`SELECT proj_id, label FROM task_thread_messages WHERE task_id = ? AND source_id = ?`
+			)
+			.get(taskId, 'stable-msg-1') as { proj_id: number; label: string };
+		expect(after.label).toBe('Second Name');
+		expect(after.proj_id).toBe(before.proj_id);
+	});
+
+	test('space_agents UPDATE leaves orchestration and github rows untouched', () => {
+		const orchSessionId = 'orch-session-iso';
+		const nodeSessionId = 'node-session-iso';
+		const workflowRunId = 'wr-iso-1';
+		const taskId = 'task-iso-1';
+		const agentId = 'agent-iso';
+
+		insertSession(db, orchSessionId, 'space_task_agent', isoNow);
+		insertSession(db, nodeSessionId, 'space_task_agent', isoNow);
+		insertSpaceTask(db, {
+			id: taskId,
+			title: 'Isolation',
+			taskAgentSessionId: orchSessionId,
+			workflowRunId,
+			now,
+		});
+		db.exec(
+			`INSERT INTO space_agents (id, space_id, name) VALUES ('${agentId}', 's1', 'Original')`
+		);
+		runMigration118(db);
+
+		db.exec(`
+			INSERT INTO node_executions (
+				id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+				agent_session_id, status, result, created_at, started_at,
+				completed_at, updated_at
+			) VALUES (
+				'ne-iso', '${workflowRunId}', 'node-1', 'coder', '${agentId}',
+				'${nodeSessionId}', 'in_progress', NULL, ${now}, ${now}, NULL, ${now}
+			)
+		`);
+
+		// Project: an orchestration message, a node-agent message, and a github
+		// event. Only the node-agent row should change after the rename.
+		insertSdkMessage(db, { id: 'orch-iso-1', sessionId: orchSessionId, isoNow });
+		insertSdkMessage(db, { id: 'node-iso-1', sessionId: nodeSessionId, isoNow });
+		const baseGhCols = `id, space_id, task_id, source, delivery_id, event_type, action,
+			repo_owner, repo_name, pr_number, pr_url, actor, actor_type, body, summary,
+			external_url, external_id, occurred_at, dedupe_key, raw_payload, state,
+			created_at, updated_at`;
+		db.exec(`
+			INSERT INTO space_github_events (${baseGhCols}) VALUES (
+				'gh-iso-1', 's1', '${taskId}', 'webhook', 'gh-iso-1', 'pull_request', 'opened',
+				'org', 'r', 1, 'https://example/iso', 'bot', 'User',
+				'', 'Opened PR', 'https://example/iso', 'gh-iso-1', ${now}, 'gh-iso-1',
+				'{}', 'routed', ${now}, ${now}
+			)
+		`);
+
+		const before = readProjection(db, taskId);
+		expect(before).toHaveLength(3);
+		const beforeOrch = before.find((r) => r.kind === 'task_agent');
+		const beforeNode = before.find((r) => r.kind === 'node_agent');
+		const beforeGh = before.find((r) => r.kind === 'github');
+		expect(beforeOrch).toBeDefined();
+		expect(beforeNode).toBeDefined();
+		expect(beforeGh).toBeDefined();
+		expect(beforeOrch?.label).toBe('Task Agent');
+		expect(beforeNode?.label).toBe('Original');
+		expect(beforeGh?.label).toBe('GitHub');
+
+		db.exec(`UPDATE space_agents SET name = 'Renamed' WHERE id = '${agentId}'`);
+
+		const after = readProjection(db, taskId);
+		expect(after).toHaveLength(3);
+		const afterOrch = after.find((r) => r.kind === 'task_agent');
+		const afterNode = after.find((r) => r.kind === 'node_agent');
+		const afterGh = after.find((r) => r.kind === 'github');
+		expect(afterOrch).toBeDefined();
+		expect(afterNode).toBeDefined();
+		expect(afterGh).toBeDefined();
+		expect(afterOrch?.label).toBe('Task Agent');
+		expect(afterNode?.label).toBe('Renamed');
+		expect(afterGh?.label).toBe('GitHub');
+	});
+
+	test('space_agents UPDATE of unrelated columns does not modify the projection', () => {
+		const orchSessionId = 'orch-session-noop';
+		const nodeSessionId = 'node-session-noop';
+		const workflowRunId = 'wr-noop-1';
+		const taskId = 'task-noop-1';
+		const agentId = 'agent-noop';
+
+		insertSession(db, orchSessionId, 'space_task_agent', isoNow);
+		insertSession(db, nodeSessionId, 'space_task_agent', isoNow);
+		insertSpaceTask(db, {
+			id: taskId,
+			title: 'Noop',
+			taskAgentSessionId: orchSessionId,
+			workflowRunId,
+			now,
+		});
+		// Add a description column for the noop UPDATE below.
+		db.exec(`ALTER TABLE space_agents ADD COLUMN description TEXT`);
+		db.exec(
+			`INSERT INTO space_agents (id, space_id, name, description) VALUES ('${agentId}', 's1', 'Stable', 'old desc')`
+		);
+		runMigration118(db);
+
+		db.exec(`
+			INSERT INTO node_executions (
+				id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+				agent_session_id, status, result, created_at, started_at,
+				completed_at, updated_at
+			) VALUES (
+				'ne-noop', '${workflowRunId}', 'node-1', 'coder', '${agentId}',
+				'${nodeSessionId}', 'in_progress', NULL, ${now}, ${now}, NULL, ${now}
+			)
+		`);
+		insertSdkMessage(db, { id: 'noop-msg-1', sessionId: nodeSessionId, isoNow });
+
+		const before = readProjection(db, taskId);
+		expect(before[0].label).toBe('Stable');
+
+		// Update an unrelated column — the trigger is `OF name`, so this must be
+		// a no-op (the WHEN guard would also reject same-name updates anyway).
+		db.exec(`UPDATE space_agents SET description = 'new desc' WHERE id = '${agentId}'`);
+		const after = readProjection(db, taskId);
+		expect(after[0].label).toBe('Stable');
 	});
 });
