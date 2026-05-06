@@ -712,7 +712,9 @@ class ExternalEventRouter {
   private static readonly RETRY_BACKOFF_MS = 1000; // 1s base, exponential backoff
 
   // Cache: spaceId → Set of "owner/repo" strings for watched repos.
-  // Invalidated when a source extension reports watched-repo configuration changes.
+  // Invalidated when a source extension reports watched-repo configuration
+  // changes, including space-level enable/disable transitions that can change
+  // which repos are eligible for repo-scoped routing.
   private watchedRepoCache: Map<string, Set<string>> = new Map();
 
   constructor(
@@ -759,8 +761,9 @@ class ExternalEventRouter {
   /**
    * Invalidate the watched-repo cache for a given space (or all spaces).
    * Called from ExternalEventExtensionContext.onSourceConfigChanged when a source extension
-   * changes watched-repo configuration (for example `space.github.watchRepo`).
-   * Without this, `repo`-scoped matching grows stale until process restart.
+   * changes watched-repo configuration or space-level source enablement.
+   * Without this, `repo`-scoped matching can use stale enabled/watched repo sets
+   * until process restart or a later watch mutation.
    */
   invalidateWatchedRepoCache(spaceId?: string): void {
     if (spaceId) {
@@ -2181,7 +2184,11 @@ const extensionContext: ExternalEventExtensionContext = {
   publisher: externalEventService,
   config: externalEventExtensionConfigStore,
   onSourceConfigChanged(change) {
-    if (change.kind === 'watched_repo_changed') {
+    if (change.source === 'github' && [
+      'watched_repo_changed',
+      'space_enabled',
+      'space_disabled',
+    ].includes(change.kind)) {
       externalEventRouter.invalidateWatchedRepoCache(change.spaceId);
     }
   },
@@ -2200,7 +2207,7 @@ for (const extension of extensions) {
 }
 ```
 
-Repo-scoped matching cache invalidation is explicit: watched-resource changes call `ExternalEventExtensionContext.onSourceConfigChanged(...)`, and daemon startup wires that callback to `externalEventRouter.invalidateWatchedRepoCache(spaceId)`. This keeps source configuration owned by the extension while ensuring `repo`-scoped subscriptions observe newly watched or unwatched repos without process restart.
+Repo-scoped matching cache invalidation is explicit: watched-resource changes and per-space source enable/disable transitions call `ExternalEventExtensionContext.onSourceConfigChanged(...)`, and daemon startup wires those GitHub change kinds to `externalEventRouter.invalidateWatchedRepoCache(spaceId)`. This keeps source configuration owned by the extension while ensuring `repo`-scoped subscriptions observe newly watched, unwatched, disabled, or re-enabled repos without process restart.
 
 ### Phased rollout
 
