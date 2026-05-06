@@ -325,8 +325,11 @@ describe('QueryOptionsBuilder', () => {
 		it('should omit thinking config for providers with thinkingModes=off', async () => {
 			mockSession.config.provider = 'minimax';
 			mockSession.config.thinkingLevel = 'think32k';
-			const options = await builder.build();
-			const result = builder.addSessionStateOptions(options);
+			// Pass minimal options directly — avoid build() because it instantiates
+			// the provider context and MiniMax lacks an API key in CI.
+			const result = builder.addSessionStateOptions(
+				{} as import('@anthropic-ai/claude-agent-sdk').Options
+			);
 
 			expect(result.thinking).toBeUndefined();
 		});
@@ -334,8 +337,11 @@ describe('QueryOptionsBuilder', () => {
 		it('should map any enabled level to max budget for providers with thinkingModes=on', async () => {
 			mockSession.config.provider = 'kimi';
 			mockSession.config.thinkingLevel = 'think8k';
-			const options = await builder.build();
-			const result = builder.addSessionStateOptions(options);
+			// Pass minimal options directly — avoid build() because it instantiates
+			// the provider context and Kimi lacks an API key in CI.
+			const result = builder.addSessionStateOptions(
+				{} as import('@anthropic-ai/claude-agent-sdk').Options
+			);
 
 			expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 31999 });
 		});

@@ -33,7 +33,11 @@ import type {
 	AgentDefinition,
 } from '@neokai/shared';
 import { getCoordinatorAgents } from './coordinator-agents';
-import { THINKING_LEVEL_TOKENS, normalizeThinkingLevel } from '@neokai/shared';
+import {
+	THINKING_LEVEL_TOKENS,
+	normalizeThinkingLevel,
+	PROVIDER_THINKING_MODES,
+} from '@neokai/shared';
 import type { PermissionMode } from '@neokai/shared/types/settings';
 import type { McpServerConfig } from '@neokai/shared/types/sdk-config';
 import type { AppMcpServerSourceType } from '@neokai/shared';
@@ -507,10 +511,11 @@ export class QueryOptionsBuilder {
 		}
 
 		// Resolve provider thinking mode so we can skip thinking config for
-		// providers that do not support it.
-		const contextManager = getProviderContextManager();
-		const providerContext = contextManager.createContext(this.ctx.session);
-		const thinkingModes = providerContext.provider.capabilities.thinkingModes;
+		// providers that do not support it. Use the static map rather than
+		// instantiating a provider context to avoid API-key failures in CI.
+		const providerId = this.ctx.session.config.provider;
+		const thinkingModes =
+			PROVIDER_THINKING_MODES[providerId as keyof typeof PROVIDER_THINKING_MODES] ?? 'granular';
 
 		// Add thinking configuration based on the session override, falling back to the app default.
 		// Backward compatibility: legacy 'auto' is treated as 'off'.
