@@ -124,6 +124,16 @@ const FULL_BUILTIN_TOOL_LIST = [
 const AGENT_INVOCATION_TOOLS = ['Task', 'TaskOutput', 'TaskStop'];
 
 /**
+ * Providers whose native SDK integration already includes agent tools in the
+ * function schema when agents are configured. All other providers need an
+ * explicit tool list because the SDK preset may omit Task/Agent tools.
+ *
+ * anthropic        — native Anthropic API, SDK handles agent tools correctly.
+ * anthropic-copilot — Copilot bridge still routes to Anthropic API.
+ */
+const NATIVE_AGENT_TOOL_PROVIDERS = ['anthropic', 'anthropic-copilot'];
+
+/**
  * Ensure agent invocation tools are present in the tool list when agents
  * are configured. Non-Anthropic SDK presets may omit Task from the function
  * schema even though the system prompt still describes agents, creating a
@@ -155,7 +165,7 @@ export function ensureAgentTools(
 		return tools;
 	}
 
-	if (!tools && providerId !== 'anthropic' && providerId !== 'anthropic-copilot') {
+	if (!tools && !NATIVE_AGENT_TOOL_PROVIDERS.includes(providerId)) {
 		return [...FULL_BUILTIN_TOOL_LIST];
 	}
 
@@ -494,28 +504,8 @@ export class QueryOptionsBuilder {
 			queryOptions.agents = agents as Options['agents'];
 
 			// Allow all tools at session level so sub-agents can use them under dontAsk
-			const allTools = [
-				'Task',
-				'TaskOutput',
-				'TaskStop',
-				'Bash',
-				'Read',
-				'Edit',
-				'Write',
-				'Glob',
-				'Grep',
-				'NotebookEdit',
-				'WebFetch',
-				'WebSearch',
-				'TodoWrite',
-				'AskUserQuestion',
-				'EnterPlanMode',
-				'ExitPlanMode',
-				'Skill',
-				'ToolSearch',
-			];
 			const existing = queryOptions.allowedTools ?? [];
-			queryOptions.allowedTools = [...new Set([...existing, ...allTools])];
+			queryOptions.allowedTools = [...new Set([...existing, ...FULL_BUILTIN_TOOL_LIST])];
 		}
 
 		// ============ Provider-specific agent tool exposure ============
@@ -523,7 +513,7 @@ export class QueryOptionsBuilder {
 			queryOptions.tools,
 			queryOptions.agents,
 			providerId,
-			this.ctx.session.type ?? 'general'
+			this.ctx.session.type ?? 'worker'
 		);
 
 		// Remove undefined values to use SDK defaults
