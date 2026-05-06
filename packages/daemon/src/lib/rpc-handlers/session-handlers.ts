@@ -30,7 +30,6 @@ import {
 	scanSDKSessionFiles,
 	identifyOrphanedSDKFiles,
 } from '../sdk-session-file-manager';
-import type { RoomManager } from '../room';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { Logger } from '../logger';
@@ -63,7 +62,6 @@ export function setupSessionHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
 	daemonHub: DaemonHub,
-	roomManager: RoomManager,
 	spaceManager: SpaceManager,
 	spaceRuntimeService?: SpaceRuntimeService
 ): void {
@@ -75,15 +73,9 @@ export function setupSessionHandlers(
 			config: req.config,
 			worktreeBaseBranch: req.worktreeBaseBranch,
 			title: req.title,
-			roomId: req.roomId,
 			spaceId: req.spaceId,
 			createdBy: req.createdBy ?? 'human',
 		});
-
-		// Add session to room if roomId is provided
-		if (req.roomId) {
-			roomManager.assignSession(req.roomId, sessionId);
-		}
 
 		// Add session to space if spaceId is provided
 		if (req.spaceId) {
@@ -310,12 +302,7 @@ export function setupSessionHandlers(
 			channel: `session:${targetSessionId}`,
 		});
 
-		// Also broadcast on room channel so RoomStore can react
-		if (roomIdForUpdate) {
-			messageHub.event('session.updated', updatedPayload, {
-				channel: `room:${roomIdForUpdate}`,
-			});
-		}
+		// Room channel broadcasts removed with legacy Room feature retirement.
 
 		return { success: true };
 	});
@@ -326,7 +313,6 @@ export function setupSessionHandlers(
 		// Get context before deleting so we can include it in the event payload
 		const agentSessionForDelete = sessionManager.getSession(targetSessionId);
 		const contextForDelete = agentSessionForDelete?.getSessionData().context;
-		const roomIdForDelete = contextForDelete?.roomId;
 		const spaceIdForDelete = contextForDelete?.spaceId;
 
 		// UI-only delete primitive (Task #85): removes worktree + SDK .jsonl + DB row.
@@ -346,17 +332,6 @@ export function setupSessionHandlers(
 			} catch {
 				// Space may already be deleted — ignore
 			}
-		}
-
-		// Broadcast on room channel so RoomStore reacts immediately.
-		// Note: the global channel broadcast is handled by session-lifecycle.ts / state-manager.ts
-		// to avoid triple-firing the event. We only add the room-scoped broadcast here.
-		if (roomIdForDelete) {
-			messageHub.event(
-				'session.deleted',
-				{ sessionId: targetSessionId, roomId: roomIdForDelete },
-				{ channel: `room:${roomIdForDelete}` }
-			);
 		}
 
 		return { success: true };
@@ -437,11 +412,6 @@ export function setupSessionHandlers(
 		messageHub.event('session.updated', archivedPayload, {
 			channel: `session:${targetSessionId}`,
 		});
-		if (roomIdForArchive) {
-			messageHub.event('session.updated', archivedPayload, {
-				channel: `room:${roomIdForArchive}`,
-			});
-		}
 
 		return {
 			success: true,

@@ -75,7 +75,6 @@ import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type { McpServerConfig } from '@neokai/shared';
 import type {
 	NeoToolsConfig,
-	NeoQueryRoomManager,
 	NeoQueryGoalRepository,
 	NeoQueryTaskRepository,
 	NeoQuerySessionManager,
@@ -160,11 +159,6 @@ function makeSettingsManager(): NeoSettingsManager {
 }
 
 function makeMinimalQueryConfig(): NeoToolsConfig {
-	const noopRoomManager: NeoQueryRoomManager = {
-		listRooms: () => [],
-		getRoom: () => null,
-		getRoomOverview: () => null,
-	};
 	const noopGoalRepo: NeoQueryGoalRepository = {
 		listGoals: () => [],
 		getGoal: () => null,
@@ -228,7 +222,6 @@ function makeMinimalQueryConfig(): NeoToolsConfig {
 	};
 
 	return {
-		roomManager: noopRoomManager,
 		goalRepository: noopGoalRepo,
 		taskRepository: noopTaskRepo,
 		sessionManager: noopSessionManager,

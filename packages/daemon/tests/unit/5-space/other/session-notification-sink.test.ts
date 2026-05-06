@@ -5,8 +5,19 @@ import {
 } from '../../../../src/lib/space/runtime/session-notification-sink';
 import type { SessionNotificationSinkConfig } from '../../../../src/lib/space/runtime/session-notification-sink';
 import type { SpaceNotificationEvent } from '../../../../src/lib/space/runtime/notification-sink';
-import type { SessionFactory } from '../../../../src/lib/room/runtime/task-group-manager';
 import type { MessageDeliveryMode } from '@neokai/shared';
+
+/**
+ * Minimal SessionFactory interface for testing.
+ * Matches the interface defined in session-notification-sink.ts.
+ */
+interface SessionFactory {
+	injectMessage(
+		sessionId: string,
+		message: string,
+		opts?: { deliveryMode?: string }
+	): Promise<void>;
+}
 
 // ---------------------------------------------------------------------------
 // Mock SessionFactory

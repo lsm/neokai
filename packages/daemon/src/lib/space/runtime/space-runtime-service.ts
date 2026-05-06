@@ -410,7 +410,7 @@ export class SpaceRuntimeService {
 		// handled by `setupSpaceAgentSession` (it also sets the system prompt);
 		// the space_task_agent sessions are handled by `TaskAgentManager`
 		// (which merges `space-agent-tools` into its MCP set). This subscription
-		// covers the remaining cases: worker/coder/general/room_chat sessions
+		// covers the remaining cases: worker sessions
 		// that live inside a Space and need to send/receive messages via
 		// `send_message_to_agent`, inspect tasks, etc.
 		//
@@ -585,7 +585,7 @@ export class SpaceRuntimeService {
 	 * but is not the Space-chat session itself.
 	 *
 	 * This widens the tool surface from "space chat session only" to "every
-	 * session in the space", so worker/coder/general/room_chat sessions
+	 * session in the space", so worker sessions
 	 * spawned inside a Space can coordinate with the rest of the Space
 	 * (e.g., `send_message_to_agent`, `list_task_members`). Permission gating
 	 * inside each tool handler (autonomyLevel checks, writer checks, etc.)
@@ -699,7 +699,7 @@ export class SpaceRuntimeService {
 	/**
 	 * Attach MCP tools and system prompt to a space's chat session.
 	 *
-	 * Mirrors RoomRuntimeService.setupRoomAgentSession(). Called:
+	 * Mirrors SpaceRuntimeService.setupSpaceAgentSession(). Called:
 	 *   - On startup for all existing spaces (re-attaches after daemon restart)
 	 *   - On space.created event for newly created spaces
 	 *
