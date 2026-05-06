@@ -12,6 +12,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
+import { runMigration118External } from './m118-task-thread-projection';
 
 /**
  * Run all database migrations
@@ -555,6 +556,15 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 117: Add disabled column to space_workflows.
 	//   When true, the workflow cannot be selected for new tasks.
 	runMigration117(db);
+
+	// Migration 118: Materialise the task-thread projection used by the
+	//   `spaceTaskMessages.byTask` and `.compact` LiveQuery feeds.
+	//   Adds the `task_thread_messages` table, supporting indexes, and the
+	//   trigger network that keeps it in sync with `sdk_messages`,
+	//   `space_github_events`, `space_tasks`, and `node_executions`.
+	//   Backfills any pre-existing rows so subscribers see consistent state
+	//   immediately after upgrade.
+	runMigration118(db);
 }
 
 /**
@@ -7968,4 +7978,13 @@ export function runMigration117(db: BunDatabase): void {
 	if (columns.includes('disabled')) return;
 
 	db.exec(`ALTER TABLE space_workflows ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`);
+}
+
+/**
+ * Migration 118 — delegated to m118-task-thread-projection.ts so the
+ * (large) trigger DDL doesn't bloat this file. The behaviour is documented
+ * in that module. Exported for direct invocation from tests.
+ */
+export function runMigration118(db: BunDatabase): void {
+	runMigration118External(db);
 }
