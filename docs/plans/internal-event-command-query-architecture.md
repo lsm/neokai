@@ -129,6 +129,21 @@ interface InternalEventEnvelope<TPayload> {
   payload: TPayload;
 }
 
+interface EventPublishAccepted {
+  eventId: string;
+  accepted: true;
+  handlerCount: number;
+}
+
+interface EventHandlerFailure {
+  subscriberName?: string;
+  error: unknown;
+}
+
+interface EventPublishResult extends EventPublishAccepted {
+  failures: EventHandlerFailure[];
+}
+
 interface InternalEventBus<TEventMap> {
   publish<K extends keyof TEventMap>(
     name: K,
@@ -153,6 +168,12 @@ interface InternalEventBus<TEventMap> {
 ### InternalCommandBus
 
 ```ts
+interface CommandResult {
+  ok: boolean;
+  error?: unknown;
+  metadata?: Record<string, unknown>;
+}
+
 interface InternalCommandBus<TCommandMap> {
   dispatch<K extends keyof TCommandMap>(name: K, command: TCommandMap[K]): Promise<CommandResult>;
   register<K extends keyof TCommandMap>(
@@ -249,7 +270,7 @@ const CLIENT_EVENT_BRIDGE = defineClientEventBridge<InternalEventMap, ClientEven
 });
 ```
 
-The bridge should be the only default way for internal events to become client-visible. This keeps authorization, payload filtering, and channel selection auditable.
+The bridge should be the only default way for internal events to become client-visible. This keeps authorization, payload filtering, and channel selection auditable. `ClientEventMap` is defined separately by the client transport/API contract so internal event payloads can be transformed, filtered, or versioned before they become client-visible.
 
 ## External Event Subsystem Alignment
 
@@ -266,6 +287,17 @@ GitHubEventAdapter
 ```
 
 Do not introduce another generic `EventBus`. The domain service should be `ExternalEventService`, and node delivery should be `ExternalEventRouter`.
+
+During migration, the existing external workflow-node design document may still use the earlier names. Interpret them as aliases for the target names below:
+
+| Earlier design name | Target name | Reason |
+| --- | --- | --- |
+| `EventBus` | `ExternalEventService` | Avoids conflict with the dead legacy `EventBus` and makes the component domain-specific. |
+| `EventPublisher` | `ExternalEventPublisher` | Clarifies that adapters publish external source events, not arbitrary internal events. |
+| `EventRouter` | `ExternalEventRouter` | Clarifies that routing is for external source events matched to workflow node interests. |
+| `EventAdapter` | `ExternalEventAdapter` | Makes the source-extension boundary explicit; short `EventAdapter` is acceptable only inside the external-event module. |
+| `EventTaskResolver` | `ExternalEventTaskResolver` | Clarifies that task enrichment applies to normalized external events. |
+| `space.externalEvent.published` | `externalEvent.published` on `InternalEventBus` | Keeps external event publication as an internal fact while avoiding raw source topics as event names. |
 
 ## Progressive Migration Milestones
 
