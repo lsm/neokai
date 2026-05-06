@@ -94,6 +94,7 @@ function renderComposer(overrides: Partial<Parameters<typeof TaskSessionChatComp
 			autoScroll={true}
 			errorMessage={null}
 			activityMembers={activityMembers}
+			taskId="task-1"
 			onAutoScrollChange={vi.fn()}
 			onTargetSelect={onTargetSelect}
 			onSend={onSend}

@@ -23,6 +23,7 @@ interface TaskSessionChatComposerProps {
 	activityMembers: SpaceTaskActivityMember[];
 	/** Workflow-defined default model per agent name (agentName -> modelId) */
 	defaultAgentModels?: Map<string, string>;
+	taskId: string;
 	onAutoScrollChange: (enabled: boolean) => void;
 	onTargetSelect: (targetId: string) => void;
 	onDraftActiveChange?: (hasDraft: boolean) => void;
@@ -43,6 +44,7 @@ export function TaskSessionChatComposer({
 	errorMessage,
 	activityMembers,
 	defaultAgentModels,
+	taskId,
 	onAutoScrollChange,
 	onTargetSelect,
 	onDraftActiveChange,
@@ -72,6 +74,7 @@ export function TaskSessionChatComposer({
 		switchModel,
 		setThinkingLevel,
 	} = useTargetSessionContext({
+		taskId,
 		selectedTarget,
 		activityMembers,
 		taskAgentSessionId: sessionId || null,

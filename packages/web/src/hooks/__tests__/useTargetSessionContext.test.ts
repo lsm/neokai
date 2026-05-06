@@ -200,6 +200,7 @@ describe('useTargetSessionContext', () => {
 	it('resolves task_agent to taskAgentSessionId', async () => {
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
+				taskId: 'task-1',
 				selectedTarget: taskAgentTarget,
 				activityMembers: [],
 				taskAgentSessionId: 'task-sess-123',
@@ -215,6 +216,7 @@ describe('useTargetSessionContext', () => {
 	it('resolves node_agent to member sessionId', async () => {
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
+				taskId: 'task-1',
 				selectedTarget: coderTarget,
 				activityMembers: members,
 				taskAgentSessionId: 'task-sess-123',
@@ -237,6 +239,7 @@ describe('useTargetSessionContext', () => {
 
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
+				taskId: 'task-1',
 				selectedTarget: notStartedTarget,
 				activityMembers: members,
 				taskAgentSessionId: 'task-sess-123',
@@ -260,6 +263,7 @@ describe('useTargetSessionContext', () => {
 
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
+				taskId: 'task-1',
 				selectedTarget: notStartedTarget,
 				activityMembers: members,
 				taskAgentSessionId: 'task-sess-123',
@@ -275,6 +279,7 @@ describe('useTargetSessionContext', () => {
 	it('derives isProcessing from activity member processingStatus', async () => {
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
+				taskId: 'task-1',
 				selectedTarget: coderTarget,
 				activityMembers: members,
 				taskAgentSessionId: 'task-sess-123',
@@ -308,6 +313,7 @@ describe('useTargetSessionContext', () => {
 
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
+				taskId: 'task-1',
 				selectedTarget: notStartedTarget,
 				activityMembers: members,
 				taskAgentSessionId: 'task-sess-123',
@@ -324,6 +330,7 @@ describe('useTargetSessionContext', () => {
 	it('sets thinking level for started agents via RPC', async () => {
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
+				taskId: 'task-1',
 				selectedTarget: coderTarget,
 				activityMembers: members,
 				taskAgentSessionId: 'task-sess-123',
@@ -351,6 +358,7 @@ describe('useTargetSessionContext', () => {
 
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
+				taskId: 'task-1',
 				selectedTarget: notStartedTarget,
 				activityMembers: members,
 				taskAgentSessionId: 'task-sess-123',
@@ -388,6 +396,7 @@ describe('useTargetSessionContext', () => {
 		const { result, rerender } = renderHook(
 			(props: { members: SpaceTaskActivityMember[] }) =>
 				useTargetSessionContext({
+					taskId: 'task-1',
 					selectedTarget: notStartedTarget,
 					activityMembers: props.members,
 					taskAgentSessionId: 'task-sess-123',
@@ -497,6 +506,7 @@ describe('useTargetSessionContext', () => {
 		const { result, rerender } = renderHook(
 			(props: { members: SpaceTaskActivityMember[] }) =>
 				useTargetSessionContext({
+					taskId: 'task-1',
 					selectedTarget: notStartedTarget,
 					activityMembers: props.members,
 					taskAgentSessionId: 'task-sess-123',
@@ -541,6 +551,54 @@ describe('useTargetSessionContext', () => {
 
 		await waitFor(() => {
 			expect(callCount).toBeGreaterThanOrEqual(2);
+		});
+	});
+
+	it('resets preconfiguration when taskId changes', async () => {
+		const notStartedTarget = {
+			id: 'node:n1:reviewer',
+			kind: 'node_agent' as const,
+			label: 'Reviewer',
+			agentName: 'reviewer',
+		};
+
+		const model: ModelInfo = {
+			id: 'claude-opus-4-5',
+			name: 'Opus 4.5',
+			family: 'opus',
+			provider: 'anthropic',
+			alias: 'opus',
+			contextWindow: 200000,
+			description: '',
+			releaseDate: '',
+			available: true,
+		};
+
+		const { result, rerender } = renderHook(
+			(props: { taskId: string }) =>
+				useTargetSessionContext({
+					taskId: props.taskId,
+					selectedTarget: notStartedTarget,
+					activityMembers: [],
+					taskAgentSessionId: 'task-sess-123',
+				}),
+			{ initialProps: { taskId: 'task-a' } }
+		);
+
+		// Pre-configure model for task-a
+		await act(async () => {
+			await result.current.switchModel(model);
+		});
+
+		expect(result.current.currentModel).toBe('claude-opus-4-5');
+
+		// Switch to a different task — preconfiguration should reset
+		rerender({ taskId: 'task-b' });
+
+		// Default model is empty for this target, so after reset currentModel
+		// should fall back to empty string.
+		await waitFor(() => {
+			expect(result.current.currentModel).toBe('');
 		});
 	});
 });

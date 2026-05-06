@@ -67,11 +67,13 @@ export function resolveTargetSessionId(
  * for agents that haven't started yet.
  */
 export function useTargetSessionContext({
+	taskId,
 	selectedTarget,
 	activityMembers,
 	taskAgentSessionId,
 	defaultAgentModels,
 }: {
+	taskId: string;
 	selectedTarget: TaskComposerTarget | null;
 	activityMembers: SpaceTaskActivityMember[];
 	taskAgentSessionId: string | null;
@@ -96,6 +98,14 @@ export function useTargetSessionContext({
 
 	// Track which targets we've already auto-applied so we don't loop.
 	const appliedAutoConfigRef = useRef<Set<string>>(new Set());
+
+	// Reset pre-configuration state when the active task changes so stale
+	// settings from a previous task don't leak into the new one.
+	useEffect(() => {
+		setPreConfiguredModel(new Map());
+		setPreConfiguredThinking(new Map());
+		appliedAutoConfigRef.current = new Set();
+	}, [taskId]);
 
 	// Default model from workflow definition (keyed by target ID).
 	const defaultModel = useMemo(() => {

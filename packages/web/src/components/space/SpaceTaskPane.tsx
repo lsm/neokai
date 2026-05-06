@@ -981,6 +981,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								errorMessage={threadSendError}
 								activityMembers={activityMembers}
 								defaultAgentModels={defaultAgentModels}
+								taskId={task.id}
 								onAutoScrollChange={setAutoScrollEnabled}
 								onTargetSelect={(targetId) => {
 									setSelectedTargetId(targetId);
