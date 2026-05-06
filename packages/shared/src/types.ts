@@ -56,28 +56,18 @@ export type {
 /**
  * Session type for unified session architecture
  * - 'worker': Standard coding session with full Claude Code system prompt
- * - 'room_chat', 'planner', 'coder', 'leader', 'general': legacy Room session rows
  * - 'lobby': Instance-level agent session
  * - 'space_task_agent': Task Agent session that orchestrates a single SpaceTask's workflow
  * - 'space_chat': Per-space coordinator session (space:chat:${spaceId}) — the human-facing interface for a Space
+ * - 'neo': Neo global agent session
  */
-export type SessionType =
-	| 'worker'
-	| 'room_chat'
-	| 'planner'
-	| 'coder'
-	| 'leader'
-	| 'general'
-	| 'lobby'
-	| 'space_task_agent'
-	| 'space_chat'
-	| 'neo';
+export type SessionType = 'worker' | 'lobby' | 'space_task_agent' | 'space_chat' | 'neo';
 
 /**
- * Context for lobby/space sessions. `roomId` is legacy DB compatibility only.
+ * Context for lobby/space sessions.
  */
 export interface SessionContext {
-	roomId?: string;
+	roomId?: string; // Deprecated: legacy DB compatibility only
 	lobbyId?: string;
 	/** Space ID for Space system sessions */
 	spaceId?: string;
@@ -563,7 +553,7 @@ export interface SessionMetadata {
 	sessionType?: SessionType;
 	/** For manager/worker: ID of the paired session */
 	pairedSessionId?: string;
-	/** For manager/worker: ID of the parent RoomSession */
+	/** For manager/worker: ID of the parent session */
 	parentSessionId?: string;
 	/** Current task being managed/executed */
 	currentTaskId?: string;

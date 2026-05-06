@@ -100,59 +100,6 @@ export class AppMcpLifecycleManager {
 	}
 
 	/**
-	 * Returns SDK MCP configs for a specific room.
-	 *
-	 * @deprecated Prefer {@link getEnabledMcpConfigsForSession}, which resolves
-	 * the full session > room > space > registry precedence chain via the pure
-	 * {@link resolveMcpServers} function. This method still supports legacy
-	 * callers that only know a roomId. M5 removes it.
-	 *
-	 * Per-room overrides take precedence:
-	 * - If the room has explicitly enabled servers (via room_mcp_enablement), return those.
-	 * - If the room has no overrides, fall back to globally-enabled servers, but exclude
-	 *   any that are explicitly disabled for this room via per-room override.
-	 */
-	getEnabledMcpConfigsForRoom(roomId: string): Record<string, McpServerConfig> {
-		const roomServers = this.db.roomMcpEnablement.getEnabledServers(roomId);
-
-		// If the room has per-room enabled servers, return those (filtered by validation).
-		if (roomServers.length > 0) {
-			const result: Record<string, McpServerConfig> = {};
-			for (const entry of roomServers) {
-				const validation = this.validateEntry(entry);
-				if (!validation.valid) {
-					continue;
-				}
-				result[entry.name] = this.convertEntry(entry);
-			}
-			return result;
-		}
-
-		// No per-room enabled servers. Fall back to global enabled set, but exclude
-		// any servers that are explicitly disabled for this room.
-		const globalServers = this.db.appMcpServers.listEnabled();
-		const result: Record<string, McpServerConfig> = {};
-
-		for (const entry of globalServers) {
-			// Check if this server is explicitly disabled for the room
-			const override = this.db.roomMcpEnablement.getOverride(roomId, entry.id);
-			if (override !== null && !override.enabled) {
-				// Server is explicitly disabled for this room — skip it
-				continue;
-			}
-
-			const validation = this.validateEntry(entry);
-			if (!validation.valid) {
-				continue;
-			}
-
-			result[entry.name] = this.convertEntry(entry);
-		}
-
-		return result;
-	}
-
-	/**
 	 * Validates a single registry entry, checking that required fields are
 	 * present for its source type.
 	 */

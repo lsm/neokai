@@ -38,10 +38,8 @@ import {
 import { JobQueueRepository } from './repositories/job-queue-repository';
 import { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
 import { TaskRepository } from './repositories/task-repository';
-import { RoomMcpEnablementRepository } from './repositories/room-mcp-enablement-repository';
 import { McpEnablementRepository } from './repositories/mcp-enablement-repository';
 import { SkillRepository } from './repositories/skill-repository';
-import { RoomSkillOverrideRepository } from './repositories/room-skill-override-repository';
 import { NeoActivityLogRepository } from './repositories/neo-activity-log-repository';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository';
 import type { ReactiveDatabase } from './reactive-database';
@@ -66,10 +64,8 @@ export { GoalRepository } from './repositories/goal-repository';
 export { TaskRepository } from './repositories/task-repository';
 export { SpaceAgentRepository } from './repositories/space-agent-repository';
 export { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
-export { RoomMcpEnablementRepository } from './repositories/room-mcp-enablement-repository';
 export { McpEnablementRepository } from './repositories/mcp-enablement-repository';
 export { SkillRepository } from './repositories/skill-repository';
-export { RoomSkillOverrideRepository } from './repositories/room-skill-override-repository';
 export { NeoActivityLogRepository } from './repositories/neo-activity-log-repository';
 export type {
 	NeoActivityLogEntry,
@@ -97,10 +93,8 @@ export class Database {
 	private jobQueueRepo!: JobQueueRepository;
 	private appMcpServerRepo!: AppMcpServerRepository;
 	private taskRepo!: TaskRepository;
-	private roomMcpEnablementRepo!: RoomMcpEnablementRepository;
 	private mcpEnablementRepo!: McpEnablementRepository;
 	private skillRepo!: SkillRepository;
-	private roomSkillOverrideRepo!: RoomSkillOverrideRepository;
 	private neoActivityLogRepo!: NeoActivityLogRepository;
 	private workspaceHistoryRepo!: WorkspaceHistoryRepository;
 	private shortIdAllocator!: ShortIdAllocator;
@@ -125,10 +119,8 @@ export class Database {
 		this.taskRepo = new TaskRepository(db, reactiveDb, shortIdAllocator);
 		this.jobQueueRepo = new JobQueueRepository(db);
 		this.appMcpServerRepo = new AppMcpServerRepository(db, reactiveDb);
-		this.roomMcpEnablementRepo = new RoomMcpEnablementRepository(db, reactiveDb);
 		this.mcpEnablementRepo = new McpEnablementRepository(db, reactiveDb);
 		this.skillRepo = new SkillRepository(db, reactiveDb);
-		this.roomSkillOverrideRepo = new RoomSkillOverrideRepository(db, reactiveDb);
 		this.neoActivityLogRepo = new NeoActivityLogRepository(db);
 		this.workspaceHistoryRepo = new WorkspaceHistoryRepository(db);
 	}
@@ -517,19 +509,9 @@ export class Database {
 	}
 
 	/**
-	 * Get the per-room MCP enablement repository
-	 *
-	 * @deprecated Use {@link mcpEnablement} (scope='room') instead. Kept around
-	 * until M5 purges the legacy `room_mcp_enablement` table.
-	 */
-	get roomMcpEnablement(): RoomMcpEnablementRepository {
-		return this.roomMcpEnablementRepo;
-	}
-
-	/**
 	 * Get the generalized per-scope MCP enablement repository. One row per
 	 * explicit (scope_type, scope_id, server_id) override; missing rows inherit
-	 * from the next most-specific scope (session > room > space > registry).
+	 * from the next most-specific scope (session > space > registry).
 	 */
 	get mcpEnablement(): McpEnablementRepository {
 		return this.mcpEnablementRepo;
@@ -540,13 +522,6 @@ export class Database {
 	 */
 	get skills(): SkillRepository {
 		return this.skillRepo;
-	}
-
-	/**
-	 * Get the per-room skill override repository
-	 */
-	get roomSkillOverrides(): RoomSkillOverrideRepository {
-		return this.roomSkillOverrideRepo;
 	}
 
 	/**

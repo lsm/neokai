@@ -30,7 +30,6 @@ import {
 	scanSDKSessionFiles,
 	identifyOrphanedSDKFiles,
 } from '../sdk-session-file-manager';
-import type { RoomManager } from '../room';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { Logger } from '../logger';
@@ -63,7 +62,6 @@ export function setupSessionHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
 	daemonHub: DaemonHub,
-	roomManager: RoomManager,
 	spaceManager: SpaceManager,
 	spaceRuntimeService?: SpaceRuntimeService
 ): void {
@@ -75,15 +73,9 @@ export function setupSessionHandlers(
 			config: req.config,
 			worktreeBaseBranch: req.worktreeBaseBranch,
 			title: req.title,
-			roomId: req.roomId,
 			spaceId: req.spaceId,
 			createdBy: req.createdBy ?? 'human',
 		});
-
-		// Add session to room if roomId is provided
-		if (req.roomId) {
-			roomManager.assignSession(req.roomId, sessionId);
-		}
 
 		// Add session to space if spaceId is provided
 		if (req.spaceId) {

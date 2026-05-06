@@ -151,12 +151,8 @@ export class ReferenceResolver {
 	// ============================================================================
 
 	private resolveTask(id: string, roomId: string | null): ResolvedReference | null {
-		if (!roomId) {
-			return null;
-		}
-
 		let task = this.deps.taskRepo.getTask(id);
-		if (!task) {
+		if (!task && roomId) {
 			task = this.deps.taskRepo.getTaskByShortId(roomId, id);
 		}
 
@@ -164,30 +160,16 @@ export class ReferenceResolver {
 			return null;
 		}
 
-		// Confirm the task belongs to the session's room (prevent cross-room access via UUID)
-		if (task.roomId !== roomId) {
-			return null;
-		}
-
 		return { type: 'task', id, data: task };
 	}
 
 	private resolveGoal(id: string, roomId: string | null): ResolvedReference | null {
-		if (!roomId) {
-			return null;
-		}
-
 		let goal = this.deps.goalRepo.getGoal(id);
-		if (!goal) {
+		if (!goal && roomId) {
 			goal = this.deps.goalRepo.getGoalByShortId(roomId, id);
 		}
 
 		if (!goal) {
-			return null;
-		}
-
-		// Confirm the goal belongs to the session's room
-		if (goal.roomId !== roomId) {
 			return null;
 		}
 

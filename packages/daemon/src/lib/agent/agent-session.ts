@@ -629,16 +629,7 @@ export class AgentSession
 
 		return {
 			id: init.sessionId,
-			title:
-				type === 'coder'
-					? 'Coder Agent'
-					: type === 'planner'
-						? 'Planner Agent'
-						: type === 'leader'
-							? 'Leader Agent'
-							: type === 'general'
-								? 'General Agent'
-								: 'New Session',
+			title: 'New Session',
 			workspacePath: init.workspacePath,
 			createdAt: now,
 			lastActiveAt: now,

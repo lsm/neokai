@@ -26,9 +26,20 @@
  */
 
 import type { NotificationSink, SpaceNotificationEvent } from './notification-sink';
-import type { SessionFactory } from '../../room/runtime/task-group-manager';
 import type { SpaceAutonomyLevel } from '@neokai/shared/types/space';
 import { Logger } from '../../logger';
+
+/**
+ * Minimal interface for injecting messages into a session.
+ * Used by SessionNotificationSink to forward notification events to the Space Agent session.
+ */
+interface SessionFactory {
+	injectMessage(
+		sessionId: string,
+		message: string,
+		opts?: { deliveryMode?: string }
+	): Promise<void>;
+}
 
 const log = new Logger('session-notification-sink');
 
