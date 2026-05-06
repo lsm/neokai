@@ -576,6 +576,12 @@ interface QueuedDeliveryFailure {
 
 interface EventRetryState {
   event: ExternalEvent;
+  /**
+   * Last matched subscriptions are retained only for lifecycle cleanup/reschedule
+   * when a run terminates while a preparation retry is pending. The retry timer
+   * must recompute current matches from the trie before preparing delivery so it
+   * never targets subscriptions removed or changed after the retry was scheduled.
+   */
   matched: Subscription[];
 }
 
@@ -1329,7 +1335,14 @@ class EventRouter {
     const timer = setTimeout(() => {
       this.eventRetryTimers.delete(retryKey);
       const retryState = this.eventRetryState.get(retryKey) ?? { event, matched };
-      void this.handleEventForSubscriptions(retryState.event, retryState.matched)
+      // Recompute against the current trie/active subscription set at retry time.
+      // The originally matched subscriptions may have been removed or changed by
+      // unregisterExecution(), clearRunInterests(), or a tick diff refresh while the
+      // timer was waiting. Reusing them would recreate queue/retry state for nodes
+      // that are no longer subscribed and could register delivery rows that should
+      // not exist.
+      const currentMatched = this.topicTrie.lookup(retryState.event.topic);
+      void this.handleEventForSubscriptions(retryState.event, currentMatched)
         .then((prepared) => {
           if (!prepared) {
             // handleEventForSubscriptions scheduled the next preparation retry.
@@ -1507,7 +1520,7 @@ When a workflow run transitions to `done` or `cancelled`, `clearRunInterests(wor
 4. Only then delete the in-memory queue, pending markers, retry counts, and timers.
 5. Event-level preparation retries can span multiple workflow runs. If one run terminates while others remain active, cancel the old shared timer and reschedule a retry for the surviving matched subscriptions with the existing retry count. Cancel without rescheduling only when no matched runs remain.
 
-This keeps run teardown from leaving non-terminal delivery rows for nodes that can no longer be started while preserving retry paths for still-active runs.
+This keeps run teardown from leaving non-terminal delivery rows for nodes that can no longer be started while preserving retry paths for still-active runs. When an event-level preparation retry timer actually fires, it must re-run `topicTrie.lookup(event.topic)` and prepare only the current active subscriptions rather than reusing the stale list captured when the timer was scheduled. This prevents canceled or diff-removed nodes from being reintroduced by retry.
 
 ### Queue for not-yet-started nodes
 
