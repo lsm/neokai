@@ -715,18 +715,19 @@ class ExternalEventRouter {
   private watchedRepoCache: Map<string, Set<string>> = new Map();
 
   constructor(
-    private readonly internalEventBus: InternalEventBus<InternalEventMap>,
-    private readonly commandBus: InternalCommandBus<InternalCommandMap>,
-    private readonly nodeExecutionRepo: NodeExecutionRepository,
-    private readonly taskRepo: SpaceTaskRepository,
-    private readonly spaceTaskManager: SpaceTaskManager,
-    private readonly sessionFactory: SessionFactory,
-    private readonly eventStore: ExternalEventStore,
-    private readonly watchedRepoLookup: WatchedRepoLookup,
+    private readonly config: {
+      internalEventBus: InternalEventBus<InternalEventMap>;
+      commandBus: InternalCommandBus<InternalCommandMap>;
+      nodeExecutionRepo: NodeExecutionRepository;
+      taskRepo: SpaceTaskRepository;
+      spaceTaskManager: SpaceTaskManager;
+      eventStore: ExternalEventStore;
+      watchedRepoLookup: WatchedRepoLookup;
+    },
   ) {
     // Subscribe to the semantic internal fact. External topic matching happens
     // inside handleEvent via event.topic, not via the internal event name.
-    this.internalEventBus.subscribe('externalEvent.published', ({ payload, channel }) => {
+    this.config.internalEventBus.subscribe('externalEvent.published', ({ payload, channel }) => {
       const { event } = payload;
       // Defense in depth: payload spaceId and channel spaceId must agree when channel is space-scoped.
       if (channel.kind === 'space' && event.spaceId !== channel.spaceId) return;
@@ -745,7 +746,7 @@ class ExternalEventRouter {
   private isWatchedRepo(spaceId: string, owner: string, repo: string): boolean {
     let cached = this.watchedRepoCache.get(spaceId);
     if (!cached) {
-      const repos = this.watchedRepoLookup.listWatchedRepos(spaceId);
+      const repos = this.config.watchedRepoLookup.listWatchedRepos(spaceId);
       cached = new Set(
         repos.filter(r => r.enabled).map(r => `${r.owner.toLowerCase()}/${r.repo.toLowerCase()}`)
       );
@@ -1008,7 +1009,7 @@ class ExternalEventRouter {
         clearTimeout(timer);
         this.retryTimers.delete(key);
         retryFailures.push({
-          eventId: this.eventStore.getEventIdForDeliveryKey(key),
+          eventId: this.config.eventStore.getEventIdForDeliveryKey(key),
           deliveryKey: key,
           reason,
         });
@@ -1086,7 +1087,7 @@ class ExternalEventRouter {
         clearTimeout(timer);
         this.retryTimers.delete(key);
         retryCancellationFailures.push({
-          eventId: this.eventStore.getEventIdForDeliveryKey(key),
+          eventId: this.config.eventStore.getEventIdForDeliveryKey(key),
           deliveryKey: key,
           reason: 'run_terminal_retry_cancelled',
         });
@@ -1134,7 +1135,7 @@ class ExternalEventRouter {
 
   private async handleEventForSubscriptions(event: ExternalEvent, matched: Subscription[]): Promise<boolean> {
     if (matched.length === 0) {
-      this.eventStore.markEventIgnored(event.id, 'no_matching_subscriptions');
+      this.config.eventStore.markEventIgnored(event.id, 'no_matching_subscriptions');
       return true;
     }
 
@@ -1148,13 +1149,13 @@ class ExternalEventRouter {
       const deliveryKey = this.makeDeliveryKey(event, sub);
       try {
         if (!this.passesScopeCheck(event, sub)) continue;
-        this.eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+        this.config.eventStore.registerExpectedDelivery(event.id, deliveryKey, {
           workflowRunId: sub.workflowRunId,
           taskId: sub.taskId,
           nodeId: sub.nodeId,
           agentName: sub.agentName,
         });
-        if (this.eventStore.isDeliveryTerminal(event.id, deliveryKey)) continue;
+        if (this.config.eventStore.isDeliveryTerminal(event.id, deliveryKey)) continue;
         eligible.push(sub);
       } catch (err) {
         preparationFailed = true;
@@ -1190,7 +1191,7 @@ class ExternalEventRouter {
     // retries, etc.) do not re-emit and re-route indefinitely when every matched
     // subscription is out of scope or already terminal.
     if (eligible.length === 0) {
-      this.eventStore.markEventIgnored(event.id, 'no_scope_eligible_subscriptions');
+      this.config.eventStore.markEventIgnored(event.id, 'no_scope_eligible_subscriptions');
       return true;
     }
 
@@ -1272,22 +1273,36 @@ class ExternalEventRouter {
     dedupeKey: string,
     sessionId: string,
   ): Promise<void> {
-    // Format and inject.
-    // NOTE: There is a TOCTOU race — the session could complete between our
-    // resolveSession call and injectMessage. This is safe: injectMessage on a
-    // completed/absent session returns a caught error (logged as a warning).
+    // Format and request injection through the command boundary.
+    // The command handler owns authorization, validation, telemetry, standardized
+    // failure mapping, and the concrete sessionFactory.injectMessage(...) call.
     const message = this.formatEventMessage(event);
-    await this.sessionFactory.injectMessage(sessionId, message, {
+    const result = await this.config.commandBus.dispatch('agent.message.inject', {
+      sessionId,
+      message,
       deliveryMode: 'defer',
+      origin: 'system',
+      metadata: {
+        source: 'externalEvent',
+        eventId: event.id,
+        deliveryKey: dedupeKey,
+        workflowRunId: sub.workflowRunId,
+        taskId: sub.taskId,
+        nodeId: sub.nodeId,
+        agentName: sub.agentName,
+      },
     });
+    if (!result.ok) {
+      throw result.error ?? new Error('agent.message.inject command failed');
+    }
 
     // Success: mark as delivered both in-memory and persistently, then advance
     // the source event to terminal delivered only when all expected per-subscription
     // deliveries are terminal. This keeps source-level dedup from re-emitting
     // already-delivered events after restart/TTL expiry.
     this.delivered.set(dedupeKey, Date.now());
-    this.eventStore.markDeliveryDelivered(event.id, dedupeKey);
-    this.eventStore.markEventDeliveredIfAllDeliveriesTerminal(event.id);
+    this.config.eventStore.markDeliveryDelivered(event.id, dedupeKey);
+    this.config.eventStore.markEventDeliveredIfAllDeliveriesTerminal(event.id);
     this.pendingDeliveries.delete(dedupeKey);
   }
 
@@ -1316,8 +1331,8 @@ class ExternalEventRouter {
     deliveryKey: string,
     reason: QueuedDeliveryFailure['reason'],
   ): void {
-    this.eventStore.markDeliveryFailed(eventId, deliveryKey, { terminal: true, reason });
-    this.eventStore.markEventFailedIfAllDeliveriesTerminal(eventId);
+    this.config.eventStore.markDeliveryFailed(eventId, deliveryKey, { terminal: true, reason });
+    this.config.eventStore.markEventFailedIfAllDeliveriesTerminal(eventId);
   }
 
   private markQueuedDeliveriesFailed(failures: QueuedDeliveryFailure[]): void {
@@ -1435,7 +1450,7 @@ class ExternalEventRouter {
       if (existingTimer) clearTimeout(existingTimer);
       this.eventRetryTimers.delete(retryKey);
       this.eventRetryState.delete(retryKey);
-      this.eventStore.markEventFailed(event.id, {
+      this.config.eventStore.markEventFailed(event.id, {
         terminal: true,
         reason: 'delivery_preparation_failed',
       });
@@ -1499,11 +1514,11 @@ class ExternalEventRouter {
 
       // Persist terminal failure so source-level dedup stops re-emitting this
       // delivery after restart or future polling of the same upstream event.
-      this.eventStore.markDeliveryFailed(event.id, deliveryKey, {
+      this.config.eventStore.markDeliveryFailed(event.id, deliveryKey, {
         terminal: true,
         reason: 'max_retries_exceeded',
       });
-      this.eventStore.markEventFailedIfAllDeliveriesTerminal(event.id);
+      this.config.eventStore.markEventFailedIfAllDeliveriesTerminal(event.id);
       return;
     }
 
@@ -1517,7 +1532,7 @@ class ExternalEventRouter {
       this.retryTimers.delete(deliveryKey);
 
       // Re-check if delivered while waiting (another delivery might have succeeded)
-      if (this.delivered.has(deliveryKey) || this.eventStore.isDeliveryTerminal(event.id, deliveryKey)) {
+      if (this.delivered.has(deliveryKey) || this.config.eventStore.isDeliveryTerminal(event.id, deliveryKey)) {
         this.retryCounts.delete(deliveryKey);
         return;
       }
@@ -1534,11 +1549,11 @@ class ExternalEventRouter {
       if (!stillActive) {
         this.retryCounts.delete(deliveryKey);
         this.pendingDeliveries.delete(deliveryKey);
-        this.eventStore.markDeliveryFailed(event.id, deliveryKey, {
+        this.config.eventStore.markDeliveryFailed(event.id, deliveryKey, {
           terminal: true,
           reason: 'subscription_inactive_retry_skipped',
         });
-        this.eventStore.markEventFailedIfAllDeliveriesTerminal(event.id);
+        this.config.eventStore.markEventFailedIfAllDeliveriesTerminal(event.id);
         return;
       }
 
@@ -1547,7 +1562,7 @@ class ExternalEventRouter {
         .then(() => {
           // deliverToSubscription catches injection failures and may schedule a
           // follow-up retry, so only clear retry state if delivery is now marked.
-          if (this.delivered.has(deliveryKey) || this.eventStore.isDeliveryTerminal(event.id, deliveryKey)) {
+          if (this.delivered.has(deliveryKey) || this.config.eventStore.isDeliveryTerminal(event.id, deliveryKey)) {
             this.retryCounts.delete(deliveryKey);
             this.pendingDeliveries.delete(deliveryKey);
           }
@@ -1612,9 +1627,9 @@ The ExternalEventRouter marks per-subscription delivery as `delivered` only afte
 
 When an event matches a subscription whose node execution is `idle` (agent session exists but finished its turn):
 
-1. Call `sessionFactory.injectMessage(sessionId, message, { deliveryMode: 'defer' })`.
-2. The existing defer mechanism handles waking: if idle → enqueue immediately; if busy → persist as deferred, replay after current turn.
-3. No new wake mechanism needed — the existing `SessionNotificationSink` pattern already solves this.
+1. Dispatch `InternalCommandBus.dispatch('agent.message.inject', { sessionId, message, deliveryMode: 'defer', ... })`.
+2. The command handler uses the existing defer mechanism under the hood: if idle → enqueue immediately; if busy → persist as deferred, replay after current turn.
+3. No new wake mechanism needed — the existing deferred injection path already solves this, but the router stays behind the command boundary.
 
 ### Node cancellation cleanup
 
@@ -2150,12 +2165,15 @@ const externalEventService = new ExternalEventService(
   externalEventStore,
   externalEventTaskResolver,
 );
-const externalEventRouter = new ExternalEventRouter(
+const externalEventRouter = new ExternalEventRouter({
   internalEventBus,
-  internalCommandBus,
-  externalEventStore,
-  ...dependencies,
-);
+  commandBus: internalCommandBus,
+  nodeExecutionRepo,
+  taskRepo,
+  spaceTaskManager,
+  eventStore: externalEventStore,
+  watchedRepoLookup,
+});
 
 const extensionContext: ExternalEventExtensionContext = {
   publisher: externalEventService,
