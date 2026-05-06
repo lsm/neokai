@@ -73,6 +73,21 @@ The migration should be explicit about which existing primitives are removed, wh
 | Direct `SpaceGitHubService` task-agent injection | Remove after external event routing is primary. | Replace with `ExternalEventService` → `ExternalEventRouter` → `InternalCommandBus.dispatch('agent.message.inject', ...)`. |
 | Live Query / `ReactiveDatabase` reactivity | Keep as reactive read-model/query update mechanism. | Do not use as a general event bus. It cooperates with state projection and query paths. |
 
+## Current Code Fact-Check Notes
+
+These notes reflect the current codebase state and should guide migration PRs:
+
+- Legacy `EventBus` still exists in `packages/shared/src/event-bus.ts`, but current imports are test-only; production code appears to have moved to `DaemonHub`/`TypedHub` paths.
+- Legacy `EventBus` is not currently exported from `packages/shared/src/mod.ts`; Milestone 1 should verify this remains true rather than assuming a barrel-export removal is required.
+- `DaemonHub` is a type alias for `TypedHub<DaemonEventMap>`, and `createDaemonHub(...)` constructs a `TypedHub<DaemonEventMap>`.
+- `TypedHub` is still exported from `packages/shared/src/mod.ts`. Do not remove that export immediately; first migrate daemon application/domain code away from direct `TypedHub` usage, then decide whether it remains public infrastructure.
+- `TypedHub` local dispatch currently queues handlers in a microtask and does not await handler promises; handler failures are swallowed. Milestone 3 must fix this in the wrapper or in `TypedHub` itself before critical workflows depend on awaited event delivery.
+- `StateManager` currently combines state caches/read models with many direct `messageHub.event(...)` forwarding calls. The bridge/projection split is valid, but implementation should be broken into smaller PRs because this surface is broad.
+- `StateManager` maintains `channelVersions`; cleanup should be handled while extracting channel lifecycle/client delivery code.
+- `NotificationSink` is actively used by Space runtime paths. It should be treated as a compatibility path, not deleted until replacement event subscribers cover the same notifications.
+- `SpaceGitHubService` still accepts an `injectTaskAgent` callback and directly injects GitHub activity into task-agent sessions. This confirms the need for the `ExternalEventService`/`ExternalEventRouter`/`agent.message.inject` replacement path.
+- Live Query is implemented as `ReactiveDatabase` table-change notifications plus `LiveQueryEngine` SQL re-evaluation/diff delivery over `liveQuery.snapshot` and `liveQuery.delta`. It is a reactive read-model mechanism, not a domain event bus.
+
 ## Live Query Boundary
 
 Live Query is adjacent to `StateProjectionService` and `InternalQueryBus`; it is not a replacement for `InternalEventBus`.
@@ -346,7 +361,7 @@ Goal: make it impossible for new production code to choose the dead event primit
 Tasks:
 
 1. Verify production imports of `packages/shared/src/event-bus.ts` remain zero.
-2. Remove it from any public/shared barrel exports if present.
+2. Verify it remains absent from public/shared barrel exports; remove it if a barrel export is reintroduced before migration starts.
 3. Mark the class and tests as deprecated or delete them if package compatibility permits.
 4. Add a short replacement note pointing to `InternalEventBus`/current `DaemonHub` wrapper.
 5. Rename variables typed as `DaemonHub` from `eventBus` to `daemonHub` where practical.
@@ -371,7 +386,8 @@ Tasks:
 4. Add a small architecture doc comment in each module explaining event/command/query semantics.
 5. Define canonical daemon event names under the new convention and begin migrating existing names as soon as the façade exists.
 6. Document that `DaemonHub` and `TypedHub` are compatibility/infrastructure details after this milestone, not application-facing APIs for new daemon/domain code.
-7. Add tests for registration, dispatch, query execution, unsubscribe, duplicate command/query handler handling, and temporary event-name aliases used during migration.
+7. Keep the current shared `TypedHub` export stable during this milestone; direct daemon application usage should move first, and any public export cleanup should be a later compatibility decision.
+8. Add tests for registration, dispatch, query execution, unsubscribe, duplicate command/query handler handling, and temporary event-name aliases used during migration.
 
 Exit criteria:
 
@@ -407,7 +423,7 @@ Tasks:
 
 1. Create `ClientEventGateway` around the existing WebSocket/MessageHub client path.
 2. Create `ClientEventBridge` with declarative internal-event-to-client-event mappings.
-3. Move the repetitive `StateManager` forwarding handlers into bridge config.
+3. Move the repetitive `StateManager` forwarding handlers into bridge config in small groups rather than one large rewrite.
 4. Keep payloads/channels behavior-compatible at first.
 5. Add authorization/filtering hooks even if initial implementation delegates to existing checks.
 6. Fix `channelVersions` cleanup while touching StateManager/channel lifecycle.
