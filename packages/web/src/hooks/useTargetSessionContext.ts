@@ -112,6 +112,10 @@ export function useTargetSessionContext({
 	// first render cycle after a task switch (React batches state updates, so
 	// the reset effect's new Maps won't be visible until the next commit).
 	const lastTaskIdRef = useRef<string>(taskId);
+	// Track the latest selectedTarget so async auto-apply continuations can
+	// read the current selection instead of a stale closure value.
+	const selectedTargetRef = useRef(selectedTarget);
+	selectedTargetRef.current = selectedTarget;
 
 	// Reset pre-configuration state when the active task changes so stale
 	// settings from a previous task don't leak into the new one.
@@ -260,7 +264,7 @@ export function useTargetSessionContext({
 							})
 							.then(() => {
 								appliedThinkingRef.current.add(targetId);
-								if (target.id === selectedTarget?.id) {
+								if (target.id === selectedTargetRef.current?.id) {
 									setLocalThinkingLevel(preThinkingCurrent.level);
 								}
 							})
