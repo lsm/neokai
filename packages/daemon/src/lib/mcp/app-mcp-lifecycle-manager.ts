@@ -73,14 +73,13 @@ export class AppMcpLifecycleManager {
 
 	/**
 	 * Returns SDK MCP configs effective for a given session, resolving the
-	 * session's space / room / session scope chain against the registry via the
+	 * session's space / session scope chain against the registry via the
 	 * pure {@link resolveMcpServers} function.
 	 *
 	 * This is the canonical entry point for all session-spawn paths (space ad-hoc,
-	 * `space_task_agent`, node-agent, room sessions). Legacy variants
-	 * ({@link getEnabledMcpConfigs}, {@link getEnabledMcpConfigsForRoom}) remain
-	 * for backward compatibility with callers that don't yet have a Session
-	 * object; M5 will remove them.
+	 * `space_task_agent`, node-agent). Legacy variant
+	 * ({@link getEnabledMcpConfigs}) remains for backward compatibility with
+	 * callers that don't yet have a Session object.
 	 */
 	getEnabledMcpConfigsForSession(
 		session: ResolveMcpServersSession

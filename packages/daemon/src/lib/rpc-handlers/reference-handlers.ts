@@ -210,14 +210,8 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
 		const requestedTypes: ReferenceType[] =
 			params.types && params.types.length > 0 ? params.types : ['task', 'goal', 'file', 'folder'];
 
-		// Resolve room context from session.
-		// The room agent route uses a synthetic session ID "room:chat:<roomId>"
-		// which has no DB entry — extract the roomId from it directly.
 		const session = sessionManager.getSessionFromDB(params.sessionId);
-		let roomId = session?.context?.roomId;
-		if (!roomId && params.sessionId.startsWith('room:chat:')) {
-			roomId = params.sessionId.slice('room:chat:'.length);
-		}
+		const roomId = session?.context?.roomId;
 
 		// Empty query with no room context: nothing to search.
 		// Empty query WITH room context: return all tasks/goals for the room.

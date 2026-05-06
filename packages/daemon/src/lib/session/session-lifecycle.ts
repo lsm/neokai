@@ -34,7 +34,7 @@ import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.
  * out during code review and the CI regression guard can locate them.
  */
 export type ArchiveResourcesTrigger = 'ui_session_archive' | 'ui_task_archive';
-export type DeleteResourcesTrigger = 'ui_session_delete' | 'ui_room_delete' | 'ui_neo_room_delete';
+export type DeleteResourcesTrigger = 'ui_session_delete';
 
 export interface SessionLifecycleConfig {
 	defaultModel: string;
@@ -197,7 +197,7 @@ export class SessionLifecycle {
 			createdAt: new Date().toISOString(),
 			lastActiveAt: new Date().toISOString(),
 			status: sessionStatus,
-			// Session type: defaults to 'worker', can be set to 'room_chat', 'planner', 'coder', 'leader', 'general', or 'lobby'
+			// Session type: defaults to 'worker', can be set to 'lobby', 'space_chat', 'space_task_agent', or 'neo'
 			type: sessionType,
 			config: {
 				model: modelId, // Use validated model ID

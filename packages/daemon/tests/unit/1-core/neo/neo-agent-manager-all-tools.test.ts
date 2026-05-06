@@ -23,7 +23,6 @@ import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { McpServerConfig } from '@neokai/shared';
 import type {
 	NeoToolsConfig,
-	NeoQueryRoomManager,
 	NeoQueryGoalRepository,
 	NeoQueryTaskRepository,
 	NeoQuerySessionManager,
@@ -39,7 +38,6 @@ import type {
 } from '../../../../src/lib/neo/tools/neo-query-tools';
 import type {
 	NeoActionToolsConfig,
-	NeoActionRoomManager,
 	NeoActionManagerFactory,
 	NeoActionGoalManager,
 	NeoActionTaskManager,
@@ -141,11 +139,6 @@ function makeSettingsManager(): NeoSettingsManager {
 }
 
 function makeMinimalQueryConfig(overrides: Partial<NeoToolsConfig> = {}): NeoToolsConfig {
-	const noopRoomManager: NeoQueryRoomManager = {
-		listRooms: () => [],
-		getRoom: () => null,
-		getRoomOverview: () => null,
-	};
 	const noopGoalRepo: NeoQueryGoalRepository = {
 		listGoals: () => [],
 		getGoal: () => null,
@@ -209,7 +202,6 @@ function makeMinimalQueryConfig(overrides: Partial<NeoToolsConfig> = {}): NeoToo
 	};
 
 	return {
-		roomManager: noopRoomManager,
 		goalRepository: noopGoalRepo,
 		taskRepository: noopTaskRepo,
 		sessionManager: noopSessionManager,
@@ -232,13 +224,6 @@ function makeMinimalQueryConfig(overrides: Partial<NeoToolsConfig> = {}): NeoToo
 function makeMinimalActionConfig(
 	overrides: Partial<NeoActionToolsConfig> = {}
 ): NeoActionToolsConfig {
-	const noopRoomManager: NeoActionRoomManager = {
-		createRoom: mock(() => ({ id: 'r1', name: 'Room 1' }) as never),
-		deleteRoom: mock(() => true),
-		getRoom: mock(() => null),
-		updateRoom: mock(() => null),
-	};
-
 	const noopGoalManager: NeoActionGoalManager = {
 		createGoal: mock(async () => ({ id: 'g1', title: 'Goal 1' }) as never),
 		getGoal: mock(async () => null),
@@ -259,7 +244,6 @@ function makeMinimalActionConfig(
 	};
 
 	return {
-		roomManager: noopRoomManager,
 		managerFactory: noopManagerFactory,
 		pendingStore: new PendingActionStore(),
 		getSecurityMode: () => 'balanced',

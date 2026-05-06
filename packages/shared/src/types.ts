@@ -107,17 +107,6 @@ export const DEFAULT_WORKER_FEATURES: SessionFeatures = {
 };
 
 /**
- * Legacy default features for old room chat session rows.
- */
-export const DEFAULT_ROOM_CHAT_FEATURES: SessionFeatures = {
-	rewind: false,
-	worktree: false,
-	coordinator: false,
-	archive: false,
-	sessionInfo: false,
-};
-
-/**
  * Default features for lobby sessions (all disabled).
  * @public
  */

@@ -455,40 +455,6 @@ describe('createNeoActionMcpServer — activity logging', () => {
 
 		const rooms = overrides.roomsById ?? new Map<string, import('@neokai/shared').Room>();
 
-		const roomManager: import('../../../../src/lib/neo/tools/neo-action-tools').NeoActionRoomManager =
-			{
-				createRoom: (params) => {
-					const room: import('@neokai/shared').Room = {
-						id: 'new-room-id',
-						name: params.name,
-						status: 'active',
-						sessionIds: [],
-						allowedPaths: params.allowedPaths ?? [],
-						createdAt: Date.now(),
-						updatedAt: Date.now(),
-					};
-					rooms.set(room.id, room);
-					return room;
-				},
-				deleteRoom: (id) => {
-					if (!rooms.has(id)) return false;
-					rooms.delete(id);
-					return true;
-				},
-				getRoom: (id) => rooms.get(id) ?? null,
-				updateRoom: (id, params) => {
-					const existing = rooms.get(id);
-					if (!existing) return null;
-					const updated = {
-						...existing,
-						...params,
-						updatedAt: Date.now(),
-					} as import('@neokai/shared').Room;
-					rooms.set(id, updated);
-					return updated;
-				},
-			};
-
 		const skillEnabled = overrides.skillEnabled ?? false;
 		const skillsManager: import('../../../../src/lib/neo/tools/neo-action-tools').NeoSkillsManager =
 			{
@@ -647,7 +613,6 @@ describe('createNeoActionMcpServer — activity logging', () => {
 			};
 
 		const config: import('../../../../src/lib/neo/tools/neo-action-tools').NeoActionToolsConfig = {
-			roomManager,
 			managerFactory,
 			pendingStore: new PAS(),
 			getSecurityMode: () => 'autonomous',
@@ -695,26 +660,6 @@ describe('createNeoActionMcpServer — activity logging', () => {
 
 	// ── End-to-end wrapper tests ───────────────────────────────────────────────
 
-	test('create_room: logged wrapper calls logAction with success status and undo data', async () => {
-		const { config, createNeoActionMcpServer } = makeConfig();
-		const { spy, calls } = makeSpyLogger();
-		config.activityLogger = spy;
-		const server = createNeoActionMcpServer(config);
-
-		await callTool(server, 'create_room', {
-			name: 'My Room',
-			workspace_path: '/home/user/project',
-		});
-
-		expect(calls).toHaveLength(1);
-		expect(calls[0].toolName).toBe('create_room');
-		expect(calls[0].status).toBe('success');
-		expect(calls[0].undoable).toBe(true);
-		expect(calls[0].undoData).toMatchObject({ roomId: 'new-room-id' });
-		expect(calls[0].targetType).toBe('room');
-		expect(calls[0].targetId).toBe('new-room-id');
-	});
-
 	test('toggle_skill: logged wrapper captures previous enabled state as undo data', async () => {
 		const { config, createNeoActionMcpServer } = makeConfig({ skillEnabled: false });
 		const { spy, calls } = makeSpyLogger();
@@ -729,42 +674,6 @@ describe('createNeoActionMcpServer — activity logging', () => {
 		expect(calls[0].undoable).toBe(true);
 		// preCapture should have recorded the state before the toggle (enabled=false).
 		expect(calls[0].undoData).toMatchObject({ skillId: 'skill-abc', previousEnabled: false });
-	});
-
-	test('confirmationRequired result: logged wrapper does not call logAction', async () => {
-		// Use conservative security mode so delete_room triggers a confirmationRequired response.
-		const { config, createNeoActionMcpServer } = makeConfig();
-		config.getSecurityMode = () => 'conservative';
-		const { spy, calls } = makeSpyLogger();
-		config.activityLogger = spy;
-		const server = createNeoActionMcpServer(config);
-
-		const result = await callTool(server, 'delete_room', { room_id: 'r-1' });
-		const data = JSON.parse(result.content[0].text);
-		expect(data.confirmationRequired).toBe(true);
-		// Nothing has executed — the wrapper must NOT log.
-		expect(calls).toHaveLength(0);
-	});
-
-	test('logged wrapper logs error entry and re-throws when handler throws', async () => {
-		const { config, createNeoActionMcpServer } = makeConfig();
-		const { spy, calls } = makeSpyLogger();
-		config.activityLogger = spy;
-		// Make roomManager.createRoom throw to simulate an unexpected handler error.
-		config.roomManager!.createRoom = () => {
-			throw new Error('DB connection lost');
-		};
-		const server = createNeoActionMcpServer(config);
-
-		await expect(
-			callTool(server, 'create_room', { name: 'Boom', workspace_path: '/home/user/project' })
-		).rejects.toThrow('DB connection lost');
-
-		expect(calls).toHaveLength(1);
-		expect(calls[0].toolName).toBe('create_room');
-		expect(calls[0].status).toBe('error');
-		expect(calls[0].error).toBe('DB connection lost');
-		expect(calls[0].undoable).toBe(false);
 	});
 
 	test('logged wrapper proceeds normally when preCapture throws', async () => {

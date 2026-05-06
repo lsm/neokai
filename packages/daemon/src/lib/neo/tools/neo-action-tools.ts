@@ -1542,7 +1542,7 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 					.int()
 					.min(1)
 					.optional()
-					.describe('Maximum number of concurrent worker sessions per room agent'),
+					.describe('Maximum number of concurrent worker sessions per space agent'),
 			},
 			(args) =>
 				logged(

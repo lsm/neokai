@@ -41,12 +41,12 @@ export function setupQuestionHandlers(
 	/**
 	 * Optional lookup for room worker/leader sessions.
 	 *
-	 * Room worker and leader sessions live in RoomRuntimeService.agentSessions,
-	 * a separate in-memory map from SessionManager's cache. If SessionManager is
+	 * Task agent sessions are managed by SpaceRuntimeService,
+	 * which maintains an in-memory map alongside SessionManager's cache. If SessionManager is
 	 * used alone it creates a fresh AgentSession from the DB (no live SDK query,
 	 * pendingResolver = null) and handleQuestionResponse always throws.
 	 *
-	 * Pass RoomRuntimeService.getAgentSession.bind(runtimeService) here so the
+	 * Pass SpaceRuntimeService.getAgentSession.bind(runtimeService) here so the
 	 * handler resolves the correct live instance first.
 	 */
 	getRuntimeSession?: (sessionId: string) => AgentSession | undefined
