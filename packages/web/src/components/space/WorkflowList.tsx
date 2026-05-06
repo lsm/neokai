@@ -242,7 +242,12 @@ function WorkflowCard({
 	}
 
 	return (
-		<div class="bg-dark-850 border border-dark-700 rounded-lg p-4 hover:border-dark-600 transition-colors group">
+		<div
+			class={[
+				'bg-dark-850 border rounded-lg p-4 hover:border-dark-600 transition-colors group',
+				workflow.disabled ? 'border-dark-800 opacity-60' : 'border-dark-700',
+			].join(' ')}
+		>
 			{deleteError && (
 				<div class="mb-2 px-3 py-1.5 bg-red-900/20 border border-red-800/40 rounded text-xs text-red-300">
 					{deleteError}
@@ -251,7 +256,14 @@ function WorkflowCard({
 
 			<div class="flex items-start justify-between gap-3">
 				<div class="flex-1 min-w-0">
-					<h3 class="text-sm font-medium text-gray-200 truncate">{workflow.name}</h3>
+					<div class="flex items-center gap-2">
+						<h3 class="text-sm font-medium text-gray-200 truncate">{workflow.name}</h3>
+						{workflow.disabled && (
+							<span class="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium bg-red-900/20 border border-red-800/40 rounded text-red-400 shrink-0">
+								Disabled
+							</span>
+						)}
+					</div>
 					{workflow.description && (
 						<p class="text-xs text-gray-500 mt-0.5 line-clamp-2">{workflow.description}</p>
 					)}

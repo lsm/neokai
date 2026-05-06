@@ -56,6 +56,7 @@ interface WorkflowRow {
 	 * refactor; no runtime consumer reads this yet.
 	 */
 	post_approval?: string | null;
+	disabled: number;
 	created_at: number;
 	updated_at: number;
 }
@@ -169,6 +170,9 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
 	if (postApproval && typeof postApproval === 'object') {
 		wf.postApproval = postApproval;
 	}
+	if (row.disabled) {
+		wf.disabled = true;
+	}
 	return wf;
 }
 
@@ -213,8 +217,8 @@ export class SpaceWorkflowRepository {
 
 		this.db
 			.prepare(
-				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, gates, layout, template_name, template_hash, instructions, completion_autonomy_level, post_approval, created_at, updated_at)
-	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, gates, layout, template_name, template_hash, instructions, completion_autonomy_level, post_approval, disabled, created_at, updated_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				workflowId,
@@ -232,6 +236,7 @@ export class SpaceWorkflowRepository {
 				params.instructions ?? null,
 				completionAutonomyLevel,
 				postApprovalJson,
+				params.disabled ? 1 : 0,
 				now,
 				now
 			);
@@ -365,6 +370,10 @@ export class SpaceWorkflowRepository {
 		if (params.postApproval !== undefined) {
 			fields.push('post_approval = ?');
 			values.push(params.postApproval ? JSON.stringify(params.postApproval) : null);
+		}
+		if (params.disabled !== undefined && params.disabled !== null) {
+			fields.push('disabled = ?');
+			values.push(params.disabled ? 1 : 0);
 		}
 
 		const hasNodeReplacement = params.nodes !== undefined;

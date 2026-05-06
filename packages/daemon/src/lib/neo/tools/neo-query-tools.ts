@@ -624,6 +624,7 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 					description: w.description ?? null,
 					nodeCount: w.nodes?.length ?? 0,
 					tags: w.tags ?? [],
+					disabled: w.disabled ?? false,
 					createdAt: w.createdAt,
 					updatedAt: w.updatedAt,
 				}))
