@@ -93,17 +93,22 @@ export function useTargetSessionContext({
 	const modelSwitcher = useModelSwitcher(targetSessionId);
 
 	// In-memory pre-configuration for not-yet-started agents.
-	// Model preconfig stores both id and provider so that auto-apply can
-	// disambiguate when multiple providers expose the same model ID.
+	// Model preconfig stores id, provider, and the owning taskId so that
+	// effective reads and auto-apply can guard against stale data after a
+	// task switch.
 	const [preConfiguredModel, setPreConfiguredModel] = useState<
-		Map<string, { id: string; provider: string }>
+		Map<string, { id: string; provider: string; taskId: string }>
 	>(new Map());
-	const [preConfiguredThinking, setPreConfiguredThinking] = useState<Map<string, ThinkingLevel>>(
-		new Map()
-	);
+	const [preConfiguredThinking, setPreConfiguredThinking] = useState<
+		Map<string, { level: ThinkingLevel; taskId: string }>
+	>(new Map());
 
 	// Track which targets we've already auto-applied so we don't loop.
 	const appliedAutoConfigRef = useRef<Set<string>>(new Set());
+	// Track the last taskId we've seen so the auto-apply effect can skip the
+	// first render cycle after a task switch (React batches state updates, so
+	// the reset effect's new Maps won't be visible until the next commit).
+	const lastTaskIdRef = useRef<string>(taskId);
 
 	// Reset pre-configuration state when the active task changes so stale
 	// settings from a previous task don't leak into the new one.
@@ -111,6 +116,7 @@ export function useTargetSessionContext({
 		setPreConfiguredModel(new Map());
 		setPreConfiguredThinking(new Map());
 		appliedAutoConfigRef.current = new Set();
+		lastTaskIdRef.current = taskId;
 	}, [taskId]);
 
 	// Default model from workflow definition (keyed by target ID).
@@ -122,15 +128,18 @@ export function useTargetSessionContext({
 	}, [selectedTarget, defaultAgentModels]);
 
 	// Effective model: live when started, pre-configured/default when not.
+	// Ignore preconfig entries that belong to a different task.
 	const preConfigEntry = preConfiguredModel.get(selectedTarget?.id ?? '');
+	const preConfigForCurrentTask =
+		preConfigEntry && preConfigEntry.taskId === taskId ? preConfigEntry : undefined;
 	const effectiveCurrentModel = isStarted
 		? modelSwitcher.currentModel
-		: (preConfigEntry?.id ?? defaultModel);
+		: (preConfigForCurrentTask?.id ?? defaultModel);
 
 	const effectiveCurrentModelInfo = isStarted
 		? modelSwitcher.currentModelInfo
 		: (modelSwitcher.availableModels.find(
-				(m) => m.id === effectiveCurrentModel && m.provider === preConfigEntry?.provider
+				(m) => m.id === effectiveCurrentModel && m.provider === preConfigForCurrentTask?.provider
 			) ??
 			modelSwitcher.availableModels.find((m) => m.id === effectiveCurrentModel) ??
 			null);
@@ -163,11 +172,13 @@ export function useTargetSessionContext({
 		};
 	}, [targetSessionId]);
 
-	// For unstarted targets, sync with pre-configured value.
+	// For unstarted targets, sync with pre-configured value (scoped to current task).
 	useEffect(() => {
 		if (!selectedTarget || isStarted) return;
-		setLocalThinkingLevel(preConfiguredThinking.get(selectedTarget.id) ?? 'auto');
-	}, [selectedTarget?.id, isStarted, preConfiguredThinking]);
+		const entry = preConfiguredThinking.get(selectedTarget.id);
+		const level = entry && entry.taskId === taskId ? entry.level : 'auto';
+		setLocalThinkingLevel(level);
+	}, [selectedTarget?.id, isStarted, preConfiguredThinking, taskId]);
 
 	// Destructure stable primitives from modelSwitcher to avoid effect re-runs
 	// caused by the switcher object identity changing every render.
@@ -180,14 +191,29 @@ export function useTargetSessionContext({
 	// attempted and all attempts succeeded; if preconditions are missing
 	// (e.g. model info not yet loaded or hub disconnected) the target stays
 	// unmarked and the effect retries on the next render cycle.
+	//
+	// Guard: skip the first render after taskId changes because React batches
+	// the reset-effect's state updates; without this guard the effect would
+	// read stale preconfiguration from the previous task.
 	useEffect(() => {
+		if (lastTaskIdRef.current !== taskId) {
+			// taskId just changed but the reset-effect's state update hasn't
+			// committed yet; defer auto-apply until the next render.
+			lastTaskIdRef.current = taskId;
+			return;
+		}
+
 		for (const target of targets) {
 			const targetId = target.id;
 			if (appliedAutoConfigRef.current.has(targetId)) continue;
 
 			const preModel = preConfiguredModel.get(targetId);
 			const preThinking = preConfiguredThinking.get(targetId);
-			if (!preModel && !preThinking) continue;
+			// Ignore entries that belong to a different task.
+			const preModelCurrent = preModel && preModel.taskId === taskId ? preModel : undefined;
+			const preThinkingCurrent =
+				preThinking && preThinking.taskId === taskId ? preThinking : undefined;
+			if (!preModelCurrent && !preThinkingCurrent) continue;
 
 			const sessionId = resolveTargetSessionId(target, activityMembers, taskAgentSessionId);
 			if (!sessionId) continue;
@@ -196,9 +222,9 @@ export function useTargetSessionContext({
 			const promises: Promise<unknown>[] = [];
 
 			// Apply model switch
-			if (preModel) {
+			if (preModelCurrent) {
 				const modelInfo = switcherModels.find(
-					(m) => m.id === preModel.id && m.provider === preModel.provider
+					(m) => m.id === preModelCurrent.id && m.provider === preModelCurrent.provider
 				);
 				if (modelInfo) {
 					attempted = true;
@@ -218,14 +244,14 @@ export function useTargetSessionContext({
 			}
 
 			// Apply thinking level
-			if (preThinking) {
+			if (preThinkingCurrent) {
 				const hub = connectionManager.getHubIfConnected();
 				if (hub) {
 					attempted = true;
 					promises.push(
 						hub.request('session.thinking.set', {
 							sessionId,
-							level: preThinking,
+							level: preThinkingCurrent.level,
 						})
 					);
 				}
@@ -236,8 +262,8 @@ export function useTargetSessionContext({
 			Promise.all(promises)
 				.then(() => {
 					appliedAutoConfigRef.current.add(targetId);
-					if (preThinking && target.id === selectedTarget?.id) {
-						setLocalThinkingLevel(preThinking);
+					if (preThinkingCurrent && target.id === selectedTarget?.id) {
+						setLocalThinkingLevel(preThinkingCurrent.level);
 					}
 				})
 				.catch(() => {
@@ -245,6 +271,7 @@ export function useTargetSessionContext({
 				});
 		}
 	}, [
+		taskId,
 		targets,
 		activityMembers,
 		taskAgentSessionId,
@@ -266,14 +293,18 @@ export function useTargetSessionContext({
 			if (!selectedTarget) return;
 			if (!isStarted) {
 				setPreConfiguredModel((prev) =>
-					new Map(prev).set(selectedTarget.id, { id: model.id, provider: model.provider })
+					new Map(prev).set(selectedTarget.id, {
+						id: model.id,
+						provider: model.provider,
+						taskId,
+					})
 				);
 				toast.success(`Pre-configured ${selectedTarget.label} to use ${model.name}`);
 				return;
 			}
 			await modelSwitcher.switchModel(model);
 		},
-		[isStarted, selectedTarget, modelSwitcher]
+		[isStarted, selectedTarget, modelSwitcher, taskId]
 	);
 
 	const setThinkingLevel = useCallback(
@@ -281,7 +312,9 @@ export function useTargetSessionContext({
 			setLocalThinkingLevel(level);
 			if (!isStarted || !targetSessionId) {
 				if (selectedTarget) {
-					setPreConfiguredThinking((prev) => new Map(prev).set(selectedTarget.id, level));
+					setPreConfiguredThinking((prev) =>
+						new Map(prev).set(selectedTarget.id, { level, taskId })
+					);
 				}
 				return;
 			}
@@ -299,7 +332,7 @@ export function useTargetSessionContext({
 				toast.error(err instanceof Error ? err.message : 'Failed to set thinking level');
 			}
 		},
-		[isStarted, targetSessionId, selectedTarget]
+		[isStarted, targetSessionId, selectedTarget, taskId]
 	);
 
 	return {

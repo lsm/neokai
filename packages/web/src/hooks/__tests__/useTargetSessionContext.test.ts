@@ -625,6 +625,74 @@ describe('useTargetSessionContext', () => {
 		});
 	});
 
+	it('does not auto-apply stale preconfiguration after taskId changes', async () => {
+		const sharedTarget = {
+			id: 'node:n1:reviewer',
+			kind: 'node_agent' as const,
+			label: 'Reviewer',
+			agentName: 'reviewer',
+		};
+
+		const model: ModelInfo = {
+			id: 'claude-opus-4-5',
+			name: 'Opus 4.5',
+			family: 'opus',
+			provider: 'anthropic',
+			alias: 'opus',
+			contextWindow: 200000,
+			description: '',
+			releaseDate: '',
+			available: true,
+		};
+
+		const { result, rerender } = renderHook(
+			(props: { taskId: string; members: SpaceTaskActivityMember[] }) =>
+				useTargetSessionContext({
+					taskId: props.taskId,
+					targets: [sharedTarget],
+					selectedTarget: sharedTarget,
+					activityMembers: props.members,
+					taskAgentSessionId: 'task-sess-123',
+				}),
+			{ initialProps: { taskId: 'task-a', members: [] as SpaceTaskActivityMember[] } }
+		);
+
+		// Pre-configure model for task-a while agent is not started
+		await act(async () => {
+			await result.current.switchModel(model);
+		});
+		expect(result.current.currentModel).toBe('claude-opus-4-5');
+		expect(mockRequest).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
+
+		// Switch to task-b where the same target already has a spawned session.
+		// The stale preconfiguration from task-a must NOT trigger auto-apply.
+		const spawnedMembers: SpaceTaskActivityMember[] = [
+			{
+				id: 'm-reviewer',
+				sessionId: 'reviewer-session-b',
+				kind: 'node_agent',
+				label: 'Reviewer',
+				role: 'reviewer',
+				state: 'active',
+				processingStatus: 'idle',
+				messageCount: 0,
+			},
+		];
+
+		rerender({ taskId: 'task-b', members: spawnedMembers });
+
+		// Wait a tick for any effect runs to settle
+		await new Promise((r) => setTimeout(r, 10));
+
+		// The model switch should NOT have been called because the preconfig
+		// belonged to task-a, not task-b.
+		expect(mockRequest).not.toHaveBeenCalledWith('session.model.switch', {
+			sessionId: 'reviewer-session-b',
+			model: 'claude-opus-4-5',
+			provider: 'anthropic',
+		});
+	});
+
 	it('auto-applies preconfiguration for non-selected targets when their session spawns', async () => {
 		const targetA = {
 			id: 'node:n1:coder',
