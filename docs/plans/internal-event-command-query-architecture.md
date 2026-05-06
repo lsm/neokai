@@ -57,6 +57,38 @@ Supporting services:
 10. **External event delivery is durable and idempotent**. Source dedupe and per-subscription delivery lifecycle belong to the external event subsystem, not source-specific services.
 11. **Current infrastructure can remain under the hood during migration**. The clean APIs should wrap existing `DaemonHub`/`MessageHub` first, then progressively replace legacy concepts.
 
+## Existing Infrastructure Disposition
+
+The migration should be explicit about which existing primitives are removed, which are hidden behind new semantic APIs, and which remain as lower-level infrastructure.
+
+| Component | Target disposition | Migration rule |
+| --- | --- | --- |
+| Legacy `EventBus` | Remove or deprecate first. | No new production usage. Remove exports/imports and delete once compatibility permits. |
+| `DaemonHub` | Compatibility implementation detail behind `InternalEventBus`. | New application/domain code must not import or inject `DaemonHub` directly once the façade exists. Existing call sites migrate incrementally to `InternalEventBus`. |
+| `TypedHub` | Lower-level implementation detail or temporary wrapper. | Fix or wrap delivery semantics, but do not keep it as the daemon application-facing event API. Direct usage should be hidden behind `InternalEventBus` or transport-specific modules. |
+| `MessageHub` | Keep as transport/RPC/client infrastructure. | Do not remove as part of the internal messaging cleanup. Keep it behind `ClientEventGateway`, WebSocket transport, and RPC/client-facing services. |
+| `StateManager` forwarding | Extract into `ClientEventBridge`/`ClientEventGateway`. | Remove repetitive daemon-to-client forwarding handlers from state projection code. |
+| `StateManager` projection | Move toward `StateProjectionService`. | Keep state/read-model updates separate from client delivery and other side effects. |
+| `NotificationSink` | Short-lived compatibility adapter only. | Remove after Space runtime events and replacement subscribers cover the migrated transitions. |
+| Direct `SpaceGitHubService` task-agent injection | Remove after external event routing is primary. | Replace with `ExternalEventService` → `ExternalEventRouter` → `InternalCommandBus.dispatch('agent.message.inject', ...)`. |
+| Live Query / `ReactiveDatabase` reactivity | Keep as reactive read-model/query update mechanism. | Do not use as a general event bus. It cooperates with state projection and query paths. |
+
+## Live Query Boundary
+
+Live Query is adjacent to `StateProjectionService` and `InternalQueryBus`; it is not a replacement for `InternalEventBus`.
+
+```text
+Command handler / domain service
+  ├─ writes durable state
+  ├─ publishes InternalEventBus fact
+  │    ├─ StateProjectionService updates read models/caches
+  │    ├─ ClientEventBridge may send selected client-safe events
+  │    └─ other subscribers run side effects
+  └─ Live Query observes/query-refreshes persisted or projected state
+```
+
+Use Live Query for reactive reads such as current task lists, workflow run state, artifact cache state, and other queryable data. Use `InternalEventBus` for facts and side-effect coordination, `InternalCommandBus` for requested actions, and `InternalQueryBus`/repositories for explicit reads. Live Query may notify consumers that queryable state changed after projections or repositories update, but it should not route agent messages, external events, audit hooks, cleanup flows, or domain side effects.
+
 ## Target Architecture
 
 ```text
@@ -71,6 +103,9 @@ InternalEventBus
   ├─ AgentNotificationService     turns domain events into agent-facing messages
   ├─ Audit/metrics subscribers    record observability data
   └─ ExternalEventRouter          routes external events to workflow node agents
+
+StateProjectionService / repositories
+  └─ Live Query                   updates reactive read/query subscribers
 
 ClientEventGateway
   └─ WebSocket/MessageHub clients
@@ -315,12 +350,14 @@ Tasks:
 3. Mark the class and tests as deprecated or delete them if package compatibility permits.
 4. Add a short replacement note pointing to `InternalEventBus`/current `DaemonHub` wrapper.
 5. Rename variables typed as `DaemonHub` from `eventBus` to `daemonHub` where practical.
+6. Add or update lint/code-review guidance so new production code does not import legacy `EventBus`.
 
 Exit criteria:
 
 - no production code references legacy `EventBus`;
 - docs explain that legacy `EventBus` is not the path forward;
-- common daemon services no longer call a `DaemonHub` instance `eventBus`.
+- common daemon services no longer call a `DaemonHub` instance `eventBus`;
+- either the legacy source/tests are deleted, or they are explicitly deprecated with a removal follow-up if package compatibility blocks immediate deletion.
 
 ### Milestone 2 — Introduce compatibility façades
 
@@ -333,14 +370,16 @@ Tasks:
 3. Add `Channels` helpers that serialize to existing channel strings.
 4. Add a small architecture doc comment in each module explaining event/command/query semantics.
 5. Define canonical daemon event names under the new convention and begin migrating existing names as soon as the façade exists.
-6. Add tests for registration, dispatch, query execution, unsubscribe, duplicate command/query handler handling, and temporary event-name aliases used during migration.
+6. Document that `DaemonHub` and `TypedHub` are compatibility/infrastructure details after this milestone, not application-facing APIs for new daemon/domain code.
+7. Add tests for registration, dispatch, query execution, unsubscribe, duplicate command/query handler handling, and temporary event-name aliases used during migration.
 
 Exit criteria:
 
 - new code can depend on `InternalEventBus`, `InternalCommandBus`, and `InternalQueryBus`;
 - existing behavior remains backed by current hub infrastructure;
 - channels are constructed through helpers in new code;
-- daemon event names start moving to the canonical dot/camelCase convention, with only short-lived aliases for surgical migration PRs.
+- daemon event names start moving to the canonical dot/camelCase convention, with only short-lived aliases for surgical migration PRs;
+- new application/domain code no longer imports `DaemonHub` or `TypedHub` directly unless it is implementing compatibility infrastructure.
 
 ### Milestone 3 — Fix event delivery semantics and observability
 
@@ -372,13 +411,15 @@ Tasks:
 4. Keep payloads/channels behavior-compatible at first.
 5. Add authorization/filtering hooks even if initial implementation delegates to existing checks.
 6. Fix `channelVersions` cleanup while touching StateManager/channel lifecycle.
+7. Document that `MessageHub` remains transport/RPC/client infrastructure and is intentionally not removed by the internal messaging cleanup.
 
 Exit criteria:
 
 - `StateManager` no longer owns repetitive daemon-to-client forwarding;
 - all client-visible internal events are listed in one bridge registry;
 - channel construction uses `Channels` helpers;
-- state cache cleanup includes channel version cleanup.
+- state cache cleanup includes channel version cleanup;
+- client delivery flows go through `ClientEventGateway`, with `MessageHub` hidden behind that transport boundary.
 
 ### Milestone 5 — Split state projections from runtime side effects
 
@@ -389,13 +430,15 @@ Tasks:
 1. Rename or split `StateManager` responsibilities into `StateProjectionService` plus bridge/gateway services.
 2. Route state-cache updates through `InternalEventBus` subscriptions.
 3. Ensure side effects such as agent notification, audit logging, and client delivery are separate subscribers.
-4. Add projection-focused tests for session, room, space, and workflow state.
+4. Keep Live Query as the reactive read-model/query update mechanism and wire it to repository/projection changes rather than treating it as an event bus.
+5. Add projection-focused tests for session, room, space, and workflow state.
 
 Exit criteria:
 
 - state projection code is not responsible for client broadcasting;
 - side-effect subscribers are separately named/tested;
-- read-model queries can be served through `InternalQueryBus`.
+- read-model queries can be served through `InternalQueryBus`;
+- Live Query remains responsible for reactive query updates, while `InternalEventBus` remains responsible for domain facts and side-effect coordination.
 
 ### Milestone 6 — Normalize Space runtime notifications
 
@@ -443,15 +486,21 @@ Tasks:
 
 1. Remove legacy `EventBus` source/tests if still present.
 2. Remove or hide direct `DaemonHub` usage behind `InternalEventBus` where feasible.
-3. Remove `NotificationSink` compatibility adapters.
-4. Remove direct SpaceGitHub task-agent injection once `ExternalEventRouter` is primary.
-5. Consolidate architecture docs around event/command/query semantics.
+3. Remove or hide direct `TypedHub` usage from daemon application/domain code; keep it only in lower-level infrastructure if still needed.
+4. Remove temporary daemon event-name aliases after call sites have migrated to canonical dot/camelCase names.
+5. Remove `NotificationSink` compatibility adapters.
+6. Remove direct SpaceGitHub task-agent injection once `ExternalEventRouter` is primary.
+7. Keep `MessageHub` as transport/RPC/client infrastructure behind `ClientEventGateway`; do not expose it as the domain event API.
+8. Consolidate architecture docs around event/command/query semantics and the Live Query boundary.
 
 Exit criteria:
 
 - production code uses `InternalEventBus`, `InternalCommandBus`, and `InternalQueryBus` as the semantic entry points;
+- direct `DaemonHub`/`TypedHub` usage is gone from application/domain code or explicitly isolated in compatibility infrastructure;
 - client delivery is through `ClientEventGateway`/`ClientEventBridge`;
-- external source delivery is through `ExternalEventService`/`ExternalEventRouter`.
+- external source delivery is through `ExternalEventService`/`ExternalEventRouter`;
+- legacy `EventBus`, `NotificationSink`, direct SpaceGitHub injection, and temporary event-name aliases are removed;
+- `MessageHub` remains only as transport/RPC/client infrastructure, not the semantic event bus.
 
 ## Risk Management
 
