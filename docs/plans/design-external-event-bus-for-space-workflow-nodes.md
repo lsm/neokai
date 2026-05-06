@@ -616,11 +616,24 @@ class GitHubEventExtension implements HttpExternalEventExtension, RpcExternalEve
   private async pollEnabledSpaces(): Promise<number> {
     if (!this.context) return 0;
     const spaces = await this.context.config.listEnabledSpaces(this.sourceId);
-    let count = 0;
-    for (const spaceConfig of spaces) {
-      count += await this.pollSpace(spaceConfig.spaceId);
-    }
-    return count;
+    const results = await Promise.allSettled(
+      spaces.map(async (spaceConfig) => {
+        try {
+          return await this.pollSpace(spaceConfig.spaceId);
+        } catch (err) {
+          log.warn('GitHubEventExtension: polling failed for space', {
+            spaceId: spaceConfig.spaceId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          return 0;
+        }
+      }),
+    );
+
+    return results.reduce((count, result) => {
+      if (result.status === 'fulfilled') return count + result.value;
+      return count;
+    }, 0);
   }
 
   async pollSpace(spaceId: string, fetchImpl: typeof fetch = fetch): Promise<number> {
@@ -1350,14 +1363,16 @@ class ExternalEventRouter {
       throw result.error ?? new Error('agent.message.inject command failed');
     }
 
-    // Success: mark as delivered both in-memory and persistently, then advance
-    // the source event to terminal delivered only when every expected
+    // Success: persist durable delivery state first, then mark the in-memory
+    // dedup cache. If persistence throws after successful command dispatch, the
+    // retry path must not be short-circuited by an in-memory delivered marker.
+    // The source event advances to terminal delivered only when every expected
     // per-subscription delivery succeeded. Terminal failures must keep the source
     // event in a failed outcome rather than being masked by later successes.
-    this.delivered.set(dedupeKey, Date.now());
     this.config.eventStore.markDeliveryDelivered(event.id, dedupeKey);
     this.config.eventStore.markEventFailedIfAnyDeliveryTerminalFailed(event.id);
     this.config.eventStore.markEventDeliveredIfAllDeliveriesDelivered(event.id);
+    this.delivered.set(dedupeKey, Date.now());
     this.pendingDeliveries.delete(dedupeKey);
   }
 
