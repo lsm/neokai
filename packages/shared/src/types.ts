@@ -235,24 +235,94 @@ export interface ProviderInfo {
  * Thinking level options for extended thinking
  *
  * Sets maxThinkingTokens budget for the SDK:
- * - 'auto': No thinking budget - SDK default behavior
+ * - 'off': No thinking budget - SDK default behavior
  * - 'think8k': 8000 tokens thinking budget
  * - 'think16k': 16000 tokens thinking budget
+ * - 'think24k': 24000 tokens thinking budget
  * - 'think32k': 31999 tokens thinking budget
  *
  * Note: The "ultrathink" keyword is NOT auto-appended. Users must type it explicitly if needed.
  */
-export type ThinkingLevel = 'auto' | 'think8k' | 'think16k' | 'think32k';
+export type ThinkingLevel = 'off' | 'think8k' | 'think16k' | 'think24k' | 'think32k';
 
 /**
  * Mapping from ThinkingLevel to maxThinkingTokens value
  */
 export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | undefined> = {
-	auto: undefined,
+	off: undefined,
 	think8k: 8000,
 	think16k: 16000,
+	think24k: 24000,
 	think32k: 31999,
 };
+
+/**
+ * Human-readable labels for thinking levels
+ */
+export const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
+	off: 'Off',
+	think8k: 'Think 8k',
+	think16k: 'Think 16k',
+	think24k: 'Think 24k',
+	think32k: 'Think 32k',
+};
+
+/**
+ * Provider thinking mode capabilities
+ * - 'off': Provider does not support thinking
+ * - 'on': Provider supports binary on/off thinking
+ * - 'granular': Provider supports token-budget thinking levels
+ */
+export const PROVIDER_THINKING_MODES: Record<Provider, 'off' | 'on' | 'granular'> = {
+	anthropic: 'granular',
+	glm: 'granular',
+	kimi: 'on',
+	minimax: 'off',
+	openrouter: 'granular',
+	ollama: 'off',
+	'ollama-cloud': 'off',
+	'anthropic-copilot': 'off',
+	'anthropic-codex': 'off',
+	'google-gemini-oauth': 'off',
+};
+
+/**
+ * Normalize a thinking level value, converting legacy 'auto' to 'off'
+ * and validating against known levels.
+ */
+export function normalizeThinkingLevel(level: string | undefined | null): ThinkingLevel {
+	if (level === 'auto') return 'off';
+	const valid: ThinkingLevel[] = ['off', 'think8k', 'think16k', 'think24k', 'think32k'];
+	if (valid.includes(level as ThinkingLevel)) return level as ThinkingLevel;
+	return 'off';
+}
+
+/**
+ * Get the thinking level options appropriate for a provider's capabilities.
+ * Returns an empty array for providers that don't support thinking.
+ */
+export function getThinkingOptionsForProvider(
+	provider: string | undefined
+): Array<{ value: ThinkingLevel; label: string }> {
+	const mode = PROVIDER_THINKING_MODES[provider as Provider] ?? 'granular';
+	switch (mode) {
+		case 'off':
+			return [];
+		case 'on':
+			return [
+				{ value: 'off', label: 'Off' },
+				{ value: 'think32k', label: 'On' },
+			];
+		case 'granular':
+			return [
+				{ value: 'off', label: 'Off' },
+				{ value: 'think8k', label: 'Think 8k' },
+				{ value: 'think16k', label: 'Think 16k' },
+				{ value: 'think24k', label: 'Think 24k' },
+				{ value: 'think32k', label: 'Think 32k' },
+			];
+	}
+}
 
 /**
  * Session configuration extending SDKConfig with UI-specific settings
@@ -312,7 +382,7 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 	/**
 	 * Thinking level for extended thinking
 	 * Maps to maxThinkingTokens in SDK options
-	 * @default 'auto'
+	 * @default 'off'
 	 */
 	thinkingLevel?: ThinkingLevel;
 

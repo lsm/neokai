@@ -11,7 +11,7 @@ vi.mock('../../../hooks', () => ({
 		availableModels: [],
 		modelSwitching: false,
 		modelLoading: false,
-		thinkingLevel: 'auto',
+		thinkingLevel: 'off',
 		isProcessing: false,
 		isStarted: true,
 		switchModel: vi.fn(async () => {}),
@@ -201,7 +201,7 @@ describe('TaskSessionChatComposer', () => {
 
 	it('passes thinkingLevel to ChatComposer', () => {
 		renderComposer();
-		expect(lastChatComposerProps?.thinkingLevel).toBe('auto');
+		expect(lastChatComposerProps?.thinkingLevel).toBe('off');
 	});
 
 	it('passes disabled session features to ChatComposer', () => {

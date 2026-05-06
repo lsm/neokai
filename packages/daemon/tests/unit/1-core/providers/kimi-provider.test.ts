@@ -34,6 +34,7 @@ describe('KimiProvider', () => {
 				maxContextWindow: 262144,
 				functionCalling: true,
 				vision: false,
+				thinkingModes: 'on',
 			});
 		});
 	});

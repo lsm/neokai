@@ -21,7 +21,7 @@
  *   same state and expect the generated IDs to match.
  */
 
-import { generateUUID, TASK_AGENT_NODE_ID } from '@neokai/shared';
+import { generateUUID, TASK_AGENT_NODE_ID, normalizeThinkingLevel } from '@neokai/shared';
 import type {
 	SpaceWorkflow,
 	CreateSpaceWorkflowParams,
@@ -138,7 +138,12 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 			id: s.id,
 			name: s.name,
 			agentId: '',
-			agents: s.agents,
+			agents: s.agents?.map((agent) => ({
+				...agent,
+				thinkingLevel: agent.thinkingLevel
+					? normalizeThinkingLevel(agent.thinkingLevel)
+					: undefined,
+			})),
 		};
 		return { step, position };
 	});
@@ -290,14 +295,21 @@ function buildWorkflowFields(state: VisualEditorState): {
 		const hasMultiAgent = Array.isArray(node.step.agents) && node.step.agents.length > 0;
 		// Build agents array — if no multi-agent configured, fall back to single agentId as a slot
 		const agents: WorkflowNodeAgent[] = hasMultiAgent
-			? node.step.agents!
+			? node.step.agents!.map((agent) => ({
+					...agent,
+					thinkingLevel: agent.thinkingLevel
+						? normalizeThinkingLevel(agent.thinkingLevel)
+						: undefined,
+				}))
 			: node.step.agentId
 				? [
 						{
 							agentId: node.step.agentId,
 							name: deriveSingleAgentRoleName(node, i),
 							model: node.step.model,
-							thinkingLevel: node.step.thinkingLevel,
+							thinkingLevel: node.step.thinkingLevel
+								? normalizeThinkingLevel(node.step.thinkingLevel)
+								: undefined,
 							customPrompt: node.step.customPrompt,
 							disabledSkillIds: node.step.disabledSkillIds,
 						},
