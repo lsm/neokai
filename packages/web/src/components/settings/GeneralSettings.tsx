@@ -24,9 +24,10 @@ const PERMISSION_MODE_OPTIONS = [
 ];
 
 const THINKING_LEVEL_OPTIONS = [
-	{ value: 'auto', label: 'Auto' },
+	{ value: 'off', label: 'Off' },
 	{ value: 'think8k', label: 'Think 8k' },
 	{ value: 'think16k', label: 'Think 16k' },
+	{ value: 'think24k', label: 'Think 24k' },
 	{ value: 'think32k', label: 'Think 32k' },
 ];
 
@@ -38,7 +39,7 @@ export function GeneralSettings() {
 	);
 	const [localAutoScroll, setLocalAutoScroll] = useState(settings?.autoScroll ?? true);
 	const [localThinkingLevel, setLocalThinkingLevel] = useState<ThinkingLevel>(
-		settings?.thinkingLevel ?? 'auto'
+		settings?.thinkingLevel ?? 'off'
 	);
 	const [localShowArchived, setLocalShowArchived] = useState(settings?.showArchived ?? false);
 	const [isUpdating, setIsUpdating] = useState(false);
@@ -49,7 +50,7 @@ export function GeneralSettings() {
 			setLocalModel(settings.model ?? 'sonnet');
 			setLocalPermissionMode(settings.permissionMode ?? 'default');
 			setLocalAutoScroll(settings.autoScroll ?? true);
-			setLocalThinkingLevel(settings.thinkingLevel ?? 'auto');
+			setLocalThinkingLevel(settings.thinkingLevel ?? 'off');
 			setLocalShowArchived(settings.showArchived ?? false);
 		}
 	}, [settings]);
@@ -105,7 +106,7 @@ export function GeneralSettings() {
 			await updateGlobalSettings({ thinkingLevel: level });
 		} catch {
 			toast.error('Failed to update thinking level');
-			setLocalThinkingLevel(settings?.thinkingLevel ?? 'auto');
+			setLocalThinkingLevel(settings?.thinkingLevel ?? 'off');
 		} finally {
 			setIsUpdating(false);
 		}

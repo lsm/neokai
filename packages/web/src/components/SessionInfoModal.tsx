@@ -121,7 +121,7 @@ export function SessionInfoModal({ isOpen, onClose, session }: SessionInfoModalP
 				<InfoSection title="Configuration">
 					<InfoRow label="Model" value={config?.model} />
 					<InfoRow label="Provider" value={config?.provider || 'anthropic'} />
-					<InfoRow label="Thinking Level" value={config?.thinkingLevel || 'auto'} />
+					<InfoRow label="Thinking Level" value={config?.thinkingLevel || 'off'} />
 					<InfoRow label="Query Mode" value={config?.queryMode || 'immediate'} />
 					<InfoRow label="Permission Mode" value={config?.permissionMode || 'default'} />
 				</InfoSection>

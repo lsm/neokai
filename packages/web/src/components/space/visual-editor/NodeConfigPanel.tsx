@@ -34,9 +34,10 @@ import { skillsStore } from '../../../lib/skills-store';
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
 	{ value: '', label: 'Inherit' },
-	{ value: 'auto', label: 'Auto' },
+	{ value: 'off', label: 'Off' },
 	{ value: 'think8k', label: 'Think 8k' },
 	{ value: 'think16k', label: 'Think 16k' },
+	{ value: 'think24k', label: 'Think 24k' },
 	{ value: 'think32k', label: 'Think 32k' },
 ];
 

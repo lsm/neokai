@@ -17,6 +17,7 @@ import type {
 	Session,
 	NeokaiActionMessage,
 	RuntimeMcpServerEntry,
+	ThinkingLevel,
 } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { generateUUID } from '@neokai/shared';
@@ -666,14 +667,15 @@ export function setupSessionHandlers(
 	});
 
 	// Handle thinking level changes
-	// Levels: auto, think8k, think16k, think32k
-	// - auto: No thinking budget
-	// - think8k/16k/32k: Token budget set via maxThinkingTokens
+	// Levels: off, think8k, think16k, think24k, think32k
+	// - off: No thinking budget
+	// - think8k/16k/24k/32k: Token budget set via maxThinkingTokens
+	// Backward compatibility: legacy 'auto' is treated as 'off'.
 	// Note: "ultrathink" keyword is NOT auto-appended - users must type it manually
 	messageHub.onRequest('session.thinking.set', async (data) => {
 		const { sessionId: targetSessionId, level } = data as {
 			sessionId: string;
-			level: 'auto' | 'think8k' | 'think16k' | 'think32k';
+			level: string;
 		};
 
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
@@ -681,15 +683,16 @@ export function setupSessionHandlers(
 			throw new Error('Session not found');
 		}
 
-		// Validate level
-		const validLevels = ['auto', 'think8k', 'think16k', 'think32k'];
-		const thinkingLevel = validLevels.includes(level) ? level : 'auto';
+		// Validate level (accept legacy 'auto' for backward compatibility)
+		const validLevels = ['off', 'auto', 'think8k', 'think16k', 'think24k', 'think32k'];
+		const rawLevel = validLevels.includes(level) ? level : 'off';
+		const thinkingLevel = rawLevel === 'auto' ? 'off' : rawLevel;
 
 		// Update session config with new thinkingLevel
 		await sessionManager.updateSession(targetSessionId, {
 			config: {
 				...agentSession.getSessionData().config,
-				thinkingLevel: thinkingLevel as 'auto' | 'think8k' | 'think16k' | 'think32k',
+				thinkingLevel: thinkingLevel as 'off' | 'think8k' | 'think16k' | 'think24k' | 'think32k',
 			},
 		});
 
@@ -711,7 +714,8 @@ export function setupSessionHandlers(
 			throw new Error('Session not found');
 		}
 
-		const thinkingLevel = agentSession.getSessionData().config.thinkingLevel ?? 'auto';
+		const rawLevel = (agentSession.getSessionData().config.thinkingLevel ?? 'off') as string;
+		const thinkingLevel = (rawLevel === 'auto' ? 'off' : rawLevel) as ThinkingLevel;
 		return { thinkingLevel };
 	});
 

@@ -16,7 +16,11 @@ import { useSignalEffect } from '@preact/signals';
 import { useState, useCallback, useEffect, useRef } from 'preact/hooks';
 import type { ContextInfo, ModelInfo, ThinkingLevel, SessionFeatures } from '@neokai/shared';
 import type { ProviderAuthStatus } from '@neokai/shared/provider';
-import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
+import {
+	DEFAULT_WORKER_FEATURES,
+	THINKING_LEVEL_LABELS,
+	PROVIDER_THINKING_MODES,
+} from '@neokai/shared';
 import { connectionState, type ConnectionState } from '../lib/state.ts';
 import ConnectionStatus from './ConnectionStatus.tsx';
 import ContextUsageBar from './ContextUsageBar.tsx';
@@ -73,29 +77,27 @@ function ProviderBadge({ provider }: { provider: string | undefined }) {
 }
 
 /**
- * Thinking level display labels
- */
-const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
-	auto: 'Auto',
-	think8k: 'Think 8k',
-	think16k: 'Think 16k',
-	think32k: 'Think 32k',
-};
-
-/**
  * ThinkingLevelIcon - Lightbulb icon with progressive lighting based on thinking level
  *
- * - auto: Dim (gray) - no glow
+ * - off: Dim (gray) - no glow
  * - think8k: 1/4 lit (amber glow, dim bulb)
  * - think16k: 1/2 lit (amber glow, medium bulb)
+ * - think24k: 3/4 lit (amber glow, bright medium bulb)
  * - think32k: Full lit (bright amber glow, bright bulb)
  */
 function ThinkingLevelIcon({ level }: { level: ThinkingLevel }) {
-	// Map level to brightness: 0 = off, 1 = 1/4, 2 = 1/2, 3 = full
-	const brightness = level === 'auto' ? 0 : level === 'think8k' ? 1 : level === 'think16k' ? 2 : 3;
+	// Map level to brightness: 0 = off, 1 = 1/4, 2 = 1/2, 3 = 3/4, 4 = full
+	const brightnessMap: Record<ThinkingLevel, number> = {
+		off: 0,
+		think8k: 1,
+		think16k: 2,
+		think24k: 3,
+		think32k: 4,
+	};
+	const brightness = brightnessMap[level];
 
 	// Color based on brightness level
-	// auto: slightly brighter white, non-auto: progressive amber
+	// off: slightly brighter white, non-off: progressive amber
 	const strokeColor =
 		brightness === 0
 			? 'text-gray-400'
@@ -103,10 +105,21 @@ function ThinkingLevelIcon({ level }: { level: ThinkingLevel }) {
 				? 'text-amber-600'
 				: brightness === 2
 					? 'text-amber-500'
-					: 'text-amber-400';
+					: brightness === 3
+						? 'text-amber-400'
+						: 'text-amber-300';
 
 	// Fill opacity for the bulb (glow effect)
-	const fillOpacity = brightness === 0 ? 0 : brightness === 1 ? 0.15 : brightness === 2 ? 0.3 : 0.5;
+	const fillOpacity =
+		brightness === 0
+			? 0
+			: brightness === 1
+				? 0.15
+				: brightness === 2
+					? 0.3
+					: brightness === 3
+						? 0.4
+						: 0.5;
 
 	return (
 		<svg class={`w-4 h-4 ${strokeColor}`} viewBox="0 0 24 24">
@@ -115,7 +128,7 @@ function ThinkingLevelIcon({ level }: { level: ThinkingLevel }) {
 				<circle
 					cx="12"
 					cy="10"
-					r={brightness === 1 ? 4 : brightness === 2 ? 5 : 6}
+					r={brightness === 1 ? 4 : brightness === 2 ? 5 : brightness === 3 ? 5.5 : 6}
 					fill="currentColor"
 					opacity={fillOpacity}
 				/>
@@ -139,10 +152,11 @@ function ThinkingLevelIcon({ level }: { level: ThinkingLevel }) {
  * Uses stroke-dasharray to create partial circle effect:
  * - think8k: 1/4 of circle lit (90 degrees)
  * - think16k: 1/2 of circle lit (180 degrees)
+ * - think24k: 3/4 of circle lit (270 degrees)
  * - think32k: Full circle lit (360 degrees)
  */
 function ThinkingBorderRing({ level }: { level: ThinkingLevel }) {
-	if (level === 'auto') return null;
+	if (level === 'off') return null;
 
 	// Circle parameters (matches w-8 h-8 = 32px button)
 	const size = 32;
@@ -151,13 +165,25 @@ function ThinkingBorderRing({ level }: { level: ThinkingLevel }) {
 	const circumference = 2 * Math.PI * radius; // ~94.25
 
 	// Calculate dash length based on level
-	// 1/4 = 25%, 1/2 = 50%, full = 100%
-	const dashPercent = level === 'think8k' ? 0.25 : level === 'think16k' ? 0.5 : 1;
+	const dashPercentMap: Record<ThinkingLevel, number> = {
+		off: 0,
+		think8k: 0.25,
+		think16k: 0.5,
+		think24k: 0.75,
+		think32k: 1,
+	};
+	const dashPercent = dashPercentMap[level];
 	const dashLength = circumference * dashPercent;
 
 	// Color based on level
 	const strokeColor =
-		level === 'think8k' ? '#d97706' : level === 'think16k' ? '#f59e0b' : '#fbbf24'; // amber-600, amber-500, amber-400
+		level === 'think8k'
+			? '#d97706'
+			: level === 'think16k'
+				? '#f59e0b'
+				: level === 'think24k'
+					? '#fbbf24'
+					: '#fde68a'; // amber-600, amber-500, amber-400, amber-300
 
 	return (
 		<svg class="absolute inset-0 w-full h-full pointer-events-none" viewBox={`0 0 ${size} ${size}`}>
@@ -299,12 +325,33 @@ export default function SessionStatusBar({
 	}, [modelDropdown, thinkingDropdown]);
 
 	// Thinking level state (synced from session config)
-	const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(thinkingLevelProp || 'auto');
+	const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(thinkingLevelProp || 'off');
 
 	// Sync thinking level with session config changes
 	useEffect(() => {
-		setThinkingLevel(thinkingLevelProp || 'auto');
+		setThinkingLevel(thinkingLevelProp || 'off');
 	}, [thinkingLevelProp]);
+
+	// Provider-aware thinking options
+	const providerThinkingMode = currentModelInfo?.provider
+		? (PROVIDER_THINKING_MODES[currentModelInfo.provider as keyof typeof PROVIDER_THINKING_MODES] ??
+			'granular')
+		: 'granular';
+	const thinkingOptions =
+		providerThinkingMode === 'off'
+			? []
+			: providerThinkingMode === 'on'
+				? [
+						{ value: 'off' as ThinkingLevel, label: 'Off' },
+						{ value: 'think32k' as ThinkingLevel, label: 'On' },
+					]
+				: [
+						{ value: 'off' as ThinkingLevel, label: 'Off' },
+						{ value: 'think8k' as ThinkingLevel, label: 'Think 8k' },
+						{ value: 'think16k' as ThinkingLevel, label: 'Think 16k' },
+						{ value: 'think24k' as ThinkingLevel, label: 'Think 24k' },
+						{ value: 'think32k' as ThinkingLevel, label: 'Think 32k' },
+					];
 
 	// Auto-scroll toggle handler
 	const handleAutoScrollToggle = useCallback(() => {
@@ -562,47 +609,49 @@ export default function SessionStatusBar({
 					<ProviderBadge provider={currentModelInfo?.provider} />
 				</div>
 
-				{/* Thinking Level */}
-				<div class="relative" ref={thinkingDropdownRef}>
-					<Tooltip
-						content={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
-						position="top"
-						delay={300}
-					>
-						<button
-							class={`${glassControlButtonBaseClass} relative ${
-								thinkingLevel === 'auto' ? 'border-dark-600/80' : 'border-transparent'
-							}`}
-							onClick={toggleThinkingDropdown}
-							title={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
+				{/* Thinking Level — hidden when provider doesn't support thinking */}
+				{thinkingOptions.length > 0 && (
+					<div class="relative" ref={thinkingDropdownRef}>
+						<Tooltip
+							content={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
+							position="top"
+							delay={300}
 						>
-							<ThinkingBorderRing level={thinkingLevel} />
-							<ThinkingLevelIcon level={thinkingLevel} />
-						</button>
-					</Tooltip>
+							<button
+								class={`${glassControlButtonBaseClass} relative ${
+									thinkingLevel === 'off' ? 'border-dark-600/80' : 'border-transparent'
+								}`}
+								onClick={toggleThinkingDropdown}
+								title={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
+							>
+								<ThinkingBorderRing level={thinkingLevel} />
+								<ThinkingLevelIcon level={thinkingLevel} />
+							</button>
+						</Tooltip>
 
-					{/* Thinking Dropdown */}
-					{thinkingDropdown.isOpen && (
-						<div
-							class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-40 py-1 z-50 animate-slideIn`}
-						>
-							<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Thinking Level</div>
-							{(['auto', 'think8k', 'think16k', 'think32k'] as const).map((level) => (
-								<button
-									key={level}
-									class={`w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 ${
-										level === thinkingLevel ? 'text-amber-400' : 'text-gray-200'
-									}`}
-									onClick={() => handleThinkingLevelChange(level)}
-								>
-									<ThinkingLevelIcon level={level} />
-									{THINKING_LEVEL_LABELS[level]}
-									{level === thinkingLevel && ' (current)'}
-								</button>
-							))}
-						</div>
-					)}
-				</div>
+						{/* Thinking Dropdown */}
+						{thinkingDropdown.isOpen && (
+							<div
+								class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-40 py-1 z-50 animate-slideIn`}
+							>
+								<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Thinking Level</div>
+								{thinkingOptions.map((option) => (
+									<button
+										key={option.value}
+										class={`w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 ${
+											option.value === thinkingLevel ? 'text-amber-400' : 'text-gray-200'
+										}`}
+										onClick={() => handleThinkingLevelChange(option.value)}
+									>
+										<ThinkingLevelIcon level={option.value} />
+										{option.label}
+										{option.value === thinkingLevel && ' (current)'}
+									</button>
+								))}
+							</div>
+						)}
+					</div>
+				)}
 
 				{/* Auto-scroll Toggle - Highlighted border and icon when active */}
 				<Tooltip

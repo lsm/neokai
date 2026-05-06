@@ -1551,7 +1551,7 @@ type BundleAgent = {
 	name: string;
 	customPrompt?: string;
 	model?: string;
-	thinkingLevel?: 'auto' | 'think8k' | 'think16k' | 'think32k';
+	thinkingLevel?: 'off' | 'think8k' | 'think16k' | 'think24k' | 'think32k';
 	role?: string;
 };
 type BundleWorkflow = {

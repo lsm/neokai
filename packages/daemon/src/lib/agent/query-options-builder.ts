@@ -513,17 +513,32 @@ export class QueryOptionsBuilder {
 	}
 
 	/**
-	 * Convert ThinkingLevel enum to new thinking option
-	 * Maps the UI-friendly enum to SDK's new thinking API
+	 * Convert ThinkingLevel enum to SDK thinking option.
+	 * Maps the UI-friendly enum to SDK's new thinking API.
+	 * Provider-aware: returns undefined when thinking should be disabled.
 	 */
-	private thinkingLevelToThinkingConfig(level: ThinkingLevel): ThinkingConfig {
-		const tokens = THINKING_LEVEL_TOKENS[level];
-
-		if (tokens === undefined) {
-			// 'auto' mode
-			return { type: 'adaptive' };
+	private thinkingLevelToThinkingConfig(
+		level: ThinkingLevel,
+		thinkingModes: 'off' | 'on' | 'granular'
+	): ThinkingConfig | undefined {
+		// Providers without thinking support: never emit thinking config
+		if (thinkingModes === 'off') {
+			return undefined;
 		}
 
+		const tokens = THINKING_LEVEL_TOKENS[level];
+
+		// 'off' level: no thinking budget
+		if (tokens === undefined) {
+			return undefined;
+		}
+
+		// Binary providers: any non-off level enables thinking with max budget
+		if (thinkingModes === 'on') {
+			return { type: 'enabled', budgetTokens: 31999 };
+		}
+
+		// Granular providers: use the exact token budget
 		return { type: 'enabled', budgetTokens: tokens };
 	}
 
@@ -547,12 +562,25 @@ export class QueryOptionsBuilder {
 			result.resumeSessionAt = resumeSessionAt;
 		}
 
+		// Resolve provider thinking mode so we can skip thinking config for
+		// providers that do not support it.
+		const contextManager = getProviderContextManager();
+		const providerContext = contextManager.createContext(this.ctx.session);
+		const thinkingModes = providerContext.provider.capabilities.thinkingModes;
+
 		// Add thinking configuration based on the session override, falling back to the app default.
+		// Backward compatibility: legacy 'auto' is treated as 'off'.
 		const globalSettings = this.ctx.settingsManager.getGlobalSettings();
-		const thinkingLevel = (this.ctx.session.config.thinkingLevel ??
+		const rawLevel = (this.ctx.session.config.thinkingLevel ??
 			globalSettings.thinkingLevel ??
-			'auto') as ThinkingLevel;
-		result.thinking = this.thinkingLevelToThinkingConfig(thinkingLevel);
+			'off') as string;
+		const thinkingLevel = (rawLevel === 'auto' ? 'off' : rawLevel) as ThinkingLevel;
+		const thinkingConfig = this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
+		if (thinkingConfig) {
+			result.thinking = thinkingConfig;
+		} else {
+			delete (result as Record<string, unknown>).thinking;
+		}
 
 		return result as Options;
 	}

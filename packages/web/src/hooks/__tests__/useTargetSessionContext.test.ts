@@ -241,7 +241,7 @@ describe('useTargetSessionContext', () => {
 				return Promise.resolve({ success: true, model: 'claude-opus-4-5' });
 			}
 			if (method === 'session.thinking.get') {
-				return Promise.resolve({ thinkingLevel: 'auto' });
+				return Promise.resolve({ thinkingLevel: 'off' });
 			}
 			return Promise.resolve({});
 		});
@@ -423,7 +423,7 @@ describe('useTargetSessionContext', () => {
 		// Wait for the async live thinking-level load to settle so it doesn't
 		// race with the manual setThinkingLevel call.
 		await waitFor(() => {
-			expect(result.current.thinkingLevel).toBe('auto');
+			expect(result.current.thinkingLevel).toBe('off');
 		});
 
 		await act(async () => {
@@ -592,7 +592,7 @@ describe('useTargetSessionContext', () => {
 				return Promise.resolve({ success: true, model: 'claude-opus-4-5' });
 			}
 			if (method === 'session.thinking.get') {
-				return Promise.resolve({ thinkingLevel: 'auto' });
+				return Promise.resolve({ thinkingLevel: 'off' });
 			}
 			return Promise.resolve({});
 		});
@@ -957,7 +957,7 @@ describe('useTargetSessionContext', () => {
 				return Promise.resolve({ models: [] });
 			}
 			if (method === 'session.thinking.get') {
-				return Promise.resolve({ thinkingLevel: 'auto' });
+				return Promise.resolve({ thinkingLevel: 'off' });
 			}
 			if (method === 'session.thinking.set') {
 				return Promise.resolve({ success: true });
@@ -1046,7 +1046,7 @@ describe('useTargetSessionContext', () => {
 				});
 			}
 			if (method === 'session.thinking.get') {
-				return Promise.resolve({ thinkingLevel: 'auto' });
+				return Promise.resolve({ thinkingLevel: 'off' });
 			}
 			if (method === 'session.thinking.set') {
 				return Promise.resolve({ success: true });
@@ -1132,7 +1132,7 @@ describe('useTargetSessionContext', () => {
 				});
 			}
 			if (method === 'session.thinking.get') {
-				return Promise.resolve({ thinkingLevel: 'auto' });
+				return Promise.resolve({ thinkingLevel: 'off' });
 			}
 			if (method === 'session.model.switch') {
 				return Promise.resolve({ success: false, error: 'Provider unavailable' });
@@ -1210,7 +1210,7 @@ describe('useTargetSessionContext', () => {
 				});
 			}
 			if (method === 'session.thinking.get') {
-				return Promise.resolve({ thinkingLevel: 'auto' });
+				return Promise.resolve({ thinkingLevel: 'off' });
 			}
 			if (method === 'session.model.switch') {
 				return Promise.resolve({ success: true, model: 'claude-opus-4-5' });
@@ -1275,7 +1275,7 @@ describe('useTargetSessionContext', () => {
 				});
 			}
 			if (method === 'session.thinking.get') {
-				return Promise.resolve({ thinkingLevel: 'auto' });
+				return Promise.resolve({ thinkingLevel: 'off' });
 			}
 			if (method === 'session.model.switch') {
 				return Promise.resolve({ success: true, model: 'claude-opus-4-5' });

@@ -147,7 +147,7 @@ function createMockAgentSession(overrides: Partial<AgentSession> = {}): {
 			provider: 'anthropic',
 			coordinatorMode: false,
 			sandbox: { enabled: true },
-			thinkingLevel: 'auto',
+			thinkingLevel: 'off',
 		},
 		createdAt: new Date().toISOString(),
 		updatedAt: new Date().toISOString(),
@@ -1305,13 +1305,13 @@ describe('Session RPC Handlers', () => {
 	});
 
 	describe('session.thinking.set', () => {
-		it('sets thinking level to auto', async () => {
+		it('sets thinking level to off', async () => {
 			const handler = messageHubData.handlers.get('session.thinking.set');
 			expect(handler).toBeDefined();
 
-			const result = await handler!({ sessionId: 'session-123', level: 'auto' }, {});
+			const result = await handler!({ sessionId: 'session-123', level: 'off' }, {});
 
-			expect(result).toEqual({ success: true, thinkingLevel: 'auto' });
+			expect(result).toEqual({ success: true, thinkingLevel: 'off' });
 		});
 
 		it('sets thinking level to think8k', async () => {
@@ -1341,13 +1341,13 @@ describe('Session RPC Handlers', () => {
 			expect(result).toEqual({ success: true, thinkingLevel: 'think32k' });
 		});
 
-		it('defaults to auto for invalid level', async () => {
+		it('defaults to off for invalid level', async () => {
 			const handler = messageHubData.handlers.get('session.thinking.set');
 			expect(handler).toBeDefined();
 
 			const result = await handler!({ sessionId: 'session-123', level: 'invalid' }, {});
 
-			expect(result).toEqual({ success: true, thinkingLevel: 'auto' });
+			expect(result).toEqual({ success: true, thinkingLevel: 'off' });
 		});
 
 		it('throws error when session not found', async () => {
@@ -1356,7 +1356,7 @@ describe('Session RPC Handlers', () => {
 
 			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
 
-			await expect(handler!({ sessionId: 'non-existent', level: 'auto' }, {})).rejects.toThrow(
+			await expect(handler!({ sessionId: 'non-existent', level: 'off' }, {})).rejects.toThrow(
 				'Session not found'
 			);
 		});
@@ -1369,7 +1369,7 @@ describe('Session RPC Handlers', () => {
 
 			const result = await handler!({ sessionId: 'session-123' }, {});
 
-			expect(result).toEqual({ thinkingLevel: 'auto' });
+			expect(result).toEqual({ thinkingLevel: 'off' });
 		});
 
 		it('returns think32k when configured', async () => {

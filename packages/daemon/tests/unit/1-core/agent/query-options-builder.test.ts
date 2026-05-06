@@ -319,11 +319,11 @@ describe('QueryOptionsBuilder', () => {
 			expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
 		});
 
-		it('should use auto as default thinking level when no session or global override exists', async () => {
+		it('should use off as default thinking level when no session or global override exists', async () => {
 			const options = await builder.build();
 			const result = builder.addSessionStateOptions(options);
 
-			expect(result.thinking).toEqual({ type: 'adaptive' });
+			expect(result.thinking).toBeUndefined();
 		});
 	});
 
