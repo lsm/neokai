@@ -690,6 +690,25 @@ class EventRouter {
     return JSON.stringify([sub.workflowRunId, sub.taskId, sub.nodeId, sub.agentName]);
   }
 
+  private parseDeliveryKey(key: string): {
+    source: string;
+    dedupeKey: string;
+    taskId: string;
+    nodeId: string;
+    agentName: string;
+    workflowRunId: string;
+  } {
+    const [source, dedupeKey, taskId, nodeId, agentName, workflowRunId] = JSON.parse(key) as [
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
+    return { source, dedupeKey, taskId, nodeId, agentName, workflowRunId };
+  }
+
   /** Evict stale dedup entries (called periodically or on demand). */
   private evictStaleDedup(): void {
     const cutoff = Date.now() - EventRouter.DEDUP_TTL_MS;
@@ -862,24 +881,24 @@ class EventRouter {
     this.markQueuedDeliveriesFailed(queuedFailures);
 
     for (const key of this.pendingDeliveries.keys()) {
-      const [, keyTaskId, keyNodeId, keyAgentName, keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string, string];
+      const parsed = this.parseDeliveryKey(key);
       if (
-        keyWorkflowRunId === workflowRunId
-        && keyTaskId === taskId
-        && keyNodeId === nodeId
-        && keyAgentName === agentName
+        parsed.workflowRunId === workflowRunId
+        && parsed.taskId === taskId
+        && parsed.nodeId === nodeId
+        && parsed.agentName === agentName
       ) {
         this.pendingDeliveries.delete(key);
       }
     }
 
     for (const key of this.retryCounts.keys()) {
-      const [, keyTaskId, keyNodeId, keyAgentName, keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string, string];
+      const parsed = this.parseDeliveryKey(key);
       if (
-        keyWorkflowRunId === workflowRunId
-        && keyTaskId === taskId
-        && keyNodeId === nodeId
-        && keyAgentName === agentName
+        parsed.workflowRunId === workflowRunId
+        && parsed.taskId === taskId
+        && parsed.nodeId === nodeId
+        && parsed.agentName === agentName
       ) {
         this.retryCounts.delete(key);
       }
@@ -887,12 +906,12 @@ class EventRouter {
 
     const retryFailures: QueuedDeliveryFailure[] = [];
     for (const [key, timer] of this.retryTimers.entries()) {
-      const [, keyTaskId, keyNodeId, keyAgentName, keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string, string];
+      const parsed = this.parseDeliveryKey(key);
       if (
-        keyWorkflowRunId === workflowRunId
-        && keyTaskId === taskId
-        && keyNodeId === nodeId
-        && keyAgentName === agentName
+        parsed.workflowRunId === workflowRunId
+        && parsed.taskId === taskId
+        && parsed.nodeId === nodeId
+        && parsed.agentName === agentName
       ) {
         clearTimeout(timer);
         this.retryTimers.delete(key);
@@ -923,8 +942,8 @@ class EventRouter {
     // Also clean up dedup entries for this run. Keys are JSON tuples, so parse
     // structurally rather than suffix-matching delimiter-joined strings.
     for (const key of this.delivered.keys()) {
-      const [, , , , keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string, string];
-      if (keyWorkflowRunId === workflowRunId) {
+      const parsed = this.parseDeliveryKey(key);
+      if (parsed.workflowRunId === workflowRunId) {
         this.delivered.delete(key);
       }
     }
@@ -950,16 +969,18 @@ class EventRouter {
     this.markQueuedDeliveriesFailed(terminalQueueFailures);
 
     // Clean up pending deliveries and retry counts for this run.
-    // Delivery keys are JSON tuples: [dedupeKey, taskId, nodeId, agentName, workflowRunId]
+    // Delivery keys are JSON tuples:
+    // [source, dedupeKey, taskId, nodeId, agentName, workflowRunId]. Always parse
+    // through parseDeliveryKey so cleanup stays aligned with makeDeliveryKey.
     for (const key of this.pendingDeliveries.keys()) {
-      const [, , , , keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string, string];
-      if (keyWorkflowRunId === workflowRunId) {
+      const parsed = this.parseDeliveryKey(key);
+      if (parsed.workflowRunId === workflowRunId) {
         this.pendingDeliveries.delete(key);
       }
     }
     for (const key of this.retryCounts.keys()) {
-      const [, , , , keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string, string];
-      if (keyWorkflowRunId === workflowRunId) {
+      const parsed = this.parseDeliveryKey(key);
+      if (parsed.workflowRunId === workflowRunId) {
         this.retryCounts.delete(key);
       }
     }
@@ -968,8 +989,8 @@ class EventRouter {
     // dropping retry bookkeeping; otherwise their rows can block event terminalization.
     const retryCancellationFailures: QueuedDeliveryFailure[] = [];
     for (const [key, timer] of this.retryTimers.entries()) {
-      const [, , , , keyWorkflowRunId] = JSON.parse(key) as [string, string, string, string, string];
-      if (keyWorkflowRunId === workflowRunId) {
+      const parsed = this.parseDeliveryKey(key);
+      if (parsed.workflowRunId === workflowRunId) {
         clearTimeout(timer);
         this.retryTimers.delete(key);
         retryCancellationFailures.push({
