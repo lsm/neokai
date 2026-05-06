@@ -659,11 +659,13 @@ The trie maps topic segments to `Set<Subscription>` at leaf nodes. Each node sto
 
 The index is **per-SpaceRuntime instance** and updated via two distinct operations:
 
-1. **`registerRunInterests`** (called on every `executeTick`): Diff-based trie update. Compares current node execution states against existing subscriptions. Adds subscriptions for newly active nodes, removes subscriptions for `cancelled` nodes. Does NOT touch the dedup map or pending queue — those are preserved across tick refreshes.
+1. **`registerRunInterests`** (called on every `executeTick`): Diff-based trie update. Compares current node execution states against existing subscriptions. Adds subscriptions for newly active nodes and removes stale trie entries. Does NOT touch the dedup map or pending queue — those are preserved across tick refreshes.
 
-2. **`clearRunInterests`** (called only on `done`/`cancelled` terminal transitions): Full teardown. Removes all trie subscriptions, dedup entries, and pending queue entries for the run. NOT called on `blocked` transitions because blocked is resumable.
+2. **`unregisterExecution`** (called when an individual node execution transitions to `cancelled`): Node-level terminal cleanup. Removes that node's subscriptions and fails queued/retrying delivery rows for that node so event terminalization is not blocked until full run teardown.
 
-3. A workflow definition is updated (interests may have changed — next `registerRunInterests` call picks up changes via the diff).
+3. **`clearRunInterests`** (called only on `done`/`cancelled` terminal transitions): Full teardown. Removes all trie subscriptions, dedup entries, and pending queue entries for the run. NOT called on `blocked` transitions because blocked is resumable.
+
+4. A workflow definition is updated (interests may have changed — next `registerRunInterests` call picks up changes via the diff).
 
 ```typescript
 interface Subscription {
@@ -1666,7 +1668,7 @@ When an event matches a subscription whose node execution is `idle` (agent sessi
 
 ### Node cancellation cleanup
 
-When a node execution transitions to `cancelled`, `unregisterExecution(workflowRunId, taskId, nodeId, agentName)` removes that node's subscriptions from `activeRuns` and the topic trie. Because expected delivery rows may already exist for queued or retrying deliveries owned by that node, cancellation must also call `failPendingStateForExecution(...)`:
+When a node execution transitions to `cancelled`, runtime status-transition wiring must call `unregisterExecution(workflowRunId, taskId, nodeId, agentName)` immediately; the next tick's diff refresh is not enough because cancellation has terminal side effects for queued/retrying deliveries. `unregisterExecution(...)` removes that node's subscriptions from `activeRuns` and the topic trie. Because expected delivery rows may already exist for queued or retrying deliveries owned by that node, cancellation must also call `failPendingStateForExecution(...)`:
 
 1. Remove queued pending-node deliveries for the exact `[workflowRunId, taskId, nodeId, agentName]` key and mark them terminally failed with reason `node_execution_cancelled`.
 2. Cancel per-delivery retry timers for the same tuple, look up each event id from the delivery store, and mark them terminally failed with reason `node_execution_cancelled`.
@@ -2181,6 +2183,18 @@ if (this.eventRouter) {
     taskId, // current task whose tick/session activation is being processed
     workflow,
     activeNodeExecutions,
+  );
+}
+
+// In the node execution status transition handler:
+// Called when an individual node execution becomes cancelled, even if the
+// workflow run itself remains active or blocked/resumable.
+if (newNodeStatus === 'cancelled') {
+  this.eventRouter.unregisterExecution(
+    workflowRunId,
+    taskId,
+    workflowNodeId,
+    agentName,
   );
 }
 
