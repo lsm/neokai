@@ -67,6 +67,65 @@ describe('resolveTargetSessionId', () => {
 	it('returns null when target is null', () => {
 		expect(resolveTargetSessionId(null, members, 'task-session')).toBeNull();
 	});
+
+	it('prefers nodeExecutionId over agentName when resolving node_agent', () => {
+		const membersWithNodeExecution: SpaceTaskActivityMember[] = [
+			{
+				id: 'm1',
+				sessionId: 'reviewer-a-session',
+				kind: 'node_agent',
+				label: 'Reviewer A',
+				role: 'reviewer',
+				state: 'active',
+				processingStatus: 'idle',
+				messageCount: 0,
+				nodeExecution: {
+					nodeExecutionId: 'ne-a',
+					nodeId: 'n1',
+					agentName: 'reviewer',
+					status: 'in_progress',
+				},
+			},
+			{
+				id: 'm2',
+				sessionId: 'reviewer-b-session',
+				kind: 'node_agent',
+				label: 'Reviewer B',
+				role: 'reviewer',
+				state: 'active',
+				processingStatus: 'idle',
+				messageCount: 0,
+				nodeExecution: {
+					nodeExecutionId: 'ne-b',
+					nodeId: 'n2',
+					agentName: 'reviewer',
+					status: 'in_progress',
+				},
+			},
+		];
+
+		const targetA = {
+			id: 'node:n1:reviewer',
+			kind: 'node_agent' as const,
+			label: 'Reviewer A',
+			agentName: 'reviewer',
+			nodeExecutionId: 'ne-a',
+		};
+		const targetB = {
+			id: 'node:n2:reviewer',
+			kind: 'node_agent' as const,
+			label: 'Reviewer B',
+			agentName: 'reviewer',
+			nodeExecutionId: 'ne-b',
+		};
+
+		expect(resolveTargetSessionId(targetA, membersWithNodeExecution, 'task-session')).toBe(
+			'reviewer-a-session'
+		);
+		expect(resolveTargetSessionId(targetB, membersWithNodeExecution, 'task-session')).toBe(
+			'reviewer-b-session'
+		);
+	});
 });
 
 describe('useTargetSessionContext', () => {
@@ -172,7 +231,7 @@ describe('useTargetSessionContext', () => {
 				selectedTarget: notStartedTarget,
 				activityMembers: members,
 				taskAgentSessionId: 'task-sess-123',
-				defaultAgentModels: new Map([['reviewer', 'claude-opus-4-5']]),
+				defaultAgentModels: new Map([['node:n1:reviewer', 'claude-opus-4-5']]),
 			})
 		);
 
@@ -195,7 +254,7 @@ describe('useTargetSessionContext', () => {
 				selectedTarget: notStartedTarget,
 				activityMembers: members,
 				taskAgentSessionId: 'task-sess-123',
-				defaultAgentModels: new Map([['reviewer', 'claude-opus-4-5']]),
+				defaultAgentModels: new Map([['node:n1:reviewer', 'claude-opus-4-5']]),
 			})
 		);
 

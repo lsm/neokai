@@ -218,4 +218,9 @@ describe('TaskSessionChatComposer', () => {
 		renderComposer();
 		expect(typeof lastChatComposerProps?.onOpenTools).toBe('function');
 	});
+
+	it('wires onThinkingLevelChange to ChatComposer', () => {
+		renderComposer();
+		expect(typeof lastChatComposerProps?.onThinkingLevelChange).toBe('function');
+	});
 });

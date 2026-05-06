@@ -307,14 +307,15 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	// Extract per-agent default models from the workflow definition so the
 	// composer can show the workflow-defined model as the default for agents
-	// that haven't started yet.
+	// that haven't started yet. Keyed by target ID (node:${nodeId}:${agentName})
+	// to avoid collisions when multiple nodes reuse the same agent slot name.
 	const defaultAgentModels = useMemo(() => {
 		const map = new Map<string, string>();
 		if (!workflow) return map;
 		for (const node of workflow.nodes) {
 			for (const agent of node.agents) {
 				if (agent.model) {
-					map.set(agent.name, agent.model);
+					map.set(`node:${node.id}:${agent.name}`, agent.model);
 				}
 			}
 		}

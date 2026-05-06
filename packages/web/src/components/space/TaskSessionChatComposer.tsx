@@ -80,7 +80,7 @@ export function TaskSessionChatComposer({
 		isProcessing: targetIsProcessing,
 		isStarted,
 		switchModel,
-		setThinkingLevel: _setThinkingLevel,
+		setThinkingLevel,
 	} = useTargetSessionContext({
 		selectedTarget,
 		activityMembers,
@@ -220,6 +220,7 @@ export function TaskSessionChatComposer({
 				onSandboxModeChange={() => {}}
 				onSend={handleSend}
 				onOpenTools={handleOpenTools}
+				onThinkingLevelChange={setThinkingLevel}
 				onEnterRewindMode={() => {}}
 				onExitRewindMode={() => {}}
 				agentMentionCandidates={mentionCandidates}

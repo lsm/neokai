@@ -50,12 +50,14 @@ export function resolveTargetSessionId(
 	if (!target) return null;
 	if (target.kind === 'task_agent') return taskAgentSessionId;
 
-	// node_agent: prefer activity member session, fall back to node execution
-	const member = activityMembers.find(
-		(m) =>
-			m.kind === 'node_agent' &&
-			(m.role === target.agentName || m.nodeExecution?.agentName === target.agentName)
-	);
+	// node_agent: prefer exact nodeExecutionId match, then fall back to agent name
+	const member = activityMembers.find((m) => {
+		if (m.kind !== 'node_agent') return false;
+		if (target.nodeExecutionId) {
+			return m.nodeExecution?.nodeExecutionId === target.nodeExecutionId;
+		}
+		return m.role === target.agentName || m.nodeExecution?.agentName === target.agentName;
+	});
 	return member?.sessionId ?? null;
 }
 
@@ -95,12 +97,12 @@ export function useTargetSessionContext({
 	// Track which targets we've already auto-applied so we don't loop.
 	const appliedAutoConfigRef = useRef<Set<string>>(new Set());
 
-	// Default model from workflow definition.
+	// Default model from workflow definition (keyed by target ID).
 	const defaultModel = useMemo(() => {
-		if (!selectedTarget || selectedTarget.kind !== 'node_agent' || !selectedTarget.agentName) {
+		if (!selectedTarget || selectedTarget.kind !== 'node_agent') {
 			return '';
 		}
-		return defaultAgentModels?.get(selectedTarget.agentName) ?? '';
+		return defaultAgentModels?.get(selectedTarget.id) ?? '';
 	}, [selectedTarget, defaultAgentModels]);
 
 	// Effective model: live when started, pre-configured/default when not.
