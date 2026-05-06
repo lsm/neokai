@@ -11,7 +11,12 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { createTables, runMigration74, runMigrations } from '../../../../src/storage/schema';
+import {
+	createTables,
+	runMigration74,
+	runMigration118,
+	runMigrations,
+} from '../../../../src/storage/schema';
 import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/rpc-handlers/live-query-handlers';
 import type { NeoTask, RoomGoal } from '@neokai/shared';
 
@@ -229,6 +234,11 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				`INSERT OR IGNORE INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
 				 VALUES ('${spaceId}', '${spaceId}', '/tmp/test-space', 'Test Space', ${now}, ${now})`
 			);
+			// Install the task-thread projection (migration 118). The spaceTaskMessages.byTask*
+			// queries read from `task_thread_messages`, populated by triggers on
+			// `sdk_messages` / `space_github_events` / `space_tasks` / `node_executions`.
+			// Must run AFTER the custom space_tasks / space_agents tables are declared.
+			runMigration118(db);
 		});
 
 		function insertSpaceTask(overrides: Record<string, unknown> = {}): string {
@@ -1917,8 +1927,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					.replace(/\s+LIMIT\s+\?(\s+OFFSET\s+\?)?/, '')
 					.replace(/\s+/g, ' ')
 					.trim();
-				// Must end with either `id ASC` or `id DESC` (tiebreaker)
-				const hasIdTiebreaker = /\bID\s+(ASC|DESC)\s*$/.test(sqlForCheck);
+				// Must end with either `id ASC|DESC` or `projId ASC|DESC` (tiebreaker).
+				// `projId` is the autoincrement key on `task_thread_messages` introduced
+				// in migration 118 — same purpose as a plain `id`, just monotonic.
+				const hasIdTiebreaker = /(?:\bID|PROJID)\s+(ASC|DESC)\s*$/.test(sqlForCheck);
 				expect(hasIdTiebreaker).toBe(true, `${name} ORDER BY lacks deterministic id tiebreaker`);
 			}
 		});

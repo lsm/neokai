@@ -698,104 +698,38 @@ ORDER BY
 /**
  * Shared CTE block for `spaceTaskMessages.byTask*` queries.
  *
- * Produces a `joined` row set — one row per (session, sdk_message) pair — that
- * the variant queries then either emit as-is (full) or slice with window
- * functions (compact).
+ * Reads from the `task_thread_messages` projection (materialised by
+ * triggers in migration 118) and aliases the snake_case columns to the
+ * camelCase shape the row mappers expect. Because all join + JSON work
+ * happens at write time inside the projection, every variant below
+ * resolves to a single indexed scan plus optional window-function
+ * computation — no per-read joins to `sessions` / `node_executions` /
+ * `space_tasks`, no JSON re-extraction for derived flags.
  *
- * The final variant must append its own `SELECT ... FROM ranked|joined ORDER BY`.
+ * The final variant must append its own `SELECT ... FROM joined ORDER BY`.
  */
 const SPACE_TASK_MESSAGES_BASE_CTE = `
-WITH target_task AS (
-  SELECT *
-  FROM space_tasks
-  WHERE id = ?
-),
--- Leg 1: orchestration task (the Task Agent's own task)
-orchestration AS (
+WITH joined AS (
   SELECT
-    tt.task_agent_session_id AS session_id,
-    'task_agent' AS kind,
-    'task-agent' AS role,
-    'Task Agent' AS label,
-    NULL AS node_execution_id,
-    tt.id AS task_id,
-    tt.title AS task_title
-  FROM target_task tt
-  JOIN sessions s ON s.id = tt.task_agent_session_id
-  WHERE tt.task_agent_session_id IS NOT NULL
-    AND s.type = 'space_task_agent'
-),
--- Leg 2: node agents via node_executions
-node_agents AS (
-  SELECT
-    ne.agent_session_id AS session_id,
-    'node_agent' AS kind,
-    ne.agent_name AS role,
-    COALESCE(sa.name, ne.agent_name, 'agent') AS label,
-    ne.id AS node_execution_id,
-    tt.id AS task_id,
-    tt.title AS task_title
-  FROM node_executions ne
-  JOIN target_task tt
-    ON tt.workflow_run_id IS NOT NULL
-   AND ne.workflow_run_id = tt.workflow_run_id
-  LEFT JOIN space_agents sa ON sa.id = ne.agent_id
-  WHERE ne.agent_session_id IS NOT NULL
-),
--- Union both legs
-all_sessions AS (
-  SELECT * FROM orchestration
-  UNION ALL
-  SELECT * FROM node_agents
-),
-github_events AS (
-  SELECT
-    ge.id AS id,
-    NULL AS sessionId,
-    'github' AS kind,
-    'github' AS role,
-    'GitHub' AS label,
-    NULL AS nodeExecutionId,
-    tt.id AS taskId,
-    tt.title AS taskTitle,
-    'github_pr_activity' AS messageType,
-    json_object(
-      'type', 'user',
-      'uuid', ge.id,
-      'message', json_object(
-        'role', 'user',
-        'content', json_array(json_object('type', 'text', 'text', '[GitHub] ' || ge.summary || char(10) || ge.external_url))
-      )
-    ) AS content,
-    'system' AS origin,
-    ge.occurred_at AS createdAt,
-    0 AS iteration,
-    NULL AS parentToolUseId
-  FROM target_task tt
-  JOIN space_github_events ge ON ge.task_id = tt.id
-  WHERE ge.state IN ('routed', 'delivered')
-),
-joined AS (
-  SELECT * FROM github_events
-  UNION ALL
-  SELECT
-    sm.id AS id,
-    sm.session_id AS sessionId,
-    ase.kind AS kind,
-    ase.role AS role,
-    ase.label AS label,
-    ase.node_execution_id AS nodeExecutionId,
-    ase.task_id AS taskId,
-    ase.task_title AS taskTitle,
-    sm.message_type AS messageType,
-    sm.sdk_message AS content,
-    sm.origin AS origin,
-    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
-    CAST(COALESCE(json_extract(sm.sdk_message, '$._taskMeta.iteration'), 0) AS INTEGER) AS iteration,
-    json_extract(sm.sdk_message, '$.parent_tool_use_id') AS parentToolUseId
-  FROM all_sessions ase
-  JOIN sdk_messages sm ON sm.session_id = ase.session_id
-  WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+    source_id          AS id,
+    proj_id            AS projId,
+    session_id         AS sessionId,
+    kind,
+    role,
+    label,
+    node_execution_id  AS nodeExecutionId,
+    task_id            AS taskId,
+    task_title         AS taskTitle,
+    message_type       AS messageType,
+    content,
+    origin,
+    created_at         AS createdAt,
+    iteration,
+    parent_tool_use_id AS parentToolUseId,
+    is_terminal        AS isTerminal,
+    is_renderable      AS isRenderable
+  FROM task_thread_messages
+  WHERE task_id = ?
 )
 `.trim();
 
@@ -821,7 +755,7 @@ SELECT
   iteration,
   parentToolUseId
 FROM joined
-ORDER BY createdAt ASC, id ASC
+ORDER BY createdAt ASC, projId ASC
 `.trim();
 
 /** Maximum non-terminal rows to keep per (session, turn) in compact mode. */
@@ -854,48 +788,10 @@ ${SPACE_TASK_MESSAGES_BASE_CTE},
 session_turns AS (
   SELECT
     j.*,
-    CASE
-      WHEN j.messageType = 'result' THEN 1
-      ELSE 0
-    END AS isTerminal,
-    CASE
-      -- Drop user rows whose content is exclusively tool_result blocks — they
-      -- render as null in the compact UI and would otherwise consume slots
-      -- in the per-turn cap without contributing visible content.
-      WHEN j.messageType = 'user'
-        AND json_type(j.content, '$.message.content') = 'array'
-        AND EXISTS (
-        SELECT 1
-        FROM json_each(json_extract(j.content, '$.message.content')) AS je
-        WHERE json_extract(je.value, '$.type') = 'tool_result'
-      ) THEN 0
-      -- Drop assistant rows that have *no* renderable content — i.e. the
-      -- content array exists but every block is either an empty/whitespace
-      -- text block or has no non-empty thinking/tool_use sibling. These
-      -- show up rarely in practice but bloat the per-turn cap when they
-      -- do; the active-turn summary applies the same filter so server and
-      -- client agree on what counts as visible activity.
-      WHEN j.messageType = 'assistant'
-        AND json_type(j.content, '$.message.content') = 'array'
-        AND NOT EXISTS (
-          SELECT 1
-          FROM json_each(json_extract(j.content, '$.message.content')) AS je
-          WHERE json_extract(je.value, '$.type') = 'tool_use'
-             OR (
-                json_extract(je.value, '$.type') = 'text'
-                AND TRIM(COALESCE(json_extract(je.value, '$.text'), '')) != ''
-             )
-             OR (
-                json_extract(je.value, '$.type') = 'thinking'
-                AND TRIM(COALESCE(json_extract(je.value, '$.thinking'), '')) != ''
-             )
-        ) THEN 0
-      ELSE 1
-    END AS isRenderable,
     COALESCE(
       SUM(CASE WHEN j.messageType = 'result' THEN 1 ELSE 0 END) OVER (
         PARTITION BY j.sessionId
-        ORDER BY j.createdAt ASC, j.id ASC
+        ORDER BY j.createdAt ASC, j.projId ASC
         ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
       ),
       0
@@ -908,14 +804,14 @@ ranked AS (
     CASE
       WHEN st.isTerminal = 0 AND st.isRenderable = 1 THEN ROW_NUMBER() OVER (
         PARTITION BY st.sessionId, st.turnIndex, st.isTerminal, st.isRenderable
-        ORDER BY st.createdAt DESC, st.id DESC
+        ORDER BY st.createdAt DESC, st.projId DESC
       )
       ELSE NULL
     END AS nonTerminalRankDesc,
     CASE
       WHEN st.isTerminal = 0 AND st.isRenderable = 1 AND st.messageType = 'user' THEN ROW_NUMBER() OVER (
         PARTITION BY st.sessionId, st.turnIndex, st.isTerminal, st.isRenderable, st.messageType
-        ORDER BY st.createdAt ASC, st.id ASC
+        ORDER BY st.createdAt ASC, st.projId ASC
       )
       ELSE NULL
     END AS userRowRankAsc
@@ -995,7 +891,7 @@ SELECT
   iteration,
   parentToolUseId
 FROM selected
-ORDER BY createdAt ASC, id ASC
+ORDER BY createdAt ASC, projId ASC
 `.trim();
 
 /**
@@ -1037,6 +933,7 @@ ${SPACE_TASK_MESSAGES_BASE_CTE},
 session_turns AS (
   SELECT
     j.id,
+    j.projId,
     j.sessionId,
     j.kind,
     j.role,
@@ -1051,7 +948,7 @@ session_turns AS (
     COALESCE(
       SUM(CASE WHEN j.messageType = 'result' THEN 1 ELSE 0 END) OVER (
         PARTITION BY j.sessionId
-        ORDER BY j.createdAt ASC, j.id ASC
+        ORDER BY j.createdAt ASC, j.projId ASC
         ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
       ),
       0
@@ -1091,6 +988,7 @@ assistant_entries AS (
     ar.turnIndex AS turnIndex,
     ar.createdAt AS ts,
     ar.id AS rowId,
+    ar.projId AS projId,
     CAST(je.key AS INTEGER) AS blockIdx,
     json_extract(ar.content, '$.uuid') AS uuid,
     json_extract(je.value, '$.type') AS blockType,
@@ -1121,6 +1019,7 @@ user_entries AS (
     ar.turnIndex AS turnIndex,
     ar.createdAt AS ts,
     ar.id AS rowId,
+    ar.projId AS projId,
     -1 AS blockIdx,
     json_extract(ar.content, '$.uuid') AS uuid,
     CASE
@@ -1176,6 +1075,7 @@ SELECT
   turnIndex,
   ts,
   rowId,
+  projId,
   blockIdx,
   uuid,
   blockType,
@@ -1190,6 +1090,7 @@ SELECT
   turnIndex,
   ts,
   rowId,
+  projId,
   blockIdx,
   uuid,
   blockType,
@@ -1198,7 +1099,7 @@ SELECT
   textValue,
   thinkingValue
 FROM user_entries
-ORDER BY sessionId ASC, ts ASC, rowId ASC, blockIdx ASC
+ORDER BY sessionId ASC, ts ASC, projId ASC, blockIdx ASC
 `.trim();
 
 // ============================================================================
