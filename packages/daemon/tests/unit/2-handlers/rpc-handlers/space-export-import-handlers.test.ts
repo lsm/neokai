@@ -87,6 +87,7 @@ function createSchema(db: Database): void {
 			instructions TEXT DEFAULT NULL,
 			completion_autonomy_level INTEGER NOT NULL DEFAULT 3,
 			post_approval TEXT DEFAULT NULL,
+			disabled INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE

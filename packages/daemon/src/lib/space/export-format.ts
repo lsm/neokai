@@ -293,6 +293,7 @@ export function exportWorkflow(
 	};
 	if (endNode !== undefined) result.endNode = endNode;
 	if (workflow.description !== undefined) result.description = workflow.description;
+	if (workflow.disabled) result.disabled = true;
 	// Export channels — strip `id` (space-specific) and convert to portable ExportedWorkflowChannel format
 	if (workflow.channels && workflow.channels.length > 0) {
 		const exportedChannels: ExportedWorkflowChannel[] = workflow.channels.map((ch) => {

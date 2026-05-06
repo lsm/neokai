@@ -1187,7 +1187,9 @@ export class SpaceRuntime {
 	 * DB and delegates to the pure `selectWorkflow()` function.
 	 */
 	resolveWorkflowForRun(spaceId: string, workflowId?: string): SpaceWorkflow | null {
-		const availableWorkflows = this.config.spaceWorkflowManager.listWorkflows(spaceId);
+		const availableWorkflows = this.config.spaceWorkflowManager
+			.listWorkflows(spaceId)
+			.filter((w) => !w.disabled);
 		return selectWorkflow({ spaceId, availableWorkflows, workflowId });
 	}
 
@@ -3772,7 +3774,9 @@ export class SpaceRuntime {
 		const spaces = await this.listActiveSpaces();
 
 		for (const space of spaces) {
-			const workflows = this.config.spaceWorkflowManager.listWorkflows(space.id);
+			const workflows = this.config.spaceWorkflowManager
+				.listWorkflows(space.id)
+				.filter((w) => !w.disabled);
 			if (workflows.length === 0) continue;
 
 			const standaloneOpenTasks = this.config.taskRepo
@@ -3858,12 +3862,12 @@ export class SpaceRuntime {
 
 		// Caller-specified preferred workflow wins over both LLM and deterministic
 		// fallback. Fall through if the id doesn't resolve (e.g. workflow was
-		// deleted between task creation and attachment).
+		// deleted between task creation and attachment) or is disabled.
 		if (task.preferredWorkflowId) {
 			const explicit = this.config.spaceWorkflowManager.getWorkflow(task.preferredWorkflowId);
-			if (explicit) return explicit;
+			if (explicit && !explicit.disabled) return explicit;
 			log.warn(
-				`SpaceRuntime: preferred_workflow_id "${task.preferredWorkflowId}" not found for task ${task.id}; selecting a workflow automatically`
+				`SpaceRuntime: preferred_workflow_id "${task.preferredWorkflowId}" not found or disabled for task ${task.id}; selecting a workflow automatically`
 			);
 		}
 

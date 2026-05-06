@@ -1359,6 +1359,11 @@ export interface SpaceWorkflow {
 	 * See {@link PostApprovalRoute}.
 	 */
 	postApproval?: PostApprovalRoute;
+	/**
+	 * When true, the workflow is disabled and cannot be selected for new tasks.
+	 * Existing workflow runs continue unaffected.
+	 */
+	disabled?: boolean;
 }
 
 /**
@@ -1414,6 +1419,8 @@ export interface CreateSpaceWorkflowParams {
 	 * Optional post-approval route. See {@link PostApprovalRoute}.
 	 */
 	postApproval?: PostApprovalRoute;
+	/** When true, create the workflow as disabled. */
+	disabled?: boolean;
 }
 
 /**
@@ -1469,6 +1476,8 @@ export interface UpdateSpaceWorkflowParams {
 	 * Update the workflow's post-approval route. Pass `null` to clear.
 	 */
 	postApproval?: PostApprovalRoute | null;
+	/** Pass true/false to enable or disable the workflow. Pass null to leave unchanged. */
+	disabled?: boolean | null;
 }
 
 /**
@@ -1673,6 +1682,8 @@ export interface ExportedSpaceWorkflow {
 	 * review. Optional for backward compat with pre-Design-v2 exports.
 	 */
 	completionAutonomyLevel?: SpaceAutonomyLevel;
+	/** When true, the workflow is disabled and cannot be selected for new tasks. */
+	disabled?: boolean;
 }
 
 /**

@@ -551,6 +551,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 116: Add thinking_level to space_agents for per-agent thinking overrides.
 	runMigration116(db);
+
+	// Migration 117: Add disabled column to space_workflows.
+	//   When true, the workflow cannot be selected for new tasks.
+	runMigration117(db);
 }
 
 /**
@@ -2272,6 +2276,7 @@ function runMigration29(db: BunDatabase): void {
 			description TEXT NOT NULL DEFAULT '',
 			start_step_id TEXT,
 			config TEXT,
+			disabled INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -5588,6 +5593,7 @@ export function runMigration74(db: BunDatabase): void {
 					layout TEXT,
 					channels TEXT,
 					gates TEXT,
+					disabled INTEGER NOT NULL DEFAULT 0,
 					created_at INTEGER NOT NULL,
 					updated_at INTEGER NOT NULL,
 					FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -7946,4 +7952,20 @@ export function runMigration116(db: BunDatabase): void {
 	if (columns.includes('thinking_level')) return;
 
 	db.exec(`ALTER TABLE space_agents ADD COLUMN thinking_level TEXT DEFAULT NULL`);
+}
+
+/**
+ * Migration 117: Add `disabled` column to `space_workflows` table.
+ *
+ * When true (1), the workflow cannot be selected for new tasks.
+ * Existing workflow runs continue unaffected.
+ * Default 0 (enabled) so all existing workflows remain selectable.
+ */
+export function runMigration117(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflows')) return;
+
+	const columns = tableColumnNames(db, 'space_workflows');
+	if (columns.includes('disabled')) return;
+
+	db.exec(`ALTER TABLE space_workflows ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`);
 }
