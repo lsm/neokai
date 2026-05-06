@@ -1013,4 +1013,145 @@ describe('useTargetSessionContext', () => {
 		);
 		expect(thinkingSetCallsForB).toHaveLength(0);
 	});
+	it('retries model auto-apply when session.model.switch returns failure', async () => {
+		const notStartedTarget = {
+			id: 'node:n1:reviewer',
+			kind: 'node_agent' as const,
+			label: 'Reviewer',
+			agentName: 'reviewer',
+		};
+
+		const model: ModelInfo = {
+			id: 'claude-opus-4-5',
+			name: 'Opus 4.5',
+			family: 'opus',
+			provider: 'anthropic',
+			alias: 'opus',
+			contextWindow: 200000,
+			description: '',
+			releaseDate: '',
+			available: true,
+		};
+
+		// Always return failure so the target is never marked applied
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'models.list') {
+				return Promise.resolve({
+					models: [
+						{
+							id: 'claude-opus-4-5',
+							display_name: 'Claude Opus 4.5',
+							description: '',
+							provider: 'anthropic',
+						},
+					],
+				});
+			}
+			if (method === 'session.model.get') {
+				return Promise.resolve({
+					currentModel: 'claude-sonnet-4-6',
+					modelInfo: {
+						id: 'claude-sonnet-4-6',
+						name: 'Claude Sonnet 4.6',
+						family: 'sonnet',
+						provider: 'anthropic',
+					},
+				});
+			}
+			if (method === 'session.thinking.get') {
+				return Promise.resolve({ thinkingLevel: 'auto' });
+			}
+			if (method === 'session.model.switch') {
+				return Promise.resolve({ success: false, error: 'Provider unavailable' });
+			}
+			return Promise.resolve({});
+		});
+
+		const { result, rerender } = renderHook(
+			(props: { members: SpaceTaskActivityMember[] }) =>
+				useTargetSessionContext({
+					taskId: 'task-1',
+					targets: [notStartedTarget],
+					selectedTarget: notStartedTarget,
+					activityMembers: props.members,
+					taskAgentSessionId: 'task-sess-123',
+				}),
+			{ initialProps: { members: [] as SpaceTaskActivityMember[] } }
+		);
+
+		await act(async () => {
+			await result.current.switchModel(model);
+		});
+
+		const spawnedMembers: SpaceTaskActivityMember[] = [
+			{
+				id: 'm-reviewer',
+				sessionId: 'reviewer-session',
+				kind: 'node_agent',
+				label: 'Reviewer',
+				role: 'reviewer',
+				state: 'active',
+				processingStatus: 'idle',
+				messageCount: 0,
+			},
+		];
+
+		rerender({ members: spawnedMembers });
+
+		// Wait for the failure call to happen
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('session.model.switch', {
+				sessionId: 'reviewer-session',
+				model: 'claude-opus-4-5',
+				provider: 'anthropic',
+			});
+		});
+
+		const callsBefore = mockRequest.mock.calls.filter(
+			(call) => call[0] === 'session.model.switch'
+		).length;
+
+		// Now make the mock return success and re-render
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'models.list') {
+				return Promise.resolve({
+					models: [
+						{
+							id: 'claude-opus-4-5',
+							display_name: 'Claude Opus 4.5',
+							description: '',
+							provider: 'anthropic',
+						},
+					],
+				});
+			}
+			if (method === 'session.model.get') {
+				return Promise.resolve({
+					currentModel: 'claude-sonnet-4-6',
+					modelInfo: {
+						id: 'claude-sonnet-4-6',
+						name: 'Claude Sonnet 4.6',
+						family: 'sonnet',
+						provider: 'anthropic',
+					},
+				});
+			}
+			if (method === 'session.thinking.get') {
+				return Promise.resolve({ thinkingLevel: 'auto' });
+			}
+			if (method === 'session.model.switch') {
+				return Promise.resolve({ success: true, model: 'claude-opus-4-5' });
+			}
+			return Promise.resolve({});
+		});
+
+		rerender({ members: [...spawnedMembers] });
+
+		await waitFor(() => {
+			const callsAfter = mockRequest.mock.calls.filter(
+				(call) => call[0] === 'session.model.switch'
+			).length;
+			expect(callsAfter).toBeGreaterThan(callsBefore);
+		});
+	});
 });

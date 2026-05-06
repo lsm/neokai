@@ -244,8 +244,11 @@ export function useTargetSessionContext({
 									model: modelInfo.id,
 									provider: modelInfo.provider,
 								})
-								.then(() => {
-									appliedModelRef.current.add(targetId);
+								.then((result: unknown) => {
+									const { success } = result as { success: boolean };
+									if (success) {
+										appliedModelRef.current.add(targetId);
+									}
 								})
 						);
 					}
