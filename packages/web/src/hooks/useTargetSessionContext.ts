@@ -1,6 +1,7 @@
 import type { ModelInfo, SpaceTaskActivityMember, ThinkingLevel } from '@neokai/shared';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
+import { connectionState } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
 import { useModelSwitcher } from './useModelSwitcher.ts';
 
@@ -157,6 +158,9 @@ export function useTargetSessionContext({
 
 	// Load the live thinking level from the session whenever the target
 	// session changes (e.g. switching to a different started agent).
+	// Also re-fetch when the connection recovers so a transient disconnect
+	// or early render while the hub is still connecting doesn't leave the
+	// dropdown stuck on a stale local default.
 	useEffect(() => {
 		if (!targetSessionId) return;
 		let cancelled = false;
@@ -178,7 +182,7 @@ export function useTargetSessionContext({
 		return () => {
 			cancelled = true;
 		};
-	}, [targetSessionId]);
+	}, [targetSessionId, connectionState.value]);
 
 	// For unstarted targets, sync with pre-configured value (scoped to current task).
 	useEffect(() => {
