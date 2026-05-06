@@ -167,6 +167,9 @@ describe('useTargetSessionContext', () => {
 			if (method === 'session.model.switch') {
 				return Promise.resolve({ success: true, model: 'claude-opus-4-5' });
 			}
+			if (method === 'session.thinking.get') {
+				return Promise.resolve({ thinkingLevel: 'auto' });
+			}
 			return Promise.resolve({});
 		});
 	});
@@ -344,6 +347,12 @@ describe('useTargetSessionContext', () => {
 			})
 		);
 
+		// Wait for the async live thinking-level load to settle so it doesn't
+		// race with the manual setThinkingLevel call.
+		await waitFor(() => {
+			expect(result.current.thinkingLevel).toBe('auto');
+		});
+
 		await act(async () => {
 			await result.current.setThinkingLevel('think16k');
 		});
@@ -508,6 +517,9 @@ describe('useTargetSessionContext', () => {
 					return Promise.reject(new Error('Switch failed'));
 				}
 				return Promise.resolve({ success: true, model: 'claude-opus-4-5' });
+			}
+			if (method === 'session.thinking.get') {
+				return Promise.resolve({ thinkingLevel: 'auto' });
 			}
 			return Promise.resolve({});
 		});

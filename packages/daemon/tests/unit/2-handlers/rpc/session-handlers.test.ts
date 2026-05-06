@@ -1362,6 +1362,49 @@ describe('Session RPC Handlers', () => {
 		});
 	});
 
+	describe('session.thinking.get', () => {
+		it('returns the current thinking level', async () => {
+			const handler = messageHubData.handlers.get('session.thinking.get');
+			expect(handler).toBeDefined();
+
+			const result = await handler!({ sessionId: 'session-123' }, {});
+
+			expect(result).toEqual({ thinkingLevel: 'auto' });
+		});
+
+		it('returns think32k when configured', async () => {
+			const handler = messageHubData.handlers.get('session.thinking.get');
+			expect(handler).toBeDefined();
+
+			// Override the mock session data to have a non-default thinking level
+			const customSession = createMockAgentSession({
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					provider: 'anthropic',
+					coordinatorMode: false,
+					sandbox: { enabled: true },
+					thinkingLevel: 'think32k',
+				},
+			});
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(customSession.agentSession);
+
+			const result = await handler!({ sessionId: 'session-123' }, {});
+
+			expect(result).toEqual({ thinkingLevel: 'think32k' });
+		});
+
+		it('throws error when session not found', async () => {
+			const handler = messageHubData.handlers.get('session.thinking.get');
+			expect(handler).toBeDefined();
+
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
+
+			await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
+				'Session not found'
+			);
+		});
+	});
+
 	describe('models.list', () => {
 		it('returns list of models', async () => {
 			const handler = messageHubData.handlers.get('models.list');

@@ -93,7 +93,11 @@ export function useTargetSessionContext({
 	const modelSwitcher = useModelSwitcher(targetSessionId);
 
 	// In-memory pre-configuration for not-yet-started agents.
-	const [preConfiguredModel, setPreConfiguredModel] = useState<Map<string, string>>(new Map());
+	// Model preconfig stores both id and provider so that auto-apply can
+	// disambiguate when multiple providers expose the same model ID.
+	const [preConfiguredModel, setPreConfiguredModel] = useState<
+		Map<string, { id: string; provider: string }>
+	>(new Map());
 	const [preConfiguredThinking, setPreConfiguredThinking] = useState<Map<string, ThinkingLevel>>(
 		new Map()
 	);
@@ -118,19 +122,50 @@ export function useTargetSessionContext({
 	}, [selectedTarget, defaultAgentModels]);
 
 	// Effective model: live when started, pre-configured/default when not.
+	const preConfigEntry = preConfiguredModel.get(selectedTarget?.id ?? '');
 	const effectiveCurrentModel = isStarted
 		? modelSwitcher.currentModel
-		: (preConfiguredModel.get(selectedTarget?.id ?? '') ?? defaultModel);
+		: (preConfigEntry?.id ?? defaultModel);
 
 	const effectiveCurrentModelInfo = isStarted
 		? modelSwitcher.currentModelInfo
-		: (modelSwitcher.availableModels.find((m) => m.id === effectiveCurrentModel) ?? null);
+		: (modelSwitcher.availableModels.find(
+				(m) => m.id === effectiveCurrentModel && m.provider === preConfigEntry?.provider
+			) ??
+			modelSwitcher.availableModels.find((m) => m.id === effectiveCurrentModel) ??
+			null);
 
-	// Thinking level — default to auto; sync with pre-configured value when switching targets.
+	// Thinking level — default to auto.
 	const [thinkingLevel, setLocalThinkingLevel] = useState<ThinkingLevel>('auto');
 
+	// Load the live thinking level from the session whenever the target
+	// session changes (e.g. switching to a different started agent).
 	useEffect(() => {
-		if (!selectedTarget) return;
+		if (!targetSessionId) return;
+		let cancelled = false;
+		const loadThinkingLevel = async () => {
+			try {
+				const hub = connectionManager.getHubIfConnected();
+				if (!hub) return;
+				const result = (await hub.request('session.thinking.get', {
+					sessionId: targetSessionId,
+				})) as { thinkingLevel: ThinkingLevel };
+				if (!cancelled) {
+					setLocalThinkingLevel(result.thinkingLevel);
+				}
+			} catch {
+				// Ignore errors — keep current thinking level
+			}
+		};
+		loadThinkingLevel();
+		return () => {
+			cancelled = true;
+		};
+	}, [targetSessionId]);
+
+	// For unstarted targets, sync with pre-configured value.
+	useEffect(() => {
+		if (!selectedTarget || isStarted) return;
 		setLocalThinkingLevel(preConfiguredThinking.get(selectedTarget.id) ?? 'auto');
 	}, [selectedTarget?.id, isStarted, preConfiguredThinking]);
 
@@ -162,7 +197,9 @@ export function useTargetSessionContext({
 
 			// Apply model switch
 			if (preModel) {
-				const modelInfo = switcherModels.find((m) => m.id === preModel);
+				const modelInfo = switcherModels.find(
+					(m) => m.id === preModel.id && m.provider === preModel.provider
+				);
 				if (modelInfo) {
 					attempted = true;
 					const hub = connectionManager.getHubIfConnected();
@@ -199,6 +236,9 @@ export function useTargetSessionContext({
 			Promise.all(promises)
 				.then(() => {
 					appliedAutoConfigRef.current.add(targetId);
+					if (preThinking && target.id === selectedTarget?.id) {
+						setLocalThinkingLevel(preThinking);
+					}
 				})
 				.catch(() => {
 					// Leave unmarked so the effect retries on next render
@@ -225,7 +265,9 @@ export function useTargetSessionContext({
 		async (model: ModelInfo) => {
 			if (!selectedTarget) return;
 			if (!isStarted) {
-				setPreConfiguredModel((prev) => new Map(prev).set(selectedTarget.id, model.id));
+				setPreConfiguredModel((prev) =>
+					new Map(prev).set(selectedTarget.id, { id: model.id, provider: model.provider })
+				);
 				toast.success(`Pre-configured ${selectedTarget.label} to use ${model.name}`);
 				return;
 			}
