@@ -25,6 +25,8 @@ export interface ProviderCapabilities {
 	streaming: boolean;
 	/** Supports extended thinking */
 	extendedThinking: boolean;
+	/** Thinking mode: 'off' = none, 'on' = binary, 'granular' = token budgets */
+	thinkingModes: 'off' | 'on' | 'granular';
 	/** Maximum context window in tokens */
 	maxContextWindow: number;
 	/** Supports function calling / tool use */

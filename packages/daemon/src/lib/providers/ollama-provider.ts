@@ -64,6 +64,7 @@ export class OllamaProvider implements Provider {
 	readonly capabilities: ProviderCapabilities = {
 		streaming: true,
 		extendedThinking: false,
+		thinkingModes: 'off',
 		maxContextWindow: 128000,
 		functionCalling: true,
 		vision: false,

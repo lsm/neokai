@@ -18,6 +18,7 @@ import type {
 	NeokaiActionMessage,
 	RuntimeMcpServerEntry,
 } from '@neokai/shared';
+import { normalizeThinkingLevel } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { generateUUID } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
@@ -636,14 +637,15 @@ export function setupSessionHandlers(
 	});
 
 	// Handle thinking level changes
-	// Levels: auto, think8k, think16k, think32k
-	// - auto: No thinking budget
-	// - think8k/16k/32k: Token budget set via maxThinkingTokens
+	// Levels: off, think8k, think16k, think24k, think32k
+	// - off: No thinking budget
+	// - think8k/16k/24k/32k: Token budget set via maxThinkingTokens
+	// Backward compatibility: legacy 'auto' is treated as 'off'.
 	// Note: "ultrathink" keyword is NOT auto-appended - users must type it manually
 	messageHub.onRequest('session.thinking.set', async (data) => {
 		const { sessionId: targetSessionId, level } = data as {
 			sessionId: string;
-			level: 'auto' | 'think8k' | 'think16k' | 'think32k';
+			level: string;
 		};
 
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
@@ -651,15 +653,14 @@ export function setupSessionHandlers(
 			throw new Error('Session not found');
 		}
 
-		// Validate level
-		const validLevels = ['auto', 'think8k', 'think16k', 'think32k'];
-		const thinkingLevel = validLevels.includes(level) ? level : 'auto';
+		// Normalize level (accepts legacy 'auto' for backward compatibility)
+		const thinkingLevel = normalizeThinkingLevel(level);
 
 		// Update session config with new thinkingLevel
 		await sessionManager.updateSession(targetSessionId, {
 			config: {
 				...agentSession.getSessionData().config,
-				thinkingLevel: thinkingLevel as 'auto' | 'think8k' | 'think16k' | 'think32k',
+				thinkingLevel,
 			},
 		});
 
@@ -681,7 +682,9 @@ export function setupSessionHandlers(
 			throw new Error('Session not found');
 		}
 
-		const thinkingLevel = agentSession.getSessionData().config.thinkingLevel ?? 'auto';
+		const thinkingLevel = normalizeThinkingLevel(
+			agentSession.getSessionData().config.thinkingLevel
+		);
 		return { thinkingLevel };
 	});
 

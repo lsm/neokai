@@ -77,7 +77,10 @@ const declarativeToolGuardSchema = z.object({
 	reason: z.string().min(1),
 });
 
-const thinkingLevelSchema = z.enum(['auto', 'think8k', 'think16k', 'think32k']);
+const thinkingLevelSchema = z.preprocess(
+	(val) => (val === 'auto' ? 'off' : val),
+	z.enum(['off', 'think8k', 'think16k', 'think24k', 'think32k'])
+);
 
 const exportedWorkflowNodeAgentSchema = z.object({
 	agentRef: z.string().min(1),

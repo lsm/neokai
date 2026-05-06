@@ -24,7 +24,11 @@ import type {
 	ResolvedQuestion,
 	SessionFeatures,
 } from '@neokai/shared';
-import { DEFAULT_LOBBY_FEATURES, DEFAULT_WORKER_FEATURES } from '@neokai/shared';
+import {
+	DEFAULT_LOBBY_FEATURES,
+	DEFAULT_WORKER_FEATURES,
+	normalizeThinkingLevel,
+} from '@neokai/shared';
 import type { SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useSignalEffect } from '@preact/signals';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -1379,7 +1383,11 @@ export default function ChatContainer({
 				readonly={readonly}
 				sessionStatus={session?.status}
 				sessionType={session?.type}
-				thinkingLevel={session?.config?.thinkingLevel}
+				thinkingLevel={
+					session?.config?.thinkingLevel
+						? normalizeThinkingLevel(session.config.thinkingLevel)
+						: undefined
+				}
 				isProcessing={isProcessing}
 				currentAction={currentAction}
 				streamingPhase={streamingPhase}

@@ -1098,6 +1098,18 @@ describe('Space Export/Import RPC Handlers', () => {
 				const agent = agentRepo.getById(existing.id)!;
 				expect(agent.thinkingLevel).toBeUndefined();
 			});
+
+			it('normalizes legacy auto thinkingLevel to off during import', async () => {
+				const bundle = makeBundle([{ name: 'Coder', thinkingLevel: 'auto' }], []);
+
+				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle,
+				});
+
+				const agent = agentRepo.getById(result.agents[0].id)!;
+				expect(agent.thinkingLevel).toBe('off');
+			});
 		});
 	});
 
@@ -1551,7 +1563,7 @@ type BundleAgent = {
 	name: string;
 	customPrompt?: string;
 	model?: string;
-	thinkingLevel?: 'auto' | 'think8k' | 'think16k' | 'think32k';
+	thinkingLevel?: 'auto' | 'off' | 'think8k' | 'think16k' | 'think24k' | 'think32k';
 	role?: string;
 };
 type BundleWorkflow = {
