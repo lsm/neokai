@@ -1,9 +1,8 @@
 /**
  * Legacy Room task draft RPC retirement tests.
  *
- * Room-scoped task RPC handlers are preserved in source for legacy data
- * compatibility only. Only the narrow Inbox compatibility shim remains
- * registered for the still-shipped web Inbox UI.
+ * All Room-scoped task RPC handlers (including the Inbox compatibility shim)
+ * were removed as part of the legacy Room feature retirement.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -42,16 +41,11 @@ describe('Task Draft RPC Handlers', () => {
 		}
 	});
 
-	test('legacy inbox compatibility RPCs remain registered', async () => {
-		await expect(daemon.messageHub.request('inbox.reviewTasks', {})).resolves.toEqual({
-			tasks: [],
-		});
-
-		await expect(daemon.messageHub.request('task.approve', {})).rejects.toThrow(
-			'Room ID is required'
-		);
-		await expect(daemon.messageHub.request('task.reject', {})).rejects.toThrow(
-			'Room ID is required'
-		);
+	test('legacy inbox compatibility RPCs are not registered', async () => {
+		for (const method of ['inbox.reviewTasks', 'task.approve', 'task.reject']) {
+			await expect(daemon.messageHub.request(method, {})).rejects.toThrow(
+				`No handler for method: ${method}`
+			);
+		}
 	});
 });
