@@ -13,31 +13,72 @@ Two parallel event pipelines exist today, neither of which routes to individual 
 1. **Room pipeline** (`GitHubService`): Webhook → normalize → filter → security → route → `deliverToRoom()` → DaemonHub `room.message`. Routes to **Rooms**, not Spaces.
 2. **Space pipeline** (`SpaceGitHubService`): Webhook → normalize → dedupe → `SpacePrTaskResolver.resolve()` → `injectTaskAgent()`. Routes events to the **Task Agent session** (the orchestrator), which must then manually relay to the coder node.
 
-The Space pipeline proves the primitives exist, but it is not the right extension boundary: GitHub-specific normalization, dedup, PR-to-task resolution, and Task Agent injection are bundled together in `SpaceGitHubService`. The target design extracts source ingestion into adapters and moves dedup, task enrichment, and node delivery into the core event bus.
+The Space pipeline proves the primitives exist, but it is not the right extension boundary: GitHub-specific normalization, dedup, PR-to-task resolution, and Task Agent injection are bundled together in `SpaceGitHubService`. The target design extracts source ingestion into extensions and moves dedup, task enrichment, and node delivery into reusable core external-event services.
 
 ## Design Overview
 
+This design treats GitHub as the first external-event **extension** rather than a special-case Space service. The extension owns source-specific concerns — GitHub auth, webhook verification, polling, raw payload normalization, and source configuration. Core Space infrastructure owns durable external-event lifecycle, task enrichment, subscription matching, retry behavior, and delivery to workflow nodes.
+
+The target flow aligns with the broader internal event/command/query refactor:
+
+```text
+GitHubEventExtension
+  ├─ enabled globally? enabled for this space?
+  ├─ verifies webhook / polls GitHub
+  ├─ normalizes GitHub payload → ExternalEvent
+  └─ publishes to ExternalEventService
+
+ExternalEventService
+  ├─ validates topic/source contract
+  ├─ dedupes by (spaceId, source, dedupeKey)
+  ├─ persists source event lifecycle
+  ├─ enriches via ExternalEventTaskResolver
+  └─ publishes InternalEventBus fact: externalEvent.published
+
+ExternalEventRouter
+  ├─ subscribes to externalEvent.published
+  ├─ matches active workflow-node eventInterests
+  ├─ records per-subscription delivery lifecycle
+  └─ dispatches InternalCommandBus command: agent.message.inject
+
+Agent session
+  └─ receives structured external-event message
 ```
-External Event Sources (GitHub webhook, polling, future: Slack, CI)
-       │
-       ▼
-┌─────────────────────┐
-│  EventAdapter       │  Verify → normalize → publish to EventBus
-│  (extension/source) │
-└────────┬────────────┘
-         │ publish(event) → hub.emit('space.externalEvent.published', { sessionId: 'global', event })
-         ▼
-┌─────────────────────┐
-│  EventBus           │  Persistent dedup + task enrichment, backed by TypedHub.
-│  (singleton)        │  Fixed TypedHub-safe method; external topic is payload data.
-└────────┬────────────┘
-         │
-         ▼
-┌─────────────────────┐
-│  EventRouter        │  Subscribes to bus. Matches events to active
-│  (per-runtime)      │  node interests and injects directly into sessions.
-└─────────────────────┘
+
+The design should make adding a third-party source boring:
+
+```text
+SlackEventExtension / JiraEventExtension / CIEventExtension
+  → normalize source payloads into ExternalEvent
+  → publish to ExternalEventService
+  → reuse the same store, task resolver, router, retry, and command delivery path
 ```
+
+No third-party extension should inspect workflow node state, resolve Space tasks directly, or inject messages into agent sessions.
+
+### Extension enablement and configuration
+
+External event sources should be configurable at two levels:
+
+1. **Global extension configuration** — installed/enabled daemon-wide, with shared secrets or app credentials.
+2. **Space extension configuration** — enabled/disabled per space, with source-specific routing scope such as watched GitHub repositories, Slack channels, Jira projects, or CI pipelines.
+
+GitHub is the reference implementation:
+
+```text
+Global GitHub config
+  ├─ extension enabled/disabled
+  ├─ GitHub App / token / webhook secret configuration
+  └─ allowed capabilities: webhooks, polling, repo watching
+
+Per-space GitHub config
+  ├─ extension enabled/disabled for the space
+  ├─ watched repositories
+  ├─ optional event filters
+  └─ optional polling/webhook preferences
+```
+
+The extension manager should prevent disabled sources from accepting webhooks, scheduling polling, or publishing events for disabled spaces. Existing source-specific tables such as `space_github_watched_repos` can remain as GitHub extension configuration during migration, but the cross-source event lifecycle belongs to `ExternalEventStore`.
 
 ## 1. Namespaced Event Topics
 
@@ -50,8 +91,8 @@ github/lsm/neokai/pull_request.comment_created
 github/lsm/neokai/pull_request.synchronize
 github/lsm/neokai/pull_request.closed
 # Not emitted in v1 — mapEventType only handles pull_request variants;
-# issues.* requires a future adapter extension: github/lsm/neokai/issues.opened
-# Future CI adapter (Phase 3): github/lsm/neokai/check_suite.completed
+# issues.* requires a future GitHub extension expansion: github/lsm/neokai/issues.opened
+# Future CI extension (Phase 3): github/lsm/neokai/check_suite.completed
 github/lsm/neokai/pull_request.*            ← wildcard: all PR events for this repo
 github/lsm/neokai/*.*                       ← wildcard: all events for this repo
 github/lsm/neokai/pull_request.review_*     ← prefix wildcard: all review events
@@ -59,9 +100,9 @@ github/lsm/neokai/pull_request.review_*     ← prefix wildcard: all review even
 
 ### Topic construction rules
 
-1. `source` — adapter identifier (`github`, `slack`, `ci`). Lowercase, no slashes.
+1. `source` — extension/source identifier (`github`, `slack`, `ci`). Lowercase, no slashes.
 2. `owner/repo` — from the event's repository context. Both lowercase for case-insensitive matching.
-3. `resource.action` — the fourth path segment is always one dotted pair. For V1 GitHub PR events, `resource` is `pull_request`; review/comment variants are encoded in `action` (`review_submitted`, `comment_created`, `review_comment_created`) so examples like `pull_request.review_submitted` remain canonical. CI resources such as `check_suite` are Phase 3/future adapter scope.
+3. `resource.action` — the fourth path segment is always one dotted pair. For V1 GitHub PR events, `resource` is `pull_request`; review/comment variants are encoded in `action` (`review_submitted`, `comment_created`, `review_comment_created`) so examples like `pull_request.review_submitted` remain canonical. CI resources such as `check_suite` are Phase 3/future extension scope.
 4. `action` — the specific action: `opened`, `review_submitted`, `comment_created`, `completed`, etc.
 5. All v1 topics use exactly 4 path segments. For resources without a natural `owner/repo` (e.g. a future Slack message), use a source-specific scope pair to preserve the same depth: `{source}/{workspace}/{channel}/{resource}.{action}` (for example, `slack/acme/eng/messages.created`). Adapters that do not have both scope levels should use a reserved placeholder segment such as `_` rather than emitting 3-segment topics.
 
@@ -180,10 +221,10 @@ export interface WorkflowNodeAgent {
 
 ### Scoping details
 
-**`task` scope** is the critical innovation. Task association is resolved before delivery by the core `EventTaskResolver`:
+**`task` scope** is the critical innovation. Task association is resolved before delivery by the core `ExternalEventTaskResolver`:
 
 1. The task's `SpaceTask` record has `workflowRunId` and (via workflow artifacts or gate data) an associated PR number, PR URL, or branch name.
-2. `EventTaskResolver` enriches matching events with `routedTaskId` using source-normalized metadata such as GitHub PR URL/number/branch.
+2. `ExternalEventTaskResolver` enriches matching events with `routedTaskId` using source-normalized metadata such as GitHub PR URL/number/branch.
 3. For a `task`-scoped subscription, the router checks whether `event.routedTaskId === sub.taskId`.
 4. The node author never specifies a PR number — it's implicit from the task context.
 
@@ -199,30 +240,32 @@ When an event arrives, the router:
 2. For each active node execution with `eventInterests`:
    a. Compiles the interest's `topic` glob against the event's topic.
    b. If matched, checks scope:
-      - `task`: checks the `EventTaskResolver` enrichment (`event.routedTaskId`) against this subscription's task.
+      - `task`: checks the `ExternalEventTaskResolver` enrichment (`event.routedTaskId`) against this subscription's task.
       - `repo`: does event's repo match any watched repo in the node's space?
       - `global`: pass.
    c. If scope check passes, the event is queued for delivery to this node's agent session.
 
-## 3. EventIngestion Adapter Interface
+## 3. External Event Extension Interface
 
-External sources are modeled as **extensions**. An adapter owns the source-specific work:
+External sources are modeled as **extensions**. An extension owns the source-specific work:
 
 1. Receive events from its source (webhook, polling, streaming API, etc.).
-2. Verify source-specific authenticity (e.g. GitHub HMAC signatures).
-3. Normalize raw source payloads into `ExternalEvent`.
-4. Publish directly to the EventBus.
+2. Check global and per-space enablement before accepting or polling events.
+3. Verify source-specific authenticity (e.g. GitHub HMAC signatures).
+4. Load source-specific configuration (for GitHub: watched repositories and webhook/polling settings).
+5. Normalize raw source payloads into `ExternalEvent`.
+6. Publish directly to `ExternalEventService`.
 
-Adapters do **not** resolve Space tasks, inspect workflow nodes, or inject into agent sessions. Those are core daemon responsibilities handled by bus-level services and the `EventRouter`. This keeps GitHub, Slack, CI, and future integrations pluggable without adding source-specific paths to the workflow runtime.
+Extensions do **not** resolve Space tasks, inspect workflow nodes, or inject into agent sessions. Those are core daemon responsibilities handled by `ExternalEventService`, `ExternalEventTaskResolver`, `ExternalEventRouter`, and `InternalCommandBus`. This keeps GitHub, Slack, Jira, CI, and future integrations pluggable without adding source-specific paths to the workflow runtime.
 
 ```typescript
-// packages/daemon/src/lib/space/runtime/event-bus/types.ts
+// packages/daemon/src/lib/external-events/types.ts
 
 /**
  * A normalized external event on the bus.
  */
 export interface ExternalEvent {
-  /** Unique event ID (UUID) assigned by the adapter for this bus publication. */
+  /** Unique event ID (UUID) assigned by the extension for this publication. */
   id: string;
   /** Space this event belongs to. Required to prevent cross-space delivery. */
   spaceId: string;
@@ -230,9 +273,9 @@ export interface ExternalEvent {
   topic: string;
   /** Timestamp when the event occurred at the source (epoch ms). */
   occurredAt: number;
-  /** Timestamp when the event was accepted by the adapter (epoch ms). */
+  /** Timestamp when the event was accepted by the extension (epoch ms). */
   ingestedAt: number;
-  /** Source adapter identifier. */
+  /** Source extension identifier. */
   source: string;
   /** Optional source-native event id/delivery id for diagnostics. */
   sourceEventId?: string;
@@ -248,7 +291,7 @@ export interface ExternalEvent {
   summary: string;
   /** External URL (e.g. GitHub PR link). */
   externalUrl?: string;
-  /** Structured source payload — adapter-specific, not constrained. */
+  /** Structured source payload — extension-specific, not constrained. */
   payload: Record<string, unknown>;
   /**
    * Stable source-level identity used by bus dedup. Must be stable across
@@ -256,61 +299,90 @@ export interface ExternalEvent {
    */
   dedupeKey: string;
   /**
-   * Core enrichment filled by EventTaskResolver after publication.
+   * Core enrichment filled by ExternalEventTaskResolver after publication.
    * Adapters should leave this unset unless the source itself has a trusted
    * first-party task id.
    */
   routedTaskId?: string;
 }
 
+export interface ExternalEventExtensionConfig {
+  source: string;
+  globallyEnabled: boolean;
+  capabilities: {
+    webhooks?: boolean;
+    polling?: boolean;
+    rpcConfig?: boolean;
+  };
+  secretsRef?: string;
+  settings?: Record<string, unknown>;
+}
+
+export interface SpaceExternalEventSourceConfig {
+  spaceId: string;
+  source: string;
+  enabled: boolean;
+  settings: Record<string, unknown>;
+}
+
+export interface ExternalEventExtensionContext {
+  /** Publish a normalized event into the shared external-event subsystem. */
+  publisher: ExternalEventPublisher;
+  /** Read global extension config, secrets references, and per-space config. */
+  config: ExternalEventExtensionConfigStore;
+  /** Notify core services that source configuration changed for a space. */
+  onSourceConfigChanged(change: { source: string; spaceId?: string; kind: string }): void;
+}
+
+export interface ExternalEventExtensionConfigStore {
+  getGlobalConfig(source: string): Promise<ExternalEventExtensionConfig>;
+  getSpaceConfig(spaceId: string, source: string): Promise<SpaceExternalEventSourceConfig | null>;
+  listEnabledSpaces(source: string): Promise<SpaceExternalEventSourceConfig[]>;
+}
+
 /**
  * Interface that event source extensions must implement.
  */
-export interface EventAdapter {
-  /** Adapter identifier (used in topic namespace: '{source}/...'). */
+export interface ExternalEventExtension {
+  /** Source identifier used in topic namespace: '{source}/...'. */
   readonly sourceId: string;
 
   /**
-   * Start the adapter. Called once at daemon startup.
-   * The adapter calls `publisher.publish(event)` whenever it accepts an event.
+   * Start the extension. Called once at daemon startup if the source is globally enabled.
+   * The extension calls `context.publisher.publish(event)` whenever it accepts an event.
    */
-  start(publisher: EventPublisher): Promise<void>;
+  start(context: ExternalEventExtensionContext): Promise<void>;
 
-  /** Stop the adapter. Called at daemon shutdown. */
+  /** Stop the extension. Called at daemon shutdown or when globally disabled. */
   stop(): Promise<void>;
 }
 
 /**
- * Optional interface for adapters that expose HTTP endpoints.
- * The daemon routes matching requests to the adapter without knowing source
+ * Optional interface for extensions that expose HTTP endpoints.
+ * The daemon routes matching requests to the extension without knowing source
  * internals such as HMAC verification, event names, or raw payload shape.
  */
-export interface HttpEventAdapter extends EventAdapter {
+export interface HttpExternalEventExtension extends ExternalEventExtension {
   readonly routes: readonly {
     method: 'GET' | 'POST' | 'PUT' | 'DELETE';
     path: string;
-    handle(req: Request, publisher: EventPublisher): Promise<Response>;
+    handle(req: Request, context: ExternalEventExtensionContext): Promise<Response>;
   }[];
 }
 
 /**
- * Optional interface for adapters that expose daemon RPC methods.
- * GitHub uses this for watch/list/poll operations; future adapters can expose
+ * Optional interface for extensions that expose daemon RPC methods.
+ * GitHub uses this for watch/list/poll operations; future extensions can expose
  * source-specific configuration without adding core RPC handler dependencies.
  */
-export interface EventAdapterContext {
-  /** Notify core services that source configuration changed for a space. */
-  onSourceConfigChanged(change: { source: string; spaceId?: string; kind: 'watched_repo_changed' }): void;
-}
-
-export interface RpcEventAdapter extends EventAdapter {
-  registerRpcHandlers(hub: MessageHub, publisher: EventPublisher, context: EventAdapterContext): void;
+export interface RpcExternalEventExtension extends ExternalEventExtension {
+  registerRpcHandlers(hub: MessageHub, context: ExternalEventExtensionContext): void;
 }
 
 /**
- * Callback adapters use to publish events onto the bus.
+ * Callback extensions use to publish events into the shared external-event subsystem.
  */
-export interface EventPublisher {
+export interface ExternalEventPublisher {
   publish(event: ExternalEvent): Promise<PublishResult>;
 }
 
@@ -350,39 +422,18 @@ export interface ExternalEventStore {
   markEventIgnored(eventId: string, reason: 'no_matching_subscriptions' | 'no_scope_eligible_subscriptions'): void;
 }
 
-export interface EventTaskResolver {
+export interface ExternalEventTaskResolver {
   /** Enrich a normalized event with routedTaskId when a trusted task association exists. */
   enrich(event: ExternalEvent): Promise<ExternalEvent>;
 }
-
-/**
- * TypedHub/MessageHub method used by EventBus.
- *
- * IMPORTANT: raw external topics (e.g. `github/lsm/neokai/pull_request.opened`)
- * are NOT used as TypedHub method names because MessageHub validates methods
- * with `[a-zA-Z0-9._-]`, requires a dot, and rejects `/` and `*`.
- * The external topic stays in `ExternalEvent.topic` and is matched by EventRouter.
- */
-export const EXTERNAL_EVENT_PUBLISHED_METHOD = 'space.externalEvent.published';
-
-export interface EventBusHubEventMap {
-  'space.externalEvent.published': {
-    /** Fixed channel required by BaseEventData/TypedHub routing. */
-    sessionId: 'global';
-    spaceId: string;
-    event: ExternalEvent;
-  };
-}
 ```
 
-The `sessionId: 'global'` field is required because EventBus is backed by TypedHub/DaemonHub, whose payloads satisfy `BaseEventData` for channel routing. External event delivery is still space-scoped by `spaceId`; the fixed session channel is only the transport channel for bus subscribers.
-
 ```typescript
-class EventBus implements EventPublisher {
+class ExternalEventService implements ExternalEventPublisher {
   constructor(
-    private readonly hub: DaemonHub,
+    private readonly internalEventBus: InternalEventBus<InternalEventMap>,
     private readonly eventStore: ExternalEventStore,
-    private readonly taskResolver: EventTaskResolver,
+    private readonly taskResolver: ExternalEventTaskResolver,
   ) {}
 
   async publish(event: ExternalEvent): Promise<PublishResult> {
@@ -401,10 +452,9 @@ class EventBus implements EventPublisher {
     // Adapters do not query workflow/task/gate tables directly.
     const enriched = await this.taskResolver.enrich(stored.event);
 
-    await this.hub.emit(EXTERNAL_EVENT_PUBLISHED_METHOD, {
-      sessionId: 'global',
-      spaceId: enriched.spaceId,
-      event: enriched,
+    await this.internalEventBus.publish('externalEvent.published', {
+      channel: Channels.space(enriched.spaceId),
+      payload: { event: enriched },
     });
 
     return {
@@ -416,38 +466,52 @@ class EventBus implements EventPublisher {
 }
 ```
 
-### Bus-level middleware/services
+### ExternalEventService responsibilities
 
-The EventBus owns cross-cutting behavior that applies to every adapter:
+`ExternalEventService` owns cross-cutting behavior that applies to every extension:
 
 1. **Validation** — all topics must satisfy the four-segment topic contract before publication.
 2. **Source-level dedup** — a persistent `ExternalEventStore` tracks `(spaceId, source, dedupeKey)` and delivery state. Terminal duplicates (`delivered`, `failed`, `ignored`, `ambiguous`) are short-circuited; retryable states (`published`, `routed`, `delivery_failed`) are re-emitted so delivery can retry.
-3. **Task enrichment** — `EventTaskResolver` enriches events with `routedTaskId` for task-scoped matching. For GitHub PR events, it uses PR URL/number/branch fields that were normalized by the adapter. For future Slack/CI events, source-specific resolver plugins can be registered without changing adapters.
-4. **Publication** — only enriched, deduped events are emitted on `space.externalEvent.published`.
+3. **Task enrichment** — `ExternalEventTaskResolver` enriches events with `routedTaskId` for task-scoped matching. For GitHub PR events, it uses PR URL/number/branch fields that were normalized by the extension. For future Slack/Jira/CI events, source-specific resolver plugins can be registered without changing extensions.
+4. **Publication** — only enriched, deduped events are published as the internal fact `externalEvent.published`.
 
-This replaces the current GitHub-specific `SpaceGitHubService.ingest()` hot path for new event delivery. In particular, the bus-level dedup store must not use unconditional `INSERT OR IGNORE` short-circuiting for retryable states; otherwise transient delivery failures become permanent event loss.
+This replaces the current GitHub-specific `SpaceGitHubService.ingest()` hot path for new event delivery. In particular, the service-level dedup store must not use unconditional `INSERT OR IGNORE` short-circuiting for retryable states; otherwise transient delivery failures become permanent event loss.
 
-### GitHub adapter as an extension
+### GitHub extension as the reference implementation
 
-The GitHub adapter is a primary source adapter, not a downstream listener on `SpaceGitHubService`:
+The GitHub extension is a primary source extension, not a downstream listener on `SpaceGitHubService`. It is the example future third-party integrations should copy:
 
 ```typescript
-class GitHubEventAdapter implements HttpEventAdapter, RpcEventAdapter {
+interface GitHubSpaceConfig {
+  enabled: boolean;
+  watchedRepos: { owner: string; repo: string; enabled: boolean }[];
+  eventFilters?: {
+    pullRequests?: boolean;
+    reviews?: boolean;
+    comments?: boolean;
+    checks?: boolean;
+  };
+  polling?: { enabled: boolean; intervalMs?: number };
+  webhooks?: { enabled: boolean };
+}
+
+class GitHubEventExtension implements HttpExternalEventExtension, RpcExternalEventExtension {
   readonly sourceId = 'github';
   readonly routes = [
     { method: 'POST', path: '/webhook/github/space', handle: this.handleWebhook.bind(this) },
   ] as const;
 
-  constructor(
-    private readonly repo: GitHubEventAdapterRepository,
-    private readonly githubToken?: string,
-  ) {}
+  private context?: ExternalEventExtensionContext;
+  private pollTimer?: ReturnType<typeof setInterval>;
 
-  async start(publisher: EventPublisher): Promise<void> {
-    this.publisher = publisher;
+  async start(context: ExternalEventExtensionContext): Promise<void> {
+    this.context = context;
+    const global = await context.config.getGlobalConfig(this.sourceId);
+    if (!global.globallyEnabled || !global.capabilities.polling) return;
+
     this.pollTimer = setInterval(() => {
-      void this.pollOnce().catch((err) => {
-        log.warn('GitHubEventAdapter: polling failed', {
+      void this.pollEnabledSpaces().catch((err) => {
+        log.warn('GitHubEventExtension: polling failed', {
           error: err instanceof Error ? err.message : String(err),
         });
       });
@@ -458,58 +522,84 @@ class GitHubEventAdapter implements HttpEventAdapter, RpcEventAdapter {
     if (this.pollTimer) clearInterval(this.pollTimer);
   }
 
-  registerRpcHandlers(hub: MessageHub, publisher: EventPublisher, context: EventAdapterContext): void {
+  registerRpcHandlers(hub: MessageHub, context: ExternalEventExtensionContext): void {
+    hub.onRequest('space.github.enable', async (data) => {
+      const config = await this.enableForSpace(data);
+      context.onSourceConfigChanged({ source: this.sourceId, spaceId: config.spaceId, kind: 'space_enabled' });
+      return config;
+    });
+
+    hub.onRequest('space.github.disable', async (data) => {
+      const config = await this.disableForSpace(data);
+      context.onSourceConfigChanged({ source: this.sourceId, spaceId: config.spaceId, kind: 'space_disabled' });
+      return config;
+    });
+
     hub.onRequest('space.github.watchRepo', async (data) => {
       const watchedRepo = await this.watchRepo(data);
-      context.onSourceConfigChanged({
-        source: this.sourceId,
-        spaceId: watchedRepo.spaceId,
-        kind: 'watched_repo_changed',
-      });
+      context.onSourceConfigChanged({ source: this.sourceId, spaceId: watchedRepo.spaceId, kind: 'watched_repo_changed' });
       return watchedRepo;
     });
-    hub.onRequest('space.github.listWatchedRepos', async (data) => this.listWatchedRepos(data));
-    hub.onRequest('space.github.pollOnce', async () => ({ count: await this.pollOnce() }));
+
+    hub.onRequest('space.github.listConfig', async (data) => this.listSpaceConfig(data));
+    hub.onRequest('space.github.pollOnce', async (data) => ({ count: await this.pollSpace(data.spaceId) }));
   }
 
-  private async handleWebhook(req: Request, publisher: EventPublisher): Promise<Response> {
+  private async handleWebhook(req: Request, context: ExternalEventExtensionContext): Promise<Response> {
+    const global = await context.config.getGlobalConfig(this.sourceId);
+    if (!global.globallyEnabled || !global.capabilities.webhooks) {
+      return Response.json({ ignored: true, reason: 'github_extension_disabled' }, { status: 202 });
+    }
+
     const raw = await req.text();
-    const verifiedRepos = this.verifySignatureAgainstWatchedRepos(req, raw);
     const normalized = normalizeGitHubWebhook(req.headers, JSON.parse(raw));
     if (!normalized) return Response.json({ ignored: true });
 
-    for (const watched of verifiedRepos) {
-      await publisher.publish(toExternalEvent(watched.spaceId, normalized));
+    const targetSpaces = await this.resolveEnabledSpacesForWebhook(context, req, raw, normalized);
+    for (const spaceConfig of targetSpaces) {
+      if (!spaceConfig.enabled) continue;
+      await context.publisher.publish(toExternalEvent(spaceConfig.spaceId, normalized));
     }
 
     return Response.json({ message: 'Webhook received' });
   }
 
-  async pollOnce(fetchImpl: typeof fetch = fetch): Promise<number> {
-    // Poll GitHub endpoints, normalize rows, and publish ExternalEvent directly.
-    // No SpaceTask lookup and no session injection happen here.
+  private async pollEnabledSpaces(): Promise<number> {
+    if (!this.context) return 0;
+    const spaces = await this.context.config.listEnabledSpaces(this.sourceId);
+    let count = 0;
+    for (const spaceConfig of spaces) {
+      count += await this.pollSpace(spaceConfig.spaceId);
+    }
+    return count;
+  }
+
+  async pollSpace(spaceId: string, fetchImpl: typeof fetch = fetch): Promise<number> {
+    // Load this space's GitHub config, poll its enabled watched repos, normalize rows,
+    // and publish ExternalEvent directly. No SpaceTask lookup and no session injection happen here.
   }
 }
 ```
 
-The normalization helpers currently living in `space-github.ts` move into this adapter module:
+The normalization helpers currently living in `space-github.ts` move into this extension module:
 
 - `normalizeSpaceGitHubWebhook(...)` → `normalizeGitHubWebhook(...)`
 - `normalizePollingRow(...)` → `normalizeGitHubPollingRow(...)`
-- `mapEventType(...)` stays with the adapter because topic construction is source-specific
+- `mapEventType(...)` stays with the extension because topic construction is source-specific
 
-The adapter may keep source-local tables such as `space_github_watched_repos` and an optional adapter event log for diagnostics, but the authoritative cross-source event lifecycle belongs to the EventBus store.
+The extension may keep source-local tables such as `space_github_watched_repos` and an optional extension event log for diagnostics, but the authoritative cross-source event lifecycle belongs to `ExternalEventStore`. During migration, existing GitHub RPC names can remain as compatibility aliases, but new extension APIs should use a generic shape where possible: global source enablement, per-space source enablement, source-specific settings, and watched-resource configuration.
 
-## 4. EventRouter Design
+## 4. ExternalEventRouter Design
 
 ### Architecture
 
-The `EventRouter` subscribes to the fixed TypedHub-safe EventBus method (`space.externalEvent.published`). When an event arrives, it:
+The `ExternalEventRouter` subscribes to the internal fact `externalEvent.published` on `InternalEventBus`. When an event arrives, it:
 
 1. Reads the external topic from `event.topic` in the payload.
 2. Looks up all active node executions that have `eventInterests` matching that payload topic.
 3. For each matching interest, checks scope.
-4. Delivers the event to the matching node's agent session.
+4. Records/updates per-subscription delivery lifecycle.
+5. Dispatches `InternalCommandBus.dispatch('agent.message.inject', ...)` for the matching node's agent session.
 
 ### Trie-based subscription index
 
@@ -590,10 +680,10 @@ interface WatchedRepoLookup {
 }
 ```
 
-### EventRouter implementation sketch
+### ExternalEventRouter implementation sketch
 
 ```typescript
-class EventRouter {
+class ExternalEventRouter {
   // topic trie for fast lookup
   private topicTrie: TopicTrie<Subscription> = new TopicTrie();
 
@@ -621,11 +711,12 @@ class EventRouter {
   private static readonly RETRY_BACKOFF_MS = 1000; // 1s base, exponential backoff
 
   // Cache: spaceId → Set of "owner/repo" strings for watched repos.
-  // Invalidated when a source adapter reports watched-repo configuration changes.
+  // Invalidated when a source extension reports watched-repo configuration changes.
   private watchedRepoCache: Map<string, Set<string>> = new Map();
 
   constructor(
-    private readonly eventBus: EventBus,
+    private readonly internalEventBus: InternalEventBus<InternalEventMap>,
+    private readonly commandBus: InternalCommandBus<InternalCommandMap>,
     private readonly nodeExecutionRepo: NodeExecutionRepository,
     private readonly taskRepo: SpaceTaskRepository,
     private readonly spaceTaskManager: SpaceTaskManager,
@@ -633,20 +724,21 @@ class EventRouter {
     private readonly eventStore: ExternalEventStore,
     private readonly watchedRepoLookup: WatchedRepoLookup,
   ) {
-    // Subscribe to the fixed TypedHub-safe method. External topic matching happens
-    // inside handleEvent via event.topic, not via the hub method name.
-    this.eventBus.subscribe(EXTERNAL_EVENT_PUBLISHED_METHOD, ({ spaceId, event }) => {
-      // Defense in depth: payload spaceId and event.spaceId must agree.
-      if (event.spaceId !== spaceId) return;
+    // Subscribe to the semantic internal fact. External topic matching happens
+    // inside handleEvent via event.topic, not via the internal event name.
+    this.internalEventBus.subscribe('externalEvent.published', ({ payload, channel }) => {
+      const { event } = payload;
+      // Defense in depth: payload spaceId and channel spaceId must agree when channel is space-scoped.
+      if (channel.kind === 'space' && event.spaceId !== channel.spaceId) return;
       void this.handleEvent(event).catch((err) => {
-        log.warn('EventRouter: failed to route external event', {
+        log.warn('ExternalEventRouter: failed to route external event', {
           error: err,
-          spaceId,
+          spaceId: event.spaceId,
           topic: event.topic,
           eventId: event.id,
         });
       });
-    });
+    }, { subscriberName: 'ExternalEventRouter' });
   }
 
   /** Check if a repo is watched for a given space. Uses cached data. */
@@ -664,7 +756,7 @@ class EventRouter {
 
   /**
    * Invalidate the watched-repo cache for a given space (or all spaces).
-   * Called from EventAdapterContext.onSourceConfigChanged when a source adapter
+   * Called from ExternalEventExtensionContext.onSourceConfigChanged when a source extension
    * changes watched-repo configuration (for example `space.github.watchRepo`).
    * Without this, `repo`-scoped matching grows stale until process restart.
    */
@@ -678,7 +770,7 @@ class EventRouter {
 
   private makeDeliveryKey(event: ExternalEvent, sub: Subscription): string {
     // Use a structured tuple key. Source-level dedupe is unique by
-    // (spaceId, source, dedupeKey), so include event.source to prevent two adapters
+    // (spaceId, source, dedupeKey), so include event.source to prevent two extensions
     // that legitimately emit the same dedupeKey from sharing pending/delivered/retry
     // bookkeeping for the same subscription. All fields are free-form strings and
     // can contain ':', '/', or other delimiter characters, so avoid delimiter joins.
@@ -711,7 +803,7 @@ class EventRouter {
 
   /** Evict stale dedup entries (called periodically or on demand). */
   private evictStaleDedup(): void {
-    const cutoff = Date.now() - EventRouter.DEDUP_TTL_MS;
+    const cutoff = Date.now() - ExternalEventRouter.DEDUP_TTL_MS;
     for (const [key, ts] of this.delivered.entries()) {
       if (ts < cutoff) this.delivered.delete(key);
     }
@@ -801,7 +893,7 @@ class EventRouter {
       if (!currentSubsByKey.has(key)) {
         const validation = validateGlobPattern(sub.interest.topic);
         if (!validation.valid) {
-          log.warn('EventRouter: skipping invalid event interest topic', {
+          log.warn('ExternalEventRouter: skipping invalid event interest topic', {
             workflowRunId,
             taskId: sub.taskId,
             nodeId: sub.nodeId,
@@ -1066,7 +1158,7 @@ class EventRouter {
         eligible.push(sub);
       } catch (err) {
         preparationFailed = true;
-        log.warn('EventRouter: failed to prepare external event delivery; scheduling retry', {
+        log.warn('ExternalEventRouter: failed to prepare external event delivery; scheduling retry', {
           error: err,
           spaceId: event.spaceId,
           topic: event.topic,
@@ -1094,7 +1186,7 @@ class EventRouter {
     if (preparationFailed) return false;
 
     // No prepared, non-terminal delivery remains for this event. Mark the source
-    // event terminal so retryable source duplicates (webhook + polling, adapter
+    // event terminal so retryable source duplicates (webhook + polling, extension
     // retries, etc.) do not re-emit and re-route indefinitely when every matched
     // subscription is out of scope or already terminal.
     if (eligible.length === 0) {
@@ -1108,7 +1200,7 @@ class EventRouter {
       try {
         await this.deliverToSubscription(event, sub);
       } catch (err) {
-        log.warn('EventRouter: failed to deliver external event to subscription', {
+        log.warn('ExternalEventRouter: failed to deliver external event to subscription', {
           error: err,
           spaceId: event.spaceId,
           topic: event.topic,
@@ -1141,7 +1233,7 @@ class EventRouter {
     // Mark as pending to prevent duplicate queueing. We do NOT mark as delivered
     // until after successful injection. Failed injection/session-resolution paths
     // clear pending and schedule router-level retry rather than relying on a source
-    // adapter to publish the same event again.
+    // extension to publish the same event again.
     this.pendingDeliveries.add(dedupeKey);
 
     try {
@@ -1209,7 +1301,7 @@ class EventRouter {
         this.pendingDeliveries.delete(dropped.deliveryKey);
         this.markQueuedDeliveryFailed(dropped.event.id, dropped.deliveryKey, 'pending_queue_overflow');
       }
-      log.warn('EventRouter: pending external event queue exceeded limit; dropped oldest event', {
+      log.warn('ExternalEventRouter: pending external event queue exceeded limit; dropped oldest event', {
         workflowRunId: sub.workflowRunId,
         taskId: sub.taskId,
         nodeId: sub.nodeId,
@@ -1266,7 +1358,7 @@ class EventRouter {
       try {
         await this.injectPreparedDelivery(pending.event, sub, pending.deliveryKey, sessionId);
       } catch (err) {
-        log.warn('EventRouter: failed to flush queued external event delivery', {
+        log.warn('ExternalEventRouter: failed to flush queued external event delivery', {
           error: err,
           eventId: pending.event.id,
           workflowRunId: sub.workflowRunId,
@@ -1281,7 +1373,7 @@ class EventRouter {
   }
 
   private passesScopeCheck(event: ExternalEvent, sub: Subscription): boolean {
-    // All scopes are bounded to the subscription's space. EventBus is a shared
+    // All scopes are bounded to the subscription's space. ExternalEventRouter handles a shared
     // daemon-wide stream, so even `global` means "global within this space", not
     // cross-space delivery.
     if (event.spaceId !== sub.spaceId) return false;
@@ -1292,7 +1384,7 @@ class EventRouter {
 
       case 'repo': {
         // Check if event's repo matches any watched repo in this space.
-        // Uses an adapter-provided watched-repo lookup filtered by
+        // Uses an extension-provided watched-repo lookup filtered by
         // (spaceId, owner, repo, enabled=true). The router caches this per-space
         // to avoid DB hits on every event.
         if (!event.repoOwner || !event.repoName) return false;
@@ -1300,11 +1392,11 @@ class EventRouter {
       }
 
       case 'task': {
-        // EventTaskResolver enriches matching events before publication. The
+        // ExternalEventTaskResolver enriches matching events before publication. The
         // router uses that trusted enrichment directly and never performs broad
         // PR/task scans during delivery. This prevents cross-task leakage in
         // multi-task runs and keeps task/gate/workflow schema access out of
-        // source adapters and delivery hot paths. If routedTaskId is absent, the
+        // source extensions and delivery hot paths. If routedTaskId is absent, the
         // event has no associated task, so the scope check returns false.
         return event.routedTaskId === sub.taskId;
       }
@@ -1333,8 +1425,8 @@ class EventRouter {
       'prepare',
     ]);
     const retries = options.retryCountOverride ?? ((this.eventRetryCounts.get(retryKey) ?? 0) + 1);
-    if (retries > EventRouter.MAX_RETRIES) {
-      log.warn('EventRouter: max preparation retries exceeded; marking event failed', {
+    if (retries > ExternalEventRouter.MAX_RETRIES) {
+      log.warn('ExternalEventRouter: max preparation retries exceeded; marking event failed', {
         eventId: event.id,
         topic: event.topic,
       });
@@ -1352,7 +1444,7 @@ class EventRouter {
 
     this.eventRetryCounts.set(retryKey, retries);
     this.eventRetryState.set(retryKey, { event, matched });
-    const backoff = EventRouter.RETRY_BACKOFF_MS * Math.pow(2, retries - 1);
+    const backoff = ExternalEventRouter.RETRY_BACKOFF_MS * Math.pow(2, retries - 1);
     const existingTimer = this.eventRetryTimers.get(retryKey);
     if (existingTimer) clearTimeout(existingTimer);
 
@@ -1385,7 +1477,7 @@ class EventRouter {
         .catch((err) => {
           // Keep count/state on failure so the next scheduled retry continues the
           // same preparation-failure budget instead of starting over.
-          log.warn('EventRouter: event preparation retry failed', { error: err, eventId: event.id });
+          log.warn('ExternalEventRouter: event preparation retry failed', { error: err, eventId: event.id });
         });
     }, backoff);
     this.eventRetryTimers.set(retryKey, timer);
@@ -1397,7 +1489,7 @@ class EventRouter {
    */
   private scheduleRetry(event: ExternalEvent, sub: Subscription, deliveryKey: string): void {
     const retries = (this.retryCounts.get(deliveryKey) ?? 0) + 1;
-    if (retries > EventRouter.MAX_RETRIES) {
+    if (retries > ExternalEventRouter.MAX_RETRIES) {
       log.warn(`Max retries exceeded for event ${deliveryKey}, marking delivery failed`);
       this.retryCounts.delete(deliveryKey);
       const existingTimer = this.retryTimers.get(deliveryKey);
@@ -1416,7 +1508,7 @@ class EventRouter {
     }
 
     this.retryCounts.set(deliveryKey, retries);
-    const backoff = EventRouter.RETRY_BACKOFF_MS * Math.pow(2, retries - 1);
+    const backoff = ExternalEventRouter.RETRY_BACKOFF_MS * Math.pow(2, retries - 1);
 
     const existingTimer = this.retryTimers.get(deliveryKey);
     if (existingTimer) clearTimeout(existingTimer);
@@ -1462,7 +1554,7 @@ class EventRouter {
         })
         .catch((err) => {
           // Don't clear retryCounts on failure — preserve count for retry logic.
-          log.warn('EventRouter: retry delivery failed', {
+          log.warn('ExternalEventRouter: retry delivery failed', {
             error: err,
             retries,
             deliveryKey,
@@ -1509,12 +1601,12 @@ Dedup happens at two different layers, each with a different key and responsibil
 
 2. **Per-subscription delivery dedup** — JSON tuple `[event.source, event.dedupeKey, subscription.taskId, subscription.nodeId, subscription.agentName, subscription.workflowRunId]`.
    - Purpose: prevent the same external event from being delivered twice to the same node agent within a run.
-   - The tuple includes `event.source` because source-level dedupe is scoped by `(spaceId, source, dedupeKey)`: two adapters can legitimately emit the same `dedupeKey` in one space and must not share pending/delivered/retry bookkeeping.
+   - The tuple includes `event.source` because source-level dedupe is scoped by `(spaceId, source, dedupeKey)`: two extensions can legitimately emit the same `dedupeKey` in one space and must not share pending/delivered/retry bookkeeping.
    - The tuple includes `taskId` to isolate multi-task runs and `nodeId` to handle cases where the same agent name appears in multiple nodes within the same run.
    - The tuple is encoded structurally rather than delimiter-joined because `source`, `dedupeKey`, workflow identifiers, node IDs, and agent names are free-form strings.
    - It is tracked in-memory for fast duplicate suppression and persisted in `space_external_event_deliveries` after successful injection.
 
-The EventRouter marks per-subscription delivery as `delivered` only after successful injection, updates `ExternalEventStore` with the successful delivery key, and advances the source event to terminal `delivered` only once all expected deliveries are terminal. Failed injection/session-resolution paths remove `pendingDeliveries` and schedule retry rather than relying on adapters to re-publish the same event. If trie lookup finds no matching subscriptions, or if all matched subscriptions are out of scope/already terminal and no preparation retry is pending, the router marks the source event terminal `ignored` so webhook+polling duplicates do not churn through routing forever.
+The ExternalEventRouter marks per-subscription delivery as `delivered` only after successful injection, updates `ExternalEventStore` with the successful delivery key, and advances the source event to terminal `delivered` only once all expected deliveries are terminal. Failed injection/session-resolution paths remove `pendingDeliveries` and schedule retry rather than relying on adapters to re-publish the same event. If trie lookup finds no matching subscriptions, or if all matched subscriptions are out of scope/already terminal and no preparation retry is pending, the router marks the source event terminal `ignored` so webhook+polling duplicates do not churn through routing forever.
 
 ### Wake-on-idle
 
@@ -1562,13 +1654,13 @@ When a node execution is `pending` (no session yet):
 - Events queued for `pending` nodes before restart may need explicit replay from the event store once persistent delivery queues are implemented.
 - New events (arriving after restart) flow through the bus normally and are not affected.
 
-If persistent queuing is needed in a future iteration, events can be persisted to a `space_event_delivery_queue` SQLite table with the same schema as the in-memory map, and drained on node activation. The table should store the `ExternalEvent.id` plus the subscription key so queued delivery can replay from `ExternalEventStore` without relying on source adapters to re-publish.
+If persistent queuing is needed in a future iteration, events can be persisted to a `space_event_delivery_queue` SQLite table with the same schema as the in-memory map, and drained on node activation. The table should store the `ExternalEvent.id` plus the subscription key so queued delivery can replay from `ExternalEventStore` without relying on source extensions to re-publish.
 
 ### Backpressure
 
 - **Rate limiting**: If a single node receives > 10 events per minute, subsequent events are coalesced into a digest message: "N additional events received in the last minute. Summary: ..."
 - **Event TTL**: Events older than 5 minutes are dropped from the queue (they're likely stale for an agent's decision-making).
-- **Bus overflow**: The `EventBus` uses TypedHub's async-everywhere design with the fixed method `space.externalEvent.published` — slow consumers don't block publishers. Handlers run via `queueMicrotask`; external slash/glob topics remain payload data and are never used as MessageHub method names.
+- **Router/handler overflow**: `ExternalEventService.publish(...)` uses `InternalEventBus.publish('externalEvent.published', ...)`. In v1, use the awaited `publish(...)` path for observability; if later throughput requires fire-and-forget behavior, use explicit `publishAsync(...)` and ensure handler failures are logged with event/subscriber context.
 
 ## 6. Topic Trie Implementation
 
@@ -1728,45 +1820,47 @@ function isReceivingStatus(status: NodeExecutionStatus): boolean {
 - Lookup: Effectively O(2^k × m) in the common case — walks exact + matching glob branches at each level, collects m total matching subscriptions from leaves. Since k is bounded (4–5) and per-agent interest count is capped, glob branching stays small.
 - Memory: O(n × k) where n = number of subscriptions
 
-## 7. Wiring the GitHub Adapter
+## 7. Wiring the GitHub Extension
 
 ### Target architecture
 
-The GitHub integration is extracted into a first-class event adapter. It no longer depends on `SpaceGitHubService.ingest()`, `space.githubEvent.routed`, or Task Agent notification delivery.
+The GitHub integration is extracted into a first-class event extension. It no longer depends on `SpaceGitHubService.ingest()`, `space.githubEvent.routed`, or Task Agent notification delivery.
 
-```
+```text
 GitHub webhook / polling
-    → GitHubEventAdapter
+    → GitHubEventExtension
+        → check global + per-space enablement
         → verify signature / fetch API pages
         → normalize raw GitHub payload
         → construct topic + dedupeKey
-        → EventBus.publish(ExternalEvent)
+        → ExternalEventService.publish(ExternalEvent)
             → ExternalEventStore.store() + retry-aware dedup
-            → EventTaskResolver.enrich()   // PR → SpaceTask when possible
-            → DaemonHub.emit('space.externalEvent.published', { event })
-                → EventRouter.deliverToSubscription()
-                    → sessionFactory.injectMessage(..., { deliveryMode: 'defer' })
+            → ExternalEventTaskResolver.enrich()   // PR → SpaceTask when possible
+            → InternalEventBus.publish('externalEvent.published', ...)
+                → ExternalEventRouter
+                    → InternalCommandBus.dispatch('agent.message.inject', ...)
 ```
 
-There is no intermediate `space.githubEvent.routed` payload contract. The adapter publishes the full normalized event directly to the bus, and the bus owns task enrichment and delivery state.
+There is no intermediate `space.githubEvent.routed` payload contract. The extension publishes the full normalized event directly to `ExternalEventService`, and core external-event services own task enrichment and delivery state.
 
 ### Changes to existing code
 
 **Extract source-specific GitHub code from `SpaceGitHubService`:**
 
-- Move webhook normalization (`normalizeSpaceGitHubWebhook`) into `github-adapter.ts`.
-- Move polling normalization (`normalizePollingRow`) into `github-adapter.ts`.
-- Move watched-repo configuration access into `GitHubEventAdapterRepository` or keep the existing `space_github_watched_repos` table behind that repository.
-- Move `space.github.watchRepo`, `space.github.listWatchedRepos`, and `space.github.pollOnce` registration behind `RpcEventAdapter.registerRpcHandlers(...)`.
-- Register `/webhook/github/space` through the adapter route registry rather than hard-coding a direct call to `spaceGitHubService.handleWebhook(req)` in `app.ts`.
+- Move webhook normalization (`normalizeSpaceGitHubWebhook`) into `github-event-extension.ts` / `github-normalizer.ts`.
+- Move polling normalization (`normalizePollingRow`) into `github-event-extension.ts` / `github-normalizer.ts`.
+- Move watched-repo configuration access into `GitHubEventExtensionRepository` or keep the existing `space_github_watched_repos` table behind that repository.
+- Move `space.github.watchRepo`, `space.github.listWatchedRepos`, and `space.github.pollOnce` registration behind `RpcExternalEventExtension.registerRpcHandlers(...)` as compatibility RPCs.
+- Add generic extension configuration APIs for global enablement, per-space enablement, and source settings; GitHub-specific RPCs can delegate to those APIs where practical.
+- Register `/webhook/github/space` through the extension route registry rather than hard-coding a direct call to `spaceGitHubService.handleWebhook(req)` in `app.ts`.
 
-**Do not extend `appendTaskActivity`:** the old plan proposed adding normalized fields to `space.githubEvent.routed`. That is no longer needed because the GitHub adapter publishes `ExternalEvent` directly and no longer treats `SpaceGitHubService` as an upstream source.
+**Do not extend `appendTaskActivity`:** the old plan proposed adding normalized fields to `space.githubEvent.routed`. That is no longer needed because the GitHub extension publishes `ExternalEvent` directly and no longer treats `SpaceGitHubService` as an upstream source.
 
-**Deprecate direct Task Agent injection:** the old `scheduleTaskNotification()` / `flushTaskNotification()` path remains only as a compatibility shim during migration. New node-level delivery goes through `EventRouter`. Once workflows rely on `eventInterests`, the Task Agent relay can be removed.
+**Deprecate direct Task Agent injection:** the old `scheduleTaskNotification()` / `flushTaskNotification()` path remains only as a compatibility shim during migration. New node-level delivery goes through `ExternalEventRouter` and the `agent.message.inject` command. Once workflows rely on `eventInterests`, the Task Agent relay can be removed.
 
-### GitHub adapter topic construction
+### GitHub extension topic construction
 
-The GitHub adapter normalizes to GitHub event kinds (`issue_comment`, `pull_request_review`, `pull_request_review_comment`, `pull_request`) and maps them to bus topics:
+The GitHub extension normalizes to GitHub event kinds (`issue_comment`, `pull_request_review`, `pull_request_review_comment`, `pull_request`) and maps them to bus topics:
 
 | GitHub normalized kind | `mapEventType(kind, action)` returns |
 |---|---|
@@ -1775,7 +1869,7 @@ The GitHub adapter normalizes to GitHub event kinds (`issue_comment`, `pull_requ
 | `pull_request_review_comment` | `pull_request.review_comment_${action}` (created, edited, deleted) |
 | `pull_request` | `pull_request.${action}` (opened, synchronize, closed, etc.) |
 
-These return values are the complete fourth path segment (`resource.action`). For V1 PR events the resource side is always `pull_request`; `comment_*`, `review_*`, and `review_comment_*` are action names, not nested resource segments. The adapter must not emit doubled resource names such as `pull_request.review.review_submitted`.
+These return values are the complete fourth path segment (`resource.action`). For V1 PR events the resource side is always `pull_request`; `comment_*`, `review_*`, and `review_comment_*` are action names, not nested resource segments. The extension must not emit doubled resource names such as `pull_request.review.review_submitted`.
 
 ```typescript
 function mapEventType(kind: string, action: string): string | null {
@@ -1784,7 +1878,7 @@ function mapEventType(kind: string, action: string): string | null {
     case 'pull_request_review': return `pull_request.review_${action}`;
     case 'pull_request_review_comment': return `pull_request.review_comment_${action}`;
     case 'pull_request': return `pull_request.${action}`;
-    default: return null; // Non-PR GitHub topics are future adapter scope.
+    default: return null; // Non-PR GitHub topics are future extension scope.
   }
 }
 ```
@@ -1829,20 +1923,20 @@ function toExternalEvent(spaceId: string, event: NormalizedGitHubEvent): Externa
 
 ### Task-scoped resolution
 
-For `task` scope, the adapter does not resolve a task. Instead, `EventTaskResolver` enriches PR events after bus dedup and before publication:
+For `task` scope, the extension does not resolve a task. Instead, `ExternalEventTaskResolver` enriches PR events after bus dedup and before publication:
 
 1. If the event already has a trusted `routedTaskId`, use it directly.
 2. For GitHub PR events, resolve using normalized `prUrl`, `repoOwner/repoName`, `prNumber`, and optional `branch`.
 3. Store the result in `event.routedTaskId` and `event.payload.taskResolution` for diagnostics.
-4. EventRouter `task` scope checks `event.routedTaskId === sub.taskId` and does not re-run broad task scans during delivery.
+4. ExternalEventRouter `task` scope checks `event.routedTaskId === sub.taskId` and does not re-run broad task scans during delivery.
 
-This removes duplicate PR→task resolution from the adapter and EventRouter hot paths while preserving the existing auto-scoping behavior.
+This removes duplicate PR→task resolution from the extension and ExternalEventRouter hot paths while preserving the existing auto-scoping behavior.
 
 ## 8. Migration Path
 
 ### DB schema changes
 
-V1 needs one core event-store table plus workflow type additions:
+V1 needs core event lifecycle tables, extension configuration storage, and workflow type additions:
 
 1. **Core bus event store** (`space_external_events`): persistent source-level event lifecycle for retry-aware dedup.
 
@@ -1866,7 +1960,7 @@ V1 needs one core event-store table plus workflow type additions:
 
    `state` values are `published`, `routed`, `delivered`, `delivery_failed`, `failed`, `ignored`, and `ambiguous`. Duplicate handling depends on state: terminal states (`delivered`, `failed`, `ignored`, `ambiguous`) short-circuit; retryable states can re-emit. `delivered` is written only after expected per-subscription deliveries are terminal, `failed` is written only after retry budgets are exhausted for all retryable deliveries, and `ignored` is written when routing finds no matching subscriptions or no eligible non-terminal delivery after scope checks.
 
-2. **Core bus delivery store** (`space_external_event_deliveries`): persistent per-subscription delivery lifecycle used by EventRouter to advance source events to terminal delivered.
+2. **Core bus delivery store** (`space_external_event_deliveries`): persistent per-subscription delivery lifecycle used by ExternalEventRouter to advance source events to terminal delivered.
 
    ```sql
    CREATE TABLE space_external_event_deliveries (
@@ -1883,17 +1977,41 @@ V1 needs one core event-store table plus workflow type additions:
    );
    ```
 
-   `EventRouter` calls `registerExpectedDelivery(...)` for every scope-matched subscription before attempting any injection. This registration must be idempotent for the `(event_id, delivery_key)` primary key: use `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING`, or an equivalent upsert that never downgrades an existing terminal row. Retryable source duplicates and router retries can prepare the same delivery more than once, so duplicate expected-delivery rows are normal and must not become preparation failures. After idempotent registration, the router skips already-terminal delivery rows and only attempts pending/retryable rows. It then records `delivered` after successful `injectMessage` and calls `markEventDeliveredIfAllDeliveriesTerminal(event.id)` so source-level dedup can stop re-emitting already-delivered events after restart or in-memory TTL eviction. When retry budget is exhausted, pending-node queue overflow evicts an expected delivery, node cancellation removes queued/retrying deliveries, a retry fires for an inactive subscription, terminal run cleanup drops queued deliveries, or terminal run cleanup cancels per-delivery retry timers, the router records terminal delivery failure and calls `markEventFailedIfAllDeliveriesTerminal(event.id)` so duplicate source observations do not restart an exhausted or impossible delivery.
+   `ExternalEventRouter` calls `registerExpectedDelivery(...)` for every scope-matched subscription before attempting any injection. This registration must be idempotent for the `(event_id, delivery_key)` primary key: use `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING`, or an equivalent upsert that never downgrades an existing terminal row. Retryable source duplicates and router retries can prepare the same delivery more than once, so duplicate expected-delivery rows are normal and must not become preparation failures. After idempotent registration, the router skips already-terminal delivery rows and only attempts pending/retryable rows. It then records `delivered` after successful `injectMessage` and calls `markEventDeliveredIfAllDeliveriesTerminal(event.id)` so source-level dedup can stop re-emitting already-delivered events after restart or in-memory TTL eviction. When retry budget is exhausted, pending-node queue overflow evicts an expected delivery, node cancellation removes queued/retrying deliveries, a retry fires for an inactive subscription, terminal run cleanup drops queued deliveries, or terminal run cleanup cancels per-delivery retry timers, the router records terminal delivery failure and calls `markEventFailedIfAllDeliveriesTerminal(event.id)` so duplicate source observations do not restart an exhausted or impossible delivery.
 
-3. **Adapter-owned GitHub configuration**: reuse or migrate the existing `space_github_watched_repos` table behind `GitHubEventAdapterRepository`. This table remains source-specific and should not be queried by EventRouter except through cache invalidation hooks for repo-scoped matching.
+3. **Extension configuration**: store global and per-space source configuration so sources can be enabled/disabled and configured independently.
 
-4. **No node-execution schema change**: event interests are stored as part of the workflow definition JSON in `space_workflows.nodes[].agents[].eventInterests`.
+   ```sql
+   CREATE TABLE external_event_source_configs (
+     source TEXT PRIMARY KEY,
+     enabled INTEGER NOT NULL DEFAULT 0,
+     capabilities_json TEXT NOT NULL,
+     settings_json TEXT NOT NULL,
+     secrets_ref TEXT,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   );
+
+   CREATE TABLE space_external_event_source_configs (
+     space_id TEXT NOT NULL,
+     source TEXT NOT NULL,
+     enabled INTEGER NOT NULL DEFAULT 0,
+     settings_json TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     PRIMARY KEY(space_id, source)
+   );
+   ```
+
+4. **Extension-owned GitHub configuration**: reuse or migrate the existing `space_github_watched_repos` table behind `GitHubEventExtensionRepository`. This table remains source-specific and should not be queried by `ExternalEventRouter` except through cache invalidation hooks for repo-scoped matching. Over time, GitHub watched repositories can move into `space_external_event_source_configs.settings_json` if that becomes simpler.
+
+5. **No node-execution schema change**: event interests are stored as part of the workflow definition JSON in `space_workflows.nodes[].agents[].eventInterests`.
 
 ### Type changes
 
 1. Add `EventInterest` interface to `packages/shared/src/types/space.ts`.
 2. Add `eventInterests?: EventInterest[]` to `WorkflowNodeAgent`.
-3. Add `ExternalEvent`, `EventAdapter`, `HttpEventAdapter`, `RpcEventAdapter`, `EventPublisher`, `ExternalEventStore`, and `EventTaskResolver` types under `packages/daemon/src/lib/space/runtime/event-bus/`.
+3. Add `ExternalEvent`, `ExternalEventExtension`, `HttpExternalEventExtension`, `RpcExternalEventExtension`, `ExternalEventPublisher`, `ExternalEventStore`, and `ExternalEventTaskResolver` types under `packages/daemon/src/lib/external-events/`.
 4. Add validation in the workflow create/update path (Zod schema or manual validation):
    - `topic` must pass `validateGlobPattern()` (non-empty, exactly 4 segments, no `..` segments, no double slashes, valid characters including segment-local `*`).
    - `scope` must be one of `'task' | 'repo' | 'global'`.
@@ -1903,20 +2021,22 @@ V1 needs one core event-store table plus workflow type additions:
 ### New files
 
 ```
-packages/daemon/src/lib/space/runtime/event-bus/
-  ├── types.ts                 # ExternalEvent, EventAdapter, EventPublisher interfaces
-  ├── event-bus.ts             # EventBus singleton (wraps TypedHub)
-  ├── event-store.ts           # Persistent retry-aware source-level dedup
-  ├── event-task-resolver.ts   # Core event -> SpaceTask enrichment
-  ├── topic-trie.ts            # TopicTrie<T> implementation
-  ├── topic-validator.ts       # validateGlobPattern() helper
-  ├── event-router.ts          # EventRouter — subscribes to bus, matches, delivers
-  └── index.ts                 # Public exports
+packages/daemon/src/lib/external-events/
+  ├── types.ts                    # ExternalEvent, extension, publisher interfaces
+  ├── external-event-service.ts   # ExternalEventService publishes externalEvent.published
+  ├── external-event-store.ts     # Persistent retry-aware source-level dedup
+  ├── external-event-task-resolver.ts # Core event -> SpaceTask enrichment
+  ├── external-event-router.ts    # Subscribes to InternalEventBus, matches, dispatches commands
+  ├── extension-manager.ts        # Global/per-space enablement + route/RPC registration
+  ├── extension-config-store.ts   # Global + per-space source config
+  ├── topic-trie.ts               # TopicTrie<T> implementation
+  ├── topic-validator.ts          # validateGlobPattern() helper
+  └── index.ts                    # Public exports
 
-packages/daemon/src/lib/space/runtime/event-adapters/github/
-  ├── github-adapter.ts        # GitHubEventAdapter — webhook/polling -> EventBus
-  ├── github-normalizer.ts     # GitHub webhook/polling normalization helpers
-  ├── github-repository.ts     # watched repo config + adapter diagnostics
+packages/daemon/src/lib/external-events/github/
+  ├── github-event-extension.ts   # GitHub webhook/polling -> ExternalEventService
+  ├── github-normalizer.ts        # GitHub webhook/polling normalization helpers
+  ├── github-repository.ts        # watched repo config + extension diagnostics
   └── index.ts
 ```
 
@@ -1932,7 +2052,7 @@ packages/daemon/src/lib/space/runtime/event-adapters/github/
  *
  * Requires exactly 4 segments because all v1 event topics have the format
  * `{source}/{scope1}/{scope2}/{resource}.{action}`. For GitHub, scope1/scope2
- * are owner/repo; for future non-repo adapters, they are source-specific scope
+ * are owner/repo; for future non-repo extensions, they are source-specific scope
  * segments such as workspace/channel.
  * Patterns like `github/*` (too shallow) or `github/*/*/pull_request/review_*`
  * (too deep) would pass validation but never match any event, creating silent
@@ -2001,7 +2121,7 @@ export function validateGlobPattern(pattern: string): { valid: boolean; reason?:
 // In SpaceRuntimeConfig, add:
 interface SpaceRuntimeConfig {
   // ... existing fields ...
-  eventRouter?: EventRouter;
+  eventRouter?: ExternalEventRouter;
 }
 
 // In SpaceRuntime.executeTick(), after node executions are resolved:
@@ -2024,86 +2144,109 @@ if (newStatus === 'done' || newStatus === 'cancelled') {
 
 // In daemon startup:
 const externalEventStore = new ExternalEventStore(db);
-const eventTaskResolver = new EventTaskResolver(db);
-const eventBus = new EventBus(daemonHub, externalEventStore, eventTaskResolver);
-const eventRouter = new EventRouter(eventBus, ...dependencies);
+const externalEventTaskResolver = new ExternalEventTaskResolver(db);
+const externalEventService = new ExternalEventService(
+  internalEventBus,
+  externalEventStore,
+  externalEventTaskResolver,
+);
+const externalEventRouter = new ExternalEventRouter(
+  internalEventBus,
+  internalCommandBus,
+  externalEventStore,
+  ...dependencies,
+);
 
-const adapterContext: EventAdapterContext = {
+const extensionContext: ExternalEventExtensionContext = {
+  publisher: externalEventService,
+  config: externalEventExtensionConfigStore,
   onSourceConfigChanged(change) {
     if (change.kind === 'watched_repo_changed') {
-      eventRouter.invalidateWatchedRepoCache(change.spaceId);
+      externalEventRouter.invalidateWatchedRepoCache(change.spaceId);
     }
   },
 };
 
-const adapters: EventAdapter[] = [
-  new GitHubEventAdapter(new GitHubEventAdapterRepository(db), process.env.GITHUB_TOKEN),
+const extensions: ExternalEventExtension[] = [
+  new GitHubEventExtension(new GitHubEventExtensionRepository(db)),
 ];
 
-for (const adapter of adapters) {
-  if ('routes' in adapter) routeRegistry.register(adapter.routes, eventBus);
-  if ('registerRpcHandlers' in adapter) adapter.registerRpcHandlers(messageHub, eventBus, adapterContext);
-  await adapter.start(eventBus);
+for (const extension of extensions) {
+  const globalConfig = await extensionContext.config.getGlobalConfig(extension.sourceId);
+  if (!globalConfig.globallyEnabled) continue;
+  if ('routes' in extension) routeRegistry.register(extension.routes, extensionContext);
+  if ('registerRpcHandlers' in extension) extension.registerRpcHandlers(messageHub, extensionContext);
+  await extension.start(extensionContext);
 }
 ```
 
-Repo-scoped matching cache invalidation is explicit: `watchRepo` changes call `EventAdapterContext.onSourceConfigChanged(...)`, and daemon startup wires that callback to `eventRouter.invalidateWatchedRepoCache(spaceId)`. This keeps source configuration owned by the adapter while ensuring `repo`-scoped subscriptions observe newly watched or unwatched repos without process restart.
+Repo-scoped matching cache invalidation is explicit: watched-resource changes call `ExternalEventExtensionContext.onSourceConfigChanged(...)`, and daemon startup wires that callback to `externalEventRouter.invalidateWatchedRepoCache(spaceId)`. This keeps source configuration owned by the extension while ensuring `repo`-scoped subscriptions observe newly watched or unwatched repos without process restart.
 
 ### Phased rollout
 
 **Phase 1 (target MVP):**
 - Add `EventInterest` type to `WorkflowNodeAgent`.
-- Implement `EventBus`, `ExternalEventStore`, `EventTaskResolver`, `TopicTrie`, and `EventRouter`.
-- Extract `GitHubEventAdapter` as the primary GitHub event source (webhook + polling + normalization).
-- Route GitHub PR events directly through EventBus to node sessions with `task` scope.
+- Implement `ExternalEventService`, `ExternalEventStore`, `ExternalEventTaskResolver`, `TopicTrie`, and `ExternalEventRouter`.
+- Implement `ExternalEventExtension` interfaces and a minimal extension manager/config store.
+- Extract `GitHubEventExtension` as the primary GitHub event source (webhook + polling + normalization).
+- Add global GitHub enablement and per-space GitHub enablement/watched-repo configuration.
+- Route GitHub PR events through `ExternalEventService` → `InternalEventBus` → `ExternalEventRouter` → `InternalCommandBus` with `task` scope.
 - Keep `SpaceGitHubService` only as a compatibility path while parity is verified.
-- No UI changes needed — event interests are authored in workflow JSON.
+- No UI changes needed for node subscriptions — event interests are authored in workflow JSON. Basic config can be exposed through existing/admin RPCs first.
 
 **Phase 2 (compatibility removal):**
 - Remove direct Task Agent notification delivery from `SpaceGitHubService` (`scheduleTaskNotification` / `flushTaskNotification`).
-- Migrate remaining `space.github.*` RPC handling into `GitHubEventAdapter`.
+- Migrate remaining `space.github.*` RPC handling into `GitHubEventExtension` or generic external-source config APIs.
 - Remove dependence on `space.githubEvent.routed` for external event delivery.
 - Add persistent per-node delivery queue if restart-safe pending-node delivery is required.
 
 **Phase 3 (future extensibility):**
-- Slack adapter: subscribe to Slack Events API, normalize to `ExternalEvent`, publish.
-- CI adapter: subscribe to GitHub Check Suite or other CI events, normalize, publish.
-- Custom adapter API: allow Space operators to register custom adapters via config.
+- Slack extension: subscribe to Slack Events API, normalize to `ExternalEvent`, publish.
+- Jira extension: subscribe to issue/project webhooks, normalize to `ExternalEvent`, publish.
+- CI extension: subscribe to GitHub Check Suite or other CI events, normalize, publish.
+- Custom extension API: allow Space operators to register custom extensions via global/per-space config.
+- UI for global and per-space extension enablement/configuration.
 
 ## 9. Relationship to Existing Systems
 
 | Existing system | Relationship |
 |---|---|
-| **DaemonHub / TypedHub** | `EventBus` is a TypedHub participant on the shared `InProcessTransportBus`. It publishes all external events through the fixed valid method `space.externalEvent.published`; slash-delimited external topics stay in `ExternalEvent.topic` and are matched by the router trie. |
+| **InternalEventBus** | Carries the internal fact `externalEvent.published`. It does not persist external events; durability remains in `ExternalEventStore`. |
+| **InternalCommandBus** | Owns the `agent.message.inject` command used by `ExternalEventRouter` to request delivery into an agent session. |
+| **MessageHub** | Remains client/RPC transport infrastructure for extension configuration RPCs and client delivery; it is not the external-event domain bus. |
 | **GitHubService** (Room pipeline) | Unchanged for Room compatibility. It is not the source for Space workflow-node events. |
-| **SpaceGitHubService** (legacy Space pipeline) | Deprecated compatibility path. Its source-specific normalization/polling logic is extracted into `GitHubEventAdapter`; task resolution and delivery move to EventBus/EventRouter. The bus must not depend on `space.githubEvent.routed`. |
-| **GitHubEventAdapter** | Source extension that owns GitHub webhook verification, polling, normalization, watched-repo configuration, and direct publication to EventBus. It does not query Space tasks or inject sessions. |
-| **ExternalEventStore** | Core bus persistence and retry-aware source-level dedup across adapters. Replaces GitHub-specific unconditional duplicate short-circuiting for new delivery. |
-| **EventTaskResolver** | Core enrichment service that maps events to Space tasks where possible (e.g. GitHub PR → task). Keeps task/gate/workflow schema access out of adapters. |
-| **SessionNotificationSink** | The event bus uses the same `sessionFactory.injectMessage()` with `deliveryMode: 'defer'` pattern. |
-| **AgentMessageRouter** | Not used for event delivery. Events are injected directly via `sessionFactory.injectMessage()`, not via the agent-to-agent messaging channel. Events are not agent-originated messages — they're system-injected context. |
-| **ChannelRouter** | Not involved. Event delivery is not a workflow channel transition. It's an injection into an existing session, not an activation trigger. |
+| **SpaceGitHubService** (legacy Space pipeline) | Deprecated compatibility path. Its source-specific normalization/polling logic is extracted into `GitHubEventExtension`; task resolution and delivery move to `ExternalEventService`/`ExternalEventRouter`. The new path must not depend on `space.githubEvent.routed`. |
+| **GitHubEventExtension** | Source extension that owns GitHub webhook verification, polling, normalization, global/per-space enablement, watched-repo configuration, and direct publication to `ExternalEventService`. It does not query Space tasks or inject sessions. |
+| **ExternalEventStore** | Core persistence and retry-aware source-level dedup across extensions. Replaces GitHub-specific unconditional duplicate short-circuiting for new delivery. |
+| **ExternalEventTaskResolver** | Core enrichment service that maps events to Space tasks where possible (e.g. GitHub PR → task). Keeps task/gate/workflow schema access out of extensions. |
+| **SessionNotificationSink** | Compatibility notification path for existing Space Agent notifications. External event delivery should move to `InternalCommandBus.dispatch('agent.message.inject', ...)`. |
+| **AgentMessageRouter** | Not used for event delivery. Events are system-injected context, not agent-originated messages. |
+| **ChannelRouter** | Not involved. Event delivery is not a workflow channel transition. It is delivery into an existing/queued agent session, not a graph activation trigger. |
 
 ## 10. Key Design Decisions
 
-### Why TypedHub and not a standalone EventEmitter?
+### Why InternalEventBus instead of a source-specific hub?
 
-TypedHub provides:
-- Async-everywhere design (cluster-ready).
-- Session-scoped subscriptions (O(1) lookup).
-- Already wired into the daemon's lifecycle.
-- No new dependency.
+The broader messaging refactor introduces `InternalEventBus` as the daemon-side semantic event layer. External source events should use that layer instead of introducing another generic bus or making GitHub own delivery semantics.
 
-Using TypedHub as the backing transport means the EventBus inherits all of these properties for free. The bus does **not** use external topic strings as TypedHub method names: raw topics contain `/` and glob `*`, which violate MessageHub method validation. Instead, EventBus publishes every external event under the fixed valid method `space.externalEvent.published` and places the external topic in `ExternalEvent.topic` for trie matching.
+Using `InternalEventBus` means:
 
-### Why not route through AgentMessageRouter?
+- `externalEvent.published` is a normal internal fact, not a raw external topic.
+- External slash/glob topics stay in `ExternalEvent.topic` and are matched by `ExternalEventRouter`.
+- Publish semantics and handler failure observability come from the shared internal event layer.
+- Client delivery, state projection, audit, metrics, and agent notification can subscribe independently.
+- The external-event subsystem owns durability through `ExternalEventStore`; the internal bus itself does not become a persistence/replay layer.
 
-AgentMessageRouter is designed for agent-to-agent communication with channel topology authorization. External events are system-injected context, not agent messages. Routing them through AgentMessageRouter would:
-- Require topology changes (events don't come from a declared node).
-- Conflate system events with agent-to-agent messages in the message history.
-- Add unnecessary authorization overhead.
+This keeps GitHub as an extension and keeps routing/delivery behavior in reusable core services.
 
-Direct injection via `sessionFactory.injectMessage()` is simpler and semantically correct.
+### Why deliver through `agent.message.inject` instead of AgentMessageRouter?
+
+AgentMessageRouter is designed for agent-to-agent communication with channel topology authorization. External events are system-injected context, not agent-originated messages. Routing them through AgentMessageRouter would:
+- Require topology changes because events do not come from a declared workflow node.
+- Conflate system events with peer agent messages in the message history.
+- Add unnecessary channel authorization overhead.
+
+The target design uses `InternalCommandBus.dispatch('agent.message.inject', ...)` so delivery remains explicit, testable, and observable without giving external extensions direct access to session injection. The command handler can still use the existing `sessionFactory.injectMessage(..., { deliveryMode: 'defer' })` mechanism under the hood.
 
 ### Why trie-based matching instead of regex?
 
@@ -2116,12 +2259,12 @@ Direct injection via `sessionFactory.injectMessage()` is simpler and semanticall
 `SpaceGitHubService` currently mixes four responsibilities in one class: GitHub source ingestion, source-level dedup, PR-to-task resolution, and Task Agent session injection. Extending it would preserve the same coupling and keep the event bus downstream of an already-routed delivery pipeline.
 
 The target architecture splits those responsibilities:
-- `GitHubEventAdapter` owns only GitHub-specific webhook/polling/normalization.
+- `GitHubEventExtension` owns only GitHub-specific webhook/polling/normalization/configuration.
 - `ExternalEventStore` owns cross-source event lifecycle and retry-aware dedup.
-- `EventTaskResolver` owns Space task enrichment.
-- `EventRouter` owns node subscription matching and session delivery.
+- `ExternalEventTaskResolver` owns Space task enrichment.
+- `ExternalEventRouter` owns node subscription matching and command-based delivery.
 
-This makes GitHub one adapter among many instead of a special core daemon path. Future adapters (Slack, CI, etc.) publish the same `ExternalEvent` shape and reuse the same dedup, task enrichment, and delivery machinery.
+This makes GitHub one extension among many instead of a special core daemon path. Future extensions (Slack, Jira, CI, etc.) publish the same `ExternalEvent` shape and reuse the same dedup, task enrichment, and delivery machinery.
 
 ### Why `deliveryMode: 'defer'` for event injection?
 
@@ -2137,15 +2280,15 @@ This is exactly the behavior we want for external events.
 ### Unit tests
 
 1. **TopicTrie**: Insert patterns, verify lookup returns correct values for exact and wildcard matches.
-2. **EventRouter**: Given subscriptions and events, verify scope filtering, topic validation before trie insertion, dedup, and delivery.
+2. **ExternalEventRouter**: Given subscriptions and events, verify scope filtering, topic validation before trie insertion, dedup, and delivery.
 3. **ExternalEventStore**: Verify terminal duplicates are short-circuited, retryable duplicates are re-emitted, expected deliveries are registered before injection, successful per-subscription delivery advances the source event to terminal `delivered` only after all expected deliveries are terminal, and retry exhaustion advances to terminal `failed`.
-4. **EventTaskResolver**: Given GitHub PR metadata, verify correct task enrichment and ambiguous/unknown states.
-5. **GitHubEventAdapter**: Given webhook and polling payloads, verify signature handling, topic construction, dedupe keys, and `ExternalEvent` construction without querying Space tasks.
+4. **ExternalEventTaskResolver**: Given GitHub PR metadata, verify correct task enrichment and ambiguous/unknown states.
+5. **GitHubEventExtension**: Given webhook and polling payloads, verify enablement checks, signature handling, topic construction, dedupe keys, and `ExternalEvent` construction without querying Space tasks.
 6. **Scope resolution**: Test `task` scope with enriched `routedTaskId` and various task/PR associations.
 
 ### Integration tests
 
-1. **End-to-end webhook flow**: POST a GitHub webhook payload to the adapter route with a `review_submitted` action for PR #42 on repo `lsm/neokai`. Verify the adapter publishes `github/lsm/neokai/pull_request.review_submitted`, `EventTaskResolver` enriches it with the matching task, and the coder node's `task`-scoped subscription receives an injected message.
+1. **End-to-end webhook flow**: POST a GitHub webhook payload to the extension route with a `review_submitted` action for PR #42 on repo `lsm/neokai`. Verify the extension publishes `github/lsm/neokai/pull_request.review_submitted`, `ExternalEventTaskResolver` enriches it with the matching task, and the coder node's `task`-scoped subscription receives an injected message.
 
 2. **Dedup across two events with same dedupeKey**: Publish the same GitHub PR review through webhook and polling (identical `dedupeKey`). Verify source-level bus dedup does not create two independent events, and per-subscription delivery dedup calls `injectMessage` exactly once for each interested node. Also verify retryable duplicate states re-emit after a simulated injection failure.
 
