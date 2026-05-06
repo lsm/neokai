@@ -52,8 +52,9 @@ function safeNodeThinkingLevel(level: string | undefined): ThinkingLevel | undef
 function normalizeNodeDraftThinkingLevel(draft: NodeDraft): NodeDraft {
 	let changed = false;
 
-	// Normalize step-level thinkingLevel
-	let stepThinkingLevel = draft.thinkingLevel;
+	// Normalize step-level thinkingLevel (widened to string because legacy
+	// runtime data may contain 'auto' even though ThinkingLevel excludes it)
+	let stepThinkingLevel: string | undefined = draft.thinkingLevel;
 	if (stepThinkingLevel === 'auto') {
 		stepThinkingLevel = 'off';
 		changed = true;
@@ -63,7 +64,8 @@ function normalizeNodeDraftThinkingLevel(draft: NodeDraft): NodeDraft {
 	let normalizedAgents: WorkflowNodeAgent[] | undefined = draft.agents;
 	if (draft.agents) {
 		normalizedAgents = draft.agents.map((agent) => {
-			if (agent.thinkingLevel === 'auto') {
+			const agentThinking: string | undefined = agent.thinkingLevel;
+			if (agentThinking === 'auto') {
 				changed = true;
 				return { ...agent, thinkingLevel: 'off' };
 			}
@@ -75,7 +77,7 @@ function normalizeNodeDraftThinkingLevel(draft: NodeDraft): NodeDraft {
 
 	return {
 		...draft,
-		thinkingLevel: stepThinkingLevel,
+		thinkingLevel: stepThinkingLevel as ThinkingLevel,
 		agents: normalizedAgents,
 	};
 }
