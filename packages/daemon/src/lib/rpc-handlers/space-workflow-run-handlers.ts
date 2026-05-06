@@ -212,7 +212,9 @@ export function setupSpaceWorkflowRunHandlers(
 		// Resolve workflow: explicit workflowId or auto-select first workflow
 		let workflowId = params.workflowId;
 		if (!workflowId) {
-			const workflows = spaceWorkflowManager.listWorkflows(params.spaceId);
+			const workflows = spaceWorkflowManager
+				.listWorkflows(params.spaceId)
+				.filter((w) => !w.disabled);
 			if (workflows.length === 0) {
 				throw new Error(`No workflows found for space: ${params.spaceId}`);
 			}
@@ -222,6 +224,7 @@ export function setupSpaceWorkflowRunHandlers(
 			const workflow = spaceWorkflowManager.getWorkflow(workflowId);
 			if (!workflow) throw new Error(`Workflow not found: ${workflowId}`);
 			if (workflow.spaceId !== params.spaceId) throw new Error(`Workflow not found: ${workflowId}`);
+			if (workflow.disabled) throw new Error(`Workflow is disabled: ${workflowId}`);
 		}
 
 		// Get or create the runtime for this space (validates space, starts runtime if needed)

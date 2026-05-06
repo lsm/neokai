@@ -255,6 +255,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [postApproval, setPostApproval] = useState<PostApprovalRoute | undefined>(() =>
 		initState?.postApproval ? { ...initState.postApproval } : undefined
 	);
+	const [disabled, setDisabled] = useState<boolean>(() => initState?.disabled ?? false);
 	const [viewportState, setViewportState] = useState<ViewportState>({
 		offsetX: 0,
 		offsetY: 0,
@@ -1144,6 +1145,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			gates,
 			completionAutonomyLevel,
 			postApproval,
+			disabled,
 		};
 
 		setSaving(true);
@@ -1225,6 +1227,16 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					/>
 				</div>
 
+				<label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
+					<input
+						type="checkbox"
+						checked={disabled}
+						data-testid="workflow-disabled-checkbox"
+						onChange={(e) => setDisabled((e.currentTarget as HTMLInputElement).checked)}
+						class="w-3 h-3 rounded accent-blue-500"
+					/>
+					<span class={disabled ? 'text-red-400 font-medium' : ''}>Disabled</span>
+				</label>
 				<button
 					onClick={onCancel}
 					class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors"

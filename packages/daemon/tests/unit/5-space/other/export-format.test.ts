@@ -2072,3 +2072,27 @@ describe('exportWorkflow — endNode', () => {
 		expect(result.ok).toBe(true);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// exportWorkflow — disabled
+// ---------------------------------------------------------------------------
+
+describe('exportWorkflow — disabled', () => {
+	test('exports disabled when true', () => {
+		const workflow = makeWorkflow({ disabled: true });
+		const exported = exportWorkflow(workflow, []);
+		expect(exported.disabled).toBe(true);
+	});
+
+	test('omits disabled when false', () => {
+		const workflow = makeWorkflow({ disabled: false });
+		const exported = exportWorkflow(workflow, []);
+		expect(exported.disabled).toBeUndefined();
+	});
+
+	test('omits disabled when undefined', () => {
+		const workflow = makeWorkflow();
+		const exported = exportWorkflow(workflow, []);
+		expect(exported.disabled).toBeUndefined();
+	});
+});

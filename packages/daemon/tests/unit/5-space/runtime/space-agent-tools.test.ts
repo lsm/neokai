@@ -82,10 +82,11 @@ function buildSingleStepWorkflow(
 	agentId: string,
 	name: string,
 	tags: string[] = [],
-	description = ''
+	description = '',
+	disabled = false
 ): SpaceWorkflow {
 	const stepId = `step-${Math.random().toString(36).slice(2)}`;
-	return workflowManager.createWorkflow({
+	const wf = workflowManager.createWorkflow({
 		spaceId,
 		name,
 		description,
@@ -95,7 +96,9 @@ function buildSingleStepWorkflow(
 		rules: [],
 		tags,
 		completionAutonomyLevel: 3,
+		disabled,
 	});
+	return wf;
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +435,37 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(false);
+
+		// Original run must still be in_progress — not cancelled
+		const originalRun = ctx.workflowRunRepo.getRun(runId);
+		expect(originalRun?.status).toBe('in_progress');
+	});
+
+	test('returns error when target workflow is disabled', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF to keep');
+		const disabledWf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Disabled WF',
+			[],
+			'',
+			true
+		);
+		const startResult = await startWorkflowRun(ctx, {
+			workflow_id: wf.id,
+			title: 'run to keep',
+		});
+		const runId = JSON.parse(startResult.content[0].text).run.id;
+
+		const result = await makeHandlers(ctx).change_plan({
+			run_id: runId,
+			workflow_id: disabledWf.id,
+		});
+
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('disabled');
 
 		// Original run must still be in_progress — not cancelled
 		const originalRun = ctx.workflowRunRepo.getRun(runId);
