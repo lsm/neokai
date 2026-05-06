@@ -11,7 +11,7 @@
  *   structured handler failures.  Use when the caller must know whether all
  *   subscribers succeeded.
  * • `publishAsync(...)` – explicit fire-and-forget.  Returns immediately;
- *   handler failures are silently swallowed (logged at debug level only).
+ *   handler failures are silently swallowed.
  *
  * Design constraints (v1)
  * -----------------------
@@ -198,10 +198,13 @@ export class InternalEventBus<
 			for (const h of scoped) targets.push(h);
 		}
 
-		// Global handlers
-		const global = sessionMap.get(GLOBAL_SESSION_KEY);
-		if (global) {
-			for (const h of global) targets.push(h);
+		// Global handlers — only add when sessionId is not the global sentinel
+		// to prevent double-delivery of the same handler set.
+		if (sessionId !== GLOBAL_SESSION_KEY) {
+			const global = sessionMap.get(GLOBAL_SESSION_KEY);
+			if (global) {
+				for (const h of global) targets.push(h);
+			}
 		}
 
 		if (targets.length === 0) {
@@ -295,13 +298,15 @@ export class InternalEventBus<
 
 /**
  * Convenience factory that produces an InternalEventBus typed with the
- * daemon's full event vocabulary.
+ * caller's event map.
  *
  * This is the entry point most daemon code should use:
  *
  *   import { createInternalEventBus } from '@neokai/daemon/lib/internal-event-bus';
- *   const bus = createInternalEventBus();
+ *   const bus = createInternalEventBus<MyEventMap>();
  */
-export function createInternalEventBus(): InternalEventBus {
-	return new InternalEventBus();
+export function createInternalEventBus<
+	TEventMap extends Record<string, InternalEventPayload> = Record<string, InternalEventPayload>,
+>(): InternalEventBus<TEventMap> {
+	return new InternalEventBus<TEventMap>();
 }

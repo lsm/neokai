@@ -13,6 +13,7 @@
 
 import { beforeEach, describe, expect, it } from 'bun:test';
 import {
+	createInternalEventBus,
 	InternalEventBus,
 	InternalEventBusPublishError,
 } from '../../../../src/lib/internal-event-bus';
@@ -145,6 +146,20 @@ describe('InternalEventBus', () => {
 
 			expect(hits.sort()).toEqual(['global', 'scoped']);
 			expect(result.delivered).toBe(2);
+		});
+
+		it('should not double-deliver when sessionId equals the global sentinel', async () => {
+			const hits: string[] = [];
+
+			bus.subscribe('session.created', () => hits.push('global'), { subscriberName: 'global' });
+
+			const result = await bus.publish('session.created', {
+				sessionId: '__global__',
+				title: 'T1',
+			});
+
+			expect(hits).toEqual(['global']);
+			expect(result.delivered).toBe(1);
 		});
 	});
 
@@ -334,6 +349,29 @@ describe('InternalEventBus', () => {
 			// Drain microtasks
 			await new Promise((r) => queueMicrotask(r));
 			expect(handlerRan).toBe(true);
+		});
+	});
+
+	describe('createInternalEventBus factory', () => {
+		it('should produce a working typed bus', async () => {
+			const factoryBus = createInternalEventBus<TestEventMap>();
+			const hits: string[] = [];
+
+			factoryBus.subscribe(
+				'session.created',
+				(data) => {
+					hits.push(data.sessionId);
+				},
+				{ subscriberName: 'factory-sub' }
+			);
+
+			const result = await factoryBus.publish('session.created', {
+				sessionId: 'factory-test',
+				title: 'Factory Test',
+			});
+
+			expect(hits).toEqual(['factory-test']);
+			expect(result.delivered).toBe(1);
 		});
 	});
 
