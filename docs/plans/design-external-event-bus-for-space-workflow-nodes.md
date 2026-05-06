@@ -416,7 +416,8 @@ export interface ExternalEventStore {
     deliveryKey: string,
     failure: { terminal: boolean; reason: string },
   ): void;
-  markEventDeliveredIfAllDeliveriesTerminal(eventId: string): void;
+  markEventDeliveredIfAllDeliveriesDelivered(eventId: string): void;
+  markEventFailedIfAnyDeliveryTerminalFailed(eventId: string): void;
   markEventFailedIfAllDeliveriesTerminal(eventId: string): void;
   markEventFailed(eventId: string, failure: { terminal: boolean; reason: string }): void;
   markEventIgnored(eventId: string, reason: 'no_matching_subscriptions' | 'no_scope_eligible_subscriptions'): void;
@@ -1297,12 +1298,13 @@ class ExternalEventRouter {
     }
 
     // Success: mark as delivered both in-memory and persistently, then advance
-    // the source event to terminal delivered only when all expected per-subscription
-    // deliveries are terminal. This keeps source-level dedup from re-emitting
-    // already-delivered events after restart/TTL expiry.
+    // the source event to terminal delivered only when every expected
+    // per-subscription delivery succeeded. Terminal failures must keep the source
+    // event in a failed outcome rather than being masked by later successes.
     this.delivered.set(dedupeKey, Date.now());
     this.config.eventStore.markDeliveryDelivered(event.id, dedupeKey);
-    this.config.eventStore.markEventDeliveredIfAllDeliveriesTerminal(event.id);
+    this.config.eventStore.markEventFailedIfAnyDeliveryTerminalFailed(event.id);
+    this.config.eventStore.markEventDeliveredIfAllDeliveriesDelivered(event.id);
     this.pendingDeliveries.delete(dedupeKey);
   }
 
@@ -1621,7 +1623,7 @@ Dedup happens at two different layers, each with a different key and responsibil
    - The tuple is encoded structurally rather than delimiter-joined because `source`, `dedupeKey`, workflow identifiers, node IDs, and agent names are free-form strings.
    - It is tracked in-memory for fast duplicate suppression and persisted in `space_external_event_deliveries` after successful injection.
 
-The ExternalEventRouter marks per-subscription delivery as `delivered` only after successful injection, updates `ExternalEventStore` with the successful delivery key, and advances the source event to terminal `delivered` only once all expected deliveries are terminal. Failed injection/session-resolution paths remove `pendingDeliveries` and schedule retry rather than relying on adapters to re-publish the same event. If trie lookup finds no matching subscriptions, or if all matched subscriptions are out of scope/already terminal and no preparation retry is pending, the router marks the source event terminal `ignored` so webhook+polling duplicates do not churn through routing forever.
+The ExternalEventRouter marks per-subscription delivery as `delivered` only after successful injection, updates `ExternalEventStore` with the successful delivery key, and advances the source event to terminal `delivered` only once all expected deliveries are `delivered`. Failed injection/session-resolution paths remove `pendingDeliveries` and schedule retry rather than relying on extensions to re-publish the same event. If a delivery reaches terminal `failed`, the source event must be `failed` rather than later reclassified as `delivered` by another subscription's success. If trie lookup finds no matching subscriptions, or if all matched subscriptions are out of scope/already terminal and no preparation retry is pending, the router marks the source event terminal `ignored` so webhook+polling duplicates do not churn through routing forever.
 
 ### Wake-on-idle
 
@@ -1660,7 +1662,7 @@ When a node execution is `pending` (no session yet):
 
 1. The event is queued in an in-memory `Map<string, ExternalEvent[]>` keyed by a JSON tuple `[workflowRunId, taskId, nodeId, agentName]` so free-form identifiers cannot collide by containing delimiter characters.
 2. When `TaskAgentManager` creates the node's session, it calls `eventRouter.flushQueuedDeliveriesForSession(sub, sessionId)`.
-3. Queued events are injected through the same prepared-delivery path as live events, so successful flush marks the per-subscription delivery delivered and advances the source event only when all expected deliveries are terminal.
+3. Queued events are injected through the same prepared-delivery path as live events, so successful flush marks the per-subscription delivery delivered and advances the source event only when all expected deliveries are delivered.
 4. If flush injection fails, the router clears the stale pending marker and schedules a normal delivery retry so the queued event is not silently lost.
 5. Queue is bounded: max 50 events per execution, oldest dropped (with a warning log). Because expected delivery rows are registered before queueing, overflow eviction must call `markDeliveryFailed(..., { terminal: true, reason: 'pending_queue_overflow' })` and then `markEventFailedIfAllDeliveriesTerminal(event.id)`; otherwise the evicted delivery row can block event terminalization forever.
 
@@ -1973,9 +1975,9 @@ V1 needs core event lifecycle tables, extension configuration storage, and workf
    );
    ```
 
-   `state` values are `published`, `routed`, `delivered`, `delivery_failed`, `failed`, `ignored`, and `ambiguous`. Duplicate handling depends on state: terminal states (`delivered`, `failed`, `ignored`, `ambiguous`) short-circuit; retryable states can re-emit. `delivered` is written only after expected per-subscription deliveries are terminal, `failed` is written only after retry budgets are exhausted for all retryable deliveries, and `ignored` is written when routing finds no matching subscriptions or no eligible non-terminal delivery after scope checks.
+   `state` values are `published`, `routed`, `delivered`, `delivery_failed`, `failed`, `ignored`, and `ambiguous`. Duplicate handling depends on state: terminal states (`delivered`, `failed`, `ignored`, `ambiguous`) short-circuit; retryable states can re-emit. `delivered` is written only after every expected per-subscription delivery is `delivered`; terminal delivery failures must instead move or keep the source event in `failed` so later successful deliveries cannot mask partial failure. `failed` is written after any delivery reaches terminal failure, or after retry budgets are exhausted for all retryable deliveries, and `ignored` is written when routing finds no matching subscriptions or no eligible non-terminal delivery after scope checks.
 
-2. **Core bus delivery store** (`space_external_event_deliveries`): persistent per-subscription delivery lifecycle used by ExternalEventRouter to advance source events to terminal delivered.
+2. **Core bus delivery store** (`space_external_event_deliveries`): persistent per-subscription delivery lifecycle used by ExternalEventRouter to advance source events to terminal delivered only when every expected delivery succeeds.
 
    ```sql
    CREATE TABLE space_external_event_deliveries (
@@ -1992,7 +1994,7 @@ V1 needs core event lifecycle tables, extension configuration storage, and workf
    );
    ```
 
-   `ExternalEventRouter` calls `registerExpectedDelivery(...)` for every scope-matched subscription before attempting any injection. This registration must be idempotent for the `(event_id, delivery_key)` primary key: use `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING`, or an equivalent upsert that never downgrades an existing terminal row. Retryable source duplicates and router retries can prepare the same delivery more than once, so duplicate expected-delivery rows are normal and must not become preparation failures. After idempotent registration, the router skips already-terminal delivery rows and only attempts pending/retryable rows. It then records `delivered` after successful `injectMessage` and calls `markEventDeliveredIfAllDeliveriesTerminal(event.id)` so source-level dedup can stop re-emitting already-delivered events after restart or in-memory TTL eviction. When retry budget is exhausted, pending-node queue overflow evicts an expected delivery, node cancellation removes queued/retrying deliveries, a retry fires for an inactive subscription, terminal run cleanup drops queued deliveries, or terminal run cleanup cancels per-delivery retry timers, the router records terminal delivery failure and calls `markEventFailedIfAllDeliveriesTerminal(event.id)` so duplicate source observations do not restart an exhausted or impossible delivery.
+   `ExternalEventRouter` calls `registerExpectedDelivery(...)` for every scope-matched subscription before attempting any injection. This registration must be idempotent for the `(event_id, delivery_key)` primary key: use `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING`, or an equivalent upsert that never downgrades an existing terminal row. Retryable source duplicates and router retries can prepare the same delivery more than once, so duplicate expected-delivery rows are normal and must not become preparation failures. After idempotent registration, the router skips already-terminal delivery rows and only attempts pending/retryable rows. It then records `delivered` after successful command-bus injection and calls `markEventDeliveredIfAllDeliveriesDelivered(event.id)` so source-level dedup can stop re-emitting fully delivered events after restart or in-memory TTL eviction. That transition must check for all expected delivery rows being `delivered`, not merely terminal; if any delivery row is terminal `failed`, `markEventFailedIfAnyDeliveryTerminalFailed(event.id)` keeps the source event failed and prevents a later successful subscription from incorrectly reclassifying the source event as delivered. When retry budget is exhausted, pending-node queue overflow evicts an expected delivery, node cancellation removes queued/retrying deliveries, a retry fires for an inactive subscription, terminal run cleanup drops queued deliveries, or terminal run cleanup cancels per-delivery retry timers, the router records terminal delivery failure and calls `markEventFailedIfAllDeliveriesTerminal(event.id)` so duplicate source observations do not restart an exhausted or impossible delivery.
 
 3. **Extension configuration**: store global and per-space source configuration so sources can be enabled/disabled and configured independently.
 
@@ -2299,7 +2301,7 @@ This is exactly the behavior we want for external events.
 
 1. **TopicTrie**: Insert patterns, verify lookup returns correct values for exact and wildcard matches.
 2. **ExternalEventRouter**: Given subscriptions and events, verify scope filtering, topic validation before trie insertion, dedup, and delivery.
-3. **ExternalEventStore**: Verify terminal duplicates are short-circuited, retryable duplicates are re-emitted, expected deliveries are registered before injection, successful per-subscription delivery advances the source event to terminal `delivered` only after all expected deliveries are terminal, and retry exhaustion advances to terminal `failed`.
+3. **ExternalEventStore**: Verify terminal duplicates are short-circuited, retryable duplicates are re-emitted, expected deliveries are registered before injection, successful per-subscription delivery advances the source event to terminal `delivered` only after all expected deliveries are `delivered`, any terminal per-subscription failure prevents/reverts a delivered outcome and marks the source event `failed`, and retry exhaustion advances to terminal `failed`.
 4. **ExternalEventTaskResolver**: Given GitHub PR metadata, verify correct task enrichment and ambiguous/unknown states.
 5. **GitHubEventExtension**: Given webhook and polling payloads, verify enablement checks, signature handling, topic construction, dedupe keys, and `ExternalEvent` construction without querying Space tasks.
 6. **Scope resolution**: Test `task` scope with enriched `routedTaskId` and various task/PR associations.
