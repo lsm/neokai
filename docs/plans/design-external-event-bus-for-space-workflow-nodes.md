@@ -677,9 +677,12 @@ class EventRouter {
   }
 
   private makeDeliveryKey(event: ExternalEvent, sub: Subscription): string {
-    // Use a structured tuple key: event.dedupeKey and workflow/node/agent ids are
-    // free-form strings and can contain ':', '/', or other delimiter characters.
-    return JSON.stringify([event.dedupeKey, sub.taskId, sub.nodeId, sub.agentName, sub.workflowRunId]);
+    // Use a structured tuple key. Source-level dedupe is unique by
+    // (spaceId, source, dedupeKey), so include event.source to prevent two adapters
+    // that legitimately emit the same dedupeKey from sharing pending/delivered/retry
+    // bookkeeping for the same subscription. All fields are free-form strings and
+    // can contain ':', '/', or other delimiter characters, so avoid delimiter joins.
+    return JSON.stringify([event.source, event.dedupeKey, sub.taskId, sub.nodeId, sub.agentName, sub.workflowRunId]);
   }
 
   private makePendingQueueKey(sub: Pick<Subscription, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>): string {
@@ -1483,10 +1486,11 @@ Dedup happens at two different layers, each with a different key and responsibil
    - Retryable duplicates (`published`, `routed`, `delivery_failed`) are re-emitted so transient delivery failures can retry.
    - This replaces `SpaceGitHubService.storeEvent()` as the authoritative dedup path for new external-event delivery.
 
-2. **Per-subscription delivery dedup** — JSON tuple `[event.dedupeKey, subscription.taskId, subscription.nodeId, subscription.agentName, subscription.workflowRunId]`.
+2. **Per-subscription delivery dedup** — JSON tuple `[event.source, event.dedupeKey, subscription.taskId, subscription.nodeId, subscription.agentName, subscription.workflowRunId]`.
    - Purpose: prevent the same external event from being delivered twice to the same node agent within a run.
+   - The tuple includes `event.source` because source-level dedupe is scoped by `(spaceId, source, dedupeKey)`: two adapters can legitimately emit the same `dedupeKey` in one space and must not share pending/delivered/retry bookkeeping.
    - The tuple includes `taskId` to isolate multi-task runs and `nodeId` to handle cases where the same agent name appears in multiple nodes within the same run.
-   - The tuple is encoded structurally rather than delimiter-joined because `dedupeKey`, workflow identifiers, node IDs, and agent names are free-form strings.
+   - The tuple is encoded structurally rather than delimiter-joined because `source`, `dedupeKey`, workflow identifiers, node IDs, and agent names are free-form strings.
    - It is tracked in-memory for fast duplicate suppression and persisted in `space_external_event_deliveries` after successful injection.
 
 The EventRouter marks per-subscription delivery as `delivered` only after successful injection, updates `ExternalEventStore` with the successful delivery key, and advances the source event to terminal `delivered` only once all expected deliveries are terminal. Failed injection/session-resolution paths remove `pendingDeliveries` and schedule retry rather than relying on adapters to re-publish the same event. If trie lookup finds no matching subscriptions, or if all matched subscriptions are out of scope/already terminal and no preparation retry is pending, the router marks the source event terminal `ignored` so webhook+polling duplicates do not churn through routing forever.
