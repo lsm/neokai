@@ -19,40 +19,41 @@
  */
 
 import type {
-	Options,
 	CanUseTool,
 	HookCallback,
+	Options,
 	PreToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
-	Session,
-	ThinkingLevel,
-	ThinkingConfig,
-	SystemPromptConfig,
-	ClaudeCodePreset,
 	AgentDefinition,
+	AppMcpServerSourceType,
+	ClaudeCodePreset,
+	DeclarativeToolGuard,
+	Session,
+	SkillEnablementOverride,
+	SystemPromptConfig,
+	ThinkingConfig,
+	ThinkingLevel,
 } from '@neokai/shared';
-import { getCoordinatorAgents } from './coordinator-agents';
 import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
-import type { PermissionMode } from '@neokai/shared/types/settings';
 import type { McpServerConfig } from '@neokai/shared/types/sdk-config';
-import type { AppMcpServerSourceType } from '@neokai/shared';
-import type { SkillEnablementOverride, DeclarativeToolGuard } from '@neokai/shared';
-import type { SettingsManager } from '../settings-manager';
-import type { SkillsManager } from '../skills-manager';
+import type { PermissionMode } from '@neokai/shared/types/settings';
+import { homedir } from 'os';
+import { join } from 'path';
+import type { Database } from '../../storage/database';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
+import { requireModelContextWindow } from '../providers/codex-anthropic-bridge/model-context-windows';
 import { getProviderContextManager } from '../providers/factory.js';
-import { resolveSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.js';
+import type { SettingsManager } from '../settings-manager';
+import type { SkillsManager } from '../skills-manager';
 import {
 	builtinSkillPluginPath,
 	defaultBuiltinSkillPluginRoot,
 } from './builtin-skill-plugin-wrapper';
-import { homedir } from 'os';
-import { join } from 'path';
-import type { Database } from '../../storage/database';
-import { requireModelContextWindow } from '../providers/codex-anthropic-bridge/model-context-windows';
+import { getCoordinatorAgents } from './coordinator-agents';
+import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 
 export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
 
@@ -90,6 +91,75 @@ function compileToolGuard(guard: DeclarativeToolGuard): HookCallback {
 			},
 		};
 	};
+}
+
+/**
+ * Built-in tools exposed when expanding an undefined tool list for
+ * non-Anthropic providers. Matches the coordinator-mode allowlist.
+ */
+const FULL_BUILTIN_TOOL_LIST = [
+	'Read',
+	'Write',
+	'Edit',
+	'Bash',
+	'Grep',
+	'Glob',
+	'WebFetch',
+	'WebSearch',
+	'Task',
+	'TaskOutput',
+	'TaskStop',
+	'NotebookEdit',
+	'TodoWrite',
+	'AskUserQuestion',
+	'EnterPlanMode',
+	'ExitPlanMode',
+	'Skill',
+	'ToolSearch',
+];
+
+/**
+ * Agent invocation tools that must be present when agents are configured.
+ */
+const AGENT_INVOCATION_TOOLS = ['Task', 'TaskOutput', 'TaskStop'];
+
+/**
+ * Ensure agent invocation tools are present in the tool list when agents
+ * are configured. Non-Anthropic SDK presets may omit Task from the function
+ * schema even though the system prompt still describes agents, creating a
+ * mismatch where the model sees agent descriptions but has no callable tool
+ * to invoke them.
+ *
+ * @param tools      Current tools value (array, preset, undefined)
+ * @param agents     Configured agents map
+ * @param providerId Resolved provider identifier
+ * @param sessionType Session type (space_chat is exempt)
+ * @returns Updated tools value
+ */
+export function ensureAgentTools(
+	tools: Options['tools'],
+	agents: Options['agents'],
+	providerId: string,
+	sessionType: string
+): Options['tools'] {
+	const hasAgentsConfigured = agents && Object.keys(agents).length > 0;
+	if (!hasAgentsConfigured || sessionType === 'space_chat') {
+		return tools;
+	}
+
+	if (Array.isArray(tools)) {
+		const missing = AGENT_INVOCATION_TOOLS.filter((t) => !(tools as string[]).includes(t));
+		if (missing.length > 0) {
+			return [...(tools as string[]), ...missing];
+		}
+		return tools;
+	}
+
+	if (!tools && providerId !== 'anthropic' && providerId !== 'anthropic-copilot') {
+		return [...FULL_BUILTIN_TOOL_LIST];
+	}
+
+	return tools;
 }
 
 /**
@@ -447,6 +517,14 @@ export class QueryOptionsBuilder {
 			const existing = queryOptions.allowedTools ?? [];
 			queryOptions.allowedTools = [...new Set([...existing, ...allTools])];
 		}
+
+		// ============ Provider-specific agent tool exposure ============
+		queryOptions.tools = ensureAgentTools(
+			queryOptions.tools,
+			queryOptions.agents,
+			providerId,
+			this.ctx.session.type ?? 'general'
+		);
 
 		// Remove undefined values to use SDK defaults
 		const cleanedOptions = Object.fromEntries(
