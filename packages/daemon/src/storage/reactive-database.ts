@@ -126,6 +126,7 @@ const DERIVED_TABLE_MAP: Record<string, ReadonlyArray<string>> = {
 	space_github_events: ['task_thread_messages'],
 	node_executions: ['task_thread_messages'],
 	space_tasks: ['task_thread_messages'],
+	space_agents: ['task_thread_messages'],
 };
 
 export function createReactiveDatabase(db: Database): ReactiveDatabase {

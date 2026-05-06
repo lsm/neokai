@@ -161,7 +161,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	});
 
 	// Initialize Space agent manager
-	const spaceAgentManager = new SpaceAgentManager(new SpaceAgentRepository(db.getDatabase()));
+	const spaceAgentManager = new SpaceAgentManager(
+		new SpaceAgentRepository(db.getDatabase(), reactiveDb)
+	);
 
 	// Initialize Space manager
 	const spaceManager = new SpaceManager(db.getDatabase());

@@ -489,6 +489,47 @@ describe('Migration 118 — task_thread_messages projection', () => {
 		expect(rows[0].node_execution_id).toBe('ne-late');
 	});
 
+	test('node_executions UPDATE of status is a no-op on the projection', () => {
+		const orchSessionId = 'orch-session-noop-ne';
+		const nodeSessionId = 'node-session-noop-ne';
+		const workflowRunId = 'wr-noop-ne-1';
+		const taskId = 'task-noop-ne-1';
+
+		insertSession(db, orchSessionId, 'space_task_agent', isoNow);
+		insertSession(db, nodeSessionId, 'space_task_agent', isoNow);
+		insertSpaceTask(db, {
+			id: taskId,
+			title: 'Noop NE',
+			taskAgentSessionId: orchSessionId,
+			workflowRunId,
+			now,
+		});
+		runMigration118(db);
+
+		db.exec(`
+			INSERT INTO node_executions (
+				id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+				agent_session_id, status, result, created_at, started_at,
+				completed_at, updated_at
+			) VALUES (
+				'ne-noop-status', '${workflowRunId}', 'node-1', 'coder', NULL,
+				'${nodeSessionId}', 'in_progress', NULL, ${now}, ${now}, NULL, ${now}
+			)
+		`);
+		insertSdkMessage(db, { id: 'noop-ne-msg-1', sessionId: nodeSessionId, isoNow });
+
+		const before = readProjection(db, taskId);
+		expect(before).toHaveLength(1);
+		expect(before[0].source_id).toBe('noop-ne-msg-1');
+
+		// Status-only update — not in the WHEN clause, trigger should be a no-op.
+		db.exec(`UPDATE node_executions SET status = 'done' WHERE id = 'ne-noop-status'`);
+		const after = readProjection(db, taskId);
+		expect(after).toHaveLength(1);
+		expect(after[0].source_id).toBe('noop-ne-msg-1');
+		expect(after[0].node_execution_id).toBe('ne-noop-status');
+	});
+
 	// -------------------------------------------------------------------------
 	// node_executions DELETE — re-project when session is shared
 	// -------------------------------------------------------------------------

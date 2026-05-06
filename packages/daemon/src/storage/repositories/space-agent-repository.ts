@@ -14,10 +14,14 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type { SpaceAgent, CreateSpaceAgentParams, UpdateSpaceAgentParams } from '@neokai/shared';
+import type { ReactiveDatabase } from '../reactive-database';
 import type { SQLiteValue } from '../types';
 
 export class SpaceAgentRepository {
-	constructor(private db: BunDatabase) {}
+	constructor(
+		private db: BunDatabase,
+		private reactiveDb?: ReactiveDatabase
+	) {}
 
 	/**
 	 * Create a new space agent
@@ -49,6 +53,7 @@ export class SpaceAgentRepository {
 				now
 			);
 
+		this.reactiveDb?.notifyChange('space_agents');
 		return this.getById(id)!;
 	}
 
@@ -155,6 +160,7 @@ export class SpaceAgentRepository {
 		values.push(id);
 
 		this.db.prepare(`UPDATE space_agents SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+		this.reactiveDb?.notifyChange('space_agents');
 		return this.getById(id);
 	}
 
@@ -162,7 +168,10 @@ export class SpaceAgentRepository {
 	 * Delete an agent by ID
 	 */
 	delete(id: string): void {
-		this.db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(id);
+		const result = this.db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(id);
+		if (result.changes > 0) {
+			this.reactiveDb?.notifyChange('space_agents');
+		}
 	}
 
 	/**

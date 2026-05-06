@@ -632,8 +632,8 @@ describe('ReactiveDatabase', () => {
 	// -------------------------------------------------------------------------
 	//
 	// SQLite triggers maintaining `task_thread_messages` from `sdk_messages` /
-	// `space_github_events` / `space_tasks` / `node_executions` write to the
-	// projection without going through the proxy. The reactive database compensates
+	// `space_github_events` / `space_tasks` / `node_executions` / `space_agents`
+	// write to the projection without going through the proxy. The reactive database compensates
 	// by fanning out a derived `task_thread_messages` change event whenever an
 	// upstream source table is incremented, so LiveQuery subscriptions reading
 	// from the projection re-evaluate.
@@ -680,6 +680,17 @@ describe('ReactiveDatabase', () => {
 
 			expect(events.length).toBe(2);
 			expect(events[0].tables).toEqual(['node_executions']);
+			expect(events[1].tables).toEqual(['task_thread_messages']);
+		});
+
+		test('notifyChange("space_agents") fans out a task_thread_messages event', () => {
+			const events: Array<{ tables: string[] }> = [];
+			reactiveDb.on('change', (data) => events.push(data));
+
+			reactiveDb.notifyChange('space_agents');
+
+			expect(events.length).toBe(2);
+			expect(events[0].tables).toEqual(['space_agents']);
 			expect(events[1].tables).toEqual(['task_thread_messages']);
 		});
 

@@ -610,10 +610,18 @@ END
  * `workflow_run_id` / `agent_id` / `agent_name` changes (rare). We delete
  * any projection rows previously attributed to the OLD execution id and
  * re-project for the NEW shape.
+ *
+ * A `WHEN` clause limits firing to the columns that affect projection
+ * content. High-frequency status transitions (in_progress → idle, etc.)
+ * are ignored, avoiding churn on long-running nodes.
  */
 const TRG_AFTER_UPDATE_NODE_EXEC = `
 CREATE TRIGGER trg_ttm_after_update_node_exec
 AFTER UPDATE ON node_executions
+WHEN COALESCE(OLD.agent_session_id, '') IS NOT COALESCE(NEW.agent_session_id, '')
+   OR COALESCE(OLD.workflow_run_id, '') IS NOT COALESCE(NEW.workflow_run_id, '')
+   OR COALESCE(OLD.agent_id, '') IS NOT COALESCE(NEW.agent_id, '')
+   OR OLD.agent_name IS NOT NEW.agent_name
 BEGIN
   DELETE FROM task_thread_messages
   WHERE source = 'sdk' AND node_execution_id = OLD.id;

@@ -365,7 +365,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
-	const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
+	const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase(), deps.reactiveDb);
 	const agentLookup: SpaceAgentLookup = {
 		getAgentById(spaceId: string, id: string) {
 			const agent = spaceAgentRepo.getById(id);
