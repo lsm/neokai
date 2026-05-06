@@ -386,7 +386,16 @@ describe('preset agent exact definitions', () => {
 		(t) => !['Task', 'TaskOutput', 'TaskStop'].includes(t)
 	) as unknown as string[];
 
-	const EXPECTED_READONLY_TOOLS = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
+	const EXPECTED_READONLY_TOOLS = [
+		'Read',
+		'Bash',
+		'Grep',
+		'Glob',
+		'WebFetch',
+		'WebSearch',
+		'Skill',
+		'ToolSearch',
+	];
 	// Reviewer has the read-only toolset PLUS Task/TaskOutput/TaskStop so it
 	// can dispatch the built-in `general-purpose` sub-agent for exploration.
 	const EXPECTED_REVIEWER_TOOLS = [...EXPECTED_READONLY_TOOLS, 'Task', 'TaskOutput', 'TaskStop'];
@@ -549,7 +558,16 @@ describe('PRESET_AGENT_TOOLS export', () => {
 		(t) => !['Task', 'TaskOutput', 'TaskStop'].includes(t)
 	) as unknown as string[];
 
-	const EXPECTED_READONLY_TOOLS = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
+	const EXPECTED_READONLY_TOOLS = [
+		'Read',
+		'Bash',
+		'Grep',
+		'Glob',
+		'WebFetch',
+		'WebSearch',
+		'Skill',
+		'ToolSearch',
+	];
 	// Reviewer additionally carries Task/TaskOutput/TaskStop for built-in
 	// `general-purpose` sub-agent delegation.
 	const EXPECTED_REVIEWER_TOOLS = [...EXPECTED_READONLY_TOOLS, 'Task', 'TaskOutput', 'TaskStop'];

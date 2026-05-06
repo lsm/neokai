@@ -17,4 +17,11 @@ export const KNOWN_TOOLS = [
 	'Task',
 	'TaskOutput',
 	'TaskStop',
+	'NotebookEdit',
+	'TodoWrite',
+	'AskUserQuestion',
+	'EnterPlanMode',
+	'ExitPlanMode',
+	'Skill',
+	'ToolSearch',
 ] as const;
