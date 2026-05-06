@@ -75,6 +75,7 @@ export function TaskSessionChatComposer({
 		setThinkingLevel,
 	} = useTargetSessionContext({
 		taskId,
+		targets,
 		selectedTarget,
 		activityMembers,
 		taskAgentSessionId: sessionId || null,

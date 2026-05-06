@@ -201,6 +201,7 @@ describe('useTargetSessionContext', () => {
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
 				taskId: 'task-1',
+				targets: [taskAgentTarget],
 				selectedTarget: taskAgentTarget,
 				activityMembers: [],
 				taskAgentSessionId: 'task-sess-123',
@@ -217,6 +218,7 @@ describe('useTargetSessionContext', () => {
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
 				taskId: 'task-1',
+				targets: [coderTarget],
 				selectedTarget: coderTarget,
 				activityMembers: members,
 				taskAgentSessionId: 'task-sess-123',
@@ -240,6 +242,7 @@ describe('useTargetSessionContext', () => {
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
 				taskId: 'task-1',
+				targets: [notStartedTarget],
 				selectedTarget: notStartedTarget,
 				activityMembers: members,
 				taskAgentSessionId: 'task-sess-123',
@@ -264,6 +267,7 @@ describe('useTargetSessionContext', () => {
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
 				taskId: 'task-1',
+				targets: [notStartedTarget],
 				selectedTarget: notStartedTarget,
 				activityMembers: members,
 				taskAgentSessionId: 'task-sess-123',
@@ -280,6 +284,7 @@ describe('useTargetSessionContext', () => {
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
 				taskId: 'task-1',
+				targets: [coderTarget],
 				selectedTarget: coderTarget,
 				activityMembers: members,
 				taskAgentSessionId: 'task-sess-123',
@@ -314,6 +319,7 @@ describe('useTargetSessionContext', () => {
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
 				taskId: 'task-1',
+				targets: [notStartedTarget],
 				selectedTarget: notStartedTarget,
 				activityMembers: members,
 				taskAgentSessionId: 'task-sess-123',
@@ -331,6 +337,7 @@ describe('useTargetSessionContext', () => {
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
 				taskId: 'task-1',
+				targets: [coderTarget],
 				selectedTarget: coderTarget,
 				activityMembers: members,
 				taskAgentSessionId: 'task-sess-123',
@@ -359,6 +366,7 @@ describe('useTargetSessionContext', () => {
 		const { result } = renderHook(() =>
 			useTargetSessionContext({
 				taskId: 'task-1',
+				targets: [notStartedTarget],
 				selectedTarget: notStartedTarget,
 				activityMembers: members,
 				taskAgentSessionId: 'task-sess-123',
@@ -397,6 +405,7 @@ describe('useTargetSessionContext', () => {
 			(props: { members: SpaceTaskActivityMember[] }) =>
 				useTargetSessionContext({
 					taskId: 'task-1',
+					targets: [notStartedTarget],
 					selectedTarget: notStartedTarget,
 					activityMembers: props.members,
 					taskAgentSessionId: 'task-sess-123',
@@ -507,6 +516,7 @@ describe('useTargetSessionContext', () => {
 			(props: { members: SpaceTaskActivityMember[] }) =>
 				useTargetSessionContext({
 					taskId: 'task-1',
+					targets: [notStartedTarget],
 					selectedTarget: notStartedTarget,
 					activityMembers: props.members,
 					taskAgentSessionId: 'task-sess-123',
@@ -578,6 +588,7 @@ describe('useTargetSessionContext', () => {
 			(props: { taskId: string }) =>
 				useTargetSessionContext({
 					taskId: props.taskId,
+					targets: [notStartedTarget],
 					selectedTarget: notStartedTarget,
 					activityMembers: [],
 					taskAgentSessionId: 'task-sess-123',
@@ -599,6 +610,171 @@ describe('useTargetSessionContext', () => {
 		// should fall back to empty string.
 		await waitFor(() => {
 			expect(result.current.currentModel).toBe('');
+		});
+	});
+
+	it('auto-applies preconfiguration for non-selected targets when their session spawns', async () => {
+		const targetA = {
+			id: 'node:n1:coder',
+			kind: 'node_agent' as const,
+			label: 'Coder',
+			agentName: 'coder',
+		};
+		const targetB = {
+			id: 'node:n1:reviewer',
+			kind: 'node_agent' as const,
+			label: 'Reviewer',
+			agentName: 'reviewer',
+		};
+
+		const model: ModelInfo = {
+			id: 'claude-opus-4-5',
+			name: 'Opus 4.5',
+			family: 'opus',
+			provider: 'anthropic',
+			alias: 'opus',
+			contextWindow: 200000,
+			description: '',
+			releaseDate: '',
+			available: true,
+		};
+
+		// Phase 1: select target A and pre-configure it
+		const { result, rerender } = renderHook(
+			(props: {
+				members: SpaceTaskActivityMember[];
+				selectedTarget: typeof targetA | typeof targetB;
+			}) =>
+				useTargetSessionContext({
+					taskId: 'task-1',
+					targets: [targetA, targetB],
+					selectedTarget: props.selectedTarget,
+					activityMembers: props.members,
+					taskAgentSessionId: 'task-sess-123',
+				}),
+			{ initialProps: { members: [] as SpaceTaskActivityMember[], selectedTarget: targetA } }
+		);
+
+		await act(async () => {
+			await result.current.switchModel(model);
+		});
+		await act(async () => {
+			await result.current.setThinkingLevel('think16k');
+		});
+
+		expect(result.current.currentModel).toBe('claude-opus-4-5');
+		expect(mockRequest).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
+
+		// Phase 2: switch selection to target B
+		rerender({ members: [] as SpaceTaskActivityMember[], selectedTarget: targetB });
+
+		// Phase 3: target A's session spawns in the background
+		const spawnedMembers: SpaceTaskActivityMember[] = [
+			{
+				id: 'm-coder',
+				sessionId: 'coder-session',
+				kind: 'node_agent',
+				label: 'Coder',
+				role: 'coder',
+				state: 'active',
+				processingStatus: 'idle',
+				messageCount: 0,
+			},
+		];
+
+		rerender({ members: spawnedMembers, selectedTarget: targetB });
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('session.model.switch', {
+				sessionId: 'coder-session',
+				model: 'claude-opus-4-5',
+				provider: 'anthropic',
+			});
+		});
+
+		expect(mockRequest).toHaveBeenCalledWith('session.thinking.set', {
+			sessionId: 'coder-session',
+			level: 'think16k',
+		});
+	});
+
+	it('does not mark auto-config applied when no RPC was attempted', async () => {
+		const notStartedTarget = {
+			id: 'node:n1:reviewer',
+			kind: 'node_agent' as const,
+			label: 'Reviewer',
+			agentName: 'reviewer',
+		};
+
+		const model: ModelInfo = {
+			id: 'claude-opus-4-5',
+			name: 'Opus 4.5',
+			family: 'opus',
+			provider: 'anthropic',
+			alias: 'opus',
+			contextWindow: 200000,
+			description: '',
+			releaseDate: '',
+			available: true,
+		};
+
+		const { result, rerender } = renderHook(
+			(props: { members: SpaceTaskActivityMember[] }) =>
+				useTargetSessionContext({
+					taskId: 'task-1',
+					targets: [notStartedTarget],
+					selectedTarget: notStartedTarget,
+					activityMembers: props.members,
+					taskAgentSessionId: 'task-sess-123',
+				}),
+			{ initialProps: { members: [] as SpaceTaskActivityMember[] } }
+		);
+
+		// Phase 1: let models load while hub is connected so switcherModels is populated
+		await waitFor(() => {
+			expect(result.current.availableModels.length).toBeGreaterThan(0);
+		});
+
+		// Phase 2: disconnect hub and pre-configure model
+		mockGetHubIfConnected.mockReturnValue(null);
+		await act(async () => {
+			await result.current.switchModel(model);
+		});
+
+		// Phase 3: spawn session while hub is still disconnected
+		const spawnedMembers: SpaceTaskActivityMember[] = [
+			{
+				id: 'm-reviewer',
+				sessionId: 'reviewer-session',
+				kind: 'node_agent',
+				label: 'Reviewer',
+				role: 'reviewer',
+				state: 'active',
+				processingStatus: 'idle',
+				messageCount: 0,
+			},
+		];
+
+		rerender({ members: spawnedMembers });
+
+		// Wait a tick to let any effect runs settle
+		await new Promise((r) => setTimeout(r, 10));
+
+		// No RPCs should have been attempted because hub is null
+		expect(mockRequest).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
+		expect(mockRequest).not.toHaveBeenCalledWith('session.thinking.set', expect.anything());
+
+		// Phase 4: reconnect the hub and re-render
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		rerender({ members: [...spawnedMembers] });
+
+		// The effect should retry now that the hub is available
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('session.model.switch', {
+				sessionId: 'reviewer-session',
+				model: 'claude-opus-4-5',
+				provider: 'anthropic',
+			});
 		});
 	});
 });

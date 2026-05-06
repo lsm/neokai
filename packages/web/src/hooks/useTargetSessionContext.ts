@@ -68,12 +68,14 @@ export function resolveTargetSessionId(
  */
 export function useTargetSessionContext({
 	taskId,
+	targets,
 	selectedTarget,
 	activityMembers,
 	taskAgentSessionId,
 	defaultAgentModels,
 }: {
 	taskId: string;
+	targets: TaskComposerTarget[];
 	selectedTarget: TaskComposerTarget | null;
 	activityMembers: SpaceTaskActivityMember[];
 	taskAgentSessionId: string | null;
@@ -134,59 +136,81 @@ export function useTargetSessionContext({
 
 	// Destructure stable primitives from modelSwitcher to avoid effect re-runs
 	// caused by the switcher object identity changing every render.
-	const { availableModels: switcherModels, switchModel: switcherSwitchModel } = modelSwitcher;
+	const { availableModels: switcherModels } = modelSwitcher;
 
-	// Auto-apply pre-configured settings when a session spawns.
-	// Only mark the target as applied after both operations succeed so that
-	// transient failures (e.g. missing hub connection) trigger a retry.
+	// Auto-apply pre-configured settings when any target's session spawns.
+	// Iterates over ALL targets so that background spawns (targets not currently
+	// selected) still receive their pending preconfiguration.
+	// Only marks a target as applied when at least one RPC was actually
+	// attempted and all attempts succeeded; if preconditions are missing
+	// (e.g. model info not yet loaded or hub disconnected) the target stays
+	// unmarked and the effect retries on the next render cycle.
 	useEffect(() => {
-		if (!targetSessionId || !selectedTarget) return;
-		const targetId = selectedTarget.id;
-		if (appliedAutoConfigRef.current.has(targetId)) return;
+		for (const target of targets) {
+			const targetId = target.id;
+			if (appliedAutoConfigRef.current.has(targetId)) continue;
 
-		const preModel = preConfiguredModel.get(targetId);
-		const preThinking = preConfiguredThinking.get(targetId);
-		if (!preModel && !preThinking) return;
+			const preModel = preConfiguredModel.get(targetId);
+			const preThinking = preConfiguredThinking.get(targetId);
+			if (!preModel && !preThinking) continue;
 
-		let modelPromise: Promise<unknown> = Promise.resolve();
-		let thinkingPromise: Promise<unknown> = Promise.resolve();
+			const sessionId = resolveTargetSessionId(target, activityMembers, taskAgentSessionId);
+			if (!sessionId) continue;
 
-		// Apply model switch
-		if (preModel) {
-			const modelInfo = switcherModels.find((m) => m.id === preModel);
-			if (modelInfo) {
-				modelPromise = switcherSwitchModel(modelInfo);
-			}
-		}
+			let attempted = false;
+			const promises: Promise<unknown>[] = [];
 
-		// Apply thinking level
-		if (preThinking) {
-			const hub = connectionManager.getHubIfConnected();
-			if (hub) {
-				thinkingPromise = hub.request('session.thinking.set', {
-					sessionId: targetSessionId,
-					level: preThinking,
-				});
-			}
-		}
-
-		Promise.all([modelPromise, thinkingPromise])
-			.then(() => {
-				appliedAutoConfigRef.current.add(targetId);
-				if (preThinking) {
-					setLocalThinkingLevel(preThinking);
+			// Apply model switch
+			if (preModel) {
+				const modelInfo = switcherModels.find((m) => m.id === preModel);
+				if (modelInfo) {
+					attempted = true;
+					const hub = connectionManager.getHubIfConnected();
+					if (hub) {
+						promises.push(
+							hub.request('session.model.switch', {
+								sessionId,
+								model: modelInfo.id,
+								provider: modelInfo.provider,
+							})
+						);
+					} else {
+						promises.push(Promise.reject(new Error('Not connected')));
+					}
 				}
-			})
-			.catch(() => {
-				// Leave unmarked so the effect retries on next render
-			});
+			}
+
+			// Apply thinking level
+			if (preThinking) {
+				const hub = connectionManager.getHubIfConnected();
+				if (hub) {
+					attempted = true;
+					promises.push(
+						hub.request('session.thinking.set', {
+							sessionId,
+							level: preThinking,
+						})
+					);
+				}
+			}
+
+			if (!attempted) continue;
+
+			Promise.all(promises)
+				.then(() => {
+					appliedAutoConfigRef.current.add(targetId);
+				})
+				.catch(() => {
+					// Leave unmarked so the effect retries on next render
+				});
+		}
 	}, [
-		targetSessionId,
-		selectedTarget,
+		targets,
+		activityMembers,
+		taskAgentSessionId,
 		preConfiguredModel,
 		preConfiguredThinking,
 		switcherModels,
-		switcherSwitchModel,
 	]);
 
 	// Derive processing state from the activity member that owns this session.
