@@ -25,6 +25,15 @@ interface TestEventMap {
 	'app.ping': { sessionId: string; ts: number };
 }
 
+/**
+ * Interface without a string index signature — verifies the class constraint
+ * is loose enough to accept normal keyed interfaces (P2).
+ */
+interface KeyedInterfaceEventMap {
+	'order.placed': { sessionId: string; orderId: string };
+	'order.shipped': { sessionId: string; orderId: string; tracking: string };
+}
+
 describe('InternalEventBus', () => {
 	let bus: InternalEventBus<TestEventMap>;
 
@@ -41,6 +50,15 @@ describe('InternalEventBus', () => {
 			expect(() => bus.subscribe('session.created', () => {}, { subscriberName: '   ' })).toThrow(
 				'subscriberName'
 			);
+		});
+
+		it('should reject the reserved global session key as an explicit sessionId', () => {
+			expect(() =>
+				bus.subscribe('session.created', () => {}, {
+					subscriberName: 'bad',
+					sessionId: '__global__',
+				})
+			).toThrow('reserved');
 		});
 
 		it('should return an unsubscribe function', () => {
@@ -413,5 +431,28 @@ describe('InternalEventBus', () => {
 
 			expect(hits).toEqual(['deleted']);
 		});
+	});
+});
+
+describe('InternalEventBus keyed interface compatibility', () => {
+	it('should accept interface-style event maps without a string index signature', async () => {
+		const keyedBus = new InternalEventBus<KeyedInterfaceEventMap>();
+		const hits: string[] = [];
+
+		keyedBus.subscribe(
+			'order.placed',
+			(data) => {
+				hits.push(data.orderId);
+			},
+			{ subscriberName: 'orders' }
+		);
+
+		const result = await keyedBus.publish('order.placed', {
+			sessionId: 's1',
+			orderId: 'ord-123',
+		});
+
+		expect(hits).toEqual(['ord-123']);
+		expect(result.delivered).toBe(1);
 	});
 });

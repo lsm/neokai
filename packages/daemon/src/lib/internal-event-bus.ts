@@ -92,13 +92,11 @@ export interface SubscribeOptions {
 	sessionId?: string;
 }
 
-export type InternalEventHandler<TPayload extends InternalEventPayload> = (
-	data: TPayload
-) => void | Promise<void>;
+export type InternalEventHandler<TPayload> = (data: TPayload) => void | Promise<void>;
 
 interface RegisteredHandler {
 	subscriberName: string;
-	handler: InternalEventHandler<InternalEventPayload>;
+	handler: (data: unknown) => void | Promise<void>;
 }
 
 const GLOBAL_SESSION_KEY = '__global__';
@@ -108,9 +106,7 @@ const GLOBAL_SESSION_KEY = '__global__';
  *
  * @template TEventMap — map of dot-separated event names to payload shapes.
  */
-export class InternalEventBus<
-	TEventMap extends Record<string, InternalEventPayload> = Record<string, InternalEventPayload>,
-> {
+export class InternalEventBus<TEventMap extends object = Record<string, InternalEventPayload>> {
 	// event → sessionId → handlers
 	private handlers = new Map<string, Map<string, Set<RegisteredHandler>>>();
 
@@ -130,6 +126,12 @@ export class InternalEventBus<
 		const eventKey = event;
 		const sessionKey = options.sessionId ?? GLOBAL_SESSION_KEY;
 
+		if (options.sessionId === GLOBAL_SESSION_KEY) {
+			throw new Error(
+				`'${GLOBAL_SESSION_KEY}' is a reserved session key and cannot be used as an explicit sessionId`
+			);
+		}
+
 		if (!options.subscriberName || options.subscriberName.trim().length === 0) {
 			throw new Error('InternalEventBus.subscribe requires a non-empty subscriberName');
 		}
@@ -148,7 +150,7 @@ export class InternalEventBus<
 
 		const registered: RegisteredHandler = {
 			subscriberName: options.subscriberName,
-			handler: handler as InternalEventHandler<InternalEventPayload>,
+			handler: handler as (data: unknown) => void | Promise<void>,
 		};
 
 		handlerSet.add(registered);
@@ -186,7 +188,7 @@ export class InternalEventBus<
 			return { delivered: 0, failures: [] };
 		}
 
-		const sessionId = data.sessionId;
+		const sessionId = (data as InternalEventPayload).sessionId;
 		const failures: HandlerFailure[] = [];
 		let delivered = 0;
 
@@ -306,7 +308,7 @@ export class InternalEventBus<
  *   const bus = createInternalEventBus<MyEventMap>();
  */
 export function createInternalEventBus<
-	TEventMap extends Record<string, InternalEventPayload> = Record<string, InternalEventPayload>,
+	TEventMap extends object = Record<string, InternalEventPayload>,
 >(): InternalEventBus<TEventMap> {
 	return new InternalEventBus<TEventMap>();
 }
