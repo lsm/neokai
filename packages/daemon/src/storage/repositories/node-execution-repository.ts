@@ -61,7 +61,13 @@ export class NodeExecutionRepository {
 				now
 			);
 
-		this.reactiveDb?.notifyChange('node_executions');
+		// Only fan out when the row has session linkage — the SQLite trigger
+		// (trg_ttm_after_insert_node_exec) only fires when agent_session_id
+		// IS NOT NULL, so notifying on null bindings causes unnecessary
+		// LiveQuery churn on the common pending/no-session activation path.
+		if (params.agentSessionId != null) {
+			this.reactiveDb?.notifyChange('node_executions');
+		}
 		return this.getById(id)!;
 	}
 
@@ -106,7 +112,10 @@ export class NodeExecutionRepository {
 		// If the insert was ignored (duplicate), return the existing record.
 		const inserted = this.getById(id);
 		if (inserted) {
-			this.reactiveDb?.notifyChange('node_executions');
+			// Only fan out when the row has session linkage (mirrors create()).
+			if (params.agentSessionId != null) {
+				this.reactiveDb?.notifyChange('node_executions');
+			}
 			return inserted;
 		}
 
