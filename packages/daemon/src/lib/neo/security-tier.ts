@@ -14,33 +14,14 @@ export const ActionClassification: Record<string, ActionRiskLevel> = {
 	// ── Low risk ──────────────────────────────────────────────────────────────
 	toggle_mcp_server: 'low',
 	toggle_skill: 'low',
-	enable_skill: 'low',
-	disable_skill: 'low',
-	create_goal: 'low',
-	update_goal: 'low',
 	update_app_settings: 'low',
-	update_room_settings: 'low',
 	update_space: 'low',
-	create_room: 'low',
 	create_space: 'low',
 	start_workflow_run: 'low',
-	create_task: 'low',
-	update_task: 'low',
-	set_task_status: 'low',
-	set_goal_status: 'low',
-	pause_schedule: 'low',
-	resume_schedule: 'low',
 
 	// ── Medium risk ───────────────────────────────────────────────────────────
 	delete_space: 'medium',
-	delete_room: 'medium',
-	delete_goal: 'medium',
 	cancel_workflow_run: 'medium',
-	stop_session: 'medium',
-	send_message_to_room: 'medium',
-	send_message_to_task: 'medium',
-	approve_task: 'medium',
-	reject_task: 'medium',
 	approve_gate: 'medium',
 	reject_gate: 'medium',
 	add_mcp_server: 'medium',
@@ -51,11 +32,6 @@ export const ActionClassification: Record<string, ActionRiskLevel> = {
 	delete_skill: 'medium',
 
 	// ── High risk ─────────────────────────────────────────────────────────────
-	delete_room_with_active_tasks: 'high',
-	bulk_delete_rooms: 'high',
-	bulk_delete_spaces: 'high',
-	bulk_cancel_sessions: 'high',
-	bulk_delete_goals: 'high',
 	undo_last_action: 'high',
 };
 

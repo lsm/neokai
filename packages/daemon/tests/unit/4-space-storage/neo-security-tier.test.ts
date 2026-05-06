@@ -40,23 +40,23 @@ describe('getConfirmationRequired', () => {
 	});
 
 	it('conservative mode requires confirmation for high risk', () => {
-		expect(getConfirmationRequired('conservative', 'bulk_delete_rooms')).toBe(true);
+		expect(getConfirmationRequired('conservative', 'undo_last_action')).toBe(true);
 	});
 
 	it('balanced mode does NOT require confirmation for low risk tool', () => {
-		expect(getConfirmationRequired('balanced', 'create_goal')).toBe(false);
+		expect(getConfirmationRequired('balanced', 'toggle_skill')).toBe(false);
 	});
 
 	it('balanced mode requires confirmation for medium risk tool', () => {
-		expect(getConfirmationRequired('balanced', 'delete_room')).toBe(true);
+		expect(getConfirmationRequired('balanced', 'delete_space')).toBe(true);
 	});
 
 	it('balanced mode requires confirmation for high risk tool', () => {
-		expect(getConfirmationRequired('balanced', 'bulk_delete_rooms')).toBe(true);
+		expect(getConfirmationRequired('balanced', 'undo_last_action')).toBe(true);
 	});
 
 	it('autonomous mode never requires confirmation', () => {
-		expect(getConfirmationRequired('autonomous', 'bulk_delete_rooms')).toBe(false);
+		expect(getConfirmationRequired('autonomous', 'undo_last_action')).toBe(false);
 	});
 
 	it('unknown tool defaults to medium risk (confirmed in conservative)', () => {
@@ -79,20 +79,16 @@ describe('ActionClassification', () => {
 		expect(ActionClassification['toggle_mcp_server']).toBe('low');
 	});
 
-	it('enable_skill is low risk', () => {
-		expect(ActionClassification['enable_skill']).toBe('low');
+	it('toggle_skill is low risk', () => {
+		expect(ActionClassification['toggle_skill']).toBe('low');
 	});
 
-	it('create_goal is low risk', () => {
-		expect(ActionClassification['create_goal']).toBe('low');
+	it('update_space is low risk', () => {
+		expect(ActionClassification['update_space']).toBe('low');
 	});
 
 	it('update_app_settings is low risk', () => {
 		expect(ActionClassification['update_app_settings']).toBe('low');
-	});
-
-	it('create_room is low risk', () => {
-		expect(ActionClassification['create_room']).toBe('low');
 	});
 
 	it('create_space is low risk', () => {
@@ -103,24 +99,20 @@ describe('ActionClassification', () => {
 		expect(ActionClassification['start_workflow_run']).toBe('low');
 	});
 
-	it('delete_room is medium risk', () => {
-		expect(ActionClassification['delete_room']).toBe('medium');
+	it('delete_space is medium risk', () => {
+		expect(ActionClassification['delete_space']).toBe('medium');
 	});
 
-	it('send_message_to_room is medium risk', () => {
-		expect(ActionClassification['send_message_to_room']).toBe('medium');
+	it('cancel_workflow_run is medium risk', () => {
+		expect(ActionClassification['cancel_workflow_run']).toBe('medium');
 	});
 
 	it('approve_gate is medium risk', () => {
 		expect(ActionClassification['approve_gate']).toBe('medium');
 	});
 
-	it('bulk_delete_rooms is high risk', () => {
-		expect(ActionClassification['bulk_delete_rooms']).toBe('high');
-	});
-
-	it('delete_room_with_active_tasks is high risk', () => {
-		expect(ActionClassification['delete_room_with_active_tasks']).toBe('high');
+	it('undo_last_action is high risk', () => {
+		expect(ActionClassification['undo_last_action']).toBe('high');
 	});
 
 	it('all entries are valid risk levels', () => {
@@ -141,11 +133,11 @@ describe('PendingActionStore', () => {
 	});
 
 	it('stores and retrieves a pending action', () => {
-		const id = store.store({ toolName: 'delete_room', input: { roomId: 'r1' } });
+		const id = store.store({ toolName: 'delete_space', input: { spaceId: 's1' } });
 		const action = store.retrieve(id);
 		expect(action).toBeDefined();
-		expect(action!.toolName).toBe('delete_room');
-		expect(action!.input).toEqual({ roomId: 'r1' });
+		expect(action!.toolName).toBe('delete_space');
+		expect(action!.input).toEqual({ spaceId: 's1' });
 	});
 
 	it('returns undefined for unknown actionId', () => {
@@ -199,7 +191,7 @@ describe('PendingActionStore', () => {
 	it('size reflects stored action count', () => {
 		expect(store.size).toBe(0);
 		store.store({ toolName: 'toggle_skill', input: {} });
-		store.store({ toolName: 'delete_room', input: {} });
+		store.store({ toolName: 'delete_space', input: {} });
 		expect(store.size).toBe(2);
 	});
 });
@@ -215,8 +207,8 @@ describe('makeConfirmActionTool', () => {
 
 	it('executes the stored action and removes it from the store', async () => {
 		const id = store.store({
-			toolName: 'create_goal',
-			input: { roomId: 'r1', title: 'My Goal' },
+			toolName: 'create_space',
+			input: { name: 'My Space', workspace_path: '/tmp/ws' },
 		});
 		const executor = async (_tool: string, input: Record<string, unknown>) => ({
 			created: true,
@@ -226,7 +218,7 @@ describe('makeConfirmActionTool', () => {
 
 		const result = await confirm({ actionId: id });
 		expect(result.success).toBe(true);
-		expect(result.result).toEqual({ created: true, roomId: 'r1', title: 'My Goal' });
+		expect(result.result).toEqual({ created: true, name: 'My Space', workspace_path: '/tmp/ws' });
 		expect(store.retrieve(id)).toBeUndefined();
 	});
 
@@ -238,7 +230,7 @@ describe('makeConfirmActionTool', () => {
 	});
 
 	it('returns error when executor throws', async () => {
-		const id = store.store({ toolName: 'delete_room', input: {} });
+		const id = store.store({ toolName: 'delete_space', input: {} });
 		const executor = async () => {
 			throw new Error('Permission denied');
 		};
@@ -275,7 +267,7 @@ describe('makeCancelActionTool', () => {
 	});
 
 	it('removes a pending action and returns success', () => {
-		const id = store.store({ toolName: 'delete_room', input: {} });
+		const id = store.store({ toolName: 'delete_space', input: {} });
 		const cancel = makeCancelActionTool(store);
 		const result = cancel({ actionId: id });
 		expect(result.success).toBe(true);
