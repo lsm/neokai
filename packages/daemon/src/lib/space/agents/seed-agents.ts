@@ -70,13 +70,24 @@ const REVIEWER_TOOLS: string[] = [
 	'Glob',
 	'WebFetch',
 	'WebSearch',
+	'Skill',
+	'ToolSearch',
 	'Task',
 	'TaskOutput',
 	'TaskStop',
 ];
 
 /** QA: read-only + bash for running tests — no Write or Edit */
-const QA_TOOLS: string[] = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
+const QA_TOOLS: string[] = [
+	'Read',
+	'Bash',
+	'Grep',
+	'Glob',
+	'WebFetch',
+	'WebSearch',
+	'Skill',
+	'ToolSearch',
+];
 
 /**
  * Tool profiles per preset agent name. Exported for testing and external consumption.
