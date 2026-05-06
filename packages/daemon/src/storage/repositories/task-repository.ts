@@ -117,24 +117,29 @@ export class TaskRepository {
 	listTasks(roomId?: string | null, filter?: TaskFilter): NeoTask[] {
 		let query = `SELECT * FROM tasks`;
 		const params: SQLiteValue[] = [];
+		let hasWhere = false;
 
 		if (roomId) {
 			query += ` WHERE room_id = ?`;
 			params.push(roomId);
+			hasWhere = true;
 		}
 
 		// Exclude archived tasks by default (status is the source of truth for archival)
 		if (!filter?.includeArchived) {
-			query += params.length > 0 ? ` AND status != 'archived'` : ` WHERE status != 'archived'`;
+			query += hasWhere ? ` AND status != 'archived'` : ` WHERE status != 'archived'`;
+			hasWhere = true;
 		}
 
 		if (filter?.status) {
-			query += params.length > 0 ? ` AND status = ?` : ` WHERE status = ?`;
+			query += hasWhere ? ` AND status = ?` : ` WHERE status = ?`;
 			params.push(filter.status);
+			hasWhere = true;
 		}
 		if (filter?.priority) {
-			query += params.length > 0 ? ` AND priority = ?` : ` WHERE priority = ?`;
+			query += hasWhere ? ` AND priority = ?` : ` WHERE priority = ?`;
 			params.push(filter.priority);
+			hasWhere = true;
 		}
 		query += ` ORDER BY updated_at DESC`;
 

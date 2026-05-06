@@ -91,6 +91,9 @@ export function setupLegacyInboxCompatHandlers(
 		if (!task) {
 			throw new Error(`Task not found: ${taskId}`);
 		}
+		if (task.roomId !== params.roomId) {
+			throw new Error(`Task does not belong to the specified room`);
+		}
 		if (task.status !== 'review') {
 			throw new Error(`Task is not in review status (current: ${task.status})`);
 		}
@@ -134,6 +137,9 @@ export function setupLegacyInboxCompatHandlers(
 		const task = taskRepo.getTask(taskId);
 		if (!task) {
 			throw new Error(`Task not found: ${taskId}`);
+		}
+		if (task.roomId !== params.roomId) {
+			throw new Error(`Task does not belong to the specified room`);
 		}
 		if (task.status !== 'review') {
 			throw new Error(`Task is not in review status (current: ${task.status})`);

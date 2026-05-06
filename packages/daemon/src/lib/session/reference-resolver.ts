@@ -151,12 +151,8 @@ export class ReferenceResolver {
 	// ============================================================================
 
 	private resolveTask(id: string, roomId: string | null): ResolvedReference | null {
-		if (!roomId) {
-			return null;
-		}
-
 		let task = this.deps.taskRepo.getTask(id);
-		if (!task) {
+		if (!task && roomId) {
 			task = this.deps.taskRepo.getTaskByShortId(roomId, id);
 		}
 
@@ -164,8 +160,10 @@ export class ReferenceResolver {
 			return null;
 		}
 
-		// Confirm the task belongs to the session's room (prevent cross-room access via UUID)
-		if ((task as { roomId?: string }).roomId !== roomId) {
+		// When a room context is present, confirm the task belongs to that room
+		// (prevent cross-room access via UUID). Without room context, UUID lookup
+		// is allowed for global sessions (e.g. neo, lobby).
+		if (roomId && (task as { roomId?: string }).roomId !== roomId) {
 			return null;
 		}
 
@@ -173,12 +171,8 @@ export class ReferenceResolver {
 	}
 
 	private resolveGoal(id: string, roomId: string | null): ResolvedReference | null {
-		if (!roomId) {
-			return null;
-		}
-
 		let goal = this.deps.goalRepo.getGoal(id);
-		if (!goal) {
+		if (!goal && roomId) {
 			goal = this.deps.goalRepo.getGoalByShortId(roomId, id);
 		}
 
@@ -186,8 +180,10 @@ export class ReferenceResolver {
 			return null;
 		}
 
-		// Confirm the goal belongs to the session's room (prevent cross-room access via UUID)
-		if ((goal as { roomId?: string }).roomId !== roomId) {
+		// When a room context is present, confirm the goal belongs to that room
+		// (prevent cross-room access via UUID). Without room context, UUID lookup
+		// is allowed for global sessions (e.g. neo, lobby).
+		if (roomId && (goal as { roomId?: string }).roomId !== roomId) {
 			return null;
 		}
 
