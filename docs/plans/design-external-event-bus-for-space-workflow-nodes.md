@@ -503,24 +503,42 @@ class GitHubEventExtension implements HttpExternalEventExtension, RpcExternalEve
   ] as const;
 
   private context?: ExternalEventExtensionContext;
-  private pollTimer?: ReturnType<typeof setInterval>;
+  private pollTimer?: ReturnType<typeof setTimeout>;
+  private stopped = false;
 
   async start(context: ExternalEventExtensionContext): Promise<void> {
     this.context = context;
+    this.stopped = false;
     const global = await context.config.getGlobalConfig(this.sourceId);
     if (!global.globallyEnabled || !global.capabilities.polling) return;
 
-    this.pollTimer = setInterval(() => {
-      void this.pollEnabledSpaces().catch((err) => {
-        log.warn('GitHubEventExtension: polling failed', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-    }, GITHUB_POLL_INTERVAL_MS);
+    // Use completion-scheduled polling instead of setInterval so a slow poll cycle
+    // cannot overlap the next one and amplify duplicate fetches/rate-limit pressure.
+    this.scheduleNextPoll();
   }
 
   async stop(): Promise<void> {
-    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.stopped = true;
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+  }
+
+  private scheduleNextPoll(): void {
+    if (this.stopped) return;
+    this.pollTimer = setTimeout(() => {
+      void this.runPollCycle();
+    }, GITHUB_POLL_INTERVAL_MS);
+  }
+
+  private async runPollCycle(): Promise<void> {
+    try {
+      await this.pollEnabledSpaces();
+    } catch (err) {
+      log.warn('GitHubEventExtension: polling failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      this.scheduleNextPoll();
+    }
   }
 
   registerRpcHandlers(hub: MessageHub, context: ExternalEventExtensionContext): void {
@@ -553,7 +571,17 @@ class GitHubEventExtension implements HttpExternalEventExtension, RpcExternalEve
     }
 
     const raw = await req.text();
-    const normalized = normalizeGitHubWebhook(req.headers, JSON.parse(raw));
+    let payload: unknown;
+    try {
+      payload = JSON.parse(raw);
+    } catch (err) {
+      log.warn('GitHubEventExtension: invalid webhook JSON', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return Response.json({ ignored: true, reason: 'invalid_json' }, { status: 400 });
+    }
+
+    const normalized = normalizeGitHubWebhook(req.headers, payload);
     if (!normalized) return Response.json({ ignored: true });
 
     const targetSpaces = await this.resolveEnabledSpacesForWebhook(context, req, raw, normalized);
