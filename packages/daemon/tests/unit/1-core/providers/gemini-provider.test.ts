@@ -109,13 +109,15 @@ describe('GeminiOAuthProvider', () => {
 	});
 
 	describe('startOAuthFlow', () => {
-		it('returns an auth URL', async () => {
+		it('returns an auth URL with the Gemini CLI loopback callback redirect', async () => {
 			const provider = new GeminiOAuthProvider();
 			const flow = await provider.startOAuthFlow();
+			const params = new URL(flow.authUrl!).searchParams;
 
 			expect(flow.type).toBe('redirect');
 			expect(flow.authUrl).toContain('accounts.google.com');
 			expect(flow.authUrl).toContain('client_id=');
+			expect(params.get('redirect_uri')).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/oauth2callback$/);
 			expect(flow.message).toContain('authorize');
 		});
 	});

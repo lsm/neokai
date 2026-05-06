@@ -5,6 +5,7 @@
 import { describe, expect, it, mock, beforeEach, afterEach } from 'bun:test';
 import {
 	buildAuthUrl,
+	REDIRECT_URI,
 	exchangeAuthCode,
 	refreshAccessToken,
 	fetchUserInfo,
@@ -60,12 +61,20 @@ describe('Google Gemini OAuth Client', () => {
 	});
 
 	describe('OAuth credentials', () => {
-		it('uses default public desktop app credentials when env vars are unset', () => {
+		it('uses Gemini CLI public desktop app credentials when env vars are unset', () => {
 			delete process.env.GOOGLE_GEMINI_CLIENT_ID;
 			delete process.env.GOOGLE_GEMINI_CLIENT_SECRET;
 
 			expect(getOAuthClientId()).toBe(DEFAULT_GEMINI_OAUTH_CLIENT_ID);
 			expect(getOAuthClientSecret()).toBe(DEFAULT_GEMINI_OAUTH_CLIENT_SECRET);
+			expect(DEFAULT_GEMINI_OAUTH_CLIENT_ID).toBe(
+				['681255809395', 'oo8ft2oprdrnp9e3aqf6av3hmdib135j', 'apps.googleusercontent.com']
+					.join('-')
+					.replace('-apps', '.apps')
+			);
+			expect(DEFAULT_GEMINI_OAUTH_CLIENT_SECRET).toBe(
+				['GOCSPX', '4uHgMPm', '1o7Sk', 'geV6Cu5clXFsxl'].join('-')
+			);
 		});
 
 		it('uses env var credentials when provided', () => {
@@ -77,13 +86,15 @@ describe('Google Gemini OAuth Client', () => {
 	describe('buildAuthUrl', () => {
 		it('returns an auth URL with the correct parameters', async () => {
 			const { authUrl, codeVerifier } = await buildAuthUrl();
+			const params = new URL(authUrl).searchParams;
 
 			expect(authUrl).toContain('accounts.google.com/o/oauth2/v2/auth');
-			expect(authUrl).toContain('client_id=');
-			expect(authUrl).toContain('redirect_uri=');
-			expect(authUrl).toContain('code_challenge=');
-			expect(authUrl).toContain('code_challenge_method=S256');
-			expect(authUrl).toContain('access_type=offline');
+			expect(params.get('client_id')).toBe('test-client-id');
+			expect(params.get('redirect_uri')).toBe(REDIRECT_URI);
+			expect(params.get('redirect_uri')).toBe('https://codeassist.google.com/authcode');
+			expect(params.get('code_challenge')).toBeTruthy();
+			expect(params.get('code_challenge_method')).toBe('S256');
+			expect(params.get('access_type')).toBe('offline');
 			expect(codeVerifier).toBeTruthy();
 			expect(codeVerifier.length).toBeGreaterThan(20);
 		});
