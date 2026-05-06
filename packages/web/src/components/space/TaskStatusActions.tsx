@@ -6,7 +6,7 @@ import type { SpaceTaskStatus } from '@neokai/shared';
  */
 export const VALID_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> = {
 	draft: ['open', 'archived'],
-	open: ['in_progress', 'blocked', 'done', 'cancelled'],
+	open: ['in_progress', 'blocked', 'review', 'done', 'cancelled'],
 	in_progress: ['open', 'review', 'done', 'blocked', 'cancelled'],
 	review: ['done', 'in_progress', 'cancelled', 'archived'],
 	// `approved` is the post-approval staging status. Conservative transition
@@ -14,7 +14,7 @@ export const VALID_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> 
 	// the PostApprovalRouter is unable to advance a task automatically.
 	approved: ['done', 'in_progress', 'archived'],
 	done: ['in_progress', 'archived'],
-	blocked: ['open', 'in_progress', 'archived'],
+	blocked: ['open', 'in_progress', 'review', 'archived'],
 	cancelled: ['open', 'in_progress', 'done', 'archived'],
 	archived: [],
 };
@@ -27,6 +27,7 @@ export const TRANSITION_LABELS: Record<string, string> = {
 	'draft->archived': 'Archive',
 	'open->in_progress': 'Start',
 	'open->blocked': 'Block',
+	'open->review': 'Submit for Review',
 	'open->done': 'Mark Done',
 	'open->cancelled': 'Cancel',
 	'in_progress->open': 'Pause',
@@ -48,6 +49,7 @@ export const TRANSITION_LABELS: Record<string, string> = {
 	'done->archived': 'Archive',
 	'blocked->open': 'Reopen',
 	'blocked->in_progress': 'Resume',
+	'blocked->review': 'Submit for Review',
 	'blocked->archived': 'Archive',
 	'cancelled->open': 'Reopen',
 	'cancelled->in_progress': 'Resume',

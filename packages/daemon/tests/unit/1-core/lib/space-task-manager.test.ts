@@ -575,18 +575,24 @@ describe('SpaceTaskManager', () => {
 			]);
 		});
 
-		it('blocked allows restart and archival', () => {
-			expect(VALID_SPACE_TASK_TRANSITIONS.blocked).toEqual(['open', 'in_progress', 'archived']);
+		it('blocked allows restart, review, and archival', () => {
+			expect(VALID_SPACE_TASK_TRANSITIONS.blocked).toEqual([
+				'open',
+				'in_progress',
+				'review',
+				'archived',
+			]);
 		});
 
 		it('archived is a true terminal state with no transitions', () => {
 			expect(VALID_SPACE_TASK_TRANSITIONS.archived).toEqual([]);
 		});
 
-		it('open allows in_progress, blocked, done, and cancelled', () => {
+		it('open allows in_progress, blocked, review, done, and cancelled', () => {
 			expect(VALID_SPACE_TASK_TRANSITIONS.open).toEqual([
 				'in_progress',
 				'blocked',
+				'review',
 				'done',
 				'cancelled',
 			]);
@@ -1055,6 +1061,38 @@ describe('SpaceTaskManager', () => {
 			expect(after?.status).toBe('done');
 			expect(after?.pendingCheckpointType).toBeFalsy();
 			expect(after?.pendingCompletionSubmittedAt).toBeFalsy();
+		});
+
+		it('transitions blocked→review and stamps pending-completion fields', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.failTask(task.id, 'waiting for dependency');
+
+			const reviewing = await manager.submitTaskForReview(task.id, {
+				submittedByNodeId: 'node-B',
+				reason: 'reviewer is ready to submit',
+			});
+
+			expect(reviewing.status).toBe('review');
+			expect(reviewing.pendingCheckpointType).toBe('task_completion');
+			expect(reviewing.pendingCompletionSubmittedByNodeId).toBe('node-B');
+			expect(reviewing.pendingCompletionReason).toBe('reviewer is ready to submit');
+		});
+
+		it('transitions open→review and stamps pending-completion fields', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			// Task stays in `open` — e.g. a review-only workflow where the
+			// reviewer node activates before the task ever hits `in_progress`.
+
+			const reviewing = await manager.submitTaskForReview(task.id, {
+				submittedByNodeId: null,
+				reason: 'review-only submit',
+			});
+
+			expect(reviewing.status).toBe('review');
+			expect(reviewing.pendingCheckpointType).toBe('task_completion');
+			expect(reviewing.pendingCompletionSubmittedByNodeId).toBeNull();
+			expect(reviewing.pendingCompletionReason).toBe('review-only submit');
 		});
 
 		it('writes status and pending-completion fields in a single UPDATE (atomicity)', async () => {

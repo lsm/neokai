@@ -19,6 +19,8 @@ export const testerAgent: AgentDefinition = {
 		'TaskStop',
 		'EnterPlanMode',
 		'ExitPlanMode',
+		'NotebookEdit',
+		'ToolSearch',
 	],
 	model: 'sonnet',
 	prompt: `You are a testing specialist. Your job is to write comprehensive tests that verify the stated requirements.

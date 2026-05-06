@@ -312,7 +312,7 @@ describe('SessionStatusBar', () => {
 	});
 
 	describe('Thinking Level', () => {
-		it('should show auto thinking level by default', () => {
+		it('should show off thinking level by default', () => {
 			const { container } = render(<SessionStatusBar {...defaultProps} />);
 
 			// Should have thinking level button with title
@@ -320,7 +320,7 @@ describe('SessionStatusBar', () => {
 			const thinkingButton = buttons.find(
 				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
 			);
-			expect(thinkingButton?.getAttribute('title')).toContain('Auto');
+			expect(thinkingButton?.getAttribute('title')).toContain('Off');
 		});
 
 		it('should show provided thinking level', () => {
@@ -530,9 +530,10 @@ describe('SessionStatusBar', () => {
 			)!;
 			fireEvent.click(thinkingButton);
 
-			expect(container.textContent).toContain('Auto');
+			expect(container.textContent).toContain('Off');
 			expect(container.textContent).toContain('Think 8k');
 			expect(container.textContent).toContain('Think 16k');
+			expect(container.textContent).toContain('Think 24k');
 			expect(container.textContent).toContain('Think 32k');
 		});
 
@@ -620,8 +621,8 @@ describe('SessionStatusBar', () => {
 			return null;
 		};
 
-		it('should show gray icon for auto level', () => {
-			const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="auto" />);
+		it('should show gray icon for off level', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="off" />);
 
 			const svg = getThinkingIcon(container);
 			expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-gray-400');
@@ -641,23 +642,23 @@ describe('SessionStatusBar', () => {
 			expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-amber-500');
 		});
 
-		it('should show amber-400 icon for think32k level', () => {
+		it('should show amber-300 icon for think32k level', () => {
 			const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="think32k" />);
 
 			const svg = getThinkingIcon(container);
-			expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-amber-400');
+			expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-amber-300');
 		});
 	});
 
 	describe('ThinkingBorderRing', () => {
-		it('should not show border ring for auto level', () => {
-			const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="auto" />);
+		it('should not show border ring for off level', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="off" />);
 
 			const buttons = Array.from(container.querySelectorAll('.control-btn'));
 			const thinkingButton = buttons.find(
 				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
 			);
-			// Auto level should have neutral border, not amber ring
+			// Off level should have neutral border, not amber ring
 			expect(thinkingButton?.className).toContain('border-dark-600/80');
 		});
 

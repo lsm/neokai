@@ -35,6 +35,7 @@ describe('MinimaxProvider', () => {
 				maxContextWindow: 200000,
 				functionCalling: true,
 				vision: true,
+				thinkingModes: 'off',
 			});
 		});
 	});
