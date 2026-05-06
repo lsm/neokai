@@ -79,11 +79,11 @@ CREATE TABLE IF NOT EXISTS task_thread_messages (
 
 const INDEX_DDL: ReadonlyArray<string> = [
 	`CREATE INDEX IF NOT EXISTS idx_ttm_task_created
-	 ON task_thread_messages(task_id, created_at, proj_id)`,
+	 ON task_thread_messages(task_id, created_at, source_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_ttm_task_session_created
-	 ON task_thread_messages(task_id, session_id, created_at, proj_id)`,
+	 ON task_thread_messages(task_id, session_id, created_at, source_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_ttm_session_created
-	 ON task_thread_messages(session_id, created_at, proj_id)`,
+	 ON task_thread_messages(session_id, created_at, source_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_ttm_source
 	 ON task_thread_messages(source, source_id)`,
 ];

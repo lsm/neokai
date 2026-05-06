@@ -1927,10 +1927,11 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					.replace(/\s+LIMIT\s+\?(\s+OFFSET\s+\?)?/, '')
 					.replace(/\s+/g, ' ')
 					.trim();
-				// Must end with either `id ASC|DESC` or `projId ASC|DESC` (tiebreaker).
-				// `projId` is the autoincrement key on `task_thread_messages` introduced
-				// in migration 118 — same purpose as a plain `id`, just monotonic.
-				const hasIdTiebreaker = /(?:\bID|PROJID)\s+(ASC|DESC)\s*$/.test(sqlForCheck);
+				// Must end with `id ASC|DESC` (tiebreaker). The `id` here is the
+				// immutable `source_id` from the original message table, not the
+				// autoincrement `proj_id`, so reinsertions by triggers (delete+insert
+				// on sdk_messages UPDATE) never shift turn boundaries.
+				const hasIdTiebreaker = /\bID\s+(ASC|DESC)\s*$/.test(sqlForCheck);
 				expect(hasIdTiebreaker).toBe(true, `${name} ORDER BY lacks deterministic id tiebreaker`);
 			}
 		});

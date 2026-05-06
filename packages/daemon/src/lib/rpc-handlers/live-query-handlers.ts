@@ -712,7 +712,6 @@ const SPACE_TASK_MESSAGES_BASE_CTE = `
 WITH joined AS (
   SELECT
     source_id          AS id,
-    proj_id            AS projId,
     session_id         AS sessionId,
     kind,
     role,
@@ -755,7 +754,7 @@ SELECT
   iteration,
   parentToolUseId
 FROM joined
-ORDER BY createdAt ASC, projId ASC
+ORDER BY createdAt ASC, id ASC
 `.trim();
 
 /** Maximum non-terminal rows to keep per (session, turn) in compact mode. */
@@ -791,7 +790,7 @@ session_turns AS (
     COALESCE(
       SUM(CASE WHEN j.messageType = 'result' THEN 1 ELSE 0 END) OVER (
         PARTITION BY j.sessionId
-        ORDER BY j.createdAt ASC, j.projId ASC
+        ORDER BY j.createdAt ASC, j.id ASC
         ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
       ),
       0
@@ -804,14 +803,14 @@ ranked AS (
     CASE
       WHEN st.isTerminal = 0 AND st.isRenderable = 1 THEN ROW_NUMBER() OVER (
         PARTITION BY st.sessionId, st.turnIndex, st.isTerminal, st.isRenderable
-        ORDER BY st.createdAt DESC, st.projId DESC
+        ORDER BY st.createdAt DESC, st.id DESC
       )
       ELSE NULL
     END AS nonTerminalRankDesc,
     CASE
       WHEN st.isTerminal = 0 AND st.isRenderable = 1 AND st.messageType = 'user' THEN ROW_NUMBER() OVER (
         PARTITION BY st.sessionId, st.turnIndex, st.isTerminal, st.isRenderable, st.messageType
-        ORDER BY st.createdAt ASC, st.projId ASC
+        ORDER BY st.createdAt ASC, st.id ASC
       )
       ELSE NULL
     END AS userRowRankAsc
@@ -891,7 +890,7 @@ SELECT
   iteration,
   parentToolUseId
 FROM selected
-ORDER BY createdAt ASC, projId ASC
+ORDER BY createdAt ASC, id ASC
 `.trim();
 
 /**
@@ -933,7 +932,6 @@ ${SPACE_TASK_MESSAGES_BASE_CTE},
 session_turns AS (
   SELECT
     j.id,
-    j.projId,
     j.sessionId,
     j.kind,
     j.role,
@@ -948,7 +946,7 @@ session_turns AS (
     COALESCE(
       SUM(CASE WHEN j.messageType = 'result' THEN 1 ELSE 0 END) OVER (
         PARTITION BY j.sessionId
-        ORDER BY j.createdAt ASC, j.projId ASC
+        ORDER BY j.createdAt ASC, j.id ASC
         ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
       ),
       0
@@ -988,7 +986,6 @@ assistant_entries AS (
     ar.turnIndex AS turnIndex,
     ar.createdAt AS ts,
     ar.id AS rowId,
-    ar.projId AS projId,
     CAST(je.key AS INTEGER) AS blockIdx,
     json_extract(ar.content, '$.uuid') AS uuid,
     json_extract(je.value, '$.type') AS blockType,
@@ -1019,7 +1016,6 @@ user_entries AS (
     ar.turnIndex AS turnIndex,
     ar.createdAt AS ts,
     ar.id AS rowId,
-    ar.projId AS projId,
     -1 AS blockIdx,
     json_extract(ar.content, '$.uuid') AS uuid,
     CASE
@@ -1075,7 +1071,6 @@ SELECT
   turnIndex,
   ts,
   rowId,
-  projId,
   blockIdx,
   uuid,
   blockType,
@@ -1090,7 +1085,6 @@ SELECT
   turnIndex,
   ts,
   rowId,
-  projId,
   blockIdx,
   uuid,
   blockType,
@@ -1099,7 +1093,7 @@ SELECT
   textValue,
   thinkingValue
 FROM user_entries
-ORDER BY sessionId ASC, ts ASC, projId ASC, blockIdx ASC
+ORDER BY sessionId ASC, ts ASC, rowId ASC, blockIdx ASC
 `.trim();
 
 // ============================================================================
