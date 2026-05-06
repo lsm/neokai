@@ -41,11 +41,19 @@ describe('Task Draft RPC Handlers', () => {
 		}
 	});
 
-	test('legacy inbox compatibility RPCs are not registered', async () => {
-		for (const method of ['inbox.reviewTasks', 'task.approve', 'task.reject']) {
-			await expect(daemon.messageHub.request(method, {})).rejects.toThrow(
-				`No handler for method: ${method}`
-			);
+	test('legacy inbox compatibility RPCs are registered', async () => {
+		// inbox.reviewTasks should succeed (returns empty array when no review tasks)
+		const inboxResult = await daemon.messageHub.request('inbox.reviewTasks', {});
+		expect(inboxResult).toHaveProperty('tasks');
+
+		// task.approve / task.reject should throw validation errors (not "No handler")
+		for (const method of ['task.approve', 'task.reject']) {
+			try {
+				await daemon.messageHub.request(method, {});
+				throw new Error(`Expected ${method} to throw`);
+			} catch (err) {
+				expect((err as Error).message).not.toContain('No handler for method');
+			}
 		}
 	});
 });

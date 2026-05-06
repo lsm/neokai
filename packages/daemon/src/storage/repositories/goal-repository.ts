@@ -177,15 +177,18 @@ export class GoalRepository {
 	listGoals(roomId?: string | null, status?: GoalStatus): RoomGoal[] {
 		let query = `SELECT * FROM goals`;
 		const params: SQLiteValue[] = [];
+		let hasWhere = false;
 
 		if (roomId) {
 			query += ` WHERE room_id = ?`;
 			params.push(roomId);
+			hasWhere = true;
 		}
 
 		if (status) {
-			query += params.length > 0 ? ` AND status = ?` : ` WHERE status = ?`;
+			query += hasWhere ? ` AND status = ?` : ` WHERE status = ?`;
 			params.push(status);
+			hasWhere = true;
 		}
 
 		query += ` ORDER BY priority DESC, created_at ASC`;
