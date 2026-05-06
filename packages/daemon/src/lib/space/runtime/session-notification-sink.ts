@@ -27,6 +27,7 @@
 
 import type { NotificationSink, SpaceNotificationEvent } from './notification-sink';
 import type { SpaceAutonomyLevel } from '@neokai/shared/types/space';
+import type { MessageDeliveryMode, MessageOrigin } from '@neokai/shared';
 import { Logger } from '../../logger';
 
 /**
@@ -37,7 +38,7 @@ interface SessionFactory {
 	injectMessage(
 		sessionId: string,
 		message: string,
-		opts?: { deliveryMode?: string }
+		opts?: { deliveryMode?: MessageDeliveryMode; origin?: MessageOrigin }
 	): Promise<void>;
 }
 
@@ -83,7 +84,6 @@ export class SessionNotificationSink implements NotificationSink {
 			await this.sessionFactory.injectMessage(this.sessionId, message, {
 				deliveryMode: 'defer',
 				origin: 'system',
-				isSyntheticMessage: true,
 			});
 		} catch (err) {
 			// Session not found or unavailable — log warning, do not propagate.
