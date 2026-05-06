@@ -126,6 +126,79 @@ describe('resolveTargetSessionId', () => {
 			'reviewer-b-session'
 		);
 	});
+
+	it('normalizes agent names for fallback matching', () => {
+		const membersWithMixedNames: SpaceTaskActivityMember[] = [
+			{
+				id: 'm1',
+				sessionId: 'code-reviewer-session',
+				kind: 'node_agent',
+				label: 'Code Reviewer',
+				role: 'code-reviewer',
+				state: 'active',
+				processingStatus: 'idle',
+				messageCount: 0,
+			},
+			{
+				id: 'm2',
+				sessionId: 'other-session',
+				kind: 'node_agent',
+				label: 'Other',
+				role: 'other_agent',
+				state: 'active',
+				processingStatus: 'idle',
+				messageCount: 0,
+				nodeExecution: {
+					nodeExecutionId: 'ne-other',
+					nodeId: 'n2',
+					agentName: 'Other Agent',
+					status: 'in_progress',
+				},
+			},
+		];
+
+		// role 'code-reviewer' should match target agentName 'code_reviewer' (underscore vs hyphen)
+		expect(
+			resolveTargetSessionId(
+				{
+					id: 'node:n1:code_reviewer',
+					kind: 'node_agent' as const,
+					label: 'Code Reviewer',
+					agentName: 'code_reviewer',
+				},
+				membersWithMixedNames,
+				'task-session'
+			)
+		).toBe('code-reviewer-session');
+
+		// role 'code-reviewer' should also match target agentName 'CodeReviewer' (casing)
+		expect(
+			resolveTargetSessionId(
+				{
+					id: 'node:n1:CodeReviewer',
+					kind: 'node_agent' as const,
+					label: 'Code Reviewer',
+					agentName: 'CodeReviewer',
+				},
+				membersWithMixedNames,
+				'task-session'
+			)
+		).toBe('code-reviewer-session');
+
+		// nodeExecution.agentName 'Other Agent' should match target 'other_agent' (trailing "agent" stripped)
+		expect(
+			resolveTargetSessionId(
+				{
+					id: 'node:n2:other_agent',
+					kind: 'node_agent' as const,
+					label: 'Other',
+					agentName: 'other_agent',
+				},
+				membersWithMixedNames,
+				'task-session'
+			)
+		).toBe('other-session');
+	});
 });
 
 describe('useTargetSessionContext', () => {

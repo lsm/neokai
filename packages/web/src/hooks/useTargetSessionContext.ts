@@ -40,6 +40,14 @@ export interface UseTargetSessionContextResult {
 	setThinkingLevel: (level: ThinkingLevel) => Promise<void>;
 }
 
+/** Normalize an agent/target name for comparison, stripping suffixes and punctuation. */
+function normalizeTargetName(name: string | null | undefined): string {
+	return (name ?? '')
+		.toLowerCase()
+		.replace(/(?:\s+agent)+$/, '')
+		.replace(/[\s_-]+/g, '');
+}
+
 /**
  * Resolve a composer target to its backing session ID.
  */
@@ -57,7 +65,10 @@ export function resolveTargetSessionId(
 		if (target.nodeExecutionId) {
 			return m.nodeExecution?.nodeExecutionId === target.nodeExecutionId;
 		}
-		return m.role === target.agentName || m.nodeExecution?.agentName === target.agentName;
+		return (
+			normalizeTargetName(m.role) === normalizeTargetName(target.agentName) ||
+			normalizeTargetName(m.nodeExecution?.agentName) === normalizeTargetName(target.agentName)
+		);
 	});
 	return member?.sessionId ?? null;
 }
