@@ -49,12 +49,13 @@ Supporting services:
 2. **Commands request actions**. Command names should be imperative/action-oriented, for example `agent.message.inject`, `space.workflow.resume`, `github.repo.watch`.
 3. **Queries read state**. Query names should return data and avoid side effects, for example `space.workflowRun.get`, `room.tasks.list`.
 4. **No silent failures**. Handler errors must be logged, returned, or surfaced through a failure result/event.
-5. **Publish semantics are explicit**. Fire-and-forget and wait-for-handlers behavior must be separate APIs or clearly documented.
+5. **Publish semantics are explicit and safe by default**. `publish(...)` waits for local internal handlers to settle; fire-and-forget must use the explicitly named `publishAsync(...)` API.
 6. **Channels are first-class**. Do not overload `sessionId` as a generic channel field in new APIs.
 7. **Internal events are not automatically client events**. Client visibility is explicit through `ClientEventBridge`.
 8. **State projection is not event forwarding**. State caches and client broadcasting are separate responsibilities.
-9. **External event delivery is durable and idempotent**. Source dedupe and per-subscription delivery lifecycle belong to the external event subsystem, not source-specific services.
-10. **Current infrastructure can remain under the hood during migration**. The clean APIs should wrap existing `DaemonHub`/`MessageHub` first, then progressively replace legacy concepts.
+9. **The internal bus is not a persistence layer**. `InternalEventBus` does not persist envelopes or provide replay in v1; durability stays domain-specific.
+10. **External event delivery is durable and idempotent**. Source dedupe and per-subscription delivery lifecycle belong to the external event subsystem, not source-specific services.
+11. **Current infrastructure can remain under the hood during migration**. The clean APIs should wrap existing `DaemonHub`/`MessageHub` first, then progressively replace legacy concepts.
 
 ## Target Architecture
 
@@ -129,31 +130,33 @@ interface InternalEventEnvelope<TPayload> {
   payload: TPayload;
 }
 
-interface EventPublishAccepted {
-  eventId: string;
-  accepted: true;
-  handlerCount: number;
-}
-
 interface EventHandlerFailure {
   subscriberName?: string;
   error: unknown;
 }
 
-interface EventPublishResult extends EventPublishAccepted {
+interface EventPublishResult {
+  eventId: string;
+  handlerCount: number;
   failures: EventHandlerFailure[];
+}
+
+interface EventPublishAccepted {
+  eventId: string;
+  accepted: true;
+  queuedAt: number;
 }
 
 interface InternalEventBus<TEventMap> {
   publish<K extends keyof TEventMap>(
     name: K,
     event: { channel: EventChannel; payload: TEventMap[K]; correlationId?: string; causationId?: string },
-  ): Promise<EventPublishAccepted>;
+  ): Promise<EventPublishResult>;
 
-  publishAndWait<K extends keyof TEventMap>(
+  publishAsync<K extends keyof TEventMap>(
     name: K,
     event: { channel: EventChannel; payload: TEventMap[K]; correlationId?: string; causationId?: string },
-  ): Promise<EventPublishResult>;
+  ): Promise<EventPublishAccepted>;
 
   subscribe<K extends keyof TEventMap>(
     name: K,
@@ -163,7 +166,7 @@ interface InternalEventBus<TEventMap> {
 }
 ```
 
-`publish(...)` means accepted/enqueued. `publishAndWait(...)` means all local internal handlers have completed or reported failure. Neither mode may swallow handler failures silently.
+`publish(...)` is the safe default: it waits for all local internal handlers to settle and returns handler counts/failures. `publishAsync(...)` is the explicit fire-and-forget API: it only accepts/enqueues delivery and returns before handlers finish. Neither mode may swallow handler failures silently; async failures must be logged with event name, channel, and subscriber context.
 
 ### InternalCommandBus
 
@@ -183,7 +186,7 @@ interface InternalCommandBus<TCommandMap> {
 }
 ```
 
-Commands should normally have one owner/handler. Duplicate command handlers should be rejected unless explicitly configured as middleware.
+Commands have one owner/handler in v1. Duplicate command handlers are rejected, and the command bus does not support middleware initially. Cross-cutting concerns such as validation, authorization, logging, transactions, and metrics should stay explicit in command handlers or nearby services until repeated patterns justify a later middleware design.
 
 ### InternalQueryBus
 
@@ -329,13 +332,15 @@ Tasks:
 2. Add initial `InternalCommandBus` and `InternalQueryBus` implementations.
 3. Add `Channels` helpers that serialize to existing channel strings.
 4. Add a small architecture doc comment in each module explaining event/command/query semantics.
-5. Add tests for registration, dispatch, query execution, unsubscribe, and duplicate command/query handler handling.
+5. Define canonical daemon event names under the new convention and begin migrating existing names as soon as the façade exists.
+6. Add tests for registration, dispatch, query execution, unsubscribe, duplicate command/query handler handling, and temporary event-name aliases used during migration.
 
 Exit criteria:
 
 - new code can depend on `InternalEventBus`, `InternalCommandBus`, and `InternalQueryBus`;
 - existing behavior remains backed by current hub infrastructure;
-- channels are constructed through helpers in new code.
+- channels are constructed through helpers in new code;
+- daemon event names start moving to the canonical dot/camelCase convention, with only short-lived aliases for surgical migration PRs.
 
 ### Milestone 3 — Fix event delivery semantics and observability
 
@@ -344,7 +349,7 @@ Goal: make the internal event layer safe for critical workflows.
 Tasks:
 
 1. Fix or wrap `TypedHub` local dispatch so async handlers can be awaited.
-2. Add explicit APIs for accepted/enqueued publish vs publish-and-wait.
+2. Implement `publish(...)` as awaited local-handler delivery and `publishAsync(...)` as the explicit fire-and-forget/accepted-only API.
 3. Stop silently swallowing handler errors; log event name, channel, subscriber name, and error.
 4. Return structured publish results with handler counts and failures for wait mode.
 5. Add tests for async handler completion, error reporting, unsubscribe cleanup, and session/channel filtering.
@@ -352,8 +357,8 @@ Tasks:
 Exit criteria:
 
 - event handler failures are observable;
-- tests prove awaited mode waits for async handlers;
-- fire-and-forget semantics are explicit rather than accidental.
+- tests prove `publish(...)` waits for async handlers;
+- fire-and-forget semantics are explicit through `publishAsync(...)` rather than accidental.
 
 ### Milestone 4 — Extract client forwarding from `StateManager`
 
@@ -402,13 +407,13 @@ Tasks:
 2. Publish these events through `InternalEventBus`.
 3. Implement `SpaceAgentNotificationService` as a subscriber that turns selected Space events into agent-facing messages.
 4. Implement client bridge mappings for client-visible Space events.
-5. Keep `NotificationSink` as a compatibility adapter during migration.
+5. Keep `NotificationSink` only as a short-lived compatibility adapter until replacement subscribers exist, then remove it in the same migration track.
 
 Exit criteria:
 
 - new Space runtime state transitions publish domain events;
 - agent notifications and UI updates are subscribers, not parallel direct pipes;
-- compatibility sink can be removed after callers migrate.
+- `NotificationSink` compatibility is removed as soon as replacement subscribers cover the migrated transitions.
 
 ### Milestone 7 — Align GitHub and external event ingestion
 
@@ -422,7 +427,7 @@ Tasks:
 4. Add `ExternalEventTaskResolver` for task enrichment.
 5. Publish `externalEvent.published` through `InternalEventBus`.
 6. Route delivery through `ExternalEventRouter` and `InternalCommandBus` command `agent.message.inject`.
-7. Keep current `SpaceGitHubService` direct injection path as a migration compatibility path until the new route proves stable.
+7. Remove the current `SpaceGitHubService` direct injection path as soon as the `ExternalEventService`/`ExternalEventRouter` replacement path is available and covered by tests.
 
 Exit criteria:
 
@@ -456,13 +461,13 @@ Exit criteria:
 - **Preserve behavior in bridge extraction.** First move should be structural, not semantic.
 - **Instrument failures early.** Event-driven systems are hard to debug if handler failures vanish.
 
-## Open Questions
+## Decisions
 
-1. Should `publish(...)` default to fire-and-forget or should only an explicitly named `publishAsync(...)` do that?
-2. Should internal event envelopes be persisted for selected durable event classes, or should persistence remain domain-specific?
-3. Should `InternalCommandBus` support middleware, or only one handler per command?
-4. How aggressively should existing daemon event names be migrated to the new naming convention versus grandfathered?
-5. What is the minimum compatibility period for `NotificationSink` and `SpaceGitHubService` direct delivery?
+1. `publish(...)` waits for local internal handlers to settle and returns an `EventPublishResult`; fire-and-forget must use the explicitly named `publishAsync(...)` API.
+2. `InternalEventBus` does not persist event envelopes in v1. Durability remains domain-specific: for example, `ExternalEventStore` persists external event lifecycle, while message/domain repositories persist their own state.
+3. `InternalCommandBus` does not support middleware in v1. Commands have one owner/handler; duplicate handlers are rejected.
+4. Existing daemon event names should migrate to the canonical dot/camelCase convention as soon as the `InternalEventBus` façade exists. Temporary aliases are acceptable only to keep migration PRs surgical and should be removed quickly.
+5. `NotificationSink` and direct `SpaceGitHubService` delivery are compatibility paths only. Remove them as soon as their `InternalEventBus`/`InternalCommandBus` replacement paths are available and tested.
 
 ## Summary
 
