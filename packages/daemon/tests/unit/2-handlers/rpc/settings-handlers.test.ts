@@ -175,9 +175,25 @@ function createMockDatabase(): {
 		db: {
 			getSession: mocks.getSession,
 			getDatabase: mocks.getDatabase,
+			workspaceHistory: {
+				list: mock(() => []),
+			},
 		} as unknown as Database,
 		mocks,
 	};
+}
+
+// Helper to create mock McpImportService
+function createMockMcpImportService(): {
+	service: import('../../../../src/lib/mcp').McpImportService;
+	refreshAllMock: ReturnType<typeof mock>;
+} {
+	const refreshAllMock = mock(() => []);
+	const service = {
+		refreshAll: refreshAllMock,
+	} as unknown as import('../../../../src/lib/mcp').McpImportService;
+
+	return { service, refreshAllMock };
 }
 
 describe('Settings RPC Handlers', () => {
@@ -186,6 +202,7 @@ describe('Settings RPC Handlers', () => {
 	let internalEventBusData: ReturnType<typeof createMockInternalEventBus>;
 	let settingsManagerData: ReturnType<typeof createMockSettingsManager>;
 	let dbData: ReturnType<typeof createMockDatabase>;
+	let mcpImportServiceData: ReturnType<typeof createMockMcpImportService>;
 
 	beforeEach(() => {
 		messageHubData = createMockMessageHub();
@@ -193,6 +210,7 @@ describe('Settings RPC Handlers', () => {
 		internalEventBusData = createMockInternalEventBus();
 		settingsManagerData = createMockSettingsManager();
 		dbData = createMockDatabase();
+		mcpImportServiceData = createMockMcpImportService();
 
 		// Setup handlers with mocked dependencies
 		registerSettingsHandlers(
@@ -200,7 +218,8 @@ describe('Settings RPC Handlers', () => {
 			settingsManagerData.settingsManager,
 			daemonHubData.daemonHub,
 			internalEventBusData.bus,
-			dbData.db
+			dbData.db,
+			mcpImportServiceData.service
 		);
 	});
 
@@ -387,6 +406,42 @@ describe('Settings RPC Handlers', () => {
 			// Verify the handler is defined and accepts the sessionId parameter
 			// The actual session-specific SettingsManager creation is tested in integration tests
 			expect(typeof handler).toBe('function');
+		});
+	});
+
+	describe('settings.mcp.refreshImports', () => {
+		it('returns empty results when mcpImportService is undefined', async () => {
+			// Re-register without the service to hit the short-circuit path
+			registerSettingsHandlers(
+				messageHubData.hub,
+				settingsManagerData.settingsManager,
+				daemonHubData.daemonHub,
+				internalEventBusData.bus,
+				dbData.db
+			);
+
+			const handler = messageHubData.handlers.get('settings.mcp.refreshImports');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({}, {})) as { results: unknown[] };
+
+			expect(result.results).toEqual([]);
+		});
+
+		it('calls refreshAll and publishes settings.updated through internalEventBus', async () => {
+			const handler = messageHubData.handlers.get('settings.mcp.refreshImports');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({}, {})) as { results: unknown[] };
+
+			expect(mcpImportServiceData.refreshAllMock).toHaveBeenCalled();
+			expect(internalEventBusData.publishAsyncMock).toHaveBeenCalledWith(
+				'settings.updated',
+				expect.objectContaining({
+					sessionId: 'global',
+				})
+			);
+			expect(result.results).toEqual([]);
 		});
 	});
 
