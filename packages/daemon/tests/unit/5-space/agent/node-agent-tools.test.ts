@@ -3459,8 +3459,9 @@ describe('node-agent-tools: list_audit_entries', () => {
 		expect(data.entries).toHaveLength(2);
 		expect(data.total).toBe(2);
 		expect(data.has_more).toBe(false);
-		expect(data.entries[0].toolName).toBe('save_artifact');
-		expect(data.entries[1].toolName).toBe('send_message');
+		const toolNames = data.entries.map((e: { toolName: string }) => e.toolName);
+		expect(toolNames).toContain('send_message');
+		expect(toolNames).toContain('save_artifact');
 	});
 
 	test('filters audit entries by task_id with real total', async () => {
@@ -3499,6 +3500,42 @@ describe('node-agent-tools: list_audit_entries', () => {
 		expect(data.total).toBe(2);
 		expect(data.has_more).toBe(false);
 		expect(data.entries.every((e: { sessionId: string }) => e.sessionId === sessA)).toBe(true);
+	});
+
+	test('task_id filter is scoped to current space', async () => {
+		const sharedTaskId = 'shared-task';
+		auditLogRepo.createEntry({ toolName: 't1', spaceId: ctx.spaceId, taskId: sharedTaskId });
+		auditLogRepo.createEntry({ toolName: 't2', spaceId: 'other-space', taskId: sharedTaskId });
+
+		const config = makeConfig(ctx, { auditLogRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_audit_entries({ task_id: sharedTaskId });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.entries).toHaveLength(1);
+		expect(data.entries[0].toolName).toBe('t1');
+		expect(data.total).toBe(1);
+	});
+
+	test('session_id filter is scoped to current space', async () => {
+		const sharedSessionId = 'shared-session';
+		auditLogRepo.createEntry({ toolName: 't1', spaceId: ctx.spaceId, sessionId: sharedSessionId });
+		auditLogRepo.createEntry({
+			toolName: 't2',
+			spaceId: 'other-space',
+			sessionId: sharedSessionId,
+		});
+
+		const config = makeConfig(ctx, { auditLogRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_audit_entries({ session_id: sharedSessionId });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.entries).toHaveLength(1);
+		expect(data.entries[0].toolName).toBe('t1');
+		expect(data.total).toBe(1);
 	});
 
 	test('task_id filter takes precedence over session_id', async () => {

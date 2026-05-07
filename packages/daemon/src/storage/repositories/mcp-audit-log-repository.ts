@@ -72,38 +72,68 @@ export class McpAuditLogRepository {
 	}
 
 	/**
-	 * List audit log entries for a space, ordered by timestamp desc
+	 * List audit log entries for a space, ordered by timestamp desc, id desc
+	 * (id is the tie-breaker for deterministic ordering when timestamps collide).
 	 */
 	listBySpace(spaceId: string, limit = 100, offset = 0): McpAuditLogEntry[] {
 		const rows = this.db
 			.prepare(
-				`SELECT * FROM mcp_audit_log WHERE space_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?`
+				`SELECT * FROM mcp_audit_log WHERE space_id = ? ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`
 			)
 			.all(spaceId, limit, offset) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToEntry(r));
 	}
 
 	/**
-	 * List audit log entries for a task, ordered by timestamp desc
+	 * List audit log entries for a task within a space, ordered by timestamp desc, id desc.
 	 */
 	listByTask(taskId: string, limit = 100, offset = 0): McpAuditLogEntry[] {
 		const rows = this.db
 			.prepare(
-				`SELECT * FROM mcp_audit_log WHERE task_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?`
+				`SELECT * FROM mcp_audit_log WHERE task_id = ? ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`
 			)
 			.all(taskId, limit, offset) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToEntry(r));
 	}
 
 	/**
-	 * List audit log entries for a session, ordered by timestamp desc
+	 * List audit log entries for a task scoped to a specific space.
+	 */
+	listByTaskAndSpace(taskId: string, spaceId: string, limit = 100, offset = 0): McpAuditLogEntry[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM mcp_audit_log WHERE task_id = ? AND space_id = ? ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`
+			)
+			.all(taskId, spaceId, limit, offset) as Record<string, unknown>[];
+		return rows.map((r) => this.rowToEntry(r));
+	}
+
+	/**
+	 * List audit log entries for a session, ordered by timestamp desc, id desc.
 	 */
 	listBySession(sessionId: string, limit = 100, offset = 0): McpAuditLogEntry[] {
 		const rows = this.db
 			.prepare(
-				`SELECT * FROM mcp_audit_log WHERE session_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?`
+				`SELECT * FROM mcp_audit_log WHERE session_id = ? ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`
 			)
 			.all(sessionId, limit, offset) as Record<string, unknown>[];
+		return rows.map((r) => this.rowToEntry(r));
+	}
+
+	/**
+	 * List audit log entries for a session scoped to a specific space.
+	 */
+	listBySessionAndSpace(
+		sessionId: string,
+		spaceId: string,
+		limit = 100,
+		offset = 0
+	): McpAuditLogEntry[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM mcp_audit_log WHERE session_id = ? AND space_id = ? ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`
+			)
+			.all(sessionId, spaceId, limit, offset) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToEntry(r));
 	}
 
@@ -128,12 +158,32 @@ export class McpAuditLogRepository {
 	}
 
 	/**
+	 * Count audit log entries for a task within a specific space.
+	 */
+	countByTaskAndSpace(taskId: string, spaceId: string): number {
+		const row = this.db
+			.prepare(`SELECT COUNT(*) as count FROM mcp_audit_log WHERE task_id = ? AND space_id = ?`)
+			.get(taskId, spaceId) as { count: number } | undefined;
+		return row?.count ?? 0;
+	}
+
+	/**
 	 * Count audit log entries for a session.
 	 */
 	countBySession(sessionId: string): number {
 		const row = this.db
 			.prepare(`SELECT COUNT(*) as count FROM mcp_audit_log WHERE session_id = ?`)
 			.get(sessionId) as { count: number } | undefined;
+		return row?.count ?? 0;
+	}
+
+	/**
+	 * Count audit log entries for a session within a specific space.
+	 */
+	countBySessionAndSpace(sessionId: string, spaceId: string): number {
+		const row = this.db
+			.prepare(`SELECT COUNT(*) as count FROM mcp_audit_log WHERE session_id = ? AND space_id = ?`)
+			.get(sessionId, spaceId) as { count: number } | undefined;
 		return row?.count ?? 0;
 	}
 

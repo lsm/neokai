@@ -1245,11 +1245,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				let entries;
 				let total: number;
 				if (args.task_id) {
-					entries = auditLogRepo.listByTask(args.task_id, limit, offset);
-					total = auditLogRepo.countByTask(args.task_id);
+					entries = auditLogRepo.listByTaskAndSpace(args.task_id, spaceId, limit, offset);
+					total = auditLogRepo.countByTaskAndSpace(args.task_id, spaceId);
 				} else if (args.session_id) {
-					entries = auditLogRepo.listBySession(args.session_id, limit, offset);
-					total = auditLogRepo.countBySession(args.session_id);
+					entries = auditLogRepo.listBySessionAndSpace(args.session_id, spaceId, limit, offset);
+					total = auditLogRepo.countBySessionAndSpace(args.session_id, spaceId);
 				} else {
 					entries = auditLogRepo.listBySpace(spaceId, limit, offset);
 					total = auditLogRepo.countBySpace(spaceId);

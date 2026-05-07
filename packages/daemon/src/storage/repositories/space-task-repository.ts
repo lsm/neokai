@@ -93,7 +93,7 @@ export class SpaceTaskRepository {
 		if (!includeArchived) {
 			query += ` AND status != 'archived'`;
 		}
-		query += ` ORDER BY updated_at DESC`;
+		query += ` ORDER BY updated_at DESC, id DESC`;
 		if (limit && limit > 0) {
 			query += ` LIMIT ? OFFSET ?`;
 			const stmt = this.db.prepare(query);
@@ -154,7 +154,7 @@ export class SpaceTaskRepository {
 	 * When limit is not provided (or 0), returns all matching tasks (unbounded).
 	 */
 	listByStatus(spaceId: string, status: SpaceTaskStatus, limit?: number, offset = 0): SpaceTask[] {
-		let query = `SELECT * FROM space_tasks WHERE space_id = ? AND status = ? ORDER BY updated_at DESC`;
+		let query = `SELECT * FROM space_tasks WHERE space_id = ? AND status = ? ORDER BY updated_at DESC, id DESC`;
 		if (limit && limit > 0) {
 			query += ` LIMIT ? OFFSET ?`;
 			const stmt = this.db.prepare(query);
