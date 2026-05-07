@@ -373,7 +373,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
 	'space_github_watched_repos',
 	// Node execution tracking — transient per-run agent state, not useful for ad-hoc queries
 	'node_executions',
-	// Task→session lookup projection (migration 118). Internal denormalisation
+	// Task→session lookup projection (migration 120). Internal denormalisation
 	// used by the live-query handlers to fan out a task into the set of sessions
 	// whose sdk_messages feed its task-thread timeline. Maintained at write time
 	// from space_tasks (task_agent leg) and node_executions (node_agent leg);

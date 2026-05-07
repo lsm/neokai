@@ -16,6 +16,13 @@ import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
+// Mock model-service functions
+const mockClearModelsCache = mock(() => {});
+
+mock.module('../../../../src/lib/model-service.js', () => ({
+	clearModelsCache: mockClearModelsCache,
+}));
+
 // Mock oauth-client functions
 const mockBuildAuthUrl = mock(async () => ({
 	authUrl: 'https://accounts.google.com/o/oauth2/v2/auth?mock=1',
@@ -144,6 +151,7 @@ describe('Gemini Auth RPC Handlers', () => {
 		mockPersistAddAccount.mockClear();
 		mockPersistRemoveAccount.mockClear();
 		mockUpdateAccount.mockClear();
+		mockClearModelsCache.mockClear();
 		mockAuthManager.getAuthStatus.mockClear();
 
 		// Import handler setup after mock is in place
@@ -310,6 +318,7 @@ describe('Gemini Auth RPC Handlers', () => {
 			expect(mockFetchUserInfo).toHaveBeenCalledWith('mock-access-token');
 			expect(mockCreateAccount).toHaveBeenCalledWith('test@gmail.com', 'mock-refresh-token');
 			expect(mockPersistAddAccount).toHaveBeenCalled();
+			expect(mockClearModelsCache).toHaveBeenCalled();
 		});
 
 		it('returns error when no refresh token in response', async () => {
@@ -335,6 +344,7 @@ describe('Gemini Auth RPC Handlers', () => {
 
 			expect(completeResult.success).toBe(false);
 			expect(completeResult.error).toContain('No refresh token received');
+			expect(mockClearModelsCache).not.toHaveBeenCalled();
 		});
 
 		it('handles re-auth flow when accountId provided', async () => {
@@ -392,6 +402,7 @@ describe('Gemini Auth RPC Handlers', () => {
 				cooldown_until: 0,
 			});
 			expect(mockPersistAddAccount).not.toHaveBeenCalled();
+			expect(mockClearModelsCache).toHaveBeenCalled();
 		});
 
 		it('returns error when re-auth email does not match target account', async () => {
@@ -429,6 +440,7 @@ describe('Gemini Auth RPC Handlers', () => {
 			expect(completeResult.error).toContain('test@gmail.com');
 			expect(completeResult.error).toContain('other@gmail.com');
 			expect(mockUpdateAccount).not.toHaveBeenCalled();
+			expect(mockClearModelsCache).not.toHaveBeenCalled();
 		});
 
 		it('returns specific error for duplicate email', async () => {
@@ -466,6 +478,7 @@ describe('Gemini Auth RPC Handlers', () => {
 			expect(completeResult.error).toContain('test@gmail.com');
 			// Should NOT have called persistAddAccount
 			expect(mockPersistAddAccount).not.toHaveBeenCalled();
+			expect(mockClearModelsCache).not.toHaveBeenCalled();
 		});
 
 		it('handles exchange errors gracefully', async () => {
@@ -489,6 +502,7 @@ describe('Gemini Auth RPC Handlers', () => {
 
 			expect(completeResult.success).toBe(false);
 			expect(completeResult.error).toContain('invalid_grant');
+			expect(mockClearModelsCache).not.toHaveBeenCalled();
 		});
 
 		it('flow survives exchange error — retry with fresh code succeeds', async () => {
@@ -525,6 +539,8 @@ describe('Gemini Auth RPC Handlers', () => {
 			expect(secondAttempt.success).toBe(true);
 			expect(secondAttempt.account?.email).toBe('test@gmail.com');
 			expect(mockExchangeAuthCode).toHaveBeenLastCalledWith('good-code', 'mock-code-verifier');
+			// Only the successful second attempt should clear the cache
+			expect(mockClearModelsCache).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -539,6 +555,7 @@ describe('Gemini Auth RPC Handlers', () => {
 
 			expect(result.success).toBe(true);
 			expect(mockPersistRemoveAccount).toHaveBeenCalledWith('acc-1');
+			expect(mockClearModelsCache).toHaveBeenCalled();
 		});
 
 		it('returns error when account not found', async () => {
@@ -555,6 +572,7 @@ describe('Gemini Auth RPC Handlers', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Account not-found not found');
+			expect(mockClearModelsCache).not.toHaveBeenCalled();
 		});
 	});
 });

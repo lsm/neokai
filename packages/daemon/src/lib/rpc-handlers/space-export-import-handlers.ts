@@ -144,6 +144,7 @@ function buildAgentCreateParams(
 	);
 	if (parts.length > 0) params.customPrompt = parts.join('\n\n');
 	if (exported.tools !== undefined) params.tools = exported.tools;
+	if (exported.settingSources !== undefined) params.settingSources = exported.settingSources;
 	return params;
 }
 
@@ -543,6 +544,7 @@ export function setupSpaceExportImportHandlers(
 							provider: exportedAgent.provider ?? null,
 							customPrompt: replaceParts.length > 0 ? replaceParts.join('\n\n') : null,
 							tools: exportedAgent.tools ?? null,
+							settingSources: exportedAgent.settingSources ?? null,
 						});
 						const id = updated?.id ?? existing.id;
 						importedAgentNameToId.set(exportedAgent.name, id);

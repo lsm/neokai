@@ -302,6 +302,15 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
 		}
 	}, [loadModelInfo, isConnected]);
 
+	// Reload models when provider accounts change (e.g., Gemini OAuth add/remove)
+	useEffect(() => {
+		const handleAccountsChanged = () => {
+			loadModelInfo();
+		};
+		window.addEventListener('gemini-accounts-changed', handleAccountsChanged);
+		return () => window.removeEventListener('gemini-accounts-changed', handleAccountsChanged);
+	}, [loadModelInfo]);
+
 	const switchModel = useCallback(
 		async (model: ModelInfo) => {
 			if (!model.provider) {

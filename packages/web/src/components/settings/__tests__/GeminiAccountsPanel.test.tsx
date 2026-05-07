@@ -423,6 +423,44 @@ describe('GeminiAccountsPanel', () => {
 				expect(queryByTestId('add-account-modal')).toBeNull();
 			});
 		});
+
+		it('dispatches gemini-accounts-changed event on successful add', async () => {
+			mockListGeminiAccounts.mockResolvedValue({ accounts: [] });
+			mockStartGeminiOAuth.mockResolvedValue({
+				success: true,
+				authUrl: 'https://auth.url',
+				flowId: 'flow-123',
+			});
+			mockCompleteGeminiOAuth.mockResolvedValue({ success: true });
+
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			const { container, getByTestId } = render(<GeminiAccountsPanel />);
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('Add Google Account');
+			});
+
+			const addButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Add Google Account')
+			);
+			addButton?.click();
+
+			await waitFor(() => {
+				expect(getByTestId('add-account-modal')).toBeTruthy();
+			});
+
+			// Simulate modal completion (the mocked modal calls onComplete directly)
+			getByTestId('modal-complete-btn').click();
+
+			await waitFor(() => {
+				expect(dispatchEventSpy).toHaveBeenCalledWith(
+					expect.objectContaining({ type: 'gemini-accounts-changed' })
+				);
+			});
+
+			dispatchEventSpy.mockRestore();
+		});
 	});
 
 	describe('Remove Account', () => {
@@ -479,6 +517,44 @@ describe('GeminiAccountsPanel', () => {
 				expect(mockRemoveGeminiAccount).toHaveBeenCalledWith('acc-1');
 				expect(mockToastSuccess).toHaveBeenCalledWith('Removed test@gmail.com');
 			});
+		});
+
+		it('dispatches gemini-accounts-changed event after removal', async () => {
+			const accounts = [createMockAccount()];
+			mockListGeminiAccounts.mockResolvedValue({ accounts });
+			mockRemoveGeminiAccount.mockResolvedValue({ success: true });
+
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			const { container } = render(<GeminiAccountsPanel />);
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('test@gmail.com');
+			});
+
+			// Click remove button
+			const removeButton = container.querySelector('[data-testid="button-ghost-xs"]');
+			if (removeButton) {
+				removeButton.click();
+			}
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('Remove Google Account');
+			});
+
+			// Click confirm "Remove" button
+			const confirmButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Remove')
+			);
+			confirmButton?.click();
+
+			await waitFor(() => {
+				expect(dispatchEventSpy).toHaveBeenCalledWith(
+					expect.objectContaining({ type: 'gemini-accounts-changed' })
+				);
+			});
+
+			dispatchEventSpy.mockRestore();
 		});
 	});
 

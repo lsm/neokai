@@ -1,6 +1,6 @@
 {
 	"name": "@neokai/daemon",
-	"version": "0.19.0",
+	"version": "0.20.0",
 	"type": "module",
 	"license": "Apache-2.0",
 	"main": "main.ts",
@@ -10,7 +10,9 @@
 		"./config": "./src/config.ts",
 		"./routes/setup-websocket": "./src/routes/setup-websocket.ts",
 		"./sdk-cli-resolver": "./src/lib/agent/sdk-cli-resolver.ts",
-		"./lib/internal-event-bus": "./src/lib/internal-event-bus.ts"
+		"./lib/internal-event-bus": "./src/lib/internal-event-bus.ts",
+		"./lib/internal-command-bus": "./src/lib/internal-command-bus.ts",
+		"./lib/internal-query-bus": "./src/lib/internal-query-bus.ts"
 	},
 	"scripts": {
 		"dev": "bun run --watch main.ts",

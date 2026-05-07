@@ -332,8 +332,13 @@ export default function SessionStatusBar({
 		setThinkingLevel(thinkingLevelProp || 'off');
 	}, [thinkingLevelProp]);
 
-	// Provider-aware thinking options
-	const thinkingOptions = getThinkingOptionsForProvider(currentModelInfo?.provider);
+	// Provider-aware thinking options — prefer runtime model thinkingModes (set by
+	// providers whose capability depends on runtime config, e.g. bridge adapter)
+	// falling back to the static PROVIDER_THINKING_MODES map.
+	const thinkingOptions = getThinkingOptionsForProvider(
+		currentModelInfo?.provider,
+		currentModelInfo?.thinkingModes
+	);
 
 	// Auto-scroll toggle handler
 	const handleAutoScrollToggle = useCallback(() => {

@@ -223,6 +223,8 @@ export class SessionLifecycle {
 				sandbox: params.config?.sandbox ?? globalSettings.sandbox,
 				// MCP servers: Allow room chat sessions to include room-agent-tools
 				mcpServers: params.config?.mcpServers,
+				// Setting sources: inherit from global settings so CLAUDE.md is loaded by default
+				settingSources: params.config?.settingSources ?? globalSettings.settingSources,
 			},
 			metadata: {
 				messageCount: 0,

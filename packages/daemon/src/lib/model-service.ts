@@ -147,6 +147,14 @@ function mergeWithFallbackModels(providerModels: ModelInfo[]): ModelInfo[] {
 const refreshInProgress = new Map<string, Promise<void>>();
 
 /**
+ * Per-key monotonic generation counters used to invalidate in-flight
+ * background refreshes.  `clearModelsCache(key)` bumps the counter for
+ * that key only, so a session-scoped clear cannot accidentally cancel a
+ * global refresh or vice-versa.
+ */
+const cacheGeneration = new Map<string, number>();
+
+/**
  * Get supported models from an existing Claude SDK query object
  * This uses the AnthropicProvider to convert SDK models to ModelInfo
  *
@@ -202,11 +210,16 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 		return;
 	}
 
+	const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
+
 	// Start background refresh
 	const refreshPromise = (async () => {
 		try {
 			const models = await loadModelsFromProviders();
-			if (models.length > 0) {
+			// Only write if the cache wasn't cleared while we were loading.
+			// This prevents a stale pre-change provider list from overwriting
+			// the cache after `clearModelsCache()` has been called.
+			if (models.length > 0 && (cacheGeneration.get(cacheKey) ?? 0) === generationAtStart) {
 				// Merge with fallback models to ensure Anthropic aliases are always available
 				const mergedModels = mergeWithFallbackModels(models);
 				modelsCache.set(cacheKey, mergedModels);
@@ -217,6 +230,10 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 			// Background refresh failed
 		} finally {
 			refreshInProgress.delete(cacheKey);
+			// Prune generation tracking if the cache key is no longer referenced
+			if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
+				cacheGeneration.delete(cacheKey);
+			}
 		}
 	})();
 
@@ -335,15 +352,42 @@ function clearProviderModelCaches(): void {
 /**
  * Clear the models cache for a specific key or all.
  * Provider-level caches are only cleared on a full clear (no cacheKey).
+ *
+ * Also bumps the per-key cache generation so any in-flight background
+ * refreshes for that key drop their stale results instead of overwriting
+ * the cleared cache.
  */
 export function clearModelsCache(cacheKey?: string): void {
 	if (cacheKey) {
+		const hadInFlight = refreshInProgress.has(cacheKey);
 		modelsCache.delete(cacheKey);
 		cacheTimestamps.delete(cacheKey);
+		refreshInProgress.delete(cacheKey);
+		if (hadInFlight || cacheGeneration.has(cacheKey)) {
+			// Bump (or preserve) the generation so any in-flight refresh —
+			// including one invalidated by an earlier clear — drops its result.
+			cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
+		}
+		// If there's no in-flight refresh and no generation history, there's
+		// nothing to invalidate; leave the key absent.
 	} else {
+		const inFlightKeys = new Set(refreshInProgress.keys());
 		modelsCache.clear();
 		cacheTimestamps.clear();
+		refreshInProgress.clear();
 		clearProviderModelCaches();
+		// Bump generation for keys that had in-flight refreshes so any
+		// running background refresh drops its stale result instead of
+		// overwriting the cleared cache.
+		for (const key of inFlightKeys) {
+			cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
+		}
+		// NOTE: We intentionally do NOT prune cacheGeneration here.
+		// A prior global clear may have bumped a generation to cancel an
+		// in-flight refresh; if a second clear arrives before that refresh
+		// resolves, pruning would delete the bump and allow the stale
+		// result to be written.  Keys are cleaned up by
+		// triggerBackgroundRefresh's finally block once the refresh completes.
 	}
 }
 
@@ -351,6 +395,10 @@ export function clearModelsCache(cacheKey?: string): void {
  * Refresh models from all providers, preserving the existing cache on failure.
  * Clears provider-level caches first so each provider re-fetches from its API,
  * but only replaces the global cache if the fetch succeeds.
+ *
+ * If no providers return models and the cache was empty (e.g. after an explicit
+ * clear), FALLBACK_MODELS is restored so the UI and model resolution paths
+ * never see a permanently empty catalog.
  */
 export async function refreshModels(): Promise<void> {
 	const cacheKey = 'global';
@@ -361,26 +409,55 @@ export async function refreshModels(): Promise<void> {
 		await inProgress;
 	}
 
+	// If another foreground refresh is already running, wait for it.
+	if (refreshInProgress.has(cacheKey)) {
+		await refreshInProgress.get(cacheKey);
+		return;
+	}
+
+	const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
 	const previousModels = modelsCache.get(cacheKey);
 	clearProviderModelCaches();
 
-	const models = await loadModelsFromProviders();
-	if (models.length > 0) {
-		const mergedModels = mergeWithFallbackModels(models);
-		// If the new result has fewer models than the previous cache, at least one
-		// provider likely returned static fallback data instead of live API results
-		// (e.g. OpenRouter returns FALLBACK_MODELS on HTTP errors). Keep the old,
-		// richer cache rather than replacing it with degraded fallback metadata.
-		// Compare merged-vs-merged so the fallback entries added by mergeWithFallbackModels
-		// don't distort the comparison.
-		if (previousModels && previousModels.length > mergedModels.length) {
-			modelsCache.set(cacheKey, previousModels);
-			cacheTimestamps.set(cacheKey, Date.now());
-			return;
+	const refreshPromise = (async () => {
+		try {
+			const models = await loadModelsFromProviders();
+			// Only write if the cache wasn't cleared while we were loading.
+			if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
+				return;
+			}
+			if (models.length > 0) {
+				const mergedModels = mergeWithFallbackModels(models);
+				// If the new result has fewer models than the previous cache, at least one
+				// provider likely returned static fallback data instead of live API results
+				// (e.g. OpenRouter returns FALLBACK_MODELS on HTTP errors). Keep the old,
+				// richer cache rather than replacing it with degraded fallback metadata.
+				// Compare merged-vs-merged so the fallback entries added by mergeWithFallbackModels
+				// don't distort the comparison.
+				if (previousModels && previousModels.length > mergedModels.length) {
+					modelsCache.set(cacheKey, previousModels);
+					cacheTimestamps.set(cacheKey, Date.now());
+					return;
+				}
+				modelsCache.set(cacheKey, mergedModels);
+				cacheTimestamps.set(cacheKey, Date.now());
+			} else if (!previousModels || previousModels.length === 0) {
+				// Cache was cleared or was already empty — restore fallback models
+				// so the UI and model resolution paths always have a baseline catalog.
+				modelsCache.set(cacheKey, FALLBACK_MODELS);
+				cacheTimestamps.set(cacheKey, Date.now());
+			}
+		} finally {
+			refreshInProgress.delete(cacheKey);
+			// Prune generation tracking if the cache key is no longer referenced.
+			if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
+				cacheGeneration.delete(cacheKey);
+			}
 		}
-		modelsCache.set(cacheKey, mergedModels);
-		cacheTimestamps.set(cacheKey, Date.now());
-	}
+	})();
+
+	refreshInProgress.set(cacheKey, refreshPromise);
+	await refreshPromise;
 }
 
 /**

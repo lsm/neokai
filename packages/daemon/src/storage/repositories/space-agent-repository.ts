@@ -30,8 +30,8 @@ export class SpaceAgentRepository {
 			.prepare(
 				`INSERT INTO space_agents
 					(id, space_id, name, description, model, thinking_level, provider, tools, custom_prompt,
-					 template_name, template_hash, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					 setting_sources, template_name, template_hash, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				id,
@@ -43,6 +43,7 @@ export class SpaceAgentRepository {
 				params.provider ?? null,
 				params.tools && params.tools.length > 0 ? JSON.stringify(params.tools) : '[]',
 				params.customPrompt ?? null,
+				params.settingSources != null ? JSON.stringify(params.settingSources) : null,
 				params.templateName ?? null,
 				params.templateHash ?? null,
 				now,
@@ -139,6 +140,10 @@ export class SpaceAgentRepository {
 			fields.push('tools = ?');
 			values.push(params.tools && params.tools.length > 0 ? JSON.stringify(params.tools) : '[]');
 		}
+		if (params.settingSources !== undefined) {
+			fields.push('setting_sources = ?');
+			values.push(params.settingSources != null ? JSON.stringify(params.settingSources) : null);
+		}
 		if (params.templateName !== undefined) {
 			fields.push('template_name = ?');
 			values.push(params.templateName ?? null);
@@ -193,6 +198,12 @@ export class SpaceAgentRepository {
 			tools = parsed.length > 0 ? parsed : undefined;
 		}
 
+		// Parse settingSources: null or missing → undefined
+		let settingSources: SpaceAgent['settingSources'];
+		if (row.setting_sources) {
+			settingSources = JSON.parse(row.setting_sources as string) as SpaceAgent['settingSources'];
+		}
+
 		return {
 			id: row.id as string,
 			spaceId: row.space_id as string,
@@ -204,6 +215,7 @@ export class SpaceAgentRepository {
 			provider: (row.provider as string | null) ?? undefined,
 			customPrompt: (row.custom_prompt as string | null) ?? null,
 			tools,
+			settingSources,
 			// `template_name` / `template_hash` may be missing entirely on
 			// schemas that predate M105 — guard with `??` so older test DBs
 			// (and any pre-migration call paths) don't return `undefined`.

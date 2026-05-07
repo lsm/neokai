@@ -476,6 +476,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 			skillOverrides,
 			mcpServers: extraMcpServers,
 			toolGuards,
+			settingSources: customAgent.settingSources ?? space.settingSources,
 		};
 	}
 
@@ -497,6 +498,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		...customToolPermissions,
 		skillOverrides,
 		mcpServers: extraMcpServers,
+		settingSources: customAgent.settingSources ?? space.settingSources,
 		toolGuards,
 	};
 }

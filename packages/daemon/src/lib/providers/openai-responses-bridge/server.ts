@@ -14,6 +14,7 @@ import {
 	type AnthropicTool,
 	type ToolChoice,
 	contentBlockStartTextSSE,
+	contentBlockStartThinkingSSE,
 	contentBlockStartToolUseSSE,
 	contentBlockStopSSE,
 	errorSSE,
@@ -23,8 +24,8 @@ import {
 	messageStartSSE,
 	messageStopSSE,
 	textDeltaSSE,
+	thinkingDeltaSSE,
 } from '../codex-anthropic-bridge/translator.js';
-import { estimateAnthropicInputTokens } from '../codex-anthropic-bridge/token-estimator.js';
 import { getModelContextWindow as getCodexModelContextWindow } from '../codex-anthropic-bridge/model-context-windows.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
 import { Logger } from '../../logger.js';
@@ -71,6 +72,11 @@ export type OpenAIResponsesBridgeConfig = {
 	fetchImpl?: typeof fetch;
 };
 
+type ResponsesReasoningItem = {
+	type: 'reasoning';
+	encrypted_content: string;
+};
+
 type ResponsesInputItem =
 	| {
 			type: 'message';
@@ -93,7 +99,8 @@ type ResponsesInputItem =
 			type: 'function_call_output';
 			call_id: string;
 			output: string;
-	  };
+	  }
+	| ResponsesReasoningItem;
 
 type ResponsesTool = {
 	type: 'function';
@@ -113,6 +120,11 @@ type ResponsesRequest = {
 	store: false;
 	stream: true;
 	parallel_tool_calls?: false;
+	reasoning?: {
+		effort: 'low' | 'medium' | 'high' | 'xhigh';
+		summary?: 'auto' | 'concise' | 'detailed';
+	};
+	include?: string[];
 };
 
 type OpenAIStreamEvent = {
@@ -134,6 +146,11 @@ type ResolvedResponsesAuth = {
 
 type ResponseContinuation = {
 	responseId: string;
+	cleanupTimer: ReturnType<typeof setTimeout>;
+};
+
+type SessionReasoningEntry = {
+	items: ResponsesReasoningItem[];
 	cleanupTimer: ReturnType<typeof setTimeout>;
 };
 
@@ -226,6 +243,9 @@ function estimateResponsesContentTokens(item: ResponsesInputItem): number {
 	}
 	if (item.type === 'function_call') {
 		return estimateTextTokens(item.name) + estimateTextTokens(item.arguments);
+	}
+	if (item.type === 'reasoning') {
+		return estimateTextTokens(item.encrypted_content);
 	}
 	return item.content.reduce((sum, block) => sum + estimateTextTokens(block.text), 0);
 }
@@ -373,14 +393,27 @@ function resolveContinuation(
 }
 
 export function anthropicMessagesToResponsesInput(
-	messages: AnthropicRequest['messages']
+	messages: AnthropicRequest['messages'],
+	reasoningItems?: ResponsesReasoningItem[]
 ): ResponsesInputItem[] {
 	const items: ResponsesInputItem[] = [];
-	for (const message of messages) {
+	// Reasoning belongs to the most recent assistant turn, so it must be
+	// inserted immediately before the *last* user message (the current turn).
+	let lastUserIndex = -1;
+	for (let i = 0; i < messages.length; i++) {
+		if (messages[i].role === 'user') {
+			lastUserIndex = i;
+		}
+	}
+	for (let i = 0; i < messages.length; i++) {
+		const message = messages[i];
 		if (typeof message.content === 'string') {
 			if (message.role === 'assistant') {
 				appendAssistantMessage(items, [message.content]);
 			} else {
+				if (reasoningItems && reasoningItems.length > 0 && i === lastUserIndex) {
+					items.push(...reasoningItems);
+				}
 				appendInputMessage(items, 'user', [message.content]);
 			}
 			continue;
@@ -388,6 +421,9 @@ export function anthropicMessagesToResponsesInput(
 		if (message.role === 'assistant') {
 			appendAssistantBlocks(items, message.content);
 		} else {
+			if (reasoningItems && reasoningItems.length > 0 && i === lastUserIndex) {
+				items.push(...reasoningItems);
+			}
 			appendUserBlocks(items, message.content);
 		}
 	}
@@ -415,21 +451,46 @@ function toolChoiceToResponsesToolChoice(
 	return undefined;
 }
 
+/**
+ * Models known to support reasoning.effort="xhigh". Mini and older
+ * variants (e.g. gpt-5.1-codex-mini) reject xhigh with a 400 error.
+ */
+const MODELS_SUPPORTING_XHIGH_REASONING = new Set(['gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5']);
+
+/**
+ * Map Anthropic SDK thinking config (budget_tokens) to OpenAI reasoning.effort.
+ * Caps xhigh to high for models that do not support it.
+ */
+function mapThinkingToReasoningEffort(
+	thinking: AnthropicRequest['thinking'],
+	model?: string
+): ResponsesRequest['reasoning'] {
+	if (!thinking || thinking.type !== 'enabled') return undefined;
+	const tokens = thinking.budget_tokens;
+	if (tokens <= 8000) return { effort: 'low', summary: 'auto' };
+	if (tokens <= 16000) return { effort: 'medium', summary: 'auto' };
+	if (tokens <= 24000) return { effort: 'high', summary: 'auto' };
+	const supportsXHigh = model ? MODELS_SUPPORTING_XHIGH_REASONING.has(model) : true;
+	return { effort: supportsXHigh ? 'xhigh' : 'high', summary: 'auto' };
+}
+
 function buildResponsesRequest(
 	body: AnthropicRequest,
 	model: string,
 	continuation?: { previousResponseId: string; input: ResponsesInputItem[] },
-	options: { includeMaxOutputTokens?: boolean; includeParallelToolCalls?: boolean } = {}
+	options: { includeMaxOutputTokens?: boolean; includeParallelToolCalls?: boolean } = {},
+	reasoningItems?: ResponsesReasoningItem[]
 ): ResponsesRequest {
 	const instructions = extractSystemText(body.system) || undefined;
 	const tools = toolsToResponsesTools(body.tools);
 	const tool_choice = toolChoiceToResponsesToolChoice(body.tool_choice);
 	const includeMaxOutputTokens = options.includeMaxOutputTokens ?? true;
 	const includeParallelToolCalls = options.includeParallelToolCalls ?? true;
+	const reasoning = mapThinkingToReasoningEffort(body.thinking, model);
 	return {
 		model,
 		...(instructions ? { instructions } : {}),
-		input: continuation?.input ?? anthropicMessagesToResponsesInput(body.messages),
+		input: continuation?.input ?? anthropicMessagesToResponsesInput(body.messages, reasoningItems),
 		...(continuation ? { previous_response_id: continuation.previousResponseId } : {}),
 		...(tools ? { tools } : {}),
 		...(tool_choice ? { tool_choice } : {}),
@@ -439,6 +500,10 @@ function buildResponsesRequest(
 		store: false,
 		stream: true,
 		...(includeParallelToolCalls ? { parallel_tool_calls: false } : {}),
+		...(reasoning ? { reasoning } : {}),
+		...(reasoning || (reasoningItems && reasoningItems.length > 0)
+			? { include: ['reasoning.encrypted_content'] }
+			: {}),
 	};
 }
 
@@ -499,11 +564,19 @@ function readFirstUsageNumber(
 function responseUsage(response: Record<string, unknown> | undefined): {
 	inputTokens?: number | null;
 	outputTokens: number;
+	reasoningTokens?: number | null;
 } {
 	const usage = response?.usage;
 	const usageRecord =
 		usage && typeof usage === 'object' && !Array.isArray(usage)
 			? (usage as Record<string, unknown>)
+			: undefined;
+	const outputTokensDetails = usageRecord?.output_tokens_details;
+	const detailsRecord =
+		outputTokensDetails &&
+		typeof outputTokensDetails === 'object' &&
+		!Array.isArray(outputTokensDetails)
+			? (outputTokensDetails as Record<string, unknown>)
 			: undefined;
 	return {
 		inputTokens: readFirstUsageNumber(usageRecord, [
@@ -514,6 +587,7 @@ function responseUsage(response: Record<string, unknown> | undefined): {
 		outputTokens:
 			readFirstUsageNumber(usageRecord, ['output_tokens', 'completion_tokens', 'outputTokens']) ??
 			0,
+		reasoningTokens: readFirstUsageNumber(detailsRecord, ['reasoning_tokens']),
 	};
 }
 
@@ -636,6 +710,7 @@ async function streamResponsesToAnthropic({
 	model,
 	estimatedInputTokens,
 	onFunctionCallResponse,
+	onReasoningItems,
 	modelContextWindow,
 }: {
 	openAIResponse: Response;
@@ -643,6 +718,7 @@ async function streamResponsesToAnthropic({
 	model: string;
 	estimatedInputTokens: number;
 	onFunctionCallResponse?: (callId: string, responseId: string) => void;
+	onReasoningItems?: (items: ResponsesReasoningItem[]) => void;
 	/**
 	 * Context window for the active model, resolved from the bridge config's models
 	 * list at session creation time. Takes precedence over the Codex-only
@@ -680,11 +756,18 @@ async function streamResponsesToAnthropic({
 	const messageId = generateMsgId();
 	let started = false;
 	let textOpen = false;
+	let thinkingOpen = false;
+	let thinkingBlockIndex = -1;
 	let blockIndex = 0;
 	let heuristicOutputTokens = 0;
-	let completedUsage: { inputTokens?: number | null; outputTokens: number } | null = null;
+	let completedUsage: {
+		inputTokens?: number | null;
+		outputTokens: number;
+		reasoningTokens?: number | null;
+	} | null = null;
 	let incomplete = false;
 	const emittedFunctionCalls = new Set<string>();
+	const responseReasoningItems: ResponsesReasoningItem[] = [];
 
 	const ensureStarted = (): boolean => {
 		if (started) return !closed;
@@ -706,9 +789,27 @@ async function streamResponsesToAnthropic({
 		textOpen = false;
 	};
 
+	const startThinkingBlock = () => {
+		if (thinkingOpen) return;
+		ensureStarted();
+		closeTextBlock();
+		thinkingBlockIndex = blockIndex;
+		send(contentBlockStartThinkingSSE(thinkingBlockIndex));
+		thinkingOpen = true;
+	};
+
+	const closeThinkingBlock = () => {
+		if (!thinkingOpen) return;
+		send(contentBlockStopSSE(thinkingBlockIndex));
+		blockIndex++;
+		thinkingOpen = false;
+		thinkingBlockIndex = -1;
+	};
+
 	const emitFunctionCall = (call: PendingFunctionCall) => {
 		if (emittedFunctionCalls.has(call.callId)) return;
 		if (!ensureStarted()) return;
+		closeThinkingBlock();
 		closeTextBlock();
 		if (!send(contentBlockStartToolUseSSE(blockIndex, call.callId, call.name))) return;
 		if (!send(inputJsonDeltaSSE(blockIndex, call.argumentsText || '{}'))) return;
@@ -725,6 +826,7 @@ async function streamResponsesToAnthropic({
 		for await (const event of readOpenAIStream(openAIResponse.body)) {
 			if (event.type === 'response.output_text.delta') {
 				ensureStarted();
+				closeThinkingBlock();
 				if (!textOpen) {
 					send(contentBlockStartTextSSE(blockIndex));
 					textOpen = true;
@@ -734,6 +836,34 @@ async function streamResponsesToAnthropic({
 					send(textDeltaSSE(blockIndex, delta));
 					heuristicOutputTokens += Math.max(1, Math.ceil(delta.length / 4));
 				}
+				continue;
+			}
+
+			if (
+				event.type === 'response.reasoning_summary_part.added' ||
+				event.type === 'response.reasoning_summary_text.delta' ||
+				event.type === 'response.reasoning_text.delta'
+			) {
+				startThinkingBlock();
+				if (
+					event.type === 'response.reasoning_summary_text.delta' ||
+					event.type === 'response.reasoning_text.delta'
+				) {
+					const delta = typeof event.delta === 'string' ? event.delta : '';
+					if (delta) {
+						send(thinkingDeltaSSE(thinkingBlockIndex, delta));
+						heuristicOutputTokens += Math.max(1, Math.ceil(delta.length / 4));
+					}
+				}
+				continue;
+			}
+
+			if (
+				event.type === 'response.reasoning_summary_part.done' ||
+				event.type === 'response.reasoning_summary_text.done' ||
+				event.type === 'response.reasoning_text.done'
+			) {
+				closeThinkingBlock();
 				continue;
 			}
 
@@ -763,6 +893,21 @@ async function streamResponsesToAnthropic({
 								});
 							}
 						}
+						if (
+							item &&
+							typeof item === 'object' &&
+							(item as Record<string, unknown>).type === 'reasoning'
+						) {
+							const record = item as Record<string, unknown>;
+							const encrypted =
+								typeof record.encrypted_content === 'string' ? record.encrypted_content : undefined;
+							if (encrypted) {
+								responseReasoningItems.push({
+									type: 'reasoning',
+									encrypted_content: encrypted,
+								});
+							}
+						}
 					}
 				}
 				if (responseId) {
@@ -770,6 +915,7 @@ async function streamResponsesToAnthropic({
 						onFunctionCallResponse?.(callId, responseId);
 					}
 				}
+				onReasoningItems?.(responseReasoningItems);
 				continue;
 			}
 
@@ -781,6 +927,7 @@ async function streamResponsesToAnthropic({
 
 			if (event.type === 'response.failed' || event.type === 'error') {
 				ensureStarted();
+				closeThinkingBlock();
 				closeTextBlock();
 				send(errorSSE('api_error', streamErrorMessage(event)));
 				send(messageStopSSE());
@@ -790,6 +937,7 @@ async function streamResponsesToAnthropic({
 		}
 
 		ensureStarted();
+		closeThinkingBlock();
 		closeTextBlock();
 		// If the model emitted tool calls before an incomplete event, let the SDK execute
 		// them; the follow-up turn can carry the continuation forward.
@@ -799,6 +947,7 @@ async function streamResponsesToAnthropic({
 			messageDeltaSSE(stopReason, {
 				inputTokens: completedUsage?.inputTokens ?? estimatedInputTokens,
 				outputTokens: completedUsage?.outputTokens || heuristicOutputTokens,
+				thinkingTokens: completedUsage?.reasoningTokens,
 				modelContextWindow: resolveContextWindow(model, modelContextWindow),
 			})
 		);
@@ -813,6 +962,7 @@ async function streamResponsesToAnthropic({
 		logger.error('openai-responses: streaming failed:', err);
 		try {
 			ensureStarted();
+			closeThinkingBlock();
 			closeTextBlock();
 			send(errorSSE('api_error', err instanceof Error ? err.message : 'OpenAI streaming failed'));
 			send(messageStopSSE());
@@ -881,6 +1031,8 @@ export function createOpenAIResponsesBridgeServer(
 	}
 	const continuationTtlMs = config.continuationTtlMs ?? DEFAULT_RESPONSE_CONTINUATION_TTL_MS;
 	const continuations = new Map<string, ResponseContinuation>();
+	// Per-session reasoning items for multi-turn continuation when store: false.
+	const sessionReasoningItems = new Map<string, SessionReasoningEntry>();
 	let resolvedAuth: ResolvedResponsesAuth | undefined;
 	// ChatGPT Codex endpoint rejects max_output_tokens and parallel_tool_calls.
 	const isChatgptOAuth = config.auth.source === 'chatgpt_oauth' && !config.openAIBaseUrl;
@@ -907,6 +1059,22 @@ export function createOpenAIResponsesBridgeServer(
 			continuations.delete(key);
 		}, continuationTtlMs);
 		continuations.set(key, { responseId, cleanupTimer });
+	};
+
+	const deleteReasoningItems = (sessionId: string): void => {
+		const entry = sessionReasoningItems.get(sessionId);
+		if (!entry) return;
+		clearTimeout(entry.cleanupTimer);
+		sessionReasoningItems.delete(sessionId);
+	};
+
+	const storeReasoningItems = (sessionId: string, items: ResponsesReasoningItem[]): void => {
+		deleteReasoningItems(sessionId);
+		const cleanupTimer = setTimeout(() => {
+			logger.warn(`openai-responses: reasoning items TTL expired sessionId=${sessionId}`);
+			sessionReasoningItems.delete(sessionId);
+		}, continuationTtlMs);
+		sessionReasoningItems.set(sessionId, { items, cleanupTimer });
 	};
 
 	const consumeContinuation = (
@@ -939,10 +1107,17 @@ export function createOpenAIResponsesBridgeServer(
 			if (route.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
 				try {
 					const body = (await req.json()) as AnthropicRequest;
-					const continuation = resolveContinuation(route.sessionId, body.messages, continuations);
+					const storedReasoning = sessionReasoningItems.get(route.sessionId)?.items;
+					let continuation = resolveContinuation(route.sessionId, body.messages, continuations);
+					if (storedReasoning && storedReasoning.length > 0) {
+						continuation = undefined;
+					}
 					const inputTokens = continuation
 						? estimateResponsesPayloadTokens(body, continuation.input)
-						: estimateAnthropicInputTokens(body);
+						: estimateResponsesPayloadTokens(
+								body,
+								anthropicMessagesToResponsesInput(body.messages, storedReasoning)
+							);
 					return new Response(JSON.stringify({ input_tokens: inputTokens }), {
 						headers: { 'Content-Type': 'application/json' },
 					});
@@ -983,7 +1158,19 @@ export function createOpenAIResponsesBridgeServer(
 				? undefined
 				: resolveContinuation(sessionId, body.messages, continuations);
 			let continuation = resolvedContinuation;
-			const requestBody = buildResponsesRequest(body, model, continuation, buildOpts);
+			// When reasoning items are stored for this session, we must send full history
+			// (previous_response_id doesn't work with store:false for reasoning).
+			const storedReasoning = sessionReasoningItems.get(sessionId)?.items;
+			if (storedReasoning && storedReasoning.length > 0) {
+				continuation = undefined;
+			}
+			let requestBody = buildResponsesRequest(
+				body,
+				model,
+				continuation,
+				buildOpts,
+				storedReasoning
+			);
 			const upstreamUrl = `${baseUrl.replace(/\/$/, '')}/responses`;
 			let openAIResponse: Response;
 			try {
@@ -1009,10 +1196,11 @@ export function createOpenAIResponsesBridgeServer(
 						logger.warn(
 							'openai-responses: endpoint rejects previous_response_id, retrying with full history'
 						);
+						requestBody = buildResponsesRequest(body, model, undefined, buildOpts, storedReasoning);
 						openAIResponse = await fetchImpl(upstreamUrl, {
 							method: 'POST',
 							headers: buildOpenAIHeaders(config.auth, resolvedAuth),
-							body: JSON.stringify(buildResponsesRequest(body, model, undefined, buildOpts)),
+							body: JSON.stringify(requestBody),
 						});
 						continuation = undefined;
 					} else {
@@ -1044,7 +1232,7 @@ export function createOpenAIResponsesBridgeServer(
 
 			const estimatedInputTokens = continuation
 				? estimateResponsesPayloadTokens(body, continuation.input)
-				: estimateAnthropicInputTokens(body);
+				: estimateResponsesPayloadTokens(body, requestBody.input);
 			const resolvedModelContextWindow = contextWindowByModelId.get(model);
 			const stream = new ReadableStream<Uint8Array>({
 				start(controller) {
@@ -1065,6 +1253,9 @@ export function createOpenAIResponsesBridgeServer(
 										storeContinuation(sessionId, callId, responseId);
 									},
 								}),
+						onReasoningItems(items) {
+							storeReasoningItems(sessionId, items);
+						},
 					});
 				},
 			});
@@ -1093,6 +1284,10 @@ export function createOpenAIResponsesBridgeServer(
 				clearTimeout(continuation.cleanupTimer);
 			}
 			continuations.clear();
+			for (const entry of sessionReasoningItems.values()) {
+				clearTimeout(entry.cleanupTimer);
+			}
+			sessionReasoningItems.clear();
 			server.stop(true);
 		},
 	};

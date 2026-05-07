@@ -556,7 +556,15 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   When true, the workflow cannot be selected for new tasks.
 	runMigration117(db);
 
-	// Migration 118: Replace task-thread projection with schema fix.
+	// Migration 118: Add setting_sources column to space_agents.
+	//   Stores per-agent setting source overrides as JSON.
+	runMigration118(db);
+
+	// Migration 119: Add setting_sources column to spaces.
+	//   Stores per-space default setting sources as JSON.
+	runMigration119(db);
+
+	// Migration 120: Replace task-thread projection with schema fix.
 	//   - Add derived columns to sdk_messages: is_renderable, is_terminal, parent_tool_use_id.
 	//     These are populated at write time so live-query handlers can read them
 	//     without re-parsing JSON or running expensive json_each filters.
@@ -565,7 +573,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//     session plus every node-agent session). Maintained at write time by
 	//     SpaceTaskRepository and NodeExecutionRepository.
 	//   - Backfill both new structures from the existing schema.
-	runMigration118(db);
+	runMigration120(db);
 }
 
 /**
@@ -7982,7 +7990,7 @@ export function runMigration117(db: BunDatabase): void {
 }
 
 /**
- * Migration 118: Replace the task-thread projection-table approach with a schema
+ * Migration 120: Replace the task-thread projection-table approach with a schema
  * fix.
  *
  * Two parallel concerns:
@@ -8006,7 +8014,7 @@ export function runMigration117(db: BunDatabase): void {
  * - `CREATE TABLE IF NOT EXISTS` and `INSERT OR IGNORE` make the
  *   task_session_map seed safe to re-run.
  */
-export function runMigration118(db: BunDatabase): void {
+export function runMigration120(db: BunDatabase): void {
 	// Step 1: add derived columns to sdk_messages.
 	if (tableExists(db, 'sdk_messages')) {
 		const columns = tableColumnNames(db, 'sdk_messages');
@@ -8144,4 +8152,34 @@ export function runMigration118(db: BunDatabase): void {
 			WHERE ne.agent_session_id IS NOT NULL
 		`);
 	}
+}
+
+/**
+ * Migration 118: Add `setting_sources` column to `space_agents` table.
+ *
+ * Stores per-agent setting source overrides as JSON (e.g. ["user","project"]).
+ * Nullable — null means inherit from Space or global default.
+ */
+export function runMigration118(db: BunDatabase): void {
+	if (!tableExists(db, 'space_agents')) return;
+
+	const columns = tableColumnNames(db, 'space_agents');
+	if (columns.includes('setting_sources')) return;
+
+	db.exec(`ALTER TABLE space_agents ADD COLUMN setting_sources TEXT DEFAULT NULL`);
+}
+
+/**
+ * Migration 119: Add `setting_sources` column to `spaces` table.
+ *
+ * Stores per-space default setting sources as JSON (e.g. ["user","project"]).
+ * Nullable — null means inherit from global default.
+ */
+export function runMigration119(db: BunDatabase): void {
+	if (!tableExists(db, 'spaces')) return;
+
+	const columns = tableColumnNames(db, 'spaces');
+	if (columns.includes('setting_sources')) return;
+
+	db.exec(`ALTER TABLE spaces ADD COLUMN setting_sources TEXT DEFAULT NULL`);
 }

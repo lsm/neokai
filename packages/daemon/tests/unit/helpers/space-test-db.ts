@@ -35,6 +35,7 @@ export function createSpaceTables(db: BunDatabase): void {
 				CHECK(autonomy_level BETWEEN 1 AND 5),
 			config TEXT,
 			task_agent_config TEXT DEFAULT NULL,
+			setting_sources TEXT DEFAULT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)
@@ -56,6 +57,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			provider TEXT,
 			template_name TEXT DEFAULT NULL,
 			template_hash TEXT DEFAULT NULL,
+			setting_sources TEXT DEFAULT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -243,7 +245,7 @@ export function createSpaceTables(db: BunDatabase): void {
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
 	);
 
-	// task_session_map (migration 118). Explicit lookup from a `space_task` to
+	// task_session_map (migration 120). Explicit lookup from a `space_task` to
 	// the set of sessions whose `sdk_messages` contribute to its timeline.
 	// Maintained at write time by SpaceTaskRepository (task_agent leg) and
 	// NodeExecutionRepository (node_agent leg).

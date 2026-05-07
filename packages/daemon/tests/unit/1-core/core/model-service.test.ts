@@ -1070,4 +1070,172 @@ describe('Model Service', () => {
 			expect(models).toEqual([]);
 		});
 	});
+
+	describe('refreshModels', () => {
+		it('should restore FALLBACK_MODELS when cache is empty and no providers are available', async () => {
+			// Ensure cache is empty (as if clearModelsCache() was called)
+			clearModelsCache();
+			expect(getAvailableModels('global')).toEqual([]);
+
+			// With no registered providers available, refreshModels should restore fallbacks
+			const { refreshModels } = await import('../../../../src/lib/model-service');
+			await refreshModels();
+
+			const models = getAvailableModels('global');
+			expect(models.length).toBeGreaterThan(0);
+			expect(models.some((m) => m.id === 'sonnet')).toBe(true);
+			expect(models.some((m) => m.id === 'opus')).toBe(true);
+			expect(models.some((m) => m.id === 'haiku')).toBe(true);
+		});
+
+		it('should preserve existing cache when refresh returns no models', async () => {
+			// Seed cache with mock models
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+			setModelsCache(testCache);
+
+			const { refreshModels } = await import('../../../../src/lib/model-service');
+			await refreshModels();
+
+			// Existing cache should be preserved because it was non-empty
+			const models = getAvailableModels('global');
+			expect(models).toEqual(mockModels);
+		});
+
+		it('should cancel in-flight background refresh when clearModelsCache is called', async () => {
+			// Use a custom cache key to avoid cross-test contamination that can
+			// write to the 'global' key from unrelated async provider loading.
+			const cacheKey = 'bg-cancel-test';
+
+			// Register a test provider so the background refresh actually returns
+			// models and reaches the generation-guard check.
+			const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+			type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+			const registry = getProviderRegistry();
+			registry.register({
+				id: 'test-provider-bg',
+				getModels: async () => [
+					{
+						id: 'bg-model',
+						name: 'BG Model',
+						family: 'test',
+						provider: 'test-provider-bg',
+						contextWindow: 100000,
+					},
+				],
+				isAvailable: async () => true,
+			} as ProviderLike);
+
+			// Seed cache with an old timestamp so getAvailableModels triggers
+			// a background refresh.
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set(cacheKey, mockModels);
+			setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000); // 5 hours ago
+
+			// Trigger a background refresh by calling getAvailableModels
+			getAvailableModels(cacheKey);
+
+			// Immediately clear the cache (simulating an OAuth account change)
+			clearModelsCache();
+			expect(getAvailableModels(cacheKey)).toEqual([]);
+
+			// Wait long enough for the background refresh to have completed
+			// if it were still running.
+			await new Promise((resolve) => setTimeout(resolve, 500));
+
+			// The cache should still be empty because the generation counter
+			// caused the in-flight refresh to drop its stale result.
+			expect(getAvailableModels(cacheKey)).toEqual([]);
+		});
+
+		it('should NOT cancel global background refresh on session-scoped clearModelsCache', async () => {
+			// Use a custom cache key to avoid cross-test contamination that can
+			// write to the 'global' key from unrelated async provider loading.
+			const cacheKey = 'bg-session-test';
+
+			// Register a test provider so the background refresh actually returns
+			// models and reaches the generation-guard check.
+			const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+			type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+			const registry = getProviderRegistry();
+			registry.register({
+				id: 'test-provider-bg2',
+				getModels: async () => [
+					{
+						id: 'bg-model-2',
+						name: 'BG Model 2',
+						family: 'test',
+						provider: 'test-provider-bg2',
+						contextWindow: 100000,
+					},
+				],
+				isAvailable: async () => true,
+			} as ProviderLike);
+
+			// Seed the cache with an old timestamp so getAvailableModels
+			// triggers a background refresh for this key.
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set(cacheKey, mockModels);
+			setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000); // 5 hours ago
+
+			// Trigger a background refresh for this key
+			getAvailableModels(cacheKey);
+
+			// Clear a *different* cache key — this must not affect the refresh
+			clearModelsCache('session-123');
+			expect(getAvailableModels('session-123')).toEqual([]);
+
+			// Wait long enough for the background refresh to complete
+			await new Promise((resolve) => setTimeout(resolve, 500));
+
+			// The cache should still have been populated because the
+			// session-scoped clear must not bump the generation for this key.
+			const models = getAvailableModels(cacheKey);
+			expect(models.length).toBeGreaterThan(0);
+			expect(models.some((m) => m.id === 'bg-model-2')).toBe(true);
+		});
+
+		it('should drop stale result when clearModelsCache is called during foreground refresh', async () => {
+			// Register a deliberately slow provider so the refresh is in-flight
+			// long enough for us to clear the cache while it runs.
+			const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+			type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+			const registry = getProviderRegistry();
+			registry.register({
+				id: 'slow-foreground-provider',
+				getModels: async () => {
+					await new Promise((resolve) => setTimeout(resolve, 200));
+					return [
+						{
+							id: 'stale-model',
+							name: 'Stale Model',
+							family: 'test',
+							provider: 'slow-foreground-provider',
+							contextWindow: 100000,
+						},
+					];
+				},
+				isAvailable: async () => true,
+			} as ProviderLike);
+
+			// Ensure cache is empty
+			clearModelsCache();
+
+			// Start a foreground refresh but do not await it yet
+			const { refreshModels } = await import('../../../../src/lib/model-service');
+			const refreshPromise = refreshModels();
+
+			// Allow the refresh to enter its async loading phase
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// Invalidate the cache while the refresh is still loading models
+			clearModelsCache();
+
+			// Wait for the refresh to finish
+			await refreshPromise;
+
+			// The generation guard should have caused the stale result to be dropped
+			expect(getAvailableModels('global')).toEqual([]);
+		});
+	});
 });

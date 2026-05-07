@@ -141,6 +141,7 @@ const exportedAgentBaseSchema = z.object({
 	systemPrompt: z.string().optional(),
 	instructions: z.string().optional(),
 	tools: z.array(z.string()).optional(),
+	settingSources: z.array(z.enum(['user', 'project', 'local'])).optional(),
 });
 
 const exportedWorkflowBaseSchema = z.object({
@@ -219,6 +220,7 @@ export function exportAgent(agent: SpaceAgent): ExportedSpaceAgent {
 	if (agent.customPrompt !== null && agent.customPrompt !== undefined)
 		exported.systemPrompt = agent.customPrompt;
 	if (agent.tools !== undefined) exported.tools = agent.tools;
+	if (agent.settingSources !== undefined) exported.settingSources = agent.settingSources;
 	return exported;
 }
 
