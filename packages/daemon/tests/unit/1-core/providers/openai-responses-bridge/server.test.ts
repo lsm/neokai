@@ -1658,4 +1658,200 @@ describe('openai-responses-bridge server', () => {
 			usage: { output_tokens: 10, thinking_tokens: 7 },
 		});
 	});
+
+	it('clears cached reasoning when response has no reasoning items', async () => {
+		const capturedBodies: Record<string, unknown>[] = [];
+		let requestCount = 0;
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async (_req, init) => {
+				const body = JSON.parse((init?.body as string) ?? '{}');
+				capturedBodies.push(body);
+				requestCount++;
+				if (requestCount === 1) {
+					return sse([
+						{
+							event: 'response.output_text.delta',
+							data: { type: 'response.output_text.delta', delta: 'First.' },
+						},
+						{
+							event: 'response.completed',
+							data: {
+								type: 'response.completed',
+								response: {
+									id: 'resp_first',
+									usage: { input_tokens: 5, output_tokens: 1 },
+									output: [{ type: 'reasoning', encrypted_content: 'enc_first' }],
+								},
+							},
+						},
+					]);
+				}
+				// Second and third requests: no reasoning items returned
+				return sse([
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: 'Later.' },
+					},
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: {
+								id: `resp_${requestCount}`,
+								usage: { input_tokens: 5, output_tokens: 1 },
+								output: [],
+							},
+						},
+					},
+				]);
+			},
+		});
+
+		const first = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'First.' }],
+				thinking: { type: 'enabled', budget_tokens: 16000 },
+			}),
+		});
+		await readSSEEvents(first.body);
+
+		const second = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [
+					{ role: 'assistant', content: 'First response.' },
+					{ role: 'user', content: 'Second.' },
+				],
+				thinking: { type: 'enabled', budget_tokens: 16000 },
+			}),
+		});
+		await readSSEEvents(second.body);
+
+		const third = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [
+					{ role: 'assistant', content: 'First response.' },
+					{ role: 'user', content: 'Second.' },
+					{ role: 'assistant', content: 'Second response.' },
+					{ role: 'user', content: 'Third.' },
+				],
+				thinking: { type: 'enabled', budget_tokens: 16000 },
+			}),
+		});
+		await readSSEEvents(third.body);
+
+		// Second request should include the cached reasoning from first turn
+		const secondInput = capturedBodies[1]?.input as Array<Record<string, unknown>>;
+		expect(
+			secondInput.some(
+				(item) => item.type === 'reasoning' && item.encrypted_content === 'enc_first'
+			)
+		).toBe(true);
+
+		// Third request should NOT contain any reasoning items because second response had none
+		const thirdInput = capturedBodies[2]?.input as Array<Record<string, unknown>>;
+		expect(thirdInput.some((item) => item.type === 'reasoning')).toBe(false);
+	});
+
+	it('includes encrypted reasoning in request when reusing cached reasoning without thinking config', async () => {
+		const capturedBodies: Record<string, unknown>[] = [];
+		let requestCount = 0;
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async (_req, init) => {
+				const body = JSON.parse((init?.body as string) ?? '{}');
+				capturedBodies.push(body);
+				requestCount++;
+				if (requestCount === 1) {
+					return sse([
+						{
+							event: 'response.output_text.delta',
+							data: { type: 'response.output_text.delta', delta: 'First.' },
+						},
+						{
+							event: 'response.completed',
+							data: {
+								type: 'response.completed',
+								response: {
+									id: 'resp_first',
+									usage: { input_tokens: 5, output_tokens: 1 },
+									output: [{ type: 'reasoning', encrypted_content: 'enc_first' }],
+								},
+							},
+						},
+					]);
+				}
+				return sse([
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: 'Second.' },
+					},
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: {
+								id: 'resp_second',
+								usage: { input_tokens: 5, output_tokens: 1 },
+								output: [{ type: 'reasoning', encrypted_content: 'enc_second' }],
+							},
+						},
+					},
+				]);
+			},
+		});
+
+		const first = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'First.' }],
+				thinking: { type: 'enabled', budget_tokens: 16000 },
+			}),
+		});
+		await readSSEEvents(first.body);
+
+		// Second turn WITHOUT thinking field — should still include reasoning and encrypted_content
+		const second = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [
+					{ role: 'assistant', content: 'First response.' },
+					{ role: 'user', content: 'Second.' },
+				],
+				// no thinking field
+			}),
+		});
+		await readSSEEvents(second.body);
+
+		// Second request should include the cached reasoning item
+		const secondBody = capturedBodies[1];
+		expect(secondBody?.reasoning).toBeUndefined();
+		expect(secondBody?.include).toEqual(['reasoning.encrypted_content']);
+		const secondInput = secondBody?.input as Array<Record<string, unknown>>;
+		expect(
+			secondInput.some(
+				(item) => item.type === 'reasoning' && item.encrypted_content === 'enc_first'
+			)
+		).toBe(true);
+	});
 });

@@ -487,7 +487,10 @@ function buildResponsesRequest(
 		store: false,
 		stream: true,
 		...(includeParallelToolCalls ? { parallel_tool_calls: false } : {}),
-		...(reasoning ? { reasoning, include: ['reasoning.encrypted_content'] } : {}),
+		...(reasoning ? { reasoning } : {}),
+		...(reasoning || (reasoningItems && reasoningItems.length > 0)
+			? { include: ['reasoning.encrypted_content'] }
+			: {}),
 	};
 }
 
@@ -899,9 +902,7 @@ async function streamResponsesToAnthropic({
 						onFunctionCallResponse?.(callId, responseId);
 					}
 				}
-				if (responseReasoningItems.length > 0) {
-					onReasoningItems?.(responseReasoningItems);
-				}
+				onReasoningItems?.(responseReasoningItems);
 				continue;
 			}
 
