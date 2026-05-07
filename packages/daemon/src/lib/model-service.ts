@@ -15,10 +15,7 @@ import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import { initializeProviders } from './providers/factory.js';
 import { getProviderRegistry } from './providers/registry.js';
 import type { Provider } from '@neokai/shared/provider';
-import {
-	getCodexBridgeModelInfos,
-	resolveCodexBridgeModelId,
-} from './providers/codex-anthropic-bridge/model-context-windows.js';
+import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
 
 /**
  * Legacy model ID mappings to SDK model IDs

@@ -48,7 +48,7 @@ import type { Database } from '../../storage/database';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
-import { requireModelContextWindow } from '../providers/codex-anthropic-bridge/model-context-windows';
+import { requireModelContextWindow } from '../providers/codex-models';
 import { getProviderContextManager } from '../providers/factory.js';
 import type { SettingsManager } from '../settings-manager';
 import type { SkillsManager } from '../skills-manager';
@@ -595,14 +595,6 @@ export class QueryOptionsBuilder {
 		const providerId = this.ctx.session.config.provider;
 		let thinkingModes =
 			PROVIDER_THINKING_MODES[providerId as keyof typeof PROVIDER_THINKING_MODES] ?? 'granular';
-		// The anthropic-codex provider can run with either the OpenAI Responses
-		// API adapter (supports reasoning) or the legacy Codex app-server adapter
-		// (does not support reasoning). Gate thinking at runtime by env var.
-		const bridgeAdapter = process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER?.trim().toLowerCase();
-		if (providerId === 'anthropic-codex' && bridgeAdapter === 'codex') {
-			thinkingModes = 'off';
-		}
-
 		// Add thinking configuration based on the session override, falling back to the app default.
 		// Backward compatibility: legacy 'auto' is treated as 'off'.
 		const globalSettings = this.ctx.settingsManager.getGlobalSettings();

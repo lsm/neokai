@@ -23,7 +23,7 @@ import {
 import type {
 	AnthropicRequest,
 	AnthropicTool,
-} from '../../../../src/lib/providers/codex-anthropic-bridge/translator.js';
+} from '../../../../src/lib/providers/provider-anthropic-compat/translator.js';
 
 describe('Gemini Format Converter', () => {
 	// -------------------------------------------------------------------------
