@@ -452,17 +452,26 @@ function toolChoiceToResponsesToolChoice(
 }
 
 /**
+ * Models known to support reasoning.effort="xhigh". Mini and older
+ * variants (e.g. gpt-5.1-codex-mini) reject xhigh with a 400 error.
+ */
+const MODELS_SUPPORTING_XHIGH_REASONING = new Set(['gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5']);
+
+/**
  * Map Anthropic SDK thinking config (budget_tokens) to OpenAI reasoning.effort.
+ * Caps xhigh to high for models that do not support it.
  */
 function mapThinkingToReasoningEffort(
-	thinking: AnthropicRequest['thinking']
+	thinking: AnthropicRequest['thinking'],
+	model?: string
 ): ResponsesRequest['reasoning'] {
 	if (!thinking || thinking.type !== 'enabled') return undefined;
 	const tokens = thinking.budget_tokens;
 	if (tokens <= 8000) return { effort: 'low', summary: 'auto' };
 	if (tokens <= 16000) return { effort: 'medium', summary: 'auto' };
 	if (tokens <= 24000) return { effort: 'high', summary: 'auto' };
-	return { effort: 'xhigh', summary: 'auto' };
+	const supportsXHigh = model ? MODELS_SUPPORTING_XHIGH_REASONING.has(model) : true;
+	return { effort: supportsXHigh ? 'xhigh' : 'high', summary: 'auto' };
 }
 
 function buildResponsesRequest(
@@ -477,7 +486,7 @@ function buildResponsesRequest(
 	const tool_choice = toolChoiceToResponsesToolChoice(body.tool_choice);
 	const includeMaxOutputTokens = options.includeMaxOutputTokens ?? true;
 	const includeParallelToolCalls = options.includeParallelToolCalls ?? true;
-	const reasoning = mapThinkingToReasoningEffort(body.thinking);
+	const reasoning = mapThinkingToReasoningEffort(body.thinking, model);
 	return {
 		model,
 		...(instructions ? { instructions } : {}),

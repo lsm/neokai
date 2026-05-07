@@ -1423,6 +1423,80 @@ describe('openai-responses-bridge server', () => {
 		expect(capturedBody?.include).toEqual(['reasoning.encrypted_content']);
 	});
 
+	it('maps think32k to xhigh on frontier models that support it', async () => {
+		let capturedBody: Record<string, unknown> | undefined;
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async (_url, init) => {
+				capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+				return sse([
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: { usage: { input_tokens: 5, output_tokens: 1 }, output: [] },
+						},
+					},
+				]);
+			},
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'Think deeply.' }],
+				thinking: { type: 'enabled', budget_tokens: 32000 },
+			}),
+		});
+
+		expect(resp.status).toBe(200);
+		expect(capturedBody?.reasoning).toEqual({ effort: 'xhigh', summary: 'auto' });
+	});
+
+	it('caps think32k to high on models that do not support xhigh', async () => {
+		let capturedBody: Record<string, unknown> | undefined;
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models: [
+				{
+					id: 'gpt-5.1-codex-mini',
+					display_name: 'GPT-5.1 Codex Mini',
+					created_at: '2026-01-01T00:00:00Z',
+					context_window: 128000,
+				},
+			],
+			fetchImpl: async (_url, init) => {
+				capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+				return sse([
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: { usage: { input_tokens: 5, output_tokens: 1 }, output: [] },
+						},
+					},
+				]);
+			},
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.1-codex-mini',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'Think deeply.' }],
+				thinking: { type: 'enabled', budget_tokens: 32000 },
+			}),
+		});
+
+		expect(resp.status).toBe(200);
+		expect(capturedBody?.reasoning).toEqual({ effort: 'high', summary: 'auto' });
+	});
 	it('omits reasoning when thinking is off', async () => {
 		let capturedBody: Record<string, unknown> | undefined;
 		server = createOpenAIResponsesBridgeServer({
