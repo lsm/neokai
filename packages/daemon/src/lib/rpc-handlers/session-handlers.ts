@@ -703,7 +703,15 @@ export function setupSessionHandlers(
 				await refreshModels();
 			}
 
-			const availableModels = getAvailableModels('global');
+			let availableModels = getAvailableModels('global');
+
+			// If cache is empty and we're not already forcing refresh, do a forced refresh.
+			// This handles the case where the cache was just cleared (e.g., after OAuth
+			// account changes) so the next models.list call re-evaluates provider availability.
+			if (!forceRefresh && availableModels.length === 0) {
+				await refreshModels();
+				availableModels = getAvailableModels('global');
+			}
 
 			return {
 				models: availableModels.map((m) => ({
@@ -716,7 +724,7 @@ export function setupSessionHandlers(
 					context_window: m.contextWindow,
 					type: 'model' as const,
 				})),
-				cached: !forceRefresh,
+				cached: !forceRefresh && availableModels.length > 0,
 			};
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);

@@ -923,6 +923,57 @@ describe('useModelSwitcher', () => {
 
 			expect(result.current.currentModel).toBe('claude-opus-4-5-20251101');
 		});
+
+		it('should reload model info when gemini-accounts-changed event fires', async () => {
+			const mockHub = {
+				request: vi
+					.fn()
+					// First load (mount)
+					.mockResolvedValueOnce({
+						currentModel: 'claude-sonnet-4-20250514',
+						modelInfo: null,
+					})
+					.mockResolvedValueOnce({ models: [] })
+					// Second load (event-triggered)
+					.mockResolvedValueOnce({
+						currentModel: 'gemini-3-pro',
+						modelInfo: {
+							id: 'gemini-3-pro',
+							name: 'Gemini 3 Pro',
+							provider: 'google-gemini-oauth',
+						},
+					})
+					.mockResolvedValueOnce({
+						models: [
+							{
+								id: 'gemini-3-pro',
+								display_name: 'Gemini 3 Pro',
+								description: '',
+								provider: 'google-gemini-oauth',
+							},
+						],
+					}),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+
+			const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+			await waitFor(() => {
+				expect(result.current.loading).toBe(false);
+			});
+
+			expect(result.current.currentModel).toBe('claude-sonnet-4-20250514');
+
+			act(() => {
+				window.dispatchEvent(new CustomEvent('gemini-accounts-changed'));
+			});
+
+			await waitFor(() => {
+				expect(result.current.currentModel).toBe('gemini-3-pro');
+			});
+
+			expect(mockHub.request).toHaveBeenCalledWith('models.list', { useCache: true });
+		});
 	});
 
 	describe('sessionId changes', () => {
