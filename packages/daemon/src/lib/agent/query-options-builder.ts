@@ -411,10 +411,14 @@ export class QueryOptionsBuilder {
 			// ============ Settings ============
 			// settingSources controls which on-disk settings files the SDK loads.
 			// Default to ['user', 'project', 'local'] so CLAUDE.md and user/project
-			// settings are loaded. strictMcpConfig: true prevents MCP auto-loading
-			// from any source — the unified app_mcp_servers registry is the sole MCP
-			// source.  settingSources only affects non-MCP settings (permissions,
-			// output style, etc.); MCP servers are fully isolated by strictMcpConfig.
+			// settings are loaded.
+			//
+			// SECURITY: strictMcpConfig is true for ALL sessions. This means the SDK
+			// ONLY accepts MCP servers explicitly placed in the mcpServers map above.
+			// It does NOT auto-load MCP servers from settings files, .mcp.json, or
+			// any other source. The unified app_mcp_servers registry is the sole MCP
+			// source. settingSources only affects non-MCP settings (permissions,
+			// output style, CLAUDE.md content, etc.).
 			settingSources:
 				config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
 			settings: buildProviderSettings(providerId, config.model),
