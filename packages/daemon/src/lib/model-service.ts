@@ -363,14 +363,13 @@ export function clearModelsCache(cacheKey?: string): void {
 		modelsCache.delete(cacheKey);
 		cacheTimestamps.delete(cacheKey);
 		refreshInProgress.delete(cacheKey);
-		if (hadInFlight) {
-			// Bump so the in-flight refresh drops its stale result.
+		if (hadInFlight || cacheGeneration.has(cacheKey)) {
+			// Bump (or preserve) the generation so any in-flight refresh —
+			// including one invalidated by an earlier clear — drops its result.
 			cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
-		} else {
-			// No in-flight refresh — remove generation tracking to prevent
-			// unbounded growth of per-session keys.
-			cacheGeneration.delete(cacheKey);
 		}
+		// If there's no in-flight refresh and no generation history, there's
+		// nothing to invalidate; leave the key absent.
 	} else {
 		const inFlightKeys = new Set(refreshInProgress.keys());
 		modelsCache.clear();
