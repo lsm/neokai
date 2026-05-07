@@ -346,7 +346,13 @@ export function createSpaceTables(db: BunDatabase): void {
 			workflow_run_id TEXT
 		)
 	`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_space_id ON mcp_audit_log(space_id)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_task_id ON mcp_audit_log(task_id)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_session_id ON mcp_audit_log(session_id)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_space ON mcp_audit_log (space_id, timestamp)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_task ON mcp_audit_log (task_id, timestamp)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_session ON mcp_audit_log (session_id, timestamp)`
+	);
 }
