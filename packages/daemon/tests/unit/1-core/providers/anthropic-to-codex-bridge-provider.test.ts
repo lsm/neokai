@@ -841,6 +841,33 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			expect(contextWindows.get('gpt-5.1-codex-mini')).toBe(128000);
 		});
 
+		it('sets thinkingModes to granular when Responses adapter is active', async () => {
+			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fakeCodexFound);
+			const models = await provider.getModels();
+			expect(models.length).toBeGreaterThan(0);
+			for (const model of models) {
+				expect(model.thinkingModes).toBe('granular');
+			}
+		});
+
+		it('sets thinkingModes to off when Codex adapter is active', async () => {
+			const p = makeProvider(
+				{ OPENAI_API_KEY: 'sk-env-key', NEOKAI_OPENAI_BRIDGE_ADAPTER: 'codex' },
+				tmpDir,
+				tmpDir,
+				fakeCodexFound
+			);
+			try {
+				const models = await p.getModels();
+				expect(models.length).toBeGreaterThan(0);
+				for (const model of models) {
+					expect(model.thinkingModes).toBe('off');
+				}
+			} finally {
+				p.stopAllBridgeServers();
+			}
+		});
+
 		it('returns models when NeoKai OAuth credentials are in auth.json', async () => {
 			const neokaiDir = path.join(tmpDir, 'neokai');
 			writeNeokaiAuth(neokaiDir, {

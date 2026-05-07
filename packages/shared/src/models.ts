@@ -36,6 +36,13 @@ export interface ModelInfo {
 	releaseDate: string;
 	/** Whether this model is currently available */
 	available: boolean;
+	/**
+	 * Runtime thinking mode for this model, overriding the static
+	 * PROVIDER_THINKING_MODES map when set. Used by providers whose
+	 * thinking support depends on runtime configuration (e.g. bridge
+	 * adapter selection).
+	 */
+	thinkingModes?: 'off' | 'on' | 'granular';
 }
 
 /**

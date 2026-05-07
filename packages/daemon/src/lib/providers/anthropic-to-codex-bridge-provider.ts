@@ -518,7 +518,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		// UI-only: it gates the Login/Logout buttons but must not hide models from users
 		// who authenticate via OPENAI_API_KEY / CODEX_API_KEY env vars.
 		if (!(await this.isAvailable())) return [];
-		return ANTHROPIC_CODEX_MODELS;
+		const thinkingModes = this.selectBridgeAdapter() === 'responses' ? 'granular' : 'off';
+		return ANTHROPIC_CODEX_MODELS.map((m) => ({ ...m, thinkingModes }));
 	}
 
 	ownsModel(modelId: string): boolean {
