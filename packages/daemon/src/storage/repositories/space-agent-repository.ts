@@ -160,6 +160,25 @@ export class SpaceAgentRepository {
 		values.push(id);
 
 		this.db.prepare(`UPDATE space_agents SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+
+		// Refresh denormalised labels in task_session_map after a rename.
+		// `task_session_map.label` is stamped at execution write time and read
+		// directly by `spaceTaskMessages.byTask*`; without this refresh, task
+		// timelines would show outdated agent names indefinitely until the
+		// next execution-level write touched the row.
+		if (params.name !== undefined && params.name !== null) {
+			this.db
+				.prepare(
+					`UPDATE task_session_map
+					 SET label = ?
+					 WHERE kind = 'node_agent'
+						 AND node_execution_id IN (
+							 SELECT id FROM node_executions WHERE agent_id = ?
+						 )`
+				)
+				.run(params.name, id);
+		}
+
 		return this.getById(id);
 	}
 

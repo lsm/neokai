@@ -721,5 +721,183 @@ describe('SpaceTaskRepository', () => {
 			repo.deleteTask(task.id);
 			expect(mapRows(task.id)).toHaveLength(0);
 		});
+
+		it('rejects task_agent map row for sessions of the wrong type', () => {
+			// Reviewer flagged: the map drives `spaceTaskMessages.byTask*`, which
+			// previously required `sessions.type = 'space_task_agent'` in its
+			// read SQL. Inserting an arbitrary session id here would surface that
+			// unrelated session's `sdk_messages` in the task timeline — a
+			// data-scope regression. The upsert must validate session type.
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-worker', 'worker');
+
+			const task = repo.createTask({ spaceId, title: 'T1' });
+			repo.updateTask(task.id, { taskAgentSessionId: 'sess-worker' });
+			expect(mapRows(task.id).filter((r) => r.kind === 'task_agent')).toHaveLength(0);
+		});
+
+		it('keeps task_agent map row when session type matches', () => {
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-orch', 'space_task_agent');
+
+			const task = repo.createTask({ spaceId, title: 'T1' });
+			repo.updateTask(task.id, { taskAgentSessionId: 'sess-orch' });
+			expect(mapRows(task.id)).toEqual([
+				{ taskId: task.id, sessionId: 'sess-orch', kind: 'task_agent' },
+			]);
+		});
+
+		it('drops a stale task_agent row when a new wrong-type session is supplied', () => {
+			// Set up a valid task_agent row, then attempt to bind to a worker
+			// session. The upsert must drop the stale row rather than leave the
+			// old binding silently active.
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-orch', 'space_task_agent');
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-worker', 'worker');
+
+			const task = repo.createTask({ spaceId, title: 'T1' });
+			repo.updateTask(task.id, { taskAgentSessionId: 'sess-orch' });
+			expect(mapRows(task.id)).toHaveLength(1);
+
+			repo.updateTask(task.id, { taskAgentSessionId: 'sess-worker' });
+			expect(mapRows(task.id).filter((r) => r.kind === 'task_agent')).toHaveLength(0);
+		});
+
+		it('seeds node_agent map rows when a task is created on an active workflow run', () => {
+			// Reviewer flagged: `spaceTaskMessages.byTask*` now JOINs
+			// task_session_map directly. If a task is created on a workflow run
+			// that already has executions, those node-agent sessions must be
+			// reflected in the map at create time — otherwise the task timeline
+			// would silently miss every existing node-agent message until some
+			// later execution write happens.
+			const now = Date.now();
+			(db as any)
+				.prepare(
+					`INSERT INTO space_workflow_nodes (id, workflow_id, name, created_at, updated_at)
+					 VALUES (?, ?, ?, ?, ?)`
+				)
+				.run('node-1', workflowId, 'Node', now, now);
+			(db as any)
+				.prepare(
+					`INSERT INTO node_executions
+					 (id, workflow_run_id, workflow_node_id, agent_name, agent_id, agent_session_id, status, created_at, updated_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run(
+					'ne-existing',
+					workflowRunId,
+					'node-1',
+					'coder',
+					null,
+					'sess-node-existing',
+					'in_progress',
+					now,
+					now
+				);
+
+			const task = repo.createTask({ spaceId, title: 'T1', workflowRunId });
+
+			const nodeAgentRows = mapRows(task.id).filter((r) => r.kind === 'node_agent');
+			expect(nodeAgentRows).toEqual([
+				{ taskId: task.id, sessionId: 'sess-node-existing', kind: 'node_agent' },
+			]);
+		});
+
+		it('seeds node_agent map rows when a task is moved onto an active workflow run', () => {
+			// Symmetric of the create-time seed: moving a task to a different
+			// run that already has executions must repopulate the map
+			// immediately, not wait for the next execution-level write.
+			const now = Date.now();
+			(db as any)
+				.prepare(
+					`INSERT INTO space_workflow_nodes (id, workflow_id, name, created_at, updated_at)
+					 VALUES (?, ?, ?, ?, ?)`
+				)
+				.run('node-2', workflowId, 'Node 2', now, now);
+
+			const otherRunId = 'run-other';
+			(db as any)
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+				)
+				.run(otherRunId, spaceId, workflowId, 'Run other', now, now);
+			(db as any)
+				.prepare(
+					`INSERT INTO node_executions
+					 (id, workflow_run_id, workflow_node_id, agent_name, agent_id, agent_session_id, status, created_at, updated_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run(
+					'ne-other',
+					otherRunId,
+					'node-2',
+					'reviewer',
+					null,
+					'sess-node-other',
+					'in_progress',
+					now,
+					now
+				);
+
+			const task = repo.createTask({ spaceId, title: 'Move me', workflowRunId });
+			expect(mapRows(task.id).filter((r) => r.kind === 'node_agent')).toHaveLength(0);
+
+			repo.updateTask(task.id, { workflowRunId: otherRunId });
+
+			const nodeAgentRows = mapRows(task.id).filter((r) => r.kind === 'node_agent');
+			expect(nodeAgentRows).toEqual([
+				{ taskId: task.id, sessionId: 'sess-node-other', kind: 'node_agent' },
+			]);
+		});
+
+		it('seeded node_agent map rows carry the agent display label', () => {
+			// Verifies the seed path resolves `space_agents.name` (matching the
+			// COALESCE precedence used by NodeExecutionRepository).
+			const now = Date.now();
+			(db as any)
+				.prepare(
+					`INSERT INTO space_agents (id, space_id, name, created_at, updated_at)
+					 VALUES (?, ?, ?, ?, ?)`
+				)
+				.run('agent-1', spaceId, 'Coder Pro', now, now);
+			(db as any)
+				.prepare(
+					`INSERT INTO space_workflow_nodes (id, workflow_id, name, created_at, updated_at)
+					 VALUES (?, ?, ?, ?, ?)`
+				)
+				.run('node-3', workflowId, 'Node 3', now, now);
+			(db as any)
+				.prepare(
+					`INSERT INTO node_executions
+					 (id, workflow_run_id, workflow_node_id, agent_name, agent_id, agent_session_id, status, created_at, updated_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run(
+					'ne-labelled',
+					workflowRunId,
+					'node-3',
+					'coder',
+					'agent-1',
+					'sess-labelled',
+					'in_progress',
+					now,
+					now
+				);
+
+			const task = repo.createTask({ spaceId, title: 'Labelled', workflowRunId });
+
+			const row = (db as any)
+				.prepare(
+					`SELECT label FROM task_session_map
+					 WHERE task_id = ? AND session_id = ? AND kind = 'node_agent'`
+				)
+				.get(task.id, 'sess-labelled') as { label: string } | undefined;
+			expect(row?.label).toBe('Coder Pro');
+		});
 	});
 });

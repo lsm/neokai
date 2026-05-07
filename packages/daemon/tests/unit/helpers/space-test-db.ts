@@ -245,6 +245,17 @@ export function createSpaceTables(db: BunDatabase): void {
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
 	);
 
+	// Minimal `sessions` table — enough for SpaceTaskRepository's
+	// task_session_map upsert to look up `sessions.type` and reject
+	// non-`space_task_agent` rows. Tests that don't pre-seed a session row
+	// still work: the upsert tolerates an unknown session id.
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS sessions (
+			id TEXT PRIMARY KEY,
+			type TEXT
+		)
+	`);
+
 	// task_session_map (migration 120). Explicit lookup from a `space_task` to
 	// the set of sessions whose `sdk_messages` contribute to its timeline.
 	// Maintained at write time by SpaceTaskRepository (task_agent leg) and

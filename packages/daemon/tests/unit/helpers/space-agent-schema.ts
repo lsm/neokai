@@ -93,6 +93,39 @@ export function createSpaceAgentSchema(db: Database): void {
 			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
 		)
 	`);
+
+	// node_executions + task_session_map (migration 120). The repository's
+	// `update` path refreshes denormalised labels in task_session_map after a
+	// rename via a JOIN through node_executions.
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS node_executions (
+			id TEXT PRIMARY KEY,
+			workflow_run_id TEXT NOT NULL,
+			workflow_node_id TEXT NOT NULL,
+			agent_name TEXT NOT NULL,
+			agent_id TEXT,
+			agent_session_id TEXT,
+			status TEXT NOT NULL DEFAULT 'pending',
+			result TEXT,
+			data TEXT,
+			created_at INTEGER NOT NULL,
+			started_at INTEGER,
+			completed_at INTEGER,
+			updated_at INTEGER NOT NULL
+		)
+	`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS task_session_map (
+			task_id TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			role TEXT NOT NULL,
+			label TEXT NOT NULL,
+			node_execution_id TEXT,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (task_id, session_id)
+		)
+	`);
 }
 
 export function insertSpace(db: Database, id = 'space-1'): void {
