@@ -102,6 +102,26 @@ export function createGeminiBridgeServer(config: GeminiBridgeConfig): GeminiBrid
 					JSON.stringify({
 						data: [
 							{
+								id: 'gemini-3.1-pro-preview',
+								type: 'model',
+								display_name: 'Gemini 3.1 Pro Preview',
+							},
+							{
+								id: 'gemini-3-pro-preview',
+								type: 'model',
+								display_name: 'Gemini 3 Pro Preview',
+							},
+							{
+								id: 'gemini-3-flash-preview',
+								type: 'model',
+								display_name: 'Gemini 3 Flash Preview',
+							},
+							{
+								id: 'gemini-3.1-flash-lite-preview',
+								type: 'model',
+								display_name: 'Gemini 3.1 Flash Lite Preview',
+							},
+							{
 								id: 'gemini-2.5-pro',
 								type: 'model',
 								display_name: 'Gemini 2.5 Pro',
@@ -112,9 +132,19 @@ export function createGeminiBridgeServer(config: GeminiBridgeConfig): GeminiBrid
 								display_name: 'Gemini 2.5 Flash',
 							},
 							{
-								id: 'gemini-2.0-flash',
+								id: 'gemini-2.5-flash-lite',
 								type: 'model',
-								display_name: 'Gemini 2.0 Flash',
+								display_name: 'Gemini 2.5 Flash Lite',
+							},
+							{
+								id: 'gemma-4-31b-it',
+								type: 'model',
+								display_name: 'Gemma 4 31B IT',
+							},
+							{
+								id: 'gemma-4-26b-a4b-it',
+								type: 'model',
+								display_name: 'Gemma 4 26B A4B IT',
 							},
 						],
 					}),

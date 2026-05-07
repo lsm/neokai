@@ -143,7 +143,7 @@ export function anthropicToGemini(
  */
 export function convertModelId(modelId: string): string {
 	// Pass through Gemini-style model IDs as-is
-	if (modelId.startsWith('gemini-')) {
+	if (modelId.startsWith('gemini-') || modelId.startsWith('gemma-')) {
 		return modelId;
 	}
 
