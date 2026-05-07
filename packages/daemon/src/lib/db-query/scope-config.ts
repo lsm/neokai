@@ -313,6 +313,13 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 		description:
 			'JSON-serialised cache of git-derived artifact data (gate diffs, commit log, per-file diffs) populated by background sync jobs and served to the TaskArtifactsPanel.',
 	},
+	{
+		tableName: 'mcp_audit_log',
+		scopeColumn: 'space_id',
+		blacklistedColumns: [],
+		description:
+			'Audit trail of MCP write operations (create_task, approve_task, send_message, save_artifact) with agent name, session ID, tool name, and parameters.',
+	},
 	// ── Main-DB tables exposed with space-scoped filtering via session ID prefix ──
 	{
 		tableName: 'sessions',
@@ -373,7 +380,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
 	'space_github_watched_repos',
 	// Node execution tracking — transient per-run agent state, not useful for ad-hoc queries
 	'node_executions',
-	// Task→session lookup projection (migration 120). Internal denormalisation
+	// Task→session lookup projection (migration 122). Internal denormalisation
 	// used by the live-query handlers to fan out a task into the set of sessions
 	// whose sdk_messages feed its task-thread timeline. Maintained at write time
 	// from space_tasks (task_agent leg) and node_executions (node_agent leg);

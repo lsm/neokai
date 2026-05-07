@@ -65,6 +65,9 @@ import {
 	ListGatesSchema,
 	ReadGateSchema,
 	RestoreNodeAgentSchema,
+	ListTasksSchema,
+	GetTaskSchema,
+	ListAuditEntriesSchema,
 } from './node-agent-tool-schemas';
 import type {
 	ListPeersInput,
@@ -77,8 +80,30 @@ import type {
 	ListGatesInput,
 	ReadGateInput,
 	RestoreNodeAgentInput,
+	ListTasksInput,
+	GetTaskInput,
+	ListAuditEntriesInput,
 } from './node-agent-tool-schemas';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { SpaceTask } from '@neokai/shared';
+import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
+
+/**
+ * Decode the JSON payload from a ToolResult created by jsonResult().
+ * Returns the parsed object or null if parsing fails.
+ */
+function decodeToolResultPayload(result: ToolResult): Record<string, unknown> | null {
+	try {
+		const text = result.content?.[0]?.text;
+		if (typeof text === 'string') {
+			return JSON.parse(text) as Record<string, unknown>;
+		}
+	} catch {
+		// Ignore parse errors — caller falls back to no-audit.
+	}
+	return null;
+}
 
 // Re-export for consumers that want the shared type
 export type { ToolResult };
@@ -209,6 +234,16 @@ export interface NodeAgentToolsConfig {
 	 */
 	artifactRepo?: WorkflowRunArtifactRepository;
 	/**
+	 * Task repository for list_tasks and get_task tools.
+	 * Optional — when absent, task read tools are not registered.
+	 */
+	taskRepo?: SpaceTaskRepository;
+	/**
+	 * MCP audit log repository for recording write operations.
+	 * Optional — when absent, no audit entries are written.
+	 */
+	auditLogRepo?: McpAuditLogRepository;
+	/**
 	 * Optional callback invoked when the agent calls `restore_node_agent`.
 	 *
 	 * Wired by TaskAgentManager to re-attach the per-session node-agent MCP server
@@ -259,6 +294,29 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			.map((value) => normalizeAgentNameToken(value))
 			.filter((value) => value.length > 0)
 	);
+
+	/** Helper to log MCP write operations to the audit log. */
+	function logAudit(
+		toolName: string,
+		paramsSummary: Record<string, unknown>,
+		taskId?: string
+	): void {
+		if (config.auditLogRepo) {
+			try {
+				config.auditLogRepo.createEntry({
+					agentName: myAgentName,
+					sessionId: mySessionId,
+					toolName,
+					paramsSummary: JSON.stringify(paramsSummary),
+					spaceId,
+					taskId: taskId ?? config.taskId,
+					workflowRunId,
+				});
+			} catch {
+				// Audit logging is best-effort; never block the tool operation.
+			}
+		}
+	}
 
 	return {
 		/**
@@ -652,6 +710,16 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				}
 			}
 
+			// Audit log: gate data writes via send_message
+			if (gateWriteResult) {
+				logAudit('send_message', {
+					target,
+					gateId: gateWriteResult.gateId,
+					gateOpen: gateWriteResult.gateOpen,
+					dataKeys: data ? Object.keys(data) : undefined,
+				});
+			}
+
 			const result = await agentMessageRouter.deliverMessage({
 				fromAgentName: myAgentName,
 				fromSessionId: mySessionId,
@@ -989,6 +1057,14 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					data: artifactData,
 				});
 
+				logAudit('save_artifact', {
+					type,
+					key: artifactKey,
+					append: append ?? false,
+					summary: summary ?? undefined,
+					dataKeys: data ? Object.keys(data) : undefined,
+				});
+
 				return jsonResult({
 					success: true,
 					artifact: {
@@ -1041,7 +1117,163 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					error: 'create_standalone_task is not available in this node-agent session.',
 				});
 			}
-			return config.onCreateStandaloneTask(args);
+			const result = await config.onCreateStandaloneTask(args);
+			// Decode the JSON payload from the ToolResult content to check success and extract the task ID.
+			const payload = decodeToolResultPayload(result);
+			const createdTask = payload?.task as { id: string } | undefined;
+			if (payload?.success && createdTask?.id) {
+				logAudit(
+					'create_standalone_task',
+					{
+						title: args.title,
+						priority: args.priority,
+						workflow_id: args.workflow_id,
+						depends_on: args.depends_on,
+						draft: args.draft,
+					},
+					createdTask.id
+				);
+			}
+			return result;
+		},
+
+		async approve_task(args: ApproveTaskInput): Promise<ToolResult> {
+			if (!config.onApproveTask) {
+				return jsonResult({
+					success: false,
+					error: 'approve_task is not available in this node-agent session.',
+				});
+			}
+			const result = await config.onApproveTask(args);
+			const payload = decodeToolResultPayload(result);
+			if (payload?.success) {
+				logAudit('approve_task', {}, config.taskId);
+			}
+			return result;
+		},
+
+		// ── Task read tools ──────────────────────────────────────────────
+
+		/**
+		 * List tasks in the current space, optionally filtered by status.
+		 *
+		 * Use `compact: true` to return a trimmed projection (id, title, status,
+		 * priority, createdAt) suitable for dense lists.
+		 */
+		async list_tasks(args: ListTasksInput): Promise<ToolResult> {
+			const { taskRepo } = config;
+			if (!taskRepo) {
+				return jsonResult({ success: false, error: 'Task repository not available.' });
+			}
+			try {
+				const limit = Math.min(args.limit ?? 20, 100);
+				const offset = args.offset ?? 0;
+				const total = taskRepo.countBySpace(spaceId, args.status ?? undefined, false);
+				let tasks: SpaceTask[];
+				if (args.status) {
+					tasks = taskRepo.listByStatus(spaceId, args.status, limit, offset);
+				} else {
+					tasks = taskRepo.listBySpace(spaceId, false, limit, offset);
+				}
+				if (args.compact) {
+					const compactTasks = tasks.map((t) => ({
+						id: t.id,
+						title: t.title,
+						status: t.status,
+						priority: t.priority,
+						createdAt: t.createdAt,
+					}));
+					return jsonResult({
+						success: true,
+						total,
+						tasks: compactTasks,
+						has_more: offset + tasks.length < total,
+					});
+				}
+				return jsonResult({ success: true, total, tasks, has_more: offset + tasks.length < total });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Get the full detail of a task by UUID or by numeric task number (e.g. #5).
+		 */
+		async get_task(args: GetTaskInput): Promise<ToolResult> {
+			const { taskRepo } = config;
+			if (!taskRepo) {
+				return jsonResult({ success: false, error: 'Task repository not available.' });
+			}
+			let task: SpaceTask | null = null;
+			if (args.task_number !== undefined) {
+				task = taskRepo.getTaskByNumber(spaceId, args.task_number);
+			} else if (args.task_id) {
+				task = taskRepo.getTask(args.task_id);
+				// Scope by space: getTask resolves by UUID only, so verify ownership.
+				if (task && task.spaceId !== spaceId) {
+					task = null;
+				}
+			} else {
+				return jsonResult({
+					success: false,
+					error: 'Either task_id or task_number is required',
+				});
+			}
+			if (!task) {
+				const ref = args.task_number !== undefined ? `#${args.task_number}` : args.task_id;
+				return jsonResult({ success: false, error: `Task not found: ${ref}` });
+			}
+			return jsonResult({ success: true, task });
+		},
+
+		/**
+		 * List MCP audit log entries for this space, filtered by task or session.
+		 *
+		 * Returns entries ordered by timestamp descending (newest first).
+		 * Use this to inspect the audit trail of tool operations performed
+		 * by agents in this workflow.
+		 */
+		async list_audit_entries(args: ListAuditEntriesInput): Promise<ToolResult> {
+			const { auditLogRepo } = config;
+			if (!auditLogRepo) {
+				return jsonResult({ success: false, error: 'Audit log repository not available.' });
+			}
+			try {
+				const limit = Math.min(args.limit ?? 20, 100);
+				const offset = args.offset ?? 0;
+				let entries;
+				let total: number;
+				if (args.task_id) {
+					entries = auditLogRepo.listByTaskAndSpace(args.task_id, spaceId, limit, offset);
+					total = auditLogRepo.countByTaskAndSpace(args.task_id, spaceId);
+				} else if (args.session_id) {
+					entries = auditLogRepo.listBySessionAndSpace(args.session_id, spaceId, limit, offset);
+					total = auditLogRepo.countBySessionAndSpace(args.session_id, spaceId);
+				} else {
+					entries = auditLogRepo.listBySpace(spaceId, limit, offset);
+					total = auditLogRepo.countBySpace(spaceId);
+				}
+				return jsonResult({
+					success: true,
+					entries: entries.map((e) => ({
+						id: e.id,
+						timestamp: e.timestamp,
+						agentName: e.agentName,
+						sessionId: e.sessionId,
+						toolName: e.toolName,
+						paramsSummary: e.paramsSummary,
+						spaceId: e.spaceId,
+						taskId: e.taskId,
+						workflowRunId: e.workflowRunId,
+					})),
+					total,
+					has_more: offset + entries.length < total,
+				});
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
 		},
 
 		// ── Self-heal ────────────────────────────────────────────────────
@@ -1209,7 +1441,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 							'runs and resolves the terminal status. Use this as your final action when you are ' +
 							'authorized to self-close; otherwise use submit_for_approval.',
 						ApproveTaskSchema.shape,
-						(args) => config.onApproveTask!(args)
+						(args) => handlers.approve_task(args)
 					),
 				]
 			: []),
@@ -1238,6 +1470,36 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 							'`approved → done`. Rejected if the task is not currently in `approved`.',
 						MarkCompleteSchema.shape,
 						(args) => config.onMarkComplete!(args)
+					),
+				]
+			: []),
+		...(config.taskRepo
+			? [
+					tool(
+						'list_tasks',
+						'List tasks in this space. Filterable by status. Use compact:true to reduce payload size. ' +
+							'Use this to discover existing tasks before creating new ones or to check on task progress.',
+						ListTasksSchema.shape,
+						(args) => handlers.list_tasks(args)
+					),
+					tool(
+						'get_task',
+						'Retrieve detailed information about a specific task including its status, result, and metadata. ' +
+							'Provide either task_number (numeric ID like 5 for task #5, preferred) or task_id (UUID).',
+						GetTaskSchema.shape,
+						(args) => handlers.get_task(args)
+					),
+				]
+			: []),
+		...(config.auditLogRepo
+			? [
+					tool(
+						'list_audit_entries',
+						'List MCP audit log entries for this space. Filter by task_id or session_id. ' +
+							'Returns entries ordered by timestamp descending (newest first). ' +
+							'Use this to inspect the audit trail of tool operations performed by agents.',
+						ListAuditEntriesSchema.shape,
+						(args) => handlers.list_audit_entries(args)
 					),
 				]
 			: []),

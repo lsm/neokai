@@ -564,7 +564,16 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   Stores per-space default setting sources as JSON.
 	runMigration119(db);
 
-	// Migration 120: Replace task-thread projection with schema fix.
+	// Migration 120: Add created_by and created_by_session columns to space_tasks.
+	//   Tracks which agent and session created a task for audit trail.
+	runMigration120(db);
+
+	// Migration 121: Create mcp_audit_log table.
+	//   General audit trail for MCP write operations (create_task, approve_task,
+	//   send_message with gate data, save_artifact, etc.).
+	runMigration121(db);
+
+	// Migration 122: Replace task-thread projection with schema fix.
 	//   - Add derived columns to sdk_messages: is_renderable, is_terminal, parent_tool_use_id.
 	//     These are populated at write time so live-query handlers can read them
 	//     without re-parsing JSON or running expensive json_each filters.
@@ -573,7 +582,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//     session plus every node-agent session). Maintained at write time by
 	//     SpaceTaskRepository and NodeExecutionRepository.
 	//   - Backfill both new structures from the existing schema.
-	runMigration120(db);
+	runMigration122(db);
 }
 
 /**
@@ -7990,7 +7999,7 @@ export function runMigration117(db: BunDatabase): void {
 }
 
 /**
- * Migration 120: Replace the task-thread projection-table approach with a schema
+ * Migration 122: Replace the task-thread projection-table approach with a schema
  * fix.
  *
  * Two parallel concerns:
@@ -8014,7 +8023,7 @@ export function runMigration117(db: BunDatabase): void {
  * - `CREATE TABLE IF NOT EXISTS` and `INSERT OR IGNORE` make the
  *   task_session_map seed safe to re-run.
  */
-export function runMigration120(db: BunDatabase): void {
+export function runMigration122(db: BunDatabase): void {
 	// Step 1: add derived columns to sdk_messages.
 	if (tableExists(db, 'sdk_messages')) {
 		const columns = tableColumnNames(db, 'sdk_messages');
@@ -8182,4 +8191,60 @@ export function runMigration119(db: BunDatabase): void {
 	if (columns.includes('setting_sources')) return;
 
 	db.exec(`ALTER TABLE spaces ADD COLUMN setting_sources TEXT DEFAULT NULL`);
+}
+
+/**
+ * Migration 120: Add `created_by` and `created_by_session` columns to `space_tasks` table.
+ *
+ * Tracks which agent and session created a task for audit trail.
+ * - `created_by`: agent name (e.g. 'space-agent', 'coder', 'task-agent')
+ * - `created_by_session`: session ID of the creator
+ * Both are nullable — existing rows get NULL.
+ */
+export function runMigration120(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+
+	const columns = tableColumnNames(db, 'space_tasks');
+	if (!columns.includes('created_by')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN created_by TEXT DEFAULT NULL`);
+	}
+	if (!columns.includes('created_by_session')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN created_by_session TEXT DEFAULT NULL`);
+	}
+}
+
+/**
+ * Migration 121: Create `mcp_audit_log` table.
+ *
+ * General audit trail for MCP write operations. Each entry records:
+ * - timestamp, agent_name, session_id, tool_name
+ * - params_summary: JSON summary of the tool call parameters
+ * - space_id, task_id, workflow_run_id: optional context
+ */
+export function runMigration121(db: BunDatabase): void {
+	if (!tableExists(db, 'mcp_audit_log')) {
+		db.exec(`
+			CREATE TABLE mcp_audit_log (
+				id TEXT PRIMARY KEY,
+				timestamp INTEGER NOT NULL,
+				agent_name TEXT DEFAULT NULL,
+				session_id TEXT DEFAULT NULL,
+				tool_name TEXT NOT NULL,
+				params_summary TEXT DEFAULT NULL,
+				space_id TEXT DEFAULT NULL,
+				task_id TEXT DEFAULT NULL,
+				workflow_run_id TEXT DEFAULT NULL
+			)
+		`);
+	}
+
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_space ON mcp_audit_log (space_id, timestamp)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_task ON mcp_audit_log (task_id, timestamp)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_session ON mcp_audit_log (session_id, timestamp)`
+	);
 }

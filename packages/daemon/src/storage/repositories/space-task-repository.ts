@@ -43,8 +43,8 @@ export class SpaceTaskRepository {
 
 			this.db
 				.prepare(
-					`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, preferred_workflow_id, created_by_task_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, preferred_workflow_id, created_by_task_id, depends_on, task_agent_session_id, created_by, created_by_session, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run(
 					id,
@@ -60,6 +60,8 @@ export class SpaceTaskRepository {
 					params.createdByTaskId ?? null,
 					JSON.stringify(params.dependsOn ?? []),
 					params.taskAgentSessionId ?? null,
+					params.createdBy ?? null,
+					params.createdBySession ?? null,
 					now,
 					now
 				);
@@ -96,15 +98,21 @@ export class SpaceTaskRepository {
 	}
 
 	/**
-	 * List tasks for a space, with optional status filter
+	 * List tasks for a space, with optional status filter and pagination.
+	 * When limit is not provided (or 0), returns all matching tasks (unbounded).
 	 */
-	listBySpace(spaceId: string, includeArchived = false): SpaceTask[] {
+	listBySpace(spaceId: string, includeArchived = false, limit?: number, offset = 0): SpaceTask[] {
 		let query = `SELECT * FROM space_tasks WHERE space_id = ?`;
 		if (!includeArchived) {
 			query += ` AND status != 'archived'`;
 		}
-		query += ` ORDER BY updated_at DESC`;
-
+		query += ` ORDER BY updated_at DESC, id DESC`;
+		if (limit && limit > 0) {
+			query += ` LIMIT ? OFFSET ?`;
+			const stmt = this.db.prepare(query);
+			const rows = stmt.all(spaceId, limit, offset) as Record<string, unknown>[];
+			return rows.map((r) => this.rowToSpaceTask(r));
+		}
 		const stmt = this.db.prepare(query);
 		const rows = stmt.all(spaceId) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
@@ -155,14 +163,41 @@ export class SpaceTaskRepository {
 	}
 
 	/**
-	 * List tasks by status within a space
+	 * List tasks by status within a space, with optional pagination.
+	 * When limit is not provided (or 0), returns all matching tasks (unbounded).
 	 */
-	listByStatus(spaceId: string, status: SpaceTaskStatus): SpaceTask[] {
-		const stmt = this.db.prepare(
-			`SELECT * FROM space_tasks WHERE space_id = ? AND status = ? ORDER BY updated_at DESC`
-		);
+	listByStatus(spaceId: string, status: SpaceTaskStatus, limit?: number, offset = 0): SpaceTask[] {
+		let query = `SELECT * FROM space_tasks WHERE space_id = ? AND status = ? ORDER BY updated_at DESC, id DESC`;
+		if (limit && limit > 0) {
+			query += ` LIMIT ? OFFSET ?`;
+			const stmt = this.db.prepare(query);
+			const rows = stmt.all(spaceId, status, limit, offset) as Record<string, unknown>[];
+			return rows.map((r) => this.rowToSpaceTask(r));
+		}
+		const stmt = this.db.prepare(query);
 		const rows = stmt.all(spaceId, status) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
+	}
+
+	/**
+	 * Count tasks for a space, optionally filtered by status.
+	 * Excludes archived by default, unless status is explicitly 'archived'.
+	 */
+	countBySpace(spaceId: string, status?: SpaceTaskStatus, includeArchived = false): number {
+		let query = `SELECT COUNT(*) as count FROM space_tasks WHERE space_id = ?`;
+		const params: SQLiteValue[] = [spaceId];
+		// When the caller explicitly filters by 'archived', include archived rows
+		// even if includeArchived is false — the status filter is the intent.
+		if (!includeArchived && status !== 'archived') {
+			query += ` AND status != 'archived'`;
+		}
+		if (status) {
+			query += ` AND status = ?`;
+			params.push(status);
+		}
+		const stmt = this.db.prepare(query);
+		const row = stmt.get(...params) as { count: number } | undefined;
+		return row?.count ?? 0;
 	}
 
 	/**
@@ -639,6 +674,8 @@ export class SpaceTaskRepository {
 			workflowRunId: (row.workflow_run_id as string | null) ?? undefined,
 			preferredWorkflowId: (row.preferred_workflow_id as string | null) ?? undefined,
 			createdByTaskId: (row.created_by_task_id as string | null) ?? undefined,
+			createdBy: (row.created_by as string | null) ?? undefined,
+			createdBySession: (row.created_by_session as string | null) ?? undefined,
 			result: (row.result as string | null) ?? null,
 			dependsOn: JSON.parse((row.depends_on as string | null) ?? '[]') as string[],
 			activeSession: (row.active_session as 'worker' | 'leader' | null) ?? null,

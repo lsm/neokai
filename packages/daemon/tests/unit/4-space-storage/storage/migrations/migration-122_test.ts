@@ -1,7 +1,7 @@
 /**
- * Migration 120 Tests — replace task-thread projection with schema fix.
+ * Migration 122 Tests — replace task-thread projection with schema fix.
  *
- * Migration 120 makes two schema-level moves:
+ * Migration 122 makes two schema-level moves:
  *   1. Adds derived columns (`is_renderable`, `is_terminal`, `parent_tool_use_id`)
  *      to `sdk_messages` and backfills them from existing rows. New rows are
  *      stamped at write time by the SDK message repository.
@@ -26,7 +26,7 @@ import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import {
 	createTables,
-	runMigration120,
+	runMigration122,
 	runMigrations,
 } from '../../../../../src/storage/schema/index.ts';
 
@@ -125,7 +125,7 @@ function seedPreM120Schema(db: BunDatabase): void {
 	db.exec('PRAGMA foreign_keys = ON');
 }
 
-describe('Migration 120: derived columns + task_session_map', () => {
+describe('Migration 122: derived columns + task_session_map', () => {
 	let testDir: string;
 	let db: BunDatabase;
 
@@ -133,7 +133,7 @@ describe('Migration 120: derived columns + task_session_map', () => {
 		testDir = join(
 			process.cwd(),
 			'tmp',
-			'test-migration-120',
+			'test-migration-122',
 			`test-${Date.now()}-${Math.random()}`
 		);
 		mkdirSync(testDir, { recursive: true });
@@ -325,7 +325,7 @@ describe('Migration 120: derived columns + task_session_map', () => {
 		});
 
 		test('is_terminal is set to 1 for result messages and 0 elsewhere', () => {
-			runMigration120(db);
+			runMigration122(db);
 			const rows = db
 				.prepare(`SELECT id, is_terminal FROM sdk_messages ORDER BY id`)
 				.all() as Array<{ id: string; is_terminal: number }>;
@@ -336,7 +336,7 @@ describe('Migration 120: derived columns + task_session_map', () => {
 		});
 
 		test('parent_tool_use_id is extracted from JSON', () => {
-			runMigration120(db);
+			runMigration122(db);
 			const subagent = db
 				.prepare(`SELECT parent_tool_use_id FROM sdk_messages WHERE id = ?`)
 				.get('msg-subagent') as { parent_tool_use_id: string | null };
@@ -348,7 +348,7 @@ describe('Migration 120: derived columns + task_session_map', () => {
 		});
 
 		test('is_renderable=0 for user rows with tool_result content', () => {
-			runMigration120(db);
+			runMigration122(db);
 			const row = db
 				.prepare(`SELECT is_renderable FROM sdk_messages WHERE id = ?`)
 				.get('msg-user-tool-result') as { is_renderable: number };
@@ -356,7 +356,7 @@ describe('Migration 120: derived columns + task_session_map', () => {
 		});
 
 		test('is_renderable=0 for assistant rows with no renderable content', () => {
-			runMigration120(db);
+			runMigration122(db);
 			const row = db
 				.prepare(`SELECT is_renderable FROM sdk_messages WHERE id = ?`)
 				.get('msg-assistant-empty') as { is_renderable: number };
@@ -364,7 +364,7 @@ describe('Migration 120: derived columns + task_session_map', () => {
 		});
 
 		test('is_renderable=1 for normal user/assistant rows and result rows', () => {
-			runMigration120(db);
+			runMigration122(db);
 			const ids = ['msg-user-text', 'msg-assistant-text', 'msg-result'];
 			const placeholders = ids.map(() => '?').join(',');
 			const rows = db
@@ -376,7 +376,7 @@ describe('Migration 120: derived columns + task_session_map', () => {
 		});
 
 		test('task_session_map seeds the task_agent leg for tasks with a Task Agent session', () => {
-			runMigration120(db);
+			runMigration122(db);
 			const row = db
 				.prepare(
 					`SELECT task_id, session_id, kind, role, label, node_execution_id
@@ -398,7 +398,7 @@ describe('Migration 120: derived columns + task_session_map', () => {
 		});
 
 		test('task_session_map seeds the node_agent leg for every (task, session) pair on the run', () => {
-			runMigration120(db);
+			runMigration122(db);
 			const rows = db
 				.prepare(
 					`SELECT task_id, session_id, kind, role, label, node_execution_id
@@ -435,7 +435,7 @@ describe('Migration 120: derived columns + task_session_map', () => {
 		});
 
 		test('task_session_map skips node executions without an agent_session_id', () => {
-			runMigration120(db);
+			runMigration122(db);
 			const orphan = db
 				.prepare(`SELECT COUNT(*) AS n FROM task_session_map WHERE node_execution_id = ?`)
 				.get('ne-3') as { n: number };
@@ -443,7 +443,7 @@ describe('Migration 120: derived columns + task_session_map', () => {
 		});
 
 		test('task_session_map skips workflow-less tasks for node_agent leg but keeps task_agent leg', () => {
-			runMigration120(db);
+			runMigration122(db);
 			const nodeRows = db
 				.prepare(`SELECT COUNT(*) AS n FROM task_session_map WHERE task_id = ? AND kind = ?`)
 				.get('task-2', 'node_agent') as { n: number };
@@ -455,7 +455,7 @@ describe('Migration 120: derived columns + task_session_map', () => {
 		});
 
 		test('is idempotent — running a second time produces the same state', () => {
-			runMigration120(db);
+			runMigration122(db);
 			const sdkBefore = db
 				.prepare(
 					`SELECT COUNT(*) AS n FROM sdk_messages WHERE is_renderable IS NOT NULL AND is_terminal IS NOT NULL`
@@ -465,7 +465,7 @@ describe('Migration 120: derived columns + task_session_map', () => {
 				db.prepare(`SELECT COUNT(*) AS n FROM task_session_map`).get() as { n: number }
 			).n;
 
-			expect(() => runMigration120(db)).not.toThrow();
+			expect(() => runMigration122(db)).not.toThrow();
 
 			const sdkAfter = db
 				.prepare(
@@ -482,13 +482,13 @@ describe('Migration 120: derived columns + task_session_map', () => {
 	});
 
 	describe('missing tables — no-op guards', () => {
-		test('runMigration120 on an empty DB does not throw and creates only task_session_map', () => {
-			expect(() => runMigration120(db)).not.toThrow();
+		test('runMigration122 on an empty DB does not throw and creates only task_session_map', () => {
+			expect(() => runMigration122(db)).not.toThrow();
 			expect(tableExists(db, 'task_session_map')).toBe(true);
 			expect(tableExists(db, 'sdk_messages')).toBe(false);
 		});
 
-		test('runMigration120 with only sdk_messages adds derived columns and creates empty task_session_map', () => {
+		test('runMigration122 with only sdk_messages adds derived columns and creates empty task_session_map', () => {
 			db.exec(`
 				CREATE TABLE sdk_messages (
 					id TEXT PRIMARY KEY,
@@ -499,7 +499,7 @@ describe('Migration 120: derived columns + task_session_map', () => {
 					timestamp TEXT NOT NULL
 				)
 			`);
-			expect(() => runMigration120(db)).not.toThrow();
+			expect(() => runMigration122(db)).not.toThrow();
 			const cols = columnNames(db, 'sdk_messages');
 			expect(cols).toContain('is_renderable');
 			expect(cols).toContain('is_terminal');

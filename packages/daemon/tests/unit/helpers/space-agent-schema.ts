@@ -94,7 +94,7 @@ export function createSpaceAgentSchema(db: Database): void {
 		)
 	`);
 
-	// node_executions + task_session_map (migration 120). The repository's
+	// node_executions + task_session_map (migration 122). The repository's
 	// `update` path refreshes denormalised labels in task_session_map after a
 	// rename via a JOIN through node_executions.
 	db.exec(`

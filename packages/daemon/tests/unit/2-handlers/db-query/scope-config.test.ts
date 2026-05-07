@@ -69,13 +69,14 @@ describe('scope-config', () => {
 				'channel_cycles',
 				'workflow_run_artifacts',
 				'workflow_run_artifact_cache',
+				'mcp_audit_log',
 				// Main-DB tables exposed with space-scoped filtering via session ID prefix:
 				'sessions',
 				'sdk_messages',
 				'session_groups',
 				'session_group_members',
 			]);
-			expect(names).toHaveLength(14);
+			expect(names).toHaveLength(15);
 		});
 
 		it('all table configs have a description', () => {
