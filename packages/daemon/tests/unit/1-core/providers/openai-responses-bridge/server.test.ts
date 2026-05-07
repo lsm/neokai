@@ -1933,4 +1933,130 @@ describe('openai-responses-bridge server', () => {
 		expect(count.input_tokens).toBe(messageStartMessage?.usage?.input_tokens);
 		expect(count.input_tokens).toBeGreaterThan(20);
 	});
+
+	it('evicts stale reasoning items after the TTL', async () => {
+		const capturedBodies: Record<string, unknown>[] = [];
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			continuationTtlMs: 10,
+			fetchImpl: async (_req, init) => {
+				const body = JSON.parse((init?.body as string) ?? '{}');
+				capturedBodies.push(body);
+				if (capturedBodies.length === 1) {
+					return sse([
+						{
+							event: 'response.output_text.delta',
+							data: { type: 'response.output_text.delta', delta: 'First.' },
+						},
+						{
+							event: 'response.completed',
+							data: {
+								type: 'response.completed',
+								response: {
+									id: 'resp_first',
+									usage: { input_tokens: 5, output_tokens: 1 },
+									output: [{ type: 'reasoning', encrypted_content: 'enc_first' }],
+								},
+							},
+						},
+					]);
+				}
+				return sse([
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: 'Second.' },
+					},
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: {
+								id: 'resp_second',
+								usage: { input_tokens: 5, output_tokens: 1 },
+								output: [],
+							},
+						},
+					},
+				]);
+			},
+		});
+
+		const first = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'First.' }],
+				thinking: { type: 'enabled', budget_tokens: 16000 },
+			}),
+		});
+		await readSSEEvents(first.body);
+
+		// Wait for TTL to expire
+		await new Promise((resolve) => setTimeout(resolve, 25));
+
+		const second = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [
+					{ role: 'assistant', content: 'First response.' },
+					{ role: 'user', content: 'Second.' },
+				],
+				// no thinking field — reasoning items should not appear if evicted
+			}),
+		});
+		await readSSEEvents(second.body);
+
+		// Reasoning items should have been evicted, so second request has no reasoning
+		// item in input and does not request encrypted_content inclusion.
+		expect(capturedBodies[1]?.include).toBeUndefined();
+		const secondInput = capturedBodies[1]?.input as Array<Record<string, unknown>>;
+		expect(secondInput.some((item) => item.type === 'reasoning')).toBe(false);
+	});
+
+	it('clears reasoning item timers on server stop', async () => {
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			continuationTtlMs: 60000,
+			fetchImpl: async () =>
+				sse([
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: 'First.' },
+					},
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: {
+								id: 'resp_first',
+								usage: { input_tokens: 5, output_tokens: 1 },
+								output: [{ type: 'reasoning', encrypted_content: 'enc_first' }],
+							},
+						},
+					},
+				]),
+		});
+
+		const first = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'First.' }],
+				thinking: { type: 'enabled', budget_tokens: 16000 },
+			}),
+		});
+		await readSSEEvents(first.body);
+
+		// stop() should clear the timer without throwing or leaking
+		expect(() => server?.stop()).not.toThrow();
+	});
 });

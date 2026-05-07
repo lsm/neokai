@@ -149,6 +149,11 @@ type ResponseContinuation = {
 	cleanupTimer: ReturnType<typeof setTimeout>;
 };
 
+type SessionReasoningEntry = {
+	items: ResponsesReasoningItem[];
+	cleanupTimer: ReturnType<typeof setTimeout>;
+};
+
 /**
  * Resolve the context window for a model.
  * Prefers the config-provided context window (from bridge models list, which may
@@ -1018,7 +1023,7 @@ export function createOpenAIResponsesBridgeServer(
 	const continuationTtlMs = config.continuationTtlMs ?? DEFAULT_RESPONSE_CONTINUATION_TTL_MS;
 	const continuations = new Map<string, ResponseContinuation>();
 	// Per-session reasoning items for multi-turn continuation when store: false.
-	const sessionReasoningItems = new Map<string, ResponsesReasoningItem[]>();
+	const sessionReasoningItems = new Map<string, SessionReasoningEntry>();
 	let resolvedAuth: ResolvedResponsesAuth | undefined;
 	// ChatGPT Codex endpoint rejects max_output_tokens and parallel_tool_calls.
 	const isChatgptOAuth = config.auth.source === 'chatgpt_oauth' && !config.openAIBaseUrl;
@@ -1045,6 +1050,22 @@ export function createOpenAIResponsesBridgeServer(
 			continuations.delete(key);
 		}, continuationTtlMs);
 		continuations.set(key, { responseId, cleanupTimer });
+	};
+
+	const deleteReasoningItems = (sessionId: string): void => {
+		const entry = sessionReasoningItems.get(sessionId);
+		if (!entry) return;
+		clearTimeout(entry.cleanupTimer);
+		sessionReasoningItems.delete(sessionId);
+	};
+
+	const storeReasoningItems = (sessionId: string, items: ResponsesReasoningItem[]): void => {
+		deleteReasoningItems(sessionId);
+		const cleanupTimer = setTimeout(() => {
+			logger.warn(`openai-responses: reasoning items TTL expired sessionId=${sessionId}`);
+			sessionReasoningItems.delete(sessionId);
+		}, continuationTtlMs);
+		sessionReasoningItems.set(sessionId, { items, cleanupTimer });
 	};
 
 	const consumeContinuation = (
@@ -1077,7 +1098,7 @@ export function createOpenAIResponsesBridgeServer(
 			if (route.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
 				try {
 					const body = (await req.json()) as AnthropicRequest;
-					const storedReasoning = sessionReasoningItems.get(route.sessionId);
+					const storedReasoning = sessionReasoningItems.get(route.sessionId)?.items;
 					let continuation = resolveContinuation(route.sessionId, body.messages, continuations);
 					if (storedReasoning && storedReasoning.length > 0) {
 						continuation = undefined;
@@ -1130,7 +1151,7 @@ export function createOpenAIResponsesBridgeServer(
 			let continuation = resolvedContinuation;
 			// When reasoning items are stored for this session, we must send full history
 			// (previous_response_id doesn't work with store:false for reasoning).
-			const storedReasoning = sessionReasoningItems.get(sessionId);
+			const storedReasoning = sessionReasoningItems.get(sessionId)?.items;
 			if (storedReasoning && storedReasoning.length > 0) {
 				continuation = undefined;
 			}
@@ -1224,7 +1245,7 @@ export function createOpenAIResponsesBridgeServer(
 									},
 								}),
 						onReasoningItems(items) {
-							sessionReasoningItems.set(sessionId, items);
+							storeReasoningItems(sessionId, items);
 						},
 					});
 				},
@@ -1254,6 +1275,9 @@ export function createOpenAIResponsesBridgeServer(
 				clearTimeout(continuation.cleanupTimer);
 			}
 			continuations.clear();
+			for (const entry of sessionReasoningItems.values()) {
+				clearTimeout(entry.cleanupTimer);
+			}
 			sessionReasoningItems.clear();
 			server.stop(true);
 		},
