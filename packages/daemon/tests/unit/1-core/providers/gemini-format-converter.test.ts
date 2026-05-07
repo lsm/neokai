@@ -320,6 +320,42 @@ describe('Gemini Format Converter', () => {
 			expect(result.anyOf).toEqual([{ type: 'string' }, { type: 'number' }]);
 		});
 
+		it('removes $schema keyword', () => {
+			const schema = {
+				$schema: 'http://json-schema.org/draft-07/schema#',
+				type: 'object',
+				properties: { name: { type: 'string' } },
+			};
+
+			const result = convertSchema(schema);
+			expect(result.$schema).toBeUndefined();
+			expect(result.type).toBe('object');
+		});
+
+		it('removes propertyNames keyword', () => {
+			const schema = {
+				type: 'object',
+				propertyNames: { pattern: '^[a-z]+$' },
+				properties: { name: { type: 'string' } },
+			};
+
+			const result = convertSchema(schema);
+			expect(result.propertyNames).toBeUndefined();
+			expect(result.type).toBe('object');
+		});
+
+		it('removes exclusiveMinimum keyword', () => {
+			const schema = {
+				type: 'number',
+				minimum: 0,
+				exclusiveMinimum: true,
+			};
+
+			const result = convertSchema(schema);
+			expect(result.exclusiveMinimum).toBeUndefined();
+			expect(result.minimum).toBe(0);
+		});
+
 		it('recursively converts nested properties', () => {
 			const schema = {
 				type: 'object',
@@ -352,6 +388,42 @@ describe('Gemini Format Converter', () => {
 			const result = convertSchema(schema);
 			const items = result.items as Record<string, unknown>;
 			expect(items.additionalProperties).toBeUndefined();
+		});
+
+		it('recursively strips unsupported keywords inside anyOf', () => {
+			const schema = {
+				anyOf: [
+					{ type: 'string', $schema: 'http://example.com/schema' },
+					{ type: 'number', exclusiveMinimum: 5 },
+				],
+			};
+
+			const result = convertSchema(schema);
+			expect(result.anyOf).toEqual([{ type: 'string' }, { type: 'number' }]);
+		});
+
+		it('preserves all supported keywords', () => {
+			const schema = {
+				type: 'object',
+				description: 'A test object',
+				properties: {
+					name: {
+						type: 'string',
+						description: 'A name',
+						minLength: 1,
+						maxLength: 100,
+						pattern: '^[a-z]+$',
+					},
+					count: { type: 'integer', minimum: 0, maximum: 100, default: 0, nullable: true },
+					tags: { type: 'array', items: { type: 'string' }, minItems: 0, maxItems: 10 },
+					status: { type: 'string', enum: ['active', 'inactive'], format: 'uuid' },
+				},
+				required: ['name'],
+				anyOf: [{ type: 'object' }],
+			};
+
+			const result = convertSchema(schema);
+			expect(result).toEqual(schema);
 		});
 	});
 

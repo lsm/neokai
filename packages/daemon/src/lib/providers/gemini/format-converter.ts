@@ -270,42 +270,55 @@ export function convertTools(tools: AnthropicTool[] | undefined): GeminiTool[] {
 }
 
 /**
+ * JSON Schema keywords supported by the Gemini Code Assist API.
+ */
+const GEMINI_SCHEMA_KEYWORDS = new Set([
+	'type',
+	'description',
+	'properties',
+	'items',
+	'required',
+	'enum',
+	'anyOf',
+	'default',
+	'nullable',
+	'format',
+	'minItems',
+	'maxItems',
+	'minimum',
+	'maximum',
+	'minLength',
+	'maxLength',
+	'pattern',
+	'oneOf',
+]);
+
+/**
  * Convert JSON Schema from Anthropic format to Gemini format.
  *
- * Gemini expects JSON Schema but with some differences:
- * - No `additionalProperties` field
- * - `anyOf` instead of `oneOf`
+ * Keeps only the JSON Schema keywords that Gemini's Code Assist API supports,
+ * stripping unsupported keywords like `$schema`, `propertyNames`,
+ * `exclusiveMinimum`, `additionalProperties`, `oneOf`, etc.
  */
 export function convertSchema(schema: Record<string, unknown>): Record<string, unknown> {
-	if (!schema) return schema;
+	if (!schema || typeof schema !== 'object') return schema;
 
-	const result = { ...schema };
-
-	// Remove additionalProperties (not supported by Gemini)
-	delete result.additionalProperties;
-
-	// Convert oneOf to anyOf
-	if (result.oneOf) {
-		result.anyOf = result.oneOf;
-		delete result.oneOf;
+	const result: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(schema)) {
+		if (!GEMINI_SCHEMA_KEYWORDS.has(key)) continue;
+		if (key === 'properties' && typeof value === 'object') {
+			const props = value as Record<string, Record<string, unknown>>;
+			result[key] = Object.fromEntries(
+				Object.entries(props).map(([k, v]) => [k, convertSchema(v)])
+			);
+		} else if (key === 'items' && typeof value === 'object') {
+			result[key] = convertSchema(value as Record<string, unknown>);
+		} else if ((key === 'anyOf' || key === 'oneOf') && Array.isArray(value)) {
+			result.anyOf = value.map((s) => convertSchema(s as Record<string, unknown>));
+		} else {
+			result[key] = value;
+		}
 	}
-
-	// Recursively convert nested schemas
-	if (result.properties && typeof result.properties === 'object') {
-		const props = result.properties as Record<string, Record<string, unknown>>;
-		result.properties = Object.fromEntries(
-			Object.entries(props).map(([key, value]) => [key, convertSchema(value)])
-		);
-	}
-
-	if (result.items && typeof result.items === 'object') {
-		result.items = convertSchema(result.items as Record<string, unknown>);
-	}
-
-	if (result.anyOf && Array.isArray(result.anyOf)) {
-		result.anyOf = result.anyOf.map((s: Record<string, unknown>) => convertSchema(s));
-	}
-
 	return result;
 }
 
