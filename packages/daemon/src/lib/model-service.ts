@@ -377,16 +377,18 @@ export function clearModelsCache(cacheKey?: string): void {
 		cacheTimestamps.clear();
 		refreshInProgress.clear();
 		clearProviderModelCaches();
-		// Bump generation only for keys that had in-flight refreshes.
+		// Bump generation for keys that had in-flight refreshes so any
+		// running background refresh drops its stale result instead of
+		// overwriting the cleared cache.
 		for (const key of inFlightKeys) {
 			cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
 		}
-		// Prune generation tracking for keys with no in-flight refresh.
-		for (const key of Array.from(cacheGeneration.keys())) {
-			if (!inFlightKeys.has(key)) {
-				cacheGeneration.delete(key);
-			}
-		}
+		// NOTE: We intentionally do NOT prune cacheGeneration here.
+		// A prior global clear may have bumped a generation to cancel an
+		// in-flight refresh; if a second clear arrives before that refresh
+		// resolves, pruning would delete the bump and allow the stale
+		// result to be written.  Keys are cleaned up by
+		// triggerBackgroundRefresh's finally block once the refresh completes.
 	}
 }
 
