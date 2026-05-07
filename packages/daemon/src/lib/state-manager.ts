@@ -32,6 +32,7 @@ import type {
 import type { Session, ContextInfo } from '@neokai/shared';
 import { STATE_CHANNELS } from '@neokai/shared';
 import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository';
+import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
 
 const VERSION = '0.1.1';
 const CLAUDE_SDK_VERSION = '0.1.37';
@@ -65,7 +66,8 @@ export class StateManager {
 		private settingsManager: SettingsManager,
 		private config: Config,
 		private eventBus: DaemonHub,
-		private db?: Database
+		private db?: Database,
+		private internalEventBus?: InternalEventBus<DaemonInternalEventMap>
 	) {
 		this.setupHandlers();
 		this.setupEventListeners();
@@ -145,10 +147,22 @@ export class StateManager {
 			await this.broadcastSystemChange();
 		});
 
-		// Settings events
-		this.eventBus.on('settings.updated', async () => {
-			await this.broadcastSettingsChange();
-		});
+		// Settings events — migrated to InternalEventBus.
+		// If internalEventBus is provided, subscribe there; otherwise fall back
+		// to DaemonHub (compatibility for tests that pass only eventBus).
+		if (this.internalEventBus) {
+			this.internalEventBus.subscribe(
+				'settings.updated',
+				async () => {
+					await this.broadcastSettingsChange();
+				},
+				{ subscriberName: 'StateManager.settingsUpdated' }
+			);
+		} else {
+			this.eventBus.on('settings.updated', async () => {
+				await this.broadcastSettingsChange();
+			});
+		}
 
 		// Commands updated - cache and broadcast
 		this.eventBus.on(

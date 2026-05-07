@@ -32,6 +32,10 @@ import {
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { Database } from '../../../../src/storage/database';
+import type {
+	InternalEventBus,
+	DaemonInternalEventMap,
+} from '../../../../src/lib/internal-event-bus';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -81,6 +85,25 @@ function createMockDaemonHub(): {
 	} as unknown as DaemonHub;
 
 	return { daemonHub, emitMock };
+}
+
+// Helper to create mock InternalEventBus
+function createMockInternalEventBus(): {
+	bus: InternalEventBus<DaemonInternalEventMap>;
+	publishAsyncMock: ReturnType<typeof mock>;
+} {
+	const publishAsyncMock = mock(() => {});
+	const bus = {
+		publishAsync: publishAsyncMock,
+		publish: mock(async () => ({ delivered: 0, failures: [] })),
+		subscribe: mock(() => () => {}),
+		getHandlerCount: mock(() => 0),
+		getHandlerCountForSession: mock(() => 0),
+		clear: mock(() => {}),
+		off: mock(() => {}),
+	} as unknown as InternalEventBus<DaemonInternalEventMap>;
+
+	return { bus, publishAsyncMock };
 }
 
 // Default global settings (mirrors the unified shape in @neokai/shared)
@@ -152,29 +175,51 @@ function createMockDatabase(): {
 		db: {
 			getSession: mocks.getSession,
 			getDatabase: mocks.getDatabase,
+			workspaceHistory: {
+				list: mock(() => []),
+			},
 		} as unknown as Database,
 		mocks,
 	};
 }
 
+// Helper to create mock McpImportService
+function createMockMcpImportService(): {
+	service: import('../../../../src/lib/mcp').McpImportService;
+	refreshAllMock: ReturnType<typeof mock>;
+} {
+	const refreshAllMock = mock(() => []);
+	const service = {
+		refreshAll: refreshAllMock,
+	} as unknown as import('../../../../src/lib/mcp').McpImportService;
+
+	return { service, refreshAllMock };
+}
+
 describe('Settings RPC Handlers', () => {
 	let messageHubData: ReturnType<typeof createMockMessageHub>;
 	let daemonHubData: ReturnType<typeof createMockDaemonHub>;
+	let internalEventBusData: ReturnType<typeof createMockInternalEventBus>;
 	let settingsManagerData: ReturnType<typeof createMockSettingsManager>;
 	let dbData: ReturnType<typeof createMockDatabase>;
+	let mcpImportServiceData: ReturnType<typeof createMockMcpImportService>;
 
 	beforeEach(() => {
 		messageHubData = createMockMessageHub();
 		daemonHubData = createMockDaemonHub();
+		internalEventBusData = createMockInternalEventBus();
 		settingsManagerData = createMockSettingsManager();
 		dbData = createMockDatabase();
+		mcpImportServiceData = createMockMcpImportService();
 
 		// Setup handlers with mocked dependencies
 		registerSettingsHandlers(
 			messageHubData.hub,
 			settingsManagerData.settingsManager,
 			daemonHubData.daemonHub,
-			dbData.db
+			internalEventBusData.bus,
+			dbData.db,
+			mcpImportServiceData.service
 		);
 	});
 
@@ -239,13 +284,13 @@ describe('Settings RPC Handlers', () => {
 			expect(result.settings.model).toBe('claude-opus');
 		});
 
-		it('emits settings.updated event', async () => {
+		it('publishes settings.updated event through internalEventBus', async () => {
 			const handler = messageHubData.handlers.get('settings.global.update');
 			expect(handler).toBeDefined();
 
 			await handler!({ updates: { model: 'claude-opus' } }, {});
 
-			expect(daemonHubData.emitMock).toHaveBeenCalledWith(
+			expect(internalEventBusData.publishAsyncMock).toHaveBeenCalledWith(
 				'settings.updated',
 				expect.objectContaining({
 					sessionId: 'global',
@@ -253,14 +298,14 @@ describe('Settings RPC Handlers', () => {
 			);
 		});
 
-		it('emits settings.updated when showArchived changes', async () => {
+		it('publishes settings.updated through internalEventBus when showArchived changes', async () => {
 			const handler = messageHubData.handlers.get('settings.global.update');
 			expect(handler).toBeDefined();
 
 			await handler!({ updates: { showArchived: true } }, {});
 
 			// showArchived filter is handled client-side via LiveQuery — no separate filterChanged event
-			expect(daemonHubData.emitMock).toHaveBeenCalledWith(
+			expect(internalEventBusData.publishAsyncMock).toHaveBeenCalledWith(
 				'settings.updated',
 				expect.objectContaining({
 					sessionId: 'global',
@@ -300,13 +345,13 @@ describe('Settings RPC Handlers', () => {
 			expect(settingsManagerData.mocks.saveGlobalSettings).toHaveBeenCalledWith(newSettings);
 		});
 
-		it('emits settings.updated event', async () => {
+		it('publishes settings.updated event through internalEventBus', async () => {
 			const handler = messageHubData.handlers.get('settings.global.save');
 			expect(handler).toBeDefined();
 
 			await handler!({ settings: defaultGlobalSettings }, {});
 
-			expect(daemonHubData.emitMock).toHaveBeenCalledWith(
+			expect(internalEventBusData.publishAsyncMock).toHaveBeenCalledWith(
 				'settings.updated',
 				expect.objectContaining({
 					sessionId: 'global',
@@ -361,6 +406,42 @@ describe('Settings RPC Handlers', () => {
 			// Verify the handler is defined and accepts the sessionId parameter
 			// The actual session-specific SettingsManager creation is tested in integration tests
 			expect(typeof handler).toBe('function');
+		});
+	});
+
+	describe('settings.mcp.refreshImports', () => {
+		it('returns empty results when mcpImportService is undefined', async () => {
+			// Re-register without the service to hit the short-circuit path
+			registerSettingsHandlers(
+				messageHubData.hub,
+				settingsManagerData.settingsManager,
+				daemonHubData.daemonHub,
+				internalEventBusData.bus,
+				dbData.db
+			);
+
+			const handler = messageHubData.handlers.get('settings.mcp.refreshImports');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({}, {})) as { results: unknown[] };
+
+			expect(result.results).toEqual([]);
+		});
+
+		it('calls refreshAll and publishes settings.updated through internalEventBus', async () => {
+			const handler = messageHubData.handlers.get('settings.mcp.refreshImports');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({}, {})) as { results: unknown[] };
+
+			expect(mcpImportServiceData.refreshAllMock).toHaveBeenCalled();
+			expect(internalEventBusData.publishAsyncMock).toHaveBeenCalledWith(
+				'settings.updated',
+				expect.objectContaining({
+					sessionId: 'global',
+				})
+			);
+			expect(result.results).toEqual([]);
 		});
 	});
 
