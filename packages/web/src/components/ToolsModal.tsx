@@ -39,6 +39,7 @@ import type {
 } from '@neokai/shared';
 import { listRuntimeMcpServers } from '../lib/api-helpers.ts';
 import { skillsStore } from '../lib/skills-store.ts';
+import { globalSettings } from '../lib/state.ts';
 
 /**
  * Human-friendly labels for runtime-attached (SDK-type) MCP servers.
@@ -276,7 +277,8 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		initialDisabledSkills.value = new Set(disabled);
 
 		// Load setting sources from session config
-		const sources = session.config.settingSources ?? ['user', 'project', 'local'];
+		const sources = session.config.settingSources ??
+			globalSettings.value?.settingSources ?? ['user', 'project', 'local'];
 		settingSources.value = sources;
 		initialSettingSources.value = [...sources];
 

@@ -1677,6 +1677,12 @@ export interface ExportedSpaceAgent {
 	 * Mirrors `SpaceAgent.tools`.
 	 */
 	tools?: string[];
+	/**
+	 * Setting sources override — which on-disk settings files this agent loads.
+	 * When absent, the agent inherits from its parent Space on import.
+	 * Mirrors `SpaceAgent.settingSources`.
+	 */
+	settingSources?: import('./settings').SettingSource[];
 }
 
 /**
