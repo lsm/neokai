@@ -449,26 +449,17 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// task_session_map — explicit lookup that resolves a `space_task` to the set
-	// of sessions whose `sdk_messages` contribute to its task-thread timeline.
-	// Maintained at write time by SpaceTaskRepository (task_agent leg) and
-	// NodeExecutionRepository (node_agent leg). Replaces the multi-CTE join chain
-	// the live-query handlers used to walk on every read.
-	db.exec(`
-      CREATE TABLE IF NOT EXISTS task_session_map (
-        task_id TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        kind TEXT NOT NULL CHECK(kind IN ('task_agent', 'node_agent')),
-        role TEXT NOT NULL,
-        label TEXT NOT NULL,
-        node_execution_id TEXT,
-        created_at INTEGER NOT NULL,
-        PRIMARY KEY (task_id, session_id),
-        FOREIGN KEY (task_id) REFERENCES space_tasks(id) ON DELETE CASCADE,
-        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-        FOREIGN KEY (node_execution_id) REFERENCES node_executions(id) ON DELETE CASCADE
-      )
-    `);
+	// task_session_map is owned by migration 122. We deliberately do *not*
+	// re-declare it here: the migration creates the table with three FKs
+	// (task_id → space_tasks, session_id → sessions, node_execution_id →
+	// node_executions), and `space_tasks` / `node_executions` are produced
+	// by earlier migrations rather than by `createTables`. Re-declaring
+	// `task_session_map` in this bootstrap path would leave the FK
+	// references pointing at tables that may not exist (createTables-only
+	// environments), which makes downstream parent-row deletes fail with
+	// `no such table: main.<parent>` when SQLite plans the cascade. In
+	// production `runMigrations` always runs before `createTables`, so the
+	// table is already present by the time we reach this point.
 
 	db.exec(`
       CREATE TABLE IF NOT EXISTS app_mcp_servers (
@@ -660,11 +651,10 @@ function createIndexes(db: BunDatabase): void {
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status
       ON sdk_messages(session_id, send_status)`);
 
-	// task_session_map index — supports lookups from a session_id back to the
-	// task it belongs to (used by the message-routing safety paths).
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_task_session_map_session ON task_session_map(session_id)`
-	);
+	// task_session_map's session_id index is owned by migration 122 alongside
+	// the table itself. Re-declaring it here would fail in createTables-only
+	// environments where migrations have not run, since the table doesn't
+	// exist in this bootstrap path. Production runs migrations first.
 
 	// Room indexes
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);

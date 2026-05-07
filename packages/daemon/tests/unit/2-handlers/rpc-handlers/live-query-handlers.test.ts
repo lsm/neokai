@@ -230,6 +230,16 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					created_at INTEGER NOT NULL,
 					updated_at INTEGER NOT NULL
 				);
+				CREATE TABLE IF NOT EXISTS task_session_map (
+					task_id TEXT NOT NULL,
+					session_id TEXT NOT NULL,
+					kind TEXT NOT NULL,
+					role TEXT NOT NULL,
+					label TEXT NOT NULL,
+					node_execution_id TEXT,
+					created_at INTEGER NOT NULL,
+					PRIMARY KEY (task_id, session_id)
+				);
 			`);
 			db.exec(
 				`INSERT OR IGNORE INTO spaces (id, slug, workspace_path, name, created_at, updated_at)

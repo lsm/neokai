@@ -5,7 +5,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { createLogger, generateUUID } from '@neokai/shared';
 import type {
 	SpaceTask,
 	SpaceTaskStatus,
@@ -14,6 +14,14 @@ import type {
 } from '@neokai/shared';
 import type { ReactiveDatabase } from '../reactive-database';
 import type { SQLiteValue } from '../types';
+
+const log = createLogger('kai:daemon:storage:space-task-repo');
+
+// Per-process set of error fingerprints already warned about. Without this,
+// a busy task-agent loop would emit one warning per UPSERT — drown the log
+// for what is almost always a "test harness without sessions table" or a
+// "session row not yet committed" race that resolves on the next write.
+const warnedSwallowedErrors = new Set<string>();
 
 export class SpaceTaskRepository {
 	constructor(
@@ -35,13 +43,28 @@ export class SpaceTaskRepository {
 	 * tracked, skip the map row" rather than throwing, matching the
 	 * fail-closed semantics callers already expect from
 	 * `upsertTaskAgentSessionMap`.
+	 *
+	 * Both swallowed cases emit a deduplicated warning so genuine bugs
+	 * (e.g. an FK target table being dropped in production) don't stay
+	 * invisible. Anything else still throws.
 	 */
-	private tryRunMapMutation(fn: () => void): void {
+	private tryRunMapMutation(fn: () => void, context: string): void {
 		try {
 			fn();
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
-			if (/no such table/i.test(message) || /FOREIGN KEY constraint failed/i.test(message)) {
+			const noSuchTable = /no such table/i.test(message);
+			const fkViolation = /FOREIGN KEY constraint failed/i.test(message);
+			if (noSuchTable || fkViolation) {
+				const kind = noSuchTable ? 'no-such-table' : 'fk-violation';
+				const fingerprint = `space-task:${kind}:${context}`;
+				if (!warnedSwallowedErrors.has(fingerprint)) {
+					warnedSwallowedErrors.add(fingerprint);
+					log.warn(
+						`task_session_map mutation skipped (${kind}) at ${context}: ${message}. ` +
+							`Further occurrences of this fingerprint will be suppressed.`
+					);
+				}
 				return;
 			}
 			throw err;
@@ -425,7 +448,7 @@ export class SpaceTaskRepository {
 						this.db
 							.prepare(`DELETE FROM task_session_map WHERE task_id = ? AND kind = 'node_agent'`)
 							.run(id);
-					});
+					}, 'updateTask:clearNodeAgents');
 					if (params.workflowRunId) {
 						this.seedNodeAgentSessionMapForRun(id, params.workflowRunId, Date.now());
 					}
@@ -465,7 +488,7 @@ export class SpaceTaskRepository {
 			// without the FK.
 			this.tryRunMapMutation(() => {
 				this.db.prepare(`DELETE FROM task_session_map WHERE task_id = ?`).run(id);
-			});
+			}, 'deleteTask');
 			this.reactiveDb?.notifyChange('space_tasks');
 		}
 		return result.changes > 0;
@@ -485,7 +508,7 @@ export class SpaceTaskRepository {
 					 WHERE task_id IN (SELECT id FROM space_tasks WHERE space_id = ?)`
 				)
 				.run(spaceId);
-		});
+		}, 'deleteTasksForSpace');
 		this.db.prepare(`DELETE FROM space_tasks WHERE space_id = ?`).run(spaceId);
 		this.reactiveDb?.notifyChange('space_tasks');
 	}
@@ -645,7 +668,7 @@ export class SpaceTaskRepository {
 				this.db
 					.prepare(`DELETE FROM task_session_map WHERE task_id = ? AND kind = 'task_agent'`)
 					.run(taskId);
-			});
+			}, 'upsertTaskAgentSessionMap:wrongType');
 			return;
 		}
 		this.tryRunMapMutation(() => {
@@ -662,7 +685,7 @@ export class SpaceTaskRepository {
 					) VALUES (?, ?, 'task_agent', 'task-agent', 'Task Agent', NULL, ?)`
 				)
 				.run(taskId, sessionId, createdAt);
-		});
+		}, 'upsertTaskAgentSessionMap:upsert');
 	}
 
 	/**
@@ -674,7 +697,7 @@ export class SpaceTaskRepository {
 			this.db
 				.prepare(`DELETE FROM task_session_map WHERE task_id = ? AND kind = 'task_agent'`)
 				.run(taskId);
-		});
+		}, 'removeTaskAgentSessionMap');
 	}
 
 	/**
@@ -725,7 +748,7 @@ export class SpaceTaskRepository {
 						AND ne.agent_session_id IS NOT NULL`
 				)
 				.run(taskId, createdAt, workflowRunId);
-		});
+		}, 'seedNodeAgentSessionMapForRun');
 	}
 
 	/**

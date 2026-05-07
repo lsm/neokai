@@ -631,55 +631,34 @@ WITH target_task AS (
   FROM space_tasks
   WHERE id = ?
 ),
--- Leg 1: orchestration task (the Task Agent's own task)
-orchestration AS (
+-- task_session_map is the canonical lookup for "which sessions contribute to
+-- this task's timeline". Reading from it (rather than re-deriving sessions
+-- inline from space_tasks.task_agent_session_id + node_executions) keeps this
+-- query in lock-step with the SPACE_TASK_MESSAGES_BASE_CTE and the scope
+-- filter buildTaskScopeFilter. The map is maintained at write time by
+-- SpaceTaskRepository (task_agent leg) and NodeExecutionRepository
+-- (node_agent leg), so it always reflects the same membership the messages
+-- read path enforces.
+all_sessions AS (
   SELECT
-    tt.task_agent_session_id AS session_id,
-    'task_agent' AS kind,
-    'Task Agent' AS label,
-    'task-agent' AS role,
+    tsm.session_id AS session_id,
+    tsm.kind AS kind,
+    tsm.label AS label,
+    tsm.role AS role,
     tt.id AS task_id,
     tt.title AS task_title,
     tt.status AS task_status,
-    NULL AS node_execution_id,
-    NULL AS workflow_node_id,
-    NULL AS agent_name,
-    NULL AS execution_status,
-    NULL AS execution_result,
-    NULL AS execution_updated_at
-  FROM target_task tt
-  JOIN sessions s ON s.id = tt.task_agent_session_id
-  WHERE tt.task_agent_session_id IS NOT NULL
-    AND s.type = 'space_task_agent'
-),
--- Leg 2: node agents via node_executions
-node_agents AS (
-  SELECT
-    ne.agent_session_id AS session_id,
-    'node_agent' AS kind,
-    COALESCE(sa.name, ne.agent_name, 'agent') AS label,
-    ne.agent_name AS role,
-    tt.id AS task_id,
-    tt.title AS task_title,
-    tt.status AS task_status,
-    ne.id AS node_execution_id,
+    tsm.node_execution_id AS node_execution_id,
     ne.workflow_node_id AS workflow_node_id,
     ne.agent_name AS agent_name,
     ne.status AS execution_status,
     ne.result AS execution_result,
     ne.updated_at AS execution_updated_at
-  FROM node_executions ne
-  JOIN target_task tt
-    ON tt.workflow_run_id IS NOT NULL
-   AND ne.workflow_run_id = tt.workflow_run_id
-  LEFT JOIN space_agents sa ON sa.id = ne.agent_id
-  WHERE ne.agent_session_id IS NOT NULL
-),
--- Union both legs
-all_sessions AS (
-  SELECT * FROM orchestration
-  UNION ALL
-  SELECT * FROM node_agents
+  FROM target_task tt
+  JOIN task_session_map tsm ON tsm.task_id = tt.id
+  LEFT JOIN node_executions ne
+    ON tsm.kind = 'node_agent'
+   AND ne.id = tsm.node_execution_id
 ),
 -- Deduplicate session IDs to prevent fan-out in message_stats JOIN
 unique_session_ids AS (

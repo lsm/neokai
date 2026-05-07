@@ -8048,12 +8048,22 @@ export function runMigration122(db: BunDatabase): void {
 		//     - assistant rows with no tool_use, no non-empty text, and no
 		//       non-empty thinking blocks have nothing to display → 0
 		//     - everything else → 1 (the column DEFAULT)
+		//
+		// All json_* calls are guarded by `json_valid(sdk_message)` so a single
+		// malformed historical row can't abort the migration. Invalid JSON
+		// rows fall through to safe defaults: is_renderable = 1 (preserves the
+		// column DEFAULT and keeps the row visible), parent_tool_use_id NULL.
 		db.exec(`
 			UPDATE sdk_messages
 			SET
 				is_terminal = CASE WHEN message_type = 'result' THEN 1 ELSE 0 END,
-				parent_tool_use_id = json_extract(sdk_message, '$.parent_tool_use_id'),
+				parent_tool_use_id = CASE
+					WHEN json_valid(sdk_message)
+					THEN json_extract(sdk_message, '$.parent_tool_use_id')
+					ELSE NULL
+				END,
 				is_renderable = CASE
+					WHEN NOT json_valid(sdk_message) THEN 1
 					WHEN message_type = 'user'
 						AND json_type(sdk_message, '$.message.content') = 'array'
 						AND EXISTS (

@@ -13,7 +13,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { createLogger, generateUUID } from '@neokai/shared';
 import type {
 	NodeExecution,
 	NodeExecutionStatus,
@@ -21,6 +21,14 @@ import type {
 	UpdateNodeExecutionParams,
 } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
+
+const log = createLogger('kai:daemon:storage:node-execution-repo');
+
+// Per-process set of error fingerprints already warned about. Without this,
+// a busy execution-update loop would emit one warning per UPSERT — drown
+// the log for what is almost always a "test harness without sessions
+// table" or a "session row not yet committed" race.
+const warnedSwallowedErrors = new Set<string>();
 
 export class NodeExecutionRepository {
 	constructor(private db: BunDatabase) {}
@@ -38,13 +46,28 @@ export class NodeExecutionRepository {
 	 * matching `sessions(id)` row can no longer be mapped — we treat that
 	 * as "session not yet tracked, skip the map row" rather than throwing,
 	 * matching the fail-closed semantics of `upsertTaskAgentSessionMap`.
+	 *
+	 * Both swallowed cases emit a deduplicated warning so genuine bugs
+	 * (e.g. an FK target table being dropped in production) don't stay
+	 * invisible. Anything else still throws.
 	 */
-	private tryRunMapMutation(fn: () => void): void {
+	private tryRunMapMutation(fn: () => void, context: string): void {
 		try {
 			fn();
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
-			if (/no such table/i.test(message) || /FOREIGN KEY constraint failed/i.test(message)) {
+			const noSuchTable = /no such table/i.test(message);
+			const fkViolation = /FOREIGN KEY constraint failed/i.test(message);
+			if (noSuchTable || fkViolation) {
+				const kind = noSuchTable ? 'no-such-table' : 'fk-violation';
+				const fingerprint = `node-execution:${kind}:${context}`;
+				if (!warnedSwallowedErrors.has(fingerprint)) {
+					warnedSwallowedErrors.add(fingerprint);
+					log.warn(
+						`task_session_map mutation skipped (${kind}) at ${context}: ${message}. ` +
+							`Further occurrences of this fingerprint will be suppressed.`
+					);
+				}
 				return;
 			}
 			throw err;
@@ -337,7 +360,7 @@ export class NodeExecutionRepository {
 						`DELETE FROM task_session_map WHERE kind = 'node_agent' AND node_execution_id = ?`
 					)
 					.run(id);
-			});
+			}, 'delete:dropExecutionRows');
 			for (const pair of affectedPairs) {
 				this.rebuildNodeAgentMapForTaskSession(pair.taskId, pair.sessionId);
 			}
@@ -400,7 +423,7 @@ export class NodeExecutionRepository {
 					   )`
 				)
 				.run(workflowRunId);
-		});
+		}, 'deleteByWorkflowRun');
 		this.db.prepare(`DELETE FROM node_executions WHERE workflow_run_id = ?`).run(workflowRunId);
 	}
 
@@ -442,7 +465,7 @@ export class NodeExecutionRepository {
 				WHERE ne.id = ?`
 			);
 			stmt.run(sessionId, createdAt, executionId);
-		});
+		}, 'syncTaskSessionMapForExecution');
 	}
 
 	/**
@@ -477,7 +500,7 @@ export class NodeExecutionRepository {
 			for (const { taskId } of affectedPairs) {
 				this.rebuildNodeAgentMapForTaskSession(taskId, sessionId);
 			}
-		});
+		}, 'removeTaskSessionMapForExecution');
 	}
 
 	/**
@@ -512,7 +535,7 @@ export class NodeExecutionRepository {
 					LIMIT 1`
 				)
 				.run(taskId, sessionId);
-		});
+		}, 'rebuildNodeAgentMapForTaskSession');
 	}
 
 	/**
