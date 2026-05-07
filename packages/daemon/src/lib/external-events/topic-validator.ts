@@ -54,7 +54,8 @@ export function validateGlobPattern(pattern: string): ValidationResult {
 		};
 	}
 
-	for (const segment of segments) {
+	for (let i = 0; i < segments.length; i++) {
+		const segment = segments[i];
 		if (segment === '') {
 			return {
 				valid: false,
@@ -73,6 +74,17 @@ export function validateGlobPattern(pattern: string): ValidationResult {
 				reason:
 					`Segment "${segment}" contains invalid characters. ` +
 					`Use alphanumeric, dash, underscore, dot, or segment-local "*" wildcard.`,
+			};
+		}
+
+		// Segments 0-2 (source, scope1, scope2): * is only allowed as a whole-segment
+		// wildcard. Mid-segment wildcards like `own*` or `re*po` are not supported.
+		if (i < 3 && segment.includes('*') && segment !== '*') {
+			return {
+				valid: false,
+				reason:
+					`Segment "${segment}" in position ${i + 1} uses an unsupported wildcard. ` +
+					`* is only allowed as a whole-segment wildcard in segments 1-3.`,
 			};
 		}
 	}

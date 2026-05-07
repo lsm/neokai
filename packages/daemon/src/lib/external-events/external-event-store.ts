@@ -346,8 +346,21 @@ export class ExternalEventStore {
 				`registerExpectedDelivery: deliveryKey must be non-empty (eventId="${eventId}")`
 			);
 		}
+		for (const [key, value] of Object.entries({
+			workflowRunId: target.workflowRunId,
+			taskId: target.taskId,
+			nodeId: target.nodeId,
+			agentName: target.agentName,
+		})) {
+			if (!value || (typeof value === 'string' && value.trim().length === 0)) {
+				throw new ExternalEventValidationError(
+					`registerExpectedDelivery: ${key} must be non-empty (eventId="${eventId}")`
+				);
+			}
+		}
+
 		const now = Date.now();
-		this.db
+		const result = this.db
 			.prepare(
 				`INSERT OR IGNORE INTO space_external_event_deliveries (
 					event_id, delivery_key, workflow_run_id, task_id, node_id, agent_name,
@@ -363,6 +376,19 @@ export class ExternalEventStore {
 				target.agentName,
 				now
 			);
+
+		// If INSERT was ignored, verify the existing row belongs to the same event.
+		// The unique index on delivery_key prevents cross-event collisions, but this
+		// check catches schema bypasses or programming errors.
+		if (result.changes === 0) {
+			const existingEventId = this.getEventIdForDeliveryKey(deliveryKey);
+			if (existingEventId !== eventId) {
+				throw new Error(
+					`registerExpectedDelivery: delivery_key "${deliveryKey}" already ` +
+						`registered for event "${existingEventId}", cannot register for "${eventId}"`
+				);
+			}
+		}
 	}
 
 	/** Returns true when the delivery row is already terminal and should be skipped. */
@@ -462,8 +488,14 @@ export class ExternalEventStore {
 		if (!event.spaceId || typeof event.spaceId !== 'string') {
 			throw new ExternalEventValidationError('ExternalEvent.spaceId is required');
 		}
-		if (!event.dedupeKey || typeof event.dedupeKey !== 'string') {
-			throw new ExternalEventValidationError('ExternalEvent.dedupeKey is required');
+		if (
+			!event.dedupeKey ||
+			typeof event.dedupeKey !== 'string' ||
+			event.dedupeKey.trim().length === 0
+		) {
+			throw new ExternalEventValidationError(
+				'ExternalEvent.dedupeKey is required and must not be whitespace-only'
+			);
 		}
 
 		const sourceCheck = validateSource(event.source);

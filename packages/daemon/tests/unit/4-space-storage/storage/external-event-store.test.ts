@@ -188,6 +188,12 @@ describe('store — validation', () => {
 		expect(() => store.store({ ...EVENT_A, dedupeKey: '' })).toThrow(ExternalEventValidationError);
 	});
 
+	test('rejects whitespace-only dedupeKey', () => {
+		expect(() => store.store({ ...EVENT_A, dedupeKey: '   ' })).toThrow(
+			ExternalEventValidationError
+		);
+	});
+
 	test('rejects unknown source', () => {
 		expect(() => store.store({ ...EVENT_A, source: 'slack' })).toThrow(
 			ExternalEventValidationError
@@ -315,6 +321,73 @@ describe('registerExpectedDelivery', () => {
 				agentName: 'coder',
 			})
 		).toThrow('deliveryKey must be non-empty');
+	});
+
+	test('throws for empty workflowRunId', () => {
+		store.store(EVENT_A);
+		expect(() =>
+			store.registerExpectedDelivery('evt-a', 'dk-1', {
+				workflowRunId: '',
+				taskId: 'task-1',
+				nodeId: 'node-1',
+				agentName: 'coder',
+			})
+		).toThrow('workflowRunId must be non-empty');
+	});
+
+	test('throws for whitespace-only taskId', () => {
+		store.store(EVENT_A);
+		expect(() =>
+			store.registerExpectedDelivery('evt-a', 'dk-1', {
+				workflowRunId: 'run-1',
+				taskId: '   ',
+				nodeId: 'node-1',
+				agentName: 'coder',
+			})
+		).toThrow('taskId must be non-empty');
+	});
+
+	test('throws for empty nodeId', () => {
+		store.store(EVENT_A);
+		expect(() =>
+			store.registerExpectedDelivery('evt-a', 'dk-1', {
+				workflowRunId: 'run-1',
+				taskId: 'task-1',
+				nodeId: '',
+				agentName: 'coder',
+			})
+		).toThrow('nodeId must be non-empty');
+	});
+
+	test('throws for empty agentName', () => {
+		store.store(EVENT_A);
+		expect(() =>
+			store.registerExpectedDelivery('evt-a', 'dk-1', {
+				workflowRunId: 'run-1',
+				taskId: 'task-1',
+				nodeId: 'node-1',
+				agentName: '',
+			})
+		).toThrow('agentName must be non-empty');
+	});
+
+	test('throws for cross-event delivery key conflict', () => {
+		store.store(EVENT_A);
+		store.store(EVENT_B);
+		store.registerExpectedDelivery('evt-a', 'dk-shared', {
+			workflowRunId: 'run-1',
+			taskId: 'task-1',
+			nodeId: 'node-1',
+			agentName: 'coder',
+		});
+		expect(() =>
+			store.registerExpectedDelivery('evt-b', 'dk-shared', {
+				workflowRunId: 'run-1',
+				taskId: 'task-2',
+				nodeId: 'node-1',
+				agentName: 'coder',
+			})
+		).toThrow('already registered for event "evt-a"');
 	});
 });
 

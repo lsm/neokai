@@ -99,6 +99,29 @@ describe('validateGlobPattern', () => {
 		expect(r.valid).toBe(false);
 		expect(r.reason).toMatch(/exactly one dot/);
 	});
+
+	test('rejects mid-segment wildcard in source position', () => {
+		const r = validateGlobPattern('git*/lsm/neokai/pull_request.opened');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/unsupported wildcard/);
+	});
+
+	test('rejects mid-segment wildcard in scope1 position', () => {
+		const r = validateGlobPattern('github/own*/neokai/pull_request.opened');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/unsupported wildcard/);
+	});
+
+	test('rejects mid-segment wildcard in scope2 position', () => {
+		const r = validateGlobPattern('github/lsm/repo*/pull_request.opened');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/unsupported wildcard/);
+	});
+
+	test('accepts whole-segment wildcard in segments 1-3', () => {
+		const r = validateGlobPattern('github/*/*/pull_request.opened');
+		expect(r.valid).toBe(true);
+	});
 });
 
 describe('validateSource', () => {
