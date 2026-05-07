@@ -224,7 +224,9 @@ export function SpaceAgentEditor({
 				model: model.trim(),
 				customPrompt: customPrompt || null,
 				tools: tools.length > 0 ? tools : undefined,
-				...(hadExplicitSettingSources || settingSourcesTouched ? { settingSources } : {}),
+				...(hadExplicitSettingSources || settingSourcesTouched || clearSettingSources
+					? { settingSources: clearSettingSources ? null : settingSources }
+					: {}),
 			};
 
 			if (isEdit && agent) {

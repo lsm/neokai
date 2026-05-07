@@ -160,8 +160,11 @@ export interface CreateSpaceParams {
 	config?: SpaceConfig;
 	/** Per-space overrides for the built-in Task Agent */
 	taskAgentConfig?: TaskAgentConfig;
-	/** Default setting sources for all agents in this Space */
-	settingSources?: SettingSource[];
+	/**
+	 * Default setting sources for all agents in this Space.
+	 * Pass `null` to explicitly clear (revert to global default).
+	 */
+	settingSources?: SettingSource[] | null;
 }
 
 /**
@@ -758,8 +761,9 @@ export interface CreateSpaceAgentParams {
 	/**
 	 * Setting sources to load for this agent.
 	 * Falls back to the global default (['user', 'project', 'local']) when unset.
+	 * Pass `null` to explicitly clear (revert to inherited defaults).
 	 */
-	settingSources?: SettingSource[];
+	settingSources?: SettingSource[] | null;
 	/**
 	 * Optional preset template name. Set by `seedPresetAgents()` when seeding
 	 * built-in presets; left undefined for user-created agents.

@@ -46,7 +46,7 @@ export class SpaceRepository {
 			params.autonomyLevel ?? 1,
 			params.config ? JSON.stringify(params.config) : null,
 			params.taskAgentConfig ? JSON.stringify(params.taskAgentConfig) : null,
-			params.settingSources ? JSON.stringify(params.settingSources) : null,
+			params.settingSources != null ? JSON.stringify(params.settingSources) : null,
 			now,
 			now
 		);
@@ -171,7 +171,7 @@ export class SpaceRepository {
 		}
 		if (params.settingSources !== undefined) {
 			fields.push('setting_sources = ?');
-			values.push(params.settingSources ? JSON.stringify(params.settingSources) : null);
+			values.push(params.settingSources != null ? JSON.stringify(params.settingSources) : null);
 		}
 
 		if (fields.length > 0) {
