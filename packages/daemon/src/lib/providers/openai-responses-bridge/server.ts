@@ -26,7 +26,6 @@ import {
 	textDeltaSSE,
 	thinkingDeltaSSE,
 } from '../codex-anthropic-bridge/translator.js';
-import { estimateAnthropicInputTokens } from '../codex-anthropic-bridge/token-estimator.js';
 import { getModelContextWindow as getCodexModelContextWindow } from '../codex-anthropic-bridge/model-context-windows.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
 import { Logger } from '../../logger.js';
@@ -1078,10 +1077,17 @@ export function createOpenAIResponsesBridgeServer(
 			if (route.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
 				try {
 					const body = (await req.json()) as AnthropicRequest;
-					const continuation = resolveContinuation(route.sessionId, body.messages, continuations);
+					const storedReasoning = sessionReasoningItems.get(route.sessionId);
+					let continuation = resolveContinuation(route.sessionId, body.messages, continuations);
+					if (storedReasoning && storedReasoning.length > 0) {
+						continuation = undefined;
+					}
 					const inputTokens = continuation
 						? estimateResponsesPayloadTokens(body, continuation.input)
-						: estimateAnthropicInputTokens(body);
+						: estimateResponsesPayloadTokens(
+								body,
+								anthropicMessagesToResponsesInput(body.messages, storedReasoning)
+							);
 					return new Response(JSON.stringify({ input_tokens: inputTokens }), {
 						headers: { 'Content-Type': 'application/json' },
 					});
@@ -1128,7 +1134,7 @@ export function createOpenAIResponsesBridgeServer(
 			if (storedReasoning && storedReasoning.length > 0) {
 				continuation = undefined;
 			}
-			const requestBody = buildResponsesRequest(
+			let requestBody = buildResponsesRequest(
 				body,
 				model,
 				continuation,
@@ -1160,12 +1166,11 @@ export function createOpenAIResponsesBridgeServer(
 						logger.warn(
 							'openai-responses: endpoint rejects previous_response_id, retrying with full history'
 						);
+						requestBody = buildResponsesRequest(body, model, undefined, buildOpts, storedReasoning);
 						openAIResponse = await fetchImpl(upstreamUrl, {
 							method: 'POST',
 							headers: buildOpenAIHeaders(config.auth, resolvedAuth),
-							body: JSON.stringify(
-								buildResponsesRequest(body, model, undefined, buildOpts, storedReasoning)
-							),
+							body: JSON.stringify(requestBody),
 						});
 						continuation = undefined;
 					} else {
@@ -1197,7 +1202,7 @@ export function createOpenAIResponsesBridgeServer(
 
 			const estimatedInputTokens = continuation
 				? estimateResponsesPayloadTokens(body, continuation.input)
-				: estimateAnthropicInputTokens(body);
+				: estimateResponsesPayloadTokens(body, requestBody.input);
 			const resolvedModelContextWindow = contextWindowByModelId.get(model);
 			const stream = new ReadableStream<Uint8Array>({
 				start(controller) {

@@ -1854,4 +1854,83 @@ describe('openai-responses-bridge server', () => {
 			)
 		).toBe(true);
 	});
+
+	it('includes injected reasoning items in count_tokens and message_start estimates', async () => {
+		let requestCount = 0;
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async () => {
+				requestCount++;
+				return sse([
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: 'Hello.' },
+					},
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: {
+								id: `resp_${requestCount}`,
+								usage: { input_tokens: 5, output_tokens: 1 },
+								output: [{ type: 'reasoning', encrypted_content: 'a'.repeat(100) }],
+							},
+						},
+					},
+				]);
+			},
+		});
+
+		// First turn to populate reasoning cache
+		const first = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'Hello.' }],
+				thinking: { type: 'enabled', budget_tokens: 16000 },
+			}),
+		});
+		await readSSEEvents(first.body);
+
+		// count_tokens for second turn
+		const countResp = await fetch(`http://127.0.0.1:${server.port}/v1/messages/count_tokens`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [
+					{ role: 'assistant', content: 'Hello.' },
+					{ role: 'user', content: 'Again.' },
+				],
+			}),
+		});
+		const count = (await countResp.json()) as { input_tokens: number };
+
+		// Actual second turn
+		const second = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [
+					{ role: 'assistant', content: 'Hello.' },
+					{ role: 'user', content: 'Again.' },
+				],
+			}),
+		});
+		const events = await readSSEEvents(second.body);
+		const messageStart = messageStartEvent(events);
+		const messageStartMessage = messageStart?.message as
+			| { usage?: { input_tokens?: number } }
+			| undefined;
+
+		// The estimates should match and should account for the ~100-char reasoning item
+		expect(count.input_tokens).toBe(messageStartMessage?.usage?.input_tokens);
+		expect(count.input_tokens).toBeGreaterThan(20);
+	});
 });
