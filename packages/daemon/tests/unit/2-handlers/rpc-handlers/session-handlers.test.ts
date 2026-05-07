@@ -29,7 +29,7 @@ const mockGetAvailableModels = mock(
 
 const mockRefreshModels = mock(async () => {});
 
-mock.module('../../../../src/lib/model-service', () => ({
+mock.module('../../../../src/lib/model-service.js', () => ({
 	getAvailableModels: mockGetAvailableModels,
 	refreshModels: mockRefreshModels,
 	clearModelsCache: mock(() => {}),

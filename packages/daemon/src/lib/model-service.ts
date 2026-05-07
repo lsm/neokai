@@ -230,6 +230,10 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 			// Background refresh failed
 		} finally {
 			refreshInProgress.delete(cacheKey);
+			// Prune generation tracking if the cache key is no longer referenced
+			if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
+				cacheGeneration.delete(cacheKey);
+			}
 		}
 	})();
 
@@ -355,21 +359,34 @@ function clearProviderModelCaches(): void {
  */
 export function clearModelsCache(cacheKey?: string): void {
 	if (cacheKey) {
+		const hadInFlight = refreshInProgress.has(cacheKey);
 		modelsCache.delete(cacheKey);
 		cacheTimestamps.delete(cacheKey);
 		refreshInProgress.delete(cacheKey);
-		cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
+		if (hadInFlight) {
+			// Bump so the in-flight refresh drops its stale result.
+			cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
+		} else {
+			// No in-flight refresh — remove generation tracking to prevent
+			// unbounded growth of per-session keys.
+			cacheGeneration.delete(cacheKey);
+		}
 	} else {
+		const inFlightKeys = new Set(refreshInProgress.keys());
 		modelsCache.clear();
 		cacheTimestamps.clear();
 		refreshInProgress.clear();
 		clearProviderModelCaches();
-		// Bump generation for every known key so all in-flight refreshes are
-		// invalidated, and ensure 'global' is bumped even if it has no entry.
-		for (const key of cacheGeneration.keys()) {
+		// Bump generation only for keys that had in-flight refreshes.
+		for (const key of inFlightKeys) {
 			cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
 		}
-		cacheGeneration.set('global', (cacheGeneration.get('global') ?? 0) + 1);
+		// Prune generation tracking for keys with no in-flight refresh.
+		for (const key of Array.from(cacheGeneration.keys())) {
+			if (!inFlightKeys.has(key)) {
+				cacheGeneration.delete(key);
+			}
+		}
 	}
 }
 
