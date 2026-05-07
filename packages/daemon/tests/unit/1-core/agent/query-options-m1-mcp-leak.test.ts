@@ -10,9 +10,10 @@
  *      (`createTaskAgentInit` / `createCustomAgentInit`) or a bare Space
  *      worker shape, then synthesize a `Session` from it.
  *   2. Run it through `QueryOptionsBuilder.build()` with no other mocks.
- *   3. Assert the resulting SDK options force `strictMcpConfig: true` and
- *      `settingSources: []`, so the Claude Agent SDK has no path to
- *      auto-load a project-level `.mcp.json` or `.claude/settings.local.json`.
+ *   3. Assert the resulting SDK options force `strictMcpConfig: true`
+ *      (which blocks MCP auto-loading regardless of `settingSources`) and
+ *      default `settingSources` to `['user', 'project']` so CLAUDE.md and
+ *      user/project settings are loaded.
  *
  * M5 removed the `NEOKAI_LEGACY_MCP_AUTOLOAD=1` escape hatch entirely —
  * setting it has no effect, which is also asserted below so any accidental
@@ -29,7 +30,7 @@ import type { AgentSessionInit } from '../../../../src/lib/agent/agent-session';
 
 function mockSettingsManager(): SettingsManager {
 	return {
-		getGlobalSettings: mock(() => ({})),
+		getGlobalSettings: mock(() => ({ settingSources: ['user', 'project'] })),
 		prepareSDKOptions: mock(async () => ({})),
 	} as unknown as SettingsManager;
 }
@@ -117,9 +118,9 @@ function sessionFromInit(init: AgentSessionInit): Session {
 	} as Session;
 }
 
-describe('MCP leak regression: strictMcpConfig + empty settingSources per spawn path', () => {
+describe('MCP leak regression: strictMcpConfig blocks auto-load regardless of settingSources', () => {
 	describe('space_task_agent (createTaskAgentInit)', () => {
-		it('emits SDK options with strictMcpConfig=true and empty settingSources', async () => {
+		it('emits SDK options with strictMcpConfig=true and default settingSources', async () => {
 			const init = createTaskAgentInit({
 				task: makeTask(),
 				space: makeSpace(),
@@ -136,7 +137,7 @@ describe('MCP leak regression: strictMcpConfig + empty settingSources per spawn 
 			const options = await builder.build();
 
 			expect(options.strictMcpConfig).toBe(true);
-			expect(options.settingSources).toEqual([]);
+			expect(options.settingSources).toEqual(['user', 'project']);
 			// No programmatic mcpServers were passed → map is absent, so nothing
 			// from a project `.mcp.json` can possibly surface here.
 			expect(options.mcpServers).toBeUndefined();
@@ -160,7 +161,7 @@ describe('MCP leak regression: strictMcpConfig + empty settingSources per spawn 
 				const options = await builder.build();
 
 				expect(options.strictMcpConfig).toBe(true);
-				expect(options.settingSources).toEqual([]);
+				expect(options.settingSources).toEqual(['user', 'project']);
 			} finally {
 				if (previous === undefined) {
 					delete process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
@@ -172,7 +173,7 @@ describe('MCP leak regression: strictMcpConfig + empty settingSources per spawn 
 	});
 
 	describe('node-agent workflow sub-session (createCustomAgentInit)', () => {
-		it('emits SDK options with strictMcpConfig=true and empty settingSources', async () => {
+		it('emits SDK options with strictMcpConfig=true and default settingSources', async () => {
 			const init = createCustomAgentInit({
 				customAgent: makeCustomAgent(),
 				task: makeTask(),
@@ -192,7 +193,7 @@ describe('MCP leak regression: strictMcpConfig + empty settingSources per spawn 
 			const options = await builder.build();
 
 			expect(options.strictMcpConfig).toBe(true);
-			expect(options.settingSources).toEqual([]);
+			expect(options.settingSources).toEqual(['user', 'project']);
 			// A workflow node-agent's `node-agent` MCP server is attached at runtime
 			// via `mergeRuntimeMcpServers` after session creation, not by the init
 			// factory. Without that runtime merge, no ambient `.mcp.json` servers
@@ -248,7 +249,7 @@ describe('MCP leak regression: strictMcpConfig + empty settingSources per spawn 
 				const options = await builder.build();
 
 				expect(options.strictMcpConfig).toBe(true);
-				expect(options.settingSources).toEqual([]);
+				expect(options.settingSources).toEqual(['user', 'project']);
 			} finally {
 				if (previous === undefined) {
 					delete process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
@@ -260,7 +261,7 @@ describe('MCP leak regression: strictMcpConfig + empty settingSources per spawn 
 	});
 
 	describe('Space ad-hoc (worker session attached to a space by context)', () => {
-		it('emits SDK options with strictMcpConfig=true and empty settingSources', async () => {
+		it('emits SDK options with strictMcpConfig=true and default settingSources', async () => {
 			// Space ad-hoc = any session opened in a Space that is neither the
 			// coordinator (`space_chat`) nor a task-agent. The runtime model uses
 			// `type: 'worker'` with a `spaceId` on the context.
@@ -296,7 +297,7 @@ describe('MCP leak regression: strictMcpConfig + empty settingSources per spawn 
 			const options = await builder.build();
 
 			expect(options.strictMcpConfig).toBe(true);
-			expect(options.settingSources).toEqual([]);
+			expect(options.settingSources).toEqual(['user', 'project']);
 			expect(options.mcpServers).toBeUndefined();
 		});
 	});

@@ -211,6 +211,11 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
 	// Advanced settings (hidden by default)
 	const useClaudeCodePreset = useSignal(true);
+	const settingSources = useSignal<import('@neokai/shared').SettingSource[]>(['user', 'project']);
+	const initialSettingSources = useSignal<import('@neokai/shared').SettingSource[]>([
+		'user',
+		'project',
+	]);
 
 	// Has the user staged any change since the modal was opened? Drives the
 	// Save button's enabled state. Computed from the four sources of pending
@@ -229,6 +234,9 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		}
 		// Advanced: claudeCodePreset toggle.
 		if (useClaudeCodePreset.value !== initialClaudeCodePreset.value) return true;
+		// Advanced: settingSources change.
+		if (JSON.stringify(settingSources.value) !== JSON.stringify(initialSettingSources.value))
+			return true;
 		return false;
 	});
 
@@ -261,6 +269,11 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		const disabled = new Set<string>(tools?.disabledSkills ?? []);
 		pendingDisabledSkills.value = disabled;
 		initialDisabledSkills.value = new Set(disabled);
+
+		// Load setting sources from session config
+		const sources = session.config.settingSources ?? ['user', 'project'];
+		settingSources.value = sources;
+		initialSettingSources.value = [...sources];
 
 		// Reset MCP overrides — the modal always starts from a clean slate;
 		// it's the daemon's resolved view that drives the initial checkbox
@@ -522,7 +535,15 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 				return;
 			}
 
-			// 3. Refresh the resolved MCP entries so the next open of the modal
+			// 3. Persist settingSources change via session.update.
+			if (JSON.stringify(settingSources.value) !== JSON.stringify(initialSettingSources.value)) {
+				await hub.request('session.update', {
+					sessionId: session.id,
+					config: { settingSources: settingSources.value },
+				});
+			}
+
+			// 4. Refresh the resolved MCP entries so the next open of the modal
 			//    sees the updated `source`/`enabled` flags.
 			await loadSessionMcpEntries();
 			toast.success('Tools configuration saved');
@@ -923,6 +944,56 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 										class="w-4 h-4 rounded border-gray-600 text-blue-500"
 									/>
 								</label>
+							</div>
+							{/* Setting Sources */}
+							<div>
+								<h4 class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
+									Setting Sources
+								</h4>
+								<div class="space-y-1.5">
+									<label class="flex items-center gap-2 cursor-pointer">
+										<input
+											type="checkbox"
+											checked={settingSources.value.includes('user')}
+											onChange={() =>
+												(settingSources.value = settingSources.value.includes('user')
+													? settingSources.value.filter((s) => s !== 'user')
+													: [...settingSources.value, 'user'])
+											}
+											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+										/>
+										<span class="text-sm text-gray-200">User settings</span>
+										<span class="text-xs text-gray-500">(~/.claude/settings.json)</span>
+									</label>
+									<label class="flex items-center gap-2 cursor-pointer">
+										<input
+											type="checkbox"
+											checked={settingSources.value.includes('project')}
+											onChange={() =>
+												(settingSources.value = settingSources.value.includes('project')
+													? settingSources.value.filter((s) => s !== 'project')
+													: [...settingSources.value, 'project'])
+											}
+											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+										/>
+										<span class="text-sm text-gray-200">Project settings + CLAUDE.md</span>
+										<span class="text-xs text-gray-500">(.claude/settings.json)</span>
+									</label>
+									<label class="flex items-center gap-2 cursor-pointer">
+										<input
+											type="checkbox"
+											checked={settingSources.value.includes('local')}
+											onChange={() =>
+												(settingSources.value = settingSources.value.includes('local')
+													? settingSources.value.filter((s) => s !== 'local')
+													: [...settingSources.value, 'local'])
+											}
+											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+										/>
+										<span class="text-sm text-gray-200">Local settings</span>
+										<span class="text-xs text-gray-500">(.claude/settings.local.json)</span>
+									</label>
+								</div>
 							</div>
 						</div>
 					)}

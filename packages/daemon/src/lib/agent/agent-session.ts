@@ -178,6 +178,11 @@ export interface AgentSessionInit {
 	 * Compiled into SDK hooks at runtime by the query options builder.
 	 */
 	toolGuards?: DeclarativeToolGuard[];
+	/**
+	 * Setting sources to load for this session (e.g., ['user', 'project']).
+	 * Falls back to global settings when unset.
+	 */
+	settingSources?: import('@neokai/shared').SettingSource[];
 }
 
 export interface AgentSessionRuntimeOptions {
@@ -615,6 +620,8 @@ export class AgentSession
 			disallowedTools: init.disallowedTools,
 			// Persist tool guards so they survive daemon restart / session restore
 			toolGuards: init.toolGuards,
+			// Setting sources for loading CLAUDE.md and settings files
+			settingSources: init.settingSources,
 		};
 
 		const metadata: SessionMetadata = {

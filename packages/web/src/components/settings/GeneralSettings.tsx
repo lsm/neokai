@@ -2,7 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
-import type { PermissionMode, ThinkingLevel } from '@neokai/shared';
+import type { PermissionMode, ThinkingLevel, SettingSource } from '@neokai/shared';
 import { normalizeThinkingLevel } from '@neokai/shared';
 import {
 	SettingsSection,
@@ -43,6 +43,9 @@ export function GeneralSettings() {
 		normalizeThinkingLevel(settings?.thinkingLevel)
 	);
 	const [localShowArchived, setLocalShowArchived] = useState(settings?.showArchived ?? false);
+	const [localSettingSources, setLocalSettingSources] = useState<SettingSource[]>(
+		settings?.settingSources ?? ['user', 'project']
+	);
 	const [isUpdating, setIsUpdating] = useState(false);
 
 	// Sync local state when global settings change
@@ -53,6 +56,7 @@ export function GeneralSettings() {
 			setLocalAutoScroll(settings.autoScroll ?? true);
 			setLocalThinkingLevel(normalizeThinkingLevel(settings.thinkingLevel));
 			setLocalShowArchived(settings.showArchived ?? false);
+			setLocalSettingSources(settings.settingSources ?? ['user', 'project']);
 		}
 	}, [settings]);
 
@@ -126,6 +130,22 @@ export function GeneralSettings() {
 		}
 	};
 
+	const toggleSettingSource = async (source: SettingSource) => {
+		const next = localSettingSources.includes(source)
+			? localSettingSources.filter((s) => s !== source)
+			: [...localSettingSources, source];
+		setLocalSettingSources(next);
+		setIsUpdating(true);
+		try {
+			await updateGlobalSettings({ settingSources: next });
+		} catch {
+			toast.error('Failed to update setting sources');
+			setLocalSettingSources(settings?.settingSources ?? ['user', 'project']);
+		} finally {
+			setIsUpdating(false);
+		}
+	};
+
 	return (
 		<SettingsSection title="General">
 			<SettingsRow label="Default Model" description="Model for new sessions">
@@ -169,6 +189,44 @@ export function GeneralSettings() {
 					onChange={handleShowArchivedChange}
 					disabled={isUpdating}
 				/>
+			</SettingsRow>
+
+			<SettingsRow label="Setting Sources" description="Which on-disk settings files the SDK loads">
+				<div class="space-y-2">
+					<label class="flex items-center gap-2 cursor-pointer">
+						<input
+							type="checkbox"
+							checked={localSettingSources.includes('user')}
+							onChange={() => toggleSettingSource('user')}
+							disabled={isUpdating}
+							class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+						/>
+						<span class="text-sm text-gray-200">User settings</span>
+						<span class="text-xs text-gray-500">(~/.claude/settings.json)</span>
+					</label>
+					<label class="flex items-center gap-2 cursor-pointer">
+						<input
+							type="checkbox"
+							checked={localSettingSources.includes('project')}
+							onChange={() => toggleSettingSource('project')}
+							disabled={isUpdating}
+							class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+						/>
+						<span class="text-sm text-gray-200">Project settings + CLAUDE.md</span>
+						<span class="text-xs text-gray-500">(.claude/settings.json)</span>
+					</label>
+					<label class="flex items-center gap-2 cursor-pointer">
+						<input
+							type="checkbox"
+							checked={localSettingSources.includes('local')}
+							onChange={() => toggleSettingSource('local')}
+							disabled={isUpdating}
+							class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+						/>
+						<span class="text-sm text-gray-200">Local settings</span>
+						<span class="text-xs text-gray-500">(.claude/settings.local.json)</span>
+					</label>
+				</div>
 			</SettingsRow>
 		</SettingsSection>
 	);

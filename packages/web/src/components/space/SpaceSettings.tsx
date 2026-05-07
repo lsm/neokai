@@ -8,7 +8,7 @@
  */
 
 import { useState, useEffect } from 'preact/hooks';
-import type { Space, SpaceExportBundle, SpaceAutonomyLevel } from '@neokai/shared';
+import type { Space, SpaceExportBundle, SpaceAutonomyLevel, SettingSource } from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { spaceStore } from '../../lib/space-store.ts';
 import { toast } from '../../lib/toast.ts';
@@ -33,6 +33,9 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 	const [backgroundContext, setBackgroundContext] = useState(space.backgroundContext ?? '');
 	const [autonomyLevel, setAutonomyLevel] = useState<SpaceAutonomyLevel>(space.autonomyLevel ?? 1);
 	const [defaultModel, setDefaultModel] = useState<string | undefined>(space.defaultModel);
+	const [settingSources, setSettingSources] = useState<SettingSource[]>(
+		space.settingSources ?? ['user', 'project']
+	);
 	const [saving, setSaving] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const [isArchiving, setIsArchiving] = useState(false);
@@ -46,6 +49,8 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		setBackgroundContext(space.backgroundContext ?? '');
 		setAutonomyLevel(space.autonomyLevel ?? 1);
 		setDefaultModel(space.defaultModel);
+		setSettingSources(space.settingSources ?? ['user', 'project']);
+		setSettingSources(space.settingSources ?? ['user', 'project']);
 		setSaveError(null);
 	}, [
 		space.id,
@@ -55,6 +60,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		space.backgroundContext,
 		space.autonomyLevel,
 		space.defaultModel,
+		space.settingSources,
 	]);
 
 	const isDirty =
@@ -63,7 +69,8 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		instructions !== (space.instructions ?? '') ||
 		backgroundContext !== (space.backgroundContext ?? '') ||
 		autonomyLevel !== (space.autonomyLevel ?? 1) ||
-		defaultModel !== space.defaultModel;
+		defaultModel !== space.defaultModel ||
+		JSON.stringify(settingSources) !== JSON.stringify(space.settingSources ?? ['user', 'project']);
 
 	async function handleSave(e: Event) {
 		e.preventDefault();
@@ -87,6 +94,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 				backgroundContext: backgroundContext.trim() || undefined,
 				autonomyLevel,
 				defaultModel: defaultModel || null,
+				settingSources,
 			});
 			// Apply response directly to avoid stale-state from event spread-merge
 			// (undefined fields like defaultModel are dropped during JSON serialization)
@@ -308,6 +316,64 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 								testId="default-model-select"
 								className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
 							/>
+
+							<div>
+								<label class="block text-xs font-medium text-gray-400 mb-1">Setting Sources</label>
+								<p class="text-xs text-gray-500 mb-2">
+									Which on-disk settings files agents in this Space load. Inherits the app-level
+									default when not set.
+								</p>
+								<div class="space-y-1.5">
+									<label class="flex items-center gap-2 cursor-pointer">
+										<input
+											type="checkbox"
+											checked={settingSources.includes('user')}
+											onChange={() =>
+												setSettingSources((prev) =>
+													prev.includes('user')
+														? prev.filter((s) => s !== 'user')
+														: [...prev, 'user']
+												)
+											}
+											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+										/>
+										<span class="text-sm text-gray-200">User settings</span>
+										<span class="text-xs text-gray-500">(~/.claude/settings.json)</span>
+									</label>
+									<label class="flex items-center gap-2 cursor-pointer">
+										<input
+											type="checkbox"
+											checked={settingSources.includes('project')}
+											onChange={() =>
+												setSettingSources((prev) =>
+													prev.includes('project')
+														? prev.filter((s) => s !== 'project')
+														: [...prev, 'project']
+												)
+											}
+											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+										/>
+										<span class="text-sm text-gray-200">Project settings + CLAUDE.md</span>
+										<span class="text-xs text-gray-500">(.claude/settings.json)</span>
+									</label>
+									<label class="flex items-center gap-2 cursor-pointer">
+										<input
+											type="checkbox"
+											checked={settingSources.includes('local')}
+											onChange={() =>
+												setSettingSources((prev) =>
+													prev.includes('local')
+														? prev.filter((s) => s !== 'local')
+														: [...prev, 'local']
+												)
+											}
+											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+										/>
+										<span class="text-sm text-gray-200">Local settings</span>
+										<span class="text-xs text-gray-500">(.claude/settings.local.json)</span>
+									</label>
+								</div>
+							</div>
 						</div>
 
 						{isDirty && (
@@ -323,6 +389,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 										setBackgroundContext(space.backgroundContext ?? '');
 										setAutonomyLevel(space.autonomyLevel ?? 1);
 										setDefaultModel(space.defaultModel);
+										setSettingSources(space.settingSources ?? ['user', 'project']);
 										setSaveError(null);
 									}}
 								>

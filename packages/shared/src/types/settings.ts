@@ -187,7 +187,11 @@ export interface SessionSettings extends GlobalSettings {
  * Default global settings
  */
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
-	settingSources: ['user', 'project', 'local'],
+	// Default to user + project only. 'local' is intentionally OFF by default
+	// because NeoKai writes to .claude/settings.local.json via writeFileOnlySettings()
+	// (permissions, sandbox, attribution). Loading it back could create circular
+	// or conflicting settings.
+	settingSources: ['user', 'project'],
 	permissionMode: 'default',
 	model: 'sonnet', // Default model for new sessions
 	showArchived: false,

@@ -58,7 +58,7 @@ describe('QueryOptionsBuilder', () => {
 		};
 
 		mockSettingsManager = {
-			getGlobalSettings: mock(() => ({})),
+			getGlobalSettings: mock(() => ({ settingSources: ['user', 'project'] })),
 			prepareSDKOptions: mock(async () => ({})),
 		} as unknown as SettingsManager;
 
@@ -544,15 +544,13 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('setting sources configuration', () => {
-		// M5 (unify-mcp-config-model): `settingSources` is unconditionally `[]`
-		// so the SDK never auto-loads `.mcp.json` / `settings.json` MCP servers.
-		// The unified `app_mcp_servers` registry (+ `mcp_enablement` overrides)
-		// is now the only source of truth — the legacy `loadSettingSources`
-		// override and the M1 `NEOKAI_LEGACY_MCP_AUTOLOAD` kill switch are both
-		// gone.
-		it('should always emit empty settingSources', async () => {
+		// Post-M5: `settingSources` defaults to the global settings value
+		// (['user', 'project']) so CLAUDE.md and user/project settings are
+		// loaded.  MCP remains locked to `strictMcpConfig: true` (unified
+		// `app_mcp_servers` registry only) regardless of settingSources.
+		it('should default settingSources to global settings', async () => {
 			const options = await builder.build();
-			expect(options.settingSources).toEqual([]);
+			expect(options.settingSources).toEqual(['user', 'project']);
 		});
 	});
 
@@ -568,7 +566,7 @@ describe('QueryOptionsBuilder', () => {
 				'space-agent-tools': { command: 'space-cmd' },
 			});
 			expect(options.strictMcpConfig).toBe(true);
-			expect(options.settingSources).toEqual([]);
+			expect(options.settingSources).toEqual(['user', 'project']);
 		});
 
 		it('should enforce space built-in tool allowlist including Bash', async () => {
@@ -648,12 +646,13 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	// ============================================================================
-	// M5 (unify-mcp-config-model): strictMcpConfig + settingSources are forced
-	// for ALL session types unconditionally; the M1 `NEOKAI_LEGACY_MCP_AUTOLOAD`
-	// kill switch was removed. These tests pin the post-M5 contract per session
-	// type so any regression that re-introduces auto-loading is caught.
+	// M5 (unify-mcp-config-model): strictMcpConfig is forced unconditionally;
+	// settingSources defaults to global settings (['user', 'project']) but can be
+	// overridden per-session. The M1 `NEOKAI_LEGACY_MCP_AUTOLOAD` kill switch was
+	// removed. These tests pin the post-M5 contract per session type so any
+	// regression that re-introduces auto-loading is caught.
 	// ============================================================================
-	describe('M5: unconditional strict MCP + empty settingSources', () => {
+	describe('M5: unconditional strict MCP + configurable settingSources', () => {
 		const sessionTypes: Array<'worker' | 'space_task_agent' | 'general' | 'coder' | 'planner'> = [
 			'worker',
 			'space_task_agent',
@@ -663,26 +662,27 @@ describe('QueryOptionsBuilder', () => {
 		];
 
 		for (const type of sessionTypes) {
-			it(`forces strictMcpConfig=true and settingSources=[] on ${type} sessions`, async () => {
+			it(`forces strictMcpConfig=true and default settingSources on ${type} sessions`, async () => {
 				mockSession.type = type;
 				const options = await builder.build();
 				expect(options.strictMcpConfig).toBe(true);
-				expect(options.settingSources).toEqual([]);
+				expect(options.settingSources).toEqual(['user', 'project']);
 			});
 		}
 
 		it('does not inject project .mcp.json servers into the mcpServers map (regression)', async () => {
 			// Pre-M1 behavior was for the SDK to auto-load any `.mcp.json` at the
 			// workspace root because `settingSources` defaulted to `['project', 'local']`.
-			// Post-M5 the SDK never looks at `.mcp.json` at all, and an ad-hoc worker
-			// session with no programmatic mcpServers emits an `undefined` mcpServers
-			// option — i.e. nothing to inject.
+			// Post-M5 the SDK still respects settingSources for *settings* files, but
+			// `strictMcpConfig: true` blocks `.mcp.json` auto-loading regardless.
+			// An ad-hoc worker session with no programmatic mcpServers emits an
+			// `undefined` mcpServers option — i.e. nothing to inject.
 			mockSession.type = 'worker';
 			mockSession.config.mcpServers = undefined;
 			const options = await builder.build();
 			expect(options.mcpServers).toBeUndefined();
 			expect(options.strictMcpConfig).toBe(true);
-			expect(options.settingSources).toEqual([]);
+			expect(options.settingSources).toEqual(['user', 'project']);
 		});
 
 		it('preserves explicit mcpServers from session config under strict mode', async () => {
@@ -692,13 +692,14 @@ describe('QueryOptionsBuilder', () => {
 			};
 			const options = await builder.build();
 			expect(options.strictMcpConfig).toBe(true);
-			expect(options.settingSources).toEqual([]);
+			expect(options.settingSources).toEqual(['user', 'project']);
 			expect(options.mcpServers).toEqual({ 'task-agent': { command: 'task-cmd' } });
 		});
 
 		it('ignores NEOKAI_LEGACY_MCP_AUTOLOAD — the M1 kill switch was removed in M5', async () => {
-			// Setting the legacy env var must have no effect; settingSources stays []
-			// and strictMcpConfig stays true regardless of value or session type.
+			// Setting the legacy env var must have no effect; settingSources stays
+			// at the global default and strictMcpConfig stays true regardless of
+			// value or session type.
 			const previous = process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
 			try {
 				for (const val of ['1', 'true', 'yes']) {
@@ -706,7 +707,7 @@ describe('QueryOptionsBuilder', () => {
 					mockSession.type = 'worker';
 					const options = await builder.build();
 					expect(options.strictMcpConfig).toBe(true);
-					expect(options.settingSources).toEqual([]);
+					expect(options.settingSources).toEqual(['user', 'project']);
 				}
 			} finally {
 				if (previous === undefined) {

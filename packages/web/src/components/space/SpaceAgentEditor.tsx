@@ -16,7 +16,7 @@
  * Validation: name required + unique, model required, at least one tool selected.
  */
 
-import type { SpaceAgent, ThinkingLevel } from '@neokai/shared';
+import type { SpaceAgent, ThinkingLevel, SettingSource } from '@neokai/shared';
 import { KNOWN_TOOLS, normalizeThinkingLevel } from '@neokai/shared';
 import { useState } from 'preact/hooks';
 import type { SpaceAgentTemplate } from '../../lib/space-store';
@@ -143,6 +143,9 @@ export function SpaceAgentEditor({
 	);
 	const [tools, setTools] = useState<string[]>(agent?.tools ?? [...TOOL_PRESETS['Full Coding']]);
 	const [customPrompt, setCustomPrompt] = useState(agent?.customPrompt ?? '');
+	const [settingSources, setSettingSources] = useState<SettingSource[]>(
+		agent?.settingSources ?? ['user', 'project']
+	);
 	const [activePreset, setActivePreset] = useState<string>(() => detectPreset(agent?.tools));
 	const [selectedTemplateName, setSelectedTemplateName] = useState<string>('');
 
@@ -218,6 +221,7 @@ export function SpaceAgentEditor({
 				model: model.trim(),
 				customPrompt: customPrompt || null,
 				tools: tools.length > 0 ? tools : undefined,
+				settingSources: settingSources.length > 0 ? settingSources : undefined,
 			};
 
 			if (isEdit && agent) {
@@ -358,6 +362,60 @@ export function SpaceAgentEditor({
 							</option>
 						))}
 					</select>
+				</div>
+
+				{/* Setting Sources */}
+				<div>
+					<label class="block text-sm font-medium text-gray-300 mb-1.5">
+						Setting Sources
+						<span class="text-gray-500 text-xs ml-2">(optional)</span>
+					</label>
+					<div class="space-y-1.5">
+						<label class="flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={settingSources.includes('user')}
+								onChange={() =>
+									setSettingSources((prev) =>
+										prev.includes('user') ? prev.filter((s) => s !== 'user') : [...prev, 'user']
+									)
+								}
+								class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+							/>
+							<span class="text-sm text-gray-200">User settings</span>
+							<span class="text-xs text-gray-500">(~/.claude/settings.json)</span>
+						</label>
+						<label class="flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={settingSources.includes('project')}
+								onChange={() =>
+									setSettingSources((prev) =>
+										prev.includes('project')
+											? prev.filter((s) => s !== 'project')
+											: [...prev, 'project']
+									)
+								}
+								class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+							/>
+							<span class="text-sm text-gray-200">Project settings + CLAUDE.md</span>
+							<span class="text-xs text-gray-500">(.claude/settings.json)</span>
+						</label>
+						<label class="flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={settingSources.includes('local')}
+								onChange={() =>
+									setSettingSources((prev) =>
+										prev.includes('local') ? prev.filter((s) => s !== 'local') : [...prev, 'local']
+									)
+								}
+								class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+							/>
+							<span class="text-sm text-gray-200">Local settings</span>
+							<span class="text-xs text-gray-500">(.claude/settings.local.json)</span>
+						</label>
+					</div>
 				</div>
 
 				{/* Tools */}

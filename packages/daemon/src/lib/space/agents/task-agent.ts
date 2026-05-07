@@ -614,5 +614,6 @@ export function createTaskAgentInit(config: TaskAgentSessionConfig): AgentSessio
 		model,
 		provider,
 		thinkingLevel: taskAgentConfig?.thinkingLevel,
+		settingSources: taskAgentConfig?.settingSources ?? space.settingSources,
 	};
 }

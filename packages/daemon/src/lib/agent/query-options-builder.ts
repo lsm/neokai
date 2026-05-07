@@ -407,10 +407,14 @@ export class QueryOptionsBuilder {
 			pathToClaudeCodeExecutable: sdkCliPath,
 
 			// ============ Settings ============
-			// Always [] — the SDK must never auto-load MCP servers, slash commands,
-			// or other settings from on-disk files. NeoKai is the sole arbiter of
-			// what reaches the SDK. See M5 of `unify-mcp-config-model`.
-			settingSources: [],
+			// settingSources controls which on-disk settings files the SDK loads.
+			// Default to ['user', 'project'] so CLAUDE.md and user/project settings
+			// are loaded. 'local' is off by default because NeoKai writes to
+			// .claude/settings.local.json and loading it back could create circular
+			// settings. strictMcpConfig: true still prevents MCP auto-loading from
+			// any source — the unified app_mcp_servers registry is the sole MCP source.
+			settingSources:
+				config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
 			settings: buildProviderSettings(providerId, config.model),
 
 			// ============ Streaming ============
