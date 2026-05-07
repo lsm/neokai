@@ -167,12 +167,15 @@ export class SpaceTaskRepository {
 	}
 
 	/**
-	 * Count tasks for a space, optionally filtered by status (excluding archived by default).
+	 * Count tasks for a space, optionally filtered by status.
+	 * Excludes archived by default, unless status is explicitly 'archived'.
 	 */
 	countBySpace(spaceId: string, status?: SpaceTaskStatus, includeArchived = false): number {
 		let query = `SELECT COUNT(*) as count FROM space_tasks WHERE space_id = ?`;
 		const params: SQLiteValue[] = [spaceId];
-		if (!includeArchived) {
+		// When the caller explicitly filters by 'archived', include archived rows
+		// even if includeArchived is false — the status filter is the intent.
+		if (!includeArchived && status !== 'archived') {
 			query += ` AND status != 'archived'`;
 		}
 		if (status) {
