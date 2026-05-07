@@ -282,7 +282,7 @@ export const PROVIDER_THINKING_MODES: Record<Provider, 'off' | 'on' | 'granular'
 	ollama: 'off',
 	'ollama-cloud': 'off',
 	'anthropic-copilot': 'off',
-	'anthropic-codex': 'off',
+	'anthropic-codex': 'granular',
 	'google-gemini-oauth': 'off',
 };
 
@@ -302,10 +302,11 @@ export function normalizeThinkingLevel(level: string | undefined | null): Thinki
  * Returns an empty array for providers that don't support thinking.
  */
 export function getThinkingOptionsForProvider(
-	provider: string | undefined
+	provider: string | undefined,
+	mode?: 'off' | 'on' | 'granular'
 ): Array<{ value: ThinkingLevel; label: string }> {
-	const mode = PROVIDER_THINKING_MODES[provider as Provider] ?? 'granular';
-	switch (mode) {
+	const resolvedMode = mode ?? PROVIDER_THINKING_MODES[provider as Provider] ?? 'granular';
+	switch (resolvedMode) {
 		case 'off':
 			return [];
 		case 'on':

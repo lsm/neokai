@@ -369,6 +369,63 @@ describe('QueryOptionsBuilder', () => {
 
 			expect(result.thinking).toBeUndefined();
 		});
+
+		it('should omit thinking config for anthropic-codex when Codex adapter is active', async () => {
+			const originalAdapter = process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER;
+			process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER = 'codex';
+			try {
+				mockSession.config.provider = 'anthropic-codex';
+				mockSession.config.thinkingLevel = 'think32k';
+				const result = builder.addSessionStateOptions(
+					{} as import('@anthropic-ai/claude-agent-sdk').Options
+				);
+				expect(result.thinking).toBeUndefined();
+			} finally {
+				if (originalAdapter === undefined) {
+					delete process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER;
+				} else {
+					process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER = originalAdapter;
+				}
+			}
+		});
+
+		it('should omit thinking config for anthropic-codex when Codex adapter env is uppercase', async () => {
+			const originalAdapter = process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER;
+			process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER = 'CODEX';
+			try {
+				mockSession.config.provider = 'anthropic-codex';
+				mockSession.config.thinkingLevel = 'think32k';
+				const result = builder.addSessionStateOptions(
+					{} as import('@anthropic-ai/claude-agent-sdk').Options
+				);
+				expect(result.thinking).toBeUndefined();
+			} finally {
+				if (originalAdapter === undefined) {
+					delete process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER;
+				} else {
+					process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER = originalAdapter;
+				}
+			}
+		});
+
+		it('should omit thinking config for anthropic-codex when Codex adapter env has extra whitespace', async () => {
+			const originalAdapter = process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER;
+			process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER = '  codex  ';
+			try {
+				mockSession.config.provider = 'anthropic-codex';
+				mockSession.config.thinkingLevel = 'think32k';
+				const result = builder.addSessionStateOptions(
+					{} as import('@anthropic-ai/claude-agent-sdk').Options
+				);
+				expect(result.thinking).toBeUndefined();
+			} finally {
+				if (originalAdapter === undefined) {
+					delete process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER;
+				} else {
+					process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER = originalAdapter;
+				}
+			}
+		});
 	});
 
 	describe('system prompt configuration', () => {

@@ -62,6 +62,11 @@ export type AnthropicRequest = {
 	 * A warning is logged when this field is present.
 	 */
 	tool_choice?: ToolChoice;
+	/**
+	 * Extended-thinking configuration emitted by the SDK.
+	 * The bridge maps `budget_tokens` to OpenAI `reasoning.effort`.
+	 */
+	thinking?: { type: 'enabled'; budget_tokens: number } | { type: 'adaptive' };
 };
 
 // ---------------------------------------------------------------------------
@@ -284,6 +289,22 @@ export function contentBlockStartToolUseSSE(
 	});
 }
 
+export function contentBlockStartThinkingSSE(index: number): string {
+	return sseEvent('content_block_start', {
+		type: 'content_block_start',
+		index,
+		content_block: { type: 'thinking', thinking: '' },
+	});
+}
+
+export function thinkingDeltaSSE(index: number, thinking: string): string {
+	return sseEvent('content_block_delta', {
+		type: 'content_block_delta',
+		index,
+		delta: { type: 'thinking_delta', thinking },
+	});
+}
+
 export function textDeltaSSE(index: number, text: string): string {
 	return sseEvent('content_block_delta', {
 		type: 'content_block_delta',
@@ -323,6 +344,8 @@ export type MessageDeltaUsage = {
 	cacheReadInputTokens?: number | null;
 	/** Model context window (from Codex usage events when available). */
 	modelContextWindow?: number | null;
+	/** Thinking / reasoning token count (from OpenAI usage events when available). */
+	thinkingTokens?: number | null;
 };
 
 export function messageDeltaSSE(
@@ -338,6 +361,7 @@ export function messageDeltaSSE(
 			cache_creation_input_tokens: usage.cacheCreationInputTokens ?? null,
 			cache_read_input_tokens: usage.cacheReadInputTokens ?? null,
 			model_context_window: usage.modelContextWindow ?? null,
+			thinking_tokens: usage.thinkingTokens ?? null,
 		},
 	});
 }
