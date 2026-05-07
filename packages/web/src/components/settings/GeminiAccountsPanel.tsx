@@ -158,6 +158,7 @@ export function GeminiAccountsPanel() {
 					if (response.success) {
 						toast.success(`Removed ${account.email}`);
 						await loadAccounts();
+						window.dispatchEvent(new CustomEvent('gemini-accounts-changed'));
 					} else {
 						toast.error(response.error || 'Failed to remove account');
 					}
@@ -327,6 +328,7 @@ export function GeminiAccountsPanel() {
 						setShowAddModal(false);
 						loadAccounts();
 						toast.success('Google account added successfully');
+						window.dispatchEvent(new CustomEvent('gemini-accounts-changed'));
 					}}
 					onCancel={() => setShowAddModal(false)}
 					onSubmitCode={handleSubmitCode}
