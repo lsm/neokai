@@ -393,18 +393,22 @@ export function anthropicMessagesToResponsesInput(
 	reasoningItems?: ResponsesReasoningItem[]
 ): ResponsesInputItem[] {
 	const items: ResponsesInputItem[] = [];
-	let pendingReasoning = reasoningItems ? [...reasoningItems] : [];
+	// Reasoning belongs to the most recent assistant turn, so it must be
+	// inserted immediately before the *last* user message (the current turn).
+	let lastUserIndex = -1;
+	for (let i = 0; i < messages.length; i++) {
+		if (messages[i].role === 'user') {
+			lastUserIndex = i;
+		}
+	}
 	for (let i = 0; i < messages.length; i++) {
 		const message = messages[i];
 		if (typeof message.content === 'string') {
 			if (message.role === 'assistant') {
 				appendAssistantMessage(items, [message.content]);
 			} else {
-				// Insert stored reasoning items before the first user message that
-				// follows an assistant message (i.e. the latest user turn).
-				if (pendingReasoning.length > 0 && i > 0 && messages[i - 1].role === 'assistant') {
-					items.push(...pendingReasoning);
-					pendingReasoning = [];
+				if (reasoningItems && reasoningItems.length > 0 && i === lastUserIndex) {
+					items.push(...reasoningItems);
 				}
 				appendInputMessage(items, 'user', [message.content]);
 			}
@@ -413,9 +417,8 @@ export function anthropicMessagesToResponsesInput(
 		if (message.role === 'assistant') {
 			appendAssistantBlocks(items, message.content);
 		} else {
-			if (pendingReasoning.length > 0 && i > 0 && messages[i - 1].role === 'assistant') {
-				items.push(...pendingReasoning);
-				pendingReasoning = [];
+			if (reasoningItems && reasoningItems.length > 0 && i === lastUserIndex) {
+				items.push(...reasoningItems);
 			}
 			appendUserBlocks(items, message.content);
 		}
@@ -1190,8 +1193,6 @@ export function createOpenAIResponsesBridgeServer(
 				);
 			}
 			consumeContinuation(sessionId, resolvedContinuation);
-			// Reasoning items have been consumed into the input array; clear them.
-			sessionReasoningItems.delete(sessionId);
 
 			const estimatedInputTokens = continuation
 				? estimateResponsesPayloadTokens(body, continuation.input)
