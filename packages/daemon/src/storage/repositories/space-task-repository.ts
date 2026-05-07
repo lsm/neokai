@@ -85,17 +85,17 @@ export class SpaceTaskRepository {
 	}
 
 	/**
-	 * List tasks for a space, with optional status filter
+	 * List tasks for a space, with optional status filter and pagination
 	 */
-	listBySpace(spaceId: string, includeArchived = false): SpaceTask[] {
+	listBySpace(spaceId: string, includeArchived = false, limit = 100, offset = 0): SpaceTask[] {
 		let query = `SELECT * FROM space_tasks WHERE space_id = ?`;
 		if (!includeArchived) {
 			query += ` AND status != 'archived'`;
 		}
-		query += ` ORDER BY updated_at DESC`;
+		query += ` ORDER BY updated_at DESC LIMIT ? OFFSET ?`;
 
 		const stmt = this.db.prepare(query);
-		const rows = stmt.all(spaceId) as Record<string, unknown>[];
+		const rows = stmt.all(spaceId, limit, offset) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
 	}
 
@@ -144,13 +144,13 @@ export class SpaceTaskRepository {
 	}
 
 	/**
-	 * List tasks by status within a space
+	 * List tasks by status within a space, with optional pagination
 	 */
-	listByStatus(spaceId: string, status: SpaceTaskStatus): SpaceTask[] {
+	listByStatus(spaceId: string, status: SpaceTaskStatus, limit = 100, offset = 0): SpaceTask[] {
 		const stmt = this.db.prepare(
-			`SELECT * FROM space_tasks WHERE space_id = ? AND status = ? ORDER BY updated_at DESC`
+			`SELECT * FROM space_tasks WHERE space_id = ? AND status = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?`
 		);
-		const rows = stmt.all(spaceId, status) as Record<string, unknown>[];
+		const rows = stmt.all(spaceId, status, limit, offset) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
 	}
 

@@ -188,6 +188,19 @@ export const ListTasksSchema = z.object({
 			'Return only summary fields (id, title, status, priority, createdAt) to reduce payload size'
 		)
 		.optional(),
+	limit: z
+		.number()
+		.int()
+		.min(1)
+		.max(100)
+		.describe('Maximum number of tasks to return (1-100, default 20)')
+		.optional(),
+	offset: z
+		.number()
+		.int()
+		.min(0)
+		.describe('Number of tasks to skip for pagination (default 0)')
+		.optional(),
 });
 
 export type ListTasksInput = z.infer<typeof ListTasksSchema>;

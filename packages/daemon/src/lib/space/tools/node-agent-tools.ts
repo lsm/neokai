@@ -1164,11 +1164,13 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				return jsonResult({ success: false, error: 'Task repository not available.' });
 			}
 			try {
+				const limit = Math.min(args.limit ?? 20, 100);
+				const offset = args.offset ?? 0;
 				let tasks: SpaceTask[];
 				if (args.status) {
-					tasks = taskRepo.listByStatus(spaceId, args.status);
+					tasks = taskRepo.listByStatus(spaceId, args.status, limit, offset);
 				} else {
-					tasks = taskRepo.listBySpace(spaceId);
+					tasks = taskRepo.listBySpace(spaceId, false, limit, offset);
 				}
 				if (args.compact) {
 					const compactTasks = tasks.map((t) => ({
