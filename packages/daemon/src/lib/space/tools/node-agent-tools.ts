@@ -1095,14 +1095,20 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					error: 'create_standalone_task is not available in this node-agent session.',
 				});
 			}
-			logAudit('create_standalone_task', {
-				title: args.title,
-				priority: args.priority,
-				workflow_id: args.workflow_id,
-				depends_on: args.depends_on,
-				draft: args.draft,
-			});
-			return config.onCreateStandaloneTask(args);
+			const result = await config.onCreateStandaloneTask(args);
+			// Only audit after successful creation; stamp the new task ID, not the current session task.
+			const createdTask = result.task as { id: string } | undefined;
+			if (result.success && createdTask?.id) {
+				logAudit('create_standalone_task', {
+					title: args.title,
+					taskId: createdTask.id,
+					priority: args.priority,
+					workflow_id: args.workflow_id,
+					depends_on: args.depends_on,
+					draft: args.draft,
+				});
+			}
+			return result;
 		},
 
 		// ── Task read tools ──────────────────────────────────────────────

@@ -207,7 +207,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		outboundSenderName === 'space-agent' ? 'Space Agent' : outboundSenderName;
 
 	/** Helper to log MCP write operations to the audit log. */
-	function logAudit(toolName: string, paramsSummary: Record<string, unknown>): void {
+	function logAudit(
+		toolName: string,
+		paramsSummary: Record<string, unknown>,
+		taskId?: string
+	): void {
 		if (config.auditLogRepo) {
 			try {
 				config.auditLogRepo.createEntry({
@@ -216,6 +220,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					toolName,
 					paramsSummary: JSON.stringify(paramsSummary),
 					spaceId,
+					taskId,
 				});
 			} catch {
 				// Audit logging is best-effort; never block the tool operation.
@@ -437,14 +442,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					createdBy: myAgentName ?? null,
 					createdBySession: mySessionId ?? null,
 				});
-				logAudit('create_standalone_task', {
-					title: args.title,
-					taskId: task.id,
-					priority: args.priority,
-					workflow_id: args.workflow_id,
-					depends_on: args.depends_on,
-					draft: args.draft,
-				});
+				logAudit(
+					'create_standalone_task',
+					{
+						title: args.title,
+						priority: args.priority,
+						workflow_id: args.workflow_id,
+						depends_on: args.depends_on,
+						draft: args.draft,
+					},
+					task.id
+				);
 				return jsonResult({ success: true, task });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -1036,11 +1044,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					approvalReason: args.reason,
 				});
 
-				logAudit('approve_task', {
-					taskId: args.task_id,
-					reason: args.reason,
-					previousStatus: task.status,
-				});
+				logAudit(
+					'approve_task',
+					{
+						reason: args.reason,
+						previousStatus: task.status,
+					},
+					args.task_id
+				);
 
 				if (daemonHub) {
 					void daemonHub
