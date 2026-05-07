@@ -29,6 +29,7 @@ import {
 import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-message-router.ts';
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
+import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import type { SpaceWorkflow, Gate, WorkflowChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -3240,5 +3241,319 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
 		expect(data.queued[0].agentName).toBe('security');
 		const securityPending = pendingMessageRepo.listPendingForTarget(isolatedRunId, 'security');
 		expect(securityPending).toHaveLength(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: list_tasks / get_task
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: list_tasks', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('lists tasks in the space', async () => {
+		const config = makeConfig(ctx, { taskRepo: ctx.taskRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_tasks({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.tasks.length).toBeGreaterThanOrEqual(2);
+		expect(data.has_more).toBe(false);
+	});
+
+	test('filters tasks by status', async () => {
+		const config = makeConfig(ctx, { taskRepo: ctx.taskRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_tasks({ status: 'in_progress' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.tasks.every((t: { status: string }) => t.status === 'in_progress')).toBe(true);
+	});
+
+	test('returns compact tasks when compact:true', async () => {
+		const config = makeConfig(ctx, { taskRepo: ctx.taskRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_tasks({ compact: true });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.tasks[0]).toHaveProperty('id');
+		expect(data.tasks[0]).toHaveProperty('title');
+		expect(data.tasks[0]).toHaveProperty('status');
+		expect(data.tasks[0]).toHaveProperty('priority');
+		expect(data.tasks[0]).toHaveProperty('createdAt');
+		expect(data.tasks[0]).not.toHaveProperty('description');
+	});
+
+	test('paginates with limit and offset', async () => {
+		const config = makeConfig(ctx, { taskRepo: ctx.taskRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		// Get first page
+		const page1 = await handlers.list_tasks({ limit: 1, offset: 0 });
+		const data1 = JSON.parse(page1.content[0].text);
+		expect(data1.tasks).toHaveLength(1);
+		expect(data1.has_more).toBe(true);
+
+		// Get second page
+		const page2 = await handlers.list_tasks({ limit: 1, offset: 1 });
+		const data2 = JSON.parse(page2.content[0].text);
+		expect(data2.tasks).toHaveLength(1);
+		expect(data2.tasks[0].id).not.toBe(data1.tasks[0].id);
+	});
+
+	test('returns error when taskRepo is not available', async () => {
+		const config = makeConfig(ctx, { taskRepo: undefined });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_tasks({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('Task repository not available');
+	});
+});
+
+describe('node-agent-tools: get_task', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('gets task by task_number', async () => {
+		const config = makeConfig(ctx, { taskRepo: ctx.taskRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		// Create a task with a known number
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Task by number',
+			description: '',
+		});
+
+		const result = await handlers.get_task({ task_number: task.taskNumber });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.task.id).toBe(task.id);
+		expect(data.task.title).toBe('Task by number');
+	});
+
+	test('gets task by task_id', async () => {
+		const config = makeConfig(ctx, { taskRepo: ctx.taskRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Task by ID',
+			description: '',
+		});
+
+		const result = await handlers.get_task({ task_id: task.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.task.id).toBe(task.id);
+	});
+
+	test('scopes task_id lookup to current space', async () => {
+		const config = makeConfig(ctx, { taskRepo: ctx.taskRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		// Create another space and task
+		const otherSpaceId = 'other-space';
+		ctx.db
+			.prepare(
+				`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+				 allowed_models, session_ids, slug, status, created_at, updated_at)
+				 VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+			)
+			.run(otherSpaceId, '/tmp/other', 'Other', 'other', Date.now(), Date.now());
+
+		const otherTask = ctx.taskRepo.createTask({
+			spaceId: otherSpaceId,
+			title: 'Other space task',
+			description: '',
+		});
+
+		// Should not find the task from the other space
+		const result = await handlers.get_task({ task_id: otherTask.id });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('Task not found');
+	});
+
+	test('returns error when neither task_id nor task_number is provided', async () => {
+		const config = makeConfig(ctx, { taskRepo: ctx.taskRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.get_task({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('Either task_id or task_number is required');
+	});
+
+	test('returns error for non-existent task', async () => {
+		const config = makeConfig(ctx, { taskRepo: ctx.taskRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.get_task({ task_number: 99999 });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('Task not found');
+	});
+
+	test('returns error when taskRepo is not available', async () => {
+		const config = makeConfig(ctx, { taskRepo: undefined });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.get_task({ task_id: 'some-id' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('Task repository not available');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: list_audit_entries
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: list_audit_entries', () => {
+	let ctx: TestCtx;
+	let auditLogRepo: McpAuditLogRepository;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+		auditLogRepo = new McpAuditLogRepository(ctx.db);
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('lists audit entries by space', async () => {
+		auditLogRepo.createEntry({ toolName: 'send_message', spaceId: ctx.spaceId });
+		auditLogRepo.createEntry({ toolName: 'save_artifact', spaceId: ctx.spaceId });
+
+		const config = makeConfig(ctx, { auditLogRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_audit_entries({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.entries).toHaveLength(2);
+		expect(data.entries[0].toolName).toBe('save_artifact');
+		expect(data.entries[1].toolName).toBe('send_message');
+	});
+
+	test('filters audit entries by task_id', async () => {
+		const taskA = 'task-a';
+		const taskB = 'task-b';
+		auditLogRepo.createEntry({ toolName: 't1', spaceId: ctx.spaceId, taskId: taskA });
+		auditLogRepo.createEntry({ toolName: 't2', spaceId: ctx.spaceId, taskId: taskA });
+		auditLogRepo.createEntry({ toolName: 't3', spaceId: ctx.spaceId, taskId: taskB });
+
+		const config = makeConfig(ctx, { auditLogRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_audit_entries({ task_id: taskA });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.entries).toHaveLength(2);
+		expect(data.entries.every((e: { taskId: string }) => e.taskId === taskA)).toBe(true);
+	});
+
+	test('filters audit entries by session_id', async () => {
+		const sessA = 'sess-a';
+		const sessB = 'sess-b';
+		auditLogRepo.createEntry({ toolName: 't1', spaceId: ctx.spaceId, sessionId: sessA });
+		auditLogRepo.createEntry({ toolName: 't2', spaceId: ctx.spaceId, sessionId: sessA });
+		auditLogRepo.createEntry({ toolName: 't3', spaceId: ctx.spaceId, sessionId: sessB });
+
+		const config = makeConfig(ctx, { auditLogRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_audit_entries({ session_id: sessA });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.entries).toHaveLength(2);
+		expect(data.entries.every((e: { sessionId: string }) => e.sessionId === sessA)).toBe(true);
+	});
+
+	test('task_id filter takes precedence over session_id', async () => {
+		auditLogRepo.createEntry({
+			toolName: 't1',
+			spaceId: ctx.spaceId,
+			taskId: 'task-x',
+			sessionId: 'sess-a',
+		});
+		auditLogRepo.createEntry({
+			toolName: 't2',
+			spaceId: ctx.spaceId,
+			taskId: 'task-y',
+			sessionId: 'sess-a',
+		});
+
+		const config = makeConfig(ctx, { auditLogRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_audit_entries({ task_id: 'task-x', session_id: 'sess-a' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.entries).toHaveLength(1);
+		expect(data.entries[0].taskId).toBe('task-x');
+	});
+
+	test('paginates with limit and offset', async () => {
+		auditLogRepo.createEntry({ toolName: 't1', spaceId: ctx.spaceId });
+		auditLogRepo.createEntry({ toolName: 't2', spaceId: ctx.spaceId });
+		auditLogRepo.createEntry({ toolName: 't3', spaceId: ctx.spaceId });
+
+		const config = makeConfig(ctx, { auditLogRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		const page1 = await handlers.list_audit_entries({ limit: 2, offset: 0 });
+		const data1 = JSON.parse(page1.content[0].text);
+		expect(data1.entries).toHaveLength(2);
+
+		const page2 = await handlers.list_audit_entries({ limit: 2, offset: 2 });
+		const data2 = JSON.parse(page2.content[0].text);
+		expect(data2.entries).toHaveLength(1);
+		expect(data2.entries[0].toolName).toBe('t1');
+	});
+
+	test('returns empty array when no entries match', async () => {
+		const config = makeConfig(ctx, { auditLogRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_audit_entries({ task_id: 'nonexistent' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.entries).toEqual([]);
+	});
+
+	test('returns error when auditLogRepo is not available', async () => {
+		const config = makeConfig(ctx, { auditLogRepo: undefined });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_audit_entries({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('Audit log repository not available');
 	});
 });

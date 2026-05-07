@@ -67,6 +67,7 @@ import {
 	RestoreNodeAgentSchema,
 	ListTasksSchema,
 	GetTaskSchema,
+	ListAuditEntriesSchema,
 } from './node-agent-tool-schemas';
 import type {
 	ListPeersInput,
@@ -81,6 +82,7 @@ import type {
 	RestoreNodeAgentInput,
 	ListTasksInput,
 	GetTaskInput,
+	ListAuditEntriesInput,
 } from './node-agent-tool-schemas';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
@@ -1225,6 +1227,50 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			return jsonResult({ success: true, task });
 		},
 
+		/**
+		 * List MCP audit log entries for this space, filtered by task or session.
+		 *
+		 * Returns entries ordered by timestamp descending (newest first).
+		 * Use this to inspect the audit trail of tool operations performed
+		 * by agents in this workflow.
+		 */
+		async list_audit_entries(args: ListAuditEntriesInput): Promise<ToolResult> {
+			const { auditLogRepo } = config;
+			if (!auditLogRepo) {
+				return jsonResult({ success: false, error: 'Audit log repository not available.' });
+			}
+			try {
+				const limit = Math.min(args.limit ?? 20, 100);
+				const offset = args.offset ?? 0;
+				let entries;
+				if (args.task_id) {
+					entries = auditLogRepo.listByTask(args.task_id, limit, offset);
+				} else if (args.session_id) {
+					entries = auditLogRepo.listBySession(args.session_id, limit, offset);
+				} else {
+					entries = auditLogRepo.listBySpace(spaceId, limit, offset);
+				}
+				return jsonResult({
+					success: true,
+					entries: entries.map((e) => ({
+						id: e.id,
+						timestamp: e.timestamp,
+						agentName: e.agentName,
+						sessionId: e.sessionId,
+						toolName: e.toolName,
+						paramsSummary: e.paramsSummary,
+						spaceId: e.spaceId,
+						taskId: e.taskId,
+						workflowRunId: e.workflowRunId,
+					})),
+					total: entries.length,
+				});
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
 		// ── Self-heal ────────────────────────────────────────────────────
 
 		/**
@@ -1434,9 +1480,21 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 					tool(
 						'get_task',
 						'Retrieve detailed information about a specific task including its status, result, and metadata. ' +
-							'Provide either task_id (UUID) or task_number (numeric, e.g. 5 for task #5).',
+							'Provide either task_number (numeric ID like 5 for task #5, preferred) or task_id (UUID).',
 						GetTaskSchema.shape,
 						(args) => handlers.get_task(args)
+					),
+				]
+			: []),
+		...(config.auditLogRepo
+			? [
+					tool(
+						'list_audit_entries',
+						'List MCP audit log entries for this space. Filter by task_id or session_id. ' +
+							'Returns entries ordered by timestamp descending (newest first). ' +
+							'Use this to inspect the audit trail of tool operations performed by agents.',
+						ListAuditEntriesSchema.shape,
+						(args) => handlers.list_audit_entries(args)
 					),
 				]
 			: []),

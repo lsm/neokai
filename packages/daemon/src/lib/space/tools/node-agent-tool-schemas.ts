@@ -224,6 +224,34 @@ export const GetTaskSchema = z.object({
 export type GetTaskInput = z.infer<typeof GetTaskSchema>;
 
 // ---------------------------------------------------------------------------
+// list_audit_entries
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `list_audit_entries` input.
+ * Lists MCP audit log entries for the current space, filtered by task or session.
+ */
+export const ListAuditEntriesSchema = z.object({
+	task_id: z.string().describe('Filter by task ID').optional(),
+	session_id: z.string().describe('Filter by session ID').optional(),
+	limit: z
+		.number()
+		.int()
+		.min(1)
+		.max(100)
+		.describe('Maximum number of entries to return (1-100, default 20)')
+		.optional(),
+	offset: z
+		.number()
+		.int()
+		.min(0)
+		.describe('Number of entries to skip for pagination (default 0)')
+		.optional(),
+});
+
+export type ListAuditEntriesInput = z.infer<typeof ListAuditEntriesSchema>;
+
+// ---------------------------------------------------------------------------
 // create_standalone_task
 // ---------------------------------------------------------------------------
 
@@ -393,6 +421,7 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
 	restore_node_agent: RestoreNodeAgentSchema,
 	list_tasks: ListTasksSchema,
 	get_task: GetTaskSchema,
+	list_audit_entries: ListAuditEntriesSchema,
 } as const;
 
 export type NodeAgentToolName = keyof typeof NODE_AGENT_TOOL_SCHEMAS;
