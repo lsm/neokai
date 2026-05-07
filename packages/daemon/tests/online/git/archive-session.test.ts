@@ -22,11 +22,9 @@ import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
-import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 
 // Detect mock mode for faster timeouts (Dev Proxy)
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
-const IDLE_TIMEOUT = IS_MOCK ? 5000 : 30000;
 const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
 const TEST_TIMEOUT = IS_MOCK ? 30000 : 90000;
 
@@ -97,11 +95,7 @@ describe('Archive Session', () => {
 			mode: 'worktree',
 		});
 
-		// Send a message to trigger workspace initialization (creates the worktree)
-		await sendMessage(daemon, sessionId, 'test worktree setup');
-		await waitForIdle(daemon, sessionId);
-
-		// Get session to find worktree path
+		// Get session to find worktree path (worktree was created synchronously by setWorktreeMode)
 		const session = await getSession(sessionId);
 		const worktree = session.worktree as { worktreePath: string; branch: string } | undefined;
 
@@ -258,7 +252,7 @@ describe('Archive Session', () => {
 
 					// Simulate squash merge to main
 					execSync('git checkout main', { cwd: repoPath });
-					execSync(`git merge --squash ${branch}`, { cwd: repoPath });
+					execSync(`git merge --squash refs/heads/${branch}`, { cwd: repoPath });
 					execSync('git commit -m "feat: add feature (squash merged)"', { cwd: repoPath });
 
 					// Archive should NOT require confirmation
@@ -288,7 +282,7 @@ describe('Archive Session', () => {
 
 					// Squash merge to main
 					execSync('git checkout main', { cwd: repoPath });
-					execSync(`git merge --squash ${branch}`, { cwd: repoPath });
+					execSync(`git merge --squash refs/heads/${branch}`, { cwd: repoPath });
 					execSync('git commit -m "feat: add feature (squash merged)"', { cwd: repoPath });
 
 					// Make another commit in worktree (new work not on main)

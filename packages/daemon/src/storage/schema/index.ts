@@ -73,6 +73,10 @@ export { runMigration111 } from './migrations';
 export { runMigration112 } from './migrations';
 // knip-ignore-next-line
 export { runMigration117 } from './migrations';
+// knip-ignore-next-line
+export { runMigration118 } from './migrations';
+// knip-ignore-next-line
+export { runMigration119 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults

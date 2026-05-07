@@ -27,8 +27,8 @@ export class SpaceRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO spaces (id, slug, workspace_path, name, description, background_context, instructions, default_model, allowed_models, session_ids, status, autonomy_level, config, task_agent_config, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO spaces (id, slug, workspace_path, name, description, background_context, instructions, default_model, allowed_models, session_ids, status, autonomy_level, config, task_agent_config, setting_sources, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -46,6 +46,7 @@ export class SpaceRepository {
 			params.autonomyLevel ?? 1,
 			params.config ? JSON.stringify(params.config) : null,
 			params.taskAgentConfig ? JSON.stringify(params.taskAgentConfig) : null,
+			params.settingSources != null ? JSON.stringify(params.settingSources) : null,
 			now,
 			now
 		);
@@ -167,6 +168,10 @@ export class SpaceRepository {
 		if (params.taskAgentConfig !== undefined) {
 			fields.push('task_agent_config = ?');
 			values.push(params.taskAgentConfig ? JSON.stringify(params.taskAgentConfig) : null);
+		}
+		if (params.settingSources !== undefined) {
+			fields.push('setting_sources = ?');
+			values.push(params.settingSources != null ? JSON.stringify(params.settingSources) : null);
 		}
 
 		if (fields.length > 0) {
@@ -295,6 +300,10 @@ export class SpaceRepository {
 		const taskAgentConfig = rawTaskAgentConfig
 			? (JSON.parse(rawTaskAgentConfig) as TaskAgentConfig)
 			: undefined;
+		const rawSettingSources = row.setting_sources as string | null;
+		const settingSources = rawSettingSources
+			? (JSON.parse(rawSettingSources) as Space['settingSources'])
+			: undefined;
 		return {
 			id: row.id as string,
 			slug: (row.slug as string) ?? '',
@@ -312,6 +321,7 @@ export class SpaceRepository {
 			autonomyLevel: ((row.autonomy_level as number) ?? 1) as SpaceAutonomyLevel,
 			config,
 			taskAgentConfig,
+			settingSources,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
 		};

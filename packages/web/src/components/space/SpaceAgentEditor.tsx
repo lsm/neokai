@@ -16,7 +16,7 @@
  * Validation: name required + unique, model required, at least one tool selected.
  */
 
-import type { SpaceAgent, ThinkingLevel } from '@neokai/shared';
+import type { SpaceAgent, ThinkingLevel, SettingSource } from '@neokai/shared';
 import { KNOWN_TOOLS, normalizeThinkingLevel } from '@neokai/shared';
 import { useState } from 'preact/hooks';
 import type { SpaceAgentTemplate } from '../../lib/space-store';
@@ -143,6 +143,14 @@ export function SpaceAgentEditor({
 	);
 	const [tools, setTools] = useState<string[]>(agent?.tools ?? [...TOOL_PRESETS['Full Coding']]);
 	const [customPrompt, setCustomPrompt] = useState(agent?.customPrompt ?? '');
+	const inheritedSettingSources = spaceStore.space?.value?.settingSources ?? [
+		'user',
+		'project',
+		'local',
+	];
+	const [settingSources, setSettingSources] = useState<SettingSource[]>(
+		agent?.settingSources ?? inheritedSettingSources
+	);
 	const [activePreset, setActivePreset] = useState<string>(() => detectPreset(agent?.tools));
 	const [selectedTemplateName, setSelectedTemplateName] = useState<string>('');
 
@@ -150,6 +158,7 @@ export function SpaceAgentEditor({
 	const [saving, setSaving] = useState(false);
 	const [errors, setErrors] = useState<Record<string, string>>({});
 	const [saveError, setSaveError] = useState<string | null>(null);
+	const [clearSettingSources, setClearSettingSources] = useState(false);
 
 	const applyPreset = (presetName: string) => {
 		setActivePreset(presetName);
@@ -218,6 +227,11 @@ export function SpaceAgentEditor({
 				model: model.trim(),
 				customPrompt: customPrompt || null,
 				tools: tools.length > 0 ? tools : undefined,
+				...(clearSettingSources ||
+				JSON.stringify(settingSources) !==
+					JSON.stringify(agent?.settingSources ?? inheritedSettingSources)
+					? { settingSources: clearSettingSources ? null : settingSources }
+					: {}),
 			};
 
 			if (isEdit && agent) {
@@ -358,6 +372,84 @@ export function SpaceAgentEditor({
 							</option>
 						))}
 					</select>
+				</div>
+
+				{/* Setting Sources */}
+				<div>
+					<label class="block text-sm font-medium text-gray-300 mb-1.5">
+						Setting Sources
+						<span class="text-gray-500 text-xs ml-2">(optional)</span>
+					</label>
+					{isEdit && agent?.settingSources !== undefined && !clearSettingSources && (
+						<button
+							type="button"
+							onClick={() => setClearSettingSources(true)}
+							class="text-xs text-blue-400 hover:text-blue-300 mb-1.5"
+						>
+							Clear override — use inherited defaults
+						</button>
+					)}
+					{clearSettingSources && (
+						<div class="flex items-center gap-2 mb-1.5">
+							<span class="text-xs text-gray-400">Will revert to inherited defaults on save.</span>
+							<button
+								type="button"
+								onClick={() => setClearSettingSources(false)}
+								class="text-xs text-blue-400 hover:text-blue-300"
+							>
+								Cancel
+							</button>
+						</div>
+					)}
+					<div class="space-y-1.5">
+						<label class="flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={settingSources.includes('user')}
+								onChange={() => {
+									setSettingSources((prev) =>
+										prev.includes('user') ? prev.filter((s) => s !== 'user') : [...prev, 'user']
+									);
+								}}
+								disabled={clearSettingSources}
+								class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+							/>
+							<span class="text-sm text-gray-200">User settings</span>
+							<span class="text-xs text-gray-500">(~/.claude/settings.json)</span>
+						</label>
+						<label class="flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={settingSources.includes('project')}
+								onChange={() => {
+									setSettingSources((prev) =>
+										prev.includes('project')
+											? prev.filter((s) => s !== 'project')
+											: [...prev, 'project']
+									);
+								}}
+								disabled={clearSettingSources}
+								class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+							/>
+							<span class="text-sm text-gray-200">Project settings + CLAUDE.md</span>
+							<span class="text-xs text-gray-500">(.claude/settings.json)</span>
+						</label>
+						<label class="flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={settingSources.includes('local')}
+								onChange={() => {
+									setSettingSources((prev) =>
+										prev.includes('local') ? prev.filter((s) => s !== 'local') : [...prev, 'local']
+									);
+								}}
+								disabled={clearSettingSources}
+								class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+							/>
+							<span class="text-sm text-gray-200">Local settings</span>
+							<span class="text-xs text-gray-500">(.claude/settings.local.json)</span>
+						</label>
+					</div>
 				</div>
 
 				{/* Tools */}

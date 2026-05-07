@@ -7,6 +7,7 @@
  */
 
 import type { ThinkingLevel } from '../types';
+import type { SettingSource } from './settings';
 import type { McpServerConfig } from './sdk-config';
 
 // ============================================================================
@@ -62,6 +63,11 @@ export interface TaskAgentConfig {
 	thinkingLevel?: ThinkingLevel;
 	/** Custom prompt additions appended after the contract sections (similar to SpaceAgent.customPrompt). */
 	customPrompt?: string;
+	/**
+	 * Setting sources to load for the Task Agent.
+	 * Falls back to the global default (['user', 'project', 'local']) when unset.
+	 */
+	settingSources?: SettingSource[];
 }
 
 /**
@@ -105,6 +111,11 @@ export interface Space {
 	config?: SpaceConfig;
 	/** Per-space overrides for the built-in Task Agent (model and custom prompt). */
 	taskAgentConfig?: TaskAgentConfig;
+	/**
+	 * Default setting sources for all agents in this Space.
+	 * Used as fallback when an agent (task or custom) does not define its own.
+	 */
+	settingSources?: SettingSource[];
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
@@ -149,6 +160,11 @@ export interface CreateSpaceParams {
 	config?: SpaceConfig;
 	/** Per-space overrides for the built-in Task Agent */
 	taskAgentConfig?: TaskAgentConfig;
+	/**
+	 * Default setting sources for all agents in this Space.
+	 * Pass `null` to explicitly clear (revert to global default).
+	 */
+	settingSources?: SettingSource[] | null;
 }
 
 /**
@@ -165,6 +181,11 @@ export interface UpdateSpaceParams {
 	config?: SpaceConfig;
 	/** Per-space overrides for the built-in Task Agent. Pass null to clear. */
 	taskAgentConfig?: TaskAgentConfig | null;
+	/**
+	 * Default setting sources for all agents in this Space.
+	 * Pass null to clear (revert to global default).
+	 */
+	settingSources?: SettingSource[] | null;
 }
 
 // ============================================================================
@@ -701,6 +722,11 @@ export interface SpaceAgent {
 	 */
 	tools?: string[];
 	/**
+	 * Setting sources to load for this agent.
+	 * Falls back to the global default (['user', 'project', 'local']) when unset.
+	 */
+	settingSources?: SettingSource[];
+	/**
 	 * When this agent was seeded from a preset, the canonical preset name
 	 * (e.g. "Reviewer", "Coder"). Null/undefined for user-created agents and
 	 * for any preset row that predates template tracking.
@@ -733,6 +759,12 @@ export interface CreateSpaceAgentParams {
 	/** Tool list override — any entry must be a name from KNOWN_TOOLS */
 	tools?: string[];
 	/**
+	 * Setting sources to load for this agent.
+	 * Falls back to the global default (['user', 'project', 'local']) when unset.
+	 * Pass `null` to explicitly clear (revert to inherited defaults).
+	 */
+	settingSources?: SettingSource[] | null;
+	/**
 	 * Optional preset template name. Set by `seedPresetAgents()` when seeding
 	 * built-in presets; left undefined for user-created agents.
 	 * When set, `templateHash` should also be supplied.
@@ -758,6 +790,11 @@ export interface UpdateSpaceAgentParams {
 	customPrompt?: string | null;
 	/** Tool list override — null clears (reverts to role defaults) */
 	tools?: string[] | null;
+	/**
+	 * Setting sources to load for this agent.
+	 * Pass `null` to clear (revert to global default).
+	 */
+	settingSources?: SettingSource[] | null;
 	/**
 	 * Update the preset template name. Pass `null` to clear template tracking
 	 * (e.g. when a user converts a preset agent into a fully custom one).
@@ -1640,6 +1677,12 @@ export interface ExportedSpaceAgent {
 	 * Mirrors `SpaceAgent.tools`.
 	 */
 	tools?: string[];
+	/**
+	 * Setting sources override — which on-disk settings files this agent loads.
+	 * When absent, the agent inherits from its parent Space on import.
+	 * Mirrors `SpaceAgent.settingSources`.
+	 */
+	settingSources?: import('./settings').SettingSource[];
 }
 
 /**
