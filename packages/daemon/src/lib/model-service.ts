@@ -147,11 +147,12 @@ function mergeWithFallbackModels(providerModels: ModelInfo[]): ModelInfo[] {
 const refreshInProgress = new Map<string, Promise<void>>();
 
 /**
- * Monotonic generation counter used to invalidate in-flight background
- * refreshes.  `clearModelsCache()` bumps this; background refreshes that
- * started before the bump drop their result instead of writing stale data.
+ * Per-key monotonic generation counters used to invalidate in-flight
+ * background refreshes.  `clearModelsCache(key)` bumps the counter for
+ * that key only, so a session-scoped clear cannot accidentally cancel a
+ * global refresh or vice-versa.
  */
-let cacheGeneration = 0;
+const cacheGeneration = new Map<string, number>();
 
 /**
  * Get supported models from an existing Claude SDK query object
@@ -209,7 +210,7 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 		return;
 	}
 
-	const generationAtStart = cacheGeneration;
+	const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
 
 	// Start background refresh
 	const refreshPromise = (async () => {
@@ -218,7 +219,7 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 			// Only write if the cache wasn't cleared while we were loading.
 			// This prevents a stale pre-change provider list from overwriting
 			// the cache after `clearModelsCache()` has been called.
-			if (models.length > 0 && generationAtStart === cacheGeneration) {
+			if (models.length > 0 && (cacheGeneration.get(cacheKey) ?? 0) === generationAtStart) {
 				// Merge with fallback models to ensure Anthropic aliases are always available
 				const mergedModels = mergeWithFallbackModels(models);
 				modelsCache.set(cacheKey, mergedModels);
@@ -348,21 +349,27 @@ function clearProviderModelCaches(): void {
  * Clear the models cache for a specific key or all.
  * Provider-level caches are only cleared on a full clear (no cacheKey).
  *
- * Also bumps the cache generation so any in-flight background refreshes
- * that started before this call drop their stale results instead of
- * overwriting the cleared cache.
+ * Also bumps the per-key cache generation so any in-flight background
+ * refreshes for that key drop their stale results instead of overwriting
+ * the cleared cache.
  */
 export function clearModelsCache(cacheKey?: string): void {
-	cacheGeneration++;
 	if (cacheKey) {
 		modelsCache.delete(cacheKey);
 		cacheTimestamps.delete(cacheKey);
 		refreshInProgress.delete(cacheKey);
+		cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
 	} else {
 		modelsCache.clear();
 		cacheTimestamps.clear();
 		refreshInProgress.clear();
 		clearProviderModelCaches();
+		// Bump generation for every known key so all in-flight refreshes are
+		// invalidated, and ensure 'global' is bumped even if it has no entry.
+		for (const key of cacheGeneration.keys()) {
+			cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
+		}
+		cacheGeneration.set('global', (cacheGeneration.get('global') ?? 0) + 1);
 	}
 }
 

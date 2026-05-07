@@ -1124,5 +1124,29 @@ describe('Model Service', () => {
 			// caused the in-flight refresh to drop its stale result.
 			expect(getAvailableModels('global')).toEqual([]);
 		});
+
+		it('should NOT cancel global background refresh on session-scoped clearModelsCache', async () => {
+			// Seed the global cache with an old timestamp so getAvailableModels
+			// triggers a background refresh for the 'global' key.
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+			setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000); // 5 hours ago
+
+			// Trigger a background refresh for 'global'
+			getAvailableModels('global');
+
+			// Clear a *different* cache key — this must not affect the global refresh
+			clearModelsCache('session-123');
+			expect(getAvailableModels('session-123')).toEqual([]);
+
+			// Wait long enough for the global background refresh to complete
+			await new Promise((resolve) => setTimeout(resolve, 500));
+
+			// The global cache should still have been populated because the
+			// session-scoped clear must not bump the generation for 'global'.
+			const globalModels = getAvailableModels('global');
+			expect(globalModels.length).toBe(mockModels.length);
+			expect(globalModels.map((m) => m.id)).toEqual(mockModels.map((m) => m.id));
+		});
 	});
 });
