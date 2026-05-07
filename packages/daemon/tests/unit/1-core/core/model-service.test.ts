@@ -1101,5 +1101,28 @@ describe('Model Service', () => {
 			const models = getAvailableModels('global');
 			expect(models).toEqual(mockModels);
 		});
+
+		it('should cancel in-flight background refresh when clearModelsCache is called', async () => {
+			// Seed cache with an old timestamp so getAvailableModels triggers
+			// a background refresh.
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+			setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000); // 5 hours ago
+
+			// Trigger a background refresh by calling getAvailableModels
+			getAvailableModels('global');
+
+			// Immediately clear the cache (simulating an OAuth account change)
+			clearModelsCache();
+			expect(getAvailableModels('global')).toEqual([]);
+
+			// Wait long enough for the background refresh to have completed
+			// if it were still running.
+			await new Promise((resolve) => setTimeout(resolve, 500));
+
+			// The cache should still be empty because the generation counter
+			// caused the in-flight refresh to drop its stale result.
+			expect(getAvailableModels('global')).toEqual([]);
+		});
 	});
 });

@@ -147,6 +147,13 @@ function mergeWithFallbackModels(providerModels: ModelInfo[]): ModelInfo[] {
 const refreshInProgress = new Map<string, Promise<void>>();
 
 /**
+ * Monotonic generation counter used to invalidate in-flight background
+ * refreshes.  `clearModelsCache()` bumps this; background refreshes that
+ * started before the bump drop their result instead of writing stale data.
+ */
+let cacheGeneration = 0;
+
+/**
  * Get supported models from an existing Claude SDK query object
  * This uses the AnthropicProvider to convert SDK models to ModelInfo
  *
@@ -202,11 +209,16 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 		return;
 	}
 
+	const generationAtStart = cacheGeneration;
+
 	// Start background refresh
 	const refreshPromise = (async () => {
 		try {
 			const models = await loadModelsFromProviders();
-			if (models.length > 0) {
+			// Only write if the cache wasn't cleared while we were loading.
+			// This prevents a stale pre-change provider list from overwriting
+			// the cache after `clearModelsCache()` has been called.
+			if (models.length > 0 && generationAtStart === cacheGeneration) {
 				// Merge with fallback models to ensure Anthropic aliases are always available
 				const mergedModels = mergeWithFallbackModels(models);
 				modelsCache.set(cacheKey, mergedModels);
@@ -335,14 +347,21 @@ function clearProviderModelCaches(): void {
 /**
  * Clear the models cache for a specific key or all.
  * Provider-level caches are only cleared on a full clear (no cacheKey).
+ *
+ * Also bumps the cache generation so any in-flight background refreshes
+ * that started before this call drop their stale results instead of
+ * overwriting the cleared cache.
  */
 export function clearModelsCache(cacheKey?: string): void {
+	cacheGeneration++;
 	if (cacheKey) {
 		modelsCache.delete(cacheKey);
 		cacheTimestamps.delete(cacheKey);
+		refreshInProgress.delete(cacheKey);
 	} else {
 		modelsCache.clear();
 		cacheTimestamps.clear();
+		refreshInProgress.clear();
 		clearProviderModelCaches();
 	}
 }
