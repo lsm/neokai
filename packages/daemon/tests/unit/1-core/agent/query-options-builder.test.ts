@@ -318,11 +318,12 @@ describe('QueryOptionsBuilder', () => {
 			expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
 		});
 
-		it('should use off as default thinking level when no session or global override exists', async () => {
+		it('should explicitly disable thinking for thinking-capable providers when level is off', async () => {
 			const options = await builder.build();
 			const result = builder.addSessionStateOptions(options);
 
-			expect(result.thinking).toBeUndefined();
+			// Default provider (anthropic) supports thinking — 'off' must emit explicit disable
+			expect(result.thinking).toEqual({ type: 'disabled' });
 		});
 
 		it('should omit thinking config for providers with thinkingModes=off', async () => {
@@ -347,6 +348,26 @@ describe('QueryOptionsBuilder', () => {
 			);
 
 			expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
+		});
+
+		it('should explicitly disable thinking for kimi when level is off', async () => {
+			mockSession.config.provider = 'kimi';
+			mockSession.config.thinkingLevel = 'off';
+			const result = builder.addSessionStateOptions(
+				{} as import('@anthropic-ai/claude-agent-sdk').Options
+			);
+
+			expect(result.thinking).toEqual({ type: 'disabled' });
+		});
+
+		it('should omit thinking config for providers with thinkingModes=off even when level is off', async () => {
+			mockSession.config.provider = 'minimax';
+			mockSession.config.thinkingLevel = 'off';
+			const result = builder.addSessionStateOptions(
+				{} as import('@anthropic-ai/claude-agent-sdk').Options
+			);
+
+			expect(result.thinking).toBeUndefined();
 		});
 	});
 
