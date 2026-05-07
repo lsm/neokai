@@ -628,6 +628,9 @@ describe('SpaceTaskRepository', () => {
 		}
 
 		it('upsertTaskAgentSessionMap is exercised when taskAgentSessionId is set', () => {
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-task-1', 'space_task_agent');
 			const task = repo.createTask({ spaceId, title: 'T1' });
 			repo.updateTask(task.id, { taskAgentSessionId: 'sess-task-1' });
 
@@ -636,6 +639,12 @@ describe('SpaceTaskRepository', () => {
 		});
 
 		it('replaces the task_agent row when taskAgentSessionId changes', () => {
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-old', 'space_task_agent');
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-new', 'space_task_agent');
 			const task = repo.createTask({ spaceId, title: 'T1' });
 			repo.updateTask(task.id, { taskAgentSessionId: 'sess-old' });
 			expect(mapRows(task.id)).toHaveLength(1);
@@ -646,6 +655,9 @@ describe('SpaceTaskRepository', () => {
 		});
 
 		it('removes the task_agent row when taskAgentSessionId is cleared', () => {
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-1', 'space_task_agent');
 			const task = repo.createTask({ spaceId, title: 'T1' });
 			repo.updateTask(task.id, { taskAgentSessionId: 'sess-1' });
 			expect(mapRows(task.id)).toHaveLength(1);
@@ -669,13 +681,16 @@ describe('SpaceTaskRepository', () => {
 			// contributing to the task's timeline. Without this clean-up the
 			// `spaceTaskMessages.byTask*` queries — which JOIN task_session_map
 			// directly — would keep returning sessions that no longer belong.
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-node-1', 'space_chat');
 			const task = repo.createTask({ spaceId, title: 'T1', workflowRunId });
 
 			// Seed a node_agent row directly to simulate a prior run sync.
 			(db as any)
 				.prepare(
 					`INSERT INTO task_session_map (task_id, session_id, kind, role, label, node_execution_id, created_at)
-					 VALUES (?, ?, 'node_agent', 'coder', 'Coder', 'ne-1', ?)`
+					 VALUES (?, ?, 'node_agent', 'coder', 'Coder', NULL, ?)`
 				)
 				.run(task.id, 'sess-node-1', Date.now());
 			expect(mapRows(task.id).filter((r) => r.kind === 'node_agent')).toHaveLength(1);
@@ -685,11 +700,14 @@ describe('SpaceTaskRepository', () => {
 		});
 
 		it('clears node_agent rows when workflowRunId moves to a different run', () => {
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-node-old', 'space_chat');
 			const task = repo.createTask({ spaceId, title: 'T1', workflowRunId });
 			(db as any)
 				.prepare(
 					`INSERT INTO task_session_map (task_id, session_id, kind, role, label, node_execution_id, created_at)
-					 VALUES (?, ?, 'node_agent', 'coder', 'Coder', 'ne-1', ?)`
+					 VALUES (?, ?, 'node_agent', 'coder', 'Coder', NULL, ?)`
 				)
 				.run(task.id, 'sess-node-old', Date.now());
 
@@ -708,18 +726,91 @@ describe('SpaceTaskRepository', () => {
 		});
 
 		it('deleteTask cascades to task_session_map', () => {
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-1', 'space_task_agent');
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-node-1', 'space_chat');
 			const task = repo.createTask({ spaceId, title: 'T1' });
 			repo.updateTask(task.id, { taskAgentSessionId: 'sess-1' });
 			(db as any)
 				.prepare(
 					`INSERT INTO task_session_map (task_id, session_id, kind, role, label, node_execution_id, created_at)
-					 VALUES (?, ?, 'node_agent', 'coder', 'Coder', 'ne-1', ?)`
+					 VALUES (?, ?, 'node_agent', 'coder', 'Coder', NULL, ?)`
 				)
 				.run(task.id, 'sess-node-1', Date.now());
 			expect(mapRows(task.id)).toHaveLength(2);
 
 			repo.deleteTask(task.id);
 			expect(mapRows(task.id)).toHaveLength(0);
+		});
+
+		it('cascades task_session_map cleanup when a session is deleted', () => {
+			// Reviewer flagged: bulk session-cleanup paths can leave orphan
+			// `task_session_map` rows because the maintenance code only runs
+			// on the happy-path repository writes. A foreign key with
+			// ON DELETE CASCADE makes session removal automatically prune
+			// the map.
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-orch', 'space_task_agent');
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-node', 'space_chat');
+			const task = repo.createTask({ spaceId, title: 'T1' });
+			repo.updateTask(task.id, { taskAgentSessionId: 'sess-orch' });
+			(db as any)
+				.prepare(
+					`INSERT INTO task_session_map (task_id, session_id, kind, role, label, node_execution_id, created_at)
+					 VALUES (?, ?, 'node_agent', 'coder', 'Coder', NULL, ?)`
+				)
+				.run(task.id, 'sess-node', Date.now());
+			expect(mapRows(task.id)).toHaveLength(2);
+
+			(db as any).prepare(`DELETE FROM sessions WHERE id = ?`).run('sess-node');
+			expect(mapRows(task.id).map((r) => r.sessionId)).toEqual(['sess-orch']);
+
+			(db as any).prepare(`DELETE FROM sessions WHERE id = ?`).run('sess-orch');
+			expect(mapRows(task.id)).toHaveLength(0);
+		});
+
+		it('cascades task_session_map cleanup when a node_execution is deleted', () => {
+			// Reviewer flagged: workflow/run cleanup paths bulk-delete
+			// `node_executions` rows. Without an FK, the corresponding
+			// `task_session_map` rows survive and continue to surface stale
+			// session bindings in task timelines.
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-node', 'space_chat');
+			(db as any)
+				.prepare(
+					`INSERT INTO space_workflow_nodes (id, workflow_id, name, created_at, updated_at)
+					 VALUES (?, ?, ?, ?, ?)`
+				)
+				.run('node-x', workflowId, 'Node', Date.now(), Date.now());
+			(db as any)
+				.prepare(
+					`INSERT INTO node_executions
+					 (id, workflow_run_id, workflow_node_id, agent_name, agent_session_id, status, created_at, updated_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run(
+					'ne-1',
+					workflowRunId,
+					'node-x',
+					'coder',
+					'sess-node',
+					'pending',
+					Date.now(),
+					Date.now()
+				);
+
+			const task = repo.createTask({ spaceId, title: 'T1', workflowRunId });
+			expect(mapRows(task.id).filter((r) => r.kind === 'node_agent')).toHaveLength(1);
+
+			(db as any).prepare(`DELETE FROM node_executions WHERE id = ?`).run('ne-1');
+			expect(mapRows(task.id).filter((r) => r.kind === 'node_agent')).toHaveLength(0);
 		});
 
 		it('rejects task_agent map row for sessions of the wrong type', () => {
@@ -734,6 +825,17 @@ describe('SpaceTaskRepository', () => {
 
 			const task = repo.createTask({ spaceId, title: 'T1' });
 			repo.updateTask(task.id, { taskAgentSessionId: 'sess-worker' });
+			expect(mapRows(task.id).filter((r) => r.kind === 'task_agent')).toHaveLength(0);
+		});
+
+		it('refuses task_agent map row when no sessions row exists for the id', () => {
+			// Reviewer flagged: only the wrong-type case used to be rejected,
+			// leaving "session row missing" to fall through to INSERT. That
+			// allowed a task to bind to an unvalidated id whose type might
+			// later resolve to something other than `space_task_agent`,
+			// re-widening the timeline scope. The guard must fail closed.
+			const task = repo.createTask({ spaceId, title: 'T1' });
+			repo.updateTask(task.id, { taskAgentSessionId: 'sess-missing' });
 			expect(mapRows(task.id).filter((r) => r.kind === 'task_agent')).toHaveLength(0);
 		});
 
@@ -777,6 +879,9 @@ describe('SpaceTaskRepository', () => {
 			// later execution write happens.
 			const now = Date.now();
 			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-node-existing', 'space_chat');
+			(db as any)
 				.prepare(
 					`INSERT INTO space_workflow_nodes (id, workflow_id, name, created_at, updated_at)
 					 VALUES (?, ?, ?, ?, ?)`
@@ -813,6 +918,9 @@ describe('SpaceTaskRepository', () => {
 			// run that already has executions must repopulate the map
 			// immediately, not wait for the next execution-level write.
 			const now = Date.now();
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-node-other', 'space_chat');
 			(db as any)
 				.prepare(
 					`INSERT INTO space_workflow_nodes (id, workflow_id, name, created_at, updated_at)
@@ -859,6 +967,9 @@ describe('SpaceTaskRepository', () => {
 			// Verifies the seed path resolves `space_agents.name` (matching the
 			// COALESCE precedence used by NodeExecutionRepository).
 			const now = Date.now();
+			(db as any)
+				.prepare(`INSERT INTO sessions (id, type) VALUES (?, ?)`)
+				.run('sess-labelled', 'space_chat');
 			(db as any)
 				.prepare(
 					`INSERT INTO space_agents (id, space_id, name, created_at, updated_at)

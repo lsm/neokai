@@ -196,6 +196,27 @@ describe('Migration 122: derived columns + task_session_map', () => {
 			const row = db.prepare(`SELECT COUNT(*) AS n FROM task_session_map`).get() as { n: number };
 			expect(row.n).toBe(0);
 		});
+
+		test('task_session_map declares ON DELETE CASCADE foreign keys', () => {
+			// Reviewer flagged: bulk cleanup paths (workflow run delete, session
+			// purge, node-execution prune) bypass the repository writers and
+			// would leave orphan map rows. Foreign keys with CASCADE move the
+			// invariant into the schema.
+			const fks = db
+				.prepare(
+					`SELECT "table", "from", "on_delete" FROM pragma_foreign_key_list('task_session_map')`
+				)
+				.all() as Array<{ table: string; from: string; on_delete: string }>;
+			const byColumn = Object.fromEntries(
+				fks.map((r) => [r.from, { table: r.table, onDelete: r.on_delete }])
+			);
+			expect(byColumn.task_id).toEqual({ table: 'space_tasks', onDelete: 'CASCADE' });
+			expect(byColumn.session_id).toEqual({ table: 'sessions', onDelete: 'CASCADE' });
+			expect(byColumn.node_execution_id).toEqual({
+				table: 'node_executions',
+				onDelete: 'CASCADE',
+			});
+		});
 	});
 
 	describe('backfill from pre-120 schema', () => {

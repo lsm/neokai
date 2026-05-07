@@ -262,6 +262,9 @@ export function createSpaceTables(db: BunDatabase): void {
 	// the set of sessions whose `sdk_messages` contribute to its timeline.
 	// Maintained at write time by SpaceTaskRepository (task_agent leg) and
 	// NodeExecutionRepository (node_agent leg).
+	//
+	// Foreign keys cascade cleanup on owner-row deletion so bulk paths
+	// (workflow run cleanup, session purge) don't leave orphan mappings.
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS task_session_map (
 			task_id TEXT NOT NULL,
@@ -271,7 +274,10 @@ export function createSpaceTables(db: BunDatabase): void {
 			label TEXT NOT NULL,
 			node_execution_id TEXT,
 			created_at INTEGER NOT NULL,
-			PRIMARY KEY (task_id, session_id)
+			PRIMARY KEY (task_id, session_id),
+			FOREIGN KEY (task_id) REFERENCES space_tasks(id) ON DELETE CASCADE,
+			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+			FOREIGN KEY (node_execution_id) REFERENCES node_executions(id) ON DELETE CASCADE
 		)
 	`);
 	db.exec(

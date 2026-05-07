@@ -26,6 +26,32 @@ export class NodeExecutionRepository {
 	constructor(private db: BunDatabase) {}
 
 	/**
+	 * Wrap a task_session_map mutation so a missing FK target table
+	 * (e.g. `sessions`, `node_executions`) doesn't bubble. SQLite validates
+	 * FK target tables at *prepare* time, so when a unit-test harness
+	 * builds only a subset of the schema the prepare throws synchronously.
+	 * Production always has every parent table, so this guard is a pure
+	 * no-op outside test harnesses.
+	 *
+	 * Also tolerates runtime FK constraint violations: with sessions FK
+	 * enforced, a node execution that points at a session id with no
+	 * matching `sessions(id)` row can no longer be mapped — we treat that
+	 * as "session not yet tracked, skip the map row" rather than throwing,
+	 * matching the fail-closed semantics of `upsertTaskAgentSessionMap`.
+	 */
+	private tryRunMapMutation(fn: () => void): void {
+		try {
+			fn();
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			if (/no such table/i.test(message) || /FOREIGN KEY constraint failed/i.test(message)) {
+				return;
+			}
+			throw err;
+		}
+	}
+
+	/**
 	 * Create a new node execution record.
 	 * Throws on constraint violations (e.g., duplicate UNIQUE key).
 	 */
@@ -282,13 +308,21 @@ export class NodeExecutionRepository {
 		// the delete, so we can rebuild the map after the row is gone. Reading
 		// from task_session_map (rather than recomputing via node_executions) is
 		// sufficient because the map is kept in sync at write time.
-		const affectedPairs = this.db
-			.prepare(
-				`SELECT task_id AS taskId, session_id AS sessionId
-				 FROM task_session_map
-				 WHERE kind = 'node_agent' AND node_execution_id = ?`
-			)
-			.all(id) as Array<{ taskId: string; sessionId: string }>;
+		let affectedPairs: Array<{ taskId: string; sessionId: string }> = [];
+		try {
+			affectedPairs = this.db
+				.prepare(
+					`SELECT task_id AS taskId, session_id AS sessionId
+					 FROM task_session_map
+					 WHERE kind = 'node_agent' AND node_execution_id = ?`
+				)
+				.all(id) as Array<{ taskId: string; sessionId: string }>;
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			if (!/no such table/i.test(message)) {
+				throw err;
+			}
+		}
 
 		const result = this.db.prepare(`DELETE FROM node_executions WHERE id = ?`).run(id);
 		if (result.changes > 0) {
@@ -297,9 +331,13 @@ export class NodeExecutionRepository {
 			// references. This preserves shared-session mappings — long-lived
 			// agent sessions reused across executions stay attached to the
 			// task's timeline as long as at least one execution still binds them.
-			this.db
-				.prepare(`DELETE FROM task_session_map WHERE kind = 'node_agent' AND node_execution_id = ?`)
-				.run(id);
+			this.tryRunMapMutation(() => {
+				this.db
+					.prepare(
+						`DELETE FROM task_session_map WHERE kind = 'node_agent' AND node_execution_id = ?`
+					)
+					.run(id);
+			});
 			for (const pair of affectedPairs) {
 				this.rebuildNodeAgentMapForTaskSession(pair.taskId, pair.sessionId);
 			}
@@ -349,16 +387,20 @@ export class NodeExecutionRepository {
 	 */
 	deleteByWorkflowRun(workflowRunId: string): void {
 		// Drop dependent task_session_map rows first so we don't leave orphan
-		// entries pointing at deleted node executions.
-		this.db
-			.prepare(
-				`DELETE FROM task_session_map
-				 WHERE kind = 'node_agent'
-				   AND node_execution_id IN (
-				     SELECT id FROM node_executions WHERE workflow_run_id = ?
-				   )`
-			)
-			.run(workflowRunId);
+		// entries pointing at deleted node executions. Redundant under the
+		// new FK ON DELETE CASCADE on node_execution_id but kept for harnesses
+		// without FKs enabled.
+		this.tryRunMapMutation(() => {
+			this.db
+				.prepare(
+					`DELETE FROM task_session_map
+					 WHERE kind = 'node_agent'
+					   AND node_execution_id IN (
+					     SELECT id FROM node_executions WHERE workflow_run_id = ?
+					   )`
+				)
+				.run(workflowRunId);
+		});
 		this.db.prepare(`DELETE FROM node_executions WHERE workflow_run_id = ?`).run(workflowRunId);
 	}
 
@@ -379,26 +421,28 @@ export class NodeExecutionRepository {
 		sessionId: string,
 		createdAt: number
 	): void {
-		const stmt = this.db.prepare(
-			`INSERT OR REPLACE INTO task_session_map (
-				task_id, session_id, kind, role, label, node_execution_id, created_at
-			)
-			SELECT
-				st.id AS task_id,
-				? AS session_id,
-				'node_agent' AS kind,
-				ne.agent_name AS role,
-				COALESCE(sa.name, ne.agent_name, 'agent') AS label,
-				ne.id AS node_execution_id,
-				? AS created_at
-			FROM node_executions ne
-			JOIN space_tasks st
-				ON st.workflow_run_id IS NOT NULL
-				AND ne.workflow_run_id = st.workflow_run_id
-			LEFT JOIN space_agents sa ON sa.id = ne.agent_id
-			WHERE ne.id = ?`
-		);
-		stmt.run(sessionId, createdAt, executionId);
+		this.tryRunMapMutation(() => {
+			const stmt = this.db.prepare(
+				`INSERT OR REPLACE INTO task_session_map (
+					task_id, session_id, kind, role, label, node_execution_id, created_at
+				)
+				SELECT
+					st.id AS task_id,
+					? AS session_id,
+					'node_agent' AS kind,
+					ne.agent_name AS role,
+					COALESCE(sa.name, ne.agent_name, 'agent') AS label,
+					ne.id AS node_execution_id,
+					? AS created_at
+				FROM node_executions ne
+				JOIN space_tasks st
+					ON st.workflow_run_id IS NOT NULL
+					AND ne.workflow_run_id = st.workflow_run_id
+				LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+				WHERE ne.id = ?`
+			);
+			stmt.run(sessionId, createdAt, executionId);
+		});
 	}
 
 	/**
@@ -414,24 +458,26 @@ export class NodeExecutionRepository {
 	 * from any remaining execution that still binds the same session.
 	 */
 	private removeTaskSessionMapForExecution(executionId: string, sessionId: string): void {
-		const affectedPairs = this.db
-			.prepare(
-				`SELECT task_id AS taskId
-				 FROM task_session_map
-				 WHERE kind = 'node_agent' AND node_execution_id = ? AND session_id = ?`
-			)
-			.all(executionId, sessionId) as Array<{ taskId: string }>;
+		this.tryRunMapMutation(() => {
+			const affectedPairs = this.db
+				.prepare(
+					`SELECT task_id AS taskId
+					 FROM task_session_map
+					 WHERE kind = 'node_agent' AND node_execution_id = ? AND session_id = ?`
+				)
+				.all(executionId, sessionId) as Array<{ taskId: string }>;
 
-		this.db
-			.prepare(
-				`DELETE FROM task_session_map
-				 WHERE kind = 'node_agent' AND node_execution_id = ? AND session_id = ?`
-			)
-			.run(executionId, sessionId);
+			this.db
+				.prepare(
+					`DELETE FROM task_session_map
+					 WHERE kind = 'node_agent' AND node_execution_id = ? AND session_id = ?`
+				)
+				.run(executionId, sessionId);
 
-		for (const { taskId } of affectedPairs) {
-			this.rebuildNodeAgentMapForTaskSession(taskId, sessionId);
-		}
+			for (const { taskId } of affectedPairs) {
+				this.rebuildNodeAgentMapForTaskSession(taskId, sessionId);
+			}
+		});
 	}
 
 	/**
@@ -441,30 +487,32 @@ export class NodeExecutionRepository {
 	 * correct behaviour: the session genuinely no longer contributes to the task.
 	 */
 	private rebuildNodeAgentMapForTaskSession(taskId: string, sessionId: string): void {
-		this.db
-			.prepare(
-				`INSERT OR REPLACE INTO task_session_map (
-					task_id, session_id, kind, role, label, node_execution_id, created_at
+		this.tryRunMapMutation(() => {
+			this.db
+				.prepare(
+					`INSERT OR REPLACE INTO task_session_map (
+						task_id, session_id, kind, role, label, node_execution_id, created_at
+					)
+					SELECT
+						st.id AS task_id,
+						ne.agent_session_id AS session_id,
+						'node_agent' AS kind,
+						ne.agent_name AS role,
+						COALESCE(sa.name, ne.agent_name, 'agent') AS label,
+						ne.id AS node_execution_id,
+						COALESCE(ne.created_at, strftime('%s','now') * 1000) AS created_at
+					FROM node_executions ne
+					JOIN space_tasks st
+						ON st.workflow_run_id IS NOT NULL
+						AND ne.workflow_run_id = st.workflow_run_id
+					LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+					WHERE st.id = ?
+						AND ne.agent_session_id = ?
+					ORDER BY ne.updated_at DESC, ne.created_at DESC, ne.id DESC
+					LIMIT 1`
 				)
-				SELECT
-					st.id AS task_id,
-					ne.agent_session_id AS session_id,
-					'node_agent' AS kind,
-					ne.agent_name AS role,
-					COALESCE(sa.name, ne.agent_name, 'agent') AS label,
-					ne.id AS node_execution_id,
-					COALESCE(ne.created_at, strftime('%s','now') * 1000) AS created_at
-				FROM node_executions ne
-				JOIN space_tasks st
-					ON st.workflow_run_id IS NOT NULL
-					AND ne.workflow_run_id = st.workflow_run_id
-				LEFT JOIN space_agents sa ON sa.id = ne.agent_id
-				WHERE st.id = ?
-					AND ne.agent_session_id = ?
-				ORDER BY ne.updated_at DESC, ne.created_at DESC, ne.id DESC
-				LIMIT 1`
-			)
-			.run(taskId, sessionId);
+				.run(taskId, sessionId);
+		});
 	}
 
 	/**

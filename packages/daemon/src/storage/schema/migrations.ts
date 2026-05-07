@@ -8094,6 +8094,67 @@ export function runMigration122(db: BunDatabase): void {
 	}
 
 	// Step 2: create task_session_map.
+	//
+	// Foreign keys provide cascade cleanup on owner-row deletion so bulk paths
+	// (e.g. workflow_run cleanup, session purge) don't leave orphan mappings:
+	//   - task_id → space_tasks(id) ON DELETE CASCADE
+	//   - session_id → sessions(id) ON DELETE CASCADE
+	//   - node_execution_id → node_executions(id) ON DELETE CASCADE (nullable;
+	//     only set on `node_agent` rows)
+	//
+	// SQLite records FK target tables at CREATE time but only validates them
+	// at INSERT time. Crucially though, an INSERT OR REPLACE / DELETE on a
+	// *parent* of `task_session_map` must plan the CASCADE delete on this
+	// child, and that planning fails when *any* of the child's other FK
+	// targets is missing — so we must ensure all three parent tables exist
+	// before creating `task_session_map`. `space_tasks` and `node_executions`
+	// are created by earlier migrations / `createTables`. `sessions` is
+	// usually created by `createTables` *after* migrations, so we
+	// pre-create a stub here using the same DDL so production behaviour is
+	// unchanged (the later `createTables` call becomes a no-op via
+	// CREATE TABLE IF NOT EXISTS).
+	if (!tableExists(db, 'sessions')) {
+		db.exec(`
+			CREATE TABLE IF NOT EXISTS sessions (
+				id TEXT PRIMARY KEY,
+				title TEXT NOT NULL,
+				workspace_path TEXT,
+				created_at TEXT NOT NULL,
+				last_active_at TEXT NOT NULL,
+				status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
+				config TEXT NOT NULL,
+				metadata TEXT NOT NULL,
+				is_worktree INTEGER DEFAULT 0,
+				worktree_path TEXT,
+				main_repo_path TEXT,
+				worktree_branch TEXT,
+				git_branch TEXT,
+				sdk_session_id TEXT,
+				sdk_origin_path TEXT,
+				available_commands TEXT,
+				processing_state TEXT,
+				archived_at TEXT,
+				parent_id TEXT,
+				type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'space_chat', 'neo')),
+				session_context TEXT
+			)
+		`);
+	}
+
+	// For databases that previously created `task_session_map` without foreign
+	// keys (early dev runs of this migration), drop and recreate so the schema
+	// upgrade is idempotent. Production databases haven't seen the no-FK form
+	// because this migration only ships with FKs.
+	if (tableExists(db, 'task_session_map')) {
+		const fkCount = (
+			db.prepare(`SELECT COUNT(*) AS n FROM pragma_foreign_key_list('task_session_map')`).get() as
+				| { n: number }
+				| undefined
+		)?.n;
+		if ((fkCount ?? 0) < 3) {
+			db.exec(`DROP TABLE task_session_map`);
+		}
+	}
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS task_session_map (
 			task_id TEXT NOT NULL,
@@ -8103,7 +8164,10 @@ export function runMigration122(db: BunDatabase): void {
 			label TEXT NOT NULL,
 			node_execution_id TEXT,
 			created_at INTEGER NOT NULL,
-			PRIMARY KEY (task_id, session_id)
+			PRIMARY KEY (task_id, session_id),
+			FOREIGN KEY (task_id) REFERENCES space_tasks(id) ON DELETE CASCADE,
+			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+			FOREIGN KEY (node_execution_id) REFERENCES node_executions(id) ON DELETE CASCADE
 		)
 	`);
 	db.exec(
@@ -8136,10 +8200,13 @@ export function runMigration122(db: BunDatabase): void {
 	// Leg 2 — node_agent rows. Derived from node_executions joined with
 	// space_tasks via workflow_run_id, with the agent label resolved from
 	// space_agents when possible (fallback to node_executions.agent_name).
+	// Requires `sessions` to exist as well — without it, the FK check on
+	// `session_id` raises at INSERT time even for non-empty sources.
 	if (
 		tableExists(db, 'node_executions') &&
 		tableExists(db, 'space_tasks') &&
-		tableExists(db, 'space_agents')
+		tableExists(db, 'space_agents') &&
+		tableExists(db, 'sessions')
 	) {
 		db.exec(`
 			INSERT OR IGNORE INTO task_session_map (

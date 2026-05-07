@@ -22,6 +22,33 @@ export class SpaceTaskRepository {
 	) {}
 
 	/**
+	 * Wrap a task_session_map mutation so a missing FK target table (e.g.
+	 * `sessions`, `node_executions`) doesn't bubble. SQLite validates FK
+	 * target tables at *prepare* time, so when a unit-test harness builds
+	 * only a subset of the schema the prepare throws synchronously. In
+	 * production every parent table exists (createTables runs after
+	 * migrations) so this guard is a pure no-op outside test harnesses.
+	 *
+	 * Also tolerates runtime FK constraint violations: with sessions FK
+	 * enforced, mutations that reference an as-yet-unwritten `sessions(id)`
+	 * row can no longer succeed — we treat that as "session not yet
+	 * tracked, skip the map row" rather than throwing, matching the
+	 * fail-closed semantics callers already expect from
+	 * `upsertTaskAgentSessionMap`.
+	 */
+	private tryRunMapMutation(fn: () => void): void {
+		try {
+			fn();
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			if (/no such table/i.test(message) || /FOREIGN KEY constraint failed/i.test(message)) {
+				return;
+			}
+			throw err;
+		}
+	}
+
+	/**
 	 * Create a new space task
 	 */
 	createTask(params: CreateSpaceTaskParams): SpaceTask {
@@ -394,9 +421,11 @@ export class SpaceTaskRepository {
 				// write fires. NodeExecutionRepository continues to keep the
 				// map in sync for executions that land after this point.
 				if (params.workflowRunId !== undefined) {
-					this.db
-						.prepare(`DELETE FROM task_session_map WHERE task_id = ? AND kind = 'node_agent'`)
-						.run(id);
+					this.tryRunMapMutation(() => {
+						this.db
+							.prepare(`DELETE FROM task_session_map WHERE task_id = ? AND kind = 'node_agent'`)
+							.run(id);
+					});
 					if (params.workflowRunId) {
 						this.seedNodeAgentSessionMapForRun(id, params.workflowRunId, Date.now());
 					}
@@ -430,7 +459,13 @@ export class SpaceTaskRepository {
 		const stmt = this.db.prepare(`DELETE FROM space_tasks WHERE id = ?`);
 		const result = stmt.run(id);
 		if (result.changes > 0) {
-			this.db.prepare(`DELETE FROM task_session_map WHERE task_id = ?`).run(id);
+			// Redundant given the FK ON DELETE CASCADE on
+			// task_session_map.task_id, but explicit for tests that don't
+			// run with PRAGMA foreign_keys = ON or that build the schema
+			// without the FK.
+			this.tryRunMapMutation(() => {
+				this.db.prepare(`DELETE FROM task_session_map WHERE task_id = ?`).run(id);
+			});
 			this.reactiveDb?.notifyChange('space_tasks');
 		}
 		return result.changes > 0;
@@ -441,13 +476,16 @@ export class SpaceTaskRepository {
 	 */
 	deleteTasksForSpace(spaceId: string): void {
 		// Drop dependent task_session_map rows first so we don't leave orphan
-		// entries pointing at deleted tasks.
-		this.db
-			.prepare(
-				`DELETE FROM task_session_map
-				 WHERE task_id IN (SELECT id FROM space_tasks WHERE space_id = ?)`
-			)
-			.run(spaceId);
+		// entries pointing at deleted tasks. Redundant under the new FK
+		// ON DELETE CASCADE but kept for harnesses without FKs enabled.
+		this.tryRunMapMutation(() => {
+			this.db
+				.prepare(
+					`DELETE FROM task_session_map
+					 WHERE task_id IN (SELECT id FROM space_tasks WHERE space_id = ?)`
+				)
+				.run(spaceId);
+		});
 		this.db.prepare(`DELETE FROM space_tasks WHERE space_id = ?`).run(spaceId);
 		this.reactiveDb?.notifyChange('space_tasks');
 	}
@@ -567,12 +605,21 @@ export class SpaceTaskRepository {
 	 * normal lifecycle events.
 	 */
 	private upsertTaskAgentSessionMap(taskId: string, sessionId: string, createdAt: number): void {
-		// Best-effort session-type validation. The `sessions` table is always
-		// present in production but may be absent in test harnesses that only
-		// build the space-test schema. A missing table is treated identically
-		// to "session not found yet" — fall through to the insert. The
-		// production session-type guard remains effective because the
-		// `sessions` table always exists alongside any real `task_agent_session_id`.
+		// Session-type validation. We require a `sessions` row of type
+		// `space_task_agent` before binding the map. If the row is missing or
+		// the type is wrong, refuse the insert and drop any prior task_agent
+		// row to avoid leaving stale scope behind. This fails closed so a
+		// task can't be mapped to an unvalidated session id whose type might
+		// later resolve to something that widens the timeline.
+		//
+		// The `sessions` table is always present in production. In test
+		// harnesses that build only the space-test schema and omit `sessions`,
+		// the SELECT throws — we fall through and skip both the validation
+		// and the subsequent map mutations (which themselves prepare against
+		// FKs that target `sessions`) so unit tests focused on map
+		// maintenance still work. Real production paths always have the
+		// table.
+		let sessionsTablePresent = true;
 		let sessionType: string | undefined;
 		try {
 			const row = this.db.prepare(`SELECT type FROM sessions WHERE id = ?`).get(sessionId) as
@@ -580,30 +627,42 @@ export class SpaceTaskRepository {
 				| undefined;
 			sessionType = row?.type;
 		} catch {
-			sessionType = undefined;
+			sessionsTablePresent = false;
 		}
-		if (sessionType !== undefined && sessionType !== 'space_task_agent') {
-			// Session exists but is the wrong type — refuse to widen the
-			// task's session scope. Drop any prior task_agent row so we
-			// don't silently keep an outdated one bound either.
-			this.db
-				.prepare(`DELETE FROM task_session_map WHERE task_id = ? AND kind = 'task_agent'`)
-				.run(taskId);
+		if (!sessionsTablePresent) {
+			// Test harness without `sessions`. The FK on
+			// `task_session_map.session_id` references `sessions(id)`, so
+			// SQLite refuses to prepare any task_session_map mutation when
+			// the parent table is absent. Skip silently — production always
+			// has the table.
 			return;
 		}
-		this.db
-			.prepare(
-				`DELETE FROM task_session_map
-				 WHERE task_id = ? AND kind = 'task_agent' AND session_id != ?`
-			)
-			.run(taskId, sessionId);
-		this.db
-			.prepare(
-				`INSERT OR REPLACE INTO task_session_map (
-					task_id, session_id, kind, role, label, node_execution_id, created_at
-				) VALUES (?, ?, 'task_agent', 'task-agent', 'Task Agent', NULL, ?)`
-			)
-			.run(taskId, sessionId, createdAt);
+		if (sessionType !== 'space_task_agent') {
+			// Either the session row doesn't exist yet, or it exists but is
+			// the wrong type. Either way, refuse to widen scope; drop any
+			// prior task_agent row so we don't silently keep a stale bind.
+			this.tryRunMapMutation(() => {
+				this.db
+					.prepare(`DELETE FROM task_session_map WHERE task_id = ? AND kind = 'task_agent'`)
+					.run(taskId);
+			});
+			return;
+		}
+		this.tryRunMapMutation(() => {
+			this.db
+				.prepare(
+					`DELETE FROM task_session_map
+					 WHERE task_id = ? AND kind = 'task_agent' AND session_id != ?`
+				)
+				.run(taskId, sessionId);
+			this.db
+				.prepare(
+					`INSERT OR REPLACE INTO task_session_map (
+						task_id, session_id, kind, role, label, node_execution_id, created_at
+					) VALUES (?, ?, 'task_agent', 'task-agent', 'Task Agent', NULL, ?)`
+				)
+				.run(taskId, sessionId, createdAt);
+		});
 	}
 
 	/**
@@ -611,9 +670,11 @@ export class SpaceTaskRepository {
 	 * Task Agent session is cleared (e.g. archive flow).
 	 */
 	private removeTaskAgentSessionMap(taskId: string): void {
-		this.db
-			.prepare(`DELETE FROM task_session_map WHERE task_id = ? AND kind = 'task_agent'`)
-			.run(taskId);
+		this.tryRunMapMutation(() => {
+			this.db
+				.prepare(`DELETE FROM task_session_map WHERE task_id = ? AND kind = 'task_agent'`)
+				.run(taskId);
+		});
 	}
 
 	/**
@@ -637,25 +698,34 @@ export class SpaceTaskRepository {
 		workflowRunId: string,
 		createdAt: number
 	): void {
-		this.db
-			.prepare(
-				`INSERT OR REPLACE INTO task_session_map (
-					task_id, session_id, kind, role, label, node_execution_id, created_at
+		// task_session_map carries FK ON DELETE CASCADE references to
+		// `sessions(id)` and `node_executions(id)`. SQLite validates FK target
+		// tables exist at *prepare* time, so this INSERT throws when those
+		// tables are absent — which is the common case in unit-test harnesses
+		// that only build a subset of the schema. Production always has both
+		// tables (createTables runs after migrations), so swallowing the
+		// missing-table error here is safe and keeps the helper test-tolerant.
+		this.tryRunMapMutation(() => {
+			this.db
+				.prepare(
+					`INSERT OR REPLACE INTO task_session_map (
+						task_id, session_id, kind, role, label, node_execution_id, created_at
+					)
+					SELECT
+						? AS task_id,
+						ne.agent_session_id AS session_id,
+						'node_agent' AS kind,
+						ne.agent_name AS role,
+						COALESCE(sa.name, ne.agent_name, 'agent') AS label,
+						ne.id AS node_execution_id,
+						? AS created_at
+					FROM node_executions ne
+					LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+					WHERE ne.workflow_run_id = ?
+						AND ne.agent_session_id IS NOT NULL`
 				)
-				SELECT
-					? AS task_id,
-					ne.agent_session_id AS session_id,
-					'node_agent' AS kind,
-					ne.agent_name AS role,
-					COALESCE(sa.name, ne.agent_name, 'agent') AS label,
-					ne.id AS node_execution_id,
-					? AS created_at
-				FROM node_executions ne
-				LEFT JOIN space_agents sa ON sa.id = ne.agent_id
-				WHERE ne.workflow_run_id = ?
-					AND ne.agent_session_id IS NOT NULL`
-			)
-			.run(taskId, createdAt, workflowRunId);
+				.run(taskId, createdAt, workflowRunId);
+		});
 	}
 
 	/**

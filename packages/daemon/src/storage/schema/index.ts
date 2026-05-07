@@ -463,7 +463,10 @@ export function createTables(db: BunDatabase): void {
         label TEXT NOT NULL,
         node_execution_id TEXT,
         created_at INTEGER NOT NULL,
-        PRIMARY KEY (task_id, session_id)
+        PRIMARY KEY (task_id, session_id),
+        FOREIGN KEY (task_id) REFERENCES space_tasks(id) ON DELETE CASCADE,
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+        FOREIGN KEY (node_execution_id) REFERENCES node_executions(id) ON DELETE CASCADE
       )
     `);
 

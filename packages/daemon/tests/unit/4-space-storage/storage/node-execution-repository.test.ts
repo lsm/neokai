@@ -590,6 +590,9 @@ describe('NodeExecutionRepository', () => {
 		function seedTask(): void {
 			const now = Date.now();
 			(db as any)
+				.prepare(`INSERT OR IGNORE INTO sessions (id, type) VALUES (?, ?)`)
+				.run(sharedSession, 'space_chat');
+			(db as any)
 				.prepare(
 					`INSERT INTO space_tasks (id, space_id, task_number, title, status, workflow_run_id, created_at, updated_at)
 					 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -657,6 +660,9 @@ describe('NodeExecutionRepository', () => {
 
 		it('updateSessionId rebuilds the map when another execution still owns the session', () => {
 			seedTask();
+			(db as any)
+				.prepare(`INSERT OR IGNORE INTO sessions (id, type) VALUES (?, ?)`)
+				.run('session-new', 'space_chat');
 			const a = createExecution({
 				workflowNodeId: 'node-A',
 				agentName: 'coder',
