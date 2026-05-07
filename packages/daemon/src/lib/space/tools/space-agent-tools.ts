@@ -434,7 +434,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					preferredWorkflowId: args.workflow_id ?? null,
 					dependsOn: args.depends_on,
 					status: args.draft ? 'draft' : undefined,
-					createdBy: myAgentName ?? 'space-agent',
+					createdBy: myAgentName ?? null,
 					createdBySession: mySessionId ?? null,
 				});
 				logAudit('create_standalone_task', {

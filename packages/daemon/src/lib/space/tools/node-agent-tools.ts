@@ -1155,6 +1155,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				task = taskRepo.getTaskByNumber(spaceId, args.task_number);
 			} else if (args.task_id) {
 				task = taskRepo.getTask(args.task_id);
+				// Scope by space: getTask resolves by UUID only, so verify ownership.
+				if (task && task.spaceId !== spaceId) {
+					task = null;
+				}
 			} else {
 				return jsonResult({
 					success: false,
