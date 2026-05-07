@@ -1070,4 +1070,36 @@ describe('Model Service', () => {
 			expect(models).toEqual([]);
 		});
 	});
+
+	describe('refreshModels', () => {
+		it('should restore FALLBACK_MODELS when cache is empty and no providers are available', async () => {
+			// Ensure cache is empty (as if clearModelsCache() was called)
+			clearModelsCache();
+			expect(getAvailableModels('global')).toEqual([]);
+
+			// With no registered providers available, refreshModels should restore fallbacks
+			const { refreshModels } = await import('../../../../src/lib/model-service');
+			await refreshModels();
+
+			const models = getAvailableModels('global');
+			expect(models.length).toBeGreaterThan(0);
+			expect(models.some((m) => m.id === 'sonnet')).toBe(true);
+			expect(models.some((m) => m.id === 'opus')).toBe(true);
+			expect(models.some((m) => m.id === 'haiku')).toBe(true);
+		});
+
+		it('should preserve existing cache when refresh returns no models', async () => {
+			// Seed cache with mock models
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+			setModelsCache(testCache);
+
+			const { refreshModels } = await import('../../../../src/lib/model-service');
+			await refreshModels();
+
+			// Existing cache should be preserved because it was non-empty
+			const models = getAvailableModels('global');
+			expect(models).toEqual(mockModels);
+		});
+	});
 });

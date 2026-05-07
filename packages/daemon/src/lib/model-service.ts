@@ -351,6 +351,10 @@ export function clearModelsCache(cacheKey?: string): void {
  * Refresh models from all providers, preserving the existing cache on failure.
  * Clears provider-level caches first so each provider re-fetches from its API,
  * but only replaces the global cache if the fetch succeeds.
+ *
+ * If no providers return models and the cache was empty (e.g. after an explicit
+ * clear), FALLBACK_MODELS is restored so the UI and model resolution paths
+ * never see a permanently empty catalog.
  */
 export async function refreshModels(): Promise<void> {
 	const cacheKey = 'global';
@@ -379,6 +383,11 @@ export async function refreshModels(): Promise<void> {
 			return;
 		}
 		modelsCache.set(cacheKey, mergedModels);
+		cacheTimestamps.set(cacheKey, Date.now());
+	} else if (!previousModels || previousModels.length === 0) {
+		// Cache was cleared or was already empty — restore fallback models
+		// so the UI and model resolution paths always have a baseline catalog.
+		modelsCache.set(cacheKey, FALLBACK_MODELS);
 		cacheTimestamps.set(cacheKey, Date.now());
 	}
 }
