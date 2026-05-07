@@ -57,6 +57,10 @@ const EVENT_B: ExternalEvent = {
 function freshDb(): Database {
 	const d = new Database(':memory:');
 	createSpaceTables(d);
+	const now = Date.now();
+	d.exec(
+		`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES ('${SPACE_ID}', '${SPACE_ID}', '/tmp/test', 'Test Space', ${now}, ${now})`
+	);
 	return d;
 }
 
@@ -287,6 +291,30 @@ describe('registerExpectedDelivery', () => {
 				agentName: 'coder',
 			})
 		).toThrow('unknown source event id');
+	});
+
+	test('throws for empty deliveryKey', () => {
+		store.store(EVENT_A);
+		expect(() =>
+			store.registerExpectedDelivery('evt-a', '', {
+				workflowRunId: 'run-1',
+				taskId: 'task-1',
+				nodeId: 'node-1',
+				agentName: 'coder',
+			})
+		).toThrow('deliveryKey must be non-empty');
+	});
+
+	test('throws for whitespace-only deliveryKey', () => {
+		store.store(EVENT_A);
+		expect(() =>
+			store.registerExpectedDelivery('evt-a', '   ', {
+				workflowRunId: 'run-1',
+				taskId: 'task-1',
+				nodeId: 'node-1',
+				agentName: 'coder',
+			})
+		).toThrow('deliveryKey must be non-empty');
 	});
 });
 
@@ -696,18 +724,18 @@ describe('updateEventState', () => {
 		expect(store.getById('evt-a')!.state).toBe('delivery_failed');
 	});
 
-	test('does not overwrite terminal state with a different state', () => {
+	test('does not overwrite terminal state with a non-terminal state', () => {
 		store.store(EVENT_A);
 		store.markEventIgnored('evt-a', 'no_matching_subscriptions');
 		store.updateEventState('evt-a', 'published');
 		expect(store.getById('evt-a')!.state).toBe('ignored');
 	});
 
-	test('allows idempotent re-write of same terminal state', () => {
+	test('rejects terminal state directly', () => {
 		store.store(EVENT_A);
-		store.markEventIgnored('evt-a', 'no_matching_subscriptions');
-		store.updateEventState('evt-a', 'ignored');
-		expect(store.getById('evt-a')!.state).toBe('ignored');
+		expect(() => store.updateEventState('evt-a', 'delivered')).toThrow('cannot set terminal state');
+		expect(() => store.updateEventState('evt-a', 'failed')).toThrow('cannot set terminal state');
+		expect(() => store.updateEventState('evt-a', 'ignored')).toThrow('cannot set terminal state');
 	});
 });
 
@@ -726,21 +754,21 @@ describe('cross-event isolation', () => {
 	test('deliveries are scoped to event id', () => {
 		store.store(EVENT_A);
 		store.store(EVENT_B);
-		store.registerExpectedDelivery('evt-a', 'dk-1', {
+		store.registerExpectedDelivery('evt-a', 'dk-a', {
 			workflowRunId: 'run-1',
 			taskId: 'task-1',
 			nodeId: 'node-1',
 			agentName: 'coder',
 		});
-		store.registerExpectedDelivery('evt-b', 'dk-1', {
+		store.registerExpectedDelivery('evt-b', 'dk-b', {
 			workflowRunId: 'run-1',
 			taskId: 'task-2',
 			nodeId: 'node-1',
 			agentName: 'coder',
 		});
 
-		store.markDeliveryDelivered('evt-a', 'dk-1');
-		expect(store.getDelivery('evt-a', 'dk-1')!.state).toBe('delivered');
-		expect(store.getDelivery('evt-b', 'dk-1')!.state).toBe('pending');
+		store.markDeliveryDelivered('evt-a', 'dk-a');
+		expect(store.getDelivery('evt-a', 'dk-a')!.state).toBe('delivered');
+		expect(store.getDelivery('evt-b', 'dk-b')!.state).toBe('pending');
 	});
 });

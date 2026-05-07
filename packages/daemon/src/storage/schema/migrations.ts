@@ -556,10 +556,18 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   When true, the workflow cannot be selected for new tasks.
 	runMigration117(db);
 
-	// Migration 118: Add external-event lifecycle tables for the External Event Bus.
+	// Migration 118: Add setting_sources column to space_agents.
+	//   Stores per-agent setting source overrides as JSON.
+	runMigration118(db);
+
+	// Migration 119: Add setting_sources column to spaces.
+	//   Stores per-space default setting sources as JSON.
+	runMigration119(db);
+
+	// Migration 120: Add external-event lifecycle tables for the External Event Bus.
 	//   space_external_events — source-level dedup + state machine.
 	//   space_external_event_deliveries — per-subscription delivery lifecycle.
-	runMigration118(db);
+	runMigration120(db);
 }
 
 /**
@@ -7976,7 +7984,37 @@ export function runMigration117(db: BunDatabase): void {
 }
 
 /**
- * Migration 118: Add external-event lifecycle tables for the External Event Bus.
+ * Migration 118: Add `setting_sources` column to `space_agents` table.
+ *
+ * Stores per-agent setting source overrides as JSON (e.g. ["user","project"]).
+ * Nullable — null means inherit from Space or global default.
+ */
+export function runMigration118(db: BunDatabase): void {
+	if (!tableExists(db, 'space_agents')) return;
+
+	const columns = tableColumnNames(db, 'space_agents');
+	if (columns.includes('setting_sources')) return;
+
+	db.exec(`ALTER TABLE space_agents ADD COLUMN setting_sources TEXT DEFAULT NULL`);
+}
+
+/**
+ * Migration 119: Add `setting_sources` column to `spaces` table.
+ *
+ * Stores per-space default setting sources as JSON (e.g. ["user","project"]).
+ * Nullable — null means inherit from global default.
+ */
+export function runMigration119(db: BunDatabase): void {
+	if (!tableExists(db, 'spaces')) return;
+
+	const columns = tableColumnNames(db, 'spaces');
+	if (columns.includes('setting_sources')) return;
+
+	db.exec(`ALTER TABLE spaces ADD COLUMN setting_sources TEXT DEFAULT NULL`);
+}
+
+/**
+ * Migration 120: Add external-event lifecycle tables for the External Event Bus.
  *
  * space_external_events
  *   - One row per (space_id, source, dedupe_key) — the canonical source event.
@@ -7993,7 +8031,7 @@ export function runMigration117(db: BunDatabase): void {
  *     every expected delivery is delivered.
  *   - A single terminal failed delivery keeps the source event failed forever.
  */
-export function runMigration118(db: BunDatabase): void {
+export function runMigration120(db: BunDatabase): void {
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_external_events (
 			id TEXT PRIMARY KEY,
@@ -8016,7 +8054,8 @@ export function runMigration118(db: BunDatabase): void {
 				CHECK(state IN ('published', 'routed', 'delivered', 'delivery_failed', 'failed', 'ignored', 'ambiguous')),
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			UNIQUE(space_id, source, dedupe_key)
+			UNIQUE(space_id, source, dedupe_key),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
 
@@ -8043,7 +8082,8 @@ export function runMigration118(db: BunDatabase): void {
 			failure_reason TEXT,
 			delivered_at INTEGER,
 			updated_at INTEGER NOT NULL,
-			PRIMARY KEY(event_id, delivery_key)
+			PRIMARY KEY(event_id, delivery_key),
+			FOREIGN KEY (event_id) REFERENCES space_external_events(id) ON DELETE CASCADE
 		)
 	`);
 
@@ -8055,5 +8095,10 @@ export function runMigration118(db: BunDatabase): void {
 	db.exec(`
 		CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_run
 		ON space_external_event_deliveries(workflow_run_id, state)
+	`);
+
+	db.exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_external_event_deliveries_key
+		ON space_external_event_deliveries(delivery_key)
 	`);
 }

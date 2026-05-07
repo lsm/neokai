@@ -85,12 +85,6 @@ export const TERMINAL_EVENT_STATES: ReadonlySet<ExternalEventState> = new Set<Ex
 	'ambiguous',
 ]);
 
-export const RETRYABLE_EVENT_STATES: ReadonlySet<ExternalEventState> = new Set<ExternalEventState>([
-	'published',
-	'routed',
-	'delivery_failed',
-]);
-
 /**
  * Lifecycle states for a per-subscription delivery row in
  * `space_external_event_deliveries`.

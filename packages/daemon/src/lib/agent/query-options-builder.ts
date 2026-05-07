@@ -289,7 +289,9 @@ export class QueryOptionsBuilder {
 		// Write file-only settings to .claude/settings.local.json before SDK starts
 		// (permission ask lists, sandbox excludedCommands, outputStyle, attribution).
 		// We no longer derive any SDK options from settings here — strictMcpConfig is
-		// always true and settingSources is always [] (M5: unified MCP registry).
+		// always true (MCP servers are fully controlled by the unified registry).
+		// settingSources is configurable per session/space/agent and defaults to
+		// ['user', 'project', 'local'] so CLAUDE.md and on-disk settings are loaded.
 		await this.ctx.settingsManager.prepareSDKOptions();
 
 		// Translate model ID for SDK compatibility using provider context
@@ -407,10 +409,18 @@ export class QueryOptionsBuilder {
 			pathToClaudeCodeExecutable: sdkCliPath,
 
 			// ============ Settings ============
-			// Always [] — the SDK must never auto-load MCP servers, slash commands,
-			// or other settings from on-disk files. NeoKai is the sole arbiter of
-			// what reaches the SDK. See M5 of `unify-mcp-config-model`.
-			settingSources: [],
+			// settingSources controls which on-disk settings files the SDK loads.
+			// Default to ['user', 'project', 'local'] so CLAUDE.md and user/project
+			// settings are loaded.
+			//
+			// SECURITY: strictMcpConfig is true for ALL sessions. This means the SDK
+			// ONLY accepts MCP servers explicitly placed in the mcpServers map above.
+			// It does NOT auto-load MCP servers from settings files, .mcp.json, or
+			// any other source. The unified app_mcp_servers registry is the sole MCP
+			// source. settingSources only affects non-MCP settings (permissions,
+			// output style, CLAUDE.md content, etc.).
+			settingSources:
+				config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
 			settings: buildProviderSettings(providerId, config.model),
 
 			// ============ Streaming ============
@@ -583,8 +593,15 @@ export class QueryOptionsBuilder {
 		// providers that do not support it. Use the static map rather than
 		// instantiating a provider context to avoid API-key failures in CI.
 		const providerId = this.ctx.session.config.provider;
-		const thinkingModes =
+		let thinkingModes =
 			PROVIDER_THINKING_MODES[providerId as keyof typeof PROVIDER_THINKING_MODES] ?? 'granular';
+		// The anthropic-codex provider can run with either the OpenAI Responses
+		// API adapter (supports reasoning) or the legacy Codex app-server adapter
+		// (does not support reasoning). Gate thinking at runtime by env var.
+		const bridgeAdapter = process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER?.trim().toLowerCase();
+		if (providerId === 'anthropic-codex' && bridgeAdapter === 'codex') {
+			thinkingModes = 'off';
+		}
 
 		// Add thinking configuration based on the session override, falling back to the app default.
 		// Backward compatibility: legacy 'auto' is treated as 'off'.

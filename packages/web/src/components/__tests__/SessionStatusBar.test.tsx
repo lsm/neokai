@@ -509,6 +509,40 @@ describe('SessionStatusBar', () => {
 	});
 
 	describe('Thinking Dropdown', () => {
+		it('should hide thinking button when model thinkingModes is off', () => {
+			const codexModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: 'anthropic-codex',
+				thinkingModes: 'off',
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={codexModelInfo} />
+			);
+
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const thinkingButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
+			);
+			expect(thinkingButton).toBeUndefined();
+		});
+
+		it('should show thinking button when model thinkingModes is granular', () => {
+			const codexModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: 'anthropic-codex',
+				thinkingModes: 'granular',
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={codexModelInfo} />
+			);
+
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const thinkingButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
+			);
+			expect(thinkingButton).toBeTruthy();
+		});
+
 		it('should open thinking dropdown when clicked', () => {
 			const { container } = render(<SessionStatusBar {...defaultProps} />);
 

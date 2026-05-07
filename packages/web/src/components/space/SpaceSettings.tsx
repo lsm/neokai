@@ -8,8 +8,9 @@
  */
 
 import { useState, useEffect } from 'preact/hooks';
-import type { Space, SpaceExportBundle, SpaceAutonomyLevel } from '@neokai/shared';
+import type { Space, SpaceExportBundle, SpaceAutonomyLevel, SettingSource } from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager.ts';
+import { globalSettings } from '../../lib/state.ts';
 import { spaceStore } from '../../lib/space-store.ts';
 import { toast } from '../../lib/toast.ts';
 import { cn } from '../../lib/utils.ts';
@@ -25,6 +26,10 @@ interface SpaceSettingsProps {
 	space: Space;
 }
 
+function getInheritedSettingSources(): SettingSource[] {
+	return globalSettings.value?.settingSources ?? ['user', 'project', 'local'];
+}
+
 export function SpaceSettings({ space }: SpaceSettingsProps) {
 	// Edit state
 	const [name, setName] = useState(space.name);
@@ -33,6 +38,11 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 	const [backgroundContext, setBackgroundContext] = useState(space.backgroundContext ?? '');
 	const [autonomyLevel, setAutonomyLevel] = useState<SpaceAutonomyLevel>(space.autonomyLevel ?? 1);
 	const [defaultModel, setDefaultModel] = useState<string | undefined>(space.defaultModel);
+	const [settingSources, setSettingSources] = useState<SettingSource[]>(
+		space.settingSources ?? getInheritedSettingSources()
+	);
+	const hadExplicitSettingSources = space.settingSources !== undefined;
+	const [clearSettingSources, setClearSettingSources] = useState(false);
 	const [saving, setSaving] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const [isArchiving, setIsArchiving] = useState(false);
@@ -46,6 +56,8 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		setBackgroundContext(space.backgroundContext ?? '');
 		setAutonomyLevel(space.autonomyLevel ?? 1);
 		setDefaultModel(space.defaultModel);
+		setSettingSources(space.settingSources ?? getInheritedSettingSources());
+		setClearSettingSources(false);
 		setSaveError(null);
 	}, [
 		space.id,
@@ -55,6 +67,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		space.backgroundContext,
 		space.autonomyLevel,
 		space.defaultModel,
+		space.settingSources,
 	]);
 
 	const isDirty =
@@ -63,7 +76,10 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		instructions !== (space.instructions ?? '') ||
 		backgroundContext !== (space.backgroundContext ?? '') ||
 		autonomyLevel !== (space.autonomyLevel ?? 1) ||
-		defaultModel !== space.defaultModel;
+		defaultModel !== space.defaultModel ||
+		JSON.stringify(settingSources) !==
+			JSON.stringify(space.settingSources ?? getInheritedSettingSources()) ||
+		clearSettingSources;
 
 	async function handleSave(e: Event) {
 		e.preventDefault();
@@ -87,6 +103,11 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 				backgroundContext: backgroundContext.trim() || undefined,
 				autonomyLevel,
 				defaultModel: defaultModel || null,
+				...(clearSettingSources ||
+				JSON.stringify(settingSources) !==
+					JSON.stringify(space.settingSources ?? getInheritedSettingSources())
+					? { settingSources: clearSettingSources ? null : settingSources }
+					: {}),
 			});
 			// Apply response directly to avoid stale-state from event spread-merge
 			// (undefined fields like defaultModel are dropped during JSON serialization)
@@ -308,6 +329,90 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 								testId="default-model-select"
 								className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
 							/>
+
+							<div>
+								<label class="block text-xs font-medium text-gray-400 mb-1">Setting Sources</label>
+								<p class="text-xs text-gray-500 mb-2">
+									Which on-disk settings files agents in this Space load. Inherits the app-level
+									default when not set.
+								</p>
+								{hadExplicitSettingSources && !clearSettingSources && (
+									<button
+										type="button"
+										onClick={() => setClearSettingSources(true)}
+										class="text-xs text-blue-400 hover:text-blue-300 mb-1.5"
+									>
+										Clear override — use inherited defaults
+									</button>
+								)}
+								{clearSettingSources && (
+									<div class="flex items-center gap-2 mb-1.5">
+										<span class="text-xs text-gray-400">
+											Will revert to inherited defaults on save.
+										</span>
+										<button
+											type="button"
+											onClick={() => setClearSettingSources(false)}
+											class="text-xs text-blue-400 hover:text-blue-300"
+										>
+											Cancel
+										</button>
+									</div>
+								)}
+								<div class="space-y-1.5">
+									<label class="flex items-center gap-2 cursor-pointer">
+										<input
+											type="checkbox"
+											checked={settingSources.includes('user')}
+											onChange={() => {
+												setSettingSources((prev) =>
+													prev.includes('user')
+														? prev.filter((s) => s !== 'user')
+														: [...prev, 'user']
+												);
+											}}
+											disabled={clearSettingSources}
+											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+										/>
+										<span class="text-sm text-gray-200">User settings</span>
+										<span class="text-xs text-gray-500">(~/.claude/settings.json)</span>
+									</label>
+									<label class="flex items-center gap-2 cursor-pointer">
+										<input
+											type="checkbox"
+											checked={settingSources.includes('project')}
+											onChange={() => {
+												setSettingSources((prev) =>
+													prev.includes('project')
+														? prev.filter((s) => s !== 'project')
+														: [...prev, 'project']
+												);
+											}}
+											disabled={clearSettingSources}
+											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+										/>
+										<span class="text-sm text-gray-200">Project settings + CLAUDE.md</span>
+										<span class="text-xs text-gray-500">(.claude/settings.json)</span>
+									</label>
+									<label class="flex items-center gap-2 cursor-pointer">
+										<input
+											type="checkbox"
+											checked={settingSources.includes('local')}
+											onChange={() => {
+												setSettingSources((prev) =>
+													prev.includes('local')
+														? prev.filter((s) => s !== 'local')
+														: [...prev, 'local']
+												);
+											}}
+											disabled={clearSettingSources}
+											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+										/>
+										<span class="text-sm text-gray-200">Local settings</span>
+										<span class="text-xs text-gray-500">(.claude/settings.local.json)</span>
+									</label>
+								</div>
+							</div>
 						</div>
 
 						{isDirty && (
@@ -323,6 +428,8 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 										setBackgroundContext(space.backgroundContext ?? '');
 										setAutonomyLevel(space.autonomyLevel ?? 1);
 										setDefaultModel(space.defaultModel);
+										setSettingSources(space.settingSources ?? getInheritedSettingSources());
+										setClearSettingSources(false);
 										setSaveError(null);
 									}}
 								>

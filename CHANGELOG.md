@@ -2,6 +2,36 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.20.0] - 2026-05-06
+
+A release adding configurable settingSources, OpenAI reasoning.effort support, workflow disable toggle, internal command/event buses, and removing the legacy Room feature entirely. 18 commits since v0.19.0.
+
+### Added
+
+- **Configurable settingSources**: Per-session, per-space, per-agent control over which settings files load (user, project, local); clear-override UI; round-trip through export/import
+- **OpenAI reasoning.effort**: Granular thinking levels for anthropic-codex bridge; maps budget_tokens to reasoning.effort (low/medium/high/xhigh); multi-turn reasoning pass-through
+- **InternalCommandBus**: Semantic daemon command facade
+- **InternalEventBus**: Semantic daemon event facade
+- **Disable workflows**: Ability to disable workflow execution per space
+- **Target-aware task thread composer**: Per-agent model, thinking, and tools selection in the task thread composer
+
+### Changed
+
+- **Thinking level UI**: Renamed Auto→Off; added think24k; provider-aware options
+- **CLAUDE.md**: Condensed from 422 to 158 lines
+
+### Removed
+
+- **Legacy Room feature**: Full removal including source code, migrations references, and web surfaces
+
+### Fixed
+
+- **Thinking**: Explicitly disable thinking when level is 'off' for thinking-capable providers
+- **Tools**: Add missing tools to KNOWN_TOOLS and specialist agents; expose Task/Agent tools for non-Anthropic providers
+- **Workflow**: Fix submit_for_approval state transition and prevent autonomy gate bypass
+- **Gemini OAuth**: Fix redirect mismatch; refresh model cache on account changes with generation-guarded invalidation
+- **Settings**: Make settingSources configurable so CLAUDE.md loads again
+
 ## [0.19.0] - 2026-05-05
 
 A release adding Google Gemini OAuth, Kimi Moonshot provider, gate poll mechanism, configurable thinking levels, and node-to-Space-Agent messaging. 21 commits since v0.18.0.

@@ -35,6 +35,7 @@ export function createSpaceTables(db: BunDatabase): void {
 				CHECK(autonomy_level BETWEEN 1 AND 5),
 			config TEXT,
 			task_agent_config TEXT DEFAULT NULL,
+			setting_sources TEXT DEFAULT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)
@@ -56,6 +57,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			provider TEXT,
 			template_name TEXT DEFAULT NULL,
 			template_hash TEXT DEFAULT NULL,
+			setting_sources TEXT DEFAULT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -351,7 +353,8 @@ export function createSpaceTables(db: BunDatabase): void {
 				CHECK(state IN ('published', 'routed', 'delivered', 'delivery_failed', 'failed', 'ignored', 'ambiguous')),
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			UNIQUE(space_id, source, dedupe_key)
+			UNIQUE(space_id, source, dedupe_key),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
 	db.exec(`
@@ -376,7 +379,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			failure_reason TEXT,
 			delivered_at INTEGER,
 			updated_at INTEGER NOT NULL,
-			PRIMARY KEY(event_id, delivery_key)
+			PRIMARY KEY(event_id, delivery_key),
+			FOREIGN KEY (event_id) REFERENCES space_external_events(id) ON DELETE CASCADE
 		)
 	`);
 	db.exec(`
@@ -386,5 +390,9 @@ export function createSpaceTables(db: BunDatabase): void {
 	db.exec(`
 		CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_run
 		ON space_external_event_deliveries(workflow_run_id, state)
+	`);
+	db.exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_external_event_deliveries_key
+		ON space_external_event_deliveries(delivery_key)
 	`);
 }

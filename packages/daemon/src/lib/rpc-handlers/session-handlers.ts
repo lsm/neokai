@@ -24,7 +24,7 @@ import { generateUUID } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@neokai/shared';
 import { isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
-import { clearModelsCache } from '../model-service';
+import { clearModelsCache } from '../model-service.js';
 import {
 	archiveSDKSessionFiles,
 	deleteSDKSessionFiles,
@@ -501,7 +501,7 @@ export function setupSessionHandlers(
 
 		// Resolve alias to full model ID for consistency with session.model.switch
 		// Pass provider so same-ID models are disambiguated by provider context
-		const { resolveModelAlias, getModelInfo } = await import('../model-service');
+		const { resolveModelAlias, getModelInfo } = await import('../model-service.js');
 		const currentModelId = await resolveModelAlias(rawModelId, 'global', sessionProvider);
 		const modelInfo = await getModelInfo(currentModelId, 'global', sessionProvider);
 
@@ -691,19 +691,29 @@ export function setupSessionHandlers(
 	// Handle listing available models
 	messageHub.onRequest('models.list', async (data) => {
 		try {
-			const { getAvailableModels, refreshModels } = await import('../model-service');
+			const { getAvailableModels, refreshModels } = await import('../model-service.js');
 
 			const params = data as {
 				forceRefresh?: boolean;
 				useCache?: boolean;
 			};
 			const forceRefresh = params?.forceRefresh ?? params?.useCache === false;
+			let didRefresh = forceRefresh;
 
 			if (forceRefresh) {
 				await refreshModels();
 			}
 
-			const availableModels = getAvailableModels('global');
+			let availableModels = getAvailableModels('global');
+
+			// If cache is empty and we're not already forcing refresh, do a forced refresh.
+			// This handles the case where the cache was just cleared (e.g., after OAuth
+			// account changes) so the next models.list call re-evaluates provider availability.
+			if (!forceRefresh && availableModels.length === 0) {
+				await refreshModels();
+				availableModels = getAvailableModels('global');
+				didRefresh = true;
+			}
 
 			return {
 				models: availableModels.map((m) => ({
@@ -716,7 +726,7 @@ export function setupSessionHandlers(
 					context_window: m.contextWindow,
 					type: 'model' as const,
 				})),
-				cached: !forceRefresh,
+				cached: !didRefresh && availableModels.length > 0,
 			};
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);

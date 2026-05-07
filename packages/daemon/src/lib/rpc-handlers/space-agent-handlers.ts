@@ -49,6 +49,8 @@ export function setupSpaceAgentHandlers(
 			thinkingLevel?: import('@neokai/shared').ThinkingLevel;
 			provider?: string;
 			customPrompt?: string | null;
+			tools?: string[];
+			settingSources?: import('@neokai/shared').SettingSource[];
 		};
 
 		if (!params.spaceId) throw new Error('spaceId is required');
@@ -62,6 +64,8 @@ export function setupSpaceAgentHandlers(
 			thinkingLevel: params.thinkingLevel,
 			provider: params.provider,
 			customPrompt: params.customPrompt,
+			tools: params.tools,
+			settingSources: params.settingSources,
 		});
 
 		if (!result.ok) throw new Error(result.error);
@@ -109,6 +113,8 @@ export function setupSpaceAgentHandlers(
 			thinkingLevel?: import('@neokai/shared').ThinkingLevel | null;
 			provider?: string | null;
 			customPrompt?: string | null;
+			tools?: string[] | null;
+			settingSources?: import('@neokai/shared').SettingSource[] | null;
 		};
 
 		if (!params.id) throw new Error('id is required');
@@ -121,6 +127,8 @@ export function setupSpaceAgentHandlers(
 			thinkingLevel: updateFields.thinkingLevel,
 			provider: updateFields.provider,
 			customPrompt: updateFields.customPrompt,
+			tools: updateFields.tools,
+			settingSources: updateFields.settingSources,
 		});
 
 		if (!result.ok) throw new Error(result.error);

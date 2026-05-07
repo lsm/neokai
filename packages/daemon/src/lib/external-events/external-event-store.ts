@@ -203,7 +203,7 @@ export class ExternalEventStore {
 			if (row.state !== 'delivered') return;
 		}
 
-		this.updateEventState(eventId, 'delivered');
+		this.setEventState(eventId, 'delivered');
 	}
 
 	/**
@@ -225,7 +225,7 @@ export class ExternalEventStore {
 			.get(eventId);
 
 		if (failed) {
-			this.updateEventState(eventId, 'failed');
+			this.setEventState(eventId, 'failed');
 		}
 	}
 
@@ -251,7 +251,7 @@ export class ExternalEventStore {
 		}
 
 		if (sawFailure) {
-			this.updateEventState(eventId, 'failed');
+			this.setEventState(eventId, 'failed');
 		}
 	}
 
@@ -271,7 +271,7 @@ export class ExternalEventStore {
 		}
 		const event = this.getById(eventId);
 		if (!event || TERMINAL_EVENT_STATES.has(event.state)) return;
-		this.updateEventState(eventId, 'failed');
+		this.setEventState(eventId, 'failed');
 	}
 
 	/**
@@ -284,20 +284,41 @@ export class ExternalEventStore {
 	): void {
 		const event = this.getById(eventId);
 		if (!event || TERMINAL_EVENT_STATES.has(event.state)) return;
-		this.updateEventState(eventId, 'ignored');
+		this.setEventState(eventId, 'ignored');
+	}
+
+	/**
+	 * Internal helper to set event state without the public guard.
+	 * Used by terminal-transition methods that have already enforced invariants.
+	 */
+	private setEventState(eventId: string, state: ExternalEventState): void {
+		this.db
+			.prepare(`UPDATE space_external_events SET state = ?, updated_at = ? WHERE id = ?`)
+			.run(state, Date.now(), eventId);
 	}
 
 	/**
 	 * Move the event to a non-terminal state (`routed`, `delivery_failed`).
 	 * Used by the router to track progress between `published` and the
 	 * eventual terminal transition. No-op if already terminal.
+	 *
+	 * Rejects terminal states — callers must use the dedicated
+	 * `markEventDeliveredIfAllDeliveriesDelivered`, `markEventFailedIf*`,
+	 * `markEventFailed`, or `markEventIgnored` methods to reach terminal
+	 * states so delivery invariants are always enforced.
 	 */
 	updateEventState(eventId: string, state: ExternalEventState): void {
+		if (TERMINAL_EVENT_STATES.has(state)) {
+			throw new Error(
+				`updateEventState: cannot set terminal state "${state}" directly. ` +
+					`Use markEventDeliveredIfAllDeliveriesDelivered, markEventFailedIf*, ` +
+					`markEventFailed, or markEventIgnored instead.`
+			);
+		}
 		const event = this.getById(eventId);
 		if (!event) return;
-		if (TERMINAL_EVENT_STATES.has(event.state) && event.state !== state) {
-			// Never overwrite a terminal state with a different terminal/non-terminal
-			// state. This protects against late retries reclassifying a finalized event.
+		if (TERMINAL_EVENT_STATES.has(event.state)) {
+			// Never overwrite a terminal state with a non-terminal state.
 			return;
 		}
 		this.db
@@ -319,6 +340,11 @@ export class ExternalEventStore {
 	registerExpectedDelivery(eventId: string, deliveryKey: string, target: DeliveryTarget): void {
 		if (!this.getById(eventId)) {
 			throw new Error(`registerExpectedDelivery: unknown source event id "${eventId}"`);
+		}
+		if (!deliveryKey || deliveryKey.trim().length === 0) {
+			throw new ExternalEventValidationError(
+				`registerExpectedDelivery: deliveryKey must be non-empty (eventId="${eventId}")`
+			);
 		}
 		const now = Date.now();
 		this.db
@@ -354,17 +380,13 @@ export class ExternalEventStore {
 	/**
 	 * Look up the source event id for a registered delivery key.
 	 *
-	 * Throws if the delivery key is not registered — the router uses this to
-	 * recover the source event id when only the delivery key is in scope (e.g.
-	 * a fired retry timer keyed by delivery_key only). Ambiguity is logically
-	 * impossible because delivery_key embeds the event id in current callers,
-	 * but the API is intentionally event-aware to support future composite keys.
+	 * The schema enforces a UNIQUE index on `delivery_key`, so this lookup is
+	 * unambiguous — a delivery key maps to exactly one event. Throws if the
+	 * delivery key is not registered.
 	 */
 	getEventIdForDeliveryKey(deliveryKey: string): string {
 		const row = this.db
-			.prepare(
-				`SELECT event_id FROM space_external_event_deliveries WHERE delivery_key = ? LIMIT 1`
-			)
+			.prepare(`SELECT event_id FROM space_external_event_deliveries WHERE delivery_key = ?`)
 			.get(deliveryKey) as Pick<ExternalEventDeliveryRow, 'event_id'> | undefined;
 		if (!row) {
 			throw new Error(

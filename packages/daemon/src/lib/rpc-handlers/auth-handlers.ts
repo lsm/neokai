@@ -29,6 +29,7 @@ import type {
 import type { AuthManager } from '../auth-manager';
 import { getProviderRegistry } from '../providers/registry';
 import { Logger } from '../logger';
+import { clearModelsCache } from '../model-service.js';
 import {
 	buildAuthUrl,
 	exchangeAuthCode,
@@ -399,6 +400,7 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
 					});
 					pendingFlows.delete(flowId);
 					await syncRotationManager();
+					clearModelsCache();
 					log.info(`Re-authenticated Google account: ${userInfo.email}`);
 					const accounts = await loadAccounts();
 					const updated = accounts.find((a) => a.id === flow.reauthAccountId);
@@ -422,6 +424,7 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
 				await persistAddAccount(account);
 				pendingFlows.delete(flowId);
 				await syncRotationManager();
+				clearModelsCache();
 
 				log.info(`Added Google account via headless OAuth: ${userInfo.email}`);
 				return {
@@ -462,6 +465,7 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
 					).getRotationManager();
 					await rm.removeAccount(req.accountId);
 				}
+				clearModelsCache();
 				log.info(`Removed Gemini OAuth account: ${req.accountId}`);
 				return { success: true };
 			} catch (error) {
