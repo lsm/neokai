@@ -297,8 +297,8 @@ const GEMINI_SCHEMA_KEYWORDS = new Set([
  * Convert JSON Schema from Anthropic format to Gemini format.
  *
  * Keeps only the JSON Schema keywords that Gemini's Code Assist API supports,
- * stripping unsupported keywords like `$schema`, `propertyNames`,
- * `exclusiveMinimum`, `additionalProperties`, `oneOf`, etc.
+ * converting `oneOf` to `anyOf` and stripping unsupported keywords like
+ * `$schema`, `propertyNames`, `exclusiveMinimum`, `additionalProperties`, etc.
  */
 export function convertSchema(schema: Record<string, unknown>): Record<string, unknown> {
 	if (!schema || typeof schema !== 'object') return schema;
@@ -314,7 +314,10 @@ export function convertSchema(schema: Record<string, unknown>): Record<string, u
 		} else if (key === 'items' && typeof value === 'object') {
 			result[key] = convertSchema(value as Record<string, unknown>);
 		} else if ((key === 'anyOf' || key === 'oneOf') && Array.isArray(value)) {
-			result.anyOf = value.map((s) => convertSchema(s as Record<string, unknown>));
+			const mapped = value.map((s) => convertSchema(s as Record<string, unknown>));
+			result.anyOf = result.anyOf
+				? [...(result.anyOf as Record<string, unknown>[]), ...mapped]
+				: mapped;
 		} else {
 			result[key] = value;
 		}

@@ -425,6 +425,16 @@ describe('Gemini Format Converter', () => {
 			const result = convertSchema(schema);
 			expect(result).toEqual(schema);
 		});
+
+		it('accumulates both anyOf and oneOf when both are present', () => {
+			const schema = {
+				anyOf: [{ type: 'string' }],
+				oneOf: [{ type: 'number' }],
+			};
+
+			const result = convertSchema(schema);
+			expect(result.anyOf).toEqual([{ type: 'string' }, { type: 'number' }]);
+		});
 	});
 
 	// -------------------------------------------------------------------------
