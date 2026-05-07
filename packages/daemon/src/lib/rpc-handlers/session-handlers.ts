@@ -698,6 +698,7 @@ export function setupSessionHandlers(
 				useCache?: boolean;
 			};
 			const forceRefresh = params?.forceRefresh ?? params?.useCache === false;
+			let didRefresh = forceRefresh;
 
 			if (forceRefresh) {
 				await refreshModels();
@@ -711,6 +712,7 @@ export function setupSessionHandlers(
 			if (!forceRefresh && availableModels.length === 0) {
 				await refreshModels();
 				availableModels = getAvailableModels('global');
+				didRefresh = true;
 			}
 
 			return {
@@ -724,7 +726,7 @@ export function setupSessionHandlers(
 					context_window: m.contextWindow,
 					type: 'model' as const,
 				})),
-				cached: !forceRefresh && availableModels.length > 0,
+				cached: !didRefresh && availableModels.length > 0,
 			};
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
