@@ -413,7 +413,8 @@ export class QueryOptionsBuilder {
 			// Default to ['user', 'project', 'local'] so CLAUDE.md and user/project
 			// settings are loaded. strictMcpConfig: true prevents MCP auto-loading
 			// from any source — the unified app_mcp_servers registry is the sole MCP
-			// source.
+			// source.  settingSources only affects non-MCP settings (permissions,
+			// output style, etc.); MCP servers are fully isolated by strictMcpConfig.
 			settingSources:
 				config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
 			settings: buildProviderSettings(providerId, config.model),
