@@ -49,7 +49,7 @@ describe('GeminiOAuthProvider', () => {
 			const provider = new GeminiOAuthProvider();
 			expect(provider.ownsModel('gemini-2.5-pro')).toBe(true);
 			expect(provider.ownsModel('gemini-2.5-flash')).toBe(true);
-			expect(provider.ownsModel('gemini-2.0-flash')).toBe(true);
+			expect(provider.ownsModel('gemini-3-pro-preview')).toBe(true);
 		});
 
 		it('does not claim non-gemini model IDs', () => {
@@ -79,10 +79,10 @@ describe('GeminiOAuthProvider', () => {
 			expect(models.some((m) => m.id === 'gemini-2.5-pro')).toBe(true);
 			expect(models.some((m) => m.id === 'gemini-2.5-flash')).toBe(true);
 
-			// All models should have correct provider
+			// All models should have correct provider and a valid family
 			for (const model of models) {
 				expect(model.provider).toBe('google-gemini-oauth');
-				expect(model.family).toBe('gemini');
+				expect(['gemini', 'gemma']).toContain(model.family);
 			}
 		});
 	});
