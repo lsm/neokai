@@ -86,7 +86,7 @@ const defaultSessionConfig: Session['config'] = {
 	maxTurns: undefined,
 	maxBudgetUsd: undefined,
 	maxThinkingTokens: undefined,
-	thinkingLevel: 'auto',
+	thinkingLevel: 'off',
 	systemPrompt: undefined,
 	sdkToolsPreset: undefined,
 	allowedTools: undefined,

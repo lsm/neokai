@@ -3,7 +3,7 @@ import type { AgentDefinition } from '@neokai/shared';
 export const vcsAgent: AgentDefinition = {
 	description:
 		'Version control specialist. Creates logical commits, pushes to remote, creates PRs, monitors CI status, and reports failures back for resolution.',
-	tools: ['Bash', 'Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'Skill'],
+	tools: ['Bash', 'Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'Skill', 'ToolSearch'],
 	model: 'sonnet',
 	prompt: `You are a version control specialist. Your job is to manage git operations with clean, logical commits and ensure CI passes.
 

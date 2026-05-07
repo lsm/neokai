@@ -18,6 +18,7 @@ import type {
 	NeokaiActionMessage,
 	RuntimeMcpServerEntry,
 } from '@neokai/shared';
+import { normalizeThinkingLevel } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { generateUUID } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
@@ -30,7 +31,6 @@ import {
 	scanSDKSessionFiles,
 	identifyOrphanedSDKFiles,
 } from '../sdk-session-file-manager';
-import type { RoomManager } from '../room';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { Logger } from '../logger';
@@ -63,7 +63,6 @@ export function setupSessionHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
 	daemonHub: DaemonHub,
-	roomManager: RoomManager,
 	spaceManager: SpaceManager,
 	spaceRuntimeService?: SpaceRuntimeService
 ): void {
@@ -75,15 +74,9 @@ export function setupSessionHandlers(
 			config: req.config,
 			worktreeBaseBranch: req.worktreeBaseBranch,
 			title: req.title,
-			roomId: req.roomId,
 			spaceId: req.spaceId,
 			createdBy: req.createdBy ?? 'human',
 		});
-
-		// Add session to room if roomId is provided
-		if (req.roomId) {
-			roomManager.assignSession(req.roomId, sessionId);
-		}
 
 		// Add session to space if spaceId is provided
 		if (req.spaceId) {
@@ -310,12 +303,7 @@ export function setupSessionHandlers(
 			channel: `session:${targetSessionId}`,
 		});
 
-		// Also broadcast on room channel so RoomStore can react
-		if (roomIdForUpdate) {
-			messageHub.event('session.updated', updatedPayload, {
-				channel: `room:${roomIdForUpdate}`,
-			});
-		}
+		// Room channel broadcasts removed with legacy Room feature retirement.
 
 		return { success: true };
 	});
@@ -326,7 +314,6 @@ export function setupSessionHandlers(
 		// Get context before deleting so we can include it in the event payload
 		const agentSessionForDelete = sessionManager.getSession(targetSessionId);
 		const contextForDelete = agentSessionForDelete?.getSessionData().context;
-		const roomIdForDelete = contextForDelete?.roomId;
 		const spaceIdForDelete = contextForDelete?.spaceId;
 
 		// UI-only delete primitive (Task #85): removes worktree + SDK .jsonl + DB row.
@@ -346,17 +333,6 @@ export function setupSessionHandlers(
 			} catch {
 				// Space may already be deleted — ignore
 			}
-		}
-
-		// Broadcast on room channel so RoomStore reacts immediately.
-		// Note: the global channel broadcast is handled by session-lifecycle.ts / state-manager.ts
-		// to avoid triple-firing the event. We only add the room-scoped broadcast here.
-		if (roomIdForDelete) {
-			messageHub.event(
-				'session.deleted',
-				{ sessionId: targetSessionId, roomId: roomIdForDelete },
-				{ channel: `room:${roomIdForDelete}` }
-			);
 		}
 
 		return { success: true };
@@ -437,11 +413,6 @@ export function setupSessionHandlers(
 		messageHub.event('session.updated', archivedPayload, {
 			channel: `session:${targetSessionId}`,
 		});
-		if (roomIdForArchive) {
-			messageHub.event('session.updated', archivedPayload, {
-				channel: `room:${roomIdForArchive}`,
-			});
-		}
 
 		return {
 			success: true,
@@ -666,14 +637,15 @@ export function setupSessionHandlers(
 	});
 
 	// Handle thinking level changes
-	// Levels: auto, think8k, think16k, think32k
-	// - auto: No thinking budget
-	// - think8k/16k/32k: Token budget set via maxThinkingTokens
+	// Levels: off, think8k, think16k, think24k, think32k
+	// - off: No thinking budget
+	// - think8k/16k/24k/32k: Token budget set via maxThinkingTokens
+	// Backward compatibility: legacy 'auto' is treated as 'off'.
 	// Note: "ultrathink" keyword is NOT auto-appended - users must type it manually
 	messageHub.onRequest('session.thinking.set', async (data) => {
 		const { sessionId: targetSessionId, level } = data as {
 			sessionId: string;
-			level: 'auto' | 'think8k' | 'think16k' | 'think32k';
+			level: string;
 		};
 
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
@@ -681,15 +653,14 @@ export function setupSessionHandlers(
 			throw new Error('Session not found');
 		}
 
-		// Validate level
-		const validLevels = ['auto', 'think8k', 'think16k', 'think32k'];
-		const thinkingLevel = validLevels.includes(level) ? level : 'auto';
+		// Normalize level (accepts legacy 'auto' for backward compatibility)
+		const thinkingLevel = normalizeThinkingLevel(level);
 
 		// Update session config with new thinkingLevel
 		await sessionManager.updateSession(targetSessionId, {
 			config: {
 				...agentSession.getSessionData().config,
-				thinkingLevel: thinkingLevel as 'auto' | 'think8k' | 'think16k' | 'think32k',
+				thinkingLevel,
 			},
 		});
 
@@ -711,7 +682,9 @@ export function setupSessionHandlers(
 			throw new Error('Session not found');
 		}
 
-		const thinkingLevel = agentSession.getSessionData().config.thinkingLevel ?? 'auto';
+		const thinkingLevel = normalizeThinkingLevel(
+			agentSession.getSessionData().config.thinkingLevel
+		);
 		return { thinkingLevel };
 	});
 

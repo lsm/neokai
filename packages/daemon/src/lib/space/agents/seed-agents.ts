@@ -70,13 +70,24 @@ const REVIEWER_TOOLS: string[] = [
 	'Glob',
 	'WebFetch',
 	'WebSearch',
+	'Skill',
+	'ToolSearch',
 	'Task',
 	'TaskOutput',
 	'TaskStop',
 ];
 
 /** QA: read-only + bash for running tests — no Write or Edit */
-const QA_TOOLS: string[] = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
+const QA_TOOLS: string[] = [
+	'Read',
+	'Bash',
+	'Grep',
+	'Glob',
+	'WebFetch',
+	'WebSearch',
+	'Skill',
+	'ToolSearch',
+];
 
 /**
  * Tool profiles per preset agent name. Exported for testing and external consumption.
@@ -206,6 +217,11 @@ If your verdict on this round is \`REQUEST_CHANGES\` (ANY P0–P3 finding exists
 \`submit_for_approval\` is **NOT** "ask a human to decide for me while findings are open." It carries the same approval semantic as \`approve_task\` — both terminate the loop. Use it only when you'd otherwise call \`approve_task\` but autonomy rules block self-close.
 
 **Important:** \`approve_task\` and \`submit_for_approval\` are your FINAL actions. After calling either tool, do NOT send a message to any agent or node. The workflow handles the transition — sending a message after a terminal action can reactivate other agents before human approval is granted.
+
+**If \`submit_for_approval\` fails for any reason** (state machine error, invalid transition, or any runtime error), you MUST:
+1. Report the error clearly in your output — explain what failed and why.
+2. **STOP**. Do NOT send a message to \`space-agent\` or any other agent asking to "advance the task to merge" or bypass the approval step.
+3. Do NOT attempt any workaround that would skip human approval. The human approval gate is mandatory at autonomy level 1 — it must be preserved regardless of technical errors.
 
 ## Posting the Review
 

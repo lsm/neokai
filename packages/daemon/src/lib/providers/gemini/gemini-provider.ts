@@ -98,6 +98,7 @@ export class GeminiOAuthProvider implements Provider {
 	readonly capabilities: ProviderCapabilities = {
 		streaming: true,
 		extendedThinking: false,
+		thinkingModes: 'off',
 		maxContextWindow: 1_000_000,
 		functionCalling: true,
 		vision: false,

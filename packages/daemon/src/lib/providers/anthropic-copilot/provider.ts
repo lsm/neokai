@@ -248,6 +248,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 		// and the SSE events contain no thinking_delta events. GitHub Copilot's API does not
 		// expose Claude's extended thinking capability.
 		extendedThinking: false,
+		thinkingModes: 'off',
 		maxContextWindow: 272000,
 		/**
 		 * Full tool-use support: the embedded server registers incoming `tools`

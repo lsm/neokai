@@ -19,6 +19,8 @@ export const coderAgent: AgentDefinition = {
 		'TaskStop',
 		'EnterPlanMode',
 		'ExitPlanMode',
+		'NotebookEdit',
+		'ToolSearch',
 	],
 	model: 'sonnet',
 	prompt: `You are a focused code implementer. Your job is to achieve the stated goal by making precise, minimal code changes.

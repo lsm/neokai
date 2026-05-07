@@ -2,9 +2,6 @@
  * Neo Query Tools - MCP tools for querying system state
  *
  * Read-only tools that give Neo full visibility into the NeoKai system:
- * - list_rooms
- * - get_room_status
- * - get_room_details
  * - get_system_info
  * - get_app_settings
  * - list_mcp_servers
@@ -41,26 +38,15 @@ import type {
 	SpaceWorkflowRun,
 	SpaceTask,
 } from '@neokai/shared';
-import type { Room, RoomGoal, NeoTask, MissionExecution } from '@neokai/shared/types/neo';
-import { isWorkerSessionId } from '../../room/session-utils';
-import { toTaskSummary } from '../../task-utils';
+import type { RoomGoal, NeoTask, MissionExecution } from '@neokai/shared/types/neo';
 
 // ---------------------------------------------------------------------------
 // Minimal interfaces — only the surface used by these tools
 // ---------------------------------------------------------------------------
 
-export interface NeoQueryRoomManager {
-	listRooms(includeArchived?: boolean): Room[];
-	getRoom(id: string): Room | null;
-	getRoomOverview(roomId: string): {
-		room: Room;
-		sessions: { id: string; title: string; status: string; lastActiveAt: number }[];
-	} | null;
-}
-
 export interface NeoQueryGoalRepository {
-	/** List goals for a specific room, optionally filtered by status */
-	listGoals(roomId: string, status?: string): RoomGoal[];
+	/** List goals, optionally filtered by room and status */
+	listGoals(roomId?: string, status?: string): RoomGoal[];
 	/** Get a single goal by ID */
 	getGoal(id: string): RoomGoal | null;
 	/** List execution history for a goal (most recent first) */
@@ -69,11 +55,11 @@ export interface NeoQueryGoalRepository {
 
 export interface NeoQueryTaskRepository {
 	/**
-	 * List tasks for a specific room, optionally filtered by status and archived state.
+	 * List tasks, optionally filtered by room, status, and archived state.
 	 * Note: assignedAgent filtering is NOT in the real TaskFilter; it is applied in-memory
 	 * by the tool handler after calling this method.
 	 */
-	listTasks(roomId: string, filter?: { status?: string; includeArchived?: boolean }): NeoTask[];
+	listTasks(roomId?: string, filter?: { status?: string; includeArchived?: boolean }): NeoTask[];
 	/** Get a single task by ID */
 	getTask(id: string): NeoTask | null;
 }
@@ -137,7 +123,6 @@ export interface NeoQuerySpaceTaskRepository {
  * All dependencies required by the Neo query tools.
  */
 export interface NeoToolsConfig {
-	roomManager: NeoQueryRoomManager;
 	goalRepository: NeoQueryGoalRepository;
 	taskRepository: NeoQueryTaskRepository;
 	sessionManager: NeoQuerySessionManager;
@@ -187,7 +172,6 @@ function errorResult(message: string): ToolResult {
  */
 export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 	const {
-		roomManager,
 		goalRepository,
 		taskRepository,
 		sessionManager,
@@ -207,111 +191,6 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 
 	return {
 		/**
-		 * List all active rooms with summary information.
-		 */
-		async list_rooms(args: { include_archived?: boolean }): Promise<ToolResult> {
-			const includeArchived = args.include_archived ?? false;
-			const rooms = roomManager.listRooms(includeArchived);
-
-			const result = rooms.map((room) => {
-				const goals = goalRepository.listGoals(room.id);
-				return {
-					id: room.id,
-					name: room.name,
-					status: room.status,
-					sessionCount: room.sessionIds.filter(isWorkerSessionId).length,
-					goalCount: goals.length,
-					activeGoalCount: goals.filter((g) => g.status === 'active' || g.status === 'needs_human')
-						.length,
-					defaultModel: room.defaultModel ?? null,
-					createdAt: room.createdAt,
-					updatedAt: room.updatedAt,
-				};
-			});
-
-			return jsonResult(result);
-		},
-
-		/**
-		 * Get a room's current operational status.
-		 */
-		async get_room_status(args: { room_id: string }): Promise<ToolResult> {
-			const room = roomManager.getRoom(args.room_id);
-			if (!room) {
-				return errorResult(`Room not found: ${args.room_id}`);
-			}
-
-			const goals = goalRepository.listGoals(room.id);
-			const activeGoals = goals.filter((g) => g.status === 'active' || g.status === 'needs_human');
-
-			// Worker sessions (exclude internal room:* management sessions)
-			const workerSessionIds = room.sessionIds.filter(isWorkerSessionId);
-
-			const activeSessions = sessionManager
-				.listSessions({ status: 'active' })
-				.filter((s) => workerSessionIds.includes(s.id));
-
-			return jsonResult({
-				id: room.id,
-				name: room.name,
-				status: room.status,
-				defaultModel: room.defaultModel ?? null,
-				sessionCount: workerSessionIds.length,
-				activeSessionCount: activeSessions.length,
-				goalCount: goals.length,
-				activeGoalCount: activeGoals.length,
-				updatedAt: room.updatedAt,
-			});
-		},
-
-		/**
-		 * Get full room details including goals summary and tasks summary.
-		 */
-		async get_room_details(args: { room_id: string }): Promise<ToolResult> {
-			const overview = roomManager.getRoomOverview(args.room_id);
-			if (!overview) {
-				return errorResult(`Room not found: ${args.room_id}`);
-			}
-
-			const { room, sessions } = overview;
-			const goals = goalRepository.listGoals(room.id);
-
-			const goalsSummary = goals.map((g) => ({
-				id: g.id,
-				shortId: g.shortId ?? null,
-				title: g.title,
-				status: g.status,
-				priority: g.priority,
-				progress: g.progress,
-				missionType: g.missionType ?? 'one_shot',
-				linkedTaskCount: g.linkedTaskIds.length,
-			}));
-
-			const allTasks = taskRepository.listTasks(room.id, { includeArchived: true });
-			const nonTerminal = allTasks.filter(
-				(t) =>
-					t.status !== 'completed' && t.status !== 'needs_attention' && t.status !== 'cancelled'
-			);
-			const activeTasks = nonTerminal.map(toTaskSummary);
-
-			return jsonResult({
-				id: room.id,
-				name: room.name,
-				status: room.status,
-				defaultModel: room.defaultModel ?? null,
-				allowedModels: room.allowedModels ?? [],
-				instructions: room.instructions ?? null,
-				background: room.background ?? null,
-				sessions,
-				goals: goalsSummary,
-				activeTasks,
-				allTaskCount: allTasks.length,
-				createdAt: room.createdAt,
-				updatedAt: room.updatedAt,
-			});
-		},
-
-		/**
 		 * Get system-wide information about the NeoKai instance.
 		 */
 		async get_system_info(): Promise<ToolResult> {
@@ -319,7 +198,6 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 			const uptimeMs = Date.now() - startedAt;
 			const uptimeSec = Math.floor(uptimeMs / 1000);
 
-			const rooms = roomManager.listRooms(false);
 			const activeSessions = sessionManager.getActiveSessions();
 
 			return jsonResult({
@@ -331,7 +209,6 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 					isAuthenticated: authStatus.isAuthenticated,
 					method: authStatus.method,
 				},
-				roomCount: rooms.length,
 				activeSessionCount: activeSessions,
 			});
 		},
@@ -667,10 +544,9 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 		// -----------------------------------------------------------------------
 
 		/**
-		 * List goals across all rooms (or a specific room), with optional filters.
+		 * List goals with optional filters.
 		 */
 		async list_goals(args: {
-			room_id?: string;
 			status?: string;
 			mission_type?: string;
 			search?: string;
@@ -678,47 +554,33 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 			offset?: number;
 			compact?: boolean;
 		}): Promise<ToolResult> {
-			// Determine which rooms to query
-			const rooms = args.room_id
-				? (() => {
-						const r = roomManager.getRoom(args.room_id);
-						return r ? [r] : null;
-					})()
-				: roomManager.listRooms(true); // include archived rooms for cross-room visibility
-
-			if (rooms === null) {
-				return errorResult(`Room not found: ${args.room_id}`);
-			}
+			const goals = goalRepository.listGoals(undefined, args.status as string | undefined);
 
 			const allGoals: Record<string, unknown>[] = [];
-			for (const room of rooms) {
-				const goals = goalRepository.listGoals(room.id, args.status as string | undefined);
-				for (const g of goals) {
-					// Filter by mission_type if provided (repository does not support this natively)
-					if (args.mission_type && (g.missionType ?? 'one_shot') !== args.mission_type) {
-						continue;
-					}
-					allGoals.push({
-						id: g.id,
-						shortId: g.shortId ?? null,
-						roomId: g.roomId,
-						roomName: room.name,
-						title: g.title,
-						status: g.status,
-						priority: g.priority,
-						progress: g.progress,
-						missionType: g.missionType ?? 'one_shot',
-						autonomyLevel: g.autonomyLevel ?? 'supervised',
-						linkedTaskCount: g.linkedTaskIds.length,
-						nextRunAt: g.nextRunAt ?? null,
-						schedulePaused: g.schedulePaused ?? false,
-						createdAt: g.createdAt,
-						updatedAt: g.updatedAt,
-					});
+			for (const g of goals) {
+				// Filter by mission_type if provided (repository does not support this natively)
+				if (args.mission_type && (g.missionType ?? 'one_shot') !== args.mission_type) {
+					continue;
 				}
+				allGoals.push({
+					id: g.id,
+					shortId: g.shortId ?? null,
+					roomId: g.roomId,
+					title: g.title,
+					status: g.status,
+					priority: g.priority,
+					progress: g.progress,
+					missionType: g.missionType ?? 'one_shot',
+					autonomyLevel: g.autonomyLevel ?? 'supervised',
+					linkedTaskCount: g.linkedTaskIds.length,
+					nextRunAt: g.nextRunAt ?? null,
+					schedulePaused: g.schedulePaused ?? false,
+					createdAt: g.createdAt,
+					updatedAt: g.updatedAt,
+				});
 			}
 
-			// Search filter (applied after cross-room aggregation)
+			// Search filter (applied after aggregation)
 			const filtered = args.search
 				? allGoals.filter((g) =>
 						(g.title as string).toLowerCase().includes(args.search!.toLowerCase())
@@ -758,14 +620,12 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 				return errorResult(`Goal not found: ${args.goal_id}`);
 			}
 
-			const room = roomManager.getRoom(goal.roomId);
 			const executions = goalRepository.listExecutions(goal.id, args.execution_limit ?? 10);
 
 			return jsonResult({
 				id: goal.id,
 				shortId: goal.shortId ?? null,
 				roomId: goal.roomId,
-				roomName: room?.name ?? null,
 				title: goal.title,
 				description: goal.description,
 				status: goal.status,
@@ -841,10 +701,9 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 		},
 
 		/**
-		 * List tasks across all rooms (or a specific room), with optional filters.
+		 * List tasks with optional filters.
 		 */
 		async list_tasks(args: {
-			room_id?: string;
 			status?: string;
 			assigned_agent?: string;
 			include_archived?: boolean;
@@ -857,53 +716,35 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 			// otherwise the repository filter would hide them and return zero results.
 			const includeArchived = args.include_archived ?? args.status === 'archived';
 
-			// Determine which rooms to query
-			const rooms = args.room_id
-				? (() => {
-						const r = roomManager.getRoom(args.room_id);
-						return r ? [r] : null;
-					})()
-				: roomManager.listRooms(true); // include archived rooms for cross-room visibility
+			// Note: assignedAgent is not in real TaskFilter, so we filter in-memory below.
+			const filter: { status?: string; includeArchived?: boolean } = { includeArchived };
+			if (args.status) filter.status = args.status;
 
-			if (rooms === null) {
-				return errorResult(`Room not found: ${args.room_id}`);
+			let tasks = taskRepository.listTasks(undefined, filter);
+
+			// In-memory filter for assignedAgent (not supported at the SQL level in TaskFilter)
+			if (args.assigned_agent) {
+				tasks = tasks.filter((t) => (t.assignedAgent ?? 'coder') === args.assigned_agent);
 			}
 
-			const allTasks: Record<string, unknown>[] = [];
-			for (const room of rooms) {
-				// Note: assignedAgent is not in real TaskFilter, so we filter in-memory below.
-				const filter: { status?: string; includeArchived?: boolean } = { includeArchived };
-				if (args.status) filter.status = args.status;
+			const allTasks: Record<string, unknown>[] = tasks.map((t) => ({
+				id: t.id,
+				shortId: t.shortId ?? null,
+				roomId: t.roomId,
+				title: t.title,
+				status: t.status,
+				priority: t.priority,
+				taskType: t.taskType ?? 'coding',
+				assignedAgent: t.assignedAgent ?? 'coder',
+				progress: t.progress ?? null,
+				activeSession: t.activeSession,
+				prUrl: t.prUrl ?? null,
+				prNumber: t.prNumber ?? null,
+				createdAt: t.createdAt,
+				updatedAt: t.updatedAt,
+			}));
 
-				let tasks = taskRepository.listTasks(room.id, filter);
-
-				// In-memory filter for assignedAgent (not supported at the SQL level in TaskFilter)
-				if (args.assigned_agent) {
-					tasks = tasks.filter((t) => (t.assignedAgent ?? 'coder') === args.assigned_agent);
-				}
-
-				for (const t of tasks) {
-					allTasks.push({
-						id: t.id,
-						shortId: t.shortId ?? null,
-						roomId: t.roomId,
-						roomName: room.name,
-						title: t.title,
-						status: t.status,
-						priority: t.priority,
-						taskType: t.taskType ?? 'coding',
-						assignedAgent: t.assignedAgent ?? 'coder',
-						progress: t.progress ?? null,
-						activeSession: t.activeSession,
-						prUrl: t.prUrl ?? null,
-						prNumber: t.prNumber ?? null,
-						createdAt: t.createdAt,
-						updatedAt: t.updatedAt,
-					});
-				}
-			}
-
-			// Search filter (applied after cross-room aggregation)
+			// Search filter (applied after aggregation)
 			const filtered = args.search
 				? allTasks.filter((t) =>
 						(t.title as string).toLowerCase().includes(args.search!.toLowerCase())
@@ -941,13 +782,10 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 				return errorResult(`Task not found: ${args.task_id}`);
 			}
 
-			const room = roomManager.getRoom(task.roomId);
-
 			return jsonResult({
 				id: task.id,
 				shortId: task.shortId ?? null,
 				roomId: task.roomId,
-				roomName: room?.name ?? null,
 				title: task.title,
 				description: task.description,
 				status: task.status,
@@ -987,37 +825,6 @@ export function createNeoQueryMcpServer(config: NeoToolsConfig) {
 	const handlers = createNeoQueryToolHandlers(config);
 
 	const tools = [
-		tool(
-			'list_rooms',
-			'List all rooms in the NeoKai system with summary info (id, name, status, session count, goal count).',
-			{
-				include_archived: z
-					.boolean()
-					.optional()
-					.default(false)
-					.describe('Include archived rooms in the results (default: false)'),
-			},
-			(args) => handlers.list_rooms(args)
-		),
-
-		tool(
-			'get_room_status',
-			'Get the current operational status of a specific room, including active sessions, goal count, and current model.',
-			{
-				room_id: z.string().describe('ID of the room to query'),
-			},
-			(args) => handlers.get_room_status(args)
-		),
-
-		tool(
-			'get_room_details',
-			'Get full details for a room including goals summary, active tasks summary, and session list.',
-			{
-				room_id: z.string().describe('ID of the room to query'),
-			},
-			(args) => handlers.get_room_details(args)
-		),
-
 		tool(
 			'get_system_info',
 			'Get system-wide information about the NeoKai instance: app version, uptime, auth status, workspace root, and active session count.',
@@ -1130,12 +937,8 @@ export function createNeoQueryMcpServer(config: NeoToolsConfig) {
 		// Goal and task query tools
 		tool(
 			'list_goals',
-			'List goals across all rooms or a specific room. Filterable by room, status, and mission type. Use compact:true and limit/offset to reduce payload size.',
+			'List goals with optional filters. Filterable by status and mission type. Use compact:true and limit/offset to reduce payload size.',
 			{
-				room_id: z
-					.string()
-					.optional()
-					.describe('Filter to goals in a specific room (omit for all rooms)'),
 				status: z
 					.enum(['active', 'needs_human', 'completed', 'archived'])
 					.optional()
@@ -1197,12 +1000,8 @@ export function createNeoQueryMcpServer(config: NeoToolsConfig) {
 
 		tool(
 			'list_tasks',
-			'List tasks across all rooms or a specific room. Filterable by room, status, and assigned agent. Use compact:true and limit/offset to reduce payload size.',
+			'List tasks with optional filters. Filterable by status and assigned agent. Use compact:true and limit/offset to reduce payload size.',
 			{
-				room_id: z
-					.string()
-					.optional()
-					.describe('Filter to tasks in a specific room (omit for all rooms)'),
 				status: z
 					.enum([
 						'draft',

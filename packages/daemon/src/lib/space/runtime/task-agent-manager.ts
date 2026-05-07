@@ -25,7 +25,7 @@
  * ## Sub-session lifecycle
  *
  * Sub-sessions are created with `AgentSession.fromInit()`, which persists them to
- * the DB. This mirrors the RoomRuntimeService pattern for leader/worker sessions.
+ * the DB. This mirrors the Space runtime pattern for task agent sessions.
  * DB records include `{ internal: true, parentTaskId }` in context metadata so
  * they can be filtered from user-visible session lists.
  *
@@ -3715,7 +3715,7 @@ export class TaskAgentManager {
 
 	/**
 	 * Inject a plain-text message into an AgentSession.
-	 * Uses the same pattern as RoomRuntimeService.injectMessage().
+	 * Uses the same pattern as SpaceRuntimeService.injectMessage().
 	 */
 	private async injectMessageIntoSession(
 		session: AgentSession,

@@ -31,14 +31,56 @@ import { WorkflowModelSelect } from './WorkflowModelSelect';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { GateEditorPanel } from './GateEditorPanel';
 import { skillsStore } from '../../../lib/skills-store';
+import { normalizeThinkingLevel } from '@neokai/shared';
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
 	{ value: '', label: 'Inherit' },
-	{ value: 'auto', label: 'Auto' },
+	{ value: 'off', label: 'Off' },
 	{ value: 'think8k', label: 'Think 8k' },
 	{ value: 'think16k', label: 'Think 16k' },
+	{ value: 'think24k', label: 'Think 24k' },
 	{ value: 'think32k', label: 'Think 32k' },
 ];
+
+/** Normalize a node thinking level, returning undefined for empty/undefined values. */
+function safeNodeThinkingLevel(level: string | undefined): ThinkingLevel | undefined {
+	if (!level) return undefined;
+	return normalizeThinkingLevel(level);
+}
+
+/** Normalize legacy 'auto' thinking levels in a NodeDraft. Returns same ref if unchanged. */
+function normalizeNodeDraftThinkingLevel(draft: NodeDraft): NodeDraft {
+	let changed = false;
+
+	// Normalize step-level thinkingLevel (widened to string because legacy
+	// runtime data may contain 'auto' even though ThinkingLevel excludes it)
+	let stepThinkingLevel: string | undefined = draft.thinkingLevel;
+	if (stepThinkingLevel === 'auto') {
+		stepThinkingLevel = 'off';
+		changed = true;
+	}
+
+	// Normalize agent slot thinkingLevels
+	let normalizedAgents: WorkflowNodeAgent[] | undefined = draft.agents;
+	if (draft.agents) {
+		normalizedAgents = draft.agents.map((agent) => {
+			const agentThinking: string | undefined = agent.thinkingLevel;
+			if (agentThinking === 'auto') {
+				changed = true;
+				return { ...agent, thinkingLevel: 'off' };
+			}
+			return agent;
+		});
+	}
+
+	if (!changed) return draft;
+
+	return {
+		...draft,
+		thinkingLevel: stepThinkingLevel as ThinkingLevel,
+		agents: normalizedAgents,
+	};
+}
 
 // ============================================================================
 // Props
@@ -156,7 +198,9 @@ function AgentsSection({
 	const singleSlot = nodeAgents.length === 1 ? nodeAgents[0] : undefined;
 	const selectedSingleAgentId = singleSlot?.agentId ?? step.agentId;
 	const selectedSingleModel = singleSlot?.model ?? step.model;
-	const selectedSingleThinkingLevel = singleSlot?.thinkingLevel ?? step.thinkingLevel;
+	const selectedSingleThinkingLevel = safeNodeThinkingLevel(
+		singleSlot?.thinkingLevel ?? step.thinkingLevel
+	);
 	const selectedSingleCustomPrompt = singleSlot?.customPrompt ?? step.customPrompt;
 
 	function updateAgents(next: WorkflowNodeAgent[]) {
@@ -481,7 +525,7 @@ function AgentsSection({
 									Thinking
 								</label>
 								<select
-									value={sa.thinkingLevel ?? ''}
+									value={safeNodeThinkingLevel(sa.thinkingLevel) ?? ''}
 									onChange={(e) =>
 										updateAgentThinkingLevel(
 											sa.name,
@@ -614,10 +658,15 @@ export function NodeConfigPanel({
 
 	// Reset confirmation dialog when the selected step changes so a previously
 	// open confirmation on one node doesn't bleed through to the next node.
+	// Also normalize any legacy 'auto' thinking levels in the loaded step data.
 	useEffect(() => {
 		setConfirmingDelete(false);
 		setPanelView({ kind: 'main' });
-	}, [step.localId]);
+		const normalized = normalizeNodeDraftThinkingLevel(step);
+		if (normalized !== step) {
+			onUpdate(normalized);
+		}
+	}, [step, step.localId, onUpdate]);
 
 	useEffect(() => {
 		if (selectedChannelRelation) {
@@ -863,7 +912,7 @@ export function NodeConfigPanel({
 							Thinking Level <span class="font-normal text-gray-600">(optional override)</span>
 						</label>
 						<select
-							value={slot.thinkingLevel ?? ''}
+							value={safeNodeThinkingLevel(slot.thinkingLevel) ?? ''}
 							onChange={(e) =>
 								updateSlot({
 									...slot,

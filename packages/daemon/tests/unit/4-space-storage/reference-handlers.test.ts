@@ -799,53 +799,6 @@ describe('reference.search handler', () => {
 			expect(result.results).toHaveLength(1);
 			expect(result.results[0].type).toBe('task');
 		});
-
-		it('extracts roomId from synthetic room:chat: session ID', async () => {
-			insertTask(db, roomId, 'task-1', 'Room Agent Task', 't-1');
-
-			// No real session in DB — the synthetic ID "room:chat:<roomId>" should be parsed
-			const sessions = new Map();
-			const { hub, call } = buildMessageHub();
-			setupReferenceHandlers(hub, {
-				db: db as never,
-				reactiveDb: buildReactiveDb(),
-				shortIdAllocator: buildShortIdAllocator(),
-				sessionManager: buildSessionManager(sessions) as never,
-				fileIndex: buildFileIndex(),
-			});
-
-			const result = (await call('reference.search', {
-				sessionId: `room:chat:${roomId}`,
-				query: '',
-			})) as { results: Array<{ type: string; displayText: string }> };
-
-			expect(result.results).toHaveLength(1);
-			expect(result.results[0].type).toBe('task');
-			expect(result.results[0].displayText).toBe('Room Agent Task');
-		});
-
-		it('returns all tasks for whitespace-only query with synthetic session ID', async () => {
-			insertTask(db, roomId, 'task-1', 'Synthetic WS Task', 't-1');
-
-			// Whitespace-only query trims to "" — with room context, should return all tasks
-			const sessions = new Map();
-			const { hub, call } = buildMessageHub();
-			setupReferenceHandlers(hub, {
-				db: db as never,
-				reactiveDb: buildReactiveDb(),
-				shortIdAllocator: buildShortIdAllocator(),
-				sessionManager: buildSessionManager(sessions) as never,
-				fileIndex: buildFileIndex(),
-			});
-
-			const result = (await call('reference.search', {
-				sessionId: `room:chat:${roomId}`,
-				query: '   ',
-			})) as { results: Array<{ type: string }> };
-
-			expect(result.results).toHaveLength(1);
-			expect(result.results[0].type).toBe('task');
-		});
 	});
 });
 

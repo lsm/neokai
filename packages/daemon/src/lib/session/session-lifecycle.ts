@@ -34,7 +34,7 @@ import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.
  * out during code review and the CI regression guard can locate them.
  */
 export type ArchiveResourcesTrigger = 'ui_session_archive' | 'ui_task_archive';
-export type DeleteResourcesTrigger = 'ui_session_delete' | 'ui_room_delete' | 'ui_neo_room_delete';
+export type DeleteResourcesTrigger = 'ui_session_delete';
 
 export interface SessionLifecycleConfig {
 	defaultModel: string;
@@ -49,31 +49,17 @@ export interface CreateSessionParams {
 	config?: Partial<Session['config']>;
 	worktreeBaseBranch?: string;
 	title?: string; // Optional title - if provided, skips auto-title generation
-	sessionId?: string; // Optional custom session ID (for room chat/self sessions)
-	roomId?: string; // Optional room ID to assign session to
+	sessionId?: string; // Optional custom session ID
 	lobbyId?: string; // Optional lobby ID to assign session to
 	/** Optional Space ID for space_chat sessions (space:chat:${spaceId}) */
 	spaceId?: string;
 	createdBy?: 'human' | 'neo'; // Creator type (defaults to 'human')
 	// Session types:
 	// - 'worker': Standard coding session with Claude Code system prompt
-	// - 'room_chat': User-facing room chat interface (room:chat:${roomId})
-	// - 'planner': Planner agent session (Room Runtime)
-	// - 'coder': Coder agent session (Room Runtime)
-	// - 'leader': Leader agent session (Room Runtime)
-	// - 'general': General agent session (Room Runtime)
 	// - 'lobby': Instance-level agent session
 	// - 'space_chat': Per-space coordinator session (space:chat:${spaceId})
-	sessionType?:
-		| 'room_chat'
-		| 'planner'
-		| 'coder'
-		| 'leader'
-		| 'general'
-		| 'worker'
-		| 'lobby'
-		| 'space_chat'
-		| 'neo';
+	// - 'neo': Neo global agent session
+	sessionType?: 'worker' | 'lobby' | 'space_chat' | 'neo';
 	pairedSessionId?: string;
 	parentSessionId?: string;
 	currentTaskId?: string;
@@ -99,36 +85,26 @@ export class SessionLifecycle {
 	 * Create a new session
 	 */
 	async create(params: CreateSessionParams): Promise<string> {
-		// Use provided sessionId or generate a new one (for room chat sessions)
+		// Use provided sessionId or generate a new one
 		const sessionId = params.sessionId || generateUUID();
 		const sessionType = params.sessionType ?? 'worker';
 
-		// Room-scoped session types must always provide an explicit workspacePath.
-		// Non-room sessions are allowed to be unbound (workspacePath = null).
-		const ROOM_SCOPED_SESSION_TYPES = [
-			'room_chat',
-			'planner',
-			'coder',
-			'leader',
-			'general',
-			'space_chat',
-		] as const;
+		// Session types that require a workspacePath.
+		// Non-scoped sessions are allowed to be unbound (workspacePath = null).
+		const WORKSPACE_REQUIRING_SESSION_TYPES = ['space_chat'] as const;
 		const providedWorkspacePath = params.workspacePath?.trim();
 		const baseWorkspacePath = providedWorkspacePath ? providedWorkspacePath : undefined;
 		if (
-			(ROOM_SCOPED_SESSION_TYPES as readonly string[]).includes(sessionType) &&
+			(WORKSPACE_REQUIRING_SESSION_TYPES as readonly string[]).includes(sessionType) &&
 			baseWorkspacePath === undefined
 		) {
-			throw new Error(
-				`Room-scoped session (type: '${sessionType}') must have explicit workspacePath`
-			);
+			throw new Error(`Session type '${sessionType}' requires explicit workspacePath`);
 		}
 
 		// Guard: when no workspace path is available (daemon started without --workspace and
 		// session provides no explicit workspacePath), skip git-support detection and worktree
-		// creation. This protects non-room sessions (e.g., spaces_global, neo) that
-		// intentionally omit workspacePath and would otherwise cause detectGitSupport(undefined)
-		// to crash.
+		// creation. This protects sessions that intentionally omit workspacePath
+		// (e.g., neo) from causing detectGitSupport(undefined) to crash.
 		let gitSupport: Awaited<ReturnType<typeof this.worktreeManager.detectGitSupport>> | undefined;
 		let isGitRepo = false;
 		if (baseWorkspacePath !== undefined) {
@@ -221,7 +197,7 @@ export class SessionLifecycle {
 			createdAt: new Date().toISOString(),
 			lastActiveAt: new Date().toISOString(),
 			status: sessionStatus,
-			// Session type: defaults to 'worker', can be set to 'room_chat', 'planner', 'coder', 'leader', 'general', or 'lobby'
+			// Session type: defaults to 'worker', can be set to 'lobby', 'space_chat', 'space_task_agent', or 'neo'
 			type: sessionType,
 			config: {
 				model: modelId, // Use validated model ID
@@ -275,11 +251,10 @@ export class SessionLifecycle {
 			// Worktree set during creation (if enabled)
 			worktree: worktreeMetadata,
 			gitBranch: currentBranch ?? undefined,
-			// Context for room/lobby/space sessions (includes links between chat and self sessions)
+			// Context for lobby/space sessions (includes links between chat and self sessions)
 			context:
-				params.roomId || params.lobbyId || params.spaceId
+				params.lobbyId || params.spaceId
 					? {
-							...(params.roomId && { roomId: params.roomId }),
 							...(params.lobbyId && { lobbyId: params.lobbyId }),
 							...(params.spaceId && { spaceId: params.spaceId }),
 						}

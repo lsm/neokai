@@ -26,6 +26,7 @@ export class MinimaxProvider implements Provider {
 	readonly capabilities: ProviderCapabilities = {
 		streaming: true,
 		extendedThinking: false,
+		thinkingModes: 'off',
 		maxContextWindow: 200000,
 		functionCalling: true,
 		vision: true,

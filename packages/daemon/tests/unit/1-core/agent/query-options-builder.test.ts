@@ -4,22 +4,25 @@
  * Tests SDK query options construction from session config.
  */
 
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { Session } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
+import type { Provider } from '@neokai/shared/provider';
+import { homedir } from 'os';
 import {
-	QueryOptionsBuilder,
-	CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
 	buildProviderSettings,
+	CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
+	ensureAgentTools,
+	QueryOptionsBuilder,
 	type QueryOptionsBuilderContext,
 } from '../../../../src/lib/agent/query-options-builder';
-import type { Session } from '@neokai/shared';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
-import { generateUUID } from '@neokai/shared';
-import { homedir } from 'os';
-import { createTables } from '../../../../src/storage/schema';
-import { SkillRepository } from '../../../../src/storage/repositories/skill-repository';
-import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import { SkillsManager } from '../../../../src/lib/skills-manager';
+import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
+import { SkillRepository } from '../../../../src/storage/repositories/skill-repository';
+import { createTables } from '../../../../src/storage/schema';
 import { noOpReactiveDb } from '../../../helpers/reactive-database';
 
 describe('QueryOptionsBuilder', () => {
@@ -300,15 +303,11 @@ describe('QueryOptionsBuilder', () => {
 		});
 
 		it('should add thinking tokens based on thinkingLevel', async () => {
-			// Use 'ultrathink' which is a known valid thinking level
-			mockSession.config.thinkingLevel = 'ultrathink';
+			mockSession.config.thinkingLevel = 'think24k';
 			const options = await builder.build();
 			const result = builder.addSessionStateOptions(options);
 
-			// THINKING_LEVEL_TOKENS maps ultrathink to a specific value
-			// Note: if the level doesn't exist in the map, it returns undefined
-			// This test verifies the mechanism works
-			expect(result).toBeDefined();
+			expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 24000 });
 		});
 
 		it('should use global thinking level when session has no override', async () => {
@@ -319,11 +318,56 @@ describe('QueryOptionsBuilder', () => {
 			expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
 		});
 
-		it('should use auto as default thinking level when no session or global override exists', async () => {
+		it('should explicitly disable thinking for thinking-capable providers when level is off', async () => {
 			const options = await builder.build();
 			const result = builder.addSessionStateOptions(options);
 
-			expect(result.thinking).toEqual({ type: 'adaptive' });
+			// Default provider (anthropic) supports thinking — 'off' must emit explicit disable
+			expect(result.thinking).toEqual({ type: 'disabled' });
+		});
+
+		it('should omit thinking config for providers with thinkingModes=off', async () => {
+			mockSession.config.provider = 'minimax';
+			mockSession.config.thinkingLevel = 'think32k';
+			// Pass minimal options directly — avoid build() because it instantiates
+			// the provider context and MiniMax lacks an API key in CI.
+			const result = builder.addSessionStateOptions(
+				{} as import('@anthropic-ai/claude-agent-sdk').Options
+			);
+
+			expect(result.thinking).toBeUndefined();
+		});
+
+		it('should preserve selected budget for providers with thinkingModes=on', async () => {
+			mockSession.config.provider = 'kimi';
+			mockSession.config.thinkingLevel = 'think8k';
+			// Pass minimal options directly — avoid build() because it instantiates
+			// the provider context and Kimi lacks an API key in CI.
+			const result = builder.addSessionStateOptions(
+				{} as import('@anthropic-ai/claude-agent-sdk').Options
+			);
+
+			expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
+		});
+
+		it('should explicitly disable thinking for kimi when level is off', async () => {
+			mockSession.config.provider = 'kimi';
+			mockSession.config.thinkingLevel = 'off';
+			const result = builder.addSessionStateOptions(
+				{} as import('@anthropic-ai/claude-agent-sdk').Options
+			);
+
+			expect(result.thinking).toEqual({ type: 'disabled' });
+		});
+
+		it('should omit thinking config for providers with thinkingModes=off even when level is off', async () => {
+			mockSession.config.provider = 'minimax';
+			mockSession.config.thinkingLevel = 'off';
+			const result = builder.addSessionStateOptions(
+				{} as import('@anthropic-ai/claude-agent-sdk').Options
+			);
+
+			expect(result.thinking).toBeUndefined();
 		});
 	});
 
@@ -452,88 +496,6 @@ describe('QueryOptionsBuilder', () => {
 		it('should always emit empty settingSources', async () => {
 			const options = await builder.build();
 			expect(options.settingSources).toEqual([]);
-		});
-	});
-
-	describe('room session restrictions', () => {
-		it('should preserve room MCP servers while enforcing strict MCP config', async () => {
-			mockSession.type = 'room_chat';
-			mockSession.config.mcpServers = {
-				'room-agent-tools': { command: 'test-command' },
-			};
-
-			const options = await builder.build();
-			expect(options.mcpServers).toEqual({
-				'room-agent-tools': { command: 'test-command' },
-			});
-			expect(options.strictMcpConfig).toBe(true);
-			expect(options.settingSources).toEqual([]);
-		});
-
-		it('should enforce room built-in tool allowlist including Bash', async () => {
-			mockSession.type = 'room_chat';
-			const options = await builder.build();
-			expect(options.tools).toEqual([
-				'Read',
-				'Glob',
-				'Grep',
-				'Bash',
-				'WebFetch',
-				'WebSearch',
-				'ToolSearch',
-				'AskUserQuestion',
-				'Skill',
-			]);
-			expect(options.allowedTools).toEqual(
-				expect.arrayContaining([
-					'Read',
-					'Glob',
-					'Grep',
-					'Bash',
-					'WebFetch',
-					'WebSearch',
-					'ToolSearch',
-					'AskUserQuestion',
-					'Skill',
-				])
-			);
-		});
-
-		it('should not include Write/Edit/NotebookEdit in room tool allowlist', async () => {
-			mockSession.type = 'room_chat';
-			const options = await builder.build();
-			expect(options.disallowedTools).toEqual(
-				expect.arrayContaining(['Edit', 'Write', 'NotebookEdit'])
-			);
-			expect(options.tools).not.toContain('Edit');
-			expect(options.tools).not.toContain('Write');
-			expect(options.tools).not.toContain('NotebookEdit');
-		});
-
-		it('should auto-allow wildcards for all configured MCP servers', async () => {
-			mockSession.type = 'room_chat';
-			mockSession.config.mcpServers = {
-				'room-agent-tools': { command: 'room-cmd' },
-				github: { command: 'github-cmd' },
-			};
-
-			const options = await builder.build();
-			expect(options.allowedTools).toEqual(
-				expect.arrayContaining(['room-agent-tools__*', 'github__*'])
-			);
-		});
-
-		it('should disable Claude Code preset system prompt for room sessions', async () => {
-			mockSession.type = 'room_chat';
-			const options = await builder.build();
-			expect(options.systemPrompt).toBeUndefined();
-		});
-
-		it('should preserve a custom string system prompt for room sessions', async () => {
-			mockSession.type = 'room_chat';
-			mockSession.config.systemPrompt = 'You are the Room Agent.';
-			const options = await builder.build();
-			expect(options.systemPrompt).toBe('You are the Room Agent.');
 		});
 	});
 
@@ -1116,6 +1078,212 @@ describe('QueryOptionsBuilder', () => {
 		});
 	});
 
+	describe('provider-specific agent tool exposure', () => {
+		afterEach(() => {
+			resetProviderRegistry();
+		});
+
+		function registerCodexProvider(): void {
+			resetProviderRegistry();
+			const registry = getProviderRegistry();
+			registry.register({
+				id: 'anthropic-codex',
+				displayName: 'OpenAI (Codex)',
+				capabilities: {
+					streaming: true,
+					extendedThinking: false,
+					maxContextWindow: 272000,
+					functionCalling: true,
+					vision: true,
+				},
+				isAvailable: () => true,
+				getModels: async () => [],
+				ownsModel: () => false,
+				buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+			} as Provider);
+		}
+
+		describe('ensureAgentTools (pure function)', () => {
+			it('returns undefined unchanged for Anthropic provider', () => {
+				const result = ensureAgentTools(
+					undefined,
+					{ Coordinator: { description: 'c', prompt: 'p' } },
+					'anthropic',
+					'general'
+				);
+				expect(result).toBeUndefined();
+			});
+
+			it('returns undefined unchanged for anthropic-copilot provider', () => {
+				const result = ensureAgentTools(
+					undefined,
+					{ Coordinator: { description: 'c', prompt: 'p' } },
+					'anthropic-copilot',
+					'general'
+				);
+				expect(result).toBeUndefined();
+			});
+
+			it('expands undefined to full array for anthropic-codex provider', () => {
+				const result = ensureAgentTools(
+					undefined,
+					{ Coordinator: { description: 'c', prompt: 'p' } },
+					'anthropic-codex',
+					'general'
+				);
+				expect(Array.isArray(result)).toBe(true);
+				expect(result).toContain('Task');
+				expect(result).toContain('TaskOutput');
+				expect(result).toContain('TaskStop');
+				expect(result).toContain('Read');
+				expect(result).toContain('Write');
+			});
+
+			it('expands undefined to full array for glm provider', () => {
+				const result = ensureAgentTools(
+					undefined,
+					{ Coordinator: { description: 'c', prompt: 'p' } },
+					'glm',
+					'general'
+				);
+				expect(Array.isArray(result)).toBe(true);
+				expect(result).toContain('Task');
+			});
+
+			it('appends missing agent tools to explicit array for non-native providers', () => {
+				const result = ensureAgentTools(
+					['Read', 'Write'],
+					{ Coordinator: { description: 'c', prompt: 'p' } },
+					'anthropic-codex',
+					'general'
+				);
+				expect(result).toEqual(['Read', 'Write', 'Task', 'TaskOutput', 'TaskStop']);
+			});
+
+			it('does not duplicate existing agent tools in explicit array for non-native providers', () => {
+				const result = ensureAgentTools(
+					['Read', 'Task', 'TaskOutput', 'TaskStop'],
+					{ Coordinator: { description: 'c', prompt: 'p' } },
+					'anthropic-codex',
+					'general'
+				);
+				expect(result).toEqual(['Read', 'Task', 'TaskOutput', 'TaskStop']);
+			});
+
+			it('preserves explicit array unchanged for Anthropic provider', () => {
+				const result = ensureAgentTools(
+					['Read', 'Write'],
+					{ Coordinator: { description: 'c', prompt: 'p' } },
+					'anthropic',
+					'general'
+				);
+				expect(result).toEqual(['Read', 'Write']);
+			});
+
+			it('preserves explicit array unchanged for anthropic-copilot provider', () => {
+				const result = ensureAgentTools(
+					['Read', 'Write'],
+					{ Coordinator: { description: 'c', prompt: 'p' } },
+					'anthropic-copilot',
+					'general'
+				);
+				expect(result).toEqual(['Read', 'Write']);
+			});
+
+			it('leaves space_chat sessions untouched even with agents', () => {
+				const result = ensureAgentTools(
+					undefined,
+					{ Coordinator: { description: 'c', prompt: 'p' } },
+					'anthropic-codex',
+					'space_chat'
+				);
+				expect(result).toBeUndefined();
+			});
+
+			it('returns original tools when no agents are configured', () => {
+				const result = ensureAgentTools(undefined, undefined, 'anthropic-codex', 'general');
+				expect(result).toBeUndefined();
+			});
+
+			it('preserves preset objects unchanged', () => {
+				const preset = { type: 'preset' as const, preset: 'claude_code' as const };
+				const result = ensureAgentTools(
+					preset,
+					{ Coordinator: { description: 'c', prompt: 'p' } },
+					'anthropic-codex',
+					'general'
+				);
+				expect(result).toEqual(preset);
+			});
+		});
+
+		describe('build() with non-Anthropic provider', () => {
+			it('expands tools to full array for OpenAI (codex) when agents are configured', async () => {
+				registerCodexProvider();
+				mockSession.config.provider = 'anthropic-codex';
+				mockSession.config.model = 'gpt-5.5';
+				mockSession.config.agents = {
+					'test-agent': {
+						description: 'Test agent',
+						prompt: 'Test prompt',
+					},
+				};
+				const codexBuilder = new QueryOptionsBuilder(mockContext);
+				const options = await codexBuilder.build();
+
+				expect(Array.isArray(options.tools)).toBe(true);
+				expect(options.tools).toContain('Task');
+				expect(options.tools).toContain('TaskOutput');
+				expect(options.tools).toContain('TaskStop');
+				expect(options.tools).toContain('Read');
+				expect(options.tools).toContain('Write');
+			});
+
+			it('expands tools for OpenAI coordinator mode', async () => {
+				registerCodexProvider();
+				mockSession.config.provider = 'anthropic-codex';
+				mockSession.config.model = 'gpt-5.5';
+				mockSession.config.coordinatorMode = true;
+				const codexBuilder = new QueryOptionsBuilder(mockContext);
+				const options = await codexBuilder.build();
+
+				expect(Array.isArray(options.tools)).toBe(true);
+				expect(options.tools).toContain('Task');
+				expect(options.tools).toContain('TaskOutput');
+				expect(options.tools).toContain('TaskStop');
+			});
+
+			it('leaves tools undefined for Anthropic when agents are configured', async () => {
+				// Default provider is anthropic; no registry setup needed.
+				mockSession.config.agents = {
+					'test-agent': {
+						description: 'Test agent',
+						prompt: 'Test prompt',
+					},
+				};
+				const options = await builder.build();
+				expect(options.tools).toBeUndefined();
+			});
+
+			it('preserves explicit tools array and appends missing agent tools for OpenAI', async () => {
+				registerCodexProvider();
+				mockSession.config.provider = 'anthropic-codex';
+				mockSession.config.model = 'gpt-5.5';
+				mockSession.config.sdkToolsPreset = ['Read', 'Write', 'Edit'];
+				mockSession.config.agents = {
+					'test-agent': {
+						description: 'Test agent',
+						prompt: 'Test prompt',
+					},
+				};
+				const codexBuilder = new QueryOptionsBuilder(mockContext);
+				const options = await codexBuilder.build();
+
+				expect(options.tools).toEqual(['Read', 'Write', 'Edit', 'Task', 'TaskOutput', 'TaskStop']);
+			});
+		});
+	});
+
 	describe('file checkpointing configuration', () => {
 		it('should enable file checkpointing by default', async () => {
 			const options = await builder.build();
@@ -1366,9 +1534,9 @@ describe('QueryOptionsBuilder', () => {
 			const mockSkillsManager = {
 				getEnabledSkills: mock(() => [enabledSkills[1]]),
 			};
-			mockSession.type = 'room_chat';
+			mockSession.type = 'space_chat';
 			mockSession.config.mcpServers = {
-				'room-agent-tools': { command: 'room-cmd' },
+				'space-agent-tools': { command: 'space-cmd' },
 			};
 			const context: QueryOptionsBuilderContext = {
 				session: mockSession,
@@ -1381,7 +1549,7 @@ describe('QueryOptionsBuilder', () => {
 			const builder = new QueryOptionsBuilder(context);
 			const options = await builder.build();
 
-			// strictMcpConfig should be true for room_chat
+			// strictMcpConfig should be true for space_chat
 			expect(options.strictMcpConfig).toBe(true);
 			// Skill-injected server must be present in mcpServers so strictMcpConfig doesn't block it
 			expect(options.mcpServers!['test-search']).toEqual({
@@ -1389,8 +1557,8 @@ describe('QueryOptionsBuilder', () => {
 				args: ['-y', 'test-mcp'],
 				env: { TEST_API_KEY: 'test-key' },
 			});
-			// Original room server must still be present
-			expect(options.mcpServers!['room-agent-tools']).toEqual({ command: 'room-cmd' });
+			// Original space server must still be present
+			expect(options.mcpServers!['space-agent-tools']).toEqual({ command: 'space-cmd' });
 			// Skill MCP server wildcard should be auto-allowed
 			expect(options.allowedTools).toContain('test-search__*');
 		});
@@ -2111,27 +2279,21 @@ describe('QueryOptionsBuilder', () => {
 	// Task 7.1 regression: Skill/WebSearch/WebFetch tools must remain available after Skills registry changes
 	describe('regression: Skill, WebSearch, WebFetch tool availability (Task 7.1)', () => {
 		beforeEach(() => {
-			mockSession.type = 'room_chat';
+			mockSession.type = 'space_chat';
 		});
 
-		it('room_chat sessions include Skill in tools list', async () => {
-			const options = await new QueryOptionsBuilder(mockContext).build();
-			expect(options.tools).toContain('Skill');
-		});
-
-		it('room_chat sessions include WebSearch in tools list', async () => {
+		it('space_chat sessions include WebSearch in tools list', async () => {
 			const options = await new QueryOptionsBuilder(mockContext).build();
 			expect(options.tools).toContain('WebSearch');
 		});
 
-		it('room_chat sessions include WebFetch in tools list', async () => {
+		it('space_chat sessions include WebFetch in tools list', async () => {
 			const options = await new QueryOptionsBuilder(mockContext).build();
 			expect(options.tools).toContain('WebFetch');
 		});
 
-		it('room_chat allowedTools includes Skill, WebSearch, WebFetch', async () => {
+		it('space_chat allowedTools includes WebSearch, WebFetch', async () => {
 			const options = await new QueryOptionsBuilder(mockContext).build();
-			expect(options.allowedTools).toContain('Skill');
 			expect(options.allowedTools).toContain('WebSearch');
 			expect(options.allowedTools).toContain('WebFetch');
 		});

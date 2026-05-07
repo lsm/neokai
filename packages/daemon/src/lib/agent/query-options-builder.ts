@@ -19,40 +19,45 @@
  */
 
 import type {
-	Options,
 	CanUseTool,
 	HookCallback,
+	Options,
 	PreToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
-	Session,
-	ThinkingLevel,
-	ThinkingConfig,
-	SystemPromptConfig,
-	ClaudeCodePreset,
 	AgentDefinition,
+	AppMcpServerSourceType,
+	ClaudeCodePreset,
+	DeclarativeToolGuard,
+	Session,
+	SkillEnablementOverride,
+	SystemPromptConfig,
+	ThinkingConfig,
+	ThinkingLevel,
 } from '@neokai/shared';
-import { getCoordinatorAgents } from './coordinator-agents';
-import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
-import type { PermissionMode } from '@neokai/shared/types/settings';
+import {
+	THINKING_LEVEL_TOKENS,
+	normalizeThinkingLevel,
+	PROVIDER_THINKING_MODES,
+} from '@neokai/shared';
 import type { McpServerConfig } from '@neokai/shared/types/sdk-config';
-import type { AppMcpServerSourceType } from '@neokai/shared';
-import type { SkillEnablementOverride, DeclarativeToolGuard } from '@neokai/shared';
-import type { SettingsManager } from '../settings-manager';
-import type { SkillsManager } from '../skills-manager';
+import type { PermissionMode } from '@neokai/shared/types/settings';
+import { homedir } from 'os';
+import { join } from 'path';
+import type { Database } from '../../storage/database';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
+import { requireModelContextWindow } from '../providers/codex-anthropic-bridge/model-context-windows';
 import { getProviderContextManager } from '../providers/factory.js';
-import { resolveSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.js';
+import type { SettingsManager } from '../settings-manager';
+import type { SkillsManager } from '../skills-manager';
 import {
 	builtinSkillPluginPath,
 	defaultBuiltinSkillPluginRoot,
 } from './builtin-skill-plugin-wrapper';
-import { homedir } from 'os';
-import { join } from 'path';
-import type { Database } from '../../storage/database';
-import { requireModelContextWindow } from '../providers/codex-anthropic-bridge/model-context-windows';
+import { getCoordinatorAgents } from './coordinator-agents';
+import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 
 export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
 
@@ -90,6 +95,88 @@ function compileToolGuard(guard: DeclarativeToolGuard): HookCallback {
 			},
 		};
 	};
+}
+
+/**
+ * Built-in tools exposed when expanding an undefined tool list for
+ * non-Anthropic providers. Matches the coordinator-mode allowlist.
+ */
+const FULL_BUILTIN_TOOL_LIST = [
+	'Read',
+	'Write',
+	'Edit',
+	'Bash',
+	'Grep',
+	'Glob',
+	'WebFetch',
+	'WebSearch',
+	'Task',
+	'TaskOutput',
+	'TaskStop',
+	'NotebookEdit',
+	'TodoWrite',
+	'AskUserQuestion',
+	'EnterPlanMode',
+	'ExitPlanMode',
+	'Skill',
+	'ToolSearch',
+];
+
+/**
+ * Agent invocation tools that must be present when agents are configured.
+ */
+const AGENT_INVOCATION_TOOLS = ['Task', 'TaskOutput', 'TaskStop'];
+
+/**
+ * Providers whose native SDK integration already includes agent tools in the
+ * function schema when agents are configured. All other providers need an
+ * explicit tool list because the SDK preset may omit Task/Agent tools.
+ *
+ * anthropic        — native Anthropic API, SDK handles agent tools correctly.
+ * anthropic-copilot — Copilot bridge still routes to Anthropic API.
+ */
+const NATIVE_AGENT_TOOL_PROVIDERS = ['anthropic', 'anthropic-copilot'];
+
+/**
+ * Ensure agent invocation tools are present in the tool list when agents
+ * are configured. Non-Anthropic SDK presets may omit Task from the function
+ * schema even though the system prompt still describes agents, creating a
+ * mismatch where the model sees agent descriptions but has no callable tool
+ * to invoke them.
+ *
+ * @param tools      Current tools value (array, preset, undefined)
+ * @param agents     Configured agents map
+ * @param providerId Resolved provider identifier
+ * @param sessionType Session type (space_chat is exempt)
+ * @returns Updated tools value
+ */
+export function ensureAgentTools(
+	tools: Options['tools'],
+	agents: Options['agents'],
+	providerId: string,
+	sessionType: string
+): Options['tools'] {
+	const hasAgentsConfigured = agents && Object.keys(agents).length > 0;
+	if (!hasAgentsConfigured || sessionType === 'space_chat') {
+		return tools;
+	}
+
+	if (Array.isArray(tools)) {
+		if (NATIVE_AGENT_TOOL_PROVIDERS.includes(providerId)) {
+			return tools;
+		}
+		const missing = AGENT_INVOCATION_TOOLS.filter((t) => !(tools as string[]).includes(t));
+		if (missing.length > 0) {
+			return [...(tools as string[]), ...missing];
+		}
+		return tools;
+	}
+
+	if (!tools && !NATIVE_AGENT_TOOL_PROVIDERS.includes(providerId)) {
+		return [...FULL_BUILTIN_TOOL_LIST];
+	}
+
+	return tools;
 }
 
 /**
@@ -341,62 +428,6 @@ export class QueryOptionsBuilder {
 			canUseTool: this.canUseTool,
 		};
 
-		// ============ Room Session Restrictions ============
-		// Room chat sessions are orchestrators — they have read tools, Bash for diagnostics,
-		// and explicitly configured MCP servers (room-agent-tools + project MCP servers).
-		// File editing tools (Write/Edit/NotebookEdit) are excluded.
-		if (this.ctx.session.type === 'room_chat') {
-			const roomAllowedBuiltinTools = [
-				'Read',
-				'Glob',
-				'Grep',
-				'Bash',
-				'WebFetch',
-				'WebSearch',
-				'ToolSearch',
-				'AskUserQuestion',
-				'Skill',
-			];
-			const restrictedBuiltinTools = [
-				'Task',
-				'TaskOutput',
-				'TaskStop',
-				'Edit',
-				'Write',
-				'NotebookEdit',
-			];
-			// Room chat must not use Claude Code preset prompt by default.
-			const systemPrompt = queryOptions.systemPrompt;
-			if (
-				typeof systemPrompt === 'object' &&
-				systemPrompt !== null &&
-				(systemPrompt as ClaudeCodePreset).type === 'preset' &&
-				(systemPrompt as ClaudeCodePreset).preset === 'claude_code'
-			) {
-				queryOptions.systemPrompt = undefined;
-			}
-
-			// Restrict room chat to coordinator-appropriate built-in tool set.
-			queryOptions.tools = roomAllowedBuiltinTools;
-
-			// Auto-allow all explicitly configured MCP server tools (room-agent-tools + project MCP servers).
-			const mcpServerWildcards = Object.keys(queryOptions.mcpServers ?? {}).map(
-				(name) => `${name}__*`
-			);
-			queryOptions.allowedTools = [
-				...new Set([
-					...(queryOptions.allowedTools ?? []),
-					...roomAllowedBuiltinTools,
-					...mcpServerWildcards,
-				]),
-			];
-
-			queryOptions.disallowedTools = [
-				...new Set([...(queryOptions.disallowedTools ?? []), ...restrictedBuiltinTools]),
-			];
-			// strictMcpConfig + settingSources are already set unconditionally above.
-		}
-
 		// ============ Space Chat Session Restrictions ============
 		// Space chat sessions are read-only coordinators — they can read files and run
 		// diagnostics but must not create or modify files.  File editing tools
@@ -480,29 +511,17 @@ export class QueryOptionsBuilder {
 			queryOptions.agents = agents as Options['agents'];
 
 			// Allow all tools at session level so sub-agents can use them under dontAsk
-			const allTools = [
-				'Task',
-				'TaskOutput',
-				'TaskStop',
-				'Bash',
-				'Read',
-				'Edit',
-				'Write',
-				'Glob',
-				'Grep',
-				'NotebookEdit',
-				'WebFetch',
-				'WebSearch',
-				'TodoWrite',
-				'AskUserQuestion',
-				'EnterPlanMode',
-				'ExitPlanMode',
-				'Skill',
-				'ToolSearch',
-			];
 			const existing = queryOptions.allowedTools ?? [];
-			queryOptions.allowedTools = [...new Set([...existing, ...allTools])];
+			queryOptions.allowedTools = [...new Set([...existing, ...FULL_BUILTIN_TOOL_LIST])];
 		}
+
+		// ============ Provider-specific agent tool exposure ============
+		queryOptions.tools = ensureAgentTools(
+			queryOptions.tools,
+			queryOptions.agents,
+			providerId,
+			this.ctx.session.type ?? 'worker'
+		);
 
 		// Remove undefined values to use SDK defaults
 		const cleanedOptions = Object.fromEntries(
@@ -513,17 +532,30 @@ export class QueryOptionsBuilder {
 	}
 
 	/**
-	 * Convert ThinkingLevel enum to new thinking option
-	 * Maps the UI-friendly enum to SDK's new thinking API
+	 * Convert ThinkingLevel enum to SDK thinking option.
+	 * Maps the UI-friendly enum to SDK's new thinking API.
+	 * Provider-aware: returns undefined when thinking should be disabled.
 	 */
-	private thinkingLevelToThinkingConfig(level: ThinkingLevel): ThinkingConfig {
-		const tokens = THINKING_LEVEL_TOKENS[level];
-
-		if (tokens === undefined) {
-			// 'auto' mode
-			return { type: 'adaptive' };
+	private thinkingLevelToThinkingConfig(
+		level: ThinkingLevel,
+		thinkingModes: 'off' | 'on' | 'granular'
+	): ThinkingConfig | undefined {
+		// Providers without thinking support: never emit thinking config
+		if (thinkingModes === 'off') {
+			return undefined;
 		}
 
+		const tokens = THINKING_LEVEL_TOKENS[level];
+
+		// 'off' level: explicitly disable thinking so the SDK does not fall back
+		// to its default behavior of enabling thinking when the property is absent.
+		if (tokens === undefined) {
+			return { type: 'disabled' };
+		}
+
+		// Preserve the selected budget for all providers that support thinking.
+		// `thinkingModes === 'on'` only affects which UI options are shown (binary
+		// on/off) — the daemon still respects the stored token budget.
 		return { type: 'enabled', budgetTokens: tokens };
 	}
 
@@ -547,12 +579,25 @@ export class QueryOptionsBuilder {
 			result.resumeSessionAt = resumeSessionAt;
 		}
 
+		// Resolve provider thinking mode so we can skip thinking config for
+		// providers that do not support it. Use the static map rather than
+		// instantiating a provider context to avoid API-key failures in CI.
+		const providerId = this.ctx.session.config.provider;
+		const thinkingModes =
+			PROVIDER_THINKING_MODES[providerId as keyof typeof PROVIDER_THINKING_MODES] ?? 'granular';
+
 		// Add thinking configuration based on the session override, falling back to the app default.
+		// Backward compatibility: legacy 'auto' is treated as 'off'.
 		const globalSettings = this.ctx.settingsManager.getGlobalSettings();
-		const thinkingLevel = (this.ctx.session.config.thinkingLevel ??
-			globalSettings.thinkingLevel ??
-			'auto') as ThinkingLevel;
-		result.thinking = this.thinkingLevelToThinkingConfig(thinkingLevel);
+		const thinkingLevel = normalizeThinkingLevel(
+			this.ctx.session.config.thinkingLevel ?? globalSettings.thinkingLevel
+		);
+		const thinkingConfig = this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
+		if (thinkingConfig) {
+			result.thinking = thinkingConfig;
+		} else {
+			delete (result as Record<string, unknown>).thinking;
+		}
 
 		return result as Options;
 	}
