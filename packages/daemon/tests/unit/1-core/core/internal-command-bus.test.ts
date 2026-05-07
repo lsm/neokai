@@ -172,6 +172,24 @@ describe('InternalCommandBus', () => {
 			expect(() => bus.register('space.workflow.resume', async () => ({ ok: true }))).not.toThrow();
 			expect(bus.hasHandler('space.workflow.resume')).toBe(true);
 		});
+
+		it('should not remove a newer handler when a stale unsubscribe is called', async () => {
+			const unsubA = bus.register('space.workflow.resume', async () => ({
+				ok: true,
+				metadata: { version: 'A' },
+			}));
+			unsubA();
+
+			bus.register('space.workflow.resume', async () => ({ ok: true, metadata: { version: 'B' } }));
+
+			// Calling the old unsubscribe should not delete the new handler
+			unsubA();
+			expect(bus.hasHandler('space.workflow.resume')).toBe(true);
+
+			const result = await bus.dispatch('space.workflow.resume', { workflowRunId: 'wr-1' });
+			expect(result.ok).toBe(true);
+			expect(result.metadata).toEqual({ version: 'B' });
+		});
 	});
 
 	describe('clear', () => {

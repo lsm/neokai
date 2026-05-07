@@ -91,7 +91,10 @@ export class InternalCommandBus<TCommandMap extends object = Record<string, unkn
 		this.handlers.set(key, registered);
 
 		return () => {
-			this.handlers.delete(key);
+			const current = this.handlers.get(key);
+			if (current === registered) {
+				this.handlers.delete(key);
+			}
 		};
 	}
 
