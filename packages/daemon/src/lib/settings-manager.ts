@@ -57,9 +57,10 @@ export class SettingsManager {
 	 * Prepare file-only settings for a session.
 	 *
 	 * Writes settings to `.claude/settings.local.json` BEFORE the SDK starts.
-	 * The SDK never reads them anymore (`settingSources: []` is unconditional)
-	 * — they're written for tooling that inspects the file directly (e.g. the
-	 * Claude Code CLI when run by hand against the same workspace).
+	 * The SDK reads this file only when `local` is included in the session's
+	 * `settingSources` (configurable per session/space/agent/global). These
+	 * settings are also written for tooling that inspects the file directly
+	 * (e.g. the Claude Code CLI when run by hand against the same workspace).
 	 *
 	 * No SDK options are derived here. `QueryOptionsBuilder` constructs the
 	 * full Options object on its own.

@@ -289,7 +289,9 @@ export class QueryOptionsBuilder {
 		// Write file-only settings to .claude/settings.local.json before SDK starts
 		// (permission ask lists, sandbox excludedCommands, outputStyle, attribution).
 		// We no longer derive any SDK options from settings here — strictMcpConfig is
-		// always true and settingSources is always [] (M5: unified MCP registry).
+		// always true (MCP servers are fully controlled by the unified registry).
+		// settingSources is configurable per session/space/agent and defaults to
+		// ['user', 'project', 'local'] so CLAUDE.md and on-disk settings are loaded.
 		await this.ctx.settingsManager.prepareSDKOptions();
 
 		// Translate model ID for SDK compatibility using provider context
