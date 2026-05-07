@@ -73,6 +73,8 @@ export { runMigration111 } from './migrations';
 export { runMigration112 } from './migrations';
 // knip-ignore-next-line
 export { runMigration117 } from './migrations';
+// knip-ignore-next-line
+export { runMigration118 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -134,6 +136,9 @@ export function createTables(db: BunDatabase): void {
         timestamp TEXT NOT NULL,
         send_status TEXT DEFAULT 'consumed' CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
         origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'neo', 'system')),
+        is_renderable INTEGER NOT NULL DEFAULT 1,
+        is_terminal INTEGER NOT NULL DEFAULT 0,
+        parent_tool_use_id TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )
     `);
@@ -436,6 +441,24 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
+	// task_session_map — explicit lookup that resolves a `space_task` to the set
+	// of sessions whose `sdk_messages` contribute to its task-thread timeline.
+	// Maintained at write time by SpaceTaskRepository (task_agent leg) and
+	// NodeExecutionRepository (node_agent leg). Replaces the multi-CTE join chain
+	// the live-query handlers used to walk on every read.
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS task_session_map (
+        task_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('task_agent', 'node_agent')),
+        role TEXT NOT NULL,
+        label TEXT NOT NULL,
+        node_execution_id TEXT,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (task_id, session_id)
+      )
+    `);
+
 	db.exec(`
       CREATE TABLE IF NOT EXISTS app_mcp_servers (
         id TEXT PRIMARY KEY,
@@ -613,12 +636,24 @@ function createIndexes(db: BunDatabase): void {
       ON sdk_messages(session_id, timestamp DESC, id DESC)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool
       ON sdk_messages(session_id, json_extract(sdk_message, '$.parent_tool_use_id'))`);
+	// Plain B-tree index over the materialised parent_tool_use_id column —
+	// preferred over idx_sdk_messages_parent_tool for new lookups.
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id
+      ON sdk_messages(session_id, parent_tool_use_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal
+      ON sdk_messages(session_id, is_renderable, is_terminal, timestamp, id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_uuid_status
       ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
       ON sdk_messages(message_type, message_subtype)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status
       ON sdk_messages(session_id, send_status)`);
+
+	// task_session_map index — supports lookups from a session_id back to the
+	// task it belongs to (used by the message-routing safety paths).
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_task_session_map_session ON task_session_map(session_id)`
+	);
 
 	// Room indexes
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);

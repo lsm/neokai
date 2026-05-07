@@ -555,6 +555,17 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 117: Add disabled column to space_workflows.
 	//   When true, the workflow cannot be selected for new tasks.
 	runMigration117(db);
+
+	// Migration 118: Replace task-thread projection with schema fix.
+	//   - Add derived columns to sdk_messages: is_renderable, is_terminal, parent_tool_use_id.
+	//     These are populated at write time so live-query handlers can read them
+	//     without re-parsing JSON or running expensive json_each filters.
+	//   - Create task_session_map: a per-task lookup that resolves task_id to the
+	//     set of sessions that contribute messages to its timeline (the Task Agent
+	//     session plus every node-agent session). Maintained at write time by
+	//     SpaceTaskRepository and NodeExecutionRepository.
+	//   - Backfill both new structures from the existing schema.
+	runMigration118(db);
 }
 
 /**
@@ -7968,4 +7979,169 @@ export function runMigration117(db: BunDatabase): void {
 	if (columns.includes('disabled')) return;
 
 	db.exec(`ALTER TABLE space_workflows ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`);
+}
+
+/**
+ * Migration 118: Replace the task-thread projection-table approach with a schema
+ * fix.
+ *
+ * Two parallel concerns:
+ *
+ * 1. Derived columns on `sdk_messages`. The live-query handlers used to compute
+ *    `is_renderable`, `is_terminal`, and `parent_tool_use_id` inline via
+ *    `json_extract` / `json_each` on every read. Materialising them at write
+ *    time keeps the live-query SQL flat and lets a plain B-tree index serve
+ *    `parent_tool_use_id` lookups instead of a function index.
+ *
+ * 2. `task_session_map` table. Mapping a `space_task` to its contributing
+ *    sessions used to require a five-CTE join (target_task → orchestration →
+ *    node_executions → space_agents → all_sessions). Replacing it with a small
+ *    explicit lookup table that the repositories maintain on write removes the
+ *    join entirely from the hot read path.
+ *
+ * The migration is idempotent end-to-end:
+ * - column adds check `tableColumnNames`
+ * - the backfill recomputes derived columns regardless of prior state (the work
+ *   is deterministic from `sdk_message` JSON)
+ * - `CREATE TABLE IF NOT EXISTS` and `INSERT OR IGNORE` make the
+ *   task_session_map seed safe to re-run.
+ */
+export function runMigration118(db: BunDatabase): void {
+	// Step 1: add derived columns to sdk_messages.
+	if (tableExists(db, 'sdk_messages')) {
+		const columns = tableColumnNames(db, 'sdk_messages');
+		if (!columns.includes('is_renderable')) {
+			db.exec(`ALTER TABLE sdk_messages ADD COLUMN is_renderable INTEGER NOT NULL DEFAULT 1`);
+		}
+		if (!columns.includes('is_terminal')) {
+			db.exec(`ALTER TABLE sdk_messages ADD COLUMN is_terminal INTEGER NOT NULL DEFAULT 0`);
+		}
+		if (!columns.includes('parent_tool_use_id')) {
+			db.exec(`ALTER TABLE sdk_messages ADD COLUMN parent_tool_use_id TEXT`);
+		}
+
+		// Backfill derived columns. The arithmetic is deterministic from
+		// sdk_message JSON, so re-running is safe.
+		//
+		// is_terminal mirrors message_type = 'result'.
+		// is_renderable encodes the same predicate the compact-feed used to
+		//   apply at read time:
+		//     - user rows whose content array contains any tool_result block
+		//       render as null in the compact feed → is_renderable = 0
+		//     - assistant rows with no tool_use, no non-empty text, and no
+		//       non-empty thinking blocks have nothing to display → 0
+		//     - everything else → 1 (the column DEFAULT)
+		db.exec(`
+			UPDATE sdk_messages
+			SET
+				is_terminal = CASE WHEN message_type = 'result' THEN 1 ELSE 0 END,
+				parent_tool_use_id = json_extract(sdk_message, '$.parent_tool_use_id'),
+				is_renderable = CASE
+					WHEN message_type = 'user'
+						AND json_type(sdk_message, '$.message.content') = 'array'
+						AND EXISTS (
+							SELECT 1
+							FROM json_each(json_extract(sdk_message, '$.message.content')) je
+							WHERE json_extract(je.value, '$.type') = 'tool_result'
+						)
+					THEN 0
+					WHEN message_type = 'assistant'
+						AND json_type(sdk_message, '$.message.content') = 'array'
+						AND NOT EXISTS (
+							SELECT 1
+							FROM json_each(json_extract(sdk_message, '$.message.content')) je
+							WHERE json_extract(je.value, '$.type') = 'tool_use'
+								OR (
+									json_extract(je.value, '$.type') = 'text'
+									AND TRIM(COALESCE(json_extract(je.value, '$.text'), '')) != ''
+								)
+								OR (
+									json_extract(je.value, '$.type') = 'thinking'
+									AND TRIM(COALESCE(json_extract(je.value, '$.thinking'), '')) != ''
+								)
+						)
+					THEN 0
+					ELSE 1
+				END
+		`);
+
+		// Plain B-tree index — supersedes the json_extract function index
+		// (idx_sdk_messages_parent_tool) for parent-tool lookups by reading the
+		// new column directly.
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id ON sdk_messages(session_id, parent_tool_use_id)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal ON sdk_messages(session_id, is_renderable, is_terminal, timestamp, id)`
+		);
+	}
+
+	// Step 2: create task_session_map.
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS task_session_map (
+			task_id TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			kind TEXT NOT NULL CHECK(kind IN ('task_agent', 'node_agent')),
+			role TEXT NOT NULL,
+			label TEXT NOT NULL,
+			node_execution_id TEXT,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (task_id, session_id)
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_task_session_map_session ON task_session_map(session_id)`
+	);
+
+	// Step 3: backfill task_session_map.
+	//
+	// Leg 1 — task_agent rows. Derived from space_tasks.task_agent_session_id.
+	if (tableExists(db, 'space_tasks') && tableExists(db, 'sessions')) {
+		db.exec(`
+			INSERT OR IGNORE INTO task_session_map (
+				task_id, session_id, kind, role, label, node_execution_id, created_at
+			)
+			SELECT
+				st.id AS task_id,
+				st.task_agent_session_id AS session_id,
+				'task_agent' AS kind,
+				'task-agent' AS role,
+				'Task Agent' AS label,
+				NULL AS node_execution_id,
+				COALESCE(st.created_at, strftime('%s','now') * 1000) AS created_at
+			FROM space_tasks st
+			JOIN sessions s ON s.id = st.task_agent_session_id
+			WHERE st.task_agent_session_id IS NOT NULL
+				AND s.type = 'space_task_agent'
+		`);
+	}
+
+	// Leg 2 — node_agent rows. Derived from node_executions joined with
+	// space_tasks via workflow_run_id, with the agent label resolved from
+	// space_agents when possible (fallback to node_executions.agent_name).
+	if (
+		tableExists(db, 'node_executions') &&
+		tableExists(db, 'space_tasks') &&
+		tableExists(db, 'space_agents')
+	) {
+		db.exec(`
+			INSERT OR IGNORE INTO task_session_map (
+				task_id, session_id, kind, role, label, node_execution_id, created_at
+			)
+			SELECT
+				st.id AS task_id,
+				ne.agent_session_id AS session_id,
+				'node_agent' AS kind,
+				ne.agent_name AS role,
+				COALESCE(sa.name, ne.agent_name, 'agent') AS label,
+				ne.id AS node_execution_id,
+				COALESCE(ne.created_at, strftime('%s','now') * 1000) AS created_at
+			FROM node_executions ne
+			JOIN space_tasks st
+				ON st.workflow_run_id IS NOT NULL
+				AND ne.workflow_run_id = st.workflow_run_id
+			LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+			WHERE ne.agent_session_id IS NOT NULL
+		`);
+	}
 }

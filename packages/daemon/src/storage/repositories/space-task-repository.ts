@@ -63,6 +63,10 @@ export class SpaceTaskRepository {
 					now,
 					now
 				);
+
+			if (params.taskAgentSessionId) {
+				this.upsertTaskAgentSessionMap(id, params.taskAgentSessionId, now);
+			}
 		});
 
 		insertTx();
@@ -244,6 +248,13 @@ export class SpaceTaskRepository {
 		if (params.taskAgentSessionId !== undefined) {
 			fields.push('task_agent_session_id = ?');
 			values.push(params.taskAgentSessionId ?? null);
+
+			// Keep task_session_map in lockstep with the canonical column.
+			if (params.taskAgentSessionId) {
+				this.upsertTaskAgentSessionMap(id, params.taskAgentSessionId, Date.now());
+			} else {
+				this.removeTaskAgentSessionMap(id);
+			}
 		}
 		if (params.startedAt !== undefined) {
 			fields.push('started_at = ?');
@@ -345,6 +356,7 @@ export class SpaceTaskRepository {
 		const stmt = this.db.prepare(`DELETE FROM space_tasks WHERE id = ?`);
 		const result = stmt.run(id);
 		if (result.changes > 0) {
+			this.db.prepare(`DELETE FROM task_session_map WHERE task_id = ?`).run(id);
 			this.reactiveDb?.notifyChange('space_tasks');
 		}
 		return result.changes > 0;
@@ -354,6 +366,14 @@ export class SpaceTaskRepository {
 	 * Delete all tasks for a space
 	 */
 	deleteTasksForSpace(spaceId: string): void {
+		// Drop dependent task_session_map rows first so we don't leave orphan
+		// entries pointing at deleted tasks.
+		this.db
+			.prepare(
+				`DELETE FROM task_session_map
+				 WHERE task_id IN (SELECT id FROM space_tasks WHERE space_id = ?)`
+			)
+			.run(spaceId);
 		this.db.prepare(`DELETE FROM space_tasks WHERE space_id = ?`).run(spaceId);
 		this.reactiveDb?.notifyChange('space_tasks');
 	}
@@ -444,6 +464,35 @@ export class SpaceTaskRepository {
 			)
 			.all(createdByTaskId) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
+	}
+
+	/**
+	 * Upsert the task_agent leg of task_session_map for a task.
+	 *
+	 * The Task Agent session is the orchestration session created for every
+	 * `space_task` (when the task transitions out of `'open'`). Recording it in
+	 * task_session_map lets the live-query handlers JOIN the table directly
+	 * instead of walking `space_tasks → sessions` to discover the orchestration
+	 * row.
+	 */
+	private upsertTaskAgentSessionMap(taskId: string, sessionId: string, createdAt: number): void {
+		this.db
+			.prepare(
+				`INSERT OR REPLACE INTO task_session_map (
+					task_id, session_id, kind, role, label, node_execution_id, created_at
+				) VALUES (?, ?, 'task_agent', 'task-agent', 'Task Agent', NULL, ?)`
+			)
+			.run(taskId, sessionId, createdAt);
+	}
+
+	/**
+	 * Drop the task_agent leg of task_session_map for a task. Used when the
+	 * Task Agent session is cleared (e.g. archive flow).
+	 */
+	private removeTaskAgentSessionMap(taskId: string): void {
+		this.db
+			.prepare(`DELETE FROM task_session_map WHERE task_id = ? AND kind = 'task_agent'`)
+			.run(taskId);
 	}
 
 	/**

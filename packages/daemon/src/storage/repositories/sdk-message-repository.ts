@@ -16,6 +16,69 @@ import type { SQLiteValue } from '../types';
 
 export type SendStatus = 'deferred' | 'enqueued' | 'consumed' | 'failed';
 
+/**
+ * Compute the materialised value for `sdk_messages.is_renderable` from a parsed
+ * SDK message.
+ *
+ * Mirrors the predicate the live-query handlers used to evaluate inline:
+ *   - `user` rows whose content array carries any `tool_result` block render as
+ *     null in the compact UI → 0
+ *   - `assistant` rows with no `tool_use`, no non-empty `text`, and no
+ *     non-empty `thinking` blocks have nothing to display → 0
+ *   - everything else → 1
+ *
+ * Keeping the logic in one helper means {@link saveSDKMessage} and
+ * {@link saveUserMessage} stamp the column the same way.
+ */
+export function computeIsRenderable(message: SDKMessage): 0 | 1 {
+	const messageType = message.type;
+	const content = (message as { message?: { content?: unknown } }).message?.content;
+	if (!Array.isArray(content)) {
+		return 1;
+	}
+
+	if (messageType === 'user') {
+		const hasToolResult = content.some(
+			(block) =>
+				typeof block === 'object' &&
+				block !== null &&
+				(block as { type?: unknown }).type === 'tool_result'
+		);
+		return hasToolResult ? 0 : 1;
+	}
+
+	if (messageType === 'assistant') {
+		const hasRenderable = content.some((block) => {
+			if (typeof block !== 'object' || block === null) return false;
+			const blockObj = block as { type?: unknown; text?: unknown; thinking?: unknown };
+			if (blockObj.type === 'tool_use') return true;
+			if (blockObj.type === 'text') {
+				const text = typeof blockObj.text === 'string' ? blockObj.text : '';
+				return text.trim().length > 0;
+			}
+			if (blockObj.type === 'thinking') {
+				const thinking = typeof blockObj.thinking === 'string' ? blockObj.thinking : '';
+				return thinking.trim().length > 0;
+			}
+			return false;
+		});
+		return hasRenderable ? 1 : 0;
+	}
+
+	return 1;
+}
+
+/** Compute `sdk_messages.is_terminal` — `1` for SDK result messages. */
+export function computeIsTerminal(message: SDKMessage): 0 | 1 {
+	return message.type === 'result' ? 1 : 0;
+}
+
+/** Extract `sdk_messages.parent_tool_use_id` from the SDK message, if any. */
+export function extractParentToolUseId(message: SDKMessage): string | null {
+	const candidate = (message as { parent_tool_use_id?: unknown }).parent_tool_use_id;
+	return typeof candidate === 'string' ? candidate : null;
+}
+
 export class SDKMessageRepository {
 	private logger = new Logger('Database');
 
@@ -35,8 +98,10 @@ export class SDKMessageRepository {
 			const timestamp = new Date().toISOString();
 
 			const stmt = this.db.prepare(
-				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, origin)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO sdk_messages (
+					id, session_id, message_type, message_subtype, sdk_message, timestamp, origin,
+					is_renderable, is_terminal, parent_tool_use_id
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			);
 
 			stmt.run(
@@ -46,7 +111,10 @@ export class SDKMessageRepository {
 				messageSubtype,
 				JSON.stringify(message),
 				timestamp,
-				origin ?? null
+				origin ?? null,
+				computeIsRenderable(message),
+				computeIsTerminal(message),
+				extractParentToolUseId(message)
 			);
 			return true;
 		} catch (error) {
@@ -315,8 +383,10 @@ export class SDKMessageRepository {
 		const timestamp = new Date().toISOString();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sdk_messages (
+				id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin,
+				is_renderable, is_terminal, parent_tool_use_id
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -327,7 +397,10 @@ export class SDKMessageRepository {
 			JSON.stringify(message),
 			timestamp,
 			sendStatus,
-			origin ?? null
+			origin ?? null,
+			computeIsRenderable(message),
+			computeIsTerminal(message),
+			extractParentToolUseId(message)
 		);
 		return id;
 	}

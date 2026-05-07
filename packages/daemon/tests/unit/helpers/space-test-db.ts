@@ -243,6 +243,26 @@ export function createSpaceTables(db: BunDatabase): void {
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
 	);
 
+	// task_session_map (migration 118). Explicit lookup from a `space_task` to
+	// the set of sessions whose `sdk_messages` contribute to its timeline.
+	// Maintained at write time by SpaceTaskRepository (task_agent leg) and
+	// NodeExecutionRepository (node_agent leg).
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS task_session_map (
+			task_id TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			kind TEXT NOT NULL CHECK(kind IN ('task_agent', 'node_agent')),
+			role TEXT NOT NULL,
+			label TEXT NOT NULL,
+			node_execution_id TEXT,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (task_id, session_id)
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_task_session_map_session ON task_session_map(session_id)`
+	);
+
 	// Workflow run artifacts
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS workflow_run_artifacts (

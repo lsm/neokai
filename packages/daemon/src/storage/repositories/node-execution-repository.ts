@@ -57,6 +57,10 @@ export class NodeExecutionRepository {
 				now
 			);
 
+		if (params.agentSessionId) {
+			this.syncTaskSessionMapForExecution(id, params.agentSessionId, now);
+		}
+
 		return this.getById(id)!;
 	}
 
@@ -100,7 +104,12 @@ export class NodeExecutionRepository {
 
 		// If the insert was ignored (duplicate), return the existing record.
 		const inserted = this.getById(id);
-		if (inserted) return inserted;
+		if (inserted) {
+			if (params.agentSessionId) {
+				this.syncTaskSessionMapForExecution(id, params.agentSessionId, now);
+			}
+			return inserted;
+		}
 
 		// Duplicate — find the existing record by unique key.
 		const existing = this.db
@@ -113,7 +122,17 @@ export class NodeExecutionRepository {
 			| Record<string, unknown>
 			| undefined;
 
-		if (existing) return this.rowToNodeExecution(existing);
+		if (existing) {
+			const existingExecution = this.rowToNodeExecution(existing);
+			if (existingExecution.agentSessionId) {
+				this.syncTaskSessionMapForExecution(
+					existingExecution.id,
+					existingExecution.agentSessionId,
+					existingExecution.createdAt
+				);
+			}
+			return existingExecution;
+		}
 		const fallback = this.getById(id);
 		if (fallback) return fallback;
 		throw new Error(
@@ -188,6 +207,19 @@ export class NodeExecutionRepository {
 		if (params.agentSessionId !== undefined) {
 			fields.push('agent_session_id = ?');
 			values.push(params.agentSessionId ?? null);
+
+			// Keep task_session_map's node_agent leg in sync. The map is keyed
+			// by (task_id, session_id), so a session change replaces the row
+			// rather than mutating it in-place.
+			const existing = this.getById(id);
+			if (existing?.agentSessionId && existing.agentSessionId !== params.agentSessionId) {
+				this.removeTaskSessionMapForExecution(id, existing.agentSessionId);
+			}
+			if (params.agentSessionId) {
+				this.syncTaskSessionMapForExecution(id, params.agentSessionId, Date.now());
+			} else if (existing?.agentSessionId) {
+				this.removeTaskSessionMapForExecution(id, existing.agentSessionId);
+			}
 		}
 		if (params.result !== undefined) {
 			fields.push('result = ?');
@@ -238,6 +270,11 @@ export class NodeExecutionRepository {
 	 */
 	delete(id: string): boolean {
 		const result = this.db.prepare(`DELETE FROM node_executions WHERE id = ?`).run(id);
+		if (result.changes > 0) {
+			this.db
+				.prepare(`DELETE FROM task_session_map WHERE kind = 'node_agent' AND node_execution_id = ?`)
+				.run(id);
+		}
 		return result.changes > 0;
 	}
 
@@ -282,7 +319,70 @@ export class NodeExecutionRepository {
 	 * Delete all node executions for a workflow run
 	 */
 	deleteByWorkflowRun(workflowRunId: string): void {
+		// Drop dependent task_session_map rows first so we don't leave orphan
+		// entries pointing at deleted node executions.
+		this.db
+			.prepare(
+				`DELETE FROM task_session_map
+				 WHERE kind = 'node_agent'
+				   AND node_execution_id IN (
+				     SELECT id FROM node_executions WHERE workflow_run_id = ?
+				   )`
+			)
+			.run(workflowRunId);
 		this.db.prepare(`DELETE FROM node_executions WHERE workflow_run_id = ?`).run(workflowRunId);
+	}
+
+	/**
+	 * Maintain the node_agent leg of task_session_map for a given execution.
+	 *
+	 * The mapping is fan-out: a workflow run with N nodes covering K tasks emits
+	 * N×K rows, one per (task_id, session_id) pair. This is fine because the
+	 * map is the single source of truth for "which sessions does this task's
+	 * timeline include" and read paths JOIN on `task_id`.
+	 *
+	 * Resolves the agent's display label (`task_session_map.label`) from
+	 * `space_agents.name` when possible, falling back to `node_executions.agent_name`
+	 * — matches the precedence the live-query handlers used to compute inline.
+	 */
+	private syncTaskSessionMapForExecution(
+		executionId: string,
+		sessionId: string,
+		createdAt: number
+	): void {
+		const stmt = this.db.prepare(
+			`INSERT OR REPLACE INTO task_session_map (
+				task_id, session_id, kind, role, label, node_execution_id, created_at
+			)
+			SELECT
+				st.id AS task_id,
+				? AS session_id,
+				'node_agent' AS kind,
+				ne.agent_name AS role,
+				COALESCE(sa.name, ne.agent_name, 'agent') AS label,
+				ne.id AS node_execution_id,
+				? AS created_at
+			FROM node_executions ne
+			JOIN space_tasks st
+				ON st.workflow_run_id IS NOT NULL
+				AND ne.workflow_run_id = st.workflow_run_id
+			LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+			WHERE ne.id = ?`
+		);
+		stmt.run(sessionId, createdAt, executionId);
+	}
+
+	/**
+	 * Remove the node_agent leg of task_session_map for a given execution + session
+	 * pair. Called when an agent_session_id flips to a different value or is cleared.
+	 */
+	private removeTaskSessionMapForExecution(executionId: string, sessionId: string): void {
+		this.db
+			.prepare(
+				`DELETE FROM task_session_map
+				 WHERE kind = 'node_agent' AND node_execution_id = ? AND session_id = ?`
+			)
+			.run(executionId, sessionId);
 	}
 
 	/**
