@@ -10,6 +10,7 @@
 import { useState, useEffect } from 'preact/hooks';
 import type { Space, SpaceExportBundle, SpaceAutonomyLevel, SettingSource } from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager.ts';
+import { globalSettings } from '../../lib/state.ts';
 import { spaceStore } from '../../lib/space-store.ts';
 import { toast } from '../../lib/toast.ts';
 import { cn } from '../../lib/utils.ts';
@@ -25,6 +26,10 @@ interface SpaceSettingsProps {
 	space: Space;
 }
 
+function getInheritedSettingSources(): SettingSource[] {
+	return globalSettings.value?.settingSources ?? ['user', 'project', 'local'];
+}
+
 export function SpaceSettings({ space }: SpaceSettingsProps) {
 	// Edit state
 	const [name, setName] = useState(space.name);
@@ -34,7 +39,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 	const [autonomyLevel, setAutonomyLevel] = useState<SpaceAutonomyLevel>(space.autonomyLevel ?? 1);
 	const [defaultModel, setDefaultModel] = useState<string | undefined>(space.defaultModel);
 	const [settingSources, setSettingSources] = useState<SettingSource[]>(
-		space.settingSources ?? ['user', 'project', 'local']
+		space.settingSources ?? getInheritedSettingSources()
 	);
 	const hadExplicitSettingSources = space.settingSources !== undefined;
 	const [clearSettingSources, setClearSettingSources] = useState(false);
@@ -51,7 +56,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		setBackgroundContext(space.backgroundContext ?? '');
 		setAutonomyLevel(space.autonomyLevel ?? 1);
 		setDefaultModel(space.defaultModel);
-		setSettingSources(space.settingSources ?? ['user', 'project', 'local']);
+		setSettingSources(space.settingSources ?? getInheritedSettingSources());
 		setClearSettingSources(false);
 		setSaveError(null);
 	}, [
@@ -73,7 +78,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		autonomyLevel !== (space.autonomyLevel ?? 1) ||
 		defaultModel !== space.defaultModel ||
 		JSON.stringify(settingSources) !==
-			JSON.stringify(space.settingSources ?? ['user', 'project', 'local']) ||
+			JSON.stringify(space.settingSources ?? getInheritedSettingSources()) ||
 		clearSettingSources;
 
 	async function handleSave(e: Event) {
@@ -100,7 +105,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 				defaultModel: defaultModel || null,
 				...(clearSettingSources ||
 				JSON.stringify(settingSources) !==
-					JSON.stringify(space.settingSources ?? ['user', 'project', 'local'])
+					JSON.stringify(space.settingSources ?? getInheritedSettingSources())
 					? { settingSources: clearSettingSources ? null : settingSources }
 					: {}),
 			});
@@ -423,7 +428,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 										setBackgroundContext(space.backgroundContext ?? '');
 										setAutonomyLevel(space.autonomyLevel ?? 1);
 										setDefaultModel(space.defaultModel);
-										setSettingSources(space.settingSources ?? ['user', 'project', 'local']);
+										setSettingSources(space.settingSources ?? getInheritedSettingSources());
 										setClearSettingSources(false);
 										setSaveError(null);
 									}}

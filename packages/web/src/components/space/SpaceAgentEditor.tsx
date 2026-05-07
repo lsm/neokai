@@ -143,8 +143,13 @@ export function SpaceAgentEditor({
 	);
 	const [tools, setTools] = useState<string[]>(agent?.tools ?? [...TOOL_PRESETS['Full Coding']]);
 	const [customPrompt, setCustomPrompt] = useState(agent?.customPrompt ?? '');
+	const inheritedSettingSources = spaceStore.space.value?.settingSources ?? [
+		'user',
+		'project',
+		'local',
+	];
 	const [settingSources, setSettingSources] = useState<SettingSource[]>(
-		agent?.settingSources ?? ['user', 'project', 'local']
+		agent?.settingSources ?? inheritedSettingSources
 	);
 	const [activePreset, setActivePreset] = useState<string>(() => detectPreset(agent?.tools));
 	const [selectedTemplateName, setSelectedTemplateName] = useState<string>('');
@@ -224,7 +229,7 @@ export function SpaceAgentEditor({
 				tools: tools.length > 0 ? tools : undefined,
 				...(clearSettingSources ||
 				JSON.stringify(settingSources) !==
-					JSON.stringify(agent?.settingSources ?? ['user', 'project', 'local'])
+					JSON.stringify(agent?.settingSources ?? inheritedSettingSources)
 					? { settingSources: clearSettingSources ? null : settingSources }
 					: {}),
 			};
