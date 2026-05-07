@@ -10,6 +10,7 @@ import { generateUUID } from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
 import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
@@ -100,6 +101,11 @@ export interface RPCHandlerDependencies {
 	settingsManager: SettingsManager;
 	config: Config;
 	daemonHub: DaemonHub;
+	/**
+	 * Semantic internal event bus for daemon domain events that have been
+	 * migrated off DaemonHub. New publishers/subscribers should use this.
+	 */
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	db: Database;
 	gitHubService?: GitHubService;
 	spaceGitHubService: SpaceGitHubService;
@@ -173,6 +179,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.messageHub,
 		deps.settingsManager,
 		deps.daemonHub,
+		deps.internalEventBus,
 		deps.db,
 		deps.mcpImportService
 	);

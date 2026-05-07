@@ -9,6 +9,11 @@ import { SettingsManager } from './lib/settings-manager';
 import { StateManager } from './lib/state-manager';
 import { MessageHub, MessageHubRouter } from '@neokai/shared';
 import { createDaemonHub } from './lib/daemon-hub';
+import {
+	createDaemonInternalEventBus,
+	type DaemonInternalEventMap,
+	type InternalEventBus,
+} from './lib/internal-event-bus';
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus';
 import { setupRPCHandlers } from './lib/rpc-handlers';
 import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers';
@@ -61,6 +66,12 @@ export interface DaemonAppContext {
 	stateManager: StateManager;
 	transport: WebSocketServerTransport;
 	eventBus: Awaited<ReturnType<typeof createDaemonHub>>;
+	/**
+	 * Semantic internal event bus for migrated daemon domain events.
+	 * New publishers/subscribers should use this instead of DaemonHub.
+	 * See docs/plans/internal-event-command-query-architecture.md.
+	 */
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	/** Semantic internal query bus for point-in-time reads */
 	queryBus: ReturnType<typeof createInternalQueryBus<DaemonQueryMap>>;
 	/**
@@ -225,6 +236,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const eventBus = createDaemonHub('daemon');
 	await eventBus.initialize();
 
+	// Initialize InternalEventBus for migrated daemon domain events.
+	// Subscribers/publishers register here as they migrate off DaemonHub.
+	const internalEventBus = createDaemonInternalEventBus();
+
 	// Initialize InternalQueryBus for point-in-time reads.
 	// Handlers will be registered by domain services as they migrate.
 	const queryBus = createInternalQueryBus<DaemonQueryMap>();
@@ -305,7 +320,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		settingsManager,
 		config,
 		eventBus, // FIX: Listens to events instead of being called directly
-		db
+		db,
+		internalEventBus
 	);
 
 	// Initialize GitHub service if configured
@@ -372,6 +388,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		settingsManager,
 		config,
 		daemonHub: eventBus,
+		internalEventBus,
 		db,
 		gitHubService: gitHubService ?? undefined,
 		spaceGitHubService,
@@ -711,6 +728,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		stateManager,
 		transport,
 		eventBus,
+		internalEventBus,
 		queryBus,
 		gitHubService,
 		spaceGitHubService,
