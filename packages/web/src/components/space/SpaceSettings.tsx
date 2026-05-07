@@ -37,7 +37,6 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		space.settingSources ?? ['user', 'project', 'local']
 	);
 	const hadExplicitSettingSources = space.settingSources !== undefined;
-	const [settingSourcesTouched, setSettingSourcesTouched] = useState(false);
 	const [clearSettingSources, setClearSettingSources] = useState(false);
 	const [saving, setSaving] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
@@ -53,7 +52,6 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		setAutonomyLevel(space.autonomyLevel ?? 1);
 		setDefaultModel(space.defaultModel);
 		setSettingSources(space.settingSources ?? ['user', 'project', 'local']);
-		setSettingSourcesTouched(false);
 		setClearSettingSources(false);
 		setSaveError(null);
 	}, [
@@ -100,7 +98,9 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 				backgroundContext: backgroundContext.trim() || undefined,
 				autonomyLevel,
 				defaultModel: defaultModel || null,
-				...(hadExplicitSettingSources || settingSourcesTouched || clearSettingSources
+				...(clearSettingSources ||
+				JSON.stringify(settingSources) !==
+					JSON.stringify(space.settingSources ?? ['user', 'project', 'local'])
 					? { settingSources: clearSettingSources ? null : settingSources }
 					: {}),
 			});
@@ -331,6 +331,29 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 									Which on-disk settings files agents in this Space load. Inherits the app-level
 									default when not set.
 								</p>
+								{hadExplicitSettingSources && !clearSettingSources && (
+									<button
+										type="button"
+										onClick={() => setClearSettingSources(true)}
+										class="text-xs text-blue-400 hover:text-blue-300 mb-1.5"
+									>
+										Clear override — use inherited defaults
+									</button>
+								)}
+								{clearSettingSources && (
+									<div class="flex items-center gap-2 mb-1.5">
+										<span class="text-xs text-gray-400">
+											Will revert to inherited defaults on save.
+										</span>
+										<button
+											type="button"
+											onClick={() => setClearSettingSources(false)}
+											class="text-xs text-blue-400 hover:text-blue-300"
+										>
+											Cancel
+										</button>
+									</div>
+								)}
 								<div class="space-y-1.5">
 									<label class="flex items-center gap-2 cursor-pointer">
 										<input
@@ -342,7 +365,6 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 														? prev.filter((s) => s !== 'user')
 														: [...prev, 'user']
 												);
-												setSettingSourcesTouched(true);
 											}}
 											disabled={clearSettingSources}
 											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
@@ -360,7 +382,6 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 														? prev.filter((s) => s !== 'project')
 														: [...prev, 'project']
 												);
-												setSettingSourcesTouched(true);
 											}}
 											disabled={clearSettingSources}
 											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
@@ -378,7 +399,6 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 														? prev.filter((s) => s !== 'local')
 														: [...prev, 'local']
 												);
-												setSettingSourcesTouched(true);
 											}}
 											disabled={clearSettingSources}
 											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
@@ -404,7 +424,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 										setAutonomyLevel(space.autonomyLevel ?? 1);
 										setDefaultModel(space.defaultModel);
 										setSettingSources(space.settingSources ?? ['user', 'project', 'local']);
-										setSettingSourcesTouched(false);
+										setClearSettingSources(false);
 										setSaveError(null);
 									}}
 								>

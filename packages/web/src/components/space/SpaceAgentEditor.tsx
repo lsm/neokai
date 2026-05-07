@@ -153,8 +153,6 @@ export function SpaceAgentEditor({
 	const [saving, setSaving] = useState(false);
 	const [errors, setErrors] = useState<Record<string, string>>({});
 	const [saveError, setSaveError] = useState<string | null>(null);
-	const hadExplicitSettingSources = isEdit && agent?.settingSources !== undefined;
-	const [settingSourcesTouched, setSettingSourcesTouched] = useState(false);
 	const [clearSettingSources, setClearSettingSources] = useState(false);
 
 	const applyPreset = (presetName: string) => {
@@ -224,7 +222,9 @@ export function SpaceAgentEditor({
 				model: model.trim(),
 				customPrompt: customPrompt || null,
 				tools: tools.length > 0 ? tools : undefined,
-				...(hadExplicitSettingSources || settingSourcesTouched || clearSettingSources
+				...(clearSettingSources ||
+				JSON.stringify(settingSources) !==
+					JSON.stringify(agent?.settingSources ?? ['user', 'project', 'local'])
 					? { settingSources: clearSettingSources ? null : settingSources }
 					: {}),
 			};
@@ -375,7 +375,7 @@ export function SpaceAgentEditor({
 						Setting Sources
 						<span class="text-gray-500 text-xs ml-2">(optional)</span>
 					</label>
-					{hadExplicitSettingSources && !clearSettingSources && (
+					{isEdit && agent?.settingSources !== undefined && !clearSettingSources && (
 						<button
 							type="button"
 							onClick={() => setClearSettingSources(true)}
@@ -405,7 +405,6 @@ export function SpaceAgentEditor({
 									setSettingSources((prev) =>
 										prev.includes('user') ? prev.filter((s) => s !== 'user') : [...prev, 'user']
 									);
-									setSettingSourcesTouched(true);
 								}}
 								disabled={clearSettingSources}
 								class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
@@ -423,7 +422,6 @@ export function SpaceAgentEditor({
 											? prev.filter((s) => s !== 'project')
 											: [...prev, 'project']
 									);
-									setSettingSourcesTouched(true);
 								}}
 								disabled={clearSettingSources}
 								class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
@@ -439,7 +437,6 @@ export function SpaceAgentEditor({
 									setSettingSources((prev) =>
 										prev.includes('local') ? prev.filter((s) => s !== 'local') : [...prev, 'local']
 									);
-									setSettingSourcesTouched(true);
 								}}
 								disabled={clearSettingSources}
 								class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
