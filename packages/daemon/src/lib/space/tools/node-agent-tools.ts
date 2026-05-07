@@ -87,6 +87,22 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { SpaceTask } from '@neokai/shared';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 
+/**
+ * Decode the JSON payload from a ToolResult created by jsonResult().
+ * Returns the parsed object or null if parsing fails.
+ */
+function decodeToolResultPayload(result: ToolResult): Record<string, unknown> | null {
+	try {
+		const text = result.content?.[0]?.text;
+		if (typeof text === 'string') {
+			return JSON.parse(text) as Record<string, unknown>;
+		}
+	} catch {
+		// Ignore parse errors — caller falls back to no-audit.
+	}
+	return null;
+}
+
 // Re-export for consumers that want the shared type
 export type { ToolResult };
 
@@ -1100,9 +1116,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				});
 			}
 			const result = await config.onCreateStandaloneTask(args);
-			// Only audit after successful creation; stamp the new task ID, not the current session task.
-			const createdTask = result.task as { id: string } | undefined;
-			if (result.success && createdTask?.id) {
+			// Decode the JSON payload from the ToolResult content to check success and extract the task ID.
+			const payload = decodeToolResultPayload(result);
+			const createdTask = payload?.task as { id: string } | undefined;
+			if (payload?.success && createdTask?.id) {
 				logAudit(
 					'create_standalone_task',
 					{
@@ -1114,6 +1131,21 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					},
 					createdTask.id
 				);
+			}
+			return result;
+		},
+
+		async approve_task(args: ApproveTaskInput): Promise<ToolResult> {
+			if (!config.onApproveTask) {
+				return jsonResult({
+					success: false,
+					error: 'approve_task is not available in this node-agent session.',
+				});
+			}
+			const result = await config.onApproveTask(args);
+			const payload = decodeToolResultPayload(result);
+			if (payload?.success) {
+				logAudit('approve_task', {}, config.taskId);
 			}
 			return result;
 		},
@@ -1350,7 +1382,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 							'runs and resolves the terminal status. Use this as your final action when you are ' +
 							'authorized to self-close; otherwise use submit_for_approval.',
 						ApproveTaskSchema.shape,
-						(args) => config.onApproveTask!(args)
+						(args) => handlers.approve_task(args)
 					),
 				]
 			: []),
