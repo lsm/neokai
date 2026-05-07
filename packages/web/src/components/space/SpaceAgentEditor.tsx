@@ -143,7 +143,7 @@ export function SpaceAgentEditor({
 	);
 	const [tools, setTools] = useState<string[]>(agent?.tools ?? [...TOOL_PRESETS['Full Coding']]);
 	const [customPrompt, setCustomPrompt] = useState(agent?.customPrompt ?? '');
-	const inheritedSettingSources = spaceStore.space.value?.settingSources ?? [
+	const inheritedSettingSources = spaceStore.space?.value?.settingSources ?? [
 		'user',
 		'project',
 		'local',
