@@ -220,16 +220,20 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	readonly id = 'anthropic-codex';
 	readonly displayName = 'OpenAI (Codex)';
 
-	readonly capabilities: ProviderCapabilities = {
-		streaming: true,
-		// GPT-5.5 supports reasoning.effort via the OpenAI Responses API; the bridge
-		// translates OpenAI reasoning events to Anthropic thinking SSE blocks.
-		extendedThinking: true,
-		thinkingModes: 'granular',
-		maxContextWindow: 272000,
-		functionCalling: true,
-		vision: false,
-	};
+	get capabilities(): ProviderCapabilities {
+		const isResponses = this.selectBridgeAdapter() === 'responses';
+		return {
+			streaming: true,
+			// GPT-5.5 supports reasoning.effort via the OpenAI Responses API; the bridge
+			// translates OpenAI reasoning events to Anthropic thinking SSE blocks.
+			// The legacy Codex app-server adapter does not support reasoning.
+			extendedThinking: isResponses,
+			thinkingModes: isResponses ? 'granular' : 'off',
+			maxContextWindow: 272000,
+			functionCalling: true,
+			vision: false,
+		};
+	}
 
 	/** Per-adapter bridge servers. Codex remains workspace-scoped; Responses is shared by auth. */
 	private readonly bridgeServers = new Map<string, BridgeServer | OpenAIResponsesBridgeServer>();

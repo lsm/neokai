@@ -159,6 +159,23 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('reports the maximum Codex context window', () => {
 			expect(provider.capabilities.maxContextWindow).toBe(272000);
 		});
+
+		it('advertises thinking when the Responses adapter is active', () => {
+			expect(provider.capabilities.extendedThinking).toBe(true);
+			expect(provider.capabilities.thinkingModes).toBe('granular');
+		});
+
+		it('disables thinking when the Codex adapter is active', () => {
+			const p = makeProvider(
+				{ NEOKAI_OPENAI_BRIDGE_ADAPTER: 'codex' },
+				undefined,
+				undefined,
+				fakeCodexFound
+			);
+			expect(p.capabilities.extendedThinking).toBe(false);
+			expect(p.capabilities.thinkingModes).toBe('off');
+			p.stopAllBridgeServers();
+		});
 	});
 
 	describe('getAuthStatus()', () => {

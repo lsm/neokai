@@ -583,8 +583,14 @@ export class QueryOptionsBuilder {
 		// providers that do not support it. Use the static map rather than
 		// instantiating a provider context to avoid API-key failures in CI.
 		const providerId = this.ctx.session.config.provider;
-		const thinkingModes =
+		let thinkingModes =
 			PROVIDER_THINKING_MODES[providerId as keyof typeof PROVIDER_THINKING_MODES] ?? 'granular';
+		// The anthropic-codex provider can run with either the OpenAI Responses
+		// API adapter (supports reasoning) or the legacy Codex app-server adapter
+		// (does not support reasoning). Gate thinking at runtime by env var.
+		if (providerId === 'anthropic-codex' && process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER === 'codex') {
+			thinkingModes = 'off';
+		}
 
 		// Add thinking configuration based on the session override, falling back to the app default.
 		// Backward compatibility: legacy 'auto' is treated as 'off'.
