@@ -1387,4 +1387,275 @@ describe('openai-responses-bridge server', () => {
 		expect(body.error.type).toBe('authentication_error');
 		expect(body.error.message).toBe('expired');
 	});
+
+	it('maps thinking budget_tokens to OpenAI reasoning.effort', async () => {
+		let capturedBody: Record<string, unknown> | undefined;
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async (_url, init) => {
+				capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+				return sse([
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: { usage: { input_tokens: 5, output_tokens: 1 }, output: [] },
+						},
+					},
+				]);
+			},
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'Think deeply.' }],
+				thinking: { type: 'enabled', budget_tokens: 16000 },
+			}),
+		});
+
+		expect(resp.status).toBe(200);
+		expect(capturedBody?.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
+		expect(capturedBody?.include).toEqual(['reasoning.encrypted_content']);
+	});
+
+	it('omits reasoning when thinking is off', async () => {
+		let capturedBody: Record<string, unknown> | undefined;
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async (_url, init) => {
+				capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+				return sse([
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: { usage: { input_tokens: 5, output_tokens: 1 }, output: [] },
+						},
+					},
+				]);
+			},
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'No thinking please.' }],
+			}),
+		});
+
+		expect(resp.status).toBe(200);
+		expect(capturedBody?.reasoning).toBeUndefined();
+		expect(capturedBody?.include).toBeUndefined();
+	});
+
+	it('streams OpenAI reasoning events as Anthropic thinking SSE', async () => {
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async () =>
+				sse([
+					{
+						event: 'response.reasoning_summary_part.added',
+						data: { type: 'response.reasoning_summary_part.added' },
+					},
+					{
+						event: 'response.reasoning_summary_text.delta',
+						data: { type: 'response.reasoning_summary_text.delta', delta: 'Let me' },
+					},
+					{
+						event: 'response.reasoning_summary_text.delta',
+						data: { type: 'response.reasoning_summary_text.delta', delta: ' think...' },
+					},
+					{
+						event: 'response.reasoning_summary_part.done',
+						data: { type: 'response.reasoning_summary_part.done' },
+					},
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: 'Hello!' },
+					},
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: { usage: { input_tokens: 5, output_tokens: 3 }, output: [] },
+						},
+					},
+				]),
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'Say hello.' }],
+				thinking: { type: 'enabled', budget_tokens: 16000 },
+			}),
+		});
+
+		const events = await readSSEEvents(resp.body);
+		const thinkingStart = events.find(
+			(e) =>
+				e.event === 'content_block_start' &&
+				(e.data.content_block as { type: string })?.type === 'thinking'
+		);
+		expect(thinkingStart).toBeDefined();
+
+		const thinkingDeltas = events
+			.filter((e) => e.event === 'content_block_delta')
+			.map((e) => (e.data.delta as { thinking?: string }).thinking)
+			.filter(Boolean);
+		expect(thinkingDeltas.join('')).toBe('Let me think...');
+
+		const textDeltas = textDeltaEvents(events);
+		expect(textDeltas.join('')).toBe('Hello!');
+
+		expect(messageDeltaEvent(events)).toMatchObject({
+			type: 'message_delta',
+			delta: { stop_reason: 'end_turn' },
+		});
+	});
+
+	it('passes encrypted reasoning content through on multi-turn', async () => {
+		const capturedBodies: Record<string, unknown>[] = [];
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async (_url, init) => {
+				const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+				capturedBodies.push(body);
+				if (capturedBodies.length === 1) {
+					return sse([
+						{
+							event: 'response.output_text.delta',
+							data: { type: 'response.output_text.delta', delta: 'First response.' },
+						},
+						{
+							event: 'response.completed',
+							data: {
+								type: 'response.completed',
+								response: {
+									id: 'resp_reasoning',
+									usage: { input_tokens: 5, output_tokens: 3 },
+									output: [
+										{
+											type: 'reasoning',
+											encrypted_content: 'enc_abc123',
+										},
+									],
+								},
+							},
+						},
+					]);
+				}
+				return sse([
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: 'Second response.' },
+					},
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: { usage: { input_tokens: 5, output_tokens: 3 }, output: [] },
+						},
+					},
+				]);
+			},
+		});
+
+		const first = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'First.' }],
+				thinking: { type: 'enabled', budget_tokens: 16000 },
+			}),
+		});
+		await readSSEEvents(first.body);
+
+		const second = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [
+					{ role: 'user', content: 'First.' },
+					{ role: 'assistant', content: 'First response.' },
+					{ role: 'user', content: 'Second.' },
+				],
+				thinking: { type: 'enabled', budget_tokens: 16000 },
+			}),
+		});
+		const events = await readSSEEvents(second.body);
+
+		// Second request should include reasoning item in input
+		const secondInput = capturedBodies[1]?.input as Array<Record<string, unknown>>;
+		expect(
+			secondInput.some(
+				(item) => item.type === 'reasoning' && item.encrypted_content === 'enc_abc123'
+			)
+		).toBe(true);
+		// previous_response_id should not be used when reasoning items are present
+		expect(capturedBodies[1]?.previous_response_id).toBeUndefined();
+		expect(textDeltaEvents(events).join('')).toBe('Second response.');
+	});
+
+	it('reports reasoning_tokens in message_delta usage', async () => {
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async () =>
+				sse([
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: 'hello' },
+					},
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: {
+								usage: {
+									input_tokens: 5,
+									output_tokens: 10,
+									output_tokens_details: { reasoning_tokens: 7 },
+								},
+								output: [],
+							},
+						},
+					},
+				]),
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [{ role: 'user', content: 'hi' }],
+			}),
+		});
+
+		const events = await readSSEEvents(resp.body);
+		expect(messageDeltaEvent(events)).toMatchObject({
+			type: 'message_delta',
+			usage: { output_tokens: 10, thinking_tokens: 7 },
+		});
+	});
 });

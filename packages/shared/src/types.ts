@@ -282,7 +282,7 @@ export const PROVIDER_THINKING_MODES: Record<Provider, 'off' | 'on' | 'granular'
 	ollama: 'off',
 	'ollama-cloud': 'off',
 	'anthropic-copilot': 'off',
-	'anthropic-codex': 'off',
+	'anthropic-codex': 'granular',
 	'google-gemini-oauth': 'off',
 };
 

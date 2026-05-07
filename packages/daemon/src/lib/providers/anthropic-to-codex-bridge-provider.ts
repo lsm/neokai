@@ -222,10 +222,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
 	readonly capabilities: ProviderCapabilities = {
 		streaming: true,
-		// The Anthropic Agent SDK can ask for extended thinking, but this provider's
-		// OpenAI bridge does not expose Anthropic thinking_delta events.
-		extendedThinking: false,
-		thinkingModes: 'off',
+		// GPT-5.5 supports reasoning.effort via the OpenAI Responses API; the bridge
+		// translates OpenAI reasoning events to Anthropic thinking SSE blocks.
+		extendedThinking: true,
+		thinkingModes: 'granular',
 		maxContextWindow: 272000,
 		functionCalling: true,
 		vision: false,
