@@ -2,13 +2,11 @@
  * Anthropic-to-Codex Bridge Provider
  *
  * Provides an Anthropic-compatible bridge for OpenAI-backed models.
- * The default adapter speaks the Anthropic Messages API (POST /v1/messages
- * with SSE streaming) backed directly by OpenAI's Responses API.  The legacy
- * Codex app-server adapter is retained behind NEOKAI_OPENAI_BRIDGE_ADAPTER=codex
- * as an optional fallback.
+ * The bridge speaks the Anthropic Messages API (POST /v1/messages with SSE
+ * streaming) backed directly by OpenAI's Responses API.
  *
  * Authentication discovery for API calls (priority order):
- *   1. OPENAI_API_KEY / CODEX_API_KEY environment variable (daemon/test use only)
+ *   1. OPENAI_API_KEY environment variable (daemon/test use only)
  *   2. ~/.neokai/auth.json  — NeoKai's own auth store (key "openai")
  *   3. ~/.codex/auth.json   — imported once into ~/.neokai/auth.json (for users who ran `codex login`)
  *
@@ -32,30 +30,19 @@ import type {
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
 import {
-	type AppServerAuth,
-	type BridgeServer,
-	createBridgeServer,
-} from './codex-anthropic-bridge/server.js';
-import {
 	type OpenAIResponsesBridgeAuth,
 	type OpenAIResponsesBridgeServer,
 	createOpenAIResponsesBridgeServer,
 } from './openai-responses-bridge/server.js';
-import { getCodexBridgeModelInfos } from './codex-anthropic-bridge/model-context-windows.js';
+import { getCodexBridgeModelInfos } from './codex-models.js';
 import { Logger } from '../logger.js';
 import * as fs from 'fs/promises';
-import { existsSync } from 'node:fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as http from 'http';
 import * as crypto from 'crypto';
 
 const logger = new Logger('anthropic-to-codex-bridge-provider');
-
-type OpenAIBridgeAdapter = 'responses' | 'codex';
-type OpenAIBridgeAdapterSetting = OpenAIBridgeAdapter | 'auto';
-
-const OPENAI_BRIDGE_ADAPTER_ENV = 'NEOKAI_OPENAI_BRIDGE_ADAPTER';
 
 // ---------------------------------------------------------------------------
 // Model catalogue
@@ -151,68 +138,6 @@ interface CodexAuthFile {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: locate the `codex` binary (bundled dep first, then PATH)
-// ---------------------------------------------------------------------------
-
-function findCodexCli(codexPath = 'codex'): string | null {
-	// 1. Resolve from bundled @openai/codex dependency.
-	//    The package ships bin/codex.js which auto-selects the platform binary.
-	//    Bun installs workspace deps into node_modules/.bun — walk up from this
-	//    file to find the root node_modules, then look for the package.
-	try {
-		const rootDir = path.resolve(import.meta.dir, '..', '..', '..', '..', '..');
-		const candidates = [
-			// Bun's hoisted layout
-			path.join(
-				rootDir,
-				'node_modules',
-				'.bun',
-				'node_modules',
-				'@openai',
-				'codex',
-				'bin',
-				'codex.js'
-			),
-			// Standard node_modules layout
-			path.join(rootDir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js'),
-			// Workspace package node_modules
-			path.join(
-				import.meta.dir,
-				'..',
-				'..',
-				'..',
-				'node_modules',
-				'@openai',
-				'codex',
-				'bin',
-				'codex.js'
-			),
-		];
-		for (const candidate of candidates) {
-			if (existsSync(candidate)) return candidate;
-		}
-	} catch {}
-
-	// 2. Resolve via .bin/codex symlink (workspace hoist).
-	try {
-		const rootDir = path.resolve(import.meta.dir, '..', '..', '..', '..', '..');
-		const binLink = path.join(rootDir, 'node_modules', '.bin', 'codex');
-		if (existsSync(binLink)) return binLink;
-	} catch {}
-
-	// 3. Fall back to system PATH.
-	try {
-		const result = Bun.spawnSync(['which', codexPath], { stderr: 'pipe' });
-		if (result.exitCode === 0) {
-			const found = result.stdout.toString().trim();
-			return found.length > 0 ? found : codexPath;
-		}
-	} catch {}
-
-	return null;
-}
-
-// ---------------------------------------------------------------------------
 // Anthropic-to-Codex Bridge Provider
 // ---------------------------------------------------------------------------
 
@@ -221,22 +146,20 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	readonly displayName = 'OpenAI (Codex)';
 
 	get capabilities(): ProviderCapabilities {
-		const isResponses = this.selectBridgeAdapter() === 'responses';
 		return {
 			streaming: true,
 			// GPT-5.5 supports reasoning.effort via the OpenAI Responses API; the bridge
 			// translates OpenAI reasoning events to Anthropic thinking SSE blocks.
-			// The legacy Codex app-server adapter does not support reasoning.
-			extendedThinking: isResponses,
-			thinkingModes: isResponses ? 'granular' : 'off',
+			extendedThinking: true,
+			thinkingModes: 'granular',
 			maxContextWindow: 272000,
 			functionCalling: true,
 			vision: false,
 		};
 	}
 
-	/** Per-adapter bridge servers. Codex remains workspace-scoped; Responses is shared by auth. */
-	private readonly bridgeServers = new Map<string, BridgeServer | OpenAIResponsesBridgeServer>();
+	/** Responses bridge servers, shared by auth. */
+	private readonly bridgeServers = new Map<string, OpenAIResponsesBridgeServer>();
 	private readonly bridgeServerAuthKeys = new Map<string, string>();
 
 	/** Path to NeoKai's own auth store. */
@@ -252,7 +175,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	 * Cached resolved bridge auth.
 	 * undefined = unresolved, null = resolved but unavailable.
 	 */
-	private cachedBridgeAuth: AppServerAuth | null | undefined = undefined;
+	private cachedBridgeAuth: OpenAIResponsesBridgeAuth | null | undefined = undefined;
 
 	/**
 	 * Backward-compatibility cache for the legacy getApiKey() return path.
@@ -272,18 +195,14 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	constructor(
 		private readonly env: Record<string, string | undefined> = process.env,
 		authDir?: string,
-		codexAuthDir?: string,
-		/** Injectable for tests — defaults to the real findCodexCli(). */
-		private readonly codexFinder: () => string | null = findCodexCli
+		codexAuthDir?: string
 	) {
 		this.authPath = path.join(authDir ?? path.join(os.homedir(), '.neokai'), 'auth.json');
 		this.codexAuthPath = path.join(codexAuthDir ?? path.join(os.homedir(), '.codex'), 'auth.json');
 	}
 
 	async isAvailable(): Promise<boolean> {
-		const auth = await this.getBridgeAuth();
-		if (!auth) return false;
-		return this.selectBridgeAdapter() === 'responses' || !!this.codexFinder();
+		return (await this.getBridgeAuth()) !== undefined;
 	}
 
 	// -------------------------------------------------------------------------
@@ -291,17 +210,14 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Return provider credentials for codex app-server, following discovery order:
-	 *   1. OPENAI_API_KEY / CODEX_API_KEY env var
+	 * Return provider credentials, following discovery order:
+	 *   1. OPENAI_API_KEY env var
 	 *   2. ~/.neokai/auth.json["openai"]
 	 *   3. One-time migration from ~/.codex/auth.json into ~/.neokai/auth.json
 	 */
-	private async getBridgeAuth(): Promise<AppServerAuth | undefined> {
+	private async getBridgeAuth(): Promise<OpenAIResponsesBridgeAuth | undefined> {
 		if (this.env.OPENAI_API_KEY) {
-			return { type: 'api_key', apiKey: this.env.OPENAI_API_KEY };
-		}
-		if (this.env.CODEX_API_KEY) {
-			return { type: 'api_key', apiKey: this.env.CODEX_API_KEY };
+			return { source: 'api_key', apiKey: this.env.OPENAI_API_KEY };
 		}
 
 		if (this.cachedBridgeAuth !== undefined) {
@@ -336,27 +252,25 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	 */
 	async getApiKey(): Promise<string | undefined> {
 		const auth = await this.getBridgeAuth();
-		if (!auth) return undefined;
-		return auth.type === 'api_key' ? auth.apiKey : auth.accessToken;
+		return auth?.apiKey;
 	}
 
-	private toBridgeAuth(credentials: StoredCredentials): AppServerAuth | undefined {
+	private toBridgeAuth(credentials: StoredCredentials): OpenAIResponsesBridgeAuth | undefined {
 		if (!credentials.access) return undefined;
 		if (credentials.type === 'api_key') {
-			return { type: 'api_key', apiKey: credentials.access };
+			return { source: 'api_key', apiKey: credentials.access };
 		}
 
-		const chatgptAccountId = credentials.accountId ?? this.extractAccountId(credentials.access);
-		if (!chatgptAccountId) {
+		const accountId = credentials.accountId ?? this.extractAccountId(credentials.access);
+		if (!accountId) {
 			// Fallback for legacy malformed entries: treat unknown oauth "access" as API key.
-			return { type: 'api_key', apiKey: credentials.access };
+			return { source: 'api_key', apiKey: credentials.access };
 		}
 
 		return {
-			type: 'chatgpt',
-			accessToken: credentials.access,
-			chatgptAccountId,
-			chatgptPlanType: credentials.planType ?? this.extractPlanType(credentials.access),
+			source: 'chatgpt_oauth',
+			apiKey: credentials.access,
+			accountId,
 			isFedrampAccount:
 				credentials.isFedrampAccount ?? this.extractIsFedrampAccount(credentials.access),
 			refreshAuthTokens: async () => {
@@ -366,8 +280,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 				if (!refreshedAccountId) return null;
 				return {
 					accessToken: refreshed.access,
-					chatgptAccountId: refreshedAccountId,
-					chatgptPlanType: refreshed.planType ?? this.extractPlanType(refreshed.access),
+					accountId: refreshedAccountId,
 					isFedrampAccount:
 						refreshed.isFedrampAccount ?? this.extractIsFedrampAccount(refreshed.access),
 				};
@@ -375,52 +288,13 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		};
 	}
 
-	private configuredBridgeAdapter(): OpenAIBridgeAdapterSetting {
-		const raw = this.env[OPENAI_BRIDGE_ADAPTER_ENV]?.trim().toLowerCase();
-		if (raw === 'responses' || raw === 'codex' || raw === 'auto') return raw;
-		return 'auto';
-	}
-
-	private selectBridgeAdapter(): OpenAIBridgeAdapter {
-		const configured = this.configuredBridgeAdapter();
-		if (configured === 'responses' || configured === 'codex') return configured;
-
-		// Auto mode: API keys use the direct OpenAI Responses API. ChatGPT OAuth
-		// tokens use the same direct adapter, pointed at the ChatGPT Codex backend:
-		// https://chatgpt.com/backend-api/codex/responses with ChatGPT-Account-ID.
-		return 'responses';
-	}
-
-	private toResponsesBridgeAuth(auth: AppServerAuth): OpenAIResponsesBridgeAuth {
-		if (auth.type === 'api_key') {
-			return { source: 'api_key', apiKey: auth.apiKey };
-		}
-		return {
-			source: 'chatgpt_oauth',
-			apiKey: auth.accessToken,
-			accountId: auth.chatgptAccountId,
-			isFedrampAccount: auth.isFedrampAccount,
-			refreshAuthTokens: auth.refreshAuthTokens
-				? async () => {
-						const refreshed = await auth.refreshAuthTokens?.();
-						if (!refreshed) return null;
-						return {
-							accessToken: refreshed.accessToken,
-							accountId: refreshed.chatgptAccountId,
-							isFedrampAccount: refreshed.isFedrampAccount,
-						};
-					}
-				: undefined,
-		};
-	}
-
-	private bridgeAuthCacheKey(auth: AppServerAuth | undefined): string {
+	private bridgeAuthCacheKey(auth: OpenAIResponsesBridgeAuth | undefined): string {
 		if (!auth) return 'none';
-		if (auth.type === 'api_key') return `api_key:${auth.apiKey}`;
+		if (auth.source === 'api_key') return `api_key:${auth.apiKey}`;
 		return [
 			'chatgpt',
-			auth.accessToken,
-			auth.chatgptAccountId,
+			auth.apiKey,
+			auth.accountId,
 			auth.isFedrampAccount ? 'fedramp' : 'standard',
 		].join(':');
 	}
@@ -476,7 +350,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
 	async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
 		// Only NeoKai-managed OAuth credentials are recognised in the UI.
-		// OPENAI_API_KEY / CODEX_API_KEY env vars are for daemon/test use only.
+		// OPENAI_API_KEY env vars are for daemon/test use only.
 		const neokaiCreds = await this.loadCredentials();
 		if (!neokaiCreds || neokaiCreds.type !== 'oauth') {
 			return {
@@ -484,15 +358,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 				error: neokaiCreds
 					? 'API key credentials are not supported via the UI. Click Login to authenticate with OpenAI OAuth.'
 					: 'Not logged in. Click Login to authenticate with OpenAI.',
-			};
-		}
-
-		const auth = this.toBridgeAuth(neokaiCreds);
-		const requiresCodexBinary = auth ? this.selectBridgeAdapter() === 'codex' : false;
-		if (requiresCodexBinary && !this.codexFinder()) {
-			return {
-				isAuthenticated: false,
-				error: 'codex binary not found on PATH. Install Codex CLI to use this provider.',
 			};
 		}
 
@@ -516,10 +381,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		// Use isAvailable() (which includes env-var credentials via getBridgeAuth()) so
 		// that the model picker works for all credential sources.  getAuthStatus() is
 		// UI-only: it gates the Login/Logout buttons but must not hide models from users
-		// who authenticate via OPENAI_API_KEY / CODEX_API_KEY env vars.
+		// who authenticate via OPENAI_API_KEY env vars.
 		if (!(await this.isAvailable())) return [];
-		const thinkingModes = this.selectBridgeAdapter() === 'responses' ? 'granular' : 'off';
-		return ANTHROPIC_CODEX_MODELS.map((m) => ({ ...m, thinkingModes }));
+		return ANTHROPIC_CODEX_MODELS.map((m) => ({ ...m, thinkingModes: 'granular' as const }));
 	}
 
 	ownsModel(modelId: string): boolean {
@@ -560,28 +424,22 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	 * route the Anthropic SDK to that bridge's local HTTP endpoint.
 	 */
 	buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
-		const workspace = sessionConfig?.workspacePath ?? process.cwd();
 		const sessionId = sessionConfig?.sessionId ?? 'default';
 		// buildSdkConfig() is synchronous per the Provider interface.  The async
 		// discovery chain populates cachedBridgeAuth via isAvailable()/getAuthStatus().
 		const envAuth = this.env.OPENAI_API_KEY
-			? ({ type: 'api_key', apiKey: this.env.OPENAI_API_KEY } as const)
-			: this.env.CODEX_API_KEY
-				? ({ type: 'api_key', apiKey: this.env.CODEX_API_KEY } as const)
-				: undefined;
+			? ({ source: 'api_key', apiKey: this.env.OPENAI_API_KEY } as const)
+			: undefined;
 		const fileAuth = this.cachedCredentials ? this.toBridgeAuth(this.cachedCredentials) : undefined;
 		const auth = envAuth ?? this.cachedBridgeAuth ?? fileAuth ?? undefined;
-		const adapter = this.selectBridgeAdapter();
 		const authKey = this.bridgeAuthCacheKey(auth);
-		const bridgeKey = adapter === 'responses' ? `responses:${authKey}` : `codex:${workspace}`;
+		const bridgeKey = `responses:${authKey}`;
 		let bridgeServer = this.bridgeServers.get(bridgeKey);
-		if (adapter === 'responses') {
-			for (const [key, server] of this.bridgeServers) {
-				if (!key.startsWith('responses:') || key === bridgeKey) continue;
-				server.stop();
-				this.bridgeServers.delete(key);
-				this.bridgeServerAuthKeys.delete(key);
-			}
+		for (const [key, server] of this.bridgeServers) {
+			if (key === bridgeKey) continue;
+			server.stop();
+			this.bridgeServers.delete(key);
+			this.bridgeServerAuthKeys.delete(key);
 		}
 		// Resolve alias (e.g. 'codex' → 'gpt-5.3-codex') so ANTHROPIC_DEFAULT_*_MODEL
 		// receives real OpenAI model IDs that the bridge can forward upstream.
@@ -592,38 +450,25 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		const resolvedId = entry.id;
 
 		if (!bridgeServer) {
-			if (adapter === 'codex') {
-				const codexBinaryPath = this.codexFinder() ?? 'codex';
-				bridgeServer = createBridgeServer({
-					codexBinaryPath,
-					auth,
-					cwd: workspace,
-					dbPath: this.env.DB_PATH,
-				});
-			} else {
-				if (!auth) {
-					logger.warn(
-						'AnthropicToCodexBridgeProvider: starting Responses bridge without resolved auth; requests will fail until credentials are available'
-					);
-				}
-				bridgeServer = createOpenAIResponsesBridgeServer({
-					auth: auth ? this.toResponsesBridgeAuth(auth) : { source: 'api_key', apiKey: '' },
-					models: this.responsesBridgeModels(),
-					modelAliases: this.modelAliases(),
-				});
+			if (!auth) {
+				logger.warn(
+					'AnthropicToCodexBridgeProvider: starting Responses bridge without resolved auth; requests will fail until credentials are available'
+				);
 			}
+			bridgeServer = createOpenAIResponsesBridgeServer({
+				auth: auth ?? { source: 'api_key', apiKey: '' },
+				models: this.responsesBridgeModels(),
+				modelAliases: this.modelAliases(),
+			});
 			this.bridgeServers.set(bridgeKey, bridgeServer);
 			this.bridgeServerAuthKeys.set(bridgeKey, authKey);
 			logger.info(
-				`AnthropicToCodexBridgeProvider: ${adapter} bridge server started on port ${bridgeServer.port} for key=${bridgeKey}`
+				`AnthropicToCodexBridgeProvider: Responses bridge server started on port ${bridgeServer.port} for key=${bridgeKey}`
 			);
 		}
 
 		const bridgeBaseUrl =
-			adapter === 'responses'
-				? (bridgeServer as OpenAIResponsesBridgeServer).baseUrlForSession?.(sessionId) ||
-					`http://127.0.0.1:${bridgeServer.port}`
-				: `http://127.0.0.1:${bridgeServer.port}`;
+			bridgeServer.baseUrlForSession?.(sessionId) || `http://127.0.0.1:${bridgeServer.port}`;
 
 		return {
 			envVars: {
