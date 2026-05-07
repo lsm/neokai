@@ -247,6 +247,18 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					'[]', ${now}, ${now}
 				)
 			`);
+			// Mirror SpaceTaskRepository's task_session_map maintenance — the live-
+			// query SQL fans out from this projection, so tests must seed it too.
+			if (overrides.taskAgentSessionId) {
+				db.exec(`
+					INSERT OR IGNORE INTO task_session_map (
+						task_id, session_id, kind, role, label, node_execution_id, created_at
+					) VALUES (
+						'${id}', '${String(overrides.taskAgentSessionId)}',
+						'task_agent', 'task-agent', 'Task Agent', NULL, ${now}
+					)
+				`);
+			}
 			return id;
 		}
 
@@ -261,6 +273,61 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					0, NULL, NULL, NULL, NULL, NULL, NULL, '${processingState}', NULL, '${type}', '{}'
 				)
 			`);
+		}
+
+		/**
+		 * Mirror NodeExecutionRepository.create — insert a node_executions row
+		 * AND seed the node_agent leg of task_session_map for every space_task
+		 * sharing the workflow_run_id. The live-query SQL JOINs on this projection
+		 * so tests must keep it in sync.
+		 */
+		function insertNodeExecution(params: {
+			id: string;
+			workflowRunId: string;
+			workflowNodeId: string;
+			agentName: string;
+			agentId?: string | null;
+			agentSessionId?: string | null;
+			status?: string;
+		}): void {
+			const {
+				id,
+				workflowRunId,
+				workflowNodeId,
+				agentName,
+				agentId = null,
+				agentSessionId = null,
+				status = 'in_progress',
+			} = params;
+			db.exec(`
+				INSERT INTO node_executions (
+					id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+					agent_session_id, status, result, created_at, started_at,
+					completed_at, updated_at
+				) VALUES (
+					'${id}', '${workflowRunId}', '${workflowNodeId}', '${agentName}',
+					${agentId ? `'${agentId}'` : 'NULL'},
+					${agentSessionId ? `'${agentSessionId}'` : 'NULL'},
+					'${status}', NULL, ${now}, ${now}, NULL, ${now}
+				)
+			`);
+			if (agentSessionId) {
+				const tasks = db
+					.prepare(
+						`SELECT id FROM space_tasks WHERE workflow_run_id IS NOT NULL AND workflow_run_id = ?`
+					)
+					.all(workflowRunId) as Array<{ id: string }>;
+				for (const t of tasks) {
+					db.exec(`
+						INSERT OR IGNORE INTO task_session_map (
+							task_id, session_id, kind, role, label, node_execution_id, created_at
+						) VALUES (
+							'${t.id}', '${agentSessionId}', 'node_agent',
+							'${agentName}', '${agentName}', '${id}', ${now}
+						)
+					`);
+				}
+			}
 		}
 
 		function insertSdkMessage(id: string, sessionIdValue: string): void {
@@ -335,31 +402,24 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			});
 
 			// Insert a separate step task for the node agent (different from the orchestration task).
-			db.exec(`
-				INSERT INTO space_tasks (
-					id, space_id, task_number, title, description, status, priority, assigned_agent,
-					agent_name, workflow_run_id, workflow_node_id, task_agent_session_id, depends_on,
-					created_at, updated_at
-				) VALUES (
-					'step-task-1', '${spaceId}', 2, '${agentName}', 'Code the feature', 'in_progress',
-					'normal', NULL, '${agentName}',
-					'${workflowRunId}', '${workflowNodeId}', '${nodeSessionId}',
-					'[]', ${now}, ${now}
-				)
-			`);
+			insertSpaceTask({
+				id: 'step-task-1',
+				agentName,
+				workflowRunId,
+				workflowNodeId,
+				taskAgentSessionId: nodeSessionId,
+				status: 'in_progress',
+			});
 
 			// Insert a matching node_execution record with agent_session_id
-			db.exec(`
-				INSERT INTO node_executions (
-					id, workflow_run_id, workflow_node_id, agent_name, agent_id,
-					agent_session_id, status, result, created_at, started_at,
-					completed_at, updated_at
-				) VALUES (
-					'ne-1', '${workflowRunId}', '${workflowNodeId}', '${agentName}', NULL,
-					'${nodeSessionId}', 'in_progress', NULL, ${now}, ${now},
-					NULL, ${now}
-				)
-			`);
+			insertNodeExecution({
+				id: 'ne-1',
+				workflowRunId,
+				workflowNodeId,
+				agentName,
+				agentSessionId: nodeSessionId,
+				status: 'in_progress',
+			});
 
 			// Insert session and SDK messages for the node agent
 			insertSession(nodeSessionId, 'space_task_agent', '{"status":"processing","phase":"coding"}');
@@ -386,17 +446,14 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			const taskId = insertSpaceTask({ workflowRunId, status: 'in_progress' });
 
 			// Insert node_execution WITHOUT agent_session_id
-			db.exec(`
-				INSERT INTO node_executions (
-					id, workflow_run_id, workflow_node_id, agent_name, agent_id,
-					agent_session_id, status, result, created_at, started_at,
-					completed_at, updated_at
-				) VALUES (
-					'ne-no-sess', '${workflowRunId}', 'node-1', 'agent', NULL,
-					NULL, 'pending', NULL, ${now}, NULL,
-					NULL, ${now}
-				)
-			`);
+			insertNodeExecution({
+				id: 'ne-no-sess',
+				workflowRunId,
+				workflowNodeId: 'node-1',
+				agentName: 'agent',
+				agentSessionId: null,
+				status: 'pending',
+			});
 
 			const rows = queryAndMap(taskId);
 			const nodeAgentRows = rows.filter((r) => r.kind === 'node_agent');
@@ -422,12 +479,24 @@ describe('NAMED_QUERY_REGISTRY', () => {
 						type: 'assistant',
 						message: { role: 'assistant', content: [{ type: 'text', text: id }] },
 					} as Record<string, unknown>);
+				const isTerminal = messageType === 'result' ? 1 : 0;
+				const content = (payload as { message?: { content?: unknown[] } }).message?.content;
+				const isToolResultOnly =
+					messageType === 'user' &&
+					Array.isArray(content) &&
+					content.length > 0 &&
+					content.every((b: unknown) => (b as { type?: string }).type === 'tool_result');
+				const isRenderable = isToolResultOnly ? 0 : 1;
+				const parentToolUseId =
+					(payload as { parent_tool_use_id?: string | null }).parent_tool_use_id ?? null;
 				db.exec(`
 					INSERT INTO sdk_messages (
-						id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin
+						id, session_id, message_type, message_subtype, sdk_message, timestamp,
+						send_status, origin, is_renderable, is_terminal, parent_tool_use_id
 					) VALUES (
 						'${id}', '${sessionIdValue}', '${messageType}', NULL, '${JSON.stringify(payload)}',
-						'${iso}', 'consumed', 'system'
+						'${iso}', 'consumed', 'system', ${isRenderable}, ${isTerminal},
+						${parentToolUseId ? `'${parentToolUseId}'` : 'NULL'}
 					)
 				`);
 			}
@@ -567,17 +636,14 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				insertSession(orchestrationSessionId, 'space_task_agent', '{"status":"processing"}');
 				insertSession(nodeSessionId, 'space_task_agent', '{"status":"processing"}');
 
-				db.exec(`
-					INSERT INTO node_executions (
-						id, workflow_run_id, workflow_node_id, agent_name, agent_id,
-						agent_session_id, status, result, created_at, started_at,
-						completed_at, updated_at
-					) VALUES (
-						'ne-compact', '${workflowRunId}', '${workflowNodeId}', 'coder', NULL,
-						'${nodeSessionId}', 'in_progress', NULL, ${now}, ${now},
-						NULL, ${now}
-					)
-				`);
+				insertNodeExecution({
+					id: 'ne-compact',
+					workflowRunId,
+					workflowNodeId,
+					agentName: 'coder',
+					agentSessionId: nodeSessionId,
+					status: 'in_progress',
+				});
 
 				for (let i = 1; i <= 6; i += 1) {
 					insertSdkMessageAt(`orch-n${i}`, orchestrationSessionId, now + i * 1000);
@@ -741,12 +807,24 @@ describe('NAMED_QUERY_REGISTRY', () => {
 						uuid: id,
 						message: { role: 'assistant', content: [{ type: 'text', text: id }] },
 					} as Record<string, unknown>);
+				const isTerminal = messageType === 'result' ? 1 : 0;
+				const content = (payload as { message?: { content?: unknown[] } }).message?.content;
+				const isToolResultOnly =
+					messageType === 'user' &&
+					Array.isArray(content) &&
+					content.length > 0 &&
+					content.every((b: unknown) => (b as { type?: string }).type === 'tool_result');
+				const isRenderable = isToolResultOnly ? 0 : 1;
+				const parentToolUseId =
+					(payload as { parent_tool_use_id?: string | null }).parent_tool_use_id ?? null;
 				db.exec(`
 					INSERT INTO sdk_messages (
-						id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin
+						id, session_id, message_type, message_subtype, sdk_message, timestamp,
+						send_status, origin, is_renderable, is_terminal, parent_tool_use_id
 					) VALUES (
 						'${id}', '${sessionIdValue}', '${messageType}', NULL, '${JSON.stringify(payload).replace(/'/g, "''")}',
-						'${iso}', 'consumed', 'system'
+						'${iso}', 'consumed', 'system', ${isRenderable}, ${isTerminal},
+						${parentToolUseId ? `'${parentToolUseId}'` : 'NULL'}
 					)
 				`);
 			}
@@ -990,17 +1068,14 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				insertSession(orchestrationSessionId, 'space_task_agent', '{"status":"processing"}');
 				insertSession(nodeSessionId, 'space_task_agent', '{"status":"processing"}');
 
-				db.exec(`
-					INSERT INTO node_executions (
-						id, workflow_run_id, workflow_node_id, agent_name, agent_id,
-						agent_session_id, status, result, created_at, started_at,
-						completed_at, updated_at
-					) VALUES (
-						'ne-multi', '${workflowRunId}', '${workflowNodeId}', 'coder', NULL,
-						'${nodeSessionId}', 'in_progress', NULL, ${now}, ${now},
-						NULL, ${now}
-					)
-				`);
+				insertNodeExecution({
+					id: 'ne-multi',
+					workflowRunId,
+					workflowNodeId,
+					agentName: 'coder',
+					agentSessionId: nodeSessionId,
+					status: 'in_progress',
+				});
 
 				// Both sessions have an active turn (no result row yet) — both
 				// should appear in the summaries.
@@ -1509,7 +1584,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			const meta = parsed._taskMeta as Record<string, unknown>;
 			expect(meta.authorRole).toBe('coder');
 			expect(meta.authorSessionId).toBe(workerSessionId);
-			expect(meta.iteration).toBe(0);
+			expect(meta.iteration).toBeUndefined();
 			expect(typeof meta.turnId).toBe('string');
 			expect(parsed.uuid).toBe('worker-msg-1');
 		});

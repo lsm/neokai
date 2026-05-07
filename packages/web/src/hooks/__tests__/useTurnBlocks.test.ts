@@ -58,7 +58,6 @@ function makeAgentMessage(opts: {
 			authorRole: opts.authorRole,
 			authorSessionId: opts.authorSessionId,
 			turnId: `turn-${id}`,
-			iteration: 1,
 		},
 		...(opts.content ?? {}),
 	};
@@ -475,7 +474,6 @@ describe('useTurnBlocks', () => {
 						authorRole: 'coder',
 						authorSessionId: 'sess-fallback',
 						turnId: 'turn-fb',
-						iteration: 1,
 					},
 				}),
 				createdAt,
@@ -1185,7 +1183,6 @@ describe('useTurnBlocks', () => {
 						authorRole: 'coder',
 						authorSessionId: 'sess-worker',
 						turnId: 't1',
-						iteration: 1,
 					},
 				}),
 				createdAt: 1000,

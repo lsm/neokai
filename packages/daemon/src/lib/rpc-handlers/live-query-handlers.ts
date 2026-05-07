@@ -95,26 +95,28 @@ function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string,
 	const role = String(row.role ?? 'system');
 	const messageType = String(row.messageType ?? 'status');
 	const createdAt = Number(row.createdAt ?? Date.now());
-	const iteration = Number(row.iteration ?? 0);
 	const rawId = row.id;
 	const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `row-${createdAt}`;
 	const parentToolUseId = typeof row.parentToolUseId === 'string' ? row.parentToolUseId : null;
+	const turnUserMessageId =
+		typeof row.turnUserMessageId === 'string' ? row.turnUserMessageId : null;
 
 	let content = typeof row.content === 'string' ? row.content : String(row.content ?? '');
 
 	if (sourceType === 'sdk') {
 		try {
 			const parsed = JSON.parse(content) as Record<string, unknown>;
-			const uuid = typeof parsed.uuid === 'string' ? parsed.uuid : String(id);
-			const shortSessionId = (sessionId ?? '').slice(0, 8);
-			const turnId = `turn_${groupId}_${iteration}_${shortSessionId}_${uuid}`;
+			// turnId is the user message's own ID — every non-user row inherits the
+			// most recent user-row id within its session, so all rows belonging to
+			// the same turn share a stable, content-derived turn key. Rows that
+			// precede any user message in their session fall back to their own id.
+			const turnId = turnUserMessageId ?? String(id);
 			const enriched = {
 				...parsed,
 				_taskMeta: {
 					authorRole: role,
 					authorSessionId: sessionId ?? '',
 					turnId,
-					iteration,
 				},
 			};
 			content = JSON.stringify(enriched);
@@ -149,10 +151,11 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 	const taskTitle = String(row.taskTitle ?? '');
 	const messageType = String(row.messageType ?? 'status');
 	const createdAt = Number(row.createdAt ?? Date.now());
-	const iteration = Number(row.iteration ?? 0);
 	const rawId = row.id;
 	const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `row-${createdAt}`;
 	const parentToolUseId = typeof row.parentToolUseId === 'string' ? row.parentToolUseId : null;
+	const turnUserMessageId =
+		typeof row.turnUserMessageId === 'string' ? row.turnUserMessageId : null;
 	const origin = typeof row.origin === 'string' ? row.origin : null;
 	// Optional backward-compat field from older compact-query variants.
 	// Current compact SQL no longer emits this, but keep tolerant parsing so
@@ -174,9 +177,13 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 
 	try {
 		const parsed = JSON.parse(content) as Record<string, unknown>;
-		const uuid = typeof parsed.uuid === 'string' ? parsed.uuid : String(id);
-		const shortSessionId = (sessionId ?? '').slice(0, 8);
-		const turnId = `turn_${taskId}_${iteration}_${shortSessionId}_${uuid}`;
+		// turnId = the id of the user-message that started this turn. SQL emits
+		// `turnUserMessageId` per row by carrying forward the most recent user-row
+		// id within the session via a window function. Rows that precede any
+		// user message in their session fall back to their own id, giving every
+		// row a stable, content-derived turn key without depending on
+		// session-group iteration metadata.
+		const turnId = turnUserMessageId ?? String(id);
 		content = JSON.stringify({
 			...parsed,
 			_taskMeta: {
@@ -187,7 +194,6 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 				taskId,
 				taskTitle,
 				turnId,
-				iteration,
 			},
 		});
 	} catch {
@@ -522,29 +528,78 @@ WITH target_group AS (
   SELECT id
   FROM session_groups
   WHERE id = ?
+),
+sdk_rows_raw AS (
+  SELECT
+    sm.id                         AS id,
+    tg.id                         AS groupId,
+    sm.session_id                 AS sessionId,
+    CASE
+      WHEN gm.role = 'leader' THEN 'leader'
+      WHEN gm.role = 'worker' AND sm.session_id LIKE 'general:%' THEN 'general'
+      WHEN gm.role = 'worker' AND sm.session_id LIKE 'planner:%' THEN 'planner'
+      WHEN gm.role = 'worker' AND sm.session_id LIKE 'coder:%' THEN 'coder'
+      WHEN gm.role = 'worker' THEN 'coder'
+      ELSE gm.role
+    END                           AS role,
+    sm.message_type               AS messageType,
+    sm.sdk_message                AS content,
+    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
+    sm.parent_tool_use_id AS parentToolUseId
+  FROM target_group tg
+  JOIN session_group_members gm ON gm.group_id = tg.id
+  JOIN sdk_messages sm ON sm.session_id = gm.session_id
+  WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+),
+sdk_rows_with_pos AS (
+  SELECT
+    r.*,
+    ROW_NUMBER() OVER (
+      PARTITION BY r.sessionId
+      ORDER BY r.createdAt ASC, r.id ASC
+    ) AS rowPos
+  FROM sdk_rows_raw r
+),
+user_row_starts AS (
+  SELECT
+    sessionId,
+    rowPos AS userRowPos,
+    id AS userMessageId
+  FROM sdk_rows_with_pos
+  WHERE messageType = 'user'
+),
+sdk_rows AS (
+  SELECT
+    p.id,
+    p.groupId,
+    p.sessionId,
+    p.role,
+    p.messageType,
+    p.content,
+    p.createdAt,
+    p.parentToolUseId,
+    (
+      SELECT urs.userMessageId
+      FROM user_row_starts urs
+      WHERE urs.sessionId = p.sessionId
+        AND urs.userRowPos <= p.rowPos
+      ORDER BY urs.userRowPos DESC
+      LIMIT 1
+    ) AS turnUserMessageId
+  FROM sdk_rows_with_pos p
 )
 SELECT
-  'sdk'                         AS sourceType,
-  sm.id                         AS id,
-  tg.id                         AS groupId,
-  sm.session_id                 AS sessionId,
-  CASE
-    WHEN gm.role = 'leader' THEN 'leader'
-    WHEN gm.role = 'worker' AND sm.session_id LIKE 'general:%' THEN 'general'
-    WHEN gm.role = 'worker' AND sm.session_id LIKE 'planner:%' THEN 'planner'
-    WHEN gm.role = 'worker' AND sm.session_id LIKE 'coder:%' THEN 'coder'
-    WHEN gm.role = 'worker' THEN 'coder'
-    ELSE gm.role
-  END                           AS role,
-  sm.message_type               AS messageType,
-  sm.sdk_message                AS content,
-  CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
-  CAST(COALESCE(json_extract(sm.sdk_message, '$._taskMeta.iteration'), 0) AS INTEGER) AS iteration,
-  json_extract(sm.sdk_message, '$.parent_tool_use_id') AS parentToolUseId
-FROM target_group tg
-JOIN session_group_members gm ON gm.group_id = tg.id
-JOIN sdk_messages sm ON sm.session_id = gm.session_id
-WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+  'sdk' AS sourceType,
+  id,
+  groupId,
+  sessionId,
+  role,
+  messageType,
+  content,
+  createdAt,
+  turnUserMessageId,
+  parentToolUseId
+FROM sdk_rows
 UNION ALL
 SELECT
   'event'                       AS sourceType,
@@ -563,7 +618,7 @@ SELECT
     ELSE COALESCE(json_extract(e.payload_json, '$.text'), e.kind)
   END                           AS content,
   e.created_at                  AS createdAt,
-  0                             AS iteration,
+  NULL                          AS turnUserMessageId,
   NULL                          AS parentToolUseId
 FROM target_group tg
 JOIN task_group_events e ON e.group_id = tg.id
@@ -710,43 +765,23 @@ WITH target_task AS (
   FROM space_tasks
   WHERE id = ?
 ),
--- Leg 1: orchestration task (the Task Agent's own task)
-orchestration AS (
+-- task_session_map is the canonical lookup for "which sessions contribute to
+-- this task's timeline". Each row is either the Task Agent's orchestration
+-- session (kind='task_agent') or a node-agent session bound to the task via
+-- workflow_run_id (kind='node_agent'). The map is maintained at write time by
+-- SpaceTaskRepository and NodeExecutionRepository so live reads can JOIN
+-- straight onto sdk_messages without walking sessions/space_agents/node_executions.
+all_sessions AS (
   SELECT
-    tt.task_agent_session_id AS session_id,
-    'task_agent' AS kind,
-    'task-agent' AS role,
-    'Task Agent' AS label,
-    NULL AS node_execution_id,
+    tsm.session_id AS session_id,
+    tsm.kind AS kind,
+    tsm.role AS role,
+    tsm.label AS label,
+    tsm.node_execution_id AS node_execution_id,
     tt.id AS task_id,
     tt.title AS task_title
   FROM target_task tt
-  JOIN sessions s ON s.id = tt.task_agent_session_id
-  WHERE tt.task_agent_session_id IS NOT NULL
-    AND s.type = 'space_task_agent'
-),
--- Leg 2: node agents via node_executions
-node_agents AS (
-  SELECT
-    ne.agent_session_id AS session_id,
-    'node_agent' AS kind,
-    ne.agent_name AS role,
-    COALESCE(sa.name, ne.agent_name, 'agent') AS label,
-    ne.id AS node_execution_id,
-    tt.id AS task_id,
-    tt.title AS task_title
-  FROM node_executions ne
-  JOIN target_task tt
-    ON tt.workflow_run_id IS NOT NULL
-   AND ne.workflow_run_id = tt.workflow_run_id
-  LEFT JOIN space_agents sa ON sa.id = ne.agent_id
-  WHERE ne.agent_session_id IS NOT NULL
-),
--- Union both legs
-all_sessions AS (
-  SELECT * FROM orchestration
-  UNION ALL
-  SELECT * FROM node_agents
+  JOIN task_session_map tsm ON tsm.task_id = tt.id
 ),
 github_events AS (
   SELECT
@@ -769,15 +804,15 @@ github_events AS (
     ) AS content,
     'system' AS origin,
     ge.occurred_at AS createdAt,
-    0 AS iteration,
-    NULL AS parentToolUseId
+    NULL AS parentToolUseId,
+    1 AS isRenderable,
+    0 AS isTerminal,
+    NULL AS turnUserMessageId
   FROM target_task tt
   JOIN space_github_events ge ON ge.task_id = tt.id
   WHERE ge.state IN ('routed', 'delivered')
 ),
-joined AS (
-  SELECT * FROM github_events
-  UNION ALL
+sdk_rows_raw AS (
   SELECT
     sm.id AS id,
     sm.session_id AS sessionId,
@@ -791,11 +826,80 @@ joined AS (
     sm.sdk_message AS content,
     sm.origin AS origin,
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
-    CAST(COALESCE(json_extract(sm.sdk_message, '$._taskMeta.iteration'), 0) AS INTEGER) AS iteration,
-    json_extract(sm.sdk_message, '$.parent_tool_use_id') AS parentToolUseId
+    sm.parent_tool_use_id AS parentToolUseId,
+    sm.is_renderable AS isRenderable,
+    sm.is_terminal AS isTerminal
   FROM all_sessions ase
   JOIN sdk_messages sm ON sm.session_id = ase.session_id
   WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+),
+sdk_rows_with_pos AS (
+  SELECT
+    r.*,
+    ROW_NUMBER() OVER (
+      PARTITION BY r.sessionId
+      ORDER BY r.createdAt ASC, r.id ASC
+    ) AS rowPos
+  FROM sdk_rows_raw r
+),
+user_row_starts AS (
+  -- For each user row, capture (sessionId, rowPos) and its own id. Non-user
+  -- rows pick up the most recent user-row id by joining on rowPos <= current.
+  SELECT
+    sessionId,
+    rowPos AS userRowPos,
+    id AS userMessageId
+  FROM sdk_rows_with_pos
+  WHERE messageType = 'user'
+),
+sdk_rows AS (
+  SELECT
+    p.id,
+    p.sessionId,
+    p.kind,
+    p.role,
+    p.label,
+    p.nodeExecutionId,
+    p.taskId,
+    p.taskTitle,
+    p.messageType,
+    p.content,
+    p.origin,
+    p.createdAt,
+    p.parentToolUseId,
+    p.isRenderable,
+    p.isTerminal,
+    (
+      SELECT urs.userMessageId
+      FROM user_row_starts urs
+      WHERE urs.sessionId = p.sessionId
+        AND urs.userRowPos <= p.rowPos
+      ORDER BY urs.userRowPos DESC
+      LIMIT 1
+    ) AS turnUserMessageId
+  FROM sdk_rows_with_pos p
+),
+joined AS (
+  SELECT * FROM github_events
+  UNION ALL
+  SELECT
+    id,
+    sessionId,
+    kind,
+    role,
+    label,
+    nodeExecutionId,
+    taskId,
+    taskTitle,
+    messageType,
+    content,
+    origin,
+    createdAt,
+    parentToolUseId,
+    isRenderable,
+    isTerminal,
+    turnUserMessageId
+  FROM sdk_rows
 )
 `.trim();
 
@@ -818,7 +922,7 @@ SELECT
   content,
   origin,
   createdAt,
-  iteration,
+  turnUserMessageId,
   parentToolUseId
 FROM joined
 ORDER BY createdAt ASC, id ASC
@@ -854,46 +958,10 @@ ${SPACE_TASK_MESSAGES_BASE_CTE},
 session_turns AS (
   SELECT
     j.*,
-    CASE
-      WHEN j.messageType = 'result' THEN 1
-      ELSE 0
-    END AS isTerminal,
-    CASE
-      -- Drop user rows whose content is exclusively tool_result blocks — they
-      -- render as null in the compact UI and would otherwise consume slots
-      -- in the per-turn cap without contributing visible content.
-      WHEN j.messageType = 'user'
-        AND json_type(j.content, '$.message.content') = 'array'
-        AND EXISTS (
-        SELECT 1
-        FROM json_each(json_extract(j.content, '$.message.content')) AS je
-        WHERE json_extract(je.value, '$.type') = 'tool_result'
-      ) THEN 0
-      -- Drop assistant rows that have *no* renderable content — i.e. the
-      -- content array exists but every block is either an empty/whitespace
-      -- text block or has no non-empty thinking/tool_use sibling. These
-      -- show up rarely in practice but bloat the per-turn cap when they
-      -- do; the active-turn summary applies the same filter so server and
-      -- client agree on what counts as visible activity.
-      WHEN j.messageType = 'assistant'
-        AND json_type(j.content, '$.message.content') = 'array'
-        AND NOT EXISTS (
-          SELECT 1
-          FROM json_each(json_extract(j.content, '$.message.content')) AS je
-          WHERE json_extract(je.value, '$.type') = 'tool_use'
-             OR (
-                json_extract(je.value, '$.type') = 'text'
-                AND TRIM(COALESCE(json_extract(je.value, '$.text'), '')) != ''
-             )
-             OR (
-                json_extract(je.value, '$.type') = 'thinking'
-                AND TRIM(COALESCE(json_extract(je.value, '$.thinking'), '')) != ''
-             )
-        ) THEN 0
-      ELSE 1
-    END AS isRenderable,
+    j.isTerminal AS isTerminalLocal,
+    j.isRenderable AS isRenderableLocal,
     COALESCE(
-      SUM(CASE WHEN j.messageType = 'result' THEN 1 ELSE 0 END) OVER (
+      SUM(j.isTerminal) OVER (
         PARTITION BY j.sessionId
         ORDER BY j.createdAt ASC, j.id ASC
         ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
@@ -906,15 +974,15 @@ ranked AS (
   SELECT
     st.*,
     CASE
-      WHEN st.isTerminal = 0 AND st.isRenderable = 1 THEN ROW_NUMBER() OVER (
-        PARTITION BY st.sessionId, st.turnIndex, st.isTerminal, st.isRenderable
+      WHEN st.isTerminalLocal = 0 AND st.isRenderableLocal = 1 THEN ROW_NUMBER() OVER (
+        PARTITION BY st.sessionId, st.turnIndex, st.isTerminalLocal, st.isRenderableLocal
         ORDER BY st.createdAt DESC, st.id DESC
       )
       ELSE NULL
     END AS nonTerminalRankDesc,
     CASE
-      WHEN st.isTerminal = 0 AND st.isRenderable = 1 AND st.messageType = 'user' THEN ROW_NUMBER() OVER (
-        PARTITION BY st.sessionId, st.turnIndex, st.isTerminal, st.isRenderable, st.messageType
+      WHEN st.isTerminalLocal = 0 AND st.isRenderableLocal = 1 AND st.messageType = 'user' THEN ROW_NUMBER() OVER (
+        PARTITION BY st.sessionId, st.turnIndex, st.isTerminalLocal, st.isRenderableLocal, st.messageType
         ORDER BY st.createdAt ASC, st.id ASC
       )
       ELSE NULL
@@ -925,24 +993,24 @@ scored AS (
   SELECT
     r.*,
     CASE
-      WHEN r.isTerminal = 0 AND r.isRenderable = 1 AND r.nonTerminalRankDesc <= ${SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT}
+      WHEN r.isTerminalLocal = 0 AND r.isRenderableLocal = 1 AND r.nonTerminalRankDesc <= ${SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT}
         THEN 1
       ELSE 0
     END AS isTailVisible,
     CASE
-      WHEN r.isTerminal = 0 AND r.isRenderable = 1 AND r.messageType = 'user' AND r.userRowRankAsc = 1
+      WHEN r.isTerminalLocal = 0 AND r.isRenderableLocal = 1 AND r.messageType = 'user' AND r.userRowRankAsc = 1
         THEN 1
       ELSE 0
     END AS isInitialUserVisible,
     -- System rows (init / compact_boundary) are sidecar metadata, not real
     -- messages — exclude them from both the total and visible counts so the
     -- "N hidden" badge reflects user/assistant turns only.
-    SUM(CASE WHEN r.isTerminal = 0 AND r.isRenderable = 1 AND r.messageType != 'system' THEN 1 ELSE 0 END) OVER (
+    SUM(CASE WHEN r.isTerminalLocal = 0 AND r.isRenderableLocal = 1 AND r.messageType != 'system' THEN 1 ELSE 0 END) OVER (
       PARTITION BY r.sessionId, r.turnIndex
     ) AS totalRenderableNonTerminalInTurn,
     SUM(
       CASE
-        WHEN r.isTerminal = 0 AND r.isRenderable = 1 AND r.messageType != 'system'
+        WHEN r.isTerminalLocal = 0 AND r.isRenderableLocal = 1 AND r.messageType != 'system'
           AND (
             (r.nonTerminalRankDesc <= ${SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT})
             OR (r.messageType = 'user' AND r.userRowRankAsc = 1)
@@ -960,7 +1028,7 @@ selected AS (
     s.*
   FROM scored s
   WHERE
-    s.isTerminal = 1
+    s.isTerminalLocal = 1
     -- Always include system rows (init / compact_boundary). Without this they
     -- would be dropped on any non-trivial turn (the system:init row sits at
     -- position 1 of every session, far outside the tail of 5). System rows
@@ -968,8 +1036,8 @@ selected AS (
     -- per-exec metadata dropdowns working consistently.
     OR s.messageType = 'system'
     OR (
-      s.isTerminal = 0
-      AND s.isRenderable = 1
+      s.isTerminalLocal = 0
+      AND s.isRenderableLocal = 1
       AND (s.isTailVisible = 1 OR s.isInitialUserVisible = 1)
     )
 )
@@ -992,7 +1060,7 @@ SELECT
       THEN totalRenderableNonTerminalInTurn - visibleRenderableNonTerminalInTurn
     ELSE 0
   END AS turnHiddenMessageCount,
-  iteration,
+  turnUserMessageId,
   parentToolUseId
 FROM selected
 ORDER BY createdAt ASC, id ASC
@@ -1046,10 +1114,11 @@ session_turns AS (
     j.messageType,
     j.content,
     j.createdAt,
-    j.iteration,
     j.parentToolUseId,
+    j.turnUserMessageId,
+    j.isTerminal AS isTerminal,
     COALESCE(
-      SUM(CASE WHEN j.messageType = 'result' THEN 1 ELSE 0 END) OVER (
+      SUM(j.isTerminal) OVER (
         PARTITION BY j.sessionId
         ORDER BY j.createdAt ASC, j.id ASC
         ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
@@ -1074,7 +1143,7 @@ active_turn AS (
     FROM session_turns st
     WHERE st.sessionId = smt.sessionId
       AND st.turnIndex = smt.maxTurnIndex
-      AND st.messageType = 'result'
+      AND st.isTerminal = 1
   )
 ),
 active_rows AS (
