@@ -58,7 +58,7 @@ export function setupSpaceTaskHandlers(
 		}
 
 		const taskManager = taskManagerFactory(params.spaceId);
-		const { spaceId, draft, ...rest } = params;
+		const { spaceId, draft, createdBy: _cb, createdBySession: _cbs, ...rest } = params;
 
 		// The draft flag is an alias for status: 'draft'. Reject contradictory
 		// input instead of silently allowing status to override draft: true.
