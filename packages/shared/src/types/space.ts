@@ -65,7 +65,7 @@ export interface TaskAgentConfig {
 	customPrompt?: string;
 	/**
 	 * Setting sources to load for the Task Agent.
-	 * Falls back to the global default (['user', 'project']) when unset.
+	 * Falls back to the global default (['user', 'project', 'local']) when unset.
 	 */
 	settingSources?: SettingSource[];
 }
@@ -720,7 +720,7 @@ export interface SpaceAgent {
 	tools?: string[];
 	/**
 	 * Setting sources to load for this agent.
-	 * Falls back to the global default (['user', 'project']) when unset.
+	 * Falls back to the global default (['user', 'project', 'local']) when unset.
 	 */
 	settingSources?: SettingSource[];
 	/**
@@ -757,7 +757,7 @@ export interface CreateSpaceAgentParams {
 	tools?: string[];
 	/**
 	 * Setting sources to load for this agent.
-	 * Falls back to the global default (['user', 'project']) when unset.
+	 * Falls back to the global default (['user', 'project', 'local']) when unset.
 	 */
 	settingSources?: SettingSource[];
 	/**

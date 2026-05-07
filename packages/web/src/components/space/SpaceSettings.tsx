@@ -34,8 +34,10 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 	const [autonomyLevel, setAutonomyLevel] = useState<SpaceAutonomyLevel>(space.autonomyLevel ?? 1);
 	const [defaultModel, setDefaultModel] = useState<string | undefined>(space.defaultModel);
 	const [settingSources, setSettingSources] = useState<SettingSource[]>(
-		space.settingSources ?? ['user', 'project']
+		space.settingSources ?? ['user', 'project', 'local']
 	);
+	const hadExplicitSettingSources = space.settingSources !== undefined;
+	const [settingSourcesTouched, setSettingSourcesTouched] = useState(false);
 	const [saving, setSaving] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const [isArchiving, setIsArchiving] = useState(false);
@@ -49,8 +51,8 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		setBackgroundContext(space.backgroundContext ?? '');
 		setAutonomyLevel(space.autonomyLevel ?? 1);
 		setDefaultModel(space.defaultModel);
-		setSettingSources(space.settingSources ?? ['user', 'project']);
-		setSettingSources(space.settingSources ?? ['user', 'project']);
+		setSettingSources(space.settingSources ?? ['user', 'project', 'local']);
+		setSettingSourcesTouched(false);
 		setSaveError(null);
 	}, [
 		space.id,
@@ -70,7 +72,8 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		backgroundContext !== (space.backgroundContext ?? '') ||
 		autonomyLevel !== (space.autonomyLevel ?? 1) ||
 		defaultModel !== space.defaultModel ||
-		JSON.stringify(settingSources) !== JSON.stringify(space.settingSources ?? ['user', 'project']);
+		JSON.stringify(settingSources) !==
+			JSON.stringify(space.settingSources ?? ['user', 'project', 'local']);
 
 	async function handleSave(e: Event) {
 		e.preventDefault();
@@ -94,7 +97,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 				backgroundContext: backgroundContext.trim() || undefined,
 				autonomyLevel,
 				defaultModel: defaultModel || null,
-				settingSources,
+				...(hadExplicitSettingSources || settingSourcesTouched ? { settingSources } : {}),
 			});
 			// Apply response directly to avoid stale-state from event spread-merge
 			// (undefined fields like defaultModel are dropped during JSON serialization)
@@ -328,13 +331,14 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 										<input
 											type="checkbox"
 											checked={settingSources.includes('user')}
-											onChange={() =>
+											onChange={() => {
 												setSettingSources((prev) =>
 													prev.includes('user')
 														? prev.filter((s) => s !== 'user')
 														: [...prev, 'user']
-												)
-											}
+												);
+												setSettingSourcesTouched(true);
+											}}
 											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 										/>
 										<span class="text-sm text-gray-200">User settings</span>
@@ -344,13 +348,14 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 										<input
 											type="checkbox"
 											checked={settingSources.includes('project')}
-											onChange={() =>
+											onChange={() => {
 												setSettingSources((prev) =>
 													prev.includes('project')
 														? prev.filter((s) => s !== 'project')
 														: [...prev, 'project']
-												)
-											}
+												);
+												setSettingSourcesTouched(true);
+											}}
 											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 										/>
 										<span class="text-sm text-gray-200">Project settings + CLAUDE.md</span>
@@ -360,13 +365,14 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 										<input
 											type="checkbox"
 											checked={settingSources.includes('local')}
-											onChange={() =>
+											onChange={() => {
 												setSettingSources((prev) =>
 													prev.includes('local')
 														? prev.filter((s) => s !== 'local')
 														: [...prev, 'local']
-												)
-											}
+												);
+												setSettingSourcesTouched(true);
+											}}
 											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 										/>
 										<span class="text-sm text-gray-200">Local settings</span>
@@ -389,7 +395,8 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 										setBackgroundContext(space.backgroundContext ?? '');
 										setAutonomyLevel(space.autonomyLevel ?? 1);
 										setDefaultModel(space.defaultModel);
-										setSettingSources(space.settingSources ?? ['user', 'project']);
+										setSettingSources(space.settingSources ?? ['user', 'project', 'local']);
+										setSettingSourcesTouched(false);
 										setSaveError(null);
 									}}
 								>

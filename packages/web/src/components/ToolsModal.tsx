@@ -211,10 +211,15 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
 	// Advanced settings (hidden by default)
 	const useClaudeCodePreset = useSignal(true);
-	const settingSources = useSignal<import('@neokai/shared').SettingSource[]>(['user', 'project']);
+	const settingSources = useSignal<import('@neokai/shared').SettingSource[]>([
+		'user',
+		'project',
+		'local',
+	]);
 	const initialSettingSources = useSignal<import('@neokai/shared').SettingSource[]>([
 		'user',
 		'project',
+		'local',
 	]);
 
 	// Has the user staged any change since the modal was opened? Drives the
@@ -271,7 +276,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		initialDisabledSkills.value = new Set(disabled);
 
 		// Load setting sources from session config
-		const sources = session.config.settingSources ?? ['user', 'project'];
+		const sources = session.config.settingSources ?? ['user', 'project', 'local'];
 		settingSources.value = sources;
 		initialSettingSources.value = [...sources];
 

@@ -398,7 +398,7 @@ describe('SettingsRepository', () => {
 		it('should have correct default global settings', () => {
 			const settings = repository.getGlobalSettings();
 
-			expect(settings.settingSources).toEqual(['user', 'project']);
+			expect(settings.settingSources).toEqual(['user', 'project', 'local']);
 			expect(settings.permissionMode).toBe('default');
 			expect(settings.model).toBe('sonnet');
 			expect(settings.autoScroll).toBe(true);

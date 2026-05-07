@@ -44,7 +44,7 @@ export function GeneralSettings() {
 	);
 	const [localShowArchived, setLocalShowArchived] = useState(settings?.showArchived ?? false);
 	const [localSettingSources, setLocalSettingSources] = useState<SettingSource[]>(
-		settings?.settingSources ?? ['user', 'project']
+		settings?.settingSources ?? ['user', 'project', 'local']
 	);
 	const [isUpdating, setIsUpdating] = useState(false);
 
@@ -56,7 +56,7 @@ export function GeneralSettings() {
 			setLocalAutoScroll(settings.autoScroll ?? true);
 			setLocalThinkingLevel(normalizeThinkingLevel(settings.thinkingLevel));
 			setLocalShowArchived(settings.showArchived ?? false);
-			setLocalSettingSources(settings.settingSources ?? ['user', 'project']);
+			setLocalSettingSources(settings.settingSources ?? ['user', 'project', 'local']);
 		}
 	}, [settings]);
 
@@ -140,7 +140,7 @@ export function GeneralSettings() {
 			await updateGlobalSettings({ settingSources: next });
 		} catch {
 			toast.error('Failed to update setting sources');
-			setLocalSettingSources(settings?.settingSources ?? ['user', 'project']);
+			setLocalSettingSources(settings?.settingSources ?? ['user', 'project', 'local']);
 		} finally {
 			setIsUpdating(false);
 		}

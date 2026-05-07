@@ -179,7 +179,7 @@ export interface AgentSessionInit {
 	 */
 	toolGuards?: DeclarativeToolGuard[];
 	/**
-	 * Setting sources to load for this session (e.g., ['user', 'project']).
+	 * Setting sources to load for this session (e.g., ['user', 'project', 'local']).
 	 * Falls back to global settings when unset.
 	 */
 	settingSources?: import('@neokai/shared').SettingSource[];

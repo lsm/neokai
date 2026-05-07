@@ -58,7 +58,7 @@ describe('QueryOptionsBuilder', () => {
 		};
 
 		mockSettingsManager = {
-			getGlobalSettings: mock(() => ({ settingSources: ['user', 'project'] })),
+			getGlobalSettings: mock(() => ({ settingSources: ['user', 'project', 'local'] })),
 			prepareSDKOptions: mock(async () => ({})),
 		} as unknown as SettingsManager;
 
@@ -545,12 +545,12 @@ describe('QueryOptionsBuilder', () => {
 
 	describe('setting sources configuration', () => {
 		// Post-M5: `settingSources` defaults to the global settings value
-		// (['user', 'project']) so CLAUDE.md and user/project settings are
+		// (['user', 'project', 'local']) so CLAUDE.md and user/project settings are
 		// loaded.  MCP remains locked to `strictMcpConfig: true` (unified
 		// `app_mcp_servers` registry only) regardless of settingSources.
 		it('should default settingSources to global settings', async () => {
 			const options = await builder.build();
-			expect(options.settingSources).toEqual(['user', 'project']);
+			expect(options.settingSources).toEqual(['user', 'project', 'local']);
 		});
 	});
 
@@ -566,7 +566,7 @@ describe('QueryOptionsBuilder', () => {
 				'space-agent-tools': { command: 'space-cmd' },
 			});
 			expect(options.strictMcpConfig).toBe(true);
-			expect(options.settingSources).toEqual(['user', 'project']);
+			expect(options.settingSources).toEqual(['user', 'project', 'local']);
 		});
 
 		it('should enforce space built-in tool allowlist including Bash', async () => {
@@ -647,7 +647,7 @@ describe('QueryOptionsBuilder', () => {
 
 	// ============================================================================
 	// M5 (unify-mcp-config-model): strictMcpConfig is forced unconditionally;
-	// settingSources defaults to global settings (['user', 'project']) but can be
+	// settingSources defaults to global settings (['user', 'project', 'local']) but can be
 	// overridden per-session. The M1 `NEOKAI_LEGACY_MCP_AUTOLOAD` kill switch was
 	// removed. These tests pin the post-M5 contract per session type so any
 	// regression that re-introduces auto-loading is caught.
@@ -666,7 +666,7 @@ describe('QueryOptionsBuilder', () => {
 				mockSession.type = type;
 				const options = await builder.build();
 				expect(options.strictMcpConfig).toBe(true);
-				expect(options.settingSources).toEqual(['user', 'project']);
+				expect(options.settingSources).toEqual(['user', 'project', 'local']);
 			});
 		}
 
@@ -682,7 +682,7 @@ describe('QueryOptionsBuilder', () => {
 			const options = await builder.build();
 			expect(options.mcpServers).toBeUndefined();
 			expect(options.strictMcpConfig).toBe(true);
-			expect(options.settingSources).toEqual(['user', 'project']);
+			expect(options.settingSources).toEqual(['user', 'project', 'local']);
 		});
 
 		it('preserves explicit mcpServers from session config under strict mode', async () => {
@@ -692,7 +692,7 @@ describe('QueryOptionsBuilder', () => {
 			};
 			const options = await builder.build();
 			expect(options.strictMcpConfig).toBe(true);
-			expect(options.settingSources).toEqual(['user', 'project']);
+			expect(options.settingSources).toEqual(['user', 'project', 'local']);
 			expect(options.mcpServers).toEqual({ 'task-agent': { command: 'task-cmd' } });
 		});
 
@@ -707,7 +707,7 @@ describe('QueryOptionsBuilder', () => {
 					mockSession.type = 'worker';
 					const options = await builder.build();
 					expect(options.strictMcpConfig).toBe(true);
-					expect(options.settingSources).toEqual(['user', 'project']);
+					expect(options.settingSources).toEqual(['user', 'project', 'local']);
 				}
 			} finally {
 				if (previous === undefined) {

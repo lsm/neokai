@@ -12,7 +12,7 @@
  *   2. Run it through `QueryOptionsBuilder.build()` with no other mocks.
  *   3. Assert the resulting SDK options force `strictMcpConfig: true`
  *      (which blocks MCP auto-loading regardless of `settingSources`) and
- *      default `settingSources` to `['user', 'project']` so CLAUDE.md and
+ *      default `settingSources` to `['user', 'project', 'local']` so CLAUDE.md and
  *      user/project settings are loaded.
  *
  * M5 removed the `NEOKAI_LEGACY_MCP_AUTOLOAD=1` escape hatch entirely —
@@ -30,7 +30,7 @@ import type { AgentSessionInit } from '../../../../src/lib/agent/agent-session';
 
 function mockSettingsManager(): SettingsManager {
 	return {
-		getGlobalSettings: mock(() => ({ settingSources: ['user', 'project'] })),
+		getGlobalSettings: mock(() => ({ settingSources: ['user', 'project', 'local'] })),
 		prepareSDKOptions: mock(async () => ({})),
 	} as unknown as SettingsManager;
 }
@@ -137,7 +137,7 @@ describe('MCP leak regression: strictMcpConfig blocks auto-load regardless of se
 			const options = await builder.build();
 
 			expect(options.strictMcpConfig).toBe(true);
-			expect(options.settingSources).toEqual(['user', 'project']);
+			expect(options.settingSources).toEqual(['user', 'project', 'local']);
 			// No programmatic mcpServers were passed → map is absent, so nothing
 			// from a project `.mcp.json` can possibly surface here.
 			expect(options.mcpServers).toBeUndefined();
@@ -161,7 +161,7 @@ describe('MCP leak regression: strictMcpConfig blocks auto-load regardless of se
 				const options = await builder.build();
 
 				expect(options.strictMcpConfig).toBe(true);
-				expect(options.settingSources).toEqual(['user', 'project']);
+				expect(options.settingSources).toEqual(['user', 'project', 'local']);
 			} finally {
 				if (previous === undefined) {
 					delete process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
@@ -193,7 +193,7 @@ describe('MCP leak regression: strictMcpConfig blocks auto-load regardless of se
 			const options = await builder.build();
 
 			expect(options.strictMcpConfig).toBe(true);
-			expect(options.settingSources).toEqual(['user', 'project']);
+			expect(options.settingSources).toEqual(['user', 'project', 'local']);
 			// A workflow node-agent's `node-agent` MCP server is attached at runtime
 			// via `mergeRuntimeMcpServers` after session creation, not by the init
 			// factory. Without that runtime merge, no ambient `.mcp.json` servers
@@ -249,7 +249,7 @@ describe('MCP leak regression: strictMcpConfig blocks auto-load regardless of se
 				const options = await builder.build();
 
 				expect(options.strictMcpConfig).toBe(true);
-				expect(options.settingSources).toEqual(['user', 'project']);
+				expect(options.settingSources).toEqual(['user', 'project', 'local']);
 			} finally {
 				if (previous === undefined) {
 					delete process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
@@ -297,7 +297,7 @@ describe('MCP leak regression: strictMcpConfig blocks auto-load regardless of se
 			const options = await builder.build();
 
 			expect(options.strictMcpConfig).toBe(true);
-			expect(options.settingSources).toEqual(['user', 'project']);
+			expect(options.settingSources).toEqual(['user', 'project', 'local']);
 			expect(options.mcpServers).toBeUndefined();
 		});
 	});

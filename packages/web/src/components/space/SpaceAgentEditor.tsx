@@ -144,7 +144,7 @@ export function SpaceAgentEditor({
 	const [tools, setTools] = useState<string[]>(agent?.tools ?? [...TOOL_PRESETS['Full Coding']]);
 	const [customPrompt, setCustomPrompt] = useState(agent?.customPrompt ?? '');
 	const [settingSources, setSettingSources] = useState<SettingSource[]>(
-		agent?.settingSources ?? ['user', 'project']
+		agent?.settingSources ?? ['user', 'project', 'local']
 	);
 	const [activePreset, setActivePreset] = useState<string>(() => detectPreset(agent?.tools));
 	const [selectedTemplateName, setSelectedTemplateName] = useState<string>('');
@@ -153,6 +153,8 @@ export function SpaceAgentEditor({
 	const [saving, setSaving] = useState(false);
 	const [errors, setErrors] = useState<Record<string, string>>({});
 	const [saveError, setSaveError] = useState<string | null>(null);
+	const hadExplicitSettingSources = isEdit && agent?.settingSources !== undefined;
+	const [settingSourcesTouched, setSettingSourcesTouched] = useState(false);
 
 	const applyPreset = (presetName: string) => {
 		setActivePreset(presetName);
@@ -221,7 +223,9 @@ export function SpaceAgentEditor({
 				model: model.trim(),
 				customPrompt: customPrompt || null,
 				tools: tools.length > 0 ? tools : undefined,
-				settingSources: settingSources.length > 0 ? settingSources : undefined,
+				...(hadExplicitSettingSources || settingSourcesTouched || !isEdit
+					? { settingSources: settingSources.length > 0 ? settingSources : undefined }
+					: {}),
 			};
 
 			if (isEdit && agent) {
@@ -375,11 +379,12 @@ export function SpaceAgentEditor({
 							<input
 								type="checkbox"
 								checked={settingSources.includes('user')}
-								onChange={() =>
+								onChange={() => {
 									setSettingSources((prev) =>
 										prev.includes('user') ? prev.filter((s) => s !== 'user') : [...prev, 'user']
-									)
-								}
+									);
+									setSettingSourcesTouched(true);
+								}}
 								class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 							/>
 							<span class="text-sm text-gray-200">User settings</span>
@@ -389,13 +394,14 @@ export function SpaceAgentEditor({
 							<input
 								type="checkbox"
 								checked={settingSources.includes('project')}
-								onChange={() =>
+								onChange={() => {
 									setSettingSources((prev) =>
 										prev.includes('project')
 											? prev.filter((s) => s !== 'project')
 											: [...prev, 'project']
-									)
-								}
+									);
+									setSettingSourcesTouched(true);
+								}}
 								class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 							/>
 							<span class="text-sm text-gray-200">Project settings + CLAUDE.md</span>
@@ -405,11 +411,12 @@ export function SpaceAgentEditor({
 							<input
 								type="checkbox"
 								checked={settingSources.includes('local')}
-								onChange={() =>
+								onChange={() => {
 									setSettingSources((prev) =>
 										prev.includes('local') ? prev.filter((s) => s !== 'local') : [...prev, 'local']
-									)
-								}
+									);
+									setSettingSourcesTouched(true);
+								}}
 								class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 							/>
 							<span class="text-sm text-gray-200">Local settings</span>
