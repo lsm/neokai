@@ -1194,5 +1194,48 @@ describe('Model Service', () => {
 			expect(models.length).toBeGreaterThan(0);
 			expect(models.some((m) => m.id === 'bg-model-2')).toBe(true);
 		});
+
+		it('should drop stale result when clearModelsCache is called during foreground refresh', async () => {
+			// Register a deliberately slow provider so the refresh is in-flight
+			// long enough for us to clear the cache while it runs.
+			const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+			type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+			const registry = getProviderRegistry();
+			registry.register({
+				id: 'slow-foreground-provider',
+				getModels: async () => {
+					await new Promise((resolve) => setTimeout(resolve, 200));
+					return [
+						{
+							id: 'stale-model',
+							name: 'Stale Model',
+							family: 'test',
+							provider: 'slow-foreground-provider',
+							contextWindow: 100000,
+						},
+					];
+				},
+				isAvailable: async () => true,
+			} as ProviderLike);
+
+			// Ensure cache is empty
+			clearModelsCache();
+
+			// Start a foreground refresh but do not await it yet
+			const { refreshModels } = await import('../../../../src/lib/model-service');
+			const refreshPromise = refreshModels();
+
+			// Allow the refresh to enter its async loading phase
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// Invalidate the cache while the refresh is still loading models
+			clearModelsCache();
+
+			// Wait for the refresh to finish
+			await refreshPromise;
+
+			// The generation guard should have caused the stale result to be dropped
+			expect(getAvailableModels('global')).toEqual([]);
+		});
 	});
 });

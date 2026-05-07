@@ -409,31 +409,55 @@ export async function refreshModels(): Promise<void> {
 		await inProgress;
 	}
 
+	// If another foreground refresh is already running, wait for it.
+	if (refreshInProgress.has(cacheKey)) {
+		await refreshInProgress.get(cacheKey);
+		return;
+	}
+
+	const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
 	const previousModels = modelsCache.get(cacheKey);
 	clearProviderModelCaches();
 
-	const models = await loadModelsFromProviders();
-	if (models.length > 0) {
-		const mergedModels = mergeWithFallbackModels(models);
-		// If the new result has fewer models than the previous cache, at least one
-		// provider likely returned static fallback data instead of live API results
-		// (e.g. OpenRouter returns FALLBACK_MODELS on HTTP errors). Keep the old,
-		// richer cache rather than replacing it with degraded fallback metadata.
-		// Compare merged-vs-merged so the fallback entries added by mergeWithFallbackModels
-		// don't distort the comparison.
-		if (previousModels && previousModels.length > mergedModels.length) {
-			modelsCache.set(cacheKey, previousModels);
-			cacheTimestamps.set(cacheKey, Date.now());
-			return;
+	const refreshPromise = (async () => {
+		try {
+			const models = await loadModelsFromProviders();
+			// Only write if the cache wasn't cleared while we were loading.
+			if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
+				return;
+			}
+			if (models.length > 0) {
+				const mergedModels = mergeWithFallbackModels(models);
+				// If the new result has fewer models than the previous cache, at least one
+				// provider likely returned static fallback data instead of live API results
+				// (e.g. OpenRouter returns FALLBACK_MODELS on HTTP errors). Keep the old,
+				// richer cache rather than replacing it with degraded fallback metadata.
+				// Compare merged-vs-merged so the fallback entries added by mergeWithFallbackModels
+				// don't distort the comparison.
+				if (previousModels && previousModels.length > mergedModels.length) {
+					modelsCache.set(cacheKey, previousModels);
+					cacheTimestamps.set(cacheKey, Date.now());
+					return;
+				}
+				modelsCache.set(cacheKey, mergedModels);
+				cacheTimestamps.set(cacheKey, Date.now());
+			} else if (!previousModels || previousModels.length === 0) {
+				// Cache was cleared or was already empty — restore fallback models
+				// so the UI and model resolution paths always have a baseline catalog.
+				modelsCache.set(cacheKey, FALLBACK_MODELS);
+				cacheTimestamps.set(cacheKey, Date.now());
+			}
+		} finally {
+			refreshInProgress.delete(cacheKey);
+			// Prune generation tracking if the cache key is no longer referenced.
+			if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
+				cacheGeneration.delete(cacheKey);
+			}
 		}
-		modelsCache.set(cacheKey, mergedModels);
-		cacheTimestamps.set(cacheKey, Date.now());
-	} else if (!previousModels || previousModels.length === 0) {
-		// Cache was cleared or was already empty — restore fallback models
-		// so the UI and model resolution paths always have a baseline catalog.
-		modelsCache.set(cacheKey, FALLBACK_MODELS);
-		cacheTimestamps.set(cacheKey, Date.now());
-	}
+	})();
+
+	refreshInProgress.set(cacheKey, refreshPromise);
+	await refreshPromise;
 }
 
 /**
