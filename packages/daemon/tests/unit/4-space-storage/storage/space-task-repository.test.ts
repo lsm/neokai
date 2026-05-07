@@ -607,4 +607,119 @@ describe('SpaceTaskRepository', () => {
 			expect(active).toEqual([]);
 		});
 	});
+
+	describe('task_session_map maintenance', () => {
+		// task_session_map is the canonical lookup the live-query handlers JOIN
+		// to discover which sessions contribute to a task's timeline. The
+		// repository owns the task_agent leg.
+
+		function mapRows(taskId: string): Array<{
+			taskId: string;
+			sessionId: string;
+			kind: string;
+		}> {
+			return (db as any)
+				.prepare(
+					`SELECT task_id AS taskId, session_id AS sessionId, kind
+					 FROM task_session_map WHERE task_id = ?
+					 ORDER BY kind, session_id`
+				)
+				.all(taskId) as Array<{ taskId: string; sessionId: string; kind: string }>;
+		}
+
+		it('upsertTaskAgentSessionMap is exercised when taskAgentSessionId is set', () => {
+			const task = repo.createTask({ spaceId, title: 'T1' });
+			repo.updateTask(task.id, { taskAgentSessionId: 'sess-task-1' });
+
+			const rows = mapRows(task.id);
+			expect(rows).toEqual([{ taskId: task.id, sessionId: 'sess-task-1', kind: 'task_agent' }]);
+		});
+
+		it('replaces the task_agent row when taskAgentSessionId changes', () => {
+			const task = repo.createTask({ spaceId, title: 'T1' });
+			repo.updateTask(task.id, { taskAgentSessionId: 'sess-old' });
+			expect(mapRows(task.id)).toHaveLength(1);
+
+			repo.updateTask(task.id, { taskAgentSessionId: 'sess-new' });
+			const rows = mapRows(task.id);
+			expect(rows).toEqual([{ taskId: task.id, sessionId: 'sess-new', kind: 'task_agent' }]);
+		});
+
+		it('removes the task_agent row when taskAgentSessionId is cleared', () => {
+			const task = repo.createTask({ spaceId, title: 'T1' });
+			repo.updateTask(task.id, { taskAgentSessionId: 'sess-1' });
+			expect(mapRows(task.id)).toHaveLength(1);
+
+			repo.updateTask(task.id, { taskAgentSessionId: null });
+			expect(mapRows(task.id)).toHaveLength(0);
+		});
+
+		it('does not mutate the map when the UPDATE affects no rows (stale id)', () => {
+			// Reviewer flagged: the map mutation used to run unconditionally,
+			// before verifying the UPDATE changed any row. With a stale/unknown
+			// id the canonical column never moves, so the map must not move
+			// either — otherwise the two diverge silently.
+			repo.updateTask('non-existent-task', { taskAgentSessionId: 'sess-orphan' });
+			expect(mapRows('non-existent-task')).toHaveLength(0);
+		});
+
+		it('clears node_agent rows when workflowRunId is detached', () => {
+			// Mirrors the duplicate-task reconcile flow: a task is moved off a
+			// workflow run, so node-agent sessions from that run must stop
+			// contributing to the task's timeline. Without this clean-up the
+			// `spaceTaskMessages.byTask*` queries — which JOIN task_session_map
+			// directly — would keep returning sessions that no longer belong.
+			const task = repo.createTask({ spaceId, title: 'T1', workflowRunId });
+
+			// Seed a node_agent row directly to simulate a prior run sync.
+			(db as any)
+				.prepare(
+					`INSERT INTO task_session_map (task_id, session_id, kind, role, label, node_execution_id, created_at)
+					 VALUES (?, ?, 'node_agent', 'coder', 'Coder', 'ne-1', ?)`
+				)
+				.run(task.id, 'sess-node-1', Date.now());
+			expect(mapRows(task.id).filter((r) => r.kind === 'node_agent')).toHaveLength(1);
+
+			repo.updateTask(task.id, { workflowRunId: null });
+			expect(mapRows(task.id).filter((r) => r.kind === 'node_agent')).toHaveLength(0);
+		});
+
+		it('clears node_agent rows when workflowRunId moves to a different run', () => {
+			const task = repo.createTask({ spaceId, title: 'T1', workflowRunId });
+			(db as any)
+				.prepare(
+					`INSERT INTO task_session_map (task_id, session_id, kind, role, label, node_execution_id, created_at)
+					 VALUES (?, ?, 'node_agent', 'coder', 'Coder', 'ne-1', ?)`
+				)
+				.run(task.id, 'sess-node-old', Date.now());
+
+			// New run.
+			const otherRunId = 'run-2';
+			(db as any)
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+				)
+				.run(otherRunId, spaceId, workflowId, 'Run 2', Date.now(), Date.now());
+
+			repo.updateTask(task.id, { workflowRunId: otherRunId });
+			// Stale node_agent rows are dropped — they'll be repopulated by
+			// NodeExecutionRepository when executions for the new run land.
+			expect(mapRows(task.id).filter((r) => r.kind === 'node_agent')).toHaveLength(0);
+		});
+
+		it('deleteTask cascades to task_session_map', () => {
+			const task = repo.createTask({ spaceId, title: 'T1' });
+			repo.updateTask(task.id, { taskAgentSessionId: 'sess-1' });
+			(db as any)
+				.prepare(
+					`INSERT INTO task_session_map (task_id, session_id, kind, role, label, node_execution_id, created_at)
+					 VALUES (?, ?, 'node_agent', 'coder', 'Coder', 'ne-1', ?)`
+				)
+				.run(task.id, 'sess-node-1', Date.now());
+			expect(mapRows(task.id)).toHaveLength(2);
+
+			repo.deleteTask(task.id);
+			expect(mapRows(task.id)).toHaveLength(0);
+		});
+	});
 });

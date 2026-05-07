@@ -1770,30 +1770,23 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
  * `spaceTaskActivity.byTask`). Returns `false` when the writing session is
  * not part of the target task, so the live query engine can skip re-evaluation.
  *
- * The prepared statement checks both the task_agent_session_id and any
- * node_execution agent_session_ids linked to the task's workflow_run.
+ * Reads membership from `task_session_map` — the same canonical lookup the
+ * read SQL joins on. Using a different source (e.g. recomputing from
+ * `space_tasks.task_agent_session_id` + `node_executions`) risks divergence:
+ * a write the read query *would* pick up could be filtered out as out-of-scope,
+ * silently dropping live-query updates.
  */
 function buildTaskScopeFilter(
 	params: ReadonlyArray<unknown>,
 	db: BunDatabase
 ): ((scope: TableChangeScope) => boolean) | undefined {
 	const taskId = params[0] as string;
-	const stmt = db.prepare(`
-		SELECT 1 FROM space_tasks st
-		WHERE st.id = ?
-			AND (
-				st.task_agent_session_id = ?
-				OR EXISTS (
-					SELECT 1 FROM node_executions ne
-					JOIN space_tasks st2 ON st2.workflow_run_id = ne.workflow_run_id
-					WHERE st2.id = ? AND ne.agent_session_id = ?
-				)
-			)
-		LIMIT 1
-	`);
+	const stmt = db.prepare(
+		`SELECT 1 FROM task_session_map WHERE task_id = ? AND session_id = ? LIMIT 1`
+	);
 	return (scope) => {
 		if (!scope.sessionId) return true;
-		return !!stmt.get(taskId, scope.sessionId, taskId, scope.sessionId);
+		return !!stmt.get(taskId, scope.sessionId);
 	};
 }
 

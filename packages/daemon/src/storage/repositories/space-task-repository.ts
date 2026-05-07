@@ -248,13 +248,10 @@ export class SpaceTaskRepository {
 		if (params.taskAgentSessionId !== undefined) {
 			fields.push('task_agent_session_id = ?');
 			values.push(params.taskAgentSessionId ?? null);
-
-			// Keep task_session_map in lockstep with the canonical column.
-			if (params.taskAgentSessionId) {
-				this.upsertTaskAgentSessionMap(id, params.taskAgentSessionId, Date.now());
-			} else {
-				this.removeTaskAgentSessionMap(id);
-			}
+			// task_session_map mutation for this is deferred until after the
+			// UPDATE succeeds — see the post-update block below. Mutating it
+			// up-front would risk leaving the map ahead of the canonical column
+			// when a stale/nonexistent task id is passed.
 		}
 		if (params.startedAt !== undefined) {
 			fields.push('started_at = ?');
@@ -328,7 +325,34 @@ export class SpaceTaskRepository {
 			values.push(Date.now());
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE space_tasks SET ${fields.join(', ')} WHERE id = ?`);
-			stmt.run(...values);
+			const result = stmt.run(...values);
+
+			// Only mutate task_session_map after we've confirmed the UPDATE
+			// affected a row. Mutating it earlier (or unconditionally) would
+			// leave denormalised state for stale/nonexistent task ids.
+			if (result.changes > 0) {
+				if (params.taskAgentSessionId !== undefined) {
+					if (params.taskAgentSessionId) {
+						this.upsertTaskAgentSessionMap(id, params.taskAgentSessionId, Date.now());
+					} else {
+						this.removeTaskAgentSessionMap(id);
+					}
+				}
+
+				// When a task is detached from a workflow run (or moved to a
+				// different one), drop stale node_agent rows. The read path
+				// (`spaceTaskMessages.byTask*`) joins task_session_map directly,
+				// so leaving these around would surface sessions that no longer
+				// belong to the task. The corresponding NodeExecutionRepository
+				// rebuild handles re-attaching node_agent rows when the task is
+				// later associated with a new run that has executions.
+				if (params.workflowRunId !== undefined) {
+					this.db
+						.prepare(`DELETE FROM task_session_map WHERE task_id = ? AND kind = 'node_agent'`)
+						.run(id);
+				}
+			}
+
 			this.reactiveDb?.notifyChange('space_tasks');
 		}
 
@@ -474,8 +498,19 @@ export class SpaceTaskRepository {
 	 * task_session_map lets the live-query handlers JOIN the table directly
 	 * instead of walking `space_tasks → sessions` to discover the orchestration
 	 * row.
+	 *
+	 * Drop any prior task_agent rows for this task before inserting the new
+	 * one. The map's primary key is `(task_id, session_id)`, so a session
+	 * change writes a new row rather than mutating the old one — leaving the
+	 * stale row would falsely report the prior session as still belonging.
 	 */
 	private upsertTaskAgentSessionMap(taskId: string, sessionId: string, createdAt: number): void {
+		this.db
+			.prepare(
+				`DELETE FROM task_session_map
+				 WHERE task_id = ? AND kind = 'task_agent' AND session_id != ?`
+			)
+			.run(taskId, sessionId);
 		this.db
 			.prepare(
 				`INSERT OR REPLACE INTO task_session_map (

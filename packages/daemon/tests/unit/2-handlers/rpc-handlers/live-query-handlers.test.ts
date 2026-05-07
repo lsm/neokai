@@ -13,6 +13,12 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { createTables, runMigration74, runMigrations } from '../../../../src/storage/schema';
 import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/rpc-handlers/live-query-handlers';
+import {
+	computeIsRenderable,
+	computeIsTerminal,
+	extractParentToolUseId,
+} from '../../../../src/storage/repositories/sdk-message-repository';
+import type { SDKMessage } from '@neokai/shared/sdk';
 import type { NeoTask, RoomGoal } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -479,16 +485,12 @@ describe('NAMED_QUERY_REGISTRY', () => {
 						type: 'assistant',
 						message: { role: 'assistant', content: [{ type: 'text', text: id }] },
 					} as Record<string, unknown>);
-				const isTerminal = messageType === 'result' ? 1 : 0;
-				const content = (payload as { message?: { content?: unknown[] } }).message?.content;
-				const isToolResultOnly =
-					messageType === 'user' &&
-					Array.isArray(content) &&
-					content.length > 0 &&
-					content.every((b: unknown) => (b as { type?: string }).type === 'tool_result');
-				const isRenderable = isToolResultOnly ? 0 : 1;
-				const parentToolUseId =
-					(payload as { parent_tool_use_id?: string | null }).parent_tool_use_id ?? null;
+				// Use the production helpers so test data stays aligned with the
+				// values the SDKMessageRepository would actually stamp.
+				const sdkLike = { type: messageType, ...payload } as unknown as SDKMessage;
+				const isRenderable = computeIsRenderable(sdkLike);
+				const isTerminal = computeIsTerminal(sdkLike);
+				const parentToolUseId = extractParentToolUseId(sdkLike);
 				db.exec(`
 					INSERT INTO sdk_messages (
 						id, session_id, message_type, message_subtype, sdk_message, timestamp,
@@ -807,16 +809,12 @@ describe('NAMED_QUERY_REGISTRY', () => {
 						uuid: id,
 						message: { role: 'assistant', content: [{ type: 'text', text: id }] },
 					} as Record<string, unknown>);
-				const isTerminal = messageType === 'result' ? 1 : 0;
-				const content = (payload as { message?: { content?: unknown[] } }).message?.content;
-				const isToolResultOnly =
-					messageType === 'user' &&
-					Array.isArray(content) &&
-					content.length > 0 &&
-					content.every((b: unknown) => (b as { type?: string }).type === 'tool_result');
-				const isRenderable = isToolResultOnly ? 0 : 1;
-				const parentToolUseId =
-					(payload as { parent_tool_use_id?: string | null }).parent_tool_use_id ?? null;
+				// Use the production helpers so test data stays aligned with the
+				// values the SDKMessageRepository would actually stamp.
+				const sdkLike = { type: messageType, ...payload } as unknown as SDKMessage;
+				const isRenderable = computeIsRenderable(sdkLike);
+				const isTerminal = computeIsTerminal(sdkLike);
+				const parentToolUseId = extractParentToolUseId(sdkLike);
 				db.exec(`
 					INSERT INTO sdk_messages (
 						id, session_id, message_type, message_subtype, sdk_message, timestamp,
@@ -1125,12 +1123,22 @@ describe('NAMED_QUERY_REGISTRY', () => {
 						uuid: id,
 						message: { role: 'assistant', content: [{ type: 'text', text: id }] },
 					} as Record<string, unknown>);
+				// Use the production helpers so test data stays aligned with the
+				// values the SDKMessageRepository would actually stamp. Without
+				// this, derived columns fall back to schema defaults, which lets
+				// the compact query include rows that should be filtered out.
+				const sdkLike = { type: messageType, ...payload } as unknown as SDKMessage;
+				const isRenderable = computeIsRenderable(sdkLike);
+				const isTerminal = computeIsTerminal(sdkLike);
+				const parentToolUseId = extractParentToolUseId(sdkLike);
 				db.exec(`
 					INSERT INTO sdk_messages (
-						id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin
+						id, session_id, message_type, message_subtype, sdk_message, timestamp,
+						send_status, origin, is_renderable, is_terminal, parent_tool_use_id
 					) VALUES (
 						'${id}', '${sessionIdValue}', '${messageType}', NULL, '${JSON.stringify(payload).replace(/'/g, "''")}',
-						'${iso}', 'consumed', 'system'
+						'${iso}', 'consumed', 'system', ${isRenderable}, ${isTerminal},
+						${parentToolUseId ? `'${parentToolUseId}'` : 'NULL'}
 					)
 				`);
 			}

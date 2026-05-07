@@ -204,22 +204,15 @@ export class NodeExecutionRepository {
 				values.push(Date.now());
 			}
 		}
+		// Snapshot the agent session id BEFORE the UPDATE so we can detect
+		// rebind/clear transitions and reconcile task_session_map after the
+		// canonical column has been written.
+		let priorSessionId: string | null = null;
 		if (params.agentSessionId !== undefined) {
 			fields.push('agent_session_id = ?');
 			values.push(params.agentSessionId ?? null);
-
-			// Keep task_session_map's node_agent leg in sync. The map is keyed
-			// by (task_id, session_id), so a session change replaces the row
-			// rather than mutating it in-place.
 			const existing = this.getById(id);
-			if (existing?.agentSessionId && existing.agentSessionId !== params.agentSessionId) {
-				this.removeTaskSessionMapForExecution(id, existing.agentSessionId);
-			}
-			if (params.agentSessionId) {
-				this.syncTaskSessionMapForExecution(id, params.agentSessionId, Date.now());
-			} else if (existing?.agentSessionId) {
-				this.removeTaskSessionMapForExecution(id, existing.agentSessionId);
-			}
+			priorSessionId = existing?.agentSessionId ?? null;
 		}
 		if (params.result !== undefined) {
 			fields.push('result = ?');
@@ -247,6 +240,22 @@ export class NodeExecutionRepository {
 				.run(...values);
 		}
 
+		// Reconcile task_session_map AFTER the canonical column has been
+		// written. Doing this post-update lets `removeTaskSessionMapForExecution`'s
+		// rebuild query see the new state of `node_executions.agent_session_id`,
+		// so a clear/rebind that genuinely removes the last reference doesn't
+		// accidentally re-insert from the just-updated row.
+		if (params.agentSessionId !== undefined) {
+			if (priorSessionId && priorSessionId !== params.agentSessionId) {
+				this.removeTaskSessionMapForExecution(id, priorSessionId);
+			}
+			if (params.agentSessionId) {
+				this.syncTaskSessionMapForExecution(id, params.agentSessionId, Date.now());
+			} else if (priorSessionId) {
+				this.removeTaskSessionMapForExecution(id, priorSessionId);
+			}
+		}
+
 		return this.getById(id);
 	}
 
@@ -269,11 +278,31 @@ export class NodeExecutionRepository {
 	 * Delete a node execution by ID
 	 */
 	delete(id: string): boolean {
+		// Capture (task_id, session_id) pairs this execution contributes to BEFORE
+		// the delete, so we can rebuild the map after the row is gone. Reading
+		// from task_session_map (rather than recomputing via node_executions) is
+		// sufficient because the map is kept in sync at write time.
+		const affectedPairs = this.db
+			.prepare(
+				`SELECT task_id AS taskId, session_id AS sessionId
+				 FROM task_session_map
+				 WHERE kind = 'node_agent' AND node_execution_id = ?`
+			)
+			.all(id) as Array<{ taskId: string; sessionId: string }>;
+
 		const result = this.db.prepare(`DELETE FROM node_executions WHERE id = ?`).run(id);
 		if (result.changes > 0) {
+			// Drop the rows owned by this execution, then rebuild any
+			// (task_id, session_id) pair that another node_execution still
+			// references. This preserves shared-session mappings — long-lived
+			// agent sessions reused across executions stay attached to the
+			// task's timeline as long as at least one execution still binds them.
 			this.db
 				.prepare(`DELETE FROM task_session_map WHERE kind = 'node_agent' AND node_execution_id = ?`)
 				.run(id);
+			for (const pair of affectedPairs) {
+				this.rebuildNodeAgentMapForTaskSession(pair.taskId, pair.sessionId);
+			}
 		}
 		return result.changes > 0;
 	}
@@ -375,14 +404,67 @@ export class NodeExecutionRepository {
 	/**
 	 * Remove the node_agent leg of task_session_map for a given execution + session
 	 * pair. Called when an agent_session_id flips to a different value or is cleared.
+	 *
+	 * Because the map is keyed by `(task_id, session_id)` and `INSERT OR REPLACE`
+	 * lets the latest writer "own" the row, naïvely deleting by
+	 * `(node_execution_id, session_id)` would drop the only mapping for a session
+	 * that another execution still references — long-lived agent sessions are
+	 * explicitly reused across executions in this repo. Instead, drop the rows
+	 * owned by this execution and rebuild each affected `(task_id, session_id)`
+	 * from any remaining execution that still binds the same session.
 	 */
 	private removeTaskSessionMapForExecution(executionId: string, sessionId: string): void {
+		const affectedPairs = this.db
+			.prepare(
+				`SELECT task_id AS taskId
+				 FROM task_session_map
+				 WHERE kind = 'node_agent' AND node_execution_id = ? AND session_id = ?`
+			)
+			.all(executionId, sessionId) as Array<{ taskId: string }>;
+
 		this.db
 			.prepare(
 				`DELETE FROM task_session_map
 				 WHERE kind = 'node_agent' AND node_execution_id = ? AND session_id = ?`
 			)
 			.run(executionId, sessionId);
+
+		for (const { taskId } of affectedPairs) {
+			this.rebuildNodeAgentMapForTaskSession(taskId, sessionId);
+		}
+	}
+
+	/**
+	 * Re-derive the `task_session_map` node_agent row for a `(task_id, session_id)`
+	 * pair from any remaining `node_executions` that still bind that session to the
+	 * same task's workflow run. No-op if no such execution exists, which is the
+	 * correct behaviour: the session genuinely no longer contributes to the task.
+	 */
+	private rebuildNodeAgentMapForTaskSession(taskId: string, sessionId: string): void {
+		this.db
+			.prepare(
+				`INSERT OR REPLACE INTO task_session_map (
+					task_id, session_id, kind, role, label, node_execution_id, created_at
+				)
+				SELECT
+					st.id AS task_id,
+					ne.agent_session_id AS session_id,
+					'node_agent' AS kind,
+					ne.agent_name AS role,
+					COALESCE(sa.name, ne.agent_name, 'agent') AS label,
+					ne.id AS node_execution_id,
+					COALESCE(ne.created_at, strftime('%s','now') * 1000) AS created_at
+				FROM node_executions ne
+				JOIN space_tasks st
+					ON st.workflow_run_id IS NOT NULL
+					AND ne.workflow_run_id = st.workflow_run_id
+				LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+				WHERE st.id = ?
+					AND ne.agent_session_id = ?
+				ORDER BY ne.updated_at DESC, ne.created_at DESC, ne.id DESC
+				LIMIT 1`
+			)
+			.run(taskId, sessionId);
 	}
 
 	/**
