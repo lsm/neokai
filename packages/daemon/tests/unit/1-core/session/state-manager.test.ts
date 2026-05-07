@@ -1184,4 +1184,143 @@ describe('StateManager', () => {
 			});
 		});
 	});
+
+	// ====================================================================
+	// ClientEventGateway DI seam — verifies that callers can inject a custom
+	// gateway and that the migrated forwarding slice (session.created /
+	// session.deleted / context.updated) actually flows through it.
+	//
+	// This is the core architectural pattern this PR introduces; the tests
+	// guard the seam against silent regressions if a future refactor swaps
+	// the gateway for a direct messageHub call again.
+	// ====================================================================
+	describe('ClientEventGateway DI seam', () => {
+		// Build a fresh StateManager wired with a spied IClientEventGateway so we
+		// can assert on the typed `EventChannel` argument without going through
+		// the registry's wire serialization.
+		function buildWithSpiedGateway() {
+			const localEventHandlers = new Map<string, Function>();
+			const localRequestHandlers = new Map<string, Function>();
+
+			const localMessageHub = {
+				event: mock(async () => {}),
+				onRequest: mock((method: string, handler: Function) => {
+					localRequestHandlers.set(method, handler);
+					return () => {};
+				}),
+				query: mock(async () => ({})),
+				command: mock(async () => {}),
+			} as unknown as MessageHub;
+
+			const localEventBus = {
+				on: mock((event: string, handler: Function) => {
+					localEventHandlers.set(event, handler);
+					return () => {};
+				}),
+				emit: mock(async () => {}),
+			} as unknown as DaemonHub;
+
+			const publish = mock(() => {});
+			const publishGlobal = mock(() => {});
+			const clientEvents = { publish, publishGlobal };
+
+			new StateManager(
+				localMessageHub,
+				mockSessionManager,
+				mockAuthManager,
+				mockSettingsManager,
+				mockConfig,
+				localEventBus,
+				undefined,
+				undefined,
+				clientEvents
+			);
+
+			return { localMessageHub, localEventHandlers, publish, publishGlobal };
+		}
+
+		it('routes session.created through the injected gateway with a typed global channel', async () => {
+			const { localMessageHub, localEventHandlers, publish } = buildWithSpiedGateway();
+
+			const handler = localEventHandlers.get('session.created');
+			expect(handler).toBeDefined();
+
+			await handler!({
+				session: { id: 'inj-1', title: 'X', status: 'active', metadata: {} } as Session,
+			});
+
+			expect(publish).toHaveBeenCalledWith(
+				'session.created',
+				{ sessionId: 'inj-1' },
+				{ kind: 'global' }
+			);
+			// And the gateway is the only path: no direct messageHub.event call
+			// for this method on the injected hub.
+			const directCalls = (localMessageHub.event as ReturnType<typeof mock>).mock.calls.filter(
+				(args) => args[0] === 'session.created'
+			);
+			expect(directCalls).toHaveLength(0);
+		});
+
+		it('routes session.deleted through the injected gateway with a typed global channel', async () => {
+			const { localMessageHub, localEventHandlers, publish } = buildWithSpiedGateway();
+
+			// Seed cache so the deleted handler runs cleanly.
+			await localEventHandlers.get('session.created')!({
+				session: { id: 'inj-2', title: 'X', status: 'active', metadata: {} } as Session,
+			});
+			(publish as ReturnType<typeof mock>).mockClear();
+
+			await localEventHandlers.get('session.deleted')!({ sessionId: 'inj-2' });
+
+			expect(publish).toHaveBeenCalledWith(
+				'session.deleted',
+				{ sessionId: 'inj-2' },
+				{ kind: 'global' }
+			);
+			const directCalls = (localMessageHub.event as ReturnType<typeof mock>).mock.calls.filter(
+				(args) => args[0] === 'session.deleted'
+			);
+			expect(directCalls).toHaveLength(0);
+		});
+
+		it('routes context.updated through the injected gateway with a typed session channel', async () => {
+			const { localEventHandlers, publish } = buildWithSpiedGateway();
+
+			const contextInfo = {
+				usedTokens: 1000,
+				maxTokens: 200000,
+				autoCompactThreshold: 0.85,
+			};
+
+			await localEventHandlers.get('context.updated')!({
+				sessionId: 'inj-3',
+				contextInfo,
+			});
+
+			expect(publish).toHaveBeenCalledWith('context.updated', contextInfo, {
+				kind: 'session',
+				sessionId: 'inj-3',
+			});
+		});
+
+		it('falls back to a default ClientEventGateway when none is injected', async () => {
+			// Sanity check: with no injected gateway, the existing wire-level
+			// behaviour is preserved (this is what the rest of the suite already
+			// asserts via the wire format). We re-prove it here explicitly so the
+			// DI seam is documented end-to-end.
+			const handler = eventHandlers.get('session.created');
+			expect(handler).toBeDefined();
+
+			await handler!({
+				session: { id: 'fallback-id', title: 'X', status: 'active', metadata: {} } as Session,
+			});
+
+			expect(mockMessageHub.event).toHaveBeenCalledWith(
+				'session.created',
+				{ sessionId: 'fallback-id' },
+				{ channel: 'global' }
+			);
+		});
+	});
 });

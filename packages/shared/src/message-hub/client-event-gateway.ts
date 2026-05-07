@@ -37,15 +37,16 @@
  *    talk to `MessageHub`.
  */
 
-import type { MessageHub } from './message-hub.ts';
 import type { EventChannel, ChannelRegistry } from './channels.ts';
 import { channelRegistry as defaultChannelRegistry } from './channels.ts';
 
 /**
- * The minimal `MessageHub` surface the gateway needs.
+ * The minimal hub surface the gateway needs.
  *
- * Typed as a structural subset so tests can pass a fake without constructing
- * a full hub.
+ * `MessageHub` structurally satisfies this interface, so production code
+ * passes a `MessageHub` instance directly and tests pass a fake — no extra
+ * adapter required. The gateway intentionally avoids importing `MessageHub`
+ * so the module stays free of transport dependencies.
  */
 export interface ClientEventSink {
 	event(method: string, data?: unknown, options?: { channel?: string }): void;
@@ -56,10 +57,11 @@ export interface ClientEventSink {
  */
 export interface ClientEventGatewayOptions {
 	/**
-	 * Underlying transport sink — almost always a `MessageHub`. Accepting the
-	 * structural interface keeps the gateway easy to test.
+	 * Underlying sink — production code passes a `MessageHub` (which
+	 * structurally satisfies `ClientEventSink`); tests can pass any object
+	 * implementing the interface.
 	 */
-	hub: ClientEventSink | MessageHub;
+	hub: ClientEventSink;
 
 	/**
 	 * Channel registry to serialize `EventChannel` descriptors. Defaults to the
