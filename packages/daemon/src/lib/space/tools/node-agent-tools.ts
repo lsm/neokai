@@ -1243,12 +1243,16 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				const limit = Math.min(args.limit ?? 20, 100);
 				const offset = args.offset ?? 0;
 				let entries;
+				let total: number;
 				if (args.task_id) {
 					entries = auditLogRepo.listByTask(args.task_id, limit, offset);
+					total = auditLogRepo.countByTask(args.task_id);
 				} else if (args.session_id) {
 					entries = auditLogRepo.listBySession(args.session_id, limit, offset);
+					total = auditLogRepo.countBySession(args.session_id);
 				} else {
 					entries = auditLogRepo.listBySpace(spaceId, limit, offset);
+					total = auditLogRepo.countBySpace(spaceId);
 				}
 				return jsonResult({
 					success: true,
@@ -1263,7 +1267,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 						taskId: e.taskId,
 						workflowRunId: e.workflowRunId,
 					})),
-					total: entries.length,
+					total,
+					has_more: offset + entries.length < total,
 				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);

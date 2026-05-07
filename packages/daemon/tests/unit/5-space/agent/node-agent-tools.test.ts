@@ -3446,7 +3446,7 @@ describe('node-agent-tools: list_audit_entries', () => {
 		ctx.db.close();
 	});
 
-	test('lists audit entries by space', async () => {
+	test('lists audit entries by space with real total and has_more', async () => {
 		auditLogRepo.createEntry({ toolName: 'send_message', spaceId: ctx.spaceId });
 		auditLogRepo.createEntry({ toolName: 'save_artifact', spaceId: ctx.spaceId });
 
@@ -3457,11 +3457,13 @@ describe('node-agent-tools: list_audit_entries', () => {
 
 		expect(data.success).toBe(true);
 		expect(data.entries).toHaveLength(2);
+		expect(data.total).toBe(2);
+		expect(data.has_more).toBe(false);
 		expect(data.entries[0].toolName).toBe('save_artifact');
 		expect(data.entries[1].toolName).toBe('send_message');
 	});
 
-	test('filters audit entries by task_id', async () => {
+	test('filters audit entries by task_id with real total', async () => {
 		const taskA = 'task-a';
 		const taskB = 'task-b';
 		auditLogRepo.createEntry({ toolName: 't1', spaceId: ctx.spaceId, taskId: taskA });
@@ -3475,10 +3477,12 @@ describe('node-agent-tools: list_audit_entries', () => {
 
 		expect(data.success).toBe(true);
 		expect(data.entries).toHaveLength(2);
+		expect(data.total).toBe(2);
+		expect(data.has_more).toBe(false);
 		expect(data.entries.every((e: { taskId: string }) => e.taskId === taskA)).toBe(true);
 	});
 
-	test('filters audit entries by session_id', async () => {
+	test('filters audit entries by session_id with real total', async () => {
 		const sessA = 'sess-a';
 		const sessB = 'sess-b';
 		auditLogRepo.createEntry({ toolName: 't1', spaceId: ctx.spaceId, sessionId: sessA });
@@ -3492,6 +3496,8 @@ describe('node-agent-tools: list_audit_entries', () => {
 
 		expect(data.success).toBe(true);
 		expect(data.entries).toHaveLength(2);
+		expect(data.total).toBe(2);
+		expect(data.has_more).toBe(false);
 		expect(data.entries.every((e: { sessionId: string }) => e.sessionId === sessA)).toBe(true);
 	});
 
@@ -3519,7 +3525,7 @@ describe('node-agent-tools: list_audit_entries', () => {
 		expect(data.entries[0].taskId).toBe('task-x');
 	});
 
-	test('paginates with limit and offset', async () => {
+	test('paginates with limit and offset, reporting real total and has_more', async () => {
 		auditLogRepo.createEntry({ toolName: 't1', spaceId: ctx.spaceId });
 		auditLogRepo.createEntry({ toolName: 't2', spaceId: ctx.spaceId });
 		auditLogRepo.createEntry({ toolName: 't3', spaceId: ctx.spaceId });
@@ -3530,14 +3536,18 @@ describe('node-agent-tools: list_audit_entries', () => {
 		const page1 = await handlers.list_audit_entries({ limit: 2, offset: 0 });
 		const data1 = JSON.parse(page1.content[0].text);
 		expect(data1.entries).toHaveLength(2);
+		expect(data1.total).toBe(3);
+		expect(data1.has_more).toBe(true);
 
 		const page2 = await handlers.list_audit_entries({ limit: 2, offset: 2 });
 		const data2 = JSON.parse(page2.content[0].text);
 		expect(data2.entries).toHaveLength(1);
+		expect(data2.total).toBe(3);
+		expect(data2.has_more).toBe(false);
 		expect(data2.entries[0].toolName).toBe('t1');
 	});
 
-	test('returns empty array when no entries match', async () => {
+	test('returns empty array with total=0 and has_more=false when no entries match', async () => {
 		const config = makeConfig(ctx, { auditLogRepo });
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_audit_entries({ task_id: 'nonexistent' });
@@ -3545,6 +3555,8 @@ describe('node-agent-tools: list_audit_entries', () => {
 
 		expect(data.success).toBe(true);
 		expect(data.entries).toEqual([]);
+		expect(data.total).toBe(0);
+		expect(data.has_more).toBe(false);
 	});
 
 	test('returns error when auditLogRepo is not available', async () => {

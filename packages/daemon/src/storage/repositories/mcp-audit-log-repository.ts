@@ -107,6 +107,36 @@ export class McpAuditLogRepository {
 		return rows.map((r) => this.rowToEntry(r));
 	}
 
+	/**
+	 * Count audit log entries for a space.
+	 */
+	countBySpace(spaceId: string): number {
+		const row = this.db
+			.prepare(`SELECT COUNT(*) as count FROM mcp_audit_log WHERE space_id = ?`)
+			.get(spaceId) as { count: number } | undefined;
+		return row?.count ?? 0;
+	}
+
+	/**
+	 * Count audit log entries for a task.
+	 */
+	countByTask(taskId: string): number {
+		const row = this.db
+			.prepare(`SELECT COUNT(*) as count FROM mcp_audit_log WHERE task_id = ?`)
+			.get(taskId) as { count: number } | undefined;
+		return row?.count ?? 0;
+	}
+
+	/**
+	 * Count audit log entries for a session.
+	 */
+	countBySession(sessionId: string): number {
+		const row = this.db
+			.prepare(`SELECT COUNT(*) as count FROM mcp_audit_log WHERE session_id = ?`)
+			.get(sessionId) as { count: number } | undefined;
+		return row?.count ?? 0;
+	}
+
 	private rowToEntry(row: Record<string, unknown>): McpAuditLogEntry {
 		return {
 			id: row.id as string,

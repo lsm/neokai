@@ -174,4 +174,49 @@ describe('McpAuditLogRepository', () => {
 			expect(page2[0].toolName).toBe('t1');
 		});
 	});
+
+	describe('countBySpace', () => {
+		it('returns the total count of entries for a space', () => {
+			repo.createEntry({ toolName: 't1', spaceId: 'space-a' });
+			repo.createEntry({ toolName: 't2', spaceId: 'space-a' });
+			repo.createEntry({ toolName: 't3', spaceId: 'space-b' });
+
+			expect(repo.countBySpace('space-a')).toBe(2);
+			expect(repo.countBySpace('space-b')).toBe(1);
+		});
+
+		it('returns 0 when no entries match', () => {
+			expect(repo.countBySpace('nonexistent')).toBe(0);
+		});
+	});
+
+	describe('countByTask', () => {
+		it('returns the total count of entries for a task', () => {
+			repo.createEntry({ toolName: 't1', taskId: 'task-a' });
+			repo.createEntry({ toolName: 't2', taskId: 'task-a' });
+			repo.createEntry({ toolName: 't3', taskId: 'task-b' });
+
+			expect(repo.countByTask('task-a')).toBe(2);
+			expect(repo.countByTask('task-b')).toBe(1);
+		});
+
+		it('returns 0 when no entries match', () => {
+			expect(repo.countByTask('nonexistent')).toBe(0);
+		});
+	});
+
+	describe('countBySession', () => {
+		it('returns the total count of entries for a session', () => {
+			repo.createEntry({ toolName: 't1', sessionId: 'sess-a' });
+			repo.createEntry({ toolName: 't2', sessionId: 'sess-a' });
+			repo.createEntry({ toolName: 't3', sessionId: 'sess-b' });
+
+			expect(repo.countBySession('sess-a')).toBe(2);
+			expect(repo.countBySession('sess-b')).toBe(1);
+		});
+
+		it('returns 0 when no entries match', () => {
+			expect(repo.countBySession('nonexistent')).toBe(0);
+		});
+	});
 });
