@@ -117,7 +117,11 @@ export class InternalCommandBus<TCommandMap extends object = Record<string, unkn
 			throw new MissingCommandHandlerError(key);
 		}
 
-		return registered.handler(command);
+		try {
+			return await registered.handler(command);
+		} catch (error) {
+			return { ok: false, error };
+		}
 	}
 
 	/**

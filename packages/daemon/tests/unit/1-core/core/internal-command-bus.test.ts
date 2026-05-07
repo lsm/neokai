@@ -107,15 +107,15 @@ describe('InternalCommandBus', () => {
 			expect(result.metadata).toEqual({ retryAfter: 60 });
 		});
 
-		it('should propagate handler throws as raw errors (not wrapped)', async () => {
+		it('should normalize handler throws to a structured failure result', async () => {
 			const err = new Error('handler blew up');
 			bus.register('space.workflow.resume', async () => {
 				throw err;
 			});
 
-			await expect(bus.dispatch('space.workflow.resume', { workflowRunId: 'wr-1' })).rejects.toBe(
-				err
-			);
+			const result = await bus.dispatch('space.workflow.resume', { workflowRunId: 'wr-1' });
+			expect(result.ok).toBe(false);
+			expect(result.error).toBe(err);
 		});
 
 		it('should throw MissingCommandHandlerError when no handler is registered', async () => {
