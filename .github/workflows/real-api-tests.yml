@@ -17,7 +17,7 @@
 # - e2e-llm: GLM_API_KEY for the Playwright tests categorized by discover as requiring
 #   LLM round-trips; Anthropic calls are routed to Dev Proxy with a dummy key.
 # - Disabled but documented real-key shards: providers-anthropic-to-codex-bridge needs
-#   OPENAI_API_KEY/CODEX_API_KEY, and providers-anthropic-copilot needs COPILOT_GITHUB_TOKEN.
+#   OPENAI_API_KEY, and providers-anthropic-copilot needs COPILOT_GITHUB_TOKEN.
 
 name: Real API Tests
 

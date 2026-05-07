@@ -33,7 +33,6 @@
 		".claude/**"
 	],
 	"ignoreDependencies": [
-		"@openai/codex",
 		"@testing-library/preact",
 		"tailwindcss",
 		"@floating-ui/dom",

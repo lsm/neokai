@@ -77,11 +77,6 @@ export function requireModelContextWindow(modelId: string): number {
 	return contextWindow;
 }
 
-export function getModelAutoCompactTokenLimit(modelId: string): number | undefined {
-	const contextWindow = getModelContextWindow(modelId);
-	return contextWindow ? Math.floor(contextWindow * 0.9) : undefined;
-}
-
 export function getCodexBridgeModelInfos(): ModelInfo[] {
 	return (Object.keys(MODEL_CONTEXT_WINDOWS) as CodexBridgeModelId[]).map((id) => {
 		const details = CODEX_MODEL_DETAILS[id];

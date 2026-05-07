@@ -160,6 +160,98 @@ export const SaveArtifactSchema = z.object({
 export type SaveArtifactInput = z.infer<typeof SaveArtifactSchema>;
 
 // ---------------------------------------------------------------------------
+// list_tasks
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `list_tasks` input.
+ * Lists tasks in the current space. Filterable by status.
+ */
+export const ListTasksSchema = z.object({
+	status: z
+		.enum([
+			'draft',
+			'open',
+			'in_progress',
+			'review',
+			'approved',
+			'done',
+			'blocked',
+			'cancelled',
+			'archived',
+		])
+		.describe('Filter by task status')
+		.optional(),
+	compact: z
+		.boolean()
+		.describe(
+			'Return only summary fields (id, title, status, priority, createdAt) to reduce payload size'
+		)
+		.optional(),
+	limit: z
+		.number()
+		.int()
+		.min(1)
+		.max(100)
+		.describe('Maximum number of tasks to return (1-100, default 20)')
+		.optional(),
+	offset: z
+		.number()
+		.int()
+		.min(0)
+		.describe('Number of tasks to skip for pagination (default 0)')
+		.optional(),
+});
+
+export type ListTasksInput = z.infer<typeof ListTasksSchema>;
+
+// ---------------------------------------------------------------------------
+// get_task
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `get_task` input.
+ * Retrieves detailed information about a specific task by UUID or numeric task number.
+ */
+export const GetTaskSchema = z.object({
+	task_id: z.string().describe('UUID of the task to retrieve').optional(),
+	task_number: z
+		.number()
+		.describe('Numeric task ID (e.g. 5 for task #5) — preferred over task_id')
+		.optional(),
+});
+
+export type GetTaskInput = z.infer<typeof GetTaskSchema>;
+
+// ---------------------------------------------------------------------------
+// list_audit_entries
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `list_audit_entries` input.
+ * Lists MCP audit log entries for the current space, filtered by task or session.
+ */
+export const ListAuditEntriesSchema = z.object({
+	task_id: z.string().describe('Filter by task ID').optional(),
+	session_id: z.string().describe('Filter by session ID').optional(),
+	limit: z
+		.number()
+		.int()
+		.min(1)
+		.max(100)
+		.describe('Maximum number of entries to return (1-100, default 20)')
+		.optional(),
+	offset: z
+		.number()
+		.int()
+		.min(0)
+		.describe('Number of entries to skip for pagination (default 0)')
+		.optional(),
+});
+
+export type ListAuditEntriesInput = z.infer<typeof ListAuditEntriesSchema>;
+
+// ---------------------------------------------------------------------------
 // create_standalone_task
 // ---------------------------------------------------------------------------
 
@@ -327,6 +419,9 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
 	list_gates: ListGatesSchema,
 	read_gate: ReadGateSchema,
 	restore_node_agent: RestoreNodeAgentSchema,
+	list_tasks: ListTasksSchema,
+	get_task: GetTaskSchema,
+	list_audit_entries: ListAuditEntriesSchema,
 } as const;
 
 export type NodeAgentToolName = keyof typeof NODE_AGENT_TOOL_SCHEMAS;

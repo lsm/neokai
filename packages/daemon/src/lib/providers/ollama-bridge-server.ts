@@ -12,8 +12,8 @@ import {
 	messageStartSSE,
 	messageStopSSE,
 	textDeltaSSE,
-} from './codex-anthropic-bridge/translator.js';
-import { estimateAnthropicInputTokens } from './codex-anthropic-bridge/token-estimator.js';
+} from './provider-anthropic-compat/translator.js';
+import { estimateAnthropicInputTokens } from './provider-anthropic-compat/token-estimator.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from './shared/error-envelope.js';
 import { Logger } from '../logger.js';
 

@@ -68,8 +68,8 @@ export function initializeProviders(): ProviderRegistry {
 	registry.register(new OllamaProvider({ kind: 'cloud' }));
 
 	// Register Anthropic-to-Codex bridge provider for OpenAI/Codex-backed models.
-	// Discovers credentials from env (OPENAI_API_KEY/CODEX_API_KEY),
-	// ~/.neokai/auth.json, and one-time import from ~/.codex/auth.json.
+	// Discovers credentials from env (OPENAI_API_KEY), ~/.neokai/auth.json,
+	// and one-time import from ~/.codex/auth.json.
 	registry.register(new AnthropicToCodexBridgeProvider());
 
 	// Register Anthropic Copilot provider (embedded Anthropic-compatible server).

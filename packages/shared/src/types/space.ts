@@ -302,6 +302,16 @@ export interface SpaceTask {
 	/** ID of the planning task that created this task */
 	createdByTaskId?: string | null;
 	/**
+	 * Agent name that created this task (e.g. 'space-agent', 'coder', 'task-agent').
+	 * Set when a task is created via `create_standalone_task` tool.
+	 */
+	createdBy?: string | null;
+	/**
+	 * Session ID of the agent that created this task.
+	 * Set when a task is created via `create_standalone_task` tool.
+	 */
+	createdBySession?: string | null;
+	/**
 	 * Which agent session is currently active (generating output).
 	 * Cleared when the session reaches a terminal state.
 	 */
@@ -465,6 +475,16 @@ export interface CreateSpaceTaskParams {
 	preferredWorkflowId?: string | null;
 	/** ID of planning task that created this task */
 	createdByTaskId?: string | null;
+	/**
+	 * Agent name that created this task (e.g. 'space-agent', 'coder', 'task-agent').
+	 * Set when a task is created via `create_standalone_task` tool.
+	 */
+	createdBy?: string | null;
+	/**
+	 * Session ID of the agent that created this task.
+	 * Set when a task is created via `create_standalone_task` tool.
+	 */
+	createdBySession?: string | null;
 	/**
 	 * ID of the Task Agent session that orchestrates this task's workflow execution.
 	 * Set when the task transitions from 'open' to 'in_progress'.

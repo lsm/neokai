@@ -563,6 +563,15 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 119: Add setting_sources column to spaces.
 	//   Stores per-space default setting sources as JSON.
 	runMigration119(db);
+
+	// Migration 120: Add created_by and created_by_session columns to space_tasks.
+	//   Tracks which agent and session created a task for audit trail.
+	runMigration120(db);
+
+	// Migration 121: Create mcp_audit_log table.
+	//   General audit trail for MCP write operations (create_task, approve_task,
+	//   send_message with gate data, save_artifact, etc.).
+	runMigration121(db);
 }
 
 /**
@@ -8006,4 +8015,60 @@ export function runMigration119(db: BunDatabase): void {
 	if (columns.includes('setting_sources')) return;
 
 	db.exec(`ALTER TABLE spaces ADD COLUMN setting_sources TEXT DEFAULT NULL`);
+}
+
+/**
+ * Migration 120: Add `created_by` and `created_by_session` columns to `space_tasks` table.
+ *
+ * Tracks which agent and session created a task for audit trail.
+ * - `created_by`: agent name (e.g. 'space-agent', 'coder', 'task-agent')
+ * - `created_by_session`: session ID of the creator
+ * Both are nullable — existing rows get NULL.
+ */
+export function runMigration120(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+
+	const columns = tableColumnNames(db, 'space_tasks');
+	if (!columns.includes('created_by')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN created_by TEXT DEFAULT NULL`);
+	}
+	if (!columns.includes('created_by_session')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN created_by_session TEXT DEFAULT NULL`);
+	}
+}
+
+/**
+ * Migration 121: Create `mcp_audit_log` table.
+ *
+ * General audit trail for MCP write operations. Each entry records:
+ * - timestamp, agent_name, session_id, tool_name
+ * - params_summary: JSON summary of the tool call parameters
+ * - space_id, task_id, workflow_run_id: optional context
+ */
+export function runMigration121(db: BunDatabase): void {
+	if (!tableExists(db, 'mcp_audit_log')) {
+		db.exec(`
+			CREATE TABLE mcp_audit_log (
+				id TEXT PRIMARY KEY,
+				timestamp INTEGER NOT NULL,
+				agent_name TEXT DEFAULT NULL,
+				session_id TEXT DEFAULT NULL,
+				tool_name TEXT NOT NULL,
+				params_summary TEXT DEFAULT NULL,
+				space_id TEXT DEFAULT NULL,
+				task_id TEXT DEFAULT NULL,
+				workflow_run_id TEXT DEFAULT NULL
+			)
+		`);
+	}
+
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_space ON mcp_audit_log (space_id, timestamp)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_task ON mcp_audit_log (task_id, timestamp)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_session ON mcp_audit_log (session_id, timestamp)`
+	);
 }

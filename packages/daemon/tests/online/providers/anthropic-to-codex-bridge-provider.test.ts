@@ -1,17 +1,16 @@
 /**
- * Codex Bridge Online Integration Tests
+ * OpenAI Responses Bridge Online Integration Tests
  *
- * Exercises the full Codex bridge pipeline end-to-end:
- *   AnthropicToCodexBridgeProvider.buildSdkConfig → HTTP bridge server → codex app-server → Codex API
+ * Exercises the full OpenAI Responses bridge pipeline end-to-end:
+ *   AnthropicToCodexBridgeProvider.buildSdkConfig → HTTP bridge server → OpenAI Responses API
  *
  * REQUIREMENTS:
- * - OPENAI_API_KEY or CODEX_API_KEY must be set
- * - The `codex` binary must be installed and on PATH
+ * - OPENAI_API_KEY must be set, or OpenAI OAuth credentials must be available in ~/.neokai/auth.json
  *
  * NOTE: Dev Proxy (NEOKAI_USE_DEV_PROXY=1) does NOT apply to these tests.
  * The bridge uses its own random-port HTTP server; Anthropic API traffic
  * interception at port 8000 has no effect here.  Tests always hit the real
- * Codex API.
+ * OpenAI Responses API.
  *
  * Run with:
  *   OPENAI_API_KEY=sk-xxx bun test \
@@ -211,14 +210,13 @@ describe('Codex Bridge (Online)', () => {
 	beforeAll(async () => {
 		provider = new AnthropicToCodexBridgeProvider();
 
-		// Hard-fail if credentials are absent or the codex binary is missing —
-		// per CLAUDE.md policy: tests must FAIL, not silently skip.
-		// isAvailable() checks all runtime auth sources (env vars OPENAI_API_KEY/CODEX_API_KEY,
-		// auth.json OAuth) rather than isAuthenticated which is UI-only (NeoKai OAuth only).
+		// Hard-fail if credentials are absent per CLAUDE.md policy: tests must FAIL,
+		// not silently skip. isAvailable() checks all runtime auth sources (OPENAI_API_KEY
+		// env var and auth.json OAuth) rather than isAuthenticated which is UI-only.
 		if (!(await provider.isAvailable())) {
 			throw new Error(
 				'anthropic-codex provider is not available. ' +
-					'Set OPENAI_API_KEY or CODEX_API_KEY, or run `codex login`.'
+					'Set OPENAI_API_KEY or run `codex login` to import OAuth credentials.'
 			);
 		}
 
