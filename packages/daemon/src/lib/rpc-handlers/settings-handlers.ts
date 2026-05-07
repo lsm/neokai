@@ -2,6 +2,11 @@
  * Settings RPC Handlers
  *
  * Provides RPC methods for managing global and session-specific settings.
+ *
+ * MIGRATION NOTE: `settings.updated` events are published through
+ * `internalEventBus` (not `daemonHub`). This is the first event migrated
+ * behind the InternalEventBus facade. See
+ * docs/plans/internal-event-command-query-architecture.md.
  */
 
 import type { MessageHub } from '@neokai/shared';
@@ -10,6 +15,7 @@ import type { GlobalSettings, SessionSettings } from '@neokai/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { Database } from '../../storage/database';
 import type { McpImportService } from '../mcp';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 
 export async function syncProviderModelAllowlists(
 	allowlists?: Record<string, string[]>
@@ -43,6 +49,7 @@ export function registerSettingsHandlers(
 	messageHub: MessageHub,
 	settingsManager: SettingsManager,
 	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	db: Database,
 	mcpImportService?: McpImportService
 ) {
@@ -64,7 +71,7 @@ export function registerSettingsHandlers(
 				await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
 			}
 			// Emit event for StateManager to broadcast (global event)
-			daemonHub.emit('settings.updated', {
+			internalEventBus.publishAsync('settings.updated', {
 				sessionId: 'global',
 				settings: updated,
 			});
@@ -84,7 +91,7 @@ export function registerSettingsHandlers(
 			await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
 		}
 		// Emit event for StateManager to broadcast (global event)
-		daemonHub.emit('settings.updated', {
+		internalEventBus.publishAsync('settings.updated', {
 			sessionId: 'global',
 			settings: data.settings,
 		});
@@ -154,7 +161,7 @@ export function registerSettingsHandlers(
 		// Emit so LiveQuery subscribers (MCP Servers page) invalidate. The repo
 		// already calls `reactiveDb.notifyChange('app_mcp_servers')` on every
 		// insert/update/delete; this event is for UI-level toast/status messaging.
-		daemonHub.emit('settings.updated', {
+		internalEventBus.publishAsync('settings.updated', {
 			sessionId: 'global',
 			settings: settingsManager.getGlobalSettings(),
 		});

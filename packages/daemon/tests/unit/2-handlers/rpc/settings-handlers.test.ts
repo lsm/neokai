@@ -32,6 +32,10 @@ import {
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { Database } from '../../../../src/storage/database';
+import type {
+	InternalEventBus,
+	DaemonInternalEventMap,
+} from '../../../../src/lib/internal-event-bus';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -81,6 +85,25 @@ function createMockDaemonHub(): {
 	} as unknown as DaemonHub;
 
 	return { daemonHub, emitMock };
+}
+
+// Helper to create mock InternalEventBus
+function createMockInternalEventBus(): {
+	bus: InternalEventBus<DaemonInternalEventMap>;
+	publishAsyncMock: ReturnType<typeof mock>;
+} {
+	const publishAsyncMock = mock(() => {});
+	const bus = {
+		publishAsync: publishAsyncMock,
+		publish: mock(async () => ({ delivered: 0, failures: [] })),
+		subscribe: mock(() => () => {}),
+		getHandlerCount: mock(() => 0),
+		getHandlerCountForSession: mock(() => 0),
+		clear: mock(() => {}),
+		off: mock(() => {}),
+	} as unknown as InternalEventBus<DaemonInternalEventMap>;
+
+	return { bus, publishAsyncMock };
 }
 
 // Default global settings (mirrors the unified shape in @neokai/shared)
@@ -160,12 +183,14 @@ function createMockDatabase(): {
 describe('Settings RPC Handlers', () => {
 	let messageHubData: ReturnType<typeof createMockMessageHub>;
 	let daemonHubData: ReturnType<typeof createMockDaemonHub>;
+	let internalEventBusData: ReturnType<typeof createMockInternalEventBus>;
 	let settingsManagerData: ReturnType<typeof createMockSettingsManager>;
 	let dbData: ReturnType<typeof createMockDatabase>;
 
 	beforeEach(() => {
 		messageHubData = createMockMessageHub();
 		daemonHubData = createMockDaemonHub();
+		internalEventBusData = createMockInternalEventBus();
 		settingsManagerData = createMockSettingsManager();
 		dbData = createMockDatabase();
 
@@ -174,6 +199,7 @@ describe('Settings RPC Handlers', () => {
 			messageHubData.hub,
 			settingsManagerData.settingsManager,
 			daemonHubData.daemonHub,
+			internalEventBusData.bus,
 			dbData.db
 		);
 	});
@@ -239,13 +265,13 @@ describe('Settings RPC Handlers', () => {
 			expect(result.settings.model).toBe('claude-opus');
 		});
 
-		it('emits settings.updated event', async () => {
+		it('publishes settings.updated event through internalEventBus', async () => {
 			const handler = messageHubData.handlers.get('settings.global.update');
 			expect(handler).toBeDefined();
 
 			await handler!({ updates: { model: 'claude-opus' } }, {});
 
-			expect(daemonHubData.emitMock).toHaveBeenCalledWith(
+			expect(internalEventBusData.publishAsyncMock).toHaveBeenCalledWith(
 				'settings.updated',
 				expect.objectContaining({
 					sessionId: 'global',
@@ -253,14 +279,14 @@ describe('Settings RPC Handlers', () => {
 			);
 		});
 
-		it('emits settings.updated when showArchived changes', async () => {
+		it('publishes settings.updated through internalEventBus when showArchived changes', async () => {
 			const handler = messageHubData.handlers.get('settings.global.update');
 			expect(handler).toBeDefined();
 
 			await handler!({ updates: { showArchived: true } }, {});
 
 			// showArchived filter is handled client-side via LiveQuery — no separate filterChanged event
-			expect(daemonHubData.emitMock).toHaveBeenCalledWith(
+			expect(internalEventBusData.publishAsyncMock).toHaveBeenCalledWith(
 				'settings.updated',
 				expect.objectContaining({
 					sessionId: 'global',
@@ -300,13 +326,13 @@ describe('Settings RPC Handlers', () => {
 			expect(settingsManagerData.mocks.saveGlobalSettings).toHaveBeenCalledWith(newSettings);
 		});
 
-		it('emits settings.updated event', async () => {
+		it('publishes settings.updated event through internalEventBus', async () => {
 			const handler = messageHubData.handlers.get('settings.global.save');
 			expect(handler).toBeDefined();
 
 			await handler!({ settings: defaultGlobalSettings }, {});
 
-			expect(daemonHubData.emitMock).toHaveBeenCalledWith(
+			expect(internalEventBusData.publishAsyncMock).toHaveBeenCalledWith(
 				'settings.updated',
 				expect.objectContaining({
 					sessionId: 'global',
