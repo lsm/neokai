@@ -782,6 +782,8 @@ export class TaskAgentManager {
 					return s?.autonomyLevel ?? 1;
 				},
 				myAgentName: 'task-agent',
+				mySessionId: sessionId,
+				auditLogRepo: this.auditLogRepo,
 			});
 			taskMcpServers['space-agent-tools'] = spaceAgentMcpServer as unknown as McpServerConfig;
 
@@ -3173,6 +3175,8 @@ export class TaskAgentManager {
 				return s?.autonomyLevel ?? 1;
 			},
 			myAgentName: 'task-agent',
+			mySessionId: sessionId,
+			auditLogRepo: this.auditLogRepo,
 		});
 		rehydrateMcpServers['space-agent-tools'] =
 			rehydrateSpaceAgentMcpServer as unknown as McpServerConfig;
@@ -4177,6 +4181,8 @@ export class TaskAgentManager {
 				return s?.autonomyLevel ?? 1;
 			},
 			myAgentName: ctx.agentName,
+			mySessionId: ctx.subSessionId,
+			auditLogRepo: this.auditLogRepo,
 			// Wire restore_node_agent so it is callable even when node-agent is
 			// missing. The closure captures the rebuild-time values of taskId,
 			// subSessionId, agentName, etc. which are stable for this session.

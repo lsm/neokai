@@ -278,7 +278,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 	);
 
 	/** Helper to log MCP write operations to the audit log. */
-	function logAudit(toolName: string, paramsSummary: Record<string, unknown>): void {
+	function logAudit(
+		toolName: string,
+		paramsSummary: Record<string, unknown>,
+		taskId?: string
+	): void {
 		if (config.auditLogRepo) {
 			try {
 				config.auditLogRepo.createEntry({
@@ -287,7 +291,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					toolName,
 					paramsSummary: JSON.stringify(paramsSummary),
 					spaceId,
-					taskId: config.taskId,
+					taskId: taskId ?? config.taskId,
 					workflowRunId,
 				});
 			} catch {
@@ -1099,14 +1103,17 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			// Only audit after successful creation; stamp the new task ID, not the current session task.
 			const createdTask = result.task as { id: string } | undefined;
 			if (result.success && createdTask?.id) {
-				logAudit('create_standalone_task', {
-					title: args.title,
-					taskId: createdTask.id,
-					priority: args.priority,
-					workflow_id: args.workflow_id,
-					depends_on: args.depends_on,
-					draft: args.draft,
-				});
+				logAudit(
+					'create_standalone_task',
+					{
+						title: args.title,
+						priority: args.priority,
+						workflow_id: args.workflow_id,
+						depends_on: args.depends_on,
+						draft: args.draft,
+					},
+					createdTask.id
+				);
 			}
 			return result;
 		},
