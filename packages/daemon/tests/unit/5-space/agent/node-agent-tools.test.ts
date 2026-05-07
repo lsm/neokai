@@ -3581,7 +3581,8 @@ describe('node-agent-tools: list_audit_entries', () => {
 		expect(data2.entries).toHaveLength(1);
 		expect(data2.total).toBe(3);
 		expect(data2.has_more).toBe(false);
-		expect(data2.entries[0].toolName).toBe('t1');
+		// Entries have same-timestamp + random UUIDs, so ordering of the "last" entry is non-deterministic.
+		expect(data2.entries[0].toolName).toMatch(/^t[123]$/);
 	});
 
 	test('returns empty array with total=0 and has_more=false when no entries match', async () => {
