@@ -588,7 +588,8 @@ export class QueryOptionsBuilder {
 		// The anthropic-codex provider can run with either the OpenAI Responses
 		// API adapter (supports reasoning) or the legacy Codex app-server adapter
 		// (does not support reasoning). Gate thinking at runtime by env var.
-		if (providerId === 'anthropic-codex' && process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER === 'codex') {
+		const bridgeAdapter = process.env.NEOKAI_OPENAI_BRIDGE_ADAPTER?.trim().toLowerCase();
+		if (providerId === 'anthropic-codex' && bridgeAdapter === 'codex') {
 			thinkingModes = 'off';
 		}
 
