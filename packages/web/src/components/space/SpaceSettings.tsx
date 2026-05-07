@@ -38,6 +38,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 	);
 	const hadExplicitSettingSources = space.settingSources !== undefined;
 	const [settingSourcesTouched, setSettingSourcesTouched] = useState(false);
+	const [clearSettingSources, setClearSettingSources] = useState(false);
 	const [saving, setSaving] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const [isArchiving, setIsArchiving] = useState(false);
@@ -53,6 +54,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		setDefaultModel(space.defaultModel);
 		setSettingSources(space.settingSources ?? ['user', 'project', 'local']);
 		setSettingSourcesTouched(false);
+		setClearSettingSources(false);
 		setSaveError(null);
 	}, [
 		space.id,
@@ -73,7 +75,8 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		autonomyLevel !== (space.autonomyLevel ?? 1) ||
 		defaultModel !== space.defaultModel ||
 		JSON.stringify(settingSources) !==
-			JSON.stringify(space.settingSources ?? ['user', 'project', 'local']);
+			JSON.stringify(space.settingSources ?? ['user', 'project', 'local']) ||
+		clearSettingSources;
 
 	async function handleSave(e: Event) {
 		e.preventDefault();
@@ -97,7 +100,9 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 				backgroundContext: backgroundContext.trim() || undefined,
 				autonomyLevel,
 				defaultModel: defaultModel || null,
-				...(hadExplicitSettingSources || settingSourcesTouched ? { settingSources } : {}),
+				...(hadExplicitSettingSources || settingSourcesTouched || clearSettingSources
+					? { settingSources: clearSettingSources ? null : settingSources }
+					: {}),
 			});
 			// Apply response directly to avoid stale-state from event spread-merge
 			// (undefined fields like defaultModel are dropped during JSON serialization)
@@ -339,6 +344,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 												);
 												setSettingSourcesTouched(true);
 											}}
+											disabled={clearSettingSources}
 											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 										/>
 										<span class="text-sm text-gray-200">User settings</span>
@@ -356,6 +362,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 												);
 												setSettingSourcesTouched(true);
 											}}
+											disabled={clearSettingSources}
 											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 										/>
 										<span class="text-sm text-gray-200">Project settings + CLAUDE.md</span>
@@ -373,6 +380,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 												);
 												setSettingSourcesTouched(true);
 											}}
+											disabled={clearSettingSources}
 											class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 										/>
 										<span class="text-sm text-gray-200">Local settings</span>

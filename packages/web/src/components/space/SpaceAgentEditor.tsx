@@ -155,6 +155,7 @@ export function SpaceAgentEditor({
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const hadExplicitSettingSources = isEdit && agent?.settingSources !== undefined;
 	const [settingSourcesTouched, setSettingSourcesTouched] = useState(false);
+	const [clearSettingSources, setClearSettingSources] = useState(false);
 
 	const applyPreset = (presetName: string) => {
 		setActivePreset(presetName);
@@ -372,6 +373,27 @@ export function SpaceAgentEditor({
 						Setting Sources
 						<span class="text-gray-500 text-xs ml-2">(optional)</span>
 					</label>
+					{hadExplicitSettingSources && !clearSettingSources && (
+						<button
+							type="button"
+							onClick={() => setClearSettingSources(true)}
+							class="text-xs text-blue-400 hover:text-blue-300 mb-1.5"
+						>
+							Clear override — use inherited defaults
+						</button>
+					)}
+					{clearSettingSources && (
+						<div class="flex items-center gap-2 mb-1.5">
+							<span class="text-xs text-gray-400">Will revert to inherited defaults on save.</span>
+							<button
+								type="button"
+								onClick={() => setClearSettingSources(false)}
+								class="text-xs text-blue-400 hover:text-blue-300"
+							>
+								Cancel
+							</button>
+						</div>
+					)}
 					<div class="space-y-1.5">
 						<label class="flex items-center gap-2 cursor-pointer">
 							<input
@@ -383,6 +405,7 @@ export function SpaceAgentEditor({
 									);
 									setSettingSourcesTouched(true);
 								}}
+								disabled={clearSettingSources}
 								class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 							/>
 							<span class="text-sm text-gray-200">User settings</span>
@@ -400,6 +423,7 @@ export function SpaceAgentEditor({
 									);
 									setSettingSourcesTouched(true);
 								}}
+								disabled={clearSettingSources}
 								class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 							/>
 							<span class="text-sm text-gray-200">Project settings + CLAUDE.md</span>
@@ -415,6 +439,7 @@ export function SpaceAgentEditor({
 									);
 									setSettingSourcesTouched(true);
 								}}
+								disabled={clearSettingSources}
 								class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 							/>
 							<span class="text-sm text-gray-200">Local settings</span>
