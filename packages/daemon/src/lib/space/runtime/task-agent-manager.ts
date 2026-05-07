@@ -71,6 +71,7 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
+import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import type { SubSessionMemberInfo } from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
@@ -310,6 +311,8 @@ export class TaskAgentManager {
 	 * Closed when the task agent session is cleaned up.
 	 */
 	private taskDbQueryServers = new Map<string, DbQueryMcpServer>();
+	/** Audit log repository for MCP write operations. */
+	private readonly auditLogRepo: McpAuditLogRepository;
 
 	/**
 	 * Eager sub-session index: taskId → (agentName → sessionId).
@@ -333,6 +336,7 @@ export class TaskAgentManager {
 	private taskArchiveListenerUnsub: (() => void) | null = null;
 
 	constructor(private readonly config: TaskAgentManagerConfig) {
+		this.auditLogRepo = new McpAuditLogRepository(this.config.db.getDatabase());
 		this.subscribeToTaskArchiveEvents();
 	}
 
@@ -4431,6 +4435,8 @@ export class TaskAgentManager {
 					preferredWorkflowId: args.workflow_id ?? null,
 					dependsOn: args.depends_on,
 					status: args.draft ? 'draft' : undefined,
+					createdBy: agentName,
+					createdBySession: subSessionId,
 				});
 				return jsonResult({ success: true, task });
 			} catch (err) {
@@ -4469,6 +4475,8 @@ export class TaskAgentManager {
 			onMarkComplete,
 			onCreateStandaloneTask,
 			artifactRepo: this.config.artifactRepo,
+			taskRepo: this.config.taskRepo,
+			auditLogRepo: this.auditLogRepo,
 			getSpaceAutonomyLevel: async (sid) => {
 				const s = await spaceManager.getSpace(sid);
 				return s?.autonomyLevel ?? 1;
