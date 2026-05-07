@@ -313,6 +313,13 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 		description:
 			'JSON-serialised cache of git-derived artifact data (gate diffs, commit log, per-file diffs) populated by background sync jobs and served to the TaskArtifactsPanel.',
 	},
+	{
+		tableName: 'mcp_audit_log',
+		scopeColumn: 'space_id',
+		blacklistedColumns: [],
+		description:
+			'Audit trail of MCP write operations (create_task, approve_task, send_message, save_artifact) with agent name, session ID, tool name, and parameters.',
+	},
 	// ── Main-DB tables exposed with space-scoped filtering via session ID prefix ──
 	{
 		tableName: 'sessions',
