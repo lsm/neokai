@@ -547,9 +547,10 @@ export class QueryOptionsBuilder {
 
 		const tokens = THINKING_LEVEL_TOKENS[level];
 
-		// 'off' level: no thinking budget
+		// 'off' level: explicitly disable thinking so the SDK does not fall back
+		// to its default behavior of enabling thinking when the property is absent.
 		if (tokens === undefined) {
-			return undefined;
+			return { type: 'disabled' };
 		}
 
 		// Preserve the selected budget for all providers that support thinking.

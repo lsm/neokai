@@ -324,9 +324,11 @@ jobs:
         run: |
           VERSION="${{ needs.wait-for-ci.outputs.version }}"
           echo "Creating GitHub Release for v$VERSION..."
+          NOTES=$(sed -n "/^## \[${VERSION#v}\]/,/^## \[/p" CHANGELOG.md | sed '$d')
+          echo "$NOTES" > /tmp/release-notes.md
           gh release create "v$VERSION" \
             --title "v$VERSION" \
-            --generate-notes
+            --notes-file /tmp/release-notes.md
           echo "GitHub Release created: v$VERSION"
         env:
           GH_TOKEN: ${{ github.token }}
