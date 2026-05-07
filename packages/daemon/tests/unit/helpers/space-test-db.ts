@@ -227,6 +227,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			post_approval_session_id TEXT DEFAULT NULL,
 			post_approval_started_at INTEGER DEFAULT NULL,
 			post_approval_blocked_reason TEXT DEFAULT NULL,
+			created_by TEXT DEFAULT NULL,
+			created_by_session TEXT DEFAULT NULL,
 			archived_at INTEGER,
 			created_at INTEGER NOT NULL,
 			started_at INTEGER,
@@ -328,5 +330,29 @@ export function createSpaceTables(db: BunDatabase): void {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_agent_messages_idem ` +
 			`ON pending_agent_messages(workflow_run_id, target_agent_name, idempotency_key) ` +
 			`WHERE idempotency_key IS NOT NULL`
+	);
+
+	// MCP audit log (migration 121)
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS mcp_audit_log (
+			id TEXT PRIMARY KEY,
+			timestamp INTEGER NOT NULL,
+			agent_name TEXT,
+			session_id TEXT,
+			tool_name TEXT NOT NULL,
+			params_summary TEXT,
+			space_id TEXT,
+			task_id TEXT,
+			workflow_run_id TEXT
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_space ON mcp_audit_log (space_id, timestamp)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_task ON mcp_audit_log (task_id, timestamp)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_session ON mcp_audit_log (session_id, timestamp)`
 	);
 }

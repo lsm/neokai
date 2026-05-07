@@ -22,6 +22,7 @@ import type { ChannelCycleRepository } from '../../../storage/repositories/chann
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
+import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import type { NotificationSink } from './notification-sink';
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SessionManager } from '../../session-manager';
@@ -108,6 +109,8 @@ export class SpaceRuntimeService {
 	private taskAgentManager: TaskAgentManager | null = null;
 	/** Resolved nodeExecutionRepo — created from db if not provided in config. */
 	private readonly nodeExecutionRepo: NodeExecutionRepository;
+	/** Audit log repository for MCP write operations. */
+	private readonly auditLogRepo: McpAuditLogRepository;
 	/** Stores db-query server instances per space for cleanup on stop. */
 	private readonly spaceDbQueryServers = new Map<string, DbQueryMcpServer>();
 	/**
@@ -141,6 +144,7 @@ export class SpaceRuntimeService {
 		// Ensure nodeExecutionRepo is available — create from db if not provided.
 		this.nodeExecutionRepo =
 			this.config.nodeExecutionRepo ?? new NodeExecutionRepository(this.config.db);
+		this.auditLogRepo = new McpAuditLogRepository(this.config.db);
 		this.runtime = new SpaceRuntime({
 			...config,
 			nodeExecutionRepo: this.nodeExecutionRepo,
@@ -665,6 +669,8 @@ export class SpaceRuntimeService {
 			// means gate writer-authorization paths that rely on matching the
 			// writer name fall through to the autonomy path, which is the
 			// correct gating behavior for non-space-agent callers.
+			mySessionId: session.id,
+			auditLogRepo: this.auditLogRepo,
 		});
 
 		const additional: Record<string, McpServerConfig> = {
@@ -756,6 +762,8 @@ export class SpaceRuntimeService {
 				return s?.autonomyLevel ?? 1;
 			},
 			myAgentName: 'space-agent',
+			mySessionId: spaceChatSessionId,
+			auditLogRepo: this.auditLogRepo,
 		});
 
 		// Create a space-scoped db-query server if dbPath is configured.

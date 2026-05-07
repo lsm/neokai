@@ -30,6 +30,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
@@ -141,6 +142,11 @@ export interface SpaceAgentToolsConfig {
 	 * writer authorization.
 	 */
 	myAgentNameAliases?: string[];
+	/**
+	 * Session ID of the calling agent. Used to stamp `createdBySession` on tasks
+	 * created via `create_standalone_task`.
+	 */
+	mySessionId?: string;
 
 	/**
 	 * Optional self-heal callback exposed as the `restore_node_agent` tool.
@@ -152,6 +158,11 @@ export interface SpaceAgentToolsConfig {
 	 * Only set for specialised sessions that intentionally mirror this restore hook.
 	 */
 	onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
+	/**
+	 * MCP audit log repository for recording write operations.
+	 * Optional — when absent, no audit entries are written.
+	 */
+	auditLogRepo?: McpAuditLogRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +192,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		getSpaceAutonomyLevel,
 		myAgentName,
 		myAgentNameAliases,
+		mySessionId,
 	} = config;
 
 	const agentNameAliases = new Set(
@@ -193,6 +205,28 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 	const outboundSenderLevel = outboundSenderName === 'task-agent' ? 'task-agent' : 'space-agent';
 	const outboundSenderDisplayName =
 		outboundSenderName === 'space-agent' ? 'Space Agent' : outboundSenderName;
+
+	/** Helper to log MCP write operations to the audit log. */
+	function logAudit(
+		toolName: string,
+		paramsSummary: Record<string, unknown>,
+		taskId?: string
+	): void {
+		if (config.auditLogRepo) {
+			try {
+				config.auditLogRepo.createEntry({
+					agentName: myAgentName,
+					sessionId: mySessionId,
+					toolName,
+					paramsSummary: JSON.stringify(paramsSummary),
+					spaceId,
+					taskId,
+				});
+			} catch {
+				// Audit logging is best-effort; never block the tool operation.
+			}
+		}
+	}
 
 	return {
 		/**
@@ -405,7 +439,20 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					preferredWorkflowId: args.workflow_id ?? null,
 					dependsOn: args.depends_on,
 					status: args.draft ? 'draft' : undefined,
+					createdBy: myAgentName ?? null,
+					createdBySession: mySessionId ?? null,
 				});
+				logAudit(
+					'create_standalone_task',
+					{
+						title: args.title,
+						priority: args.priority,
+						workflow_id: args.workflow_id,
+						depends_on: args.depends_on,
+						draft: args.draft,
+					},
+					task.id
+				);
 				return jsonResult({ success: true, task });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -996,6 +1043,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					approvalSource: 'agent',
 					approvalReason: args.reason,
 				});
+
+				logAudit(
+					'approve_task',
+					{
+						reason: args.reason,
+						previousStatus: task.status,
+					},
+					args.task_id
+				);
 
 				if (daemonHub) {
 					void daemonHub
