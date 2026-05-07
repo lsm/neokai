@@ -9,7 +9,7 @@ import { SettingsManager } from './lib/settings-manager';
 import { StateManager } from './lib/state-manager';
 import { MessageHub, MessageHubRouter } from '@neokai/shared';
 import { createDaemonHub } from './lib/daemon-hub';
-import { createInternalQueryBus } from './lib/internal-query-bus';
+import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus';
 import { setupRPCHandlers } from './lib/rpc-handlers';
 import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers';
 import { WebSocketServerTransport } from './lib/websocket-server-transport';
@@ -62,7 +62,7 @@ export interface DaemonAppContext {
 	transport: WebSocketServerTransport;
 	eventBus: Awaited<ReturnType<typeof createDaemonHub>>;
 	/** Semantic internal query bus for point-in-time reads */
-	queryBus: ReturnType<typeof createInternalQueryBus>;
+	queryBus: ReturnType<typeof createInternalQueryBus<DaemonQueryMap>>;
 	/**
 	 * GitHub service instance (null if not configured)
 	 */
@@ -227,7 +227,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Initialize InternalQueryBus for point-in-time reads.
 	// Handlers will be registered by domain services as they migrate.
-	const queryBus = createInternalQueryBus();
+	const queryBus = createInternalQueryBus<DaemonQueryMap>();
 
 	// Initialize application-level MCP and Skills managers before SessionManager
 	// so AgentSession can inject skills into SDK query options.

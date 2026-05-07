@@ -91,7 +91,7 @@ describe('InternalQueryBus', () => {
 			expect(payloads[0].includeArchived).toBe(true);
 		});
 
-		it('should include metadata from a successful handler result', async () => {
+		it('should return data on a successful handler result', async () => {
 			bus.register('app.health', async () => ({ status: 'ok' }));
 
 			const received = await bus.execute('app.health', { component: 'db' });
@@ -244,11 +244,8 @@ describe('InternalQueryBus', () => {
 	});
 
 	describe('structured failure shape', () => {
-		it('should preserve metadata on failure when handler returns ok:false-like object', async () => {
-			// Handlers return raw data; if they throw, we catch it.
-			// This test verifies the catch path preserves the original error.
+		it('should preserve the original error when handler throws', async () => {
 			const err = new Error('downstream failure');
-			(err as Error & { metadata?: unknown }).metadata = { retryAfter: 30 };
 			bus.register('app.health', async () => {
 				throw err;
 			});

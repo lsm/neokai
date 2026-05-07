@@ -52,9 +52,6 @@ export interface QueryResult<T = unknown> {
 
 	/** Error payload when `ok` is false. */
 	error?: unknown;
-
-	/** Arbitrary metadata the handler may attach (cache hit, latency, etc). */
-	metadata?: Record<string, unknown>;
 }
 
 /**
@@ -86,6 +83,20 @@ interface RegisteredQueryHandler {
 	handler: (query: unknown) => Promise<unknown>;
 }
 
+/** Extract the input type for a given query map entry. */
+type QueryInput<TQueryMap, K extends keyof TQueryMap> = TQueryMap[K] extends {
+	input: infer I;
+}
+	? I
+	: never;
+
+/** Extract the output type for a given query map entry. */
+type QueryOutput<TQueryMap, K extends keyof TQueryMap> = TQueryMap[K] extends {
+	output: infer O;
+}
+	? O
+	: never;
+
 /**
  * InternalQueryBus
  *
@@ -95,10 +106,7 @@ interface RegisteredQueryHandler {
  *   'space.workflowRun.get': { input: { runId: string }; output: WorkflowRun | null }
  */
 export class InternalQueryBus<
-	TQueryMap extends Record<string, { input: unknown; output: unknown }> = Record<
-		string,
-		{ input: unknown; output: unknown }
-	>,
+	TQueryMap extends object = Record<string, { input: unknown; output: unknown }>,
 > {
 	private handlers = new Map<string, RegisteredQueryHandler>();
 
@@ -112,7 +120,7 @@ export class InternalQueryBus<
 	 */
 	register<K extends keyof TQueryMap & string>(
 		queryName: K,
-		handler: QueryHandler<TQueryMap[K]['input'], TQueryMap[K]['output']>
+		handler: QueryHandler<QueryInput<TQueryMap, K>, QueryOutput<TQueryMap, K>>
 	): () => void {
 		const key = queryName;
 
@@ -147,8 +155,8 @@ export class InternalQueryBus<
 	 */
 	async execute<K extends keyof TQueryMap & string>(
 		queryName: K,
-		query: TQueryMap[K]['input']
-	): Promise<QueryResult<TQueryMap[K]['output']>> {
+		query: QueryInput<TQueryMap, K>
+	): Promise<QueryResult<QueryOutput<TQueryMap, K>>> {
 		const key = queryName;
 		const registered = this.handlers.get(key);
 
@@ -157,7 +165,7 @@ export class InternalQueryBus<
 		}
 
 		try {
-			const data = (await registered.handler(query)) as TQueryMap[K]['output'];
+			const data = (await registered.handler(query)) as QueryOutput<TQueryMap, K>;
 			return { ok: true, data };
 		} catch (error) {
 			return { ok: false, error };
@@ -203,10 +211,7 @@ export class InternalQueryBus<
  *   const bus = createInternalQueryBus<MyQueryMap>();
  */
 export function createInternalQueryBus<
-	TQueryMap extends Record<string, { input: unknown; output: unknown }> = Record<
-		string,
-		{ input: unknown; output: unknown }
-	>,
+	TQueryMap extends object = Record<string, { input: unknown; output: unknown }>,
 >(): InternalQueryBus<TQueryMap> {
 	return new InternalQueryBus<TQueryMap>();
 }
