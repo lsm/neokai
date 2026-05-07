@@ -1166,6 +1166,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			try {
 				const limit = Math.min(args.limit ?? 20, 100);
 				const offset = args.offset ?? 0;
+				const total = taskRepo.countBySpace(spaceId, args.status ?? undefined, false);
 				let tasks: SpaceTask[];
 				if (args.status) {
 					tasks = taskRepo.listByStatus(spaceId, args.status, limit, offset);
@@ -1180,9 +1181,14 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 						priority: t.priority,
 						createdAt: t.createdAt,
 					}));
-					return jsonResult({ success: true, total: compactTasks.length, tasks: compactTasks });
+					return jsonResult({
+						success: true,
+						total,
+						tasks: compactTasks,
+						has_more: offset + tasks.length < total,
+					});
 				}
-				return jsonResult({ success: true, total: tasks.length, tasks });
+				return jsonResult({ success: true, total, tasks, has_more: offset + tasks.length < total });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
 				return jsonResult({ success: false, error: message });

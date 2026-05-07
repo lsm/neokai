@@ -8046,21 +8046,21 @@ export function runMigration120(db: BunDatabase): void {
  * - space_id, task_id, workflow_run_id: optional context
  */
 export function runMigration121(db: BunDatabase): void {
-	if (tableExists(db, 'mcp_audit_log')) return;
-
-	db.exec(`
-		CREATE TABLE mcp_audit_log (
-			id TEXT PRIMARY KEY,
-			timestamp INTEGER NOT NULL,
-			agent_name TEXT DEFAULT NULL,
-			session_id TEXT DEFAULT NULL,
-			tool_name TEXT NOT NULL,
-			params_summary TEXT DEFAULT NULL,
-			space_id TEXT DEFAULT NULL,
-			task_id TEXT DEFAULT NULL,
-			workflow_run_id TEXT DEFAULT NULL
-		)
-	`);
+	if (!tableExists(db, 'mcp_audit_log')) {
+		db.exec(`
+			CREATE TABLE mcp_audit_log (
+				id TEXT PRIMARY KEY,
+				timestamp INTEGER NOT NULL,
+				agent_name TEXT DEFAULT NULL,
+				session_id TEXT DEFAULT NULL,
+				tool_name TEXT NOT NULL,
+				params_summary TEXT DEFAULT NULL,
+				space_id TEXT DEFAULT NULL,
+				task_id TEXT DEFAULT NULL,
+				workflow_run_id TEXT DEFAULT NULL
+			)
+		`);
+	}
 
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_space ON mcp_audit_log (space_id, timestamp)`

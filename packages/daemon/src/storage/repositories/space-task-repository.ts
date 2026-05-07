@@ -85,17 +85,23 @@ export class SpaceTaskRepository {
 	}
 
 	/**
-	 * List tasks for a space, with optional status filter and pagination
+	 * List tasks for a space, with optional status filter and pagination.
+	 * When limit is not provided (or 0), returns all matching tasks (unbounded).
 	 */
-	listBySpace(spaceId: string, includeArchived = false, limit = 100, offset = 0): SpaceTask[] {
+	listBySpace(spaceId: string, includeArchived = false, limit?: number, offset = 0): SpaceTask[] {
 		let query = `SELECT * FROM space_tasks WHERE space_id = ?`;
 		if (!includeArchived) {
 			query += ` AND status != 'archived'`;
 		}
-		query += ` ORDER BY updated_at DESC LIMIT ? OFFSET ?`;
-
+		query += ` ORDER BY updated_at DESC`;
+		if (limit && limit > 0) {
+			query += ` LIMIT ? OFFSET ?`;
+			const stmt = this.db.prepare(query);
+			const rows = stmt.all(spaceId, limit, offset) as Record<string, unknown>[];
+			return rows.map((r) => this.rowToSpaceTask(r));
+		}
 		const stmt = this.db.prepare(query);
-		const rows = stmt.all(spaceId, limit, offset) as Record<string, unknown>[];
+		const rows = stmt.all(spaceId) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
 	}
 
@@ -144,14 +150,38 @@ export class SpaceTaskRepository {
 	}
 
 	/**
-	 * List tasks by status within a space, with optional pagination
+	 * List tasks by status within a space, with optional pagination.
+	 * When limit is not provided (or 0), returns all matching tasks (unbounded).
 	 */
-	listByStatus(spaceId: string, status: SpaceTaskStatus, limit = 100, offset = 0): SpaceTask[] {
-		const stmt = this.db.prepare(
-			`SELECT * FROM space_tasks WHERE space_id = ? AND status = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?`
-		);
-		const rows = stmt.all(spaceId, status, limit, offset) as Record<string, unknown>[];
+	listByStatus(spaceId: string, status: SpaceTaskStatus, limit?: number, offset = 0): SpaceTask[] {
+		let query = `SELECT * FROM space_tasks WHERE space_id = ? AND status = ? ORDER BY updated_at DESC`;
+		if (limit && limit > 0) {
+			query += ` LIMIT ? OFFSET ?`;
+			const stmt = this.db.prepare(query);
+			const rows = stmt.all(spaceId, status, limit, offset) as Record<string, unknown>[];
+			return rows.map((r) => this.rowToSpaceTask(r));
+		}
+		const stmt = this.db.prepare(query);
+		const rows = stmt.all(spaceId, status) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
+	}
+
+	/**
+	 * Count tasks for a space, optionally filtered by status (excluding archived by default).
+	 */
+	countBySpace(spaceId: string, status?: SpaceTaskStatus, includeArchived = false): number {
+		let query = `SELECT COUNT(*) as count FROM space_tasks WHERE space_id = ?`;
+		const params: SQLiteValue[] = [spaceId];
+		if (!includeArchived) {
+			query += ` AND status != 'archived'`;
+		}
+		if (status) {
+			query += ` AND status = ?`;
+			params.push(status);
+		}
+		const stmt = this.db.prepare(query);
+		const row = stmt.get(...params) as { count: number } | undefined;
+		return row?.count ?? 0;
 	}
 
 	/**
