@@ -555,6 +555,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 117: Add disabled column to space_workflows.
 	//   When true, the workflow cannot be selected for new tasks.
 	runMigration117(db);
+
+	// Migration 118: Add external-event lifecycle tables for the External Event Bus.
+	//   space_external_events — source-level dedup + state machine.
+	//   space_external_event_deliveries — per-subscription delivery lifecycle.
+	runMigration118(db);
 }
 
 /**
@@ -7968,4 +7973,87 @@ export function runMigration117(db: BunDatabase): void {
 	if (columns.includes('disabled')) return;
 
 	db.exec(`ALTER TABLE space_workflows ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`);
+}
+
+/**
+ * Migration 118: Add external-event lifecycle tables for the External Event Bus.
+ *
+ * space_external_events
+ *   - One row per (space_id, source, dedupe_key) — the canonical source event.
+ *   - State machine: published → routed → delivered | failed | ignored | ambiguous
+ *   - Terminal states (delivered, failed, ignored, ambiguous) short-circuit
+ *     duplicate source observations.
+ *   - Retryable states (published, routed, delivery_failed) re-emit so delivery
+ *     can retry.
+ *
+ * space_external_event_deliveries
+ *   - Per-subscription delivery rows keyed by (event_id, delivery_key).
+ *   - Terminal delivery states: delivered, failed.
+ *   - The router advances the source event to terminal delivered only when
+ *     every expected delivery is delivered.
+ *   - A single terminal failed delivery keeps the source event failed forever.
+ */
+export function runMigration118(db: BunDatabase): void {
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_external_events (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			source TEXT NOT NULL,
+			topic TEXT NOT NULL,
+			dedupe_key TEXT NOT NULL,
+			occurred_at INTEGER NOT NULL,
+			ingested_at INTEGER NOT NULL,
+			source_event_id TEXT,
+			pr_number INTEGER,
+			repo_owner TEXT,
+			repo_name TEXT,
+			branch TEXT,
+			summary TEXT NOT NULL,
+			external_url TEXT,
+			payload_json TEXT NOT NULL,
+			routed_task_id TEXT,
+			state TEXT NOT NULL DEFAULT 'published'
+				CHECK(state IN ('published', 'routed', 'delivered', 'delivery_failed', 'failed', 'ignored', 'ambiguous')),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(space_id, source, dedupe_key)
+		)
+	`);
+
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_events_lookup
+		ON space_external_events(space_id, source, dedupe_key)
+	`);
+
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_events_state
+		ON space_external_events(state, updated_at)
+	`);
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_external_event_deliveries (
+			event_id TEXT NOT NULL,
+			delivery_key TEXT NOT NULL,
+			workflow_run_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			node_id TEXT NOT NULL,
+			agent_name TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT 'pending'
+				CHECK(state IN ('pending', 'delivered', 'failed')),
+			failure_reason TEXT,
+			delivered_at INTEGER,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(event_id, delivery_key)
+		)
+	`);
+
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_event
+		ON space_external_event_deliveries(event_id, state)
+	`);
+
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_run
+		ON space_external_event_deliveries(workflow_run_id, state)
+	`);
 }

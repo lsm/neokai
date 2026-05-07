@@ -30,6 +30,7 @@
 		"packages/shared/src/event-bus.ts",
 		"packages/daemon/src/lib/job-queue-constants.ts",
 		"packages/daemon/dump-context.ts",
+		"packages/daemon/src/lib/external-events/index.ts",
 		".claude/**"
 	],
 	"ignoreDependencies": [
