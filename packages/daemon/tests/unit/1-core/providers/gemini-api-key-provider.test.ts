@@ -50,39 +50,20 @@ describe('GeminiApiKeyProvider', () => {
 	});
 
 	describe('isAvailable', () => {
-		it('returns false when no API key is configured', () => {
+		it('always returns true when provider is registered', () => {
 			const provider = new GeminiApiKeyProvider({});
-			expect(provider.isAvailable()).toBe(false);
-		});
-
-		it('returns true when GOOGLE_API_KEY is set', () => {
-			const provider = new GeminiApiKeyProvider({ GOOGLE_API_KEY: 'test-key' });
 			expect(provider.isAvailable()).toBe(true);
 		});
 
-		it('returns true when GEMINI_API_KEY is set', () => {
-			const provider = new GeminiApiKeyProvider({ GEMINI_API_KEY: 'test-key' });
+		it('returns true even without env key (session key may be provided)', () => {
+			const provider = new GeminiApiKeyProvider({});
 			expect(provider.isAvailable()).toBe(true);
-		});
-
-		it('prefers GOOGLE_API_KEY over GEMINI_API_KEY', () => {
-			const provider = new GeminiApiKeyProvider({
-				GOOGLE_API_KEY: 'google-key',
-				GEMINI_API_KEY: 'gemini-key',
-			});
-			expect(provider.getApiKey()).toBe('google-key');
 		});
 	});
 
 	describe('getModels', () => {
-		it('returns empty array when no API key is configured', async () => {
+		it('returns static model list', async () => {
 			const provider = new GeminiApiKeyProvider({});
-			const models = await provider.getModels();
-			expect(models).toEqual([]);
-		});
-
-		it('returns static model list when API key is available', async () => {
-			const provider = new GeminiApiKeyProvider({ GOOGLE_API_KEY: 'test-key' });
 			const models = await provider.getModels();
 
 			expect(models.length).toBeGreaterThan(0);

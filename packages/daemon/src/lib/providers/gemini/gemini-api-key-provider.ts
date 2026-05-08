@@ -165,10 +165,14 @@ export class GeminiApiKeyProvider implements Provider {
 	constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
 
 	/**
-	 * Check if provider is available (has API key configured).
+	 * Check if provider is available.
+	 *
+	 * Always returns true when the provider is registered because the API key
+	 * may be supplied per-session via `providerConfig.apiKey` (passed to
+	 * `buildSdkConfig`).  Runtime auth validation happens in `buildSdkConfig`.
 	 */
 	isAvailable(): boolean {
-		return !!this.getApiKey();
+		return true;
 	}
 
 	/**
@@ -391,7 +395,6 @@ function convertToGenAIContents(request: AnthropicRequest): GenAIContent[] {
 		}
 
 		const parts: GenAIPart[] = [];
-		const toolResultParts: GenAIPart[] = [];
 
 		for (const block of msg.content) {
 			if (block.type === 'text') {
@@ -404,17 +407,19 @@ function convertToGenAIContents(request: AnthropicRequest): GenAIContent[] {
 					},
 				});
 			} else if (block.type === 'tool_result') {
-				const textContent =
+				// Preserve all content blocks (text, image, document) in order.
+				// Non-text blocks are serialized as JSON so no data is dropped.
+				const resultText =
 					typeof block.content === 'string'
 						? block.content
-						: block.content.map((c) => c.text).join('');
+						: block.content.map((c) => (c.type === 'text' ? c.text : JSON.stringify(c))).join('\n');
 
 				const functionName = toolNameMap.get(block.tool_use_id) ?? 'unknown_tool';
 
-				toolResultParts.push({
+				parts.push({
 					functionResponse: {
 						name: functionName,
-						response: { result: textContent },
+						response: { result: resultText },
 					},
 				});
 			}
@@ -422,9 +427,6 @@ function convertToGenAIContents(request: AnthropicRequest): GenAIContent[] {
 
 		if (parts.length > 0) {
 			contents.push({ role, parts });
-		}
-		if (toolResultParts.length > 0) {
-			contents.push({ role: 'user', parts: toolResultParts });
 		}
 	}
 
@@ -582,6 +584,7 @@ async function streamViaGenAI(
 								encoder.encode(
 									messageDeltaSSE(stopReason, {
 										outputTokens: Math.max(outputTokens, 1),
+										inputTokens: inputTokens > 0 ? inputTokens : null,
 									})
 								)
 							);
@@ -610,6 +613,7 @@ async function streamViaGenAI(
 					encoder.encode(
 						messageDeltaSSE('end_turn', {
 							outputTokens: Math.max(outputTokens, 1),
+							inputTokens: inputTokens > 0 ? inputTokens : null,
 						})
 					)
 				);
@@ -749,6 +753,14 @@ function classifyGeminiError(message: string): {
 		lower.includes('access denied')
 	) {
 		return { errorType: 'permission_error', statusCode: 403 };
+	}
+	if (
+		lower.includes('rate limit') ||
+		lower.includes('quota') ||
+		lower.includes('resource_exhausted') ||
+		lower.includes('too many requests')
+	) {
+		return { errorType: 'rate_limit_error', statusCode: 429 };
 	}
 	return { errorType: 'api_error', statusCode: 500 };
 }
