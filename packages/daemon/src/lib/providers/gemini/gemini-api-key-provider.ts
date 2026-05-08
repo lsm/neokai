@@ -451,19 +451,17 @@ function convertToolChoice(
 ): GenAIToolConfig | undefined {
 	if (!toolChoice) return undefined;
 
-	const { FunctionCallingConfigMode } = require('@google/genai') as typeof import('@google/genai');
-
 	switch (toolChoice.type) {
 		case 'auto':
-			return { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } };
+			return { functionCallingConfig: { mode: 'AUTO' } };
 		case 'none':
-			return { functionCallingConfig: { mode: FunctionCallingConfigMode.NONE } };
+			return { functionCallingConfig: { mode: 'NONE' } };
 		case 'any':
-			return { functionCallingConfig: { mode: FunctionCallingConfigMode.ANY } };
+			return { functionCallingConfig: { mode: 'ANY' } };
 		case 'tool':
 			return {
 				functionCallingConfig: {
-					mode: FunctionCallingConfigMode.ANY,
+					mode: 'ANY',
 					allowedFunctionNames: [toolChoice.name],
 				},
 			};
