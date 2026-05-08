@@ -358,6 +358,14 @@ const PD_PLAN_REVIEW_PROMPT =
 	"deep-merged with the existing votes, so each reviewer's entry accumulates " +
 	'independently — write the SAME lens key your prompt assigns you (architecture / security / ' +
 	'correctness / ux). The gate passes when ≥ 4 entries have value `"approved"`.\n' +
+	'   IMPORTANT — expected gate-blocked response: until the 4th reviewer writes their entry, ' +
+	'`plan-approval-gate` is still closed and the channel to Task Dispatcher is blocked. The ' +
+	'`send_message` call will return `success: false` with an error like `Gate ' +
+	'"plan-approval-gate" blocked delivery ...`. This is NORMAL and EXPECTED for the first three ' +
+	'reviewers — your vote IS recorded (look for the `gateWrite` field in the response, which ' +
+	'shows `gateOpen: false` until the gate fills). Do NOT treat this as a failure, do NOT retry ' +
+	'the send, and CRUCIALLY do not skip step 5 if you are rejecting. The Task Dispatcher will ' +
+	'be activated automatically the moment the 4th approval lands.\n' +
 	'5. If you reject, write `{ "<your lens>": "rejected" }` in the same shape AND also send a ' +
 	'message to the Planning node via the feedback channel describing exactly what needs to ' +
 	'change, so the Planner can revise and re-open. Do NOT call `approve_task` or ' +
