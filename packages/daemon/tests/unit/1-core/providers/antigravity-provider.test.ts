@@ -83,12 +83,12 @@ describe('AntigravityProvider', () => {
 	});
 
 	describe('isAvailable', () => {
-		it('returns false when no credentials are configured', () => {
+		it('returns false when no credentials are configured', async () => {
 			const provider = new AntigravityProvider();
-			expect(provider.isAvailable()).toBe(false);
+			expect(await provider.isAvailable()).toBe(false);
 		});
 
-		it('returns true when credentials are set', () => {
+		it('returns true when credentials are set', async () => {
 			const provider = new AntigravityProvider();
 			provider.setCredentials({
 				refreshToken: 'test-refresh',
@@ -97,7 +97,7 @@ describe('AntigravityProvider', () => {
 				projectId: 'test-project',
 				email: 'test@example.com',
 			});
-			expect(provider.isAvailable()).toBe(true);
+			expect(await provider.isAvailable()).toBe(true);
 		});
 	});
 
@@ -245,10 +245,10 @@ describe('AntigravityProvider', () => {
 				expiresAt: Date.now() + 3600_000,
 				projectId: 'test-project',
 			});
-			expect(provider.isAvailable()).toBe(true);
+			expect(await provider.isAvailable()).toBe(true);
 
 			await provider.logout();
-			expect(provider.isAvailable()).toBe(false);
+			expect(await provider.isAvailable()).toBe(false);
 			expect(provider.getCredentials()).toBeNull();
 		});
 	});

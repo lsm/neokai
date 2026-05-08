@@ -129,8 +129,6 @@ async function removeCredentials(): Promise<void> {
 	}
 }
 
-void removeCredentials;
-
 // ---------------------------------------------------------------------------
 // Cloud Code Assist Endpoints
 // ---------------------------------------------------------------------------
@@ -350,7 +348,8 @@ export class AntigravityProvider implements Provider {
 	// Availability
 	// -----------------------------------------------------------------------
 
-	isAvailable(): boolean {
+	async isAvailable(): Promise<boolean> {
+		await this._init();
 		return this.credentials !== null;
 	}
 
@@ -679,6 +678,7 @@ export class AntigravityProvider implements Provider {
 				this.credentials.refreshToken = data.refresh_token;
 			}
 
+			await saveCredentials(this.credentials);
 			return true;
 		} catch (error) {
 			log.error(
@@ -696,6 +696,7 @@ export class AntigravityProvider implements Provider {
 		this.credentials = null;
 		this.stopOAuthCallbackServer();
 		await this.shutdown();
+		await removeCredentials();
 		log.info('Antigravity logged out');
 	}
 
@@ -709,6 +710,7 @@ export class AntigravityProvider implements Provider {
 			bridge.stop();
 		}
 		this.bridgeServers.clear();
+		this.stopOAuthCallbackServer();
 	}
 
 	// -----------------------------------------------------------------------
@@ -816,7 +818,7 @@ export class AntigravityProvider implements Provider {
  * and rebuild stale bridge servers.
  */
 function hashCredentials(credentials: AntigravityCredentials): string {
-	return `${credentials.accessToken.slice(0, 8)}:${credentials.refreshToken.slice(0, 8)}:${credentials.expiresAt}:${credentials.projectId}`;
+	return `${credentials.refreshToken.slice(0, 8)}:${credentials.projectId}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -939,6 +941,7 @@ function createAntigravityBridgeServer(config: AntigravityBridgeConfig): Antigra
 					if (data.refresh_token) {
 						credentials.refreshToken = data.refresh_token;
 					}
+					await saveCredentials(credentials);
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);
 					return new Response(createAnthropicErrorBody('authentication_error', message), {
