@@ -621,4 +621,43 @@ describe('inferProviderForModel', () => {
 		expect(inferProviderForModel('gemma-2b')).toBe('google-gemini-oauth');
 		expect(inferProviderForModel('gemma-4-31b-it')).toBe('google-gemini-oauth');
 	});
+
+	it('falls back to google-gemini-oauth when google-gemini is registered but not available', () => {
+		resetProviderRegistry();
+		const reg = getProviderRegistry();
+		expect(reg.has('google-gemini')).toBe(false);
+		reg.register(
+			new (class implements Provider {
+				readonly id = 'google-gemini' as const;
+				readonly displayName = 'Google Gemini';
+				readonly capabilities = {
+					streaming: true,
+					extendedThinking: false,
+					maxContextWindow: 1_000_000,
+					functionCalling: true,
+					vision: false,
+				};
+				isAvailable(): boolean {
+					return false;
+				}
+				async getModels(): Promise<ModelInfo[]> {
+					return [];
+				}
+				ownsModel(modelId: string): boolean {
+					return modelId.startsWith('gemini-') || modelId.startsWith('gemma-');
+				}
+				getModelForTier(): string | undefined {
+					return 'gemini-2.5-pro';
+				}
+				buildSdkConfig(): ProviderSdkConfig {
+					return { envVars: {}, isAnthropicCompatible: true };
+				}
+			})()
+		);
+
+		expect(inferProviderForModel('gemini-2.5-pro')).toBe('google-gemini-oauth');
+		expect(inferProviderForModel('gemma-2b')).toBe('google-gemini-oauth');
+
+		resetProviderRegistry();
+	});
 });

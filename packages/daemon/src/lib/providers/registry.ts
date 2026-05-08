@@ -274,6 +274,26 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
 		return 'kimi';
 	}
 
+	// Prefer the available API key provider for Gemini models; fall back to
+	// OAuth if the API key provider is not available (e.g. no key configured).
+	// This must run before the live registry lookup because both Gemini
+	// providers claim the same model IDs, and we want to route based on
+	// availability rather than registration order.
+	if (modelId.startsWith('gemini-') || modelId.startsWith('gemma-')) {
+		const registry = getProviderRegistry();
+		const apiKeyProvider = registry.get('google-gemini');
+		if (apiKeyProvider) {
+			const available = apiKeyProvider.isAvailable();
+			// isAvailable may be sync (boolean) or async (Promise<boolean>).
+			// For the sync case we can check immediately; for async we
+			// conservatively treat the provider as available.
+			if (typeof available === 'boolean' ? available : true) {
+				return 'google-gemini';
+			}
+		}
+		return 'google-gemini-oauth';
+	}
+
 	// Live registry lookup (populated at daemon startup, empty in unit tests)
 	const fromRegistry = getProviderRegistry().findProviderForModel(modelId)?.id;
 	if (fromRegistry) return fromRegistry as ProviderIdStr;
@@ -290,12 +310,5 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
 	if (modelId === 'openrouter/auto' || (modelId.includes('/') && !modelId.startsWith('claude-')))
 		return 'openrouter';
 	if (modelId.startsWith('gpt-')) return 'anthropic-codex';
-	// Prefer the API key provider for Gemini models; fall back to OAuth if
-	// only the OAuth provider is registered (e.g. in older setups).
-	if (modelId.startsWith('gemini-') || modelId.startsWith('gemma-')) {
-		const registry = getProviderRegistry();
-		if (registry.has('google-gemini')) return 'google-gemini';
-		return 'google-gemini-oauth';
-	}
 	return 'anthropic';
 }

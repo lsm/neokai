@@ -30,7 +30,7 @@ import {
 	textDeltaSSE,
 	type AnthropicRequest,
 } from '../provider-anthropic-compat/translator.js';
-import { createAnthropicErrorBody } from '../shared/error-envelope.js';
+import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
 
 const log = createLogger('kai:providers:gemini:apikey');
 
@@ -157,10 +157,10 @@ export class GeminiApiKeyProvider implements Provider {
 		thinkingModes: 'off',
 		maxContextWindow: 2_000_000,
 		functionCalling: true,
-		vision: true,
+		vision: false,
 	};
 
-	private bridgeServers = new Map<string, GeminiApiKeyBridgeServer>();
+	private bridgeServers = new Map<string, { apiKey: string; bridge: GeminiApiKeyBridgeServer }>();
 
 	constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
 
@@ -223,10 +223,17 @@ export class GeminiApiKeyProvider implements Provider {
 			);
 		}
 
-		let bridge = this.bridgeServers.get(sessionId);
-		if (!bridge) {
+		const existing = this.bridgeServers.get(sessionId);
+		let bridge: GeminiApiKeyBridgeServer;
+		if (existing && existing.apiKey === apiKey) {
+			bridge = existing.bridge;
+		} else {
+			// API key changed or first creation — tear down old bridge if present
+			if (existing) {
+				existing.bridge.stop();
+			}
 			bridge = createGeminiApiKeyBridgeServer({ apiKey, sessionId });
-			this.bridgeServers.set(sessionId, bridge);
+			this.bridgeServers.set(sessionId, { apiKey, bridge });
 			log.info(`API key bridge server started on port ${bridge.port} for session ${sessionId}`);
 		}
 
@@ -262,7 +269,7 @@ export class GeminiApiKeyProvider implements Provider {
 	 * Shut down all bridge servers.
 	 */
 	async shutdown(): Promise<void> {
-		for (const [sessionId, bridge] of this.bridgeServers.entries()) {
+		for (const [sessionId, { bridge }] of this.bridgeServers.entries()) {
 			log.info(`Shutting down API key bridge server for session ${sessionId}`);
 			bridge.stop();
 		}
@@ -342,13 +349,11 @@ function createGeminiApiKeyBridgeServer(
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				log.error(`Gemini API key request failed: ${message}`);
-				return new Response(
-					createAnthropicErrorBody(
-						message.includes('API key') ? 'authentication_error' : 'api_error',
-						message
-					),
-					{ status: 500, headers: { 'Content-Type': 'application/json' } }
-				);
+				const { errorType, statusCode } = classifyGeminiError(message);
+				return new Response(createAnthropicErrorBody(errorType, message), {
+					status: statusCode,
+					headers: { 'Content-Type': 'application/json' },
+				});
 			}
 		},
 	});
@@ -540,7 +545,10 @@ async function streamViaGenAI(
 									controller.enqueue(encoder.encode(textDeltaSSE(contentBlockIndex, part.text)));
 									controller.enqueue(encoder.encode(contentBlockStopSSE(contentBlockIndex)));
 									contentBlockIndex++;
-									outputTokens += Math.ceil(part.text.length / 4);
+									// Only estimate tokens when usage metadata isn't available
+									if (!chunk.usageMetadata) {
+										outputTokens += Math.ceil(part.text.length / 4);
+									}
 								} else if (part.functionCall) {
 									chunkHasFunctionCall = true;
 									hasSeenFunctionCall = true;
@@ -585,11 +593,12 @@ async function streamViaGenAI(
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				log.error(`Streaming error: ${message}`);
+				const { errorType } = classifyGeminiError(message);
 				controller.enqueue(
 					encoder.encode(
 						`event: error\ndata: ${JSON.stringify({
 							type: 'error',
-							error: { type: 'api_error', message },
+							error: { type: errorType, message },
 						})}\n\n`
 					)
 				);
@@ -714,4 +723,32 @@ function convertFinishReason(reason: string | undefined): 'end_turn' | 'tool_use
 		default:
 			return 'end_turn';
 	}
+}
+
+/**
+ * Classify a Gemini SDK error message into an Anthropic-compatible error type
+ * and HTTP status code.
+ */
+function classifyGeminiError(message: string): {
+	errorType: AnthropicErrorType;
+	statusCode: number;
+} {
+	const lower = message.toLowerCase();
+	if (
+		lower.includes('api key') ||
+		lower.includes('apikey') ||
+		lower.includes('unauthenticated') ||
+		lower.includes('authentication') ||
+		lower.includes('invalid credentials')
+	) {
+		return { errorType: 'authentication_error', statusCode: 401 };
+	}
+	if (
+		lower.includes('permission') ||
+		lower.includes('forbidden') ||
+		lower.includes('access denied')
+	) {
+		return { errorType: 'permission_error', statusCode: 403 };
+	}
+	return { errorType: 'api_error', statusCode: 500 };
 }

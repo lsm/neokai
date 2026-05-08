@@ -19,7 +19,7 @@ describe('GeminiApiKeyProvider', () => {
 			expect(provider.capabilities.extendedThinking).toBe(false);
 			expect(provider.capabilities.maxContextWindow).toBe(2_000_000);
 			expect(provider.capabilities.functionCalling).toBe(true);
-			expect(provider.capabilities.vision).toBe(true);
+			expect(provider.capabilities.vision).toBe(false);
 		});
 	});
 
@@ -147,6 +147,21 @@ describe('GeminiApiKeyProvider', () => {
 			const config1 = provider.buildSdkConfig('gemini-2.5-pro', { sessionId: 'sess-1' });
 			const config2 = provider.buildSdkConfig('gemini-2.5-pro', { sessionId: 'sess-2' });
 
+			expect(config1.envVars.ANTHROPIC_BASE_URL).not.toBe(config2.envVars.ANTHROPIC_BASE_URL);
+		});
+
+		it('recreates bridge when session API key changes', () => {
+			const provider = new GeminiApiKeyProvider({ GOOGLE_API_KEY: 'old-key' });
+			const config1 = provider.buildSdkConfig('gemini-2.5-pro', {
+				sessionId: 'sess-1',
+				apiKey: 'old-key',
+			});
+			const config2 = provider.buildSdkConfig('gemini-2.5-pro', {
+				sessionId: 'sess-1',
+				apiKey: 'new-key',
+			});
+
+			// Different API key should create a new bridge on a different port
 			expect(config1.envVars.ANTHROPIC_BASE_URL).not.toBe(config2.envVars.ANTHROPIC_BASE_URL);
 		});
 	});
