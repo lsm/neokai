@@ -23,7 +23,7 @@ import {
 import type {
 	AnthropicRequest,
 	AnthropicTool,
-} from '../../../../src/lib/providers/codex-anthropic-bridge/translator.js';
+} from '../../../../src/lib/providers/provider-anthropic-compat/translator.js';
 
 describe('Gemini Format Converter', () => {
 	// -------------------------------------------------------------------------
@@ -310,14 +310,49 @@ describe('Gemini Format Converter', () => {
 			expect(result.additionalProperties).toBeUndefined();
 		});
 
-		it('converts oneOf to anyOf', () => {
+		it('preserves oneOf as-is', () => {
 			const schema = {
 				oneOf: [{ type: 'string' }, { type: 'number' }],
 			};
 
 			const result = convertSchema(schema);
-			expect(result.oneOf).toBeUndefined();
-			expect(result.anyOf).toEqual([{ type: 'string' }, { type: 'number' }]);
+			expect(result.oneOf).toEqual([{ type: 'string' }, { type: 'number' }]);
+		});
+
+		it('removes $schema keyword', () => {
+			const schema = {
+				$schema: 'http://json-schema.org/draft-07/schema#',
+				type: 'object',
+				properties: { name: { type: 'string' } },
+			};
+
+			const result = convertSchema(schema);
+			expect(result.$schema).toBeUndefined();
+			expect(result.type).toBe('object');
+		});
+
+		it('removes propertyNames keyword', () => {
+			const schema = {
+				type: 'object',
+				propertyNames: { pattern: '^[a-z]+$' },
+				properties: { name: { type: 'string' } },
+			};
+
+			const result = convertSchema(schema);
+			expect(result.propertyNames).toBeUndefined();
+			expect(result.type).toBe('object');
+		});
+
+		it('removes exclusiveMinimum keyword', () => {
+			const schema = {
+				type: 'number',
+				minimum: 0,
+				exclusiveMinimum: true,
+			};
+
+			const result = convertSchema(schema);
+			expect(result.exclusiveMinimum).toBeUndefined();
+			expect(result.minimum).toBe(0);
 		});
 
 		it('recursively converts nested properties', () => {
@@ -352,6 +387,64 @@ describe('Gemini Format Converter', () => {
 			const result = convertSchema(schema);
 			const items = result.items as Record<string, unknown>;
 			expect(items.additionalProperties).toBeUndefined();
+		});
+
+		it('recursively strips unsupported keywords inside anyOf', () => {
+			const schema = {
+				anyOf: [
+					{ type: 'string', $schema: 'http://example.com/schema' },
+					{ type: 'number', exclusiveMinimum: 5 },
+				],
+			};
+
+			const result = convertSchema(schema);
+			expect(result.anyOf).toEqual([{ type: 'string' }, { type: 'number' }]);
+		});
+
+		it('preserves all supported keywords', () => {
+			const schema = {
+				type: 'object',
+				description: 'A test object',
+				properties: {
+					name: {
+						type: 'string',
+						description: 'A name',
+						minLength: 1,
+						maxLength: 100,
+						pattern: '^[a-z]+$',
+					},
+					count: { type: 'integer', minimum: 0, maximum: 100, default: 0, nullable: true },
+					tags: { type: 'array', items: { type: 'string' }, minItems: 0, maxItems: 10 },
+					status: { type: 'string', enum: ['active', 'inactive'], format: 'uuid' },
+				},
+				required: ['name'],
+				anyOf: [{ type: 'object' }],
+			};
+
+			const result = convertSchema(schema);
+			expect(result).toEqual(schema);
+		});
+
+		it('preserves both anyOf and oneOf as distinct keys', () => {
+			const schema = {
+				anyOf: [{ type: 'string' }],
+				oneOf: [{ type: 'number' }],
+			};
+
+			const result = convertSchema(schema);
+			expect(result.anyOf).toEqual([{ type: 'string' }]);
+			expect(result.oneOf).toEqual([{ type: 'number' }]);
+		});
+
+		it('handles properties: null without throwing', () => {
+			const schema = {
+				type: 'object',
+				properties: null,
+			};
+
+			const result = convertSchema(schema);
+			expect(result.type).toBe('object');
+			expect(result.properties).toBeNull();
 		});
 	});
 

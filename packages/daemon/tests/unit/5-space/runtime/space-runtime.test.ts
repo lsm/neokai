@@ -49,7 +49,10 @@ function makeDb(): BunDatabase {
 		sdk_message TEXT NOT NULL,
 		timestamp TEXT NOT NULL,
 		send_status TEXT,
-		origin TEXT
+		origin TEXT,
+		is_renderable INTEGER NOT NULL DEFAULT 1,
+		is_terminal INTEGER NOT NULL DEFAULT 0,
+		parent_tool_use_id TEXT
 	)`);
 
 	return db;

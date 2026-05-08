@@ -14,6 +14,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import {
 	createInternalEventBus,
+	createDaemonInternalEventBus,
 	InternalEventBus,
 	InternalEventBusPublishError,
 } from '../../../../src/lib/internal-event-bus';
@@ -454,5 +455,58 @@ describe('InternalEventBus keyed interface compatibility', () => {
 
 		expect(hits).toEqual(['ord-123']);
 		expect(result.delivered).toBe(1);
+	});
+});
+
+describe('DaemonInternalEventMap — settings.updated end-to-end', () => {
+	it('should flow through createDaemonInternalEventBus with typed payload', async () => {
+		const bus = createDaemonInternalEventBus();
+		const received: Array<{ sessionId: string; settings: Record<string, unknown> }> = [];
+
+		bus.subscribe(
+			'settings.updated',
+			(data) => {
+				received.push(data);
+			},
+			{ subscriberName: 'test-sub' }
+		);
+
+		const result = await bus.publish('settings.updated', {
+			sessionId: 'global',
+			settings: { model: 'claude-sonnet-4' } as unknown as import('@neokai/shared').GlobalSettings,
+		});
+
+		expect(result.delivered).toBe(1);
+		expect(result.failures).toHaveLength(0);
+		expect(received).toHaveLength(1);
+		expect(received[0].sessionId).toBe('global');
+		expect(received[0].settings).toEqual({ model: 'claude-sonnet-4' });
+	});
+
+	it('should fire-and-forget via publishAsync', async () => {
+		const bus = createDaemonInternalEventBus();
+		let resolved = false;
+
+		bus.subscribe(
+			'settings.updated',
+			async () => {
+				await new Promise((r) => setTimeout(r, 30));
+				resolved = true;
+			},
+			{ subscriberName: 'slow' }
+		);
+
+		const start = performance.now();
+		bus.publishAsync('settings.updated', {
+			sessionId: 'global',
+			settings: {} as unknown as import('@neokai/shared').GlobalSettings,
+		});
+		const elapsed = performance.now() - start;
+
+		expect(elapsed).toBeLessThan(10);
+		expect(resolved).toBe(false);
+
+		await new Promise((r) => setTimeout(r, 50));
+		expect(resolved).toBe(true);
 	});
 });

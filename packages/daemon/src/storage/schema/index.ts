@@ -77,6 +77,14 @@ export { runMigration117 } from './migrations';
 export { runMigration118 } from './migrations';
 // knip-ignore-next-line
 export { runMigration119 } from './migrations';
+// knip-ignore-next-line
+export { runMigration120 } from './migrations';
+// knip-ignore-next-line
+export { runMigration121 } from './migrations';
+// knip-ignore-next-line
+export { runMigration122 } from './migrations';
+// knip-ignore-next-line
+export { runMigration123 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -127,7 +135,14 @@ export function createTables(db: BunDatabase): void {
 	// OAuth state table removed - web-based OAuth flow is no longer supported
 	// Authentication is now handled via environment variables only
 
-	// SDK Messages table (stores full SDK messages with all metadata)
+	// SDK Messages table (stores full SDK messages with all metadata).
+	//
+	// `task_id` is denormalised from the writing session's
+	// `session_context.taskId` at INSERT time. It supports task-scoped
+	// activity feeds without a separate map table. Nullable (most non-Space
+	// sessions are not task-bound) and intentionally has no FK — task
+	// lifecycle is managed independently and we don't want a task delete
+	// to cascade-blow-away historic messages.
 	db.exec(`
       CREATE TABLE IF NOT EXISTS sdk_messages (
         id TEXT PRIMARY KEY,
@@ -138,6 +153,10 @@ export function createTables(db: BunDatabase): void {
         timestamp TEXT NOT NULL,
         send_status TEXT DEFAULT 'consumed' CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
         origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'neo', 'system')),
+        is_renderable INTEGER NOT NULL DEFAULT 1,
+        is_terminal INTEGER NOT NULL DEFAULT 0,
+        parent_tool_use_id TEXT,
+        task_id TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )
     `);
@@ -440,6 +459,11 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
+	// task_session_map has been removed. Task-scoped lookups now read
+	// `sdk_messages.task_id` directly (see migration 122 + the column
+	// declared in `sdk_messages` above). This bootstrap path no longer
+	// needs to know about the legacy table at all.
+
 	db.exec(`
       CREATE TABLE IF NOT EXISTS app_mcp_servers (
         id TEXT PRIMARY KEY,
@@ -617,12 +641,30 @@ function createIndexes(db: BunDatabase): void {
       ON sdk_messages(session_id, timestamp DESC, id DESC)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool
       ON sdk_messages(session_id, json_extract(sdk_message, '$.parent_tool_use_id'))`);
+	// Plain B-tree index over the materialised parent_tool_use_id column —
+	// preferred over idx_sdk_messages_parent_tool for new lookups.
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id
+      ON sdk_messages(session_id, parent_tool_use_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal
+      ON sdk_messages(session_id, is_renderable, is_terminal, timestamp, id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_uuid_status
       ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
       ON sdk_messages(message_type, message_subtype)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status
       ON sdk_messages(session_id, send_status)`);
+	// Task-scoped feeds and activity views read directly from this column.
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id
+      ON sdk_messages(task_id, timestamp)`);
+	// Covers the `SELECT DISTINCT session_id WHERE task_id = ?` dedup in the
+	// SPACE_TASK_ACTIVITY_BY_TASK_SQL `contributing_sessions` CTE — turns it
+	// into an index-only scan rather than walking the (task_id, timestamp)
+	// index and dropping the timestamp column.
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session
+      ON sdk_messages(task_id, session_id)`);
+
+	// Legacy `task_session_map` indexes no longer exist — see the
+	// `sdk_messages.task_id` column above for the replacement.
 
 	// Room indexes
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);

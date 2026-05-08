@@ -26,6 +26,8 @@
  * internal-event / command / query architecture plan.
  */
 
+import type { GlobalSettings } from '@neokai/shared';
+
 export interface HandlerFailure {
 	/** Subscriber name that registered the failing handler. */
 	subscriberName: string;
@@ -314,4 +316,55 @@ export function createInternalEventBus<
 	TEventMap extends object = Record<string, InternalEventPayload>,
 >(): InternalEventBus<TEventMap> {
 	return new InternalEventBus<TEventMap>();
+}
+
+// ---------------------------------------------------------------------------
+// Event contracts — canonical payloads for events migrated to InternalEventBus.
+// Expand this map as new events are migrated off DaemonHub; keep each domain's
+// events in a separate interface and intersect them here.
+//
+// Naming convention: dot-separated, lower camelCase per segment, fact/state-
+// change wording. See docs/plans/internal-event-command-query-architecture.md.
+// ---------------------------------------------------------------------------
+
+/**
+ * Payload for `settings.updated` — emitted when global settings are updated
+ * via `settings.global.update`, `settings.global.save`, or after a successful
+ * `.mcp.json` import refresh. Subscribers (e.g. StateManager) re-broadcast
+ * the latest settings to clients on the global settings channel.
+ *
+ * Always carries `sessionId: 'global'` — settings are application-wide.
+ */
+export interface SettingsUpdatedEvent {
+	sessionId: string;
+	settings: GlobalSettings;
+}
+
+/**
+ * Settings domain events.
+ */
+export interface SettingsEvents {
+	'settings.updated': SettingsUpdatedEvent;
+}
+
+/**
+ * Canonical daemon internal event map.
+ *
+ * Each domain should own its slice; this type is the intersection of all
+ * domain event maps so the bus can be typed with the full surface.
+ *
+ * NOTE: This map intentionally starts small. New events are added here as
+ * publishers/subscribers migrate off DaemonHub. Events that have not yet been
+ * migrated continue to flow through DaemonHub (`createDaemonHub`) and the
+ * compatibility `DaemonEventMap`.
+ */
+export interface DaemonInternalEventMap extends SettingsEvents {}
+
+/**
+ * Convenience factory typed with the canonical daemon internal event map.
+ * Prefer this over the bare `createInternalEventBus` factory inside daemon
+ * application/domain code so all migrated events share one typed surface.
+ */
+export function createDaemonInternalEventBus(): InternalEventBus<DaemonInternalEventMap> {
+	return new InternalEventBus<DaemonInternalEventMap>();
 }

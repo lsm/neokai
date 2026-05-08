@@ -227,6 +227,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			post_approval_session_id TEXT DEFAULT NULL,
 			post_approval_started_at INTEGER DEFAULT NULL,
 			post_approval_blocked_reason TEXT DEFAULT NULL,
+			created_by TEXT DEFAULT NULL,
+			created_by_session TEXT DEFAULT NULL,
 			archived_at INTEGER,
 			created_at INTEGER NOT NULL,
 			started_at INTEGER,
@@ -244,6 +246,38 @@ export function createSpaceTables(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
 	);
+
+	// Minimal `sessions` table — used by tests that need to seed
+	// `session_context.taskId` so the SDKMessageRepository can derive the
+	// `sdk_messages.task_id` column at INSERT time.
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS sessions (
+			id TEXT PRIMARY KEY,
+			type TEXT,
+			session_context TEXT
+		)
+	`);
+
+	// `sdk_messages` is the canonical message store. Tests that exercise
+	// task-scoped feeds rely on the `task_id` column being present and
+	// indexed exactly the way migration 122 produces it in production.
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS sdk_messages (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			message_type TEXT NOT NULL,
+			message_subtype TEXT,
+			sdk_message TEXT NOT NULL,
+			timestamp TEXT NOT NULL,
+			send_status TEXT DEFAULT 'consumed',
+			origin TEXT,
+			is_renderable INTEGER NOT NULL DEFAULT 1,
+			is_terminal INTEGER NOT NULL DEFAULT 0,
+			parent_tool_use_id TEXT,
+			task_id TEXT
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id)`);
 
 	// Workflow run artifacts
 	db.exec(`
@@ -330,7 +364,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			`WHERE idempotency_key IS NOT NULL`
 	);
 
-	// External Event Bus tables (migration 118)
+	// External Event Bus tables (migration 123)
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_external_events (
 			id TEXT PRIMARY KEY,
@@ -395,4 +429,28 @@ export function createSpaceTables(db: BunDatabase): void {
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_external_event_deliveries_key
 		ON space_external_event_deliveries(delivery_key)
 	`);
+
+	// MCP audit log (migration 121)
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS mcp_audit_log (
+			id TEXT PRIMARY KEY,
+			timestamp INTEGER NOT NULL,
+			agent_name TEXT,
+			session_id TEXT,
+			tool_name TEXT NOT NULL,
+			params_summary TEXT,
+			space_id TEXT,
+			task_id TEXT,
+			workflow_run_id TEXT
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_space ON mcp_audit_log (space_id, timestamp)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_task ON mcp_audit_log (task_id, timestamp)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_session ON mcp_audit_log (session_id, timestamp)`
+	);
 }
