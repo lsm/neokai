@@ -165,11 +165,6 @@ export async function fetchAvailableModels(
 			continue;
 		}
 
-		if (models.length === 0) {
-			log.info(`Discovery endpoint ${endpoint} returned no usable models`);
-			continue;
-		}
-
 		log.info(`Discovered ${models.length} models from ${endpoint}`);
 		return models;
 	}
@@ -203,7 +198,6 @@ function parseDiscoveryResponse(payload: unknown): ModelInfo[] | null {
 		models.push(discoveryModelToModelInfo(modelId, model));
 	}
 
-	models.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 	return models;
 }
 

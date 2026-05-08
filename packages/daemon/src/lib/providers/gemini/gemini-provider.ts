@@ -95,7 +95,7 @@ export class GeminiOAuthProvider implements Provider {
 		}
 	}
 
-	private _discoveredModels: ModelInfo[] | null = null;
+	private _modelCache: ModelInfo[] | null = null;
 
 	/**
 	 * Discover available models from Google's Code Assist API.
@@ -103,26 +103,29 @@ export class GeminiOAuthProvider implements Provider {
 	 * Uses the first available account's OAuth token to call the
 	 * fetchAvailableModels endpoint. Falls back to a static list
 	 * if discovery fails (network error, no accounts, etc.).
+	 * Results are cached so subsequent calls are cheap.
 	 */
 	async getModels(): Promise<ModelInfo[]> {
-		if (this._discoveredModels) {
-			return this._discoveredModels;
+		if (this._modelCache) {
+			return this._modelCache;
 		}
 
 		const discovered = await this.discoverModels();
 		if (discovered) {
-			this._discoveredModels = discovered;
+			this._modelCache = discovered;
 			return discovered;
 		}
 
-		return getFallbackModels();
+		const fallback = getFallbackModels();
+		this._modelCache = fallback;
+		return fallback;
 	}
 
 	/**
 	 * Force a refresh of the model cache on the next getModels() call.
 	 */
 	clearModelCache(): void {
-		this._discoveredModels = null;
+		this._modelCache = null;
 	}
 
 	/**
@@ -141,7 +144,7 @@ export class GeminiOAuthProvider implements Provider {
 	private async discoverModels(): Promise<ModelInfo[] | null> {
 		try {
 			await this.rotationManager.initialize();
-			const account = await this.rotationManager.getAccountForSession('discovery');
+			const account = await this.rotationManager.getAccountForSession('__gemini_model_discovery__');
 			if (!account) {
 				log.warn('No account available for model discovery');
 				return null;
@@ -159,7 +162,7 @@ export class GeminiOAuthProvider implements Provider {
 			log.warn(`Model discovery failed: ${err instanceof Error ? err.message : err}`);
 			return null;
 		} finally {
-			this.rotationManager.releaseSession('discovery');
+			this.rotationManager.releaseSession('__gemini_model_discovery__');
 		}
 	}
 
@@ -197,8 +200,8 @@ export class GeminiOAuthProvider implements Provider {
 				rotationManager: this.rotationManager,
 				fetchImpl: this._deps?.fetchImpl,
 				sessionId,
-				models: this._discoveredModels
-					? this._discoveredModels.map((m) => ({ id: m.id, display_name: m.name }))
+				models: this._modelCache
+					? this._modelCache.map((m) => ({ id: m.id, display_name: m.name }))
 					: undefined,
 			});
 			this.bridgeServers.set(sessionId, bridge);

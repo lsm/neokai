@@ -310,14 +310,13 @@ describe('Gemini Format Converter', () => {
 			expect(result.additionalProperties).toBeUndefined();
 		});
 
-		it('converts oneOf to anyOf', () => {
+		it('preserves oneOf as-is', () => {
 			const schema = {
 				oneOf: [{ type: 'string' }, { type: 'number' }],
 			};
 
 			const result = convertSchema(schema);
-			expect(result.oneOf).toBeUndefined();
-			expect(result.anyOf).toEqual([{ type: 'string' }, { type: 'number' }]);
+			expect(result.oneOf).toEqual([{ type: 'string' }, { type: 'number' }]);
 		});
 
 		it('removes $schema keyword', () => {
@@ -426,14 +425,26 @@ describe('Gemini Format Converter', () => {
 			expect(result).toEqual(schema);
 		});
 
-		it('accumulates both anyOf and oneOf when both are present', () => {
+		it('preserves both anyOf and oneOf as distinct keys', () => {
 			const schema = {
 				anyOf: [{ type: 'string' }],
 				oneOf: [{ type: 'number' }],
 			};
 
 			const result = convertSchema(schema);
-			expect(result.anyOf).toEqual([{ type: 'string' }, { type: 'number' }]);
+			expect(result.anyOf).toEqual([{ type: 'string' }]);
+			expect(result.oneOf).toEqual([{ type: 'number' }]);
+		});
+
+		it('handles properties: null without throwing', () => {
+			const schema = {
+				type: 'object',
+				properties: null,
+			};
+
+			const result = convertSchema(schema);
+			expect(result.type).toBe('object');
+			expect(result.properties).toBeNull();
 		});
 	});
 

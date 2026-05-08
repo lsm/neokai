@@ -280,6 +280,7 @@ const GEMINI_SCHEMA_KEYWORDS = new Set([
 	'required',
 	'enum',
 	'anyOf',
+	'oneOf',
 	'default',
 	'nullable',
 	'format',
@@ -290,7 +291,6 @@ const GEMINI_SCHEMA_KEYWORDS = new Set([
 	'minLength',
 	'maxLength',
 	'pattern',
-	'oneOf',
 ]);
 
 /**
@@ -306,18 +306,17 @@ export function convertSchema(schema: Record<string, unknown>): Record<string, u
 	const result: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(schema)) {
 		if (!GEMINI_SCHEMA_KEYWORDS.has(key)) continue;
-		if (key === 'properties' && typeof value === 'object') {
+		if (key === 'properties' && value && typeof value === 'object') {
 			const props = value as Record<string, Record<string, unknown>>;
 			result[key] = Object.fromEntries(
 				Object.entries(props).map(([k, v]) => [k, convertSchema(v)])
 			);
-		} else if (key === 'items' && typeof value === 'object') {
+		} else if (key === 'items' && value && typeof value === 'object') {
 			result[key] = convertSchema(value as Record<string, unknown>);
-		} else if ((key === 'anyOf' || key === 'oneOf') && Array.isArray(value)) {
-			const mapped = value.map((s) => convertSchema(s as Record<string, unknown>));
-			result.anyOf = result.anyOf
-				? [...(result.anyOf as Record<string, unknown>[]), ...mapped]
-				: mapped;
+		} else if (key === 'anyOf' && Array.isArray(value)) {
+			result.anyOf = value.map((s) => convertSchema(s as Record<string, unknown>));
+		} else if (key === 'oneOf' && Array.isArray(value)) {
+			result.oneOf = value.map((s) => convertSchema(s as Record<string, unknown>));
 		} else {
 			result[key] = value;
 		}

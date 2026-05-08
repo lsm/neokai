@@ -179,6 +179,50 @@ describe('Gemini Model Discovery', () => {
 			expect(result![0].contextWindow).toBe(1_000_000);
 		});
 
+		it('returns empty array when discovery yields no routable models', async () => {
+			const mockResponse = {
+				models: {
+					'claude-3-opus': { displayName: 'Claude Opus' },
+					'gpt-4o': { displayName: 'GPT-4o' },
+				},
+			};
+
+			const fetchImpl = () =>
+				Promise.resolve(new Response(JSON.stringify(mockResponse), { status: 200 }));
+
+			const result = await fetchAvailableModels({
+				token: 'test-token',
+				fetchImpl: fetchImpl as typeof fetch,
+			});
+
+			expect(result).not.toBeNull();
+			expect(result).toEqual([]);
+		});
+
+		it('preserves server ordering instead of re-sorting', async () => {
+			const mockResponse = {
+				models: {
+					'gemini-2.5-flash': { displayName: 'Gemini 2.5 Flash' },
+					'gemini-3-pro-preview': { displayName: 'Gemini 3 Pro Preview' },
+					'gemini-2.5-pro': { displayName: 'Gemini 2.5 Pro' },
+				},
+			};
+
+			const fetchImpl = () =>
+				Promise.resolve(new Response(JSON.stringify(mockResponse), { status: 200 }));
+
+			const result = await fetchAvailableModels({
+				token: 'test-token',
+				fetchImpl: fetchImpl as typeof fetch,
+			});
+
+			expect(result).not.toBeNull();
+			expect(result).toHaveLength(2);
+			// gemini-2.5-pro is denylisted, so only flash and 3-pro remain
+			expect(result![0].id).toBe('gemini-2.5-flash');
+			expect(result![1].id).toBe('gemini-3-pro-preview');
+		});
+
 		it('uses custom endpoint when provided', async () => {
 			let calledUrl = '';
 			const fetchImpl = (url: string) => {
