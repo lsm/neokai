@@ -197,6 +197,9 @@ function parseDiscoveryResponse(payload: unknown): ModelInfo[] | null {
 		const model = rawModel as DiscoveryApiModel;
 		if (model.isInternal === true) continue;
 
+		// Only include IDs that the bridge can actually route
+		if (!modelId.startsWith('gemini-') && !modelId.startsWith('gemma-')) continue;
+
 		models.push(discoveryModelToModelInfo(modelId, model));
 	}
 

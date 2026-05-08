@@ -137,6 +137,29 @@ describe('Gemini Model Discovery', () => {
 			expect(result![0].family).toBe('gemma');
 		});
 
+		it('filters non-routable model IDs', async () => {
+			const mockResponse = {
+				models: {
+					'gemini-3-pro-preview': { displayName: 'Gemini 3 Pro' },
+					'claude-3-opus': { displayName: 'Claude Opus' },
+					'gpt-4o': { displayName: 'GPT-4o' },
+					'some-random-model': { displayName: 'Random' },
+				},
+			};
+
+			const fetchImpl = () =>
+				Promise.resolve(new Response(JSON.stringify(mockResponse), { status: 200 }));
+
+			const result = await fetchAvailableModels({
+				token: 'test-token',
+				fetchImpl: fetchImpl as typeof fetch,
+			});
+
+			expect(result).not.toBeNull();
+			expect(result).toHaveLength(1);
+			expect(result![0].id).toBe('gemini-3-pro-preview');
+		});
+
 		it('falls back to default context window when maxTokens is missing', async () => {
 			const mockResponse = {
 				models: {
