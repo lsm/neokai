@@ -13,6 +13,8 @@ import { Database } from './index';
 export interface TableChangeScope {
 	/** The session that produced the write, when known. */
 	sessionId?: string;
+	/** The Space task affected by the write, when known. */
+	taskId?: string;
 }
 
 export interface TableChangeEvent {
@@ -65,7 +67,90 @@ export interface ReactiveDatabase {
 interface MethodMapping {
 	table: string;
 	/** Extract scope from the method's positional arguments. */
-	extractScope?: (args: unknown[]) => TableChangeScope;
+	extractScope?: (args: unknown[], db: Database) => TableChangeScope;
+}
+
+function resolveTaskIdForSession(db: Database, sessionId: string): string | undefined {
+	try {
+		const row = db
+			.getDatabase()
+			.prepare(
+				`SELECT
+					CASE
+						WHEN session_context IS NULL THEN NULL
+						WHEN NOT json_valid(session_context) THEN NULL
+						ELSE json_extract(session_context, '$.taskId')
+					END AS task_id,
+					type
+				 FROM sessions WHERE id = ?`
+			)
+			.get(sessionId) as { task_id: string | null; type: string | null } | undefined;
+		if (!row?.type || !['space_task_agent', 'worker'].includes(row.type)) return undefined;
+		return row.task_id ?? undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function sdkMessageScope(db: Database, sessionId: unknown): TableChangeScope {
+	if (typeof sessionId !== 'string') return {};
+	return { sessionId, taskId: resolveTaskIdForSession(db, sessionId) };
+}
+
+function messageIdsScope(db: Database, messageIds: unknown): TableChangeScope {
+	if (!Array.isArray(messageIds) || messageIds.length === 0) return {};
+	try {
+		const ids = messageIds.filter((id): id is string => typeof id === 'string');
+		if (ids.length === 0) return {};
+		const placeholders = ids.map(() => '?').join(',');
+		const rows = db
+			.getDatabase()
+			.prepare(
+				`SELECT DISTINCT session_id, task_id FROM sdk_messages WHERE id IN (${placeholders})`
+			)
+			.all(...ids) as Array<{ session_id: string | null; task_id: string | null }>;
+		return (
+			mergeScopes(
+				rows.map((row) => ({
+					sessionId: row.session_id ?? undefined,
+					taskId: row.task_id ?? undefined,
+				}))
+			) ?? {}
+		);
+	} catch {
+		return {};
+	}
+}
+
+function messageIdScope(db: Database, messageId: unknown): TableChangeScope {
+	if (typeof messageId !== 'string') return {};
+	try {
+		const row = db
+			.getDatabase()
+			.prepare(`SELECT session_id, task_id FROM sdk_messages WHERE id = ?`)
+			.get(messageId) as { session_id: string | null; task_id: string | null } | undefined;
+		return { sessionId: row?.session_id ?? undefined, taskId: row?.task_id ?? undefined };
+	} catch {
+		return {};
+	}
+}
+
+function mergeScopes(scopes: TableChangeScope[]): TableChangeScope | undefined {
+	if (scopes.length === 0) return undefined;
+	let sessionId: string | undefined;
+	let taskId: string | undefined;
+	for (const scope of scopes) {
+		if (scope.sessionId) {
+			if (sessionId && sessionId !== scope.sessionId) return undefined;
+			sessionId = scope.sessionId;
+		}
+		if (scope.taskId) {
+			if (taskId && taskId !== scope.taskId) return undefined;
+			taskId = scope.taskId;
+		}
+	}
+	if (!sessionId && !taskId) return undefined;
+	return { sessionId, taskId };
 }
 
 const METHOD_TABLE_MAP: Record<string, MethodMapping> = {
@@ -76,14 +161,20 @@ const METHOD_TABLE_MAP: Record<string, MethodMapping> = {
 	// SDK Message operations — scoped by sessionId where available
 	saveSDKMessage: {
 		table: 'sdk_messages',
-		extractScope: (args) => ({ sessionId: args[0] as string }),
+		extractScope: (args, db) => sdkMessageScope(db, args[0]),
 	},
 	saveUserMessage: {
 		table: 'sdk_messages',
-		extractScope: (args) => ({ sessionId: args[0] as string }),
+		extractScope: (args, db) => sdkMessageScope(db, args[0]),
 	},
-	updateMessageStatus: { table: 'sdk_messages' }, // args are messageIds, no sessionId
-	updateMessageTimestamp: { table: 'sdk_messages' }, // args are messageId, no sessionId
+	updateMessageStatus: {
+		table: 'sdk_messages',
+		extractScope: (args, db) => messageIdsScope(db, args[0]),
+	},
+	updateMessageTimestamp: {
+		table: 'sdk_messages',
+		extractScope: (args, db) => messageIdScope(db, args[0]),
+	},
 	deleteMessagesAfter: {
 		table: 'sdk_messages',
 		extractScope: (args) => ({ sessionId: args[0] as string }),
@@ -116,9 +207,24 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 	const tableVersions: Record<string, number> = {};
 	let transactionDepth = 0;
 	const pendingTables = new Set<string>();
+	const pendingTableScopes = new Map<string, TableChangeScope | null>();
 
 	function getVersion(table: string): number {
 		return tableVersions[table] ?? 0;
+	}
+
+	function addPendingScope(table: string, scope?: TableChangeScope): void {
+		if (!scope?.sessionId && !scope?.taskId) {
+			pendingTableScopes.set(table, null);
+			return;
+		}
+		const current = pendingTableScopes.get(table);
+		if (current === null) return;
+		if (!current) {
+			pendingTableScopes.set(table, scope);
+			return;
+		}
+		pendingTableScopes.set(table, mergeScopes([current, scope]) ?? null);
 	}
 
 	function incrementAndEmit(table: string, scope?: TableChangeScope): void {
@@ -127,6 +233,7 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 
 		if (transactionDepth > 0) {
 			pendingTables.add(table);
+			addPendingScope(table, scope);
 			return;
 		}
 
@@ -148,16 +255,23 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 		pendingTables.clear();
 
 		const versions: Record<string, number> = {};
+		const tableScopes = new Map(pendingTableScopes);
+		pendingTableScopes.clear();
+		const hasUnscopedTable = tables.some((table) => tableScopes.get(table) === null);
+		const scopes = tables.map((table) => tableScopes.get(table) ?? undefined);
+		const eventScope = hasUnscopedTable
+			? undefined
+			: mergeScopes(scopes.filter((scope): scope is TableChangeScope => !!scope));
+
 		for (const table of tables) {
 			const version = getVersion(table);
 			versions[table] = version;
-			const versionEvent: TableVersionEvent = { table, version };
+			const tableScope = tableScopes.get(table) ?? eventScope;
+			const versionEvent: TableVersionEvent = { table, version, scope: tableScope };
 			emitter.emit(`change:${table}`, versionEvent);
 		}
 
-		// Transaction flushes do not carry scope — multiple writes may target
-		// different sessions, making single-scope attribution inaccurate.
-		const changeEvent: TableChangeEvent = { tables, versions };
+		const changeEvent: TableChangeEvent = { tables, versions, scope: eventScope };
 		emitter.emit('change', changeEvent);
 	}
 
@@ -185,7 +299,7 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 			return function (this: Database, ...args: unknown[]) {
 				const result = (value as (...a: unknown[]) => unknown).apply(target, args);
 				// Only emit if the call didn't throw
-				const scope = mapping.extractScope?.(args);
+				const scope = mapping.extractScope?.(args, target);
 				incrementAndEmit(mapping.table, scope);
 				return result;
 			};
@@ -218,6 +332,7 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 			transactionDepth -= 1;
 			if (transactionDepth === 0) {
 				pendingTables.clear();
+				pendingTableScopes.clear();
 			}
 		},
 		notifyChange(table: string): void {

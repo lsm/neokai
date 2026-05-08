@@ -56,6 +56,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 		expect(NAMED_QUERY_REGISTRY.has('spaceTaskActivity.byTask')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('spaceTaskMessages.byTask')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('spaceTaskMessages.byTask.compact')).toBe(true);
+		expect(NAMED_QUERY_REGISTRY.has('spaceTaskActiveTurn.byTask')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('skills.byRoom')).toBe(false);
 		expect(NAMED_QUERY_REGISTRY.has('neo.messages')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('neo.activity')).toBe(true);
@@ -66,6 +67,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 		expect(NAMED_QUERY_REGISTRY.get('spaceTaskActivity.byTask')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!.paramCount).toBe(1);
+		expect(NAMED_QUERY_REGISTRY.get('spaceTaskActiveTurn.byTask')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('neo.messages')!.paramCount).toBe(2);
 		expect(NAMED_QUERY_REGISTRY.get('neo.activity')!.paramCount).toBe(2);
 	});
@@ -881,7 +883,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
 		// -----------------------------------------------------------------------
 		// SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL — server-derived running
-		// roster source. Drives `metadata.activeTurnSummaries` on the compact
+		// roster source. Backing SQL for the separate `spaceTaskActiveTurn.byTask`
 		// LiveQuery; the client renders this directly without re-deriving from
 		// the (potentially truncated) compact rows.
 		// -----------------------------------------------------------------------
