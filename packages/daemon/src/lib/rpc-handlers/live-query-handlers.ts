@@ -1996,47 +1996,65 @@ function buildTaskScopeFilter(
 	};
 }
 
-function buildSessionsListScopeFilter(): (scope: TableChangeScope) => boolean {
-	return (scope) => {
-		if (!scope.sessionId) return true;
-		if (scope.roomId || scope.spaceId) return false;
-		if (!scope.sessionType) return true;
-		return ![
-			'lobby',
-			'spaces_global',
-			'neo',
-			'room_chat',
-			'planner',
-			'coder',
-			'leader',
-			'space_chat',
-			'space_task_agent',
-		].includes(scope.sessionType);
-	};
-}
+// Note: `sessions.list` intentionally has no scope filter. The query only
+// watches the `sessions` table, so incoming scopes describe session-level
+// writes (createSession / updateSession / deleteSession). The scope reflects
+// the *post*-write row, so we cannot tell whether an `updateSession` moved a
+// session in or out of the visible chat-sidebar set (e.g. by gaining
+// `roomId`/`spaceId`, or being reclassified to an internal type via
+// `AgentSession.fromInit`). Skipping such writes leaves stale rows. Session
+// writes are infrequent compared to `sdk_messages`, so re-evaluating
+// `sessions.list` on every session write is cheap and correct.
 
 function buildSpaceSessionsScopeFilter(
 	params: ReadonlyArray<unknown>,
 	db: BunDatabase
 ): (scope: TableChangeScope) => boolean {
 	const spaceId = params[0] as string;
-	const sessionIds = new Set<string>();
-	try {
-		const row = db.prepare('SELECT session_ids FROM spaces WHERE id = ?').get(spaceId) as
-			| { session_ids: string | null }
-			| undefined;
-		const parsed = row?.session_ids ? (JSON.parse(row.session_ids) as unknown) : [];
-		if (Array.isArray(parsed)) {
+	// Re-query membership on every invalidation rather than snapshotting at
+	// subscribe time. Snapshotting drops two important update paths:
+	//   1. Sessions added to the space *after* subscription would be filtered
+	//      out and miss title/status/lastActiveAt changes until the client
+	//      reconnects.
+	//   2. Sessions removed from the space would remain "in scope" forever,
+	//      causing avoidable re-evaluations.
+	// Reading the row is a single indexed lookup against `spaces.id`, so
+	// the cost is negligible relative to the SQL re-evaluation it gates.
+	const memberStmt = db.prepare('SELECT session_ids FROM spaces WHERE id = ?');
+	const readMembership = (): Set<string> | null => {
+		try {
+			const row = memberStmt.get(spaceId) as { session_ids: string | null } | undefined;
+			if (!row?.session_ids) return new Set();
+			const parsed = JSON.parse(row.session_ids) as unknown;
+			if (!Array.isArray(parsed)) return new Set();
+			const out = new Set<string>();
 			for (const value of parsed) {
-				if (typeof value === 'string') sessionIds.add(value);
+				if (typeof value === 'string') out.add(value);
 			}
+			return out;
+		} catch {
+			return null;
 		}
-	} catch {
-		return () => true;
-	}
+	};
+
 	return (scope) => {
+		// If the scope explicitly tags this write with our spaceId (e.g. the
+		// session was just created/updated as a member of this space), accept
+		// without an extra DB hit. Covers the new-member case directly.
+		if (scope.spaceId === spaceId) return true;
+
+		// No sessionId on the scope (e.g. a `spaces` row was rewritten):
+		// we cannot tell what changed, so be conservative.
 		if (!scope.sessionId) return true;
-		return sessionIds.has(scope.sessionId);
+
+		const members = readMembership();
+		if (members === null) return true; // membership unreadable: be safe
+		// Re-evaluate when the session is currently in this space *or* could
+		// have been a member just before the write — we cannot distinguish a
+		// just-removed session from an unrelated session here, so accept any
+		// scope whose sessionId matches the live set. Sessions outside the
+		// live set with no spaceId hint are filtered.
+		return members.has(scope.sessionId);
 	};
 }
 
@@ -2192,7 +2210,10 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			paramCount: 1,
 			debounceMs: DEBOUNCE_SESSION_LIST_MS,
 			mapRow: mapSessionRow,
-			buildScopeFilter: () => buildSessionsListScopeFilter(),
+			// No scope filter — see the comment on the (deleted)
+			// `buildSessionsListScopeFilter` site above. Session writes are
+			// infrequent and `updateSession` post-write scope can hide
+			// transitions that should remove a row from this list.
 			mapResult: (rawRows) => {
 				if (rawRows.length > 0 && rawRows[0]._totalCount != null) {
 					return {

@@ -9,7 +9,7 @@
  * - Symbolic links are indexed (as file or folder depending on their target type)
  *   but symlinked directories are NOT recursed into, to prevent infinite loops.
  * - Calling setIgnorePatterns() immediately re-filters the cache.
- * - The polling interval is configurable via NEOKAI_FILE_INDEX_POLL_MS (default 10000 ms).
+ * - The polling interval is configurable via NEOKAI_FILE_INDEX_POLL_MS (default 60000 ms).
  */
 
 import { join, normalize, relative } from 'node:path';

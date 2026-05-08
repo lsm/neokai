@@ -2105,4 +2105,102 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			}
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// Scope filter contracts
+	// -------------------------------------------------------------------------
+
+	describe('scope filters', () => {
+		describe('sessions.list', () => {
+			test('has no scope filter so visible→hidden updateSession transitions invalidate', () => {
+				// `sessions.list` post-update scope cannot distinguish a session
+				// becoming hidden from one that was always hidden, so the only
+				// safe behaviour is to re-evaluate on every `sessions` write.
+				// Any scope filter here would be unsound — keep it absent.
+				const entry = NAMED_QUERY_REGISTRY.get('sessions.list')!;
+				expect(entry.buildScopeFilter).toBeUndefined();
+			});
+		});
+
+		describe('spaceSessions.bySpace', () => {
+			let scopedDb: BunDatabase;
+			const SPACE_ID = 'space-scope-test';
+
+			beforeEach(() => {
+				scopedDb = new BunDatabase(':memory:');
+				scopedDb.exec(`
+					CREATE TABLE spaces (
+						id TEXT PRIMARY KEY,
+						session_ids TEXT NOT NULL DEFAULT '[]'
+					)
+				`);
+				scopedDb.exec(
+					`INSERT INTO spaces (id, session_ids) VALUES ('${SPACE_ID}', '["existing-1","existing-2"]')`
+				);
+			});
+
+			afterEach(() => {
+				scopedDb.close();
+			});
+
+			function buildFilter() {
+				const entry = NAMED_QUERY_REGISTRY.get('spaceSessions.bySpace')!;
+				expect(entry.buildScopeFilter).toBeDefined();
+				return entry.buildScopeFilter!([SPACE_ID], scopedDb);
+			}
+
+			test('accepts writes whose scope.spaceId matches the watched space', () => {
+				const filter = buildFilter();
+				// New session created with spaceId set to ours — even before the
+				// spaces.session_ids row catches up — must be considered in scope.
+				expect(
+					filter({
+						sessionId: 'brand-new-session',
+						spaceId: SPACE_ID,
+					})
+				).toBe(true);
+			});
+
+			test('accepts writes for sessions currently in the live membership set', () => {
+				const filter = buildFilter();
+				expect(filter({ sessionId: 'existing-1' })).toBe(true);
+				expect(filter({ sessionId: 'existing-2' })).toBe(true);
+			});
+
+			test('reads membership live so members added after subscription are in scope', () => {
+				const filter = buildFilter();
+				// At subscription time `late-joiner` is not a member, but the new
+				// implementation re-reads membership on every call.
+				expect(filter({ sessionId: 'late-joiner' })).toBe(false);
+				scopedDb.exec(
+					`UPDATE spaces SET session_ids = '["existing-1","existing-2","late-joiner"]' WHERE id = '${SPACE_ID}'`
+				);
+				expect(filter({ sessionId: 'late-joiner' })).toBe(true);
+			});
+
+			test('drops sessions removed from membership without requiring resubscribe', () => {
+				const filter = buildFilter();
+				expect(filter({ sessionId: 'existing-2' })).toBe(true);
+				scopedDb.exec(`UPDATE spaces SET session_ids = '["existing-1"]' WHERE id = '${SPACE_ID}'`);
+				// `existing-2` is no longer a member, scope.spaceId is absent —
+				// filter should reject and avoid unnecessary re-evaluation.
+				expect(filter({ sessionId: 'existing-2' })).toBe(false);
+			});
+
+			test('falls through when scope has no sessionId (e.g. a spaces-table write)', () => {
+				const filter = buildFilter();
+				expect(filter({})).toBe(true);
+			});
+
+			test('rejects sessions belonging to a different space', () => {
+				const filter = buildFilter();
+				expect(
+					filter({
+						sessionId: 'other-session',
+						spaceId: 'some-other-space',
+					})
+				).toBe(false);
+			});
+		});
+	});
 });

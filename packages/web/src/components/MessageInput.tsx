@@ -380,7 +380,6 @@ export default function MessageInput({
 			refHandleKeyDown,
 			cmdHandleKeyDown,
 			handleSubmit,
-			agentWorking,
 			showAgentMentionAutocomplete,
 			filteredAgentMentionCandidates,
 			agentMentionSelectedIndex,
