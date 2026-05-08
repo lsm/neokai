@@ -160,6 +160,11 @@ export class SpaceAgentRepository {
 		values.push(id);
 
 		this.db.prepare(`UPDATE space_agents SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+
+		// Agent labels are derived at query time by joining `space_agents.name`
+		// (see live-query handlers' SPACE_TASK_MESSAGES_BASE_CTE), so a rename
+		// surfaces immediately with no extra denormalised store to refresh.
+
 		return this.getById(id);
 	}
 

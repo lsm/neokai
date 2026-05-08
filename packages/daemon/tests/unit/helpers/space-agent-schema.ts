@@ -93,6 +93,27 @@ export function createSpaceAgentSchema(db: Database): void {
 			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
 		)
 	`);
+
+	// node_executions still required by tests that exercise the repo's
+	// agent-name update path (which used to refresh denormalised labels and
+	// is now a no-op — kept here so the schema parity is obvious).
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS node_executions (
+			id TEXT PRIMARY KEY,
+			workflow_run_id TEXT NOT NULL,
+			workflow_node_id TEXT NOT NULL,
+			agent_name TEXT NOT NULL,
+			agent_id TEXT,
+			agent_session_id TEXT,
+			status TEXT NOT NULL DEFAULT 'pending',
+			result TEXT,
+			data TEXT,
+			created_at INTEGER NOT NULL,
+			started_at INTEGER,
+			completed_at INTEGER,
+			updated_at INTEGER NOT NULL
+		)
+	`);
 }
 
 export function insertSpace(db: Database, id = 'space-1'): void {

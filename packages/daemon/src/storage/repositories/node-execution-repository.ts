@@ -100,7 +100,9 @@ export class NodeExecutionRepository {
 
 		// If the insert was ignored (duplicate), return the existing record.
 		const inserted = this.getById(id);
-		if (inserted) return inserted;
+		if (inserted) {
+			return inserted;
+		}
 
 		// Duplicate — find the existing record by unique key.
 		const existing = this.db
@@ -113,7 +115,9 @@ export class NodeExecutionRepository {
 			| Record<string, unknown>
 			| undefined;
 
-		if (existing) return this.rowToNodeExecution(existing);
+		if (existing) {
+			return this.rowToNodeExecution(existing);
+		}
 		const fallback = this.getById(id);
 		if (fallback) return fallback;
 		throw new Error(

@@ -247,6 +247,38 @@ export function createSpaceTables(db: BunDatabase): void {
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
 	);
 
+	// Minimal `sessions` table — used by tests that need to seed
+	// `session_context.taskId` so the SDKMessageRepository can derive the
+	// `sdk_messages.task_id` column at INSERT time.
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS sessions (
+			id TEXT PRIMARY KEY,
+			type TEXT,
+			session_context TEXT
+		)
+	`);
+
+	// `sdk_messages` is the canonical message store. Tests that exercise
+	// task-scoped feeds rely on the `task_id` column being present and
+	// indexed exactly the way migration 122 produces it in production.
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS sdk_messages (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			message_type TEXT NOT NULL,
+			message_subtype TEXT,
+			sdk_message TEXT NOT NULL,
+			timestamp TEXT NOT NULL,
+			send_status TEXT DEFAULT 'consumed',
+			origin TEXT,
+			is_renderable INTEGER NOT NULL DEFAULT 1,
+			is_terminal INTEGER NOT NULL DEFAULT 0,
+			parent_tool_use_id TEXT,
+			task_id TEXT
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id)`);
+
 	// Workflow run artifacts
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS workflow_run_artifacts (

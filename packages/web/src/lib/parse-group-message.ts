@@ -5,7 +5,6 @@ export interface TaskMeta {
 	authorRole: 'planner' | 'coder' | 'general' | 'leader' | 'craft' | 'lead' | 'human' | 'system';
 	authorSessionId: string;
 	turnId: string;
-	iteration: number;
 }
 
 export type ParsedGroupMessage = SDKMessage & { _taskMeta?: TaskMeta };
@@ -26,7 +25,6 @@ export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
 				authorRole: 'system',
 				authorSessionId: '',
 				turnId: `status-${msg.id}`,
-				iteration: 0,
 			},
 		} as unknown as SDKMessage;
 	}
@@ -41,7 +39,6 @@ export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
 				authorRole: 'system',
 				authorSessionId: '',
 				turnId: `leader-summary-${msg.id}`,
-				iteration: 0,
 			},
 		} as unknown as SDKMessage;
 	}
@@ -63,7 +60,6 @@ export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
 				authorRole: 'system',
 				authorSessionId: '',
 				turnId: `rate-limited-${msg.id}`,
-				iteration: 0,
 			},
 		} as unknown as SDKMessage;
 	}
@@ -85,7 +81,6 @@ export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
 				authorRole: 'system',
 				authorSessionId: '',
 				turnId: `model-fallback-${msg.id}`,
-				iteration: 0,
 			},
 		} as unknown as SDKMessage;
 	}
