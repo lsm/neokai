@@ -584,8 +584,41 @@ describe('inferProviderForModel', () => {
 		expect(inferProviderForModel('unknown-model')).toBe('anthropic');
 	});
 
-	it('routes gemini- models to google-gemini-oauth', () => {
+	it('routes gemini- models to google-gemini-oauth when registry is empty', () => {
 		expect(inferProviderForModel('gemini-2.5-pro')).toBe('google-gemini-oauth');
 		expect(inferProviderForModel('gemini-2.5-flash')).toBe('google-gemini-oauth');
+	});
+
+	it('prefers google-gemini over google-gemini-oauth when both are registered', () => {
+		const reg = getProviderRegistry();
+		reg.register(
+			new (class extends MockProvider {
+				readonly id = 'google-gemini' as const;
+				readonly displayName = 'Google Gemini';
+				ownsModel(modelId: string): boolean {
+					return modelId.startsWith('gemini-') || modelId.startsWith('gemma-');
+				}
+			})()
+		);
+		reg.register(
+			new (class extends MockProvider {
+				readonly id = 'google-gemini-oauth' as const;
+				readonly displayName = 'Google Gemini (OAuth)';
+				ownsModel(modelId: string): boolean {
+					return modelId.startsWith('gemini-') || modelId.startsWith('gemma-');
+				}
+			})()
+		);
+
+		expect(inferProviderForModel('gemini-2.5-pro')).toBe('google-gemini');
+		expect(inferProviderForModel('gemini-2.5-flash')).toBe('google-gemini');
+		expect(inferProviderForModel('gemma-2b')).toBe('google-gemini');
+
+		resetProviderRegistry();
+	});
+
+	it('routes gemma- models to google-gemini-oauth when registry is empty', () => {
+		expect(inferProviderForModel('gemma-2b')).toBe('google-gemini-oauth');
+		expect(inferProviderForModel('gemma-4-31b-it')).toBe('google-gemini-oauth');
 	});
 });
