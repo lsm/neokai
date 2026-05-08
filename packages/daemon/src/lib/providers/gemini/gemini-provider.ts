@@ -154,11 +154,12 @@ export class GeminiOAuthProvider implements Provider {
 				fetchImpl: this._deps?.fetchImpl,
 			});
 
-			this.rotationManager.releaseSession('discovery');
 			return models;
 		} catch (err) {
 			log.warn(`Model discovery failed: ${err instanceof Error ? err.message : err}`);
 			return null;
+		} finally {
+			this.rotationManager.releaseSession('discovery');
 		}
 	}
 
@@ -196,6 +197,9 @@ export class GeminiOAuthProvider implements Provider {
 				rotationManager: this.rotationManager,
 				fetchImpl: this._deps?.fetchImpl,
 				sessionId,
+				models: this._discoveredModels
+					? this._discoveredModels.map((m) => ({ id: m.id, display_name: m.name }))
+					: undefined,
 			});
 			this.bridgeServers.set(sessionId, bridge);
 			log.info(`Bridge server started on port ${bridge.port} for session ${sessionId}`);
