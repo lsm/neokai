@@ -1820,9 +1820,9 @@ export interface ApprovalRecord {
 // the client derived the roster from the same compacted feed rows used by the
 // minimal thread renderer — capped at the last 5 non-terminal renderable rows
 // per turn — so long turns under-reported their activity. The server now
-// computes the full chronological activity list per active turn alongside the
-// compact feed and ships it as `activeTurnSummaries` on the LiveQuery
-// metadata channel; the client display cap is applied at render time.
+// computes the full chronological activity list per active turn via the
+// `spaceTaskActiveTurn.byTask` LiveQuery; the client display cap is applied at
+// render time.
 
 /** A single chronological activity entry within an active turn. */
 export type ActivityEntry =
@@ -1839,9 +1839,7 @@ export type ActivityEntry =
 
 /**
  * Per-(session, turn) summary of activity entries within an active (incomplete)
- * turn. Emitted on the `liveQuery.snapshot`/`liveQuery.delta` `metadata` field
- * for the `spaceTaskMessages.byTask.compact` query under
- * `metadata.activeTurnSummaries`.
+ * turn. Derived client-side from `spaceTaskActiveTurn.byTask` rows.
  *
  * The server only emits a summary for the highest turnIndex per session that
  * has not yet seen a terminal `result` row. Closed turns are excluded —

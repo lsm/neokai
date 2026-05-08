@@ -1319,6 +1319,7 @@ user_entries AS (
     )
 )
 SELECT
+  sessionId || ':' || turnIndex || ':' || rowId || ':' || blockIdx AS id,
   sessionId,
   turnIndex,
   ts,
@@ -1333,6 +1334,7 @@ SELECT
 FROM assistant_entries
 UNION ALL
 SELECT
+  sessionId || ':' || turnIndex || ':' || rowId || ':' || blockIdx AS id,
   sessionId,
   turnIndex,
   ts,
@@ -1345,7 +1347,7 @@ SELECT
   textValue,
   thinkingValue
 FROM user_entries
-ORDER BY sessionId ASC, ts ASC, rowId ASC, blockIdx ASC
+ORDER BY sessionId ASC, ts ASC, rowId ASC, blockIdx ASC, id ASC
 `.trim();
 
 // ============================================================================
@@ -1571,6 +1573,64 @@ export function buildActiveTurnSummariesFromRows(
 	}
 
 	return Array.from(bySession.values());
+}
+
+function mapActiveTurnEntryRow(row: Record<string, unknown>): Record<string, unknown> {
+	const sessionId = typeof row.sessionId === 'string' ? row.sessionId : '';
+	const turnIndex = Number(row.turnIndex ?? 0);
+	const ts = Number(row.ts ?? 0);
+	const uuid = typeof row.uuid === 'string' ? row.uuid : '';
+	const blockType = typeof row.blockType === 'string' ? row.blockType : '';
+	const rowId = typeof row.rowId === 'string' || typeof row.rowId === 'number' ? row.rowId : '';
+	const blockIdx = Number(row.blockIdx ?? -1);
+	const rawId = row.id;
+	const id = typeof rawId === 'string' ? rawId : `${sessionId}:${turnIndex}:${rowId}:${blockIdx}`;
+
+	let entry: Record<string, unknown> | null = null;
+	if (blockType === 'tool_use') {
+		const toolName = typeof row.toolName === 'string' ? row.toolName : '';
+		const rawInput = row.toolInput;
+		let parsedInput: Record<string, unknown> = {};
+		if (typeof rawInput === 'string') {
+			try {
+				const maybe = JSON.parse(rawInput);
+				if (maybe && typeof maybe === 'object') parsedInput = maybe as Record<string, unknown>;
+			} catch {
+				parsedInput = {};
+			}
+		} else if (rawInput && typeof rawInput === 'object') {
+			parsedInput = rawInput as Record<string, unknown>;
+		}
+		entry = {
+			kind: 'tool_use',
+			toolName,
+			preview: activityPreviewFromToolInput(toolName, parsedInput),
+			ts,
+			uuid,
+		};
+	} else if (blockType === 'text') {
+		const text = typeof row.textValue === 'string' ? row.textValue : '';
+		if (text.trim().length > 0) entry = { kind: 'text', text: activityOneLine(text), ts, uuid };
+	} else if (blockType === 'thinking') {
+		const thinking = typeof row.thinkingValue === 'string' ? row.thinkingValue : '';
+		if (thinking.trim().length > 0) {
+			entry = { kind: 'thinking', preview: thinking.trim(), ts, uuid };
+		}
+	} else if (blockType === '__user_message') {
+		const text = typeof row.textValue === 'string' ? row.textValue : '';
+		entry = { kind: 'user_message', text: activityOneLine(text), ts, uuid };
+	} else if (blockType === '__user_replay') {
+		const text = typeof row.textValue === 'string' ? row.textValue : '';
+		entry = { kind: 'agent_handoff', text: activityOneLine(text), ts, uuid };
+	}
+
+	return {
+		id,
+		sessionId,
+		turnIndex,
+		ts,
+		entry,
+	};
 }
 
 // ============================================================================
@@ -1925,6 +1985,7 @@ function buildTaskScopeFilter(
 		 LIMIT 1`
 	);
 	return (scope) => {
+		if (scope.taskId) return scope.taskId === taskId;
 		if (!scope.sessionId) return true;
 		if (linkedSessions.has(scope.sessionId)) return true;
 		if (messageStmt.get(taskId, scope.sessionId)) return true;
@@ -1980,6 +2041,16 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			paramCount: 1,
 			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
 			mapRow: mapSpaceTaskMessageRow,
+			buildScopeFilter: buildTaskScopeFilter,
+		},
+	],
+	[
+		'spaceTaskActiveTurn.byTask',
+		{
+			sql: SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL,
+			paramCount: 1,
+			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
+			mapRow: mapActiveTurnEntryRow,
 			buildScopeFilter: buildTaskScopeFilter,
 		},
 	],
@@ -2115,43 +2186,8 @@ export function setupLiveQueryHandlers(
 	const stmtSessionsTotalCount = db.prepare(SESSIONS_TOTAL_COUNT_SQL);
 	const stmtSessionsArchivedCount = db.prepare(SESSIONS_ARCHIVED_COUNT_SQL);
 
-	// Sidecar prepared statement for the compact-thread mapResult: emits one
-	// row per activity entry in each session's currently-active turn. The
-	// compact thread query itself caps rows per turn at 5; this sidecar is
-	// the uncapped feed used to drive the running roster on the task view.
-	//
-	// Prepared lazily on first use so daemon startup doesn't depend on every
-	// table referenced by the CTE chain (e.g. `node_executions`) being live
-	// yet. Preparing eagerly here regressed test setups whose minimal schema
-	// hadn't run the migration that creates that table.
-	let _stmtActiveTurnEntries: ReturnType<BunDatabase['prepare']> | null = null;
-	const getStmtActiveTurnEntries = () => {
-		if (!_stmtActiveTurnEntries) {
-			_stmtActiveTurnEntries = db.prepare(SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL);
-		}
-		return _stmtActiveTurnEntries;
-	};
-
 	const sessionsListBase = NAMED_QUERY_REGISTRY.get('sessions.list')!;
 	const activeRegistry = new Map(NAMED_QUERY_REGISTRY);
-
-	// Override the compact-thread query so each evaluation also computes the
-	// active-turn activity summary alongside the compact rows. Wired through
-	// the metadata channel so existing snapshot/delta plumbing carries it
-	// without a parallel subscription.
-	const compactThreadBase = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
-	activeRegistry.set('spaceTaskMessages.byTask.compact', {
-		...compactThreadBase,
-		mapResult: (_rawRows, params) => {
-			const taskId = params[0];
-			if (typeof taskId !== 'string' || taskId.length === 0) return undefined;
-			const entryRows = getStmtActiveTurnEntries().all(taskId) as Record<string, unknown>[];
-			const summaries = buildActiveTurnSummariesFromRows(entryRows);
-			// Always emit the field so the client sees an authoritative empty
-			// list rather than a stale value from a prior snapshot.
-			return { activeTurnSummaries: summaries };
-		},
-	});
 
 	activeRegistry.set('sessions.list', {
 		...sessionsListBase,
@@ -2234,7 +2270,8 @@ export function setupLiveQueryHandlers(
 		} else if (
 			queryName === 'spaceTaskActivity.byTask' ||
 			queryName === 'spaceTaskMessages.byTask' ||
-			queryName === 'spaceTaskMessages.byTask.compact'
+			queryName === 'spaceTaskMessages.byTask.compact' ||
+			queryName === 'spaceTaskActiveTurn.byTask'
 		) {
 			const taskId = params[0] as string;
 			let spaceTask: { space_id: string } | null = null;
