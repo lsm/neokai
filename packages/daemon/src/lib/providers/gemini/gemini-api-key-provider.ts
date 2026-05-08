@@ -595,6 +595,7 @@ async function streamViaGenAI(
 						})}\n\n`
 					)
 				);
+				finished = true;
 			}
 
 			if (!finished) {
