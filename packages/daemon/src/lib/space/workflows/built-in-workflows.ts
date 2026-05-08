@@ -1034,9 +1034,15 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 							'2. Decompose the goal into concrete, small-enough work items\n' +
 							'3. Write `plan.md` — one section per work item with title, description, priority\n' +
 							'4. Commit and open/update a PR against the default branch\n' +
-							'5. Wait for plan-pr-gate to verify mergeability\n\n' +
-							'If re-activated after Plan Review feedback: address each reviewer comment, ' +
-							'update `plan.md`, and push to the same PR branch.',
+							'5. Hand off to Plan Review by calling ' +
+							'`send_message(target="Plan Review", message="<short summary>", ' +
+							'data: { pr_url: "<plan PR url>" })`. The `data: { pr_url }` write is ' +
+							'auto-merged into `plan-pr-gate`, which verifies the PR is open and ' +
+							'mergeable before Plan Review activates. Skipping this call leaves ' +
+							'`plan-pr-gate` closed and Plan Review never starts.\n' +
+							'6. Wait for Plan Review feedback. If re-activated, address each reviewer ' +
+							'comment, update `plan.md`, push to the same PR branch, then repeat step 5 ' +
+							'(re-supply `data: { pr_url }` — `plan-pr-gate` resets each cycle).',
 					},
 				},
 			],
