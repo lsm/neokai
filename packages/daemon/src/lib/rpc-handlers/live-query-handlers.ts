@@ -1848,27 +1848,68 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
  * `spaceTaskActivity.byTask`). Returns `false` when the writing session is
  * not part of the target task, so the live query engine can skip re-evaluation.
  *
- * Reads membership directly from `sdk_messages.task_id` — the same column
- * the read SQL filters on. A session is considered in-scope as soon as it
- * has stamped at least one message for the task. Using a different source
- * (e.g. recomputing from `space_tasks.task_agent_session_id` +
- * `node_executions`) risks divergence: a write the read query *would* pick
- * up could be filtered out as out-of-scope, silently dropping live-query
- * updates. We additionally accept the Task Agent session itself even
- * before its first message lands, so the very first orchestration write
- * isn't suppressed.
+ * Membership is derived from three sources:
+ *   1. `space_tasks.task_agent_session_id` — the orchestration session
+ *   2. `node_executions` for the task's workflow run — node-agent sessions
+ *   3. `sdk_messages.task_id` — sessions that have stamped messages for the task
+ *
+ * Because scoped delete events are emitted *after* the row is removed, a
+ * session that just deleted its final task-stamped message would fail the
+ * `sdk_messages.task_id` check even though the feed changed. To prevent
+ * false negatives we capture the set of sessions that were linked at
+ * subscribe time (including those with historical messages) and keep them
+ * in-scope for the lifetime of the subscription. New sessions that join
+ * after subscribe are caught by the dynamic checks.
  */
 function buildTaskScopeFilter(
 	params: ReadonlyArray<unknown>,
 	db: BunDatabase
 ): ((scope: TableChangeScope) => boolean) | undefined {
 	const taskId = params[0] as string;
-	// Scope filter aligns with the read query's filter on sdk_messages.task_id.
-	// A session is in-scope if it has ever stamped a message for this task
-	// (captured by sdk_messages.task_id). We also accept the task agent and
-	// node-agent sessions from space_tasks / node_executions so zero-message
-	// sessions still trigger re-evaluation. This dual check prevents both
-	// false negatives (stale cache after detachment) and false positives.
+
+	// Capture the set of sessions linked to this task at subscribe time.
+	// This prevents the delete-last-message false negative: a session that
+	// had messages when the subscription was created stays in-scope even
+	// after those messages are deleted.
+	const linkedSessions = new Set<string>();
+	try {
+		const taskAgent = db
+			.prepare('SELECT task_agent_session_id FROM space_tasks WHERE id = ?')
+			.get(taskId) as { task_agent_session_id: string } | undefined;
+		if (taskAgent?.task_agent_session_id) {
+			linkedSessions.add(taskAgent.task_agent_session_id);
+		}
+	} catch {
+		// space_tasks may not exist in minimal test schemas
+	}
+	try {
+		const nodeAgents = db
+			.prepare(
+				`SELECT ne.agent_session_id
+				 FROM node_executions ne
+				 JOIN space_tasks st ON st.id = ? AND st.workflow_run_id IS NOT NULL
+				 WHERE ne.workflow_run_id = st.workflow_run_id
+				   AND ne.agent_session_id IS NOT NULL`
+			)
+			.all(taskId) as Array<{ agent_session_id: string }>;
+		for (const row of nodeAgents) {
+			if (row.agent_session_id) linkedSessions.add(row.agent_session_id);
+		}
+	} catch {
+		// node_executions may not exist in minimal test schemas
+	}
+	try {
+		const messageSessions = db
+			.prepare('SELECT DISTINCT session_id FROM sdk_messages WHERE task_id = ?')
+			.all(taskId) as Array<{ session_id: string }>;
+		for (const row of messageSessions) {
+			if (row.session_id) linkedSessions.add(row.session_id);
+		}
+	} catch {
+		// sdk_messages may not exist in minimal test schemas
+	}
+
+	// Dynamic checks for sessions that become linked after subscribe time.
 	const messageStmt = db.prepare(
 		`SELECT 1 FROM sdk_messages WHERE task_id = ? AND session_id = ? LIMIT 1`
 	);
@@ -1885,6 +1926,7 @@ function buildTaskScopeFilter(
 	);
 	return (scope) => {
 		if (!scope.sessionId) return true;
+		if (linkedSessions.has(scope.sessionId)) return true;
 		if (messageStmt.get(taskId, scope.sessionId)) return true;
 		if (taskAgentStmt.get(taskId, scope.sessionId)) return true;
 		return !!nodeExecStmt.get(taskId, scope.sessionId);

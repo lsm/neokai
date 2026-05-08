@@ -123,6 +123,10 @@ export class SDKMessageRepository {
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			if (/no such table/i.test(message)) {
+				this.logger.warn(
+					`sessions table missing when resolving task_id for session ${sessionId}; ` +
+						'message will not appear in task timelines'
+				);
 				return null;
 			}
 			throw err;

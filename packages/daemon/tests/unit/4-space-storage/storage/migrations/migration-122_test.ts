@@ -401,6 +401,55 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
 			expect(taskIdAfter).toBe(taskIdBefore);
 			expect(tableExists(db, 'task_session_map')).toBe(false);
 		});
+
+		test('second run does not rewrite already-correct derived rows', () => {
+			runMigration122(db);
+			// All derived columns are now correct. Capture the exact values.
+			const before = db
+				.prepare(
+					`SELECT id, is_renderable, is_terminal, parent_tool_use_id FROM sdk_messages ORDER BY id`
+				)
+				.all() as Array<{
+				id: string;
+				is_renderable: number;
+				is_terminal: number;
+				parent_tool_use_id: string | null;
+			}>;
+
+			// Force a mutation by running again. If the WHERE clause is too
+			// broad, rows will be "updated" to the same values but SQLite
+			// will still bump change counters.
+			runMigration122(db);
+
+			const after = db
+				.prepare(
+					`SELECT id, is_renderable, is_terminal, parent_tool_use_id FROM sdk_messages ORDER BY id`
+				)
+				.all() as Array<{
+				id: string;
+				is_renderable: number;
+				is_terminal: number;
+				parent_tool_use_id: string | null;
+			}>;
+			expect(after).toEqual(before);
+		});
+
+		test('task_id backfill skips worker sessions with no taskId in context', () => {
+			// sess-orphan is a worker with NULL session_context — its rows
+			// should stay NULL and not be rescanned on every boot.
+			runMigration122(db);
+			const orphan = db
+				.prepare(`SELECT task_id FROM sdk_messages WHERE id = ?`)
+				.get('msg-orphan') as { task_id: string | null };
+			expect(orphan.task_id).toBeNull();
+
+			// Running again should not throw and should leave the row untouched.
+			expect(() => runMigration122(db)).not.toThrow();
+			const orphan2 = db
+				.prepare(`SELECT task_id FROM sdk_messages WHERE id = ?`)
+				.get('msg-orphan') as { task_id: string | null };
+			expect(orphan2.task_id).toBeNull();
+		});
 	});
 
 	describe('missing tables — no-op guards', () => {

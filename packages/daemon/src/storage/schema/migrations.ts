@@ -8059,15 +8059,10 @@ export function runMigration122(db: BunDatabase): void {
 			db.exec(`ALTER TABLE sdk_messages ADD COLUMN task_id TEXT`);
 		}
 
-		// Backfill derived columns. The WHERE clause targets rows that still
-		// hold the column defaults — for is_terminal that's 0 on a 'result'
-		// message (always wrong), and for is_renderable that's 1 on rows that
-		// should be 0. The predicate is conservative: it may backfill a few
-		// already-correct rows, but it will never miss a row that needs fixing.
-		//
-		// Because the gate is data-state rather than schema-add state, an
-		// interrupted migration (crash between ALTER and UPDATE) is automatically
-		// repaired on the next boot.
+		// Backfill derived columns. The WHERE clause only targets rows whose
+		// derived values are genuinely stale, so the migration converges after
+		// the first successful run instead of rewriting most of the table on
+		// every startup.
 		//
 		// is_terminal mirrors message_type = 'result'.
 		// is_renderable encodes the same predicate the compact-feed used to
@@ -8082,11 +8077,6 @@ export function runMigration122(db: BunDatabase): void {
 		// malformed historical row can't abort the migration. Invalid JSON
 		// rows fall through to safe defaults: is_renderable = 1 (preserves the
 		// column DEFAULT and keeps the row visible), parent_tool_use_id NULL.
-		//
-		// No schema-add gate: the WHERE clause is the only guard. This makes the
-		// backfill safely rerunnable — an interrupted migration (crash between
-		// ALTER and UPDATE) is repaired on next boot without rewriting already-
-		// correct rows.
 		db.exec(`
 			UPDATE sdk_messages
 			SET
@@ -8125,9 +8115,56 @@ export function runMigration122(db: BunDatabase): void {
 					ELSE 1
 				END
 			WHERE
-				(message_type = 'result' AND is_terminal = 0)
-				OR parent_tool_use_id IS NULL
-				OR is_renderable = 1
+				-- is_terminal mismatch
+				is_terminal != CASE WHEN message_type = 'result' THEN 1 ELSE 0 END
+				OR
+				-- parent_tool_use_id should be non-NULL but is NULL
+				(
+					json_valid(sdk_message)
+					AND json_extract(sdk_message, '$.parent_tool_use_id') IS NOT NULL
+					AND parent_tool_use_id IS NULL
+				)
+				OR
+				-- parent_tool_use_id should be NULL but is non-NULL
+				(
+					parent_tool_use_id IS NOT NULL
+					AND (
+						NOT json_valid(sdk_message)
+						OR json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
+					)
+				)
+				OR
+				-- is_renderable mismatch for user/assistant messages
+				(
+					message_type IN ('user', 'assistant')
+					AND is_renderable != CASE
+						WHEN message_type = 'user'
+							AND json_type(sdk_message, '$.message.content') = 'array'
+							AND EXISTS (
+								SELECT 1
+								FROM json_each(json_extract(sdk_message, '$.message.content')) je
+								WHERE json_extract(je.value, '$.type') = 'tool_result'
+							)
+						THEN 0
+						WHEN message_type = 'assistant'
+							AND json_type(sdk_message, '$.message.content') = 'array'
+							AND NOT EXISTS (
+								SELECT 1
+								FROM json_each(json_extract(sdk_message, '$.message.content')) je
+								WHERE json_extract(je.value, '$.type') = 'tool_use'
+									OR (
+										json_extract(je.value, '$.type') = 'text'
+										AND TRIM(COALESCE(json_extract(je.value, '$.text'), '')) != ''
+									)
+									OR (
+										json_extract(je.value, '$.type') = 'thinking'
+										AND TRIM(COALESCE(json_extract(je.value, '$.thinking'), '')) != ''
+									)
+							)
+						THEN 0
+						ELSE 1
+					END
+				)
 		`);
 
 		// Plain B-tree index — supersedes the json_extract function index
@@ -8150,9 +8187,9 @@ export function runMigration122(db: BunDatabase): void {
 		// Runs whenever rows with `task_id IS NULL` remain for an allowed session
 		// type, so an interrupted migration is repaired on next boot. We restrict
 		// the scan to rows whose session is an allowed type (space_task_agent,
-		// worker) — this avoids re-scanning permanently-NULL rows from lobby/neo/
-		// room-scoped sessions on every startup. The subquery itself is the same
-		// type guard that resolveTaskIdForSession applies at write time.
+		// worker) AND actually carries a taskId in context — this avoids re-
+		// scanning permanently-NULL rows from ordinary non-Space worker sessions
+		// on every startup.
 		//
 		// `json_valid(s.session_context)` guards against malformed JSON the same
 		// way the sdk_message backfill does.
@@ -8172,12 +8209,24 @@ export function runMigration122(db: BunDatabase): void {
 				)
 				WHERE task_id IS NULL
 				  AND session_id IN (
-					  SELECT id FROM sessions WHERE type IN ('space_task_agent', 'worker')
+					  SELECT id FROM sessions
+					  WHERE type IN ('space_task_agent', 'worker')
+						AND session_context IS NOT NULL
+						AND json_valid(session_context)
+						AND json_extract(session_context, '$.taskId') IS NOT NULL
 				  )
 			`);
 		}
 
-		db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id)`);
+		// Must match the fresh-schema bootstrap in schema/index.ts:
+		// `CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id, timestamp)`.
+		// Upgraded databases create this index here; fresh databases create it in
+		// createIndexes(). Both use IF NOT EXISTS, so the first one wins. Keeping
+		// the column list identical ensures upgraded and fresh databases have the
+		// same index shape.
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id, timestamp)`
+		);
 		// Covers the `DISTINCT session_id` dedup in the contributing_sessions CTE.
 		db.exec(
 			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session ON sdk_messages(task_id, session_id)`
