@@ -1540,6 +1540,52 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 		expect(record?.data.y).toBe('val2');
 	});
 
+	test('map-type field deep-merges entries from multiple writers (vote-counting)', async () => {
+		// Simulates plan-approval-gate: multiple reviewers each write a partial
+		// `approvals` map keyed by their lens. A shallow merge would replace the
+		// whole map with the latest writer's entry, losing prior votes. Deep
+		// merge of map-type fields must preserve all entries.
+		const gate: Gate = {
+			id: 'gate-votes',
+			fields: [
+				{
+					name: 'approvals',
+					type: 'map',
+					writers: ['*'],
+					check: { op: 'count', match: 'approved', min: 2 },
+				},
+			],
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGatedChannel(gate);
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		const config = makeConfig(ctx, { workflow, gateDataRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		// First write (lens "architecture")
+		const r1 = await handlers.send_message({
+			target: 'reviewer',
+			message: 'lens=architecture',
+			data: { approvals: { architecture: 'approved' } },
+		});
+		expect(JSON.parse(r1.content[0].text).gateWrite.gateOpen).toBe(false);
+
+		// Second write (lens "security") — must NOT overwrite the first vote.
+		// The auto-gate-write deep-merges map-type fields keyed by writer lens.
+		const r2 = await handlers.send_message({
+			target: 'reviewer',
+			message: 'lens=security',
+			data: { approvals: { security: 'approved' } },
+		});
+		expect(JSON.parse(r2.content[0].text).gateWrite.gateOpen).toBe(true);
+
+		const record = gateDataRepo.get(ctx.workflowRunId, 'gate-votes');
+		expect(record?.data.approvals).toEqual({
+			architecture: 'approved',
+			security: 'approved',
+		});
+	});
+
 	test('onGateDataChanged fires after gate-write via send_message', async () => {
 		const gate: Gate = {
 			id: 'gate-callback',

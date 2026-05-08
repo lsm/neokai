@@ -557,9 +557,12 @@ export class ChannelRouter {
 		const channelIsCyclic = match ? this.isChannelCyclicByIndex(channelIndex, workflow) : false;
 
 		// ── 2. Target resolution: agent name → DM, node name → fan-out ────────
-		// Activation is intentionally resolved before gate evaluation below. Gates may
-		// block delivery of the message content, but they must not block spawning or
-		// resuming the target agent session that needs to receive/react to the handoff.
+		// Target resolution itself is non-mutating — only `activateNode` below
+		// creates pending node_executions. For gated channels we evaluate the
+		// gate BEFORE activating so blocked messages do not spawn the target
+		// agent session prematurely. Once the gate opens (via
+		// `onGateDataChanged` or a subsequent send), the target is activated
+		// from the same code path.
 		let targetNode = this.findNodeByAgentName(workflow, toTarget);
 		let isFanOut = false;
 
@@ -587,7 +590,25 @@ export class ChannelRouter {
 			}
 		}
 
-		// ── 3. Lazy activation ─────────────────────────────────────────────────
+		// ── 3. Gate evaluation (BEFORE activation) ───────────────────────────
+		// Evaluate the channel's gate first when one exists. If the gate is
+		// closed, throw without creating any pending node_executions for the
+		// target — otherwise the tick loop would spawn agent sessions for
+		// gates that have not yet opened (e.g. Task Dispatcher activating
+		// before all 4 reviewers approve in plan-approval-gate).
+		if (channel?.gateId) {
+			const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
+			if (!gateResult.open) {
+				throw new ChannelGateBlockedError(
+					gateResult.reason ??
+						`Gate "${channel.gateId}" blocked delivery from "${fromRole}" to "${toTarget}"`,
+					channel.gateId
+				);
+			}
+		}
+
+		// ── 4. Lazy activation ─────────────────────────────────────────────────
+		// Only reached when the channel is open (no gate, or gate eval passed).
 		const activeTasks = this.getActiveTasksForNode(runId, targetNode.id);
 		let activatedTasks: SpaceTask[] | undefined;
 
@@ -596,20 +617,6 @@ export class ChannelRouter {
 				reopenBy: `agent:${fromRole}`,
 				reopenReason: `peer send_message from "${fromRole}" to "${toTarget}"`,
 			});
-		}
-
-		// ── 4. Gate evaluation ───────────────────────────────────────────────
-		if (channel) {
-			if (channel.gateId) {
-				const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
-				if (!gateResult.open) {
-					throw new ChannelGateBlockedError(
-						gateResult.reason ??
-							`Gate "${channel.gateId}" blocked delivery from "${fromRole}" to "${toTarget}"`,
-						channel.gateId
-					);
-				}
-			}
 		}
 
 		// ── 5. Increment per-channel cycle count and reset cyclic gates ──────

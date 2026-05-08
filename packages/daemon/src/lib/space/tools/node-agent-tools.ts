@@ -621,10 +621,36 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 							}
 
 							if (Object.keys(authorizedData).length > 0) {
-								const updated = gateDataRepo.merge(workflowRunId, gateId, {
+								// Deep-merge map-type fields: each reviewer in a vote-counting gate
+								// (e.g. plan-approval-gate `approvals: map`) writes a partial map
+								// keyed by their lens/identity. A shallow merge would replace the
+								// entire map with the latest writer's entry only — losing prior
+								// votes. For every authorized field whose definition is `type: map`,
+								// merge the new entries on top of the previously stored entries
+								// before handing off to gateDataRepo.merge.
+								const existingRecord = gateDataRepo.get(workflowRunId, gateId);
+								const existingData = existingRecord?.data ?? {};
+								const partialToMerge: Record<string, unknown> = {
 									...authorizedData,
 									approvalSource: 'agent',
-								});
+								};
+								for (const [key, value] of Object.entries(authorizedData)) {
+									const fieldDef = fieldMap.get(key);
+									if (!fieldDef || fieldDef.type !== 'map') continue;
+									if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+									const existingMap = existingData[key];
+									if (
+										existingMap &&
+										typeof existingMap === 'object' &&
+										!Array.isArray(existingMap)
+									) {
+										partialToMerge[key] = {
+											...(existingMap as Record<string, unknown>),
+											...(value as Record<string, unknown>),
+										};
+									}
+								}
+								const updated = gateDataRepo.merge(workflowRunId, gateId, partialToMerge);
 								const evalResult = await evaluateGate(
 									gateDef,
 									updated.data,

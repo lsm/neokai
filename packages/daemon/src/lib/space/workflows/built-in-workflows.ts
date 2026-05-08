@@ -323,32 +323,45 @@ const PD_PLANNING_PROMPT =
 	'- Out of scope: what is intentionally not included\n' +
 	'- Open questions: anything that needs clarification before tasks are dispatched\n\n' +
 	'Write the plan to `plan.md` at the repo root, commit it, and open/update a PR targeting the ' +
-	'default branch. The plan-pr-gate will automatically verify the PR before Plan Review starts.';
+	'default branch. After the PR is open and mergeable, hand off to Plan Review by calling ' +
+	'`send_message(target="Plan Review", message="<short summary>", data: { pr_url: "<plan PR url>" })`. ' +
+	'The `data: { pr_url }` payload is auto-merged into `plan-pr-gate`; the gate script then ' +
+	'verifies the PR is open and mergeable before Plan Review activates. Without this explicit ' +
+	'`pr_url` write the gate stays closed and Plan Review never starts. Always re-supply ' +
+	'`data: { pr_url }` on every send to Plan Review — `plan-pr-gate` resets each cycle, so the ' +
+	'URL must be reasserted after every revision.';
 
 const PD_PLAN_REVIEW_PROMPT =
 	'You are one of four parallel Reviewers in the Plan Review node of a Plan & Decompose Workflow. ' +
 	'You receive a plan from the Planning node and must evaluate it through your specific lens ' +
 	'before tasks are dispatched. You do not coordinate with other reviewers; vote independently.\n\n' +
 	'TERMINAL ACTION PRE-CONDITIONS:\n' +
-	'Plan Review is NOT the end node in this workflow — the task-completion tools ' +
-	'(`approve_task`, `submit_for_approval`) are not available to you. Your terminal ' +
-	'action is your vote on `plan-approval-gate`. Vote `approved: true` ONLY when your ' +
-	'lens-specific verdict is APPROVE (zero P0–P3 findings under your lens). If ANY ' +
-	'P0–P3 finding exists, you MUST vote `approved: false` AND send_message to the ' +
-	'Planning node describing what to change. Do NOT vote `approved: true` to "let a ' +
-	'human decide" or to defer judgment — that is equivalent to silently passing the ' +
-	'plan through with findings open. The 4-of-4 approval threshold exists precisely ' +
-	'so that no lens can be skipped.\n\n' +
+	'Plan Review is NOT the end node in this workflow. The task-completion tools ' +
+	'(`approve_task`, `submit_for_approval`) ARE technically registered for every node-agent ' +
+	'session, but for reviewers they are STRICTLY OFF-LIMITS — calling either of them closes the ' +
+	'entire Plan & Decompose run before the Task Dispatcher has had a chance to fan the plan out ' +
+	'into standalone tasks. Only the Task Dispatcher (the workflow end node) is allowed to call ' +
+	'them. Your terminal action is your vote on `plan-approval-gate`. Vote `approved` ONLY when ' +
+	'your lens-specific verdict is APPROVE (zero P0–P3 findings under your lens). If ANY P0–P3 ' +
+	'finding exists, you MUST vote `rejected` AND send_message to the Planning node describing ' +
+	'what to change. Do NOT vote `approved` to "let a human decide" or to defer judgment — that ' +
+	'is equivalent to silently passing the plan through with findings open. The 4-of-4 approval ' +
+	'threshold exists precisely so that no lens can be skipped.\n\n' +
 	'Steps:\n' +
 	'1. Read the plan file in the PR (`gh pr diff` and `gh pr view`).\n' +
 	'2. Evaluate the plan against your lens criteria (described below).\n' +
 	'3. Post your review to the PR with `gh pr review <url> --comment --body "<your review>"` so ' +
 	'the Planner and peer reviewers can see your feedback in the PR thread.\n' +
-	'4. Vote by writing to plan-approval-gate: call send_message to the "Task Dispatcher" node ' +
-	'with `data: { reviewer_name: "<your lens>", approved: true|false, comments_url: "<pr url>" }`. ' +
-	'The vote counts toward the 4-of-4 approval threshold.\n' +
-	'5. If you reject, also send a message to the Planning node via the feedback channel ' +
-	'describing what needs to change, so the Planner can revise and re-open.';
+	'4. Vote by writing your lens entry into the `approvals` map on `plan-approval-gate`. Call ' +
+	'`send_message(target="Task Dispatcher", message="<short verdict>", data: { approvals: ' +
+	'{ "<your lens>": "approved" }, pr_url: "<plan PR url>" })`. The `approvals` map is ' +
+	"deep-merged with the existing votes, so each reviewer's entry accumulates " +
+	'independently — write the SAME lens key your prompt assigns you (architecture / security / ' +
+	'correctness / ux). The gate passes when ≥ 4 entries have value `"approved"`.\n' +
+	'5. If you reject, write `{ "<your lens>": "rejected" }` in the same shape AND also send a ' +
+	'message to the Planning node via the feedback channel describing exactly what needs to ' +
+	'change, so the Planner can revise and re-open. Do NOT call `approve_task` or ' +
+	'`submit_for_approval` — they are reserved for the Task Dispatcher.';
 
 const PD_TASK_DISPATCHER_PROMPT =
 	'You are the Task Dispatcher in a Plan & Decompose Workflow. You are the end node. ' +
@@ -1035,7 +1048,9 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 							'items, long-term maintainability, and whether the decomposition will hold up as ' +
 							'the system grows. Flag items that smuggle unrelated concerns together or create ' +
 							'hidden cross-cutting dependencies.\n\n' +
-							'When voting, use `reviewer_name: "architecture"` in the plan-approval-gate data.',
+							'When voting, your lens key is `"architecture"` — write ' +
+							'`data: { approvals: { architecture: "approved" } }` (or `"rejected"`) on the ' +
+							'`plan-approval-gate`.',
 					},
 				},
 				{
@@ -1049,7 +1064,9 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 							'authentication/authorization, secrets handling, and supply-chain risk for any ' +
 							'new dependencies. Flag items that expose user data, bypass existing auth checks, ' +
 							'or rely on untrusted input without validation.\n\n' +
-							'When voting, use `reviewer_name: "security"` in the plan-approval-gate data.',
+							'When voting, your lens key is `"security"` — write ' +
+							'`data: { approvals: { security: "approved" } }` (or `"rejected"`) on the ' +
+							'`plan-approval-gate`.',
 					},
 				},
 				{
@@ -1063,7 +1080,9 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 							'consistency across failures, idempotency, and race conditions. Flag items ' +
 							'whose acceptance criteria are vague, whose failure modes are unclear, or ' +
 							'whose tests would not catch the obvious regressions.\n\n' +
-							'When voting, use `reviewer_name: "correctness"` in the plan-approval-gate data.',
+							'When voting, your lens key is `"correctness"` — write ' +
+							'`data: { approvals: { correctness: "approved" } }` (or `"rejected"`) on the ' +
+							'`plan-approval-gate`.',
 					},
 				},
 				{
@@ -1077,7 +1096,9 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 							'documentation, error messages, and upgrade/migration experience for ' +
 							'existing users. Flag items that change public interfaces without describing ' +
 							'what users will see or how docs will be updated.\n\n' +
-							'When voting, use `reviewer_name: "ux"` in the plan-approval-gate data.',
+							'When voting, your lens key is `"ux"` — write ' +
+							'`data: { approvals: { ux: "approved" } }` (or `"rejected"`) on the ' +
+							'`plan-approval-gate`.',
 					},
 				},
 			],
@@ -1134,8 +1155,12 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 			description:
 				'All four Plan Reviewers must approve the plan before Task Dispatcher activates. ' +
 				'Each reviewer writes to the `approvals` map with their lens name as the key ' +
-				'(architecture, security, correctness, ux) and `approved: true` as the value. ' +
-				'Gate passes when ≥ 4 entries are approved.',
+				'(architecture, security, correctness, ux) and the string `"approved"` as the ' +
+				"value. The auto-gate-write deep-merges map fields, so each reviewer's entry " +
+				'accumulates without overwriting earlier votes. Gate passes when ≥ 4 entries ' +
+				'have value `"approved"`. Note: `resetOnCycle: true` means all approvals are ' +
+				'cleared when Plan Review→Planning revision feedback fires — fresh votes are ' +
+				'collected after each plan revision because the plan diff has changed.',
 			fields: [
 				{
 					name: 'approvals',
