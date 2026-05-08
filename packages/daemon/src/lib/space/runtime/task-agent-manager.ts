@@ -58,6 +58,7 @@ import type { UUID } from 'crypto';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
 import { AgentSession } from '../../../lib/agent/agent-session';
+import { validateImageSizes } from '../../session/message-persistence';
 import type { Database } from '../../../storage/database';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { DaemonHub } from '../../daemon-hub';
@@ -3739,11 +3740,16 @@ export class TaskAgentManager {
 
 	/**
 	 * Inject a message (optionally with image attachments) into an AgentSession.
-	 * Uses the same pattern as SpaceRuntimeService.injectMessage().
 	 *
-	 * When `images` is non-empty, the SDK message content becomes a multi-modal
-	 * block array (images first, then text) — mirroring the regular non-space
-	 * chat path in `MessagePersistenceService.persistAndDispatchUserMessage`.
+	 * Mirrors the multi-modal content shape produced by `buildMessageContent`
+	 * in `MessagePersistence.persist` (the regular non-space chat path): when
+	 * `images` is non-empty the SDK message content becomes a multi-modal
+	 * block array (images first, then text) and is passed through to
+	 * `MessageQueue.enqueueWithId`, which already accepts
+	 * `string | MessageContent[]`. Image base64 sizes are validated against
+	 * the same Anthropic API limit as the non-space path via
+	 * `validateImageSizes` so users get the same early "resize image" error
+	 * instead of a downstream API failure.
 	 */
 	private async injectMessageIntoSession(
 		session: AgentSession,
@@ -3772,6 +3778,12 @@ export class TaskAgentManager {
 
 		const messageId = generateUUID();
 		const hasImages = !!images && images.length > 0;
+		// Validate base64 size up-front so users get the same early "resize image"
+		// error returned by the live-session persistence path instead of a late,
+		// opaque API failure once the SDK forwards the oversized payload.
+		if (hasImages) {
+			validateImageSizes(images!);
+		}
 		const sdkContent: MessageContent[] = hasImages
 			? [
 					...images!.map((img) => ({

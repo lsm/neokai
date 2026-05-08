@@ -6,7 +6,11 @@ import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, Session } from '@neokai/shared';
 import type { Database } from '../../../../src/storage/database';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
-import { MessagePersistence } from '../../../../src/lib/session/message-persistence';
+import {
+	MAX_IMAGE_BASE64_SIZE,
+	MessagePersistence,
+	validateImageSizes,
+} from '../../../../src/lib/session/message-persistence';
 import type { SessionCache } from '../../../../src/lib/session/session-cache';
 
 describe('MessagePersistence', () => {
@@ -196,5 +200,46 @@ describe('MessagePersistence', () => {
 				skipQueryStart: true,
 			})
 		);
+	});
+});
+
+describe('validateImageSizes', () => {
+	const tinyData = 'AAAA'; // 4 bytes — well under the 5MB cap
+
+	it('returns without error for an empty list', () => {
+		expect(() => validateImageSizes([])).not.toThrow();
+	});
+
+	it('accepts images under the 5MB base64 cap', () => {
+		expect(() => validateImageSizes([{ media_type: 'image/png', data: tinyData }])).not.toThrow();
+	});
+
+	it('throws a user-facing error when an image exceeds the cap', () => {
+		const oversized = 'a'.repeat(MAX_IMAGE_BASE64_SIZE + 1);
+		expect(() => validateImageSizes([{ media_type: 'image/png', data: oversized }])).toThrow(
+			/exceeds API limit.*Please resize the image/i
+		);
+	});
+
+	it('throws when any image in a batch exceeds the cap', () => {
+		const oversized = 'a'.repeat(MAX_IMAGE_BASE64_SIZE + 1);
+		expect(() =>
+			validateImageSizes([
+				{ media_type: 'image/png', data: tinyData },
+				{ media_type: 'image/png', data: oversized },
+			])
+		).toThrow(/exceeds API limit/);
+	});
+
+	it('also handles ImageContent shaped inputs (source.data)', () => {
+		const oversized = 'a'.repeat(MAX_IMAGE_BASE64_SIZE + 1);
+		expect(() =>
+			validateImageSizes([
+				{
+					type: 'image',
+					source: { type: 'base64', media_type: 'image/png', data: oversized },
+				},
+			])
+		).toThrow(/exceeds API limit/);
 	});
 });

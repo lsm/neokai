@@ -224,4 +224,26 @@ describe('TaskSessionChatComposer', () => {
 		renderComposer();
 		expect(typeof lastChatComposerProps?.onThinkingLevelChange).toBe('function');
 	});
+
+	describe('image passthrough', () => {
+		it('forwards image attachments from ChatComposer.onSend to the parent onSend with the selected target', async () => {
+			const { onSend } = renderComposer();
+			const sampleImage = { media_type: 'image/png' as const, data: 'AAAAB' };
+
+			// Simulate ChatComposer firing onSend with a multi-modal payload
+			await lastChatComposerProps?.onSend?.('look at this', [sampleImage], 'immediate');
+
+			expect(onSend).toHaveBeenCalledTimes(1);
+			expect(onSend).toHaveBeenCalledWith('look at this', targets[0], [sampleImage]);
+		});
+
+		it('forwards undefined when ChatComposer.onSend fires without images', async () => {
+			const { onSend } = renderComposer();
+
+			await lastChatComposerProps?.onSend?.('plain text', undefined, 'immediate');
+
+			expect(onSend).toHaveBeenCalledTimes(1);
+			expect(onSend).toHaveBeenCalledWith('plain text', targets[0], undefined);
+		});
+	});
 });
