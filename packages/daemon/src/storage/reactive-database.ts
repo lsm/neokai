@@ -20,7 +20,13 @@ export interface TableChangeScope {
 export interface TableChangeEvent {
 	tables: string[];
 	versions: Record<string, number>;
-	/** Scope metadata for the change. Only populated for single-table, non-transaction events. */
+	/**
+	 * Scope metadata for the change. Populated for single-table, non-transaction
+	 * events, and also for transaction-flush events when every pending write to a
+	 * given table shares a compatible scope (see `addPendingScope` /
+	 * `mergeScopes`). Left unset when transaction batches contain conflicting or
+	 * unscoped writes.
+	 */
 	scope?: TableChangeScope;
 }
 

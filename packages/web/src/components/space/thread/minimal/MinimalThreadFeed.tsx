@@ -271,10 +271,10 @@ function rosterEntriesFromSummary(
 
 /**
  * Defensive string coercion for fields that the typed `ActivityEntry` shape
- * declares as `string`. `parseActiveTurnSummaries` validates the wrapper but
- * intentionally trusts entry-level fields (the daemon already normalises
- * them), so we coerce here as a belt-and-braces guard against a malformed
- * entry crashing the renderer with a `TypeError` on `.trim()`.
+ * declares as `string`. The daemon already normalises entry-level fields when
+ * it builds `ActiveTurnSummary`, but we coerce here as a belt-and-braces guard
+ * against a malformed entry crashing the renderer with a `TypeError` on
+ * `.trim()`.
  */
 function asTrimmedString(value: unknown): string {
 	return typeof value === 'string' ? value.trim() : '';
