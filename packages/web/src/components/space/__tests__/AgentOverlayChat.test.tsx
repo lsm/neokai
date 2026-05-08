@@ -125,11 +125,16 @@ describe('AgentOverlayChat', () => {
 
 		fireEvent.click(getByTestId('mock-chat-send-override'));
 		await vi.waitFor(() => {
-			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'hello node', {
-				kind: 'node_agent',
-				agentName: 'coder',
-				nodeExecutionId: 'exec-coder-1',
-			});
+			expect(mockSendTaskMessage).toHaveBeenCalledWith(
+				'task-1',
+				'hello node',
+				{
+					kind: 'node_agent',
+					agentName: 'coder',
+					nodeExecutionId: 'exec-coder-1',
+				},
+				undefined
+			);
 		});
 	});
 

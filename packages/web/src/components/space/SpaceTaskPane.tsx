@@ -1,5 +1,6 @@
 import {
 	isWorkflowRecoveryTransition,
+	type MessageImage,
 	type SpaceTaskActivityMember,
 	type SpaceTaskActivityState,
 	type SpaceTaskPriority,
@@ -529,7 +530,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	const sendThreadMessage = async (
 		nextMessage: string,
-		target: TaskComposerTarget | null
+		target: TaskComposerTarget | null,
+		images?: MessageImage[]
 	): Promise<boolean> => {
 		if (!nextMessage) return false;
 		if (!runtimeSpaceId || !task) return false;
@@ -554,7 +556,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							agentName: target.agentName,
 							...(target.nodeExecutionId ? { nodeExecutionId: target.nodeExecutionId } : {}),
 						}
-					: { kind: 'task_agent' }
+					: { kind: 'task_agent' },
+				images
 			);
 
 			// When the daemon queued the message for a not-yet-spawned agent,

@@ -275,11 +275,16 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 		fireEvent.click(container.getByTestId('send-button'));
 
 		await waitFor(() =>
-			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Can you check this?', {
-				kind: 'node_agent',
-				agentName: 'Coder',
-				nodeExecutionId: 'exec-coder',
-			})
+			expect(mockSendTaskMessage).toHaveBeenCalledWith(
+				'task-1',
+				'Can you check this?',
+				{
+					kind: 'node_agent',
+					agentName: 'Coder',
+					nodeExecutionId: 'exec-coder',
+				},
+				undefined
+			)
 		);
 	});
 
@@ -299,11 +304,16 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 		fireEvent.click(container.getByTestId('send-button'));
 
 		await waitFor(() =>
-			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Please review again', {
-				kind: 'node_agent',
-				agentName: 'Reviewer',
-				nodeExecutionId: 'exec-reviewer',
-			})
+			expect(mockSendTaskMessage).toHaveBeenCalledWith(
+				'task-1',
+				'Please review again',
+				{
+					kind: 'node_agent',
+					agentName: 'Reviewer',
+					nodeExecutionId: 'exec-reviewer',
+				},
+				undefined
+			)
 		);
 		await waitFor(() =>
 			expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(

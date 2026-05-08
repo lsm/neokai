@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useRef } from 'preact/hooks';
+import type { MessageImage } from '@neokai/shared';
 import { Portal } from '../ui/Portal';
 import { setupFocusTrap } from '../ui/Modal';
 import ChatContainer from '../../islands/ChatContainer';
@@ -59,14 +60,21 @@ export function AgentOverlayChat({
 }: AgentOverlayChatProps) {
 	const panelRef = useRef<HTMLDivElement>(null);
 	const handleTaskContextSend = taskContext
-		? async (message: string, _images?: unknown[]) => {
+		? async (message: string, images?: MessageImage[]) => {
 				const trimmed = message.trim();
 				if (!trimmed) return false;
-				const result = await spaceStore.sendTaskMessage(taskContext.taskId, trimmed, {
-					kind: 'node_agent',
-					agentName: taskContext.agentName,
-					...(taskContext.nodeExecutionId ? { nodeExecutionId: taskContext.nodeExecutionId } : {}),
-				});
+				const result = await spaceStore.sendTaskMessage(
+					taskContext.taskId,
+					trimmed,
+					{
+						kind: 'node_agent',
+						agentName: taskContext.agentName,
+						...(taskContext.nodeExecutionId
+							? { nodeExecutionId: taskContext.nodeExecutionId }
+							: {}),
+					},
+					images
+				);
 				if (result?.delivered === false && !result?.queued) {
 					throw new Error(
 						'Agent is starting — your message could not be delivered. Try again in a moment.'

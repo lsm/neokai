@@ -28,7 +28,11 @@ interface TaskSessionChatComposerProps {
 	onTargetSelect: (targetId: string) => void;
 	onDraftActiveChange?: (hasDraft: boolean) => void;
 	onComposerRef?: Ref<HTMLDivElement>;
-	onSend: (message: string, target: TaskComposerTarget | null) => Promise<boolean>;
+	onSend: (
+		message: string,
+		target: TaskComposerTarget | null,
+		images?: MessageImage[]
+	) => Promise<boolean>;
 }
 
 export function TaskSessionChatComposer({
@@ -85,10 +89,10 @@ export function TaskSessionChatComposer({
 	// Return the boolean so MessageInput can restore the draft when sending fails
 	const handleSend = async (
 		content: string,
-		_images?: MessageImage[],
+		images?: MessageImage[],
 		_deliveryMode?: MessageDeliveryMode
 	): Promise<boolean> => {
-		return onSend(content, selectedTarget);
+		return onSend(content, selectedTarget, images);
 	};
 
 	const handleOpenTools = () => {
