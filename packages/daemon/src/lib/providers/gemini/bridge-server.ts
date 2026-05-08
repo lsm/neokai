@@ -52,6 +52,8 @@ export interface GeminiBridgeConfig {
 	rotationManager: AccountRotationManager;
 	fetchImpl?: typeof fetch;
 	sessionId?: string;
+	/** Optional model list override for the /v1/models endpoint. */
+	models?: Array<{ id: string; display_name: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,55 +100,20 @@ export function createGeminiBridgeServer(config: GeminiBridgeConfig): GeminiBrid
 
 			// Models endpoint (minimal)
 			if (url.pathname === '/v1/models' && req.method === 'GET') {
+				const modelList = config.models ?? [
+					{ id: 'gemini-3.1-pro-preview', display_name: 'Gemini 3.1 Pro Preview' },
+					{ id: 'gemini-3-pro-preview', display_name: 'Gemini 3 Pro Preview' },
+					{ id: 'gemini-3-flash-preview', display_name: 'Gemini 3 Flash Preview' },
+					{ id: 'gemini-3.1-flash-lite-preview', display_name: 'Gemini 3.1 Flash Lite Preview' },
+					{ id: 'gemini-2.5-pro', display_name: 'Gemini 2.5 Pro' },
+					{ id: 'gemini-2.5-flash', display_name: 'Gemini 2.5 Flash' },
+					{ id: 'gemini-2.5-flash-lite', display_name: 'Gemini 2.5 Flash Lite' },
+					{ id: 'gemma-4-31b-it', display_name: 'Gemma 4 31B IT' },
+					{ id: 'gemma-4-26b-a4b-it', display_name: 'Gemma 4 26B A4B IT' },
+				];
 				return new Response(
 					JSON.stringify({
-						data: [
-							{
-								id: 'gemini-3.1-pro-preview',
-								type: 'model',
-								display_name: 'Gemini 3.1 Pro Preview',
-							},
-							{
-								id: 'gemini-3-pro-preview',
-								type: 'model',
-								display_name: 'Gemini 3 Pro Preview',
-							},
-							{
-								id: 'gemini-3-flash-preview',
-								type: 'model',
-								display_name: 'Gemini 3 Flash Preview',
-							},
-							{
-								id: 'gemini-3.1-flash-lite-preview',
-								type: 'model',
-								display_name: 'Gemini 3.1 Flash Lite Preview',
-							},
-							{
-								id: 'gemini-2.5-pro',
-								type: 'model',
-								display_name: 'Gemini 2.5 Pro',
-							},
-							{
-								id: 'gemini-2.5-flash',
-								type: 'model',
-								display_name: 'Gemini 2.5 Flash',
-							},
-							{
-								id: 'gemini-2.5-flash-lite',
-								type: 'model',
-								display_name: 'Gemini 2.5 Flash Lite',
-							},
-							{
-								id: 'gemma-4-31b-it',
-								type: 'model',
-								display_name: 'Gemma 4 31B IT',
-							},
-							{
-								id: 'gemma-4-26b-a4b-it',
-								type: 'model',
-								display_name: 'Gemma 4 26B A4B IT',
-							},
-						],
+						data: modelList.map((m) => ({ ...m, type: 'model' })),
 					}),
 					{ headers: { 'Content-Type': 'application/json' } }
 				);

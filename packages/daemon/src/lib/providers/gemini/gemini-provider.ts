@@ -36,117 +36,10 @@ import {
 } from './oauth-client.js';
 import { AccountRotationManager } from './account-rotation.js';
 import { createGeminiBridgeServer, type GeminiBridgeServer } from './bridge-server.js';
+import { fetchAvailableModels, getFallbackModels } from './model-discovery.js';
+import { refreshAccessToken } from './oauth-client.js';
 
 const log = createLogger('kai:providers:gemini');
-
-// ---------------------------------------------------------------------------
-// Gemini models
-// ---------------------------------------------------------------------------
-
-const GEMINI_MODELS: ModelInfo[] = [
-	// Gemini 3.x preview models (latest generation)
-	{
-		id: 'gemini-3.1-pro-preview',
-		name: 'Gemini 3.1 Pro Preview',
-		alias: 'gemini-3.1-pro-preview',
-		family: 'gemini',
-		provider: 'google-gemini-oauth',
-		contextWindow: 1_000_000,
-		description: 'Google Gemini 3.1 Pro Preview via Code Assist (OAuth)',
-		releaseDate: '2025-05-01',
-		available: true,
-	},
-	{
-		id: 'gemini-3-pro-preview',
-		name: 'Gemini 3 Pro Preview',
-		alias: 'gemini-3-pro-preview',
-		family: 'gemini',
-		provider: 'google-gemini-oauth',
-		contextWindow: 1_000_000,
-		description: 'Google Gemini 3 Pro Preview via Code Assist (OAuth)',
-		releaseDate: '2025-04-01',
-		available: true,
-	},
-	{
-		id: 'gemini-3-flash-preview',
-		name: 'Gemini 3 Flash Preview',
-		alias: 'gemini-3-flash-preview',
-		family: 'gemini',
-		provider: 'google-gemini-oauth',
-		contextWindow: 1_000_000,
-		description: 'Google Gemini 3 Flash Preview via Code Assist (OAuth)',
-		releaseDate: '2025-04-01',
-		available: true,
-	},
-	{
-		id: 'gemini-3.1-flash-lite-preview',
-		name: 'Gemini 3.1 Flash Lite Preview',
-		alias: 'gemini-3.1-flash-lite-preview',
-		family: 'gemini',
-		provider: 'google-gemini-oauth',
-		contextWindow: 1_000_000,
-		description: 'Google Gemini 3.1 Flash Lite Preview via Code Assist (OAuth)',
-		releaseDate: '2025-05-01',
-		available: true,
-	},
-	// Gemini 2.5 stable models
-	{
-		id: 'gemini-2.5-pro',
-		name: 'Gemini 2.5 Pro',
-		alias: 'gemini-2.5-pro',
-		family: 'gemini',
-		provider: 'google-gemini-oauth',
-		contextWindow: 1_000_000,
-		description: 'Google Gemini 2.5 Pro via Code Assist (OAuth)',
-		releaseDate: '2025-01-01',
-		available: true,
-	},
-	{
-		id: 'gemini-2.5-flash',
-		name: 'Gemini 2.5 Flash',
-		alias: 'gemini-2.5-flash',
-		family: 'gemini',
-		provider: 'google-gemini-oauth',
-		contextWindow: 1_000_000,
-		description: 'Google Gemini 2.5 Flash via Code Assist (OAuth)',
-		releaseDate: '2025-01-01',
-		available: true,
-	},
-	{
-		id: 'gemini-2.5-flash-lite',
-		name: 'Gemini 2.5 Flash Lite',
-		alias: 'gemini-2.5-flash-lite',
-		family: 'gemini',
-		provider: 'google-gemini-oauth',
-		contextWindow: 1_000_000,
-		description: 'Google Gemini 2.5 Flash Lite via Code Assist (OAuth)',
-		releaseDate: '2025-01-01',
-		available: true,
-	},
-	// Gemma models
-	{
-		id: 'gemma-4-31b-it',
-		name: 'Gemma 4 31B IT',
-		alias: 'gemma-4-31b-it',
-		family: 'gemma',
-		provider: 'google-gemini-oauth',
-		contextWindow: 1_000_000,
-		description: 'Google Gemma 4 31B IT via Code Assist (OAuth)',
-		releaseDate: '2025-01-01',
-		available: true,
-	},
-	{
-		id: 'gemma-4-26b-a4b-it',
-		name: 'Gemma 4 26B A4B IT',
-		alias: 'gemma-4-26b-a4b-it',
-		family: 'gemma',
-		provider: 'google-gemini-oauth',
-		contextWindow: 1_000_000,
-		description: 'Google Gemma 4 26B A4B IT via Code Assist (OAuth)',
-		releaseDate: '2025-01-01',
-		available: true,
-	},
-];
 
 /** Success HTML shown in the browser after OAuth completes. */
 const OAUTH_SUCCESS_HTML =
@@ -202,18 +95,71 @@ export class GeminiOAuthProvider implements Provider {
 		}
 	}
 
+	private _discoveredModels: ModelInfo[] | null = null;
+
 	/**
-	 * Get list of available Gemini models.
+	 * Discover available models from Google's Code Assist API.
+	 *
+	 * Uses the first available account's OAuth token to call the
+	 * fetchAvailableModels endpoint. Falls back to a static list
+	 * if discovery fails (network error, no accounts, etc.).
 	 */
 	async getModels(): Promise<ModelInfo[]> {
-		return GEMINI_MODELS;
+		if (this._discoveredModels) {
+			return this._discoveredModels;
+		}
+
+		const discovered = await this.discoverModels();
+		if (discovered) {
+			this._discoveredModels = discovered;
+			return discovered;
+		}
+
+		return getFallbackModels();
 	}
 
 	/**
-	 * Check if a model ID belongs to this provider (exact match against catalog).
+	 * Force a refresh of the model cache on the next getModels() call.
+	 */
+	clearModelCache(): void {
+		this._discoveredModels = null;
+	}
+
+	/**
+	 * Check if a model ID belongs to this provider.
+	 *
+	 * Accepts any gemini-* or gemma-* ID since discovery may surface
+	 * models not in the fallback list.
 	 */
 	ownsModel(modelId: string): boolean {
-		return GEMINI_MODELS.some((m) => m.id === modelId);
+		return modelId.startsWith('gemini-') || modelId.startsWith('gemma-');
+	}
+
+	/**
+	 * Discover models using the fetchAvailableModels endpoint.
+	 */
+	private async discoverModels(): Promise<ModelInfo[] | null> {
+		try {
+			await this.rotationManager.initialize();
+			const account = await this.rotationManager.getAccountForSession('discovery');
+			if (!account) {
+				log.warn('No account available for model discovery');
+				return null;
+			}
+
+			const tokenResponse = await refreshAccessToken(account.refresh_token, this._deps);
+
+			const models = await fetchAvailableModels({
+				token: tokenResponse.access_token,
+				fetchImpl: this._deps?.fetchImpl,
+			});
+
+			this.rotationManager.releaseSession('discovery');
+			return models;
+		} catch (err) {
+			log.warn(`Model discovery failed: ${err instanceof Error ? err.message : err}`);
+			return null;
+		}
 	}
 
 	/**
