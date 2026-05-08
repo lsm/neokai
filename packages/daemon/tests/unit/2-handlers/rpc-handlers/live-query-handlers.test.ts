@@ -273,7 +273,12 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			return id;
 		}
 
-		function insertSession(id: string, type: string, processingState: string): void {
+		function insertSession(
+			id: string,
+			type: string,
+			processingState: string,
+			sessionContext?: string
+		): void {
 			db.exec(`
 				INSERT INTO sessions (
 					id, title, workspace_path, created_at, last_active_at, status, config, metadata,
@@ -281,7 +286,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					available_commands, processing_state, archived_at, type, session_context
 				) VALUES (
 					'${id}', 'Session', '/tmp/test-space', '${nowIso}', '${nowIso}', 'active', '{}', '{}',
-					0, NULL, NULL, NULL, NULL, NULL, NULL, '${processingState}', NULL, '${type}', '{}'
+					0, NULL, NULL, NULL, NULL, NULL, NULL, '${processingState}', NULL, '${type}', '${sessionContext ?? '{}'}'
 				)
 			`);
 		}
@@ -440,7 +445,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			});
 
 			// Insert session and SDK messages for the node agent
-			insertSession(nodeSessionId, 'space_task_agent', '{"status":"processing","phase":"coding"}');
+			insertSession(nodeSessionId, 'worker', '{"status":"processing","phase":"coding"}');
 			insertSdkMessage('sdk-node-1', nodeSessionId);
 			insertSdkMessage('sdk-node-2', nodeSessionId);
 
@@ -476,6 +481,80 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			const rows = queryAndMap(taskId);
 			const nodeAgentRows = rows.filter((r) => r.kind === 'node_agent');
 			expect(nodeAgentRows).toHaveLength(0);
+		});
+
+		test('includes zero-message sessions in activity set', () => {
+			const orchestrationSessionId = 'space:test-space:task:orch-zero';
+			const nodeSessionId = 'space:test-space:task:node-zero';
+			const workflowRunId = 'wr-zero-msg';
+			const taskId = insertSpaceTask({
+				taskAgentSessionId: orchestrationSessionId,
+				workflowRunId,
+				status: 'in_progress',
+			});
+
+			insertSession(orchestrationSessionId, 'space_task_agent', '{"status":"processing"}');
+			insertSession(nodeSessionId, 'worker', '{"status":"queued"}');
+
+			insertNodeExecution({
+				id: 'ne-zero',
+				workflowRunId,
+				workflowNodeId: 'node-zero',
+				agentName: 'coder',
+				agentSessionId: nodeSessionId,
+				status: 'pending',
+			});
+
+			// No SDK messages at all — the activity feed should still surface
+			// both the orchestration session and the node-agent session.
+			const rows = queryAndMap(taskId);
+			expect(rows).toHaveLength(2);
+			const orch = rows.find((r) => r.kind === 'task_agent');
+			const node = rows.find((r) => r.kind === 'node_agent');
+			expect(orch).toBeDefined();
+			expect(orch!.sessionId).toBe(orchestrationSessionId);
+			expect(orch!.messageCount).toBe(0);
+			expect(node).toBeDefined();
+			expect(node!.sessionId).toBe(nodeSessionId);
+			expect(node!.messageCount).toBe(0);
+			expect(node!.label).toBe('Coder');
+			expect(node!.role).toBe('coder');
+		});
+
+		test('classifies by session type, not current task_agent_session_id pointer', () => {
+			// Simulate a scenario where the orchestration session was replaced
+			// (rehydrate self-heal) but historical messages still exist. The
+			// session.type column is the stable source of truth — messages from
+			// the old session must keep their task_agent classification even
+			// though the task pointer now points at a different session.
+			const oldOrchSessionId = 'space:test-space:task:orch-old';
+			const newOrchSessionId = 'space:test-space:task:orch-new';
+			const taskId = insertSpaceTask({
+				taskAgentSessionId: newOrchSessionId, // pointer rotated to new session
+				status: 'in_progress',
+			});
+
+			insertSession(
+				oldOrchSessionId,
+				'space_task_agent',
+				'{"status":"processing"}',
+				`{"taskId":"${taskId}"}`
+			);
+			insertSession(
+				newOrchSessionId,
+				'space_task_agent',
+				'{"status":"processing"}',
+				`{"taskId":"${taskId}"}`
+			);
+			// Ensure the message helper stamps task_id for this session
+			sessionTaskIds.set(oldOrchSessionId, taskId);
+			insertSdkMessage('sdk-old', oldOrchSessionId);
+
+			const rows = queryMessages(taskId);
+			const oldRow = rows.find((r) => r.sessionId === oldOrchSessionId);
+			expect(oldRow).toBeDefined();
+			expect(oldRow!.kind).toBe('task_agent'); // still task_agent because session.type says so
+			expect(oldRow!.label).toBe('Task Agent');
 		});
 
 		// -------------------------------------------------------------------------
@@ -650,7 +729,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				});
 
 				insertSession(orchestrationSessionId, 'space_task_agent', '{"status":"processing"}');
-				insertSession(nodeSessionId, 'space_task_agent', '{"status":"processing"}');
+				insertSession(nodeSessionId, 'worker', '{"status":"processing"}');
 
 				insertNodeExecution({
 					id: 'ne-compact',
@@ -1080,7 +1159,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				});
 
 				insertSession(orchestrationSessionId, 'space_task_agent', '{"status":"processing"}');
-				insertSession(nodeSessionId, 'space_task_agent', '{"status":"processing"}');
+				insertSession(nodeSessionId, 'worker', '{"status":"processing"}');
 
 				insertNodeExecution({
 					id: 'ne-multi',

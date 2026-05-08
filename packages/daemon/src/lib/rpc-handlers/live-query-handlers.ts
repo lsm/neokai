@@ -631,15 +631,33 @@ WITH target_task AS (
   FROM space_tasks
   WHERE id = ?
 ),
--- Derive contributing sessions directly from sdk_messages.task_id — the
--- canonical "messages stamped at write time with the writing session's
--- task context" column. Each session is then characterised by joining
--- the sessions row and (for node-agent sessions) the most-recent
--- node_executions row that bound it to the task's workflow run.
+-- Derive the contributing-session set from the source-of-truth tables —
+-- task_agent_session_id on space_tasks and agent_session_id on
+-- node_executions for the task's workflow run — so sessions that exist
+-- but haven't emitted a message yet (queued / early-processing) are
+-- still surfaced in the activity feed. Sourcing from sdk_messages.task_id
+-- alone would hide them until the first SDK row is persisted.
 contributing_sessions AS (
-  SELECT DISTINCT sm.session_id, tt.id AS task_id, tt.title AS task_title, tt.status AS task_status
+  SELECT
+    tt.task_agent_session_id AS session_id,
+    tt.id AS task_id,
+    tt.title AS task_title,
+    tt.status AS task_status
   FROM target_task tt
-  JOIN sdk_messages sm ON sm.task_id = tt.id
+  JOIN sessions s ON s.id = tt.task_agent_session_id
+  WHERE tt.task_agent_session_id IS NOT NULL
+    AND s.type = 'space_task_agent'
+  UNION
+  SELECT
+    ne.agent_session_id AS session_id,
+    tt.id AS task_id,
+    tt.title AS task_title,
+    tt.status AS task_status
+  FROM target_task tt
+  JOIN node_executions ne
+    ON tt.workflow_run_id IS NOT NULL
+   AND ne.workflow_run_id = tt.workflow_run_id
+   AND ne.agent_session_id IS NOT NULL
 ),
 -- Pick the most relevant node_execution per (task, session): prefer
 -- in-progress, then most recently updated. Used to resolve agent_name /
@@ -673,23 +691,26 @@ session_node_exec AS (
 all_sessions AS (
   SELECT
     cs.session_id AS session_id,
-    -- Task Agent vs node-agent classification: the task's
-    -- task_agent_session_id column is the source of truth for the
-    -- orchestration session; everything else is a node-agent session.
+    -- Task Agent vs node-agent classification: derived from sessions.type.
+    -- Using sessions.type (a stable property of the session row) rather than
+    -- comparing to the current task_agent_session_id ensures historical rows
+    -- stay correctly attributed if the orchestration pointer is rotated or
+    -- cleared (rehydrate self-heal, session replacement).
     CASE
-      WHEN cs.session_id = (SELECT task_agent_session_id FROM target_task)
-        THEN 'task_agent'
+      WHEN s_kind.type = 'space_task_agent' THEN 'task_agent'
       ELSE 'node_agent'
     END AS kind,
     CASE
-      WHEN cs.session_id = (SELECT task_agent_session_id FROM target_task)
-        THEN 'Task Agent'
+      WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent'
       ELSE COALESCE(sa.name, sne.agent_name, 'agent')
     END AS label,
     CASE
-      WHEN cs.session_id = (SELECT task_agent_session_id FROM target_task)
-        THEN 'task-agent'
-      ELSE sne.agent_name
+      WHEN s_kind.type = 'space_task_agent' THEN 'task-agent'
+      -- Fall back to a stable string when no node_executions row is
+      -- available (e.g. workflow-run cleanup detached the row after the
+      -- session emitted messages) — otherwise the mapper retypes the
+      -- author as 'system', misattributing genuine node-agent activity.
+      ELSE COALESCE(sne.agent_name, 'agent')
     END AS role,
     cs.task_id,
     cs.task_title,
@@ -701,6 +722,7 @@ all_sessions AS (
     sne.execution_result,
     sne.execution_updated_at
   FROM contributing_sessions cs
+  LEFT JOIN sessions s_kind ON s_kind.id = cs.session_id
   LEFT JOIN session_node_exec sne
     ON sne.task_id = cs.task_id
    AND sne.session_id = cs.session_id
@@ -850,18 +872,23 @@ sdk_rows_raw AS (
   SELECT
     sm.id AS id,
     sm.session_id AS sessionId,
-    -- Task Agent vs node-agent classification — derived from the
-    -- task's task_agent_session_id rather than a denormalised map.
+    -- Task Agent vs node-agent classification — derived from sessions.type
+    -- (a stable property of the session row), not from the task's current
+    -- task_agent_session_id pointer. Pointer rotation/clearing must not
+    -- retype historical rows.
     CASE
-      WHEN sm.session_id = tt.task_agent_session_id THEN 'task_agent'
+      WHEN s_kind.type = 'space_task_agent' THEN 'task_agent'
       ELSE 'node_agent'
     END AS kind,
     CASE
-      WHEN sm.session_id = tt.task_agent_session_id THEN 'task-agent'
-      ELSE sne.agent_name
+      WHEN s_kind.type = 'space_task_agent' THEN 'task-agent'
+      -- Fall back to a stable string when no node_executions row is
+      -- available — otherwise the mapper retypes the author as 'system',
+      -- misattributing genuine node-agent messages.
+      ELSE COALESCE(sne.agent_name, 'agent')
     END AS role,
     CASE
-      WHEN sm.session_id = tt.task_agent_session_id THEN 'Task Agent'
+      WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent'
       ELSE COALESCE(sa.name, sne.agent_name, 'agent')
     END AS label,
     sne.node_execution_id AS nodeExecutionId,
@@ -876,6 +903,7 @@ sdk_rows_raw AS (
     sm.is_terminal AS isTerminal
   FROM target_task tt
   JOIN sdk_messages sm ON sm.task_id = tt.id
+  LEFT JOIN sessions s_kind ON s_kind.id = sm.session_id
   LEFT JOIN session_node_exec sne
     ON sne.task_id = tt.id
    AND sne.session_id = sm.session_id
@@ -1835,16 +1863,31 @@ function buildTaskScopeFilter(
 	db: BunDatabase
 ): ((scope: TableChangeScope) => boolean) | undefined {
 	const taskId = params[0] as string;
+	// Scope filter aligns with the read query's filter on sdk_messages.task_id.
+	// A session is in-scope if it has ever stamped a message for this task
+	// (captured by sdk_messages.task_id). We also accept the task agent and
+	// node-agent sessions from space_tasks / node_executions so zero-message
+	// sessions still trigger re-evaluation. This dual check prevents both
+	// false negatives (stale cache after detachment) and false positives.
 	const messageStmt = db.prepare(
 		`SELECT 1 FROM sdk_messages WHERE task_id = ? AND session_id = ? LIMIT 1`
 	);
 	const taskAgentStmt = db.prepare(
 		`SELECT 1 FROM space_tasks WHERE id = ? AND task_agent_session_id = ? LIMIT 1`
 	);
+	const nodeExecStmt = db.prepare(
+		`SELECT 1 FROM node_executions ne
+		 JOIN space_tasks st ON st.id = ?
+		   AND st.workflow_run_id IS NOT NULL
+		   AND ne.workflow_run_id = st.workflow_run_id
+		 WHERE ne.agent_session_id = ?
+		 LIMIT 1`
+	);
 	return (scope) => {
 		if (!scope.sessionId) return true;
 		if (messageStmt.get(taskId, scope.sessionId)) return true;
-		return !!taskAgentStmt.get(taskId, scope.sessionId);
+		if (taskAgentStmt.get(taskId, scope.sessionId)) return true;
+		return !!nodeExecStmt.get(taskId, scope.sessionId);
 	};
 }
 

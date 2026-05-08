@@ -8041,21 +8041,33 @@ export function runMigration122(db: BunDatabase): void {
 	// Step 1: add derived columns to sdk_messages.
 	if (tableExists(db, 'sdk_messages')) {
 		const columns = tableColumnNames(db, 'sdk_messages');
-		if (!columns.includes('is_renderable')) {
+		const addedRenderable = !columns.includes('is_renderable');
+		const addedTerminal = !columns.includes('is_terminal');
+		const addedParentToolUseId = !columns.includes('parent_tool_use_id');
+		const addedTaskId = !columns.includes('task_id');
+
+		if (addedRenderable) {
 			db.exec(`ALTER TABLE sdk_messages ADD COLUMN is_renderable INTEGER NOT NULL DEFAULT 1`);
 		}
-		if (!columns.includes('is_terminal')) {
+		if (addedTerminal) {
 			db.exec(`ALTER TABLE sdk_messages ADD COLUMN is_terminal INTEGER NOT NULL DEFAULT 0`);
 		}
-		if (!columns.includes('parent_tool_use_id')) {
+		if (addedParentToolUseId) {
 			db.exec(`ALTER TABLE sdk_messages ADD COLUMN parent_tool_use_id TEXT`);
 		}
-		if (!columns.includes('task_id')) {
+		if (addedTaskId) {
 			db.exec(`ALTER TABLE sdk_messages ADD COLUMN task_id TEXT`);
 		}
 
-		// Backfill derived columns. The arithmetic is deterministic from
-		// sdk_message JSON, so re-running is safe.
+		// Backfill derived columns. The WHERE clause targets rows that still
+		// hold the column defaults — for is_terminal that's 0 on a 'result'
+		// message (always wrong), and for is_renderable that's 1 on rows that
+		// should be 0. The predicate is conservative: it may backfill a few
+		// already-correct rows, but it will never miss a row that needs fixing.
+		//
+		// Because the gate is data-state rather than schema-add state, an
+		// interrupted migration (crash between ALTER and UPDATE) is automatically
+		// repaired on the next boot.
 		//
 		// is_terminal mirrors message_type = 'result'.
 		// is_renderable encodes the same predicate the compact-feed used to
@@ -8070,6 +8082,11 @@ export function runMigration122(db: BunDatabase): void {
 		// malformed historical row can't abort the migration. Invalid JSON
 		// rows fall through to safe defaults: is_renderable = 1 (preserves the
 		// column DEFAULT and keeps the row visible), parent_tool_use_id NULL.
+		//
+		// No schema-add gate: the WHERE clause is the only guard. This makes the
+		// backfill safely rerunnable — an interrupted migration (crash between
+		// ALTER and UPDATE) is repaired on next boot without rewriting already-
+		// correct rows.
 		db.exec(`
 			UPDATE sdk_messages
 			SET
@@ -8107,6 +8124,10 @@ export function runMigration122(db: BunDatabase): void {
 					THEN 0
 					ELSE 1
 				END
+			WHERE
+				(message_type = 'result' AND is_terminal = 0)
+				OR parent_tool_use_id IS NULL
+				OR is_renderable = 1
 		`);
 
 		// Plain B-tree index — supersedes the json_extract function index
@@ -8126,6 +8147,13 @@ export function runMigration122(db: BunDatabase): void {
 		// (worker sessions outside the Space system, lobby/neo, etc.) get NULL —
 		// the column is nullable on purpose.
 		//
+		// Runs whenever rows with `task_id IS NULL` remain for an allowed session
+		// type, so an interrupted migration is repaired on next boot. We restrict
+		// the scan to rows whose session is an allowed type (space_task_agent,
+		// worker) — this avoids re-scanning permanently-NULL rows from lobby/neo/
+		// room-scoped sessions on every startup. The subquery itself is the same
+		// type guard that resolveTaskIdForSession applies at write time.
+		//
 		// `json_valid(s.session_context)` guards against malformed JSON the same
 		// way the sdk_message backfill does.
 		if (tableExists(db, 'sessions')) {
@@ -8140,8 +8168,12 @@ export function runMigration122(db: BunDatabase): void {
 						END
 					FROM sessions s
 					WHERE s.id = sdk_messages.session_id
+					  AND s.type IN ('space_task_agent', 'worker')
 				)
 				WHERE task_id IS NULL
+				  AND session_id IN (
+					  SELECT id FROM sessions WHERE type IN ('space_task_agent', 'worker')
+				  )
 			`);
 		}
 

@@ -107,11 +107,19 @@ export class SDKMessageRepository {
 							WHEN session_context IS NULL THEN NULL
 							WHEN NOT json_valid(session_context) THEN NULL
 							ELSE json_extract(session_context, '$.taskId')
-						END AS task_id
+						END AS task_id,
+						type
 					 FROM sessions WHERE id = ?`
 				)
-				.get(sessionId) as { task_id: string | null } | undefined;
-			return row?.task_id ?? null;
+				.get(sessionId) as { task_id: string | null; type: string | null } | undefined;
+			if (!row) return null;
+			// Only stamp task_id for sessions that are part of the Space task
+			// system. Other session types (lobby, neo, room-scoped, etc.) may
+			// carry a taskId in context from transient operations but their
+			// messages must not leak into task timelines.
+			const allowedTypes = ['space_task_agent', 'worker'];
+			if (!row.type || !allowedTypes.includes(row.type)) return null;
+			return row.task_id ?? null;
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			if (/no such table/i.test(message)) {
