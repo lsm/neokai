@@ -621,36 +621,34 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 							}
 
 							if (Object.keys(authorizedData).length > 0) {
-								// Deep-merge map-type fields: each reviewer in a vote-counting gate
-								// (e.g. plan-approval-gate `approvals: map`) writes a partial map
-								// keyed by their lens/identity. A shallow merge would replace the
-								// entire map with the latest writer's entry only — losing prior
-								// votes. For every authorized field whose definition is `type: map`,
-								// merge the new entries on top of the previously stored entries
-								// before handing off to gateDataRepo.merge.
-								const existingRecord = gateDataRepo.get(workflowRunId, gateId);
-								const existingData = existingRecord?.data ?? {};
+								// Deep-merge map-type fields atomically: each reviewer in a
+								// vote-counting gate (e.g. plan-approval-gate `approvals: map`)
+								// writes a partial map keyed by their lens/identity. A naive
+								// shallow merge would replace the whole map with the latest
+								// writer's entry, losing prior votes. Doing the read-merge-write
+								// in JS would also race with `incrementAndResetCyclicChannel`
+								// (which clears the gate on revision feedback) — if a stale
+								// snapshot was read before the reset and written back after,
+								// cleared votes would resurrect. Push the deep-merge into the
+								// repository so it runs inside a single SQLite transaction.
+								const mapFields = new Set<string>();
+								for (const key of Object.keys(authorizedData)) {
+									const fieldDef = fieldMap.get(key);
+									if (fieldDef?.type === 'map') mapFields.add(key);
+								}
 								const partialToMerge: Record<string, unknown> = {
 									...authorizedData,
 									approvalSource: 'agent',
 								};
-								for (const [key, value] of Object.entries(authorizedData)) {
-									const fieldDef = fieldMap.get(key);
-									if (!fieldDef || fieldDef.type !== 'map') continue;
-									if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
-									const existingMap = existingData[key];
-									if (
-										existingMap &&
-										typeof existingMap === 'object' &&
-										!Array.isArray(existingMap)
-									) {
-										partialToMerge[key] = {
-											...(existingMap as Record<string, unknown>),
-											...(value as Record<string, unknown>),
-										};
-									}
-								}
-								const updated = gateDataRepo.merge(workflowRunId, gateId, partialToMerge);
+								const updated =
+									mapFields.size > 0
+										? gateDataRepo.mergeWithMapFields(
+												workflowRunId,
+												gateId,
+												partialToMerge,
+												mapFields
+											)
+										: gateDataRepo.merge(workflowRunId, gateId, partialToMerge);
 								const evalResult = await evaluateGate(
 									gateDef,
 									updated.data,
