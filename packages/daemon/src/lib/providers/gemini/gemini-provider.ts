@@ -147,13 +147,20 @@ export class GeminiOAuthProvider implements Provider {
 	/**
 	 * Force a refresh of the model cache on the next getModels() call.
 	 * Also updates active bridge servers with the newly discovered list.
+	 *
+	 * Kept synchronous to match the Provider interface (clearModelCache?(): void).
+	 * Re-discovery runs in the background; bridges are updated when it resolves.
 	 */
-	async clearModelCache(): Promise<void> {
+	clearModelCache(): void {
 		this._modelCache = null;
 		this._modelCacheIsDiscovered = false;
 		this._lastDiscoveryFailure = 0;
-		const models = await this.getModels();
-		this._syncBridgeModels(models);
+		// Fire-and-forget re-discovery + bridge sync so the caller doesn't have to await
+		this.getModels()
+			.then((models) => this._syncBridgeModels(models))
+			.catch(() => {
+				// Errors are logged inside discoverModels; ignore here
+			});
 	}
 
 	/**
@@ -213,6 +220,7 @@ export class GeminiOAuthProvider implements Provider {
 					fetchImpl: this._deps?.fetchImpl,
 				});
 
+				this.rotationManager.releaseSession('__gemini_model_discovery__');
 				return models;
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
