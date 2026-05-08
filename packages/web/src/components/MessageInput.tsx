@@ -285,6 +285,8 @@ export default function MessageInput({
 		};
 	}, [content, getImagesForSend]);
 
+	const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
 	const refreshQueuedMessages = useCallback(async () => {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
@@ -304,29 +306,52 @@ export default function MessageInput({
 					limit: 20,
 				}),
 			])) as [{ messages?: QueuedOverlayMessage[] }, { messages?: QueuedOverlayMessage[] }];
-			setQueuedForCurrentTurn(enqueuedResponse.messages ?? []);
-			setQueuedForNextTurn(deferredResponse.messages ?? []);
+			const nextEnqueued = enqueuedResponse.messages ?? [];
+			const nextDeferred = deferredResponse.messages ?? [];
+			setQueuedForCurrentTurn((prev) => {
+				if (
+					prev.length === nextEnqueued.length &&
+					prev.every((m, i) => m.uuid === nextEnqueued[i]?.uuid)
+				)
+					return prev;
+				return nextEnqueued;
+			});
+			setQueuedForNextTurn((prev) => {
+				if (
+					prev.length === nextDeferred.length &&
+					prev.every((m, i) => m.uuid === nextDeferred[i]?.uuid)
+				)
+					return prev;
+				return nextDeferred;
+			});
 		} catch {
 			// Best-effort queue refresh
 		}
 	}, [sessionId]);
 
+	// Manage the polling interval imperatively to avoid depending on queue
+	// lengths in the useEffect dependency array. The old approach included
+	// queuedForCurrentTurn.length / queuedForNextTurn.length as deps, which
+	// caused a re-render loop: every refresh call produced a new [] reference
+	// (even when empty), re-triggering the effect and re-creating the interval
+	// while the agent was idle.
 	useEffect(() => {
 		void refreshQueuedMessages();
-	}, [refreshQueuedMessages]);
+		if (!agentWorking) return;
+		pollingIntervalRef.current = setInterval(() => {
+			void refreshQueuedMessages();
+		}, 700);
+		return () => {
+			if (pollingIntervalRef.current !== null) {
+				clearInterval(pollingIntervalRef.current);
+				pollingIntervalRef.current = null;
+			}
+		};
+	}, [agentWorking, refreshQueuedMessages]);
 
 	useLayoutEffect(() => {
 		syncMessagesContainerPadding();
 	}, [syncMessagesContainerPadding]);
-
-	useEffect(() => {
-		if (!agentWorking && queuedForCurrentTurn.length === 0 && queuedForNextTurn.length === 0)
-			return;
-		const timer = setInterval(() => {
-			void refreshQueuedMessages();
-		}, 700);
-		return () => clearInterval(timer);
-	}, [agentWorking, queuedForCurrentTurn.length, queuedForNextTurn.length, refreshQueuedMessages]);
 
 	useEffect(() => {
 		syncMessagesContainerPadding();
