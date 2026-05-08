@@ -78,11 +78,17 @@ export interface GeminiRequest {
 	project?: string;
 	request: {
 		contents: GeminiContent[];
-		systemInstruction?: { parts: GeminiPart[] };
+		systemInstruction?: { role?: string; parts: GeminiPart[] };
 		tools?: GeminiTool[];
 		toolConfig?: GeminiToolConfig;
 		generationConfig?: GeminiGenerationConfig;
 	};
+	/** Antigravity-specific request type */
+	requestType?: string;
+	/** Antigravity-specific user agent */
+	userAgent?: string;
+	/** Antigravity-specific request ID */
+	requestId?: string;
 }
 
 /** A Gemini candidate (response part). */

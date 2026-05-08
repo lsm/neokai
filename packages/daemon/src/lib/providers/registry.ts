@@ -280,6 +280,18 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
 	// providers claim the same model IDs, and we want to route based on
 	// availability rather than registration order.
 	if (modelId.startsWith('gemini-') || modelId.startsWith('gemma-')) {
+		// Route Gemini 3 models to Antigravity when available
+		if (modelId.startsWith('gemini-3')) {
+			const registry = getProviderRegistry();
+			const antigravityProvider = registry.get('google-antigravity');
+			if (antigravityProvider) {
+				const available = antigravityProvider.isAvailable();
+				if (typeof available === 'boolean' ? available : true) {
+					return 'google-antigravity';
+				}
+			}
+		}
+
 		const registry = getProviderRegistry();
 		const apiKeyProvider = registry.get('google-gemini');
 		if (apiKeyProvider) {
@@ -292,6 +304,18 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
 			}
 		}
 		return 'google-gemini-oauth';
+	}
+
+	// Route specific Antigravity model IDs (Claude and GPT-OSS variants)
+	const antigravityModelIds = new Set([
+		'claude-sonnet-4-5-20250929',
+		'claude-opus-4-5-20250929',
+		'claude-haiku-4-5-20250929',
+		'gpt-oss-120b',
+		'gpt-oss-20b',
+	]);
+	if (antigravityModelIds.has(modelId)) {
+		return 'google-antigravity';
 	}
 
 	// Live registry lookup (populated at daemon startup, empty in unit tests)

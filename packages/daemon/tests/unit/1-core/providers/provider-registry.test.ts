@@ -320,7 +320,7 @@ describe('ProviderRegistry', () => {
 	describe('initializeProviders — all built-in providers registered', () => {
 		// Outer beforeEach already resets registry+factory; no per-test resets needed.
 
-		it('should register exactly eleven built-in providers', () => {
+		it('should register exactly twelve built-in providers', () => {
 			const reg = initializeProviders();
 
 			const ids = reg
@@ -333,6 +333,7 @@ describe('ProviderRegistry', () => {
 					'anthropic-codex',
 					'anthropic-copilot',
 					'glm',
+					'google-antigravity',
 					'google-gemini',
 					'google-gemini-oauth',
 					'kimi',
@@ -395,18 +396,23 @@ describe('ProviderRegistry', () => {
 			expect(reg.has('google-gemini')).toBe(true);
 		});
 
+		it('should include google-antigravity provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('google-antigravity')).toBe(true);
+		});
+
 		it('should return the same singleton registry on repeated calls without reset', () => {
 			const reg1 = initializeProviders();
 			const reg2 = initializeProviders();
 			// The global singleton must be the same reference — not a new instance
 			expect(reg1).toBe(reg2);
-			expect(reg2.size).toBe(11);
+			expect(reg2.size).toBe(12);
 		});
 
 		it('should use the global registry singleton', () => {
 			initializeProviders();
 			const globalReg = getProviderRegistry();
-			expect(globalReg.size).toBe(11);
+			expect(globalReg.size).toBe(12);
 		});
 	});
 
@@ -574,9 +580,24 @@ describe('inferProviderForModel', () => {
 	});
 
 	it('defaults claude- models to anthropic', () => {
-		expect(inferProviderForModel('claude-sonnet-4-5-20250929')).toBe('anthropic');
 		expect(inferProviderForModel('claude-opus-4-6')).toBe('anthropic');
 		expect(inferProviderForModel('claude-sonnet-4.6/preview')).toBe('anthropic');
+	});
+
+	it('routes Antigravity model IDs to google-antigravity when provider is available', () => {
+		// These specific model IDs route to Antigravity regardless of availability
+		// because they are exclusive to the Antigravity service
+		expect(inferProviderForModel('claude-sonnet-4-5-20250929')).toBe('google-antigravity');
+		expect(inferProviderForModel('claude-opus-4-5-20250929')).toBe('google-antigravity');
+		expect(inferProviderForModel('gpt-oss-120b')).toBe('google-antigravity');
+		expect(inferProviderForModel('gpt-oss-20b')).toBe('google-antigravity');
+	});
+
+	it('routes gemini-3 models to google-gemini-oauth when antigravity is not available', () => {
+		// When Antigravity is not authenticated, Gemini 3 models fall through
+		// to the standard Gemini OAuth provider
+		expect(inferProviderForModel('gemini-3.1-pro-preview')).toBe('google-gemini-oauth');
+		expect(inferProviderForModel('gemini-3-pro-preview')).toBe('google-gemini-oauth');
 	});
 
 	it('defaults unknown models to anthropic', () => {

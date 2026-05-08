@@ -201,7 +201,8 @@ export type Provider =
 	| 'anthropic-copilot'
 	| 'anthropic-codex'
 	| 'google-gemini'
-	| 'google-gemini-oauth';
+	| 'google-gemini-oauth'
+	| 'google-antigravity';
 
 /**
  * Provider-specific configuration
@@ -286,6 +287,7 @@ export const PROVIDER_THINKING_MODES: Record<Provider, 'off' | 'on' | 'granular'
 	'anthropic-codex': 'granular',
 	'google-gemini': 'off',
 	'google-gemini-oauth': 'off',
+	'google-antigravity': 'on',
 };
 
 /**
