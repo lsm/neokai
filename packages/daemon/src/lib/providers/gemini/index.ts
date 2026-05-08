@@ -5,6 +5,7 @@
  */
 
 export { GeminiOAuthProvider } from './gemini-provider.js';
+export { GeminiApiKeyProvider } from './gemini-api-key-provider.js';
 export {
 	// OAuth client
 	getOAuthClientId,

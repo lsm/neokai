@@ -290,6 +290,12 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
 	if (modelId === 'openrouter/auto' || (modelId.includes('/') && !modelId.startsWith('claude-')))
 		return 'openrouter';
 	if (modelId.startsWith('gpt-')) return 'anthropic-codex';
-	if (modelId.startsWith('gemini-2.')) return 'google-gemini-oauth';
+	// Prefer the API key provider for Gemini models; fall back to OAuth if
+	// only the OAuth provider is registered (e.g. in older setups).
+	if (modelId.startsWith('gemini-') || modelId.startsWith('gemma-')) {
+		const registry = getProviderRegistry();
+		if (registry.has('google-gemini')) return 'google-gemini';
+		return 'google-gemini-oauth';
+	}
 	return 'anthropic';
 }

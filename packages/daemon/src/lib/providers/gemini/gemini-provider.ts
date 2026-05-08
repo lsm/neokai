@@ -36,8 +36,7 @@ import {
 } from './oauth-client.js';
 import { AccountRotationManager } from './account-rotation.js';
 import { createGeminiBridgeServer, type GeminiBridgeServer } from './bridge-server.js';
-import { fetchAvailableModels, getFallbackModels } from './model-discovery.js';
-import { refreshAccessToken } from './oauth-client.js';
+import { getFallbackModels } from './model-discovery.js';
 
 const log = createLogger('kai:providers:gemini');
 
@@ -90,7 +89,8 @@ export class GeminiOAuthProvider implements Provider {
 	 */
 	async isAvailable(): Promise<boolean> {
 		try {
-			const accounts = await loadAccounts();
+			await this.rotationManager.initialize();
+			const accounts = this.rotationManager.getAccounts();
 			return accounts.some((a) => a.status !== 'invalid');
 		} catch {
 			return false;
@@ -212,67 +212,15 @@ export class GeminiOAuthProvider implements Provider {
 	/**
 	 * Discover models using the fetchAvailableModels endpoint.
 	 *
-	 * Tries multiple accounts if the first one's token refresh fails,
-	 * so that a single revoked account doesn't force fallback on
-	 * multi-account setups.
+	 * Discovery is currently disabled because Google's Code Assist discovery
+	 * endpoints return 403 for all accounts.  This method now returns null
+	 * immediately so callers fall back to the static model list.
+	 *
+	 * If Google restores public discovery in the future, this method can be
+	 * re-enabled by updating fetchAvailableModels() in model-discovery.ts.
 	 */
 	private async discoverModels(): Promise<ModelInfo[] | null> {
-		try {
-			await this.rotationManager.initialize();
-		} catch {
-			return null;
-		}
-
-		const triedAccountIds = new Set<string>();
-
-		while (true) {
-			const account = await this.rotationManager.getAccountForSession('__gemini_model_discovery__');
-			if (!account) {
-				log.warn('No account available for model discovery');
-				break;
-			}
-
-			if (triedAccountIds.has(account.id)) {
-				// Already tried this account — no new accounts left
-				break;
-			}
-			triedAccountIds.add(account.id);
-
-			try {
-				const tokenResponse = await refreshAccessToken(account.refresh_token, this._deps);
-
-				const models = await fetchAvailableModels({
-					token: tokenResponse.access_token,
-					fetchImpl: this._deps?.fetchImpl,
-				});
-
-				this.rotationManager.releaseSession('__gemini_model_discovery__');
-
-				// fetchAvailableModels returns null on endpoint failure — try next account
-				if (models === null) {
-					log.warn(`Discovery endpoint failed for account ${account.email}, trying next account`);
-					continue;
-				}
-
-				return models;
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				const isTokenInvalid = message.includes('invalid') || message.includes('revoked');
-
-				if (isTokenInvalid) {
-					await this.rotationManager.markInvalid(account.id);
-					log.warn(`Discovery account ${account.email} token invalid, trying next account`);
-					// Release and loop to try another account
-					this.rotationManager.releaseSession('__gemini_model_discovery__');
-					continue;
-				}
-
-				log.warn(`Model discovery failed: ${message}`);
-				break;
-			}
-		}
-
-		this.rotationManager.releaseSession('__gemini_model_discovery__');
+		// Discovery disabled — Code Assist endpoints are no longer publicly accessible
 		return null;
 	}
 

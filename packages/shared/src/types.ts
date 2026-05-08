@@ -200,6 +200,7 @@ export type Provider =
 	| 'ollama-cloud'
 	| 'anthropic-copilot'
 	| 'anthropic-codex'
+	| 'google-gemini'
 	| 'google-gemini-oauth';
 
 /**
@@ -283,6 +284,7 @@ export const PROVIDER_THINKING_MODES: Record<Provider, 'off' | 'on' | 'granular'
 	'ollama-cloud': 'off',
 	'anthropic-copilot': 'off',
 	'anthropic-codex': 'granular',
+	'google-gemini': 'off',
 	'google-gemini-oauth': 'off',
 };
 

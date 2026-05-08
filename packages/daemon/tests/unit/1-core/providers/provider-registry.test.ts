@@ -320,7 +320,7 @@ describe('ProviderRegistry', () => {
 	describe('initializeProviders — all built-in providers registered', () => {
 		// Outer beforeEach already resets registry+factory; no per-test resets needed.
 
-		it('should register exactly ten built-in providers', () => {
+		it('should register exactly eleven built-in providers', () => {
 			const reg = initializeProviders();
 
 			const ids = reg
@@ -333,6 +333,7 @@ describe('ProviderRegistry', () => {
 					'anthropic-codex',
 					'anthropic-copilot',
 					'glm',
+					'google-gemini',
 					'google-gemini-oauth',
 					'kimi',
 					'minimax',
@@ -389,18 +390,23 @@ describe('ProviderRegistry', () => {
 			expect(reg.has('google-gemini-oauth')).toBe(true);
 		});
 
+		it('should include google-gemini provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('google-gemini')).toBe(true);
+		});
+
 		it('should return the same singleton registry on repeated calls without reset', () => {
 			const reg1 = initializeProviders();
 			const reg2 = initializeProviders();
 			// The global singleton must be the same reference — not a new instance
 			expect(reg1).toBe(reg2);
-			expect(reg2.size).toBe(10);
+			expect(reg2.size).toBe(11);
 		});
 
 		it('should use the global registry singleton', () => {
 			initializeProviders();
 			const globalReg = getProviderRegistry();
-			expect(globalReg.size).toBe(10);
+			expect(globalReg.size).toBe(11);
 		});
 	});
 

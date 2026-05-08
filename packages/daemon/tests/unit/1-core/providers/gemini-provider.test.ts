@@ -94,10 +94,10 @@ describe('GeminiOAuthProvider', () => {
 
 	describe('isAvailable', () => {
 		it('returns false when no accounts are configured', async () => {
-			const provider = new GeminiOAuthProvider();
-			// No accounts file exists in test environment
+			const storage = new InMemoryAccountStorage();
+			const rotationManager = new AccountRotationManager({ healthCheckOnStartup: false }, storage);
+			const provider = new GeminiOAuthProvider(undefined, rotationManager);
 			const available = await provider.isAvailable();
-			// In test environment, no accounts file exists, so should be false
 			expect(available).toBe(false);
 		});
 	});
@@ -137,157 +137,52 @@ describe('GeminiOAuthProvider', () => {
 	});
 
 	describe('model cache behavior', () => {
-		it('does not cache fallback models permanently', async () => {
+		it('returns fallback models when discovery is disabled', async () => {
 			const storage = new InMemoryAccountStorage();
 			const rotationManager = new AccountRotationManager({ healthCheckOnStartup: false }, storage);
 			const provider = new GeminiOAuthProvider(undefined, rotationManager);
 
-			// First call — no accounts, discovery fails, returns fallback
-			const models1 = await provider.getModels();
-			expect(models1.some((m) => m.id === 'gemini-2.5-pro')).toBe(true);
-
-			// _modelCache should still be null because fallback is not cached
-			// (we can't inspect private fields, but we can verify behavior:
-			// calling getModels again should still attempt discovery and
-			// return the same fallback since no accounts exist)
-			const models2 = await provider.getModels();
-			expect(models2).toEqual(models1);
+			// Discovery is disabled — returns static fallback list
+			const models = await provider.getModels();
+			expect(models.some((m) => m.id === 'gemini-2.5-pro')).toBe(true);
+			expect(models.some((m) => m.id === 'gemini-2.5-flash')).toBe(true);
 		});
 
-		it('caches discovered models and returns them without re-discovery', async () => {
-			const mockFetch = (url: string) => {
-				if (url.includes('oauth2.googleapis.com')) {
-					return Promise.resolve(
-						new Response(
-							JSON.stringify({
-								access_token: 'test-access-token',
-								expires_in: 3600,
-								token_type: 'Bearer',
-							}),
-							{ status: 200 }
-						)
-					);
-				}
-				return Promise.resolve(
-					new Response(
-						JSON.stringify({
-							models: {
-								'gemini-3-pro-preview': { displayName: 'Gemini 3 Pro Preview' },
-							},
-						}),
-						{ status: 200 }
-					)
-				);
-			};
-
+		it('returns consistent fallback models on repeated calls', async () => {
 			const storage = new InMemoryAccountStorage();
-			const account = createAccount('test@gmail.com', 'test-refresh-token');
-			await storage.save([account]);
 			const rotationManager = new AccountRotationManager({ healthCheckOnStartup: false }, storage);
-			const provider = new GeminiOAuthProvider(
-				{ fetchImpl: mockFetch as typeof fetch },
-				rotationManager
-			);
-			const models = await provider.getModels();
-			expect(models.some((m) => m.id === 'gemini-3-pro-preview')).toBe(true);
-			expect(models.some((m) => m.id === 'gemini-2.5-pro')).toBe(false);
+			const provider = new GeminiOAuthProvider(undefined, rotationManager);
+
+			const models1 = await provider.getModels();
+			const models2 = await provider.getModels();
+			expect(models2).toEqual(models1);
 		});
 	});
 
 	describe('bridge model sync', () => {
-		it('buildSdkConfig warms model cache in background', async () => {
-			const mockFetch = (url: string) => {
-				if (url.includes('oauth2.googleapis.com')) {
-					return Promise.resolve(
-						new Response(
-							JSON.stringify({
-								access_token: 'test-access-token',
-								expires_in: 3600,
-								token_type: 'Bearer',
-							}),
-							{ status: 200 }
-						)
-					);
-				}
-				return Promise.resolve(
-					new Response(
-						JSON.stringify({
-							models: {
-								'gemini-3-pro-preview': { displayName: 'Gemini 3 Pro Preview' },
-							},
-						}),
-						{ status: 200 }
-					)
-				);
-			};
-
-			const storage = new InMemoryAccountStorage();
-			const account = createAccount('test@gmail.com', 'test-refresh-token');
-			await storage.save([account]);
-			const rotationManager = new AccountRotationManager({ healthCheckOnStartup: false }, storage);
-			const provider = new GeminiOAuthProvider(
-				{ fetchImpl: mockFetch as typeof fetch },
-				rotationManager
-			);
+		it('buildSdkConfig creates a bridge server', () => {
+			const provider = new GeminiOAuthProvider();
 
 			// buildSdkConfig is synchronous and should not block
 			const config = provider.buildSdkConfig('gemini-2.5-pro');
 			expect(config.envVars.ANTHROPIC_BASE_URL).toContain('http://127.0.0.1:');
-
-			// Wait for background discovery to complete
-			await new Promise((resolve) => setTimeout(resolve, 100));
-
-			// Now getModels should return the discovered list
-			const models = await provider.getModels();
-			expect(models.some((m) => m.id === 'gemini-3-pro-preview')).toBe(true);
 		});
 
-		it('clearModelCache updates bridge model list', async () => {
-			const mockFetch = (url: string) => {
-				if (url.includes('oauth2.googleapis.com')) {
-					return Promise.resolve(
-						new Response(
-							JSON.stringify({
-								access_token: 'test-access-token',
-								expires_in: 3600,
-								token_type: 'Bearer',
-							}),
-							{ status: 200 }
-						)
-					);
-				}
-				return Promise.resolve(
-					new Response(
-						JSON.stringify({
-							models: {
-								'gemini-3-pro-preview': { displayName: 'Gemini 3 Pro Preview' },
-							},
-						}),
-						{ status: 200 }
-					)
-				);
-			};
-
-			const storage = new InMemoryAccountStorage();
-			const account = createAccount('test@gmail.com', 'test-refresh-token');
-			await storage.save([account]);
-			const rotationManager = new AccountRotationManager({ healthCheckOnStartup: false }, storage);
-			const provider = new GeminiOAuthProvider(
-				{ fetchImpl: mockFetch as typeof fetch },
-				rotationManager
-			);
+		it('clearModelCache returns fallback models when discovery is disabled', async () => {
+			const provider = new GeminiOAuthProvider();
 
 			// Create a bridge
 			provider.buildSdkConfig('gemini-2.5-pro', { sessionId: 'test-session' });
 
 			// Warm cache first
-			await provider.getModels();
+			const modelsBefore = await provider.getModels();
+			expect(modelsBefore.some((m) => m.id === 'gemini-2.5-pro')).toBe(true);
 
-			// Clear cache — should re-discover and update bridges
-			await provider.clearModelCache();
+			// Clear cache — should return fallback again since discovery is disabled
+			provider.clearModelCache();
 
 			const models = await provider.getModels();
-			expect(models.some((m) => m.id === 'gemini-3-pro-preview')).toBe(true);
+			expect(models.some((m) => m.id === 'gemini-2.5-pro')).toBe(true);
 		});
 	});
 });
