@@ -546,6 +546,16 @@ export class ChannelRouter {
 			throw new ActivationError(`Run not found: ${runId}`);
 		}
 
+		// Archive is a hard tombstone: if every task on this run has been
+		// archived, no inter-agent activity is permitted. Check this BEFORE
+		// gate evaluation so scripted gates do not run on tombstoned runs and
+		// callers see the canonical archived-task error rather than a gate
+		// closure (which would falsely suggest the work could resume once the
+		// gate opens).
+		if (this.isParentTaskArchived(runId)) {
+			throw new ActivationError(ARCHIVED_TASK_ERROR_MESSAGE);
+		}
+
 		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
 		if (!workflow) {
 			throw new ActivationError(`Workflow not found: ${run.workflowId}`);
@@ -619,7 +629,27 @@ export class ChannelRouter {
 			});
 		}
 
-		// ── 5. Increment per-channel cycle count and reset cyclic gates ──────
+		// ── 5. Re-check gate AFTER activation ────────────────────────────────
+		// `await this.activateNode(...)` yields to the event loop. A concurrent
+		// `incrementAndResetCyclicChannel` (e.g. on a `resetOnCycle` gate) can
+		// reset gate data during that await, transitioning the gate from open
+		// → closed. Re-evaluate the gate here so a stale-gate race cannot let
+		// the message proceed as if the channel were still open. The pre-
+		// activation check (step 3) is still useful because it short-circuits
+		// the common case without creating pending executions; this second
+		// check is the correctness backstop.
+		if (channel?.gateId) {
+			const postActivationGate = await this.evaluateGateById(runId, channel.gateId, workflow);
+			if (!postActivationGate.open) {
+				throw new ChannelGateBlockedError(
+					postActivationGate.reason ??
+						`Gate "${channel.gateId}" closed during activation; blocking delivery from "${fromRole}" to "${toTarget}"`,
+					channel.gateId
+				);
+			}
+		}
+
+		// ── 6. Increment per-channel cycle count and reset cyclic gates ──────
 		if (channelIsCyclic && channel) {
 			this.incrementAndResetCyclicChannel(runId, channelIndex, channel.maxCycles ?? 5, workflow);
 		}
