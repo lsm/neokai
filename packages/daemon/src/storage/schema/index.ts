@@ -133,7 +133,14 @@ export function createTables(db: BunDatabase): void {
 	// OAuth state table removed - web-based OAuth flow is no longer supported
 	// Authentication is now handled via environment variables only
 
-	// SDK Messages table (stores full SDK messages with all metadata)
+	// SDK Messages table (stores full SDK messages with all metadata).
+	//
+	// `task_id` is denormalised from the writing session's
+	// `session_context.taskId` at INSERT time. It supports task-scoped
+	// activity feeds without a separate map table. Nullable (most non-Space
+	// sessions are not task-bound) and intentionally has no FK — task
+	// lifecycle is managed independently and we don't want a task delete
+	// to cascade-blow-away historic messages.
 	db.exec(`
       CREATE TABLE IF NOT EXISTS sdk_messages (
         id TEXT PRIMARY KEY,
@@ -147,6 +154,7 @@ export function createTables(db: BunDatabase): void {
         is_renderable INTEGER NOT NULL DEFAULT 1,
         is_terminal INTEGER NOT NULL DEFAULT 0,
         parent_tool_use_id TEXT,
+        task_id TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )
     `);
@@ -449,17 +457,10 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// task_session_map is owned by migration 122. We deliberately do *not*
-	// re-declare it here: the migration creates the table with three FKs
-	// (task_id → space_tasks, session_id → sessions, node_execution_id →
-	// node_executions), and `space_tasks` / `node_executions` are produced
-	// by earlier migrations rather than by `createTables`. Re-declaring
-	// `task_session_map` in this bootstrap path would leave the FK
-	// references pointing at tables that may not exist (createTables-only
-	// environments), which makes downstream parent-row deletes fail with
-	// `no such table: main.<parent>` when SQLite plans the cascade. In
-	// production `runMigrations` always runs before `createTables`, so the
-	// table is already present by the time we reach this point.
+	// task_session_map has been removed. Task-scoped lookups now read
+	// `sdk_messages.task_id` directly (see migration 122 + the column
+	// declared in `sdk_messages` above). This bootstrap path no longer
+	// needs to know about the legacy table at all.
 
 	db.exec(`
       CREATE TABLE IF NOT EXISTS app_mcp_servers (
@@ -650,11 +651,12 @@ function createIndexes(db: BunDatabase): void {
       ON sdk_messages(message_type, message_subtype)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status
       ON sdk_messages(session_id, send_status)`);
+	// Task-scoped feeds and activity views read directly from this column.
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id
+      ON sdk_messages(task_id, timestamp)`);
 
-	// task_session_map's session_id index is owned by migration 122 alongside
-	// the table itself. Re-declaring it here would fail in createTables-only
-	// environments where migrations have not run, since the table doesn't
-	// exist in this bootstrap path. Production runs migrations first.
+	// Legacy `task_session_map` indexes no longer exist — see the
+	// `sdk_messages.task_id` column above for the replacement.
 
 	// Room indexes
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);

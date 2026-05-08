@@ -72,8 +72,10 @@ function makeDb(): BunDatabase {
 		origin TEXT,
 		is_renderable INTEGER NOT NULL DEFAULT 1,
 		is_terminal INTEGER NOT NULL DEFAULT 0,
-		parent_tool_use_id TEXT
+		parent_tool_use_id TEXT,
+		task_id TEXT
 	)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id)`);
 	return db;
 }
 

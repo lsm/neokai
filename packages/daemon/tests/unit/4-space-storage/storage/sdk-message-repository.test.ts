@@ -71,10 +71,12 @@ describe('SDKMessageRepository', () => {
 				origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'neo', 'system')),
 				is_renderable INTEGER NOT NULL DEFAULT 1,
 				is_terminal INTEGER NOT NULL DEFAULT 0,
-				parent_tool_use_id TEXT
+				parent_tool_use_id TEXT,
+				task_id TEXT
 			);
 			CREATE INDEX idx_sdk_messages_session ON sdk_messages(session_id);
 			CREATE INDEX idx_sdk_messages_timestamp ON sdk_messages(timestamp);
+			CREATE INDEX idx_sdk_messages_task_id ON sdk_messages(task_id);
 		`);
 		repository = new SDKMessageRepository(db as any);
 	});

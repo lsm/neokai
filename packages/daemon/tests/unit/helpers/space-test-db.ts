@@ -247,42 +247,37 @@ export function createSpaceTables(db: BunDatabase): void {
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
 	);
 
-	// Minimal `sessions` table — enough for SpaceTaskRepository's
-	// task_session_map upsert to look up `sessions.type` and reject
-	// non-`space_task_agent` rows. Tests that don't pre-seed a session row
-	// still work: the upsert tolerates an unknown session id.
+	// Minimal `sessions` table — used by tests that need to seed
+	// `session_context.taskId` so the SDKMessageRepository can derive the
+	// `sdk_messages.task_id` column at INSERT time.
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS sessions (
 			id TEXT PRIMARY KEY,
-			type TEXT
+			type TEXT,
+			session_context TEXT
 		)
 	`);
 
-	// task_session_map (migration 122). Explicit lookup from a `space_task` to
-	// the set of sessions whose `sdk_messages` contribute to its timeline.
-	// Maintained at write time by SpaceTaskRepository (task_agent leg) and
-	// NodeExecutionRepository (node_agent leg).
-	//
-	// Foreign keys cascade cleanup on owner-row deletion so bulk paths
-	// (workflow run cleanup, session purge) don't leave orphan mappings.
+	// `sdk_messages` is the canonical message store. Tests that exercise
+	// task-scoped feeds rely on the `task_id` column being present and
+	// indexed exactly the way migration 122 produces it in production.
 	db.exec(`
-		CREATE TABLE IF NOT EXISTS task_session_map (
-			task_id TEXT NOT NULL,
+		CREATE TABLE IF NOT EXISTS sdk_messages (
+			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
-			kind TEXT NOT NULL CHECK(kind IN ('task_agent', 'node_agent')),
-			role TEXT NOT NULL,
-			label TEXT NOT NULL,
-			node_execution_id TEXT,
-			created_at INTEGER NOT NULL,
-			PRIMARY KEY (task_id, session_id),
-			FOREIGN KEY (task_id) REFERENCES space_tasks(id) ON DELETE CASCADE,
-			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-			FOREIGN KEY (node_execution_id) REFERENCES node_executions(id) ON DELETE CASCADE
+			message_type TEXT NOT NULL,
+			message_subtype TEXT,
+			sdk_message TEXT NOT NULL,
+			timestamp TEXT NOT NULL,
+			send_status TEXT DEFAULT 'consumed',
+			origin TEXT,
+			is_renderable INTEGER NOT NULL DEFAULT 1,
+			is_terminal INTEGER NOT NULL DEFAULT 0,
+			parent_tool_use_id TEXT,
+			task_id TEXT
 		)
 	`);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_task_session_map_session ON task_session_map(session_id)`
-	);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id)`);
 
 	// Workflow run artifacts
 	db.exec(`

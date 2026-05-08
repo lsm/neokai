@@ -94,9 +94,9 @@ export function createSpaceAgentSchema(db: Database): void {
 		)
 	`);
 
-	// node_executions + task_session_map (migration 122). The repository's
-	// `update` path refreshes denormalised labels in task_session_map after a
-	// rename via a JOIN through node_executions.
+	// node_executions still required by tests that exercise the repo's
+	// agent-name update path (which used to refresh denormalised labels and
+	// is now a no-op — kept here so the schema parity is obvious).
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS node_executions (
 			id TEXT PRIMARY KEY,
@@ -112,18 +112,6 @@ export function createSpaceAgentSchema(db: Database): void {
 			started_at INTEGER,
 			completed_at INTEGER,
 			updated_at INTEGER NOT NULL
-		)
-	`);
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS task_session_map (
-			task_id TEXT NOT NULL,
-			session_id TEXT NOT NULL,
-			kind TEXT NOT NULL,
-			role TEXT NOT NULL,
-			label TEXT NOT NULL,
-			node_execution_id TEXT,
-			created_at INTEGER NOT NULL,
-			PRIMARY KEY (task_id, session_id)
 		)
 	`);
 }

@@ -3,19 +3,20 @@
  *
  * Migration 122 makes two schema-level moves:
  *   1. Adds derived columns (`is_renderable`, `is_terminal`, `parent_tool_use_id`)
- *      to `sdk_messages` and backfills them from existing rows. New rows are
- *      stamped at write time by the SDK message repository.
- *   2. Creates `task_session_map` — an explicit lookup that resolves a
- *      `space_task` to the set of sessions whose `sdk_messages` contribute to
- *      its task-thread timeline. Backfilled from `space_tasks.task_agent_session_id`
- *      (task_agent leg) and `node_executions.agent_session_id` joined with
- *      `space_tasks` via `workflow_run_id` (node_agent leg).
+ *      and a denormalised `task_id` column to `sdk_messages`. The derived
+ *      columns are computed from the message JSON; `task_id` is backfilled
+ *      from `sessions.session_context.taskId`. New rows are stamped at write
+ *      time by the SDK message repository.
+ *   2. Drops the legacy `task_session_map` lookup table — the data it carried
+ *      is now derived directly from `sdk_messages.task_id` plus joins onto
+ *      `sessions` / `node_executions` at read time.
  *
  * Covers:
- *   - Fresh, fully-migrated DB — both new structures exist with the expected
- *     shape.
- *   - Pre-120 schema with rows — derived columns are computed correctly,
- *     parent_tool_use_id is extracted, task_session_map is fully populated.
+ *   - Fresh, fully-migrated DB — sdk_messages has all derived columns plus
+ *     task_id and the supporting index, and the legacy lookup table is gone.
+ *   - Pre-122 schema with rows — derived columns are computed correctly,
+ *     parent_tool_use_id is extracted, task_id is backfilled from session
+ *     context.
  *   - Re-running the migration is a no-op (idempotent).
  *   - Empty / partial-table DB cases are guarded.
  */
@@ -50,11 +51,12 @@ function indexExists(db: BunDatabase, name: string): boolean {
 }
 
 /**
- * Build the post-M117 / pre-M120 shape needed to exercise backfill: a minimal
- * `sessions`, `sdk_messages`, `space_tasks`, `node_executions`, and `space_agents`
- * surface that lets us seed rows and then assert the migration's effects.
+ * Build the post-M117 / pre-M122 shape needed to exercise backfill: a minimal
+ * `sessions`, `sdk_messages` surface that lets us seed rows and then assert
+ * the migration's effects. `session_context` is the column the migration
+ * reads to backfill `sdk_messages.task_id`.
  */
-function seedPreM120Schema(db: BunDatabase): void {
+function seedPreM122Schema(db: BunDatabase): void {
 	db.exec('PRAGMA foreign_keys = OFF');
 	db.exec(`
 		CREATE TABLE sessions (
@@ -65,7 +67,8 @@ function seedPreM120Schema(db: BunDatabase): void {
 			status TEXT NOT NULL DEFAULT 'active',
 			config TEXT NOT NULL DEFAULT '{}',
 			metadata TEXT NOT NULL DEFAULT '{}',
-			title TEXT NOT NULL DEFAULT ''
+			title TEXT NOT NULL DEFAULT '',
+			session_context TEXT
 		)
 	`);
 	db.exec(`
@@ -80,52 +83,10 @@ function seedPreM120Schema(db: BunDatabase): void {
 			origin TEXT
 		)
 	`);
-	db.exec(`
-		CREATE TABLE space_tasks (
-			id TEXT PRIMARY KEY,
-			space_id TEXT NOT NULL,
-			task_number INTEGER NOT NULL,
-			title TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL DEFAULT 'open',
-			priority TEXT NOT NULL DEFAULT 'normal',
-			labels TEXT NOT NULL DEFAULT '[]',
-			workflow_run_id TEXT,
-			task_agent_session_id TEXT,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL
-		)
-	`);
-	db.exec(`
-		CREATE TABLE space_agents (
-			id TEXT PRIMARY KEY,
-			space_id TEXT NOT NULL,
-			name TEXT NOT NULL,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL
-		)
-	`);
-	db.exec(`
-		CREATE TABLE node_executions (
-			id TEXT PRIMARY KEY,
-			workflow_run_id TEXT NOT NULL,
-			workflow_node_id TEXT NOT NULL,
-			agent_name TEXT NOT NULL,
-			agent_id TEXT,
-			agent_session_id TEXT,
-			status TEXT NOT NULL DEFAULT 'pending',
-			result TEXT,
-			data TEXT,
-			created_at INTEGER NOT NULL,
-			started_at INTEGER,
-			completed_at INTEGER,
-			updated_at INTEGER NOT NULL
-		)
-	`);
 	db.exec('PRAGMA foreign_keys = ON');
 }
 
-describe('Migration 122: derived columns + task_session_map', () => {
+describe('Migration 122: derived columns + task_id on sdk_messages', () => {
 	let testDir: string;
 	let db: BunDatabase;
 
@@ -160,116 +121,52 @@ describe('Migration 122: derived columns + task_session_map', () => {
 			createTables(db);
 		});
 
-		test('sdk_messages has the new derived columns', () => {
+		test('sdk_messages has the new derived columns plus task_id', () => {
 			const columns = columnNames(db, 'sdk_messages');
 			expect(columns).toContain('is_renderable');
 			expect(columns).toContain('is_terminal');
 			expect(columns).toContain('parent_tool_use_id');
+			expect(columns).toContain('task_id');
 		});
 
-		test('task_session_map table exists with expected columns', () => {
-			expect(tableExists(db, 'task_session_map')).toBe(true);
-			const cols = columnNames(db, 'task_session_map');
-			expect(cols).toEqual(
-				expect.arrayContaining([
-					'task_id',
-					'session_id',
-					'kind',
-					'role',
-					'label',
-					'node_execution_id',
-					'created_at',
-				])
-			);
+		test('sdk_messages task_id index exists', () => {
+			expect(indexExists(db, 'idx_sdk_messages_task_id')).toBe(true);
 		});
 
-		test('task_session_map(session_id) index exists', () => {
-			expect(indexExists(db, 'idx_task_session_map_session')).toBe(true);
-		});
-
-		test('sdk_messages new indexes exist', () => {
+		test('sdk_messages new derived-column indexes exist', () => {
 			expect(indexExists(db, 'idx_sdk_messages_parent_tool_use_id')).toBe(true);
 			expect(indexExists(db, 'idx_sdk_messages_renderable_terminal')).toBe(true);
 		});
 
-		test('task_session_map is empty on a fresh DB with no tasks', () => {
-			const row = db.prepare(`SELECT COUNT(*) AS n FROM task_session_map`).get() as { n: number };
-			expect(row.n).toBe(0);
-		});
-
-		test('task_session_map declares ON DELETE CASCADE foreign keys', () => {
-			// Reviewer flagged: bulk cleanup paths (workflow run delete, session
-			// purge, node-execution prune) bypass the repository writers and
-			// would leave orphan map rows. Foreign keys with CASCADE move the
-			// invariant into the schema.
-			const fks = db
-				.prepare(
-					`SELECT "table", "from", "on_delete" FROM pragma_foreign_key_list('task_session_map')`
-				)
-				.all() as Array<{ table: string; from: string; on_delete: string }>;
-			const byColumn = Object.fromEntries(
-				fks.map((r) => [r.from, { table: r.table, onDelete: r.on_delete }])
-			);
-			expect(byColumn.task_id).toEqual({ table: 'space_tasks', onDelete: 'CASCADE' });
-			expect(byColumn.session_id).toEqual({ table: 'sessions', onDelete: 'CASCADE' });
-			expect(byColumn.node_execution_id).toEqual({
-				table: 'node_executions',
-				onDelete: 'CASCADE',
-			});
+		test('legacy task_session_map table has been dropped', () => {
+			expect(tableExists(db, 'task_session_map')).toBe(false);
 		});
 	});
 
-	describe('backfill from pre-120 schema', () => {
+	describe('backfill from pre-122 schema', () => {
 		beforeEach(() => {
-			seedPreM120Schema(db);
+			seedPreM122Schema(db);
 			const now = Date.now();
 			const ts = new Date(now).toISOString();
 
-			// Sessions: one Task Agent, two node-agent sessions.
+			// Two task-bound sessions and one un-bound (worker) session. The
+			// task-bound rows carry `taskId` in their `session_context`, exactly
+			// the way Task Agent + node-agent sessions stamp it at creation.
 			db.prepare(
-				`INSERT INTO sessions (id, type, created_at, last_active_at) VALUES (?, ?, ?, ?)`
-			).run('sess-task-agent', 'space_task_agent', ts, ts);
+				`INSERT INTO sessions (id, type, created_at, last_active_at, session_context) VALUES (?, ?, ?, ?, ?)`
+			).run('sess-task-agent', 'space_task_agent', ts, ts, JSON.stringify({ taskId: 'task-1' }));
 			db.prepare(
-				`INSERT INTO sessions (id, type, created_at, last_active_at) VALUES (?, ?, ?, ?)`
-			).run('sess-coder', 'coder', ts, ts);
+				`INSERT INTO sessions (id, type, created_at, last_active_at, session_context) VALUES (?, ?, ?, ?, ?)`
+			).run('sess-coder', 'worker', ts, ts, JSON.stringify({ taskId: 'task-1' }));
 			db.prepare(
-				`INSERT INTO sessions (id, type, created_at, last_active_at) VALUES (?, ?, ?, ?)`
-			).run('sess-reviewer', 'general', ts, ts);
+				`INSERT INTO sessions (id, type, created_at, last_active_at, session_context) VALUES (?, ?, ?, ?, ?)`
+			).run('sess-orphan', 'worker', ts, ts, null);
+			db.prepare(
+				`INSERT INTO sessions (id, type, created_at, last_active_at, session_context) VALUES (?, ?, ?, ?, ?)`
+			).run('sess-malformed', 'worker', ts, ts, '{not-json');
 
-			// Space agent for label resolution.
-			db.prepare(
-				`INSERT INTO space_agents (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-			).run('agent-coder', 'sp-1', 'Coder Agent', now, now);
-
-			// Task with both legs: a Task Agent session and node executions on a workflow run.
-			db.prepare(
-				`INSERT INTO space_tasks (id, space_id, task_number, title, workflow_run_id, task_agent_session_id, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-			).run('task-1', 'sp-1', 1, 'Task 1', 'run-1', 'sess-task-agent', now, now);
-
-			// Task without workflow run — should still get its task_agent leg.
-			db.prepare(
-				`INSERT INTO space_tasks (id, space_id, task_number, title, task_agent_session_id, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?)`
-			).run('task-2', 'sp-1', 2, 'Task 2', 'sess-task-agent', now, now);
-
-			// Node executions — one with agent_id (label from space_agents), one without (fallback to agent_name).
-			db.prepare(
-				`INSERT INTO node_executions (id, workflow_run_id, workflow_node_id, agent_name, agent_id, agent_session_id, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-			).run('ne-1', 'run-1', 'node-coder', 'coder', 'agent-coder', 'sess-coder', now, now);
-			db.prepare(
-				`INSERT INTO node_executions (id, workflow_run_id, workflow_node_id, agent_name, agent_id, agent_session_id, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-			).run('ne-2', 'run-1', 'node-reviewer', 'reviewer', null, 'sess-reviewer', now, now);
-
-			// Node execution without a session — must NOT appear in the map.
-			db.prepare(
-				`INSERT INTO node_executions (id, workflow_run_id, workflow_node_id, agent_name, agent_id, agent_session_id, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-			).run('ne-3', 'run-1', 'node-pending', 'pending', null, null, now, now);
-
-			// SDK messages spanning all renderability classes.
+			// SDK messages spanning all renderability classes, plus rows on the
+			// task-bound and unbound sessions so we can assert task_id backfill.
 			db.prepare(
 				`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
 				 VALUES (?, ?, ?, ?, ?)`
@@ -298,7 +195,7 @@ describe('Migration 122: derived columns + task_session_map', () => {
 				 VALUES (?, ?, ?, ?, ?)`
 			).run(
 				'msg-user-text',
-				'sess-coder',
+				'sess-task-agent',
 				'user',
 				JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: 'hi' }] } }),
 				ts
@@ -341,6 +238,28 @@ describe('Migration 122: derived columns + task_session_map', () => {
 					parent_tool_use_id: 'parent-tu-1',
 					message: { content: [{ type: 'text', text: 'sub' }] },
 				}),
+				ts
+			);
+			// Un-bound session: should backfill to NULL (no taskId in context).
+			db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+				 VALUES (?, ?, ?, ?, ?)`
+			).run(
+				'msg-orphan',
+				'sess-orphan',
+				'assistant',
+				JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'x' }] } }),
+				ts
+			);
+			// Malformed JSON in session_context: must NOT throw or corrupt the row.
+			db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+				 VALUES (?, ?, ?, ?, ?)`
+			).run(
+				'msg-malformed-context',
+				'sess-malformed',
+				'assistant',
+				JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'x' }] } }),
 				ts
 			);
 		});
@@ -396,83 +315,56 @@ describe('Migration 122: derived columns + task_session_map', () => {
 			}
 		});
 
-		test('task_session_map seeds the task_agent leg for tasks with a Task Agent session', () => {
+		test('task_id is backfilled from sessions.session_context.taskId', () => {
 			runMigration122(db);
-			const row = db
-				.prepare(
-					`SELECT task_id, session_id, kind, role, label, node_execution_id
-					 FROM task_session_map
-					 WHERE task_id = ? AND kind = 'task_agent'`
-				)
-				.get('task-1') as {
-				task_id: string;
-				session_id: string;
-				kind: string;
-				role: string;
-				label: string;
-				node_execution_id: string | null;
-			};
-			expect(row.session_id).toBe('sess-task-agent');
-			expect(row.role).toBe('task-agent');
-			expect(row.label).toBe('Task Agent');
-			expect(row.node_execution_id).toBeNull();
-		});
-
-		test('task_session_map seeds the node_agent leg for every (task, session) pair on the run', () => {
-			runMigration122(db);
-			const rows = db
-				.prepare(
-					`SELECT task_id, session_id, kind, role, label, node_execution_id
-					 FROM task_session_map
-					 WHERE task_id = ? AND kind = 'node_agent'
-					 ORDER BY session_id ASC`
-				)
-				.all('task-1') as Array<{
-				task_id: string;
-				session_id: string;
-				kind: string;
-				role: string;
-				label: string;
-				node_execution_id: string | null;
+			const rows = db.prepare(`SELECT id, task_id FROM sdk_messages ORDER BY id`).all() as Array<{
+				id: string;
+				task_id: string | null;
 			}>;
-			expect(rows).toEqual([
-				{
-					task_id: 'task-1',
-					session_id: 'sess-coder',
-					kind: 'node_agent',
-					role: 'coder',
-					label: 'Coder Agent',
-					node_execution_id: 'ne-1',
-				},
-				{
-					task_id: 'task-1',
-					session_id: 'sess-reviewer',
-					kind: 'node_agent',
-					role: 'reviewer',
-					label: 'reviewer',
-					node_execution_id: 'ne-2',
-				},
-			]);
+			const map = new Map(rows.map((r) => [r.id, r.task_id]));
+			expect(map.get('msg-result')).toBe('task-1');
+			expect(map.get('msg-user-tool-result')).toBe('task-1');
+			expect(map.get('msg-user-text')).toBe('task-1');
+			expect(map.get('msg-assistant-text')).toBe('task-1');
+			expect(map.get('msg-subagent')).toBe('task-1');
 		});
 
-		test('task_session_map skips node executions without an agent_session_id', () => {
+		test('task_id is null for sessions without a task context', () => {
 			runMigration122(db);
 			const orphan = db
-				.prepare(`SELECT COUNT(*) AS n FROM task_session_map WHERE node_execution_id = ?`)
-				.get('ne-3') as { n: number };
-			expect(orphan.n).toBe(0);
+				.prepare(`SELECT task_id FROM sdk_messages WHERE id = ?`)
+				.get('msg-orphan') as { task_id: string | null };
+			expect(orphan.task_id).toBeNull();
 		});
 
-		test('task_session_map skips workflow-less tasks for node_agent leg but keeps task_agent leg', () => {
+		test('task_id is null for sessions with malformed session_context JSON', () => {
+			// Migration must tolerate broken rows — the json_valid guard prevents
+			// json_extract from aborting the UPDATE.
 			runMigration122(db);
-			const nodeRows = db
-				.prepare(`SELECT COUNT(*) AS n FROM task_session_map WHERE task_id = ? AND kind = ?`)
-				.get('task-2', 'node_agent') as { n: number };
-			expect(nodeRows.n).toBe(0);
-			const orchestrationRows = db
-				.prepare(`SELECT COUNT(*) AS n FROM task_session_map WHERE task_id = ? AND kind = ?`)
-				.get('task-2', 'task_agent') as { n: number };
-			expect(orchestrationRows.n).toBe(1);
+			const malformed = db
+				.prepare(`SELECT task_id FROM sdk_messages WHERE id = ?`)
+				.get('msg-malformed-context') as { task_id: string | null };
+			expect(malformed.task_id).toBeNull();
+		});
+
+		test('drops the legacy task_session_map table', () => {
+			// Pre-existing task_session_map rows must not survive the migration —
+			// the read path no longer reads from it, so leaving stale rows around
+			// would just be dead bytes plus a misleading source of truth.
+			db.exec(`
+				CREATE TABLE task_session_map (
+					task_id TEXT NOT NULL,
+					session_id TEXT NOT NULL,
+					kind TEXT NOT NULL,
+					role TEXT NOT NULL,
+					label TEXT NOT NULL,
+					node_execution_id TEXT,
+					created_at INTEGER NOT NULL,
+					PRIMARY KEY (task_id, session_id)
+				)
+			`);
+			runMigration122(db);
+			expect(tableExists(db, 'task_session_map')).toBe(false);
 		});
 
 		test('is idempotent — running a second time produces the same state', () => {
@@ -482,8 +374,10 @@ describe('Migration 122: derived columns + task_session_map', () => {
 					`SELECT COUNT(*) AS n FROM sdk_messages WHERE is_renderable IS NOT NULL AND is_terminal IS NOT NULL`
 				)
 				.get() as { n: number };
-			const mapBefore = (
-				db.prepare(`SELECT COUNT(*) AS n FROM task_session_map`).get() as { n: number }
+			const taskIdBefore = (
+				db.prepare(`SELECT COUNT(*) AS n FROM sdk_messages WHERE task_id = 'task-1'`).get() as {
+					n: number;
+				}
 			).n;
 
 			expect(() => runMigration122(db)).not.toThrow();
@@ -493,23 +387,26 @@ describe('Migration 122: derived columns + task_session_map', () => {
 					`SELECT COUNT(*) AS n FROM sdk_messages WHERE is_renderable IS NOT NULL AND is_terminal IS NOT NULL`
 				)
 				.get() as { n: number };
-			const mapAfter = (
-				db.prepare(`SELECT COUNT(*) AS n FROM task_session_map`).get() as { n: number }
+			const taskIdAfter = (
+				db.prepare(`SELECT COUNT(*) AS n FROM sdk_messages WHERE task_id = 'task-1'`).get() as {
+					n: number;
+				}
 			).n;
 
 			expect(sdkAfter.n).toBe(sdkBefore.n);
-			expect(mapAfter).toBe(mapBefore);
+			expect(taskIdAfter).toBe(taskIdBefore);
+			expect(tableExists(db, 'task_session_map')).toBe(false);
 		});
 	});
 
 	describe('missing tables — no-op guards', () => {
-		test('runMigration122 on an empty DB does not throw and creates only task_session_map', () => {
+		test('runMigration122 on an empty DB does not throw', () => {
 			expect(() => runMigration122(db)).not.toThrow();
-			expect(tableExists(db, 'task_session_map')).toBe(true);
 			expect(tableExists(db, 'sdk_messages')).toBe(false);
+			expect(tableExists(db, 'task_session_map')).toBe(false);
 		});
 
-		test('runMigration122 with only sdk_messages adds derived columns and creates empty task_session_map', () => {
+		test('runMigration122 with only sdk_messages adds derived columns including task_id', () => {
 			db.exec(`
 				CREATE TABLE sdk_messages (
 					id TEXT PRIMARY KEY,
@@ -525,10 +422,8 @@ describe('Migration 122: derived columns + task_session_map', () => {
 			expect(cols).toContain('is_renderable');
 			expect(cols).toContain('is_terminal');
 			expect(cols).toContain('parent_tool_use_id');
-			expect(tableExists(db, 'task_session_map')).toBe(true);
-			expect(
-				(db.prepare(`SELECT COUNT(*) AS n FROM task_session_map`).get() as { n: number }).n
-			).toBe(0);
+			expect(cols).toContain('task_id');
+			expect(indexExists(db, 'idx_sdk_messages_task_id')).toBe(true);
 		});
 	});
 });

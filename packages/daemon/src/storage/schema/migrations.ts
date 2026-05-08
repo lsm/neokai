@@ -8010,18 +8010,30 @@ export function runMigration117(db: BunDatabase): void {
  *    time keeps the live-query SQL flat and lets a plain B-tree index serve
  *    `parent_tool_use_id` lookups instead of a function index.
  *
- * 2. `task_session_map` table. Mapping a `space_task` to its contributing
- *    sessions used to require a five-CTE join (target_task → orchestration →
- *    node_executions → space_agents → all_sessions). Replacing it with a small
- *    explicit lookup table that the repositories maintain on write removes the
- *    join entirely from the hot read path.
+ * 2. `task_id` column on `sdk_messages`. Mapping a `space_task` to its
+ *    contributing sessions used to require a five-CTE join (target_task →
+ *    orchestration → node_executions → space_agents → all_sessions), and a
+ *    short-lived denormalised `task_session_map` table tried to short-circuit
+ *    it. Stamping `task_id` directly on each persisted SDK message turns the
+ *    primary read path (`get all messages for a task`) into a simple indexed
+ *    `WHERE task_id = ?` lookup and makes the lookup table unnecessary.
+ *
+ *    The session already knows its task: `sessions.session_context` carries
+ *    `taskId` for both the Task Agent (`type = 'space_task_agent'`) and node
+ *    agent (`type = 'worker'`) sub-sessions — set by `task-agent.ts` and
+ *    `custom-agent.ts` at session creation. The backfill mines that JSON to
+ *    populate task_id for existing rows.
+ *
+ *    Display-time metadata (kind, role, label, node_execution_id) is derived at
+ *    query time by joining `sessions` (for `type` → kind) and `node_executions`
+ *    (for `agent_name`, `workflow_node_id`) when needed — there is no
+ *    denormalised cache.
  *
  * The migration is idempotent end-to-end:
  * - column adds check `tableColumnNames`
  * - the backfill recomputes derived columns regardless of prior state (the work
- *   is deterministic from `sdk_message` JSON)
- * - `CREATE TABLE IF NOT EXISTS` and `INSERT OR IGNORE` make the
- *   task_session_map seed safe to re-run.
+ *   is deterministic from `sdk_message` JSON / `sessions.session_context`)
+ * - DROP IF EXISTS makes the lookup-table cleanup safe to re-run.
  */
 export function runMigration122(db: BunDatabase): void {
 	// Step 1: add derived columns to sdk_messages.
@@ -8035,6 +8047,9 @@ export function runMigration122(db: BunDatabase): void {
 		}
 		if (!columns.includes('parent_tool_use_id')) {
 			db.exec(`ALTER TABLE sdk_messages ADD COLUMN parent_tool_use_id TEXT`);
+		}
+		if (!columns.includes('task_id')) {
+			db.exec(`ALTER TABLE sdk_messages ADD COLUMN task_id TEXT`);
 		}
 
 		// Backfill derived columns. The arithmetic is deterministic from
@@ -8101,143 +8116,42 @@ export function runMigration122(db: BunDatabase): void {
 		db.exec(
 			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal ON sdk_messages(session_id, is_renderable, is_terminal, timestamp, id)`
 		);
-	}
 
-	// Step 2: create task_session_map.
-	//
-	// Foreign keys provide cascade cleanup on owner-row deletion so bulk paths
-	// (e.g. workflow_run cleanup, session purge) don't leave orphan mappings:
-	//   - task_id → space_tasks(id) ON DELETE CASCADE
-	//   - session_id → sessions(id) ON DELETE CASCADE
-	//   - node_execution_id → node_executions(id) ON DELETE CASCADE (nullable;
-	//     only set on `node_agent` rows)
-	//
-	// SQLite records FK target tables at CREATE time but only validates them
-	// at INSERT time. Crucially though, an INSERT OR REPLACE / DELETE on a
-	// *parent* of `task_session_map` must plan the CASCADE delete on this
-	// child, and that planning fails when *any* of the child's other FK
-	// targets is missing — so we must ensure all three parent tables exist
-	// before creating `task_session_map`. `space_tasks` and `node_executions`
-	// are created by earlier migrations / `createTables`. `sessions` is
-	// usually created by `createTables` *after* migrations, so we
-	// pre-create a stub here using the same DDL so production behaviour is
-	// unchanged (the later `createTables` call becomes a no-op via
-	// CREATE TABLE IF NOT EXISTS).
-	if (!tableExists(db, 'sessions')) {
-		db.exec(`
-			CREATE TABLE IF NOT EXISTS sessions (
-				id TEXT PRIMARY KEY,
-				title TEXT NOT NULL,
-				workspace_path TEXT,
-				created_at TEXT NOT NULL,
-				last_active_at TEXT NOT NULL,
-				status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
-				config TEXT NOT NULL,
-				metadata TEXT NOT NULL,
-				is_worktree INTEGER DEFAULT 0,
-				worktree_path TEXT,
-				main_repo_path TEXT,
-				worktree_branch TEXT,
-				git_branch TEXT,
-				sdk_session_id TEXT,
-				sdk_origin_path TEXT,
-				available_commands TEXT,
-				processing_state TEXT,
-				archived_at TEXT,
-				parent_id TEXT,
-				type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'space_chat', 'neo')),
-				session_context TEXT
-			)
-		`);
-	}
-
-	// For databases that previously created `task_session_map` without foreign
-	// keys (early dev runs of this migration), drop and recreate so the schema
-	// upgrade is idempotent. Production databases haven't seen the no-FK form
-	// because this migration only ships with FKs.
-	if (tableExists(db, 'task_session_map')) {
-		const fkCount = (
-			db.prepare(`SELECT COUNT(*) AS n FROM pragma_foreign_key_list('task_session_map')`).get() as
-				| { n: number }
-				| undefined
-		)?.n;
-		if ((fkCount ?? 0) < 3) {
-			db.exec(`DROP TABLE task_session_map`);
+		// Step 2: backfill `sdk_messages.task_id` from the writing session's
+		// `session_context.taskId`. Both the Task Agent and node-agent sub-sessions
+		// stamp this at creation, so a JOIN on `sessions` covers every Space
+		// session that ever produced messages. Sessions without a task context
+		// (worker sessions outside the Space system, lobby/neo, etc.) get NULL —
+		// the column is nullable on purpose.
+		//
+		// `json_valid(s.session_context)` guards against malformed JSON the same
+		// way the sdk_message backfill does.
+		if (tableExists(db, 'sessions')) {
+			db.exec(`
+				UPDATE sdk_messages
+				SET task_id = (
+					SELECT
+						CASE
+							WHEN s.session_context IS NULL THEN NULL
+							WHEN NOT json_valid(s.session_context) THEN NULL
+							ELSE json_extract(s.session_context, '$.taskId')
+						END
+					FROM sessions s
+					WHERE s.id = sdk_messages.session_id
+				)
+				WHERE task_id IS NULL
+			`);
 		}
-	}
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS task_session_map (
-			task_id TEXT NOT NULL,
-			session_id TEXT NOT NULL,
-			kind TEXT NOT NULL CHECK(kind IN ('task_agent', 'node_agent')),
-			role TEXT NOT NULL,
-			label TEXT NOT NULL,
-			node_execution_id TEXT,
-			created_at INTEGER NOT NULL,
-			PRIMARY KEY (task_id, session_id),
-			FOREIGN KEY (task_id) REFERENCES space_tasks(id) ON DELETE CASCADE,
-			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-			FOREIGN KEY (node_execution_id) REFERENCES node_executions(id) ON DELETE CASCADE
-		)
-	`);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_task_session_map_session ON task_session_map(session_id)`
-	);
 
-	// Step 3: backfill task_session_map.
-	//
-	// Leg 1 — task_agent rows. Derived from space_tasks.task_agent_session_id.
-	if (tableExists(db, 'space_tasks') && tableExists(db, 'sessions')) {
-		db.exec(`
-			INSERT OR IGNORE INTO task_session_map (
-				task_id, session_id, kind, role, label, node_execution_id, created_at
-			)
-			SELECT
-				st.id AS task_id,
-				st.task_agent_session_id AS session_id,
-				'task_agent' AS kind,
-				'task-agent' AS role,
-				'Task Agent' AS label,
-				NULL AS node_execution_id,
-				COALESCE(st.created_at, strftime('%s','now') * 1000) AS created_at
-			FROM space_tasks st
-			JOIN sessions s ON s.id = st.task_agent_session_id
-			WHERE st.task_agent_session_id IS NOT NULL
-				AND s.type = 'space_task_agent'
-		`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id)`);
 	}
 
-	// Leg 2 — node_agent rows. Derived from node_executions joined with
-	// space_tasks via workflow_run_id, with the agent label resolved from
-	// space_agents when possible (fallback to node_executions.agent_name).
-	// Requires `sessions` to exist as well — without it, the FK check on
-	// `session_id` raises at INSERT time even for non-empty sources.
-	if (
-		tableExists(db, 'node_executions') &&
-		tableExists(db, 'space_tasks') &&
-		tableExists(db, 'space_agents') &&
-		tableExists(db, 'sessions')
-	) {
-		db.exec(`
-			INSERT OR IGNORE INTO task_session_map (
-				task_id, session_id, kind, role, label, node_execution_id, created_at
-			)
-			SELECT
-				st.id AS task_id,
-				ne.agent_session_id AS session_id,
-				'node_agent' AS kind,
-				ne.agent_name AS role,
-				COALESCE(sa.name, ne.agent_name, 'agent') AS label,
-				ne.id AS node_execution_id,
-				COALESCE(ne.created_at, strftime('%s','now') * 1000) AS created_at
-			FROM node_executions ne
-			JOIN space_tasks st
-				ON st.workflow_run_id IS NOT NULL
-				AND ne.workflow_run_id = st.workflow_run_id
-			LEFT JOIN space_agents sa ON sa.id = ne.agent_id
-			WHERE ne.agent_session_id IS NOT NULL
-		`);
-	}
+	// Step 3: drop the legacy `task_session_map` lookup table. It was a
+	// denormalised cache of data that already exists on `sessions` +
+	// `node_executions`; with `sdk_messages.task_id` populated the read path
+	// no longer needs it. Idempotent — early development DBs that never created
+	// the table skip cleanly.
+	db.exec(`DROP TABLE IF EXISTS task_session_map`);
 }
 
 /**

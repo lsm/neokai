@@ -631,34 +631,81 @@ WITH target_task AS (
   FROM space_tasks
   WHERE id = ?
 ),
--- task_session_map is the canonical lookup for "which sessions contribute to
--- this task's timeline". Reading from it (rather than re-deriving sessions
--- inline from space_tasks.task_agent_session_id + node_executions) keeps this
--- query in lock-step with the SPACE_TASK_MESSAGES_BASE_CTE and the scope
--- filter buildTaskScopeFilter. The map is maintained at write time by
--- SpaceTaskRepository (task_agent leg) and NodeExecutionRepository
--- (node_agent leg), so it always reflects the same membership the messages
--- read path enforces.
+-- Derive contributing sessions directly from sdk_messages.task_id — the
+-- canonical "messages stamped at write time with the writing session's
+-- task context" column. Each session is then characterised by joining
+-- the sessions row and (for node-agent sessions) the most-recent
+-- node_executions row that bound it to the task's workflow run.
+contributing_sessions AS (
+  SELECT DISTINCT sm.session_id, tt.id AS task_id, tt.title AS task_title, tt.status AS task_status
+  FROM target_task tt
+  JOIN sdk_messages sm ON sm.task_id = tt.id
+),
+-- Pick the most relevant node_execution per (task, session): prefer
+-- in-progress, then most recently updated. Used to resolve agent_name /
+-- workflow_node_id / execution_status / label below. Only applies to
+-- node-agent sessions; the Task Agent session has no row here.
+session_node_exec AS (
+  SELECT cs.task_id, cs.session_id, ne.id AS node_execution_id,
+         ne.workflow_node_id, ne.agent_id, ne.agent_name,
+         ne.status AS execution_status, ne.result AS execution_result,
+         ne.updated_at AS execution_updated_at,
+         ROW_NUMBER() OVER (
+           PARTITION BY cs.task_id, cs.session_id
+           ORDER BY
+             CASE ne.status
+               WHEN 'in_progress' THEN 0
+               WHEN 'waiting_rebind' THEN 1
+               WHEN 'blocked' THEN 2
+               WHEN 'pending' THEN 3
+               ELSE 4
+             END,
+             ne.updated_at DESC,
+             ne.created_at DESC,
+             ne.id DESC
+         ) AS rn
+  FROM contributing_sessions cs
+  JOIN target_task tt ON tt.id = cs.task_id
+  JOIN node_executions ne
+    ON ne.workflow_run_id = tt.workflow_run_id
+   AND ne.agent_session_id = cs.session_id
+),
 all_sessions AS (
   SELECT
-    tsm.session_id AS session_id,
-    tsm.kind AS kind,
-    tsm.label AS label,
-    tsm.role AS role,
-    tt.id AS task_id,
-    tt.title AS task_title,
-    tt.status AS task_status,
-    tsm.node_execution_id AS node_execution_id,
-    ne.workflow_node_id AS workflow_node_id,
-    ne.agent_name AS agent_name,
-    ne.status AS execution_status,
-    ne.result AS execution_result,
-    ne.updated_at AS execution_updated_at
-  FROM target_task tt
-  JOIN task_session_map tsm ON tsm.task_id = tt.id
-  LEFT JOIN node_executions ne
-    ON tsm.kind = 'node_agent'
-   AND ne.id = tsm.node_execution_id
+    cs.session_id AS session_id,
+    -- Task Agent vs node-agent classification: the task's
+    -- task_agent_session_id column is the source of truth for the
+    -- orchestration session; everything else is a node-agent session.
+    CASE
+      WHEN cs.session_id = (SELECT task_agent_session_id FROM target_task)
+        THEN 'task_agent'
+      ELSE 'node_agent'
+    END AS kind,
+    CASE
+      WHEN cs.session_id = (SELECT task_agent_session_id FROM target_task)
+        THEN 'Task Agent'
+      ELSE COALESCE(sa.name, sne.agent_name, 'agent')
+    END AS label,
+    CASE
+      WHEN cs.session_id = (SELECT task_agent_session_id FROM target_task)
+        THEN 'task-agent'
+      ELSE sne.agent_name
+    END AS role,
+    cs.task_id,
+    cs.task_title,
+    cs.task_status,
+    sne.node_execution_id,
+    sne.workflow_node_id,
+    sne.agent_name,
+    sne.execution_status,
+    sne.execution_result,
+    sne.execution_updated_at
+  FROM contributing_sessions cs
+  LEFT JOIN session_node_exec sne
+    ON sne.task_id = cs.task_id
+   AND sne.session_id = cs.session_id
+   AND sne.rn = 1
+  LEFT JOIN space_agents sa ON sa.id = sne.agent_id
 ),
 -- Deduplicate session IDs to prevent fan-out in message_stats JOIN
 unique_session_ids AS (
@@ -744,24 +791,6 @@ WITH target_task AS (
   FROM space_tasks
   WHERE id = ?
 ),
--- task_session_map is the canonical lookup for "which sessions contribute to
--- this task's timeline". Each row is either the Task Agent's orchestration
--- session (kind='task_agent') or a node-agent session bound to the task via
--- workflow_run_id (kind='node_agent'). The map is maintained at write time by
--- SpaceTaskRepository and NodeExecutionRepository so live reads can JOIN
--- straight onto sdk_messages without walking sessions/space_agents/node_executions.
-all_sessions AS (
-  SELECT
-    tsm.session_id AS session_id,
-    tsm.kind AS kind,
-    tsm.role AS role,
-    tsm.label AS label,
-    tsm.node_execution_id AS node_execution_id,
-    tt.id AS task_id,
-    tt.title AS task_title
-  FROM target_task tt
-  JOIN task_session_map tsm ON tsm.task_id = tt.id
-),
 github_events AS (
   SELECT
     ge.id AS id,
@@ -791,16 +820,53 @@ github_events AS (
   JOIN space_github_events ge ON ge.task_id = tt.id
   WHERE ge.state IN ('routed', 'delivered')
 ),
+-- Pick the most relevant node_execution per (task, session) for label /
+-- node_execution_id derivation. Same precedence the activity query uses:
+-- prefer in-progress, then most-recent. Only relevant for non Task Agent
+-- sessions (the Task Agent has no node_executions row).
+session_node_exec AS (
+  SELECT tt.id AS task_id, ne.agent_session_id AS session_id, ne.id AS node_execution_id,
+         ne.agent_id, ne.agent_name,
+         ROW_NUMBER() OVER (
+           PARTITION BY tt.id, ne.agent_session_id
+           ORDER BY
+             CASE ne.status
+               WHEN 'in_progress' THEN 0
+               WHEN 'waiting_rebind' THEN 1
+               WHEN 'blocked' THEN 2
+               WHEN 'pending' THEN 3
+               ELSE 4
+             END,
+             ne.updated_at DESC,
+             ne.created_at DESC,
+             ne.id DESC
+         ) AS rn
+  FROM target_task tt
+  JOIN node_executions ne
+    ON ne.workflow_run_id = tt.workflow_run_id
+   AND ne.agent_session_id IS NOT NULL
+),
 sdk_rows_raw AS (
   SELECT
     sm.id AS id,
     sm.session_id AS sessionId,
-    ase.kind AS kind,
-    ase.role AS role,
-    ase.label AS label,
-    ase.node_execution_id AS nodeExecutionId,
-    ase.task_id AS taskId,
-    ase.task_title AS taskTitle,
+    -- Task Agent vs node-agent classification — derived from the
+    -- task's task_agent_session_id rather than a denormalised map.
+    CASE
+      WHEN sm.session_id = tt.task_agent_session_id THEN 'task_agent'
+      ELSE 'node_agent'
+    END AS kind,
+    CASE
+      WHEN sm.session_id = tt.task_agent_session_id THEN 'task-agent'
+      ELSE sne.agent_name
+    END AS role,
+    CASE
+      WHEN sm.session_id = tt.task_agent_session_id THEN 'Task Agent'
+      ELSE COALESCE(sa.name, sne.agent_name, 'agent')
+    END AS label,
+    sne.node_execution_id AS nodeExecutionId,
+    tt.id AS taskId,
+    tt.title AS taskTitle,
     sm.message_type AS messageType,
     sm.sdk_message AS content,
     sm.origin AS origin,
@@ -808,8 +874,13 @@ sdk_rows_raw AS (
     sm.parent_tool_use_id AS parentToolUseId,
     sm.is_renderable AS isRenderable,
     sm.is_terminal AS isTerminal
-  FROM all_sessions ase
-  JOIN sdk_messages sm ON sm.session_id = ase.session_id
+  FROM target_task tt
+  JOIN sdk_messages sm ON sm.task_id = tt.id
+  LEFT JOIN session_node_exec sne
+    ON sne.task_id = tt.id
+   AND sne.session_id = sm.session_id
+   AND sne.rn = 1
+  LEFT JOIN space_agents sa ON sa.id = sne.agent_id
   WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
 sdk_rows_with_pos AS (
@@ -1749,23 +1820,31 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
  * `spaceTaskActivity.byTask`). Returns `false` when the writing session is
  * not part of the target task, so the live query engine can skip re-evaluation.
  *
- * Reads membership from `task_session_map` — the same canonical lookup the
- * read SQL joins on. Using a different source (e.g. recomputing from
- * `space_tasks.task_agent_session_id` + `node_executions`) risks divergence:
- * a write the read query *would* pick up could be filtered out as out-of-scope,
- * silently dropping live-query updates.
+ * Reads membership directly from `sdk_messages.task_id` — the same column
+ * the read SQL filters on. A session is considered in-scope as soon as it
+ * has stamped at least one message for the task. Using a different source
+ * (e.g. recomputing from `space_tasks.task_agent_session_id` +
+ * `node_executions`) risks divergence: a write the read query *would* pick
+ * up could be filtered out as out-of-scope, silently dropping live-query
+ * updates. We additionally accept the Task Agent session itself even
+ * before its first message lands, so the very first orchestration write
+ * isn't suppressed.
  */
 function buildTaskScopeFilter(
 	params: ReadonlyArray<unknown>,
 	db: BunDatabase
 ): ((scope: TableChangeScope) => boolean) | undefined {
 	const taskId = params[0] as string;
-	const stmt = db.prepare(
-		`SELECT 1 FROM task_session_map WHERE task_id = ? AND session_id = ? LIMIT 1`
+	const messageStmt = db.prepare(
+		`SELECT 1 FROM sdk_messages WHERE task_id = ? AND session_id = ? LIMIT 1`
+	);
+	const taskAgentStmt = db.prepare(
+		`SELECT 1 FROM space_tasks WHERE id = ? AND task_agent_session_id = ? LIMIT 1`
 	);
 	return (scope) => {
 		if (!scope.sessionId) return true;
-		return !!stmt.get(taskId, scope.sessionId);
+		if (messageStmt.get(taskId, scope.sessionId)) return true;
+		return !!taskAgentStmt.get(taskId, scope.sessionId);
 	};
 }
 

@@ -85,6 +85,43 @@ export class SDKMessageRepository {
 	constructor(private db: BunDatabase) {}
 
 	/**
+	 * Derive `sdk_messages.task_id` from the writing session's
+	 * `session_context.taskId`. Both Task Agent and node-agent sessions stamp
+	 * this at creation, so for any Space-bound session we can recover the
+	 * task id directly from the `sessions` row without an extra map.
+	 *
+	 * Returns null when the session is missing, has no `session_context`, the
+	 * context JSON is malformed, or the context simply has no `taskId` (e.g.
+	 * a non-Space worker session). The column is nullable on purpose.
+	 *
+	 * Uses `json_valid` so a single malformed historical row can't throw at
+	 * INSERT time. Tolerates the `sessions` table being absent (e.g. unit
+	 * test harnesses that build a subset of the schema) by returning null.
+	 */
+	private resolveTaskIdForSession(sessionId: string): string | null {
+		try {
+			const row = this.db
+				.prepare(
+					`SELECT
+						CASE
+							WHEN session_context IS NULL THEN NULL
+							WHEN NOT json_valid(session_context) THEN NULL
+							ELSE json_extract(session_context, '$.taskId')
+						END AS task_id
+					 FROM sessions WHERE id = ?`
+				)
+				.get(sessionId) as { task_id: string | null } | undefined;
+			return row?.task_id ?? null;
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			if (/no such table/i.test(message)) {
+				return null;
+			}
+			throw err;
+		}
+	}
+
+	/**
 	 * Save a full SDK message to the database
 	 *
 	 * FIX: Enhanced with proper error handling and logging
@@ -100,8 +137,8 @@ export class SDKMessageRepository {
 			const stmt = this.db.prepare(
 				`INSERT INTO sdk_messages (
 					id, session_id, message_type, message_subtype, sdk_message, timestamp, origin,
-					is_renderable, is_terminal, parent_tool_use_id
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					is_renderable, is_terminal, parent_tool_use_id, task_id
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			);
 
 			stmt.run(
@@ -114,7 +151,8 @@ export class SDKMessageRepository {
 				origin ?? null,
 				computeIsRenderable(message),
 				computeIsTerminal(message),
-				extractParentToolUseId(message)
+				extractParentToolUseId(message),
+				this.resolveTaskIdForSession(sessionId)
 			);
 			return true;
 		} catch (error) {
@@ -385,8 +423,8 @@ export class SDKMessageRepository {
 		const stmt = this.db.prepare(
 			`INSERT INTO sdk_messages (
 				id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin,
-				is_renderable, is_terminal, parent_tool_use_id
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				is_renderable, is_terminal, parent_tool_use_id, task_id
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -400,7 +438,8 @@ export class SDKMessageRepository {
 			origin ?? null,
 			computeIsRenderable(message),
 			computeIsTerminal(message),
-			extractParentToolUseId(message)
+			extractParentToolUseId(message),
+			this.resolveTaskIdForSession(sessionId)
 		);
 		return id;
 	}
@@ -769,11 +808,19 @@ export class SDKMessageRepository {
 		const timestamp = new Date(message.timestamp).toISOString();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
-       VALUES (?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, task_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
 		);
 
-		stmt.run(id, sessionId, 'neokai_action', message.action, JSON.stringify(message), timestamp);
+		stmt.run(
+			id,
+			sessionId,
+			'neokai_action',
+			message.action,
+			JSON.stringify(message),
+			timestamp,
+			this.resolveTaskIdForSession(sessionId)
+		);
 		return id;
 	}
 

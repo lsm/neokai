@@ -230,22 +230,22 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					created_at INTEGER NOT NULL,
 					updated_at INTEGER NOT NULL
 				);
-				CREATE TABLE IF NOT EXISTS task_session_map (
-					task_id TEXT NOT NULL,
-					session_id TEXT NOT NULL,
-					kind TEXT NOT NULL,
-					role TEXT NOT NULL,
-					label TEXT NOT NULL,
-					node_execution_id TEXT,
-					created_at INTEGER NOT NULL,
-					PRIMARY KEY (task_id, session_id)
-				);
 			`);
+			// Migration 122 / createTables already adds `task_id` directly to
+			// sdk_messages. Tests inserting messages must stamp `task_id` so the
+			// live-query SQL (which filters via sm.task_id = ?) can reach them.
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id)`);
 			db.exec(
 				`INSERT OR IGNORE INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
 				 VALUES ('${spaceId}', '${spaceId}', '/tmp/test-space', 'Test Space', ${now}, ${now})`
 			);
+			sessionTaskIds.clear();
 		});
+
+		// Map session_id → task_id so message inserts can stamp the denormalised
+		// `sdk_messages.task_id` column the live-query SQL filters on. Reset per
+		// test via the outer beforeEach replaying through this.
+		const sessionTaskIds = new Map<string, string>();
 
 		function insertSpaceTask(overrides: Record<string, unknown> = {}): string {
 			const id = (overrides.id as string) ?? `space-task-${Date.now()}-${Math.random()}`;
@@ -263,17 +263,12 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					'[]', ${now}, ${now}
 				)
 			`);
-			// Mirror SpaceTaskRepository's task_session_map maintenance — the live-
-			// query SQL fans out from this projection, so tests must seed it too.
+			// Bind the task agent session to this task so subsequent message
+			// inserts stamp `sdk_messages.task_id` exactly the way the
+			// SDKMessageRepository does in production (derived from the
+			// session_context.taskId carried by the orchestration session).
 			if (overrides.taskAgentSessionId) {
-				db.exec(`
-					INSERT OR IGNORE INTO task_session_map (
-						task_id, session_id, kind, role, label, node_execution_id, created_at
-					) VALUES (
-						'${id}', '${String(overrides.taskAgentSessionId)}',
-						'task_agent', 'task-agent', 'Task Agent', NULL, ${now}
-					)
-				`);
+				sessionTaskIds.set(String(overrides.taskAgentSessionId), id);
 			}
 			return id;
 		}
@@ -292,10 +287,12 @@ describe('NAMED_QUERY_REGISTRY', () => {
 		}
 
 		/**
-		 * Mirror NodeExecutionRepository.create — insert a node_executions row
-		 * AND seed the node_agent leg of task_session_map for every space_task
-		 * sharing the workflow_run_id. The live-query SQL JOINs on this projection
-		 * so tests must keep it in sync.
+		 * Mirror NodeExecutionRepository.create — insert a node_executions row.
+		 * Also bind the agent_session_id to every space_task on the same
+		 * workflow_run_id so subsequent message inserts stamp `sdk_messages.task_id`
+		 * against the orchestration task (the way the SDKMessageRepository would
+		 * if it were called with a node-agent session whose session_context.taskId
+		 * is the orchestration task).
 		 */
 		function insertNodeExecution(params: {
 			id: string;
@@ -328,31 +325,36 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				)
 			`);
 			if (agentSessionId) {
+				// Bind the node-agent session to the orchestration task on this
+				// workflow run — i.e. the task whose own task_agent_session_id is
+				// distinct from the node agent's session. This mirrors what the
+				// SDKMessageRepository would derive from sessions.session_context.taskId
+				// in production.
 				const tasks = db
 					.prepare(
-						`SELECT id FROM space_tasks WHERE workflow_run_id IS NOT NULL AND workflow_run_id = ?`
+						`SELECT id, task_agent_session_id FROM space_tasks
+						 WHERE workflow_run_id IS NOT NULL
+						   AND workflow_run_id = ?
+						   AND (task_agent_session_id IS NULL OR task_agent_session_id <> ?)`
 					)
-					.all(workflowRunId) as Array<{ id: string }>;
-				for (const t of tasks) {
-					db.exec(`
-						INSERT OR IGNORE INTO task_session_map (
-							task_id, session_id, kind, role, label, node_execution_id, created_at
-						) VALUES (
-							'${t.id}', '${agentSessionId}', 'node_agent',
-							'${agentName}', '${agentName}', '${id}', ${now}
-						)
-					`);
+					.all(workflowRunId, agentSessionId) as Array<{
+					id: string;
+					task_agent_session_id: string | null;
+				}>;
+				if (tasks.length > 0) {
+					sessionTaskIds.set(agentSessionId, tasks[0].id);
 				}
 			}
 		}
 
 		function insertSdkMessage(id: string, sessionIdValue: string): void {
+			const taskIdForSession = sessionTaskIds.get(sessionIdValue) ?? null;
 			db.exec(`
 				INSERT INTO sdk_messages (
-					id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin
+					id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, task_id
 				) VALUES (
 					'${id}', '${sessionIdValue}', 'assistant', NULL, '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}',
-					'${nowIso}', 'consumed', 'system'
+					'${nowIso}', 'consumed', 'system', ${taskIdForSession ? `'${taskIdForSession}'` : 'NULL'}
 				)
 			`);
 		}
@@ -501,14 +503,16 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				const isRenderable = computeIsRenderable(sdkLike);
 				const isTerminal = computeIsTerminal(sdkLike);
 				const parentToolUseId = extractParentToolUseId(sdkLike);
+				const taskIdForSession = sessionTaskIds.get(sessionIdValue) ?? null;
 				db.exec(`
 					INSERT INTO sdk_messages (
 						id, session_id, message_type, message_subtype, sdk_message, timestamp,
-						send_status, origin, is_renderable, is_terminal, parent_tool_use_id
+						send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
 					) VALUES (
 						'${id}', '${sessionIdValue}', '${messageType}', NULL, '${JSON.stringify(payload)}',
 						'${iso}', 'consumed', 'system', ${isRenderable}, ${isTerminal},
-						${parentToolUseId ? `'${parentToolUseId}'` : 'NULL'}
+						${parentToolUseId ? `'${parentToolUseId}'` : 'NULL'},
+						${taskIdForSession ? `'${taskIdForSession}'` : 'NULL'}
 					)
 				`);
 			}
@@ -825,14 +829,16 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				const isRenderable = computeIsRenderable(sdkLike);
 				const isTerminal = computeIsTerminal(sdkLike);
 				const parentToolUseId = extractParentToolUseId(sdkLike);
+				const taskIdForSession = sessionTaskIds.get(sessionIdValue) ?? null;
 				db.exec(`
 					INSERT INTO sdk_messages (
 						id, session_id, message_type, message_subtype, sdk_message, timestamp,
-						send_status, origin, is_renderable, is_terminal, parent_tool_use_id
+						send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
 					) VALUES (
 						'${id}', '${sessionIdValue}', '${messageType}', NULL, '${JSON.stringify(payload).replace(/'/g, "''")}',
 						'${iso}', 'consumed', 'system', ${isRenderable}, ${isTerminal},
-						${parentToolUseId ? `'${parentToolUseId}'` : 'NULL'}
+						${parentToolUseId ? `'${parentToolUseId}'` : 'NULL'},
+						${taskIdForSession ? `'${taskIdForSession}'` : 'NULL'}
 					)
 				`);
 			}
@@ -1141,14 +1147,16 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				const isRenderable = computeIsRenderable(sdkLike);
 				const isTerminal = computeIsTerminal(sdkLike);
 				const parentToolUseId = extractParentToolUseId(sdkLike);
+				const taskIdForSession = sessionTaskIds.get(sessionIdValue) ?? null;
 				db.exec(`
 					INSERT INTO sdk_messages (
 						id, session_id, message_type, message_subtype, sdk_message, timestamp,
-						send_status, origin, is_renderable, is_terminal, parent_tool_use_id
+						send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id
 					) VALUES (
 						'${id}', '${sessionIdValue}', '${messageType}', NULL, '${JSON.stringify(payload).replace(/'/g, "''")}',
 						'${iso}', 'consumed', 'system', ${isRenderable}, ${isTerminal},
-						${parentToolUseId ? `'${parentToolUseId}'` : 'NULL'}
+						${parentToolUseId ? `'${parentToolUseId}'` : 'NULL'},
+						${taskIdForSession ? `'${taskIdForSession}'` : 'NULL'}
 					)
 				`);
 			}
