@@ -15,6 +15,15 @@ import type { Provider as ProviderIdStr } from '@neokai/shared';
 
 const log = createLogger('kai:providers:registry');
 
+/** Model IDs that are exclusive to the Antigravity provider. */
+const ANTIGRAVITY_MODEL_IDS = new Set([
+	'claude-sonnet-4-5-20250929',
+	'claude-opus-4-5-20250929',
+	'claude-haiku-4-5-20250929',
+	'gpt-oss-120b',
+	'gpt-oss-20b',
+]);
+
 /**
  * Provider Registry class
  *
@@ -307,15 +316,16 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
 	}
 
 	// Route specific Antigravity model IDs (Claude and GPT-OSS variants)
-	const antigravityModelIds = new Set([
-		'claude-sonnet-4-5-20250929',
-		'claude-opus-4-5-20250929',
-		'claude-haiku-4-5-20250929',
-		'gpt-oss-120b',
-		'gpt-oss-20b',
-	]);
-	if (antigravityModelIds.has(modelId)) {
-		return 'google-antigravity';
+	// Only when the provider is authenticated — otherwise buildSdkConfig throws
+	if (ANTIGRAVITY_MODEL_IDS.has(modelId)) {
+		const registry = getProviderRegistry();
+		const agProvider = registry.get('google-antigravity');
+		if (agProvider) {
+			const available = agProvider.isAvailable();
+			if (typeof available === 'boolean' ? available : true) {
+				return 'google-antigravity';
+			}
+		}
 	}
 
 	// Live registry lookup (populated at daemon startup, empty in unit tests)

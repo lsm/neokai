@@ -144,7 +144,7 @@ describe('AntigravityProvider', () => {
 	});
 
 	describe('startOAuthFlow', () => {
-		it('returns a redirect auth URL', async () => {
+		it('returns a redirect auth URL with a dynamic callback port', async () => {
 			const provider = new AntigravityProvider();
 			const flow = await provider.startOAuthFlow();
 			const params = new URL(flow.authUrl!).searchParams;
@@ -152,12 +152,13 @@ describe('AntigravityProvider', () => {
 			expect(flow.type).toBe('redirect');
 			expect(flow.authUrl).toContain('accounts.google.com');
 			expect(flow.authUrl).toContain('client_id=');
-			expect(params.get('redirect_uri')).toBe('http://localhost:51121/oauth-callback');
+			// Callback port is dynamically allocated, not hardcoded to 51121
+			expect(params.get('redirect_uri')).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/oauth-callback$/);
 			expect(params.get('scope')).toContain('cloud-platform');
 			expect(params.get('scope')).toContain('cclog');
 			expect(params.get('scope')).toContain('experimentsandconfigs');
 			expect(params.get('code_challenge_method')).toBe('S256');
-			expect(flow.message).toContain('sign-in');
+			expect(flow.message).toContain('authorize');
 		});
 	});
 
@@ -208,6 +209,28 @@ describe('AntigravityProvider', () => {
 			});
 			const config1 = provider.buildSdkConfig('gemini-3.1-pro-preview', { sessionId: 'sess-1' });
 			const config2 = provider.buildSdkConfig('gemini-3.1-pro-preview', { sessionId: 'sess-2' });
+
+			expect(config1.envVars.ANTHROPIC_BASE_URL).not.toBe(config2.envVars.ANTHROPIC_BASE_URL);
+		});
+
+		it('rebuilds bridge when credentials change', () => {
+			const provider = new AntigravityProvider();
+			provider.setCredentials({
+				refreshToken: 'test-refresh',
+				accessToken: 'test-access',
+				expiresAt: Date.now() + 3600_000,
+				projectId: 'test-project',
+			});
+			const config1 = provider.buildSdkConfig('gemini-3.1-pro-preview', { sessionId: 'sess-1' });
+
+			// Change credentials (simulating OAuth completion)
+			provider.setCredentials({
+				refreshToken: 'new-refresh',
+				accessToken: 'new-access',
+				expiresAt: Date.now() + 3600_000,
+				projectId: 'test-project',
+			});
+			const config2 = provider.buildSdkConfig('gemini-3.1-pro-preview', { sessionId: 'sess-1' });
 
 			expect(config1.envVars.ANTHROPIC_BASE_URL).not.toBe(config2.envVars.ANTHROPIC_BASE_URL);
 		});

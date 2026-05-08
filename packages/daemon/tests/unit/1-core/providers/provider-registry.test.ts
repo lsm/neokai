@@ -585,12 +585,32 @@ describe('inferProviderForModel', () => {
 	});
 
 	it('routes Antigravity model IDs to google-antigravity when provider is available', () => {
-		// These specific model IDs route to Antigravity regardless of availability
-		// because they are exclusive to the Antigravity service
+		// Register an available Antigravity provider
+		const agProvider = { id: 'google-antigravity', isAvailable: () => true } as unknown as Provider;
+		getProviderRegistry().register(agProvider);
+
 		expect(inferProviderForModel('claude-sonnet-4-5-20250929')).toBe('google-antigravity');
 		expect(inferProviderForModel('claude-opus-4-5-20250929')).toBe('google-antigravity');
 		expect(inferProviderForModel('gpt-oss-120b')).toBe('google-antigravity');
 		expect(inferProviderForModel('gpt-oss-20b')).toBe('google-antigravity');
+
+		getProviderRegistry().unregister('google-antigravity');
+	});
+
+	it('falls back when Antigravity model IDs are routed but provider is unavailable', () => {
+		// Register an unavailable Antigravity provider
+		const agProvider = {
+			id: 'google-antigravity',
+			isAvailable: () => false,
+		} as unknown as Provider;
+		getProviderRegistry().register(agProvider);
+
+		// claude-* falls through to anthropic (default)
+		expect(inferProviderForModel('claude-sonnet-4-5-20250929')).toBe('anthropic');
+		// gpt-oss-* falls through to anthropic-codex (static heuristic for bare gpt-* IDs)
+		expect(inferProviderForModel('gpt-oss-20b')).toBe('anthropic-codex');
+
+		getProviderRegistry().unregister('google-antigravity');
 	});
 
 	it('routes gemini-3 models to google-gemini-oauth when antigravity is not available', () => {

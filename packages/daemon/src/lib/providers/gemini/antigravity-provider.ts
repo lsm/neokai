@@ -28,6 +28,9 @@ import type {
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
 import { createLogger } from '@neokai/shared/logger';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import * as os from 'os';
 import {
 	contentBlockStartTextSSE,
 	contentBlockStartToolUseSSE,
@@ -74,7 +77,13 @@ const ANTIGRAVITY_CLIENT_ID = [
 /** Antigravity OAuth client secret. Split to avoid false-positive secret scanning. */
 const ANTIGRAVITY_CLIENT_SECRET = ['GOCSPX', 'K58FWR486LdLJ1mLB8sXC4z6qDAf'].join('-');
 
-const ANTIGRAVITY_REDIRECT_URI = 'http://localhost:51121/oauth-callback';
+/** Success HTML shown in the browser after OAuth completes. */
+const OAUTH_SUCCESS_HTML =
+	'<html><body><h2>Authorization successful!</h2><p>You can close this tab and return to NeoKai.</p></body></html>';
+
+/** Error HTML shown in the browser when OAuth fails. */
+const OAUTH_ERROR_HTML = (reason: string) =>
+	`<html><body><h2>Authorization failed</h2><p>${reason}</p><p>You can close this tab.</p></body></html>`;
 
 const ANTIGRAVITY_SCOPES = [
 	'https://www.googleapis.com/auth/cloud-platform',
@@ -87,6 +96,40 @@ const ANTIGRAVITY_SCOPES = [
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const USERINFO_URL = 'https://www.googleapis.com/oauth2/v1/userinfo?alt=json';
+
+/** Path to the Antigravity credentials storage file. */
+function getCredentialsFilePath(): string {
+	return path.join(os.homedir(), '.neokai', 'antigravity-credentials.json');
+}
+
+/** Load persisted Antigravity credentials. */
+async function loadCredentials(): Promise<AntigravityCredentials | null> {
+	try {
+		const filePath = getCredentialsFilePath();
+		const data = await fs.readFile(filePath, 'utf-8');
+		return JSON.parse(data) as AntigravityCredentials;
+	} catch {
+		return null;
+	}
+}
+
+/** Save Antigravity credentials to disk. */
+async function saveCredentials(credentials: AntigravityCredentials): Promise<void> {
+	const filePath = getCredentialsFilePath();
+	await fs.mkdir(path.dirname(filePath), { recursive: true });
+	await fs.writeFile(filePath, JSON.stringify(credentials, null, 2), { mode: 0o600 });
+}
+
+/** Remove persisted Antigravity credentials. */
+async function removeCredentials(): Promise<void> {
+	try {
+		await fs.unlink(getCredentialsFilePath());
+	} catch {
+		// Ignore if file doesn't exist
+	}
+}
+
+void removeCredentials;
 
 // ---------------------------------------------------------------------------
 // Cloud Code Assist Endpoints
@@ -279,9 +322,29 @@ export class AntigravityProvider implements Provider {
 	private bridgeServers = new Map<string, AntigravityBridgeServer>();
 	private credentials: AntigravityCredentials | null = null;
 	private _pendingCodeVerifier?: string;
+	private _pendingOAuthState?: string;
 	private _oauthCallbackServer?: { stop(): void };
+	/** Flow ID of the currently active OAuth callback server. */
+	private _activeCallbackFlowId?: string;
+	private _initialized = false;
+	/** Hash of the credentials object used by the last bridge for each session.
+	 *  When credentials change, bridges with a stale hash are rebuilt. */
+	private _bridgeCredentialHashes = new Map<string, string>();
 
-	constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
+	constructor(private readonly env: NodeJS.ProcessEnv = process.env) {
+		// Load persisted credentials in the background
+		this._init();
+	}
+
+	private async _init(): Promise<void> {
+		if (this._initialized) return;
+		this._initialized = true;
+		const creds = await loadCredentials();
+		if (creds) {
+			this.credentials = creds;
+			log.info(`Loaded persisted Antigravity credentials for ${creds.email ?? 'unknown user'}`);
+		}
+	}
 
 	// -----------------------------------------------------------------------
 	// Availability
@@ -326,13 +389,22 @@ export class AntigravityProvider implements Provider {
 			);
 		}
 
+		const credHash = hashCredentials(this.credentials);
+		const existingHash = this._bridgeCredentialHashes.get(sessionId);
+
 		let bridge = this.bridgeServers.get(sessionId);
-		if (!bridge) {
+		if (!bridge || existingHash !== credHash) {
+			// Tear down stale bridge before creating a new one
+			if (bridge) {
+				log.info(`Restarting Antigravity bridge for session ${sessionId} (credentials changed)`);
+				bridge.stop();
+			}
 			bridge = createAntigravityBridgeServer({
 				credentials: this.credentials,
 				sessionId,
 			});
 			this.bridgeServers.set(sessionId, bridge);
+			this._bridgeCredentialHashes.set(sessionId, credHash);
 			log.info(`Antigravity bridge server started on port ${bridge.port} for session ${sessionId}`);
 		}
 
@@ -376,19 +448,75 @@ export class AntigravityProvider implements Provider {
 	// -----------------------------------------------------------------------
 
 	async startOAuthFlow(): Promise<ProviderOAuthFlowData> {
+		// Tear down any previous callback server
 		this.stopOAuthCallbackServer();
 
+		// Promise that resolves when the OAuth callback delivers the auth code
+		let resolveCode: ((code: string) => void) | undefined;
+		const codePromise = new Promise<string>((resolve) => {
+			resolveCode = resolve;
+		});
+
+		// Start a local callback server to receive the OAuth redirect
+		let expectedState = '';
+
+		const server = Bun.serve({
+			port: 0,
+			idleTimeout: 255,
+			fetch(req: Request): Response {
+				const url = new URL(req.url);
+
+				if (url.pathname === '/favicon.ico') {
+					return new Response('', { status: 204 });
+				}
+
+				const error = url.searchParams.get('error');
+				if (error) {
+					return new Response(OAUTH_ERROR_HTML(error), {
+						status: 400,
+						headers: { 'Content-Type': 'text/html' },
+					});
+				}
+
+				// Validate state parameter to prevent CSRF
+				const returnedState = url.searchParams.get('state');
+				if (!returnedState || returnedState !== expectedState) {
+					return new Response(OAUTH_ERROR_HTML('Invalid OAuth state parameter'), {
+						status: 403,
+						headers: { 'Content-Type': 'text/html' },
+					});
+				}
+
+				const code = url.searchParams.get('code');
+				if (!code) {
+					return new Response(OAUTH_ERROR_HTML('Missing authorization code'), {
+						status: 400,
+						headers: { 'Content-Type': 'text/html' },
+					});
+				}
+
+				// Resolve the promise so the background exchanger can proceed
+				resolveCode?.(code);
+
+				return new Response(OAUTH_SUCCESS_HTML, {
+					status: 200,
+					headers: { 'Content-Type': 'text/html' },
+				});
+			},
+		});
+
+		const callbackPort = server.port ?? 0;
+		const redirectUri = `http://127.0.0.1:${callbackPort}/oauth-callback`;
+
+		// Build the auth URL with the local callback redirect URI
 		const codeVerifier = generateCodeVerifier();
 		const codeChallenge = await generateCodeChallenge(codeVerifier);
 		const state = generateStateParameter();
 
-		this._pendingCodeVerifier = codeVerifier;
-
-		// Build auth URL
 		const params = new URLSearchParams({
 			client_id: ANTIGRAVITY_CLIENT_ID,
 			response_type: 'code',
-			redirect_uri: ANTIGRAVITY_REDIRECT_URI,
+			redirect_uri: redirectUri,
 			scope: ANTIGRAVITY_SCOPES.join(' '),
 			code_challenge: codeChallenge,
 			code_challenge_method: 'S256',
@@ -399,84 +527,117 @@ export class AntigravityProvider implements Provider {
 
 		const authUrl = `${AUTH_URL}?${params.toString()}`;
 
+		expectedState = state;
+		this._pendingCodeVerifier = codeVerifier;
+		this._pendingOAuthState = state;
+
+		// Assign a unique flow ID so the background handler only tears down
+		// its own server (not a newer login flow's server)
+		const flowId = crypto.randomUUID();
+		this._oauthCallbackServer = server;
+		this._activeCallbackFlowId = flowId;
+
+		// Start background code exchange — runs after the user authorizes
+		this._handleOAuthCallback(codePromise, codeVerifier, redirectUri, flowId);
+
 		return {
 			type: 'redirect',
 			authUrl,
-			message: 'Complete the sign-in in your browser. You will be redirected automatically.',
+			message:
+				'Visit the URL to authorize your Antigravity account. The page will redirect automatically.',
 		};
 	}
 
 	/**
-	 * Complete OAuth flow with authorization code.
-	 * This is called when the user pastes the redirect URL or when the callback
-	 * server receives the code automatically.
+	 * Background handler: waits for the OAuth code from the callback server,
+	 * exchanges it for tokens, and saves the credentials.
+	 *
+	 * @param flowId - Unique ID for this login flow; the finally block only
+	 *   tears down the callback server if it still belongs to this flow.
 	 */
-	async completeOAuthFlow(authCodeOrUrl: string): Promise<{ email: string }> {
-		if (!this._pendingCodeVerifier) {
-			throw new Error('No pending OAuth flow. Call startOAuthFlow() first.');
-		}
-
-		const codeVerifier = this._pendingCodeVerifier;
-		this._pendingCodeVerifier = undefined;
-
-		// Parse code from URL or use as-is
-		let code = authCodeOrUrl;
+	private async _handleOAuthCallback(
+		codePromise: Promise<string>,
+		codeVerifier: string,
+		redirectUri: string,
+		flowId: string
+	): Promise<void> {
 		try {
-			const url = new URL(authCodeOrUrl);
-			const urlCode = url.searchParams.get('code');
-			if (urlCode) {
-				code = urlCode;
+			// Wait for the code with a 240-second timeout
+			const code = await Promise.race([
+				codePromise,
+				new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 240_000)),
+			]);
+
+			if (!code) {
+				log.warn('Antigravity OAuth callback timed out — no code received within 240 seconds');
+				return;
 			}
-		} catch {
-			// Not a URL, use as raw code
+
+			this._pendingCodeVerifier = undefined;
+			this._pendingOAuthState = undefined;
+			// Only shut down the server if this flow still owns it
+			if (this._activeCallbackFlowId === flowId) {
+				this.stopOAuthCallbackServer();
+				this._activeCallbackFlowId = undefined;
+			}
+
+			// Exchange code for tokens
+			const tokenResponse = await fetch(TOKEN_URL, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+				body: new URLSearchParams({
+					client_id: ANTIGRAVITY_CLIENT_ID,
+					client_secret: ANTIGRAVITY_CLIENT_SECRET,
+					code,
+					grant_type: 'authorization_code',
+					redirect_uri: redirectUri,
+					code_verifier: codeVerifier,
+				}),
+			});
+
+			if (!tokenResponse.ok) {
+				const error = await tokenResponse.text();
+				throw new Error(`Token exchange failed: ${error}`);
+			}
+
+			const tokenData = (await tokenResponse.json()) as {
+				access_token: string;
+				refresh_token: string;
+				expires_in: number;
+			};
+
+			if (!tokenData.refresh_token) {
+				throw new Error('No refresh token received. Please try again.');
+			}
+
+			// Get user email
+			const email = await this.fetchUserEmail(tokenData.access_token);
+
+			// Discover project
+			const projectId = await this.discoverProject(tokenData.access_token);
+
+			// Store and persist credentials
+			this.credentials = {
+				refreshToken: tokenData.refresh_token,
+				accessToken: tokenData.access_token,
+				expiresAt: Date.now() + tokenData.expires_in * 1000 - 5 * 60 * 1000,
+				projectId,
+				email,
+			};
+			await saveCredentials(this.credentials);
+
+			log.info(`Antigravity OAuth completed for ${email ?? 'unknown user'}`);
+		} catch (err) {
+			log.error(
+				`Antigravity OAuth code exchange failed: ${err instanceof Error ? err.message : err}`
+			);
+		} finally {
+			// Only tear down the server if this flow still owns it
+			if (this._activeCallbackFlowId === flowId) {
+				this.stopOAuthCallbackServer();
+				this._activeCallbackFlowId = undefined;
+			}
 		}
-
-		// Exchange code for tokens
-		const tokenResponse = await fetch(TOKEN_URL, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-			body: new URLSearchParams({
-				client_id: ANTIGRAVITY_CLIENT_ID,
-				client_secret: ANTIGRAVITY_CLIENT_SECRET,
-				code,
-				grant_type: 'authorization_code',
-				redirect_uri: ANTIGRAVITY_REDIRECT_URI,
-				code_verifier: codeVerifier,
-			}),
-		});
-
-		if (!tokenResponse.ok) {
-			const error = await tokenResponse.text();
-			throw new Error(`Token exchange failed: ${error}`);
-		}
-
-		const tokenData = (await tokenResponse.json()) as {
-			access_token: string;
-			refresh_token: string;
-			expires_in: number;
-		};
-
-		if (!tokenData.refresh_token) {
-			throw new Error('No refresh token received. Please try again.');
-		}
-
-		// Get user email
-		const email = await this.fetchUserEmail(tokenData.access_token);
-
-		// Discover project
-		const projectId = await this.discoverProject(tokenData.access_token);
-
-		// Store credentials
-		this.credentials = {
-			refreshToken: tokenData.refresh_token,
-			accessToken: tokenData.access_token,
-			expiresAt: Date.now() + tokenData.expires_in * 1000 - 5 * 60 * 1000,
-			projectId,
-			email,
-		};
-
-		log.info(`Antigravity OAuth completed for ${email ?? 'unknown user'}`);
-		return { email: email ?? 'unknown' };
 	}
 
 	// -----------------------------------------------------------------------
@@ -650,6 +811,14 @@ export class AntigravityProvider implements Provider {
 	}
 }
 
+/**
+ * Create a stable hash of credentials so we can detect when they change
+ * and rebuild stale bridge servers.
+ */
+function hashCredentials(credentials: AntigravityCredentials): string {
+	return `${credentials.accessToken.slice(0, 8)}:${credentials.refreshToken.slice(0, 8)}:${credentials.expiresAt}:${credentials.projectId}`;
+}
+
 // ---------------------------------------------------------------------------
 // PKCE Helpers
 // ---------------------------------------------------------------------------
@@ -816,9 +985,6 @@ function buildAntigravityRequest(
 		project: credentials.projectId,
 	});
 
-	// Inject Antigravity-specific fields
-	const _modelId = anthropicRequest.model;
-
 	// Inject Antigravity system instruction
 	const existingParts = baseRequest.request.systemInstruction?.parts ?? [];
 	baseRequest.request.systemInstruction = {
@@ -844,22 +1010,31 @@ function needsClaudeThinkingBetaHeader(modelId: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Streaming
+// Shared request logic
 // ---------------------------------------------------------------------------
 
-async function streamAntigravityRequest(
+interface AntigravityRequestResult {
+	response: Response;
+	modelId: string;
+}
+
+async function makeAntigravityRequest(
 	anthropicRequest: AnthropicRequest,
-	credentials: AntigravityCredentials
-): Promise<Response> {
+	credentials: AntigravityCredentials,
+	acceptSSE: boolean
+): Promise<AntigravityRequestResult> {
 	const requestBody = buildAntigravityRequest(anthropicRequest, credentials);
 	const modelId = anthropicRequest.model;
 
 	const headers: Record<string, string> = {
 		Authorization: `Bearer ${credentials.accessToken}`,
 		'Content-Type': 'application/json',
-		Accept: 'text/event-stream',
 		...getAntigravityHeaders(),
 	};
+
+	if (acceptSSE) {
+		headers.Accept = 'text/event-stream';
+	}
 
 	if (needsClaudeThinkingBetaHeader(modelId)) {
 		headers['anthropic-beta'] = CLAUDE_THINKING_BETA_HEADER;
@@ -867,7 +1042,6 @@ async function streamAntigravityRequest(
 
 	const requestBodyJson = JSON.stringify(requestBody);
 
-	// Fetch with retry logic and endpoint fallback
 	let response: Response | undefined;
 	let lastError: Error | undefined;
 	let endpointIndex = 0;
@@ -917,6 +1091,15 @@ async function streamAntigravityRequest(
 			if (lastError.message === 'fetch failed' && lastError.cause instanceof Error) {
 				lastError = new Error(`Network error: ${lastError.cause.message}`);
 			}
+			// Do not retry errors that were explicitly thrown as non-retryable
+			// (e.g., 4xx client errors other than 429).
+			if (lastError.message.startsWith('Cloud Code Assist API error (')) {
+				const statusMatch = lastError.message.match(/\((\d{3})\)/);
+				const status = statusMatch ? Number.parseInt(statusMatch[1], 10) : 0;
+				if (status >= 400 && status < 500 && status !== 429) {
+					throw lastError;
+				}
+			}
 			if (attempt < MAX_RETRIES) {
 				const delayMs = BASE_DELAY_MS * 2 ** attempt;
 				await sleep(delayMs);
@@ -930,6 +1113,18 @@ async function streamAntigravityRequest(
 		throw lastError ?? new Error('Failed to get response after retries');
 	}
 
+	return { response, modelId };
+}
+
+// ---------------------------------------------------------------------------
+// Streaming
+// ---------------------------------------------------------------------------
+
+async function streamAntigravityRequest(
+	anthropicRequest: AnthropicRequest,
+	credentials: AntigravityCredentials
+): Promise<Response> {
+	const { response, modelId } = await makeAntigravityRequest(anthropicRequest, credentials, true);
 	return streamGeminiResponse(response, modelId);
 }
 
@@ -941,82 +1136,7 @@ async function generateAntigravityRequest(
 	anthropicRequest: AnthropicRequest,
 	credentials: AntigravityCredentials
 ): Promise<Response> {
-	const requestBody = buildAntigravityRequest(anthropicRequest, credentials);
-	const modelId = anthropicRequest.model;
-
-	const headers: Record<string, string> = {
-		Authorization: `Bearer ${credentials.accessToken}`,
-		'Content-Type': 'application/json',
-		...getAntigravityHeaders(),
-	};
-
-	if (needsClaudeThinkingBetaHeader(modelId)) {
-		headers['anthropic-beta'] = CLAUDE_THINKING_BETA_HEADER;
-	}
-
-	const requestBodyJson = JSON.stringify(requestBody);
-
-	// Fetch with retry logic and endpoint fallback
-	let response: Response | undefined;
-	let lastError: Error | undefined;
-	let endpointIndex = 0;
-
-	for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-		try {
-			const endpoint = ANTIGRAVITY_ENDPOINT_FALLBACKS[endpointIndex];
-			const requestUrl = `${endpoint}/v1internal:streamGenerateContent?alt=sse`;
-
-			response = await fetch(requestUrl, {
-				method: 'POST',
-				headers,
-				body: requestBodyJson,
-			});
-
-			if (response.ok) {
-				break;
-			}
-
-			const errorText = await response.text();
-
-			if (
-				(response.status === 403 || response.status === 404) &&
-				endpointIndex < ANTIGRAVITY_ENDPOINT_FALLBACKS.length - 1
-			) {
-				endpointIndex++;
-				continue;
-			}
-
-			if (attempt < MAX_RETRIES && isRetryableError(response.status, errorText)) {
-				if (endpointIndex < ANTIGRAVITY_ENDPOINT_FALLBACKS.length - 1) {
-					endpointIndex++;
-				}
-				const serverDelay = extractRetryDelay(errorText, response);
-				const delayMs = serverDelay ?? BASE_DELAY_MS * 2 ** attempt;
-				await sleep(delayMs);
-				continue;
-			}
-
-			throw new Error(
-				`Cloud Code Assist API error (${response.status}): ${extractErrorMessage(errorText)}`
-			);
-		} catch (error) {
-			lastError = error instanceof Error ? error : new Error(String(error));
-			if (lastError.message === 'fetch failed' && lastError.cause instanceof Error) {
-				lastError = new Error(`Network error: ${lastError.cause.message}`);
-			}
-			if (attempt < MAX_RETRIES) {
-				const delayMs = BASE_DELAY_MS * 2 ** attempt;
-				await sleep(delayMs);
-				continue;
-			}
-			throw lastError;
-		}
-	}
-
-	if (!response || !response.ok) {
-		throw lastError ?? new Error('Failed to get response after retries');
-	}
-
+	const { response, modelId } = await makeAntigravityRequest(anthropicRequest, credentials, false);
 	return collectGeminiResponse(response, modelId);
 }
 
@@ -1140,7 +1260,12 @@ function processGeminiChunk(chunk: GeminiResponseChunk, state: GeminiStreamState
 					events.push(textDeltaSSE(state.contentBlockIndex, part.text));
 					events.push(contentBlockStopSSE(state.contentBlockIndex));
 					state.contentBlockIndex++;
-					state.outputTokens += Math.ceil(part.text.length / 4);
+					// Only estimate tokens when the provider hasn't reported usage yet.
+					// usageMetadata sets outputTokens directly; adding character-based
+					// estimates on top would double-count.
+					if (!response.usageMetadata?.candidatesTokenCount) {
+						state.outputTokens += Math.ceil(part.text.length / 4);
+					}
 				} else if (part.functionCall) {
 					chunkHasFunctionCall = true;
 					state.hasSeenFunctionCall = true;
@@ -1164,6 +1289,7 @@ function processGeminiChunk(chunk: GeminiResponseChunk, state: GeminiStreamState
 					: convertFinishReason(candidate.finishReason);
 			events.push(
 				messageDeltaSSE(stopReason, {
+					inputTokens: state.inputTokens > 0 ? state.inputTokens : null,
 					outputTokens: Math.max(state.outputTokens, 1),
 				})
 			);
@@ -1187,39 +1313,43 @@ async function collectGeminiResponse(geminiResponse: Response, model: string): P
 
 	const chunks: GeminiResponseChunk[] = [];
 
-	while (true) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		buffer += decoder.decode(value, { stream: true });
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buffer += decoder.decode(value, { stream: true });
 
-		const lines = buffer.split('\n').map((l) => l.replace(/\r$/, ''));
-		buffer = lines.pop() ?? '';
+			const lines = buffer.split('\n').map((l) => l.replace(/\r$/, ''));
+			buffer = lines.pop() ?? '';
 
-		for (const line of lines) {
-			const dataContent = extractSSEData(line);
-			if (dataContent !== undefined) {
-				dataBuffer += dataContent.trim();
-			} else if (line === '' && dataBuffer) {
-				try {
-					chunks.push(JSON.parse(dataBuffer) as GeminiResponseChunk);
-				} catch {
-					// Skip
+			for (const line of lines) {
+				const dataContent = extractSSEData(line);
+				if (dataContent !== undefined) {
+					dataBuffer += dataContent.trim();
+				} else if (line === '' && dataBuffer) {
+					try {
+						chunks.push(JSON.parse(dataBuffer) as GeminiResponseChunk);
+					} catch {
+						// Skip
+					}
+					dataBuffer = '';
 				}
-				dataBuffer = '';
 			}
 		}
-	}
 
-	const trailingData = extractSSEData(buffer);
-	if (trailingData !== undefined) {
-		dataBuffer += trailingData.trim();
-	}
-	if (dataBuffer) {
-		try {
-			chunks.push(JSON.parse(dataBuffer) as GeminiResponseChunk);
-		} catch {
-			// Skip
+		const trailingData = extractSSEData(buffer);
+		if (trailingData !== undefined) {
+			dataBuffer += trailingData.trim();
 		}
+		if (dataBuffer) {
+			try {
+				chunks.push(JSON.parse(dataBuffer) as GeminiResponseChunk);
+			} catch {
+				// Skip
+			}
+		}
+	} finally {
+		reader.releaseLock();
 	}
 
 	const state = createStreamState(model);
@@ -1421,6 +1551,14 @@ function classifyAntigravityError(message: string): {
 		lower.includes('too many requests')
 	) {
 		return { errorType: 'rate_limit_error', statusCode: 429 };
+	}
+	if (
+		lower.includes('not found') ||
+		lower.includes('not_found') ||
+		lower.includes('unknown model') ||
+		lower.includes('model not found')
+	) {
+		return { errorType: 'not_found_error', statusCode: 404 };
 	}
 	return { errorType: 'api_error', statusCode: 500 };
 }
