@@ -63,7 +63,7 @@ export interface InputTextareaProps {
 	onAgentMentionClose?: () => void;
 	// Agent state - passed as prop to avoid direct signal reads that cause re-renders
 	isAgentWorking?: boolean;
-	canQueueMessages?: boolean;
+
 	onStop?: () => void;
 	onPaste?: (e: ClipboardEvent) => void;
 	/** Optional control rendered inside the input, on the left side */
@@ -103,7 +103,6 @@ export function InputTextarea({
 	onReferenceSelect,
 	onReferenceClose,
 	isAgentWorking = false,
-	canQueueMessages = false,
 	onStop,
 	onPaste,
 	leadingElement,
@@ -333,13 +332,7 @@ export function InputTextarea({
 						type="button"
 						onClick={onSubmit}
 						disabled={disabled || !hasContent}
-						title={
-							isMobileDevice.current
-								? 'Send message'
-								: isAgentWorking && canQueueMessages
-									? 'Send message now (Tab queues next turn)'
-									: 'Send message (Enter or Cmd+Enter)'
-						}
+						title={isMobileDevice.current ? 'Send message' : 'Send message (Enter or Cmd+Enter)'}
 						aria-label="Send message"
 						data-testid="send-button"
 						class={cn(
