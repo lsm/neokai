@@ -654,6 +654,12 @@ function createIndexes(db: BunDatabase): void {
 	// Task-scoped feeds and activity views read directly from this column.
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id
       ON sdk_messages(task_id, timestamp)`);
+	// Covers the `SELECT DISTINCT session_id WHERE task_id = ?` dedup in the
+	// SPACE_TASK_ACTIVITY_BY_TASK_SQL `contributing_sessions` CTE — turns it
+	// into an index-only scan rather than walking the (task_id, timestamp)
+	// index and dropping the timestamp column.
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session
+      ON sdk_messages(task_id, session_id)`);
 
 	// Legacy `task_session_map` indexes no longer exist — see the
 	// `sdk_messages.task_id` column above for the replacement.

@@ -577,11 +577,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   - Add derived columns to sdk_messages: is_renderable, is_terminal, parent_tool_use_id.
 	//     These are populated at write time so live-query handlers can read them
 	//     without re-parsing JSON or running expensive json_each filters.
-	//   - Create task_session_map: a per-task lookup that resolves task_id to the
-	//     set of sessions that contribute messages to its timeline (the Task Agent
-	//     session plus every node-agent session). Maintained at write time by
-	//     SpaceTaskRepository and NodeExecutionRepository.
-	//   - Backfill both new structures from the existing schema.
+	//   - Add task_id column (+ index) to sdk_messages: stamped at INSERT time by
+	//     SDKMessageRepository from sessions.session_context.taskId. Replaces the
+	//     earlier task_session_map projection (which is dropped if present from a
+	//     prior dev run) with a single denormalised column on the message row, so
+	//     the live-query thread feeds can JOIN through sdk_messages.task_id directly
+	//     without maintaining a parallel lookup table.
+	//   - Backfill derived columns + task_id from the existing schema.
 	runMigration122(db);
 }
 
@@ -8144,6 +8146,10 @@ export function runMigration122(db: BunDatabase): void {
 		}
 
 		db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id)`);
+		// Covers the `DISTINCT session_id` dedup in the contributing_sessions CTE.
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session ON sdk_messages(task_id, session_id)`
+		);
 	}
 
 	// Step 3: drop the legacy `task_session_map` lookup table. It was a
