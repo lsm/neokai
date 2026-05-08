@@ -326,6 +326,10 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
 				return 'google-antigravity';
 			}
 		}
+		// When Antigravity is unavailable, skip the live registry lookup
+		// because the registered provider would claim these IDs via ownsModel()
+		// and route to an unauthenticated provider. Fall through to static
+		// fallback instead.
 	}
 
 	// Live registry lookup (populated at daemon startup, empty in unit tests)

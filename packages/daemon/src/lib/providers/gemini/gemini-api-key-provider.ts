@@ -762,5 +762,13 @@ function classifyGeminiError(message: string): {
 	) {
 		return { errorType: 'rate_limit_error', statusCode: 429 };
 	}
+	if (
+		lower.includes('not found') ||
+		lower.includes('not_found') ||
+		lower.includes('unknown model') ||
+		lower.includes('model not found')
+	) {
+		return { errorType: 'not_found_error', statusCode: 404 };
+	}
 	return { errorType: 'api_error', statusCode: 500 };
 }

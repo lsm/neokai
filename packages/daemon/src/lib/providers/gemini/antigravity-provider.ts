@@ -324,19 +324,18 @@ export class AntigravityProvider implements Provider {
 	private _oauthCallbackServer?: { stop(): void };
 	/** Flow ID of the currently active OAuth callback server. */
 	private _activeCallbackFlowId?: string;
-	private _initialized = false;
+	private _initPromise: Promise<void> | null = null;
 	/** Hash of the credentials object used by the last bridge for each session.
 	 *  When credentials change, bridges with a stale hash are rebuilt. */
 	private _bridgeCredentialHashes = new Map<string, string>();
 
 	constructor(private readonly env: NodeJS.ProcessEnv = process.env) {
 		// Load persisted credentials in the background
-		this._init();
+		this._initPromise = this._init();
 	}
 
 	private async _init(): Promise<void> {
-		if (this._initialized) return;
-		this._initialized = true;
+		if (this._initPromise) return;
 		const creds = await loadCredentials();
 		if (creds) {
 			this.credentials = creds;
@@ -349,7 +348,9 @@ export class AntigravityProvider implements Provider {
 	// -----------------------------------------------------------------------
 
 	async isAvailable(): Promise<boolean> {
-		await this._init();
+		if (this._initPromise) {
+			await this._initPromise;
+		}
 		return this.credentials !== null;
 	}
 
@@ -818,7 +819,7 @@ export class AntigravityProvider implements Provider {
  * and rebuild stale bridge servers.
  */
 function hashCredentials(credentials: AntigravityCredentials): string {
-	return `${credentials.refreshToken.slice(0, 8)}:${credentials.projectId}`;
+	return `${credentials.refreshToken}:${credentials.projectId}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1221,6 +1222,7 @@ function streamGeminiResponse(geminiResponse: Response, model: string): Response
 				controller.enqueue(
 					encoder.encode(
 						messageDeltaSSE('end_turn', {
+							inputTokens: state.inputTokens > 0 ? state.inputTokens : null,
 							outputTokens: Math.max(state.outputTokens, 1),
 						})
 					)
