@@ -77,6 +77,8 @@ export interface NamedQuery {
 
 const DEBOUNCE_SDK_MESSAGES_MS = 100;
 const DEBOUNCE_SESSION_GROUP_MESSAGES_MS = 150;
+const DEBOUNCE_SESSION_LIST_MS = 150;
+const DEBOUNCE_SPACE_SESSIONS_MS = 150;
 const DEBOUNCE_SPACE_TASK_FEEDS_MS = 250;
 
 // ============================================================================
@@ -1994,6 +1996,50 @@ function buildTaskScopeFilter(
 	};
 }
 
+function buildSessionsListScopeFilter(): (scope: TableChangeScope) => boolean {
+	return (scope) => {
+		if (!scope.sessionId) return true;
+		if (scope.roomId || scope.spaceId) return false;
+		if (!scope.sessionType) return true;
+		return ![
+			'lobby',
+			'spaces_global',
+			'neo',
+			'room_chat',
+			'planner',
+			'coder',
+			'leader',
+			'space_chat',
+			'space_task_agent',
+		].includes(scope.sessionType);
+	};
+}
+
+function buildSpaceSessionsScopeFilter(
+	params: ReadonlyArray<unknown>,
+	db: BunDatabase
+): (scope: TableChangeScope) => boolean {
+	const spaceId = params[0] as string;
+	const sessionIds = new Set<string>();
+	try {
+		const row = db.prepare('SELECT session_ids FROM spaces WHERE id = ?').get(spaceId) as
+			| { session_ids: string | null }
+			| undefined;
+		const parsed = row?.session_ids ? (JSON.parse(row.session_ids) as unknown) : [];
+		if (Array.isArray(parsed)) {
+			for (const value of parsed) {
+				if (typeof value === 'string') sessionIds.add(value);
+			}
+		}
+	} catch {
+		return () => true;
+	}
+	return (scope) => {
+		if (!scope.sessionId) return true;
+		return sessionIds.has(scope.sessionId);
+	};
+}
+
 export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 	[
 		'sessionGroupMessages.byGroup',
@@ -2119,6 +2165,8 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SPACE_SESSIONS_BY_SPACE_SQL,
 			paramCount: 1,
+			debounceMs: DEBOUNCE_SPACE_SESSIONS_MS,
+			buildScopeFilter: buildSpaceSessionsScopeFilter,
 		},
 	],
 	[
@@ -2142,7 +2190,9 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SESSIONS_LIST_SQL,
 			paramCount: 1,
+			debounceMs: DEBOUNCE_SESSION_LIST_MS,
 			mapRow: mapSessionRow,
+			buildScopeFilter: () => buildSessionsListScopeFilter(),
 			mapResult: (rawRows) => {
 				if (rawRows.length > 0 && rawRows[0]._totalCount != null) {
 					return {

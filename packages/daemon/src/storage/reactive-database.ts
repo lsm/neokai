@@ -13,6 +13,12 @@ import { Database } from './index';
 export interface TableChangeScope {
 	/** The session that produced the write, when known. */
 	sessionId?: string;
+	/** The type of session affected by the write, when known. */
+	sessionType?: string;
+	/** The room associated with the changed session, when known. */
+	roomId?: string;
+	/** The space associated with the changed session, when known. */
+	spaceId?: string;
 	/** The Space task affected by the write, when known. */
 	taskId?: string;
 }
@@ -98,6 +104,60 @@ function resolveTaskIdForSession(db: Database, sessionId: string): string | unde
 	}
 }
 
+function sessionScopeFromRow(row: {
+	id: string;
+	type: string | null;
+	session_context: string | null;
+}): TableChangeScope {
+	let context: Record<string, unknown> | undefined;
+	if (row.session_context) {
+		try {
+			context = JSON.parse(row.session_context) as Record<string, unknown>;
+		} catch {
+			context = undefined;
+		}
+	}
+	return {
+		sessionId: row.id,
+		sessionType: row.type ?? undefined,
+		roomId: typeof context?.roomId === 'string' ? context.roomId : undefined,
+		spaceId: typeof context?.spaceId === 'string' ? context.spaceId : undefined,
+		taskId: typeof context?.taskId === 'string' ? context.taskId : undefined,
+	};
+}
+
+function sessionScope(db: Database, sessionId: unknown): TableChangeScope {
+	if (typeof sessionId !== 'string') return {};
+	try {
+		const row = db
+			.getDatabase()
+			.prepare('SELECT id, type, session_context FROM sessions WHERE id = ?')
+			.get(sessionId) as
+			| { id: string; type: string | null; session_context: string | null }
+			| undefined;
+		return row ? sessionScopeFromRow(row) : { sessionId };
+	} catch {
+		return { sessionId };
+	}
+}
+
+function createSessionScope(_db: Database, session: unknown): TableChangeScope {
+	if (!session || typeof session !== 'object') return {};
+	const value = session as {
+		id?: unknown;
+		type?: unknown;
+		context?: { roomId?: unknown; spaceId?: unknown; taskId?: unknown };
+	};
+	if (typeof value.id !== 'string') return {};
+	return {
+		sessionId: value.id,
+		sessionType: typeof value.type === 'string' ? value.type : undefined,
+		roomId: typeof value.context?.roomId === 'string' ? value.context.roomId : undefined,
+		spaceId: typeof value.context?.spaceId === 'string' ? value.context.spaceId : undefined,
+		taskId: typeof value.context?.taskId === 'string' ? value.context.taskId : undefined,
+	};
+}
+
 function sdkMessageScope(db: Database, sessionId: unknown): TableChangeScope {
 	if (typeof sessionId !== 'string') return {};
 	return { sessionId, taskId: resolveTaskIdForSession(db, sessionId) };
@@ -143,27 +203,30 @@ function messageIdScope(db: Database, messageId: unknown): TableChangeScope {
 
 function mergeScopes(scopes: TableChangeScope[]): TableChangeScope | undefined {
 	if (scopes.length === 0) return undefined;
-	let sessionId: string | undefined;
-	let taskId: string | undefined;
+	const merged: TableChangeScope = {};
+	const keys: Array<keyof TableChangeScope> = [
+		'sessionId',
+		'sessionType',
+		'roomId',
+		'spaceId',
+		'taskId',
+	];
 	for (const scope of scopes) {
-		if (scope.sessionId) {
-			if (sessionId && sessionId !== scope.sessionId) return undefined;
-			sessionId = scope.sessionId;
-		}
-		if (scope.taskId) {
-			if (taskId && taskId !== scope.taskId) return undefined;
-			taskId = scope.taskId;
+		for (const key of keys) {
+			const value = scope[key];
+			if (!value) continue;
+			if (merged[key] && merged[key] !== value) return undefined;
+			merged[key] = value;
 		}
 	}
-	if (!sessionId && !taskId) return undefined;
-	return { sessionId, taskId };
+	return Object.keys(merged).length === 0 ? undefined : merged;
 }
 
 const METHOD_TABLE_MAP: Record<string, MethodMapping> = {
 	// Session operations
-	createSession: { table: 'sessions' },
-	updateSession: { table: 'sessions' },
-	deleteSession: { table: 'sessions' },
+	createSession: { table: 'sessions', extractScope: (args, db) => createSessionScope(db, args[0]) },
+	updateSession: { table: 'sessions', extractScope: (args, db) => sessionScope(db, args[0]) },
+	deleteSession: { table: 'sessions', extractScope: (args, db) => sessionScope(db, args[0]) },
 	// SDK Message operations — scoped by sessionId where available
 	saveSDKMessage: {
 		table: 'sdk_messages',

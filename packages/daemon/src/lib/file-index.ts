@@ -217,7 +217,7 @@ export class FileIndex {
 		pollIntervalMs?: number
 	) {
 		this.pollInterval =
-			pollIntervalMs ?? parseInt(process.env.NEOKAI_FILE_INDEX_POLL_MS ?? '10000', 10);
+			pollIntervalMs ?? parseInt(process.env.NEOKAI_FILE_INDEX_POLL_MS ?? '60000', 10);
 	}
 
 	/** Load .gitignore from workspace root if it exists. */
@@ -389,6 +389,7 @@ export class FileIndex {
 		this.pollTimer = setInterval(() => {
 			void this.runRefresh();
 		}, this.pollInterval);
+		this.pollTimer.unref?.();
 	}
 
 	/**
