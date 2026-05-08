@@ -19,7 +19,7 @@ import type {
 	AnthropicRequest,
 	AnthropicTool,
 	ToolChoice,
-} from '../codex-anthropic-bridge/translator.js';
+} from '../provider-anthropic-compat/translator.js';
 
 // ---------------------------------------------------------------------------
 // Gemini Code Assist types

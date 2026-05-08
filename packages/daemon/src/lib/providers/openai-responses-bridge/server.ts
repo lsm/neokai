@@ -25,8 +25,8 @@ import {
 	messageStopSSE,
 	textDeltaSSE,
 	thinkingDeltaSSE,
-} from '../codex-anthropic-bridge/translator.js';
-import { getModelContextWindow as getCodexModelContextWindow } from '../codex-anthropic-bridge/model-context-windows.js';
+} from '../provider-anthropic-compat/translator.js';
+import { getModelContextWindow as getCodexModelContextWindow } from '../codex-models.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
 import { Logger } from '../../logger.js';
 

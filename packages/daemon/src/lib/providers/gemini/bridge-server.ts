@@ -23,7 +23,7 @@ import {
 	messageStopSSE,
 	textDeltaSSE,
 	type AnthropicRequest,
-} from '../codex-anthropic-bridge/translator.js';
+} from '../provider-anthropic-compat/translator.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
 import {
 	type GeminiRequest,

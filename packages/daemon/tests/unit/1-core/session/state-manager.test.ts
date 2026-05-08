@@ -10,6 +10,10 @@ import type { MessageHub, Session, GlobalSettings, AgentProcessingState } from '
 import { STATE_CHANNELS, DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
 import type { Database } from '../../../../src/storage/database';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type {
+	DaemonInternalEventMap,
+	InternalEventBus,
+} from '../../../../src/lib/internal-event-bus';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
@@ -435,8 +439,43 @@ describe('StateManager', () => {
 		});
 
 		describe('settings.updated', () => {
-			it('should broadcast settings change', async () => {
+			it('should broadcast settings change via DaemonHub fallback', async () => {
 				const handler = eventHandlers.get('settings.updated');
+				await handler!();
+
+				expect(mockMessageHub.event).toHaveBeenCalledWith(
+					STATE_CHANNELS.GLOBAL_SETTINGS,
+					expect.objectContaining({
+						settings: expect.any(Object),
+					}),
+					{ channel: 'global' }
+				);
+			});
+
+			it('should broadcast settings change via InternalEventBus', async () => {
+				const internalSubscribers = new Map<string, Function>();
+				const mockInternalEventBus = {
+					subscribe: mock((event: string, handler: Function) => {
+						internalSubscribers.set(event, handler);
+						return () => {};
+					}),
+				} as unknown as InternalEventBus<DaemonInternalEventMap>;
+
+				const sm = new StateManager(
+					mockMessageHub,
+					mockSessionManager,
+					mockAuthManager,
+					mockSettingsManager,
+					mockConfig,
+					mockEventBus,
+					undefined,
+					mockInternalEventBus
+				);
+
+				// Verify internalEventBus.subscribe was called for settings.updated
+				expect(internalSubscribers.has('settings.updated')).toBe(true);
+
+				const handler = internalSubscribers.get('settings.updated');
 				await handler!();
 
 				expect(mockMessageHub.event).toHaveBeenCalledWith(

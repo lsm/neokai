@@ -69,6 +69,12 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	'api.connection': { sessionId: string } & ApiConnectionState;
 
 	// Settings events (global events - use 'global' as sessionId)
+	/**
+	 * MIGRATED: `settings.updated` is now published/subscribed through
+	 * `InternalEventBus` (see `DaemonInternalEventMap` in internal-event-bus.ts).
+	 * This entry remains in `DaemonEventMap` for backward compatibility but new
+	 * code should use `InternalEventBus` directly.
+	 */
 	'settings.updated': { sessionId: string; settings: GlobalSettings };
 
 	// Commands events

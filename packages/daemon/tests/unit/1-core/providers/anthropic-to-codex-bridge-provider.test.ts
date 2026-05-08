@@ -5,7 +5,7 @@
  *  - getAuthStatus(): NeoKai OAuth only (env vars → unauthenticated), file-based auth, missing credentials, missing binary
  *  - getApiKey(): full discovery chain (env → ~/.neokai/auth.json → ~/.codex/auth.json)
  *  - importFromCodexAuth(): one-time migration scenarios (API key, OAuth with/without refresh)
- *  - buildSdkConfig(): per-workspace bridge server isolation and reuse
+ *  - buildSdkConfig(): Responses bridge server reuse and auth refresh
  */
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
@@ -31,16 +31,10 @@ import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/an
 function makeProvider(
 	env: Record<string, string | undefined> = {},
 	authDir?: string,
-	codexAuthDir?: string,
-	codexFinder?: () => string | null
+	codexAuthDir?: string
 ): AnthropicToCodexBridgeProvider {
-	return new AnthropicToCodexBridgeProvider(env, authDir, codexAuthDir, codexFinder);
+	return new AnthropicToCodexBridgeProvider(env, authDir, codexAuthDir);
 }
-
-/** A codexFinder that always returns a fake binary path — avoids `which codex` subprocess in tests. */
-const fakeCodexFound = () => '/usr/local/bin/codex';
-/** A codexFinder that always returns null — simulates codex not installed. */
-const fakeCodexMissing = () => null;
 
 /**
  * Write a NeoKai auth.json with an openai entry to a temp dir.
@@ -153,7 +147,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
 	describe('capabilities', () => {
 		beforeEach(() => {
-			provider = makeProvider({}, undefined, undefined, fakeCodexFound);
+			provider = makeProvider({}, undefined, undefined);
 		});
 
 		it('reports the maximum Codex context window', () => {
@@ -163,18 +157,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('advertises thinking when the Responses adapter is active', () => {
 			expect(provider.capabilities.extendedThinking).toBe(true);
 			expect(provider.capabilities.thinkingModes).toBe('granular');
-		});
-
-		it('disables thinking when the Codex adapter is active', () => {
-			const p = makeProvider(
-				{ NEOKAI_OPENAI_BRIDGE_ADAPTER: 'codex' },
-				undefined,
-				undefined,
-				fakeCodexFound
-			);
-			expect(p.capabilities.extendedThinking).toBe(false);
-			expect(p.capabilities.thinkingModes).toBe('off');
-			p.stopAllBridgeServers();
 		});
 	});
 
@@ -191,36 +173,20 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		});
 
 		it('returns isAuthenticated=false when no credentials', async () => {
-			provider = makeProvider({}, emptyDir, emptyDir, fakeCodexMissing);
+			provider = makeProvider({}, emptyDir, emptyDir);
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(false);
 			expect(result.error).toBeTruthy();
 		});
 
 		it('returns isAuthenticated=false when only OPENAI_API_KEY env var is set (env vars are daemon/test only)', async () => {
-			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, emptyDir, emptyDir, fakeCodexFound);
-			const result = await provider.getAuthStatus();
-			expect(result.isAuthenticated).toBe(false);
-		});
-
-		it('returns isAuthenticated=false when only CODEX_API_KEY env var is set (env vars are daemon/test only)', async () => {
-			provider = makeProvider(
-				{ CODEX_API_KEY: 'codex-env-key' },
-				emptyDir,
-				emptyDir,
-				fakeCodexFound
-			);
+			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, emptyDir, emptyDir);
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(false);
 		});
 
 		it('returns isAuthenticated=false with descriptive error when env vars are empty', async () => {
-			provider = makeProvider(
-				{ OPENAI_API_KEY: '', CODEX_API_KEY: '' },
-				emptyDir,
-				emptyDir,
-				fakeCodexMissing
-			);
+			provider = makeProvider({ OPENAI_API_KEY: '' }, emptyDir, emptyDir);
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(false);
 			expect(result.error).toBeTruthy();
@@ -235,30 +201,10 @@ describe('AnthropicToCodexBridgeProvider', () => {
 				refresh: 'oauth-refresh-token',
 				expires: Date.now() + 3600_000,
 			});
-			provider = makeProvider({}, neokaiDir, codexDir, fakeCodexMissing);
+			provider = makeProvider({}, neokaiDir, codexDir);
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(true);
 			expect(result.method).toBe('oauth');
-		});
-
-		it('returns isAuthenticated=false with binary-not-found error when Codex adapter is explicitly selected', async () => {
-			const neokaiDir = path.join(emptyDir, 'neokai');
-			const codexDir = path.join(emptyDir, 'codex');
-			writeNeokaiAuth(neokaiDir, {
-				type: 'oauth',
-				access: 'oauth-access-token',
-				refresh: 'oauth-refresh-token',
-				expires: Date.now() + 3600_000,
-			});
-			provider = makeProvider(
-				{ NEOKAI_OPENAI_BRIDGE_ADAPTER: 'codex' },
-				neokaiDir,
-				codexDir,
-				fakeCodexMissing
-			);
-			const result = await provider.getAuthStatus();
-			expect(result.isAuthenticated).toBe(false);
-			expect(result.error).toContain('codex binary not found');
 		});
 
 		it('returns isAuthenticated=true when NeoKai OAuth credentials in auth.json and codex found', async () => {
@@ -271,7 +217,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 				expires: Date.now() + 3600_000,
 				accountId: 'user_abc123',
 			});
-			provider = makeProvider({}, neokaiDir, codexDir, fakeCodexFound);
+			provider = makeProvider({}, neokaiDir, codexDir);
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(true);
 			expect(result.method).toBe('oauth');
@@ -281,7 +227,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			const neokaiDir = path.join(emptyDir, 'neokai');
 			const codexDir = path.join(emptyDir, 'codex');
 			writeNeokaiAuth(neokaiDir, { type: 'api_key', access: 'sk-imported-key' });
-			provider = makeProvider({}, neokaiDir, codexDir, fakeCodexFound);
+			provider = makeProvider({}, neokaiDir, codexDir);
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(false);
 		});
@@ -296,7 +242,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 				// expires 1 minute ago (past the 5-min buffer)
 				expires: Date.now() - 60_000,
 			});
-			provider = makeProvider({}, neokaiDir, codexDir, fakeCodexFound);
+			provider = makeProvider({}, neokaiDir, codexDir);
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(true);
 			expect(result.needsRefresh).toBe(true);
@@ -326,11 +272,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
 			provider = makeProvider({ OPENAI_API_KEY: 'env-api-key' }, neokaiDir, codexDir);
 			expect(await provider.getApiKey()).toBe('env-api-key');
-		});
-
-		it('Priority 2: returns CODEX_API_KEY env var when OPENAI_API_KEY is absent', async () => {
-			provider = makeProvider({ CODEX_API_KEY: 'codex-env-key' });
-			expect(await provider.getApiKey()).toBe('codex-env-key');
 		});
 
 		it('Priority 3: returns access token from ~/.neokai/auth.json when no env var', async () => {
@@ -402,12 +343,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
 	describe('buildSdkConfig() bridge server routing', () => {
 		beforeEach(() => {
-			provider = makeProvider(
-				{ OPENAI_API_KEY: 'sk-placeholder' },
-				undefined,
-				undefined,
-				fakeCodexFound
-			);
+			provider = makeProvider({ OPENAI_API_KEY: 'sk-placeholder' }, undefined, undefined);
 		});
 
 		it('shares the Responses bridge server across workspace paths with the same auth', () => {
@@ -418,26 +354,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			const urlB = cfgB.envVars.ANTHROPIC_BASE_URL as string;
 			expect(urlA).toBe(urlB);
 			expect(new URL(urlA).port).toBe(new URL(urlB).port);
-		});
-
-		it('keeps Codex adapter bridge servers scoped by workspace path', () => {
-			const p = makeProvider(
-				{ OPENAI_API_KEY: 'sk-placeholder', NEOKAI_OPENAI_BRIDGE_ADAPTER: 'codex' },
-				undefined,
-				undefined,
-				fakeCodexFound
-			);
-			try {
-				const cfgA = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/workspace-a' });
-				const cfgB = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/workspace-b' });
-
-				const urlA = cfgA.envVars.ANTHROPIC_BASE_URL as string;
-				const urlB = cfgB.envVars.ANTHROPIC_BASE_URL as string;
-				expect(urlA).not.toBe(urlB);
-				expect(new URL(urlA).port).not.toBe(new URL(urlB).port);
-			} finally {
-				p.stopAllBridgeServers();
-			}
 		});
 
 		it('reuses the same bridge server for the same workspace path', () => {
@@ -453,7 +369,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('recreates a Responses bridge that was started before auth was available', async () => {
 			const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'neokai-build-cfg-auth-late-'));
 			const neokaiDir = path.join(tmpDir, 'neokai');
-			const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'), fakeCodexFound);
+			const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
 			try {
 				const cfgWithoutAuth = p.buildSdkConfig('gpt-5.3-codex', {
 					workspacePath: '/tmp/workspace-auth-late',
@@ -483,7 +399,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			let p: AnthropicToCodexBridgeProvider | undefined;
 			try {
 				const neokaiDir = path.join(tmpDir, 'neokai');
-				p = makeProvider(env, neokaiDir, path.join(tmpDir, 'codex'), fakeCodexFound);
+				p = makeProvider(env, neokaiDir, path.join(tmpDir, 'codex'));
 				const capturedRequests: Array<{
 					url: string;
 					authorization: string | null;
@@ -596,7 +512,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			try {
 				const neokaiDir = path.join(tmpDir, 'neokai');
 				writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'file-based-token' });
-				const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'), fakeCodexFound);
+				const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
 				// Warm the cache as isAvailable() / getAuthStatus() would in QueryRunner
 				await p.getApiKey();
 				// buildSdkConfig() is synchronous but should use the cached key
@@ -617,12 +533,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			try {
 				const neokaiDir = path.join(tmpDir, 'neokai');
 				writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'file-token-not-empty' });
-				const p = makeProvider(
-					{ OPENAI_API_KEY: '' },
-					neokaiDir,
-					path.join(tmpDir, 'codex'),
-					fakeCodexFound
-				);
+				const p = makeProvider({ OPENAI_API_KEY: '' }, neokaiDir, path.join(tmpDir, 'codex'));
 				await p.getApiKey(); // populates cachedApiKey
 				const cfg = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/empty-env-ws' });
 				expect(cfg.isAnthropicCompatible).toBe(true);
@@ -653,7 +564,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 					access: accessToken,
 					refresh: 'oauth-refresh-token',
 				});
-				const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'), fakeCodexFound);
+				const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
 				await p.getApiKey();
 
 				let capturedHeaders: Headers | undefined;
@@ -759,7 +670,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
 	describe('ownsModel()', () => {
 		beforeEach(() => {
-			provider = makeProvider({}, undefined, undefined, fakeCodexFound);
+			provider = makeProvider({}, undefined, undefined);
 		});
 
 		it('owns models explicitly listed in the catalogue', () => {
@@ -824,13 +735,13 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('returns models when OPENAI_API_KEY env var is set (env vars still power API calls)', async () => {
 			// getModels() uses isAvailable() which includes env-var credentials.
 			// This ensures models appear in the picker even when the user has not done NeoKai OAuth.
-			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fakeCodexFound);
+			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir);
 			const models = await provider.getModels();
 			expect(models.length).toBeGreaterThan(0);
 		});
 
 		it('reports correct context windows for Codex catalogue models', async () => {
-			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fakeCodexFound);
+			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir);
 			const models = await provider.getModels();
 			const contextWindows = new Map(models.map((model) => [model.id, model.contextWindow]));
 
@@ -842,29 +753,11 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		});
 
 		it('sets thinkingModes to granular when Responses adapter is active', async () => {
-			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fakeCodexFound);
+			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir);
 			const models = await provider.getModels();
 			expect(models.length).toBeGreaterThan(0);
 			for (const model of models) {
 				expect(model.thinkingModes).toBe('granular');
-			}
-		});
-
-		it('sets thinkingModes to off when Codex adapter is active', async () => {
-			const p = makeProvider(
-				{ OPENAI_API_KEY: 'sk-env-key', NEOKAI_OPENAI_BRIDGE_ADAPTER: 'codex' },
-				tmpDir,
-				tmpDir,
-				fakeCodexFound
-			);
-			try {
-				const models = await p.getModels();
-				expect(models.length).toBeGreaterThan(0);
-				for (const model of models) {
-					expect(model.thinkingModes).toBe('off');
-				}
-			} finally {
-				p.stopAllBridgeServers();
 			}
 		});
 
@@ -875,13 +768,13 @@ describe('AnthropicToCodexBridgeProvider', () => {
 				access: 'oauth-access-token',
 				refresh: 'oauth-refresh-token',
 			});
-			provider = makeProvider({}, neokaiDir, tmpDir, fakeCodexFound);
+			provider = makeProvider({}, neokaiDir, tmpDir);
 			const models = await provider.getModels();
 			expect(models.length).toBeGreaterThan(0);
 		});
 
 		it('returns empty array when no credentials and codex not found', async () => {
-			provider = makeProvider({}, tmpDir, tmpDir, fakeCodexMissing);
+			provider = makeProvider({}, tmpDir, tmpDir);
 			const models = await provider.getModels();
 			expect(models).toEqual([]);
 		});
