@@ -32,7 +32,6 @@ const MODEL_DENYLIST = new Set([
 	'chat_23310',
 	'gemini-2.5-flash-thinking',
 	'gemini-3-pro-low',
-	'gemini-2.5-pro',
 ]);
 
 // ---------------------------------------------------------------------------

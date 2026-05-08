@@ -217,10 +217,11 @@ describe('Gemini Model Discovery', () => {
 			});
 
 			expect(result).not.toBeNull();
-			expect(result).toHaveLength(2);
-			// gemini-2.5-pro is denylisted, so only flash and 3-pro remain
+			expect(result).toHaveLength(3);
+			// Server ordering is preserved
 			expect(result![0].id).toBe('gemini-2.5-flash');
 			expect(result![1].id).toBe('gemini-3-pro-preview');
+			expect(result![2].id).toBe('gemini-2.5-pro');
 		});
 
 		it('uses custom endpoint when provided', async () => {

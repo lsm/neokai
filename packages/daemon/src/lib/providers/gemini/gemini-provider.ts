@@ -104,6 +104,8 @@ export class GeminiOAuthProvider implements Provider {
 	private _lastDiscoveryFailure = 0;
 	/** Minimum ms between discovery retries after failure (1 minute). */
 	private static readonly DISCOVERY_BACKOFF_MS = 60_000;
+	/** True while a discovery request is in flight to prevent duplicate concurrent calls. */
+	private _discoveryInFlight = false;
 
 	/**
 	 * Discover available models from Google's Code Assist API.
@@ -125,23 +127,47 @@ export class GeminiOAuthProvider implements Provider {
 			if (this._modelCache) {
 				return this._modelCache;
 			}
-			return getFallbackModels();
+			const fallback = getFallbackModels();
+			this._syncBridgeModels(fallback);
+			return fallback;
 		}
 
-		const discovered = await this.discoverModels();
-		if (discovered) {
-			this._modelCache = discovered;
-			this._modelCacheIsDiscovered = true;
-			this._lastDiscoveryFailure = 0;
-			this._syncBridgeModels(discovered);
-			return discovered;
+		// Deduplicate: if another call is already discovering, wait for it
+		if (this._discoveryInFlight) {
+			// Poll briefly until the in-flight discovery completes
+			for (let i = 0; i < 50; i++) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				if (!this._discoveryInFlight && this._modelCache) {
+					return this._modelCache;
+				}
+			}
+			// Timed out waiting — return fallback
+			const fallback = getFallbackModels();
+			this._syncBridgeModels(fallback);
+			return fallback;
+		}
+
+		this._discoveryInFlight = true;
+		try {
+			const discovered = await this.discoverModels();
+			if (discovered) {
+				this._modelCache = discovered;
+				this._modelCacheIsDiscovered = true;
+				this._lastDiscoveryFailure = 0;
+				this._syncBridgeModels(discovered);
+				return discovered;
+			}
+		} finally {
+			this._discoveryInFlight = false;
 		}
 
 		this._lastDiscoveryFailure = now;
 		if (this._modelCache) {
 			return this._modelCache;
 		}
-		return getFallbackModels();
+		const fallback = getFallbackModels();
+		this._syncBridgeModels(fallback);
+		return fallback;
 	}
 
 	/**
@@ -199,7 +225,7 @@ export class GeminiOAuthProvider implements Provider {
 
 		const triedAccountIds = new Set<string>();
 
-		while (triedAccountIds.size <= 3) {
+		while (true) {
 			const account = await this.rotationManager.getAccountForSession('__gemini_model_discovery__');
 			if (!account) {
 				log.warn('No account available for model discovery');
@@ -221,6 +247,13 @@ export class GeminiOAuthProvider implements Provider {
 				});
 
 				this.rotationManager.releaseSession('__gemini_model_discovery__');
+
+				// fetchAvailableModels returns null on endpoint failure — try next account
+				if (models === null) {
+					log.warn(`Discovery endpoint failed for account ${account.email}, trying next account`);
+					continue;
+				}
+
 				return models;
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -292,6 +325,7 @@ export class GeminiOAuthProvider implements Provider {
 		// Warm the model cache in the background if it hasn't been loaded yet.
 		// When discovery/fallback resolves, update the bridge so /v1/models
 		// stays in sync with provider.getModels().
+		// The _discoveryInFlight guard in getModels() deduplicates concurrent calls.
 		if (!this._modelCache) {
 			this.getModels().catch(() => {
 				// Errors are logged inside discoverModels; ignore here
