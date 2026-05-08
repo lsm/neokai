@@ -387,6 +387,9 @@ const EXCLUDED_TABLE_NAMES: string[] = [
 	// (space/room/session), not useful for ad-hoc agent queries. Agents should
 	// read MCP state through the resolver rather than hitting the table directly.
 	'mcp_enablement',
+	// External Event Bus — internal event routing/delivery state, not useful for ad-hoc agent queries.
+	'space_external_events',
+	'space_external_event_deliveries',
 	// Dropped tables (no longer exist in schema)
 	'space_session_groups',
 	'space_session_group_members',
