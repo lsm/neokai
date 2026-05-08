@@ -46,12 +46,16 @@ const _log = createLogger('kai:providers:gemini:bridge');
 export interface GeminiBridgeServer {
 	port: number;
 	stop(): void;
+	/** Update the model list served by /v1/models. */
+	updateModels(models: Array<{ id: string; display_name: string }>): void;
 }
 
 export interface GeminiBridgeConfig {
 	rotationManager: AccountRotationManager;
 	fetchImpl?: typeof fetch;
 	sessionId?: string;
+	/** Optional model list override for the /v1/models endpoint. */
+	models?: Array<{ id: string; display_name: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +89,18 @@ export function createGeminiBridgeServer(config: GeminiBridgeConfig): GeminiBrid
 	const rotationManager = config.rotationManager;
 	const sessionId = config.sessionId ?? 'default';
 
+	let currentModels = config.models ?? [
+		{ id: 'gemini-3.1-pro-preview', display_name: 'Gemini 3.1 Pro Preview' },
+		{ id: 'gemini-3-pro-preview', display_name: 'Gemini 3 Pro Preview' },
+		{ id: 'gemini-3-flash-preview', display_name: 'Gemini 3 Flash Preview' },
+		{ id: 'gemini-3.1-flash-lite-preview', display_name: 'Gemini 3.1 Flash Lite Preview' },
+		{ id: 'gemini-2.5-pro', display_name: 'Gemini 2.5 Pro' },
+		{ id: 'gemini-2.5-flash', display_name: 'Gemini 2.5 Flash' },
+		{ id: 'gemini-2.5-flash-lite', display_name: 'Gemini 2.5 Flash Lite' },
+		{ id: 'gemma-4-31b-it', display_name: 'Gemma 4 31B IT' },
+		{ id: 'gemma-4-26b-a4b-it', display_name: 'Gemma 4 26B A4B IT' },
+	];
+
 	const server = Bun.serve({
 		port: 0,
 		idleTimeout: 0,
@@ -100,23 +116,7 @@ export function createGeminiBridgeServer(config: GeminiBridgeConfig): GeminiBrid
 			if (url.pathname === '/v1/models' && req.method === 'GET') {
 				return new Response(
 					JSON.stringify({
-						data: [
-							{
-								id: 'gemini-2.5-pro',
-								type: 'model',
-								display_name: 'Gemini 2.5 Pro',
-							},
-							{
-								id: 'gemini-2.5-flash',
-								type: 'model',
-								display_name: 'Gemini 2.5 Flash',
-							},
-							{
-								id: 'gemini-2.0-flash',
-								type: 'model',
-								display_name: 'Gemini 2.0 Flash',
-							},
-						],
+						data: currentModels.map((m) => ({ ...m, type: 'model' })),
 					}),
 					{ headers: { 'Content-Type': 'application/json' } }
 				);
@@ -179,6 +179,9 @@ export function createGeminiBridgeServer(config: GeminiBridgeConfig): GeminiBrid
 	return {
 		port: server.port ?? 0,
 		stop: () => server.stop(),
+		updateModels: (models: Array<{ id: string; display_name: string }>) => {
+			currentModels = models;
+		},
 	};
 }
 

@@ -70,3 +70,9 @@ export {
 	type GeminiBridgeServer,
 	type GeminiBridgeConfig,
 } from './bridge-server.js';
+export {
+	// Model discovery
+	fetchAvailableModels,
+	getFallbackModels,
+	type FetchDiscoveryModelsOptions,
+} from './model-discovery.js';

@@ -36,48 +36,10 @@ import {
 } from './oauth-client.js';
 import { AccountRotationManager } from './account-rotation.js';
 import { createGeminiBridgeServer, type GeminiBridgeServer } from './bridge-server.js';
+import { fetchAvailableModels, getFallbackModels } from './model-discovery.js';
+import { refreshAccessToken } from './oauth-client.js';
 
 const log = createLogger('kai:providers:gemini');
-
-// ---------------------------------------------------------------------------
-// Gemini models
-// ---------------------------------------------------------------------------
-
-const GEMINI_MODELS: ModelInfo[] = [
-	{
-		id: 'gemini-2.5-pro',
-		name: 'Gemini 2.5 Pro',
-		alias: 'gemini-2.5-pro',
-		family: 'gemini',
-		provider: 'google-gemini-oauth',
-		contextWindow: 1_000_000,
-		description: 'Google Gemini 2.5 Pro via Code Assist (OAuth)',
-		releaseDate: '2025-01-01',
-		available: true,
-	},
-	{
-		id: 'gemini-2.5-flash',
-		name: 'Gemini 2.5 Flash',
-		alias: 'gemini-2.5-flash',
-		family: 'gemini',
-		provider: 'google-gemini-oauth',
-		contextWindow: 1_000_000,
-		description: 'Google Gemini 2.5 Flash via Code Assist (OAuth)',
-		releaseDate: '2025-01-01',
-		available: true,
-	},
-	{
-		id: 'gemini-2.0-flash',
-		name: 'Gemini 2.0 Flash',
-		alias: 'gemini-2.0-flash',
-		family: 'gemini',
-		provider: 'google-gemini-oauth',
-		contextWindow: 1_000_000,
-		description: 'Google Gemini 2.0 Flash via Code Assist (OAuth)',
-		releaseDate: '2025-01-01',
-		available: true,
-	},
-];
 
 /** Success HTML shown in the browser after OAuth completes. */
 const OAUTH_SUCCESS_HTML =
@@ -114,11 +76,13 @@ export class GeminiOAuthProvider implements Provider {
 	 *  stale background handlers from tearing down a newer flow's server. */
 	private _activeCallbackFlowId?: string;
 
-	constructor(deps?: OAuthClientDeps) {
+	constructor(deps?: OAuthClientDeps, rotationManager?: AccountRotationManager) {
 		this._deps = deps;
-		this.rotationManager = new AccountRotationManager({
-			healthCheckOnStartup: false, // Defer to explicit initialization
-		});
+		this.rotationManager =
+			rotationManager ??
+			new AccountRotationManager({
+				healthCheckOnStartup: false, // Defer to explicit initialization
+			});
 	}
 
 	/**
@@ -133,18 +97,183 @@ export class GeminiOAuthProvider implements Provider {
 		}
 	}
 
+	private _modelCache: ModelInfo[] | null = null;
+	/** True when the current cache is a discovered list (not fallback). */
+	private _modelCacheIsDiscovered = false;
+	/** Timestamp of the last failed discovery attempt, for backoff. */
+	private _lastDiscoveryFailure = 0;
+	/** Minimum ms between discovery retries after failure (1 minute). */
+	private static readonly DISCOVERY_BACKOFF_MS = 60_000;
+	/** True while a discovery request is in flight to prevent duplicate concurrent calls. */
+	private _discoveryInFlight = false;
+
 	/**
-	 * Get list of available Gemini models.
+	 * Discover available models from Google's Code Assist API.
+	 *
+	 * Uses the first available account's OAuth token to call the
+	 * fetchAvailableModels endpoint. Falls back to a static list
+	 * if discovery fails (network error, no accounts, etc.).
+	 * Successfully discovered results are cached; fallback is not cached
+	 * so that transient outages don't permanently pin the static list.
 	 */
 	async getModels(): Promise<ModelInfo[]> {
-		return GEMINI_MODELS;
+		if (this._modelCache && this._modelCacheIsDiscovered) {
+			return this._modelCache;
+		}
+
+		// Don't retry discovery too aggressively after a failure
+		const now = Date.now();
+		if (now - this._lastDiscoveryFailure < GeminiOAuthProvider.DISCOVERY_BACKOFF_MS) {
+			if (this._modelCache) {
+				return this._modelCache;
+			}
+			const fallback = getFallbackModels();
+			this._syncBridgeModels(fallback);
+			return fallback;
+		}
+
+		// Deduplicate: if another call is already discovering, wait for it
+		if (this._discoveryInFlight) {
+			// Poll briefly until the in-flight discovery completes
+			for (let i = 0; i < 50; i++) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				if (!this._discoveryInFlight && this._modelCache) {
+					return this._modelCache;
+				}
+			}
+			// Timed out waiting — return fallback
+			const fallback = getFallbackModels();
+			this._syncBridgeModels(fallback);
+			return fallback;
+		}
+
+		this._discoveryInFlight = true;
+		try {
+			const discovered = await this.discoverModels();
+			if (discovered) {
+				this._modelCache = discovered;
+				this._modelCacheIsDiscovered = true;
+				this._lastDiscoveryFailure = 0;
+				this._syncBridgeModels(discovered);
+				return discovered;
+			}
+		} finally {
+			this._discoveryInFlight = false;
+		}
+
+		this._lastDiscoveryFailure = now;
+		if (this._modelCache) {
+			return this._modelCache;
+		}
+		const fallback = getFallbackModels();
+		this._syncBridgeModels(fallback);
+		return fallback;
 	}
 
 	/**
-	 * Check if a model ID belongs to this provider (exact match against catalog).
+	 * Force a refresh of the model cache on the next getModels() call.
+	 * Also updates active bridge servers with the newly discovered list.
+	 *
+	 * Kept synchronous to match the Provider interface (clearModelCache?(): void).
+	 * Re-discovery runs in the background; bridges are updated when it resolves.
+	 */
+	clearModelCache(): void {
+		this._modelCache = null;
+		this._modelCacheIsDiscovered = false;
+		this._lastDiscoveryFailure = 0;
+		// Fire-and-forget re-discovery + bridge sync so the caller doesn't have to await
+		this.getModels()
+			.then((models) => this._syncBridgeModels(models))
+			.catch(() => {
+				// Errors are logged inside discoverModels; ignore here
+			});
+	}
+
+	/**
+	 * Push the current model list to all active bridge servers.
+	 */
+	private _syncBridgeModels(models: ModelInfo[]): void {
+		const bridgeModels = models.map((m) => ({ id: m.id, display_name: m.name }));
+		for (const bridge of this.bridgeServers.values()) {
+			bridge.updateModels(bridgeModels);
+		}
+	}
+
+	/**
+	 * Check if a model ID belongs to this provider.
+	 *
+	 * Accepts any gemini-* or gemma-* ID since discovery may surface
+	 * models not in the fallback list.
 	 */
 	ownsModel(modelId: string): boolean {
-		return GEMINI_MODELS.some((m) => m.id === modelId);
+		return modelId.startsWith('gemini-') || modelId.startsWith('gemma-');
+	}
+
+	/**
+	 * Discover models using the fetchAvailableModels endpoint.
+	 *
+	 * Tries multiple accounts if the first one's token refresh fails,
+	 * so that a single revoked account doesn't force fallback on
+	 * multi-account setups.
+	 */
+	private async discoverModels(): Promise<ModelInfo[] | null> {
+		try {
+			await this.rotationManager.initialize();
+		} catch {
+			return null;
+		}
+
+		const triedAccountIds = new Set<string>();
+
+		while (true) {
+			const account = await this.rotationManager.getAccountForSession('__gemini_model_discovery__');
+			if (!account) {
+				log.warn('No account available for model discovery');
+				break;
+			}
+
+			if (triedAccountIds.has(account.id)) {
+				// Already tried this account — no new accounts left
+				break;
+			}
+			triedAccountIds.add(account.id);
+
+			try {
+				const tokenResponse = await refreshAccessToken(account.refresh_token, this._deps);
+
+				const models = await fetchAvailableModels({
+					token: tokenResponse.access_token,
+					fetchImpl: this._deps?.fetchImpl,
+				});
+
+				this.rotationManager.releaseSession('__gemini_model_discovery__');
+
+				// fetchAvailableModels returns null on endpoint failure — try next account
+				if (models === null) {
+					log.warn(`Discovery endpoint failed for account ${account.email}, trying next account`);
+					continue;
+				}
+
+				return models;
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				const isTokenInvalid = message.includes('invalid') || message.includes('revoked');
+
+				if (isTokenInvalid) {
+					await this.rotationManager.markInvalid(account.id);
+					log.warn(`Discovery account ${account.email} token invalid, trying next account`);
+					// Release and loop to try another account
+					this.rotationManager.releaseSession('__gemini_model_discovery__');
+					continue;
+				}
+
+				log.warn(`Model discovery failed: ${message}`);
+				break;
+			}
+		}
+
+		this.rotationManager.releaseSession('__gemini_model_discovery__');
+		return null;
 	}
 
 	/**
@@ -169,6 +298,10 @@ export class GeminiOAuthProvider implements Provider {
 	 *
 	 * buildSdkConfig() is synchronous per the Provider interface.
 	 * The async rotation manager initialization is deferred to the first request.
+	 *
+	 * If the model cache hasn't been populated yet, discovery is kicked off
+	 * in the background and the bridge's model list is updated when it
+	 * resolves so the bridge doesn't stay pinned to the hard-coded fallback.
 	 */
 	buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
 		const sessionId = sessionConfig?.sessionId ?? 'default';
@@ -181,9 +314,22 @@ export class GeminiOAuthProvider implements Provider {
 				rotationManager: this.rotationManager,
 				fetchImpl: this._deps?.fetchImpl,
 				sessionId,
+				models: this._modelCache
+					? this._modelCache.map((m) => ({ id: m.id, display_name: m.name }))
+					: undefined,
 			});
 			this.bridgeServers.set(sessionId, bridge);
 			log.info(`Bridge server started on port ${bridge.port} for session ${sessionId}`);
+		}
+
+		// Warm the model cache in the background if it hasn't been loaded yet.
+		// When discovery/fallback resolves, update the bridge so /v1/models
+		// stays in sync with provider.getModels().
+		// The _discoveryInFlight guard in getModels() deduplicates concurrent calls.
+		if (!this._modelCache) {
+			this.getModels().catch(() => {
+				// Errors are logged inside discoverModels; ignore here
+			});
 		}
 
 		return {
