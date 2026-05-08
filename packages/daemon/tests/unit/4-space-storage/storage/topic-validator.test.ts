@@ -9,6 +9,7 @@
 import { describe, test, expect } from 'bun:test';
 import {
 	validateGlobPattern,
+	validateLiteralTopic,
 	validateSource,
 	KNOWN_SOURCES,
 } from '../../../../src/lib/external-events/topic-validator';
@@ -121,6 +122,31 @@ describe('validateGlobPattern', () => {
 	test('accepts whole-segment wildcard in segments 1-3', () => {
 		const r = validateGlobPattern('github/*/*/pull_request.opened');
 		expect(r.valid).toBe(true);
+	});
+});
+
+describe('validateLiteralTopic', () => {
+	test('accepts literal topic', () => {
+		const r = validateLiteralTopic('github/lsm/neokai/pull_request.review_submitted');
+		expect(r.valid).toBe(true);
+	});
+
+	test('rejects segment wildcard', () => {
+		const r = validateLiteralTopic('github/*/*/pull_request.opened');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/no wildcards/);
+	});
+
+	test('rejects dotted-segment wildcard', () => {
+		const r = validateLiteralTopic('github/lsm/neokai/pull_request.*');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/no wildcards/);
+	});
+
+	test('rejects invalid segment count', () => {
+		const r = validateLiteralTopic('github/owner/repo');
+		expect(r.valid).toBe(false);
+		expect(r.reason).toMatch(/exactly 4 segments/);
 	});
 });
 

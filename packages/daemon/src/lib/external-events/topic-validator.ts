@@ -124,6 +124,27 @@ export function validateGlobPattern(pattern: string): ValidationResult {
  */
 export const KNOWN_SOURCES: ReadonlySet<string> = new Set<string>(['github']);
 
+/**
+ * Validate that a topic is a literal (no wildcards) suitable for storing
+ * as a published external event.
+ *
+ * This is stricter than `validateGlobPattern` — it rejects any `*` characters
+ * since published events must be concrete topics, not subscription patterns.
+ */
+export function validateLiteralTopic(topic: string): ValidationResult {
+	const globCheck = validateGlobPattern(topic);
+	if (!globCheck.valid) {
+		return globCheck;
+	}
+	if (topic.includes('*')) {
+		return {
+			valid: false,
+			reason: `Published event topic must be a literal (no wildcards); got "${topic}"`,
+		};
+	}
+	return { valid: true };
+}
+
 export function validateSource(source: string): ValidationResult {
 	if (typeof source !== 'string' || source.trim().length === 0) {
 		return { valid: false, reason: 'Source must be a non-empty string' };

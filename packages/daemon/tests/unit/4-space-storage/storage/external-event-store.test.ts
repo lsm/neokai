@@ -194,6 +194,15 @@ describe('store — validation', () => {
 		);
 	});
 
+	test('rejects dedupeKey with leading/trailing whitespace', () => {
+		expect(() => store.store({ ...EVENT_A, dedupeKey: ' key' })).toThrow(
+			ExternalEventValidationError
+		);
+		expect(() => store.store({ ...EVENT_A, dedupeKey: 'key ' })).toThrow(
+			ExternalEventValidationError
+		);
+	});
+
 	test('rejects unknown source', () => {
 		expect(() => store.store({ ...EVENT_A, source: 'slack' })).toThrow(
 			ExternalEventValidationError
@@ -210,6 +219,18 @@ describe('store — validation', () => {
 		expect(() =>
 			store.store({ ...EVENT_A, topic: 'slack/owner/repo/pull_request.opened' })
 		).toThrow(ExternalEventValidationError);
+	});
+
+	test('rejects wildcard topic on store', () => {
+		expect(() => store.store({ ...EVENT_A, topic: 'github/*/*/pull_request.opened' })).toThrow(
+			'no wildcards'
+		);
+	});
+
+	test('rejects dotted wildcard topic on store', () => {
+		expect(() => store.store({ ...EVENT_A, topic: 'github/lsm/neokai/pull_request.*' })).toThrow(
+			'no wildcards'
+		);
 	});
 
 	test('rejects non-finite occurredAt', () => {
@@ -369,6 +390,48 @@ describe('registerExpectedDelivery', () => {
 				agentName: '',
 			})
 		).toThrow('agentName must be non-empty');
+	});
+
+	test('throws for whitespace-padded workflowRunId', () => {
+		store.store(EVENT_A);
+		expect(() =>
+			store.registerExpectedDelivery('evt-a', 'dk-1', {
+				workflowRunId: 'run-1 ',
+				taskId: 'task-1',
+				nodeId: 'node-1',
+				agentName: 'coder',
+			})
+		).toThrow('leading or trailing whitespace');
+	});
+
+	test('throws for whitespace-padded taskId', () => {
+		store.store(EVENT_A);
+		expect(() =>
+			store.registerExpectedDelivery('evt-a', 'dk-1', {
+				workflowRunId: 'run-1',
+				taskId: ' task-1',
+				nodeId: 'node-1',
+				agentName: 'coder',
+			})
+		).toThrow('leading or trailing whitespace');
+	});
+
+	test('throws for same-event delivery key with different target', () => {
+		store.store(EVENT_A);
+		store.registerExpectedDelivery('evt-a', 'dk-1', {
+			workflowRunId: 'run-1',
+			taskId: 'task-1',
+			nodeId: 'node-1',
+			agentName: 'coder',
+		});
+		expect(() =>
+			store.registerExpectedDelivery('evt-a', 'dk-1', {
+				workflowRunId: 'run-1',
+				taskId: 'task-2',
+				nodeId: 'node-1',
+				agentName: 'coder',
+			})
+		).toThrow('already registered for event "evt-a" with different target');
 	});
 
 	test('throws for cross-event delivery key conflict', () => {
@@ -809,6 +872,23 @@ describe('updateEventState', () => {
 		expect(() => store.updateEventState('evt-a', 'delivered')).toThrow('cannot set terminal state');
 		expect(() => store.updateEventState('evt-a', 'failed')).toThrow('cannot set terminal state');
 		expect(() => store.updateEventState('evt-a', 'ignored')).toThrow('cannot set terminal state');
+	});
+
+	test('rejects backward transition from routed to published', () => {
+		store.store(EVENT_A);
+		store.updateEventState('evt-a', 'routed');
+		expect(() => store.updateEventState('evt-a', 'published')).toThrow(
+			'cannot regress state from "routed" to "published"'
+		);
+	});
+
+	test('rejects backward transition from delivery_failed to routed', () => {
+		store.store(EVENT_A);
+		store.updateEventState('evt-a', 'routed');
+		store.updateEventState('evt-a', 'delivery_failed');
+		expect(() => store.updateEventState('evt-a', 'routed')).toThrow(
+			'cannot regress state from "delivery_failed" to "routed"'
+		);
 	});
 });
 

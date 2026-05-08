@@ -29,7 +29,7 @@ import {
 	TERMINAL_DELIVERY_STATES,
 	TERMINAL_EVENT_STATES,
 } from './types';
-import { validateGlobPattern, validateSource } from './topic-validator';
+import { validateLiteralTopic, validateSource } from './topic-validator';
 
 interface ExternalEventRow {
 	id: string;
@@ -321,6 +321,14 @@ export class ExternalEventStore {
 			// Never overwrite a terminal state with a non-terminal state.
 			return;
 		}
+		// Forward-only progression: published -> routed -> delivery_failed.
+		// Reject backward transitions (e.g. routed -> published).
+		const forwardOrder: ExternalEventState[] = ['published', 'routed', 'delivery_failed'];
+		const currentIndex = forwardOrder.indexOf(event.state);
+		const targetIndex = forwardOrder.indexOf(state);
+		if (targetIndex < currentIndex) {
+			throw new Error(`updateEventState: cannot regress state from "${event.state}" to "${state}"`);
+		}
 		this.db
 			.prepare(`UPDATE space_external_events SET state = ?, updated_at = ? WHERE id = ?`)
 			.run(state, Date.now(), eventId);
@@ -352,9 +360,17 @@ export class ExternalEventStore {
 			nodeId: target.nodeId,
 			agentName: target.agentName,
 		})) {
-			if (!value || (typeof value === 'string' && value.trim().length === 0)) {
+			if (!value || typeof value !== 'string' || value.trim().length === 0) {
 				throw new ExternalEventValidationError(
 					`registerExpectedDelivery: ${key} must be non-empty (eventId="${eventId}")`
+				);
+			}
+			// Reject leading/trailing whitespace so lookups keyed by canonical IDs
+			// never miss these rows.
+			if (value !== value.trim()) {
+				throw new ExternalEventValidationError(
+					`registerExpectedDelivery: ${key} must not have leading or trailing whitespace ` +
+						`(eventId="${eventId}")`
 				);
 			}
 		}
@@ -377,15 +393,31 @@ export class ExternalEventStore {
 				now
 			);
 
-		// If INSERT was ignored, verify the existing row belongs to the same event.
-		// The unique index on delivery_key prevents cross-event collisions, but this
-		// check catches schema bypasses or programming errors.
+		// If INSERT was ignored, verify the existing row belongs to the same event
+		// and has the same target fields. The unique index on delivery_key prevents
+		// cross-event collisions, but this check also catches same-event target
+		// mismatches (different workflowRunId/taskId/nodeId/agentName).
 		if (result.changes === 0) {
 			const existingEventId = this.getEventIdForDeliveryKey(deliveryKey);
 			if (existingEventId !== eventId) {
 				throw new Error(
 					`registerExpectedDelivery: delivery_key "${deliveryKey}" already ` +
 						`registered for event "${existingEventId}", cannot register for "${eventId}"`
+				);
+			}
+			const existing = this.getDelivery(eventId, deliveryKey);
+			if (
+				existing &&
+				(existing.workflowRunId !== target.workflowRunId ||
+					existing.taskId !== target.taskId ||
+					existing.nodeId !== target.nodeId ||
+					existing.agentName !== target.agentName)
+			) {
+				throw new Error(
+					`registerExpectedDelivery: delivery_key "${deliveryKey}" already ` +
+						`registered for event "${eventId}" with different target ` +
+						`(existing: ${existing.workflowRunId}/${existing.taskId}/${existing.nodeId}/${existing.agentName}, ` +
+						`requested: ${target.workflowRunId}/${target.taskId}/${target.nodeId}/${target.agentName})`
 				);
 			}
 		}
@@ -497,13 +529,21 @@ export class ExternalEventStore {
 				'ExternalEvent.dedupeKey is required and must not be whitespace-only'
 			);
 		}
+		// Reject leading/trailing whitespace on dedupeKey so logically identical
+		// keys (e.g. "key" vs "key ") do not bypass deduplication.
+		if (event.dedupeKey !== event.dedupeKey.trim()) {
+			throw new ExternalEventValidationError(
+				'ExternalEvent.dedupeKey must not have leading or trailing whitespace'
+			);
+		}
 
 		const sourceCheck = validateSource(event.source);
 		if (!sourceCheck.valid) {
 			throw new ExternalEventValidationError(`ExternalEvent.source invalid: ${sourceCheck.reason}`);
 		}
 
-		const topicCheck = validateGlobPattern(event.topic);
+		// Published events must be literal topics (no wildcards).
+		const topicCheck = validateLiteralTopic(event.topic);
 		if (!topicCheck.valid) {
 			throw new ExternalEventValidationError(`ExternalEvent.topic invalid: ${topicCheck.reason}`);
 		}
