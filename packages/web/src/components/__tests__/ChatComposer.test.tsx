@@ -3,18 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ChatComposerProps } from '../ChatComposer';
 
 vi.mock('../MessageInput.tsx', () => ({
-	default: (props: {
-		disabled?: boolean;
-		placeholder?: string;
-		isProcessing?: boolean;
-		canQueueMessages?: boolean;
-	}) => (
+	default: (props: { disabled?: boolean; placeholder?: string; isProcessing?: boolean }) => (
 		<div
 			data-testid="mock-message-input"
 			data-disabled={String(props.disabled)}
 			data-placeholder={props.placeholder}
 			data-is-processing={String(props.isProcessing)}
-			data-can-queue-messages={String(props.canQueueMessages)}
 		/>
 	),
 }));
@@ -105,21 +99,5 @@ describe('ChatComposer', () => {
 		const { getByTestId } = render(<ChatComposer {...baseProps({ isProcessing: true })} />);
 
 		expect(getByTestId('mock-message-input').dataset.isProcessing).toBe('true');
-	});
-
-	it('enables queue shortcuts for regular session composers', () => {
-		const { getByTestId } = render(<ChatComposer {...baseProps()} />);
-
-		expect(getByTestId('mock-message-input').dataset.canQueueMessages).toBe('true');
-	});
-
-	it('disables queue shortcuts when a custom leading control handles task routing', () => {
-		const { getByTestId } = render(
-			<ChatComposer
-				{...baseProps({ inputLeadingElement: <button type="button">Target</button> })}
-			/>
-		);
-
-		expect(getByTestId('mock-message-input').dataset.canQueueMessages).toBe('false');
 	});
 });

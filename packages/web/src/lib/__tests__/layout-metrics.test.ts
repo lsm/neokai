@@ -20,16 +20,8 @@ describe('layout-metrics', () => {
 		expect(getMessagesBottomPaddingPx(158)).toBe(174);
 	});
 
-	it('adds queue-overlay headroom rows', () => {
-		expect(getMessagesBottomPaddingPx(158, 3)).toBe(186);
-	});
-
-	it('caps queue-overlay headroom rows', () => {
-		expect(getMessagesBottomPaddingPx(158, 99)).toBe(206);
-	});
-
 	it('caps very tall footer padding at the hard maximum', () => {
-		expect(getMessagesBottomPaddingPx(900, 99)).toBe(MAX_MESSAGES_BOTTOM_PADDING_PX);
+		expect(getMessagesBottomPaddingPx(900)).toBe(MAX_MESSAGES_BOTTOM_PADDING_PX);
 	});
 
 	it('falls back to minimum for invalid heights', () => {

@@ -25,7 +25,7 @@ import {
 	useModelSwitcher,
 	useReferenceAutocomplete,
 } from '../hooks';
-import { connectionManager } from '../lib/connection-manager';
+
 import { getMessagesBottomPaddingPx } from '../lib/layout-metrics.ts';
 import { isAgentWorking } from '../lib/state.ts';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
@@ -88,16 +88,6 @@ interface MessageInputProps {
 	onDraftActiveChange?: (hasDraft: boolean) => void;
 	/** Whether the backing agent/session is currently processing or queued. */
 	isProcessing?: boolean;
-	/** Whether this session supports queueing draft text for the next turn via Tab. */
-	canQueueMessages?: boolean;
-}
-
-interface QueuedOverlayMessage {
-	dbId: string;
-	uuid: string;
-	text: string;
-	timestamp: number;
-	status: 'deferred' | 'enqueued' | 'consumed';
 }
 
 export default function MessageInput({
@@ -117,7 +107,6 @@ export default function MessageInput({
 	leadingPaddingClass,
 	onDraftActiveChange,
 	isProcessing,
-	canQueueMessages = true,
 }: MessageInputProps) {
 	// Cache touch device detection — computed once on first render, stable thereafter.
 	// Using useRef (not a module constant) so tests can mock matchMedia before render.
@@ -257,8 +246,6 @@ export default function MessageInput({
 	}, []);
 
 	const agentWorking = isProcessing ?? isAgentWorking.value;
-	const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuedOverlayMessage[]>([]);
-	const [queuedForNextTurn, setQueuedForNextTurn] = useState<QueuedOverlayMessage[]>([]);
 
 	const syncMessagesContainerPadding = useCallback(() => {
 		const scroller = document.querySelector<HTMLElement>('[data-messages-container]');
@@ -285,58 +272,13 @@ export default function MessageInput({
 		};
 	}, [content, getImagesForSend]);
 
-	const refreshQueuedMessages = useCallback(async () => {
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			return;
-		}
-
-		try {
-			const [enqueuedResponse, deferredResponse] = (await Promise.all([
-				hub.request('session.messages.byStatus', {
-					sessionId,
-					status: 'enqueued',
-					limit: 20,
-				}),
-				hub.request('session.messages.byStatus', {
-					sessionId,
-					status: 'deferred',
-					limit: 20,
-				}),
-			])) as [{ messages?: QueuedOverlayMessage[] }, { messages?: QueuedOverlayMessage[] }];
-			setQueuedForCurrentTurn(enqueuedResponse.messages ?? []);
-			setQueuedForNextTurn(deferredResponse.messages ?? []);
-		} catch {
-			// Best-effort queue refresh
-		}
-	}, [sessionId]);
-
-	useEffect(() => {
-		void refreshQueuedMessages();
-	}, [refreshQueuedMessages]);
-
 	useLayoutEffect(() => {
 		syncMessagesContainerPadding();
 	}, [syncMessagesContainerPadding]);
 
 	useEffect(() => {
-		if (!agentWorking && queuedForCurrentTurn.length === 0 && queuedForNextTurn.length === 0)
-			return;
-		const timer = setInterval(() => {
-			void refreshQueuedMessages();
-		}, 700);
-		return () => clearInterval(timer);
-	}, [agentWorking, queuedForCurrentTurn.length, queuedForNextTurn.length, refreshQueuedMessages]);
-
-	useEffect(() => {
 		syncMessagesContainerPadding();
-	}, [
-		syncMessagesContainerPadding,
-		attachments.length,
-		isDragging,
-		queuedForCurrentTurn.length,
-		queuedForNextTurn.length,
-	]);
+	}, [syncMessagesContainerPadding, attachments.length, isDragging]);
 
 	const handleTextareaHeightChange = useCallback(
 		(_heightPx: number) => {
@@ -366,29 +308,9 @@ export default function MessageInput({
 			if (result === false) {
 				// Restore the draft so the user doesn't lose their message
 				setContent(savedContent);
-				return;
-			}
-			if (
-				agentWorking ||
-				deliveryMode === 'defer' ||
-				queuedForCurrentTurn.length > 0 ||
-				queuedForNextTurn.length > 0
-			) {
-				await refreshQueuedMessages();
 			}
 		},
-		[
-			disabled,
-			extractOutgoingMessage,
-			clearDraft,
-			clearAttachments,
-			setContent,
-			onSend,
-			agentWorking,
-			queuedForCurrentTurn.length,
-			queuedForNextTurn.length,
-			refreshQueuedMessages,
-		]
+		[disabled, extractOutgoingMessage, clearDraft, clearAttachments, setContent, onSend]
 	);
 
 	// Destructure stable callback refs to avoid recreating handleKeyDown on every render
@@ -439,12 +361,6 @@ export default function MessageInput({
 				return;
 			}
 
-			if (e.key === 'Tab' && !e.shiftKey && agentWorking && canQueueMessages) {
-				e.preventDefault();
-				void handleSubmit('defer');
-				return;
-			}
-
 			// Handle Enter key behavior
 			if (e.key === 'Enter') {
 				if (e.metaKey || e.ctrlKey) {
@@ -464,8 +380,6 @@ export default function MessageInput({
 			refHandleKeyDown,
 			cmdHandleKeyDown,
 			handleSubmit,
-			agentWorking,
-			canQueueMessages,
 			showAgentMentionAutocomplete,
 			filteredAgentMentionCandidates,
 			agentMentionSelectedIndex,
@@ -576,47 +490,6 @@ export default function MessageInput({
 						</div>
 					)}
 
-					{(queuedForCurrentTurn.length > 0 || queuedForNextTurn.length > 0) && !disabled && (
-						<div class="mb-2 flex flex-col items-end gap-1.5" data-testid="queue-overlay">
-							{queuedForCurrentTurn.slice(0, 3).map((queued, index) => (
-								<div
-									key={queued.dbId}
-									class="pointer-events-none inline-flex max-w-[22rem] items-center gap-2 rounded-full border border-dark-600/80 bg-dark-900/85 px-3 py-1 text-xs text-gray-200 backdrop-blur-sm"
-									data-testid="queued-current-turn-bubble"
-								>
-									<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-									<span class="truncate">
-										{index === 0 && <span class="mr-1 text-amber-300">Now</span>}
-										{queued.text}
-									</span>
-								</div>
-							))}
-							{queuedForNextTurn.slice(0, 3).map((queued, index) => (
-								<div
-									key={queued.dbId}
-									class="pointer-events-none inline-flex max-w-[22rem] items-center gap-2 rounded-full border border-dark-600/80 bg-dark-900/85 px-3 py-1 text-xs text-gray-200 backdrop-blur-sm"
-									data-testid="queued-next-turn-bubble"
-								>
-									<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
-									<span class="truncate">
-										{index === 0 && <span class="mr-1 text-blue-300">Next</span>}
-										{queued.text}
-									</span>
-								</div>
-							))}
-							{queuedForCurrentTurn.length > 3 && (
-								<p class="pointer-events-none text-xs text-amber-200/80">
-									+{queuedForCurrentTurn.length - 3} more pending
-								</p>
-							)}
-							{queuedForNextTurn.length > 3 && (
-								<p class="pointer-events-none text-xs text-blue-200/80">
-									+{queuedForNextTurn.length - 3} more deferred
-								</p>
-							)}
-						</div>
-					)}
-
 					{/* iOS 26 Style: Floating single-line input */}
 					<div class="flex items-end gap-3">
 						{/* Plus Button with Actions Menu */}
@@ -682,7 +555,6 @@ export default function MessageInput({
 							onReferenceSelect={referenceAutocomplete.handleSelect}
 							onReferenceClose={referenceAutocomplete.close}
 							isAgentWorking={agentWorking}
-							canQueueMessages={canQueueMessages}
 							onStop={handleInterrupt}
 							onPaste={disabled ? undefined : handlePaste}
 							textareaRef={textareaInputRef}

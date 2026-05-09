@@ -291,15 +291,41 @@ describe('ReactiveDatabase — scope extraction', () => {
 		expect(txEvent.scope).toBeUndefined();
 	});
 
-	test('createSession does NOT carry scope', () => {
+	test('createSession carries scope derived from the session record', () => {
 		const events: TableChangeEvent[] = [];
 		reactiveDb.on('change', (data) => events.push(data));
 
-		reactiveDb.db.createSession(makeSession('sess-no-scope'));
+		reactiveDb.db.createSession(
+			makeSession('sess-with-scope', {
+				roomId: 'room-1',
+				spaceId: 'space-1',
+				taskId: 'task-1',
+			})
+		);
 
 		const sessionEvent = events.find((e) => e.tables.includes('sessions'));
 		expect(sessionEvent).toBeDefined();
-		expect(sessionEvent!.scope).toBeUndefined();
+		expect(sessionEvent!.scope).toEqual({
+			sessionId: 'sess-with-scope',
+			sessionType: 'worker',
+			roomId: 'room-1',
+			spaceId: 'space-1',
+			taskId: 'task-1',
+		});
+	});
+
+	test('createSession scope omits unset context fields', () => {
+		const events: TableChangeEvent[] = [];
+		reactiveDb.on('change', (data) => events.push(data));
+
+		reactiveDb.db.createSession(makeSession('sess-no-context'));
+
+		const sessionEvent = events.find((e) => e.tables.includes('sessions'));
+		expect(sessionEvent).toBeDefined();
+		expect(sessionEvent!.scope).toEqual({
+			sessionId: 'sess-no-context',
+			sessionType: 'worker',
+		});
 	});
 });
 
