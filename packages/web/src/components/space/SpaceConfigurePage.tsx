@@ -66,6 +66,9 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 		setEditingWorkflow(undefined);
 	}, [space.id]);
 
+	// Read the workflow version so the effect re-runs when the same workflow
+	// is edited in place (spaceStore bumps the version on spaceWorkflow.updated).
+	const workflowVersion = spaceStore.workflowVersions.value.get(workflowEditId ?? '') ?? 0;
 	useEffect(() => {
 		if (!workflowEditId || workflowEditId === 'new') {
 			setEditingWorkflow(undefined);
@@ -82,7 +85,7 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 		return () => {
 			cancelled = true;
 		};
-	}, [workflowEditId]);
+	}, [workflowEditId, workflowVersion]);
 
 	// For edit mode, defer mounting the editor until the workflow detail has
 	// loaded so VisualWorkflowEditor (which initializes from props on mount)

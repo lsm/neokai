@@ -50,6 +50,9 @@ export function useRunGateSummaries(
 	workflowId: string | null | undefined
 ): { summaries: RunGateSummary[] | undefined; fetchError: string | null; retry: () => void } {
 	const [gates, setGates] = useState<Gate[]>([]);
+	// Read the workflow version so the effect re-runs when the same workflow
+	// is edited in place (spaceStore bumps the version on spaceWorkflow.updated).
+	const workflowVersion = spaceStore.workflowVersions.value.get(workflowId ?? '') ?? 0;
 
 	useEffect(() => {
 		if (!workflowId) {
@@ -66,7 +69,7 @@ export function useRunGateSummaries(
 		return () => {
 			cancelled = true;
 		};
-	}, [workflowId]);
+	}, [workflowId, workflowVersion]);
 
 	const [gateDataMap, setGateDataMap] = useState<Map<string, Record<string, unknown>> | null>(null);
 	const [fetchError, setFetchError] = useState<string | null>(null);

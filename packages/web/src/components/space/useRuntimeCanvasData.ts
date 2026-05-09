@@ -64,6 +64,9 @@ export function useRuntimeCanvasData(
 	const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
 
 	const [workflow, setWorkflow] = useState<SpaceWorkflow | null>(null);
+	// Read the workflow version so the effect re-runs when the same workflow
+	// is edited in place (spaceStore bumps the version on spaceWorkflow.updated).
+	const workflowVersion = spaceStore.workflowVersions.value.get(workflowId ?? '') ?? 0;
 
 	useEffect(() => {
 		if (!workflowId) {
@@ -80,7 +83,7 @@ export function useRuntimeCanvasData(
 		return () => {
 			cancelled = true;
 		};
-	}, [workflowId]);
+	}, [workflowId, workflowVersion]);
 
 	const [viewportState, setViewportState] = useState<ViewportState>({
 		offsetX: 0,

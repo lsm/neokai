@@ -271,8 +271,14 @@ class SpaceStore {
 	/** Cache of full workflow details fetched on-demand (keyed by workflowId) */
 	private workflowDetailCache = new Map<string, SpaceWorkflow>();
 
-	/** In-flight promises for workflow detail fetches (keyed by workflowId) */
+	/** In-flight promises for workflow detail fetches (keyed by workflowId).
+	 *  Each promise captures the spaceId at request time; if the space changes
+	 *  before resolution, the result is discarded instead of cached. */
 	private workflowDetailPromises = new Map<string, Promise<SpaceWorkflow | null>>();
+
+	/** Monotonic counter bumped on every spaceWorkflow.updated event so hooks
+	 *  keyed by workflowId can re-fetch when the same workflow is edited in place. */
+	readonly workflowVersions = signal<Map<string, number>>(new Map());
 
 	private upsertTaskOnePerRun(tasks: SpaceTask[], task: SpaceTask): SpaceTask[] {
 		const withoutSameId = tasks.filter((current) => current.id !== task.id);
@@ -560,6 +566,7 @@ class SpaceStore {
 		this.nodeExecPromise = null;
 		this.sessions.value = [];
 		this.clearWorkflowDetailCache();
+		this.workflowVersions.value = new Map();
 		this.disposeSpaceSessionsSubscription();
 
 		// 3. Update active space (may be updated to real UUID after fetch)
@@ -811,8 +818,14 @@ class SpaceStore {
 				} else {
 					this.workflows.value = [...this.workflows.value, summary];
 				}
-				// Evict cached detail so the next fetch gets the updated definition
+				// Evict cached detail, cancel any in-flight request, and bump the
+				// version so hooks keyed by workflowId re-fetch the new definition.
 				this.workflowDetailCache.delete(event.workflow.id);
+				this.workflowDetailPromises.delete(event.workflow.id);
+				this.workflowVersions.value = new Map(this.workflowVersions.value).set(
+					event.workflow.id,
+					event.workflow.updatedAt
+				);
 			}
 		});
 		this.cleanupFunctions.push(unsubWorkflowUpdated);
@@ -826,6 +839,10 @@ class SpaceStore {
 			if (event.spaceId === spaceId) {
 				this.workflows.value = this.workflows.value.filter((w) => w.id !== event.workflowId);
 				this.workflowDetailCache.delete(event.workflowId);
+				this.workflowDetailPromises.delete(event.workflowId);
+				const nextVersions = new Map(this.workflowVersions.value);
+				nextVersions.delete(event.workflowId);
+				this.workflowVersions.value = nextVersions;
 			}
 		});
 		this.cleanupFunctions.push(unsubWorkflowDeleted);
@@ -941,6 +958,11 @@ class SpaceStore {
 	/**
 	 * Fetch a full workflow by ID. Deduplicates concurrent requests and caches
 	 * the result so multiple callers asking for the same workflow share one fetch.
+	 *
+	 * Stale-guard: the request captures the active spaceId at call time. If the
+	 * space changes before the response arrives, the result is returned to the
+	 * original caller but NOT cached, preventing stale data from polluting the
+	 * cache after a space switch.
 	 */
 	async fetchWorkflowDetail(workflowId: string): Promise<SpaceWorkflow | null> {
 		const cached = this.workflowDetailCache.get(workflowId);
@@ -960,7 +982,12 @@ class SpaceStore {
 					spaceId,
 				});
 				if (result?.workflow) {
-					this.workflowDetailCache.set(workflowId, result.workflow);
+					// Only cache if we're still on the same space. If the user switched
+					// spaces while this request was in flight, caching would store stale
+					// workflow data from the previous space.
+					if (this.spaceId.value === spaceId) {
+						this.workflowDetailCache.set(workflowId, result.workflow);
+					}
 					return result.workflow;
 				}
 				return null;

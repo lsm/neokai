@@ -261,6 +261,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	// Fetch full workflow detail for composer targets and declared-agent slots.
 	// spaceStore.workflows only holds lightweight summaries.
+	// Read the workflow version so the effect re-runs when the same workflow
+	// is edited in place (spaceStore bumps the version on spaceWorkflow.updated).
+	const workflowVersion = spaceStore.workflowVersions.value.get(canvasWorkflowId ?? '') ?? 0;
 	useEffect(() => {
 		if (!canvasWorkflowId) {
 			setFullWorkflow(null);
@@ -277,7 +280,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		return () => {
 			cancelled = true;
 		};
-	}, [canvasWorkflowId]);
+	}, [canvasWorkflowId, workflowVersion]);
 
 	// Scope @mention autocomplete to workflow agents only (no agents for non-workflow tasks)
 	const workflow = fullWorkflow;
