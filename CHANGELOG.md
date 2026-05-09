@@ -2,6 +2,32 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.21.0] - 2026-05-08
+
+A release adding image support across bridges and task threads, external event infrastructure, task observability tools, and significant idle performance improvements. 13 commits since v0.20.0.
+
+### Added
+
+- **Image attachments in task thread**: Composer images flow through space task message pipeline to SDK; server-side 5MB validation; preserved on send failure
+- **OpenAI Responses bridge image forwarding**: Image content blocks translated to OpenAI input_image format with URL and base64 support
+- **Task observability tools**: `list_tasks`, `get_task`, `list_audit_entries` MCP tools with audit trail
+- **ExternalEvent schema and store**: Durable event lifecycle storage with dedup, retry, and per-subscription delivery state machine
+- **InternalQueryBus facade**: Preserves Live Query boundary with semantic query interface
+- **GLM-5V-Turbo model**: Vision-capable model added to GLM/Zhipu provider
+
+### Changed
+
+- **Migrate settings.updated event behind InternalEventBus**: Consistent event dispatch pattern
+- **Replace task_thread_messages projection with derived columns**: Schema simplification
+- **Remove legacy Codex app-server adapter**: Cleanup of unused code path
+
+### Fixed
+
+- **Plan & Decompose workflow**: Gate evaluation before activation; map-field deep-merge for gate data; atomic repository transactions; re-check gate after activation; archive guard before gate eval; corrected planner and reviewer prompts
+- **Idle performance**: Stop session polling when agent is idle; remove broken queued-messages polling; scope task live-query invalidation; reduce file-index churn
+- **Gemini**: Whitelist JSON Schema keywords in tool definitions instead of blacklist
+- **Model cache**: Scope per-session cache invalidation keys
+
 ## [0.20.0] - 2026-05-06
 
 A release adding configurable settingSources, OpenAI reasoning.effort support, workflow disable toggle, internal command/event buses, and removing the legacy Room feature entirely. 18 commits since v0.19.0.
