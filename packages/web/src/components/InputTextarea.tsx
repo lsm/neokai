@@ -26,7 +26,7 @@
 
 import type { ComponentChildren } from 'preact';
 import type { MutableRef } from 'preact/hooks';
-import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
@@ -182,6 +182,22 @@ export function InputTextarea({
 		textareaRef.current?.focus();
 	}, []);
 
+	// Mobile Safari: when the textarea is focused and the virtual keyboard opens,
+	// the page may scroll the focused element behind the address bar or the
+	// composer may jump off-screen. We wait for the keyboard animation (~300 ms)
+	// then scroll the textarea into view so the user can see what they are typing.
+	const handleFocus = useCallback(() => {
+		if (!isMobileDevice.current) return;
+		const textarea = textareaRef.current;
+		if (!textarea) return;
+		// Delay to let the keyboard finish its animation; on iOS this is roughly
+		// 250-300 ms. Using 350 ms gives a safe margin.
+		const timer = setTimeout(() => {
+			textarea.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+		}, 350);
+		return () => clearTimeout(timer);
+	}, []);
+
 	const charCount = content.length;
 	const showCharCount = charCount > maxChars * 0.8;
 	const hasContent = content.trim().length > 0;
@@ -252,6 +268,7 @@ export function InputTextarea({
 					ref={textareaRef}
 					onInput={(e) => onContentChange((e.target as HTMLTextAreaElement).value)}
 					onKeyDown={onKeyDown}
+					onFocus={handleFocus}
 					onPaste={onPaste}
 					disabled={disabled}
 					placeholder={placeholder}

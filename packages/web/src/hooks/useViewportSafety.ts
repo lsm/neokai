@@ -73,6 +73,16 @@ function updateSafeHeight(vv: VisualViewport): void {
 }
 
 /**
+ * Update the `--keyboard-height` CSS custom property on `document.documentElement`.
+ * This is the difference between the layout viewport and the visual viewport,
+ * representing the area covered by the virtual keyboard.
+ */
+function updateKeyboardHeight(vv: VisualViewport): void {
+	const height = Math.max(0, window.innerHeight - vv.height);
+	document.documentElement.style.setProperty('--keyboard-height', `${height}px`);
+}
+
+/**
  * Check whether the virtual keyboard is currently visible by comparing
  * `visualViewport.height` with `window.innerHeight`. Returns true when the
  * difference exceeds {@link KEYBOARD_THRESHOLD} to avoid false positives from
@@ -131,14 +141,20 @@ export function useViewportSafety(): void {
 				// Shrink the app container to the visible viewport height
 				document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
 
+				// Record keyboard height so fixed/absolute positioned elements
+				// (e.g. chat composer) can offset themselves above the keyboard
+				updateKeyboardHeight(vv);
+
 				// Remove bottom bar padding — the BottomTabBar is fixed at bottom:0
 				// and hidden behind the keyboard, so reserving space for it creates a gap
 				savedBottomBarHeight =
 					document.documentElement.style.getPropertyValue('--bottom-bar-height');
 				document.documentElement.style.setProperty('--bottom-bar-height', '0px');
 			} else if (kbVisible && keyboardOpen) {
-				// Keep --safe-height in sync as keyboard height may change
+				// Keep --safe-height and --keyboard-height in sync as keyboard
+				// height may change (e.g. switching between emoji and text keyboards)
 				document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
+				updateKeyboardHeight(vv);
 			} else if (!kbVisible && keyboardOpen) {
 				// Keyboard just closed
 				keyboardOpen = false;
@@ -150,6 +166,9 @@ export function useViewportSafety(): void {
 					document.documentElement.style.removeProperty('--safe-height');
 				}
 				// On iPad, --safe-height is already updated above via updateSafeHeight()
+
+				// Remove keyboard height override
+				document.documentElement.style.removeProperty('--keyboard-height');
 
 				// Restore bottom bar height from saved value.
 				// NOTE: We use !== null instead of truthiness because
@@ -183,6 +202,7 @@ export function useViewportSafety(): void {
 			keyboardOpen = true;
 			document.documentElement.classList.add('keyboard-open');
 			document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
+			updateKeyboardHeight(vv);
 			savedBottomBarHeight = document.documentElement.style.getPropertyValue('--bottom-bar-height');
 			document.documentElement.style.setProperty('--bottom-bar-height', '0px');
 		}
@@ -200,6 +220,7 @@ export function useViewportSafety(): void {
 			// Cleanup: restore original state
 			document.documentElement.classList.remove('keyboard-open');
 			document.documentElement.style.removeProperty('--safe-height');
+			document.documentElement.style.removeProperty('--keyboard-height');
 			if (savedBottomBarHeight !== null) {
 				document.documentElement.style.setProperty('--bottom-bar-height', savedBottomBarHeight);
 			}
