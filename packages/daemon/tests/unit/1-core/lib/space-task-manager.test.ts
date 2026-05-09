@@ -917,6 +917,72 @@ describe('SpaceTaskManager', () => {
 		});
 	});
 
+	describe('cancelDependentTasks (cancellation cascade)', () => {
+		it('cancels both open and in_progress dependents when parent is cancelled', async () => {
+			const a = await manager.createTask({ title: 'A', description: '' });
+			const bOpen = await manager.createTask({
+				title: 'B',
+				description: '',
+				dependsOn: [a.id],
+			});
+			const cInProgress = await manager.createTask({
+				title: 'C',
+				description: '',
+				dependsOn: [a.id],
+			});
+			await manager.startTask(cInProgress.id);
+
+			// Cancel the parent.
+			await manager.startTask(a.id);
+			await manager.setTaskStatus(a.id, 'cancelled');
+
+			const cascaded = await manager.cancelDependentTasks(a.id);
+			const ids = cascaded.map((t) => t.id).sort();
+			expect(ids).toEqual([bOpen.id, cInProgress.id].sort());
+
+			expect((await manager.getTask(bOpen.id))!.status).toBe('cancelled');
+			expect((await manager.getTask(cInProgress.id))!.status).toBe('cancelled');
+		});
+
+		it('cascades recursively through dependency chain', async () => {
+			const a = await manager.createTask({ title: 'A', description: '' });
+			const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
+			const c = await manager.createTask({ title: 'C', description: '', dependsOn: [b.id] });
+
+			await manager.startTask(a.id);
+			await manager.setTaskStatus(a.id, 'cancelled');
+
+			const cascaded = await manager.cancelDependentTasks(a.id);
+			expect(cascaded).toHaveLength(2);
+			expect((await manager.getTask(b.id))!.status).toBe('cancelled');
+			expect((await manager.getTask(c.id))!.status).toBe('cancelled');
+		});
+
+		it('does not cascade to done tasks', async () => {
+			const a = await manager.createTask({ title: 'A', description: '' });
+			const done = await manager.createTask({
+				title: 'Done',
+				description: '',
+				dependsOn: [a.id],
+			});
+			await manager.startTask(done.id);
+			await manager.completeTask(done.id, 'finished');
+
+			await manager.startTask(a.id);
+			await manager.setTaskStatus(a.id, 'cancelled');
+
+			const cascaded = await manager.cancelDependentTasks(a.id);
+			expect(cascaded).toHaveLength(0);
+			expect((await manager.getTask(done.id))!.status).toBe('done');
+		});
+
+		it('returns empty array when no dependents exist', async () => {
+			const a = await manager.createTask({ title: 'A', description: '' });
+			const cascaded = await manager.cancelDependentTasks(a.id);
+			expect(cascaded).toHaveLength(0);
+		});
+	});
+
 	describe('taskNumber (numeric task IDs)', () => {
 		it('createTask assigns auto-incrementing taskNumber', async () => {
 			const t1 = await manager.createTask({ title: 'A', description: '' });

@@ -557,17 +557,39 @@ export class SpaceTaskManager {
 	}
 
 	/**
-	 * Block in_progress tasks that depend on the given task with 'dependency_failed'.
-	 * Open tasks are intentionally NOT blocked here — they haven't started yet, so
-	 * they should remain `open` and be skipped naturally by `areDependenciesMet()`
-	 * on the next runtime tick. Blocking them would prevent them from ever
-	 * auto-starting once their dependency completes (they'd need a manual retry).
+	 * Block in_progress tasks that depend on the given (failed/blocked) task
+	 * with 'dependency_failed'. Open tasks are intentionally NOT blocked here —
+	 * they haven't started yet, so they should remain `open` and be skipped
+	 * naturally by `areDependenciesMet()` on the next runtime tick. Blocking
+	 * them would prevent them from ever auto-starting once their dependency
+	 * completes (they'd need a manual retry).
+	 *
+	 * For cancellation propagation (a terminal parent that won't be retried),
+	 * use `cancelDependentTasks` instead — it cancels both `open` and
+	 * `in_progress` dependents so they don't wait forever on an unmet dep.
 	 *
 	 * Recurses: if task B (in_progress) depends on A and task C (in_progress)
 	 * depends on B, blocking A cascades to both B and C.
 	 */
 	async blockDependentTasks(taskId: string): Promise<SpaceTask[]> {
 		return this.doBlockCascade(taskId, []);
+	}
+
+	/**
+	 * Cancel both `open` and `in_progress` tasks that depend on the given
+	 * (already-cancelled) task. Cancellation is terminal-but-restartable —
+	 * propagating `cancelled` keeps dependents from waiting forever on a
+	 * parent that will never reach `done`. A user can still retry the chain
+	 * by reactivating from the root.
+	 *
+	 * Use this from runtime paths where the parent has *already* been set to
+	 * `cancelled`. The API-level `cancelTaskCascade` is the one-shot version
+	 * that sets the root and cascades open dependents in a single call.
+	 *
+	 * Recurses through transitive dependents.
+	 */
+	async cancelDependentTasks(taskId: string): Promise<SpaceTask[]> {
+		return this.doCancelDependentsCascade(taskId, []);
 	}
 
 	private async doBlockCascade(taskId: string, acc: SpaceTask[]): Promise<SpaceTask[]> {
@@ -582,6 +604,25 @@ export class SpaceTaskManager {
 				});
 				acc.push(blocked);
 				await this.doBlockCascade(t.id, acc);
+			}
+		}
+		return acc;
+	}
+
+	private async doCancelDependentsCascade(taskId: string, acc: SpaceTask[]): Promise<SpaceTask[]> {
+		const candidates = [
+			...(await this.listTasksByStatus('open')),
+			...(await this.listTasksByStatus('in_progress')),
+		];
+		for (const t of candidates) {
+			// Skip tasks already cancelled by a prior recursive path in this cascade
+			if (acc.some((a) => a.id === t.id)) continue;
+			if (t.dependsOn?.includes(taskId)) {
+				const cancelled = await this.setTaskStatus(t.id, 'cancelled', {
+					result: `Dependency task ${taskId} was cancelled`,
+				});
+				acc.push(cancelled);
+				await this.doCancelDependentsCascade(t.id, acc);
 			}
 		}
 		return acc;

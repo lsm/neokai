@@ -615,6 +615,57 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(runAfter?.completedAt).toBeNull();
 		});
 
+		test('canonical task in `blocked` is not pushed through dispatchPostApproval on run completion', async () => {
+			// Regression for the cascade-block path: if a task was cascade-blocked
+			// (`dependency_failed`) while its workflow run continued and then
+			// completed, the runtime previously tried to transition
+			// `blocked → approved` via dispatchPostApproval, which is invalid.
+			// The completion guard must treat `blocked` as already-resolved.
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'node-blk-1', name: 'Plan', agentId: AGENT_B },
+				{ id: 'node-blk-2', name: 'Code', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			expect(tasks).toHaveLength(1);
+
+			// First-node task completes normally — this is what signals
+			// CompletionDetector that the run is complete.
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+			// Second-node task is `blocked` (e.g. cascade-blocked by a dependency
+			// failure on a sibling task) when the run reaches completion.
+			const taskManager = rt.getTaskManagerForSpace(SPACE_ID);
+			const blockedTask = await taskManager.createTask({
+				title: 'Code',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: 'node-blk-2',
+				taskType: 'coding',
+				agentName: 'coder',
+				status: 'blocked',
+				blockReason: 'dependency_failed',
+			});
+
+			seedNodeExec(db, run.id, 'node-blk-1', 'agent', 'idle');
+			seedNodeExec(db, run.id, 'node-blk-2', 'coder', 'idle');
+
+			// Should not throw with "Invalid status transition from 'blocked' to 'approved'".
+			await rt.executeTick();
+
+			// Run reaches `done` via CompletionDetector.
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+
+			// Blocked task is left in `blocked` (or archived alongside the run) —
+			// it must NEVER be transitioned to `approved`/`done`, which would be
+			// an invalid `blocked → approved` transition.
+			const blockedAfter = taskRepo.getTask(blockedTask.id);
+			expect(['blocked', 'archived']).toContain(blockedAfter?.status);
+			expect(blockedAfter?.status).not.toBe('approved');
+			expect(blockedAfter?.status).not.toBe('done');
+		});
+
 		test('blocked → in_progress → done lifecycle via resume', async () => {
 			const rt = makeRuntimeWithTam();
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
