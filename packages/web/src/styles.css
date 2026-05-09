@@ -682,13 +682,16 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
    When the virtual keyboard opens, the composer (position:absolute;bottom:0)
    would normally sit behind the keyboard. We offset it by the keyboard height
    so it stays visible and tappable. The transition gives a smooth slide as the
-   keyboard animates in/out. */
-.chat-footer {
-	transition: bottom 0.25s ease;
-}
+   keyboard animates in/out. Scoped to coarse-pointer devices so desktop
+   browsers are not affected. */
+@media (pointer: coarse) {
+	.chat-footer {
+		transition: bottom 0.25s ease;
+	}
 
-html.keyboard-open .chat-footer {
-	bottom: var(--keyboard-height, 0px);
+	html.keyboard-open .chat-footer {
+		bottom: var(--keyboard-height, 0px);
+	}
 }
 
 /* ── Space task thread — compact running-block indicator ─────────────────────
