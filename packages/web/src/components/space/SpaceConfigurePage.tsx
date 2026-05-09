@@ -64,10 +64,14 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 			setEditingWorkflow(undefined);
 			return;
 		}
+		let cancelled = false;
 		// Fetch full workflow detail for editing — spaceStore.workflows only holds summaries
 		spaceStore.fetchWorkflowDetail(workflowEditId).then((wf) => {
-			if (wf) setEditingWorkflow(wf);
+			if (!cancelled && wf) setEditingWorkflow(wf);
 		});
+		return () => {
+			cancelled = true;
+		};
 	}, [workflowEditId]);
 
 	const showWorkflowEditor = activeTab === 'workflows' && workflowEditId !== null;

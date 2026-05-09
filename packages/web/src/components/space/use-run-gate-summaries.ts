@@ -56,9 +56,13 @@ export function useRunGateSummaries(
 			setGates([]);
 			return;
 		}
+		let cancelled = false;
 		spaceStore.fetchWorkflowDetail(workflowId).then((wf) => {
-			setGates(wf?.gates ?? []);
+			if (!cancelled) setGates(wf?.gates ?? []);
 		});
+		return () => {
+			cancelled = true;
+		};
 	}, [workflowId]);
 
 	const [gateDataMap, setGateDataMap] = useState<Map<string, Record<string, unknown>> | null>(null);

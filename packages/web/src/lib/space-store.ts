@@ -81,6 +81,7 @@ function workflowToSummary(wf: SpaceWorkflow): SpaceWorkflowSummary {
 		description: wf.description,
 		tags: wf.tags,
 		templateName: wf.templateName,
+		templateHash: wf.templateHash ?? null,
 		disabled: wf.disabled,
 		nodeCount: wf.nodes?.length ?? 0,
 		completionAutonomyLevel: wf.completionAutonomyLevel,
@@ -810,6 +811,8 @@ class SpaceStore {
 				} else {
 					this.workflows.value = [...this.workflows.value, summary];
 				}
+				// Evict cached detail so the next fetch gets the updated definition
+				this.workflowDetailCache.delete(event.workflow.id);
 			}
 		});
 		this.cleanupFunctions.push(unsubWorkflowUpdated);
@@ -822,6 +825,7 @@ class SpaceStore {
 		}>('spaceWorkflow.deleted', (event) => {
 			if (event.spaceId === spaceId) {
 				this.workflows.value = this.workflows.value.filter((w) => w.id !== event.workflowId);
+				this.workflowDetailCache.delete(event.workflowId);
 			}
 		});
 		this.cleanupFunctions.push(unsubWorkflowDeleted);

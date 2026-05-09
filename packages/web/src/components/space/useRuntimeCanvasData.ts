@@ -70,9 +70,13 @@ export function useRuntimeCanvasData(
 			setWorkflow(null);
 			return;
 		}
+		let cancelled = false;
 		spaceStore.fetchWorkflowDetail(workflowId).then((wf) => {
-			setWorkflow(wf);
+			if (!cancelled) setWorkflow(wf);
 		});
+		return () => {
+			cancelled = true;
+		};
 	}, [workflowId]);
 
 	const [viewportState, setViewportState] = useState<ViewportState>({

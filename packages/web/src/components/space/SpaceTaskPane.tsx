@@ -266,9 +266,13 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			setFullWorkflow(null);
 			return;
 		}
+		let cancelled = false;
 		spaceStore.fetchWorkflowDetail(canvasWorkflowId).then((wf) => {
-			setFullWorkflow(wf);
+			if (!cancelled) setFullWorkflow(wf);
 		});
+		return () => {
+			cancelled = true;
+		};
 	}, [canvasWorkflowId]);
 
 	// Scope @mention autocomplete to workflow agents only (no agents for non-workflow tasks)
