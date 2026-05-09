@@ -105,6 +105,302 @@ describe('openai-responses-bridge server', () => {
 		]);
 	});
 
+	it('translates Anthropic image blocks into Responses input_image items', () => {
+		const input = anthropicMessagesToResponsesInput([
+			{
+				role: 'user',
+				content: [
+					{
+						type: 'image',
+						source: { type: 'base64', media_type: 'image/jpeg', data: 'abc123' },
+					},
+					{ type: 'text', text: 'What is in this image?' },
+				],
+			},
+		]);
+
+		// Source order is preserved: image first, then text
+		expect(input).toEqual([
+			{
+				type: 'message',
+				role: 'user',
+				content: [
+					{ type: 'input_image', image_url: 'data:image/jpeg;base64,abc123' },
+					{ type: 'input_text', text: 'What is in this image?' },
+				],
+			},
+		]);
+	});
+
+	it('handles image-only user messages without text', () => {
+		const input = anthropicMessagesToResponsesInput([
+			{
+				role: 'user',
+				content: [
+					{
+						type: 'image',
+						source: { type: 'base64', media_type: 'image/png', data: 'pngdata' },
+					},
+				],
+			},
+		]);
+
+		expect(input).toEqual([
+			{
+				type: 'message',
+				role: 'user',
+				content: [{ type: 'input_image', image_url: 'data:image/png;base64,pngdata' }],
+			},
+		]);
+	});
+
+	it('handles multiple images in a single user message', () => {
+		const input = anthropicMessagesToResponsesInput([
+			{
+				role: 'user',
+				content: [
+					{ type: 'text', text: 'Compare these:' },
+					{
+						type: 'image',
+						source: { type: 'base64', media_type: 'image/jpeg', data: 'img1' },
+					},
+					{
+						type: 'image',
+						source: { type: 'base64', media_type: 'image/webp', data: 'img2' },
+					},
+				],
+			},
+		]);
+
+		expect(input).toEqual([
+			{
+				type: 'message',
+				role: 'user',
+				content: [
+					{ type: 'input_text', text: 'Compare these:' },
+					{ type: 'input_image', image_url: 'data:image/jpeg;base64,img1' },
+					{ type: 'input_image', image_url: 'data:image/webp;base64,img2' },
+				],
+			},
+		]);
+	});
+
+	it('preserves interleaved text/image order in user messages', () => {
+		const input = anthropicMessagesToResponsesInput([
+			{
+				role: 'user',
+				content: [
+					{ type: 'text', text: 'Before' },
+					{
+						type: 'image',
+						source: { type: 'base64', media_type: 'image/jpeg', data: 'img1' },
+					},
+					{ type: 'text', text: 'Between' },
+					{
+						type: 'image',
+						source: { type: 'base64', media_type: 'image/png', data: 'img2' },
+					},
+					{ type: 'text', text: 'After' },
+				],
+			},
+		]);
+
+		expect(input).toEqual([
+			{
+				type: 'message',
+				role: 'user',
+				content: [
+					{ type: 'input_text', text: 'Before' },
+					{ type: 'input_image', image_url: 'data:image/jpeg;base64,img1' },
+					{ type: 'input_text', text: 'Between' },
+					{ type: 'input_image', image_url: 'data:image/png;base64,img2' },
+					{ type: 'input_text', text: 'After' },
+				],
+			},
+		]);
+	});
+
+	it('translates URL-based image blocks to input_image with direct URL', () => {
+		const input = anthropicMessagesToResponsesInput([
+			{
+				role: 'user',
+				content: [
+					{
+						type: 'image',
+						source: { type: 'url', url: 'https://example.com/cat.jpg' },
+					},
+					{ type: 'text', text: 'What is this?' },
+				],
+			},
+		]);
+
+		expect(input).toEqual([
+			{
+				type: 'message',
+				role: 'user',
+				content: [
+					{ type: 'input_image', image_url: 'https://example.com/cat.jpg' },
+					{ type: 'input_text', text: 'What is this?' },
+				],
+			},
+		]);
+	});
+
+	it('handles images mixed with tool_results in user messages', () => {
+		const input = anthropicMessagesToResponsesInput([
+			{
+				role: 'assistant',
+				content: [{ type: 'tool_use', id: 'call_1', name: 'screenshot', input: {} }],
+			},
+			{
+				role: 'user',
+				content: [
+					{ type: 'tool_result', tool_use_id: 'call_1', content: 'took screenshot' },
+					{
+						type: 'image',
+						source: { type: 'base64', media_type: 'image/png', data: 'screendata' },
+					},
+					{ type: 'text', text: 'What do you see?' },
+				],
+			},
+		]);
+
+		expect(input).toEqual([
+			{
+				type: 'function_call',
+				call_id: 'call_1',
+				name: 'screenshot',
+				arguments: '{}',
+				status: 'completed',
+			},
+			{ type: 'function_call_output', call_id: 'call_1', output: 'took screenshot' },
+			{
+				type: 'message',
+				role: 'user',
+				content: [
+					{ type: 'input_image', image_url: 'data:image/png;base64,screendata' },
+					{ type: 'input_text', text: 'What do you see?' },
+				],
+			},
+		]);
+	});
+
+	it('preserves non-text blocks in tool_result content as structured output', () => {
+		const input = anthropicMessagesToResponsesInput([
+			{
+				role: 'assistant',
+				content: [{ type: 'tool_use', id: 'call_1', name: 'screenshot', input: {} }],
+			},
+			{
+				role: 'user',
+				content: [
+					{
+						type: 'tool_result',
+						tool_use_id: 'call_1',
+						content: [
+							{ type: 'text', text: 'Screenshot taken.' },
+							{
+								type: 'image',
+								source: { type: 'base64', media_type: 'image/png', data: 'screendata' },
+							},
+						],
+					},
+				],
+			},
+		]);
+
+		expect(input).toEqual([
+			{
+				type: 'function_call',
+				call_id: 'call_1',
+				name: 'screenshot',
+				arguments: '{}',
+				status: 'completed',
+			},
+			{
+				type: 'function_call_output',
+				call_id: 'call_1',
+				output: [
+					{ type: 'input_text', text: 'Screenshot taken.' },
+					{ type: 'input_image', image_url: 'data:image/png;base64,screendata' },
+				],
+			},
+		]);
+	});
+
+	it('flattens text-only tool_result content to a string', () => {
+		const input = anthropicMessagesToResponsesInput([
+			{
+				role: 'assistant',
+				content: [{ type: 'tool_use', id: 'call_1', name: 'lookup', input: {} }],
+			},
+			{
+				role: 'user',
+				content: [
+					{
+						type: 'tool_result',
+						tool_use_id: 'call_1',
+						content: [
+							{ type: 'text', text: 'Line 1' },
+							{ type: 'text', text: 'Line 2' },
+						],
+					},
+				],
+			},
+		]);
+
+		expect(input).toEqual([
+			{
+				type: 'function_call',
+				call_id: 'call_1',
+				name: 'lookup',
+				arguments: '{}',
+				status: 'completed',
+			},
+			{
+				type: 'function_call_output',
+				call_id: 'call_1',
+				output: 'Line 1\nLine 2',
+			},
+		]);
+	});
+
+	it('throws on unsupported image source types', () => {
+		expect(() =>
+			anthropicMessagesToResponsesInput([
+				{
+					role: 'user',
+					content: [
+						{
+							type: 'image',
+							source: { type: 'file', media_type: 'image/png', data: 'filedata' } as unknown as {
+								type: 'base64';
+								media_type: string;
+								data: string;
+							},
+						},
+					],
+				},
+			])
+		).toThrow('Unsupported image source type: file');
+	});
+
+	it('throws on unsupported user content block types', () => {
+		expect(() =>
+			anthropicMessagesToResponsesInput([
+				{
+					role: 'user',
+					content: [
+						{
+							type: 'document',
+							source: { type: 'base64', media_type: 'application/pdf', data: 'pdfdata' },
+						} as unknown as { type: 'text'; text: string },
+					],
+				},
+			])
+		).toThrow('Unsupported user content block type: document');
+	});
+
 	it('streams OpenAI text deltas as Anthropic text SSE', async () => {
 		let capturedBody: Record<string, unknown> | undefined;
 		server = createOpenAIResponsesBridgeServer({
@@ -174,6 +470,66 @@ describe('openai-responses-bridge server', () => {
 			type: 'message_delta',
 			delta: { stop_reason: 'end_turn' },
 		});
+	});
+
+	it('forwards image attachments to the OpenAI Responses API', async () => {
+		let capturedBody: Record<string, unknown> | undefined;
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async (_url, init) => {
+				capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+				return sse([
+					{
+						event: 'response.output_text.delta',
+						data: { type: 'response.output_text.delta', delta: 'A cat.' },
+					},
+					{
+						event: 'response.completed',
+						data: {
+							type: 'response.completed',
+							response: { usage: { input_tokens: 100, output_tokens: 2 }, output: [] },
+						},
+					},
+				]);
+			},
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [
+					{
+						role: 'user',
+						content: [
+							{
+								type: 'image',
+								source: { type: 'base64', media_type: 'image/jpeg', data: 'abc123' },
+							},
+							{ type: 'text', text: 'What is in this image?' },
+						],
+					},
+				],
+			}),
+		});
+
+		expect(resp.status).toBe(200);
+		const input = capturedBody?.input as Array<Record<string, unknown>>;
+		expect(input).toEqual([
+			{
+				type: 'message',
+				role: 'user',
+				content: [
+					{ type: 'input_image', image_url: 'data:image/jpeg;base64,abc123' },
+					{ type: 'input_text', text: 'What is in this image?' },
+				],
+			},
+		]);
+		const events = await readSSEEvents(resp.body);
+		expect(textDeltaEvents(events).join('')).toBe('A cat.');
 	});
 
 	it('streams OpenAI function calls as Anthropic tool_use blocks', async () => {
@@ -924,6 +1280,86 @@ describe('openai-responses-bridge server', () => {
 		});
 		expect(events.at(-1)?.event).toBe('message_stop');
 		expect(messageDeltaEvent(events)).toBeUndefined();
+	});
+
+	it('returns 400 for unsupported user content blocks', async () => {
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async () =>
+				new Response(JSON.stringify({ error: { message: 'should not reach upstream' } }), {
+					status: 500,
+				}),
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [
+					{
+						role: 'user',
+						content: [
+							{
+								type: 'document',
+								source: {
+									type: 'base64',
+									media_type: 'application/pdf',
+									data: 'pdfdata',
+								},
+							} as unknown as { type: 'text'; text: string },
+						],
+					},
+				],
+			}),
+		});
+
+		const body = (await resp.json()) as { error: { type: string; message: string } };
+		expect(resp.status).toBe(400);
+		expect(body.error.type).toBe('invalid_request_error');
+		expect(body.error.message).toContain('Unsupported user content block type: document');
+	});
+
+	it('returns 400 for unsupported image source types', async () => {
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async () =>
+				new Response(JSON.stringify({ error: { message: 'should not reach upstream' } }), {
+					status: 500,
+				}),
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [
+					{
+						role: 'user',
+						content: [
+							{
+								type: 'image',
+								source: { type: 'file', media_type: 'image/png', data: 'filedata' } as unknown as {
+									type: 'base64';
+									media_type: string;
+									data: string;
+								},
+							},
+						],
+					},
+				],
+			}),
+		});
+
+		const body = (await resp.json()) as { error: { type: string; message: string } };
+		expect(resp.status).toBe(400);
+		expect(body.error.type).toBe('invalid_request_error');
+		expect(body.error.message).toContain('Unsupported image source type: file');
 	});
 
 	it('maps upstream 429 responses to Anthropic rate_limit_error', async () => {

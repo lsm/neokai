@@ -209,7 +209,7 @@ export function convertMessages(messages: AnthropicMessage[]): GeminiContent[] {
 				const textContent =
 					typeof block.content === 'string'
 						? block.content
-						: block.content.map((c) => c.text).join('');
+						: block.content.map((c) => (c.type === 'text' ? c.text : `[${c.type}]`)).join('');
 
 				// Look up the actual function name from the corresponding tool_use block
 				const functionName =
