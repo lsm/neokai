@@ -976,6 +976,29 @@ describe('SpaceTaskManager', () => {
 			expect((await manager.getTask(done.id))!.status).toBe('done');
 		});
 
+		it('traverses through already-cancelled intermediates to reach open descendants', async () => {
+			// Regression: A → B → C, with B already cancelled and C still open.
+			// Calling cancelDependentTasks(A) must walk through B to cancel C,
+			// otherwise C is left stranded with an unmet dependency on B.
+			const a = await manager.createTask({ title: 'A', description: '' });
+			const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
+			const c = await manager.createTask({ title: 'C', description: '', dependsOn: [b.id] });
+
+			// B was cancelled before A.
+			await manager.startTask(b.id);
+			await manager.setTaskStatus(b.id, 'cancelled');
+
+			// A is now cancelled; the cascade must reach C through the cancelled B.
+			await manager.startTask(a.id);
+			await manager.setTaskStatus(a.id, 'cancelled');
+
+			const cascaded = await manager.cancelDependentTasks(a.id);
+			// Only C transitions (B was already cancelled and is just a waypoint).
+			expect(cascaded.map((t) => t.id)).toContain(c.id);
+			expect((await manager.getTask(c.id))!.status).toBe('cancelled');
+			expect((await manager.getTask(b.id))!.status).toBe('cancelled');
+		});
+
 		it('returns empty array when no dependents exist', async () => {
 			const a = await manager.createTask({ title: 'A', description: '' });
 			const cascaded = await manager.cancelDependentTasks(a.id);

@@ -73,6 +73,7 @@ import type { TaskAgentManager } from './task-agent-manager';
 import { WorkflowExecutor } from './workflow-executor';
 import { isPermanentSpawnError } from './workflow-node-execution-validation';
 import { selectWorkflow } from './workflow-selector';
+import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
 
 const log = new Logger('space-runtime');
 
@@ -761,6 +762,18 @@ export class SpaceRuntime {
 				const cascaded = await taskManager.cancelDependentTasks(taskId);
 				for (const cancelled of cascaded) {
 					await this.safeOnTaskUpdated(spaceId, cancelled);
+					// Cancel the underlying workflow run (if any) so completion
+					// detection on the next tick doesn't finalize the run as
+					// `done` just because the cancelled task signals
+					// completion via `CompletionDetector.isComplete`. Only
+					// in_progress dependents had a live run to begin with;
+					// open dependents have no run attached.
+					if (cancelled.workflowRunId) {
+						const run = this.config.workflowRunRepo.getRun(cancelled.workflowRunId);
+						if (run && canTransitionRunStatus(run.status, 'cancelled')) {
+							await this.transitionRunStatusAndEmit(cancelled.workflowRunId, 'cancelled');
+						}
+					}
 				}
 			}
 		}

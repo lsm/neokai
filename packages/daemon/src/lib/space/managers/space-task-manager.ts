@@ -609,21 +609,32 @@ export class SpaceTaskManager {
 		return acc;
 	}
 
-	private async doCancelDependentsCascade(taskId: string, acc: SpaceTask[]): Promise<SpaceTask[]> {
-		const candidates = [
-			...(await this.listTasksByStatus('open')),
-			...(await this.listTasksByStatus('in_progress')),
-		];
-		for (const t of candidates) {
-			// Skip tasks already cancelled by a prior recursive path in this cascade
-			if (acc.some((a) => a.id === t.id)) continue;
-			if (t.dependsOn?.includes(taskId)) {
+	private async doCancelDependentsCascade(
+		taskId: string,
+		acc: SpaceTask[],
+		visited: Set<string> = new Set()
+	): Promise<SpaceTask[]> {
+		// Walk through ALL non-archived tasks so we can traverse intermediate
+		// `cancelled` dependents to reach their (still-open) descendants. We
+		// only *transition* `open`/`in_progress` tasks; already-`cancelled`/
+		// `done`/`blocked`/`review`/`approved` tasks are visited solely so the
+		// recursion can continue through them.
+		const allTasks = await this.listTasks(false /* includeArchived */);
+		for (const t of allTasks) {
+			if (visited.has(t.id)) continue;
+			if (!t.dependsOn?.includes(taskId)) continue;
+			visited.add(t.id);
+
+			if (t.status === 'open' || t.status === 'in_progress') {
 				const cancelled = await this.setTaskStatus(t.id, 'cancelled', {
 					result: `Dependency task ${taskId} was cancelled`,
 				});
 				acc.push(cancelled);
-				await this.doCancelDependentsCascade(t.id, acc);
 			}
+			// Recurse through this dependent regardless of whether we
+			// transitioned it — already-cancelled intermediates may still have
+			// open descendants that need to be cancelled.
+			await this.doCancelDependentsCascade(t.id, acc, visited);
 		}
 		return acc;
 	}

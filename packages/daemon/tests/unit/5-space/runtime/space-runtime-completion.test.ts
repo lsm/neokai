@@ -695,6 +695,54 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
 		});
+
+		test('cascade-cancelling an in_progress dependent also cancels its workflow run', async () => {
+			// Regression: when the runtime cancels task A (e.g. via the run-cancel
+			// reconcile path), the cascade transitions in_progress dependent task B
+			// to `cancelled`. Without the run-cancel hook, B's workflow run stays
+			// `in_progress` and CompletionDetector finalizes it as `done` on the
+			// next tick (because a `cancelled` task signals completion). The hook
+			// must transition B's run to `cancelled` so the lifecycle/audit state
+			// is consistent.
+			const rt = makeRuntimeWithTam();
+			const workflowA = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'node-cascade-a', name: 'A', agentId: AGENT_A },
+			]);
+			const workflowB = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'node-cascade-b', name: 'B', agentId: AGENT_A },
+			]);
+
+			const { run: runA, tasks: tasksA } = await rt.startWorkflowRun(
+				SPACE_ID,
+				workflowA.id,
+				'Run A'
+			);
+			const { run: runB, tasks: tasksB } = await rt.startWorkflowRun(
+				SPACE_ID,
+				workflowB.id,
+				'Run B'
+			);
+
+			// Wire B → depends on A.
+			taskRepo.updateTask(tasksB[0].id, { dependsOn: [tasksA[0].id] });
+
+			// Cancel run A externally; the runtime tick will mirror the run
+			// cancellation onto task A (via reconcileTerminalRunTasks /
+			// processRunTick), which calls updateTaskAndEmit and triggers our
+			// cascade.
+			workflowRunRepo.transitionStatus(runA.id, 'cancelled');
+
+			await rt.executeTick();
+
+			// Task A is cancelled.
+			expect(taskRepo.getTask(tasksA[0].id)?.status).toBe('cancelled');
+
+			// Cascade: task B is cancelled too.
+			expect(taskRepo.getTask(tasksB[0].id)?.status).toBe('cancelled');
+
+			// Run B is cancelled (NOT silently finalized to `done`).
+			expect(workflowRunRepo.getRun(runB.id)?.status).toBe('cancelled');
+		});
 	});
 
 	// -------------------------------------------------------------------------
