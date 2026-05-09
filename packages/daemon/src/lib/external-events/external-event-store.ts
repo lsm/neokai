@@ -299,6 +299,16 @@ export class ExternalEventStore {
 	}
 
 	/**
+	 * Update the `routed_task_id` column for an existing event.
+	 * No-op if the event does not exist.
+	 */
+	setRoutedTaskId(eventId: string, routedTaskId: string): void {
+		this.db
+			.prepare(`UPDATE space_external_events SET routed_task_id = ?, updated_at = ? WHERE id = ?`)
+			.run(routedTaskId, Date.now(), eventId);
+	}
+
+	/**
 	 * Internal helper to set event state without the public guard.
 	 * Used by terminal-transition methods that have already enforced invariants.
 	 */

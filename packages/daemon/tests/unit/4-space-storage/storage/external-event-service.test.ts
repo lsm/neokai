@@ -4,10 +4,10 @@
  * Covers:
  *   - publish: new event → stored, enriched, bus published
  *   - publish: terminal duplicate → short-circuits
- *   - publish: retryable duplicate → returns retryable_duplicate
- *   - publish: enriched routedTaskId returned
+ *   - publish: retryable duplicate → returns retryable_duplicate, re-emits bus
+ *   - publish: enriched routedTaskId returned and persisted
  *   - publish: ambiguous/unknown task resolution → ignored
- *   - publish: ignored resolution (no PR number) → ignored
+ *   - publish: ignored resolution (no PR number) → non-terminal
  *   - bus payload carries space-scoped sessionId
  *   - no session injection in service or resolver
  */
@@ -119,9 +119,10 @@ describe('publish — new event', () => {
 		expect(busReceived[0]!.eventId).toBe(event.id);
 		expect(busReceived[0]!.routedTaskId).toBe(result.routedTaskId);
 
-		// Stored state advanced to routed
+		// Stored state advanced to routed and routedTaskId persisted
 		const rec = store.getById(event.id);
 		expect(rec!.state).toBe('routed');
+		expect(rec!.event.routedTaskId).toBe(result.routedTaskId);
 	});
 
 	test('returns published with routedTaskId when event carries trusted metadata', async () => {
@@ -140,6 +141,9 @@ describe('publish — new event', () => {
 		expect(result.outcome).toBe('published');
 		expect(result.routedTaskId).toBe('task-trusted-1');
 		expect(busReceived[0]!.routedTaskId).toBe('task-trusted-1');
+
+		const rec = store.getById(event.id);
+		expect(rec!.event.routedTaskId).toBe('task-trusted-1');
 	});
 });
 
@@ -160,15 +164,34 @@ describe('publish — duplicates', () => {
 		expect(result.eventId).toBe(event.id);
 	});
 
-	test('retryable duplicate returns retryable_duplicate', async () => {
-		const event = makeEvent();
-		store.store(event);
+	test('retryable duplicate returns retryable_duplicate and re-emits bus', async () => {
+		const busReceived: ExternalEventPublishedPayload[] = [];
+		bus.subscribe(
+			'externalEvent.published',
+			(data) => {
+				busReceived.push(data);
+			},
+			{ subscriberName: 'sub' }
+		);
 
+		// Seed matching task and publish once
+		taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Fix bug #42',
+			description: '',
+			status: 'open',
+		});
+		const event = makeEvent();
+		await service.publish(event);
+		expect(busReceived).toHaveLength(1);
+
+		// Retryable duplicate re-emits bus event
 		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
 		const result = await service.publish(dup);
 
 		expect(result.outcome).toBe('retryable_duplicate');
 		expect(result.eventId).toBe(event.id);
+		expect(busReceived).toHaveLength(2);
 	});
 
 	test('retryable duplicate after routed state', async () => {
@@ -219,21 +242,14 @@ describe('publish — task resolution', () => {
 		expect(store.getById(event.id)!.state).toBe('ambiguous');
 	});
 
-	test('ignored resolution (no PR number) returns ignored', async () => {
+	test('ignored resolution (no PR number) leaves event non-terminal', async () => {
 		const event = makeEvent({ prNumber: undefined });
 		const result = await service.publish(event);
 
 		expect(result.outcome).toBe('ignored');
-		expect(store.getById(event.id)!.state).toBe('ignored');
-	});
-
-	test('non-github source returns ignored', async () => {
-		const event = makeEvent({ source: 'github', topic: 'github/lsm/neokai/pull_request.opened' });
-		// GitHub resolver still handles it, but without prNumber it becomes ignored
-		const eventNoPr = { ...event, prNumber: undefined };
-		const result = await service.publish(eventNoPr);
-
-		expect(result.outcome).toBe('ignored');
+		// Event stays in published so a later re-observation with complete
+		// metadata can still be enriched.
+		expect(store.getById(event.id)!.state).toBe('published');
 	});
 });
 
@@ -255,6 +271,10 @@ describe('publish — custom resolver', () => {
 
 		expect(result.outcome).toBe('published');
 		expect(result.routedTaskId).toBe('custom-task-1');
+
+		const rec = store.getById(event.id);
+		expect(rec!.event.routedTaskId).toBe('custom-task-1');
+		expect(rec!.state).toBe('routed');
 	});
 });
 
@@ -312,7 +332,7 @@ describe('publish — bus semantics', () => {
 		expect(globalReceived).toHaveLength(1);
 	});
 
-	test('bus is not fired for duplicates', async () => {
+	test('bus is not fired for terminal duplicates', async () => {
 		const received: ExternalEventPublishedPayload[] = [];
 		bus.subscribe(
 			'externalEvent.published',
@@ -334,9 +354,11 @@ describe('publish — bus semantics', () => {
 		await service.publish(event);
 		expect(received).toHaveLength(1);
 
+		// Mark terminal, then duplicate should NOT fire bus
+		store.markEventIgnored(event.id, 'no_matching_subscriptions');
 		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
 		const result = await service.publish(dup);
-		expect(result.outcome).toBe('retryable_duplicate');
+		expect(result.outcome).toBe('duplicate_terminal');
 		expect(received).toHaveLength(1); // no second bus event
 	});
 });

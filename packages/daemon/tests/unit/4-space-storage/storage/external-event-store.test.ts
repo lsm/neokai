@@ -843,6 +843,53 @@ describe('markEventIgnored', () => {
 });
 
 // ---------------------------------------------------------------------------
+// markEventAmbiguous
+// ---------------------------------------------------------------------------
+
+describe('markEventAmbiguous', () => {
+	test('advances published → ambiguous', () => {
+		store.store(EVENT_A);
+		store.markEventAmbiguous('evt-a');
+		expect(store.getById('evt-a')!.state).toBe('ambiguous');
+	});
+
+	test('no-op when already terminal', () => {
+		store.store(EVENT_A);
+		store.markEventIgnored('evt-a', 'no_matching_subscriptions');
+		store.markEventAmbiguous('evt-a');
+		expect(store.getById('evt-a')!.state).toBe('ignored');
+	});
+
+	test('terminal prevents re-transition', () => {
+		store.store(EVENT_A);
+		store.markEventAmbiguous('evt-a');
+		expect(store.getById('evt-a')!.state).toBe('ambiguous');
+		store.markEventFailed('evt-a', { terminal: true, reason: 'boom' });
+		// ambiguous is terminal, so failed should not overwrite
+		expect(store.getById('evt-a')!.state).toBe('ambiguous');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// setRoutedTaskId
+// ---------------------------------------------------------------------------
+
+describe('setRoutedTaskId', () => {
+	test('updates routed_task_id on existing event', () => {
+		store.store(EVENT_A);
+		store.setRoutedTaskId('evt-a', 'task-123');
+		const rec = store.getById('evt-a');
+		expect(rec!.event.routedTaskId).toBe('task-123');
+	});
+
+	test('no-op for unknown event id', () => {
+		// Should not throw
+		store.setRoutedTaskId('no-such-event', 'task-123');
+		expect(store.getById('no-such-event')).toBeNull();
+	});
+});
+
+// ---------------------------------------------------------------------------
 // updateEventState
 // ---------------------------------------------------------------------------
 

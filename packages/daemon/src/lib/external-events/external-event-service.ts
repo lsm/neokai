@@ -64,9 +64,21 @@ export class ExternalEventService implements ExternalEventPublisher {
 					eventId: storeResult.event.id,
 				};
 			}
+			// Retryable duplicate — re-emit the bus event so failed subscribers
+			// from the first observation get another chance.
+			await this.bus.publish('externalEvent.published', {
+				sessionId: storeResult.event.spaceId,
+				spaceId: storeResult.event.spaceId,
+				eventId: storeResult.event.id,
+				source: storeResult.event.source,
+				topic: storeResult.event.topic,
+				dedupeKey: storeResult.event.dedupeKey,
+				routedTaskId: storeResult.event.routedTaskId,
+			});
 			return {
 				outcome: 'retryable_duplicate',
 				eventId: storeResult.event.id,
+				routedTaskId: storeResult.event.routedTaskId ?? undefined,
 			};
 		}
 
@@ -74,7 +86,9 @@ export class ExternalEventService implements ExternalEventPublisher {
 		const resolution = await this.resolver.resolve(event);
 
 		if (resolution.type === 'ignored') {
-			this.store.markEventIgnored(event.id, 'no_matching_subscriptions');
+			// Do NOT mark terminal — incomplete metadata may be filled in on a
+			// later re-observation with the same dedupeKey. Leaving the event in
+			// `published` keeps it eligible for retry.
 			return { outcome: 'ignored', eventId: event.id };
 		}
 
@@ -88,13 +102,8 @@ export class ExternalEventService implements ExternalEventPublisher {
 			return { outcome: 'ignored', eventId: event.id };
 		}
 
-		// Enriched — update the stored event with the resolved task id.
-		const enrichedEvent: ExternalEvent = {
-			...event,
-			routedTaskId: resolution.routedTaskId,
-		};
-
-		// Update the DB row with the resolved routed_task_id.
+		// Enriched — persist the resolved task id before advancing state.
+		this.store.setRoutedTaskId(event.id, resolution.routedTaskId);
 		this.store.updateEventState(event.id, 'routed');
 
 		// Publish the fact on the internal bus so subscribers (router, metrics,
@@ -102,17 +111,17 @@ export class ExternalEventService implements ExternalEventPublisher {
 		await this.bus.publish('externalEvent.published', {
 			sessionId: event.spaceId,
 			spaceId: event.spaceId,
-			eventId: enrichedEvent.id,
-			source: enrichedEvent.source,
-			topic: enrichedEvent.topic,
-			dedupeKey: enrichedEvent.dedupeKey,
-			routedTaskId: enrichedEvent.routedTaskId,
+			eventId: event.id,
+			source: event.source,
+			topic: event.topic,
+			dedupeKey: event.dedupeKey,
+			routedTaskId: resolution.routedTaskId,
 		});
 
 		return {
 			outcome: 'published',
-			eventId: enrichedEvent.id,
-			routedTaskId: enrichedEvent.routedTaskId,
+			eventId: event.id,
+			routedTaskId: resolution.routedTaskId,
 		};
 	}
 }

@@ -10,6 +10,8 @@
  *     * missing prNumber/repoOwner/repoName returns ignored
  *     * non-github source returns ignored
  *     * archived/done/cancelled tasks are excluded from matching
+ *     * PR number boundary matching (not raw substring)
+ *     * repo filter narrows candidates in multi-repo spaces
  *   - No direct workflow/task/gate table queries
  */
 
@@ -174,6 +176,130 @@ describe('heuristic PR matching', () => {
 		if (result.type === 'enriched') {
 			expect(result.routedTaskId).toBe(task.id);
 		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Boundary matching
+// ---------------------------------------------------------------------------
+
+describe('PR number boundary matching', () => {
+	test('does not match #42 inside #420', async () => {
+		taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Fix bug #420',
+			description: '',
+			status: 'open',
+		});
+
+		const result = await resolver.resolve(makeEvent({ prNumber: 42 }));
+		expect(result.type).toBe('unknown');
+	});
+
+	test('does not match #42 inside abc#42x', async () => {
+		taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'abc#42x something',
+			description: '',
+			status: 'open',
+		});
+
+		const result = await resolver.resolve(makeEvent({ prNumber: 42 }));
+		expect(result.type).toBe('unknown');
+	});
+
+	test('matches #42 at start of title', async () => {
+		const task = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: '#42 fix bug',
+			description: '',
+			status: 'open',
+		});
+
+		const result = await resolver.resolve(makeEvent({ prNumber: 42 }));
+		expect(result.type).toBe('enriched');
+		if (result.type === 'enriched') {
+			expect(result.routedTaskId).toBe(task.id);
+		}
+	});
+
+	test('matches #42 at end of title', async () => {
+		const task = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Fix bug #42',
+			description: '',
+			status: 'open',
+		});
+
+		const result = await resolver.resolve(makeEvent({ prNumber: 42 }));
+		expect(result.type).toBe('enriched');
+		if (result.type === 'enriched') {
+			expect(result.routedTaskId).toBe(task.id);
+		}
+	});
+
+	test('matches #42 surrounded by spaces', async () => {
+		const task = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Fix bug #42 in parser',
+			description: '',
+			status: 'open',
+		});
+
+		const result = await resolver.resolve(makeEvent({ prNumber: 42 }));
+		expect(result.type).toBe('enriched');
+		if (result.type === 'enriched') {
+			expect(result.routedTaskId).toBe(task.id);
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Repo filter
+// ---------------------------------------------------------------------------
+
+describe('repo filter', () => {
+	test('taskRepoFilter narrows candidates by repo', async () => {
+		const repoA = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Fix bug #42',
+			description: '',
+			status: 'open',
+		});
+		taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Also #42',
+			description: '',
+			status: 'open',
+		});
+
+		const filteredResolver = new GitHubExternalEventTaskResolver({
+			taskRepo,
+			taskRepoFilter: (task) => task.id === repoA.id,
+		});
+
+		const result = await filteredResolver.resolve(makeEvent());
+		expect(result.type).toBe('enriched');
+		if (result.type === 'enriched') {
+			expect(result.routedTaskId).toBe(repoA.id);
+		}
+	});
+
+	test('taskRepoFilter can produce unknown when no tasks match repo', async () => {
+		taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Fix bug #42',
+			description: '',
+			status: 'open',
+		});
+
+		const filteredResolver = new GitHubExternalEventTaskResolver({
+			taskRepo,
+			taskRepoFilter: () => false,
+		});
+
+		const result = await filteredResolver.resolve(makeEvent());
+		expect(result.type).toBe('unknown');
 	});
 });
 

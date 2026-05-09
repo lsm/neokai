@@ -14,6 +14,7 @@
  *   - `ignored`      : the event does not require task resolution (e.g. no PR number).
  */
 
+import type { SpaceTask } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { ExternalEvent } from './types';
 
@@ -51,6 +52,23 @@ export interface ExternalEventTaskResolver {
 
 export interface GitHubTaskResolverConfig {
 	taskRepo: SpaceTaskRepository;
+	/**
+	 * Optional repo-scoped task filter. When provided, candidates are narrowed
+	 * to tasks associated with the given repository. This is needed for accurate
+	 * resolution in multi-repo spaces because `SpaceTask` does not yet carry
+	 * repo metadata natively.
+	 */
+	taskRepoFilter?: (task: SpaceTask, repoOwner: string, repoName: string) => boolean;
+}
+
+/**
+ * Test whether `text` contains `prString` as a standalone token.
+ *
+ * Uses word boundaries so `#42` does not match inside `#420` or `abc#42x`.
+ */
+function titleContainsPrNumber(text: string, prNumber: number): boolean {
+	const pattern = new RegExp(`(?:^|[^a-zA-Z0-9])#${prNumber}(?:[^a-zA-Z0-9]|$)`);
+	return pattern.test(text);
 }
 
 /**
@@ -60,8 +78,9 @@ export interface GitHubTaskResolverConfig {
  * 1. If the event already carries `routedTaskId` (set by a trusted source
  *    extension), return it directly.
  * 2. If the event has `prNumber`, `repoOwner`, and `repoName`, look for open
- *    tasks in the same space whose title contains the PR number. This is a
- *    heuristic — multiple matches produce `ambiguous`.
+ *    tasks in the same space whose title contains the PR number as a
+ *    standalone token. When `taskRepoFilter` is provided, candidates are
+ *    further narrowed by repo. Multiple matches produce `ambiguous`.
  * 3. Otherwise return `ignored` (no PR number means no routing attempt).
  *
  * This resolver never queries workflow/task/gate tables directly. It only
@@ -86,15 +105,20 @@ export class GitHubExternalEventTaskResolver implements ExternalEventTaskResolve
 		}
 
 		const tasks = this.config.taskRepo.listBySpace(event.spaceId, false);
-		const prString = `#${event.prNumber}`;
+		const repoFilter = this.config.taskRepoFilter;
 
-		const candidates = tasks.filter(
-			(t) =>
-				t.status !== 'archived' &&
-				t.status !== 'done' &&
-				t.status !== 'cancelled' &&
-				t.title.toLowerCase().includes(prString.toLowerCase())
-		);
+		const candidates = tasks.filter((t) => {
+			if (t.status === 'archived' || t.status === 'done' || t.status === 'cancelled') {
+				return false;
+			}
+			if (!titleContainsPrNumber(t.title, event.prNumber!)) {
+				return false;
+			}
+			if (repoFilter) {
+				return repoFilter(t, event.repoOwner!, event.repoName!);
+			}
+			return true;
+		});
 
 		if (candidates.length === 0) {
 			return { type: 'unknown' };
