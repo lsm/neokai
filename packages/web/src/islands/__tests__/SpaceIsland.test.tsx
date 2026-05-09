@@ -43,9 +43,22 @@ const { mockNavigateToSpaceConfigure } = vi.hoisted(() => ({
 	}),
 }));
 
+const { mockNavigateToSpaceSession } = vi.hoisted(() => ({
+	mockNavigateToSpaceSession: vi.fn(),
+}));
+
+const { mockCreateSession } = vi.hoisted(() => ({
+	mockCreateSession: vi.fn(),
+}));
+
+const { mockToastError } = vi.hoisted(() => ({
+	mockToastError: vi.fn(),
+}));
+
 // Real Preact signal for the configure tab (read during render — needs reactivity)
 const mockCurrentSpaceConfigureTabSignal = signal<string>('agents');
 const mockCurrentSpaceIdSignal = signal<string | null>(null);
+const mockCurrentSpaceViewModeSignal = signal<string>('overview');
 
 // Wire bridge so mockNavigateToSpaceConfigure can update the real signal
 configureTabBridge.signal = mockCurrentSpaceConfigureTabSignal;
@@ -60,6 +73,9 @@ vi.mock('../../lib/signals', async (importOriginal) => {
 		},
 		get currentSpaceIdSignal() {
 			return mockCurrentSpaceIdSignal;
+		},
+		get currentSpaceViewModeSignal() {
+			return mockCurrentSpaceViewModeSignal;
 		},
 	};
 });
@@ -135,6 +151,8 @@ vi.mock('../../lib/space-store', () => ({
 			space: mockSpace,
 			workflows: mockWorkflows,
 			agents: mockAgents,
+			sessions: { value: [] },
+			tasks: { value: [] },
 			configDataLoaded: { value: true },
 			ensureConfigData: vi.fn().mockResolvedValue(undefined),
 			ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
@@ -146,9 +164,20 @@ vi.mock('../../lib/space-store', () => ({
 vi.mock('../../lib/router', () => ({
 	navigateToSpace: vi.fn(),
 	navigateToSpaceTask: vi.fn(),
+	navigateToSpaceSession: mockNavigateToSpaceSession,
 	navigateToSpaceConfigure: mockNavigateToSpaceConfigure,
 	pushOverlayHistory: vi.fn(),
 	closeOverlayHistory: vi.fn(),
+}));
+
+vi.mock('../../lib/api-helpers', () => ({
+	createSession: mockCreateSession,
+}));
+
+vi.mock('../../lib/toast', () => ({
+	toast: {
+		error: mockToastError,
+	},
 }));
 
 import SpaceIsland from '../SpaceIsland';
@@ -206,6 +235,9 @@ beforeEach(() => {
 	configureTabBridge.signal.value = 'agents';
 	idBridge.signal.value = null;
 	mockNavigateToSpaceConfigure.mockClear();
+	mockNavigateToSpaceSession.mockClear();
+	mockCreateSession.mockClear();
+	mockToastError.mockClear();
 });
 
 afterEach(() => {
@@ -353,5 +385,163 @@ describe('SpaceIsland — content priority chain', () => {
 		);
 		await findByTestId('chat-container');
 		expect(queryByTestId('space-task-pane')).toBeNull();
+	});
+});
+
+describe('SpaceIsland — sessions view', () => {
+	it('renders Create Session button in the header', async () => {
+		const { getByLabelText, getByTestId } = render(
+			<SpaceIsland spaceId="space-1" viewMode="sessions" />
+		);
+		await waitFor(
+			() => {
+				expect(getByTestId('space-sessions-view')).toBeTruthy();
+			},
+			{ timeout: LAZY_LOAD_TIMEOUT }
+		);
+		expect(getByLabelText('Create session')).toBeTruthy();
+	});
+
+	it('calls createSession and navigates on success', async () => {
+		mockCreateSession.mockResolvedValueOnce({ sessionId: 'new-session-123' });
+		mockCurrentSpaceIdSignal.value = 'space-1';
+		mockCurrentSpaceViewModeSignal.value = 'sessions';
+
+		const { getByLabelText, getByTestId } = render(
+			<SpaceIsland spaceId="space-1" viewMode="sessions" />
+		);
+		await waitFor(
+			() => {
+				expect(getByTestId('space-sessions-view')).toBeTruthy();
+			},
+			{ timeout: LAZY_LOAD_TIMEOUT }
+		);
+
+		fireEvent.click(getByLabelText('Create session'));
+		await waitFor(() => {
+			expect(mockCreateSession).toHaveBeenCalledTimes(1);
+		});
+		expect(mockCreateSession).toHaveBeenCalledWith({
+			spaceId: 'space-1',
+			workspacePath: undefined,
+		});
+		// Navigation is conditional on currentSpaceIdSignal and currentSpaceViewModeSignal
+		// matching the origin values. In tests these signals are real Preact signals
+		// but the component reads them at resolution time, not via subscription,
+		// so the guard should pass when values match.
+		await waitFor(() => {
+			expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'new-session-123');
+		});
+	});
+
+	it('shows toast.error when createSession fails', async () => {
+		mockCreateSession.mockRejectedValueOnce(new Error('Connection refused'));
+
+		const { getByLabelText, getByTestId } = render(
+			<SpaceIsland spaceId="space-1" viewMode="sessions" />
+		);
+		await waitFor(
+			() => {
+				expect(getByTestId('space-sessions-view')).toBeTruthy();
+			},
+			{ timeout: LAZY_LOAD_TIMEOUT }
+		);
+
+		fireEvent.click(getByLabelText('Create session'));
+		await waitFor(() => {
+			expect(mockToastError).toHaveBeenCalledWith('Connection refused');
+		});
+		expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
+	});
+
+	it('skips navigation when user has navigated to a different space', async () => {
+		mockCreateSession.mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					setTimeout(() => resolve({ sessionId: 'new-session-123' }), 50);
+				})
+		);
+		mockCurrentSpaceIdSignal.value = 'space-1';
+
+		const { getByLabelText, getByTestId } = render(
+			<SpaceIsland spaceId="space-1" viewMode="sessions" />
+		);
+		await waitFor(
+			() => {
+				expect(getByTestId('space-sessions-view')).toBeTruthy();
+			},
+			{ timeout: LAZY_LOAD_TIMEOUT }
+		);
+
+		fireEvent.click(getByLabelText('Create session'));
+		// Simulate user navigating to a different space while request is in flight
+		mockCurrentSpaceIdSignal.value = 'space-2';
+		await waitFor(() => {
+			expect(mockCreateSession).toHaveBeenCalledTimes(1);
+		});
+		expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
+	});
+
+	it('disables the button while creating session', async () => {
+		mockCreateSession.mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					setTimeout(() => resolve({ sessionId: 'new-session-123' }), 50);
+				})
+		);
+
+		const { getByLabelText, getByTestId } = render(
+			<SpaceIsland spaceId="space-1" viewMode="sessions" />
+		);
+		await waitFor(
+			() => {
+				expect(getByTestId('space-sessions-view')).toBeTruthy();
+			},
+			{ timeout: LAZY_LOAD_TIMEOUT }
+		);
+
+		const btn = getByLabelText('Create session') as HTMLButtonElement;
+		fireEvent.click(btn);
+		expect(btn.disabled).toBe(true);
+		await waitFor(() => {
+			expect(mockCreateSession).toHaveBeenCalledTimes(1);
+		});
+		// Wait for the async handler to finish and re-enable the button
+		await waitFor(() => {
+			expect(btn.disabled).toBe(false);
+		});
+	});
+});
+
+describe('SpaceIsland — tasks view', () => {
+	it('renders Create Task button in the header', async () => {
+		const { getByLabelText, getByTestId } = render(
+			<SpaceIsland spaceId="space-1" viewMode="tasks" />
+		);
+		await waitFor(
+			() => {
+				expect(getByTestId('space-tasks-view')).toBeTruthy();
+			},
+			{ timeout: LAZY_LOAD_TIMEOUT }
+		);
+		expect(getByLabelText('Create task')).toBeTruthy();
+	});
+
+	it('opens SpaceCreateTaskDialog when Create Task button is clicked', async () => {
+		const { getByLabelText, getByTestId, getByRole } = render(
+			<SpaceIsland spaceId="space-1" viewMode="tasks" />
+		);
+		await waitFor(
+			() => {
+				expect(getByTestId('space-tasks-view')).toBeTruthy();
+			},
+			{ timeout: LAZY_LOAD_TIMEOUT }
+		);
+
+		fireEvent.click(getByLabelText('Create task'));
+		// Dialog title is a heading; use getByRole to avoid matching the submit button
+		await waitFor(() => {
+			expect(getByRole('heading', { name: 'Create Task' })).toBeTruthy();
+		});
 	});
 });

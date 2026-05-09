@@ -130,6 +130,14 @@ export default function SpaceIsland({
 	}, []);
 
 	const error = spaceStore.error.value;
+	const [createTaskOpen, setCreateTaskOpen] = useState(false);
+	const [creatingSession, setCreatingSession] = useState(false);
+
+	// For non-session views, show spinner/error while space data loads.
+	// Show spinner if space is not yet loaded and there's no error — this covers
+	// both the initial render (loading=false, space=null) before the useEffect has
+	// called selectSpace and the active-loading state (loading=true, space=null).
+	const space = spaceStore.space.value;
 
 	useEffect(() => {
 		spaceStore.selectSpace(spaceId).catch(() => {
@@ -154,15 +162,6 @@ export default function SpaceIsland({
 	const handleTaskPaneClose = useCallback(() => {
 		navigateToSpace(spaceId);
 	}, [spaceId]);
-
-	const [createTaskOpen, setCreateTaskOpen] = useState(false);
-	const [creatingSession, setCreatingSession] = useState(false);
-
-	// For non-session views, show spinner/error while space data loads.
-	// Show spinner if space is not yet loaded and there's no error — this covers
-	// both the initial render (loading=false, space=null) before the useEffect has
-	// called selectSpace and the active-loading state (loading=true, space=null).
-	const space = spaceStore.space.value;
 
 	const handleCreateSession = useCallback(
 		async (e: Event) => {
