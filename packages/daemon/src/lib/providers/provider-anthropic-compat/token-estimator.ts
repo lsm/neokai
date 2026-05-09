@@ -71,6 +71,9 @@ function estimateContentBlockTokens(block: AnthropicContentBlock): number {
 	if (block.type === 'tool_result') {
 		return MESSAGE_OVERHEAD_TOKENS + estimateToolResultContent(block.content);
 	}
+	if (block.type === 'image') {
+		return ESTIMATED_IMAGE_TOKENS;
+	}
 	return estimateTextTokens(stableJson(block));
 }
 
