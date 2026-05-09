@@ -21,6 +21,7 @@ import {
 	spaceOverlayPendingTaskIdSignal,
 	spaceOverlayPendingAgentNameSignal,
 	currentSpaceViewModeSignal,
+	currentSpaceIdSignal,
 } from '../lib/signals';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
@@ -136,6 +137,14 @@ export default function SpaceIsland({
 		});
 	}, [spaceId]);
 
+	// Reset task-dialog state when leaving the Tasks view so it doesn't
+	// reopen unexpectedly when the user later returns.
+	useEffect(() => {
+		if (viewMode !== 'tasks') {
+			setCreateTaskOpen(false);
+		}
+	}, [viewMode, spaceId]);
+
 	const handleTaskPaneClose = useCallback(() => {
 		navigateToSpace(spaceId);
 	}, [spaceId]);
@@ -154,12 +163,17 @@ export default function SpaceIsland({
 			e.stopPropagation();
 			if (creatingSession) return;
 			setCreatingSession(true);
+			const originSpaceId = spaceId;
 			try {
 				const response = await createSession({
 					spaceId,
 					workspacePath: space?.workspacePath,
 				});
-				navigateToSpaceSession(spaceId, response.sessionId);
+				// Only navigate if the user is still in the same space;
+				// prevents stale async redirect if they navigated elsewhere.
+				if (currentSpaceIdSignal.value === originSpaceId) {
+					navigateToSpaceSession(spaceId, response.sessionId);
+				}
 			} catch (err) {
 				toast.error(err instanceof Error ? err.message : 'Failed to create session');
 			} finally {
@@ -252,9 +266,12 @@ export default function SpaceIsland({
 					isOpen={createTaskOpen}
 					onClose={() => setCreateTaskOpen(false)}
 					onCreated={(task) => {
-						// Only navigate if the user is still on the Tasks view;
+						// Only navigate if the user is still on the Tasks view of this space;
 						// prevents stale async redirect if they navigated elsewhere.
-						if (currentSpaceViewModeSignal.value === 'tasks') {
+						if (
+							currentSpaceViewModeSignal.value === 'tasks' &&
+							currentSpaceIdSignal.value === spaceId
+						) {
 							navigateToSpaceTask(spaceId, task.id);
 						}
 					}}
