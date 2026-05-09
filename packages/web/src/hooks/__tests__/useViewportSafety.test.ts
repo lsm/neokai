@@ -16,16 +16,18 @@ import { useViewportSafety } from '../useViewportSafety.ts';
 /** Partial VisualViewport mock with trackable event listeners. */
 interface MockVisualViewport {
 	height: number;
+	offsetTop: number;
 	addEventListener: ReturnType<typeof vi.fn>;
 	removeEventListener: ReturnType<typeof vi.fn>;
 	/** Fire all registered listeners for an event (test helper). */
 	_trigger(event: string): void;
 }
 
-function createMockVisualViewport(height: number): MockVisualViewport {
+function createMockVisualViewport(height: number, offsetTop = 0): MockVisualViewport {
 	const listeners: Record<string, Array<EventListenerOrEventListenerObject>> = {};
 	return {
 		height,
+		offsetTop,
 		addEventListener: vi.fn((event: string, cb: EventListenerOrEventListenerObject) => {
 			listeners[event] = listeners[event] ?? [];
 			listeners[event].push(cb);

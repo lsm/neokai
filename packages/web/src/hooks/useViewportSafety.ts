@@ -74,11 +74,15 @@ function updateSafeHeight(vv: VisualViewport): void {
 
 /**
  * Update the `--keyboard-height` CSS custom property on `document.documentElement`.
- * This is the difference between the layout viewport and the visual viewport,
- * representing the area covered by the virtual keyboard.
+ *
+ * Computes the area covered by the virtual keyboard using the visual viewport's
+ * bottom edge relative to the layout viewport. When iOS auto-pans the page on
+ * focus, `visualViewport.offsetTop` becomes non-zero; subtracting it prevents
+ * overestimating the keyboard height and avoids an artificial gap above the
+ * composer.
  */
 function updateKeyboardHeight(vv: VisualViewport): void {
-	const height = Math.max(0, window.innerHeight - vv.height);
+	const height = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
 	document.documentElement.style.setProperty('--keyboard-height', `${height}px`);
 }
 

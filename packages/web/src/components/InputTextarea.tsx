@@ -177,6 +177,20 @@ export function InputTextarea({
 		return () => cancelAnimationFrame(rafId);
 	}, [content, onHeightChange]);
 
+	// Ref to track the delayed scroll-into-view timer so we can cancel it on
+	// blur or unmount. Preact DOM event handlers ignore return values, so a
+	// ref + explicit cleanup is required.
+	const focusScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(() => {
+		return () => {
+			if (focusScrollTimerRef.current) {
+				clearTimeout(focusScrollTimerRef.current);
+				focusScrollTimerRef.current = null;
+			}
+		};
+	}, []);
+
 	// Focus on mount
 	useEffect(() => {
 		textareaRef.current?.focus();
@@ -190,12 +204,23 @@ export function InputTextarea({
 		if (!isMobileDevice.current) return;
 		const textarea = textareaRef.current;
 		if (!textarea) return;
+		// Cancel any pending scroll from a previous focus
+		if (focusScrollTimerRef.current) {
+			clearTimeout(focusScrollTimerRef.current);
+		}
 		// Delay to let the keyboard finish its animation; on iOS this is roughly
 		// 250-300 ms. Using 350 ms gives a safe margin.
-		const timer = setTimeout(() => {
+		focusScrollTimerRef.current = setTimeout(() => {
+			focusScrollTimerRef.current = null;
 			textarea.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 		}, 350);
-		return () => clearTimeout(timer);
+	}, []);
+
+	const handleBlur = useCallback(() => {
+		if (focusScrollTimerRef.current) {
+			clearTimeout(focusScrollTimerRef.current);
+			focusScrollTimerRef.current = null;
+		}
 	}, []);
 
 	const charCount = content.length;
@@ -269,6 +294,7 @@ export function InputTextarea({
 					onInput={(e) => onContentChange((e.target as HTMLTextAreaElement).value)}
 					onKeyDown={onKeyDown}
 					onFocus={handleFocus}
+					onBlur={handleBlur}
 					onPaste={onPaste}
 					disabled={disabled}
 					placeholder={placeholder}
