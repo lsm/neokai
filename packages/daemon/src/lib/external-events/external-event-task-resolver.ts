@@ -57,16 +57,52 @@ export interface GitHubTaskResolverConfig {
 	 * to tasks associated with the given repository. This is needed for accurate
 	 * resolution in multi-repo spaces because `SpaceTask` does not yet carry
 	 * repo metadata natively.
+	 *
+	 * When absent, a default heuristic filter is applied that requires the task
+	 * title or description to contain the repo owner or repo name. This prevents
+	 * cross-repo misrouting in multi-repo spaces without requiring every caller
+	 * to inject a custom filter.
 	 */
 	taskRepoFilter?: (task: SpaceTask, repoOwner: string, repoName: string) => boolean;
+}
+
+/**
+ * Default repo-scoped filter used when no custom `taskRepoFilter` is provided.
+ *
+ * Requires the task title or description to contain the repo owner or repo
+ * name as a standalone token (case-insensitive, word-bounded). This is a
+ * conservative heuristic that prevents cross-repo misrouting in multi-repo
+ * spaces while still matching correctly for single-repo spaces.
+ */
+function defaultRepoFilter(task: SpaceTask, repoOwner: string, repoName: string): boolean {
+	const text = `${task.title} ${task.description ?? ''}`;
+	const ownerPattern = new RegExp(
+		`(?:^|[^a-zA-Z0-9])${escapeRegExp(repoOwner)}(?:[^a-zA-Z0-9]|$)`,
+		'i'
+	);
+	const namePattern = new RegExp(
+		`(?:^|[^a-zA-Z0-9])${escapeRegExp(repoName)}(?:[^a-zA-Z0-9]|$)`,
+		'i'
+	);
+	return ownerPattern.test(text) || namePattern.test(text);
+}
+
+/** Escape a string for safe interpolation into a RegExp. */
+function escapeRegExp(str: string): string {
+	return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
  * Test whether `text` contains `prString` as a standalone token.
  *
  * Uses word boundaries so `#42` does not match inside `#420` or `abc#42x`.
+ * `prNumber` must be a positive safe integer; non-integer values are rejected
+ * to avoid regex metacharacter injection.
  */
 function titleContainsPrNumber(text: string, prNumber: number): boolean {
+	if (!Number.isInteger(prNumber) || prNumber <= 0 || prNumber > Number.MAX_SAFE_INTEGER) {
+		return false;
+	}
 	const pattern = new RegExp(`(?:^|[^a-zA-Z0-9])#${prNumber}(?:[^a-zA-Z0-9]|$)`);
 	return pattern.test(text);
 }
@@ -105,7 +141,7 @@ export class GitHubExternalEventTaskResolver implements ExternalEventTaskResolve
 		}
 
 		const tasks = this.config.taskRepo.listBySpace(event.spaceId, false);
-		const repoFilter = this.config.taskRepoFilter;
+		const repoFilter = this.config.taskRepoFilter ?? defaultRepoFilter;
 
 		const candidates = tasks.filter((t) => {
 			if (t.status === 'archived' || t.status === 'done' || t.status === 'cancelled') {
@@ -114,10 +150,7 @@ export class GitHubExternalEventTaskResolver implements ExternalEventTaskResolve
 			if (!titleContainsPrNumber(t.title, event.prNumber!)) {
 				return false;
 			}
-			if (repoFilter) {
-				return repoFilter(t, event.repoOwner!, event.repoName!);
-			}
-			return true;
+			return repoFilter(t, event.repoOwner!, event.repoName!);
 		});
 
 		if (candidates.length === 0) {

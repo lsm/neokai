@@ -87,7 +87,7 @@ describe('heuristic PR matching', () => {
 		const task = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Fix bug #42',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'open',
 		});
 
@@ -103,13 +103,13 @@ describe('heuristic PR matching', () => {
 		taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Work on #42',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'open',
 		});
 		taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Also #42',
-			description: '',
+			description: 'neokai',
 			status: 'open',
 		});
 
@@ -167,7 +167,7 @@ describe('heuristic PR matching', () => {
 		const task = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Fix bug #42',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'in_progress',
 		});
 
@@ -212,7 +212,7 @@ describe('PR number boundary matching', () => {
 		const task = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: '#42 fix bug',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'open',
 		});
 
@@ -227,7 +227,7 @@ describe('PR number boundary matching', () => {
 		const task = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Fix bug #42',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'open',
 		});
 
@@ -242,7 +242,7 @@ describe('PR number boundary matching', () => {
 		const task = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Fix bug #42 in parser',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'open',
 		});
 
@@ -299,6 +299,75 @@ describe('repo filter', () => {
 		});
 
 		const result = await filteredResolver.resolve(makeEvent());
+		expect(result.type).toBe('unknown');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Default repo filter
+// ---------------------------------------------------------------------------
+
+describe('default repo filter', () => {
+	test('excludes tasks that do not mention repo owner or name', async () => {
+		taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Fix bug #42',
+			description: 'some unrelated work',
+			status: 'open',
+		});
+
+		const result = await resolver.resolve(makeEvent());
+		expect(result.type).toBe('unknown');
+	});
+
+	test('includes tasks that mention repo owner in title', async () => {
+		const task = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Fix bug #42 for lsm',
+			description: '',
+			status: 'open',
+		});
+
+		const result = await resolver.resolve(makeEvent());
+		expect(result.type).toBe('enriched');
+		if (result.type === 'enriched') {
+			expect(result.routedTaskId).toBe(task.id);
+		}
+	});
+
+	test('includes tasks that mention repo name in description', async () => {
+		const task = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Fix bug #42',
+			description: 'work on neokai feature',
+			status: 'open',
+		});
+
+		const result = await resolver.resolve(makeEvent());
+		expect(result.type).toBe('enriched');
+		if (result.type === 'enriched') {
+			expect(result.routedTaskId).toBe(task.id);
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// PR number validation
+// ---------------------------------------------------------------------------
+
+describe('PR number validation', () => {
+	test('non-integer prNumber returns unknown (tried to match but found nothing)', async () => {
+		const result = await resolver.resolve(makeEvent({ prNumber: 3.14 }));
+		expect(result.type).toBe('unknown');
+	});
+
+	test('negative prNumber returns unknown', async () => {
+		const result = await resolver.resolve(makeEvent({ prNumber: -1 }));
+		expect(result.type).toBe('unknown');
+	});
+
+	test('zero prNumber returns unknown', async () => {
+		const result = await resolver.resolve(makeEvent({ prNumber: 0 }));
 		expect(result.type).toBe('unknown');
 	});
 });

@@ -43,6 +43,7 @@ export interface ExternalEventPublishedPayload {
 	topic: string;
 	dedupeKey: string;
 	routedTaskId?: string;
+	[key: string]: unknown;
 }
 
 export class ExternalEventService implements ExternalEventPublisher {
@@ -64,26 +65,38 @@ export class ExternalEventService implements ExternalEventPublisher {
 					eventId: storeResult.event.id,
 				};
 			}
-			// Retryable duplicate — re-emit the bus event so failed subscribers
-			// from the first observation get another chance.
-			await this.bus.publish('externalEvent.published', {
-				sessionId: storeResult.event.spaceId,
-				spaceId: storeResult.event.spaceId,
-				eventId: storeResult.event.id,
-				source: storeResult.event.source,
-				topic: storeResult.event.topic,
-				dedupeKey: storeResult.event.dedupeKey,
-				routedTaskId: storeResult.event.routedTaskId,
-			});
-			return {
-				outcome: 'retryable_duplicate',
-				eventId: storeResult.event.id,
-				routedTaskId: storeResult.event.routedTaskId ?? undefined,
-			};
+			// Retryable duplicate — the new observation may carry more complete
+			// metadata (e.g. PR number filled in on a later webhook). Re-run the
+			// resolver so enrichment can advance; if still unresolvable, re-emit
+			// the stale canonical payload so failed subscribers recover.
+			return await this._handleRetryableDuplicate(event, storeResult.event);
 		}
 
 		// First observation — attempt enrichment.
+		return await this._handleFirstObservation(event);
+	}
+
+	/**
+	 * Handle a first-observation (non-duplicate) event.
+	 *
+	 * Always publishes `externalEvent.published` so subscribers see every newly
+	 * stored event, even when resolution is `ignored` (incomplete metadata).
+	 */
+	private async _handleFirstObservation(event: ExternalEvent): Promise<PublishResult> {
 		const resolution = await this.resolver.resolve(event);
+
+		// Publish the event on the bus regardless of resolution outcome so
+		// diagnostics, metrics, and retry orchestration subscribers see it.
+		const busPayload: ExternalEventPublishedPayload = {
+			sessionId: event.spaceId,
+			spaceId: event.spaceId,
+			eventId: event.id,
+			source: event.source,
+			topic: event.topic,
+			dedupeKey: event.dedupeKey,
+			routedTaskId: resolution.type === 'enriched' ? resolution.routedTaskId : undefined,
+		};
+		await this.bus.publish('externalEvent.published', busPayload);
 
 		if (resolution.type === 'ignored') {
 			// Do NOT mark terminal — incomplete metadata may be filled in on a
@@ -106,22 +119,61 @@ export class ExternalEventService implements ExternalEventPublisher {
 		this.store.setRoutedTaskId(event.id, resolution.routedTaskId);
 		this.store.updateEventState(event.id, 'routed');
 
-		// Publish the fact on the internal bus so subscribers (router, metrics,
-		// diagnostics) can react without polling the DB.
-		await this.bus.publish('externalEvent.published', {
-			sessionId: event.spaceId,
-			spaceId: event.spaceId,
-			eventId: event.id,
-			source: event.source,
-			topic: event.topic,
-			dedupeKey: event.dedupeKey,
-			routedTaskId: resolution.routedTaskId,
-		});
-
 		return {
 			outcome: 'published',
 			eventId: event.id,
 			routedTaskId: resolution.routedTaskId,
+		};
+	}
+
+	/**
+	 * Handle a retryable duplicate.
+	 *
+	 * Re-runs the resolver on the *new* event (which may have more complete
+	 * metadata). If enrichment succeeds, persists it and returns `published`.
+	 * Otherwise re-emits the canonical bus payload so failed subscribers recover.
+	 */
+	private async _handleRetryableDuplicate(
+		newEvent: ExternalEvent,
+		canonicalEvent: ExternalEvent
+	): Promise<PublishResult> {
+		const resolution = await this.resolver.resolve(newEvent);
+
+		if (resolution.type === 'enriched') {
+			// New observation enriched the previously unresolvable event.
+			this.store.setRoutedTaskId(canonicalEvent.id, resolution.routedTaskId);
+			this.store.updateEventState(canonicalEvent.id, 'routed');
+			await this.bus.publish('externalEvent.published', {
+				sessionId: canonicalEvent.spaceId,
+				spaceId: canonicalEvent.spaceId,
+				eventId: canonicalEvent.id,
+				source: canonicalEvent.source,
+				topic: canonicalEvent.topic,
+				dedupeKey: canonicalEvent.dedupeKey,
+				routedTaskId: resolution.routedTaskId,
+			});
+			return {
+				outcome: 'published',
+				eventId: canonicalEvent.id,
+				routedTaskId: resolution.routedTaskId,
+			};
+		}
+
+		// Still not enrichable — re-emit the canonical payload so failed
+		// subscribers from the first observation get another chance.
+		await this.bus.publish('externalEvent.published', {
+			sessionId: canonicalEvent.spaceId,
+			spaceId: canonicalEvent.spaceId,
+			eventId: canonicalEvent.id,
+			source: canonicalEvent.source,
+			topic: canonicalEvent.topic,
+			dedupeKey: canonicalEvent.dedupeKey,
+			routedTaskId: canonicalEvent.routedTaskId,
+		});
+		return {
+			outcome: 'retryable_duplicate',
+			eventId: canonicalEvent.id,
+			routedTaskId: canonicalEvent.routedTaskId ?? undefined,
 		};
 	}
 }

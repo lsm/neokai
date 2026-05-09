@@ -101,7 +101,7 @@ describe('publish — new event', () => {
 		taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Fix bug #42',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'open',
 		});
 
@@ -164,7 +164,7 @@ describe('publish — duplicates', () => {
 		expect(result.eventId).toBe(event.id);
 	});
 
-	test('retryable duplicate returns retryable_duplicate and re-emits bus', async () => {
+	test('retryable duplicate that gets enriched returns published', async () => {
 		const busReceived: ExternalEventPublishedPayload[] = [];
 		bus.subscribe(
 			'externalEvent.published',
@@ -174,19 +174,48 @@ describe('publish — duplicates', () => {
 			{ subscriberName: 'sub' }
 		);
 
-		// Seed matching task and publish once
+		// First observation: missing PR number means 'ignored' resolution.
+		// Event stays in 'published' state (non-terminal) so it can be retried.
+		const event = makeEvent({ prNumber: undefined });
+		const firstResult = await service.publish(event);
+		expect(firstResult.outcome).toBe('ignored');
+		expect(store.getById(event.id)!.state).toBe('published');
+		expect(busReceived).toHaveLength(1);
+
+		// A task is created later. Retryable duplicate with PR number now enriches.
 		taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Fix bug #42',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'open',
 		});
-		const event = makeEvent();
+		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
+		const result = await service.publish(dup);
+
+		expect(result.outcome).toBe('published');
+		expect(result.eventId).toBe(event.id);
+		expect(result.routedTaskId).toBeDefined();
+		expect(busReceived).toHaveLength(2);
+	});
+
+	test('retryable duplicate still unresolvable returns retryable_duplicate and re-emits bus', async () => {
+		const busReceived: ExternalEventPublishedPayload[] = [];
+		bus.subscribe(
+			'externalEvent.published',
+			(data) => {
+				busReceived.push(data);
+			},
+			{ subscriberName: 'sub' }
+		);
+
+		// First observation: missing PR number means 'ignored' resolution.
+		// Event stays in 'published' state (non-terminal) so it can be retried.
+		const event = makeEvent({ prNumber: undefined });
 		await service.publish(event);
 		expect(busReceived).toHaveLength(1);
 
-		// Retryable duplicate re-emits bus event
-		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
+		// Retryable duplicate with still no PR number re-emits canonical payload
+		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey, prNumber: undefined });
 		const result = await service.publish(dup);
 
 		expect(result.outcome).toBe('retryable_duplicate');
@@ -216,13 +245,13 @@ describe('publish — task resolution', () => {
 		taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Work on #42',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'open',
 		});
 		taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Also #42',
-			description: '',
+			description: 'neokai',
 			status: 'open',
 		});
 
@@ -250,6 +279,25 @@ describe('publish — task resolution', () => {
 		// Event stays in published so a later re-observation with complete
 		// metadata can still be enriched.
 		expect(store.getById(event.id)!.state).toBe('published');
+	});
+
+	test('ignored resolution still publishes bus event', async () => {
+		const busReceived: ExternalEventPublishedPayload[] = [];
+		bus.subscribe(
+			'externalEvent.published',
+			(data) => {
+				busReceived.push(data);
+			},
+			{ subscriberName: 'sub' }
+		);
+
+		const event = makeEvent({ prNumber: undefined });
+		const result = await service.publish(event);
+
+		expect(result.outcome).toBe('ignored');
+		expect(busReceived).toHaveLength(1);
+		expect(busReceived[0]!.eventId).toBe(event.id);
+		expect(busReceived[0]!.routedTaskId).toBeUndefined();
 	});
 });
 
@@ -297,7 +345,7 @@ describe('publish — bus semantics', () => {
 		taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Fix bug #42',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'open',
 		});
 
@@ -322,7 +370,7 @@ describe('publish — bus semantics', () => {
 		taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Fix bug #42',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'open',
 		});
 
@@ -346,7 +394,7 @@ describe('publish — bus semantics', () => {
 		taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Fix bug #42',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'open',
 		});
 
