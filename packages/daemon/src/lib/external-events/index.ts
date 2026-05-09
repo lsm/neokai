@@ -24,4 +24,24 @@ export {
 	KNOWN_SOURCES,
 	type ValidationResult,
 } from './topic-validator';
-export { ExternalEventStore, ExternalEventValidationError } from './external-event-store';
+export {
+	ExternalEventStore,
+	ExternalEventValidationError,
+} from './external-event-store';
+export {
+	ExternalEventService,
+	type ExternalEventPublisher,
+	type PublishResult,
+	type PublishOutcome,
+	type ExternalEventPublishedPayload,
+} from './external-event-service';
+export {
+	GitHubExternalEventTaskResolver,
+	type ExternalEventTaskResolver,
+	type TaskResolution,
+	type EnrichedResolution,
+	type AmbiguousResolution,
+	type UnknownResolution,
+	type IgnoredResolution,
+	type GitHubTaskResolverConfig,
+} from './external-event-task-resolver';

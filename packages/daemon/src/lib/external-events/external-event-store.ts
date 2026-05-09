@@ -288,6 +288,17 @@ export class ExternalEventStore {
 	}
 
 	/**
+	 * Mark the source event terminal `ambiguous`. Called when task resolution
+	 * cannot determine a single unambiguous target (multiple candidates or
+	 * no candidates).
+	 */
+	markEventAmbiguous(eventId: string): void {
+		const event = this.getById(eventId);
+		if (!event || TERMINAL_EVENT_STATES.has(event.state)) return;
+		this.setEventState(eventId, 'ambiguous');
+	}
+
+	/**
 	 * Internal helper to set event state without the public guard.
 	 * Used by terminal-transition methods that have already enforced invariants.
 	 */
