@@ -233,6 +233,83 @@ describe('publish — duplicates', () => {
 
 		expect(result.outcome).toBe('retryable_duplicate');
 	});
+
+	test('retryable duplicate after delivery_failed does not throw', async () => {
+		const event = makeEvent();
+		store.store(event);
+		store.updateEventState(event.id, 'routed');
+		store.updateEventState(event.id, 'delivery_failed');
+
+		// Duplicate should not throw on backward state transition
+		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
+		const result = await service.publish(dup);
+
+		// Still retryable because delivery_failed is non-terminal
+		expect(result.outcome).toBe('retryable_duplicate');
+	});
+
+	test('retryable duplicate that enriches after delivery_failed sets routedTaskId without regressing state', async () => {
+		const busReceived: ExternalEventPublishedPayload[] = [];
+		bus.subscribe(
+			'externalEvent.published',
+			(data) => {
+				busReceived.push(data);
+			},
+			{ subscriberName: 'sub' }
+		);
+
+		// First observation: ignored (no matching task yet)
+		const event = makeEvent({ prNumber: undefined });
+		await service.publish(event);
+		expect(store.getById(event.id)!.state).toBe('published');
+
+		// Router advances to routed, then delivery fails
+		store.updateEventState(event.id, 'routed');
+		store.updateEventState(event.id, 'delivery_failed');
+
+		// Task created later. Retryable duplicate enriches.
+		taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Fix bug #42',
+			description: 'lsm/neokai',
+			status: 'open',
+		});
+		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
+		const result = await service.publish(dup);
+
+		expect(result.outcome).toBe('published');
+		expect(result.routedTaskId).toBeDefined();
+		// State must NOT regress from delivery_failed to routed
+		expect(store.getById(event.id)!.state).toBe('delivery_failed');
+		// But routedTaskId IS persisted
+		expect(store.getById(event.id)!.event.routedTaskId).toBe(result.routedTaskId);
+		expect(busReceived).toHaveLength(2);
+	});
+
+	test('retryable duplicate with ambiguous resolution terminalizes', async () => {
+		const event = makeEvent({ prNumber: undefined });
+		await service.publish(event);
+		expect(store.getById(event.id)!.state).toBe('published');
+
+		// Two tasks now exist — duplicate resolves to ambiguous
+		taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Work on #42',
+			description: 'lsm/neokai',
+			status: 'open',
+		});
+		taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Also #42',
+			description: 'neokai',
+			status: 'open',
+		});
+		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
+		const result = await service.publish(dup);
+
+		expect(result.outcome).toBe('retryable_duplicate');
+		expect(store.getById(event.id)!.state).toBe('ambiguous');
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -262,13 +339,14 @@ describe('publish — task resolution', () => {
 		expect(store.getById(event.id)!.state).toBe('ambiguous');
 	});
 
-	test('unknown resolution returns ignored and sets ambiguous state', async () => {
+	test('unknown resolution returns ignored and leaves event retryable', async () => {
 		// No tasks at all
 		const event = makeEvent();
 		const result = await service.publish(event);
 
 		expect(result.outcome).toBe('ignored');
-		expect(store.getById(event.id)!.state).toBe('ambiguous');
+		// Do NOT terminalize — a matching task may be created later.
+		expect(store.getById(event.id)!.state).toBe('published');
 	});
 
 	test('ignored resolution (no PR number) leaves event non-terminal', async () => {

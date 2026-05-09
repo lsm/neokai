@@ -58,23 +58,37 @@ export interface GitHubTaskResolverConfig {
 	 * resolution in multi-repo spaces because `SpaceTask` does not yet carry
 	 * repo metadata natively.
 	 *
-	 * When absent, a default heuristic filter is applied that requires the task
-	 * title or description to contain the repo owner or repo name. This prevents
-	 * cross-repo misrouting in multi-repo spaces without requiring every caller
-	 * to inject a custom filter.
+	 * When absent, a default heuristic filter is applied. In multi-repo spaces
+	 * it requires the task title or description to contain the repo owner or
+	 * repo name as a word-bounded token. In single-repo spaces (where no task
+	 * mentions the repo), all PR-number matches are allowed through.
 	 */
-	taskRepoFilter?: (task: SpaceTask, repoOwner: string, repoName: string) => boolean;
+	taskRepoFilter?: (
+		task: SpaceTask,
+		repoOwner: string,
+		repoName: string,
+		allTasks: SpaceTask[]
+	) => boolean;
 }
 
 /**
  * Default repo-scoped filter used when no custom `taskRepoFilter` is provided.
  *
- * Requires the task title or description to contain the repo owner or repo
- * name as a standalone token (case-insensitive, word-bounded). This is a
- * conservative heuristic that prevents cross-repo misrouting in multi-repo
- * spaces while still matching correctly for single-repo spaces.
+ * In multi-repo spaces, requires the task title or description to contain the
+ * repo owner or repo name as a standalone token (case-insensitive, word-bounded).
+ * This prevents cross-repo misrouting where different repos have tasks with the
+ * same PR number.
+ *
+ * In single-repo spaces (where no task mentions the repo name), the filter
+ * falls back to allowing all candidates that matched the PR number. This avoids
+ * forcing every caller to inject a custom filter for the common case.
  */
-function defaultRepoFilter(task: SpaceTask, repoOwner: string, repoName: string): boolean {
+function defaultRepoFilter(
+	task: SpaceTask,
+	repoOwner: string,
+	repoName: string,
+	allTasks: SpaceTask[]
+): boolean {
 	const text = `${task.title} ${task.description ?? ''}`;
 	const ownerPattern = new RegExp(
 		`(?:^|[^a-zA-Z0-9])${escapeRegExp(repoOwner)}(?:[^a-zA-Z0-9]|$)`,
@@ -84,7 +98,18 @@ function defaultRepoFilter(task: SpaceTask, repoOwner: string, repoName: string)
 		`(?:^|[^a-zA-Z0-9])${escapeRegExp(repoName)}(?:[^a-zA-Z0-9]|$)`,
 		'i'
 	);
-	return ownerPattern.test(text) || namePattern.test(text);
+	const matchesRepo = ownerPattern.test(text) || namePattern.test(text);
+	if (matchesRepo) {
+		return true;
+	}
+	// Single-repo fallback: if NO task in the space mentions the repo, allow
+	// all PR-number matches through. This avoids false unknowns in spaces
+	// where tasks don't carry repo metadata in their titles/descriptions.
+	const anyTaskMentionsRepo = allTasks.some((t) => {
+		const tText = `${t.title} ${t.description ?? ''}`;
+		return ownerPattern.test(tText) || namePattern.test(tText);
+	});
+	return !anyTaskMentionsRepo;
 }
 
 /** Escape a string for safe interpolation into a RegExp. */
@@ -136,7 +161,13 @@ export class GitHubExternalEventTaskResolver implements ExternalEventTaskResolve
 		}
 
 		// 2. Heuristic: PR number + repo match against open tasks in the space.
-		if (event.prNumber == null || event.repoOwner == null || event.repoName == null) {
+		if (
+			event.prNumber == null ||
+			event.repoOwner == null ||
+			event.repoName == null ||
+			event.repoOwner === '' ||
+			event.repoName === ''
+		) {
 			return { type: 'ignored' };
 		}
 
@@ -150,7 +181,7 @@ export class GitHubExternalEventTaskResolver implements ExternalEventTaskResolve
 			if (!titleContainsPrNumber(t.title, event.prNumber!)) {
 				return false;
 			}
-			return repoFilter(t, event.repoOwner!, event.repoName!);
+			return repoFilter(t, event.repoOwner!, event.repoName!, tasks);
 		});
 
 		if (candidates.length === 0) {

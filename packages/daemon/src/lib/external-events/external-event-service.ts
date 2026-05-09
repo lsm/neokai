@@ -81,24 +81,17 @@ export class ExternalEventService implements ExternalEventPublisher {
 	 *
 	 * Always publishes `externalEvent.published` so subscribers see every newly
 	 * stored event, even when resolution is `ignored` (incomplete metadata).
+	 *
+	 * Persistence ordering: state/routedTaskId are written BEFORE the bus
+	 * event is published so subscribers that read from ExternalEventStore see
+	 * the enriched canonical row.
 	 */
 	private async _handleFirstObservation(event: ExternalEvent): Promise<PublishResult> {
 		const resolution = await this.resolver.resolve(event);
 
-		// Publish the event on the bus regardless of resolution outcome so
-		// diagnostics, metrics, and retry orchestration subscribers see it.
-		const busPayload: ExternalEventPublishedPayload = {
-			sessionId: event.spaceId,
-			spaceId: event.spaceId,
-			eventId: event.id,
-			source: event.source,
-			topic: event.topic,
-			dedupeKey: event.dedupeKey,
-			routedTaskId: resolution.type === 'enriched' ? resolution.routedTaskId : undefined,
-		};
-		await this.bus.publish('externalEvent.published', busPayload);
-
 		if (resolution.type === 'ignored') {
+			// Publish before returning so diagnostics/metrics subscribers see it.
+			await this._publishBusEvent(event, undefined);
 			// Do NOT mark terminal — incomplete metadata may be filled in on a
 			// later re-observation with the same dedupeKey. Leaving the event in
 			// `published` keeps it eligible for retry.
@@ -106,18 +99,25 @@ export class ExternalEventService implements ExternalEventPublisher {
 		}
 
 		if (resolution.type === 'ambiguous') {
+			// Publish before terminalizing so subscribers see the event.
+			await this._publishBusEvent(event, undefined);
 			this.store.markEventAmbiguous(event.id);
 			return { outcome: 'ignored', eventId: event.id };
 		}
 
 		if (resolution.type === 'unknown') {
-			this.store.markEventAmbiguous(event.id);
+			// Publish before returning so subscribers see the event.
+			await this._publishBusEvent(event, undefined);
+			// Do NOT mark terminal — a matching task may be created later.
+			// Leaving the event in `published` keeps it eligible for retry.
 			return { outcome: 'ignored', eventId: event.id };
 		}
 
-		// Enriched — persist the resolved task id before advancing state.
+		// Enriched — persist the resolved task id and advance state BEFORE
+		// publishing so subscribers reading from the store see the enriched row.
 		this.store.setRoutedTaskId(event.id, resolution.routedTaskId);
 		this.store.updateEventState(event.id, 'routed');
+		await this._publishBusEvent(event, resolution.routedTaskId);
 
 		return {
 			outcome: 'published',
@@ -132,6 +132,10 @@ export class ExternalEventService implements ExternalEventPublisher {
 	 * Re-runs the resolver on the *new* event (which may have more complete
 	 * metadata). If enrichment succeeds, persists it and returns `published`.
 	 * Otherwise re-emits the canonical bus payload so failed subscribers recover.
+	 *
+	 * For `unknown`/`ambiguous` resolutions on a duplicate, the event is
+	 * terminalized (mirroring the first-observation path) so it is not re-emitted
+	 * indefinitely on every duplicate observation.
 	 */
 	private async _handleRetryableDuplicate(
 		newEvent: ExternalEvent,
@@ -141,17 +145,17 @@ export class ExternalEventService implements ExternalEventPublisher {
 
 		if (resolution.type === 'enriched') {
 			// New observation enriched the previously unresolvable event.
+			// Only advance state if the canonical event has not already progressed
+			// past `routed` (e.g. to `delivery_failed`). Backward transitions are
+			// rejected by updateEventState.
+			const canonicalRec = this.store.getById(canonicalEvent.id);
+			const canAdvanceState =
+				canonicalRec != null && !['routed', 'delivery_failed'].includes(canonicalRec.state);
 			this.store.setRoutedTaskId(canonicalEvent.id, resolution.routedTaskId);
-			this.store.updateEventState(canonicalEvent.id, 'routed');
-			await this.bus.publish('externalEvent.published', {
-				sessionId: canonicalEvent.spaceId,
-				spaceId: canonicalEvent.spaceId,
-				eventId: canonicalEvent.id,
-				source: canonicalEvent.source,
-				topic: canonicalEvent.topic,
-				dedupeKey: canonicalEvent.dedupeKey,
-				routedTaskId: resolution.routedTaskId,
-			});
+			if (canAdvanceState) {
+				this.store.updateEventState(canonicalEvent.id, 'routed');
+			}
+			await this._publishBusEvent(canonicalEvent, resolution.routedTaskId);
 			return {
 				outcome: 'published',
 				eventId: canonicalEvent.id,
@@ -159,21 +163,51 @@ export class ExternalEventService implements ExternalEventPublisher {
 			};
 		}
 
-		// Still not enrichable — re-emit the canonical payload so failed
-		// subscribers from the first observation get another chance.
-		await this.bus.publish('externalEvent.published', {
-			sessionId: canonicalEvent.spaceId,
-			spaceId: canonicalEvent.spaceId,
-			eventId: canonicalEvent.id,
-			source: canonicalEvent.source,
-			topic: canonicalEvent.topic,
-			dedupeKey: canonicalEvent.dedupeKey,
-			routedTaskId: canonicalEvent.routedTaskId,
-		});
+		if (resolution.type === 'ambiguous') {
+			this.store.markEventAmbiguous(canonicalEvent.id);
+			await this._publishBusEvent(canonicalEvent, canonicalEvent.routedTaskId);
+			return {
+				outcome: 'retryable_duplicate',
+				eventId: canonicalEvent.id,
+				routedTaskId: canonicalEvent.routedTaskId ?? undefined,
+			};
+		}
+
+		if (resolution.type === 'unknown') {
+			// Do NOT terminalize — a matching task may be created later.
+			// Re-emit the canonical payload so failed subscribers recover.
+			await this._publishBusEvent(canonicalEvent, canonicalEvent.routedTaskId);
+			return {
+				outcome: 'retryable_duplicate',
+				eventId: canonicalEvent.id,
+				routedTaskId: canonicalEvent.routedTaskId ?? undefined,
+			};
+		}
+
+		// `ignored` — re-emit the canonical payload so failed subscribers recover.
+		await this._publishBusEvent(canonicalEvent, canonicalEvent.routedTaskId);
 		return {
 			outcome: 'retryable_duplicate',
 			eventId: canonicalEvent.id,
 			routedTaskId: canonicalEvent.routedTaskId ?? undefined,
 		};
+	}
+
+	/**
+	 * Helper to publish `externalEvent.published` with the given routedTaskId.
+	 */
+	private async _publishBusEvent(
+		event: ExternalEvent,
+		routedTaskId: string | undefined
+	): Promise<void> {
+		await this.bus.publish('externalEvent.published', {
+			sessionId: event.spaceId,
+			spaceId: event.spaceId,
+			eventId: event.id,
+			source: event.source,
+			topic: event.topic,
+			dedupeKey: event.dedupeKey,
+			routedTaskId,
+		});
 	}
 }

@@ -308,7 +308,30 @@ describe('repo filter', () => {
 // ---------------------------------------------------------------------------
 
 describe('default repo filter', () => {
-	test('excludes tasks that do not mention repo owner or name', async () => {
+	test('single-repo fallback allows tasks without repo mention when no task mentions repo', async () => {
+		const task = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Fix bug #42',
+			description: 'some unrelated work',
+			status: 'open',
+		});
+
+		const result = await resolver.resolve(makeEvent());
+		expect(result.type).toBe('enriched');
+		if (result.type === 'enriched') {
+			expect(result.routedTaskId).toBe(task.id);
+		}
+	});
+
+	test('excludes tasks that do not mention repo in multi-repo spaces', async () => {
+		// One task mentions the repo — this triggers multi-repo mode
+		taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Other repo work',
+			description: 'lsm/neokai',
+			status: 'open',
+		});
+		// Another task with same PR but no repo mention
 		taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Fix bug #42',
@@ -394,6 +417,16 @@ describe('ignored resolution', () => {
 
 	test('non-github source returns ignored', async () => {
 		const result = await resolver.resolve(makeEvent({ source: 'slack' as unknown as 'github' }));
+		expect(result.type).toBe('ignored');
+	});
+
+	test('empty repoOwner returns ignored', async () => {
+		const result = await resolver.resolve(makeEvent({ repoOwner: '' }));
+		expect(result.type).toBe('ignored');
+	});
+
+	test('empty repoName returns ignored', async () => {
+		const result = await resolver.resolve(makeEvent({ repoName: '' }));
 		expect(result.type).toBe('ignored');
 	});
 });
