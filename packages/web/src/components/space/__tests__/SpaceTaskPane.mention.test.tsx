@@ -67,6 +67,7 @@ vi.mock('../../../lib/space-store', () => ({
 			unsubscribeTaskActivity: mockUnsubscribeTaskActivity,
 			ensureConfigData: vi.fn().mockResolvedValue(undefined),
 			ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
+			workflowVersions: signal(new Map()),
 			fetchWorkflowDetail: vi.fn((id: string) =>
 				Promise.resolve(mockWorkflows.value.find((w) => w.id === id) ?? null)
 			),

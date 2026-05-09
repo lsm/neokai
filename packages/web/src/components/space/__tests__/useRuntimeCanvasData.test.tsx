@@ -42,6 +42,7 @@ vi.mock('../../../lib/space-store', () => ({
 			workflows: mockWorkflows,
 			agents: mockAgents,
 			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
+			workflowVersions: signal(new Map()),
 			fetchWorkflowDetail: vi.fn((id: string) =>
 				Promise.resolve(mockWorkflows.value.find((w) => w.id === id) ?? null)
 			),
