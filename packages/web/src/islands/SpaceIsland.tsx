@@ -132,6 +132,7 @@ export default function SpaceIsland({
 	const error = spaceStore.error.value;
 	const [createTaskOpen, setCreateTaskOpen] = useState(false);
 	const [creatingSession, setCreatingSession] = useState(false);
+	const [, setActiveSessionRequestId] = useState<number | null>(null);
 
 	// For non-session views, show spinner/error while space data loads.
 	// Show spinner if space is not yet loaded and there's no error — this covers
@@ -145,18 +146,22 @@ export default function SpaceIsland({
 		});
 	}, [spaceId]);
 
-	// Reset task-dialog state when leaving the Tasks view so it doesn't
-	// reopen unexpectedly when the user later returns.
+	// Reset task-dialog state when leaving the Tasks view or switching spaces
+	// so it doesn't reopen unexpectedly.
 	useEffect(() => {
 		if (viewMode !== 'tasks') {
 			setCreateTaskOpen(false);
 		}
-	}, [viewMode, spaceId]);
+	}, [viewMode]);
+	useEffect(() => {
+		setCreateTaskOpen(false);
+	}, [spaceId]);
 
 	// Reset session-creation lock when switching spaces so a stale lock
 	// from space A doesn't block valid creates in space B.
 	useEffect(() => {
 		setCreatingSession(false);
+		setActiveSessionRequestId(null);
 	}, [spaceId]);
 
 	const handleTaskPaneClose = useCallback(() => {
@@ -167,7 +172,9 @@ export default function SpaceIsland({
 		async (e: Event) => {
 			e.stopPropagation();
 			if (creatingSession) return;
+			const requestId = Date.now();
 			setCreatingSession(true);
+			setActiveSessionRequestId(requestId);
 			const originSpaceId = spaceId;
 			const originViewMode = viewMode;
 			try {
@@ -186,7 +193,15 @@ export default function SpaceIsland({
 			} catch (err) {
 				toast.error(err instanceof Error ? err.message : 'Failed to create session');
 			} finally {
-				setCreatingSession(false);
+				// Only clear the lock if this request is still the active one.
+				// A newer request in another space will have a different requestId.
+				setActiveSessionRequestId((current) => {
+					if (current === requestId) {
+						setCreatingSession(false);
+						return null;
+					}
+					return current;
+				});
 			}
 		},
 		[spaceId, space?.workspacePath, creatingSession, viewMode]

@@ -462,6 +462,7 @@ describe('SpaceIsland — sessions view', () => {
 				})
 		);
 		mockCurrentSpaceIdSignal.value = 'space-1';
+		mockCurrentSpaceViewModeSignal.value = 'sessions';
 
 		const { getByLabelText, getByTestId } = render(
 			<SpaceIsland spaceId="space-1" viewMode="sessions" />
@@ -479,7 +480,10 @@ describe('SpaceIsland — sessions view', () => {
 		await waitFor(() => {
 			expect(mockCreateSession).toHaveBeenCalledTimes(1);
 		});
-		expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
+		// Wait for the delayed promise to fully settle before asserting no navigation
+		await waitFor(() => {
+			expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
+		});
 	});
 
 	it('disables the button while creating session', async () => {
