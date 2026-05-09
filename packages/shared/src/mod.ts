@@ -9,6 +9,8 @@ export * from './message-hub/router.ts';
 export * from './message-hub/websocket-client-transport.ts';
 export * from './message-hub/in-process-transport.ts';
 export * from './message-hub/typed-hub.ts';
+export * from './message-hub/channels.ts';
+export * from './message-hub/client-event-gateway.ts';
 export * from './utils.ts';
 export * from './state-types.ts';
 export * from './models.ts';

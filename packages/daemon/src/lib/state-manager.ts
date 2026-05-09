@@ -11,7 +11,7 @@
  * - Broadcasts immediately on event (no debouncing needed - LLM is slow)
  */
 
-import type { MessageHub, AgentProcessingState } from '@neokai/shared';
+import type { MessageHub, AgentProcessingState, IClientEventGateway } from '@neokai/shared';
 import type { DaemonHub } from './daemon-hub';
 import type { SessionManager } from './session-manager';
 import type { AuthManager } from './auth-manager';
@@ -30,7 +30,7 @@ import type {
 	SDKMessagesUpdate,
 } from '@neokai/shared';
 import type { Session, ContextInfo } from '@neokai/shared';
-import { STATE_CHANNELS } from '@neokai/shared';
+import { Channels, ClientEventGateway, STATE_CHANNELS } from '@neokai/shared';
 import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository';
 import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
 
@@ -42,6 +42,21 @@ export class StateManager {
 	// FIX: Per-channel versioning instead of global version
 	private channelVersions = new Map<string, number>();
 	private logger = new Logger('StateManager');
+
+	/**
+	 * Client-facing event gateway.
+	 *
+	 * Wraps `messageHub.event(...)` so daemon code can publish via a typed
+	 * `EventChannel` instead of inline `{ channel: 'global' }` literals. Only a
+	 * minimal slice of forwarding currently flows through the gateway —
+	 * `session.created`, `session.deleted`, and `context.updated` — as a
+	 * proof-of-pattern. Versioned state broadcasts continue to call
+	 * `messageHub.event(...)` directly until per-channel versioning moves
+	 * onto the gateway in a follow-up PR.
+	 *
+	 * See `docs/plans/internal-event-command-query-architecture.md`.
+	 */
+	private clientEvents: IClientEventGateway;
 
 	// Track API connection state (updated via broadcasts from ErrorManager)
 	private apiConnectionState: import('@neokai/shared').ApiConnectionState = {
@@ -67,8 +82,10 @@ export class StateManager {
 		private config: Config,
 		private eventBus: DaemonHub,
 		private db?: Database,
-		private internalEventBus?: InternalEventBus<DaemonInternalEventMap>
+		private internalEventBus?: InternalEventBus<DaemonInternalEventMap>,
+		clientEvents?: IClientEventGateway
 	) {
+		this.clientEvents = clientEvents ?? new ClientEventGateway({ hub: messageHub });
 		this.setupHandlers();
 		this.setupEventListeners();
 	}
@@ -98,8 +115,8 @@ export class StateManager {
 			this.sessionCache.set(session.id, session);
 			this.processingStateCache.set(session.id, { status: 'idle' });
 
-			// Publish session.created event
-			this.messageHub.event('session.created', { sessionId: session.id }, { channel: 'global' });
+			// Publish session.created event (via ClientEventGateway — proof of pattern)
+			this.clientEvents.publish('session.created', { sessionId: session.id }, Channels.global());
 
 			// Note: Global sessions list updates are now handled by LiveQuery (sessions.list)
 		});
@@ -137,7 +154,8 @@ export class StateManager {
 			this.processingStateCache.delete(sessionId);
 			this.commandsCache.delete(sessionId);
 
-			this.messageHub.event('session.deleted', { sessionId }, { channel: 'global' });
+			// Publish session.deleted event (via ClientEventGateway — proof of pattern)
+			this.clientEvents.publish('session.deleted', { sessionId }, Channels.global());
 
 			// Note: Global sessions list updates are now handled by LiveQuery (sessions.list)
 		});
@@ -181,9 +199,12 @@ export class StateManager {
 			'context.updated',
 			async (data: { sessionId: string; contextInfo: ContextInfo }) => {
 				// Publish dedicated context.updated event (fast path for UI)
-				this.messageHub.event('context.updated', data.contextInfo, {
-					channel: `session:${data.sessionId}`,
-				});
+				// Routed via ClientEventGateway — proof of pattern.
+				this.clientEvents.publish(
+					'context.updated',
+					data.contextInfo,
+					Channels.session(data.sessionId)
+				);
 
 				// Also update unified session state (includes metadata.lastContextInfo)
 				await this.broadcastSessionStateChange(data.sessionId);
