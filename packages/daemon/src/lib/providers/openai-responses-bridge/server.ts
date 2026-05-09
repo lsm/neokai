@@ -106,7 +106,7 @@ type ResponsesInputItem =
 	| {
 			type: 'function_call_output';
 			call_id: string;
-			output: string | Array<{ type: 'text'; text: string } | ResponsesInputImage>;
+			output: string | Array<ResponsesInputText | ResponsesInputImage>;
 	  }
 	| ResponsesReasoningItem;
 
@@ -317,16 +317,16 @@ function estimateResponsesPayloadTokens(
 
 function toolResultContent(
 	content: AnthropicContentBlockToolResult['content']
-): string | Array<{ type: 'text'; text: string } | ResponsesInputImage> {
+): string | Array<ResponsesInputText | ResponsesInputImage> {
 	if (typeof content === 'string') return content;
 	const hasNonText = content.some((block) => block.type !== 'text');
 	if (!hasNonText) {
 		return content.map((block) => (block.type === 'text' ? block.text : '')).join('\n');
 	}
-	const result: Array<{ type: 'text'; text: string } | ResponsesInputImage> = [];
+	const result: Array<ResponsesInputText | ResponsesInputImage> = [];
 	for (const block of content) {
 		if (block.type === 'text') {
-			result.push({ type: 'text', text: block.text });
+			result.push({ type: 'input_text', text: block.text });
 			continue;
 		}
 		if (block.type === 'image') {
@@ -334,7 +334,7 @@ function toolResultContent(
 			continue;
 		}
 		result.push({
-			type: 'text',
+			type: 'input_text',
 			text: `[Unsupported content block: ${(block as { type?: string }).type ?? 'unknown'}]`,
 		});
 	}
@@ -420,7 +420,7 @@ function appendUserBlocks(items: ResponsesInputItem[], blocks: AnthropicContentB
 				output: result.is_error
 					? typeof output === 'string'
 						? `[Tool error]\n${output}`
-						: [{ type: 'text' as const, text: `[Tool error]` }, ...output]
+						: [{ type: 'input_text' as const, text: `[Tool error]` }, ...output]
 					: output,
 			});
 			continue;
@@ -1295,7 +1295,21 @@ export function createOpenAIResponsesBridgeServer(
 						logger.warn(
 							'openai-responses: endpoint rejects previous_response_id, retrying with full history'
 						);
-						requestBody = buildResponsesRequest(body, model, undefined, buildOpts, storedReasoning);
+						try {
+							requestBody = buildResponsesRequest(
+								body,
+								model,
+								undefined,
+								buildOpts,
+								storedReasoning
+							);
+						} catch (err) {
+							return sendJsonError(
+								400,
+								'invalid_request_error',
+								err instanceof Error ? err.message : 'Bad Request'
+							);
+						}
 						openAIResponse = await fetchImpl(upstreamUrl, {
 							method: 'POST',
 							headers: buildOpenAIHeaders(config.auth, resolvedAuth),

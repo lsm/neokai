@@ -321,7 +321,7 @@ describe('openai-responses-bridge server', () => {
 				type: 'function_call_output',
 				call_id: 'call_1',
 				output: [
-					{ type: 'text', text: 'Screenshot taken.' },
+					{ type: 'input_text', text: 'Screenshot taken.' },
 					{ type: 'input_image', image_url: 'data:image/png;base64,screendata' },
 				],
 			},
