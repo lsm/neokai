@@ -46,7 +46,11 @@ function estimateTextTokens(text: string): number {
 
 function estimateToolResultContent(content: AnthropicContentBlockToolResult['content']): number {
 	if (typeof content === 'string') return estimateTextTokens(content);
-	return content.reduce((sum, block) => sum + estimateTextTokens(block.text), 0);
+	return content.reduce(
+		(sum, block) =>
+			sum + estimateTextTokens(block.type === 'text' ? block.text : `[${block.type}]`),
+		0
+	);
 }
 
 function estimateContentBlockTokens(block: AnthropicContentBlock): number {

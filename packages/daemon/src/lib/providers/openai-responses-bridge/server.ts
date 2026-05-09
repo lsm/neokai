@@ -249,11 +249,11 @@ function estimateTextTokens(text: string): number {
  *
  * OpenAI bills vision tokens based on image dimensions and detail level,
  * not base64 payload size. Without access to actual image dimensions,
- * we use a conservative fixed estimate (low-detail ~85 tokens plus
- * overhead) rather than a base64-length heuristic that would inflate
- * estimates for large encoded payloads.
+ * we use a conservative fixed estimate (~300 tokens) that covers the
+ * common auto/high-detail case rather than a base64-length heuristic
+ * that would inflate estimates for large encoded payloads.
  */
-const ESTIMATED_IMAGE_TOKENS = 100;
+const ESTIMATED_IMAGE_TOKENS = 300;
 
 function estimateResponsesContentTokens(item: ResponsesInputItem): number {
 	if (item.type === 'function_call_output') {
@@ -309,7 +309,17 @@ function estimateResponsesPayloadTokens(
 
 function toolResultText(content: AnthropicContentBlockToolResult['content']): string {
 	if (typeof content === 'string') return content;
-	return content.map((block) => block.text).join('\n');
+	return content
+		.map((block) => {
+			if (block.type === 'text') return block.text;
+			if (block.type === 'image') {
+				const sourceType =
+					'source' in block && block.source?.type === 'url' ? 'URL' : 'base64 image';
+				return `[Image: ${sourceType}]`;
+			}
+			return `[Unsupported content block: ${(block as { type?: string }).type ?? 'unknown'}]`;
+		})
+		.join('\n');
 }
 
 function appendInputMessage(
@@ -360,8 +370,13 @@ function imageBlockToInputImage(block: AnthropicContentBlockImage): ResponsesInp
 	if (block.source.type === 'url') {
 		return { type: 'input_image', image_url: block.source.url };
 	}
-	const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
-	return { type: 'input_image', image_url: dataUrl };
+	if (block.source.type === 'base64') {
+		const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
+		return { type: 'input_image', image_url: dataUrl };
+	}
+	throw new Error(
+		`Unsupported image source type: ${(block.source as { type?: string }).type ?? 'unknown'}`
+	);
 }
 
 function appendUserBlocks(items: ResponsesInputItem[], blocks: AnthropicContentBlock[]): void {
@@ -385,7 +400,9 @@ function appendUserBlocks(items: ResponsesInputItem[], blocks: AnthropicContentB
 				call_id: result.tool_use_id,
 				output: result.is_error ? `[Tool error]\n${output}` : output,
 			});
+			continue;
 		}
+		throw new Error(`Unsupported user content block type: ${block.type}`);
 	}
 	appendInputMessage(items, 'user', contentParts);
 }

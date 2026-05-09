@@ -24,7 +24,7 @@ export type AnthropicContentBlockToolUse = {
 export type AnthropicContentBlockToolResult = {
 	type: 'tool_result';
 	tool_use_id: string;
-	content: string | Array<{ type: 'text'; text: string }>;
+	content: string | Array<{ type: 'text'; text: string } | AnthropicContentBlockImage>;
 };
 
 export type AnthropicContentBlockImage =

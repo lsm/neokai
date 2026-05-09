@@ -285,6 +285,82 @@ describe('openai-responses-bridge server', () => {
 		]);
 	});
 
+	it('preserves non-text blocks in tool_result content as placeholders', () => {
+		const input = anthropicMessagesToResponsesInput([
+			{
+				role: 'assistant',
+				content: [{ type: 'tool_use', id: 'call_1', name: 'screenshot', input: {} }],
+			},
+			{
+				role: 'user',
+				content: [
+					{
+						type: 'tool_result',
+						tool_use_id: 'call_1',
+						content: [
+							{ type: 'text', text: 'Screenshot taken.' },
+							{
+								type: 'image',
+								source: { type: 'base64', media_type: 'image/png', data: 'screendata' },
+							},
+						],
+					},
+				],
+			},
+		]);
+
+		expect(input).toEqual([
+			{
+				type: 'function_call',
+				call_id: 'call_1',
+				name: 'screenshot',
+				arguments: '{}',
+				status: 'completed',
+			},
+			{
+				type: 'function_call_output',
+				call_id: 'call_1',
+				output: 'Screenshot taken.\n[Image: base64 image]',
+			},
+		]);
+	});
+
+	it('throws on unsupported image source types', () => {
+		expect(() =>
+			anthropicMessagesToResponsesInput([
+				{
+					role: 'user',
+					content: [
+						{
+							type: 'image',
+							source: { type: 'file', media_type: 'image/png', data: 'filedata' } as unknown as {
+								type: 'base64';
+								media_type: string;
+								data: string;
+							},
+						},
+					],
+				},
+			])
+		).toThrow('Unsupported image source type: file');
+	});
+
+	it('throws on unsupported user content block types', () => {
+		expect(() =>
+			anthropicMessagesToResponsesInput([
+				{
+					role: 'user',
+					content: [
+						{
+							type: 'document',
+							source: { type: 'base64', media_type: 'application/pdf', data: 'pdfdata' },
+						} as unknown as { type: 'text'; text: string },
+					],
+				},
+			])
+		).toThrow('Unsupported user content block type: document');
+	});
+
 	it('streams OpenAI text deltas as Anthropic text SSE', async () => {
 		let capturedBody: Record<string, unknown> | undefined;
 		server = createOpenAIResponsesBridgeServer({
