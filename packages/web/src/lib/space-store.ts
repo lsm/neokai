@@ -37,6 +37,7 @@ import type {
 	SpaceTask,
 	SpaceTaskActivityMember,
 	SpaceWorkflow,
+	SpaceWorkflowSummary,
 	SpaceWorkflowRun,
 	UpdateSpaceAgentParams,
 	UpdateSpaceParams,
@@ -72,6 +73,21 @@ export interface SpaceAgentTemplate {
 	customPrompt: string;
 }
 
+function workflowToSummary(wf: SpaceWorkflow): SpaceWorkflowSummary {
+	return {
+		id: wf.id,
+		spaceId: wf.spaceId,
+		name: wf.name,
+		description: wf.description,
+		tags: wf.tags,
+		templateName: wf.templateName,
+		disabled: wf.disabled,
+		nodeCount: wf.nodes?.length ?? 0,
+		completionAutonomyLevel: wf.completionAutonomyLevel,
+		createdAt: wf.createdAt,
+		updatedAt: wf.updatedAt,
+	};
+}
 class SpaceStore {
 	// ========================================
 	// Core Signals
@@ -108,7 +124,7 @@ class SpaceStore {
 	readonly agentTemplates = signal<SpaceAgentTemplate[]>([]);
 
 	/** Workflow definitions for this space */
-	readonly workflows = signal<SpaceWorkflow[]>([]);
+	readonly workflows = signal<SpaceWorkflowSummary[]>([]);
 
 	/** Built-in workflow templates sourced from daemon seeding definitions */
 	readonly workflowTemplates = signal<SpaceWorkflow[]>([]);
@@ -250,6 +266,12 @@ class SpaceStore {
 
 	/** In-flight promise for ensureNodeExecutions to prevent duplicate fetches */
 	private nodeExecPromise: Promise<void> | null = null;
+
+	/** Cache of full workflow details fetched on-demand (keyed by workflowId) */
+	private workflowDetailCache = new Map<string, SpaceWorkflow>();
+
+	/** In-flight promises for workflow detail fetches (keyed by workflowId) */
+	private workflowDetailPromises = new Map<string, Promise<SpaceWorkflow | null>>();
 
 	private upsertTaskOnePerRun(tasks: SpaceTask[], task: SpaceTask): SpaceTask[] {
 		const withoutSameId = tasks.filter((current) => current.id !== task.id);
@@ -536,6 +558,7 @@ class SpaceStore {
 		this.nodeExecLoaded.value = false;
 		this.nodeExecPromise = null;
 		this.sessions.value = [];
+		this.clearWorkflowDetailCache();
 		this.disposeSpaceSessionsSubscription();
 
 		// 3. Update active space (may be updated to real UUID after fetch)
@@ -763,7 +786,7 @@ class SpaceStore {
 			if (event.spaceId === spaceId) {
 				const exists = this.workflows.value.some((w) => w.id === event.workflow.id);
 				if (!exists) {
-					this.workflows.value = [...this.workflows.value, event.workflow];
+					this.workflows.value = [...this.workflows.value, workflowToSummary(event.workflow)];
 				}
 			}
 		});
@@ -777,14 +800,15 @@ class SpaceStore {
 		}>('spaceWorkflow.updated', (event) => {
 			if (event.spaceId === spaceId) {
 				const idx = this.workflows.value.findIndex((w) => w.id === event.workflow.id);
+				const summary = workflowToSummary(event.workflow);
 				if (idx >= 0) {
 					this.workflows.value = [
 						...this.workflows.value.slice(0, idx),
-						event.workflow,
+						summary,
 						...this.workflows.value.slice(idx + 1),
 					];
 				} else {
-					this.workflows.value = [...this.workflows.value, event.workflow];
+					this.workflows.value = [...this.workflows.value, summary];
 				}
 			}
 		});
@@ -877,9 +901,12 @@ class SpaceStore {
 		spaceId: string
 	): Promise<void> {
 		try {
-			const result = await hub.request<{ workflows: SpaceWorkflow[] }>('spaceWorkflow.list', {
-				spaceId,
-			});
+			const result = await hub.request<{ workflows: SpaceWorkflowSummary[] }>(
+				'spaceWorkflow.list',
+				{
+					spaceId,
+				}
+			);
 			this.workflows.value = result?.workflows ?? [];
 		} catch (err) {
 			logger.error('Failed to fetch workflows:', err);
@@ -905,6 +932,52 @@ class SpaceStore {
 			logger.error('Failed to fetch workflow templates:', err);
 			this.workflowTemplates.value = [];
 		}
+	}
+
+	/**
+	 * Fetch a full workflow by ID. Deduplicates concurrent requests and caches
+	 * the result so multiple callers asking for the same workflow share one fetch.
+	 */
+	async fetchWorkflowDetail(workflowId: string): Promise<SpaceWorkflow | null> {
+		const cached = this.workflowDetailCache.get(workflowId);
+		if (cached) return cached;
+
+		const inFlight = this.workflowDetailPromises.get(workflowId);
+		if (inFlight) return inFlight;
+
+		const spaceId = this.spaceId.value;
+		if (!spaceId) return null;
+
+		const promise = (async (): Promise<SpaceWorkflow | null> => {
+			try {
+				const hub = await connectionManager.getHub();
+				const result = await hub.request<{ workflow: SpaceWorkflow }>('spaceWorkflow.get', {
+					id: workflowId,
+					spaceId,
+				});
+				if (result?.workflow) {
+					this.workflowDetailCache.set(workflowId, result.workflow);
+					return result.workflow;
+				}
+				return null;
+			} catch (err) {
+				logger.error('Failed to fetch workflow detail:', err);
+				return null;
+			} finally {
+				this.workflowDetailPromises.delete(workflowId);
+			}
+		})();
+
+		this.workflowDetailPromises.set(workflowId, promise);
+		return promise;
+	}
+
+	/**
+	 * Clear the workflow detail cache. Called on space switch.
+	 */
+	private clearWorkflowDetailCache(): void {
+		this.workflowDetailCache.clear();
+		this.workflowDetailPromises.clear();
 	}
 
 	/**

@@ -188,6 +188,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	// review RPC needs to surface inside the modal regardless of composer
 	// visibility — see `SubmitForReviewModalProps.error`.
 	const [submitForReviewError, setSubmitForReviewError] = useState<string | null>(null);
+	const [fullWorkflow, setFullWorkflow] = useState<import('@neokai/shared').SpaceWorkflow | null>(
+		null
+	);
 	const activeView = currentSpaceTaskViewTabSignal.value;
 
 	useEffect(() => {
@@ -256,10 +259,20 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		: null;
 	const canvasWorkflowId = workflowRun?.workflowId ?? null;
 
+	// Fetch full workflow detail for composer targets and declared-agent slots.
+	// spaceStore.workflows only holds lightweight summaries.
+	useEffect(() => {
+		if (!canvasWorkflowId) {
+			setFullWorkflow(null);
+			return;
+		}
+		spaceStore.fetchWorkflowDetail(canvasWorkflowId).then((wf) => {
+			setFullWorkflow(wf);
+		});
+	}, [canvasWorkflowId]);
+
 	// Scope @mention autocomplete to workflow agents only (no agents for non-workflow tasks)
-	const workflow = canvasWorkflowId
-		? (spaceStore.workflows.value.find((w) => w.id === canvasWorkflowId) ?? null)
-		: null;
+	const workflow = fullWorkflow;
 	const spaceAgents = spaceStore.agents.value;
 	const nodeExecutions = spaceStore.nodeExecutions.value;
 	const taskAgentMember = activityMembers.find((m) => m.kind === 'task_agent') ?? null;

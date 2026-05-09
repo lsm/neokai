@@ -35,6 +35,7 @@ import type {
 	Space,
 	SpaceAgent,
 	SpaceWorkflow,
+	SpaceWorkflowSummary,
 	SpaceWorkflowRun,
 	SpaceTask,
 } from '@neokai/shared';
@@ -108,6 +109,7 @@ export interface NeoQuerySpaceAgentManager {
 
 export interface NeoQuerySpaceWorkflowManager {
 	listWorkflows(spaceId: string): SpaceWorkflow[];
+	listWorkflowSummaries(spaceId: string): SpaceWorkflowSummary[];
 }
 
 export interface NeoQueryWorkflowRunRepository {
@@ -346,7 +348,7 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 
 			const result = spaces.map((space) => {
 				const agents = spaceAgentManager.listBySpaceId(space.id);
-				const workflows = spaceWorkflowManager.listWorkflows(space.id);
+				const workflows = spaceWorkflowManager.listWorkflowSummaries(space.id);
 				return {
 					id: space.id,
 					slug: space.slug,
@@ -411,7 +413,7 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 			}
 
 			const agents = spaceAgentManager.listBySpaceId(space.id);
-			const workflows = spaceWorkflowManager.listWorkflows(space.id);
+			const workflows = spaceWorkflowManager.listWorkflowSummaries(space.id);
 			const runs = workflowRunRepository.listBySpace(space.id);
 
 			// Return the 10 most recent runs
@@ -438,7 +440,7 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 				id: w.id,
 				name: w.name,
 				description: w.description ?? null,
-				nodeCount: w.nodes?.length ?? 0,
+				nodeCount: w.nodeCount,
 			}));
 
 			return jsonResult({
@@ -493,15 +495,15 @@ export function createNeoQueryToolHandlers(config: NeoToolsConfig) {
 				return errorResult(`Space not found: ${args.space_id}`);
 			}
 
-			const workflows = spaceWorkflowManager.listWorkflows(space.id);
+			const workflows = spaceWorkflowManager.listWorkflowSummaries(space.id);
 			return jsonResult(
 				workflows.map((w) => ({
 					id: w.id,
 					name: w.name,
 					description: w.description ?? null,
-					nodeCount: w.nodes?.length ?? 0,
-					tags: w.tags ?? [],
-					disabled: w.disabled ?? false,
+					nodeCount: w.nodeCount,
+					tags: w.tags,
+					disabled: w.disabled,
 					createdAt: w.createdAt,
 					updatedAt: w.updatedAt,
 				}))

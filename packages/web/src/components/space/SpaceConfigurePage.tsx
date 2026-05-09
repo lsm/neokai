@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { lazy, Suspense } from 'preact/compat';
-import type { Space } from '@neokai/shared';
+import type { Space, SpaceWorkflow } from '@neokai/shared';
 import { Tab, TabGroup, TabList, TabPanel, TabPanels } from '@neokai/ui';
 import { spaceStore } from '../../lib/space-store';
 import { currentSpaceConfigureTabSignal, currentSpaceIdSignal } from '../../lib/signals';
@@ -57,11 +57,18 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 	const spaceId = currentSpaceIdSignal.value ?? '';
 	/** null = list view; 'new' = create editor; <id> = edit editor */
 	const [workflowEditId, setWorkflowEditId] = useState<string | null>(null);
+	const [editingWorkflow, setEditingWorkflow] = useState<SpaceWorkflow | undefined>(undefined);
 
-	const editingWorkflow =
-		workflowEditId && workflowEditId !== 'new'
-			? workflows.find((workflow) => workflow.id === workflowEditId)
-			: undefined;
+	useEffect(() => {
+		if (!workflowEditId || workflowEditId === 'new') {
+			setEditingWorkflow(undefined);
+			return;
+		}
+		// Fetch full workflow detail for editing — spaceStore.workflows only holds summaries
+		spaceStore.fetchWorkflowDetail(workflowEditId).then((wf) => {
+			if (wf) setEditingWorkflow(wf);
+		});
+	}, [workflowEditId]);
 
 	const showWorkflowEditor = activeTab === 'workflows' && workflowEditId !== null;
 	const selectedIndex = Math.max(

@@ -157,6 +157,9 @@ vi.mock('../../lib/space-store', () => ({
 			ensureConfigData: vi.fn().mockResolvedValue(undefined),
 			ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
 			selectSpace: mockSelectSpace,
+			fetchWorkflowDetail: vi.fn((id: string) =>
+				Promise.resolve(mockWorkflows.value.find((w) => w.id === id) ?? null)
+			),
 		};
 	},
 }));

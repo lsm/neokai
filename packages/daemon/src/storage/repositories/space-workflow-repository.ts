@@ -17,6 +17,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type {
 	SpaceWorkflow,
+	SpaceWorkflowSummary,
 	SpaceAutonomyLevel,
 	WorkflowNode,
 	WorkflowNodeInput,
@@ -277,6 +278,61 @@ export class SpaceWorkflowRepository {
 			this.emitMigrationLog(r, ctx);
 			return rowToWorkflow(r, nodes);
 		});
+	}
+
+	listWorkflowSummaries(spaceId: string): SpaceWorkflowSummary[] {
+		const rows = this.db
+			.prepare(
+				`SELECT id, space_id, name, description, tags, template_name, template_hash, disabled, completion_autonomy_level, created_at, updated_at
+				 FROM space_workflows
+				 WHERE space_id = ?
+				 ORDER BY created_at ASC, rowid ASC`
+			)
+			.all(spaceId) as Array<
+			Pick<
+				WorkflowRow,
+				| 'id'
+				| 'space_id'
+				| 'name'
+				| 'description'
+				| 'tags'
+				| 'template_name'
+				| 'template_hash'
+				| 'disabled'
+				| 'completion_autonomy_level'
+				| 'created_at'
+				| 'updated_at'
+			>
+		>;
+
+		const nodeCounts = this.db
+			.prepare(
+				`SELECT workflow_id, COUNT(*) as count
+				 FROM space_workflow_nodes
+				 WHERE workflow_id IN (SELECT id FROM space_workflows WHERE space_id = ?)
+				 GROUP BY workflow_id`
+			)
+			.all(spaceId) as Array<{ workflow_id: string; count: number }>;
+		const countByWorkflowId = new Map<string, number>();
+		for (const nc of nodeCounts) {
+			countByWorkflowId.set(nc.workflow_id, nc.count);
+		}
+
+		return rows.map((r) => ({
+			id: r.id,
+			spaceId: r.space_id,
+			name: r.name,
+			description: r.description || undefined,
+			tags: parseJson<string[]>(r.tags, []),
+			templateName: r.template_name ?? undefined,
+			templateHash: r.template_hash ?? null,
+			disabled: !!r.disabled,
+			nodeCount: countByWorkflowId.get(r.id) ?? 0,
+			completionAutonomyLevel:
+				(r.completion_autonomy_level as SpaceAutonomyLevel) ?? (3 as SpaceAutonomyLevel),
+			createdAt: r.created_at,
+			updatedAt: r.updated_at,
+		}));
 	}
 
 	/**

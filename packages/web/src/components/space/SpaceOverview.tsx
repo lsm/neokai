@@ -9,7 +9,12 @@
  */
 
 import { useState, useCallback } from 'preact/hooks';
-import type { RuntimeState, SpaceTask, SpaceAutonomyLevel, SpaceWorkflow } from '@neokai/shared';
+import type {
+	RuntimeState,
+	SpaceTask,
+	SpaceAutonomyLevel,
+	SpaceWorkflowSummary,
+} from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import {
 	navigateToSpaceTask,
@@ -181,7 +186,7 @@ function AutonomyLevelBar({
 	onChange,
 }: {
 	level: SpaceAutonomyLevel;
-	workflows: SpaceWorkflow[];
+	workflows: SpaceWorkflowSummary[];
 	onChange: (level: SpaceAutonomyLevel) => void;
 }) {
 	return (

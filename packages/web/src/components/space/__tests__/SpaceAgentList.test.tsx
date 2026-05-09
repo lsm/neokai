@@ -453,9 +453,12 @@ describe('SpaceAgentList', () => {
 		expect(queryByTestId('confirm-modal')).toBeNull();
 	});
 
-	// ── Delete flow — workflow-referenced agent (BLOCKED) ─────────────────────
+	// ── Delete flow — workflow-referenced agent (no longer blocked client-side) ─
+	// SpaceWorkflowSummary no longer includes node/agent details, so the client
+	// cannot determine workflow references. The daemon still blocks deletion of
+	// in-use agents. All delete clicks now show the standard confirm dialog.
 
-	it('shows blocking modal (not confirm) when agent is used in a workflow', () => {
+	it('shows confirm modal (not blocking) even when agent is used in a workflow', () => {
 		const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
 		mockAgents.value = [agent];
 		mockWorkflows.value = [makeWorkflow('agent-1')];
@@ -463,41 +466,41 @@ describe('SpaceAgentList', () => {
 			<SpaceAgentList {...DEFAULT_PROPS} />
 		);
 		fireEvent.click(getByLabelText('Delete Coder'));
-		// Should show the blocking modal, NOT the confirm modal
-		expect(getByTestId('block-modal')).toBeTruthy();
-		expect(queryByTestId('confirm-modal')).toBeNull();
+		// Should show the confirm modal, NOT a blocking modal
+		expect(getByTestId('confirm-modal')).toBeTruthy();
+		expect(queryByTestId('block-modal')).toBeNull();
 	});
 
-	it('blocking modal shows the referencing workflow name', () => {
-		const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
-		mockAgents.value = [agent];
-		mockWorkflows.value = [makeWorkflow('agent-1')];
-		const { getByLabelText, getByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-		fireEvent.click(getByLabelText('Delete Coder'));
-		expect(getByText('Coding Workflow')).toBeTruthy();
-	});
-
-	it('blocking modal title is "Cannot Delete Agent"', () => {
-		const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
-		mockAgents.value = [agent];
-		mockWorkflows.value = [makeWorkflow('agent-1')];
-		const { getByLabelText, getByRole } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-		fireEvent.click(getByLabelText('Delete Coder'));
-		expect(getByRole('dialog', { name: 'Cannot Delete Agent' })).toBeTruthy();
-	});
-
-	it('does not call deleteAgent when blocking modal is shown', () => {
+	it('confirm modal shows agent name when referenced by workflow', () => {
 		const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
 		mockAgents.value = [agent];
 		mockWorkflows.value = [makeWorkflow('agent-1')];
 		const { getByLabelText, getByTestId } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
 		fireEvent.click(getByLabelText('Delete Coder'));
-		// Close the blocking modal
-		fireEvent.click(getByTestId('block-modal-close'));
+		expect(getByTestId('confirm-message').textContent).toContain('Coder');
+	});
+
+	it('confirm modal title is "Delete Agent" even for referenced agents', () => {
+		const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
+		mockAgents.value = [agent];
+		mockWorkflows.value = [makeWorkflow('agent-1')];
+		const { getByLabelText, getByRole } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		fireEvent.click(getByLabelText('Delete Coder'));
+		expect(getByRole('dialog', { name: 'Delete Agent' })).toBeTruthy();
+	});
+
+	it('does not call deleteAgent when confirm modal is cancelled', () => {
+		const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
+		mockAgents.value = [agent];
+		mockWorkflows.value = [makeWorkflow('agent-1')];
+		const { getByLabelText, getByTestId } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		fireEvent.click(getByLabelText('Delete Coder'));
+		// Cancel the confirm modal
+		fireEvent.click(getByTestId('confirm-cancel'));
 		expect(mockDeleteAgent).not.toHaveBeenCalled();
 	});
 
-	it('closing blocking modal removes it from view', () => {
+	it('closing confirm modal removes it from view', () => {
 		const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
 		mockAgents.value = [agent];
 		mockWorkflows.value = [makeWorkflow('agent-1')];
@@ -505,9 +508,9 @@ describe('SpaceAgentList', () => {
 			<SpaceAgentList {...DEFAULT_PROPS} />
 		);
 		fireEvent.click(getByLabelText('Delete Coder'));
-		expect(getByTestId('block-modal')).toBeTruthy();
-		fireEvent.click(getByTestId('block-modal-close'));
-		expect(queryByTestId('block-modal')).toBeNull();
+		expect(getByTestId('confirm-modal')).toBeTruthy();
+		fireEvent.click(getByTestId('confirm-cancel'));
+		expect(queryByTestId('confirm-modal')).toBeNull();
 	});
 
 	// ── Drift detection & sync ────────────────────────────────────────────────

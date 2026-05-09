@@ -324,7 +324,7 @@ export function setupSpaceWorkflowHandlers(
 			throw new Error(`Space not found: ${params.spaceId}`);
 		}
 
-		const workflows = workflowManager.listWorkflows(params.spaceId);
+		const workflows = workflowManager.listWorkflowSummaries(params.spaceId);
 		return { workflows };
 	});
 
@@ -342,19 +342,10 @@ export function setupSpaceWorkflowHandlers(
 			throw new Error(`Space not found: ${params.spaceId}`);
 		}
 
-		// Return canonical built-ins from the same source used by seeding.
-		// Clone shallowly to avoid accidental mutation of shared constants.
-		const workflows = getBuiltInWorkflows().map((workflow) => ({
-			...workflow,
-			nodes: workflow.nodes.map((node) => ({
-				...node,
-				agents: node.agents.map((agent) => ({ ...agent })),
-			})),
-			channels: workflow.channels ? [...workflow.channels] : undefined,
-			gates: workflow.gates ? [...workflow.gates] : undefined,
-			tags: [...workflow.tags],
-			postApproval: workflow.postApproval ? { ...workflow.postApproval } : undefined,
-		}));
+		// Built-in templates are a small fixed set (5 workflows). Return full
+		// workflows so the visual editor template picker can use nodes/channels/gates
+		// without an extra round-trip per template.
+		const workflows: SpaceWorkflow[] = getBuiltInWorkflows();
 		return { workflows };
 	});
 
@@ -643,7 +634,7 @@ export function setupSpaceWorkflowHandlers(
 		// a user-named template has no canonical source to resync against.
 		const builtInNames = new Set(getBuiltInWorkflows().map((w) => w.name));
 
-		const workflows = workflowManager.listWorkflows(params.spaceId);
+		const workflows = workflowManager.listWorkflowSummaries(params.spaceId);
 
 		// Group workflows by templateName.
 		const byTemplate = new Map<string, typeof workflows>();

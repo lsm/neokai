@@ -67,6 +67,9 @@ vi.mock('../../../lib/space-store', () => ({
 			unsubscribeTaskActivity: mockUnsubscribeTaskActivity,
 			ensureConfigData: vi.fn().mockResolvedValue(undefined),
 			ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
+			fetchWorkflowDetail: vi.fn((id: string) =>
+				Promise.resolve(mockWorkflows.value.find((w) => w.id === id) ?? null)
+			),
 		};
 	},
 }));
@@ -236,9 +239,20 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 		fireEvent.input(textarea, { target: { value } });
 	}
 
+	async function waitForWorkflowLoaded(container: ReturnType<typeof render>) {
+		// SpaceTaskPane fetches the full workflow asynchronously before
+		// composer targets (and therefore @mention candidates) are available.
+		await waitFor(() => {
+			expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
+				'Send to Coder'
+			);
+		});
+	}
+
 	it('shows dropdown when user types @', async () => {
 		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 		const textarea = getTextarea(container);
 
 		typeIntoTextarea(textarea, '@');
@@ -251,6 +265,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	it('shows all workflow agents when @ is typed alone', async () => {
 		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 		const textarea = getTextarea(container);
 
 		typeIntoTextarea(textarea, '@');
@@ -266,6 +281,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	it('targets the first workflow agent by default when sending from a workflow task', async () => {
 		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 		const textarea = getTextarea(container);
 
 		expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
@@ -291,6 +307,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	it('sends to the manually selected workflow agent', async () => {
 		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 
 		fireEvent.click(container.getByTestId('task-composer-target-trigger'));
 		const options = container.getAllByTestId('task-composer-target-option');
@@ -335,6 +352,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 			});
 
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 
 		await waitFor(() =>
 			expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
@@ -371,6 +389,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 			});
 
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 
 		await waitFor(() =>
 			expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
@@ -393,6 +412,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 			});
 
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 
 		await waitFor(() =>
 			expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
@@ -422,6 +442,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	it('filters agents when @partial is typed', async () => {
 		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 		const textarea = getTextarea(container);
 
 		typeIntoTextarea(textarea, '@Co');
@@ -436,6 +457,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	it('shows no dropdown when filter matches nothing', async () => {
 		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 		const textarea = getTextarea(container);
 
 		typeIntoTextarea(textarea, '@zzz');
@@ -447,6 +469,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	it('hides dropdown when Escape is pressed', async () => {
 		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 		const textarea = getTextarea(container);
 
 		typeIntoTextarea(textarea, '@');
@@ -465,6 +488,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	it('selects agent on Enter and inserts mention into textarea', async () => {
 		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 		const textarea = getTextarea(container);
 
 		typeIntoTextarea(textarea, '@Co');
@@ -485,6 +509,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	it('closes dropdown after clicking an agent name', async () => {
 		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 		const textarea = getTextarea(container);
 
 		typeIntoTextarea(textarea, '@');
@@ -504,6 +529,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	it('inserts correct mention text when agent is clicked', async () => {
 		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 		const textarea = getTextarea(container);
 
 		typeIntoTextarea(textarea, '@Re');
@@ -520,9 +546,10 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 		});
 	});
 
-	it('does not show dropdown when no @ is in the text', () => {
+	it('does not show dropdown when no @ is in the text', async () => {
 		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 		const textarea = getTextarea(container);
 
 		typeIntoTextarea(textarea, 'hello world');
@@ -533,6 +560,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	it('navigates down in the dropdown list with ArrowDown', async () => {
 		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 		const textarea = getTextarea(container);
 
 		typeIntoTextarea(textarea, '@');
@@ -556,6 +584,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	it('does not select agent on Shift+Enter (allows newline insertion)', async () => {
 		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 		const textarea = getTextarea(container);
 
 		typeIntoTextarea(textarea, '@Co');
@@ -576,6 +605,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	it('navigates up in the dropdown list with ArrowUp', async () => {
 		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 		const textarea = getTextarea(container);
 
 		typeIntoTextarea(textarea, '@');
@@ -645,6 +675,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 		mockTasks.value = [makeWorkflowTask()];
 
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 		const textarea = getTextarea(container);
 
 		typeIntoTextarea(textarea, '@');
@@ -661,6 +692,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 		// Workflow includes both Coder and Reviewer
 		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
+		await waitForWorkflowLoaded(container);
 		const textarea = getTextarea(container);
 
 		// Type '@Re' — only Reviewer should match

@@ -36,6 +36,9 @@ vi.mock('../../../lib/space-store', () => ({
 		get workflows() {
 			return workflowsSignal;
 		},
+		fetchWorkflowDetail: vi.fn((id: string) =>
+			Promise.resolve(workflowsSignal.value.find((w) => w.id === id) ?? null)
+		),
 	},
 }));
 

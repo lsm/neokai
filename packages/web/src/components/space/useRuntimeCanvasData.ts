@@ -60,11 +60,20 @@ export function useRuntimeCanvasData(
 	workflowId: string | null,
 	runId: string | null
 ): RuntimeCanvasData {
-	const workflows = spaceStore.workflows.value;
 	const agents = spaceStore.agents.value;
 	const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
 
-	const workflow = workflowId ? (workflows.find((w) => w.id === workflowId) ?? null) : null;
+	const [workflow, setWorkflow] = useState<SpaceWorkflow | null>(null);
+
+	useEffect(() => {
+		if (!workflowId) {
+			setWorkflow(null);
+			return;
+		}
+		spaceStore.fetchWorkflowDetail(workflowId).then((wf) => {
+			setWorkflow(wf);
+		});
+	}, [workflowId]);
 
 	const [viewportState, setViewportState] = useState<ViewportState>({
 		offsetX: 0,

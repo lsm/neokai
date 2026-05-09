@@ -49,10 +49,17 @@ export function useRunGateSummaries(
 	runId: string | null | undefined,
 	workflowId: string | null | undefined
 ): { summaries: RunGateSummary[] | undefined; fetchError: string | null; retry: () => void } {
-	const workflow = workflowId
-		? (spaceStore.workflows.value.find((w) => w.id === workflowId) ?? null)
-		: null;
-	const gates: Gate[] = workflow?.gates ?? [];
+	const [gates, setGates] = useState<Gate[]>([]);
+
+	useEffect(() => {
+		if (!workflowId) {
+			setGates([]);
+			return;
+		}
+		spaceStore.fetchWorkflowDetail(workflowId).then((wf) => {
+			setGates(wf?.gates ?? []);
+		});
+	}, [workflowId]);
 
 	const [gateDataMap, setGateDataMap] = useState<Map<string, Record<string, unknown>> | null>(null);
 	const [fetchError, setFetchError] = useState<string | null>(null);

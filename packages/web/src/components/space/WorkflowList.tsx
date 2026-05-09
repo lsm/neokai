@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect } from 'preact/hooks';
-import type { SpaceWorkflow, SpaceExportBundle, DuplicateDriftReport } from '@neokai/shared';
+import type { SpaceWorkflowSummary, SpaceExportBundle, DuplicateDriftReport } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 
 type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
@@ -56,45 +56,23 @@ function MiniConnector({ conditionType }: { conditionType?: WorkflowConditionTyp
 // Show at most MAX_DOTS dots; if there are more steps, show a "+N" overflow label.
 const MAX_DOTS = 6;
 
-function MiniStepViz({ workflow }: { workflow: SpaceWorkflow }) {
-	if (workflow.nodes.length === 0) {
+function MiniStepViz({ workflow }: { workflow: SpaceWorkflowSummary }) {
+	if (workflow.nodeCount === 0) {
 		return <span class="text-xs text-gray-700 italic">No steps</span>;
 	}
 
-	// Build ordered step list: startNode first, then remaining nodes in order
-	const stepMap = new Map(workflow.nodes.map((s) => [s.id, s]));
-	const ordered: string[] = [];
-	const visited = new Set<string>();
-
-	const startNode = stepMap.get(workflow.startNodeId);
-	if (startNode) {
-		visited.add(startNode.id);
-		ordered.push(startNode.id);
-	}
-
-	for (const s of workflow.nodes) {
-		if (!visited.has(s.id)) {
-			ordered.push(s.id);
-		}
-	}
-
 	// Cap display at MAX_DOTS; show overflow count if needed
-	const overflow = ordered.length > MAX_DOTS ? ordered.length - MAX_DOTS : 0;
-	const display = overflow > 0 ? ordered.slice(0, MAX_DOTS) : ordered;
+	const overflow = workflow.nodeCount > MAX_DOTS ? workflow.nodeCount - MAX_DOTS : 0;
+	const display = overflow > 0 ? workflow.nodeCount - overflow : workflow.nodeCount;
 
 	return (
 		<div class="flex items-center gap-0 overflow-hidden">
-			{display.map((id, i) => {
-				const step = stepMap.get(id);
-				const nextId = i + 1 < display.length ? display[i + 1] : undefined;
-
-				return (
-					<div key={id} class="flex items-center" title={step?.name ?? id}>
-						<MiniStepDot isStart={i === 0} />
-						{nextId && <MiniConnector conditionType={undefined} />}
-					</div>
-				);
-			})}
+			{Array.from({ length: display }).map((_, i) => (
+				<div key={i} class="flex items-center">
+					<MiniStepDot isStart={i === 0} />
+					{i + 1 < display && <MiniConnector conditionType={undefined} />}
+				</div>
+			))}
 			{overflow > 0 && <span class="text-xs text-gray-600 ml-1">+{overflow}</span>}
 		</div>
 	);
@@ -121,7 +99,7 @@ interface DuplicateDriftInfo {
 }
 
 interface WorkflowCardProps {
-	workflow: SpaceWorkflow;
+	workflow: SpaceWorkflowSummary;
 	spaceId: string;
 	spaceName: string;
 	onEdit: () => void;
@@ -403,7 +381,7 @@ function WorkflowCard({
 			{/* Step count + tags footer */}
 			<div class="mt-2.5 flex items-center gap-2 flex-wrap">
 				<span class="text-xs text-gray-600">
-					{workflow.nodes.length} {workflow.nodes.length === 1 ? 'step' : 'steps'}
+					{workflow.nodeCount} {workflow.nodeCount === 1 ? 'step' : 'steps'}
 				</span>
 				{workflow.tags.length > 0 && (
 					<>
@@ -524,7 +502,7 @@ function WorkflowCard({
 interface WorkflowListProps {
 	spaceId: string;
 	spaceName: string;
-	workflows: SpaceWorkflow[];
+	workflows: SpaceWorkflowSummary[];
 	onCreateWorkflow: () => void;
 	onEditWorkflow: (workflowId: string) => void;
 }

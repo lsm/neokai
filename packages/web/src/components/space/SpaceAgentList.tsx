@@ -15,7 +15,6 @@ import { useState, useEffect } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
-import { Modal } from '../ui/Modal';
 import type { Space, SpaceAgent, AgentDriftReport, TaskAgentConfig } from '@neokai/shared';
 import { SpaceAgentEditor } from './SpaceAgentEditor';
 import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect';
@@ -340,7 +339,6 @@ function AgentIcon() {
 export function SpaceAgentList() {
 	const agents = spaceStore.agents.value;
 	const loading = spaceStore.loading.value;
-	const workflows = spaceStore.workflows.value;
 	const spaceId = spaceStore.spaceId.value;
 	const space = spaceStore.space.value;
 
@@ -421,12 +419,6 @@ export function SpaceAgentList() {
 		}
 	};
 
-	function getWorkflowNamesReferencingAgent(agentId: string): string[] {
-		return workflows
-			.filter((wf) => wf.nodes.some((step) => step.agents.some((a) => a.agentId === agentId)))
-			.map((wf) => wf.name);
-	}
-
 	const handleEdit = (agent: SpaceAgent) => {
 		setEditingAgent(agent);
 		setEditorOpen(true);
@@ -461,9 +453,8 @@ export function SpaceAgentList() {
 		}
 	};
 
-	const referencedWorkflows = deletingAgent
-		? getWorkflowNamesReferencingAgent(deletingAgent.id)
-		: [];
+	// Workflow reference check removed: SpaceWorkflowSummary no longer includes
+	// node/agent details. The daemon still blocks deletion of in-use agents.
 
 	const existingAgentNames = agents.filter((a) => a.id !== editingAgent?.id).map((a) => a.name);
 
@@ -548,39 +539,9 @@ export function SpaceAgentList() {
 				/>
 			)}
 
-			{/* Blocked delete: agent is still referenced by one or more workflows */}
-			{deletingAgent && referencedWorkflows.length > 0 && (
-				<Modal isOpen onClose={() => setDeletingAgent(null)} title="Cannot Delete Agent" size="sm">
-					<div class="space-y-4">
-						<p class="text-sm text-gray-300 leading-relaxed">
-							<span class="font-medium text-gray-100">"{deletingAgent.name}"</span> is currently
-							used in the following {referencedWorkflows.length === 1 ? 'workflow' : 'workflows'}:
-						</p>
-						<ul class="list-disc list-inside space-y-1">
-							{referencedWorkflows.map((name) => (
-								<li key={name} class="text-sm text-amber-300">
-									{name}
-								</li>
-							))}
-						</ul>
-						<p class="text-xs text-gray-500">
-							Remove this agent from all workflow steps first, then delete it.
-						</p>
-						<div class="flex justify-end pt-1">
-							<button
-								type="button"
-								onClick={() => setDeletingAgent(null)}
-								class="px-4 py-2 text-sm font-medium text-gray-200 bg-dark-700 hover:bg-dark-600 rounded-lg transition-colors"
-							>
-								Understood
-							</button>
-						</div>
-					</div>
-				</Modal>
-			)}
-
+			{/* Standard delete confirmation */}
 			{/* Standard delete confirmation: agent is not referenced by any workflow */}
-			{deletingAgent && referencedWorkflows.length === 0 && (
+			{deletingAgent && (
 				<ConfirmModal
 					isOpen
 					onClose={() => {

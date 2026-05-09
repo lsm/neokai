@@ -30,6 +30,9 @@ vi.mock('../../../lib/space-store', () => ({
 			agents: mockAgents,
 			tasks: mockTasks,
 			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
+			fetchWorkflowDetail: vi.fn((id: string) =>
+				Promise.resolve(mockWorkflows.value.find((w) => w.id === id) ?? null)
+			),
 		};
 	},
 }));
@@ -166,7 +169,7 @@ describe('ReadOnlyWorkflowCanvas', () => {
 		expect(canvas.getAttribute('data-node-count')).toBe('0');
 	});
 
-	it('calls onNodeClick when a node is selected, passing persisted ID and node name', () => {
+	it('calls onNodeClick when a node is selected, passing persisted ID and node name', async () => {
 		mockWorkflows.value = [makeWorkflow()];
 		const onNodeClick = vi.fn();
 		const { getByTestId } = render(
@@ -174,8 +177,10 @@ describe('ReadOnlyWorkflowCanvas', () => {
 		);
 		// Find the button whose data-step-id is the persisted ID 'n1'
 		const canvas = getByTestId('visual-workflow-canvas');
+		await waitFor(() => {
+			expect(canvas.querySelector('[data-step-id="n1"]')).not.toBeNull();
+		});
 		const nodeBtn = canvas.querySelector('[data-step-id="n1"]') as HTMLElement;
-		expect(nodeBtn).not.toBeNull();
 		nodeBtn.click();
 		expect(onNodeClick).toHaveBeenCalledTimes(1);
 		// Called with persisted node ID and node name

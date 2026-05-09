@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act, cleanup } from '@testing-library/preact';
+import { renderHook, act, cleanup, waitFor } from '@testing-library/preact';
 import { signal, computed } from '@preact/signals';
 import type { SpaceAgent, SpaceWorkflow, NodeExecution, Gate } from '@neokai/shared';
 
@@ -42,6 +42,9 @@ vi.mock('../../../lib/space-store', () => ({
 			workflows: mockWorkflows,
 			agents: mockAgents,
 			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
+			fetchWorkflowDetail: vi.fn((id: string) =>
+				Promise.resolve(mockWorkflows.value.find((w) => w.id === id) ?? null)
+			),
 		};
 	},
 }));
@@ -167,14 +170,15 @@ describe('useRuntimeCanvasData', () => {
 		expect(result.current.workflow).toBeNull();
 	});
 
-	it('correctly maps SpaceWorkflow nodes to WorkflowNodeData with stepIndex, isStartNode, isEndNode', () => {
+	it('correctly maps SpaceWorkflow nodes to WorkflowNodeData with stepIndex, isStartNode, isEndNode', async () => {
 		mockWorkflows.value = [makeWorkflow()];
 		const { result } = renderHook(() => useRuntimeCanvasData('wf-1', null));
 
-		const { nodeData } = result.current;
-		// Task Agent is excluded — only n1 and n2
-		expect(nodeData).toHaveLength(2);
+		await waitFor(() => {
+			expect(result.current.nodeData.length).toBe(2);
+		});
 
+		const { nodeData } = result.current;
 		const first = nodeData[0];
 		expect(first.stepIndex).toBe(0);
 		expect(first.step.id).toBe('n1');
@@ -188,7 +192,7 @@ describe('useRuntimeCanvasData', () => {
 		expect(second.isEndNode).toBe(true);
 	});
 
-	it('derives nodeTaskStates from nodeExecutionsByNodeId filtered by runId', () => {
+	it('derives nodeTaskStates from nodeExecutionsByNodeId filtered by runId', async () => {
 		mockWorkflows.value = [makeWorkflow()];
 		mockNodeExecutions.value = [
 			makeNodeExecution({
@@ -207,8 +211,12 @@ describe('useRuntimeCanvasData', () => {
 		];
 
 		const { result } = renderHook(() => useRuntimeCanvasData('wf-1', 'run-1'));
-		const { nodeData } = result.current;
 
+		await waitFor(() => {
+			expect(result.current.nodeData.length).toBeGreaterThan(0);
+		});
+
+		const { nodeData } = result.current;
 		const n1 = nodeData.find((n) => n.step.id === 'n1');
 		expect(n1?.nodeTaskStates).toHaveLength(1);
 		expect(n1?.nodeTaskStates?.[0].status).toBe('done');
@@ -262,15 +270,13 @@ describe('useRuntimeCanvasData', () => {
 
 		const { result } = renderHook(() => useRuntimeCanvasData('wf-1', 'run-1'));
 
-		await act(async () => {
-			await new Promise((resolve) => setTimeout(resolve, 20));
+		await waitFor(() => {
+			const { channelEdges } = result.current;
+			const edge = channelEdges.find(
+				(e) => e.fromStepId !== 'task-agent' && e.toStepId !== 'task-agent'
+			);
+			expect(edge?.runtimeStatus).toBe('open');
 		});
-
-		const { channelEdges } = result.current;
-		const edge = channelEdges.find(
-			(e) => e.fromStepId !== 'task-agent' && e.toStepId !== 'task-agent'
-		);
-		expect(edge?.runtimeStatus).toBe('open');
 	});
 
 	it('computes runtimeStatus: "waiting_human" when gate data is empty and gate has human approval field', async () => {
@@ -293,15 +299,13 @@ describe('useRuntimeCanvasData', () => {
 
 		const { result } = renderHook(() => useRuntimeCanvasData('wf-1', 'run-1'));
 
-		await act(async () => {
-			await new Promise((resolve) => setTimeout(resolve, 20));
+		await waitFor(() => {
+			const { channelEdges } = result.current;
+			const edge = channelEdges.find(
+				(e) => e.fromStepId !== 'task-agent' && e.toStepId !== 'task-agent'
+			);
+			expect(edge?.runtimeStatus).toBe('waiting_human');
 		});
-
-		const { channelEdges } = result.current;
-		const edge = channelEdges.find(
-			(e) => e.fromStepId !== 'task-agent' && e.toStepId !== 'task-agent'
-		);
-		expect(edge?.runtimeStatus).toBe('waiting_human');
 	});
 
 	it('computes runtimeStatus: "blocked" when gate data shows approved=false', async () => {
@@ -323,14 +327,12 @@ describe('useRuntimeCanvasData', () => {
 
 		const { result } = renderHook(() => useRuntimeCanvasData('wf-1', 'run-1'));
 
-		await act(async () => {
-			await new Promise((resolve) => setTimeout(resolve, 20));
+		await waitFor(() => {
+			const { channelEdges } = result.current;
+			const edge = channelEdges.find(
+				(e) => e.fromStepId !== 'task-agent' && e.toStepId !== 'task-agent'
+			);
+			expect(edge?.runtimeStatus).toBe('blocked');
 		});
-
-		const { channelEdges } = result.current;
-		const edge = channelEdges.find(
-			(e) => e.fromStepId !== 'task-agent' && e.toStepId !== 'task-agent'
-		);
-		expect(edge?.runtimeStatus).toBe('blocked');
 	});
 });

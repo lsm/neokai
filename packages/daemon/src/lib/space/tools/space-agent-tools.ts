@@ -234,7 +234,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		 * The LLM agent calls this first to understand available options.
 		 */
 		async list_workflows(): Promise<ToolResult> {
-			const workflows = workflowManager.listWorkflows(spaceId);
+			const workflows = workflowManager.listWorkflowSummaries(spaceId);
 			return jsonResult({ success: true, workflows });
 		},
 
@@ -357,7 +357,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		 * read it from structured tool logs for observability.
 		 */
 		async suggest_workflow(_args: { description: string }): Promise<ToolResult> {
-			const allWorkflows = workflowManager.listWorkflows(spaceId).filter((w) => !w.disabled);
+			const allWorkflows = workflowManager
+				.listWorkflowSummaries(spaceId)
+				.filter((w) => !w.disabled);
 			if (allWorkflows.length === 0) {
 				return jsonResult({
 					success: true,
@@ -1200,7 +1202,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.string()
 					.optional()
 					.describe(
-						'ID of the workflow to use for this task. When provided, the runtime uses this workflow instead of auto-selecting one. Example: "67b42e04-ae03-425d-b267-40527b042dcc" for Coding with QA Workflow.'
+						'ID of the workflow to use for this task. When provided, the runtime uses this workflow instead of auto-selecting one. Call list_workflows to discover available workflow IDs.'
 					),
 				depends_on: z
 					.array(z.string())
