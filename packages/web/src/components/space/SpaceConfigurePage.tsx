@@ -80,7 +80,14 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 		setEditingWorkflow(undefined);
 		// Fetch full workflow detail for editing — spaceStore.workflows only holds summaries
 		spaceStore.fetchWorkflowDetail(workflowEditId).then((wf) => {
-			if (!cancelled) setEditingWorkflow(wf ?? undefined);
+			if (cancelled) return;
+			if (wf) {
+				setEditingWorkflow(wf);
+			} else {
+				// Fetch failed or workflow was deleted concurrently — reset the edit
+				// target so the user can retry by clicking Edit again.
+				setWorkflowEditId(null);
+			}
 		});
 		return () => {
 			cancelled = true;

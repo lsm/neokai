@@ -64,7 +64,11 @@ export function useRunGateSummaries(
 		// a previous workflow's gate list while the new fetch is in flight.
 		setGates([]);
 		spaceStore.fetchWorkflowDetail(workflowId).then((wf) => {
-			if (!cancelled) setGates(wf?.gates ?? []);
+			if (cancelled) return;
+			// Only update gates when the fetch succeeds. If wf is null (transient
+			// RPC failure or concurrently deleted workflow), leave gates as [] from
+			// the clear above rather than explicitly mapping failure to "no gates".
+			if (wf) setGates(wf.gates ?? []);
 		});
 		return () => {
 			cancelled = true;
