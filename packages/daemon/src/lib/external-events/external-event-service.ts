@@ -16,6 +16,7 @@ import type { InternalEventBus } from '../internal-event-bus';
 import type { ExternalEventStore } from './external-event-store';
 import type { ExternalEventTaskResolver } from './external-event-task-resolver';
 import type { ExternalEvent } from './types';
+import { TERMINAL_EVENT_STATES } from './types';
 
 export type PublishOutcome = 'published' | 'duplicate_terminal' | 'retryable_duplicate' | 'ignored';
 
@@ -148,20 +149,25 @@ export class ExternalEventService implements ExternalEventPublisher {
 		canonicalEvent: ExternalEvent
 	): Promise<PublishResult> {
 		// Preserve canonical route: if already routed/delivery_failed with a
-		// routedTaskId, do not re-resolve and risk changing the target.
+		// valid routedTaskId, do not re-resolve and risk changing the target.
 		let canonicalRec = this.store.getById(canonicalEvent.id);
-		if (canonicalRec != null && canonicalRec.event.routedTaskId) {
+		const canonicalRoutedTaskId = canonicalRec?.event.routedTaskId;
+		if (
+			canonicalRec != null &&
+			typeof canonicalRoutedTaskId === 'string' &&
+			canonicalRoutedTaskId.trim() !== ''
+		) {
 			// Reconcile stale state: if the canonical event carries a routedTaskId
 			// but is still in `published` state (e.g. routedTaskId was set directly
 			// by a source extension without advancing state), promote it to `routed`.
 			if (canonicalRec.state === 'published') {
 				this.store.updateEventState(canonicalEvent.id, 'routed');
 			}
-			await this._publishBusEvent(canonicalEvent, canonicalRec.event.routedTaskId);
+			await this._publishBusEvent(canonicalEvent, canonicalRoutedTaskId);
 			return {
 				outcome: 'retryable_duplicate',
 				eventId: canonicalEvent.id,
-				routedTaskId: canonicalRec.event.routedTaskId,
+				routedTaskId: canonicalRoutedTaskId,
 			};
 		}
 
@@ -170,6 +176,18 @@ export class ExternalEventService implements ExternalEventPublisher {
 		// Re-read canonical state after the await — another actor may have
 		// advanced it while the resolver was running.
 		canonicalRec = this.store.getById(canonicalEvent.id);
+
+		// If the canonical event became terminal while we were resolving,
+		// do not overwrite its state or routedTaskId. Re-emit the canonical
+		// payload so subscribers recover, then return retryable_duplicate.
+		if (canonicalRec != null && TERMINAL_EVENT_STATES.has(canonicalRec.state)) {
+			await this._publishBusEvent(canonicalEvent, canonicalRec.event.routedTaskId);
+			return {
+				outcome: 'retryable_duplicate',
+				eventId: canonicalEvent.id,
+				routedTaskId: canonicalRec.event.routedTaskId ?? undefined,
+			};
+		}
 
 		if (resolution.type === 'enriched') {
 			// New observation enriched the previously unresolvable event.

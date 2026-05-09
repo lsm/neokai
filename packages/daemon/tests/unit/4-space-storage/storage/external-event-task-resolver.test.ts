@@ -122,6 +122,16 @@ describe('trusted routedTaskId', () => {
 
 		expect(result.type).toBe('enriched');
 	});
+
+	test('padded routedTaskId is normalized (trimmed) before returning', async () => {
+		const event = makeEvent({ routedTaskId: '  task-trusted  ' });
+		const result = await resolver.resolve(event);
+
+		expect(result.type).toBe('enriched');
+		if (result.type === 'enriched') {
+			expect(result.routedTaskId).toBe('task-trusted');
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -450,7 +460,24 @@ describe('ignored resolution', () => {
 	});
 
 	test('whitespace-only repoName returns ignored', async () => {
-		const result = await resolver.resolve(makeEvent({ repoName: '	' }));
+		const result = await resolver.resolve(makeEvent({ repoName: '\t' }));
 		expect(result.type).toBe('ignored');
+	});
+
+	test('padded repoOwner/repoName are normalized before filtering', async () => {
+		const task = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Fix bug #42',
+			description: 'lsm/neokai',
+			status: 'open',
+		});
+
+		const event = makeEvent({ repoOwner: '  lsm  ', repoName: '  neokai  ' });
+		const result = await resolver.resolve(event);
+
+		expect(result.type).toBe('enriched');
+		if (result.type === 'enriched') {
+			expect(result.routedTaskId).toBe(task.id);
+		}
 	});
 });

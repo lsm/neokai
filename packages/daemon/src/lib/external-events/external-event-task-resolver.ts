@@ -134,7 +134,7 @@ export class GitHubExternalEventTaskResolver implements ExternalEventTaskResolve
 			typeof event.routedTaskId === 'string' &&
 			event.routedTaskId.trim() !== ''
 		) {
-			return { type: 'enriched', routedTaskId: event.routedTaskId };
+			return { type: 'enriched', routedTaskId: event.routedTaskId.trim() };
 		}
 
 		// 2. Heuristic: PR number + repo match against open tasks in the space.
@@ -153,6 +153,10 @@ export class GitHubExternalEventTaskResolver implements ExternalEventTaskResolve
 		const tasks = this.config.taskRepo.listBySpace(event.spaceId, false);
 		const repoFilter = this.config.taskRepoFilter ?? defaultRepoFilter;
 
+		// Normalize repo metadata to avoid false negatives from padded input.
+		const normalizedOwner = event.repoOwner.trim();
+		const normalizedName = event.repoName.trim();
+
 		const candidates = tasks.filter((t) => {
 			if (t.status !== 'open' && t.status !== 'in_progress') {
 				return false;
@@ -160,7 +164,7 @@ export class GitHubExternalEventTaskResolver implements ExternalEventTaskResolve
 			if (!titleContainsPrNumber(t.title, event.prNumber!)) {
 				return false;
 			}
-			return repoFilter(t, event.repoOwner!, event.repoName!);
+			return repoFilter(t, normalizedOwner, normalizedName);
 		});
 
 		if (candidates.length === 0) {

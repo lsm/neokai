@@ -281,6 +281,68 @@ describe('publish — duplicates', () => {
 		expect(busReceived[0]!.routedTaskId).toBe('task-canonical');
 	});
 
+	test('retryable duplicate skips fast-path for whitespace-only canonical routedTaskId', async () => {
+		const event = makeEvent();
+		store.store(event);
+		store.setRoutedTaskId(event.id, '   ');
+
+		// Seed a matching task so the resolver can enrich
+		taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Fix bug #42',
+			description: 'lsm/neokai',
+			status: 'open',
+		});
+
+		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
+		const result = await service.publish(dup);
+
+		// Whitespace-only canonical routedTaskId is ignored; resolver re-runs
+		expect(result.outcome).toBe('published');
+		expect(result.routedTaskId).toBeDefined();
+	});
+
+	test('retryable duplicate skips enrichment if canonical became terminal during resolve', async () => {
+		const busReceived: ExternalEventPublishedPayload[] = [];
+		bus.subscribe(
+			'externalEvent.published',
+			(data) => {
+				busReceived.push(data);
+			},
+			{ subscriberName: 'sub' }
+		);
+
+		// First observation: no matching task, stays published.
+		const event = makeEvent();
+		await service.publish(event);
+		expect(store.getById(event.id)!.state).toBe('published');
+		expect(busReceived).toHaveLength(1);
+
+		// Inject a custom resolver that simulates a slow resolve and
+		// terminalizes the canonical event mid-flight.
+		const slowResolver: ExternalEventTaskResolver = {
+			async resolve(): Promise<TaskResolution> {
+				// Simulate another actor terminalizing the event while we await.
+				store.markEventAmbiguous(event.id);
+				return { type: 'enriched', routedTaskId: 'task-slow' };
+			},
+		};
+
+		const customService = new ExternalEventService(store, slowResolver, bus);
+		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
+		const result = await customService.publish(dup);
+
+		// Canonical became terminal (ambiguous) during resolve.
+		// Should NOT overwrite state or persist the new routedTaskId.
+		expect(result.outcome).toBe('retryable_duplicate');
+		expect(store.getById(event.id)!.state).toBe('ambiguous');
+		// The canonical routedTaskId should remain undefined
+		expect(store.getById(event.id)!.event.routedTaskId).toBeUndefined();
+		// Bus was re-emitted with canonical payload (no routedTaskId)
+		expect(busReceived).toHaveLength(2);
+		expect(busReceived[1]!.routedTaskId).toBeUndefined();
+	});
+
 	test('retryable duplicate enriches without regressing delivery_failed state', async () => {
 		const busReceived: ExternalEventPublishedPayload[] = [];
 		bus.subscribe(
