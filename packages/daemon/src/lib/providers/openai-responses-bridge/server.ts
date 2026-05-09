@@ -106,7 +106,7 @@ type ResponsesInputItem =
 	| {
 			type: 'function_call_output';
 			call_id: string;
-			output: string;
+			output: string | Array<{ type: 'text'; text: string } | ResponsesInputImage>;
 	  }
 	| ResponsesReasoningItem;
 
@@ -257,7 +257,15 @@ const ESTIMATED_IMAGE_TOKENS = 300;
 
 function estimateResponsesContentTokens(item: ResponsesInputItem): number {
 	if (item.type === 'function_call_output') {
-		return estimateTextTokens(item.output);
+		if (typeof item.output === 'string') {
+			return estimateTextTokens(item.output);
+		}
+		return item.output.reduce((sum, block) => {
+			if (block.type === 'input_image') {
+				return sum + ESTIMATED_IMAGE_TOKENS;
+			}
+			return sum + estimateTextTokens(block.text);
+		}, 0);
 	}
 	if (item.type === 'function_call') {
 		return estimateTextTokens(item.name) + estimateTextTokens(item.arguments);
@@ -307,19 +315,30 @@ function estimateResponsesPayloadTokens(
 	);
 }
 
-function toolResultText(content: AnthropicContentBlockToolResult['content']): string {
+function toolResultContent(
+	content: AnthropicContentBlockToolResult['content']
+): string | Array<{ type: 'text'; text: string } | ResponsesInputImage> {
 	if (typeof content === 'string') return content;
-	return content
-		.map((block) => {
-			if (block.type === 'text') return block.text;
-			if (block.type === 'image') {
-				const sourceType =
-					'source' in block && block.source?.type === 'url' ? 'URL' : 'base64 image';
-				return `[Image: ${sourceType}]`;
-			}
-			return `[Unsupported content block: ${(block as { type?: string }).type ?? 'unknown'}]`;
-		})
-		.join('\n');
+	const hasNonText = content.some((block) => block.type !== 'text');
+	if (!hasNonText) {
+		return content.map((block) => (block.type === 'text' ? block.text : '')).join('\n');
+	}
+	const result: Array<{ type: 'text'; text: string } | ResponsesInputImage> = [];
+	for (const block of content) {
+		if (block.type === 'text') {
+			result.push({ type: 'text', text: block.text });
+			continue;
+		}
+		if (block.type === 'image') {
+			result.push(imageBlockToInputImage(block));
+			continue;
+		}
+		result.push({
+			type: 'text',
+			text: `[Unsupported content block: ${(block as { type?: string }).type ?? 'unknown'}]`,
+		});
+	}
+	return result;
 }
 
 function appendInputMessage(
@@ -392,13 +411,17 @@ function appendUserBlocks(items: ResponsesInputItem[], blocks: AnthropicContentB
 		}
 		if (block.type === 'tool_result') {
 			const result = block as AnthropicContentBlockToolResult & { is_error?: boolean };
-			const output = toolResultText(result.content);
+			const output = toolResultContent(result.content);
 			appendInputMessage(items, 'user', contentParts);
 			contentParts.length = 0;
 			items.push({
 				type: 'function_call_output',
 				call_id: result.tool_use_id,
-				output: result.is_error ? `[Tool error]\n${output}` : output,
+				output: result.is_error
+					? typeof output === 'string'
+						? `[Tool error]\n${output}`
+						: [{ type: 'text' as const, text: `[Tool error]` }, ...output]
+					: output,
 			});
 			continue;
 		}
@@ -1237,13 +1260,16 @@ export function createOpenAIResponsesBridgeServer(
 			if (storedReasoning && storedReasoning.length > 0) {
 				continuation = undefined;
 			}
-			let requestBody = buildResponsesRequest(
-				body,
-				model,
-				continuation,
-				buildOpts,
-				storedReasoning
-			);
+			let requestBody: ResponsesRequest;
+			try {
+				requestBody = buildResponsesRequest(body, model, continuation, buildOpts, storedReasoning);
+			} catch (err) {
+				return sendJsonError(
+					400,
+					'invalid_request_error',
+					err instanceof Error ? err.message : 'Bad Request'
+				);
+			}
 			const upstreamUrl = `${baseUrl.replace(/\/$/, '')}/responses`;
 			let openAIResponse: Response;
 			try {

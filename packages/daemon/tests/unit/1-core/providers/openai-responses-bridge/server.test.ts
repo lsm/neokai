@@ -285,7 +285,7 @@ describe('openai-responses-bridge server', () => {
 		]);
 	});
 
-	it('preserves non-text blocks in tool_result content as placeholders', () => {
+	it('preserves non-text blocks in tool_result content as structured output', () => {
 		const input = anthropicMessagesToResponsesInput([
 			{
 				role: 'assistant',
@@ -320,7 +320,47 @@ describe('openai-responses-bridge server', () => {
 			{
 				type: 'function_call_output',
 				call_id: 'call_1',
-				output: 'Screenshot taken.\n[Image: base64 image]',
+				output: [
+					{ type: 'text', text: 'Screenshot taken.' },
+					{ type: 'input_image', image_url: 'data:image/png;base64,screendata' },
+				],
+			},
+		]);
+	});
+
+	it('flattens text-only tool_result content to a string', () => {
+		const input = anthropicMessagesToResponsesInput([
+			{
+				role: 'assistant',
+				content: [{ type: 'tool_use', id: 'call_1', name: 'lookup', input: {} }],
+			},
+			{
+				role: 'user',
+				content: [
+					{
+						type: 'tool_result',
+						tool_use_id: 'call_1',
+						content: [
+							{ type: 'text', text: 'Line 1' },
+							{ type: 'text', text: 'Line 2' },
+						],
+					},
+				],
+			},
+		]);
+
+		expect(input).toEqual([
+			{
+				type: 'function_call',
+				call_id: 'call_1',
+				name: 'lookup',
+				arguments: '{}',
+				status: 'completed',
+			},
+			{
+				type: 'function_call_output',
+				call_id: 'call_1',
+				output: 'Line 1\nLine 2',
 			},
 		]);
 	});
@@ -1240,6 +1280,86 @@ describe('openai-responses-bridge server', () => {
 		});
 		expect(events.at(-1)?.event).toBe('message_stop');
 		expect(messageDeltaEvent(events)).toBeUndefined();
+	});
+
+	it('returns 400 for unsupported user content blocks', async () => {
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async () =>
+				new Response(JSON.stringify({ error: { message: 'should not reach upstream' } }), {
+					status: 500,
+				}),
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [
+					{
+						role: 'user',
+						content: [
+							{
+								type: 'document',
+								source: {
+									type: 'base64',
+									media_type: 'application/pdf',
+									data: 'pdfdata',
+								},
+							} as unknown as { type: 'text'; text: string },
+						],
+					},
+				],
+			}),
+		});
+
+		const body = (await resp.json()) as { error: { type: string; message: string } };
+		expect(resp.status).toBe(400);
+		expect(body.error.type).toBe('invalid_request_error');
+		expect(body.error.message).toContain('Unsupported user content block type: document');
+	});
+
+	it('returns 400 for unsupported image source types', async () => {
+		server = createOpenAIResponsesBridgeServer({
+			auth: { source: 'api_key', apiKey: 'sk-test' },
+			models,
+			fetchImpl: async () =>
+				new Response(JSON.stringify({ error: { message: 'should not reach upstream' } }), {
+					status: 500,
+				}),
+		});
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'gpt-5.3-codex',
+				max_tokens: 128,
+				messages: [
+					{
+						role: 'user',
+						content: [
+							{
+								type: 'image',
+								source: { type: 'file', media_type: 'image/png', data: 'filedata' } as unknown as {
+									type: 'base64';
+									media_type: string;
+									data: string;
+								},
+							},
+						],
+					},
+				],
+			}),
+		});
+
+		const body = (await resp.json()) as { error: { type: string; message: string } };
+		expect(resp.status).toBe(400);
+		expect(body.error.type).toBe('invalid_request_error');
+		expect(body.error.message).toContain('Unsupported image source type: file');
 	});
 
 	it('maps upstream 429 responses to Anthropic rate_limit_error', async () => {
