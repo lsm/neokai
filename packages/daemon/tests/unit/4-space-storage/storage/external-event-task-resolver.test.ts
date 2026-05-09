@@ -15,12 +15,12 @@
  *   - No direct workflow/task/gate table queries
  */
 
-import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { createSpaceTables } from '../../helpers/space-test-db';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import { GitHubExternalEventTaskResolver } from '../../../../src/lib/external-events/external-event-task-resolver';
-import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 let db: Database;
 let taskRepo: SpaceTaskRepository;
@@ -76,6 +76,52 @@ describe('trusted routedTaskId', () => {
 			expect(result.routedTaskId).toBe('task-trusted');
 		}
 	});
+
+	test('empty string routedTaskId falls through to heuristic matching', async () => {
+		const task = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Fix bug #42',
+			description: 'lsm/neokai',
+			status: 'open',
+		});
+
+		const event = makeEvent({ routedTaskId: '' });
+		const result = await resolver.resolve(event);
+
+		expect(result.type).toBe('enriched');
+		if (result.type === 'enriched') {
+			expect(result.routedTaskId).toBe(task.id);
+		}
+	});
+
+	test('whitespace-only routedTaskId falls through to heuristic matching', async () => {
+		taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Fix bug #42',
+			description: 'lsm/neokai',
+			status: 'open',
+		});
+
+		const event = makeEvent({ routedTaskId: '   ' });
+		const result = await resolver.resolve(event);
+
+		// PR number exists but only one matching task → enriched
+		expect(result.type).toBe('enriched');
+	});
+
+	test('non-string routedTaskId falls through to heuristic matching', async () => {
+		taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Fix bug #42',
+			description: 'lsm/neokai',
+			status: 'open',
+		});
+
+		const event = makeEvent({ routedTaskId: 123 as unknown as string });
+		const result = await resolver.resolve(event);
+
+		expect(result.type).toBe('enriched');
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -127,54 +173,45 @@ describe('heuristic PR matching', () => {
 		expect(result.type).toBe('unknown');
 	});
 
-	test('archived tasks are excluded from matching', async () => {
-		taskRepo.createTask({
+	test('only open and in_progress tasks are included in matching', async () => {
+		const openTask = taskRepo.createTask({
 			spaceId: SPACE_ID,
-			title: 'Fix bug #42',
+			title: 'Open bug #42',
 			description: 'lsm/neokai',
-			status: 'archived',
+			status: 'open',
 		});
-
-		const result = await resolver.resolve(makeEvent());
-		expect(result.type).toBe('unknown');
-	});
-
-	test('done tasks are excluded from matching', async () => {
-		taskRepo.createTask({
+		const inProgressTask = taskRepo.createTask({
 			spaceId: SPACE_ID,
-			title: 'Fix bug #42',
-			description: 'lsm/neokai',
-			status: 'done',
-		});
-
-		const result = await resolver.resolve(makeEvent());
-		expect(result.type).toBe('unknown');
-	});
-
-	test('cancelled tasks are excluded from matching', async () => {
-		taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Fix bug #42',
-			description: 'lsm/neokai',
-			status: 'cancelled',
-		});
-
-		const result = await resolver.resolve(makeEvent());
-		expect(result.type).toBe('unknown');
-	});
-
-	test('in_progress tasks are included in matching', async () => {
-		const task = taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Fix bug #42',
+			title: 'In-progress bug #42',
 			description: 'lsm/neokai',
 			status: 'in_progress',
 		});
 
+		// All non-open/in_progress statuses should be excluded
+		const excludedStatuses = [
+			'archived',
+			'done',
+			'cancelled',
+			'draft',
+			'review',
+			'approved',
+			'blocked',
+		] as const;
+		for (const status of excludedStatuses) {
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: `Excluded ${status} #42`,
+				description: 'lsm/neokai',
+				status,
+			});
+		}
+
 		const result = await resolver.resolve(makeEvent());
-		expect(result.type).toBe('enriched');
-		if (result.type === 'enriched') {
-			expect(result.routedTaskId).toBe(task.id);
+		expect(result.type).toBe('ambiguous');
+		if (result.type === 'ambiguous') {
+			expect(result.candidateTaskIds).toHaveLength(2);
+			expect(result.candidateTaskIds).toContain(openTask.id);
+			expect(result.candidateTaskIds).toContain(inProgressTask.id);
 		}
 	});
 });

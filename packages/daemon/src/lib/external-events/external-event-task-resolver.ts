@@ -129,7 +129,11 @@ export class GitHubExternalEventTaskResolver implements ExternalEventTaskResolve
 		}
 
 		// 1. Trusted first-party metadata.
-		if (event.routedTaskId) {
+		if (
+			event.routedTaskId &&
+			typeof event.routedTaskId === 'string' &&
+			event.routedTaskId.trim() !== ''
+		) {
 			return { type: 'enriched', routedTaskId: event.routedTaskId };
 		}
 
@@ -138,6 +142,8 @@ export class GitHubExternalEventTaskResolver implements ExternalEventTaskResolve
 			event.prNumber == null ||
 			event.repoOwner == null ||
 			event.repoName == null ||
+			typeof event.repoOwner !== 'string' ||
+			typeof event.repoName !== 'string' ||
 			event.repoOwner.trim() === '' ||
 			event.repoName.trim() === ''
 		) {
@@ -148,7 +154,7 @@ export class GitHubExternalEventTaskResolver implements ExternalEventTaskResolve
 		const repoFilter = this.config.taskRepoFilter ?? defaultRepoFilter;
 
 		const candidates = tasks.filter((t) => {
-			if (t.status === 'archived' || t.status === 'done' || t.status === 'cancelled') {
+			if (t.status !== 'open' && t.status !== 'in_progress') {
 				return false;
 			}
 			if (!titleContainsPrNumber(t.title, event.prNumber!)) {

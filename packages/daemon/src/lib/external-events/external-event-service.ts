@@ -149,8 +149,14 @@ export class ExternalEventService implements ExternalEventPublisher {
 	): Promise<PublishResult> {
 		// Preserve canonical route: if already routed/delivery_failed with a
 		// routedTaskId, do not re-resolve and risk changing the target.
-		const canonicalRec = this.store.getById(canonicalEvent.id);
+		let canonicalRec = this.store.getById(canonicalEvent.id);
 		if (canonicalRec != null && canonicalRec.event.routedTaskId) {
+			// Reconcile stale state: if the canonical event carries a routedTaskId
+			// but is still in `published` state (e.g. routedTaskId was set directly
+			// by a source extension without advancing state), promote it to `routed`.
+			if (canonicalRec.state === 'published') {
+				this.store.updateEventState(canonicalEvent.id, 'routed');
+			}
 			await this._publishBusEvent(canonicalEvent, canonicalRec.event.routedTaskId);
 			return {
 				outcome: 'retryable_duplicate',
@@ -160,6 +166,10 @@ export class ExternalEventService implements ExternalEventPublisher {
 		}
 
 		const resolution = await this.resolver.resolve(newEvent);
+
+		// Re-read canonical state after the await — another actor may have
+		// advanced it while the resolver was running.
+		canonicalRec = this.store.getById(canonicalEvent.id);
 
 		if (resolution.type === 'enriched') {
 			// New observation enriched the previously unresolvable event.

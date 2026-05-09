@@ -12,25 +12,25 @@
  *   - no session injection in service or resolver
  */
 
-import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { createSpaceTables } from '../../helpers/space-test-db';
+import { beforeEach, describe, expect, test } from 'bun:test';
+import {
+	type ExternalEventPublishedPayload,
+	ExternalEventService,
+} from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
 import {
-	ExternalEventService,
-	type ExternalEventPublishedPayload,
-} from '../../../../src/lib/external-events/external-event-service';
-import {
-	GitHubExternalEventTaskResolver,
 	type ExternalEventTaskResolver,
+	GitHubExternalEventTaskResolver,
 	type TaskResolution,
 } from '../../../../src/lib/external-events/external-event-task-resolver';
+import type { ExternalEvent } from '../../../../src/lib/external-events/types';
 import {
 	createInternalEventBus,
 	type InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
-import type { ExternalEvent } from '../../../../src/lib/external-events/types';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 let db: Database;
 let store: ExternalEventStore;
@@ -250,6 +250,35 @@ describe('publish — duplicates', () => {
 
 		expect(result.outcome).toBe('retryable_duplicate');
 		expect(result.routedTaskId).toBe('task-canonical');
+	});
+
+	test('retryable duplicate promotes stale published state to routed when canonical has routedTaskId', async () => {
+		const busReceived: ExternalEventPublishedPayload[] = [];
+		bus.subscribe(
+			'externalEvent.published',
+			(data) => {
+				busReceived.push(data);
+			},
+			{ subscriberName: 'sub' }
+		);
+
+		const event = makeEvent();
+		store.store(event);
+		// Simulate a source extension that set routedTaskId directly without
+		// advancing state — canonical is still in `published`.
+		store.setRoutedTaskId(event.id, 'task-canonical');
+		expect(store.getById(event.id)!.state).toBe('published');
+
+		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
+		const result = await service.publish(dup);
+
+		expect(result.outcome).toBe('retryable_duplicate');
+		expect(result.routedTaskId).toBe('task-canonical');
+		// State was promoted from published → routed
+		expect(store.getById(event.id)!.state).toBe('routed');
+		// Bus was re-emitted with the canonical routedTaskId
+		expect(busReceived).toHaveLength(1);
+		expect(busReceived[0]!.routedTaskId).toBe('task-canonical');
 	});
 
 	test('retryable duplicate enriches without regressing delivery_failed state', async () => {
