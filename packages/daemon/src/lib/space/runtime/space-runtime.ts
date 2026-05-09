@@ -744,7 +744,9 @@ export class SpaceRuntime {
 		if (updated) {
 			await this.safeOnTaskUpdated(spaceId, updated, opts);
 
-			// Cascade dependency_failed to open tasks that depend on this one
+			// Cascade dependency_failed to in_progress tasks that depend on this one.
+			// Open (not-yet-started) dependents are intentionally left untouched so
+			// they can still run if their dependency is later retried/completed.
 			if (params.status === 'blocked' || params.status === 'cancelled') {
 				const taskManager = this.getOrCreateTaskManager(spaceId);
 				const cascaded = await taskManager.blockDependentTasks(taskId);

@@ -557,17 +557,22 @@ export class SpaceTaskManager {
 	}
 
 	/**
-	 * Block all open tasks that depend on the given task with 'dependency_failed'.
-	 * Recurses: if task B depends on A and task C depends on B, blocking A
-	 * cascades to both B and C.
+	 * Block in_progress tasks that depend on the given task with 'dependency_failed'.
+	 * Open tasks are intentionally NOT blocked here — they haven't started yet, so
+	 * they should remain `open` and be skipped naturally by `areDependenciesMet()`
+	 * on the next runtime tick. Blocking them would prevent them from ever
+	 * auto-starting once their dependency completes (they'd need a manual retry).
+	 *
+	 * Recurses: if task B (in_progress) depends on A and task C (in_progress)
+	 * depends on B, blocking A cascades to both B and C.
 	 */
 	async blockDependentTasks(taskId: string): Promise<SpaceTask[]> {
 		return this.doBlockCascade(taskId, []);
 	}
 
 	private async doBlockCascade(taskId: string, acc: SpaceTask[]): Promise<SpaceTask[]> {
-		const openTasks = await this.listTasksByStatus('open');
-		for (const t of openTasks) {
+		const inProgressTasks = await this.listTasksByStatus('in_progress');
+		for (const t of inProgressTasks) {
 			// Skip tasks already blocked by a prior recursive path in this cascade
 			if (acc.some((a) => a.id === t.id)) continue;
 			if (t.dependsOn?.includes(taskId)) {

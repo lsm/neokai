@@ -812,11 +812,12 @@ describe('SpaceTaskManager', () => {
 	});
 
 	describe('blockDependentTasks (failure cascade)', () => {
-		it('blocks open tasks that depend on the failed task', async () => {
+		it('blocks in_progress tasks that depend on the failed task', async () => {
 			const a = await manager.createTask({ title: 'A', description: '' });
 			const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
 
 			await manager.startTask(a.id);
+			await manager.startTask(b.id); // B is in_progress when A fails
 			await manager.failTask(a.id, 'crashed', 'agent_crashed');
 
 			const cascaded = await manager.blockDependentTasks(a.id);
@@ -826,12 +827,34 @@ describe('SpaceTaskManager', () => {
 			expect(cascaded[0].blockReason).toBe('dependency_failed');
 		});
 
-		it('cascades recursively through dependency chain', async () => {
+		it('does NOT block open tasks waiting on the failed dependency', async () => {
+			// Regression: a daemon restart cascades blocked status from a stalled
+			// in_progress task to all dependents. Open tasks waiting on the dep
+			// must remain `open` so the runtime can pick them up once the
+			// dependency eventually completes (manual retry, etc.).
+			const a = await manager.createTask({ title: 'A', description: '' });
+			const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
+
+			await manager.startTask(a.id);
+			await manager.failTask(a.id, 'crashed', 'agent_crashed');
+
+			// B is still `open` (never started)
+			const cascaded = await manager.blockDependentTasks(a.id);
+			expect(cascaded).toHaveLength(0);
+			const bAfter = (await manager.getTask(b.id))!;
+			expect(bAfter.status).toBe('open');
+			expect(bAfter.blockReason ?? null).toBeNull();
+		});
+
+		it('cascades recursively through in_progress dependency chain', async () => {
 			const a = await manager.createTask({ title: 'A', description: '' });
 			const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
 			const c = await manager.createTask({ title: 'C', description: '', dependsOn: [b.id] });
 
+			// All three are in_progress when A fails.
 			await manager.startTask(a.id);
+			await manager.startTask(b.id);
+			await manager.startTask(c.id);
 			await manager.failTask(a.id, 'crashed');
 
 			const cascaded = await manager.blockDependentTasks(a.id);
@@ -845,13 +868,12 @@ describe('SpaceTaskManager', () => {
 			expect(cBlocked.blockReason).toBe('dependency_failed');
 		});
 
-		it('does not cascade to in_progress or done tasks', async () => {
+		it('does not cascade to open or done tasks', async () => {
 			const a = await manager.createTask({ title: 'A', description: '' });
 			const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
 			const c = await manager.createTask({ title: 'C', description: '', dependsOn: [a.id] });
 
-			// Start B (in_progress) and complete C (done) before A fails
-			await manager.startTask(b.id);
+			// Complete C (done); leave B in `open` before A fails.
 			await manager.startTask(c.id);
 			await manager.completeTask(c.id, 'done');
 
@@ -859,9 +881,9 @@ describe('SpaceTaskManager', () => {
 			await manager.failTask(a.id, 'crashed');
 
 			const cascaded = await manager.blockDependentTasks(a.id);
-			// Neither B (in_progress) nor C (done) should be affected
+			// Neither B (open) nor C (done) should be affected.
 			expect(cascaded).toHaveLength(0);
-			expect((await manager.getTask(b.id))!.status).toBe('in_progress');
+			expect((await manager.getTask(b.id))!.status).toBe('open');
 			expect((await manager.getTask(c.id))!.status).toBe('done');
 		});
 
@@ -875,7 +897,10 @@ describe('SpaceTaskManager', () => {
 				dependsOn: [a.id, b.id],
 			});
 
+			// Both B and D are in_progress when A fails.
 			await manager.startTask(a.id);
+			await manager.startTask(b.id);
+			await manager.startTask(d.id);
 			await manager.failTask(a.id, 'crashed');
 
 			// Should not throw; both B and D should end up blocked
