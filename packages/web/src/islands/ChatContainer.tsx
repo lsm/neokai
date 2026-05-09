@@ -96,10 +96,10 @@ export async function sendChatContainerMessage({
 	setLocalError: (message: string | null) => void;
 }): Promise<boolean> {
 	if (onSendOverride) {
-		if (images && images.length > 0) {
-			toast.error('Image attachments are not supported for task agent messages yet.');
-			return false;
-		}
+		// Task-agent overlays don't support deferred / queued sends yet — those are
+		// scoped to the regular session path, where the daemon owns the
+		// "deferred until idle" replay logic. Fail loudly so the caller's draft
+		// is preserved instead of silently dropping the user's message.
 		if (deliveryMode !== 'immediate') {
 			toast.error('Queued sends are not supported for task agent messages yet.');
 			return false;

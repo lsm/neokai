@@ -6,7 +6,7 @@
  * - space.task.getMessages — paginated snapshot of messages from a Task Agent session
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub, MessageImage } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { AgentSession } from '../agent/agent-session';
@@ -76,7 +76,8 @@ export interface TaskAgentManagerInterface {
 	injectTaskAgentMessage(
 		taskId: string,
 		message: string,
-		isSyntheticMessage?: boolean
+		isSyntheticMessage?: boolean,
+		images?: MessageImage[]
 	): Promise<void>;
 	/** Returns the live AgentSession for the given task, or undefined if not spawned. */
 	getTaskAgent(taskId: string): AgentSession | undefined;
@@ -87,7 +88,8 @@ export interface TaskAgentManagerInterface {
 	injectSubSessionMessage?(
 		subSessionId: string,
 		message: string,
-		isSyntheticMessage?: boolean
+		isSyntheticMessage?: boolean,
+		images?: MessageImage[]
 	): Promise<void>;
 	/**
 	 * Optional: lazy-activate a workflow-declared node agent for a given task.
@@ -204,7 +206,8 @@ export function setupSpaceTaskMessageHandlers(
 		task: ReturnType<SpaceTaskRepository['getTask']>,
 		taskId: string,
 		message: string,
-		target: { agentName?: string; nodeExecutionId?: string }
+		target: { agentName?: string; nodeExecutionId?: string },
+		images?: MessageImage[]
 	): Promise<{
 		ok: true;
 		routedTo: string[];
@@ -274,7 +277,7 @@ export function setupSpaceTaskMessageHandlers(
 		if (deliverable.length > 0) {
 			await Promise.all(
 				deliverable.map((exec) =>
-					taskAgentManager.injectSubSessionMessage!(exec.agentSessionId!, message, false)
+					taskAgentManager.injectSubSessionMessage!(exec.agentSessionId!, message, false, images)
 				)
 			);
 			return {
@@ -287,7 +290,17 @@ export function setupSpaceTaskMessageHandlers(
 		// No live session after activation — persist the message to the
 		// pending-message queue so it is delivered when the session spawns.
 		// This prevents the user's message from being silently dropped.
+		//
+		// Limitation: the pending-message queue stores text only. If the user
+		// attached images to a message destined for a not-yet-live agent, fail
+		// loudly rather than silently dropping the attachments — the caller can
+		// retry once the agent is online.
 		if (pendingMessageQueue) {
+			if (images && images.length > 0) {
+				throw new Error(
+					'Cannot send images to an agent that is still starting. Wait for the agent to come online and try again.'
+				);
+			}
 			const queuedNames: string[] = [];
 			for (const exec of matches) {
 				const { record } = pendingMessageQueue.enqueue({
@@ -364,6 +377,7 @@ export function setupSpaceTaskMessageHandlers(
 			spaceId: string;
 			taskId: string;
 			message: string;
+			images?: MessageImage[];
 			target?: SpaceTaskMessageTarget | null;
 		};
 
@@ -379,6 +393,11 @@ export function setupSpaceTaskMessageHandlers(
 		if (params.message.length > 100_000) {
 			throw new Error('Message is too long (max 100,000 characters)');
 		}
+		// Defensive: collapse `images: []` (which the web client may send) to
+		// undefined so downstream code can use `images && images.length > 0`
+		// uniformly without re-checking the array length.
+		const images =
+			Array.isArray(params.images) && params.images.length > 0 ? params.images : undefined;
 
 		// Validate task exists and belongs to the given space
 		const task = taskRepo.getTask(params.taskId);
@@ -390,7 +409,13 @@ export function setupSpaceTaskMessageHandlers(
 		}
 
 		if (params.target?.kind === 'node_agent') {
-			const result = await routeToNodeAgents(task, params.taskId, params.message, params.target);
+			const result = await routeToNodeAgents(
+				task,
+				params.taskId,
+				params.message,
+				params.target,
+				images
+			);
 			log.info(
 				`space.task.sendMessage: explicit target routing to [${result.routedTo.join(', ')}] for task ${params.taskId}`
 			);
@@ -430,7 +455,12 @@ export function setupSpaceTaskMessageHandlers(
 					// Inject into all matching sessions in parallel (independent operations)
 					await Promise.all(
 						matches.map((exec) =>
-							taskAgentManager.injectSubSessionMessage!(exec.agentSessionId!, params.message, false)
+							taskAgentManager.injectSubSessionMessage!(
+								exec.agentSessionId!,
+								params.message,
+								false,
+								images
+							)
 						)
 					);
 					routedTo.push(mention);
@@ -476,7 +506,7 @@ export function setupSpaceTaskMessageHandlers(
 			});
 		}
 
-		await taskAgentManager.injectTaskAgentMessage(params.taskId, params.message);
+		await taskAgentManager.injectTaskAgentMessage(params.taskId, params.message, false, images);
 		log.info(`space.task.sendMessage: injected message into task ${params.taskId}`);
 
 		// Human touch: `space.task.sendMessage` is the sole RPC boundary for

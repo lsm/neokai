@@ -44,22 +44,21 @@ describe('sendChatContainerMessage override path', () => {
 		expect(setLocalError).toHaveBeenCalledWith(null);
 	});
 
-	it('rejects image sends before calling the override', async () => {
+	it('forwards image attachments to the override', async () => {
+		const images = [{ data: 'abc', media_type: 'image/png' as const }];
 		const result = await sendChatContainerMessage({
 			content: 'hello',
-			images: [{ data: 'abc', media_type: 'image/png' }],
+			images,
 			deliveryMode: 'immediate',
 			onSendOverride,
 			sendMessage,
 			setLocalError,
 		});
 
-		expect(result).toBe(false);
-		expect(onSendOverride).not.toHaveBeenCalled();
+		expect(result).toBe(true);
+		expect(onSendOverride).toHaveBeenCalledWith('hello', images);
 		expect(sendMessage).not.toHaveBeenCalled();
-		expect(toast.error).toHaveBeenCalledWith(
-			'Image attachments are not supported for task agent messages yet.'
-		);
+		expect(toast.error).not.toHaveBeenCalled();
 	});
 
 	it('rejects queued delivery before calling the override', async () => {

@@ -101,6 +101,7 @@ export interface UseChatBaseReturn {
 	openFilePicker: () => void;
 	handlePaste: (e: ClipboardEvent) => Promise<void>;
 	clearAttachments: () => void;
+	restoreAttachments: (attachments: AttachmentWithMetadata[]) => void;
 
 	// Auto-scroll (compose useAutoScroll)
 	messagesContainerRef: RefObject<HTMLDivElement>;
@@ -337,6 +338,7 @@ export function useChatBase<T = ChatMessage>(options: UseChatBaseOptions<T>): Us
 		openFilePicker: fileAttachments.openFilePicker,
 		handlePaste,
 		clearAttachments: fileAttachments.clear,
+		restoreAttachments: fileAttachments.restore,
 
 		// Auto-scroll
 		messagesContainerRef,

@@ -36,6 +36,33 @@ import {
 
 type MessageImageInput = MessageImage | ImageContent;
 
+/**
+ * Anthropic API limit for base64-encoded image data per attachment.
+ * Exceeding this returns a late, opaque API error, so we validate
+ * server-side before persisting/queueing the SDK user message.
+ */
+export const MAX_IMAGE_BASE64_SIZE = 5 * 1024 * 1024; // 5MB
+
+/**
+ * Validate base64 image sizes against the Anthropic API limit and throw a
+ * user-facing error before any persistence happens. Used by the live-session
+ * persistence path and by space task message injection (where the workflow
+ * agent enqueues the message into a sub-session) so both paths return the
+ * same early "resize image" error instead of a downstream API failure.
+ */
+export function validateImageSizes(images: ReadonlyArray<MessageImageInput>): void {
+	for (const image of images) {
+		const base64SizeBytes = getImageData(image).length;
+		if (base64SizeBytes > MAX_IMAGE_BASE64_SIZE) {
+			const sizeMB = (base64SizeBytes / (1024 * 1024)).toFixed(2);
+			const maxMB = (MAX_IMAGE_BASE64_SIZE / (1024 * 1024)).toFixed(2);
+			throw new Error(
+				`Image base64 size (${sizeMB} MB) exceeds API limit (${maxMB} MB). Please resize the image before uploading.`
+			);
+		}
+	}
+}
+
 export interface MessagePersistenceData {
 	sessionId: string;
 	messageId: string;
@@ -144,17 +171,7 @@ export class MessagePersistence {
 		try {
 			// 1. Validate image sizes (API limit is 5MB for base64-encoded data)
 			if (images && images.length > 0) {
-				const MAX_BASE64_SIZE = 5 * 1024 * 1024; // 5MB
-				for (const image of images) {
-					const base64SizeBytes = getImageData(image).length;
-					if (base64SizeBytes > MAX_BASE64_SIZE) {
-						const sizeMB = (base64SizeBytes / (1024 * 1024)).toFixed(2);
-						const maxMB = (MAX_BASE64_SIZE / (1024 * 1024)).toFixed(2);
-						throw new Error(
-							`Image base64 size (${sizeMB} MB) exceeds API limit (${maxMB} MB). Please resize the image before uploading.`
-						);
-					}
-				}
+				validateImageSizes(images);
 			}
 
 			// 2. Expand built-in commands (e.g., /merge-session → full prompt)

@@ -29,6 +29,7 @@ import type {
 	CreateSpaceWorkflowParams,
 	LiveQueryDeltaEvent,
 	LiveQuerySnapshotEvent,
+	MessageImage,
 	NodeExecution,
 	RuntimeState,
 	Space,
@@ -1681,13 +1682,19 @@ class SpaceStore {
 	 *
 	 * Returns the daemon response so callers can inspect delivered /
 	 * queued / activated for non-delivery feedback.
+	 *
+	 * `images` is an optional list of base64-encoded image attachments. The
+	 * daemon threads them into the SDK user-message content array so workflow
+	 * agents see image blocks alongside the text — mirroring the regular
+	 * (non-space) chat path.
 	 */
 	async sendTaskMessage(
 		taskId: string,
 		message: string,
 		target?:
 			| { kind: 'task_agent' }
-			| { kind: 'node_agent'; agentName: string; nodeExecutionId?: string }
+			| { kind: 'node_agent'; agentName: string; nodeExecutionId?: string },
+		images?: MessageImage[]
 	): Promise<{
 		ok: boolean;
 		routedTo?: string[];
@@ -1706,6 +1713,7 @@ class SpaceStore {
 			spaceId,
 			message,
 			...(target ? { target } : {}),
+			...(images && images.length > 0 ? { images } : {}),
 		});
 	}
 

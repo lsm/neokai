@@ -139,6 +139,7 @@ export default function MessageInput({
 		handleFileDrop,
 		handleRemove,
 		clear: clearAttachments,
+		restore: restoreAttachments,
 		openFilePicker,
 		getImagesForSend,
 		handlePaste,
@@ -296,8 +297,12 @@ export default function MessageInput({
 			const outgoing = extractOutgoingMessage();
 			if (!outgoing) return;
 
-			// Save content before clearing so we can restore it if the send fails.
+			// Save content + attachments before clearing so we can restore them
+			// if the send fails. `attachments` contains the AttachmentWithMetadata
+			// list (data + media_type + name + size) needed to repopulate the chip
+			// row, while `outgoing.images` is the trimmed-down send payload.
 			const savedContent = outgoing.content;
+			const savedAttachments = attachments;
 
 			// Clear UI optimistically
 			clearDraft();
@@ -306,11 +311,23 @@ export default function MessageInput({
 			// Send message with images; a boolean false return signals failure
 			const result = await onSend(savedContent, outgoing.images, deliveryMode);
 			if (result === false) {
-				// Restore the draft so the user doesn't lose their message
+				// Restore the draft and attachments so the user doesn't lose their work
 				setContent(savedContent);
+				if (savedAttachments.length > 0) {
+					restoreAttachments(savedAttachments);
+				}
 			}
 		},
-		[disabled, extractOutgoingMessage, clearDraft, clearAttachments, setContent, onSend]
+		[
+			disabled,
+			extractOutgoingMessage,
+			attachments,
+			clearDraft,
+			clearAttachments,
+			restoreAttachments,
+			setContent,
+			onSend,
+		]
 	);
 
 	// Destructure stable callback refs to avoid recreating handleKeyDown on every render

@@ -23,6 +23,13 @@ export interface UseFileAttachmentsResult {
 	handleFileDrop: (files: FileList) => Promise<void>;
 	handleRemove: (index: number) => void;
 	clear: () => void;
+	/**
+	 * Re-populate the attachment list after an optimistic `clear()`. Used by
+	 * the message composer to restore attachments when a send fails so the
+	 * user doesn't have to re-attach files. Pass the list snapshotted before
+	 * the optimistic clear.
+	 */
+	restore: (attachments: AttachmentWithMetadata[]) => void;
 	openFilePicker: () => void;
 	getImagesForSend: () => MessageImage[] | undefined;
 	handlePaste: (e: ClipboardEvent) => void;
@@ -104,6 +111,10 @@ export function useFileAttachments(): UseFileAttachmentsResult {
 		setAttachments([]);
 	}, []);
 
+	const restore = useCallback((items: AttachmentWithMetadata[]) => {
+		setAttachments(items);
+	}, []);
+
 	const openFilePicker = useCallback(() => {
 		fileInputRef.current?.click();
 	}, []);
@@ -121,6 +132,7 @@ export function useFileAttachments(): UseFileAttachmentsResult {
 		handleFileDrop,
 		handleRemove,
 		clear,
+		restore,
 		openFilePicker,
 		getImagesForSend,
 		handlePaste,
