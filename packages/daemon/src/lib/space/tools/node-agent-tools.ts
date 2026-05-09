@@ -621,10 +621,34 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 							}
 
 							if (Object.keys(authorizedData).length > 0) {
-								const updated = gateDataRepo.merge(workflowRunId, gateId, {
+								// Deep-merge map-type fields atomically: each reviewer in a
+								// vote-counting gate (e.g. plan-approval-gate `approvals: map`)
+								// writes a partial map keyed by their lens/identity. A naive
+								// shallow merge would replace the whole map with the latest
+								// writer's entry, losing prior votes. Doing the read-merge-write
+								// in JS would also race with `incrementAndResetCyclicChannel`
+								// (which clears the gate on revision feedback) — if a stale
+								// snapshot was read before the reset and written back after,
+								// cleared votes would resurrect. Push the deep-merge into the
+								// repository so it runs inside a single SQLite transaction.
+								const mapFields = new Set<string>();
+								for (const key of Object.keys(authorizedData)) {
+									const fieldDef = fieldMap.get(key);
+									if (fieldDef?.type === 'map') mapFields.add(key);
+								}
+								const partialToMerge: Record<string, unknown> = {
 									...authorizedData,
 									approvalSource: 'agent',
-								});
+								};
+								const updated =
+									mapFields.size > 0
+										? gateDataRepo.mergeWithMapFields(
+												workflowRunId,
+												gateId,
+												partialToMerge,
+												mapFields
+											)
+										: gateDataRepo.merge(workflowRunId, gateId, partialToMerge);
 								const evalResult = await evaluateGate(
 									gateDef,
 									updated.data,

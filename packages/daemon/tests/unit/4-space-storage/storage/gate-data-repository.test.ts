@@ -106,6 +106,112 @@ describe('GateDataRepository — merge', () => {
 });
 
 // ---------------------------------------------------------------------------
+// mergeWithMapFields
+// ---------------------------------------------------------------------------
+
+describe('GateDataRepository — mergeWithMapFields', () => {
+	test('creates record if none exists', () => {
+		const result = repo.mergeWithMapFields(
+			RUN_ID,
+			GATE_ID_A,
+			{ approvals: { architecture: 'approved' } },
+			new Set(['approvals'])
+		);
+		expect(result.data).toEqual({ approvals: { architecture: 'approved' } });
+	});
+
+	test('deep-merges nominated map field across multiple writes', () => {
+		repo.mergeWithMapFields(
+			RUN_ID,
+			GATE_ID_A,
+			{ approvals: { architecture: 'approved' } },
+			new Set(['approvals'])
+		);
+		repo.mergeWithMapFields(
+			RUN_ID,
+			GATE_ID_A,
+			{ approvals: { security: 'approved' } },
+			new Set(['approvals'])
+		);
+		repo.mergeWithMapFields(
+			RUN_ID,
+			GATE_ID_A,
+			{ approvals: { ux: 'rejected' } },
+			new Set(['approvals'])
+		);
+
+		expect(repo.get(RUN_ID, GATE_ID_A)!.data).toEqual({
+			approvals: {
+				architecture: 'approved',
+				security: 'approved',
+				ux: 'rejected',
+			},
+		});
+	});
+
+	test('shallow-overwrites keys not in the mapFields set', () => {
+		repo.set(RUN_ID, GATE_ID_A, { approvals: { architecture: 'approved' }, status: 'pending' });
+		repo.mergeWithMapFields(
+			RUN_ID,
+			GATE_ID_A,
+			{ approvals: { security: 'approved' }, status: 'reviewing' },
+			new Set(['approvals'])
+		);
+
+		expect(repo.get(RUN_ID, GATE_ID_A)!.data).toEqual({
+			approvals: { architecture: 'approved', security: 'approved' },
+			status: 'reviewing',
+		});
+	});
+
+	test('replaces non-object existing value with new object even when key is in mapFields', () => {
+		repo.set(RUN_ID, GATE_ID_A, { approvals: 'invalid-string' });
+		repo.mergeWithMapFields(
+			RUN_ID,
+			GATE_ID_A,
+			{ approvals: { architecture: 'approved' } },
+			new Set(['approvals'])
+		);
+
+		expect(repo.get(RUN_ID, GATE_ID_A)!.data).toEqual({
+			approvals: { architecture: 'approved' },
+		});
+	});
+
+	test('reset between writes wipes prior entries (cyclic feedback semantics)', () => {
+		// Simulates the race-defensive behaviour: a reset() must not be
+		// silently undone by a stale snapshot composed in JS.
+		repo.mergeWithMapFields(
+			RUN_ID,
+			GATE_ID_A,
+			{ approvals: { architecture: 'approved' } },
+			new Set(['approvals'])
+		);
+		repo.mergeWithMapFields(
+			RUN_ID,
+			GATE_ID_A,
+			{ approvals: { security: 'approved' } },
+			new Set(['approvals'])
+		);
+
+		// Cyclic reset clears all approvals.
+		repo.reset(RUN_ID, GATE_ID_A, { approvals: {} });
+
+		// Next reviewer in the new cycle writes — must NOT bring back prior cycle's votes.
+		repo.mergeWithMapFields(
+			RUN_ID,
+			GATE_ID_A,
+			{ approvals: { ux: 'approved' } },
+			new Set(['approvals'])
+		);
+
+		expect(repo.get(RUN_ID, GATE_ID_A)!.data).toEqual({
+			approvals: { ux: 'approved' },
+		});
+	});
+});
+
+// ---------------------------------------------------------------------------
 // delete
 // ---------------------------------------------------------------------------
 
