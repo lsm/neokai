@@ -72,16 +72,25 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 			return;
 		}
 		let cancelled = false;
+		// Clear stale workflow immediately so the editor never mounts with
+		// data from a previous ID while the new fetch is in flight.
+		setEditingWorkflow(undefined);
 		// Fetch full workflow detail for editing — spaceStore.workflows only holds summaries
 		spaceStore.fetchWorkflowDetail(workflowEditId).then((wf) => {
-			if (!cancelled && wf) setEditingWorkflow(wf);
+			if (!cancelled) setEditingWorkflow(wf ?? undefined);
 		});
 		return () => {
 			cancelled = true;
 		};
 	}, [workflowEditId]);
 
-	const showWorkflowEditor = activeTab === 'workflows' && workflowEditId !== null;
+	// For edit mode, defer mounting the editor until the workflow detail has
+	// loaded so VisualWorkflowEditor (which initializes from props on mount)
+	// never receives stale or undefined data.
+	const showWorkflowEditor =
+		activeTab === 'workflows' &&
+		workflowEditId !== null &&
+		(workflowEditId === 'new' || editingWorkflow !== undefined);
 	const selectedIndex = Math.max(
 		0,
 		CONFIGURE_TABS.findIndex((tab) => tab.id === activeTab)

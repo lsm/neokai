@@ -57,6 +57,9 @@ export function useRunGateSummaries(
 			return;
 		}
 		let cancelled = false;
+		// Clear stale gates immediately so banners are never evaluated against
+		// a previous workflow's gate list while the new fetch is in flight.
+		setGates([]);
 		spaceStore.fetchWorkflowDetail(workflowId).then((wf) => {
 			if (!cancelled) setGates(wf?.gates ?? []);
 		});

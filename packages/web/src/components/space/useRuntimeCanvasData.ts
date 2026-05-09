@@ -71,6 +71,9 @@ export function useRuntimeCanvasData(
 			return;
 		}
 		let cancelled = false;
+		// Clear stale workflow immediately so the canvas never renders with
+		// nodes/channels/gates from a previous ID while the new fetch is in flight.
+		setWorkflow(null);
 		spaceStore.fetchWorkflowDetail(workflowId).then((wf) => {
 			if (!cancelled) setWorkflow(wf);
 		});

@@ -267,6 +267,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			return;
 		}
 		let cancelled = false;
+		// Clear stale workflow immediately so composer targets and @mention
+		// candidates are never derived from a previous workflow while the new
+		// fetch is in flight.
+		setFullWorkflow(null);
 		spaceStore.fetchWorkflowDetail(canvasWorkflowId).then((wf) => {
 			if (!cancelled) setFullWorkflow(wf);
 		});
