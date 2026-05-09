@@ -129,18 +129,36 @@ export class ExternalEventService implements ExternalEventPublisher {
 	/**
 	 * Handle a retryable duplicate.
 	 *
-	 * Re-runs the resolver on the *new* event (which may have more complete
-	 * metadata). If enrichment succeeds, persists it and returns `published`.
-	 * Otherwise re-emits the canonical bus payload so failed subscribers recover.
+	 * If the canonical event already carries a resolved `routedTaskId`, the
+	 * canonical route is preserved and the stale bus payload is re-emitted
+	 * without re-running the resolver. This prevents later task-list changes
+	 * (or duplicate payloads missing trusted routing fields) from changing the
+	 * target of an already-routed event.
 	 *
-	 * For `unknown`/`ambiguous` resolutions on a duplicate, the event is
-	 * terminalized (mirroring the first-observation path) so it is not re-emitted
-	 * indefinitely on every duplicate observation.
+	 * Otherwise, re-runs the resolver on the *new* event (which may have more
+	 * complete metadata). If enrichment succeeds, persists it and returns
+	 * `published`. Otherwise re-emits the canonical bus payload so failed
+	 * subscribers recover.
+	 *
+	 * For `ambiguous` resolutions on a duplicate, the bus event is published
+	 * BEFORE terminalizing so transient handler failures remain recoverable.
 	 */
 	private async _handleRetryableDuplicate(
 		newEvent: ExternalEvent,
 		canonicalEvent: ExternalEvent
 	): Promise<PublishResult> {
+		// Preserve canonical route: if already routed/delivery_failed with a
+		// routedTaskId, do not re-resolve and risk changing the target.
+		const canonicalRec = this.store.getById(canonicalEvent.id);
+		if (canonicalRec != null && canonicalRec.event.routedTaskId) {
+			await this._publishBusEvent(canonicalEvent, canonicalRec.event.routedTaskId);
+			return {
+				outcome: 'retryable_duplicate',
+				eventId: canonicalEvent.id,
+				routedTaskId: canonicalRec.event.routedTaskId,
+			};
+		}
+
 		const resolution = await this.resolver.resolve(newEvent);
 
 		if (resolution.type === 'enriched') {
@@ -148,7 +166,6 @@ export class ExternalEventService implements ExternalEventPublisher {
 			// Only advance state if the canonical event has not already progressed
 			// past `routed` (e.g. to `delivery_failed`). Backward transitions are
 			// rejected by updateEventState.
-			const canonicalRec = this.store.getById(canonicalEvent.id);
 			const canAdvanceState =
 				canonicalRec != null && !['routed', 'delivery_failed'].includes(canonicalRec.state);
 			this.store.setRoutedTaskId(canonicalEvent.id, resolution.routedTaskId);
@@ -164,8 +181,10 @@ export class ExternalEventService implements ExternalEventPublisher {
 		}
 
 		if (resolution.type === 'ambiguous') {
-			this.store.markEventAmbiguous(canonicalEvent.id);
+			// Publish BEFORE terminalizing so transient handler failures are
+			// recoverable on the next duplicate observation.
 			await this._publishBusEvent(canonicalEvent, canonicalEvent.routedTaskId);
+			this.store.markEventAmbiguous(canonicalEvent.id);
 			return {
 				outcome: 'retryable_duplicate',
 				eventId: canonicalEvent.id,

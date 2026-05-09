@@ -223,32 +223,36 @@ describe('publish — duplicates', () => {
 		expect(busReceived).toHaveLength(2);
 	});
 
-	test('retryable duplicate after routed state', async () => {
+	test('retryable duplicate after routed state preserves canonical route', async () => {
 		const event = makeEvent();
 		store.store(event);
+		store.setRoutedTaskId(event.id, 'task-canonical');
 		store.updateEventState(event.id, 'routed');
 
 		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
 		const result = await service.publish(dup);
 
+		// Canonical route is preserved — resolver is NOT re-run.
 		expect(result.outcome).toBe('retryable_duplicate');
+		expect(result.routedTaskId).toBe('task-canonical');
 	});
 
-	test('retryable duplicate after delivery_failed does not throw', async () => {
+	test('retryable duplicate after delivery_failed preserves canonical route', async () => {
 		const event = makeEvent();
 		store.store(event);
+		store.setRoutedTaskId(event.id, 'task-canonical');
 		store.updateEventState(event.id, 'routed');
 		store.updateEventState(event.id, 'delivery_failed');
 
-		// Duplicate should not throw on backward state transition
+		// Duplicate preserves canonical route — resolver is NOT re-run.
 		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
 		const result = await service.publish(dup);
 
-		// Still retryable because delivery_failed is non-terminal
 		expect(result.outcome).toBe('retryable_duplicate');
+		expect(result.routedTaskId).toBe('task-canonical');
 	});
 
-	test('retryable duplicate that enriches after delivery_failed sets routedTaskId without regressing state', async () => {
+	test('retryable duplicate enriches without regressing delivery_failed state', async () => {
 		const busReceived: ExternalEventPublishedPayload[] = [];
 		bus.subscribe(
 			'externalEvent.published',
@@ -258,12 +262,13 @@ describe('publish — duplicates', () => {
 			{ subscriberName: 'sub' }
 		);
 
-		// First observation: ignored (no matching task yet)
-		const event = makeEvent({ prNumber: undefined });
+		// First observation: unknown (no matching task yet). State stays published.
+		const event = makeEvent();
 		await service.publish(event);
 		expect(store.getById(event.id)!.state).toBe('published');
 
-		// Router advances to routed, then delivery fails
+		// Router advances to routed, then delivery fails — but NO routedTaskId set
+		// (simulating a case where the router set state but enrichment happened later)
 		store.updateEventState(event.id, 'routed');
 		store.updateEventState(event.id, 'delivery_failed');
 

@@ -58,37 +58,21 @@ export interface GitHubTaskResolverConfig {
 	 * resolution in multi-repo spaces because `SpaceTask` does not yet carry
 	 * repo metadata natively.
 	 *
-	 * When absent, a default heuristic filter is applied. In multi-repo spaces
-	 * it requires the task title or description to contain the repo owner or
-	 * repo name as a word-bounded token. In single-repo spaces (where no task
-	 * mentions the repo), all PR-number matches are allowed through.
+	 * When absent, a default heuristic filter is applied that requires the task
+	 * title or description to contain the repo owner or repo name as a
+	 * word-bounded token (case-insensitive).
 	 */
-	taskRepoFilter?: (
-		task: SpaceTask,
-		repoOwner: string,
-		repoName: string,
-		allTasks: SpaceTask[]
-	) => boolean;
+	taskRepoFilter?: (task: SpaceTask, repoOwner: string, repoName: string) => boolean;
 }
 
 /**
  * Default repo-scoped filter used when no custom `taskRepoFilter` is provided.
  *
- * In multi-repo spaces, requires the task title or description to contain the
- * repo owner or repo name as a standalone token (case-insensitive, word-bounded).
- * This prevents cross-repo misrouting where different repos have tasks with the
- * same PR number.
- *
- * In single-repo spaces (where no task mentions the repo name), the filter
- * falls back to allowing all candidates that matched the PR number. This avoids
- * forcing every caller to inject a custom filter for the common case.
+ * Requires the task title or description to contain the repo owner or repo
+ * name as a standalone token (case-insensitive, word-bounded). This prevents
+ * cross-repo misrouting where different repos have tasks with the same PR number.
  */
-function defaultRepoFilter(
-	task: SpaceTask,
-	repoOwner: string,
-	repoName: string,
-	allTasks: SpaceTask[]
-): boolean {
+function defaultRepoFilter(task: SpaceTask, repoOwner: string, repoName: string): boolean {
 	const text = `${task.title} ${task.description ?? ''}`;
 	const ownerPattern = new RegExp(
 		`(?:^|[^a-zA-Z0-9])${escapeRegExp(repoOwner)}(?:[^a-zA-Z0-9]|$)`,
@@ -98,18 +82,7 @@ function defaultRepoFilter(
 		`(?:^|[^a-zA-Z0-9])${escapeRegExp(repoName)}(?:[^a-zA-Z0-9]|$)`,
 		'i'
 	);
-	const matchesRepo = ownerPattern.test(text) || namePattern.test(text);
-	if (matchesRepo) {
-		return true;
-	}
-	// Single-repo fallback: if NO task in the space mentions the repo, allow
-	// all PR-number matches through. This avoids false unknowns in spaces
-	// where tasks don't carry repo metadata in their titles/descriptions.
-	const anyTaskMentionsRepo = allTasks.some((t) => {
-		const tText = `${t.title} ${t.description ?? ''}`;
-		return ownerPattern.test(tText) || namePattern.test(tText);
-	});
-	return !anyTaskMentionsRepo;
+	return ownerPattern.test(text) || namePattern.test(text);
 }
 
 /** Escape a string for safe interpolation into a RegExp. */
@@ -165,8 +138,8 @@ export class GitHubExternalEventTaskResolver implements ExternalEventTaskResolve
 			event.prNumber == null ||
 			event.repoOwner == null ||
 			event.repoName == null ||
-			event.repoOwner === '' ||
-			event.repoName === ''
+			event.repoOwner.trim() === '' ||
+			event.repoName.trim() === ''
 		) {
 			return { type: 'ignored' };
 		}
@@ -181,7 +154,7 @@ export class GitHubExternalEventTaskResolver implements ExternalEventTaskResolve
 			if (!titleContainsPrNumber(t.title, event.prNumber!)) {
 				return false;
 			}
-			return repoFilter(t, event.repoOwner!, event.repoName!, tasks);
+			return repoFilter(t, event.repoOwner!, event.repoName!);
 		});
 
 		if (candidates.length === 0) {

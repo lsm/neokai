@@ -131,7 +131,7 @@ describe('heuristic PR matching', () => {
 		taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Fix bug #42',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'archived',
 		});
 
@@ -143,7 +143,7 @@ describe('heuristic PR matching', () => {
 		taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Fix bug #42',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'done',
 		});
 
@@ -155,7 +155,7 @@ describe('heuristic PR matching', () => {
 		taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Fix bug #42',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'cancelled',
 		});
 
@@ -188,7 +188,7 @@ describe('PR number boundary matching', () => {
 		taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Fix bug #420',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'open',
 		});
 
@@ -200,7 +200,7 @@ describe('PR number boundary matching', () => {
 		taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'abc#42x something',
-			description: '',
+			description: 'lsm/neokai',
 			status: 'open',
 		});
 
@@ -308,30 +308,7 @@ describe('repo filter', () => {
 // ---------------------------------------------------------------------------
 
 describe('default repo filter', () => {
-	test('single-repo fallback allows tasks without repo mention when no task mentions repo', async () => {
-		const task = taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Fix bug #42',
-			description: 'some unrelated work',
-			status: 'open',
-		});
-
-		const result = await resolver.resolve(makeEvent());
-		expect(result.type).toBe('enriched');
-		if (result.type === 'enriched') {
-			expect(result.routedTaskId).toBe(task.id);
-		}
-	});
-
-	test('excludes tasks that do not mention repo in multi-repo spaces', async () => {
-		// One task mentions the repo — this triggers multi-repo mode
-		taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Other repo work',
-			description: 'lsm/neokai',
-			status: 'open',
-		});
-		// Another task with same PR but no repo mention
+	test('excludes tasks that do not mention repo owner or name', async () => {
 		taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Fix bug #42',
@@ -427,6 +404,16 @@ describe('ignored resolution', () => {
 
 	test('empty repoName returns ignored', async () => {
 		const result = await resolver.resolve(makeEvent({ repoName: '' }));
+		expect(result.type).toBe('ignored');
+	});
+
+	test('whitespace-only repoOwner returns ignored', async () => {
+		const result = await resolver.resolve(makeEvent({ repoOwner: '   ' }));
+		expect(result.type).toBe('ignored');
+	});
+
+	test('whitespace-only repoName returns ignored', async () => {
+		const result = await resolver.resolve(makeEvent({ repoName: '	' }));
 		expect(result.type).toBe('ignored');
 	});
 });
