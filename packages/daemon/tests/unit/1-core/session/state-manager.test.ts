@@ -119,6 +119,7 @@ describe('StateManager', () => {
 			expect(eventHandlers.has('room.overview')).toBe(false);
 			expect(eventHandlers.has('room.runtime.stateChanged')).toBe(false);
 			expect(eventHandlers.has('goal.created')).toBe(false);
+			expect(eventHandlers.has('goal.updated')).toBe(false);
 			expect(eventHandlers.has('goal.completed')).toBe(false);
 			expect(eventHandlers.has('goal.progressUpdated')).toBe(false);
 			expect(eventHandlers.has('space.created')).toBe(false);
@@ -133,10 +134,6 @@ describe('StateManager', () => {
 			expect(eventHandlers.has('spaceAgent.created')).toBe(false);
 			expect(eventHandlers.has('spaceAgent.updated')).toBe(false);
 			expect(eventHandlers.has('spaceAgent.deleted')).toBe(false);
-			expect(eventHandlers.has('spaceSessionGroup.created')).toBe(false);
-			expect(eventHandlers.has('spaceSessionGroup.memberAdded')).toBe(false);
-			expect(eventHandlers.has('spaceSessionGroup.memberUpdated')).toBe(false);
-			expect(eventHandlers.has('spaceSessionGroup.deleted')).toBe(false);
 			expect(eventHandlers.has('spaceWorkflow.created')).toBe(false);
 			expect(eventHandlers.has('spaceWorkflow.updated')).toBe(false);
 			expect(eventHandlers.has('spaceWorkflow.deleted')).toBe(false);
@@ -795,151 +792,195 @@ describe('ClientEventGateway DI seam', () => {
 	// guard the seam against silent regressions if a future refactor swaps
 	// the gateway for a direct messageHub call again.
 	// ====================================================================
-	describe('ClientEventGateway DI seam', () => {
-		// Build a fresh StateManager wired with a spied IClientEventGateway so we
-		// can assert on the typed `EventChannel` argument without going through
-		// the registry's wire serialization.
-		function buildWithSpiedGateway() {
-			const localEventHandlers = new Map<string, Function>();
-			const localRequestHandlers = new Map<string, Function>();
+	// Build a fresh StateManager wired with a spied IClientEventGateway so we
+	// can assert on the typed `EventChannel` argument without going through
+	// the registry's wire serialization.
+	function buildWithSpiedGateway() {
+		const localEventHandlers = new Map<string, Function>();
+		const localRequestHandlers = new Map<string, Function>();
 
-			const localMessageHub = {
-				event: mock(async () => {}),
-				onRequest: mock((method: string, handler: Function) => {
-					localRequestHandlers.set(method, handler);
-					return () => {};
-				}),
-				query: mock(async () => ({})),
-				command: mock(async () => {}),
-			} as unknown as MessageHub;
+		const localMessageHub = {
+			event: mock(async () => {}),
+			onRequest: mock((method: string, handler: Function) => {
+				localRequestHandlers.set(method, handler);
+				return () => {};
+			}),
+			query: mock(async () => ({})),
+			command: mock(async () => {}),
+		} as unknown as MessageHub;
 
-			const localEventBus = {
-				on: mock((event: string, handler: Function) => {
-					localEventHandlers.set(event, handler);
-					return () => {};
-				}),
-				emit: mock(async () => {}),
-			} as unknown as DaemonHub;
+		const localEventBus = {
+			on: mock((event: string, handler: Function) => {
+				localEventHandlers.set(event, handler);
+				return () => {};
+			}),
+			emit: mock(async () => {}),
+		} as unknown as DaemonHub;
 
-			const publish = mock(() => {});
-			const publishGlobal = mock(() => {});
-			const clientEvents = { publish, publishGlobal };
+		const publish = mock(() => {});
+		const publishGlobal = mock(() => {});
+		const clientEvents = { publish, publishGlobal };
 
-			const localSessionManager = {
-				getActiveSessions: mock(() => 2),
-				getTotalSessions: mock(() => 5),
-				listSessions: mock(() => []),
-				getSessionAsync: mock(async () => null),
-			} as unknown as SessionManager;
+		const localSessionManager = {
+			getActiveSessions: mock(() => 2),
+			getTotalSessions: mock(() => 5),
+			listSessions: mock(() => []),
+			getSessionAsync: mock(async () => null),
+		} as unknown as SessionManager;
 
-			const localAuthManager = {
-				getAuthStatus: mock(async () => ({
-					isAuthenticated: true,
-					method: 'api_key' as const,
-				})),
-			} as unknown as AuthManager;
+		const localAuthManager = {
+			getAuthStatus: mock(async () => ({
+				isAuthenticated: true,
+				method: 'api_key' as const,
+			})),
+		} as unknown as AuthManager;
 
-			const localSettingsManager = {
-				getGlobalSettings: mock(() => ({
-					...DEFAULT_GLOBAL_SETTINGS,
-					settingSources: ['user', 'project', 'local'],
-				})),
-			} as unknown as SettingsManager;
+		const localSettingsManager = {
+			getGlobalSettings: mock(() => ({
+				...DEFAULT_GLOBAL_SETTINGS,
+				settingSources: ['user', 'project', 'local'],
+			})),
+		} as unknown as SettingsManager;
 
-			const localConfig = {
-				defaultModel: 'claude-sonnet-4-20250514',
-				maxSessions: 10,
-				dbPath: '/test/db.sqlite',
-			} as unknown as Config;
+		const localConfig = {
+			defaultModel: 'claude-sonnet-4-20250514',
+			maxSessions: 10,
+			dbPath: '/test/db.sqlite',
+		} as unknown as Config;
 
-			const sm = new StateManager(
-				localMessageHub,
-				localSessionManager,
-				localAuthManager,
-				localSettingsManager,
-				localConfig,
-				localEventBus,
-				undefined,
-				undefined,
-				clientEvents
-			);
+		const sm = new StateManager(
+			localMessageHub,
+			localSessionManager,
+			localAuthManager,
+			localSettingsManager,
+			localConfig,
+			localEventBus,
+			undefined,
+			undefined,
+			clientEvents
+		);
 
-			return { localMessageHub, localEventHandlers, publish, publishGlobal, sm };
-		}
+		return { localMessageHub, localEventHandlers, publish, publishGlobal, sm };
+	}
 
-		it('routes session.created through the injected gateway with a typed global channel', async () => {
-			const { localMessageHub, localEventHandlers, publish } = buildWithSpiedGateway();
+	it('routes session.created through the injected gateway with a typed global channel', async () => {
+		const { localMessageHub, localEventHandlers, publish } = buildWithSpiedGateway();
 
-			const handler = localEventHandlers.get('session.created');
-			expect(handler).toBeDefined();
+		const handler = localEventHandlers.get('session.created');
+		expect(handler).toBeDefined();
 
-			await handler!({
-				session: { id: 'inj-1', title: 'X', status: 'active', metadata: {} } as Session,
-			});
-
-			expect(publish).toHaveBeenCalledWith(
-				'session.created',
-				{ sessionId: 'inj-1' },
-				{ kind: 'global' }
-			);
-			// And the gateway is the only path: no direct messageHub.event call
-			// for this method on the injected hub.
-			const directCalls = (localMessageHub.event as ReturnType<typeof mock>).mock.calls.filter(
-				(args) => args[0] === 'session.created'
-			);
-			expect(directCalls).toHaveLength(0);
+		await handler!({
+			session: { id: 'inj-1', title: 'X', status: 'active', metadata: {} } as Session,
 		});
 
-		it('routes session.deleted through the injected gateway with a typed global channel', async () => {
-			const { localMessageHub, localEventHandlers, publish } = buildWithSpiedGateway();
+		expect(publish).toHaveBeenCalledWith(
+			'session.created',
+			{ sessionId: 'inj-1' },
+			{ kind: 'global' }
+		);
+		// And the gateway is the only path: no direct messageHub.event call
+		// for this method on the injected hub.
+		const directCalls = (localMessageHub.event as ReturnType<typeof mock>).mock.calls.filter(
+			(args) => args[0] === 'session.created'
+		);
+		expect(directCalls).toHaveLength(0);
+	});
 
-			// Seed cache so the deleted handler runs cleanly.
-			await localEventHandlers.get('session.created')!({
-				session: { id: 'inj-2', title: 'X', status: 'active', metadata: {} } as Session,
-			});
-			(publish as ReturnType<typeof mock>).mockClear();
+	it('routes session.deleted through the injected gateway with a typed global channel', async () => {
+		const { localMessageHub, localEventHandlers, publish } = buildWithSpiedGateway();
 
-			await localEventHandlers.get('session.deleted')!({ sessionId: 'inj-2' });
+		// Seed cache so the deleted handler runs cleanly.
+		await localEventHandlers.get('session.created')!({
+			session: { id: 'inj-2', title: 'X', status: 'active', metadata: {} } as Session,
+		});
+		(publish as ReturnType<typeof mock>).mockClear();
 
-			expect(publish).toHaveBeenCalledWith(
-				'session.deleted',
-				{ sessionId: 'inj-2' },
-				{ kind: 'global' }
-			);
-			const directCalls = (localMessageHub.event as ReturnType<typeof mock>).mock.calls.filter(
-				(args) => args[0] === 'session.deleted'
-			);
-			expect(directCalls).toHaveLength(0);
+		await localEventHandlers.get('session.deleted')!({ sessionId: 'inj-2' });
+
+		expect(publish).toHaveBeenCalledWith(
+			'session.deleted',
+			{ sessionId: 'inj-2' },
+			{ kind: 'global' }
+		);
+		const directCalls = (localMessageHub.event as ReturnType<typeof mock>).mock.calls.filter(
+			(args) => args[0] === 'session.deleted'
+		);
+		expect(directCalls).toHaveLength(0);
+	});
+
+	it('routes context.updated through the injected gateway with a typed session channel', async () => {
+		const { localEventHandlers, publish } = buildWithSpiedGateway();
+
+		const contextInfo = {
+			usedTokens: 1000,
+			maxTokens: 200000,
+			autoCompactThreshold: 0.85,
+		};
+
+		await localEventHandlers.get('context.updated')!({
+			sessionId: 'inj-3',
+			contextInfo,
 		});
 
-		it('routes context.updated through the injected gateway with a typed session channel', async () => {
-			const { localEventHandlers, publish } = buildWithSpiedGateway();
-
-			const contextInfo = {
-				usedTokens: 1000,
-				maxTokens: 200000,
-				autoCompactThreshold: 0.85,
-			};
-
-			await localEventHandlers.get('context.updated')!({
-				sessionId: 'inj-3',
-				contextInfo,
-			});
-
-			expect(publish).toHaveBeenCalledWith('context.updated', contextInfo, {
-				kind: 'session',
-				sessionId: 'inj-3',
-			});
+		expect(publish).toHaveBeenCalledWith('context.updated', contextInfo, {
+			kind: 'session',
+			sessionId: 'inj-3',
 		});
+	});
 
-		it('falls back to a default ClientEventGateway when none is injected', async () => {
-			// Sanity check: with no injected gateway, the existing wire-level
-			// behaviour is preserved (this is what the rest of the suite already
-			// asserts via the wire format). We re-prove it here explicitly so the
-			// DI seam is documented end-to-end.
-			const { sm } = buildWithSpiedGateway();
-			const handler = sm.getClientEventGateway();
-			expect(handler).toBeDefined();
-		});
+	it('falls back to a default ClientEventGateway when none is injected', async () => {
+		// Build a StateManager WITHOUT injecting a custom gateway.
+		const localMessageHub = {
+			event: mock(async () => {}),
+			onRequest: mock(() => () => {}),
+			query: mock(async () => ({})),
+			command: mock(async () => {}),
+		} as unknown as MessageHub;
+
+		const localEventBus = {
+			on: mock((event: string, handler: Function) => {
+				return () => {};
+			}),
+			emit: mock(async () => {}),
+		} as unknown as DaemonHub;
+
+		const localSessionManager = {
+			getActiveSessions: mock(() => 2),
+			getTotalSessions: mock(() => 5),
+			listSessions: mock(() => []),
+			getSessionAsync: mock(async () => null),
+		} as unknown as SessionManager;
+
+		const localAuthManager = {
+			getAuthStatus: mock(async () => ({
+				isAuthenticated: true,
+				method: 'api_key' as const,
+			})),
+		} as unknown as AuthManager;
+
+		const localSettingsManager = {
+			getGlobalSettings: mock(() => DEFAULT_GLOBAL_SETTINGS),
+		} as unknown as SettingsManager;
+
+		const localConfig = {
+			defaultModel: 'claude-sonnet-4-20250514',
+			maxSessions: 10,
+			dbPath: '/test/db.sqlite',
+		} as unknown as Config;
+
+		const sm = new StateManager(
+			localMessageHub,
+			localSessionManager,
+			localAuthManager,
+			localSettingsManager,
+			localConfig,
+			localEventBus
+		);
+
+		// The gateway should exist and be a real ClientEventGateway (not undefined)
+		const gateway = sm.getClientEventGateway();
+		expect(gateway).toBeDefined();
+		expect(gateway.publish).toBeDefined();
+		expect(gateway.publishGlobal).toBeDefined();
 	});
 });
