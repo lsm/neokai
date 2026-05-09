@@ -1,12 +1,14 @@
+import type { ComponentChildren } from 'preact';
 import { borderColors } from '../../lib/design-tokens';
 import { contextPanelOpenSignal } from '../../lib/signals';
 
 interface SpacePageHeaderProps {
 	spaceName: string;
 	pageTitle: string;
+	actions?: ComponentChildren;
 }
 
-export function SpacePageHeader({ spaceName, pageTitle }: SpacePageHeaderProps) {
+export function SpacePageHeader({ spaceName, pageTitle, actions }: SpacePageHeaderProps) {
 	return (
 		<div
 			class={`flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default} px-4 h-[65px] flex items-center`}
@@ -32,6 +34,7 @@ export function SpacePageHeader({ spaceName, pageTitle }: SpacePageHeaderProps) 
 					<h2 class="text-sm font-semibold text-gray-100 truncate">{pageTitle}</h2>
 				</div>
 			</div>
+			{actions && <div class="flex items-center gap-2 flex-shrink-0">{actions}</div>}
 		</div>
 	);
 }

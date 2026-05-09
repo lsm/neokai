@@ -10,7 +10,7 @@
  * Space navigation is handled by the Context Panel sidebar.
  */
 
-import { useCallback, useEffect } from 'preact/hooks';
+import { useCallback, useEffect, useState } from 'preact/hooks';
 import { lazy, Suspense } from 'preact/compat';
 import type { SpaceViewMode } from '../lib/signals';
 import {
@@ -22,14 +22,17 @@ import {
 	spaceOverlayPendingAgentNameSignal,
 } from '../lib/signals';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
+import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { spaceStore } from '../lib/space-store';
 import {
 	navigateToSpace,
 	navigateToSpaceTask,
+	navigateToSpaceSession,
 	pushOverlayHistory,
 	closeOverlayHistory,
 } from '../lib/router';
+import { createSession } from '../lib/api-helpers';
 import ChatContainer from './ChatContainer';
 
 const SpaceConfigurePage = lazy(() =>
@@ -135,6 +138,30 @@ export default function SpaceIsland({
 		navigateToSpace(spaceId);
 	}, [spaceId]);
 
+	const [createTaskOpen, setCreateTaskOpen] = useState(false);
+
+	// For non-session views, show spinner/error while space data loads.
+	// Show spinner if space is not yet loaded and there's no error — this covers
+	// both the initial render (loading=false, space=null) before the useEffect has
+	// called selectSpace and the active-loading state (loading=true, space=null).
+	const space = spaceStore.space.value;
+
+	const handleCreateSession = useCallback(
+		async (e: Event) => {
+			e.stopPropagation();
+			try {
+				const response = await createSession({
+					spaceId,
+					workspacePath: space?.workspacePath,
+				});
+				navigateToSpaceSession(spaceId, response.sessionId);
+			} catch {
+				// Session creation failed silently
+			}
+		},
+		[spaceId, space?.workspacePath]
+	);
+
 	// Session/agent chat view — render immediately, don't block on space data
 	// ChatContainer's root is already flex-1 flex-col overflow-hidden.
 	// AgentOverlayChat uses a Portal so it doesn't affect layout.
@@ -146,12 +173,6 @@ export default function SpaceIsland({
 			</>
 		);
 	}
-
-	// For non-session views, show spinner/error while space data loads.
-	// Show spinner if space is not yet loaded and there's no error — this covers
-	// both the initial render (loading=false, space=null) before the useEffect has
-	// called selectSpace and the active-loading state (loading=true, space=null).
-	const space = spaceStore.space.value;
 	if (!space && !error) {
 		return (
 			<div class="flex-1 flex items-center justify-center bg-dark-900">
@@ -190,7 +211,27 @@ export default function SpaceIsland({
 					class="flex-1 flex flex-col overflow-hidden bg-dark-900"
 					data-testid="space-tasks-view"
 				>
-					<SpacePageHeader spaceName={space.name} pageTitle="Tasks" />
+					<SpacePageHeader
+						spaceName={space.name}
+						pageTitle="Tasks"
+						actions={
+							<button
+								onClick={() => setCreateTaskOpen(true)}
+								class="p-1.5 bg-dark-850 border border-dark-700 rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0"
+								aria-label="Create task"
+								title="Create task"
+							>
+								<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M12 4v16m8-8H4"
+									/>
+								</svg>
+							</button>
+						}
+					/>
 					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
 						<Suspense fallback={lazyFallback}>
 							<SpaceTasks
@@ -200,6 +241,11 @@ export default function SpaceIsland({
 						</Suspense>
 					</div>
 				</div>
+				<SpaceCreateTaskDialog
+					isOpen={createTaskOpen}
+					onClose={() => setCreateTaskOpen(false)}
+					onCreated={(task) => navigateToSpaceTask(spaceId, task.id)}
+				/>
 				{overlay}
 			</>
 		);
@@ -212,7 +258,27 @@ export default function SpaceIsland({
 					class="flex-1 flex flex-col overflow-hidden bg-dark-900"
 					data-testid="space-sessions-view"
 				>
-					<SpacePageHeader spaceName={space.name} pageTitle="Sessions" />
+					<SpacePageHeader
+						spaceName={space.name}
+						pageTitle="Sessions"
+						actions={
+							<button
+								onClick={handleCreateSession}
+								class="p-1.5 bg-dark-850 border border-dark-700 rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0"
+								aria-label="Create session"
+								title="Create session"
+							>
+								<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M12 4v16m8-8H4"
+									/>
+								</svg>
+							</button>
+						}
+					/>
 					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
 						<Suspense fallback={lazyFallback}>
 							<SpaceSessionsPage spaceId={spaceId} />
