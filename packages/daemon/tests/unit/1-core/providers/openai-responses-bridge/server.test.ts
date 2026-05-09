@@ -119,13 +119,14 @@ describe('openai-responses-bridge server', () => {
 			},
 		]);
 
+		// Source order is preserved: image first, then text
 		expect(input).toEqual([
 			{
 				type: 'message',
 				role: 'user',
 				content: [
-					{ type: 'input_text', text: 'What is in this image?' },
 					{ type: 'input_image', image_url: 'data:image/jpeg;base64,abc123' },
+					{ type: 'input_text', text: 'What is in this image?' },
 				],
 			},
 		]);
@@ -184,6 +185,67 @@ describe('openai-responses-bridge server', () => {
 		]);
 	});
 
+	it('preserves interleaved text/image order in user messages', () => {
+		const input = anthropicMessagesToResponsesInput([
+			{
+				role: 'user',
+				content: [
+					{ type: 'text', text: 'Before' },
+					{
+						type: 'image',
+						source: { type: 'base64', media_type: 'image/jpeg', data: 'img1' },
+					},
+					{ type: 'text', text: 'Between' },
+					{
+						type: 'image',
+						source: { type: 'base64', media_type: 'image/png', data: 'img2' },
+					},
+					{ type: 'text', text: 'After' },
+				],
+			},
+		]);
+
+		expect(input).toEqual([
+			{
+				type: 'message',
+				role: 'user',
+				content: [
+					{ type: 'input_text', text: 'Before' },
+					{ type: 'input_image', image_url: 'data:image/jpeg;base64,img1' },
+					{ type: 'input_text', text: 'Between' },
+					{ type: 'input_image', image_url: 'data:image/png;base64,img2' },
+					{ type: 'input_text', text: 'After' },
+				],
+			},
+		]);
+	});
+
+	it('translates URL-based image blocks to input_image with direct URL', () => {
+		const input = anthropicMessagesToResponsesInput([
+			{
+				role: 'user',
+				content: [
+					{
+						type: 'image',
+						source: { type: 'url', url: 'https://example.com/cat.jpg' },
+					},
+					{ type: 'text', text: 'What is this?' },
+				],
+			},
+		]);
+
+		expect(input).toEqual([
+			{
+				type: 'message',
+				role: 'user',
+				content: [
+					{ type: 'input_image', image_url: 'https://example.com/cat.jpg' },
+					{ type: 'input_text', text: 'What is this?' },
+				],
+			},
+		]);
+	});
+
 	it('handles images mixed with tool_results in user messages', () => {
 		const input = anthropicMessagesToResponsesInput([
 			{
@@ -216,8 +278,8 @@ describe('openai-responses-bridge server', () => {
 				type: 'message',
 				role: 'user',
 				content: [
-					{ type: 'input_text', text: 'What do you see?' },
 					{ type: 'input_image', image_url: 'data:image/png;base64,screendata' },
+					{ type: 'input_text', text: 'What do you see?' },
 				],
 			},
 		]);
@@ -345,8 +407,8 @@ describe('openai-responses-bridge server', () => {
 				type: 'message',
 				role: 'user',
 				content: [
-					{ type: 'input_text', text: 'What is in this image?' },
 					{ type: 'input_image', image_url: 'data:image/jpeg;base64,abc123' },
+					{ type: 'input_text', text: 'What is in this image?' },
 				],
 			},
 		]);

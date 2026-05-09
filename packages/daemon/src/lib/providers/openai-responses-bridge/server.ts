@@ -245,6 +245,16 @@ function estimateTextTokens(text: string): number {
 	return Math.max(1, Math.ceil((characterEstimate + lexicalPieces) / 2));
 }
 
+/** Fixed token estimate per image for OpenAI vision models.
+ *
+ * OpenAI bills vision tokens based on image dimensions and detail level,
+ * not base64 payload size. Without access to actual image dimensions,
+ * we use a conservative fixed estimate (low-detail ~85 tokens plus
+ * overhead) rather than a base64-length heuristic that would inflate
+ * estimates for large encoded payloads.
+ */
+const ESTIMATED_IMAGE_TOKENS = 100;
+
 function estimateResponsesContentTokens(item: ResponsesInputItem): number {
 	if (item.type === 'function_call_output') {
 		return estimateTextTokens(item.output);
@@ -257,8 +267,7 @@ function estimateResponsesContentTokens(item: ResponsesInputItem): number {
 	}
 	return item.content.reduce((sum, block) => {
 		if (block.type === 'input_image') {
-			// Rough heuristic: base64 data URL ~4/3 of raw bytes, ~1 token per 4 chars
-			return sum + Math.max(1, Math.ceil(block.image_url.length / 4));
+			return sum + ESTIMATED_IMAGE_TOKENS;
 		}
 		return sum + estimateTextTokens(block.text);
 	}, 0);
@@ -306,20 +315,34 @@ function toolResultText(content: AnthropicContentBlockToolResult['content']): st
 function appendInputMessage(
 	items: ResponsesInputItem[],
 	role: 'user' | 'system' | 'developer',
-	textParts: string[],
-	imageParts: ResponsesInputImage[] = []
+	contentParts: Array<ResponsesInputText | ResponsesInputImage>
 ): void {
-	const text = textParts.filter(Boolean).join('\n\n');
-	if (!text && imageParts.length === 0) return;
-	const content: Array<ResponsesInputText | ResponsesInputImage> = [];
-	if (text) {
-		content.push({ type: 'input_text', text });
+	if (contentParts.length === 0) return;
+	// Merge consecutive input_text blocks into a single block so the upstream
+	// API receives clean, consolidated text rather than fragmented pieces.
+	const merged: Array<ResponsesInputText | ResponsesInputImage> = [];
+	let pendingText: string[] = [];
+	const flushText = () => {
+		const text = pendingText.filter(Boolean).join('\n\n');
+		if (text) {
+			merged.push({ type: 'input_text', text });
+		}
+		pendingText = [];
+	};
+	for (const part of contentParts) {
+		if (part.type === 'input_text') {
+			pendingText.push(part.text);
+		} else {
+			flushText();
+			merged.push(part);
+		}
 	}
-	content.push(...imageParts);
+	flushText();
+	if (merged.length === 0) return;
 	items.push({
 		type: 'message',
 		role,
-		content,
+		content: merged,
 	});
 }
 
@@ -334,26 +357,29 @@ function appendAssistantMessage(items: ResponsesInputItem[], textParts: string[]
 }
 
 function imageBlockToInputImage(block: AnthropicContentBlockImage): ResponsesInputImage {
+	if (block.source.type === 'url') {
+		return { type: 'input_image', image_url: block.source.url };
+	}
 	const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
 	return { type: 'input_image', image_url: dataUrl };
 }
 
 function appendUserBlocks(items: ResponsesInputItem[], blocks: AnthropicContentBlock[]): void {
-	const textParts: string[] = [];
-	const imageParts: ResponsesInputImage[] = [];
+	const contentParts: Array<ResponsesInputText | ResponsesInputImage> = [];
 	for (const block of blocks) {
 		if (block.type === 'text') {
-			textParts.push(block.text);
+			contentParts.push({ type: 'input_text', text: block.text });
 			continue;
 		}
 		if (block.type === 'image') {
-			imageParts.push(imageBlockToInputImage(block));
+			contentParts.push(imageBlockToInputImage(block));
 			continue;
 		}
 		if (block.type === 'tool_result') {
 			const result = block as AnthropicContentBlockToolResult & { is_error?: boolean };
 			const output = toolResultText(result.content);
-			appendInputMessage(items, 'user', textParts.splice(0), imageParts.splice(0));
+			appendInputMessage(items, 'user', contentParts);
+			contentParts.length = 0;
 			items.push({
 				type: 'function_call_output',
 				call_id: result.tool_use_id,
@@ -361,7 +387,7 @@ function appendUserBlocks(items: ResponsesInputItem[], blocks: AnthropicContentB
 			});
 		}
 	}
-	appendInputMessage(items, 'user', textParts, imageParts);
+	appendInputMessage(items, 'user', contentParts);
 }
 
 function appendAssistantBlocks(items: ResponsesInputItem[], blocks: AnthropicContentBlock[]): void {
@@ -444,7 +470,7 @@ export function anthropicMessagesToResponsesInput(
 				if (reasoningItems && reasoningItems.length > 0 && i === lastUserIndex) {
 					items.push(...reasoningItems);
 				}
-				appendInputMessage(items, 'user', [message.content]);
+				appendInputMessage(items, 'user', [{ type: 'input_text', text: message.content }]);
 			}
 			continue;
 		}

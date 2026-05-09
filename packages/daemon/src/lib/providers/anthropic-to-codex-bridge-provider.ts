@@ -154,7 +154,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			thinkingModes: 'granular',
 			maxContextWindow: 272000,
 			functionCalling: true,
-			vision: false,
+			vision: true,
 		};
 	}
 

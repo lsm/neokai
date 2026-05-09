@@ -27,14 +27,22 @@ export type AnthropicContentBlockToolResult = {
 	content: string | Array<{ type: 'text'; text: string }>;
 };
 
-export type AnthropicContentBlockImage = {
-	type: 'image';
-	source: {
-		type: 'base64';
-		media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
-		data: string;
-	};
-};
+export type AnthropicContentBlockImage =
+	| {
+			type: 'image';
+			source: {
+				type: 'base64';
+				media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+				data: string;
+			};
+	  }
+	| {
+			type: 'image';
+			source: {
+				type: 'url';
+				url: string;
+			};
+	  };
 
 export type AnthropicContentBlock =
 	| AnthropicContentBlockText
