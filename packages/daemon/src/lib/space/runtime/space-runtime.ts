@@ -2641,7 +2641,18 @@ export class SpaceRuntime {
 				// terminal state). This allows post-completion cross-node messaging,
 				// e.g. a reviewer sending follow-up feedback to a coder whose node
 				// already finished while the PR is still being merged.
-				const taskTerminal = finalTaskStatus === 'done' || finalTaskStatus === 'cancelled';
+				//
+				// `blocked` is included alongside `done`/`cancelled` because the run
+				// itself has just been transitioned to `done` (above), so leaving
+				// siblings in `in_progress` would create inconsistent run/execution
+				// lifecycle state. `approved` is included for the same reason — the
+				// task has crossed the post-approval boundary; only `review` keeps
+				// siblings live because the human may still reject the completion.
+				const taskTerminal =
+					finalTaskStatus === 'done' ||
+					finalTaskStatus === 'cancelled' ||
+					finalTaskStatus === 'blocked' ||
+					finalTaskStatus === 'approved';
 				if (taskTerminal) {
 					const siblingsToQuiesce = this.config.nodeExecutionRepo
 						.listByWorkflowRun(runId)

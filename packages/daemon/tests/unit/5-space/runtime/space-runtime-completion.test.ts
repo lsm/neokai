@@ -1254,6 +1254,68 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(completedEvents).toHaveLength(1);
 		});
 
+		test('canonical task blocked still quiesces siblings on run completion', async () => {
+			// Regression: when the canonical task is `blocked` (treated as
+			// already-resolved by the completion guard) but the run reaches
+			// `done` via CompletionDetector (a sibling task is `done`/`cancelled`
+			// or `reportedStatus` is set), in-flight sibling NodeExecutions
+			// must still be quiesced. Otherwise the run is `done` while
+			// siblings linger in `in_progress`, creating inconsistent
+			// run/execution lifecycle state.
+			const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+			mockTam.isSessionAlive = () => true;
+			const rt = makeRuntimeWithTam({
+				taskAgentManager: mockTam as unknown as TaskAgentManager,
+			});
+
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'blk-sibling', name: 'Sibling', agentId: AGENT_A },
+				{ id: 'blk-end', name: 'End', agentId: AGENT_B },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			expect(tasks).toHaveLength(1);
+
+			// Canonical task is `blocked` (e.g. cascade-blocked by a dependency
+			// failure) AND has `reportedStatus` set, so CompletionDetector
+			// considers the run complete. The completion guard treats `blocked`
+			// as already-resolved, but sibling quiescing must still fire.
+			taskRepo.updateTask(tasks[0].id, {
+				status: 'blocked',
+				reportedStatus: 'blocked',
+				reportedSummary: 'cascade-blocked',
+			});
+
+			// Sibling exec is in flight with a live session.
+			const siblingExecId = seedNodeExec(db, run.id, 'blk-sibling', 'Sibling', 'in_progress');
+			const siblingSessionId = 'blk-sibling-session-001';
+			db.prepare('UPDATE node_executions SET agent_session_id = ? WHERE id = ?').run(
+				siblingSessionId,
+				siblingExecId
+			);
+			seedNodeExec(db, run.id, 'blk-end', 'End', 'idle');
+
+			await rt.executeTick();
+
+			// Run reaches `done`.
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+
+			// Canonical stays in `blocked` (or archived alongside the run) —
+			// must NEVER be transitioned to `approved`/`done`.
+			const canonical = taskRepo.getTask(tasks[0].id);
+			expect(canonical?.status).not.toBe('approved');
+			expect(canonical?.status).not.toBe('done');
+
+			// In-flight sibling must be quiesced to `idle` — not stranded
+			// in `in_progress` while the run is `done`.
+			const execs = nodeExecutionRepo.listByWorkflowRun(run.id);
+			const siblingExec = execs.find((e) => e.workflowNodeId === 'blk-sibling');
+			expect(siblingExec?.status).toBe('idle');
+			expect(siblingExec?.agentSessionId).toBe(siblingSessionId);
+			expect(mockTam.interruptedSessions).toContain(siblingSessionId);
+			expect(mockTam.cancelledSessions).not.toContain(siblingSessionId);
+		});
+
 		test('sibling session remains reachable for send_message after workflow completion (#1515)', async () => {
 			// Regression for issue #1515: when a downstream node (e.g. a reviewer)
 			// tries to resolve peers for send_message AFTER an upstream sibling
