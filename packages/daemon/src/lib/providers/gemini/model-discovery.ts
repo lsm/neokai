@@ -1,10 +1,12 @@
 /**
  * Gemini Model Discovery
  *
- * Dynamically fetches available models from Google's Code Assist API
- * using the fetchAvailableModels endpoint.
+ * Previously dynamically fetched available models from Google's Code Assist API.
+ * The discovery endpoints (daily-cloudcode-pa.googleapis.com) now return 403 for
+ * all accounts, so discovery is disabled.  Only static fallback models are used.
  *
- * Adapted from Pi's antigravity discovery implementation.
+ * If Google restores public discovery in the future, the fetchAvailableModels()
+ * function can be re-enabled by adding working endpoints to DISCOVERY_ENDPOINTS.
  */
 
 import { createLogger } from '@neokai/shared/logger';
@@ -13,21 +15,21 @@ import type { ModelInfo } from '@neokai/shared';
 const log = createLogger('kai:providers:gemini:discovery');
 
 // ---------------------------------------------------------------------------
-// Discovery endpoints
+// Discovery endpoints — DISABLED (all return 403)
 // ---------------------------------------------------------------------------
 
-const DISCOVERY_ENDPOINTS = [
-	'https://daily-cloudcode-pa.googleapis.com',
-	'https://daily-cloudcode-pa.sandbox.googleapis.com',
-];
+/** Discovery is disabled because Google's Code Assist discovery endpoints
+ *  (daily-cloudcode-pa.googleapis.com) are no longer publicly accessible.
+ *  Kept empty so the code structure is preserved if Google restores access. */
+const _DISCOVERY_ENDPOINTS: string[] = [];
 
-const FETCH_AVAILABLE_MODELS_PATH = '/v1internal:fetchAvailableModels';
+const _FETCH_AVAILABLE_MODELS_PATH = '/v1internal:fetchAvailableModels';
 
 // ---------------------------------------------------------------------------
 // Denylist — models to hide from the UI
 // ---------------------------------------------------------------------------
 
-const MODEL_DENYLIST = new Set([
+const _MODEL_DENYLIST = new Set([
 	'chat_20706',
 	'chat_23310',
 	'gemini-2.5-flash-thinking',
@@ -35,7 +37,7 @@ const MODEL_DENYLIST = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
-// Fallback models (used when discovery fails)
+// Static model list (discovery disabled — Code Assist endpoints return 403)
 // ---------------------------------------------------------------------------
 
 const FALLBACK_MODELS: ModelInfo[] = [
@@ -47,7 +49,7 @@ const FALLBACK_MODELS: ModelInfo[] = [
 		provider: 'google-gemini-oauth',
 		contextWindow: 1_000_000,
 		description: 'Google Gemini 2.5 Pro via Code Assist (OAuth)',
-		releaseDate: '2025-01-01',
+		releaseDate: '2025-05-01',
 		available: true,
 	},
 	{
@@ -58,7 +60,7 @@ const FALLBACK_MODELS: ModelInfo[] = [
 		provider: 'google-gemini-oauth',
 		contextWindow: 1_000_000,
 		description: 'Google Gemini 2.5 Flash via Code Assist (OAuth)',
-		releaseDate: '2025-01-01',
+		releaseDate: '2025-05-01',
 		available: true,
 	},
 	{
@@ -69,7 +71,18 @@ const FALLBACK_MODELS: ModelInfo[] = [
 		provider: 'google-gemini-oauth',
 		contextWindow: 1_000_000,
 		description: 'Google Gemini 2.5 Flash Lite via Code Assist (OAuth)',
-		releaseDate: '2025-01-01',
+		releaseDate: '2025-05-01',
+		available: true,
+	},
+	{
+		id: 'gemini-2.0-flash',
+		name: 'Gemini 2.0 Flash',
+		alias: 'gemini-2.0-flash',
+		family: 'gemini',
+		provider: 'google-gemini-oauth',
+		contextWindow: 1_000_000,
+		description: 'Google Gemini 2.0 Flash via Code Assist (OAuth)',
+		releaseDate: '2025-02-01',
 		available: true,
 	},
 ];
@@ -95,7 +108,7 @@ interface DiscoveryApiModel {
 }
 
 /** Response from the discovery endpoint. */
-interface DiscoveryApiResponse {
+interface _DiscoveryApiResponse {
 	models?: Record<string, DiscoveryApiModel>;
 }
 
@@ -116,125 +129,16 @@ export interface FetchDiscoveryModelsOptions {
 /**
  * Fetch available models from Google's Code Assist discovery endpoint.
  *
- * Tries multiple endpoints in order. Returns null on complete failure
- * (network error, auth failure, or unparseable response).
+ * Discovery is currently disabled because all known endpoints return 403.
+ * This function immediately returns null so callers fall back to the static
+ * model list.  If Google restores public discovery, re-enable by populating
+ * DISCOVERY_ENDPOINTS.
  */
 export async function fetchAvailableModels(
-	options: FetchDiscoveryModelsOptions
+	_options: FetchDiscoveryModelsOptions
 ): Promise<ModelInfo[] | null> {
-	const fetchImpl = options.fetchImpl ?? fetch;
-	const endpoints = options.endpoint
-		? [trimTrailingSlashes(options.endpoint)]
-		: DISCOVERY_ENDPOINTS.map(trimTrailingSlashes);
-
-	for (const endpoint of endpoints) {
-		let response: Response;
-		try {
-			response = await fetchImpl(`${endpoint}${FETCH_AVAILABLE_MODELS_PATH}`, {
-				method: 'POST',
-				headers: {
-					Authorization: `Bearer ${options.token}`,
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify({}),
-			});
-		} catch (err) {
-			log.warn(
-				`Discovery endpoint ${endpoint} unreachable: ${err instanceof Error ? err.message : err}`
-			);
-			continue;
-		}
-
-		if (!response.ok) {
-			log.warn(`Discovery endpoint ${endpoint} returned ${response.status}`);
-			continue;
-		}
-
-		let payload: unknown;
-		try {
-			payload = await response.json();
-		} catch {
-			log.warn(`Discovery endpoint ${endpoint} returned invalid JSON`);
-			continue;
-		}
-
-		const models = parseDiscoveryResponse(payload);
-		if (models === null) {
-			log.warn(`Discovery endpoint ${endpoint} returned unparseable payload`);
-			continue;
-		}
-
-		log.info(`Discovered ${models.length} models from ${endpoint}`);
-		return models;
-	}
-
-	log.warn('All discovery endpoints failed, falling back to static model list');
+	log.warn('Model discovery is disabled — Code Assist endpoints are no longer publicly accessible');
 	return null;
-}
-
-// ---------------------------------------------------------------------------
-// Parsing
-// ---------------------------------------------------------------------------
-
-function parseDiscoveryResponse(payload: unknown): ModelInfo[] | null {
-	if (typeof payload !== 'object' || payload === null) return null;
-
-	const response = payload as DiscoveryApiResponse;
-	if (!response.models || typeof response.models !== 'object') return null;
-
-	const models: ModelInfo[] = [];
-
-	for (const [modelId, rawModel] of Object.entries(response.models)) {
-		if (MODEL_DENYLIST.has(modelId)) continue;
-		if (!rawModel || typeof rawModel !== 'object') continue;
-
-		const model = rawModel as DiscoveryApiModel;
-		if (model.isInternal === true) continue;
-
-		// Only include IDs that the bridge can actually route
-		if (!modelId.startsWith('gemini-') && !modelId.startsWith('gemma-')) continue;
-
-		models.push(discoveryModelToModelInfo(modelId, model));
-	}
-
-	return models;
-}
-
-function discoveryModelToModelInfo(modelId: string, model: DiscoveryApiModel): ModelInfo {
-	const displayName = model.displayName || modelId;
-	const contextWindow = toPositiveNumber(model.maxTokens, 1_000_000);
-
-	return {
-		id: modelId,
-		name: displayName,
-		alias: modelId,
-		family: inferFamily(modelId),
-		provider: 'google-gemini-oauth',
-		contextWindow,
-		description: `${displayName} via Code Assist (OAuth)`,
-		releaseDate: '2025-01-01',
-		available: true,
-		// Map discovery metadata to NeoKai model features
-		thinkingModes: model.supportsThinking === true ? 'on' : 'off',
-		preferContextWindowMetadata: true,
-	};
-}
-
-function inferFamily(modelId: string): string {
-	if (modelId.startsWith('gemma-')) return 'gemma';
-	if (modelId.startsWith('gemini-')) return 'gemini';
-	return 'gemini';
-}
-
-function toPositiveNumber(value: unknown, fallback: number): number {
-	if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-		return value;
-	}
-	return fallback;
-}
-
-function trimTrailingSlashes(value: string): string {
-	return value.replace(/\/+$/, '');
 }
 
 // ---------------------------------------------------------------------------

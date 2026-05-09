@@ -275,7 +275,17 @@ export async function refreshAccessToken(
 		throw new Error(`Token refresh failed (${response.status}): ${errorText}`);
 	}
 
-	return response.json() as Promise<GoogleTokenResponse>;
+	const tokenResponse = (await response.json()) as GoogleTokenResponse;
+
+	// Google may return a new refresh_token on refresh (rare but possible).
+	// If it does, callers should persist it.  We preserve the original
+	// refresh_token in the response so downstream code doesn't have to
+	// handle the "missing refresh_token" case.
+	if (!tokenResponse.refresh_token) {
+		tokenResponse.refresh_token = refreshToken;
+	}
+
+	return tokenResponse;
 }
 
 /**

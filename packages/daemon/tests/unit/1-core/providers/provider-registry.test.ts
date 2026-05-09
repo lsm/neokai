@@ -320,7 +320,7 @@ describe('ProviderRegistry', () => {
 	describe('initializeProviders — all built-in providers registered', () => {
 		// Outer beforeEach already resets registry+factory; no per-test resets needed.
 
-		it('should register exactly ten built-in providers', () => {
+		it('should register exactly twelve built-in providers', () => {
 			const reg = initializeProviders();
 
 			const ids = reg
@@ -333,6 +333,8 @@ describe('ProviderRegistry', () => {
 					'anthropic-codex',
 					'anthropic-copilot',
 					'glm',
+					'google-antigravity',
+					'google-gemini',
 					'google-gemini-oauth',
 					'kimi',
 					'minimax',
@@ -389,18 +391,28 @@ describe('ProviderRegistry', () => {
 			expect(reg.has('google-gemini-oauth')).toBe(true);
 		});
 
+		it('should include google-gemini provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('google-gemini')).toBe(true);
+		});
+
+		it('should include google-antigravity provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('google-antigravity')).toBe(true);
+		});
+
 		it('should return the same singleton registry on repeated calls without reset', () => {
 			const reg1 = initializeProviders();
 			const reg2 = initializeProviders();
 			// The global singleton must be the same reference — not a new instance
 			expect(reg1).toBe(reg2);
-			expect(reg2.size).toBe(10);
+			expect(reg2.size).toBe(12);
 		});
 
 		it('should use the global registry singleton', () => {
 			initializeProviders();
 			const globalReg = getProviderRegistry();
-			expect(globalReg.size).toBe(10);
+			expect(globalReg.size).toBe(12);
 		});
 	});
 
@@ -568,9 +580,44 @@ describe('inferProviderForModel', () => {
 	});
 
 	it('defaults claude- models to anthropic', () => {
-		expect(inferProviderForModel('claude-sonnet-4-5-20250929')).toBe('anthropic');
 		expect(inferProviderForModel('claude-opus-4-6')).toBe('anthropic');
 		expect(inferProviderForModel('claude-sonnet-4.6/preview')).toBe('anthropic');
+	});
+
+	it('routes Antigravity model IDs to google-antigravity when provider is available', () => {
+		// Register an available Antigravity provider
+		const agProvider = { id: 'google-antigravity', isAvailable: () => true } as unknown as Provider;
+		getProviderRegistry().register(agProvider);
+
+		expect(inferProviderForModel('claude-sonnet-4-5-20250929')).toBe('google-antigravity');
+		expect(inferProviderForModel('claude-opus-4-5-20250929')).toBe('google-antigravity');
+		expect(inferProviderForModel('gpt-oss-120b')).toBe('google-antigravity');
+		expect(inferProviderForModel('gpt-oss-20b')).toBe('google-antigravity');
+
+		getProviderRegistry().unregister('google-antigravity');
+	});
+
+	it('falls back when Antigravity model IDs are routed but provider is unavailable', () => {
+		// Register an unavailable Antigravity provider
+		const agProvider = {
+			id: 'google-antigravity',
+			isAvailable: () => false,
+		} as unknown as Provider;
+		getProviderRegistry().register(agProvider);
+
+		// claude-* falls through to anthropic (default)
+		expect(inferProviderForModel('claude-sonnet-4-5-20250929')).toBe('anthropic');
+		// gpt-oss-* falls through to anthropic-codex (static heuristic for bare gpt-* IDs)
+		expect(inferProviderForModel('gpt-oss-20b')).toBe('anthropic-codex');
+
+		getProviderRegistry().unregister('google-antigravity');
+	});
+
+	it('routes gemini-3 models to google-gemini-oauth when antigravity is not available', () => {
+		// When Antigravity is not authenticated, Gemini 3 models fall through
+		// to the standard Gemini OAuth provider
+		expect(inferProviderForModel('gemini-3.1-pro-preview')).toBe('google-gemini-oauth');
+		expect(inferProviderForModel('gemini-3-pro-preview')).toBe('google-gemini-oauth');
 	});
 
 	it('defaults unknown models to anthropic', () => {
@@ -578,8 +625,80 @@ describe('inferProviderForModel', () => {
 		expect(inferProviderForModel('unknown-model')).toBe('anthropic');
 	});
 
-	it('routes gemini- models to google-gemini-oauth', () => {
+	it('routes gemini- models to google-gemini-oauth when registry is empty', () => {
 		expect(inferProviderForModel('gemini-2.5-pro')).toBe('google-gemini-oauth');
 		expect(inferProviderForModel('gemini-2.5-flash')).toBe('google-gemini-oauth');
+	});
+
+	it('prefers google-gemini over google-gemini-oauth when both are registered', () => {
+		const reg = getProviderRegistry();
+		reg.register(
+			new (class extends MockProvider {
+				readonly id = 'google-gemini' as const;
+				readonly displayName = 'Google Gemini';
+				ownsModel(modelId: string): boolean {
+					return modelId.startsWith('gemini-') || modelId.startsWith('gemma-');
+				}
+			})()
+		);
+		reg.register(
+			new (class extends MockProvider {
+				readonly id = 'google-gemini-oauth' as const;
+				readonly displayName = 'Google Gemini (OAuth)';
+				ownsModel(modelId: string): boolean {
+					return modelId.startsWith('gemini-') || modelId.startsWith('gemma-');
+				}
+			})()
+		);
+
+		expect(inferProviderForModel('gemini-2.5-pro')).toBe('google-gemini');
+		expect(inferProviderForModel('gemini-2.5-flash')).toBe('google-gemini');
+		expect(inferProviderForModel('gemma-2b')).toBe('google-gemini');
+
+		resetProviderRegistry();
+	});
+
+	it('routes gemma- models to google-gemini-oauth when registry is empty', () => {
+		expect(inferProviderForModel('gemma-2b')).toBe('google-gemini-oauth');
+		expect(inferProviderForModel('gemma-4-31b-it')).toBe('google-gemini-oauth');
+	});
+
+	it('falls back to google-gemini-oauth when google-gemini is registered but not available', () => {
+		resetProviderRegistry();
+		const reg = getProviderRegistry();
+		expect(reg.has('google-gemini')).toBe(false);
+		reg.register(
+			new (class implements Provider {
+				readonly id = 'google-gemini' as const;
+				readonly displayName = 'Google Gemini';
+				readonly capabilities = {
+					streaming: true,
+					extendedThinking: false,
+					maxContextWindow: 1_000_000,
+					functionCalling: true,
+					vision: false,
+				};
+				isAvailable(): boolean {
+					return false;
+				}
+				async getModels(): Promise<ModelInfo[]> {
+					return [];
+				}
+				ownsModel(modelId: string): boolean {
+					return modelId.startsWith('gemini-') || modelId.startsWith('gemma-');
+				}
+				getModelForTier(): string | undefined {
+					return 'gemini-2.5-pro';
+				}
+				buildSdkConfig(): ProviderSdkConfig {
+					return { envVars: {}, isAnthropicCompatible: true };
+				}
+			})()
+		);
+
+		expect(inferProviderForModel('gemini-2.5-pro')).toBe('google-gemini-oauth');
+		expect(inferProviderForModel('gemma-2b')).toBe('google-gemini-oauth');
+
+		resetProviderRegistry();
 	});
 });

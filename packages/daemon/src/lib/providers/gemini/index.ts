@@ -5,6 +5,8 @@
  */
 
 export { GeminiOAuthProvider } from './gemini-provider.js';
+export { GeminiApiKeyProvider } from './gemini-api-key-provider.js';
+export { AntigravityProvider } from './antigravity-provider.js';
 export {
 	// OAuth client
 	getOAuthClientId,

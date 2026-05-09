@@ -15,7 +15,7 @@ import { OpenRouterProvider } from './openrouter-provider.js';
 import { OllamaProvider } from './ollama-provider.js';
 import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-provider.js';
 import { AnthropicToCopilotBridgeProvider } from './anthropic-copilot/index.js';
-import { GeminiOAuthProvider } from './gemini/index.js';
+import { GeminiOAuthProvider, GeminiApiKeyProvider, AntigravityProvider } from './gemini/index.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
@@ -77,9 +77,17 @@ export function initializeProviders(): ProviderRegistry {
 	// ANTHROPIC_AUTH_TOKEN (encoded by buildSdkConfig) and parsed per-request in server.ts.
 	registry.register(new AnthropicToCopilotBridgeProvider(process.cwd()));
 
+	// Register Google Gemini API key provider (standard Gemini API).
+	// Available when GOOGLE_API_KEY or GEMINI_API_KEY is set.
+	registry.register(new GeminiApiKeyProvider());
+
 	// Register Google Gemini OAuth provider (Cloud Code Assist via OAuth).
 	// Available when one or more Google accounts have been added.
 	registry.register(new GeminiOAuthProvider());
+
+	// Register Antigravity provider (Gemini 3, Claude, GPT-OSS via Cloud Code Assist sandbox).
+	// Available after OAuth authentication with Antigravity credentials.
+	registry.register(new AntigravityProvider());
 
 	// Additional built-in providers can be registered here
 	// Example:
