@@ -59,6 +59,13 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 	const [workflowEditId, setWorkflowEditId] = useState<string | null>(null);
 	const [editingWorkflow, setEditingWorkflow] = useState<SpaceWorkflow | undefined>(undefined);
 
+	// Reset editor state when the space changes so we don't try to edit a
+	// workflow belonging to the previous space.
+	useEffect(() => {
+		setWorkflowEditId(null);
+		setEditingWorkflow(undefined);
+	}, [space.id]);
+
 	useEffect(() => {
 		if (!workflowEditId || workflowEditId === 'new') {
 			setEditingWorkflow(undefined);

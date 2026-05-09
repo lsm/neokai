@@ -180,14 +180,19 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
 			const sid = window.location.pathname.split('/')[2];
+			// list returns summaries — fetch full detail to read nodes
 			const list = (await hub.request('spaceWorkflow.list', { spaceId: sid })) as {
-				workflows: Array<{
-					name: string;
-					nodes: Array<{ name: string; agents?: Array<{ name: string }> }>;
-				}>;
+				workflows: Array<{ id: string; name: string }>;
 			};
 			const planDecompose = list.workflows.find((w) => w.name === 'Plan & Decompose Workflow');
-			const reviewNode = planDecompose?.nodes.find((n) => n.name === 'Plan Review');
+			if (!planDecompose) return 0;
+			const detail = (await hub.request('spaceWorkflow.get', {
+				spaceId: sid,
+				id: planDecompose.id,
+			})) as {
+				workflow: { nodes: Array<{ name: string; agents?: Array<{ name: string }> }> } | null;
+			};
+			const reviewNode = detail.workflow?.nodes.find((n) => n.name === 'Plan Review');
 			return reviewNode?.agents?.length ?? 0;
 		});
 		expect(reviewSlotCount).toBe(4);
