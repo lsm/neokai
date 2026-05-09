@@ -77,6 +77,8 @@ export interface NamedQuery {
 
 const DEBOUNCE_SDK_MESSAGES_MS = 100;
 const DEBOUNCE_SESSION_GROUP_MESSAGES_MS = 150;
+const DEBOUNCE_SESSION_LIST_MS = 150;
+const DEBOUNCE_SPACE_SESSIONS_MS = 150;
 const DEBOUNCE_SPACE_TASK_FEEDS_MS = 250;
 
 // ============================================================================
@@ -95,26 +97,28 @@ function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string,
 	const role = String(row.role ?? 'system');
 	const messageType = String(row.messageType ?? 'status');
 	const createdAt = Number(row.createdAt ?? Date.now());
-	const iteration = Number(row.iteration ?? 0);
 	const rawId = row.id;
 	const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `row-${createdAt}`;
 	const parentToolUseId = typeof row.parentToolUseId === 'string' ? row.parentToolUseId : null;
+	const turnUserMessageId =
+		typeof row.turnUserMessageId === 'string' ? row.turnUserMessageId : null;
 
 	let content = typeof row.content === 'string' ? row.content : String(row.content ?? '');
 
 	if (sourceType === 'sdk') {
 		try {
 			const parsed = JSON.parse(content) as Record<string, unknown>;
-			const uuid = typeof parsed.uuid === 'string' ? parsed.uuid : String(id);
-			const shortSessionId = (sessionId ?? '').slice(0, 8);
-			const turnId = `turn_${groupId}_${iteration}_${shortSessionId}_${uuid}`;
+			// turnId is the user message's own ID — every non-user row inherits the
+			// most recent user-row id within its session, so all rows belonging to
+			// the same turn share a stable, content-derived turn key. Rows that
+			// precede any user message in their session fall back to their own id.
+			const turnId = turnUserMessageId ?? String(id);
 			const enriched = {
 				...parsed,
 				_taskMeta: {
 					authorRole: role,
 					authorSessionId: sessionId ?? '',
 					turnId,
-					iteration,
 				},
 			};
 			content = JSON.stringify(enriched);
@@ -149,10 +153,11 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 	const taskTitle = String(row.taskTitle ?? '');
 	const messageType = String(row.messageType ?? 'status');
 	const createdAt = Number(row.createdAt ?? Date.now());
-	const iteration = Number(row.iteration ?? 0);
 	const rawId = row.id;
 	const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `row-${createdAt}`;
 	const parentToolUseId = typeof row.parentToolUseId === 'string' ? row.parentToolUseId : null;
+	const turnUserMessageId =
+		typeof row.turnUserMessageId === 'string' ? row.turnUserMessageId : null;
 	const origin = typeof row.origin === 'string' ? row.origin : null;
 	// Optional backward-compat field from older compact-query variants.
 	// Current compact SQL no longer emits this, but keep tolerant parsing so
@@ -174,9 +179,13 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 
 	try {
 		const parsed = JSON.parse(content) as Record<string, unknown>;
-		const uuid = typeof parsed.uuid === 'string' ? parsed.uuid : String(id);
-		const shortSessionId = (sessionId ?? '').slice(0, 8);
-		const turnId = `turn_${taskId}_${iteration}_${shortSessionId}_${uuid}`;
+		// turnId = the id of the user-message that started this turn. SQL emits
+		// `turnUserMessageId` per row by carrying forward the most recent user-row
+		// id within the session via a window function. Rows that precede any
+		// user message in their session fall back to their own id, giving every
+		// row a stable, content-derived turn key without depending on
+		// session-group iteration metadata.
+		const turnId = turnUserMessageId ?? String(id);
 		content = JSON.stringify({
 			...parsed,
 			_taskMeta: {
@@ -187,7 +196,6 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 				taskId,
 				taskTitle,
 				turnId,
-				iteration,
 			},
 		});
 	} catch {
@@ -522,29 +530,78 @@ WITH target_group AS (
   SELECT id
   FROM session_groups
   WHERE id = ?
+),
+sdk_rows_raw AS (
+  SELECT
+    sm.id                         AS id,
+    tg.id                         AS groupId,
+    sm.session_id                 AS sessionId,
+    CASE
+      WHEN gm.role = 'leader' THEN 'leader'
+      WHEN gm.role = 'worker' AND sm.session_id LIKE 'general:%' THEN 'general'
+      WHEN gm.role = 'worker' AND sm.session_id LIKE 'planner:%' THEN 'planner'
+      WHEN gm.role = 'worker' AND sm.session_id LIKE 'coder:%' THEN 'coder'
+      WHEN gm.role = 'worker' THEN 'coder'
+      ELSE gm.role
+    END                           AS role,
+    sm.message_type               AS messageType,
+    sm.sdk_message                AS content,
+    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
+    sm.parent_tool_use_id AS parentToolUseId
+  FROM target_group tg
+  JOIN session_group_members gm ON gm.group_id = tg.id
+  JOIN sdk_messages sm ON sm.session_id = gm.session_id
+  WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+),
+sdk_rows_with_pos AS (
+  SELECT
+    r.*,
+    ROW_NUMBER() OVER (
+      PARTITION BY r.sessionId
+      ORDER BY r.createdAt ASC, r.id ASC
+    ) AS rowPos
+  FROM sdk_rows_raw r
+),
+user_row_starts AS (
+  SELECT
+    sessionId,
+    rowPos AS userRowPos,
+    id AS userMessageId
+  FROM sdk_rows_with_pos
+  WHERE messageType = 'user'
+),
+sdk_rows AS (
+  SELECT
+    p.id,
+    p.groupId,
+    p.sessionId,
+    p.role,
+    p.messageType,
+    p.content,
+    p.createdAt,
+    p.parentToolUseId,
+    (
+      SELECT urs.userMessageId
+      FROM user_row_starts urs
+      WHERE urs.sessionId = p.sessionId
+        AND urs.userRowPos <= p.rowPos
+      ORDER BY urs.userRowPos DESC
+      LIMIT 1
+    ) AS turnUserMessageId
+  FROM sdk_rows_with_pos p
 )
 SELECT
-  'sdk'                         AS sourceType,
-  sm.id                         AS id,
-  tg.id                         AS groupId,
-  sm.session_id                 AS sessionId,
-  CASE
-    WHEN gm.role = 'leader' THEN 'leader'
-    WHEN gm.role = 'worker' AND sm.session_id LIKE 'general:%' THEN 'general'
-    WHEN gm.role = 'worker' AND sm.session_id LIKE 'planner:%' THEN 'planner'
-    WHEN gm.role = 'worker' AND sm.session_id LIKE 'coder:%' THEN 'coder'
-    WHEN gm.role = 'worker' THEN 'coder'
-    ELSE gm.role
-  END                           AS role,
-  sm.message_type               AS messageType,
-  sm.sdk_message                AS content,
-  CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
-  CAST(COALESCE(json_extract(sm.sdk_message, '$._taskMeta.iteration'), 0) AS INTEGER) AS iteration,
-  json_extract(sm.sdk_message, '$.parent_tool_use_id') AS parentToolUseId
-FROM target_group tg
-JOIN session_group_members gm ON gm.group_id = tg.id
-JOIN sdk_messages sm ON sm.session_id = gm.session_id
-WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+  'sdk' AS sourceType,
+  id,
+  groupId,
+  sessionId,
+  role,
+  messageType,
+  content,
+  createdAt,
+  turnUserMessageId,
+  parentToolUseId
+FROM sdk_rows
 UNION ALL
 SELECT
   'event'                       AS sourceType,
@@ -563,7 +620,7 @@ SELECT
     ELSE COALESCE(json_extract(e.payload_json, '$.text'), e.kind)
   END                           AS content,
   e.created_at                  AS createdAt,
-  0                             AS iteration,
+  NULL                          AS turnUserMessageId,
   NULL                          AS parentToolUseId
 FROM target_group tg
 JOIN task_group_events e ON e.group_id = tg.id
@@ -576,55 +633,103 @@ WITH target_task AS (
   FROM space_tasks
   WHERE id = ?
 ),
--- Leg 1: orchestration task (the Task Agent's own task)
-orchestration AS (
+-- Derive the contributing-session set from the source-of-truth tables —
+-- task_agent_session_id on space_tasks and agent_session_id on
+-- node_executions for the task's workflow run — so sessions that exist
+-- but haven't emitted a message yet (queued / early-processing) are
+-- still surfaced in the activity feed. Sourcing from sdk_messages.task_id
+-- alone would hide them until the first SDK row is persisted.
+contributing_sessions AS (
   SELECT
     tt.task_agent_session_id AS session_id,
-    'task_agent' AS kind,
-    'Task Agent' AS label,
-    'task-agent' AS role,
     tt.id AS task_id,
     tt.title AS task_title,
-    tt.status AS task_status,
-    NULL AS node_execution_id,
-    NULL AS workflow_node_id,
-    NULL AS agent_name,
-    NULL AS execution_status,
-    NULL AS execution_result,
-    NULL AS execution_updated_at
+    tt.status AS task_status
   FROM target_task tt
   JOIN sessions s ON s.id = tt.task_agent_session_id
   WHERE tt.task_agent_session_id IS NOT NULL
     AND s.type = 'space_task_agent'
-),
--- Leg 2: node agents via node_executions
-node_agents AS (
+  UNION
   SELECT
     ne.agent_session_id AS session_id,
-    'node_agent' AS kind,
-    COALESCE(sa.name, ne.agent_name, 'agent') AS label,
-    ne.agent_name AS role,
     tt.id AS task_id,
     tt.title AS task_title,
-    tt.status AS task_status,
-    ne.id AS node_execution_id,
-    ne.workflow_node_id AS workflow_node_id,
-    ne.agent_name AS agent_name,
-    ne.status AS execution_status,
-    ne.result AS execution_result,
-    ne.updated_at AS execution_updated_at
-  FROM node_executions ne
-  JOIN target_task tt
+    tt.status AS task_status
+  FROM target_task tt
+  JOIN node_executions ne
     ON tt.workflow_run_id IS NOT NULL
    AND ne.workflow_run_id = tt.workflow_run_id
-  LEFT JOIN space_agents sa ON sa.id = ne.agent_id
-  WHERE ne.agent_session_id IS NOT NULL
+   AND ne.agent_session_id IS NOT NULL
 ),
--- Union both legs
+-- Pick the most relevant node_execution per (task, session): prefer
+-- in-progress, then most recently updated. Used to resolve agent_name /
+-- workflow_node_id / execution_status / label below. Only applies to
+-- node-agent sessions; the Task Agent session has no row here.
+session_node_exec AS (
+  SELECT cs.task_id, cs.session_id, ne.id AS node_execution_id,
+         ne.workflow_node_id, ne.agent_id, ne.agent_name,
+         ne.status AS execution_status, ne.result AS execution_result,
+         ne.updated_at AS execution_updated_at,
+         ROW_NUMBER() OVER (
+           PARTITION BY cs.task_id, cs.session_id
+           ORDER BY
+             CASE ne.status
+               WHEN 'in_progress' THEN 0
+               WHEN 'waiting_rebind' THEN 1
+               WHEN 'blocked' THEN 2
+               WHEN 'pending' THEN 3
+               ELSE 4
+             END,
+             ne.updated_at DESC,
+             ne.created_at DESC,
+             ne.id DESC
+         ) AS rn
+  FROM contributing_sessions cs
+  JOIN target_task tt ON tt.id = cs.task_id
+  JOIN node_executions ne
+    ON ne.workflow_run_id = tt.workflow_run_id
+   AND ne.agent_session_id = cs.session_id
+),
 all_sessions AS (
-  SELECT * FROM orchestration
-  UNION ALL
-  SELECT * FROM node_agents
+  SELECT
+    cs.session_id AS session_id,
+    -- Task Agent vs node-agent classification: derived from sessions.type.
+    -- Using sessions.type (a stable property of the session row) rather than
+    -- comparing to the current task_agent_session_id ensures historical rows
+    -- stay correctly attributed if the orchestration pointer is rotated or
+    -- cleared (rehydrate self-heal, session replacement).
+    CASE
+      WHEN s_kind.type = 'space_task_agent' THEN 'task_agent'
+      ELSE 'node_agent'
+    END AS kind,
+    CASE
+      WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent'
+      ELSE COALESCE(sa.name, sne.agent_name, 'agent')
+    END AS label,
+    CASE
+      WHEN s_kind.type = 'space_task_agent' THEN 'task-agent'
+      -- Fall back to a stable string when no node_executions row is
+      -- available (e.g. workflow-run cleanup detached the row after the
+      -- session emitted messages) — otherwise the mapper retypes the
+      -- author as 'system', misattributing genuine node-agent activity.
+      ELSE COALESCE(sne.agent_name, 'agent')
+    END AS role,
+    cs.task_id,
+    cs.task_title,
+    cs.task_status,
+    sne.node_execution_id,
+    sne.workflow_node_id,
+    sne.agent_name,
+    sne.execution_status,
+    sne.execution_result,
+    sne.execution_updated_at
+  FROM contributing_sessions cs
+  LEFT JOIN sessions s_kind ON s_kind.id = cs.session_id
+  LEFT JOIN session_node_exec sne
+    ON sne.task_id = cs.task_id
+   AND sne.session_id = cs.session_id
+   AND sne.rn = 1
+  LEFT JOIN space_agents sa ON sa.id = sne.agent_id
 ),
 -- Deduplicate session IDs to prevent fan-out in message_stats JOIN
 unique_session_ids AS (
@@ -710,44 +815,6 @@ WITH target_task AS (
   FROM space_tasks
   WHERE id = ?
 ),
--- Leg 1: orchestration task (the Task Agent's own task)
-orchestration AS (
-  SELECT
-    tt.task_agent_session_id AS session_id,
-    'task_agent' AS kind,
-    'task-agent' AS role,
-    'Task Agent' AS label,
-    NULL AS node_execution_id,
-    tt.id AS task_id,
-    tt.title AS task_title
-  FROM target_task tt
-  JOIN sessions s ON s.id = tt.task_agent_session_id
-  WHERE tt.task_agent_session_id IS NOT NULL
-    AND s.type = 'space_task_agent'
-),
--- Leg 2: node agents via node_executions
-node_agents AS (
-  SELECT
-    ne.agent_session_id AS session_id,
-    'node_agent' AS kind,
-    ne.agent_name AS role,
-    COALESCE(sa.name, ne.agent_name, 'agent') AS label,
-    ne.id AS node_execution_id,
-    tt.id AS task_id,
-    tt.title AS task_title
-  FROM node_executions ne
-  JOIN target_task tt
-    ON tt.workflow_run_id IS NOT NULL
-   AND ne.workflow_run_id = tt.workflow_run_id
-  LEFT JOIN space_agents sa ON sa.id = ne.agent_id
-  WHERE ne.agent_session_id IS NOT NULL
-),
--- Union both legs
-all_sessions AS (
-  SELECT * FROM orchestration
-  UNION ALL
-  SELECT * FROM node_agents
-),
 github_events AS (
   SELECT
     ge.id AS id,
@@ -769,33 +836,150 @@ github_events AS (
     ) AS content,
     'system' AS origin,
     ge.occurred_at AS createdAt,
-    0 AS iteration,
-    NULL AS parentToolUseId
+    NULL AS parentToolUseId,
+    1 AS isRenderable,
+    0 AS isTerminal,
+    NULL AS turnUserMessageId
   FROM target_task tt
   JOIN space_github_events ge ON ge.task_id = tt.id
   WHERE ge.state IN ('routed', 'delivered')
+),
+-- Pick the most relevant node_execution per (task, session) for label /
+-- node_execution_id derivation. Same precedence the activity query uses:
+-- prefer in-progress, then most-recent. Only relevant for non Task Agent
+-- sessions (the Task Agent has no node_executions row).
+session_node_exec AS (
+  SELECT tt.id AS task_id, ne.agent_session_id AS session_id, ne.id AS node_execution_id,
+         ne.agent_id, ne.agent_name,
+         ROW_NUMBER() OVER (
+           PARTITION BY tt.id, ne.agent_session_id
+           ORDER BY
+             CASE ne.status
+               WHEN 'in_progress' THEN 0
+               WHEN 'waiting_rebind' THEN 1
+               WHEN 'blocked' THEN 2
+               WHEN 'pending' THEN 3
+               ELSE 4
+             END,
+             ne.updated_at DESC,
+             ne.created_at DESC,
+             ne.id DESC
+         ) AS rn
+  FROM target_task tt
+  JOIN node_executions ne
+    ON ne.workflow_run_id = tt.workflow_run_id
+   AND ne.agent_session_id IS NOT NULL
+),
+sdk_rows_raw AS (
+  SELECT
+    sm.id AS id,
+    sm.session_id AS sessionId,
+    -- Task Agent vs node-agent classification — derived from sessions.type
+    -- (a stable property of the session row), not from the task's current
+    -- task_agent_session_id pointer. Pointer rotation/clearing must not
+    -- retype historical rows.
+    CASE
+      WHEN s_kind.type = 'space_task_agent' THEN 'task_agent'
+      ELSE 'node_agent'
+    END AS kind,
+    CASE
+      WHEN s_kind.type = 'space_task_agent' THEN 'task-agent'
+      -- Fall back to a stable string when no node_executions row is
+      -- available — otherwise the mapper retypes the author as 'system',
+      -- misattributing genuine node-agent messages.
+      ELSE COALESCE(sne.agent_name, 'agent')
+    END AS role,
+    CASE
+      WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent'
+      ELSE COALESCE(sa.name, sne.agent_name, 'agent')
+    END AS label,
+    sne.node_execution_id AS nodeExecutionId,
+    tt.id AS taskId,
+    tt.title AS taskTitle,
+    sm.message_type AS messageType,
+    sm.sdk_message AS content,
+    sm.origin AS origin,
+    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
+    sm.parent_tool_use_id AS parentToolUseId,
+    sm.is_renderable AS isRenderable,
+    sm.is_terminal AS isTerminal
+  FROM target_task tt
+  JOIN sdk_messages sm ON sm.task_id = tt.id
+  LEFT JOIN sessions s_kind ON s_kind.id = sm.session_id
+  LEFT JOIN session_node_exec sne
+    ON sne.task_id = tt.id
+   AND sne.session_id = sm.session_id
+   AND sne.rn = 1
+  LEFT JOIN space_agents sa ON sa.id = sne.agent_id
+  WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+),
+sdk_rows_with_pos AS (
+  SELECT
+    r.*,
+    ROW_NUMBER() OVER (
+      PARTITION BY r.sessionId
+      ORDER BY r.createdAt ASC, r.id ASC
+    ) AS rowPos
+  FROM sdk_rows_raw r
+),
+user_row_starts AS (
+  -- For each user row, capture (sessionId, rowPos) and its own id. Non-user
+  -- rows pick up the most recent user-row id by joining on rowPos <= current.
+  SELECT
+    sessionId,
+    rowPos AS userRowPos,
+    id AS userMessageId
+  FROM sdk_rows_with_pos
+  WHERE messageType = 'user'
+),
+sdk_rows AS (
+  SELECT
+    p.id,
+    p.sessionId,
+    p.kind,
+    p.role,
+    p.label,
+    p.nodeExecutionId,
+    p.taskId,
+    p.taskTitle,
+    p.messageType,
+    p.content,
+    p.origin,
+    p.createdAt,
+    p.parentToolUseId,
+    p.isRenderable,
+    p.isTerminal,
+    (
+      SELECT urs.userMessageId
+      FROM user_row_starts urs
+      WHERE urs.sessionId = p.sessionId
+        AND urs.userRowPos <= p.rowPos
+      ORDER BY urs.userRowPos DESC
+      LIMIT 1
+    ) AS turnUserMessageId
+  FROM sdk_rows_with_pos p
 ),
 joined AS (
   SELECT * FROM github_events
   UNION ALL
   SELECT
-    sm.id AS id,
-    sm.session_id AS sessionId,
-    ase.kind AS kind,
-    ase.role AS role,
-    ase.label AS label,
-    ase.node_execution_id AS nodeExecutionId,
-    ase.task_id AS taskId,
-    ase.task_title AS taskTitle,
-    sm.message_type AS messageType,
-    sm.sdk_message AS content,
-    sm.origin AS origin,
-    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
-    CAST(COALESCE(json_extract(sm.sdk_message, '$._taskMeta.iteration'), 0) AS INTEGER) AS iteration,
-    json_extract(sm.sdk_message, '$.parent_tool_use_id') AS parentToolUseId
-  FROM all_sessions ase
-  JOIN sdk_messages sm ON sm.session_id = ase.session_id
-  WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+    id,
+    sessionId,
+    kind,
+    role,
+    label,
+    nodeExecutionId,
+    taskId,
+    taskTitle,
+    messageType,
+    content,
+    origin,
+    createdAt,
+    parentToolUseId,
+    isRenderable,
+    isTerminal,
+    turnUserMessageId
+  FROM sdk_rows
 )
 `.trim();
 
@@ -818,7 +1002,7 @@ SELECT
   content,
   origin,
   createdAt,
-  iteration,
+  turnUserMessageId,
   parentToolUseId
 FROM joined
 ORDER BY createdAt ASC, id ASC
@@ -854,46 +1038,10 @@ ${SPACE_TASK_MESSAGES_BASE_CTE},
 session_turns AS (
   SELECT
     j.*,
-    CASE
-      WHEN j.messageType = 'result' THEN 1
-      ELSE 0
-    END AS isTerminal,
-    CASE
-      -- Drop user rows whose content is exclusively tool_result blocks — they
-      -- render as null in the compact UI and would otherwise consume slots
-      -- in the per-turn cap without contributing visible content.
-      WHEN j.messageType = 'user'
-        AND json_type(j.content, '$.message.content') = 'array'
-        AND EXISTS (
-        SELECT 1
-        FROM json_each(json_extract(j.content, '$.message.content')) AS je
-        WHERE json_extract(je.value, '$.type') = 'tool_result'
-      ) THEN 0
-      -- Drop assistant rows that have *no* renderable content — i.e. the
-      -- content array exists but every block is either an empty/whitespace
-      -- text block or has no non-empty thinking/tool_use sibling. These
-      -- show up rarely in practice but bloat the per-turn cap when they
-      -- do; the active-turn summary applies the same filter so server and
-      -- client agree on what counts as visible activity.
-      WHEN j.messageType = 'assistant'
-        AND json_type(j.content, '$.message.content') = 'array'
-        AND NOT EXISTS (
-          SELECT 1
-          FROM json_each(json_extract(j.content, '$.message.content')) AS je
-          WHERE json_extract(je.value, '$.type') = 'tool_use'
-             OR (
-                json_extract(je.value, '$.type') = 'text'
-                AND TRIM(COALESCE(json_extract(je.value, '$.text'), '')) != ''
-             )
-             OR (
-                json_extract(je.value, '$.type') = 'thinking'
-                AND TRIM(COALESCE(json_extract(je.value, '$.thinking'), '')) != ''
-             )
-        ) THEN 0
-      ELSE 1
-    END AS isRenderable,
+    j.isTerminal AS isTerminalLocal,
+    j.isRenderable AS isRenderableLocal,
     COALESCE(
-      SUM(CASE WHEN j.messageType = 'result' THEN 1 ELSE 0 END) OVER (
+      SUM(j.isTerminal) OVER (
         PARTITION BY j.sessionId
         ORDER BY j.createdAt ASC, j.id ASC
         ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
@@ -906,15 +1054,15 @@ ranked AS (
   SELECT
     st.*,
     CASE
-      WHEN st.isTerminal = 0 AND st.isRenderable = 1 THEN ROW_NUMBER() OVER (
-        PARTITION BY st.sessionId, st.turnIndex, st.isTerminal, st.isRenderable
+      WHEN st.isTerminalLocal = 0 AND st.isRenderableLocal = 1 THEN ROW_NUMBER() OVER (
+        PARTITION BY st.sessionId, st.turnIndex, st.isTerminalLocal, st.isRenderableLocal
         ORDER BY st.createdAt DESC, st.id DESC
       )
       ELSE NULL
     END AS nonTerminalRankDesc,
     CASE
-      WHEN st.isTerminal = 0 AND st.isRenderable = 1 AND st.messageType = 'user' THEN ROW_NUMBER() OVER (
-        PARTITION BY st.sessionId, st.turnIndex, st.isTerminal, st.isRenderable, st.messageType
+      WHEN st.isTerminalLocal = 0 AND st.isRenderableLocal = 1 AND st.messageType = 'user' THEN ROW_NUMBER() OVER (
+        PARTITION BY st.sessionId, st.turnIndex, st.isTerminalLocal, st.isRenderableLocal, st.messageType
         ORDER BY st.createdAt ASC, st.id ASC
       )
       ELSE NULL
@@ -925,24 +1073,24 @@ scored AS (
   SELECT
     r.*,
     CASE
-      WHEN r.isTerminal = 0 AND r.isRenderable = 1 AND r.nonTerminalRankDesc <= ${SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT}
+      WHEN r.isTerminalLocal = 0 AND r.isRenderableLocal = 1 AND r.nonTerminalRankDesc <= ${SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT}
         THEN 1
       ELSE 0
     END AS isTailVisible,
     CASE
-      WHEN r.isTerminal = 0 AND r.isRenderable = 1 AND r.messageType = 'user' AND r.userRowRankAsc = 1
+      WHEN r.isTerminalLocal = 0 AND r.isRenderableLocal = 1 AND r.messageType = 'user' AND r.userRowRankAsc = 1
         THEN 1
       ELSE 0
     END AS isInitialUserVisible,
     -- System rows (init / compact_boundary) are sidecar metadata, not real
     -- messages — exclude them from both the total and visible counts so the
     -- "N hidden" badge reflects user/assistant turns only.
-    SUM(CASE WHEN r.isTerminal = 0 AND r.isRenderable = 1 AND r.messageType != 'system' THEN 1 ELSE 0 END) OVER (
+    SUM(CASE WHEN r.isTerminalLocal = 0 AND r.isRenderableLocal = 1 AND r.messageType != 'system' THEN 1 ELSE 0 END) OVER (
       PARTITION BY r.sessionId, r.turnIndex
     ) AS totalRenderableNonTerminalInTurn,
     SUM(
       CASE
-        WHEN r.isTerminal = 0 AND r.isRenderable = 1 AND r.messageType != 'system'
+        WHEN r.isTerminalLocal = 0 AND r.isRenderableLocal = 1 AND r.messageType != 'system'
           AND (
             (r.nonTerminalRankDesc <= ${SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT})
             OR (r.messageType = 'user' AND r.userRowRankAsc = 1)
@@ -960,7 +1108,7 @@ selected AS (
     s.*
   FROM scored s
   WHERE
-    s.isTerminal = 1
+    s.isTerminalLocal = 1
     -- Always include system rows (init / compact_boundary). Without this they
     -- would be dropped on any non-trivial turn (the system:init row sits at
     -- position 1 of every session, far outside the tail of 5). System rows
@@ -968,8 +1116,8 @@ selected AS (
     -- per-exec metadata dropdowns working consistently.
     OR s.messageType = 'system'
     OR (
-      s.isTerminal = 0
-      AND s.isRenderable = 1
+      s.isTerminalLocal = 0
+      AND s.isRenderableLocal = 1
       AND (s.isTailVisible = 1 OR s.isInitialUserVisible = 1)
     )
 )
@@ -992,7 +1140,7 @@ SELECT
       THEN totalRenderableNonTerminalInTurn - visibleRenderableNonTerminalInTurn
     ELSE 0
   END AS turnHiddenMessageCount,
-  iteration,
+  turnUserMessageId,
   parentToolUseId
 FROM selected
 ORDER BY createdAt ASC, id ASC
@@ -1046,10 +1194,11 @@ session_turns AS (
     j.messageType,
     j.content,
     j.createdAt,
-    j.iteration,
     j.parentToolUseId,
+    j.turnUserMessageId,
+    j.isTerminal AS isTerminal,
     COALESCE(
-      SUM(CASE WHEN j.messageType = 'result' THEN 1 ELSE 0 END) OVER (
+      SUM(j.isTerminal) OVER (
         PARTITION BY j.sessionId
         ORDER BY j.createdAt ASC, j.id ASC
         ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
@@ -1074,7 +1223,7 @@ active_turn AS (
     FROM session_turns st
     WHERE st.sessionId = smt.sessionId
       AND st.turnIndex = smt.maxTurnIndex
-      AND st.messageType = 'result'
+      AND st.isTerminal = 1
   )
 ),
 active_rows AS (
@@ -1172,6 +1321,7 @@ user_entries AS (
     )
 )
 SELECT
+  sessionId || ':' || turnIndex || ':' || rowId || ':' || blockIdx AS id,
   sessionId,
   turnIndex,
   ts,
@@ -1186,6 +1336,7 @@ SELECT
 FROM assistant_entries
 UNION ALL
 SELECT
+  sessionId || ':' || turnIndex || ':' || rowId || ':' || blockIdx AS id,
   sessionId,
   turnIndex,
   ts,
@@ -1198,7 +1349,7 @@ SELECT
   textValue,
   thinkingValue
 FROM user_entries
-ORDER BY sessionId ASC, ts ASC, rowId ASC, blockIdx ASC
+ORDER BY sessionId ASC, ts ASC, rowId ASC, blockIdx ASC, id ASC
 `.trim();
 
 // ============================================================================
@@ -1424,6 +1575,64 @@ export function buildActiveTurnSummariesFromRows(
 	}
 
 	return Array.from(bySession.values());
+}
+
+function mapActiveTurnEntryRow(row: Record<string, unknown>): Record<string, unknown> {
+	const sessionId = typeof row.sessionId === 'string' ? row.sessionId : '';
+	const turnIndex = Number(row.turnIndex ?? 0);
+	const ts = Number(row.ts ?? 0);
+	const uuid = typeof row.uuid === 'string' ? row.uuid : '';
+	const blockType = typeof row.blockType === 'string' ? row.blockType : '';
+	const rowId = typeof row.rowId === 'string' || typeof row.rowId === 'number' ? row.rowId : '';
+	const blockIdx = Number(row.blockIdx ?? -1);
+	const rawId = row.id;
+	const id = typeof rawId === 'string' ? rawId : `${sessionId}:${turnIndex}:${rowId}:${blockIdx}`;
+
+	let entry: Record<string, unknown> | null = null;
+	if (blockType === 'tool_use') {
+		const toolName = typeof row.toolName === 'string' ? row.toolName : '';
+		const rawInput = row.toolInput;
+		let parsedInput: Record<string, unknown> = {};
+		if (typeof rawInput === 'string') {
+			try {
+				const maybe = JSON.parse(rawInput);
+				if (maybe && typeof maybe === 'object') parsedInput = maybe as Record<string, unknown>;
+			} catch {
+				parsedInput = {};
+			}
+		} else if (rawInput && typeof rawInput === 'object') {
+			parsedInput = rawInput as Record<string, unknown>;
+		}
+		entry = {
+			kind: 'tool_use',
+			toolName,
+			preview: activityPreviewFromToolInput(toolName, parsedInput),
+			ts,
+			uuid,
+		};
+	} else if (blockType === 'text') {
+		const text = typeof row.textValue === 'string' ? row.textValue : '';
+		if (text.trim().length > 0) entry = { kind: 'text', text: activityOneLine(text), ts, uuid };
+	} else if (blockType === 'thinking') {
+		const thinking = typeof row.thinkingValue === 'string' ? row.thinkingValue : '';
+		if (thinking.trim().length > 0) {
+			entry = { kind: 'thinking', preview: thinking.trim(), ts, uuid };
+		}
+	} else if (blockType === '__user_message') {
+		const text = typeof row.textValue === 'string' ? row.textValue : '';
+		entry = { kind: 'user_message', text: activityOneLine(text), ts, uuid };
+	} else if (blockType === '__user_replay') {
+		const text = typeof row.textValue === 'string' ? row.textValue : '';
+		entry = { kind: 'agent_handoff', text: activityOneLine(text), ts, uuid };
+	}
+
+	return {
+		id,
+		sessionId,
+		turnIndex,
+		ts,
+		entry,
+	};
 }
 
 // ============================================================================
@@ -1701,30 +1910,151 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
  * `spaceTaskActivity.byTask`). Returns `false` when the writing session is
  * not part of the target task, so the live query engine can skip re-evaluation.
  *
- * The prepared statement checks both the task_agent_session_id and any
- * node_execution agent_session_ids linked to the task's workflow_run.
+ * Membership is derived from three sources:
+ *   1. `space_tasks.task_agent_session_id` — the orchestration session
+ *   2. `node_executions` for the task's workflow run — node-agent sessions
+ *   3. `sdk_messages.task_id` — sessions that have stamped messages for the task
+ *
+ * Because scoped delete events are emitted *after* the row is removed, a
+ * session that just deleted its final task-stamped message would fail the
+ * `sdk_messages.task_id` check even though the feed changed. To prevent
+ * false negatives we capture the set of sessions that were linked at
+ * subscribe time (including those with historical messages) and keep them
+ * in-scope for the lifetime of the subscription. New sessions that join
+ * after subscribe are caught by the dynamic checks.
  */
 function buildTaskScopeFilter(
 	params: ReadonlyArray<unknown>,
 	db: BunDatabase
 ): ((scope: TableChangeScope) => boolean) | undefined {
 	const taskId = params[0] as string;
-	const stmt = db.prepare(`
-		SELECT 1 FROM space_tasks st
-		WHERE st.id = ?
-			AND (
-				st.task_agent_session_id = ?
-				OR EXISTS (
-					SELECT 1 FROM node_executions ne
-					JOIN space_tasks st2 ON st2.workflow_run_id = ne.workflow_run_id
-					WHERE st2.id = ? AND ne.agent_session_id = ?
-				)
+
+	// Capture the set of sessions linked to this task at subscribe time.
+	// This prevents the delete-last-message false negative: a session that
+	// had messages when the subscription was created stays in-scope even
+	// after those messages are deleted.
+	const linkedSessions = new Set<string>();
+	try {
+		const taskAgent = db
+			.prepare('SELECT task_agent_session_id FROM space_tasks WHERE id = ?')
+			.get(taskId) as { task_agent_session_id: string } | undefined;
+		if (taskAgent?.task_agent_session_id) {
+			linkedSessions.add(taskAgent.task_agent_session_id);
+		}
+	} catch {
+		// space_tasks may not exist in minimal test schemas
+	}
+	try {
+		const nodeAgents = db
+			.prepare(
+				`SELECT ne.agent_session_id
+				 FROM node_executions ne
+				 JOIN space_tasks st ON st.id = ? AND st.workflow_run_id IS NOT NULL
+				 WHERE ne.workflow_run_id = st.workflow_run_id
+				   AND ne.agent_session_id IS NOT NULL`
 			)
-		LIMIT 1
-	`);
+			.all(taskId) as Array<{ agent_session_id: string }>;
+		for (const row of nodeAgents) {
+			if (row.agent_session_id) linkedSessions.add(row.agent_session_id);
+		}
+	} catch {
+		// node_executions may not exist in minimal test schemas
+	}
+	try {
+		const messageSessions = db
+			.prepare('SELECT DISTINCT session_id FROM sdk_messages WHERE task_id = ?')
+			.all(taskId) as Array<{ session_id: string }>;
+		for (const row of messageSessions) {
+			if (row.session_id) linkedSessions.add(row.session_id);
+		}
+	} catch {
+		// sdk_messages may not exist in minimal test schemas
+	}
+
+	// Dynamic checks for sessions that become linked after subscribe time.
+	const messageStmt = db.prepare(
+		`SELECT 1 FROM sdk_messages WHERE task_id = ? AND session_id = ? LIMIT 1`
+	);
+	const taskAgentStmt = db.prepare(
+		`SELECT 1 FROM space_tasks WHERE id = ? AND task_agent_session_id = ? LIMIT 1`
+	);
+	const nodeExecStmt = db.prepare(
+		`SELECT 1 FROM node_executions ne
+		 JOIN space_tasks st ON st.id = ?
+		   AND st.workflow_run_id IS NOT NULL
+		   AND ne.workflow_run_id = st.workflow_run_id
+		 WHERE ne.agent_session_id = ?
+		 LIMIT 1`
+	);
 	return (scope) => {
+		if (scope.taskId) return scope.taskId === taskId;
 		if (!scope.sessionId) return true;
-		return !!stmt.get(taskId, scope.sessionId, taskId, scope.sessionId);
+		if (linkedSessions.has(scope.sessionId)) return true;
+		if (messageStmt.get(taskId, scope.sessionId)) return true;
+		if (taskAgentStmt.get(taskId, scope.sessionId)) return true;
+		return !!nodeExecStmt.get(taskId, scope.sessionId);
+	};
+}
+
+// Note: `sessions.list` intentionally has no scope filter. The query only
+// watches the `sessions` table, so incoming scopes describe session-level
+// writes (createSession / updateSession / deleteSession). The scope reflects
+// the *post*-write row, so we cannot tell whether an `updateSession` moved a
+// session in or out of the visible chat-sidebar set (e.g. by gaining
+// `roomId`/`spaceId`, or being reclassified to an internal type via
+// `AgentSession.fromInit`). Skipping such writes leaves stale rows. Session
+// writes are infrequent compared to `sdk_messages`, so re-evaluating
+// `sessions.list` on every session write is cheap and correct.
+
+function buildSpaceSessionsScopeFilter(
+	params: ReadonlyArray<unknown>,
+	db: BunDatabase
+): (scope: TableChangeScope) => boolean {
+	const spaceId = params[0] as string;
+	// Re-query membership on every invalidation rather than snapshotting at
+	// subscribe time. Snapshotting drops two important update paths:
+	//   1. Sessions added to the space *after* subscription would be filtered
+	//      out and miss title/status/lastActiveAt changes until the client
+	//      reconnects.
+	//   2. Sessions removed from the space would remain "in scope" forever,
+	//      causing avoidable re-evaluations.
+	// Reading the row is a single indexed lookup against `spaces.id`, so
+	// the cost is negligible relative to the SQL re-evaluation it gates.
+	const memberStmt = db.prepare('SELECT session_ids FROM spaces WHERE id = ?');
+	const readMembership = (): Set<string> | null => {
+		try {
+			const row = memberStmt.get(spaceId) as { session_ids: string | null } | undefined;
+			if (!row?.session_ids) return new Set();
+			const parsed = JSON.parse(row.session_ids) as unknown;
+			if (!Array.isArray(parsed)) return new Set();
+			const out = new Set<string>();
+			for (const value of parsed) {
+				if (typeof value === 'string') out.add(value);
+			}
+			return out;
+		} catch {
+			return null;
+		}
+	};
+
+	return (scope) => {
+		// If the scope explicitly tags this write with our spaceId (e.g. the
+		// session was just created/updated as a member of this space), accept
+		// without an extra DB hit. Covers the new-member case directly.
+		if (scope.spaceId === spaceId) return true;
+
+		// No sessionId on the scope (e.g. a `spaces` row was rewritten):
+		// we cannot tell what changed, so be conservative.
+		if (!scope.sessionId) return true;
+
+		const members = readMembership();
+		if (members === null) return true; // membership unreadable: be safe
+		// Re-evaluate when the session is currently in this space *or* could
+		// have been a member just before the write — we cannot distinguish a
+		// just-removed session from an unrelated session here, so accept any
+		// scope whose sessionId matches the live set. Sessions outside the
+		// live set with no spaceId hint are filtered.
+		return members.has(scope.sessionId);
 	};
 }
 
@@ -1775,6 +2105,16 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			paramCount: 1,
 			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
 			mapRow: mapSpaceTaskMessageRow,
+			buildScopeFilter: buildTaskScopeFilter,
+		},
+	],
+	[
+		'spaceTaskActiveTurn.byTask',
+		{
+			sql: SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL,
+			paramCount: 1,
+			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
+			mapRow: mapActiveTurnEntryRow,
 			buildScopeFilter: buildTaskScopeFilter,
 		},
 	],
@@ -1843,6 +2183,8 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SPACE_SESSIONS_BY_SPACE_SQL,
 			paramCount: 1,
+			debounceMs: DEBOUNCE_SPACE_SESSIONS_MS,
+			buildScopeFilter: buildSpaceSessionsScopeFilter,
 		},
 	],
 	[
@@ -1866,7 +2208,12 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SESSIONS_LIST_SQL,
 			paramCount: 1,
+			debounceMs: DEBOUNCE_SESSION_LIST_MS,
 			mapRow: mapSessionRow,
+			// No scope filter — see the comment on the (deleted)
+			// `buildSessionsListScopeFilter` site above. Session writes are
+			// infrequent and `updateSession` post-write scope can hide
+			// transitions that should remove a row from this list.
 			mapResult: (rawRows) => {
 				if (rawRows.length > 0 && rawRows[0]._totalCount != null) {
 					return {
@@ -1910,43 +2257,8 @@ export function setupLiveQueryHandlers(
 	const stmtSessionsTotalCount = db.prepare(SESSIONS_TOTAL_COUNT_SQL);
 	const stmtSessionsArchivedCount = db.prepare(SESSIONS_ARCHIVED_COUNT_SQL);
 
-	// Sidecar prepared statement for the compact-thread mapResult: emits one
-	// row per activity entry in each session's currently-active turn. The
-	// compact thread query itself caps rows per turn at 5; this sidecar is
-	// the uncapped feed used to drive the running roster on the task view.
-	//
-	// Prepared lazily on first use so daemon startup doesn't depend on every
-	// table referenced by the CTE chain (e.g. `node_executions`) being live
-	// yet. Preparing eagerly here regressed test setups whose minimal schema
-	// hadn't run the migration that creates that table.
-	let _stmtActiveTurnEntries: ReturnType<BunDatabase['prepare']> | null = null;
-	const getStmtActiveTurnEntries = () => {
-		if (!_stmtActiveTurnEntries) {
-			_stmtActiveTurnEntries = db.prepare(SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL);
-		}
-		return _stmtActiveTurnEntries;
-	};
-
 	const sessionsListBase = NAMED_QUERY_REGISTRY.get('sessions.list')!;
 	const activeRegistry = new Map(NAMED_QUERY_REGISTRY);
-
-	// Override the compact-thread query so each evaluation also computes the
-	// active-turn activity summary alongside the compact rows. Wired through
-	// the metadata channel so existing snapshot/delta plumbing carries it
-	// without a parallel subscription.
-	const compactThreadBase = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
-	activeRegistry.set('spaceTaskMessages.byTask.compact', {
-		...compactThreadBase,
-		mapResult: (_rawRows, params) => {
-			const taskId = params[0];
-			if (typeof taskId !== 'string' || taskId.length === 0) return undefined;
-			const entryRows = getStmtActiveTurnEntries().all(taskId) as Record<string, unknown>[];
-			const summaries = buildActiveTurnSummariesFromRows(entryRows);
-			// Always emit the field so the client sees an authoritative empty
-			// list rather than a stale value from a prior snapshot.
-			return { activeTurnSummaries: summaries };
-		},
-	});
 
 	activeRegistry.set('sessions.list', {
 		...sessionsListBase,
@@ -2029,7 +2341,8 @@ export function setupLiveQueryHandlers(
 		} else if (
 			queryName === 'spaceTaskActivity.byTask' ||
 			queryName === 'spaceTaskMessages.byTask' ||
-			queryName === 'spaceTaskMessages.byTask.compact'
+			queryName === 'spaceTaskMessages.byTask.compact' ||
+			queryName === 'spaceTaskActiveTurn.byTask'
 		) {
 			const taskId = params[0] as string;
 			let spaceTask: { space_id: string } | null = null;

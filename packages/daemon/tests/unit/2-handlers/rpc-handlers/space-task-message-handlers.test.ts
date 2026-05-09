@@ -293,7 +293,9 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(taskAgentManager.ensureTaskAgentSession).toHaveBeenCalledWith('task-1');
 			expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalledWith(
 				'task-1',
-				'Please continue'
+				'Please continue',
+				false,
+				undefined
 			);
 		});
 
@@ -366,7 +368,12 @@ describe('setupSpaceTaskMessageHandlers', () => {
 
 			expect(result).toEqual({ ok: true });
 			expect(taskAgentManager.ensureTaskAgentSession).toHaveBeenCalledWith('task-2');
-			expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalledWith('task-2', 'Hello');
+			expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalledWith(
+				'task-2',
+				'Hello',
+				false,
+				undefined
+			);
 			expect((daemonHub.emit as ReturnType<typeof mock>).mock.calls[0]?.[0]).toBe(
 				'space.task.updated'
 			);
@@ -468,6 +475,183 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(emitCalls.length).toBe(1);
 			expect(emitCalls[0]?.[0]).toBe('space.task.updated');
 			expect(emitCalls[0]?.[1]).toMatchObject({ task: expect.objectContaining({ id: 'task-2' }) });
+		});
+
+		// ─── Image attachment routing ─────────────────────────────────────────────
+		// Regression coverage for the bug where the space thread / slide-out chat
+		// silently dropped image uploads. The RPC handler must forward `images`
+		// to the underlying inject* call so the agent sees image blocks alongside
+		// the text in the SDK message content.
+		describe('image attachments', () => {
+			const sampleImage = {
+				media_type: 'image/png' as const,
+				data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
+			};
+
+			it('forwards images to injectTaskAgentMessage when no target / no @mention', async () => {
+				setup();
+
+				await call('space.task.sendMessage', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					message: 'Look at this',
+					images: [sampleImage],
+				});
+
+				expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalledWith(
+					'task-1',
+					'Look at this',
+					false,
+					[sampleImage]
+				);
+			});
+
+			it('treats images: [] as no images (passes undefined to injectTaskAgentMessage)', async () => {
+				setup();
+
+				await call('space.task.sendMessage', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					message: 'Plain text',
+					images: [],
+				});
+
+				expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalledWith(
+					'task-1',
+					'Plain text',
+					false,
+					undefined
+				);
+			});
+
+			it('forwards images to injectSubSessionMessage on @mention routing', async () => {
+				const mockTaskWithWorkflowRun: SpaceTask = {
+					...mockTaskWithSession,
+					workflowRunId: 'run-abc-123',
+				};
+				const mh = createMockMessageHub();
+				hub = mh.hub;
+				handlers = mh.handlers;
+				const injectSubSession = mock(async () => {});
+				taskAgentManager = {
+					...createMockTaskAgentManager(null, mockTaskWithWorkflowRun),
+					injectSubSessionMessage: injectSubSession,
+				};
+				db = createMockDatabase(mockTaskWithWorkflowRun);
+				daemonHub = { emit: mock(async () => {}) } as unknown as DaemonHub;
+				const nodeExecutionRepo = makeNodeExecutionRepo([
+					{ agentName: 'Coder', agentSessionId: 'session-coder-1' },
+				]);
+				setupSpaceTaskMessageHandlers(hub, taskAgentManager, db, daemonHub, nodeExecutionRepo);
+
+				await call('space.task.sendMessage', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					message: '@Coder check this screenshot',
+					images: [sampleImage],
+				});
+
+				expect(injectSubSession).toHaveBeenCalledWith(
+					'session-coder-1',
+					'@Coder check this screenshot',
+					false,
+					[sampleImage]
+				);
+			});
+
+			it('forwards images to injectSubSessionMessage on explicit node-agent target', async () => {
+				const mockTaskWithWorkflowRun: SpaceTask = {
+					...mockTaskWithSession,
+					workflowRunId: 'run-abc-123',
+				};
+				const mh = createMockMessageHub();
+				hub = mh.hub;
+				handlers = mh.handlers;
+				const injectSubSession = mock(async () => {});
+				taskAgentManager = {
+					...createMockTaskAgentManager(null, mockTaskWithWorkflowRun),
+					injectSubSessionMessage: injectSubSession,
+				};
+				db = createMockDatabase(mockTaskWithWorkflowRun);
+				daemonHub = { emit: mock(async () => {}) } as unknown as DaemonHub;
+				const nodeExecutionRepo = makeNodeExecutionRepo([
+					{
+						id: 'exec-reviewer',
+						workflowNodeId: 'node-1',
+						agentName: 'Reviewer',
+						agentSessionId: 'session-reviewer-1',
+					},
+				]);
+				setupSpaceTaskMessageHandlers(hub, taskAgentManager, db, daemonHub, nodeExecutionRepo);
+
+				await call('space.task.sendMessage', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					message: 'Please review the attached design',
+					target: { kind: 'node_agent', agentName: 'Reviewer' },
+					images: [sampleImage],
+				});
+
+				expect(injectSubSession).toHaveBeenCalledWith(
+					'session-reviewer-1',
+					'Please review the attached design',
+					false,
+					[sampleImage]
+				);
+			});
+
+			it('rejects images destined for a not-yet-spawned node agent rather than silently dropping them', async () => {
+				const mockTaskWithWorkflowRun: SpaceTask = {
+					...mockTaskWithSession,
+					workflowRunId: 'run-abc-123',
+				};
+				const mh = createMockMessageHub();
+				hub = mh.hub;
+				handlers = mh.handlers;
+				const injectSubSession = mock(async () => {});
+				taskAgentManager = {
+					...createMockTaskAgentManager(null, mockTaskWithWorkflowRun),
+					injectSubSessionMessage: injectSubSession,
+				};
+				db = createMockDatabase(mockTaskWithWorkflowRun);
+				daemonHub = { emit: mock(async () => {}) } as unknown as DaemonHub;
+				// Reviewer has no agentSessionId → not spawned yet
+				const nodeExecutionRepo = makeNodeExecutionRepo([
+					{
+						id: 'exec-reviewer',
+						workflowNodeId: 'node-1',
+						agentName: 'Reviewer',
+						agentSessionId: null,
+					},
+				]);
+				const pendingMessageQueue = {
+					enqueue: mock(() => ({ record: { id: 'pending-1' }, deduped: false })),
+				};
+				setupSpaceTaskMessageHandlers(
+					hub,
+					taskAgentManager,
+					db,
+					daemonHub,
+					nodeExecutionRepo,
+					undefined,
+					undefined,
+					pendingMessageQueue
+				);
+
+				await expect(
+					call('space.task.sendMessage', {
+						spaceId: 'space-1',
+						taskId: 'task-1',
+						message: 'Take a look at this',
+						target: { kind: 'node_agent', agentName: 'Reviewer' },
+						images: [sampleImage],
+					})
+				).rejects.toThrow(/images.*starting|starting.*images/i);
+
+				// Did not silently fall through to the text-only pending queue.
+				expect(pendingMessageQueue.enqueue).not.toHaveBeenCalled();
+				expect(injectSubSession).not.toHaveBeenCalled();
+			});
 		});
 	});
 
@@ -672,7 +856,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(injectSubSession).toHaveBeenCalledWith(
 				'session-coder-1',
 				'@Coder please fix the bug',
-				false
+				false,
+				undefined
 			);
 			// Should NOT have routed to Task Agent
 			expect(taskAgentManager.injectTaskAgentMessage).not.toHaveBeenCalled();
@@ -741,12 +926,14 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(injectSubSession).toHaveBeenCalledWith(
 				'session-coder-1',
 				'@Coder please check both',
-				false
+				false,
+				undefined
 			);
 			expect(injectSubSession).toHaveBeenCalledWith(
 				'session-coder-2',
 				'@Coder please check both',
-				false
+				false,
+				undefined
 			);
 		});
 
@@ -779,7 +966,12 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			});
 
 			expect(result).toMatchObject({ ok: true, routedTo: ['coder'] });
-			expect(injectSubSession).toHaveBeenCalledWith('session-coder-1', '@coder please fix', false);
+			expect(injectSubSession).toHaveBeenCalledWith(
+				'session-coder-1',
+				'@coder please fix',
+				false,
+				undefined
+			);
 		});
 
 		it('message without @mentions falls back to Task Agent routing', async () => {
@@ -797,7 +989,9 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(injectSubSession).not.toHaveBeenCalled();
 			expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalledWith(
 				'task-1',
-				'Please continue the work'
+				'Please continue the work',
+				false,
+				undefined
 			);
 		});
 
@@ -833,7 +1027,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(injectSubSession).toHaveBeenCalledWith(
 				'session-reviewer-1',
 				'Please review this',
-				false
+				false,
+				undefined
 			);
 			expect(taskAgentManager.injectTaskAgentMessage).not.toHaveBeenCalled();
 		});
@@ -875,7 +1070,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(injectSubSession).toHaveBeenCalledWith(
 				'session-reviewer-idle',
 				'@Reviewer please review',
-				false
+				false,
+				undefined
 			);
 		});
 
@@ -901,22 +1097,26 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(injectSubSession).not.toHaveBeenCalledWith(
 				'session-coder-cancelled',
 				expect.anything(),
-				false
+				false,
+				undefined
 			);
 			expect(injectSubSession).toHaveBeenCalledWith(
 				'session-coder-idle',
 				'@Coder please check',
-				false
+				false,
+				undefined
 			);
 			expect(injectSubSession).toHaveBeenCalledWith(
 				'session-coder-blocked',
 				'@Coder please check',
-				false
+				false,
+				undefined
 			);
 			expect(injectSubSession).toHaveBeenCalledWith(
 				'session-coder-active',
 				'@Coder please check',
-				false
+				false,
+				undefined
 			);
 		});
 
@@ -1115,8 +1315,18 @@ describe('setupSpaceTaskMessageHandlers', () => {
 
 			expect(result).toMatchObject({ ok: true, routedTo: ['Coder'] });
 			expect(injectSubSession).toHaveBeenCalledTimes(2);
-			expect(injectSubSession).toHaveBeenCalledWith('session-coder-a', 'Please check both', false);
-			expect(injectSubSession).toHaveBeenCalledWith('session-coder-b', 'Please check both', false);
+			expect(injectSubSession).toHaveBeenCalledWith(
+				'session-coder-a',
+				'Please check both',
+				false,
+				undefined
+			);
+			expect(injectSubSession).toHaveBeenCalledWith(
+				'session-coder-b',
+				'Please check both',
+				false,
+				undefined
+			);
 		});
 
 		it('activateNode invoked once per unique missing workflowNodeId (deduped)', async () => {
@@ -1225,7 +1435,12 @@ describe('setupSpaceTaskMessageHandlers', () => {
 
 			expect(activateCalls).toEqual(['node-rev']);
 			expect(injectSub).toHaveBeenCalledTimes(1);
-			expect(injectSub).toHaveBeenCalledWith('session-reviewer-live', 'Please review', false);
+			expect(injectSub).toHaveBeenCalledWith(
+				'session-reviewer-live',
+				'Please review',
+				false,
+				undefined
+			);
 			expect(result).toMatchObject({
 				ok: true,
 				routedTo: ['Reviewer'],

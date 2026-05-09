@@ -46,6 +46,8 @@ import type {
 	NodeExecution,
 	MessageHub,
 	McpServerConfig,
+	MessageContent,
+	MessageImage,
 	MessageOrigin,
 	WorkflowNodeAgent,
 } from '@neokai/shared';
@@ -56,6 +58,7 @@ import type { UUID } from 'crypto';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
 import { AgentSession } from '../../../lib/agent/agent-session';
+import { validateImageSizes } from '../../session/message-persistence';
 import type { Database } from '../../../storage/database';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { DaemonHub } from '../../daemon-hub';
@@ -1782,11 +1785,16 @@ export class TaskAgentManager {
 	/**
 	 * Inject a message into a Task Agent session.
 	 * Used by Space Agent's `send_message_to_task` tool.
+	 *
+	 * `images` is forwarded so human-driven RPCs (`space.task.sendMessage`) can
+	 * deliver image attachments to a Task Agent session. Synthetic injects from
+	 * other agents pass `undefined` and behave exactly as before.
 	 */
 	async injectTaskAgentMessage(
 		taskId: string,
 		message: string,
-		isSyntheticMessage = false
+		isSyntheticMessage = false,
+		images?: MessageImage[]
 	): Promise<void> {
 		let session = this.taskAgentSessions.get(taskId);
 		if (!session) {
@@ -1806,18 +1814,24 @@ export class TaskAgentManager {
 			message,
 			'immediate',
 			undefined,
-			isSyntheticMessage
+			isSyntheticMessage,
+			images
 		);
 	}
 
 	/**
 	 * Inject a message into a sub-session.
 	 * Called by the Task Agent MCP tool handler via the messageInjector callback.
+	 *
+	 * `images` is forwarded so human-driven RPCs (`space.task.sendMessage`) can
+	 * deliver image attachments directly to a node-agent sub-session. Synthetic
+	 * injects from other agents pass `undefined` and behave exactly as before.
 	 */
 	async injectSubSessionMessage(
 		subSessionId: string,
 		message: string,
-		isSyntheticMessage = true
+		isSyntheticMessage = true,
+		images?: MessageImage[]
 	): Promise<void> {
 		const indexed = this.agentSessionIndex.get(subSessionId);
 		if (indexed) {
@@ -1826,7 +1840,8 @@ export class TaskAgentManager {
 				message,
 				'immediate',
 				undefined,
-				isSyntheticMessage
+				isSyntheticMessage,
+				images
 			);
 			return;
 		}
@@ -1840,7 +1855,8 @@ export class TaskAgentManager {
 					message,
 					'immediate',
 					undefined,
-					isSyntheticMessage
+					isSyntheticMessage,
+					images
 				);
 				return;
 			}
@@ -1854,7 +1870,8 @@ export class TaskAgentManager {
 				message,
 				'immediate',
 				undefined,
-				isSyntheticMessage
+				isSyntheticMessage,
+				images
 			);
 			return;
 		}
@@ -3722,15 +3739,25 @@ export class TaskAgentManager {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Inject a plain-text message into an AgentSession.
-	 * Uses the same pattern as SpaceRuntimeService.injectMessage().
+	 * Inject a message (optionally with image attachments) into an AgentSession.
+	 *
+	 * Mirrors the multi-modal content shape produced by `buildMessageContent`
+	 * in `MessagePersistence.persist` (the regular non-space chat path): when
+	 * `images` is non-empty the SDK message content becomes a multi-modal
+	 * block array (images first, then text) and is passed through to
+	 * `MessageQueue.enqueueWithId`, which already accepts
+	 * `string | MessageContent[]`. Image base64 sizes are validated against
+	 * the same Anthropic API limit as the non-space path via
+	 * `validateImageSizes` so users get the same early "resize image" error
+	 * instead of a downstream API failure.
 	 */
 	private async injectMessageIntoSession(
 		session: AgentSession,
 		message: string,
 		deliveryMode: 'immediate' | 'defer' = 'immediate',
 		origin?: MessageOrigin,
-		isSyntheticMessage = true
+		isSyntheticMessage = true,
+		images?: MessageImage[]
 	): Promise<void> {
 		const sessionId = session.session.id;
 		const state = session.getProcessingState();
@@ -3750,6 +3777,27 @@ export class TaskAgentManager {
 			state.status === 'interrupted';
 
 		const messageId = generateUUID();
+		const hasImages = !!images && images.length > 0;
+		// Validate base64 size up-front so users get the same early "resize image"
+		// error returned by the live-session persistence path instead of a late,
+		// opaque API failure once the SDK forwards the oversized payload.
+		if (hasImages) {
+			validateImageSizes(images!);
+		}
+		const sdkContent: MessageContent[] = hasImages
+			? [
+					...images!.map((img) => ({
+						type: 'image' as const,
+						source: {
+							type: 'base64' as const,
+							media_type: img.media_type,
+							data: img.data,
+						},
+					})),
+					{ type: 'text' as const, text: message },
+				]
+			: [{ type: 'text' as const, text: message }];
+
 		const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
 			type: 'user' as const,
 			uuid: messageId as UUID,
@@ -3758,7 +3806,7 @@ export class TaskAgentManager {
 			isSynthetic: isSyntheticMessage,
 			message: {
 				role: 'user' as const,
-				content: [{ type: 'text' as const, text: message }],
+				content: sdkContent,
 			},
 		};
 
@@ -3770,7 +3818,10 @@ export class TaskAgentManager {
 
 		await session.ensureQueryStarted();
 		this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
-		await session.messageQueue.enqueueWithId(messageId, message);
+		// When images are present, enqueue the multi-modal content array so the SDK
+		// sees image blocks alongside the text. Otherwise pass the plain string to
+		// preserve the existing behaviour for callers that don't supply images.
+		await session.messageQueue.enqueueWithId(messageId, hasImages ? sdkContent : message);
 	}
 
 	// -------------------------------------------------------------------------

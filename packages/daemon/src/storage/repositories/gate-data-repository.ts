@@ -78,11 +78,64 @@ export class GateDataRepository {
 	 * Nested objects are replaced wholesale, not merged recursively.
 	 * Example: merging `{ nested: { b: 2 } }` into `{ nested: { a: 1 } }`
 	 * yields `{ nested: { b: 2 } }` — `a` is lost.
+	 *
+	 * Atomic within `bun:sqlite`: read, merge, and write run inside a single
+	 * SQLite transaction so a concurrent `reset()` (e.g. from
+	 * `incrementAndResetCyclicChannel`) cannot interleave between the read and
+	 * the write and resurrect cleared keys. JS is single-threaded so this is
+	 * already safe today, but the transaction is cheap and prevents future
+	 * regressions if `await` boundaries are added between read and write.
 	 */
 	merge(runId: string, gateId: string, partial: Record<string, unknown>): GateDataRecord {
-		const existing = this.get(runId, gateId);
-		const merged = existing ? { ...existing.data, ...partial } : { ...partial };
-		return this.set(runId, gateId, merged);
+		return this.db.transaction(() => {
+			const existing = this.get(runId, gateId);
+			const merged = existing ? { ...existing.data, ...partial } : { ...partial };
+			return this.set(runId, gateId, merged);
+		})();
+	}
+
+	/**
+	 * Merge partial data into an existing gate data record, deep-merging
+	 * nominated map-typed fields instead of replacing them wholesale.
+	 *
+	 * Top-level keys in `partial` shallow-overwrite existing keys, *except*
+	 * for keys listed in `mapFields` — for those, if both the existing value
+	 * and the new value are plain (non-array) objects, their entries are
+	 * shallow-merged so per-writer entries (e.g. each reviewer's lens entry
+	 * in `plan-approval-gate.approvals`) accumulate instead of clobbering
+	 * each other.
+	 *
+	 * The whole read-merge-write sequence runs inside a SQLite transaction
+	 * so a concurrent `reset()` cannot interleave between the read and the
+	 * write — without this, a cyclic reset (e.g. on revision feedback) could
+	 * be silently undone by a stale snapshot from a peer reviewer's
+	 * gate-write that started before the reset.
+	 */
+	mergeWithMapFields(
+		runId: string,
+		gateId: string,
+		partial: Record<string, unknown>,
+		mapFields: ReadonlySet<string>
+	): GateDataRecord {
+		return this.db.transaction(() => {
+			const existing = this.get(runId, gateId);
+			const existingData = existing?.data ?? {};
+			const next: Record<string, unknown> = { ...existingData };
+			for (const [key, value] of Object.entries(partial)) {
+				if (mapFields.has(key) && value && typeof value === 'object' && !Array.isArray(value)) {
+					const existingMap = existingData[key];
+					if (existingMap && typeof existingMap === 'object' && !Array.isArray(existingMap)) {
+						next[key] = {
+							...(existingMap as Record<string, unknown>),
+							...(value as Record<string, unknown>),
+						};
+						continue;
+					}
+				}
+				next[key] = value;
+			}
+			return this.set(runId, gateId, next);
+		})();
 	}
 
 	/**

@@ -353,9 +353,14 @@ describe('SpaceTaskPane — composer', () => {
 		fireEvent.click(getByTestId('send-button'));
 
 		await waitFor(() =>
-			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Looks good to me', {
-				kind: 'task_agent',
-			})
+			expect(mockSendTaskMessage).toHaveBeenCalledWith(
+				'task-1',
+				'Looks good to me',
+				{
+					kind: 'task_agent',
+				},
+				undefined
+			)
 		);
 		expect(mockEnsureTaskAgentSession).not.toHaveBeenCalled();
 	});
@@ -414,9 +419,14 @@ describe('SpaceTaskPane — composer', () => {
 		fireEvent.submit(textarea.form!);
 
 		await waitFor(() =>
-			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Approve the PR', {
-				kind: 'task_agent',
-			})
+			expect(mockSendTaskMessage).toHaveBeenCalledWith(
+				'task-1',
+				'Approve the PR',
+				{
+					kind: 'task_agent',
+				},
+				undefined
+			)
 		);
 		await waitFor(() => expect(textarea.value).toBe(''));
 	});
@@ -430,9 +440,14 @@ describe('SpaceTaskPane — composer', () => {
 		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
 		await waitFor(() =>
-			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Quick approve', {
-				kind: 'task_agent',
-			})
+			expect(mockSendTaskMessage).toHaveBeenCalledWith(
+				'task-1',
+				'Quick approve',
+				{
+					kind: 'task_agent',
+				},
+				undefined
+			)
 		);
 	});
 

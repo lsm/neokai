@@ -24,13 +24,31 @@ export type AnthropicContentBlockToolUse = {
 export type AnthropicContentBlockToolResult = {
 	type: 'tool_result';
 	tool_use_id: string;
-	content: string | Array<{ type: 'text'; text: string }>;
+	content: string | Array<{ type: 'text'; text: string } | AnthropicContentBlockImage>;
 };
+
+export type AnthropicContentBlockImage =
+	| {
+			type: 'image';
+			source: {
+				type: 'base64';
+				media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+				data: string;
+			};
+	  }
+	| {
+			type: 'image';
+			source: {
+				type: 'url';
+				url: string;
+			};
+	  };
 
 export type AnthropicContentBlock =
 	| AnthropicContentBlockText
 	| AnthropicContentBlockToolUse
-	| AnthropicContentBlockToolResult;
+	| AnthropicContentBlockToolResult
+	| AnthropicContentBlockImage;
 
 export type AnthropicMessage = {
 	role: 'user' | 'assistant';

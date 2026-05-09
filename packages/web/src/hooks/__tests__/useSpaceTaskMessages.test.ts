@@ -49,9 +49,22 @@ function fireEvent(method: string, payload: unknown): void {
 	(eventHandlers[method] ?? []).forEach((h) => h(payload));
 }
 
-function lastSubscribeSubId(): string {
-	const subscribeCalls = mockRequest.mock.calls.filter((call) => call[0] === 'liveQuery.subscribe');
-	return subscribeCalls[subscribeCalls.length - 1][1].subscriptionId;
+function subscribeCalls() {
+	return mockRequest.mock.calls.filter((call) => call[0] === 'liveQuery.subscribe');
+}
+
+function lastMessageSubscribeSubId(): string {
+	const calls = subscribeCalls().filter((call) =>
+		String(call[1].queryName).startsWith('spaceTaskMessages.')
+	);
+	return calls[calls.length - 1][1].subscriptionId;
+}
+
+function lastActiveTurnSubscribeSubId(): string {
+	const calls = subscribeCalls().filter(
+		(call) => call[1].queryName === 'spaceTaskActiveTurn.byTask'
+	);
+	return calls[calls.length - 1][1].subscriptionId;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,13 +91,19 @@ describe('useSpaceTaskMessages', () => {
 		});
 	});
 
-	it('subscribes to the compact query name by default', () => {
+	it('subscribes to compact messages and active-turn queries by default', () => {
 		renderHook(() => useSpaceTaskMessages('task-abc'));
 
-		const subscribe = mockRequest.mock.calls.find(([method]) => method === 'liveQuery.subscribe');
-		expect(subscribe).toBeDefined();
-		expect(subscribe![1]).toMatchObject({
+		expect(subscribeCalls().map((call) => call[1].queryName)).toEqual([
+			'spaceTaskMessages.byTask.compact',
+			'spaceTaskActiveTurn.byTask',
+		]);
+		expect(subscribeCalls()[0][1]).toMatchObject({
 			queryName: 'spaceTaskMessages.byTask.compact',
+			params: ['task-abc'],
+		});
+		expect(subscribeCalls()[1][1]).toMatchObject({
+			queryName: 'spaceTaskActiveTurn.byTask',
 			params: ['task-abc'],
 		});
 	});
@@ -92,17 +111,17 @@ describe('useSpaceTaskMessages', () => {
 	it('subscribes to the compact query name when variant="compact"', () => {
 		renderHook(() => useSpaceTaskMessages('task-abc', 'compact'));
 
-		const subscribe = mockRequest.mock.calls.find(([method]) => method === 'liveQuery.subscribe');
-		expect(subscribe![1]).toMatchObject({
-			queryName: 'spaceTaskMessages.byTask.compact',
-		});
+		expect(subscribeCalls().map((call) => call[1].queryName)).toEqual([
+			'spaceTaskMessages.byTask.compact',
+			'spaceTaskActiveTurn.byTask',
+		]);
 	});
 
 	it('subscribes to the legacy full query name when variant="full"', () => {
 		renderHook(() => useSpaceTaskMessages('task-abc', 'full'));
 
-		const subscribe = mockRequest.mock.calls.find(([method]) => method === 'liveQuery.subscribe');
-		expect(subscribe![1]).toMatchObject({
+		expect(subscribeCalls()).toHaveLength(1);
+		expect(subscribeCalls()[0][1]).toMatchObject({
 			queryName: 'spaceTaskMessages.byTask',
 			params: ['task-abc'],
 		});
@@ -113,6 +132,41 @@ describe('useSpaceTaskMessages', () => {
 
 		const subscribe = mockRequest.mock.calls.find(([method]) => method === 'liveQuery.subscribe');
 		expect(subscribe).toBeUndefined();
+	});
+
+	it('builds active-turn summaries from the separate active-turn query', () => {
+		const { result } = renderHook(() => useSpaceTaskMessages('task-abc'));
+		const messageSubId = lastMessageSubscribeSubId();
+		const activeTurnSubId = lastActiveTurnSubscribeSubId();
+
+		act(() => {
+			fireEvent('liveQuery.snapshot', {
+				subscriptionId: messageSubId,
+				rows: [],
+				version: 1,
+			});
+			fireEvent('liveQuery.snapshot', {
+				subscriptionId: activeTurnSubId,
+				rows: [
+					{
+						id: 'sess-1:1:row-1:0',
+						sessionId: 'sess-1',
+						turnIndex: 1,
+						ts: 10,
+						entry: { kind: 'text', text: 'Working', ts: 10, uuid: 'u1' },
+					},
+				],
+				version: 1,
+			});
+		});
+
+		expect(result.current.activeTurnSummaries).toEqual([
+			{
+				sessionId: 'sess-1',
+				turnIndex: 1,
+				entries: [{ kind: 'text', text: 'Working', ts: 10, uuid: 'u1' }],
+			},
+		]);
 	});
 
 	// Regression coverage for the empty-state flash reported against
@@ -138,7 +192,7 @@ describe('useSpaceTaskMessages', () => {
 		it('flips isLoading to false once the LiveQuery snapshot arrives', () => {
 			const { result } = renderHook(() => useSpaceTaskMessages('task-1'));
 
-			const subId = lastSubscribeSubId();
+			const subId = lastMessageSubscribeSubId();
 			expect(result.current.isLoading).toBe(true);
 
 			act(() => {
@@ -159,7 +213,7 @@ describe('useSpaceTaskMessages', () => {
 			);
 
 			// Finish loading task-1.
-			const firstSubId = lastSubscribeSubId();
+			const firstSubId = lastMessageSubscribeSubId();
 			act(() => {
 				fireEvent('liveQuery.snapshot', {
 					subscriptionId: firstSubId,
@@ -175,7 +229,7 @@ describe('useSpaceTaskMessages', () => {
 			expect(result.current.isLoading).toBe(true);
 
 			// Snapshot for task-2 closes the gate.
-			const secondSubId = lastSubscribeSubId();
+			const secondSubId = lastMessageSubscribeSubId();
 			expect(secondSubId).not.toBe(firstSubId);
 			act(() => {
 				fireEvent('liveQuery.snapshot', {
@@ -213,7 +267,7 @@ describe('useSpaceTaskMessages', () => {
 			});
 
 			const { result } = renderHook(() => useSpaceTaskMessages('task-1'));
-			const firstSubId = lastSubscribeSubId();
+			const firstSubId = lastMessageSubscribeSubId();
 			act(() => {
 				fireEvent('liveQuery.snapshot', {
 					subscriptionId: firstSubId,
@@ -228,9 +282,7 @@ describe('useSpaceTaskMessages', () => {
 				connectionHandler?.('connected');
 			});
 
-			expect(
-				mockRequest.mock.calls.filter(([method]) => method === 'liveQuery.subscribe')
-			).toHaveLength(2);
+			expect(subscribeCalls()).toHaveLength(4);
 			expect(result.current.isLoading).toBe(true);
 			expect(result.current.rows).toHaveLength(1);
 

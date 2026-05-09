@@ -44,9 +44,17 @@ function estimateTextTokens(text: string): number {
 	return Math.max(1, Math.ceil((characterEstimate + lexicalPieces) / 2));
 }
 
+const ESTIMATED_IMAGE_TOKENS = 300;
+
 function estimateToolResultContent(content: AnthropicContentBlockToolResult['content']): number {
 	if (typeof content === 'string') return estimateTextTokens(content);
-	return content.reduce((sum, block) => sum + estimateTextTokens(block.text), 0);
+	return content.reduce((sum, block) => {
+		if (block.type === 'text') return sum + estimateTextTokens(block.text);
+		if (block.type === 'image') return sum + ESTIMATED_IMAGE_TOKENS;
+		return (
+			sum + estimateTextTokens(`[Unsupported: ${(block as { type?: string }).type ?? 'unknown'}]`)
+		);
+	}, 0);
 }
 
 function estimateContentBlockTokens(block: AnthropicContentBlock): number {
@@ -62,6 +70,9 @@ function estimateContentBlockTokens(block: AnthropicContentBlock): number {
 	}
 	if (block.type === 'tool_result') {
 		return MESSAGE_OVERHEAD_TOKENS + estimateToolResultContent(block.content);
+	}
+	if (block.type === 'image') {
+		return ESTIMATED_IMAGE_TOKENS;
 	}
 	return estimateTextTokens(stableJson(block));
 }

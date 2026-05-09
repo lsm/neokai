@@ -78,6 +78,17 @@ export class GlmProvider implements Provider {
 			available: true,
 		},
 		{
+			id: 'glm-5v-turbo',
+			name: 'GLM-5V-Turbo',
+			alias: 'glm-5v-turbo',
+			family: 'glm',
+			provider: 'glm',
+			contextWindow: 200000,
+			description: 'GLM-5V-Turbo · Vision-capable turbo model optimized for multimodal agent tasks',
+			releaseDate: '2026-05-01',
+			available: true,
+		},
+		{
 			id: 'glm-4.7',
 			name: 'GLM-4.7',
 			alias: 'glm-4.7',

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type {
 	ActiveTurnSummary,
+	ActivityEntry,
 	LiveQueryDeltaEvent,
 	LiveQuerySnapshotEvent,
 } from '@neokai/shared';
@@ -41,52 +42,22 @@ export interface SpaceTaskThreadMessageRow {
 	sessionMessageCount?: number;
 }
 
+interface ActiveTurnEntryRow {
+	id: string;
+	sessionId: string;
+	turnIndex: number;
+	ts: number;
+	entry: ActivityEntry | null;
+}
+
 export type SpaceTaskMessagesQueryVariant = 'compact' | 'full';
 
 export interface UseSpaceTaskMessagesResult {
 	rows: SpaceTaskThreadMessageRow[];
-	/**
-	 * Server-computed activity summary for the currently-active turn of each
-	 * session in the task. Empty array when no session has an open turn.
-	 *
-	 * Populated only by the `compact` query variant — the daemon ships this
-	 * alongside the compacted rows on the LiveQuery `metadata` channel so the
-	 * running roster on the task view can surface activity from the *full*
-	 * active turn (not the compacted slice). Closed turns are intentionally
-	 * absent.
-	 */
+	/** Server-computed activity summary for the currently-active turn of each session. */
 	activeTurnSummaries: ActiveTurnSummary[];
 	isLoading: boolean;
 	isReconnecting: boolean;
-}
-
-/**
- * Coerce a raw `metadata.activeTurnSummaries` payload into the typed
- * `ActiveTurnSummary[]` shape. The daemon already produces well-formed entries,
- * but defensive parsing here means a malformed snapshot can never crash the
- * thread renderer — it just falls back to an empty roster.
- */
-function parseActiveTurnSummaries(value: unknown): ActiveTurnSummary[] {
-	if (!Array.isArray(value)) return [];
-	const out: ActiveTurnSummary[] = [];
-	for (const raw of value) {
-		if (!raw || typeof raw !== 'object') continue;
-		const r = raw as Record<string, unknown>;
-		const sessionId = typeof r.sessionId === 'string' ? r.sessionId : null;
-		if (!sessionId) continue;
-		const turnIndex = typeof r.turnIndex === 'number' ? r.turnIndex : 0;
-		const entries = Array.isArray(r.entries)
-			? (r.entries as Record<string, unknown>[]).filter(
-					(e): e is Record<string, unknown> => !!e && typeof e === 'object'
-				)
-			: [];
-		out.push({
-			sessionId,
-			turnIndex,
-			entries: entries as ActiveTurnSummary['entries'],
-		});
-	}
-	return out;
 }
 
 let _taskMessageSubCounter = 0;
@@ -95,10 +66,24 @@ function nextTaskMessageSubId(taskId: string): string {
 	return `space-task-messages-${taskId}-${_taskMessageSubCounter}`;
 }
 
+let _activeTurnSubCounter = 0;
+function nextActiveTurnSubId(taskId: string): string {
+	_activeTurnSubCounter += 1;
+	return `space-task-active-turn-${taskId}-${_activeTurnSubCounter}`;
+}
+
 function sortRows(rows: SpaceTaskThreadMessageRow[]): SpaceTaskThreadMessageRow[] {
 	return [...rows].sort((a, b) => {
 		if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
 		return String(a.id).localeCompare(String(b.id));
+	});
+}
+
+function sortActiveTurnRows(rows: ActiveTurnEntryRow[]): ActiveTurnEntryRow[] {
+	return [...rows].sort((a, b) => {
+		if (a.sessionId !== b.sessionId) return a.sessionId.localeCompare(b.sessionId);
+		if (a.ts !== b.ts) return a.ts - b.ts;
+		return a.id.localeCompare(b.id);
 	});
 }
 
@@ -119,13 +104,44 @@ function applyDelta(
 	return sortRows(Array.from(next.values()));
 }
 
+function applyActiveTurnDelta(
+	currentRows: ActiveTurnEntryRow[],
+	event: LiveQueryDeltaEvent
+): ActiveTurnEntryRow[] {
+	const next = new Map(currentRows.map((row) => [row.id, row]));
+	for (const row of (event.removed ?? []) as ActiveTurnEntryRow[]) {
+		next.delete(row.id);
+	}
+	for (const row of (event.updated ?? []) as ActiveTurnEntryRow[]) {
+		next.set(row.id, row);
+	}
+	for (const row of (event.added ?? []) as ActiveTurnEntryRow[]) {
+		next.set(row.id, row);
+	}
+	return sortActiveTurnRows(Array.from(next.values()));
+}
+
+function buildActiveTurnSummaries(rows: ActiveTurnEntryRow[]): ActiveTurnSummary[] {
+	const bySession = new Map<string, ActiveTurnSummary>();
+	for (const row of sortActiveTurnRows(rows)) {
+		if (!row.sessionId || !row.entry) continue;
+		let summary = bySession.get(row.sessionId);
+		if (!summary) {
+			summary = { sessionId: row.sessionId, turnIndex: row.turnIndex, entries: [] };
+			bySession.set(row.sessionId, summary);
+		}
+		summary.entries.push(row.entry);
+	}
+	return Array.from(bySession.values());
+}
+
 export function useSpaceTaskMessages(
 	taskId: string | null,
 	variant: SpaceTaskMessagesQueryVariant = 'compact'
 ): UseSpaceTaskMessagesResult {
 	const { request, onEvent, getHub, isConnected } = useMessageHub();
 	const [rows, setRows] = useState<SpaceTaskThreadMessageRow[]>([]);
-	const [activeTurnSummaries, setActiveTurnSummaries] = useState<ActiveTurnSummary[]>([]);
+	const [activeTurnRows, setActiveTurnRows] = useState<ActiveTurnEntryRow[]>([]);
 	/**
 	 * The task id whose LiveQuery snapshot has been applied to `rows`.
 	 * `null` means either no subscription is active or we are still waiting
@@ -137,6 +153,7 @@ export function useSpaceTaskMessages(
 	 */
 	const [loadedForTaskId, setLoadedForTaskId] = useState<string | null>(null);
 	const activeSubIdRef = useRef<string | null>(null);
+	const activeTurnSubIdRef = useRef<string | null>(null);
 
 	const queryName =
 		variant === 'full' ? 'spaceTaskMessages.byTask' : 'spaceTaskMessages.byTask.compact';
@@ -144,35 +161,43 @@ export function useSpaceTaskMessages(
 	useEffect(() => {
 		if (!taskId || !isConnected) {
 			setRows([]);
-			setActiveTurnSummaries([]);
+			setActiveTurnRows([]);
 			setLoadedForTaskId(null);
 			activeSubIdRef.current = null;
+			activeTurnSubIdRef.current = null;
 			return;
 		}
 
 		const subscriptionId = nextTaskMessageSubId(taskId);
+		const activeTurnSubscriptionId = nextActiveTurnSubId(taskId);
+		const shouldSubscribeActiveTurn = variant === 'compact';
 		activeSubIdRef.current = subscriptionId;
+		activeTurnSubIdRef.current = shouldSubscribeActiveTurn ? activeTurnSubscriptionId : null;
 		// Clear stale rows from a previous subscription synchronously. The
 		// empty-state UI is still suppressed because `loadedForTaskId` is now
 		// out of sync with `taskId`, so consumers see the loading state.
 		setRows([]);
-		setActiveTurnSummaries([]);
+		setActiveTurnRows([]);
 		setLoadedForTaskId(null);
 
 		const unsubSnapshot = onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
-			if (event.subscriptionId !== activeSubIdRef.current) return;
-			setRows(sortRows((event.rows as SpaceTaskThreadMessageRow[]) ?? []));
-			setActiveTurnSummaries(parseActiveTurnSummaries(event.metadata?.activeTurnSummaries));
-			setLoadedForTaskId(taskId);
+			if (event.subscriptionId === activeSubIdRef.current) {
+				setRows(sortRows((event.rows as SpaceTaskThreadMessageRow[]) ?? []));
+				setLoadedForTaskId(taskId);
+				return;
+			}
+			if (event.subscriptionId === activeTurnSubIdRef.current) {
+				setActiveTurnRows(sortActiveTurnRows((event.rows as ActiveTurnEntryRow[]) ?? []));
+			}
 		});
 
 		const unsubDelta = onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
-			if (event.subscriptionId !== activeSubIdRef.current) return;
-			setRows((prev) => applyDelta(prev, event));
-			// `metadata` is recomputed every evaluation, so a delta carries the
-			// current active-turn summary for the task — overwrite, don't merge.
-			if (event.metadata && 'activeTurnSummaries' in event.metadata) {
-				setActiveTurnSummaries(parseActiveTurnSummaries(event.metadata.activeTurnSummaries));
+			if (event.subscriptionId === activeSubIdRef.current) {
+				setRows((prev) => applyDelta(prev, event));
+				return;
+			}
+			if (event.subscriptionId === activeTurnSubIdRef.current) {
+				setActiveTurnRows((prev) => applyActiveTurnDelta(prev, event));
 			}
 		});
 
@@ -193,6 +218,19 @@ export function useSpaceTaskMessages(
 						setLoadedForTaskId(taskId);
 					}
 				});
+			if (shouldSubscribeActiveTurn) {
+				hub
+					.request('liveQuery.subscribe', {
+						queryName: 'spaceTaskActiveTurn.byTask',
+						params: [taskId],
+						subscriptionId: activeTurnSubscriptionId,
+					})
+					.catch(() => {
+						if (activeTurnSubIdRef.current === activeTurnSubscriptionId) {
+							setActiveTurnRows([]);
+						}
+					});
+			}
 		};
 
 		const unsubReconnect = getHub()?.onConnection((state) => {
@@ -209,11 +247,21 @@ export function useSpaceTaskMessages(
 			unsubDelta();
 			unsubReconnect?.();
 			activeSubIdRef.current = null;
+			activeTurnSubIdRef.current = null;
 			Promise.resolve(request('liveQuery.unsubscribe', { subscriptionId })).catch(() => {});
+			if (shouldSubscribeActiveTurn) {
+				Promise.resolve(
+					request('liveQuery.unsubscribe', { subscriptionId: activeTurnSubscriptionId })
+				).catch(() => {});
+			}
 		};
-	}, [taskId, isConnected, onEvent, request, getHub, queryName]);
+	}, [taskId, isConnected, onEvent, request, getHub, queryName, variant]);
 
 	const sortedRows = useMemo(() => sortRows(rows), [rows]);
+	const activeTurnSummaries = useMemo(
+		() => buildActiveTurnSummaries(activeTurnRows),
+		[activeTurnRows]
+	);
 
 	// Derived: we are loading whenever we have an active taskId but have not
 	// yet applied a snapshot for it. Computing this (instead of tracking it

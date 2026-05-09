@@ -546,6 +546,16 @@ export class ChannelRouter {
 			throw new ActivationError(`Run not found: ${runId}`);
 		}
 
+		// Archive is a hard tombstone: if every task on this run has been
+		// archived, no inter-agent activity is permitted. Check this BEFORE
+		// gate evaluation so scripted gates do not run on tombstoned runs and
+		// callers see the canonical archived-task error rather than a gate
+		// closure (which would falsely suggest the work could resume once the
+		// gate opens).
+		if (this.isParentTaskArchived(runId)) {
+			throw new ActivationError(ARCHIVED_TASK_ERROR_MESSAGE);
+		}
+
 		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
 		if (!workflow) {
 			throw new ActivationError(`Workflow not found: ${run.workflowId}`);
@@ -557,9 +567,12 @@ export class ChannelRouter {
 		const channelIsCyclic = match ? this.isChannelCyclicByIndex(channelIndex, workflow) : false;
 
 		// ── 2. Target resolution: agent name → DM, node name → fan-out ────────
-		// Activation is intentionally resolved before gate evaluation below. Gates may
-		// block delivery of the message content, but they must not block spawning or
-		// resuming the target agent session that needs to receive/react to the handoff.
+		// Target resolution itself is non-mutating — only `activateNode` below
+		// creates pending node_executions. For gated channels we evaluate the
+		// gate BEFORE activating so blocked messages do not spawn the target
+		// agent session prematurely. Once the gate opens (via
+		// `onGateDataChanged` or a subsequent send), the target is activated
+		// from the same code path.
 		let targetNode = this.findNodeByAgentName(workflow, toTarget);
 		let isFanOut = false;
 
@@ -587,7 +600,25 @@ export class ChannelRouter {
 			}
 		}
 
-		// ── 3. Lazy activation ─────────────────────────────────────────────────
+		// ── 3. Gate evaluation (BEFORE activation) ───────────────────────────
+		// Evaluate the channel's gate first when one exists. If the gate is
+		// closed, throw without creating any pending node_executions for the
+		// target — otherwise the tick loop would spawn agent sessions for
+		// gates that have not yet opened (e.g. Task Dispatcher activating
+		// before all 4 reviewers approve in plan-approval-gate).
+		if (channel?.gateId) {
+			const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
+			if (!gateResult.open) {
+				throw new ChannelGateBlockedError(
+					gateResult.reason ??
+						`Gate "${channel.gateId}" blocked delivery from "${fromRole}" to "${toTarget}"`,
+					channel.gateId
+				);
+			}
+		}
+
+		// ── 4. Lazy activation ─────────────────────────────────────────────────
+		// Only reached when the channel is open (no gate, or gate eval passed).
 		const activeTasks = this.getActiveTasksForNode(runId, targetNode.id);
 		let activatedTasks: SpaceTask[] | undefined;
 
@@ -598,21 +629,27 @@ export class ChannelRouter {
 			});
 		}
 
-		// ── 4. Gate evaluation ───────────────────────────────────────────────
-		if (channel) {
-			if (channel.gateId) {
-				const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
-				if (!gateResult.open) {
-					throw new ChannelGateBlockedError(
-						gateResult.reason ??
-							`Gate "${channel.gateId}" blocked delivery from "${fromRole}" to "${toTarget}"`,
-						channel.gateId
-					);
-				}
+		// ── 5. Re-check gate AFTER activation ────────────────────────────────
+		// `await this.activateNode(...)` yields to the event loop. A concurrent
+		// `incrementAndResetCyclicChannel` (e.g. on a `resetOnCycle` gate) can
+		// reset gate data during that await, transitioning the gate from open
+		// → closed. Re-evaluate the gate here so a stale-gate race cannot let
+		// the message proceed as if the channel were still open. The pre-
+		// activation check (step 3) is still useful because it short-circuits
+		// the common case without creating pending executions; this second
+		// check is the correctness backstop.
+		if (channel?.gateId) {
+			const postActivationGate = await this.evaluateGateById(runId, channel.gateId, workflow);
+			if (!postActivationGate.open) {
+				throw new ChannelGateBlockedError(
+					postActivationGate.reason ??
+						`Gate "${channel.gateId}" closed during activation; blocking delivery from "${fromRole}" to "${toTarget}"`,
+					channel.gateId
+				);
 			}
 		}
 
-		// ── 5. Increment per-channel cycle count and reset cyclic gates ──────
+		// ── 6. Increment per-channel cycle count and reset cyclic gates ──────
 		if (channelIsCyclic && channel) {
 			this.incrementAndResetCyclicChannel(runId, channelIndex, channel.maxCycles ?? 5, workflow);
 		}

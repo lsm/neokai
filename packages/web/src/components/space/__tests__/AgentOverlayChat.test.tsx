@@ -32,7 +32,7 @@ vi.mock('../../../islands/ChatContainer', () => ({
 	}: {
 		sessionId: string;
 		onBack?: () => void;
-		onSendOverride?: (message: string) => Promise<boolean>;
+		onSendOverride?: (message: string, images?: unknown) => Promise<boolean>;
 	}) => (
 		<div
 			data-testid="mock-chat-container"
@@ -43,13 +43,26 @@ vi.mock('../../../islands/ChatContainer', () => ({
 				back
 			</button>
 			{onSendOverride ? (
-				<button
-					type="button"
-					data-testid="mock-chat-send-override"
-					onClick={() => void onSendOverride(' hello node ')}
-				>
-					send
-				</button>
+				<>
+					<button
+						type="button"
+						data-testid="mock-chat-send-override"
+						onClick={() => void onSendOverride(' hello node ')}
+					>
+						send
+					</button>
+					<button
+						type="button"
+						data-testid="mock-chat-send-override-with-images"
+						onClick={() =>
+							void onSendOverride(' hello with screenshot ', [
+								{ media_type: 'image/png', data: 'AAAAB' },
+							])
+						}
+					>
+						send-with-images
+					</button>
+				</>
 			) : null}
 			{sessionId}
 		</div>
@@ -125,11 +138,45 @@ describe('AgentOverlayChat', () => {
 
 		fireEvent.click(getByTestId('mock-chat-send-override'));
 		await vi.waitFor(() => {
-			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'hello node', {
-				kind: 'node_agent',
-				agentName: 'coder',
-				nodeExecutionId: 'exec-coder-1',
-			});
+			expect(mockSendTaskMessage).toHaveBeenCalledWith(
+				'task-1',
+				'hello node',
+				{
+					kind: 'node_agent',
+					agentName: 'coder',
+					nodeExecutionId: 'exec-coder-1',
+				},
+				undefined
+			);
+		});
+	});
+
+	it('forwards image attachments through onSendOverride to spaceStore.sendTaskMessage', async () => {
+		const { getByTestId } = render(
+			<AgentOverlayChat
+				sessionId={SESSION_ID}
+				onClose={onClose}
+				taskContext={{
+					taskId: 'task-1',
+					agentName: 'coder',
+					nodeExecutionId: 'exec-coder-1',
+				}}
+			/>
+		);
+
+		fireEvent.click(getByTestId('mock-chat-send-override-with-images'));
+
+		await vi.waitFor(() => {
+			expect(mockSendTaskMessage).toHaveBeenCalledWith(
+				'task-1',
+				'hello with screenshot',
+				{
+					kind: 'node_agent',
+					agentName: 'coder',
+					nodeExecutionId: 'exec-coder-1',
+				},
+				[{ media_type: 'image/png', data: 'AAAAB' }]
+			);
 		});
 	});
 

@@ -9,6 +9,7 @@
 
 import {
 	type AnthropicContentBlock,
+	type AnthropicContentBlockImage,
 	type AnthropicContentBlockToolResult,
 	type AnthropicRequest,
 	type AnthropicTool,
@@ -77,11 +78,18 @@ type ResponsesReasoningItem = {
 	encrypted_content: string;
 };
 
+type ResponsesInputText = { type: 'input_text'; text: string };
+type ResponsesInputImage = {
+	type: 'input_image';
+	image_url: string;
+	detail?: 'low' | 'high' | 'auto' | 'original';
+};
+
 type ResponsesInputItem =
 	| {
 			type: 'message';
 			role: 'user' | 'system' | 'developer';
-			content: Array<{ type: 'input_text'; text: string }>;
+			content: Array<ResponsesInputText | ResponsesInputImage>;
 	  }
 	| {
 			type: 'message';
@@ -98,7 +106,7 @@ type ResponsesInputItem =
 	| {
 			type: 'function_call_output';
 			call_id: string;
-			output: string;
+			output: string | Array<ResponsesInputText | ResponsesInputImage>;
 	  }
 	| ResponsesReasoningItem;
 
@@ -237,9 +245,27 @@ function estimateTextTokens(text: string): number {
 	return Math.max(1, Math.ceil((characterEstimate + lexicalPieces) / 2));
 }
 
+/** Fixed token estimate per image for OpenAI vision models.
+ *
+ * OpenAI bills vision tokens based on image dimensions and detail level,
+ * not base64 payload size. Without access to actual image dimensions,
+ * we use a conservative fixed estimate (~300 tokens) that covers the
+ * common auto/high-detail case rather than a base64-length heuristic
+ * that would inflate estimates for large encoded payloads.
+ */
+const ESTIMATED_IMAGE_TOKENS = 300;
+
 function estimateResponsesContentTokens(item: ResponsesInputItem): number {
 	if (item.type === 'function_call_output') {
-		return estimateTextTokens(item.output);
+		if (typeof item.output === 'string') {
+			return estimateTextTokens(item.output);
+		}
+		return item.output.reduce((sum, block) => {
+			if (block.type === 'input_image') {
+				return sum + ESTIMATED_IMAGE_TOKENS;
+			}
+			return sum + estimateTextTokens(block.text);
+		}, 0);
 	}
 	if (item.type === 'function_call') {
 		return estimateTextTokens(item.name) + estimateTextTokens(item.arguments);
@@ -247,7 +273,12 @@ function estimateResponsesContentTokens(item: ResponsesInputItem): number {
 	if (item.type === 'reasoning') {
 		return estimateTextTokens(item.encrypted_content);
 	}
-	return item.content.reduce((sum, block) => sum + estimateTextTokens(block.text), 0);
+	return item.content.reduce((sum, block) => {
+		if (block.type === 'input_image') {
+			return sum + ESTIMATED_IMAGE_TOKENS;
+		}
+		return sum + estimateTextTokens(block.text);
+	}, 0);
 }
 
 function estimateResponsesInputTokens(items: ResponsesInputItem[]): number {
@@ -284,22 +315,63 @@ function estimateResponsesPayloadTokens(
 	);
 }
 
-function toolResultText(content: AnthropicContentBlockToolResult['content']): string {
+function toolResultContent(
+	content: AnthropicContentBlockToolResult['content']
+): string | Array<ResponsesInputText | ResponsesInputImage> {
 	if (typeof content === 'string') return content;
-	return content.map((block) => block.text).join('\n');
+	const hasNonText = content.some((block) => block.type !== 'text');
+	if (!hasNonText) {
+		return content.map((block) => (block.type === 'text' ? block.text : '')).join('\n');
+	}
+	const result: Array<ResponsesInputText | ResponsesInputImage> = [];
+	for (const block of content) {
+		if (block.type === 'text') {
+			result.push({ type: 'input_text', text: block.text });
+			continue;
+		}
+		if (block.type === 'image') {
+			result.push(imageBlockToInputImage(block));
+			continue;
+		}
+		result.push({
+			type: 'input_text',
+			text: `[Unsupported content block: ${(block as { type?: string }).type ?? 'unknown'}]`,
+		});
+	}
+	return result;
 }
 
 function appendInputMessage(
 	items: ResponsesInputItem[],
 	role: 'user' | 'system' | 'developer',
-	textParts: string[]
+	contentParts: Array<ResponsesInputText | ResponsesInputImage>
 ): void {
-	const text = textParts.filter(Boolean).join('\n\n');
-	if (!text) return;
+	if (contentParts.length === 0) return;
+	// Merge consecutive input_text blocks into a single block so the upstream
+	// API receives clean, consolidated text rather than fragmented pieces.
+	const merged: Array<ResponsesInputText | ResponsesInputImage> = [];
+	let pendingText: string[] = [];
+	const flushText = () => {
+		const text = pendingText.filter(Boolean).join('\n\n');
+		if (text) {
+			merged.push({ type: 'input_text', text });
+		}
+		pendingText = [];
+	};
+	for (const part of contentParts) {
+		if (part.type === 'input_text') {
+			pendingText.push(part.text);
+		} else {
+			flushText();
+			merged.push(part);
+		}
+	}
+	flushText();
+	if (merged.length === 0) return;
 	items.push({
 		type: 'message',
 		role,
-		content: [{ type: 'input_text', text }],
+		content: merged,
 	});
 }
 
@@ -313,25 +385,49 @@ function appendAssistantMessage(items: ResponsesInputItem[], textParts: string[]
 	});
 }
 
+function imageBlockToInputImage(block: AnthropicContentBlockImage): ResponsesInputImage {
+	if (block.source.type === 'url') {
+		return { type: 'input_image', image_url: block.source.url };
+	}
+	if (block.source.type === 'base64') {
+		const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
+		return { type: 'input_image', image_url: dataUrl };
+	}
+	throw new Error(
+		`Unsupported image source type: ${(block.source as { type?: string }).type ?? 'unknown'}`
+	);
+}
+
 function appendUserBlocks(items: ResponsesInputItem[], blocks: AnthropicContentBlock[]): void {
-	const textParts: string[] = [];
+	const contentParts: Array<ResponsesInputText | ResponsesInputImage> = [];
 	for (const block of blocks) {
 		if (block.type === 'text') {
-			textParts.push(block.text);
+			contentParts.push({ type: 'input_text', text: block.text });
+			continue;
+		}
+		if (block.type === 'image') {
+			contentParts.push(imageBlockToInputImage(block));
 			continue;
 		}
 		if (block.type === 'tool_result') {
 			const result = block as AnthropicContentBlockToolResult & { is_error?: boolean };
-			const output = toolResultText(result.content);
-			appendInputMessage(items, 'user', textParts.splice(0));
+			const output = toolResultContent(result.content);
+			appendInputMessage(items, 'user', contentParts);
+			contentParts.length = 0;
 			items.push({
 				type: 'function_call_output',
 				call_id: result.tool_use_id,
-				output: result.is_error ? `[Tool error]\n${output}` : output,
+				output: result.is_error
+					? typeof output === 'string'
+						? `[Tool error]\n${output}`
+						: [{ type: 'input_text' as const, text: `[Tool error]` }, ...output]
+					: output,
 			});
+			continue;
 		}
+		throw new Error(`Unsupported user content block type: ${block.type}`);
 	}
-	appendInputMessage(items, 'user', textParts);
+	appendInputMessage(items, 'user', contentParts);
 }
 
 function appendAssistantBlocks(items: ResponsesInputItem[], blocks: AnthropicContentBlock[]): void {
@@ -414,7 +510,7 @@ export function anthropicMessagesToResponsesInput(
 				if (reasoningItems && reasoningItems.length > 0 && i === lastUserIndex) {
 					items.push(...reasoningItems);
 				}
-				appendInputMessage(items, 'user', [message.content]);
+				appendInputMessage(items, 'user', [{ type: 'input_text', text: message.content }]);
 			}
 			continue;
 		}
@@ -1164,13 +1260,16 @@ export function createOpenAIResponsesBridgeServer(
 			if (storedReasoning && storedReasoning.length > 0) {
 				continuation = undefined;
 			}
-			let requestBody = buildResponsesRequest(
-				body,
-				model,
-				continuation,
-				buildOpts,
-				storedReasoning
-			);
+			let requestBody: ResponsesRequest;
+			try {
+				requestBody = buildResponsesRequest(body, model, continuation, buildOpts, storedReasoning);
+			} catch (err) {
+				return sendJsonError(
+					400,
+					'invalid_request_error',
+					err instanceof Error ? err.message : 'Bad Request'
+				);
+			}
 			const upstreamUrl = `${baseUrl.replace(/\/$/, '')}/responses`;
 			let openAIResponse: Response;
 			try {
@@ -1196,7 +1295,21 @@ export function createOpenAIResponsesBridgeServer(
 						logger.warn(
 							'openai-responses: endpoint rejects previous_response_id, retrying with full history'
 						);
-						requestBody = buildResponsesRequest(body, model, undefined, buildOpts, storedReasoning);
+						try {
+							requestBody = buildResponsesRequest(
+								body,
+								model,
+								undefined,
+								buildOpts,
+								storedReasoning
+							);
+						} catch (err) {
+							return sendJsonError(
+								400,
+								'invalid_request_error',
+								err instanceof Error ? err.message : 'Bad Request'
+							);
+						}
 						openAIResponse = await fetchImpl(upstreamUrl, {
 							method: 'POST',
 							headers: buildOpenAIHeaders(config.auth, resolvedAuth),

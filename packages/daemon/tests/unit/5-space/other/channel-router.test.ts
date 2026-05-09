@@ -1156,7 +1156,7 @@ describe('ChannelRouter', () => {
 		// Gated channels — check condition
 		// -----------------------------------------------------------------------
 
-		test('gated channel (check): activates target before blocking content when condition not satisfied', async () => {
+		test('gated channel (check): does NOT activate target when condition not satisfied', async () => {
 			const gate: Gate = {
 				id: 'plan-gate',
 				fields: [{ name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } }],
@@ -1189,14 +1189,125 @@ describe('ChannelRouter', () => {
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
 			// No gate data written → field does not exist → gate is closed.
-			// The target agent is still activated first; the gate only blocks message content.
+			// Gate evaluation runs BEFORE lazy activation, so the target node is
+			// NOT activated and no node execution is created. This is the fix
+			// for the premature-activation bug — the tick loop must not see a
+			// pending execution for a blocked target.
 			await expect(router.deliverMessage(run.id, 'planner', 'coder', 'msg')).rejects.toBeInstanceOf(
 				ChannelGateBlockedError
 			);
 			const executions = new NodeExecutionRepository(db).listByNode(run.id, NODE_B);
-			expect(executions).toHaveLength(1);
-			expect(executions[0].agentName).toBe('coder');
-			expect(executions[0].status).toBe('pending');
+			expect(executions).toHaveLength(0);
+		});
+
+		test('gated channel: throws ActivationError when parent task is archived (no gate eval)', async () => {
+			// Archived runs are tombstones — gates must not be evaluated and
+			// scripted gates must not run. The archive guard short-circuits
+			// before gate evaluation and before activation.
+			const gate: Gate = {
+				id: 'archived-run-gate',
+				fields: [{ name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } }],
+				resetOnCycle: false,
+			};
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'planner', to: 'coder', gateId: 'archived-run-gate' },
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{
+						id: NODE_A,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+					{ id: NODE_B, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Archived Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Even with the gate satisfied, the archived guard must trump it.
+			gateDataRepo.set(run.id, 'archived-run-gate', { plan: 'something' });
+			for (const t of taskRepo.listByWorkflowRunIncludingArchived(run.id)) {
+				taskRepo.archiveTask(t.id);
+			}
+
+			await expect(router.deliverMessage(run.id, 'planner', 'coder', 'msg')).rejects.toBeInstanceOf(
+				ActivationError
+			);
+			await expect(router.deliverMessage(run.id, 'planner', 'coder', 'msg')).rejects.toThrow(
+				/archived/
+			);
+		});
+
+		test('gated channel: re-checks gate after activation and throws when closed mid-await', async () => {
+			// Race coverage: deliverMessage performs an `await activateNode(...)`
+			// after the first gate eval. If a concurrent cycle reset clears the
+			// gate during that await, the post-activation re-check must catch
+			// the stale-gate condition and throw.
+			const gate: Gate = {
+				id: 'race-gate',
+				fields: [{ name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } }],
+				resetOnCycle: false,
+			};
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'planner', to: 'coder', gateId: 'race-gate' },
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{
+						id: NODE_A,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+					{ id: NODE_B, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Race Gate Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			// Simulate the race by clearing the gate after the first eval but
+			// before the post-activation re-check. We do this by stubbing
+			// `activateNode` to clear gate data while it awaits.
+			gateDataRepo.set(run.id, 'race-gate', { plan: 'initial value' });
+
+			const realActivate = router.activateNode.bind(router);
+			let activateCalls = 0;
+			(router as unknown as { activateNode: typeof router.activateNode }).activateNode = async (
+				...args: Parameters<typeof router.activateNode>
+			) => {
+				activateCalls += 1;
+				// Clear gate data mid-activation to simulate a concurrent reset
+				gateDataRepo.set(run.id, 'race-gate', {});
+				return realActivate(...args);
+			};
+
+			try {
+				await expect(
+					router.deliverMessage(run.id, 'planner', 'coder', 'msg')
+				).rejects.toBeInstanceOf(ChannelGateBlockedError);
+				expect(activateCalls).toBe(1);
+			} finally {
+				(router as unknown as { activateNode: typeof router.activateNode }).activateNode =
+					realActivate;
+			}
 		});
 
 		test('gated channel (check): allows delivery when condition satisfied', async () => {

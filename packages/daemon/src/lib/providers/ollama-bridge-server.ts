@@ -96,7 +96,9 @@ function estimateTokens(text: string): number {
 
 function toolResultText(toolResult: AnthropicContentBlockToolResult): string {
 	if (typeof toolResult.content === 'string') return toolResult.content;
-	return toolResult.content.map((part) => part.text).join('');
+	return toolResult.content
+		.map((part) => (part.type === 'text' ? part.text : `[${part.type}]`))
+		.join('');
 }
 
 function extractText(content: string | AnthropicRequest['messages'][number]['content']): string {

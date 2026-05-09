@@ -32,7 +32,11 @@ function makeTempDbPath(): string {
 	return join(tmpdir(), `scoped-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
 }
 
-function makeSession(id: string): Session {
+function makeSession(
+	id: string,
+	context?: Session['context'],
+	type: Session['type'] = 'worker'
+): Session {
 	const now = new Date().toISOString();
 	const config: SessionConfig = {
 		model: 'claude-sonnet-4-5-20250929',
@@ -56,6 +60,8 @@ function makeSession(id: string): Session {
 		status: 'active',
 		config,
 		metadata,
+		type,
+		context,
 	};
 }
 
@@ -172,15 +178,29 @@ describe('ReactiveDatabase — scope extraction', () => {
 		expect(sdkEvent!.scope).toEqual({ sessionId: 'sess-3' });
 	});
 
-	test('updateMessageStatus emits change event WITHOUT scope (no sessionId in args)', () => {
+	test('updateMessageStatus emits scope when message ids resolve to one scope', () => {
 		const events: TableChangeEvent[] = [];
 		reactiveDb.on('change', (data) => events.push(data));
 
-		reactiveDb.db.updateMessageStatus(['msg-id-1', 'msg-id-2'], 'consumed');
+		reactiveDb.db.createSession(makeSession('sess-status', { taskId: 'task-status' }));
+		const messageId = reactiveDb.db.saveUserMessage(
+			'sess-status',
+			{
+				type: 'user',
+				uuid: 'test-uuid-status',
+				session_id: 'sess-status',
+				parent_tool_use_id: null,
+				message: { role: 'user', content: [{ type: 'text', text: 'status' }] },
+			} as any,
+			'enqueued'
+		);
+		events.length = 0;
+
+		reactiveDb.db.updateMessageStatus([messageId], 'consumed');
 
 		const sdkEvent = events.find((e) => e.tables.includes('sdk_messages'));
 		expect(sdkEvent).toBeDefined();
-		expect(sdkEvent!.scope).toBeUndefined();
+		expect(sdkEvent!.scope).toEqual({ sessionId: 'sess-status', taskId: 'task-status' });
 	});
 
 	test('change:<table> event includes scope', () => {
@@ -203,7 +223,7 @@ describe('ReactiveDatabase — scope extraction', () => {
 		expect(scopedEvent!.scope).toEqual({ sessionId: 'sess-4' });
 	});
 
-	test('transaction flush does NOT carry scope', () => {
+	test('transaction flush preserves compatible scope', () => {
 		const events: TableChangeEvent[] = [];
 		reactiveDb.on('change', (data) => events.push(data));
 
@@ -220,23 +240,92 @@ describe('ReactiveDatabase — scope extraction', () => {
 		reactiveDb.db.saveSDKMessage('sess-5', message as any);
 		reactiveDb.commitTransaction();
 
-		// Transaction flush event
-		const txEvent =
-			events.find((e) => e.tables.includes('sdk_messages') && e.tables.length > 1) ||
-			events[events.length - 1];
-		// Scope should be undefined for transaction commits
-		expect(txEvent.scope).toBeUndefined();
+		const txEvent = events[events.length - 1];
+		expect(txEvent.scope).toEqual({ sessionId: 'sess-5' });
 	});
 
-	test('createSession does NOT carry scope', () => {
+	test('sdk message scope includes taskId for task sessions', () => {
 		const events: TableChangeEvent[] = [];
 		reactiveDb.on('change', (data) => events.push(data));
 
-		reactiveDb.db.createSession(makeSession('sess-no-scope'));
+		reactiveDb.db.createSession(makeSession('sess-task', { taskId: 'task-1' }));
+		const message = {
+			type: 'assistant',
+			uuid: 'test-uuid-task',
+			session_id: 'sess-task',
+			parent_tool_use_id: null,
+			message: { role: 'assistant', content: [{ type: 'text', text: 'task' }] },
+		};
+		reactiveDb.db.saveSDKMessage('sess-task', message as any);
+
+		const sdkEvent = events.find((e) => e.tables.includes('sdk_messages'));
+		expect(sdkEvent).toBeDefined();
+		expect(sdkEvent!.scope).toEqual({ sessionId: 'sess-task', taskId: 'task-1' });
+	});
+
+	test('transaction flush drops scope for mixed sessions', () => {
+		const events: TableChangeEvent[] = [];
+		reactiveDb.on('change', (data) => events.push(data));
+
+		reactiveDb.db.createSession(makeSession('sess-a', { taskId: 'task-a' }));
+		reactiveDb.db.createSession(makeSession('sess-b', { taskId: 'task-b' }));
+
+		reactiveDb.beginTransaction();
+		reactiveDb.db.saveSDKMessage('sess-a', {
+			type: 'assistant',
+			uuid: 'test-uuid-a',
+			session_id: 'sess-a',
+			parent_tool_use_id: null,
+			message: { role: 'assistant', content: [{ type: 'text', text: 'a' }] },
+		} as any);
+		reactiveDb.db.saveSDKMessage('sess-b', {
+			type: 'assistant',
+			uuid: 'test-uuid-b',
+			session_id: 'sess-b',
+			parent_tool_use_id: null,
+			message: { role: 'assistant', content: [{ type: 'text', text: 'b' }] },
+		} as any);
+		reactiveDb.commitTransaction();
+
+		const txEvent = events[events.length - 1];
+		expect(txEvent.scope).toBeUndefined();
+	});
+
+	test('createSession carries scope derived from the session record', () => {
+		const events: TableChangeEvent[] = [];
+		reactiveDb.on('change', (data) => events.push(data));
+
+		reactiveDb.db.createSession(
+			makeSession('sess-with-scope', {
+				roomId: 'room-1',
+				spaceId: 'space-1',
+				taskId: 'task-1',
+			})
+		);
 
 		const sessionEvent = events.find((e) => e.tables.includes('sessions'));
 		expect(sessionEvent).toBeDefined();
-		expect(sessionEvent!.scope).toBeUndefined();
+		expect(sessionEvent!.scope).toEqual({
+			sessionId: 'sess-with-scope',
+			sessionType: 'worker',
+			roomId: 'room-1',
+			spaceId: 'space-1',
+			taskId: 'task-1',
+		});
+	});
+
+	test('createSession scope omits unset context fields', () => {
+		const events: TableChangeEvent[] = [];
+		reactiveDb.on('change', (data) => events.push(data));
+
+		reactiveDb.db.createSession(makeSession('sess-no-context'));
+
+		const sessionEvent = events.find((e) => e.tables.includes('sessions'));
+		expect(sessionEvent).toBeDefined();
+		expect(sessionEvent!.scope).toEqual({
+			sessionId: 'sess-no-context',
+			sessionType: 'worker',
+		});
 	});
 });
 

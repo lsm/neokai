@@ -96,8 +96,69 @@ describe('useFileAttachments', () => {
 			expect(typeof result.current.handleFileDrop).toBe('function');
 			expect(typeof result.current.handleRemove).toBe('function');
 			expect(typeof result.current.clear).toBe('function');
+			expect(typeof result.current.restore).toBe('function');
 			expect(typeof result.current.openFilePicker).toBe('function');
 			expect(typeof result.current.getImagesForSend).toBe('function');
+		});
+	});
+
+	describe('restore', () => {
+		it('repopulates the attachment list (e.g. after a failed send clear)', () => {
+			const { result } = renderHook(() => useFileAttachments());
+
+			expect(result.current.attachments).toEqual([]);
+
+			const snapshot = [
+				{
+					data: 'AAAA',
+					media_type: 'image/png' as const,
+					name: 'a.png',
+					size: 4,
+				},
+				{
+					data: 'BBBB',
+					media_type: 'image/jpeg' as const,
+					name: 'b.jpg',
+					size: 4,
+				},
+			];
+
+			act(() => {
+				result.current.restore(snapshot);
+			});
+
+			expect(result.current.attachments).toEqual(snapshot);
+		});
+
+		it('clear() then restore() round-trips back to the original attachments', () => {
+			const { result } = renderHook(() => useFileAttachments());
+			const snapshot = [
+				{
+					data: 'AAAA',
+					media_type: 'image/png' as const,
+					name: 'a.png',
+					size: 4,
+				},
+			];
+
+			act(() => {
+				result.current.restore(snapshot);
+			});
+			expect(result.current.attachments).toEqual(snapshot);
+
+			// Snapshot what the composer would save before optimistic clear
+			const saved = result.current.attachments;
+
+			act(() => {
+				result.current.clear();
+			});
+			expect(result.current.attachments).toEqual([]);
+
+			// Failed send → restore
+			act(() => {
+				result.current.restore(saved);
+			});
+			expect(result.current.attachments).toEqual(snapshot);
 		});
 	});
 

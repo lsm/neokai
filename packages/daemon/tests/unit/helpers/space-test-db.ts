@@ -247,6 +247,38 @@ export function createSpaceTables(db: BunDatabase): void {
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
 	);
 
+	// Minimal `sessions` table — used by tests that need to seed
+	// `session_context.taskId` so the SDKMessageRepository can derive the
+	// `sdk_messages.task_id` column at INSERT time.
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS sessions (
+			id TEXT PRIMARY KEY,
+			type TEXT,
+			session_context TEXT
+		)
+	`);
+
+	// `sdk_messages` is the canonical message store. Tests that exercise
+	// task-scoped feeds rely on the `task_id` column being present and
+	// indexed exactly the way migration 122 produces it in production.
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS sdk_messages (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			message_type TEXT NOT NULL,
+			message_subtype TEXT,
+			sdk_message TEXT NOT NULL,
+			timestamp TEXT NOT NULL,
+			send_status TEXT DEFAULT 'consumed',
+			origin TEXT,
+			is_renderable INTEGER NOT NULL DEFAULT 1,
+			is_terminal INTEGER NOT NULL DEFAULT 0,
+			parent_tool_use_id TEXT,
+			task_id TEXT
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id)`);
+
 	// Workflow run artifacts
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS workflow_run_artifacts (
@@ -331,6 +363,72 @@ export function createSpaceTables(db: BunDatabase): void {
 			`ON pending_agent_messages(workflow_run_id, target_agent_name, idempotency_key) ` +
 			`WHERE idempotency_key IS NOT NULL`
 	);
+
+	// External Event Bus tables (migration 123)
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_external_events (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			source TEXT NOT NULL,
+			topic TEXT NOT NULL,
+			dedupe_key TEXT NOT NULL,
+			occurred_at INTEGER NOT NULL,
+			ingested_at INTEGER NOT NULL,
+			source_event_id TEXT,
+			pr_number INTEGER,
+			repo_owner TEXT,
+			repo_name TEXT,
+			branch TEXT,
+			summary TEXT NOT NULL,
+			external_url TEXT,
+			payload_json TEXT NOT NULL,
+			routed_task_id TEXT,
+			state TEXT NOT NULL DEFAULT 'published'
+				CHECK(state IN ('published', 'routed', 'delivered', 'delivery_failed', 'failed', 'ignored', 'ambiguous')),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(space_id, source, dedupe_key),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_events_lookup
+		ON space_external_events(space_id, source, dedupe_key)
+	`);
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_events_state
+		ON space_external_events(state, updated_at)
+	`);
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_external_event_deliveries (
+			event_id TEXT NOT NULL,
+			delivery_key TEXT NOT NULL,
+			workflow_run_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			node_id TEXT NOT NULL,
+			agent_name TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT 'pending'
+				CHECK(state IN ('pending', 'delivered', 'failed')),
+			failure_reason TEXT,
+			delivered_at INTEGER,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(event_id, delivery_key),
+			FOREIGN KEY (event_id) REFERENCES space_external_events(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_event
+		ON space_external_event_deliveries(event_id, state)
+	`);
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_run
+		ON space_external_event_deliveries(workflow_run_id, state)
+	`);
+	db.exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_external_event_deliveries_key
+		ON space_external_event_deliveries(delivery_key)
+	`);
 
 	// MCP audit log (migration 121)
 	db.exec(`

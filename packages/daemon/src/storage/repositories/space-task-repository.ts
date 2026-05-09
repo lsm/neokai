@@ -353,6 +353,7 @@ export class SpaceTaskRepository {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE space_tasks SET ${fields.join(', ')} WHERE id = ?`);
 			stmt.run(...values);
+
 			this.reactiveDb?.notifyChange('space_tasks');
 		}
 

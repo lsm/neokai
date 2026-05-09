@@ -572,6 +572,24 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   General audit trail for MCP write operations (create_task, approve_task,
 	//   send_message with gate data, save_artifact, etc.).
 	runMigration121(db);
+
+	// Migration 122: Replace task-thread projection with schema fix.
+	//   - Add derived columns to sdk_messages: is_renderable, is_terminal, parent_tool_use_id.
+	//     These are populated at write time so live-query handlers can read them
+	//     without re-parsing JSON or running expensive json_each filters.
+	//   - Add task_id column (+ index) to sdk_messages: stamped at INSERT time by
+	//     SDKMessageRepository from sessions.session_context.taskId. Replaces the
+	//     earlier task_session_map projection (which is dropped if present from a
+	//     prior dev run) with a single denormalised column on the message row, so
+	//     the live-query thread feeds can JOIN through sdk_messages.task_id directly
+	//     without maintaining a parallel lookup table.
+	//   - Backfill derived columns + task_id from the existing schema.
+	runMigration122(db);
+
+	// Migration 123: Add external-event lifecycle tables for the External Event Bus.
+	//   space_external_events — source-level dedup + state machine.
+	//   space_external_event_deliveries — per-subscription delivery lifecycle.
+	runMigration123(db);
 }
 
 /**
@@ -7988,6 +8006,247 @@ export function runMigration117(db: BunDatabase): void {
 }
 
 /**
+ * Migration 122: Replace the task-thread projection-table approach with a schema
+ * fix.
+ *
+ * Two parallel concerns:
+ *
+ * 1. Derived columns on `sdk_messages`. The live-query handlers used to compute
+ *    `is_renderable`, `is_terminal`, and `parent_tool_use_id` inline via
+ *    `json_extract` / `json_each` on every read. Materialising them at write
+ *    time keeps the live-query SQL flat and lets a plain B-tree index serve
+ *    `parent_tool_use_id` lookups instead of a function index.
+ *
+ * 2. `task_id` column on `sdk_messages`. Mapping a `space_task` to its
+ *    contributing sessions used to require a five-CTE join (target_task →
+ *    orchestration → node_executions → space_agents → all_sessions), and a
+ *    short-lived denormalised `task_session_map` table tried to short-circuit
+ *    it. Stamping `task_id` directly on each persisted SDK message turns the
+ *    primary read path (`get all messages for a task`) into a simple indexed
+ *    `WHERE task_id = ?` lookup and makes the lookup table unnecessary.
+ *
+ *    The session already knows its task: `sessions.session_context` carries
+ *    `taskId` for both the Task Agent (`type = 'space_task_agent'`) and node
+ *    agent (`type = 'worker'`) sub-sessions — set by `task-agent.ts` and
+ *    `custom-agent.ts` at session creation. The backfill mines that JSON to
+ *    populate task_id for existing rows.
+ *
+ *    Display-time metadata (kind, role, label, node_execution_id) is derived at
+ *    query time by joining `sessions` (for `type` → kind) and `node_executions`
+ *    (for `agent_name`, `workflow_node_id`) when needed — there is no
+ *    denormalised cache.
+ *
+ * The migration is idempotent end-to-end:
+ * - column adds check `tableColumnNames`
+ * - the backfill recomputes derived columns regardless of prior state (the work
+ *   is deterministic from `sdk_message` JSON / `sessions.session_context`)
+ * - DROP IF EXISTS makes the lookup-table cleanup safe to re-run.
+ */
+export function runMigration122(db: BunDatabase): void {
+	// Step 1: add derived columns to sdk_messages.
+	if (tableExists(db, 'sdk_messages')) {
+		const columns = tableColumnNames(db, 'sdk_messages');
+		const addedRenderable = !columns.includes('is_renderable');
+		const addedTerminal = !columns.includes('is_terminal');
+		const addedParentToolUseId = !columns.includes('parent_tool_use_id');
+		const addedTaskId = !columns.includes('task_id');
+
+		if (addedRenderable) {
+			db.exec(`ALTER TABLE sdk_messages ADD COLUMN is_renderable INTEGER NOT NULL DEFAULT 1`);
+		}
+		if (addedTerminal) {
+			db.exec(`ALTER TABLE sdk_messages ADD COLUMN is_terminal INTEGER NOT NULL DEFAULT 0`);
+		}
+		if (addedParentToolUseId) {
+			db.exec(`ALTER TABLE sdk_messages ADD COLUMN parent_tool_use_id TEXT`);
+		}
+		if (addedTaskId) {
+			db.exec(`ALTER TABLE sdk_messages ADD COLUMN task_id TEXT`);
+		}
+
+		// Backfill derived columns. The WHERE clause only targets rows whose
+		// derived values are genuinely stale, so the migration converges after
+		// the first successful run instead of rewriting most of the table on
+		// every startup.
+		//
+		// is_terminal mirrors message_type = 'result'.
+		// is_renderable encodes the same predicate the compact-feed used to
+		//   apply at read time:
+		//     - user rows whose content array contains any tool_result block
+		//       render as null in the compact feed → is_renderable = 0
+		//     - assistant rows with no tool_use, no non-empty text, and no
+		//       non-empty thinking blocks have nothing to display → 0
+		//     - everything else → 1 (the column DEFAULT)
+		//
+		// All json_* calls are guarded by `json_valid(sdk_message)` so a single
+		// malformed historical row can't abort the migration. Invalid JSON
+		// rows fall through to safe defaults: is_renderable = 1 (preserves the
+		// column DEFAULT and keeps the row visible), parent_tool_use_id NULL.
+		db.exec(`
+			UPDATE sdk_messages
+			SET
+				is_terminal = CASE WHEN message_type = 'result' THEN 1 ELSE 0 END,
+				parent_tool_use_id = CASE
+					WHEN json_valid(sdk_message)
+					THEN json_extract(sdk_message, '$.parent_tool_use_id')
+					ELSE NULL
+				END,
+				is_renderable = CASE
+					WHEN NOT json_valid(sdk_message) THEN 1
+					WHEN message_type = 'user'
+						AND json_type(sdk_message, '$.message.content') = 'array'
+						AND EXISTS (
+							SELECT 1
+							FROM json_each(json_extract(sdk_message, '$.message.content')) je
+							WHERE json_extract(je.value, '$.type') = 'tool_result'
+						)
+					THEN 0
+					WHEN message_type = 'assistant'
+						AND json_type(sdk_message, '$.message.content') = 'array'
+						AND NOT EXISTS (
+							SELECT 1
+							FROM json_each(json_extract(sdk_message, '$.message.content')) je
+							WHERE json_extract(je.value, '$.type') = 'tool_use'
+								OR (
+									json_extract(je.value, '$.type') = 'text'
+									AND TRIM(COALESCE(json_extract(je.value, '$.text'), '')) != ''
+								)
+								OR (
+									json_extract(je.value, '$.type') = 'thinking'
+									AND TRIM(COALESCE(json_extract(je.value, '$.thinking'), '')) != ''
+								)
+						)
+					THEN 0
+					ELSE 1
+				END
+			WHERE
+				-- is_terminal mismatch
+				is_terminal != CASE WHEN message_type = 'result' THEN 1 ELSE 0 END
+				OR
+				-- parent_tool_use_id should be non-NULL but is NULL
+				(
+					json_valid(sdk_message)
+					AND json_extract(sdk_message, '$.parent_tool_use_id') IS NOT NULL
+					AND parent_tool_use_id IS NULL
+				)
+				OR
+				-- parent_tool_use_id should be NULL but is non-NULL
+				(
+					parent_tool_use_id IS NOT NULL
+					AND (
+						NOT json_valid(sdk_message)
+						OR json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
+					)
+				)
+				OR
+				-- is_renderable mismatch for user/assistant messages
+				(
+					message_type IN ('user', 'assistant')
+					AND is_renderable != CASE
+						WHEN message_type = 'user'
+							AND json_type(sdk_message, '$.message.content') = 'array'
+							AND EXISTS (
+								SELECT 1
+								FROM json_each(json_extract(sdk_message, '$.message.content')) je
+								WHERE json_extract(je.value, '$.type') = 'tool_result'
+							)
+						THEN 0
+						WHEN message_type = 'assistant'
+							AND json_type(sdk_message, '$.message.content') = 'array'
+							AND NOT EXISTS (
+								SELECT 1
+								FROM json_each(json_extract(sdk_message, '$.message.content')) je
+								WHERE json_extract(je.value, '$.type') = 'tool_use'
+									OR (
+										json_extract(je.value, '$.type') = 'text'
+										AND TRIM(COALESCE(json_extract(je.value, '$.text'), '')) != ''
+									)
+									OR (
+										json_extract(je.value, '$.type') = 'thinking'
+										AND TRIM(COALESCE(json_extract(je.value, '$.thinking'), '')) != ''
+									)
+							)
+						THEN 0
+						ELSE 1
+					END
+				)
+		`);
+
+		// Plain B-tree index — supersedes the json_extract function index
+		// (idx_sdk_messages_parent_tool) for parent-tool lookups by reading the
+		// new column directly.
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id ON sdk_messages(session_id, parent_tool_use_id)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal ON sdk_messages(session_id, is_renderable, is_terminal, timestamp, id)`
+		);
+
+		// Step 2: backfill `sdk_messages.task_id` from the writing session's
+		// `session_context.taskId`. Both the Task Agent and node-agent sub-sessions
+		// stamp this at creation, so a JOIN on `sessions` covers every Space
+		// session that ever produced messages. Sessions without a task context
+		// (worker sessions outside the Space system, lobby/neo, etc.) get NULL —
+		// the column is nullable on purpose.
+		//
+		// Runs whenever rows with `task_id IS NULL` remain for an allowed session
+		// type, so an interrupted migration is repaired on next boot. We restrict
+		// the scan to rows whose session is an allowed type (space_task_agent,
+		// worker) AND actually carries a taskId in context — this avoids re-
+		// scanning permanently-NULL rows from ordinary non-Space worker sessions
+		// on every startup.
+		//
+		// `json_valid(s.session_context)` guards against malformed JSON the same
+		// way the sdk_message backfill does.
+		if (tableExists(db, 'sessions')) {
+			db.exec(`
+				UPDATE sdk_messages
+				SET task_id = (
+					SELECT
+						CASE
+							WHEN s.session_context IS NULL THEN NULL
+							WHEN NOT json_valid(s.session_context) THEN NULL
+							ELSE json_extract(s.session_context, '$.taskId')
+						END
+					FROM sessions s
+					WHERE s.id = sdk_messages.session_id
+					  AND s.type IN ('space_task_agent', 'worker')
+				)
+				WHERE task_id IS NULL
+				  AND session_id IN (
+					  SELECT id FROM sessions
+					  WHERE type IN ('space_task_agent', 'worker')
+						AND session_context IS NOT NULL
+						AND json_valid(session_context)
+						AND json_extract(session_context, '$.taskId') IS NOT NULL
+				  )
+			`);
+		}
+
+		// Must match the fresh-schema bootstrap in schema/index.ts:
+		// `CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id, timestamp)`.
+		// Upgraded databases create this index here; fresh databases create it in
+		// createIndexes(). Both use IF NOT EXISTS, so the first one wins. Keeping
+		// the column list identical ensures upgraded and fresh databases have the
+		// same index shape.
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id, timestamp)`
+		);
+		// Covers the `DISTINCT session_id` dedup in the contributing_sessions CTE.
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session ON sdk_messages(task_id, session_id)`
+		);
+	}
+
+	// Step 3: drop the legacy `task_session_map` lookup table. It was a
+	// denormalised cache of data that already exists on `sessions` +
+	// `node_executions`; with `sdk_messages.task_id` populated the read path
+	// no longer needs it. Idempotent — early development DBs that never created
+	// the table skip cleanly.
+	db.exec(`DROP TABLE IF EXISTS task_session_map`);
+}
+
+/**
  * Migration 118: Add `setting_sources` column to `space_agents` table.
  *
  * Stores per-agent setting source overrides as JSON (e.g. ["user","project"]).
@@ -8071,4 +8330,94 @@ export function runMigration121(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_session ON mcp_audit_log (session_id, timestamp)`
 	);
+}
+
+/**
+ * Migration 123: Add external-event lifecycle tables for the External Event Bus.
+ *
+ * space_external_events
+ *   - One row per (space_id, source, dedupe_key) — the canonical source event.
+ *   - State machine: published → routed → delivered | failed | ignored | ambiguous
+ *   - Terminal states (delivered, failed, ignored, ambiguous) short-circuit
+ *     duplicate source observations.
+ *   - Retryable states (published, routed, delivery_failed) re-emit so delivery
+ *     can retry.
+ *
+ * space_external_event_deliveries
+ *   - Per-subscription delivery rows keyed by (event_id, delivery_key).
+ *   - Terminal delivery states: delivered, failed.
+ *   - The router advances the source event to terminal delivered only when
+ *     every expected delivery is delivered.
+ *   - A single terminal failed delivery keeps the source event failed forever.
+ */
+export function runMigration123(db: BunDatabase): void {
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_external_events (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			source TEXT NOT NULL,
+			topic TEXT NOT NULL,
+			dedupe_key TEXT NOT NULL,
+			occurred_at INTEGER NOT NULL,
+			ingested_at INTEGER NOT NULL,
+			source_event_id TEXT,
+			pr_number INTEGER,
+			repo_owner TEXT,
+			repo_name TEXT,
+			branch TEXT,
+			summary TEXT NOT NULL,
+			external_url TEXT,
+			payload_json TEXT NOT NULL,
+			routed_task_id TEXT,
+			state TEXT NOT NULL DEFAULT 'published'
+				CHECK(state IN ('published', 'routed', 'delivered', 'delivery_failed', 'failed', 'ignored', 'ambiguous')),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(space_id, source, dedupe_key),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_events_lookup
+		ON space_external_events(space_id, source, dedupe_key)
+	`);
+
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_events_state
+		ON space_external_events(state, updated_at)
+	`);
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_external_event_deliveries (
+			event_id TEXT NOT NULL,
+			delivery_key TEXT NOT NULL,
+			workflow_run_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			node_id TEXT NOT NULL,
+			agent_name TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT 'pending'
+				CHECK(state IN ('pending', 'delivered', 'failed')),
+			failure_reason TEXT,
+			delivered_at INTEGER,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(event_id, delivery_key),
+			FOREIGN KEY (event_id) REFERENCES space_external_events(id) ON DELETE CASCADE
+		)
+	`);
+
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_event
+		ON space_external_event_deliveries(event_id, state)
+	`);
+
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_run
+		ON space_external_event_deliveries(workflow_run_id, state)
+	`);
+
+	db.exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_external_event_deliveries_key
+		ON space_external_event_deliveries(delivery_key)
+	`);
 }
