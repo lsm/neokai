@@ -154,27 +154,21 @@ export function InputTextarea({
 		}
 	}, [content]);
 
-	// Auto-resize textarea
-	// Uses requestAnimationFrame to avoid forced synchronous reflow:
-	// the height reset and scrollHeight read happen in separate frames,
-	// allowing the browser to batch layout calculations naturally.
-	useEffect(() => {
+	// Auto-resize textarea.
+	// Uses useLayoutEffect so the height is recalculated synchronously
+	// before paint. This ensures the composer padding (driven by
+	// syncMessagesContainerPadding in MessageInput) always measures the
+	// correct footer height before auto-scroll fires on a new message.
+	useLayoutEffect(() => {
 		const textarea = textareaRef.current;
 		if (!textarea) return;
 
-		// Frame 1: Reset height so scrollHeight reflects actual content
 		textarea.style.height = 'auto';
 		textarea.style.minHeight = '40px';
-
-		// Frame 2: Read natural height and apply clamped value
-		const rafId = requestAnimationFrame(() => {
-			const newHeight = Math.min(Math.max(40, textarea.scrollHeight), 200);
-			textarea.style.height = `${newHeight}px`;
-			setIsMultiline(newHeight > 45);
-			onHeightChange?.(newHeight);
-		});
-
-		return () => cancelAnimationFrame(rafId);
+		const newHeight = Math.min(Math.max(40, textarea.scrollHeight), 200);
+		textarea.style.height = `${newHeight}px`;
+		setIsMultiline(newHeight > 45);
+		onHeightChange?.(newHeight);
 	}, [content, onHeightChange]);
 
 	// Focus on mount
