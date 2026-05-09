@@ -48,6 +48,7 @@ import type { Database } from '../../storage/database';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
+import { getSessionModelInfo } from '../model-service.js';
 import { requireModelContextWindow } from '../providers/codex-models';
 import { getProviderContextManager } from '../providers/factory.js';
 import type { SettingsManager } from '../settings-manager';
@@ -180,27 +181,51 @@ export function ensureAgentTools(
 }
 
 /**
- * Provider-specific SDK settings overrides.
+ * Providers whose native SDK integration already knows the correct context
+ * window and auto-compact behavior. No override needed.
+ *
+ * anthropic        — native Anthropic API, SDK knows all model context windows.
+ * anthropic-copilot — Copilot bridge still routes to Anthropic API.
  */
-export function buildProviderSettings(providerId: string, modelId?: string): Options['settings'] {
-	if (providerId !== 'anthropic-codex') {
-		return undefined;
+const NATIVE_CONTEXT_WINDOW_PROVIDERS = ['anthropic', 'anthropic-copilot'];
+
+/**
+ * Provider-specific SDK settings overrides.
+ *
+ * For the Codex bridge, returns a hardcoded 1M autoCompactWindow.
+ * For other non-native providers, the caller should supply the model's
+ * actual contextWindow so the SDK auto-compacts at the right threshold.
+ */
+export function buildProviderSettings(
+	providerId: string,
+	modelId?: string,
+	contextWindow?: number
+): Options['settings'] {
+	if (providerId === 'anthropic-codex') {
+		if (!modelId) {
+			throw new Error(`Unknown Codex model auto-compact window: ${modelId ?? 'missing model'}`);
+		}
+		try {
+			requireModelContextWindow(modelId);
+		} catch {
+			throw new Error(`Unknown Codex model auto-compact window: ${modelId}`);
+		}
+
+		return {
+			// Keep SDK-driven compaction disabled for the Codex bridge. The bridge uses
+			// a single persistent Codex turn per session and rejects overlapping turns.
+			autoCompactWindow: CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
+		};
 	}
 
-	if (!modelId) {
-		throw new Error(`Unknown Codex model auto-compact window: ${modelId ?? 'missing model'}`);
-	}
-	try {
-		requireModelContextWindow(modelId);
-	} catch {
-		throw new Error(`Unknown Codex model auto-compact window: ${modelId}`);
+	// For non-native providers where the SDK can't discover the actual context
+	// window (OpenRouter, Ollama, GLM, etc.), pass the model's contextWindow
+	// so auto-compact triggers at the right percentage of actual capacity.
+	if (!NATIVE_CONTEXT_WINDOW_PROVIDERS.includes(providerId) && contextWindow) {
+		return { autoCompactWindow: contextWindow };
 	}
 
-	return {
-		// Keep SDK-driven compaction disabled for the Codex bridge. The bridge uses
-		// a single persistent Codex turn per session and rejects overlapping turns.
-		autoCompactWindow: CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
-	};
+	return undefined;
 }
 
 /**
@@ -337,6 +362,12 @@ export class QueryOptionsBuilder {
 		// here is the effective set for this session.
 		const mergedMcpServers = this.mergeMcpServers(mcpServers, mcpServersFromSkills);
 
+		// Resolve model metadata so non-native providers get the correct
+		// autoCompactWindow (the SDK defaults to 200k when it can't discover
+		// the real context window, causing premature compaction on 1M models).
+		const modelInfo = await getSessionModelInfo(this.ctx.session);
+		const autoCompactWindow = modelInfo?.contextWindow;
+
 		// Build final query options
 		const queryOptions: Options = {
 			// ============ Model & Execution ============
@@ -421,7 +452,7 @@ export class QueryOptionsBuilder {
 			// output style, CLAUDE.md content, etc.).
 			settingSources:
 				config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
-			settings: buildProviderSettings(providerId, config.model),
+			settings: buildProviderSettings(providerId, config.model, autoCompactWindow),
 
 			// ============ Streaming ============
 			includePartialMessages: config.includePartialMessages,

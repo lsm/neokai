@@ -24,6 +24,7 @@ import { AppMcpServerRepository } from '../../../../src/storage/repositories/app
 import { SkillRepository } from '../../../../src/storage/repositories/skill-repository';
 import { createTables } from '../../../../src/storage/schema';
 import { noOpReactiveDb } from '../../../helpers/reactive-database';
+import { setModelsCache } from '../../../../src/lib/model-service';
 
 describe('QueryOptionsBuilder', () => {
 	let builder: QueryOptionsBuilder;
@@ -152,9 +153,9 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.env).toEqual({ MY_VAR: 'value' });
 		});
 
-		it('should not override SDK auto-compaction settings for other providers', async () => {
+		it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
+			// Default provider is anthropic — SDK already knows correct context window
 			const options = await builder.build();
-
 			expect(options.settings).toBeUndefined();
 		});
 
@@ -186,10 +187,123 @@ describe('QueryOptionsBuilder', () => {
 			);
 		});
 
-		it('should not override SDK auto-compaction settings for other providers', () => {
+		it('should not override SDK auto-compaction settings for native anthropic provider', () => {
 			expect(buildProviderSettings('anthropic')).toBeUndefined();
-			expect(buildProviderSettings('glm')).toBeUndefined();
-			expect(buildProviderSettings('anthropic-copilot')).toBeUndefined();
+		});
+
+		it('should not override SDK auto-compaction settings when no contextWindow is known', () => {
+			expect(buildProviderSettings('glm', 'glm-5')).toBeUndefined();
+			expect(buildProviderSettings('openrouter', 'deepseek-v4')).toBeUndefined();
+		});
+
+		it('should set autoCompactWindow for non-native providers when contextWindow is known', () => {
+			expect(buildProviderSettings('openrouter', 'deepseek-v4', 1_000_000)).toEqual({
+				autoCompactWindow: 1_000_000,
+			});
+			expect(buildProviderSettings('glm', 'glm-5', 128_000)).toEqual({
+				autoCompactWindow: 128_000,
+			});
+			expect(buildProviderSettings('ollama', 'llama3', 128_000)).toEqual({
+				autoCompactWindow: 128_000,
+			});
+		});
+
+		it('should still return undefined for anthropic-copilot (native Anthropic API)', () => {
+			// anthropic-copilot routes to Anthropic API — SDK knows the context window
+			expect(
+				buildProviderSettings('anthropic-copilot', 'claude-sonnet-4.6', 200_000)
+			).toBeUndefined();
+		});
+	});
+
+	describe('auto-compact window via build()', () => {
+		function registerOpenRouterProvider(): void {
+			resetProviderRegistry();
+			const registry = getProviderRegistry();
+			registry.register({
+				id: 'openrouter',
+				displayName: 'OpenRouter',
+				capabilities: {
+					streaming: true,
+					extendedThinking: false,
+					maxContextWindow: 1_000_000,
+					functionCalling: true,
+					vision: true,
+				},
+				isAvailable: () => true,
+				getModels: async () => [],
+				ownsModel: () => false,
+				buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+			} as Provider);
+		}
+
+		afterEach(() => {
+			setModelsCache(new Map());
+			resetProviderRegistry();
+		});
+
+		it('should set autoCompactWindow for OpenRouter 1M context model', async () => {
+			registerOpenRouterProvider();
+			setModelsCache(
+				new Map([
+					[
+						'global',
+						[
+							{
+								id: 'deepseek-v4',
+								name: 'DeepSeek V4',
+								provider: 'openrouter',
+								contextWindow: 1_000_000,
+								available: true,
+							},
+						],
+					],
+				])
+			);
+			mockSession.config.provider = 'openrouter';
+			mockSession.config.model = 'deepseek-v4';
+			const options = await builder.build();
+			expect(options.settings).toEqual({ autoCompactWindow: 1_000_000 });
+		});
+
+		it('should set autoCompactWindow for OpenRouter model with 128k context window', async () => {
+			registerOpenRouterProvider();
+			setModelsCache(
+				new Map([
+					[
+						'global',
+						[
+							{
+								id: 'qwen-2.5-72b',
+								name: 'Qwen 2.5 72B',
+								provider: 'openrouter',
+								contextWindow: 128_000,
+								available: true,
+							},
+						],
+					],
+				])
+			);
+			mockSession.config.provider = 'openrouter';
+			mockSession.config.model = 'qwen-2.5-72b';
+			const options = await builder.build();
+			expect(options.settings).toEqual({ autoCompactWindow: 128_000 });
+		});
+
+		it('should leave settings undefined for native anthropic provider', async () => {
+			// Default mockSession uses anthropic provider
+			const options = await builder.build();
+			expect(options.settings).toBeUndefined();
+		});
+
+		it('should leave settings undefined when model context window is unknown', async () => {
+			registerOpenRouterProvider();
+			// Empty cache — model not found
+			setModelsCache(new Map());
+			mockSession.config.provider = 'openrouter';
+			mockSession.config.model = 'unknown-model';
+			const options = await builder.build();
+			expect(options.settings).toBeUndefined();
 		});
 	});
 
