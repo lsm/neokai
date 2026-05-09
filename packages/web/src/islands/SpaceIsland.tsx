@@ -145,6 +145,12 @@ export default function SpaceIsland({
 		}
 	}, [viewMode, spaceId]);
 
+	// Reset session-creation lock when switching spaces so a stale lock
+	// from space A doesn't block valid creates in space B.
+	useEffect(() => {
+		setCreatingSession(false);
+	}, [spaceId]);
+
 	const handleTaskPaneClose = useCallback(() => {
 		navigateToSpace(spaceId);
 	}, [spaceId]);
@@ -164,14 +170,18 @@ export default function SpaceIsland({
 			if (creatingSession) return;
 			setCreatingSession(true);
 			const originSpaceId = spaceId;
+			const originViewMode = viewMode;
 			try {
 				const response = await createSession({
 					spaceId,
 					workspacePath: space?.workspacePath,
 				});
-				// Only navigate if the user is still in the same space;
-				// prevents stale async redirect if they navigated elsewhere.
-				if (currentSpaceIdSignal.value === originSpaceId) {
+				// Only navigate if the user is still in the same space and on the
+				// Sessions view; prevents stale async redirect if they navigated elsewhere.
+				if (
+					currentSpaceIdSignal.value === originSpaceId &&
+					currentSpaceViewModeSignal.value === originViewMode
+				) {
 					navigateToSpaceSession(spaceId, response.sessionId);
 				}
 			} catch (err) {
@@ -180,7 +190,7 @@ export default function SpaceIsland({
 				setCreatingSession(false);
 			}
 		},
-		[spaceId, space?.workspacePath, creatingSession]
+		[spaceId, space?.workspacePath, creatingSession, viewMode]
 	);
 
 	// Session/agent chat view — render immediately, don't block on space data
