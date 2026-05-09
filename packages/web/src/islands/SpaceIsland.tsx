@@ -20,6 +20,7 @@ import {
 	spaceOverlayTaskContextSignal,
 	spaceOverlayPendingTaskIdSignal,
 	spaceOverlayPendingAgentNameSignal,
+	currentSpaceViewModeSignal,
 } from '../lib/signals';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
@@ -33,6 +34,7 @@ import {
 	closeOverlayHistory,
 } from '../lib/router';
 import { createSession } from '../lib/api-helpers';
+import { toast } from '../lib/toast';
 import ChatContainer from './ChatContainer';
 
 const SpaceConfigurePage = lazy(() =>
@@ -139,6 +141,7 @@ export default function SpaceIsland({
 	}, [spaceId]);
 
 	const [createTaskOpen, setCreateTaskOpen] = useState(false);
+	const [creatingSession, setCreatingSession] = useState(false);
 
 	// For non-session views, show spinner/error while space data loads.
 	// Show spinner if space is not yet loaded and there's no error — this covers
@@ -149,17 +152,21 @@ export default function SpaceIsland({
 	const handleCreateSession = useCallback(
 		async (e: Event) => {
 			e.stopPropagation();
+			if (creatingSession) return;
+			setCreatingSession(true);
 			try {
 				const response = await createSession({
 					spaceId,
 					workspacePath: space?.workspacePath,
 				});
 				navigateToSpaceSession(spaceId, response.sessionId);
-			} catch {
-				// Session creation failed silently
+			} catch (err) {
+				toast.error(err instanceof Error ? err.message : 'Failed to create session');
+			} finally {
+				setCreatingSession(false);
 			}
 		},
-		[spaceId, space?.workspacePath]
+		[spaceId, space?.workspacePath, creatingSession]
 	);
 
 	// Session/agent chat view — render immediately, don't block on space data
@@ -244,7 +251,13 @@ export default function SpaceIsland({
 				<SpaceCreateTaskDialog
 					isOpen={createTaskOpen}
 					onClose={() => setCreateTaskOpen(false)}
-					onCreated={(task) => navigateToSpaceTask(spaceId, task.id)}
+					onCreated={(task) => {
+						// Only navigate if the user is still on the Tasks view;
+						// prevents stale async redirect if they navigated elsewhere.
+						if (currentSpaceViewModeSignal.value === 'tasks') {
+							navigateToSpaceTask(spaceId, task.id);
+						}
+					}}
 				/>
 				{overlay}
 			</>
@@ -264,7 +277,8 @@ export default function SpaceIsland({
 						actions={
 							<button
 								onClick={handleCreateSession}
-								class="p-1.5 bg-dark-850 border border-dark-700 rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0"
+								disabled={creatingSession}
+								class="p-1.5 bg-dark-850 border border-dark-700 rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
 								aria-label="Create session"
 								title="Create session"
 							>
