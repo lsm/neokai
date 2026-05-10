@@ -24,6 +24,7 @@ import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 import { Logger } from '../../logger';
 import { validatePostApproval } from '../workflows/post-approval-validator';
+import { slugify } from '../slug';
 
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
@@ -106,12 +107,16 @@ export class SpaceWorkflowManager {
 			}
 		}
 
+		// Auto-generate handle from name if not provided, with collision resolution
+		const handle = params.handle?.trim() ?? this.generateUniqueHandle(params.spaceId, trimmedName);
+
 		return this.repo.createWorkflow({
 			...params,
 			name: trimmedName,
 			nodes,
 			startNodeId,
 			endNodeId,
+			handle,
 		});
 	}
 
@@ -121,6 +126,15 @@ export class SpaceWorkflowManager {
 
 	getWorkflow(id: string): SpaceWorkflow | null {
 		const wf = this.repo.getWorkflow(id);
+		if (!wf) return null;
+		return this.sanitizePostApprovalForLoad(wf);
+	}
+
+	/**
+	 * Get a workflow by its handle within a specific space.
+	 */
+	getWorkflowByHandle(spaceId: string, handle: string): SpaceWorkflow | null {
+		const wf = this.repo.getWorkflowByHandle(spaceId, handle);
 		if (!wf) return null;
 		return this.sanitizePostApprovalForLoad(wf);
 	}
@@ -170,6 +184,18 @@ export class SpaceWorkflowManager {
 			const trimmedName = params.name.trim();
 			this.validateName(existing.spaceId, trimmedName, id);
 			params = { ...params, name: trimmedName };
+			// Auto-regenerate handle on rename if caller didn't supply one
+			if (params.handle === undefined) {
+				params = {
+					...params,
+					handle: this.generateUniqueHandle(existing.spaceId, trimmedName, id),
+				};
+			}
+		}
+		if (params.handle !== undefined && params.handle !== null) {
+			const trimmedHandle = params.handle.trim();
+			this.validateHandle(existing.spaceId, trimmedHandle, id);
+			params = { ...params, handle: trimmedHandle };
 		}
 		if (params.nodes !== undefined) {
 			this.validateStableNodeIds(id, existing.nodes, params.nodes ?? [], {
@@ -307,6 +333,28 @@ export class SpaceWorkflowManager {
 				);
 			}
 		}
+	}
+
+	private validateHandle(spaceId: string, handle: string, excludeId: string | null): void {
+		if (!handle) {
+			throw new WorkflowValidationError('Workflow handle must not be empty');
+		}
+		const existing = this.repo.listWorkflows(spaceId);
+		for (const wf of existing) {
+			if (wf.handle === handle && wf.id !== excludeId) {
+				throw new WorkflowValidationError(
+					`A workflow with handle "${handle}" already exists in this space`
+				);
+			}
+		}
+	}
+
+	private generateUniqueHandle(spaceId: string, name: string, excludeId?: string): string {
+		const existing = this.repo.listWorkflows(spaceId);
+		const existingHandles = existing
+			.filter((wf) => wf.id !== excludeId && wf.handle)
+			.map((wf) => wf.handle!);
+		return slugify(name, existingHandles);
 	}
 
 	private validateNodes(spaceId: string, nodes: WorkflowNodeInput[]): void {

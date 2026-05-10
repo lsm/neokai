@@ -474,6 +474,52 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 		const originalRun = ctx.workflowRunRepo.getRun(runId);
 		expect(originalRun?.status).toBe('in_progress');
 	});
+
+	test('switches workflow by handle instead of id', async () => {
+		const wf1 = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF One');
+		const wf2 = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Two');
+		expect(wf2.handle).toBeDefined();
+
+		const startResult = await startWorkflowRun(ctx, {
+			workflow_id: wf1.id,
+			title: 'switch test',
+		});
+		const runId = JSON.parse(startResult.content[0].text).run.id;
+
+		const result = await makeHandlers(ctx).change_plan({
+			run_id: runId,
+			workflow_handle: wf2.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.previousRunId).toBe(runId);
+		expect(parsed.run.workflowId).toBe(wf2.id);
+
+		// Old run should be cancelled
+		const oldRun = ctx.workflowRunRepo.getRun(runId);
+		expect(oldRun?.status).toBe('cancelled');
+	});
+
+	test('returns error when workflow_handle does not exist', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
+		const startResult = await startWorkflowRun(ctx, {
+			workflow_id: wf.id,
+			title: 'run',
+		});
+		const runId = JSON.parse(startResult.content[0].text).run.id;
+
+		const result = await makeHandlers(ctx).change_plan({
+			run_id: runId,
+			workflow_handle: 'nonexistent-handle',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('nonexistent-handle');
+
+		// Original run must still be in_progress
+		const originalRun = ctx.workflowRunRepo.getRun(runId);
+		expect(originalRun?.status).toBe('in_progress');
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -598,6 +644,44 @@ describe('createSpaceAgentToolHandlers — get_workflow_detail', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.workflow.tags).toContain('alpha');
 		expect(parsed.workflow.tags).toContain('beta');
+	});
+
+	test('resolves workflow by handle when workflow_handle is provided', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Handle Lookup WF',
+			[],
+			'Look me up by handle'
+		);
+		// The workflow was auto-generated with a handle from its name
+		expect(wf.handle).toBeDefined();
+
+		const result = await makeHandlers(ctx).get_workflow_detail({
+			workflow_handle: wf.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflow.id).toBe(wf.id);
+		expect(parsed.workflow.name).toBe('Handle Lookup WF');
+	});
+
+	test('returns error when workflow_handle does not exist', async () => {
+		const result = await makeHandlers(ctx).get_workflow_detail({
+			workflow_handle: 'nonexistent-handle',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('nonexistent-handle');
+	});
+
+	test('returns error when neither workflow_id nor workflow_handle is provided', async () => {
+		const result = await makeHandlers(ctx).get_workflow_detail({});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toMatch(/workflow_id or workflow_handle/);
 	});
 });
 
@@ -901,6 +985,51 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
 		await expect(ctx.taskManager.updateTask(aId, { dependsOn: [cId] })).rejects.toThrow(
 			/circular|cycle/i
 		);
+	});
+
+	test('persists preferredWorkflowId when workflow_handle is provided', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Coding QA');
+		expect(wf.handle).toBeDefined();
+
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Fix auth bug',
+			description: 'Authentication fails for international users',
+			workflow_handle: wf.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		const stored = ctx.taskRepo.getTask(parsed.task.id);
+		expect(stored).not.toBeNull();
+		expect(stored?.preferredWorkflowId).toBe(wf.id);
+	});
+
+	test('returns error when workflow_handle does not exist', async () => {
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task',
+			description: 'Desc',
+			workflow_handle: 'nonexistent-handle',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('nonexistent-handle');
+	});
+
+	test('workflow_id takes precedence over workflow_handle when both provided', async () => {
+		const wf1 = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF One');
+		const wf2 = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Two');
+		expect(wf1.handle).toBeDefined();
+		expect(wf2.handle).toBeDefined();
+
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task',
+			description: 'Desc',
+			workflow_id: wf1.id,
+			workflow_handle: wf2.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		const stored = ctx.taskRepo.getTask(parsed.task.id);
+		expect(stored?.preferredWorkflowId).toBe(wf1.id);
 	});
 });
 

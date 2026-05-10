@@ -351,10 +351,10 @@ export function setupSpaceWorkflowHandlers(
 
 	// ─── spaceWorkflow.get ───────────────────────────────────────────────────
 	messageHub.onRequest('spaceWorkflow.get', async (data) => {
-		const params = data as { id: string; spaceId?: string };
+		const params = data as { id?: string; handle?: string; spaceId?: string };
 
-		if (!params.id) {
-			throw new Error('id is required');
+		if (!params.id && !params.handle) {
+			throw new Error('id or handle is required');
 		}
 
 		// When spaceId is provided: verify the space exists before fetching the workflow.
@@ -367,14 +367,20 @@ export function setupSpaceWorkflowHandlers(
 			}
 		}
 
-		const workflow = workflowManager.getWorkflow(params.id);
+		let workflow: SpaceWorkflow | null = null;
+		if (params.id) {
+			workflow = workflowManager.getWorkflow(params.id);
+		} else if (params.handle && params.spaceId) {
+			workflow = workflowManager.getWorkflowByHandle(params.spaceId, params.handle);
+		}
+
 		if (!workflow) {
-			throw new Error(`Workflow not found: ${params.id}`);
+			throw new Error(`Workflow not found: ${params.id ?? params.handle}`);
 		}
 
 		// Ownership check — reject if caller's spaceId doesn't match the workflow's owner
 		if (params.spaceId && workflow.spaceId !== params.spaceId) {
-			throw new Error(`Workflow not found: ${params.id}`);
+			throw new Error(`Workflow not found: ${params.id ?? params.handle}`);
 		}
 
 		return { workflow };

@@ -474,4 +474,172 @@ describe('SpaceWorkflowManager', () => {
 			expect(fetched?.postApproval).toBeUndefined();
 		});
 	});
+
+	describe('handle generation and validation', () => {
+		it('auto-generates a handle from the workflow name on create', () => {
+			const result = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Coding with QA',
+				nodes: [{ id: 'node-1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+			});
+			expect(result.handle).toBe('coding-with-qa');
+		});
+
+		it('uses provided handle when explicitly supplied', () => {
+			const result = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Coding with QA',
+				nodes: [{ id: 'node-1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+				handle: 'custom-handle',
+			});
+			expect(result.handle).toBe('custom-handle');
+		});
+
+		it('appends numeric suffix on handle collision when auto-generating', () => {
+			// Seed a handle directly via repo to simulate an existing workflow
+			// with a handle that a new workflow's name would collide with.
+			repo.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Existing',
+				nodes: [{ name: 'Step', agentId: 'agent-1' }],
+				handle: 'collision-test',
+			});
+			const result = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Collision Test',
+				nodes: [{ id: 'node-2', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+			});
+			expect(result.handle).toBe('collision-test-2');
+		});
+
+		it('increments suffix for multiple collisions when auto-generating', () => {
+			repo.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Existing A',
+				nodes: [{ name: 'Step', agentId: 'agent-1' }],
+				handle: 'collision-test',
+			});
+			repo.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Existing B',
+				nodes: [{ name: 'Step', agentId: 'agent-1' }],
+				handle: 'collision-test-2',
+			});
+			const result = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Collision Test',
+				nodes: [{ id: 'n3', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+			});
+			expect(result.handle).toBe('collision-test-3');
+		});
+
+		it('regenerates handle on rename when caller does not supply one', () => {
+			const created = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Old Name',
+				nodes: [{ id: 'node-1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+			});
+			expect(created.handle).toBe('old-name');
+
+			const updated = manager.updateWorkflow(created.id, { name: 'New Name' });
+			expect(updated?.handle).toBe('new-name');
+		});
+
+		it('keeps existing handle on rename when caller explicitly provides it', () => {
+			const created = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Old Name',
+				nodes: [{ id: 'node-1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+			});
+
+			const updated = manager.updateWorkflow(created.id, { name: 'New Name', handle: 'old-name' });
+			expect(updated?.handle).toBe('old-name');
+		});
+
+		it('rejects empty handle on update', () => {
+			const created = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'WF',
+				nodes: [{ id: 'node-1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+			});
+
+			expect(() => manager.updateWorkflow(created.id, { handle: '' })).toThrow(
+				'Workflow handle must not be empty'
+			);
+		});
+
+		it('rejects duplicate handle on update', () => {
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'First',
+				nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+				handle: 'first-handle',
+			});
+			const second = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Second',
+				nodes: [{ id: 'n2', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+				handle: 'second-handle',
+			});
+
+			expect(() => manager.updateWorkflow(second.id, { handle: 'first-handle' })).toThrow(
+				'A workflow with handle "first-handle" already exists in this space'
+			);
+		});
+
+		it('getWorkflowByHandle returns the workflow when handle exists', () => {
+			const created = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Findable',
+				nodes: [{ id: 'node-1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+				handle: 'find-me',
+			});
+
+			const found = manager.getWorkflowByHandle('space-1', 'find-me');
+			expect(found).not.toBeNull();
+			expect(found?.id).toBe(created.id);
+		});
+
+		it('getWorkflowByHandle returns null when handle does not exist', () => {
+			const found = manager.getWorkflowByHandle('space-1', 'missing');
+			expect(found).toBeNull();
+		});
+
+		it('allows same handle in different spaces', () => {
+			// Insert a second space
+			const now = Date.now();
+			db.prepare(
+				`INSERT INTO spaces (id, workspace_path, name, slug, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			).run('space-2', '/ws/2', 'Space 2', 'space-2', now, now);
+
+			const wf1 = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Shared',
+				nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+				handle: 'shared',
+			});
+			const wf2 = manager.createWorkflow({
+				spaceId: 'space-2',
+				name: 'Shared',
+				nodes: [{ id: 'n2', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+				handle: 'shared',
+			});
+
+			expect(wf1.handle).toBe('shared');
+			expect(wf2.handle).toBe('shared');
+		});
+	});
 });

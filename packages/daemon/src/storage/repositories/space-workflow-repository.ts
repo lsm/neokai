@@ -58,6 +58,7 @@ interface WorkflowRow {
 	 */
 	post_approval?: string | null;
 	disabled: number;
+	handle: string | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -174,6 +175,9 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
 	if (row.disabled) {
 		wf.disabled = true;
 	}
+	if (row.handle) {
+		wf.handle = row.handle;
+	}
 	return wf;
 }
 
@@ -218,8 +222,8 @@ export class SpaceWorkflowRepository {
 
 		this.db
 			.prepare(
-				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, gates, layout, template_name, template_hash, instructions, completion_autonomy_level, post_approval, disabled, created_at, updated_at)
-	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, gates, layout, template_name, template_hash, instructions, completion_autonomy_level, post_approval, disabled, handle, created_at, updated_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				workflowId,
@@ -238,6 +242,7 @@ export class SpaceWorkflowRepository {
 				completionAutonomyLevel,
 				postApprovalJson,
 				params.disabled ? 1 : 0,
+				params.handle ?? null,
 				now,
 				now
 			);
@@ -431,6 +436,10 @@ export class SpaceWorkflowRepository {
 			fields.push('disabled = ?');
 			values.push(params.disabled ? 1 : 0);
 		}
+		if (params.handle !== undefined) {
+			fields.push('handle = ?');
+			values.push(params.handle ?? null);
+		}
 
 		const hasNodeReplacement = params.nodes !== undefined;
 
@@ -486,6 +495,34 @@ export class SpaceWorkflowRepository {
 	deleteWorkflow(id: string): boolean {
 		const result = this.db.prepare(`DELETE FROM space_workflows WHERE id = ?`).run(id);
 		return result.changes > 0;
+	}
+
+	// -------------------------------------------------------------------------
+	// Handle lookup
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Get a workflow by its handle within a specific space.
+	 */
+	getWorkflowByHandle(spaceId: string, handle: string): SpaceWorkflow | null {
+		const row = this.db
+			.prepare(`SELECT * FROM space_workflows WHERE space_id = ? AND handle = ?`)
+			.get(spaceId, handle) as WorkflowRow | undefined;
+		if (!row) return null;
+		const ctx: NodeMigrationContext = { strippedFields: new Set<string>() };
+		const nodes = this.fetchNodes(row.id, ctx);
+		this.emitMigrationLog(row, ctx);
+		return rowToWorkflow(row, nodes);
+	}
+
+	/**
+	 * Get all handles currently in use for a space (for collision detection).
+	 */
+	getHandlesForSpace(spaceId: string): string[] {
+		const rows = this.db
+			.prepare(`SELECT handle FROM space_workflows WHERE space_id = ? AND handle IS NOT NULL`)
+			.all(spaceId) as Array<{ handle: string }>;
+		return rows.map((r) => r.handle);
 	}
 
 	// -------------------------------------------------------------------------

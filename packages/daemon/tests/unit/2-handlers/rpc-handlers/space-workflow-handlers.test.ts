@@ -126,6 +126,7 @@ function createMockWorkflowManager(
 	return {
 		createWorkflow: mock(() => workflow!),
 		getWorkflow: mock(() => workflow),
+		getWorkflowByHandle: mock(() => workflow),
 		listWorkflows: mock(() => (workflow ? [workflow] : [])),
 		listWorkflowSummaries: mock(() =>
 			workflow
@@ -369,14 +370,36 @@ describe('space-workflow-handlers', () => {
 		});
 
 		it('throws when id is missing', async () => {
-			await expect(call('spaceWorkflow.get', {})).rejects.toThrow('id is required');
+			await expect(call('spaceWorkflow.get', {})).rejects.toThrow('id or handle is required');
 		});
 
-		it('throws when workflow not found', async () => {
+		it('throws when workflow not found by id', async () => {
 			setup(mockSpace, null);
 			await expect(call('spaceWorkflow.get', { id: 'ghost' })).rejects.toThrow(
 				'Workflow not found: ghost'
 			);
+		});
+
+		it('returns workflow by handle when handle and spaceId are provided', async () => {
+			const result = (await call('spaceWorkflow.get', {
+				handle: 'test-workflow',
+				spaceId: 'space-1',
+			})) as { workflow: SpaceWorkflow };
+			expect(result.workflow).toEqual(mockWorkflow);
+			expect(workflowManager.getWorkflowByHandle).toHaveBeenCalledWith('space-1', 'test-workflow');
+		});
+
+		it('throws when handle is provided but spaceId is missing', async () => {
+			await expect(call('spaceWorkflow.get', { handle: 'test-workflow' })).rejects.toThrow(
+				'Workflow not found: test-workflow'
+			);
+		});
+
+		it('throws when workflow not found by handle', async () => {
+			setup(mockSpace, null);
+			await expect(
+				call('spaceWorkflow.get', { handle: 'ghost', spaceId: 'space-1' })
+			).rejects.toThrow('Workflow not found: ghost');
 		});
 	});
 

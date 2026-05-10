@@ -1536,6 +1536,12 @@ export interface SpaceWorkflow {
 	 * Existing workflow runs continue unaffected.
 	 */
 	disabled?: boolean;
+	/**
+	 * Short human-readable handle (e.g. 'coding-with-qa') used as an alternative
+	 * identifier for workflows within a space. Unique per space. Auto-generated
+	 * from the workflow name via slugification when not explicitly provided.
+	 */
+	handle?: string;
 }
 
 /**
@@ -1593,6 +1599,11 @@ export interface CreateSpaceWorkflowParams {
 	postApproval?: PostApprovalRoute;
 	/** When true, create the workflow as disabled. */
 	disabled?: boolean;
+	/**
+	 * Optional explicit handle. When omitted, the backend auto-generates one
+	 * from the workflow name via slugification.
+	 */
+	handle?: string;
 }
 
 /**
@@ -1650,6 +1661,10 @@ export interface UpdateSpaceWorkflowParams {
 	postApproval?: PostApprovalRoute | null;
 	/** Pass true/false to enable or disable the workflow. Pass null to leave unchanged. */
 	disabled?: boolean | null;
+	/**
+	 * Update the workflow's handle. Pass null to clear. Pass undefined to leave unchanged.
+	 */
+	handle?: string | null;
 }
 
 /**
