@@ -1,6 +1,15 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
-import type { HookCallback, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
-import { createLoopDetectorHook } from '../../../../src/lib/agent/loop-detector-hook';
+import type {
+	HookCallback,
+	PostToolUseFailureHookInput,
+	PostToolUseHookInput,
+	PreToolUseHookInput,
+} from '@anthropic-ai/claude-agent-sdk';
+import {
+	createLoopDetectorHook,
+	createLoopDetectorHooks,
+	isBashFailureResponse,
+} from '../../../../src/lib/agent/loop-detector-hook';
 
 const signal = new AbortController().signal;
 
@@ -21,7 +30,51 @@ function makePreToolUse(
 	};
 }
 
+function makePostToolUse(
+	tool_name: string,
+	tool_input: Record<string, unknown>,
+	tool_response: unknown,
+	overrides: Partial<PostToolUseHookInput> = {}
+): PostToolUseHookInput {
+	return {
+		hook_event_name: 'PostToolUse',
+		tool_name,
+		tool_input,
+		tool_response,
+		session_id: 'test-session',
+		transcript_path: '/test/path',
+		cwd: '/test/cwd',
+		tool_use_id: 'test-id',
+		...overrides,
+	};
+}
+
+function makePostToolUseFailure(
+	tool_name: string,
+	tool_input: Record<string, unknown>,
+	overrides: Partial<PostToolUseFailureHookInput> = {}
+): PostToolUseFailureHookInput {
+	return {
+		hook_event_name: 'PostToolUseFailure',
+		tool_name,
+		tool_input,
+		session_id: 'test-session',
+		transcript_path: '/test/path',
+		cwd: '/test/cwd',
+		tool_use_id: 'test-id',
+		error: 'boom',
+		...overrides,
+	};
+}
+
 async function call(hook: HookCallback, input: PreToolUseHookInput) {
+	return hook(input, 'test-id', { signal });
+}
+
+async function callPost(
+	hook: HookCallback,
+	input: PostToolUseHookInput | PostToolUseFailureHookInput
+) {
 	return hook(input, 'test-id', { signal });
 }
 
@@ -162,7 +215,11 @@ describe('LoopDetectorHook', () => {
 	});
 
 	describe('untracked tools', () => {
-		it('does not deny on Bash even when called many times with identical args', async () => {
+		it('does not deny on Bash via the legacy single-hook factory (no failure observer)', async () => {
+			// `createLoopDetectorHook` produces only the PreToolUse callback;
+			// without the paired PostToolUse hook recording outcomes, the Bash
+			// failure ring stays empty and the persistent-failure precondition
+			// is never satisfied — so even 20 identical Bash calls pass through.
 			const input = makePreToolUse('Bash', { command: 'git status', description: 'status' });
 			for (let i = 0; i < 20; i++) {
 				expect(await call(hook, input)).toEqual({});
@@ -176,12 +233,12 @@ describe('LoopDetectorHook', () => {
 			}
 		});
 
-		it('an untracked tool call DOES reset a tracked streak (Bash counts as a different action)', async () => {
+		it('a Bash call DOES reset a tracked Read streak (different lastKey)', async () => {
 			const read = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
 			const bash = makePreToolUse('Bash', { command: 'echo hi' });
-			// Read, Bash (untracked, counts as a different action), Read, Read
-			// — must NOT deny. Bash reset the streak so we are only on the
-			// 2nd consecutive Read here.
+			// Read, Bash (different lastKey, counts as a different action wrt
+			// the Read streak), Read, Read — must NOT deny. The Bash call
+			// overwrote lastKey so we are only on the 2nd consecutive Read here.
 			expect(await call(hook, read)).toEqual({});
 			expect(await call(hook, bash)).toEqual({});
 			expect(await call(hook, read)).toEqual({});
@@ -406,6 +463,477 @@ describe('LoopDetectorHook', () => {
 			expect(await call(tightHook, input)).toMatchObject({
 				hookSpecificOutput: { permissionDecision: 'deny' },
 			});
+		});
+	});
+
+	describe('Bash dead-loop detection (PostToolUse hybrid)', () => {
+		const FAILING_BASH = makePreToolUse('Bash', {
+			command: 'ls -la .git/hooks 2>&1',
+			description: 'List git hooks',
+		});
+
+		function makeBashFailureResponse(): unknown {
+			// Mirrors the SDK Bash tool's failure shape: top-level is_error
+			// and a stderr containing a recognisable failure marker.
+			return {
+				is_error: true,
+				stderr: 'ls: .git/hooks: No such file or directory',
+				stdout: '',
+			};
+		}
+
+		function makeBashSuccessResponse(): unknown {
+			return {
+				stdout: 'pre-commit\npre-push\n',
+				stderr: '',
+			};
+		}
+
+		it('denies after 5 consecutive identical failing Bash commands', async () => {
+			const { preToolUse, postToolUse } = createLoopDetectorHooks();
+
+			// Calls 1..4 — under threshold, no deny.
+			for (let i = 0; i < 4; i++) {
+				expect(await call(preToolUse, FAILING_BASH)).toEqual({});
+				await callPost(
+					postToolUse,
+					makePostToolUse(
+						'Bash',
+						FAILING_BASH.tool_input as Record<string, unknown>,
+						makeBashFailureResponse()
+					)
+				);
+			}
+			// Call 5 — threshold hit AND last 5 outcomes all failures (wait,
+			// only 4 recorded so far; the 5th PreToolUse fires before its own
+			// PostToolUse). We need 5 failures recorded before the 6th call
+			// can deny. Confirm 5th call passes through.
+			expect(await call(preToolUse, FAILING_BASH)).toEqual({});
+			await callPost(
+				postToolUse,
+				makePostToolUse(
+					'Bash',
+					FAILING_BASH.tool_input as Record<string, unknown>,
+					makeBashFailureResponse()
+				)
+			);
+
+			// Call 6 — now 5 failures in the ring; deny fires.
+			const result = await call(preToolUse, FAILING_BASH);
+			expect(result).toMatchObject({
+				hookSpecificOutput: {
+					hookEventName: 'PreToolUse',
+					permissionDecision: 'deny',
+				},
+			});
+			const reason = (result as { hookSpecificOutput: { permissionDecisionReason: string } })
+				.hookSpecificOutput.permissionDecisionReason;
+			expect(reason).toContain('Bash dead-loop detected');
+			expect(reason).toContain('ls -la .git/hooks 2>&1');
+		});
+
+		it('does NOT deny when the same command succeeds repeatedly (legitimate polling)', async () => {
+			// `git status` polling: agent keeps re-running the same command,
+			// and each call succeeds. Must not deny — Bash output can
+			// legitimately differ across successful calls.
+			const { preToolUse, postToolUse } = createLoopDetectorHooks();
+			const cmd = makePreToolUse('Bash', { command: 'git status' });
+
+			for (let i = 0; i < 20; i++) {
+				expect(await call(preToolUse, cmd)).toEqual({});
+				await callPost(
+					postToolUse,
+					makePostToolUse(
+						'Bash',
+						cmd.tool_input as Record<string, unknown>,
+						makeBashSuccessResponse()
+					)
+				);
+			}
+		});
+
+		it('does NOT deny when mixed success/failure (a single success clears the streak deny)', async () => {
+			// Flaky test scenario: 4 failures, 1 success, then a failure. The
+			// success purges the failure ring so even the streak count of 6
+			// does not satisfy "last 5 all failures."
+			const { preToolUse, postToolUse } = createLoopDetectorHooks();
+			const cmd = makePreToolUse('Bash', { command: 'bun test foo.test.ts' });
+
+			for (let i = 0; i < 4; i++) {
+				expect(await call(preToolUse, cmd)).toEqual({});
+				await callPost(
+					postToolUse,
+					makePostToolUse(
+						'Bash',
+						cmd.tool_input as Record<string, unknown>,
+						makeBashFailureResponse()
+					)
+				);
+			}
+			// 5th call: streak is 5 but ring only has 4 failures. No deny.
+			expect(await call(preToolUse, cmd)).toEqual({});
+			await callPost(
+				postToolUse,
+				makePostToolUse(
+					'Bash',
+					cmd.tool_input as Record<string, unknown>,
+					makeBashSuccessResponse()
+				)
+			);
+			// 6th call: streak is 6, ring has [F,F,F,F,S] → not all failures, no deny.
+			expect(await call(preToolUse, cmd)).toEqual({});
+			await callPost(
+				postToolUse,
+				makePostToolUse(
+					'Bash',
+					cmd.tool_input as Record<string, unknown>,
+					makeBashFailureResponse()
+				)
+			);
+			// 7th call: ring is [F,F,F,S,F] → still not all failures, no deny.
+			expect(await call(preToolUse, cmd)).toEqual({});
+		});
+
+		it('a different Bash command resets the streak (semantic streak reset)', async () => {
+			// 4 failing `cmd-A`, then 1 `cmd-B`, then 5 failing `cmd-A`. Even
+			// though there are 9 failures of cmd-A total, the streak reset by
+			// cmd-B means the consecutive count starts over.
+			const { preToolUse, postToolUse } = createLoopDetectorHooks();
+			const a = makePreToolUse('Bash', { command: 'ls nonexistent-a 2>&1' });
+			const b = makePreToolUse('Bash', { command: 'ls nonexistent-b 2>&1' });
+
+			for (let i = 0; i < 4; i++) {
+				expect(await call(preToolUse, a)).toEqual({});
+				await callPost(
+					postToolUse,
+					makePostToolUse(
+						'Bash',
+						a.tool_input as Record<string, unknown>,
+						makeBashFailureResponse()
+					)
+				);
+			}
+			// Interleave a different Bash command.
+			expect(await call(preToolUse, b)).toEqual({});
+			await callPost(
+				postToolUse,
+				makePostToolUse('Bash', b.tool_input as Record<string, unknown>, makeBashFailureResponse())
+			);
+			// Streak for a was reset. We need 5 more consecutive a calls to
+			// rebuild the streak. The 5th passes, then the 6th gets denied
+			// (because the ring still has 5 a-failures from before — the
+			// failure ring is independent of streak resets, but the streak
+			// counter starts over so deny only fires when count >= 5).
+			for (let i = 0; i < 4; i++) {
+				expect(await call(preToolUse, a)).toEqual({});
+				await callPost(
+					postToolUse,
+					makePostToolUse(
+						'Bash',
+						a.tool_input as Record<string, unknown>,
+						makeBashFailureResponse()
+					)
+				);
+			}
+			// 5th a in the new streak — streak is 5, ring has ≥5 failures. Deny.
+			expect(await call(preToolUse, a)).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+		});
+
+		it('a non-Bash tool call also resets the Bash streak', async () => {
+			const { preToolUse, postToolUse } = createLoopDetectorHooks();
+			const bash = makePreToolUse('Bash', { command: 'ls bad 2>&1' });
+			const read = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
+
+			// 4 failing Bash.
+			for (let i = 0; i < 4; i++) {
+				expect(await call(preToolUse, bash)).toEqual({});
+				await callPost(
+					postToolUse,
+					makePostToolUse(
+						'Bash',
+						bash.tool_input as Record<string, unknown>,
+						makeBashFailureResponse()
+					)
+				);
+			}
+			// Read in between — resets Bash streak.
+			expect(await call(preToolUse, read)).toEqual({});
+			// Bash again — streak is 1, no deny even though failure ring has 4.
+			expect(await call(preToolUse, bash)).toEqual({});
+			await callPost(
+				postToolUse,
+				makePostToolUse(
+					'Bash',
+					bash.tool_input as Record<string, unknown>,
+					makeBashFailureResponse()
+				)
+			);
+			// 4 more consecutive Bash → streak is 5, failures ring has 5 → deny.
+			for (let i = 0; i < 3; i++) {
+				expect(await call(preToolUse, bash)).toEqual({});
+				await callPost(
+					postToolUse,
+					makePostToolUse(
+						'Bash',
+						bash.tool_input as Record<string, unknown>,
+						makeBashFailureResponse()
+					)
+				);
+			}
+			expect(await call(preToolUse, bash)).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+		});
+
+		it('counts PostToolUseFailure as a failure outcome', async () => {
+			// SDK-level errors (hook crash, sandbox kill) come via the
+			// PostToolUseFailure event, not PostToolUse. These must also be
+			// counted as failures so a wedged tool path can still be denied.
+			const { preToolUse, postToolUseFailure } = createLoopDetectorHooks();
+			const cmd = makePreToolUse('Bash', { command: 'do-the-thing' });
+
+			for (let i = 0; i < 5; i++) {
+				expect(await call(preToolUse, cmd)).toEqual({});
+				await callPost(
+					postToolUseFailure,
+					makePostToolUseFailure('Bash', cmd.tool_input as Record<string, unknown>)
+				);
+			}
+			expect(await call(preToolUse, cmd)).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+		});
+
+		it('continues denying on every retry of the same failing command (loop is broken, not throttled)', async () => {
+			const { preToolUse, postToolUse } = createLoopDetectorHooks();
+
+			for (let i = 0; i < 5; i++) {
+				expect(await call(preToolUse, FAILING_BASH)).toEqual({});
+				await callPost(
+					postToolUse,
+					makePostToolUse(
+						'Bash',
+						FAILING_BASH.tool_input as Record<string, unknown>,
+						makeBashFailureResponse()
+					)
+				);
+			}
+			// Three identical retries — each denied. Importantly, the ring
+			// has 5 failures and stays that way until the streak resets via a
+			// different action.
+			expect(await call(preToolUse, FAILING_BASH)).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+			expect(await call(preToolUse, FAILING_BASH)).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+			expect(await call(preToolUse, FAILING_BASH)).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+		});
+
+		it('respects bash.enabled=false (no Bash deny ever)', async () => {
+			const { preToolUse, postToolUse } = createLoopDetectorHooks({
+				bash: { enabled: false, threshold: 5, failuresRequired: 5 },
+			});
+
+			for (let i = 0; i < 50; i++) {
+				expect(await call(preToolUse, FAILING_BASH)).toEqual({});
+				await callPost(
+					postToolUse,
+					makePostToolUse(
+						'Bash',
+						FAILING_BASH.tool_input as Record<string, unknown>,
+						makeBashFailureResponse()
+					)
+				);
+			}
+		});
+
+		it('respects custom bash thresholds', async () => {
+			// Lower threshold and failuresRequired to 2 for ease of testing.
+			const { preToolUse, postToolUse } = createLoopDetectorHooks({
+				bash: { enabled: true, threshold: 2, failuresRequired: 2 },
+			});
+
+			// 1st call: pre passes, then record failure.
+			expect(await call(preToolUse, FAILING_BASH)).toEqual({});
+			await callPost(
+				postToolUse,
+				makePostToolUse(
+					'Bash',
+					FAILING_BASH.tool_input as Record<string, unknown>,
+					makeBashFailureResponse()
+				)
+			);
+			// 2nd call: streak=2 but ring only has 1. No deny yet.
+			expect(await call(preToolUse, FAILING_BASH)).toEqual({});
+			await callPost(
+				postToolUse,
+				makePostToolUse(
+					'Bash',
+					FAILING_BASH.tool_input as Record<string, unknown>,
+					makeBashFailureResponse()
+				)
+			);
+			// 3rd call: streak=3, ring=[F,F]. Deny.
+			expect(await call(preToolUse, FAILING_BASH)).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+		});
+
+		it('isolates Bash failure rings per (session, agent)', async () => {
+			const { preToolUse, postToolUse } = createLoopDetectorHooks();
+			const aPre = makePreToolUse('Bash', { command: 'ls bad 2>&1' }, { session_id: 'sess-A' });
+			const bPre = makePreToolUse('Bash', { command: 'ls bad 2>&1' }, { session_id: 'sess-B' });
+
+			// Build a fully-loaded failure ring in sess-A.
+			for (let i = 0; i < 5; i++) {
+				expect(await call(preToolUse, aPre)).toEqual({});
+				await callPost(
+					postToolUse,
+					makePostToolUse(
+						'Bash',
+						aPre.tool_input as Record<string, unknown>,
+						makeBashFailureResponse(),
+						{ session_id: 'sess-A' }
+					)
+				);
+			}
+			// One more in sess-A — deny.
+			expect(await call(preToolUse, aPre)).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+			// In sess-B the failure ring is empty for that fingerprint, so
+			// even repeated calls do not deny on the first hits.
+			for (let i = 0; i < 4; i++) {
+				expect(await call(preToolUse, bPre)).toEqual({});
+			}
+		});
+
+		it('treats interrupted Bash responses as failures', async () => {
+			const { preToolUse, postToolUse } = createLoopDetectorHooks();
+			const interruptedResponse = { interrupted: true, stdout: '', stderr: '' };
+
+			for (let i = 0; i < 5; i++) {
+				expect(await call(preToolUse, FAILING_BASH)).toEqual({});
+				await callPost(
+					postToolUse,
+					makePostToolUse(
+						'Bash',
+						FAILING_BASH.tool_input as Record<string, unknown>,
+						interruptedResponse
+					)
+				);
+			}
+			expect(await call(preToolUse, FAILING_BASH)).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+		});
+
+		it('PostToolUse hook ignores non-Bash tools', async () => {
+			const { preToolUse, postToolUse } = createLoopDetectorHooks();
+			// Recording a fake failure for Read should NOT pollute Bash's ring.
+			await callPost(
+				postToolUse,
+				makePostToolUse('Read', { file_path: '/abs/foo.ts' }, { is_error: true, stderr: 'boom' })
+			);
+			// Now run 5 successful Bash calls — should still pass on the 6th.
+			const cmd = makePreToolUse('Bash', { command: 'true' });
+			for (let i = 0; i < 6; i++) {
+				expect(await call(preToolUse, cmd)).toEqual({});
+				await callPost(
+					postToolUse,
+					makePostToolUse(
+						'Bash',
+						cmd.tool_input as Record<string, unknown>,
+						makeBashSuccessResponse()
+					)
+				);
+			}
+		});
+	});
+
+	describe('isBashFailureResponse classifier', () => {
+		it('classifies null / undefined as success', () => {
+			expect(isBashFailureResponse(null)).toBe(false);
+			expect(isBashFailureResponse(undefined)).toBe(false);
+		});
+
+		it('classifies plain success strings as success', () => {
+			expect(isBashFailureResponse('Hello\nWorld\n')).toBe(false);
+			expect(isBashFailureResponse('On branch main\nnothing to commit, working tree clean')).toBe(
+				false
+			);
+		});
+
+		it('classifies strings with exit-code error markers as failures', () => {
+			expect(isBashFailureResponse('Exit code: 1')).toBe(true);
+			expect(isBashFailureResponse('Some output\nExit code: 127')).toBe(true);
+			expect(isBashFailureResponse('Exit code: 0')).toBe(false);
+		});
+
+		it('classifies strings with bash-stderr blocks as failures', () => {
+			expect(
+				isBashFailureResponse(
+					'<bash-stderr>ls: cannot access .git/hooks: No such file or directory</bash-stderr>'
+				)
+			).toBe(true);
+			// Empty stderr block is not a failure.
+			expect(isBashFailureResponse('<bash-stderr></bash-stderr>')).toBe(false);
+		});
+
+		it('classifies textual error markers as failures', () => {
+			expect(isBashFailureResponse('bash: foo: command not found')).toBe(true);
+			expect(isBashFailureResponse('ls: /nope: No such file or directory')).toBe(true);
+			expect(isBashFailureResponse('Permission denied')).toBe(true);
+			expect(isBashFailureResponse('command timed out after 120s')).toBe(true);
+		});
+
+		it('classifies object responses with is_error=true as failures', () => {
+			expect(isBashFailureResponse({ is_error: true, stdout: '', stderr: 'oops' })).toBe(true);
+		});
+
+		it('classifies object responses with non-zero exit code as failures', () => {
+			expect(isBashFailureResponse({ exitCode: 1, stdout: '' })).toBe(true);
+			expect(isBashFailureResponse({ exit_code: 127, stdout: '' })).toBe(true);
+			expect(isBashFailureResponse({ returnCode: 2, stdout: '' })).toBe(true);
+			expect(isBashFailureResponse({ exitCode: 0, stdout: 'ok' })).toBe(false);
+		});
+
+		it('classifies interrupted responses as failures', () => {
+			expect(isBashFailureResponse({ interrupted: true, stdout: '' })).toBe(true);
+		});
+
+		it('classifies content-block arrays with is_error blocks as failures', () => {
+			expect(
+				isBashFailureResponse([
+					{ type: 'text', text: 'some output' },
+					{ is_error: true, type: 'text', text: 'failure' },
+				])
+			).toBe(true);
+		});
+
+		it('classifies content-block arrays with error markers in text as failures', () => {
+			expect(
+				isBashFailureResponse([{ type: 'text', text: 'ls: foo: No such file or directory' }])
+			).toBe(true);
+		});
+
+		it('does NOT classify plain success object responses as failures', () => {
+			expect(isBashFailureResponse({ stdout: 'hello', stderr: '' })).toBe(false);
+		});
+
+		it('does NOT classify benign stderr (e.g. warnings) without strong error markers as failures', () => {
+			// The classifier is conservative: a non-empty stderr without an
+			// obvious error marker is not enough to call it a failure. This
+			// avoids false positives on commands that legitimately write to
+			// stderr (npm warnings, etc.).
+			expect(isBashFailureResponse({ stdout: 'built', stderr: 'warning: deprecated flag' })).toBe(
+				false
+			);
 		});
 	});
 });

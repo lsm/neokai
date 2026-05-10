@@ -864,6 +864,23 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
 		});
 
+		it('installs paired PostToolUse and PostToolUseFailure observers for the Bash dead-loop detector', async () => {
+			const options = await builder.build();
+
+			// The Bash failure-aware detector needs the PostToolUse and
+			// PostToolUseFailure events to populate its outcome ring. Without
+			// these the Bash deny path is permanently disabled.
+			expect(options.hooks?.PostToolUse).toBeDefined();
+			expect(options.hooks?.PostToolUse).toHaveLength(1);
+			expect(options.hooks?.PostToolUse?.[0]?.matcher).toBeUndefined();
+			expect(options.hooks?.PostToolUse?.[0]?.hooks).toHaveLength(1);
+
+			expect(options.hooks?.PostToolUseFailure).toBeDefined();
+			expect(options.hooks?.PostToolUseFailure).toHaveLength(1);
+			expect(options.hooks?.PostToolUseFailure?.[0]?.matcher).toBeUndefined();
+			expect(options.hooks?.PostToolUseFailure?.[0]?.hooks).toHaveLength(1);
+		});
+
 		it('compiles declarative tool guards into PreToolUse hooks', async () => {
 			const guardBuilder = new QueryOptionsBuilder({
 				...mockContext,
