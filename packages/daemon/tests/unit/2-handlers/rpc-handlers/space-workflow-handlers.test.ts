@@ -29,6 +29,7 @@ import {
 } from '../../../../src/lib/rpc-handlers/space-workflow-handlers';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
+import type { SpaceWorkflowSummary } from '@neokai/shared';
 import { WorkflowValidationError } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
@@ -126,6 +127,26 @@ function createMockWorkflowManager(
 		createWorkflow: mock(() => workflow!),
 		getWorkflow: mock(() => workflow),
 		listWorkflows: mock(() => (workflow ? [workflow] : [])),
+		listWorkflowSummaries: mock(() =>
+			workflow
+				? [
+						{
+							id: workflow.id,
+							spaceId: workflow.spaceId,
+							name: workflow.name,
+							description: workflow.description,
+							tags: workflow.tags ?? [],
+							templateName: workflow.templateName,
+							templateHash: workflow.templateHash ?? null,
+							disabled: workflow.disabled,
+							nodeCount: workflow.nodes?.length ?? 0,
+							completionAutonomyLevel: workflow.completionAutonomyLevel ?? 3,
+							createdAt: workflow.createdAt,
+							updatedAt: workflow.updatedAt,
+						},
+					]
+				: []
+		),
 		updateWorkflow: mock(() => ({ ...workflow!, name: 'Updated' })),
 		deleteWorkflow: mock(() => true),
 	} as unknown as SpaceWorkflowManager;
@@ -270,10 +291,25 @@ describe('space-workflow-handlers', () => {
 
 		it('lists workflows for a space', async () => {
 			const result = (await call('spaceWorkflow.list', { spaceId: 'space-1' })) as {
-				workflows: SpaceWorkflow[];
+				workflows: SpaceWorkflowSummary[];
 			};
-			expect(result.workflows).toEqual([mockWorkflow]);
-			expect(workflowManager.listWorkflows).toHaveBeenCalledWith('space-1');
+			expect(result.workflows).toEqual([
+				{
+					id: mockWorkflow.id,
+					spaceId: mockWorkflow.spaceId,
+					name: mockWorkflow.name,
+					description: mockWorkflow.description,
+					tags: mockWorkflow.tags ?? [],
+					templateName: mockWorkflow.templateName,
+					templateHash: mockWorkflow.templateHash ?? null,
+					disabled: mockWorkflow.disabled,
+					nodeCount: mockWorkflow.nodes?.length ?? 0,
+					completionAutonomyLevel: mockWorkflow.completionAutonomyLevel ?? 3,
+					createdAt: mockWorkflow.createdAt,
+					updatedAt: mockWorkflow.updatedAt,
+				},
+			]);
+			expect(workflowManager.listWorkflowSummaries).toHaveBeenCalledWith('space-1');
 		});
 
 		it('throws when spaceId is missing', async () => {
@@ -766,7 +802,22 @@ describe('space-workflow-handlers', () => {
 	describe('spaceWorkflow.detectDuplicateDrift', () => {
 		function setupWithWorkflows(workflows: SpaceWorkflow[]) {
 			setup(mockSpace, mockWorkflow);
-			(workflowManager.listWorkflows as ReturnType<typeof mock>).mockReturnValue(workflows);
+			(workflowManager.listWorkflowSummaries as ReturnType<typeof mock>).mockReturnValue(
+				workflows.map((w) => ({
+					id: w.id,
+					spaceId: w.spaceId,
+					name: w.name,
+					description: w.description,
+					tags: w.tags ?? [],
+					templateName: w.templateName,
+					templateHash: w.templateHash ?? null,
+					disabled: w.disabled,
+					nodeCount: w.nodes?.length ?? 0,
+					completionAutonomyLevel: w.completionAutonomyLevel ?? 3,
+					createdAt: w.createdAt,
+					updatedAt: w.updatedAt,
+				}))
+			);
 		}
 
 		it('throws when spaceId is missing', async () => {

@@ -49,10 +49,31 @@ export function useRunGateSummaries(
 	runId: string | null | undefined,
 	workflowId: string | null | undefined
 ): { summaries: RunGateSummary[] | undefined; fetchError: string | null; retry: () => void } {
-	const workflow = workflowId
-		? (spaceStore.workflows.value.find((w) => w.id === workflowId) ?? null)
-		: null;
-	const gates: Gate[] = workflow?.gates ?? [];
+	const [gates, setGates] = useState<Gate[]>([]);
+	// Read the workflow version so the effect re-runs when the same workflow
+	// is edited in place (spaceStore bumps the version on spaceWorkflow.updated).
+	const workflowVersion = spaceStore.workflowVersions.value.get(workflowId ?? '') ?? 0;
+
+	useEffect(() => {
+		if (!workflowId) {
+			setGates([]);
+			return;
+		}
+		let cancelled = false;
+		// Clear stale gates immediately so banners are never evaluated against
+		// a previous workflow's gate list while the new fetch is in flight.
+		setGates([]);
+		spaceStore.fetchWorkflowDetail(workflowId).then((wf) => {
+			if (cancelled) return;
+			// Only update gates when the fetch succeeds. If wf is null (transient
+			// RPC failure or concurrently deleted workflow), leave gates as [] from
+			// the clear above rather than explicitly mapping failure to "no gates".
+			if (wf) setGates(wf.gates ?? []);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [workflowId, workflowVersion]);
 
 	const [gateDataMap, setGateDataMap] = useState<Map<string, Record<string, unknown>> | null>(null);
 	const [fetchError, setFetchError] = useState<string | null>(null);

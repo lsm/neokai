@@ -37,6 +37,7 @@ import type {
 	SpaceTask,
 	SpaceTaskActivityMember,
 	SpaceWorkflow,
+	SpaceWorkflowSummary,
 	SpaceWorkflowRun,
 	UpdateSpaceAgentParams,
 	UpdateSpaceParams,
@@ -72,6 +73,22 @@ export interface SpaceAgentTemplate {
 	customPrompt: string;
 }
 
+function workflowToSummary(wf: SpaceWorkflow): SpaceWorkflowSummary {
+	return {
+		id: wf.id,
+		spaceId: wf.spaceId,
+		name: wf.name,
+		description: wf.description,
+		tags: wf.tags,
+		templateName: wf.templateName,
+		templateHash: wf.templateHash ?? null,
+		disabled: wf.disabled,
+		nodeCount: wf.nodes?.length ?? 0,
+		completionAutonomyLevel: wf.completionAutonomyLevel,
+		createdAt: wf.createdAt,
+		updatedAt: wf.updatedAt,
+	};
+}
 class SpaceStore {
 	// ========================================
 	// Core Signals
@@ -108,7 +125,7 @@ class SpaceStore {
 	readonly agentTemplates = signal<SpaceAgentTemplate[]>([]);
 
 	/** Workflow definitions for this space */
-	readonly workflows = signal<SpaceWorkflow[]>([]);
+	readonly workflows = signal<SpaceWorkflowSummary[]>([]);
 
 	/** Built-in workflow templates sourced from daemon seeding definitions */
 	readonly workflowTemplates = signal<SpaceWorkflow[]>([]);
@@ -250,6 +267,24 @@ class SpaceStore {
 
 	/** In-flight promise for ensureNodeExecutions to prevent duplicate fetches */
 	private nodeExecPromise: Promise<void> | null = null;
+
+	/** Cache of full workflow details fetched on-demand (keyed by workflowId) */
+	private workflowDetailCache = new Map<string, SpaceWorkflow>();
+
+	/** In-flight promises for workflow detail fetches (keyed by workflowId).
+	 *  Each promise captures the spaceId at request time; if the space changes
+	 *  before resolution, the result is discarded instead of cached. */
+	private workflowDetailPromises = new Map<string, Promise<SpaceWorkflow | null>>();
+
+	/** Per-workflow fetch generation counter. Incremented before each fetch and
+	 *  on invalidation events. Stale responses compare their captured generation
+	 *  against the current one and skip caching when they no longer match. */
+	private workflowDetailFetchGens = new Map<string, number>();
+
+	/** Monotonic counter bumped on every spaceWorkflow.updated/deleted event so
+	 *  hooks keyed by workflowId can re-fetch when the same workflow is edited
+	 *  or deleted in place. */
+	readonly workflowVersions = signal<Map<string, number>>(new Map());
 
 	private upsertTaskOnePerRun(tasks: SpaceTask[], task: SpaceTask): SpaceTask[] {
 		const withoutSameId = tasks.filter((current) => current.id !== task.id);
@@ -536,6 +571,8 @@ class SpaceStore {
 		this.nodeExecLoaded.value = false;
 		this.nodeExecPromise = null;
 		this.sessions.value = [];
+		this.clearWorkflowDetailCache();
+		this.workflowVersions.value = new Map();
 		this.disposeSpaceSessionsSubscription();
 
 		// 3. Update active space (may be updated to real UUID after fetch)
@@ -763,7 +800,7 @@ class SpaceStore {
 			if (event.spaceId === spaceId) {
 				const exists = this.workflows.value.some((w) => w.id === event.workflow.id);
 				if (!exists) {
-					this.workflows.value = [...this.workflows.value, event.workflow];
+					this.workflows.value = [...this.workflows.value, workflowToSummary(event.workflow)];
 				}
 			}
 		});
@@ -777,15 +814,29 @@ class SpaceStore {
 		}>('spaceWorkflow.updated', (event) => {
 			if (event.spaceId === spaceId) {
 				const idx = this.workflows.value.findIndex((w) => w.id === event.workflow.id);
+				const summary = workflowToSummary(event.workflow);
 				if (idx >= 0) {
 					this.workflows.value = [
 						...this.workflows.value.slice(0, idx),
-						event.workflow,
+						summary,
 						...this.workflows.value.slice(idx + 1),
 					];
 				} else {
-					this.workflows.value = [...this.workflows.value, event.workflow];
+					this.workflows.value = [...this.workflows.value, summary];
 				}
+				// Evict cached detail, cancel any in-flight request, bump the fetch
+				// generation so stale responses skip caching, and advance the version
+				// so hooks keyed by workflowId re-fetch the new definition.
+				this.workflowDetailCache.delete(event.workflow.id);
+				this.workflowDetailPromises.delete(event.workflow.id);
+				this.workflowDetailFetchGens.set(
+					event.workflow.id,
+					(this.workflowDetailFetchGens.get(event.workflow.id) ?? 0) + 1
+				);
+				this.workflowVersions.value = new Map(this.workflowVersions.value).set(
+					event.workflow.id,
+					(this.workflowVersions.value.get(event.workflow.id) ?? 0) + 1
+				);
 			}
 		});
 		this.cleanupFunctions.push(unsubWorkflowUpdated);
@@ -798,6 +849,19 @@ class SpaceStore {
 		}>('spaceWorkflow.deleted', (event) => {
 			if (event.spaceId === spaceId) {
 				this.workflows.value = this.workflows.value.filter((w) => w.id !== event.workflowId);
+				this.workflowDetailCache.delete(event.workflowId);
+				this.workflowDetailPromises.delete(event.workflowId);
+				this.workflowDetailFetchGens.set(
+					event.workflowId,
+					(this.workflowDetailFetchGens.get(event.workflowId) ?? 0) + 1
+				);
+				// Advance the version so consumers keyed by [workflowId, version]
+				// re-run and clear stale workflow detail/gates instead of keeping
+				// pre-delete state alive.
+				this.workflowVersions.value = new Map(this.workflowVersions.value).set(
+					event.workflowId,
+					(this.workflowVersions.value.get(event.workflowId) ?? 0) + 1
+				);
 			}
 		});
 		this.cleanupFunctions.push(unsubWorkflowDeleted);
@@ -877,9 +941,12 @@ class SpaceStore {
 		spaceId: string
 	): Promise<void> {
 		try {
-			const result = await hub.request<{ workflows: SpaceWorkflow[] }>('spaceWorkflow.list', {
-				spaceId,
-			});
+			const result = await hub.request<{ workflows: SpaceWorkflowSummary[] }>(
+				'spaceWorkflow.list',
+				{
+					spaceId,
+				}
+			);
 			this.workflows.value = result?.workflows ?? [];
 		} catch (err) {
 			logger.error('Failed to fetch workflows:', err);
@@ -905,6 +972,70 @@ class SpaceStore {
 			logger.error('Failed to fetch workflow templates:', err);
 			this.workflowTemplates.value = [];
 		}
+	}
+
+	/**
+	 * Fetch a full workflow by ID. Deduplicates concurrent requests and caches
+	 * the result so multiple callers asking for the same workflow share one fetch.
+	 *
+	 * Stale-guard: the request captures the active spaceId at call time. If the
+	 * space changes before the response arrives, the result is returned to the
+	 * original caller but NOT cached, preventing stale data from polluting the
+	 * cache after a space switch.
+	 */
+	async fetchWorkflowDetail(workflowId: string): Promise<SpaceWorkflow | null> {
+		const cached = this.workflowDetailCache.get(workflowId);
+		if (cached) return cached;
+
+		const inFlight = this.workflowDetailPromises.get(workflowId);
+		if (inFlight) return inFlight;
+
+		const spaceId = this.spaceId.value;
+		if (!spaceId) return null;
+
+		// Capture generation at request time; if an invalidation event bumps it
+		// while this request is in flight, the stale response will skip caching.
+		const generation = (this.workflowDetailFetchGens.get(workflowId) ?? 0) + 1;
+		this.workflowDetailFetchGens.set(workflowId, generation);
+
+		const promise = (async (): Promise<SpaceWorkflow | null> => {
+			try {
+				const hub = await connectionManager.getHub();
+				const result = await hub.request<{ workflow: SpaceWorkflow }>('spaceWorkflow.get', {
+					id: workflowId,
+					spaceId,
+				});
+				if (result?.workflow) {
+					// Only cache if (a) we're still on the same space, AND (b) the
+					// generation hasn't been bumped by an invalidation event.
+					if (
+						this.spaceId.value === spaceId &&
+						this.workflowDetailFetchGens.get(workflowId) === generation
+					) {
+						this.workflowDetailCache.set(workflowId, result.workflow);
+					}
+					return result.workflow;
+				}
+				return null;
+			} catch (err) {
+				logger.error('Failed to fetch workflow detail:', err);
+				return null;
+			} finally {
+				this.workflowDetailPromises.delete(workflowId);
+			}
+		})();
+
+		this.workflowDetailPromises.set(workflowId, promise);
+		return promise;
+	}
+
+	/**
+	 * Clear the workflow detail cache. Called on space switch.
+	 */
+	private clearWorkflowDetailCache(): void {
+		this.workflowDetailCache.clear();
+		this.workflowDetailPromises.clear();
+		this.workflowDetailFetchGens.clear();
 	}
 
 	/**

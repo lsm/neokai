@@ -135,6 +135,10 @@ vi.mock('../../../lib/space-store', () => ({
 			ensureConfigData: vi.fn().mockResolvedValue(undefined),
 			ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
 			listGateData: vi.fn().mockResolvedValue([]),
+			workflowVersions: signal(new Map()),
+			fetchWorkflowDetail: vi.fn((id: string) =>
+				Promise.resolve(mockWorkflows.value.find((w) => w.id === id) ?? null)
+			),
 		};
 	},
 }));
@@ -1089,7 +1093,7 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
 		} as SpaceWorkflow;
 	}
 
-	it('renders workflow-declared agents that have not spawned a session as "(Not started)"', () => {
+	it('renders workflow-declared agents that have not spawned a session as "(Not started)"', async () => {
 		mockTasks.value = [
 			makeTask({
 				workflowRunId: 'run-1',
@@ -1105,6 +1109,8 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
 		]);
 
 		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		// Wait for async fetchWorkflowDetail to resolve before opening the menu
+		await waitFor(() => expect(getByTestId('task-actions-menu-trigger')).toBeTruthy());
 		fireEvent.click(getByTestId('task-actions-menu-trigger'));
 
 		expect(getByText('Open Task Agent (Active)')).toBeTruthy();
@@ -1112,7 +1118,7 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
 		expect(getByText('Open reviewer (Not started)')).toBeTruthy();
 	});
 
-	it('renders workflow-declared (Not started) agents as clickable and routes to a pending-agent overlay', () => {
+	it('renders workflow-declared (Not started) agents as clickable and routes to a pending-agent overlay', async () => {
 		// Task #139 regression fix: in #133 these entries were rendered as
 		// disabled — that violated #133's own AC #4 ("clicking a declared-but-
 		// not-spawned agent opens the chat overlay; the first message activates
@@ -1144,6 +1150,8 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
 		]);
 
 		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		// Wait for async fetchWorkflowDetail to resolve before opening the menu
+		await waitFor(() => expect(getByTestId('task-actions-menu-trigger')).toBeTruthy());
 		fireEvent.click(getByTestId('task-actions-menu-trigger'));
 
 		const reviewerItem = getByText('Open reviewer (Not started)').closest('button');
@@ -1163,7 +1171,7 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
 		expect(mockPushOverlayHistory).not.toHaveBeenCalled();
 	});
 
-	it('hides workflow-declared entry once the agent has a live activity member (avoids duplicate)', () => {
+	it('hides workflow-declared entry once the agent has a live activity member (avoids duplicate)', async () => {
 		mockTasks.value = [
 			makeTask({
 				workflowRunId: 'run-1',
@@ -1195,6 +1203,8 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
 		const { getByTestId, getByText, queryByText } = render(
 			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
 		);
+		// Wait for async fetchWorkflowDetail to resolve before opening the menu
+		await waitFor(() => expect(getByTestId('task-actions-menu-trigger')).toBeTruthy());
 		fireEvent.click(getByTestId('task-actions-menu-trigger'));
 
 		expect(getByText('Open Coder (Active)')).toBeTruthy();

@@ -14,6 +14,7 @@
 
 import type {
 	SpaceWorkflow,
+	SpaceWorkflowSummary,
 	WorkflowNodeInput,
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
@@ -126,6 +127,10 @@ export class SpaceWorkflowManager {
 
 	listWorkflows(spaceId: string): SpaceWorkflow[] {
 		return this.repo.listWorkflows(spaceId).map((wf) => this.sanitizePostApprovalForLoad(wf));
+	}
+
+	listWorkflowSummaries(spaceId: string): SpaceWorkflowSummary[] {
+		return this.repo.listWorkflowSummaries(spaceId);
 	}
 
 	/**

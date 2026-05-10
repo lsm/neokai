@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { lazy, Suspense } from 'preact/compat';
-import type { Space } from '@neokai/shared';
+import type { Space, SpaceWorkflow } from '@neokai/shared';
 import { Tab, TabGroup, TabList, TabPanel, TabPanels } from '@neokai/ui';
 import { spaceStore } from '../../lib/space-store';
 import { currentSpaceConfigureTabSignal, currentSpaceIdSignal } from '../../lib/signals';
@@ -57,13 +57,58 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 	const spaceId = currentSpaceIdSignal.value ?? '';
 	/** null = list view; 'new' = create editor; <id> = edit editor */
 	const [workflowEditId, setWorkflowEditId] = useState<string | null>(null);
+	const [editingWorkflow, setEditingWorkflow] = useState<SpaceWorkflow | undefined>(undefined);
 
-	const editingWorkflow =
-		workflowEditId && workflowEditId !== 'new'
-			? workflows.find((workflow) => workflow.id === workflowEditId)
-			: undefined;
+	// Reset editor state when the space changes so we don't try to edit a
+	// workflow belonging to the previous space.
+	useEffect(() => {
+		setWorkflowEditId(null);
+		setEditingWorkflow(undefined);
+	}, [space.id]);
 
-	const showWorkflowEditor = activeTab === 'workflows' && workflowEditId !== null;
+	// Read the workflow version so the effect re-runs when the same workflow
+	// is edited in place (spaceStore bumps the version on spaceWorkflow.updated).
+	const workflowVersion = spaceStore.workflowVersions.value.get(workflowEditId ?? '') ?? 0;
+	const lastFetchedEditIdRef = useRef<string | null>(null);
+	useEffect(() => {
+		if (!workflowEditId || workflowEditId === 'new') {
+			setEditingWorkflow(undefined);
+			lastFetchedEditIdRef.current = null;
+			return;
+		}
+		let cancelled = false;
+		// Only clear editingWorkflow when switching to a different workflow ID.
+		// When the same workflow is refreshed in place (version bump from a save
+		// or remote update), keep the editor mounted so in-progress unsaved edits
+		// are not discarded.
+		const isSwitchingId = lastFetchedEditIdRef.current !== workflowEditId;
+		if (isSwitchingId) {
+			setEditingWorkflow(undefined);
+		}
+		lastFetchedEditIdRef.current = workflowEditId;
+		// Fetch full workflow detail for editing — spaceStore.workflows only holds summaries
+		spaceStore.fetchWorkflowDetail(workflowEditId).then((wf) => {
+			if (cancelled) return;
+			if (wf) {
+				setEditingWorkflow(wf);
+			} else {
+				// Fetch failed or workflow was deleted concurrently — reset the edit
+				// target so the user can retry by clicking Edit again.
+				setWorkflowEditId(null);
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [workflowEditId, workflowVersion]);
+
+	// For edit mode, defer mounting the editor until the workflow detail has
+	// loaded so VisualWorkflowEditor (which initializes from props on mount)
+	// never receives stale or undefined data.
+	const showWorkflowEditor =
+		activeTab === 'workflows' &&
+		workflowEditId !== null &&
+		(workflowEditId === 'new' || editingWorkflow !== undefined);
 	const selectedIndex = Math.max(
 		0,
 		CONFIGURE_TABS.findIndex((tab) => tab.id === activeTab)

@@ -15,7 +15,7 @@
  * from both the daemon and the web bundle.
  */
 
-import type { SpaceWorkflow } from '../types/space.ts';
+import type { SpaceWorkflow, SpaceWorkflowSummary } from '../types/space.ts';
 
 /**
  * Returns `true` when `wf` would auto-close (skip human review) at the given
@@ -23,7 +23,10 @@ import type { SpaceWorkflow } from '../types/space.ts';
  * `completionAutonomyLevel` are treated as requiring the maximum level (5),
  * which keeps them gated unless the workflow author opts in.
  */
-export function isWorkflowAutoClosingAtLevel(wf: SpaceWorkflow, level: number): boolean {
+export function isWorkflowAutoClosingAtLevel(
+	wf: SpaceWorkflow | SpaceWorkflowSummary,
+	level: number
+): boolean {
 	const threshold = wf.completionAutonomyLevel ?? 5;
 	return level >= threshold;
 }

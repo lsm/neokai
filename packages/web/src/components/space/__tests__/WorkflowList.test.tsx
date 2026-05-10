@@ -17,7 +17,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
-import type { SpaceWorkflow, DuplicateDriftReport } from '@neokai/shared';
+import type { SpaceWorkflowSummary, DuplicateDriftReport } from '@neokai/shared';
 
 // ---- Mocks ----
 // Signals are initialized immediately so vi.mock's lazy getter can reference them safely.
@@ -53,19 +53,13 @@ vi.mock('../export-import-utils.ts', () => ({
 
 import { WorkflowList } from '../WorkflowList';
 
-function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
-	const s1 = 'step-1';
-	const s2 = 'step-2';
+function makeWorkflow(overrides: Partial<SpaceWorkflowSummary> = {}): SpaceWorkflowSummary {
 	return {
 		id: 'wf-1',
 		spaceId: 'space-1',
 		name: 'My Workflow',
 		description: 'Does stuff',
-		nodes: [
-			{ id: s1, name: 'Plan', agents: [{ agentId: 'a1', name: 'planner' }] },
-			{ id: s2, name: 'Code', agents: [{ agentId: 'a2', name: 'coder' }] },
-		],
-		startNodeId: s1,
+		nodeCount: 2,
 		tags: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
@@ -77,7 +71,7 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 const defaultProps = {
 	spaceId: 'space-1',
 	spaceName: 'Test Space',
-	workflows: [] as SpaceWorkflow[],
+	workflows: [] as SpaceWorkflowSummary[],
 	onCreateWorkflow: vi.fn(),
 	onEditWorkflow: vi.fn(),
 };
@@ -159,15 +153,9 @@ describe('WorkflowList', () => {
 	});
 
 	it('renders singular "1 step"', () => {
-		const s1 = 'step-1';
 		const props = {
 			...defaultProps,
-			workflows: [
-				makeWorkflow({
-					nodes: [{ id: s1, name: 'Plan', agents: [{ agentId: 'a1', name: 'planner' }] }],
-					startNodeId: s1,
-				}),
-			],
+			workflows: [makeWorkflow({ nodeCount: 1 })],
 		};
 		const { getByText } = render(<WorkflowList {...props} />);
 		expect(getByText('1 step')).toBeTruthy();
@@ -210,7 +198,7 @@ describe('WorkflowList', () => {
 	it('handles workflow with no steps in mini viz', () => {
 		const props = {
 			...defaultProps,
-			workflows: [makeWorkflow({ nodes: [], startNodeId: '' })],
+			workflows: [makeWorkflow({ nodeCount: 0 })],
 		};
 		const { getByText } = render(<WorkflowList {...props} />);
 		expect(getByText('No steps')).toBeTruthy();

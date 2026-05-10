@@ -11,13 +11,13 @@
  */
 
 import { useMemo, useState } from 'preact/hooks';
-import type { SpaceAutonomyLevel, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceAutonomyLevel, SpaceWorkflowSummary } from '@neokai/shared';
 import { isWorkflowAutoClosingAtLevel } from '@neokai/shared';
 import { cn } from '../../lib/utils.ts';
 
 interface AutonomyWorkflowSummaryProps {
 	level: SpaceAutonomyLevel;
-	workflows: SpaceWorkflow[];
+	workflows: SpaceWorkflowSummary[];
 	/** Optional extra tailwind classes applied to the wrapper. */
 	class?: string;
 	/**

@@ -1326,6 +1326,43 @@ export interface PostApprovalRoute {
 }
 
 /**
+ * Lightweight summary of a SpaceWorkflow for list views and payload-size-sensitive callers.
+ * Excludes nodes, channels, gates, layout, and instructions.
+ */
+export interface SpaceWorkflowSummary {
+	/** Unique identifier */
+	id: string;
+	/** Space this workflow belongs to */
+	spaceId: string;
+	/** Human-readable name */
+	name: string;
+	/** Optional description of what this workflow accomplishes */
+	description?: string;
+	/** Tags for organizational categorization */
+	tags: string[];
+	/** Name of the built-in template this workflow was created from or last synced to */
+	templateName?: string;
+	/** When true, the workflow is disabled and cannot be selected for new tasks */
+	disabled?: boolean;
+	/** Number of nodes in the workflow graph */
+	nodeCount: number;
+	/**
+	 * Minimum space autonomy level at which `approve_task` is offered to end-node agents.
+	 * See `SpaceWorkflow.completionAutonomyLevel`.
+	 */
+	completionAutonomyLevel: SpaceAutonomyLevel;
+	/**
+	 * Hash of the canonical built-in template this workflow was derived from.
+	 * Used by drift detection to identify duplicate workflows that have diverged.
+	 */
+	templateHash?: string | null;
+	/** Creation timestamp (milliseconds since epoch) */
+	createdAt: number;
+	/** Last update timestamp (milliseconds since epoch) */
+	updatedAt: number;
+}
+
+/**
  * A named, reusable workflow definition within a Space.
  * Workflows are collaboration graphs: nodes are agent groups, channels are communication paths.
  * The SpaceRuntime executes workflows by creating SpaceWorkflowRun instances.

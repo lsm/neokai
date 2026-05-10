@@ -60,11 +60,30 @@ export function useRuntimeCanvasData(
 	workflowId: string | null,
 	runId: string | null
 ): RuntimeCanvasData {
-	const workflows = spaceStore.workflows.value;
 	const agents = spaceStore.agents.value;
 	const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
 
-	const workflow = workflowId ? (workflows.find((w) => w.id === workflowId) ?? null) : null;
+	const [workflow, setWorkflow] = useState<SpaceWorkflow | null>(null);
+	// Read the workflow version so the effect re-runs when the same workflow
+	// is edited in place (spaceStore bumps the version on spaceWorkflow.updated).
+	const workflowVersion = spaceStore.workflowVersions.value.get(workflowId ?? '') ?? 0;
+
+	useEffect(() => {
+		if (!workflowId) {
+			setWorkflow(null);
+			return;
+		}
+		let cancelled = false;
+		// Clear stale workflow immediately so the canvas never renders with
+		// nodes/channels/gates from a previous ID while the new fetch is in flight.
+		setWorkflow(null);
+		spaceStore.fetchWorkflowDetail(workflowId).then((wf) => {
+			if (!cancelled) setWorkflow(wf);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [workflowId, workflowVersion]);
 
 	const [viewportState, setViewportState] = useState<ViewportState>({
 		offsetX: 0,

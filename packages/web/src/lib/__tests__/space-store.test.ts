@@ -122,6 +122,19 @@ function makeWorkflow(id: string): SpaceWorkflow {
 	};
 }
 
+function makeWorkflowSummary(id: string): import('@neokai/shared').SpaceWorkflowSummary {
+	return {
+		id,
+		spaceId: 'space-1',
+		name: `Workflow ${id}`,
+		nodeCount: 0,
+		tags: [],
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+		completionAutonomyLevel: 3,
+	};
+}
+
 function makeTaskActivityRows(taskId = 't1'): SpaceTaskActivityMember[] {
 	return [
 		{
@@ -725,14 +738,18 @@ describe('SpaceStore — spaceWorkflow events', () => {
 		const handler = mockEventHandlers.get('spaceWorkflow.created');
 		handler!({ sessionId: 'global', spaceId: 'space-1', workflow: wf });
 
-		expect(spaceStore.workflows.value).toContainEqual(wf);
+		expect(spaceStore.workflows.value).toContainEqual(
+			expect.objectContaining({ id: 'wf1', name: 'Workflow wf1' })
+		);
 	});
 
 	it('replaces workflow on updated event', async () => {
 		await spaceStore.selectSpace('space-1');
-		spaceStore.workflows.value = [{ ...makeWorkflow('wf1'), name: 'Old' }];
+		spaceStore.workflows.value = [makeWorkflowSummary('wf1')];
+		spaceStore.workflows.value[0].name = 'Old';
 
-		const updated = { ...makeWorkflow('wf1'), name: 'New' };
+		const updated = makeWorkflow('wf1');
+		updated.name = 'New';
 		const handler = mockEventHandlers.get('spaceWorkflow.updated');
 		handler!({ sessionId: 'global', spaceId: 'space-1', workflow: updated });
 
@@ -741,7 +758,7 @@ describe('SpaceStore — spaceWorkflow events', () => {
 
 	it('removes workflow on deleted event', async () => {
 		await spaceStore.selectSpace('space-1');
-		spaceStore.workflows.value = [makeWorkflow('wf1'), makeWorkflow('wf2')];
+		spaceStore.workflows.value = [makeWorkflowSummary('wf1'), makeWorkflowSummary('wf2')];
 
 		const handler = mockEventHandlers.get('spaceWorkflow.deleted');
 		handler!({ sessionId: 'global', spaceId: 'space-1', workflowId: 'wf1' });
@@ -752,7 +769,7 @@ describe('SpaceStore — spaceWorkflow events', () => {
 	it('ignores events for a different space', async () => {
 		await spaceStore.selectSpace('space-1');
 		const handler = mockEventHandlers.get('spaceWorkflow.deleted');
-		spaceStore.workflows.value = [makeWorkflow('wf1')];
+		spaceStore.workflows.value = [makeWorkflowSummary('wf1')];
 
 		handler!({ sessionId: 'global', spaceId: 'space-99', workflowId: 'wf1' });
 
