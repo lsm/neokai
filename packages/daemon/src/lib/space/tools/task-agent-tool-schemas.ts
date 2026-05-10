@@ -158,14 +158,6 @@ export const ListGroupMembersSchema = z.object({});
 export type ListGroupMembersInput = z.infer<typeof ListGroupMembersSchema>;
 
 // ---------------------------------------------------------------------------
-// Aggregate export for MCP server factory
-// ---------------------------------------------------------------------------
-
-/**
- * All Task Agent tool schemas keyed by tool name.
- * The MCP server factory can iterate this map to register tools.
- */
-// ---------------------------------------------------------------------------
 // update_task
 // ---------------------------------------------------------------------------
 
