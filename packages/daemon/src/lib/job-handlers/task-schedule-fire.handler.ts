@@ -67,7 +67,7 @@ export interface TaskScheduleFireHandlerDeps {
 	 */
 	eventHub?: {
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		emit: (event: string, data: any) => Promise<void>;
+		emit: (event: string, data: any) => Promise<unknown>;
 	};
 }
 

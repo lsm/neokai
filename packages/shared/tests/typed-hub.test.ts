@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { TypedHub } from '../src/message-hub/typed-hub.ts';
+import { TypedHub, TypedHubPublishError } from '../src/message-hub/typed-hub.ts';
 import type { BaseEventData } from '../src/message-hub/typed-hub.ts';
 
 // Define test event map (using dots like MessageHub convention)
@@ -42,9 +42,6 @@ describe('TypedHub', () => {
 				title: 'Test Session',
 			});
 
-			// Wait for async delivery via MessageHub
-			await new Promise((resolve) => setTimeout(resolve, 20));
-
 			expect(received.length).toBe(1);
 			expect(received[0].sessionId).toBe('test-1');
 			expect(received[0].title).toBe('Test Session');
@@ -66,7 +63,6 @@ describe('TypedHub', () => {
 				sessionId: 'multi-test',
 				title: 'Multi',
 			});
-			await new Promise((resolve) => setTimeout(resolve, 20));
 
 			expect(received1).toEqual(['multi-test']);
 			expect(received2).toEqual(['multi-test']);
@@ -83,7 +79,6 @@ describe('TypedHub', () => {
 				sessionId: 'before',
 				title: 'Before',
 			});
-			await new Promise((resolve) => setTimeout(resolve, 20));
 
 			unsubscribe();
 
@@ -91,7 +86,6 @@ describe('TypedHub', () => {
 				sessionId: 'after',
 				title: 'After',
 			});
-			await new Promise((resolve) => setTimeout(resolve, 20));
 
 			expect(received).toEqual(['before']);
 		});
@@ -111,7 +105,6 @@ describe('TypedHub', () => {
 				sessionId: 'second',
 				title: 'Second',
 			});
-			await new Promise((resolve) => setTimeout(resolve, 30));
 
 			// Should only receive first event
 			expect(received).toEqual(['first']);
@@ -159,7 +152,6 @@ describe('TypedHub', () => {
 				sessionId: 'session-3',
 				content: 'msg3',
 			});
-			await new Promise((resolve) => setTimeout(resolve, 30));
 
 			// Session-specific handlers only get their session's events
 			expect(session1Events).toEqual(['msg1']);
@@ -202,8 +194,6 @@ describe('TypedHub', () => {
 				content: 'target2',
 			});
 
-			await new Promise((resolve) => setTimeout(resolve, 30));
-
 			expect(received).toEqual(['target1']);
 		});
 	});
@@ -234,14 +224,12 @@ describe('TypedHub', () => {
 				sessionId: 'from-hub',
 				title: 'From Hub',
 			});
-			await new Promise((resolve) => setTimeout(resolve, 20));
 
 			// Participant publishes - participant receives via local dispatch
 			await participant.publish('session.created', {
 				sessionId: 'from-participant',
 				title: 'From Participant',
 			});
-			await new Promise((resolve) => setTimeout(resolve, 20));
 
 			// Local dispatch ensures each hub receives its own events
 			expect(hubReceived).toContain('hub:from-hub');
@@ -251,6 +239,69 @@ describe('TypedHub', () => {
 			// For now, local dispatch provides EventBus-like behavior within each hub
 
 			await participant.close();
+		});
+	});
+
+	describe('async delivery semantics', () => {
+		it('should await async handlers before publish returns', async () => {
+			let handlerCompleted = false;
+
+			hub.subscribe('session.created', async (data) => {
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				handlerCompleted = true;
+			});
+
+			expect(handlerCompleted).toBe(false);
+			await hub.publish('session.created', {
+				sessionId: 'async-test',
+				title: 'Async',
+			});
+			expect(handlerCompleted).toBe(true);
+		});
+
+		it('should run multiple async handlers concurrently', async () => {
+			const order: string[] = [];
+
+			hub.subscribe('session.created', async () => {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				order.push('handler1');
+			});
+
+			hub.subscribe('session.created', async () => {
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				order.push('handler2');
+			});
+
+			await hub.publish('session.created', {
+				sessionId: 'concurrent-test',
+				title: 'Concurrent',
+			});
+
+			// Both should have completed; handler2 finishes first due to shorter timeout
+			expect(order).toEqual(['handler2', 'handler1']);
+		});
+
+		it('should return PublishResult with delivered count', async () => {
+			hub.subscribe('session.created', () => {});
+			hub.subscribe('session.created', () => {});
+
+			const result = await hub.publish('session.created', {
+				sessionId: 'count-test',
+				title: 'Count',
+			});
+
+			expect(result.delivered).toBe(2);
+			expect(result.failures).toEqual([]);
+		});
+
+		it('should return empty result when no handlers are registered', async () => {
+			const result = await hub.publish('session.created', {
+				sessionId: 'no-handlers',
+				title: 'No Handlers',
+			});
+
+			expect(result.delivered).toBe(0);
+			expect(result.failures).toEqual([]);
 		});
 	});
 
@@ -268,6 +319,199 @@ describe('TypedHub', () => {
 			).rejects.toThrow('not initialized');
 
 			await uninitializedHub.close();
+		});
+
+		it('should surface sync handler errors in TypedHubPublishError', async () => {
+			hub.subscribe('session.created', () => {
+				throw new Error('sync boom');
+			});
+
+			try {
+				await hub.publish('session.created', {
+					sessionId: 'error-test',
+					title: 'Error',
+				});
+				expect.unreachable('Should have thrown');
+			} catch (err) {
+				expect(err).toBeInstanceOf(TypedHubPublishError);
+				const typedErr = err as TypedHubPublishError;
+				expect(typedErr.event).toBe('session.created');
+				expect(typedErr.result.delivered).toBe(0);
+				expect(typedErr.result.failures.length).toBe(1);
+				expect(typedErr.result.failures[0].error.message).toBe('sync boom');
+				expect(typedErr.result.failures[0].event).toBe('session.created');
+			}
+		});
+
+		it('should surface async handler rejections in TypedHubPublishError', async () => {
+			hub.subscribe('session.created', async () => {
+				throw new Error('async boom');
+			});
+
+			try {
+				await hub.publish('session.created', {
+					sessionId: 'error-test',
+					title: 'Error',
+				});
+				expect.unreachable('Should have thrown');
+			} catch (err) {
+				expect(err).toBeInstanceOf(TypedHubPublishError);
+				const typedErr = err as TypedHubPublishError;
+				expect(typedErr.result.failures[0].error.message).toBe('async boom');
+			}
+		});
+
+		it('should still run all handlers when one fails', async () => {
+			const received: string[] = [];
+
+			hub.subscribe('session.created', () => {
+				throw new Error('first fails');
+			});
+
+			hub.subscribe('session.created', (data) => {
+				received.push(data.sessionId);
+			});
+
+			hub.subscribe('session.created', async () => {
+				throw new Error('third fails');
+			});
+
+			try {
+				await hub.publish('session.created', {
+					sessionId: 'partial-test',
+					title: 'Partial',
+				});
+				expect.unreachable('Should have thrown');
+			} catch (err) {
+				expect(err).toBeInstanceOf(TypedHubPublishError);
+				const typedErr = err as TypedHubPublishError;
+				expect(typedErr.result.delivered).toBe(1);
+				expect(typedErr.result.failures.length).toBe(2);
+				expect(received).toEqual(['partial-test']);
+			}
+		});
+
+		it('should handle mixed sync and async handler failures', async () => {
+			const received: string[] = [];
+
+			hub.subscribe('session.created', () => {
+				throw new Error('sync fail');
+			});
+
+			hub.subscribe('session.created', async (data) => {
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				received.push(data.sessionId);
+			});
+
+			hub.subscribe('session.created', async () => {
+				throw new Error('async fail');
+			});
+
+			try {
+				await hub.publish('session.created', {
+					sessionId: 'mixed-test',
+					title: 'Mixed',
+				});
+				expect.unreachable('Should have thrown');
+			} catch (err) {
+				expect(err).toBeInstanceOf(TypedHubPublishError);
+				const typedErr = err as TypedHubPublishError;
+				expect(typedErr.result.delivered).toBe(1);
+				expect(typedErr.result.failures.length).toBe(2);
+				expect(received).toEqual(['mixed-test']);
+			}
+		});
+
+		it('should handle non-Error throws by wrapping them', async () => {
+			hub.subscribe('session.created', () => {
+				throw 'string error';
+			});
+
+			try {
+				await hub.publish('session.created', {
+					sessionId: 'string-error',
+					title: 'String Error',
+				});
+				expect.unreachable('Should have thrown');
+			} catch (err) {
+				expect(err).toBeInstanceOf(TypedHubPublishError);
+				const typedErr = err as TypedHubPublishError;
+				expect(typedErr.result.failures[0].error.message).toBe('string error');
+			}
+		});
+	});
+
+	describe('publishAsync', () => {
+		it('should return immediately without waiting for handlers', async () => {
+			let handlerCompleted = false;
+
+			hub.subscribe('session.created', async () => {
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				handlerCompleted = true;
+			});
+
+			hub.publishAsync('session.created', {
+				sessionId: 'async-test',
+				title: 'Async',
+			});
+
+			// publishAsync returns immediately; handler has not completed
+			expect(handlerCompleted).toBe(false);
+
+			// Wait for the microtask to run
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			expect(handlerCompleted).toBe(true);
+		});
+
+		it('should swallow handler errors silently', async () => {
+			hub.subscribe('session.created', () => {
+				throw new Error('should be swallowed');
+			});
+
+			// publishAsync should not throw even though handler throws
+			expect(() => {
+				hub.publishAsync('session.created', {
+					sessionId: 'swallow-test',
+					title: 'Swallow',
+				});
+			}).not.toThrow();
+
+			// Wait for microtask
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		});
+
+		it('should throw when publishAsync called before initialization', async () => {
+			const uninitializedHub = new TypedHub<TestEventMap>({
+				name: 'uninitialized',
+			});
+
+			expect(() => {
+				uninitializedHub.publishAsync('session.created', {
+					sessionId: 'test',
+					title: 'Test',
+				});
+			}).toThrow('not initialized');
+
+			await uninitializedHub.close();
+		});
+	});
+
+	describe('emit alias', () => {
+		it('should behave identically to publish', async () => {
+			const received: string[] = [];
+
+			hub.subscribe('session.created', (data) => {
+				received.push(data.sessionId);
+			});
+
+			const result = await hub.emit('session.created', {
+				sessionId: 'emit-test',
+				title: 'Emit',
+			});
+
+			expect(received).toEqual(['emit-test']);
+			expect(result.delivered).toBe(1);
+			expect(result.failures).toEqual([]);
 		});
 	});
 
@@ -290,7 +534,6 @@ describe('TypedHub', () => {
 				sessionId: 'another',
 				title: 'Another',
 			});
-			await new Promise((resolve) => setTimeout(resolve, 30));
 
 			expect(created).toEqual(['new', 'another']);
 			expect(deleted).toEqual(['old']);
@@ -327,7 +570,6 @@ describe('TypedHub', () => {
 				sessionId: 'before-close',
 				title: 'Before',
 			});
-			await new Promise((resolve) => setTimeout(resolve, 20));
 
 			await hub.close();
 

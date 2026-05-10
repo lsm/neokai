@@ -26,8 +26,11 @@
  * const serverHub = new TypedHub<ServerEvents>({ name: 'server' });
  * await serverHub.initialize();
  *
- * // Publish events (type-safe)
+ * // Publish events (type-safe) — awaits all handlers, throws on failures
  * await serverHub.publish('session.created', { sessionId: '123', session: {...} });
+ *
+ * // Fire-and-forget publish — returns immediately, swallows handler errors
+ * serverHub.publishAsync('session.created', { sessionId: '123', session: {...} });
  *
  * // Subscribe to events (type-safe)
  * serverHub.subscribe('session.created', (data) => {
@@ -92,6 +95,46 @@ export interface TypedSubscribeOptions {
 }
 
 /**
+ * Structured failure from a single handler.
+ */
+export interface HandlerFailure {
+	/** Event name being handled when the failure occurred. */
+	event: string;
+
+	/** The raw Error (or Error-like) thrown by the handler. */
+	error: Error;
+}
+
+/**
+ * Result returned by {@link TypedHub.publish}.
+ */
+export interface PublishResult {
+	/** Number of handlers that completed successfully. */
+	delivered: number;
+
+	/** Structured failures from handlers that threw or rejected. */
+	failures: HandlerFailure[];
+}
+
+/**
+ * Thrown by {@link TypedHub.publish} when one or more handlers fail.
+ * The `result` field contains the full breakdown so callers can decide
+ * whether to abort, partially retry, or continue.
+ */
+export class TypedHubPublishError extends Error {
+	constructor(
+		public readonly event: string,
+		public readonly result: PublishResult
+	) {
+		super(
+			`Publish of '${event}' failed with ${result.failures.length} handler failure(s) ` +
+				`(${result.delivered} succeeded)`
+		);
+		this.name = 'TypedHubPublishError';
+	}
+}
+
+/**
  * TypedHub - Type-safe MessageHub wrapper
  *
  * @template TEventMap - Map of event names to their data types
@@ -111,6 +154,12 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 	// This enables EventBus-like behavior where publisher receives own events
 	private localHandlers: Map<string, Map<string, Set<(data: unknown) => void | Promise<void>>>> =
 		new Map();
+
+	// Track handler names for diagnostics (event → sessionId → handler → name)
+	private handlerNames: Map<
+		string,
+		Map<string, WeakMap<(data: unknown) => void | Promise<void>, string>>
+	> = new Map();
 
 	// Track MessageHub subscriptions for cleanup
 	private hubSubscriptions: Map<string, (() => void)[]> = new Map();
@@ -156,12 +205,24 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 	}
 
 	/**
-	 * Publish an event to all subscribers
+	 * Publish an event to all subscribers and **await** every local handler.
+	 *
+	 * All matching handlers are executed concurrently. If any handler throws,
+	 * the error is captured in a structured {@link HandlerFailure}, every other
+	 * handler still runs, and the method finally throws
+	 * {@link TypedHubPublishError} containing the full {@link PublishResult}.
+	 *
+	 * When **all** handlers succeed the returned {@link PublishResult} contains
+	 * `failures: []` and is never thrown.
 	 *
 	 * @param event - Event name (e.g., 'session.created')
 	 * @param data - Event data (must include sessionId)
+	 * @returns Structured result with handler counts and failures
 	 */
-	async publish<K extends keyof TEventMap & string>(event: K, data: TEventMap[K]): Promise<void> {
+	async publish<K extends keyof TEventMap & string>(
+		event: K,
+		data: TEventMap[K]
+	): Promise<PublishResult> {
 		if (!this.initialized) {
 			throw new Error('TypedHub not initialized. Call initialize() first.');
 		}
@@ -170,71 +231,120 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 
 		// Dispatch to local handlers (EventBus-like behavior)
 		// This ensures publisher receives own events, even with single hub
-		await this.dispatchLocally(event, data);
+		const result = await this.dispatchLocally(event, data);
 
 		// Also send event via MessageHub for cross-transport delivery
 		// Note: Bus excludes sender, so this only reaches other participants
 		await this.hub.event(event, data, { channel: data.sessionId });
+
+		if (result.failures.length > 0) {
+			throw new TypedHubPublishError(event, result);
+		}
+
+		return result;
 	}
 
 	/**
-	 * Dispatch event to local handlers
-	 * Delivers asynchronously via queueMicrotask for consistent async behavior
+	 * Fire-and-forget publish.
+	 *
+	 * Schedules handlers asynchronously but returns immediately.
+	 * Handler failures are silently swallowed; they are never thrown
+	 * and the caller cannot await them.
+	 *
+	 * @param event - Event name (e.g., 'session.created')
+	 * @param data - Event data (must include sessionId)
 	 */
-	private async dispatchLocally<K extends keyof TEventMap & string>(
-		event: K,
-		data: TEventMap[K]
-	): Promise<void> {
-		const eventHandlers = this.localHandlers.get(event);
-		if (!eventHandlers || eventHandlers.size === 0) {
-			return;
+	publishAsync<K extends keyof TEventMap & string>(event: K, data: TEventMap[K]): void {
+		if (!this.initialized) {
+			throw new Error('TypedHub not initialized. Call initialize() first.');
 		}
 
-		const eventSessionId = data.sessionId;
-		const GLOBAL_KEY = '__global__';
+		this.log(`Publishing (async): ${event}`, data);
 
-		// Deliver asynchronously
-		await new Promise<void>((resolve) => {
-			queueMicrotask(() => {
-				// 1. Session-specific handlers (O(1) lookup)
-				const sessionHandlers = eventHandlers.get(eventSessionId);
-				if (sessionHandlers) {
-					for (const handler of sessionHandlers) {
-						this.invokeHandler(handler, data, event);
-					}
-				}
-
-				// 2. Global handlers (O(1) lookup)
-				const globalHandlers = eventHandlers.get(GLOBAL_KEY);
-				if (globalHandlers) {
-					for (const handler of globalHandlers) {
-						this.invokeHandler(handler, data, event);
-					}
-				}
-
-				resolve();
+		// Defer to the next microtask so that synchronous handlers do not
+		// run on the caller's stack and `publishAsync` truly returns
+		// immediately.
+		queueMicrotask(() => {
+			this.publish(event, data).catch(() => {
+				// Swallow — publishAsync is explicit fire-and-forget.
 			});
 		});
 	}
 
 	/**
-	 * Invoke handler with error handling
+	 * Dispatch event to local handlers.
+	 * All matching handlers are executed concurrently.  Returns a structured
+	 * result so callers can decide whether to throw or continue.
 	 */
-	private invokeHandler(
-		handler: (data: unknown) => void | Promise<void>,
-		data: unknown,
-		_event: string
-	): void {
-		try {
-			const result = handler(data);
-			if (result instanceof Promise) {
-				result.catch(() => {
-					// Handler errors are handler's responsibility to manage
-				});
-			}
-		} catch {
-			// Handler errors are handler's responsibility to manage
+	private async dispatchLocally<K extends keyof TEventMap & string>(
+		event: K,
+		data: TEventMap[K]
+	): Promise<PublishResult> {
+		const eventHandlers = this.localHandlers.get(event);
+		if (!eventHandlers || eventHandlers.size === 0) {
+			return { delivered: 0, failures: [] };
 		}
+
+		const eventSessionId = data.sessionId;
+		const GLOBAL_KEY = '__global__';
+
+		const targets: { handler: (data: unknown) => void | Promise<void>; name: string }[] = [];
+
+		// 1. Session-specific handlers (O(1) lookup)
+		const sessionHandlers = eventHandlers.get(eventSessionId);
+		if (sessionHandlers) {
+			for (const handler of sessionHandlers) {
+				const name = this.getHandlerName(event, eventSessionId, handler);
+				targets.push({ handler, name });
+			}
+		}
+
+		// 2. Global handlers (O(1) lookup)
+		const globalHandlers = eventHandlers.get(GLOBAL_KEY);
+		if (globalHandlers) {
+			for (const handler of globalHandlers) {
+				const name = this.getHandlerName(event, GLOBAL_KEY, handler);
+				targets.push({ handler, name });
+			}
+		}
+
+		if (targets.length === 0) {
+			return { delivered: 0, failures: [] };
+		}
+
+		const failures: HandlerFailure[] = [];
+		let delivered = 0;
+
+		// Run every handler concurrently; collect failures individually.
+		await Promise.all(
+			targets.map(async ({ handler, name }) => {
+				try {
+					await handler(data);
+					delivered++;
+				} catch (raw) {
+					const error = raw instanceof Error ? raw : new Error(String(raw));
+					failures.push({ event, error });
+					this.log(`Handler '${name}' failed for event '${event}':`, error);
+				}
+			})
+		);
+
+		return { delivered, failures };
+	}
+
+	/**
+	 * Look up the diagnostic name for a handler.
+	 */
+	private getHandlerName(
+		event: string,
+		sessionId: string,
+		handler: (data: unknown) => void | Promise<void>
+	): string {
+		const sessionMap = this.handlerNames.get(event);
+		if (!sessionMap) return '<anonymous>';
+		const nameMap = sessionMap.get(sessionId);
+		if (!nameMap) return '<anonymous>';
+		return nameMap.get(handler) ?? '<anonymous>';
 	}
 
 	/**
@@ -265,6 +375,17 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 			eventHandlers.set(subscriptionKey, new Set());
 		}
 		eventHandlers.get(subscriptionKey)!.add(typedHandler);
+
+		// Track handler name for diagnostics
+		const handlerName = options?.sessionId ? `session:${options.sessionId}` : 'global';
+		if (!this.handlerNames.has(event)) {
+			this.handlerNames.set(event, new Map());
+		}
+		const nameSessionMap = this.handlerNames.get(event)!;
+		if (!nameSessionMap.has(subscriptionKey)) {
+			nameSessionMap.set(subscriptionKey, new WeakMap());
+		}
+		nameSessionMap.get(subscriptionKey)!.set(typedHandler, handlerName);
 
 		// Also subscribe via MessageHub for cross-transport events (from other participants)
 		// Create wrapper that applies session filtering
@@ -302,6 +423,18 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 				}
 			}
 
+			// Remove from handler names
+			const nameMap = this.handlerNames.get(event);
+			if (nameMap) {
+				const sessionNameMap = nameMap.get(subscriptionKey);
+				if (sessionNameMap) {
+					// WeakMap entries are GC'd automatically; no need to delete
+					if (nameMap.size === 0) {
+						this.handlerNames.delete(event);
+					}
+				}
+			}
+
 			// Unsubscribe from MessageHub
 			hubUnsub();
 
@@ -333,7 +466,7 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 	/**
 	 * Alias for publish() - EventBus compatibility
 	 */
-	emit<K extends keyof TEventMap & string>(event: K, data: TEventMap[K]): Promise<void> {
+	emit<K extends keyof TEventMap & string>(event: K, data: TEventMap[K]): Promise<PublishResult> {
 		return this.publish(event, data);
 	}
 
@@ -388,6 +521,9 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 
 		// Clear local handlers
 		this.localHandlers.clear();
+
+		// Clear handler names
+		this.handlerNames.clear();
 
 		// Close transport
 		await this.transport.close();
