@@ -59,6 +59,16 @@ export interface TaskScheduleFireHandlerDeps {
 	jobQueue: JobQueueRepository;
 	spaceRepo: SpaceRepository;
 	taskRepo: SpaceTaskRepository;
+	/**
+	 * Optional event emitter for broadcasting schedule/task changes.
+	 * When provided, the handler emits `space.task.created` and
+	 * `space.schedule.updated` after a successful fire so the web
+	 * client can refresh its state without polling.
+	 */
+	eventHub?: {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		emit: (event: string, data: any) => Promise<void>;
+	};
 }
 
 export async function handleTaskScheduleFire(
@@ -66,7 +76,7 @@ export async function handleTaskScheduleFire(
 	deps: TaskScheduleFireHandlerDeps
 ): Promise<TaskScheduleFireResult> {
 	const { scheduleId } = job.payload as TaskScheduleFirePayload;
-	const { db, scheduleRepo, jobQueue, spaceRepo, taskRepo } = deps;
+	const { db, scheduleRepo, jobQueue, spaceRepo, taskRepo, eventHub } = deps;
 
 	const schedule = scheduleRepo.getById(scheduleId);
 
@@ -225,6 +235,37 @@ export async function handleTaskScheduleFire(
 		taskId = result.taskId;
 		nextRunAt = result.nextRunAt;
 		log.debug('task-schedule-fire: created task', { scheduleId, taskId, nextRunAt });
+
+		// Emit events so the web client can refresh its state without polling.
+		// Fire-and-forget — handler success must not depend on event delivery.
+		if (eventHub) {
+			const emittedTask = taskRepo.getTask(taskId);
+			if (emittedTask) {
+				eventHub
+					.emit('space.task.created', {
+						sessionId: 'global',
+						spaceId: schedule.spaceId,
+						taskId,
+						task: emittedTask,
+					})
+					.catch(() => {
+						// Swallow — event emission is best-effort.
+					});
+			}
+			const emittedSchedule = scheduleRepo.getById(scheduleId);
+			if (emittedSchedule) {
+				eventHub
+					.emit('space.schedule.updated', {
+						sessionId: 'global',
+						spaceId: schedule.spaceId,
+						scheduleId,
+						schedule: emittedSchedule,
+					})
+					.catch(() => {
+						// Swallow — event emission is best-effort.
+					});
+			}
+		}
 	} catch (err) {
 		// A concurrent pause/delete invalidated our pending_job_id mid-flight;
 		// the transaction rolled back the task and any next-job enqueue, so

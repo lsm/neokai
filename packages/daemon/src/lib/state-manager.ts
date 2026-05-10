@@ -337,6 +337,13 @@ export class StateManager {
 			});
 		});
 
+		// Space schedule events (global channel)
+		this.eventBus.on('space.schedule.updated', (data) => {
+			this.messageHub.event('space.schedule.updated', data, {
+				channel: data.sessionId, // 'global'
+			});
+		});
+
 		// Space workflow run events (global channel)
 		this.eventBus.on('space.workflowRun.created', (data) => {
 			this.messageHub.event('space.workflowRun.created', data, {

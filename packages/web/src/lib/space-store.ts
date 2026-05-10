@@ -578,6 +578,7 @@ class SpaceStore {
 		this.nodeExecLoaded.value = false;
 		this.nodeExecPromise = null;
 		this.sessions.value = [];
+		this.schedules.value = [];
 		this.clearWorkflowDetailCache();
 		this.workflowVersions.value = new Map();
 		this.disposeSpaceSessionsSubscription();
@@ -711,6 +712,21 @@ class SpaceStore {
 			}
 		});
 		this.cleanupFunctions.push(unsubTaskUpdated);
+
+		// --- space.schedule.updated ---
+		const unsubScheduleUpdated = hub.onEvent<{
+			sessionId: string;
+			spaceId: string;
+			scheduleId: string;
+			schedule: TaskSchedule;
+		}>('space.schedule.updated', (event) => {
+			if (event.spaceId === spaceId) {
+				this.schedules.value = this.schedules.value.map((s) =>
+					s.id === event.scheduleId ? event.schedule : s
+				);
+			}
+		});
+		this.cleanupFunctions.push(unsubScheduleUpdated);
 
 		// --- space.workflowRun.created ---
 		const unsubRunCreated = hub.onEvent<{

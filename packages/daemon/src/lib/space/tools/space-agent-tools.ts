@@ -1224,7 +1224,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				if (!existing || existing.spaceId !== spaceId) {
 					return jsonResult({ success: false, error: `Schedule not found: ${args.schedule_id}` });
 				}
-				config.scheduleService.deleteSchedule(args.schedule_id);
+				const ok = config.scheduleService.deleteSchedule(args.schedule_id);
+				if (!ok) {
+					return jsonResult({
+						success: false,
+						error:
+							'Schedule was modified concurrently (e.g. a fire job advanced it). Please retry.',
+					});
+				}
 				logAudit('delete_scheduled_task', { schedule_id: args.schedule_id });
 				return jsonResult({ success: true });
 			} catch (err) {
