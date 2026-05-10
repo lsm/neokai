@@ -1,0 +1,416 @@
+/**
+ * Migration 124 Tests — simplify external-event schema.
+ *
+ * Covers:
+ *   - Fresh DB: space_external_events has the simplified schema (no pr_number,
+ *     repo_owner, repo_name, branch, routed_task_id columns).
+ *   - Pre-124 schema with rows: legacy columns are backfilled into payload_json,
+ *     state values are migrated, delivery rows are preserved (FK off during DROP).
+ *   - Re-running the migration is a no-op (idempotent).
+ *   - Crash recovery: leftover space_external_events_new is cleaned up.
+ */
+
+import { Database as BunDatabase } from 'bun:sqlite';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import {
+	createTables,
+	runMigration124,
+	runMigrations,
+} from '../../../../../src/storage/schema/index.ts';
+
+function columnNames(db: BunDatabase, table: string): string[] {
+	const rows = db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>;
+	return rows.map((r) => r.name);
+}
+
+function tableExists(db: BunDatabase, table: string): boolean {
+	const row = db
+		.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+		.get(table) as { name?: string } | undefined;
+	return !!row?.name;
+}
+
+function indexExists(db: BunDatabase, name: string): boolean {
+	const row = db
+		.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`)
+		.get(name) as { name?: string } | undefined;
+	return !!row?.name;
+}
+
+/**
+ * Build the pre-M124 shape: space_external_events with legacy columns plus
+ * the deliveries child table.
+ */
+function seedPreM124Schema(db: BunDatabase): void {
+	db.exec('PRAGMA foreign_keys = OFF');
+	db.exec(`
+		CREATE TABLE spaces (
+			id TEXT PRIMARY KEY,
+			slug TEXT NOT NULL,
+			workspace_path TEXT NOT NULL,
+			name TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`);
+	db.exec(`
+		CREATE TABLE space_external_events (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			source TEXT NOT NULL,
+			topic TEXT NOT NULL,
+			dedupe_key TEXT NOT NULL,
+			occurred_at INTEGER NOT NULL,
+			ingested_at INTEGER NOT NULL,
+			source_event_id TEXT,
+			pr_number INTEGER,
+			repo_owner TEXT,
+			repo_name TEXT,
+			branch TEXT,
+			summary TEXT NOT NULL,
+			external_url TEXT,
+			payload_json TEXT NOT NULL,
+			routed_task_id TEXT,
+			state TEXT NOT NULL DEFAULT 'published'
+				CHECK(state IN ('published', 'routed', 'delivered', 'delivery_failed', 'failed', 'ignored', 'ambiguous')),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(space_id, source, dedupe_key),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`
+		CREATE TABLE space_external_event_deliveries (
+			event_id TEXT NOT NULL,
+			delivery_key TEXT NOT NULL,
+			workflow_run_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			node_id TEXT NOT NULL,
+			agent_name TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT 'pending'
+				CHECK(state IN ('pending', 'delivered', 'failed')),
+			failure_reason TEXT,
+			delivered_at INTEGER,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(event_id, delivery_key),
+			FOREIGN KEY (event_id) REFERENCES space_external_events(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec('PRAGMA foreign_keys = ON');
+}
+
+describe('Migration 124: simplify external-event schema', () => {
+	let testDir: string;
+	let db: BunDatabase;
+
+	beforeEach(() => {
+		testDir = join(
+			process.cwd(),
+			'tmp',
+			'test-migration-124',
+			`test-${Date.now()}-${Math.random()}`
+		);
+		mkdirSync(testDir, { recursive: true });
+		db = new BunDatabase(join(testDir, 'test.db'));
+		db.exec('PRAGMA foreign_keys = ON');
+	});
+
+	afterEach(() => {
+		try {
+			db.close();
+		} catch {
+			// ignore
+		}
+		try {
+			rmSync(testDir, { recursive: true, force: true });
+		} catch {
+			// ignore
+		}
+	});
+
+	describe('fresh DB (all migrations applied)', () => {
+		beforeEach(() => {
+			runMigrations(db, () => {});
+			createTables(db);
+		});
+
+		test('space_external_events does not have legacy columns', () => {
+			const columns = columnNames(db, 'space_external_events');
+			expect(columns).not.toContain('pr_number');
+			expect(columns).not.toContain('repo_owner');
+			expect(columns).not.toContain('repo_name');
+			expect(columns).not.toContain('branch');
+			expect(columns).not.toContain('routed_task_id');
+		});
+
+		test('space_external_events has the simplified state CHECK', () => {
+			// Attempting to insert an old state should fail.
+			expect(() =>
+				db.exec(`
+					INSERT INTO space_external_events (
+						id, space_id, source, topic, dedupe_key,
+						occurred_at, ingested_at, summary, payload_json,
+						state, created_at, updated_at
+					) VALUES (
+						'evt-1', 'sp-1', 'github', 'github/o/r/t.a', 'dk-1',
+						1, 1, 's', '{}',
+						'routed', 1, 1
+					)
+				`)
+			).toThrow();
+		});
+
+		test('indexes are recreated', () => {
+			expect(indexExists(db, 'idx_space_external_events_lookup')).toBe(true);
+			expect(indexExists(db, 'idx_space_external_events_state')).toBe(true);
+		});
+	});
+
+	describe('backfill from pre-124 schema', () => {
+		beforeEach(() => {
+			seedPreM124Schema(db);
+			db.prepare(
+				`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+			).run('sp-1', 'sp-1', '/tmp/test', 'Test Space', 1, 1);
+
+			// Event with legacy columns and minimal payload.
+			db.prepare(`
+				INSERT INTO space_external_events (
+					id, space_id, source, topic, dedupe_key,
+					occurred_at, ingested_at, source_event_id,
+					pr_number, repo_owner, repo_name, branch,
+					summary, external_url, payload_json, routed_task_id,
+					state, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				'evt-legacy',
+				'sp-1',
+				'github',
+				'github/lsm/neokai/pull_request.opened',
+				'dk-legacy',
+				1_700_000_000_000,
+				1_700_000_001_000,
+				'del-123',
+				42,
+				'lsm',
+				'neokai',
+				'feature-42',
+				'PR #42 opened',
+				'https://github.com/lsm/neokai/pull/42',
+				JSON.stringify({ action: 'opened' }),
+				'task-42',
+				'routed',
+				1_700_000_000_000,
+				1_700_000_000_000
+			);
+
+			// Event with legacy columns that are already duplicated in payload.
+			db.prepare(`
+				INSERT INTO space_external_events (
+					id, space_id, source, topic, dedupe_key,
+					occurred_at, ingested_at, source_event_id,
+					pr_number, repo_owner, repo_name, branch,
+					summary, external_url, payload_json, routed_task_id,
+					state, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				'evt-payload-dup',
+				'sp-1',
+				'github',
+				'github/lsm/neokai/pull_request.closed',
+				'dk-payload-dup',
+				1_700_000_000_000,
+				1_700_000_001_000,
+				null,
+				99,
+				'acme',
+				'widget',
+				'hotfix-99',
+				'PR #99 closed',
+				null,
+				JSON.stringify({
+					prNumber: 99,
+					repoOwner: 'acme',
+					repoName: 'widget',
+					branch: 'hotfix-99',
+				}),
+				null,
+				'delivery_failed',
+				1_700_000_000_000,
+				1_700_000_000_000
+			);
+
+			// Event with no legacy columns (NULL).
+			db.prepare(`
+				INSERT INTO space_external_events (
+					id, space_id, source, topic, dedupe_key,
+					occurred_at, ingested_at, source_event_id,
+					pr_number, repo_owner, repo_name, branch,
+					summary, external_url, payload_json, routed_task_id,
+					state, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				'evt-minimal',
+				'sp-1',
+				'github',
+				'github/lsm/neokai/issue.created',
+				'dk-minimal',
+				1_700_000_000_000,
+				1_700_000_001_000,
+				null,
+				null,
+				null,
+				null,
+				null,
+				'Issue created',
+				null,
+				JSON.stringify({ number: 1 }),
+				null,
+				'ambiguous',
+				1_700_000_000_000,
+				1_700_000_000_000
+			);
+
+			// Delivery row for evt-legacy — should survive the migration.
+			db.prepare(`
+				INSERT INTO space_external_event_deliveries (
+					event_id, delivery_key, workflow_run_id, task_id, node_id, agent_name,
+					state, failure_reason, delivered_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				'evt-legacy',
+				'dk-1',
+				'run-1',
+				'task-1',
+				'node-1',
+				'coder',
+				'pending',
+				null,
+				null,
+				1_700_000_000_000
+			);
+		});
+
+		test('legacy columns are backfilled into payload_json', () => {
+			runMigration124(db);
+			const row = db
+				.prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
+				.get('evt-legacy') as { payload_json: string };
+			const payload = JSON.parse(row.payload_json);
+			expect(payload.prNumber).toBe(42);
+			expect(payload.repoOwner).toBe('lsm');
+			expect(payload.repoName).toBe('neokai');
+			expect(payload.branch).toBe('feature-42');
+			// Original payload keys are preserved.
+			expect(payload.action).toBe('opened');
+		});
+
+		test('backfill does not overwrite existing payload values', () => {
+			runMigration124(db);
+			const row = db
+				.prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
+				.get('evt-payload-dup') as { payload_json: string };
+			const payload = JSON.parse(row.payload_json);
+			// The payload already had these values — they should be preserved.
+			expect(payload.prNumber).toBe(99);
+			expect(payload.repoOwner).toBe('acme');
+			expect(payload.repoName).toBe('widget');
+			expect(payload.branch).toBe('hotfix-99');
+		});
+
+		test('state values are migrated correctly', () => {
+			runMigration124(db);
+			const legacy = db
+				.prepare(`SELECT state FROM space_external_events WHERE id = ?`)
+				.get('evt-legacy') as { state: string };
+			expect(legacy.state).toBe('published'); // routed → published
+
+			const payloadDup = db
+				.prepare(`SELECT state FROM space_external_events WHERE id = ?`)
+				.get('evt-payload-dup') as { state: string };
+			expect(payloadDup.state).toBe('published'); // delivery_failed → published
+
+			const minimal = db
+				.prepare(`SELECT state FROM space_external_events WHERE id = ?`)
+				.get('evt-minimal') as { state: string };
+			expect(minimal.state).toBe('ignored'); // ambiguous → ignored
+		});
+
+		test('delivery rows are preserved (not cascade-deleted)', () => {
+			runMigration124(db);
+			const deliveries = db
+				.prepare(`SELECT COUNT(*) AS n FROM space_external_event_deliveries WHERE event_id = ?`)
+				.get('evt-legacy') as { n: number };
+			expect(deliveries.n).toBe(1);
+		});
+
+		test('legacy columns are dropped from the schema', () => {
+			runMigration124(db);
+			const columns = columnNames(db, 'space_external_events');
+			expect(columns).not.toContain('pr_number');
+			expect(columns).not.toContain('repo_owner');
+			expect(columns).not.toContain('repo_name');
+			expect(columns).not.toContain('branch');
+			expect(columns).not.toContain('routed_task_id');
+		});
+
+		test('indexes are recreated', () => {
+			runMigration124(db);
+			expect(indexExists(db, 'idx_space_external_events_lookup')).toBe(true);
+			expect(indexExists(db, 'idx_space_external_events_state')).toBe(true);
+		});
+
+		test('is idempotent — running a second time is a no-op', () => {
+			runMigration124(db);
+			const before = db.prepare(`SELECT COUNT(*) AS n FROM space_external_events`).get() as {
+				n: number;
+			};
+			const deliveriesBefore = db
+				.prepare(`SELECT COUNT(*) AS n FROM space_external_event_deliveries`)
+				.get() as { n: number };
+
+			expect(() => runMigration124(db)).not.toThrow();
+
+			const after = db.prepare(`SELECT COUNT(*) AS n FROM space_external_events`).get() as {
+				n: number;
+			};
+			const deliveriesAfter = db
+				.prepare(`SELECT COUNT(*) AS n FROM space_external_event_deliveries`)
+				.get() as { n: number };
+			expect(after.n).toBe(before.n);
+			expect(deliveriesAfter.n).toBe(deliveriesBefore.n);
+		});
+	});
+
+	describe('crash recovery', () => {
+		beforeEach(() => {
+			seedPreM124Schema(db);
+			db.prepare(
+				`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+			).run('sp-1', 'sp-1', '/tmp/test', 'Test Space', 1, 1);
+		});
+
+		test('cleans up leftover space_external_events_new from interrupted migration', () => {
+			// Simulate an interrupted migration by creating the temp table.
+			db.exec(`
+				CREATE TABLE space_external_events_new (
+					id TEXT PRIMARY KEY
+				)
+			`);
+			expect(tableExists(db, 'space_external_events_new')).toBe(true);
+
+			// The migration should drop the leftover table before starting.
+			expect(() => runMigration124(db)).not.toThrow();
+			expect(tableExists(db, 'space_external_events_new')).toBe(false);
+		});
+	});
+
+	describe('missing table — no-op guard', () => {
+		test('runMigration124 on an empty DB does not throw', () => {
+			expect(() => runMigration124(db)).not.toThrow();
+			expect(tableExists(db, 'space_external_events')).toBe(false);
+		});
+	});
+});

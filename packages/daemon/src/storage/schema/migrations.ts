@@ -8436,11 +8436,14 @@ export function runMigration123(db: BunDatabase): void {
  *
  * Changes to space_external_events:
  *   - DROP pr_number, repo_owner, repo_name, branch, routed_task_id columns.
+ *   - Backfill legacy columns into payload_json so subscribers retain metadata.
  *   - Migrate existing rows: 'routed' → 'published', 'delivery_failed' → 'published',
  *     'ambiguous' → 'ignored'.
  *   - Update CHECK constraint to ('published', 'delivered', 'failed', 'ignored').
  *
  * Note: SQLite does not support DROP COLUMN directly. We recreate the table.
+ * The rewrite is wrapped in a transaction with foreign keys disabled to prevent
+ * the child table (space_external_event_deliveries) from being cascade-deleted.
  */
 export function runMigration124(db: BunDatabase): void {
 	// Check if the old schema still exists (has pr_number column).
@@ -8452,68 +8455,98 @@ export function runMigration124(db: BunDatabase): void {
 		return;
 	}
 
-	// Migrate state values before recreating the table.
-	db.exec(`
-		UPDATE space_external_events
-		SET state = CASE state
-			WHEN 'routed' THEN 'published'
-			WHEN 'delivery_failed' THEN 'published'
-			WHEN 'ambiguous' THEN 'ignored'
-			ELSE state
-		END
-		WHERE state IN ('routed', 'delivery_failed', 'ambiguous')
-	`);
+	// Clean up any leftover temp table from a previous interrupted migration.
+	db.exec(`DROP TABLE IF EXISTS space_external_events_new`);
 
-	// Recreate table without task-specific columns.
-	db.exec(`
-		CREATE TABLE space_external_events_new (
-			id TEXT PRIMARY KEY,
-			space_id TEXT NOT NULL,
-			source TEXT NOT NULL,
-			topic TEXT NOT NULL,
-			dedupe_key TEXT NOT NULL,
-			occurred_at INTEGER NOT NULL,
-			ingested_at INTEGER NOT NULL,
-			source_event_id TEXT,
-			summary TEXT NOT NULL,
-			external_url TEXT,
-			payload_json TEXT NOT NULL,
-			state TEXT NOT NULL DEFAULT 'published'
-				CHECK(state IN ('published', 'delivered', 'failed', 'ignored')),
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			UNIQUE(space_id, source, dedupe_key),
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
-		)
-	`);
+	// Disable foreign keys before dropping the parent table so the child
+	// table (space_external_event_deliveries) is not cascade-deleted.
+	db.exec(`PRAGMA foreign_keys = OFF`);
 
-	// Copy data from old table to new table.
-	db.exec(`
-		INSERT INTO space_external_events_new (
-			id, space_id, source, topic, dedupe_key,
-			occurred_at, ingested_at, source_event_id,
-			summary, external_url, payload_json,
-			state, created_at, updated_at
-		)
-		SELECT
-			id, space_id, source, topic, dedupe_key,
-			occurred_at, ingested_at, source_event_id,
-			summary, external_url, payload_json,
-			state, created_at, updated_at
-		FROM space_external_events
-	`);
+	try {
+		db.transaction(() => {
+			// 1. Backfill legacy columns into payload_json so subscribers retain
+			//    source-specific metadata after the columns are dropped.
+			db.exec(`
+				UPDATE space_external_events
+				SET payload_json = json_set(
+					payload_json,
+					'$.prNumber', COALESCE(pr_number, json_extract(payload_json, '$.prNumber')),
+					'$.repoOwner', COALESCE(NULLIF(repo_owner, ''), json_extract(payload_json, '$.repoOwner')),
+					'$.repoName', COALESCE(NULLIF(repo_name, ''), json_extract(payload_json, '$.repoName')),
+					'$.branch', COALESCE(NULLIF(branch, ''), json_extract(payload_json, '$.branch'))
+				)
+				WHERE pr_number IS NOT NULL
+				   OR NULLIF(repo_owner, '') IS NOT NULL
+				   OR NULLIF(repo_name, '') IS NOT NULL
+				   OR NULLIF(branch, '') IS NOT NULL
+			`);
 
-	// Drop old table and rename new one.
-	db.exec(`DROP TABLE space_external_events`);
-	db.exec(`ALTER TABLE space_external_events_new RENAME TO space_external_events`);
+			// 2. Migrate state values.
+			db.exec(`
+				UPDATE space_external_events
+				SET state = CASE state
+					WHEN 'routed' THEN 'published'
+					WHEN 'delivery_failed' THEN 'published'
+					WHEN 'ambiguous' THEN 'ignored'
+					ELSE state
+				END
+				WHERE state IN ('routed', 'delivery_failed', 'ambiguous')
+			`);
 
-	// Recreate indexes.
-	db.exec(`
-		CREATE INDEX IF NOT EXISTS idx_space_external_events_lookup
-		ON space_external_events(space_id, source, dedupe_key)
-	`);
-	db.exec(`
-		CREATE INDEX IF NOT EXISTS idx_space_external_events_state
-		ON space_external_events(state, updated_at)
-	`);
+			// 3. Recreate table without task-specific columns.
+			db.exec(`
+				CREATE TABLE space_external_events_new (
+					id TEXT PRIMARY KEY,
+					space_id TEXT NOT NULL,
+					source TEXT NOT NULL,
+					topic TEXT NOT NULL,
+					dedupe_key TEXT NOT NULL,
+					occurred_at INTEGER NOT NULL,
+					ingested_at INTEGER NOT NULL,
+					source_event_id TEXT,
+					summary TEXT NOT NULL,
+					external_url TEXT,
+					payload_json TEXT NOT NULL,
+					state TEXT NOT NULL DEFAULT 'published'
+						CHECK(state IN ('published', 'delivered', 'failed', 'ignored')),
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL,
+					UNIQUE(space_id, source, dedupe_key),
+					FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+				)
+			`);
+
+			// 4. Copy data from old table to new table.
+			db.exec(`
+				INSERT INTO space_external_events_new (
+					id, space_id, source, topic, dedupe_key,
+					occurred_at, ingested_at, source_event_id,
+					summary, external_url, payload_json,
+					state, created_at, updated_at
+				)
+				SELECT
+					id, space_id, source, topic, dedupe_key,
+					occurred_at, ingested_at, source_event_id,
+					summary, external_url, payload_json,
+					state, created_at, updated_at
+				FROM space_external_events
+			`);
+
+			// 5. Drop old table and rename new one.
+			db.exec(`DROP TABLE space_external_events`);
+			db.exec(`ALTER TABLE space_external_events_new RENAME TO space_external_events`);
+
+			// 6. Recreate indexes.
+			db.exec(`
+				CREATE INDEX IF NOT EXISTS idx_space_external_events_lookup
+				ON space_external_events(space_id, source, dedupe_key)
+			`);
+			db.exec(`
+				CREATE INDEX IF NOT EXISTS idx_space_external_events_state
+				ON space_external_events(state, updated_at)
+			`);
+		})();
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
+	}
 }
