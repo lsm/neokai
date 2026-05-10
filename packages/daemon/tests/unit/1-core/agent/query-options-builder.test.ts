@@ -850,10 +850,18 @@ describe('QueryOptionsBuilder', () => {
 				'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
 		};
 
-		it('should return empty hooks when no toolGuards provided', async () => {
+		it('should always install the loop-detector hook even with no toolGuards', async () => {
 			const options = await builder.build();
 
-			expect(options.hooks).toEqual({});
+			expect(options.hooks?.PreToolUse).toBeDefined();
+			expect(options.hooks?.PreToolUse).toHaveLength(1);
+			// No matcher: the loop detector observes every PreToolUse so that
+			// untracked tools (Edit, Write, Bash, …) can serve as the
+			// "different action" that breaks a denied streak. Decision logic
+			// (which tools to deny, which to merely use as reset signals)
+			// lives inside the hook itself.
+			expect(options.hooks?.PreToolUse?.[0]?.matcher).toBeUndefined();
+			expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
 		});
 
 		it('compiles declarative tool guards into PreToolUse hooks', async () => {
@@ -863,7 +871,8 @@ describe('QueryOptionsBuilder', () => {
 			});
 			const options = await guardBuilder.build();
 
-			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+			const bashEntry = options.hooks?.PreToolUse?.find((e) => e.matcher === 'Bash');
+			const hook = bashEntry?.hooks[0];
 			expect(hook).toBeDefined();
 
 			for (const command of [
@@ -905,7 +914,8 @@ describe('QueryOptionsBuilder', () => {
 				toolGuards: [NO_MERGE_GUARD],
 			});
 			const options = await guardBuilder.build();
-			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+			const bashEntry = options.hooks?.PreToolUse?.find((e) => e.matcher === 'Bash');
+			const hook = bashEntry?.hooks[0];
 
 			const result = await hook!(
 				{
@@ -939,10 +949,11 @@ describe('QueryOptionsBuilder', () => {
 			});
 			const options = await guardBuilder.build();
 
-			// Both guards share the same matcher, so they should be under one entry
-			expect(options.hooks?.PreToolUse).toHaveLength(1);
-			expect(options.hooks?.PreToolUse?.[0]?.matcher).toBe('Bash');
-			expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(2);
+			// Both guards share the same matcher, so they should be under one entry.
+			// (The loop-detector matcher is also present at a different index.)
+			const bashEntries = options.hooks?.PreToolUse?.filter((e) => e.matcher === 'Bash');
+			expect(bashEntries).toHaveLength(1);
+			expect(bashEntries?.[0]?.hooks).toHaveLength(2);
 		});
 
 		it('gracefully skips guards with invalid regex patterns', async () => {
@@ -960,7 +971,8 @@ describe('QueryOptionsBuilder', () => {
 			const options = await guardBuilder.build();
 
 			// Hook is compiled (no crash), but the no-op callback returns {}
-			const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+			const bashEntry = options.hooks?.PreToolUse?.find((e) => e.matcher === 'Bash');
+			const hook = bashEntry?.hooks[0];
 			expect(hook).toBeDefined();
 			const result = await hook!(
 				{
