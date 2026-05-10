@@ -7647,7 +7647,9 @@ export function runMigration108(db: BunDatabase): void {
 					}
 				}
 				if (mutated) update.run(JSON.stringify(config), row.id);
-			} catch {}
+			} catch {
+				continue;
+			}
 		}
 	}
 }
