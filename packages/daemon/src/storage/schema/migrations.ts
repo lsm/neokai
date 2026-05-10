@@ -8466,6 +8466,13 @@ export function runMigration124(db: BunDatabase): void {
 		db.transaction(() => {
 			// 1. Backfill legacy columns into payload_json so subscribers retain
 			//    source-specific metadata after the columns are dropped.
+			//    Guard against malformed JSON: coerce invalid payloads to '{}' first,
+			//    then apply json_set only on valid rows.
+			db.exec(`
+				UPDATE space_external_events
+				SET payload_json = '{}'
+				WHERE json_valid(payload_json) = 0
+			`);
 			db.exec(`
 				UPDATE space_external_events
 				SET payload_json = json_set(
@@ -8475,10 +8482,11 @@ export function runMigration124(db: BunDatabase): void {
 					'$.repoName', COALESCE(NULLIF(repo_name, ''), json_extract(payload_json, '$.repoName')),
 					'$.branch', COALESCE(NULLIF(branch, ''), json_extract(payload_json, '$.branch'))
 				)
-				WHERE pr_number IS NOT NULL
+				WHERE json_valid(payload_json) = 1
+				  AND (pr_number IS NOT NULL
 				   OR NULLIF(repo_owner, '') IS NOT NULL
 				   OR NULLIF(repo_name, '') IS NOT NULL
-				   OR NULLIF(branch, '') IS NOT NULL
+				   OR NULLIF(branch, '') IS NOT NULL)
 			`);
 
 			// 2. Migrate state values.

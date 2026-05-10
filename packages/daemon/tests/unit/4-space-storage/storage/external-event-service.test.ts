@@ -81,13 +81,13 @@ describe('publish — new event', () => {
 			{ subscriberName: 'test-sub' }
 		);
 
-		const event = makeEvent();
+		const event = makeEvent({ externalUrl: 'https://github.com/lsm/neokai/pull/42' });
 		const result = await service.publish(event);
 
 		expect(result.outcome).toBe('published');
 		expect(result.eventId).toBe(event.id);
 
-		// Bus fired
+		// Bus fired with full event payload
 		expect(busReceived).toHaveLength(1);
 		expect(busReceived[0]!.spaceId).toBe(SPACE_ID);
 		expect(busReceived[0]!.sessionId).toBe(SPACE_ID);
@@ -95,6 +95,11 @@ describe('publish — new event', () => {
 		expect(busReceived[0]!.source).toBe('github');
 		expect(busReceived[0]!.topic).toBe(event.topic);
 		expect(busReceived[0]!.dedupeKey).toBe(event.dedupeKey);
+		expect(busReceived[0]!.summary).toBe(event.summary);
+		expect(busReceived[0]!.externalUrl).toBe('https://github.com/lsm/neokai/pull/42');
+		expect(busReceived[0]!.payload).toEqual(event.payload);
+		expect(busReceived[0]!.occurredAt).toBe(event.occurredAt);
+		expect(busReceived[0]!.ingestedAt).toBe(event.ingestedAt);
 
 		// Stored state is published
 		const rec = store.getById(event.id);

@@ -273,6 +273,37 @@ describe('Migration 124: simplify external-event schema', () => {
 				1_700_000_000_000
 			);
 
+			// Event with malformed payload_json — should not abort migration.
+			db.prepare(`
+				INSERT INTO space_external_events (
+					id, space_id, source, topic, dedupe_key,
+					occurred_at, ingested_at, source_event_id,
+					pr_number, repo_owner, repo_name, branch,
+					summary, external_url, payload_json, routed_task_id,
+					state, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				'evt-malformed',
+				'sp-1',
+				'github',
+				'github/lsm/neokai/pull_request.closed',
+				'dk-malformed',
+				1_700_000_000_000,
+				1_700_000_001_000,
+				null,
+				77,
+				'acme',
+				'widget',
+				'bugfix-77',
+				'PR #77 closed',
+				null,
+				'{not-valid-json',
+				null,
+				'published',
+				1_700_000_000_000,
+				1_700_000_000_000
+			);
+
 			// Delivery row for evt-legacy — should survive the migration.
 			db.prepare(`
 				INSERT INTO space_external_event_deliveries (
@@ -318,6 +349,20 @@ describe('Migration 124: simplify external-event schema', () => {
 			expect(payload.repoOwner).toBe('acme');
 			expect(payload.repoName).toBe('widget');
 			expect(payload.branch).toBe('hotfix-99');
+		});
+
+		test('malformed payload_json is coerced to valid JSON and backfilled', () => {
+			runMigration124(db);
+			const row = db
+				.prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
+				.get('evt-malformed') as { payload_json: string };
+			// Should be valid JSON now.
+			const payload = JSON.parse(row.payload_json);
+			// Legacy columns should still be backfilled into the coerced payload.
+			expect(payload.prNumber).toBe(77);
+			expect(payload.repoOwner).toBe('acme');
+			expect(payload.repoName).toBe('widget');
+			expect(payload.branch).toBe('bugfix-77');
 		});
 
 		test('state values are migrated correctly', () => {

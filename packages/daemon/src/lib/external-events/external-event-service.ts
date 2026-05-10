@@ -30,6 +30,9 @@ export interface PublishResult {
 /**
  * Payload for `externalEvent.published` — emitted after a successful (non-duplicate)
  * store so subscribers can react to new external events.
+ *
+ * Includes the full normalized event so subscribers can perform source-specific
+ * matching/routing without an extra store lookup.
  */
 export interface ExternalEventPublishedPayload {
 	sessionId: string;
@@ -38,6 +41,11 @@ export interface ExternalEventPublishedPayload {
 	source: string;
 	topic: string;
 	dedupeKey: string;
+	summary: string;
+	externalUrl?: string;
+	payload: Record<string, unknown>;
+	occurredAt: number;
+	ingestedAt: number;
 	[key: string]: unknown;
 }
 
@@ -109,6 +117,11 @@ export class ExternalEventService implements ExternalEventPublisher {
 			source: event.source,
 			topic: event.topic,
 			dedupeKey: event.dedupeKey,
+			summary: event.summary,
+			externalUrl: event.externalUrl,
+			payload: event.payload,
+			occurredAt: event.occurredAt,
+			ingestedAt: event.ingestedAt,
 		});
 	}
 }
