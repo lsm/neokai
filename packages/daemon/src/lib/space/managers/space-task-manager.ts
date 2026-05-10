@@ -557,17 +557,44 @@ export class SpaceTaskManager {
 	}
 
 	/**
-	 * Block all open tasks that depend on the given task with 'dependency_failed'.
-	 * Recurses: if task B depends on A and task C depends on B, blocking A
-	 * cascades to both B and C.
+	 * Block in_progress tasks that depend on the given (failed/blocked) task
+	 * with 'dependency_failed'. Open tasks are intentionally NOT blocked here —
+	 * they haven't started yet, so they should remain `open` and be skipped
+	 * naturally by `areDependenciesMet()` on the next runtime tick. Blocking
+	 * them would prevent them from ever auto-starting once their dependency
+	 * completes (they'd need a manual retry).
+	 *
+	 * For cancellation propagation (a terminal parent that won't be retried),
+	 * use `cancelDependentTasks` instead — it cancels both `open` and
+	 * `in_progress` dependents so they don't wait forever on an unmet dep.
+	 *
+	 * Recurses: if task B (in_progress) depends on A and task C (in_progress)
+	 * depends on B, blocking A cascades to both B and C.
 	 */
 	async blockDependentTasks(taskId: string): Promise<SpaceTask[]> {
 		return this.doBlockCascade(taskId, []);
 	}
 
+	/**
+	 * Cancel both `open` and `in_progress` tasks that depend on the given
+	 * (already-cancelled) task. Cancellation is terminal-but-restartable —
+	 * propagating `cancelled` keeps dependents from waiting forever on a
+	 * parent that will never reach `done`. A user can still retry the chain
+	 * by reactivating from the root.
+	 *
+	 * Use this from runtime paths where the parent has *already* been set to
+	 * `cancelled`. The API-level `cancelTaskCascade` is the one-shot version
+	 * that sets the root and cascades open dependents in a single call.
+	 *
+	 * Recurses through transitive dependents.
+	 */
+	async cancelDependentTasks(taskId: string): Promise<SpaceTask[]> {
+		return this.doCancelDependentsCascade(taskId, []);
+	}
+
 	private async doBlockCascade(taskId: string, acc: SpaceTask[]): Promise<SpaceTask[]> {
-		const openTasks = await this.listTasksByStatus('open');
-		for (const t of openTasks) {
+		const inProgressTasks = await this.listTasksByStatus('in_progress');
+		for (const t of inProgressTasks) {
 			// Skip tasks already blocked by a prior recursive path in this cascade
 			if (acc.some((a) => a.id === t.id)) continue;
 			if (t.dependsOn?.includes(taskId)) {
@@ -577,6 +604,46 @@ export class SpaceTaskManager {
 				});
 				acc.push(blocked);
 				await this.doBlockCascade(t.id, acc);
+			}
+		}
+		return acc;
+	}
+
+	private async doCancelDependentsCascade(
+		taskId: string,
+		acc: SpaceTask[],
+		visited: Set<string> = new Set()
+	): Promise<SpaceTask[]> {
+		// Walk through ALL non-archived tasks so we can traverse intermediate
+		// `cancelled` dependents to reach their (still-open) descendants. We
+		// only *transition* `open`/`in_progress` tasks. Recursion only continues
+		// through tasks we just cancelled OR that were already `cancelled` —
+		// dependents in `done`/`review`/`approved`/`blocked` represent intact
+		// intermediate state, so their downstream descendants have a satisfied
+		// (or independently-failed) dependency edge and must not be transitively
+		// cancelled. Example: A retried→cancelled, B (deps:[A]) already done,
+		// C (deps:[B]) open — C must remain runnable because B is satisfied.
+		const allTasks = await this.listTasks(false /* includeArchived */);
+		for (const t of allTasks) {
+			if (visited.has(t.id)) continue;
+			if (!t.dependsOn?.includes(taskId)) continue;
+			visited.add(t.id);
+
+			let propagate = false;
+			if (t.status === 'open' || t.status === 'in_progress') {
+				const cancelled = await this.setTaskStatus(t.id, 'cancelled', {
+					result: `Dependency task ${taskId} was cancelled`,
+				});
+				acc.push(cancelled);
+				propagate = true;
+			} else if (t.status === 'cancelled') {
+				// Already-cancelled intermediate: keep traversing so we can reach
+				// any still-open descendants that depend on this branch.
+				propagate = true;
+			}
+
+			if (propagate) {
+				await this.doCancelDependentsCascade(t.id, acc, visited);
 			}
 		}
 		return acc;

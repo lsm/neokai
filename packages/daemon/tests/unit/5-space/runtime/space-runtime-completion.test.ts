@@ -615,6 +615,57 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(runAfter?.completedAt).toBeNull();
 		});
 
+		test('canonical task in `blocked` is not pushed through dispatchPostApproval on run completion', async () => {
+			// Regression for the cascade-block path: if a task was cascade-blocked
+			// (`dependency_failed`) while its workflow run continued and then
+			// completed, the runtime previously tried to transition
+			// `blocked → approved` via dispatchPostApproval, which is invalid.
+			// The completion guard must treat `blocked` as already-resolved.
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'node-blk-1', name: 'Plan', agentId: AGENT_B },
+				{ id: 'node-blk-2', name: 'Code', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			expect(tasks).toHaveLength(1);
+
+			// First-node task completes normally — this is what signals
+			// CompletionDetector that the run is complete.
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+			// Second-node task is `blocked` (e.g. cascade-blocked by a dependency
+			// failure on a sibling task) when the run reaches completion.
+			const taskManager = rt.getTaskManagerForSpace(SPACE_ID);
+			const blockedTask = await taskManager.createTask({
+				title: 'Code',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: 'node-blk-2',
+				taskType: 'coding',
+				agentName: 'coder',
+				status: 'blocked',
+				blockReason: 'dependency_failed',
+			});
+
+			seedNodeExec(db, run.id, 'node-blk-1', 'agent', 'idle');
+			seedNodeExec(db, run.id, 'node-blk-2', 'coder', 'idle');
+
+			// Should not throw with "Invalid status transition from 'blocked' to 'approved'".
+			await rt.executeTick();
+
+			// Run reaches `done` via CompletionDetector.
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+
+			// Blocked task is left in `blocked` (or archived alongside the run) —
+			// it must NEVER be transitioned to `approved`/`done`, which would be
+			// an invalid `blocked → approved` transition.
+			const blockedAfter = taskRepo.getTask(blockedTask.id);
+			expect(['blocked', 'archived']).toContain(blockedAfter?.status);
+			expect(blockedAfter?.status).not.toBe('approved');
+			expect(blockedAfter?.status).not.toBe('done');
+		});
+
 		test('blocked → in_progress → done lifecycle via resume', async () => {
 			const rt = makeRuntimeWithTam();
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -643,6 +694,54 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
+		});
+
+		test('cascade-cancelling an in_progress dependent also cancels its workflow run', async () => {
+			// Regression: when the runtime cancels task A (e.g. via the run-cancel
+			// reconcile path), the cascade transitions in_progress dependent task B
+			// to `cancelled`. Without the run-cancel hook, B's workflow run stays
+			// `in_progress` and CompletionDetector finalizes it as `done` on the
+			// next tick (because a `cancelled` task signals completion). The hook
+			// must transition B's run to `cancelled` so the lifecycle/audit state
+			// is consistent.
+			const rt = makeRuntimeWithTam();
+			const workflowA = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'node-cascade-a', name: 'A', agentId: AGENT_A },
+			]);
+			const workflowB = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'node-cascade-b', name: 'B', agentId: AGENT_A },
+			]);
+
+			const { run: runA, tasks: tasksA } = await rt.startWorkflowRun(
+				SPACE_ID,
+				workflowA.id,
+				'Run A'
+			);
+			const { run: runB, tasks: tasksB } = await rt.startWorkflowRun(
+				SPACE_ID,
+				workflowB.id,
+				'Run B'
+			);
+
+			// Wire B → depends on A.
+			taskRepo.updateTask(tasksB[0].id, { dependsOn: [tasksA[0].id] });
+
+			// Cancel run A externally; the runtime tick will mirror the run
+			// cancellation onto task A (via reconcileTerminalRunTasks /
+			// processRunTick), which calls updateTaskAndEmit and triggers our
+			// cascade.
+			workflowRunRepo.transitionStatus(runA.id, 'cancelled');
+
+			await rt.executeTick();
+
+			// Task A is cancelled.
+			expect(taskRepo.getTask(tasksA[0].id)?.status).toBe('cancelled');
+
+			// Cascade: task B is cancelled too.
+			expect(taskRepo.getTask(tasksB[0].id)?.status).toBe('cancelled');
+
+			// Run B is cancelled (NOT silently finalized to `done`).
+			expect(workflowRunRepo.getRun(runB.id)?.status).toBe('cancelled');
 		});
 	});
 
@@ -1153,6 +1252,68 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
+		});
+
+		test('canonical task blocked still quiesces siblings on run completion', async () => {
+			// Regression: when the canonical task is `blocked` (treated as
+			// already-resolved by the completion guard) but the run reaches
+			// `done` via CompletionDetector (a sibling task is `done`/`cancelled`
+			// or `reportedStatus` is set), in-flight sibling NodeExecutions
+			// must still be quiesced. Otherwise the run is `done` while
+			// siblings linger in `in_progress`, creating inconsistent
+			// run/execution lifecycle state.
+			const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+			mockTam.isSessionAlive = () => true;
+			const rt = makeRuntimeWithTam({
+				taskAgentManager: mockTam as unknown as TaskAgentManager,
+			});
+
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'blk-sibling', name: 'Sibling', agentId: AGENT_A },
+				{ id: 'blk-end', name: 'End', agentId: AGENT_B },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			expect(tasks).toHaveLength(1);
+
+			// Canonical task is `blocked` (e.g. cascade-blocked by a dependency
+			// failure) AND has `reportedStatus` set, so CompletionDetector
+			// considers the run complete. The completion guard treats `blocked`
+			// as already-resolved, but sibling quiescing must still fire.
+			taskRepo.updateTask(tasks[0].id, {
+				status: 'blocked',
+				reportedStatus: 'blocked',
+				reportedSummary: 'cascade-blocked',
+			});
+
+			// Sibling exec is in flight with a live session.
+			const siblingExecId = seedNodeExec(db, run.id, 'blk-sibling', 'Sibling', 'in_progress');
+			const siblingSessionId = 'blk-sibling-session-001';
+			db.prepare('UPDATE node_executions SET agent_session_id = ? WHERE id = ?').run(
+				siblingSessionId,
+				siblingExecId
+			);
+			seedNodeExec(db, run.id, 'blk-end', 'End', 'idle');
+
+			await rt.executeTick();
+
+			// Run reaches `done`.
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+
+			// Canonical stays in `blocked` (or archived alongside the run) —
+			// must NEVER be transitioned to `approved`/`done`.
+			const canonical = taskRepo.getTask(tasks[0].id);
+			expect(canonical?.status).not.toBe('approved');
+			expect(canonical?.status).not.toBe('done');
+
+			// In-flight sibling must be quiesced to `idle` — not stranded
+			// in `in_progress` while the run is `done`.
+			const execs = nodeExecutionRepo.listByWorkflowRun(run.id);
+			const siblingExec = execs.find((e) => e.workflowNodeId === 'blk-sibling');
+			expect(siblingExec?.status).toBe('idle');
+			expect(siblingExec?.agentSessionId).toBe(siblingSessionId);
+			expect(mockTam.interruptedSessions).toContain(siblingSessionId);
+			expect(mockTam.cancelledSessions).not.toContain(siblingSessionId);
 		});
 
 		test('sibling session remains reachable for send_message after workflow completion (#1515)', async () => {

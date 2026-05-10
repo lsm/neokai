@@ -73,6 +73,7 @@ import type { TaskAgentManager } from './task-agent-manager';
 import { WorkflowExecutor } from './workflow-executor';
 import { isPermanentSpawnError } from './workflow-node-execution-validation';
 import { selectWorkflow } from './workflow-selector';
+import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
 
 const log = new Logger('space-runtime');
 
@@ -744,12 +745,35 @@ export class SpaceRuntime {
 		if (updated) {
 			await this.safeOnTaskUpdated(spaceId, updated, opts);
 
-			// Cascade dependency_failed to open tasks that depend on this one
-			if (params.status === 'blocked' || params.status === 'cancelled') {
+			// Cascade dependent-task state changes based on the parent's terminal status.
+			//   - `blocked` (transient, retryable): only abort `in_progress` dependents.
+			//     `open` dependents stay `open`, skipped by `areDependenciesMet()` until
+			//     the dependency is retried/completed.
+			//   - `cancelled` (terminal, will not auto-resume): cancel both `open` and
+			//     `in_progress` dependents so they don't wait forever on an unmet dep.
+			if (params.status === 'blocked') {
 				const taskManager = this.getOrCreateTaskManager(spaceId);
 				const cascaded = await taskManager.blockDependentTasks(taskId);
 				for (const blocked of cascaded) {
 					await this.safeOnTaskUpdated(spaceId, blocked);
+				}
+			} else if (params.status === 'cancelled') {
+				const taskManager = this.getOrCreateTaskManager(spaceId);
+				const cascaded = await taskManager.cancelDependentTasks(taskId);
+				for (const cancelled of cascaded) {
+					await this.safeOnTaskUpdated(spaceId, cancelled);
+					// Cancel the underlying workflow run (if any) so completion
+					// detection on the next tick doesn't finalize the run as
+					// `done` just because the cancelled task signals
+					// completion via `CompletionDetector.isComplete`. Only
+					// in_progress dependents had a live run to begin with;
+					// open dependents have no run attached.
+					if (cancelled.workflowRunId) {
+						const run = this.config.workflowRunRepo.getRun(cancelled.workflowRunId);
+						if (run && canTransitionRunStatus(run.status, 'cancelled')) {
+							await this.transitionRunStatusAndEmit(cancelled.workflowRunId, 'cancelled');
+						}
+					}
 				}
 			}
 		}
@@ -886,11 +910,15 @@ export class SpaceRuntime {
 
 			// Skip tasks already at a terminal or paused state — matches the
 			// active-tick guard (`taskAlreadyResolved`) at processRunTick.
+			// `blocked` is included so that a task that was cascade-blocked
+			// by a dependency failure isn't pushed through dispatchPostApproval
+			// (which would attempt an invalid `blocked → approved` transition).
 			if (
 				canonicalTask.status !== 'done' &&
 				canonicalTask.status !== 'review' &&
 				canonicalTask.status !== 'cancelled' &&
-				canonicalTask.status !== 'approved'
+				canonicalTask.status !== 'approved' &&
+				canonicalTask.status !== 'blocked'
 			) {
 				// Preserve the computed result on the task before routing —
 				// dispatchPostApproval handles the status transition itself.
@@ -2565,11 +2593,15 @@ export class SpaceRuntime {
 				// status — `done`/`cancelled` are terminal; `approved` means
 				// PostApprovalRouter already ran once. `review` can only occur via
 				// gate-type checkpoints now that completion actions are removed.
+				// `blocked` is also skipped: a task that was cascade-blocked by a
+				// failed dependency can't be transitioned `blocked → approved`
+				// (invalid transition), so we leave it for manual retry.
 				const taskAlreadyResolved =
 					canonicalTask.status === 'done' ||
 					canonicalTask.status === 'review' ||
 					canonicalTask.status === 'cancelled' ||
-					canonicalTask.status === 'approved';
+					canonicalTask.status === 'approved' ||
+					canonicalTask.status === 'blocked';
 
 				// Final status drives sibling cancellation. We only kill siblings when
 				// the task reached a true terminal state (`done`/`cancelled`).
@@ -2609,7 +2641,18 @@ export class SpaceRuntime {
 				// terminal state). This allows post-completion cross-node messaging,
 				// e.g. a reviewer sending follow-up feedback to a coder whose node
 				// already finished while the PR is still being merged.
-				const taskTerminal = finalTaskStatus === 'done' || finalTaskStatus === 'cancelled';
+				//
+				// `blocked` is included alongside `done`/`cancelled` because the run
+				// itself has just been transitioned to `done` (above), so leaving
+				// siblings in `in_progress` would create inconsistent run/execution
+				// lifecycle state. `approved` is included for the same reason — the
+				// task has crossed the post-approval boundary; only `review` keeps
+				// siblings live because the human may still reject the completion.
+				const taskTerminal =
+					finalTaskStatus === 'done' ||
+					finalTaskStatus === 'cancelled' ||
+					finalTaskStatus === 'blocked' ||
+					finalTaskStatus === 'approved';
 				if (taskTerminal) {
 					const siblingsToQuiesce = this.config.nodeExecutionRepo
 						.listByWorkflowRun(runId)
