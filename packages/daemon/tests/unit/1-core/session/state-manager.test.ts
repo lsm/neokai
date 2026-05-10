@@ -114,14 +114,7 @@ describe('StateManager', () => {
 			expect(eventHandlers.has('settings.updated')).toBe(true);
 		});
 
-		it('should NOT register room/space forwarding handlers (migrated to ClientEventBridge)', () => {
-			expect(eventHandlers.has('room.task.update')).toBe(false);
-			expect(eventHandlers.has('room.overview')).toBe(false);
-			expect(eventHandlers.has('room.runtime.stateChanged')).toBe(false);
-			expect(eventHandlers.has('goal.created')).toBe(false);
-			expect(eventHandlers.has('goal.updated')).toBe(false);
-			expect(eventHandlers.has('goal.completed')).toBe(false);
-			expect(eventHandlers.has('goal.progressUpdated')).toBe(false);
+		it('should NOT register space forwarding handlers (migrated to ClientEventBridge)', () => {
 			expect(eventHandlers.has('space.created')).toBe(false);
 			expect(eventHandlers.has('space.updated')).toBe(false);
 			expect(eventHandlers.has('space.archived')).toBe(false);

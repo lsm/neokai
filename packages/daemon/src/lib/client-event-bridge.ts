@@ -11,9 +11,9 @@
  *
  * Scope (first slice)
  * -------------------
- * This PR migrates the **room event bridge** and **space event bridge** slices
- * from StateManager.  These are pure forwarding paths with no state caching,
- * no version increments, and no side effects — the safest first extraction.
+ * This PR migrates the **space event bridge** slice from StateManager.
+ * These are pure forwarding paths with no state caching, no version
+ * increments, and no side effects — the safest first extraction.
  *
  * Remaining in StateManager (for follow-up PRs)
  * ---------------------------------------------
@@ -44,43 +44,6 @@ interface BridgeMapping {
 	channel: (payload: DaemonEventMap[keyof DaemonEventMap]) => EventChannel;
 	transform?: (payload: DaemonEventMap[keyof DaemonEventMap]) => unknown;
 }
-
-// ---------------------------------------------------------------------------
-// Room bridge mappings
-// ---------------------------------------------------------------------------
-
-const ROOM_BRIDGE_MAPPINGS: BridgeMapping[] = [
-	{
-		event: 'room.task.update',
-		clientEvent: 'room.task.update',
-		channel: (p) => Channels.room((p as DaemonEventMap['room.task.update']).roomId),
-	},
-	{
-		event: 'room.overview',
-		clientEvent: 'room.overview',
-		channel: (p) => Channels.room((p as DaemonEventMap['room.overview']).room.id),
-	},
-	{
-		event: 'room.runtime.stateChanged',
-		clientEvent: 'room.runtime.stateChanged',
-		channel: (p) => Channels.room((p as DaemonEventMap['room.runtime.stateChanged']).roomId),
-	},
-	{
-		event: 'goal.created',
-		clientEvent: 'goal.created',
-		channel: (p) => Channels.room((p as DaemonEventMap['goal.created']).roomId),
-	},
-	{
-		event: 'goal.completed',
-		clientEvent: 'goal.completed',
-		channel: (p) => Channels.room((p as DaemonEventMap['goal.completed']).roomId),
-	},
-	{
-		event: 'goal.progressUpdated',
-		clientEvent: 'goal.progressUpdated',
-		channel: (p) => Channels.room((p as DaemonEventMap['goal.progressUpdated']).roomId),
-	},
-];
 
 // ---------------------------------------------------------------------------
 // Space bridge mappings
@@ -198,9 +161,6 @@ export class ClientEventBridge {
 			return;
 		}
 
-		for (const mapping of ROOM_BRIDGE_MAPPINGS) {
-			this.subscribeMapping(mapping);
-		}
 		for (const mapping of SPACE_BRIDGE_MAPPINGS) {
 			this.subscribeMapping(mapping);
 		}

@@ -44,19 +44,6 @@ describe('ClientEventBridge', () => {
 	}
 
 	describe('start', () => {
-		it('should subscribe to all room bridge events', () => {
-			const { daemonHub, gateway, eventHandlers } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, gateway);
-			bridge.start();
-
-			expect(eventHandlers.has('room.task.update')).toBe(true);
-			expect(eventHandlers.has('room.overview')).toBe(true);
-			expect(eventHandlers.has('room.runtime.stateChanged')).toBe(true);
-			expect(eventHandlers.has('goal.created')).toBe(true);
-			expect(eventHandlers.has('goal.completed')).toBe(true);
-			expect(eventHandlers.has('goal.progressUpdated')).toBe(true);
-		});
-
 		it('should subscribe to all space bridge events', () => {
 			const { daemonHub, gateway, eventHandlers } = buildFixture();
 			const bridge = new ClientEventBridge(daemonHub, gateway);
@@ -86,7 +73,7 @@ describe('ClientEventBridge', () => {
 			bridge.start();
 
 			// Only one handler per event should be registered
-			expect(eventHandlers.size).toBe(21);
+			expect(eventHandlers.size).toBe(15);
 		});
 	});
 
@@ -97,99 +84,7 @@ describe('ClientEventBridge', () => {
 			bridge.start();
 			bridge.stop();
 
-			expect(unsubscribers.length).toBe(21);
-		});
-	});
-
-	describe('room event forwarding', () => {
-		it('forwards room.task.update to room channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
-
-			const data = {
-				sessionId: 'room:room-123',
-				roomId: 'room-123',
-				task: { id: 'task-1', title: 'Task 1', status: 'in_progress' },
-			};
-			eventHandlers.get('room.task.update')!(data);
-
-			expect(published).toHaveLength(1);
-			expect(published[0].method).toBe('room.task.update');
-			expect(published[0].data).toEqual(data);
-			expect(published[0].channel).toEqual({ kind: 'room', roomId: 'room-123' });
-		});
-
-		it('forwards room.overview to room channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
-
-			const data = {
-				sessionId: 'room:room-123',
-				room: { id: 'room-123', name: 'Test Room' },
-				sessions: [],
-			};
-			eventHandlers.get('room.overview')!(data);
-
-			expect(published[0].channel).toEqual({ kind: 'room', roomId: 'room-123' });
-		});
-
-		it('forwards room.runtime.stateChanged to room channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
-
-			const data = {
-				sessionId: 'room:room-123',
-				roomId: 'room-123',
-				state: 'running',
-			};
-			eventHandlers.get('room.runtime.stateChanged')!(data);
-
-			expect(published[0].channel).toEqual({ kind: 'room', roomId: 'room-123' });
-		});
-
-		it('forwards goal.created to room channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
-
-			const data = {
-				sessionId: 'room:room-123',
-				roomId: 'room-123',
-				goalId: 'goal-1',
-				goal: { id: 'goal-1', title: 'Goal 1', status: 'active' },
-			};
-			eventHandlers.get('goal.created')!(data);
-
-			expect(published[0].channel).toEqual({ kind: 'room', roomId: 'room-123' });
-		});
-
-		it('forwards goal.completed to room channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
-
-			const data = {
-				sessionId: 'room:room-123',
-				roomId: 'room-123',
-				goalId: 'goal-1',
-				goal: { id: 'goal-1', title: 'Goal 1', status: 'completed' },
-			};
-			eventHandlers.get('goal.completed')!(data);
-
-			expect(published[0].channel).toEqual({ kind: 'room', roomId: 'room-123' });
-		});
-
-		it('forwards goal.progressUpdated to room channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
-
-			const data = {
-				sessionId: 'room:room-123',
-				roomId: 'room-123',
-				goalId: 'goal-1',
-				progress: 75,
-			};
-			eventHandlers.get('goal.progressUpdated')!(data);
-
-			expect(published[0].channel).toEqual({ kind: 'room', roomId: 'room-123' });
+			expect(unsubscribers.length).toBe(15);
 		});
 	});
 
