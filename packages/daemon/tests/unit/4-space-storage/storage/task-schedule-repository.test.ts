@@ -222,6 +222,19 @@ describe('TaskScheduleRepository', () => {
 			}
 			expect(repo.listActiveDue(now, 3)).toHaveLength(3);
 		});
+
+		it('excludes schedules that already have a pendingJobId linked', () => {
+			// Recovery scans iterate the due-list; once a schedule is reseeded its
+			// pending_job_id is non-null and it must drop out of subsequent pages so
+			// pagination advances through later rows instead of looping forever.
+			const now = Date.now();
+			const s1 = repo.create(makeCronParams({ spaceId, nextRunAt: now - 1000 }));
+			const s2 = repo.create(makeCronParams({ spaceId, nextRunAt: now - 500 }));
+			repo.updatePendingJobId(s1.id, 'job-already-linked');
+
+			const due = repo.listActiveDue(now);
+			expect(due.map((s) => s.id)).toEqual([s2.id]);
+		});
 	});
 
 	// ─── listActiveWithPendingJob ──────────────────────────────────────────────
@@ -244,6 +257,28 @@ describe('TaskScheduleRepository', () => {
 			repo.updateStatus(s1.id, 'paused');
 
 			expect(repo.listActiveWithPendingJob()).toHaveLength(0);
+		});
+	});
+
+	// ─── listActiveBySpace ─────────────────────────────────────────────────────
+
+	describe('listActiveBySpace', () => {
+		it('returns only active schedules for the given space', () => {
+			const s1 = repo.create(makeCronParams({ spaceId }));
+			const s2 = repo.create(makeCronParams({ spaceId }));
+			const paused = repo.create(makeCronParams({ spaceId }));
+			repo.updateStatus(paused.id, 'paused');
+
+			const otherSpace = spaceRepo.createSpace({
+				workspacePath: '/workspace/other',
+				slug: 'other',
+				name: 'Other',
+			});
+			repo.create(makeCronParams({ spaceId: otherSpace.id }));
+
+			const active = repo.listActiveBySpace(spaceId);
+			const ids = active.map((s) => s.id).sort();
+			expect(ids).toEqual([s1.id, s2.id].sort());
 		});
 	});
 

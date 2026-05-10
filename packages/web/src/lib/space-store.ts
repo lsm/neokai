@@ -2104,6 +2104,12 @@ class SpaceStore {
 
 	/**
 	 * Create a recurring (cron) or one-shot (at) task schedule.
+	 *
+	 * If the user switches spaces while the request is in flight, the late
+	 * response is dropped from the local signal so a schedule belonging to
+	 * space A can't surface in space B's Scheduled tab. The schedule itself
+	 * was still created on the daemon — the next list refresh will pick it
+	 * up when the user returns to space A.
 	 */
 	async createSchedule(params: {
 		title: string;
@@ -2126,6 +2132,8 @@ class SpaceStore {
 			...params,
 			spaceId,
 		});
+		// Drop the response if the active space changed while we were awaiting.
+		if (this.spaceId.value !== spaceId) return schedule;
 		this.schedules.value = [...this.schedules.value, schedule];
 		return schedule;
 	}

@@ -16,7 +16,7 @@ import { navigateToSpaceTasks } from '../../lib/router';
 import { currentSpaceIdSignal, currentSpaceTasksFilterTabSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
-import { getRelativeTime } from '../../lib/utils';
+import { getRelativeTime, formatRelativeFuture } from '../../lib/utils';
 
 type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'archived' | 'scheduled';
 
@@ -561,7 +561,7 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 							schedules={schedules}
 							onPause={(id) => spaceStore.pauseSchedule(id).catch(() => {})}
 							onResume={(id) => spaceStore.resumeSchedule(id).catch(() => {})}
-							onDelete={(id) => spaceStore.deleteSchedule(id).catch(() => {})}
+							onDelete={(id) => spaceStore.deleteSchedule(id)}
 						/>
 					)
 				) : filteredTasks.length === 0 ? (
@@ -589,18 +589,25 @@ function ScheduleList({
 	schedules: TaskSchedule[];
 	onPause: (id: string) => void;
 	onResume: (id: string) => void;
-	onDelete: (id: string) => void;
+	onDelete: (id: string) => Promise<unknown>;
 }) {
 	const [deletingId, setDeletingId] = useState<string | null>(null);
 
 	const handleDelete = (id: string) => {
 		setDeletingId(id);
-		onDelete(id);
+		// Always clear `deletingId` once the RPC settles so a transient failure
+		// (network blip, daemon restart) doesn't permanently disable the row's
+		// Delete button for the rest of the session. The store throws on failure;
+		// we swallow it here because the user-visible feedback is the row staying
+		// in place — a follow-up retry just clicks Delete again.
+		onDelete(id).finally(() => {
+			setDeletingId((curr) => (curr === id ? null : curr));
+		});
 	};
 
 	const formatNextRun = (nextRunAt: number | null) => {
 		if (!nextRunAt) return 'N/A';
-		return getRelativeTime(nextRunAt);
+		return formatRelativeFuture(nextRunAt);
 	};
 
 	const formatTrigger = (s: TaskSchedule) => {

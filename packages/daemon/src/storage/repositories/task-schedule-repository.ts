@@ -108,14 +108,24 @@ export class TaskScheduleRepository {
 	}
 
 	/**
-	 * List active schedules whose nextRunAt <= now.
-	 * Used for startup re-seeding to recover lost jobs.
+	 * List active schedules whose nextRunAt <= now AND have no pending job
+	 * linked. Used for startup re-seeding to recover lost jobs.
+	 *
+	 * The `pending_job_id IS NULL` filter is important for paginated recovery:
+	 * after a page is re-seeded (each schedule gets a new pending job linked),
+	 * those rows must drop out of subsequent pages so the loop can advance to
+	 * the next batch of orphaned schedules. Without it, the first page would
+	 * be returned again with no actionable rows and the loop would stop early
+	 * even though further due schedules remain.
 	 */
 	listActiveDue(now: number, limit = 100): TaskSchedule[] {
 		const rows = this.db
 			.prepare(
 				`SELECT * FROM task_schedules
-				 WHERE status = 'active' AND next_run_at IS NOT NULL AND next_run_at <= ?
+				 WHERE status = 'active'
+				   AND next_run_at IS NOT NULL
+				   AND next_run_at <= ?
+				   AND pending_job_id IS NULL
 				 ORDER BY next_run_at ASC
 				 LIMIT ?`
 			)
@@ -134,6 +144,21 @@ export class TaskScheduleRepository {
 				 WHERE status = 'active' AND pending_job_id IS NOT NULL`
 			)
 			.all() as Record<string, unknown>[];
+		return rows.map((r) => this.rowToSchedule(r));
+	}
+
+	/**
+	 * List active schedules belonging to a specific space.
+	 * Used by SpaceManager.resumeSpace / startSpace to re-seed schedules whose
+	 * fire jobs were skipped while the space was paused/stopped.
+	 */
+	listActiveBySpace(spaceId: string): TaskSchedule[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM task_schedules
+				 WHERE status = 'active' AND space_id = ?`
+			)
+			.all(spaceId) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSchedule(r));
 	}
 

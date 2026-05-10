@@ -111,9 +111,41 @@ describe('ScheduleService', () => {
 				})
 			).toThrow(/runAt must be in the future/);
 		});
+
+		it('rejects an unsupported triggerType', () => {
+			expect(() =>
+				service.createSchedule({
+					spaceId,
+					title: 'Bad trigger',
+					// biome-ignore lint/suspicious/noExplicitAny: deliberately bypassing TS to simulate
+					// a malformed RPC payload.
+					triggerType: 'webhook' as any,
+				})
+			).toThrow(/Unsupported triggerType/);
+		});
 	});
 
 	describe('updateSchedule', () => {
+		it('rejects clearing the title to empty/whitespace', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Cron',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+			});
+
+			expect(() => service.updateSchedule(schedule.id, { title: '' })).toThrow(
+				/title must be a non-empty string/
+			);
+			expect(() => service.updateSchedule(schedule.id, { title: '   ' })).toThrow(
+				/title must be a non-empty string/
+			);
+
+			// Schedule's title is unchanged after the rejected updates.
+			const after = scheduleRepo.getById(schedule.id);
+			expect(after?.title).toBe('Cron');
+		});
+
 		it('rejects setting cronExpression to null on a cron schedule', () => {
 			const schedule = service.createSchedule({
 				spaceId,
@@ -302,6 +334,104 @@ describe('ScheduleService', () => {
 			expect(ok).toBe(true);
 			expect(scheduleRepo.getById(schedule.id)).toBeNull();
 			expect(jobQueue.getJob(jobId)).toBeNull();
+		});
+	});
+
+	describe('recoverSchedulesForSpace', () => {
+		it('re-enqueues active cron schedules whose pendingJobId was cleared', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Cron',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+				timezone: 'UTC',
+			});
+
+			// Simulate the fire-handler's space-paused branch clearing pending linkage.
+			scheduleRepo.updatePendingJobId(schedule.id, null);
+
+			const recovered = service.recoverSchedulesForSpace(spaceId);
+			expect(recovered).toBe(1);
+
+			const after = scheduleRepo.getById(schedule.id);
+			expect(after?.pendingJobId).not.toBeNull();
+			expect(after?.status).toBe('active');
+			expect(jobQueue.getJob(after?.pendingJobId as string)).not.toBeNull();
+		});
+
+		it('re-enqueues `at` schedules whose runAt is still in the future', () => {
+			const future = Date.now() + 60_000;
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'One Shot',
+				triggerType: 'at',
+				runAt: future,
+			});
+			scheduleRepo.updatePendingJobId(schedule.id, null);
+
+			const recovered = service.recoverSchedulesForSpace(spaceId);
+			expect(recovered).toBe(1);
+
+			const after = scheduleRepo.getById(schedule.id);
+			expect(after?.pendingJobId).not.toBeNull();
+			expect(after?.status).toBe('active');
+		});
+
+		it('marks `at` schedules whose deadline expired during the outage as completed', () => {
+			const future = Date.now() + 60_000;
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'One Shot',
+				triggerType: 'at',
+				runAt: future,
+			});
+			scheduleRepo.updatePendingJobId(schedule.id, null);
+			// Move runAt into the past directly via the repo (bypass validation).
+			scheduleRepo.update(schedule.id, { runAt: Date.now() - 60_000 });
+
+			const recovered = service.recoverSchedulesForSpace(spaceId);
+			expect(recovered).toBe(0); // expired schedule wasn't re-enqueued
+
+			const after = scheduleRepo.getById(schedule.id);
+			expect(after?.status).toBe('completed');
+			expect(after?.pendingJobId).toBeNull();
+		});
+
+		it('skips schedules that already have a pending job linked', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Cron',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+			});
+			const originalJobId = schedule.pendingJobId;
+
+			const recovered = service.recoverSchedulesForSpace(spaceId);
+			expect(recovered).toBe(0);
+
+			// Existing linkage untouched.
+			const after = scheduleRepo.getById(schedule.id);
+			expect(after?.pendingJobId).toBe(originalJobId);
+		});
+
+		it('leaves an unrecoverable cron config alone for the operator to fix', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Cron',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+				timezone: 'UTC',
+			});
+			scheduleRepo.updatePendingJobId(schedule.id, null);
+			// Corrupt timezone so getNextRunAt returns null.
+			scheduleRepo.update(schedule.id, { timezone: 'Not/A_Real_Zone' });
+
+			const recovered = service.recoverSchedulesForSpace(spaceId);
+			expect(recovered).toBe(0);
+
+			const after = scheduleRepo.getById(schedule.id);
+			expect(after?.status).toBe('active'); // not terminally completed
+			expect(after?.pendingJobId).toBeNull();
 		});
 	});
 });

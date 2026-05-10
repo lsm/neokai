@@ -86,6 +86,14 @@ export async function handleTaskScheduleFire(
 	// Without this, a non-active space would still spawn fresh tasks every cron
 	// tick, violating the space lifecycle contract (paused/stopped must prevent
 	// new scheduled work).
+	//
+	// We don't just bail here: if we leave the schedule with `pendingJobId`
+	// pointing at *this* (now-consumed) job, the next cron tick never lands
+	// because the schedule has no future job linked. Instead we advance the
+	// schedule forward — for cron, we recompute `nextRunAt` and enqueue a fresh
+	// fire job; for `at`, we leave the schedule "unwired" by clearing
+	// pendingJobId so SpaceManager.resumeSpace/startSpace can recover it. The
+	// space-resume path then re-seeds any missed schedules.
 	const space = spaceRepo.getSpace(schedule.spaceId);
 	if (!space || space.status !== 'active' || space.paused || space.stopped) {
 		log.debug('task-schedule-fire: skipping schedule for non-active space', {
@@ -95,6 +103,36 @@ export async function handleTaskScheduleFire(
 			paused: space?.paused,
 			stopped: space?.stopped,
 		});
+
+		// Clear pendingJobId / advance nextRunAt so the space-resume reseed has
+		// a clean handle. Do this in a CAS transaction so a concurrent
+		// pause/delete/reschedule mid-handler still wins.
+		try {
+			db.transaction(() => {
+				const fresh = scheduleRepo.getById(scheduleId);
+				if (!fresh || fresh.status !== 'active') return;
+				if (fresh.pendingJobId !== job.id) return; // someone else moved on
+
+				if (fresh.triggerType === 'cron' && fresh.cronExpression) {
+					const next = getNextRunAt(fresh.cronExpression, fresh.timezone, Date.now());
+					// On cron-config errors (null next), just clear the pending linkage so
+					// resume / operator-fix can re-seed; the schedule stays active.
+					scheduleRepo.update(scheduleId, { nextRunAt: next ?? undefined });
+					scheduleRepo.updatePendingJobId(scheduleId, null);
+				} else {
+					// `at` schedule — clear pending so resume re-evaluates whether the
+					// deadline has passed and either completes or re-enqueues.
+					scheduleRepo.updatePendingJobId(scheduleId, null);
+				}
+			})();
+		} catch (err) {
+			log.error('task-schedule-fire: clearing pending linkage failed', {
+				scheduleId,
+				error: err instanceof Error ? err.message : err,
+			});
+			// Non-fatal — the next space-resume reseed will pick this up.
+		}
+
 		return {
 			scheduleId,
 			taskId: null,

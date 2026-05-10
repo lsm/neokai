@@ -197,7 +197,7 @@ describe('handleTaskScheduleFire', () => {
 		expect(after?.lastCreatedTaskId).toBeNull();
 	});
 
-	it('skips when host space is paused (no task created)', async () => {
+	it('skips when host space is paused (no task created, pending linkage cleared)', async () => {
 		const scheduleId = createCronSchedule();
 		scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
 		spaceRepo.pauseSpace(spaceId);
@@ -208,9 +208,16 @@ describe('handleTaskScheduleFire', () => {
 		expect(result.skipped).toBe(true);
 		expect(result.skipReason).toBe('space_not_active');
 		expect(taskRepo.listBySpace(spaceId)).toHaveLength(0);
+
+		// Pending linkage cleared so SpaceManager.resumeSpace can re-seed without
+		// the dangling job-1 reference, and `next_run_at` advanced so the schedule
+		// keeps moving forward when the space resumes.
+		const after = scheduleRepo.getById(scheduleId);
+		expect(after?.pendingJobId).toBeNull();
+		expect(after?.status).toBe('active');
 	});
 
-	it('skips when host space is stopped (no task created)', async () => {
+	it('skips when host space is stopped (no task created, pending linkage cleared)', async () => {
 		const scheduleId = createCronSchedule();
 		scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
 		spaceRepo.stopSpace(spaceId);
@@ -221,6 +228,10 @@ describe('handleTaskScheduleFire', () => {
 		expect(result.skipped).toBe(true);
 		expect(result.skipReason).toBe('space_not_active');
 		expect(taskRepo.listBySpace(spaceId)).toHaveLength(0);
+
+		const after = scheduleRepo.getById(scheduleId);
+		expect(after?.pendingJobId).toBeNull();
+		expect(after?.status).toBe('active');
 	});
 
 	it('rolls back when a concurrent pause invalidates pendingJobId mid-fire', async () => {

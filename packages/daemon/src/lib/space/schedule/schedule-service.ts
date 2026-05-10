@@ -80,6 +80,14 @@ export class ScheduleService {
 		} else if (input.triggerType === 'at') {
 			if (!input.runAt) throw new Error('runAt is required for at triggers');
 			if (input.runAt < Date.now()) throw new Error('runAt must be in the future');
+		} else {
+			// RPC payloads are cast from `unknown` and the agent MCP tool also
+			// dispatches into this service. TypeScript's narrowing isn't enforced
+			// at runtime, so explicitly reject any other value rather than
+			// silently falling through and creating an inconsistent schedule.
+			throw new Error(
+				`Unsupported triggerType: ${String(input.triggerType)} (expected 'cron' or 'at')`
+			);
 		}
 	}
 
@@ -168,6 +176,14 @@ export class ScheduleService {
 
 		const existing = scheduleRepo.getById(scheduleId);
 		if (!existing) throw new Error(`Schedule not found: ${scheduleId}`);
+
+		// Match create-time data quality: a schedule fires tasks whose title is
+		// inherited from the schedule template, so a blank title would spawn
+		// nameless tasks. Reject explicit empty/whitespace updates here rather
+		// than silently persisting them.
+		if (input.title !== undefined && !input.title.trim()) {
+			throw new Error('title must be a non-empty string');
+		}
 
 		// Trigger-config consistency: a `cron` schedule must always have a cron
 		// expression. Setting it to `null` would orphan the schedule.
@@ -353,5 +369,72 @@ export class ScheduleService {
 
 	listSchedules(spaceId: string, status?: TaskScheduleStatus): TaskSchedule[] {
 		return this.deps.scheduleRepo.listBySpace(spaceId, status);
+	}
+
+	/**
+	 * Recover active schedules for a space whose fire jobs were skipped while
+	 * the space was paused or stopped. Called by SpaceManager when a space is
+	 * resumed or restarted so cron schedules pick up forward progress without
+	 * waiting for a daemon restart.
+	 *
+	 * For each active schedule with `pending_job_id IS NULL`:
+	 *   - cron: advance `next_run_at` to the next tick from now, enqueue a fresh
+	 *     fire job at that time. We do not fire missed ticks retroactively — the
+	 *     space was intentionally inactive during that window.
+	 *   - at:   if the target time has passed, mark the schedule `completed`
+	 *     (the deadline expired during the outage). Otherwise re-enqueue at
+	 *     the original runAt.
+	 *
+	 * Schedules that already have a pending job are left alone — startup
+	 * recovery (Pass 1) handles dangling job IDs.
+	 *
+	 * Returns the number of schedules re-seeded.
+	 */
+	recoverSchedulesForSpace(spaceId: string): number {
+		const { db, scheduleRepo, jobQueue } = this.deps;
+
+		const schedules = scheduleRepo.listActiveBySpace(spaceId);
+		let recovered = 0;
+
+		for (const schedule of schedules) {
+			if (schedule.pendingJobId) continue; // already linked
+
+			db.transaction(() => {
+				if (schedule.triggerType === 'cron' && schedule.cronExpression) {
+					const next = getNextRunAt(schedule.cronExpression, schedule.timezone);
+					if (next === null) {
+						// Unrecoverable cron config — leave for operator to fix; do not
+						// terminally complete a recurring schedule on transient errors.
+						return;
+					}
+					const job = jobQueue.enqueue({
+						queue: TASK_SCHEDULE_FIRE,
+						payload: { scheduleId: schedule.id } satisfies TaskScheduleFirePayload,
+						runAt: next,
+					});
+					scheduleRepo.update(schedule.id, { nextRunAt: next });
+					scheduleRepo.updatePendingJobId(schedule.id, job.id);
+					recovered++;
+					return;
+				}
+
+				if (schedule.triggerType === 'at' && schedule.runAt) {
+					if (schedule.runAt < Date.now()) {
+						// Deadline expired while the space was inactive — terminal.
+						scheduleRepo.updateStatus(schedule.id, 'completed');
+						return;
+					}
+					const job = jobQueue.enqueue({
+						queue: TASK_SCHEDULE_FIRE,
+						payload: { scheduleId: schedule.id } satisfies TaskScheduleFirePayload,
+						runAt: schedule.runAt,
+					});
+					scheduleRepo.updatePendingJobId(schedule.id, job.id);
+					recovered++;
+				}
+			})();
+		}
+
+		return recovered;
 	}
 }

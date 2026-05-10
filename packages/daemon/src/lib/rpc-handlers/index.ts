@@ -320,6 +320,20 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		jobQueue: deps.jobQueue,
 	});
 
+	// When a space is resumed/started, re-seed any of its active schedules
+	// whose fire jobs were skipped during the inactive window so cron/at
+	// schedules pick up forward progress without waiting for daemon restart.
+	deps.spaceManager.onSpaceResumedRegister((spaceId) => {
+		try {
+			const recovered = scheduleService.recoverSchedulesForSpace(spaceId);
+			if (recovered > 0) {
+				log.info('recovered schedules after space resume', { spaceId, recovered });
+			}
+		} catch (err) {
+			log.error('schedule recovery after space resume failed (non-fatal)', err);
+		}
+	});
+
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
 	const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
