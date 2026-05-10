@@ -10,12 +10,18 @@
  * - Shows error message on failure
  * - Cancel closes and resets form
  * - Priority and type selectors update form state
+ * - Schedule toggle shows/hides schedule options
+ * - One-time schedule validation (runAt required, must be future)
+ * - Recurring schedule validation (cron required, must be valid)
+ * - Cron preset buttons populate the expression
+ * - Submit calls spaceStore.createSchedule when scheduling enabled
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, waitFor, cleanup } from '@testing-library/preact';
 
 const mockCreateTask = vi.fn();
+const mockCreateSchedule = vi.fn();
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
 
@@ -23,6 +29,9 @@ vi.mock('../../../lib/space-store', () => ({
 	spaceStore: {
 		get createTask() {
 			return mockCreateTask;
+		},
+		get createSchedule() {
+			return mockCreateSchedule;
 		},
 	},
 }));
@@ -75,15 +84,31 @@ const TASK_MOCK = {
 	updatedAt: Date.now(),
 };
 
+const SCHEDULE_MOCK = {
+	id: 'sched-1',
+	spaceId: 'space-1',
+	title: 'Scheduled task',
+	description: '',
+	priority: 'normal',
+	triggerType: 'cron',
+	cronExpression: '@daily',
+	runAt: null,
+	timezone: 'UTC',
+	status: 'active',
+	createdAt: Date.now(),
+	updatedAt: Date.now(),
+};
+
 describe('SpaceCreateTaskDialog', () => {
-	let onClose: ReturnType<typeof vi.fn>;
-	let onCreated: ReturnType<typeof vi.fn>;
+	let onClose;
+	let onCreated;
 
 	beforeEach(() => {
 		cleanup();
 		onClose = vi.fn();
 		onCreated = vi.fn();
 		mockCreateTask.mockReset();
+		mockCreateSchedule.mockReset();
 		mockToastSuccess.mockReset();
 		mockToastError.mockReset();
 	});
@@ -219,5 +244,220 @@ describe('SpaceCreateTaskDialog', () => {
 				})
 			);
 		});
+	});
+
+	// ─── Schedule tests ───────────────────────────────────────────────────────
+
+	it('shows schedule options when toggle is checked', () => {
+		const { getByLabelText, getByText } = render(
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+		);
+		const toggle = getByLabelText('Schedule this task');
+		fireEvent.click(toggle);
+		expect(getByText('One-time')).toBeTruthy();
+		expect(getByText('Recurring')).toBeTruthy();
+	});
+
+	it('hides schedule options when toggle is unchecked', () => {
+		const { getByLabelText, queryByText } = render(
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+		);
+		const toggle = getByLabelText('Schedule this task');
+		fireEvent.click(toggle);
+		expect(queryByText('One-time')).toBeTruthy();
+		fireEvent.click(toggle);
+		expect(queryByText('One-time')).toBeNull();
+	});
+
+	it('shows runAt input for one-time trigger', () => {
+		const { getByLabelText, getByText, container } = render(
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+		);
+		fireEvent.click(getByLabelText('Schedule this task'));
+		fireEvent.click(getByText('One-time'));
+		expect(container.querySelector('input[type="datetime-local"]')).toBeTruthy();
+	});
+
+	it('shows cron input for recurring trigger', () => {
+		const { getByLabelText, getByText, getByPlaceholderText } = render(
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+		);
+		fireEvent.click(getByLabelText('Schedule this task'));
+		fireEvent.click(getByText('Recurring'));
+		expect(getByPlaceholderText('0 9 * * 1')).toBeTruthy();
+	});
+
+	it('shows validation error when one-time runAt is missing', async () => {
+		const { getByLabelText, getByText, getByPlaceholderText, getByRole, findByText } = render(
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+		);
+		fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
+			target: { value: 'My scheduled task' },
+		});
+		fireEvent.click(getByLabelText('Schedule this task'));
+		fireEvent.click(getByText('One-time'));
+		fireEvent.submit(getByRole('dialog').querySelector('form'));
+		expect(await findByText('Run date/time is required')).toBeTruthy();
+		expect(mockCreateSchedule).not.toHaveBeenCalled();
+	});
+
+	it('shows validation error when one-time runAt is in the past', async () => {
+		const { getByLabelText, getByText, getByPlaceholderText, getByRole, findByText, container } =
+			render(<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />);
+		fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
+			target: { value: 'My scheduled task' },
+		});
+		fireEvent.click(getByLabelText('Schedule this task'));
+		fireEvent.click(getByText('One-time'));
+
+		const dtInput = container.querySelector('input[type="datetime-local"]');
+		// Set to a past date
+		const past = new Date(Date.now() - 86400000);
+		const pad = (n) => String(n).padStart(2, '0');
+		const pastValue = `${past.getFullYear()}-${pad(past.getMonth() + 1)}-${pad(past.getDate())}T${pad(past.getHours())}:${pad(past.getMinutes())}`;
+		fireEvent.input(dtInput, { target: { value: pastValue } });
+
+		fireEvent.submit(getByRole('dialog').querySelector('form'));
+		expect(await findByText('Run time must be in the future')).toBeTruthy();
+	});
+
+	it('shows validation error when cron expression is empty', async () => {
+		const { getByLabelText, getByText, getByPlaceholderText, getByRole, findByText } = render(
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+		);
+		fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
+			target: { value: 'My scheduled task' },
+		});
+		fireEvent.click(getByLabelText('Schedule this task'));
+		fireEvent.click(getByText('Recurring'));
+		fireEvent.submit(getByRole('dialog').querySelector('form'));
+		expect(await findByText('Cron expression is required')).toBeTruthy();
+	});
+
+	it('shows validation error when cron expression is invalid', async () => {
+		const { getByLabelText, getByText, getByPlaceholderText, getByRole, findAllByText } = render(
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+		);
+		fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
+			target: { value: 'My scheduled task' },
+		});
+		fireEvent.click(getByLabelText('Schedule this task'));
+		fireEvent.click(getByText('Recurring'));
+		fireEvent.input(getByPlaceholderText('0 9 * * 1'), {
+			target: { value: 'not-a-cron' },
+		});
+		fireEvent.submit(getByRole('dialog').querySelector('form'));
+		const errors = await findAllByText('Invalid cron expression');
+		expect(errors.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it('accepts @daily preset as valid cron', async () => {
+		mockCreateSchedule.mockResolvedValue(SCHEDULE_MOCK);
+
+		const { getByLabelText, getByText, getByPlaceholderText, getByRole } = render(
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+		);
+		fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
+			target: { value: 'My scheduled task' },
+		});
+		fireEvent.click(getByLabelText('Schedule this task'));
+		fireEvent.click(getByText('Recurring'));
+		fireEvent.click(getByText('@daily'));
+
+		fireEvent.submit(getByRole('dialog').querySelector('form'));
+
+		await waitFor(() => {
+			expect(mockCreateSchedule).toHaveBeenCalledWith(
+				expect.objectContaining({
+					title: 'My scheduled task',
+					triggerType: 'cron',
+					cronExpression: '@daily',
+				})
+			);
+		});
+	});
+
+	it('calls spaceStore.createSchedule for one-time schedule', async () => {
+		mockCreateSchedule.mockResolvedValue({
+			...SCHEDULE_MOCK,
+			triggerType: 'at',
+			runAt: Date.now() + 3600000,
+		});
+
+		const { getByLabelText, getByText, getByPlaceholderText, getByRole, container } = render(
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+		);
+		fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
+			target: { value: 'My scheduled task' },
+		});
+		fireEvent.click(getByLabelText('Schedule this task'));
+		fireEvent.click(getByText('One-time'));
+
+		const dtInput = container.querySelector('input[type="datetime-local"]');
+		const future = new Date(Date.now() + 3600000);
+		const pad = (n) => String(n).padStart(2, '0');
+		const futureValue = `${future.getFullYear()}-${pad(future.getMonth() + 1)}-${pad(future.getDate())}T${pad(future.getHours())}:${pad(future.getMinutes())}`;
+		fireEvent.input(dtInput, { target: { value: futureValue } });
+
+		fireEvent.submit(getByRole('dialog').querySelector('form'));
+
+		await waitFor(() => {
+			expect(mockCreateSchedule).toHaveBeenCalledWith(
+				expect.objectContaining({
+					title: 'My scheduled task',
+					triggerType: 'at',
+					cronExpression: null,
+				})
+			);
+		});
+	});
+
+	it('shows success toast after creating schedule', async () => {
+		mockCreateSchedule.mockResolvedValue(SCHEDULE_MOCK);
+
+		const { getByLabelText, getByText, getByPlaceholderText, getByRole } = render(
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+		);
+		fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
+			target: { value: 'My scheduled task' },
+		});
+		fireEvent.click(getByLabelText('Schedule this task'));
+		fireEvent.click(getByText('Recurring'));
+		fireEvent.click(getByText('@daily'));
+
+		fireEvent.submit(getByRole('dialog').querySelector('form'));
+
+		await waitFor(() => {
+			expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining('Scheduled task'));
+			expect(onClose).toHaveBeenCalled();
+		});
+	});
+
+	it('shows error when createSchedule fails', async () => {
+		mockCreateSchedule.mockRejectedValue(new Error('Schedule conflict'));
+
+		const { getByLabelText, getByText, getByPlaceholderText, getByRole, findByText } = render(
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+		);
+		fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
+			target: { value: 'My scheduled task' },
+		});
+		fireEvent.click(getByLabelText('Schedule this task'));
+		fireEvent.click(getByText('Recurring'));
+		fireEvent.click(getByText('@daily'));
+
+		fireEvent.submit(getByRole('dialog').querySelector('form'));
+
+		expect(await findByText('Schedule conflict')).toBeTruthy();
+		expect(onClose).not.toHaveBeenCalled();
+	});
+
+	it('button label changes to Create Schedule when scheduling enabled', () => {
+		const { getByLabelText, getByText } = render(
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+		);
+		expect(getByText('Create Task')).toBeTruthy();
+		fireEvent.click(getByLabelText('Schedule this task'));
+		expect(getByText('Create Schedule')).toBeTruthy();
 	});
 });
