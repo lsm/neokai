@@ -77,8 +77,29 @@ interface StatusGroupDef {
 	status: SpaceTaskStatus;
 	title: string;
 	variant: 'default' | 'yellow' | 'purple' | 'green' | 'red' | 'gray';
-	/** Optional filter override; when provided, used instead of status-only matching */
-	filterFn?: (task: SpaceTask) => boolean;
+	/**
+	 * Optional secondary `block_reason` filter applied server-side. Used by
+	 * the Action tab to split blocked rows into "Needs Input" /
+	 * "Gate Pending" / generic-"Blocked" groups via the same paginated
+	 * `spaceTask.list` RPC. Tri-state: `undefined` = ignore the column,
+	 * `null` = match rows with no reason set, value = match exactly.
+	 */
+	blockReason?: SpaceBlockReason | null;
+	/**
+	 * Optional negative `block_reason` filter applied server-side. Mutually
+	 * exclusive with `blockReason`. Used by the Action tab's generic
+	 * "Blocked" bucket to include every blocked row whose reason is NOT one
+	 * of the attention-required values, plus rows with no reason set —
+	 * mirroring the legacy client-side filter.
+	 */
+	blockReasonNotIn?: SpaceBlockReason[];
+	/**
+	 * Local predicate run against the full `tasks` signal, used only to
+	 * compute the badge count shown in the group header. Mirrors the
+	 * server-side filter exactly so badge counts match the page total
+	 * the server returns. Defaults to a status-only match.
+	 */
+	matchFn?: (task: SpaceTask) => boolean;
 }
 
 const ACTION_GROUPS: StatusGroupDef[] = [
@@ -86,14 +107,16 @@ const ACTION_GROUPS: StatusGroupDef[] = [
 		status: 'blocked',
 		title: 'Needs Input',
 		variant: 'red',
-		filterFn: (t) =>
+		blockReason: 'human_input_requested',
+		matchFn: (t) =>
 			t.status === 'blocked' && (t.blockReason as SpaceBlockReason) === 'human_input_requested',
 	},
 	{
 		status: 'blocked',
 		title: 'Gate Pending',
 		variant: 'red',
-		filterFn: (t) =>
+		blockReason: 'gate_rejected',
+		matchFn: (t) =>
 			t.status === 'blocked' && (t.blockReason as SpaceBlockReason) === 'gate_rejected',
 	},
 	{ status: 'review', title: 'Awaiting Review', variant: 'purple' },
@@ -101,7 +124,12 @@ const ACTION_GROUPS: StatusGroupDef[] = [
 		status: 'blocked',
 		title: 'Blocked',
 		variant: 'yellow',
-		filterFn: (t) =>
+		// Server-side: include every blocked row whose reason is NOT one of the
+		// attention-required values (plus null reasons). Mirrors the legacy
+		// client-side `!ATTENTION_BLOCK_REASONS.includes(...)` filter so the
+		// totals stay disjoint from the two attention buckets above.
+		blockReasonNotIn: ATTENTION_BLOCK_REASONS,
+		matchFn: (t) =>
 			t.status === 'blocked' &&
 			!ATTENTION_BLOCK_REASONS.includes(t.blockReason as SpaceBlockReason),
 	},
@@ -309,6 +337,9 @@ function TaskDependencyBadges({
 	);
 }
 
+/** Page size for per-group pagination in the Tasks view. */
+const TASK_GROUP_PAGE_SIZE = 10;
+
 /** Task group card with colored header, matching RoomTasks.TaskGroup style */
 function TaskGroup({
 	title,
@@ -317,6 +348,7 @@ function TaskGroup({
 	tasks,
 	taskById,
 	onTaskClick,
+	pagination,
 }: {
 	title: string;
 	count: number;
@@ -324,6 +356,19 @@ function TaskGroup({
 	tasks: SpaceTask[];
 	taskById: ReadonlyMap<string, SpaceTask>;
 	onTaskClick?: (taskId: string) => void;
+	/**
+	 * Optional pagination footer rendered when the group's total exceeds the
+	 * page size. Encapsulates Prev/Next/range-text so the parent group wrapper
+	 * owns offset state while this card stays presentation-only.
+	 */
+	pagination?: {
+		offset: number;
+		limit: number;
+		total: number;
+		onPrev: () => void;
+		onNext: () => void;
+		isLoading?: boolean;
+	};
 }) {
 	const headerStyles: Record<string, string> = {
 		default: '',
@@ -352,6 +397,8 @@ function TaskGroup({
 		gray: 'border-dark-700',
 	};
 
+	const showPagination = !!pagination && pagination.total > pagination.limit;
+
 	return (
 		<div class={`bg-dark-850 border rounded-xl overflow-hidden ${borderStyles[variant]}`}>
 			<div
@@ -366,6 +413,80 @@ function TaskGroup({
 					<TaskItem key={task.id} task={task} taskById={taskById} onClick={onTaskClick} />
 				))}
 			</div>
+			{showPagination && pagination && (
+				<TaskGroupPagination
+					offset={pagination.offset}
+					limit={pagination.limit}
+					total={pagination.total}
+					pageSize={tasks.length}
+					onPrev={pagination.onPrev}
+					onNext={pagination.onNext}
+					isLoading={pagination.isLoading}
+				/>
+			)}
+		</div>
+	);
+}
+
+/**
+ * Footer row rendered below a paginated `TaskGroup` when the total row count
+ * exceeds the page size. Shows "Showing X–Y of Z" with Prev/Next buttons.
+ *
+ * `pageSize` is the actual length of the current page (may be < `limit` on
+ * the last page); used to compute the "Y" of "X–Y of Z" exactly without
+ * needing an extra round-trip to the server.
+ */
+export function TaskGroupPagination({
+	offset,
+	limit,
+	total,
+	pageSize,
+	onPrev,
+	onNext,
+	isLoading,
+}: {
+	offset: number;
+	limit: number;
+	total: number;
+	pageSize: number;
+	onPrev: () => void;
+	onNext: () => void;
+	isLoading?: boolean;
+}) {
+	const start = pageSize === 0 ? 0 : offset + 1;
+	const end = offset + pageSize;
+	const prevDisabled = offset === 0 || isLoading;
+	const nextDisabled = offset + limit >= total || isLoading;
+
+	const buttonClass =
+		'px-2 py-1 text-xs rounded text-gray-300 hover:bg-dark-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent';
+
+	return (
+		<div
+			data-testid="task-group-pagination"
+			class="flex items-center justify-between px-4 py-2 border-t border-dark-700 bg-dark-900/30"
+		>
+			<button
+				type="button"
+				class={buttonClass}
+				disabled={prevDisabled}
+				data-testid="task-group-prev"
+				onClick={onPrev}
+			>
+				← Prev
+			</button>
+			<span class="text-xs text-gray-500" data-testid="task-group-range">
+				Showing {start}–{end} of {total}
+			</span>
+			<button
+				type="button"
+				class={buttonClass}
+				disabled={nextDisabled}
+				data-testid="task-group-next"
+				onClick={onNext}
+			>
+				Next →
+			</button>
 		</div>
 	);
 }
@@ -468,7 +589,9 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 		if (activeTab === 'scheduled') return [];
 		const predicate = TAB_PREDICATES[activeTab as Exclude<TaskFilterTab, 'scheduled'>];
 		if (!predicate) return [];
-		return [...tasks].filter(predicate).sort((a, b) => b.updatedAt - a.updatedAt);
+		// Used only to drive the tab-empty-state decision; the per-group
+		// content is fetched server-side by `PaginatedTaskGroup`.
+		return tasks.filter(predicate);
 	}, [tasks, activeTab]);
 
 	// Build the dep lookup once per render of the list — O(N) total rather
@@ -568,7 +691,7 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 					<EmptyTabState tab={activeTab} />
 				) : (
 					<TaskGroupList
-						tasks={filteredTasks}
+						tasks={tasks}
 						taskById={taskById}
 						tab={activeTab as Exclude<TaskFilterTab, 'scheduled'>}
 						onTaskClick={onSelectTask}
@@ -698,21 +821,137 @@ function TaskGroupList({
 	return (
 		<div class="space-y-4">
 			{groups.map((group) => {
-				const filterFn = group.filterFn ?? ((t: SpaceTask) => t.status === group.status);
-				const groupTasks = tasks.filter(filterFn);
-				if (groupTasks.length === 0) return null;
+				// Compute the badge count from the full `tasks` signal so it stays
+				// in sync with real-time updates (e.g. a task transitions from
+				// `open` to `in_progress` — the new "In Progress" badge updates
+				// before the paginated fetch lands). The actual page contents are
+				// fetched server-side from `PaginatedTaskGroup`.
+				const matchFn = group.matchFn ?? ((t: SpaceTask) => t.status === group.status);
+				const localCount = tasks.filter(matchFn).length;
+
+				// Skip rendering empty groups, mirroring the legacy behaviour.
+				// Using the local count here means we don't fire a network
+				// request just to learn there's nothing to show.
+				if (localCount === 0) return null;
+
 				return (
-					<TaskGroup
-						key={group.title}
-						title={group.title}
-						count={groupTasks.length}
-						variant={group.variant}
-						tasks={groupTasks}
+					<PaginatedTaskGroup
+						key={`${tab}-${group.title}`}
+						group={group}
+						localCount={localCount}
 						taskById={taskById}
 						onTaskClick={onTaskClick}
 					/>
 				);
 			})}
 		</div>
+	);
+}
+
+/**
+ * Wrapper that owns per-group pagination state. Fetches a single page of
+ * tasks for the group's status (and optional `blockReason` filter) on mount
+ * and on offset changes via `spaceStore.fetchTaskGroup`.
+ *
+ * Parent renders the badge count from the live `tasks` signal so the header
+ * updates instantly on real-time task changes; the paginated body is fetched
+ * lazily and shows a loading shim during the round-trip. When a real-time
+ * `space.task.updated` event lands while a page is on screen, we also re-fetch
+ * the current page so paginated rows reflect the change.
+ */
+function PaginatedTaskGroup({
+	group,
+	localCount,
+	taskById,
+	onTaskClick,
+}: {
+	group: StatusGroupDef;
+	localCount: number;
+	taskById: ReadonlyMap<string, SpaceTask>;
+	onTaskClick?: (taskId: string) => void;
+}) {
+	const [offset, setOffset] = useState(0);
+	const [page, setPage] = useState<{ tasks: SpaceTask[]; total: number }>({
+		tasks: [],
+		total: 0,
+	});
+	const [loading, setLoading] = useState(false);
+
+	// Reset offset to 0 if the group identity changes (e.g. user switches tab).
+	// Using the title + status combo as the key avoids stale offsets when
+	// remounting under a different tab.
+	const groupKey = `${group.title}-${group.status}-${group.blockReason ?? ''}`;
+	useEffect(() => {
+		setOffset(0);
+	}, [groupKey]);
+
+	// Re-fetch when the local count changes too — keeps the visible page
+	// fresh when tasks are added, updated, or removed without forcing the
+	// user to click Prev/Next. The local count is derived from the same
+	// real-time `tasks` signal that drives badge counts.
+	useEffect(() => {
+		let cancelled = false;
+		setLoading(true);
+		spaceStore
+			.fetchTaskGroup(group.status, {
+				blockReason: group.blockReason,
+				blockReasonNotIn: group.blockReasonNotIn,
+				limit: TASK_GROUP_PAGE_SIZE,
+				offset,
+			})
+			.then((result) => {
+				if (cancelled) return;
+				setPage(result);
+
+				// Clamp offset if total shrank (e.g. tasks moved to another
+				// status while the user was on a deeper page). If the current
+				// offset now points past the end, jump back one page so the
+				// user keeps seeing content rather than an empty card.
+				if (result.total > 0 && offset >= result.total) {
+					const lastPageOffset =
+						Math.max(0, Math.ceil(result.total / TASK_GROUP_PAGE_SIZE) - 1) * TASK_GROUP_PAGE_SIZE;
+					setOffset(lastPageOffset);
+				}
+			})
+			.catch(() => {
+				if (cancelled) return;
+				// Fall back to an empty page on error — group will collapse via
+				// the localCount === 0 check on next render if the count is
+				// also zero, otherwise the user can hit Prev/Next to retry.
+				setPage({ tasks: [], total: 0 });
+			})
+			.finally(() => {
+				if (cancelled) return;
+				setLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+		// `groupKey` captures all server-filter inputs; `localCount` triggers
+		// a refresh on real-time changes; `offset` drives Prev/Next.
+	}, [groupKey, offset, localCount]);
+
+	// Use the server total once we have it; before the first fetch resolves,
+	// fall back to the local count so the header doesn't flash "(0)" for
+	// non-empty groups during initial load.
+	const headerCount = page.total || localCount;
+
+	return (
+		<TaskGroup
+			title={group.title}
+			count={headerCount}
+			variant={group.variant}
+			tasks={page.tasks}
+			taskById={taskById}
+			onTaskClick={onTaskClick}
+			pagination={{
+				offset,
+				limit: TASK_GROUP_PAGE_SIZE,
+				total: page.total,
+				onPrev: () => setOffset((o) => Math.max(0, o - TASK_GROUP_PAGE_SIZE)),
+				onNext: () => setOffset((o) => o + TASK_GROUP_PAGE_SIZE),
+				isLoading: loading,
+			}}
+		/>
 	);
 }

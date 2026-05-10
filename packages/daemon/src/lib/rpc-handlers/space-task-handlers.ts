@@ -12,7 +12,10 @@ import {
 	isWorkflowRecoveryTransition,
 	type CreateSpaceTaskParams,
 	type MessageHub,
+	type PaginatedSpaceTaskResult,
+	type SpaceBlockReason,
 	type SpaceTask,
+	type SpaceTaskStatus,
 	type UpdateSpaceTaskParams,
 } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
@@ -85,8 +88,35 @@ export function setupSpaceTaskHandlers(
 	});
 
 	// ─── spaceTask.list ─────────────────────────────────────────────────────────
+	//
+	// Two response shapes for backward compatibility:
+	//
+	//   1. Legacy / overview call: `{ spaceId, includeArchived? }` →
+	//      returns `SpaceTask[]` (full list, no pagination). Used by the
+	//      initial space-overview load, sidebar badge counts, and tab counts.
+	//
+	//   2. Paginated single-group call: any of `status`, `limit`, `offset`,
+	//      or `blockReason` provided → returns `PaginatedSpaceTaskResult`
+	//      `{ tasks, total }`. Used by the Tasks view's per-group Prev/Next
+	//      pagination (10 items per status group).
+	//
+	// `blockReason` is treated as a tri-state filter: omitted (undefined) =
+	// ignore the column; `null` = match rows with no reason set; a value =
+	// match exactly. The Action tab uses this to split blocked rows into
+	// "Needs Input" / "Gate Pending" / generic-"Blocked" buckets. `blockReason`
+	// requires `status === 'blocked'` — combining it with another status
+	// filter would silently return an empty page (the data shape doesn't
+	// support that combination), so we reject it loudly instead.
 	messageHub.onRequest('spaceTask.list', async (data) => {
-		const params = data as { spaceId: string; includeArchived?: boolean };
+		const params = data as {
+			spaceId: string;
+			includeArchived?: boolean;
+			status?: SpaceTaskStatus;
+			blockReason?: SpaceBlockReason | null;
+			blockReasonNotIn?: SpaceBlockReason[];
+			limit?: number;
+			offset?: number;
+		};
 
 		if (!params.spaceId) {
 			throw new Error('spaceId is required');
@@ -99,7 +129,48 @@ export function setupSpaceTaskHandlers(
 		}
 
 		const taskManager = taskManagerFactory(params.spaceId);
-		return taskManager.listTasks(params.includeArchived ?? false);
+
+		const usePagination =
+			params.status !== undefined ||
+			params.limit !== undefined ||
+			params.offset !== undefined ||
+			params.blockReason !== undefined ||
+			params.blockReasonNotIn !== undefined;
+
+		if (!usePagination) {
+			return taskManager.listTasks(params.includeArchived ?? false);
+		}
+
+		if (params.status === undefined) {
+			throw new Error('status is required when paginating spaceTask.list');
+		}
+		if (
+			(params.blockReason !== undefined || params.blockReasonNotIn !== undefined) &&
+			params.status !== 'blocked'
+		) {
+			throw new Error("blockReason / blockReasonNotIn filter requires status === 'blocked'");
+		}
+		if (params.blockReason !== undefined && params.blockReasonNotIn !== undefined) {
+			throw new Error('blockReason and blockReasonNotIn are mutually exclusive');
+		}
+
+		const limit = params.limit ?? 10;
+		const offset = params.offset ?? 0;
+		if (!Number.isFinite(limit) || limit <= 0) {
+			throw new Error('limit must be a positive number');
+		}
+		if (!Number.isFinite(offset) || offset < 0) {
+			throw new Error('offset must be a non-negative number');
+		}
+
+		const result: PaginatedSpaceTaskResult = await taskManager.listTasksByStatusPaginated(
+			params.status,
+			params.blockReason,
+			limit,
+			offset,
+			params.blockReasonNotIn
+		);
+		return result;
 	});
 
 	// ─── spaceTask.get ──────────────────────────────────────────────────────────

@@ -103,6 +103,10 @@ function createMockTaskManager(task: SpaceTask | null = mockTask): SpaceTaskMana
 		createTask: mock(async () => task!),
 		getTask: mock(async () => task),
 		listTasks: mock(async () => (task ? [task] : [])),
+		listTasksByStatusPaginated: mock(async () => ({
+			tasks: task ? [task] : [],
+			total: task ? 1 : 0,
+		})),
 		setTaskStatus: mock(async () => ({ ...task!, status: 'in_progress' as const })),
 		updateTask: mock(async () => ({ ...task!, title: 'Updated' })),
 		updateTaskProgress: mock(async () => ({ ...task!, progress: 50 })),
@@ -290,6 +294,128 @@ describe('space-task-handlers', () => {
 			await expect(call('spaceTask.list', { spaceId: 'ghost' })).rejects.toThrow(
 				'Space not found: ghost'
 			);
+		});
+
+		describe('paginated mode', () => {
+			it('routes to listTasksByStatusPaginated with status + limit + offset', async () => {
+				const result = await call('spaceTask.list', {
+					spaceId: 'space-1',
+					status: 'in_progress',
+					limit: 10,
+					offset: 20,
+				});
+
+				expect(taskManager.listTasksByStatusPaginated).toHaveBeenCalledWith(
+					'in_progress',
+					undefined,
+					10,
+					20,
+					undefined
+				);
+				expect(result).toEqual({ tasks: [mockTask], total: 1 });
+			});
+
+			it('forwards a blockReason filter when provided', async () => {
+				await call('spaceTask.list', {
+					spaceId: 'space-1',
+					status: 'blocked',
+					blockReason: 'human_input_requested',
+					limit: 10,
+				});
+
+				expect(taskManager.listTasksByStatusPaginated).toHaveBeenCalledWith(
+					'blocked',
+					'human_input_requested',
+					10,
+					0,
+					undefined
+				);
+			});
+
+			it('forwards an explicit null blockReason', async () => {
+				await call('spaceTask.list', {
+					spaceId: 'space-1',
+					status: 'blocked',
+					blockReason: null,
+				});
+
+				expect(taskManager.listTasksByStatusPaginated).toHaveBeenCalledWith(
+					'blocked',
+					null,
+					10, // default limit
+					0,
+					undefined
+				);
+			});
+
+			it('forwards a blockReasonNotIn filter', async () => {
+				await call('spaceTask.list', {
+					spaceId: 'space-1',
+					status: 'blocked',
+					blockReasonNotIn: ['human_input_requested', 'gate_rejected'],
+				});
+
+				expect(taskManager.listTasksByStatusPaginated).toHaveBeenCalledWith(
+					'blocked',
+					undefined,
+					10,
+					0,
+					['human_input_requested', 'gate_rejected']
+				);
+			});
+
+			it('rejects blockReason without status=blocked', async () => {
+				await expect(
+					call('spaceTask.list', {
+						spaceId: 'space-1',
+						status: 'in_progress',
+						blockReason: 'human_input_requested',
+					})
+				).rejects.toThrow(/status === 'blocked'/);
+			});
+
+			it('rejects combining blockReason and blockReasonNotIn', async () => {
+				await expect(
+					call('spaceTask.list', {
+						spaceId: 'space-1',
+						status: 'blocked',
+						blockReason: 'human_input_requested',
+						blockReasonNotIn: ['gate_rejected'],
+					})
+				).rejects.toThrow(/mutually exclusive/);
+			});
+
+			it('rejects pagination params without a status', async () => {
+				await expect(call('spaceTask.list', { spaceId: 'space-1', limit: 10 })).rejects.toThrow(
+					/status is required/
+				);
+			});
+
+			it('rejects non-positive limit', async () => {
+				await expect(
+					call('spaceTask.list', { spaceId: 'space-1', status: 'open', limit: 0 })
+				).rejects.toThrow(/limit must be a positive number/);
+				await expect(
+					call('spaceTask.list', { spaceId: 'space-1', status: 'open', limit: -1 })
+				).rejects.toThrow(/limit must be a positive number/);
+			});
+
+			it('rejects negative offset', async () => {
+				await expect(
+					call('spaceTask.list', { spaceId: 'space-1', status: 'open', offset: -1 })
+				).rejects.toThrow(/offset must be a non-negative number/);
+			});
+
+			it('defaults limit to 10 and offset to 0 when only status provided', async () => {
+				await call('spaceTask.list', { spaceId: 'space-1', status: 'open' });
+				expect(taskManager.listTasksByStatusPaginated).toHaveBeenCalledWith(
+					'open',
+					undefined,
+					10,
+					0,
+					undefined
+				);
+			});
 		});
 	});
 
