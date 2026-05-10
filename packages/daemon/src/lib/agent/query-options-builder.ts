@@ -58,6 +58,7 @@ import {
 	defaultBuiltinSkillPluginRoot,
 } from './builtin-skill-plugin-wrapper';
 import { getCoordinatorAgents } from './coordinator-agents';
+import { createLoopDetectorHook, DEFAULT_LOOP_DETECTOR_CONFIG } from './loop-detector-hook';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 
 export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
@@ -1021,29 +1022,46 @@ CRITICAL RULES:
 
 	/**
 	 * Build hooks configuration
+	 *
+	 * Always installs the loop-detector hook (one shared matcher across the
+	 * tracked tools — see DEFAULT_LOOP_DETECTOR_CONFIG.thresholds). Tool guards
+	 * from the workflow definition are appended on top.
 	 */
 	private buildHooks(): Options['hooks'] {
-		const guards = this.ctx.toolGuards;
-		if (!guards?.length) return {};
-
 		const hooks: NonNullable<Options['hooks']> = {};
-		// Group guards by matcher (tool name) to create one matcher entry per tool.
-		// Skip malformed entries (null, non-object) so a bad persisted workflow
-		// cannot crash query startup.
-		const byMatcher = new Map<string, DeclarativeToolGuard[]>();
-		for (const guard of guards) {
-			if (!guard || typeof guard !== 'object' || !guard.matcher) continue;
-			const existing = byMatcher.get(guard.matcher) ?? [];
-			existing.push(guard);
-			byMatcher.set(guard.matcher, existing);
+		const preToolUse: NonNullable<Options['hooks']>['PreToolUse'] = [];
+
+		// Loop detector: matcher is a regex of the tracked tool names so the
+		// SDK only invokes the hook for those tools. The hook itself is also
+		// defensive (it no-ops for untracked tools).
+		const trackedTools = Object.keys(DEFAULT_LOOP_DETECTOR_CONFIG.thresholds);
+		if (trackedTools.length > 0) {
+			preToolUse.push({
+				matcher: trackedTools.join('|'),
+				hooks: [createLoopDetectorHook()],
+			});
 		}
 
-		const preToolUse: NonNullable<Options['hooks']>['PreToolUse'] = [];
-		for (const [matcher, matcherGuards] of byMatcher) {
-			preToolUse.push({
-				matcher,
-				hooks: matcherGuards.map(compileToolGuard),
-			});
+		// Workflow tool guards (declarative deny/allow rules) layered on top.
+		const guards = this.ctx.toolGuards;
+		if (guards?.length) {
+			// Group guards by matcher (tool name) to create one matcher entry per tool.
+			// Skip malformed entries (null, non-object) so a bad persisted workflow
+			// cannot crash query startup.
+			const byMatcher = new Map<string, DeclarativeToolGuard[]>();
+			for (const guard of guards) {
+				if (!guard || typeof guard !== 'object' || !guard.matcher) continue;
+				const existing = byMatcher.get(guard.matcher) ?? [];
+				existing.push(guard);
+				byMatcher.set(guard.matcher, existing);
+			}
+
+			for (const [matcher, matcherGuards] of byMatcher) {
+				preToolUse.push({
+					matcher,
+					hooks: matcherGuards.map(compileToolGuard),
+				});
+			}
 		}
 
 		if (preToolUse.length > 0) {
