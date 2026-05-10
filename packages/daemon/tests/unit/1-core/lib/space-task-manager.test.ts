@@ -812,11 +812,12 @@ describe('SpaceTaskManager', () => {
 	});
 
 	describe('blockDependentTasks (failure cascade)', () => {
-		it('blocks open tasks that depend on the failed task', async () => {
+		it('blocks in_progress tasks that depend on the failed task', async () => {
 			const a = await manager.createTask({ title: 'A', description: '' });
 			const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
 
 			await manager.startTask(a.id);
+			await manager.startTask(b.id); // B is in_progress when A fails
 			await manager.failTask(a.id, 'crashed', 'agent_crashed');
 
 			const cascaded = await manager.blockDependentTasks(a.id);
@@ -826,12 +827,34 @@ describe('SpaceTaskManager', () => {
 			expect(cascaded[0].blockReason).toBe('dependency_failed');
 		});
 
-		it('cascades recursively through dependency chain', async () => {
+		it('does NOT block open tasks waiting on the failed dependency', async () => {
+			// Regression: a daemon restart cascades blocked status from a stalled
+			// in_progress task to all dependents. Open tasks waiting on the dep
+			// must remain `open` so the runtime can pick them up once the
+			// dependency eventually completes (manual retry, etc.).
+			const a = await manager.createTask({ title: 'A', description: '' });
+			const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
+
+			await manager.startTask(a.id);
+			await manager.failTask(a.id, 'crashed', 'agent_crashed');
+
+			// B is still `open` (never started)
+			const cascaded = await manager.blockDependentTasks(a.id);
+			expect(cascaded).toHaveLength(0);
+			const bAfter = (await manager.getTask(b.id))!;
+			expect(bAfter.status).toBe('open');
+			expect(bAfter.blockReason ?? null).toBeNull();
+		});
+
+		it('cascades recursively through in_progress dependency chain', async () => {
 			const a = await manager.createTask({ title: 'A', description: '' });
 			const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
 			const c = await manager.createTask({ title: 'C', description: '', dependsOn: [b.id] });
 
+			// All three are in_progress when A fails.
 			await manager.startTask(a.id);
+			await manager.startTask(b.id);
+			await manager.startTask(c.id);
 			await manager.failTask(a.id, 'crashed');
 
 			const cascaded = await manager.blockDependentTasks(a.id);
@@ -845,13 +868,12 @@ describe('SpaceTaskManager', () => {
 			expect(cBlocked.blockReason).toBe('dependency_failed');
 		});
 
-		it('does not cascade to in_progress or done tasks', async () => {
+		it('does not cascade to open or done tasks', async () => {
 			const a = await manager.createTask({ title: 'A', description: '' });
 			const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
 			const c = await manager.createTask({ title: 'C', description: '', dependsOn: [a.id] });
 
-			// Start B (in_progress) and complete C (done) before A fails
-			await manager.startTask(b.id);
+			// Complete C (done); leave B in `open` before A fails.
 			await manager.startTask(c.id);
 			await manager.completeTask(c.id, 'done');
 
@@ -859,9 +881,9 @@ describe('SpaceTaskManager', () => {
 			await manager.failTask(a.id, 'crashed');
 
 			const cascaded = await manager.blockDependentTasks(a.id);
-			// Neither B (in_progress) nor C (done) should be affected
+			// Neither B (open) nor C (done) should be affected.
 			expect(cascaded).toHaveLength(0);
-			expect((await manager.getTask(b.id))!.status).toBe('in_progress');
+			expect((await manager.getTask(b.id))!.status).toBe('open');
 			expect((await manager.getTask(c.id))!.status).toBe('done');
 		});
 
@@ -875,7 +897,10 @@ describe('SpaceTaskManager', () => {
 				dependsOn: [a.id, b.id],
 			});
 
+			// Both B and D are in_progress when A fails.
 			await manager.startTask(a.id);
+			await manager.startTask(b.id);
+			await manager.startTask(d.id);
 			await manager.failTask(a.id, 'crashed');
 
 			// Should not throw; both B and D should end up blocked
@@ -888,6 +913,154 @@ describe('SpaceTaskManager', () => {
 		it('returns empty array when no dependents exist', async () => {
 			const a = await manager.createTask({ title: 'A', description: '' });
 			const cascaded = await manager.blockDependentTasks(a.id);
+			expect(cascaded).toHaveLength(0);
+		});
+	});
+
+	describe('cancelDependentTasks (cancellation cascade)', () => {
+		it('cancels both open and in_progress dependents when parent is cancelled', async () => {
+			const a = await manager.createTask({ title: 'A', description: '' });
+			const bOpen = await manager.createTask({
+				title: 'B',
+				description: '',
+				dependsOn: [a.id],
+			});
+			const cInProgress = await manager.createTask({
+				title: 'C',
+				description: '',
+				dependsOn: [a.id],
+			});
+			await manager.startTask(cInProgress.id);
+
+			// Cancel the parent.
+			await manager.startTask(a.id);
+			await manager.setTaskStatus(a.id, 'cancelled');
+
+			const cascaded = await manager.cancelDependentTasks(a.id);
+			const ids = cascaded.map((t) => t.id).sort();
+			expect(ids).toEqual([bOpen.id, cInProgress.id].sort());
+
+			expect((await manager.getTask(bOpen.id))!.status).toBe('cancelled');
+			expect((await manager.getTask(cInProgress.id))!.status).toBe('cancelled');
+		});
+
+		it('cascades recursively through dependency chain', async () => {
+			const a = await manager.createTask({ title: 'A', description: '' });
+			const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
+			const c = await manager.createTask({ title: 'C', description: '', dependsOn: [b.id] });
+
+			await manager.startTask(a.id);
+			await manager.setTaskStatus(a.id, 'cancelled');
+
+			const cascaded = await manager.cancelDependentTasks(a.id);
+			expect(cascaded).toHaveLength(2);
+			expect((await manager.getTask(b.id))!.status).toBe('cancelled');
+			expect((await manager.getTask(c.id))!.status).toBe('cancelled');
+		});
+
+		it('does not cascade to done tasks', async () => {
+			const a = await manager.createTask({ title: 'A', description: '' });
+			const done = await manager.createTask({
+				title: 'Done',
+				description: '',
+				dependsOn: [a.id],
+			});
+			await manager.startTask(done.id);
+			await manager.completeTask(done.id, 'finished');
+
+			await manager.startTask(a.id);
+			await manager.setTaskStatus(a.id, 'cancelled');
+
+			const cascaded = await manager.cancelDependentTasks(a.id);
+			expect(cascaded).toHaveLength(0);
+			expect((await manager.getTask(done.id))!.status).toBe('done');
+		});
+
+		it('traverses through already-cancelled intermediates to reach open descendants', async () => {
+			// Regression: A → B → C, with B already cancelled and C still open.
+			// Calling cancelDependentTasks(A) must walk through B to cancel C,
+			// otherwise C is left stranded with an unmet dependency on B.
+			const a = await manager.createTask({ title: 'A', description: '' });
+			const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
+			const c = await manager.createTask({ title: 'C', description: '', dependsOn: [b.id] });
+
+			// B was cancelled before A.
+			await manager.startTask(b.id);
+			await manager.setTaskStatus(b.id, 'cancelled');
+
+			// A is now cancelled; the cascade must reach C through the cancelled B.
+			await manager.startTask(a.id);
+			await manager.setTaskStatus(a.id, 'cancelled');
+
+			const cascaded = await manager.cancelDependentTasks(a.id);
+			// Only C transitions (B was already cancelled and is just a waypoint).
+			expect(cascaded.map((t) => t.id)).toContain(c.id);
+			expect((await manager.getTask(c.id))!.status).toBe('cancelled');
+			expect((await manager.getTask(b.id))!.status).toBe('cancelled');
+		});
+
+		it('does not cascade through done/review/approved/blocked intermediates', async () => {
+			// Regression for over-propagation: if A is retried→cancelled, B (deps:[A])
+			// is already `done`, and C (deps:[B]) is still `open`, cancelling A must
+			// NOT cancel C — B is a satisfied dependency for C.
+			const a = await manager.createTask({ title: 'A', description: '' });
+			const bDone = await manager.createTask({
+				title: 'B-done',
+				description: '',
+				dependsOn: [a.id],
+			});
+			const cOpen = await manager.createTask({
+				title: 'C-open',
+				description: '',
+				dependsOn: [bDone.id],
+			});
+
+			// B finished successfully.
+			await manager.startTask(bDone.id);
+			await manager.completeTask(bDone.id, 'ok');
+
+			// A is now cancelled (e.g., retried then aborted).
+			await manager.startTask(a.id);
+			await manager.setTaskStatus(a.id, 'cancelled');
+
+			const cascaded = await manager.cancelDependentTasks(a.id);
+			// Neither B (done) nor C (downstream of done) should be cancelled.
+			expect(cascaded).toHaveLength(0);
+			expect((await manager.getTask(bDone.id))!.status).toBe('done');
+			expect((await manager.getTask(cOpen.id))!.status).toBe('open');
+		});
+
+		it('does not cascade through a blocked intermediate', async () => {
+			// Same shape as above but B is `blocked` (transient/retryable). Its
+			// downstream C must still not be cancelled — once B is unblocked C
+			// becomes runnable again.
+			const a = await manager.createTask({ title: 'A', description: '' });
+			const bBlocked = await manager.createTask({
+				title: 'B-blocked',
+				description: '',
+				dependsOn: [a.id],
+			});
+			const cOpen = await manager.createTask({
+				title: 'C-open',
+				description: '',
+				dependsOn: [bBlocked.id],
+			});
+
+			await manager.startTask(bBlocked.id);
+			await manager.failTask(bBlocked.id, 'transient');
+
+			await manager.startTask(a.id);
+			await manager.setTaskStatus(a.id, 'cancelled');
+
+			const cascaded = await manager.cancelDependentTasks(a.id);
+			expect(cascaded).toHaveLength(0);
+			expect((await manager.getTask(bBlocked.id))!.status).toBe('blocked');
+			expect((await manager.getTask(cOpen.id))!.status).toBe('open');
+		});
+
+		it('returns empty array when no dependents exist', async () => {
+			const a = await manager.createTask({ title: 'A', description: '' });
+			const cascaded = await manager.cancelDependentTasks(a.id);
 			expect(cascaded).toHaveLength(0);
 		});
 	});
