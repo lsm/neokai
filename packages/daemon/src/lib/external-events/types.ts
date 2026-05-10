@@ -17,6 +17,10 @@
  * to recognize the same external event across webhook + polling observations.
  * It must be stable across observations of the same external event from any
  * channel and unique within `(spaceId, source)`.
+ *
+ * Source-specific metadata (PR number, repo owner, branch, etc.) lives in the
+ * opaque `payload` object. The event pipeline is intentionally agnostic to
+ * task-system concerns — task matching is the responsibility of subscribers.
  */
 export interface ExternalEvent {
 	/** Unique event ID (UUID) assigned by the extension for this publication. */
@@ -33,14 +37,6 @@ export interface ExternalEvent {
 	source: string;
 	/** Optional source-native event id / delivery id for diagnostics. */
 	sourceEventId?: string;
-	/** Optional PR number used by core task resolution (GitHub). */
-	prNumber?: number;
-	/** Repository owner (lowercase) for repo-scoped matching. */
-	repoOwner?: string;
-	/** Repository name (lowercase) for repo-scoped matching. */
-	repoName?: string;
-	/** Branch name, if available. */
-	branch?: string;
 	/** Human-readable summary for agent consumption. */
 	summary: string;
 	/** External URL (e.g. GitHub PR link). */
@@ -52,37 +48,22 @@ export interface ExternalEvent {
 	 * webhook and polling observations of the same external event.
 	 */
 	dedupeKey: string;
-	/**
-	 * Core enrichment filled by `ExternalEventTaskResolver` after publication.
-	 * Adapters should leave this unset unless the source itself has a trusted
-	 * first-party task id.
-	 */
-	routedTaskId?: string;
 }
 
 /**
  * Lifecycle states for the source event row in `space_external_events`.
  *
- * Retryable: `published`, `routed`, `delivery_failed` — source duplicates
- * re-emit so delivery can retry.
+ * Retryable: `published` — source duplicates re-emit so delivery can retry.
  *
- * Terminal: `delivered`, `failed`, `ignored`, `ambiguous` — source duplicates
- * are short-circuited.
+ * Terminal: `delivered`, `failed`, `ignored` — source duplicates are
+ * short-circuited.
  */
-export type ExternalEventState =
-	| 'published'
-	| 'routed'
-	| 'delivered'
-	| 'delivery_failed'
-	| 'failed'
-	| 'ignored'
-	| 'ambiguous';
+export type ExternalEventState = 'published' | 'delivered' | 'failed' | 'ignored';
 
 export const TERMINAL_EVENT_STATES: ReadonlySet<ExternalEventState> = new Set<ExternalEventState>([
 	'delivered',
 	'failed',
 	'ignored',
-	'ambiguous',
 ]);
 
 /**

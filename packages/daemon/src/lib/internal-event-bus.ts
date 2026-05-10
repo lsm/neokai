@@ -27,6 +27,7 @@
  */
 
 import type { GlobalSettings } from '@neokai/shared';
+import type { ExternalEventPublishedPayload } from './external-events/external-event-service';
 
 export interface HandlerFailure {
 	/** Subscriber name that registered the failing handler. */
@@ -348,6 +349,13 @@ export interface SettingsEvents {
 }
 
 /**
+ * External event domain events.
+ */
+export interface ExternalEventEvents {
+	'externalEvent.published': ExternalEventPublishedPayload;
+}
+
+/**
  * Canonical daemon internal event map.
  *
  * Each domain should own its slice; this type is the intersection of all
@@ -358,7 +366,7 @@ export interface SettingsEvents {
  * migrated continue to flow through DaemonHub (`createDaemonHub`) and the
  * compatibility `DaemonEventMap`.
  */
-export interface DaemonInternalEventMap extends SettingsEvents {}
+export interface DaemonInternalEventMap extends SettingsEvents, ExternalEventEvents {}
 
 /**
  * Convenience factory typed with the canonical daemon internal event map.

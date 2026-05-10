@@ -120,7 +120,7 @@ export function validateGlobPattern(pattern: string): ValidationResult {
 /**
  * Allow-list of source identifiers known to the daemon. Extensions register
  * their identifier here so unknown/typo'd sources fail loudly at publish time
- * rather than silently storing topics that no router will ever match.
+ * rather than silently storing topics that no subscriber will ever match.
  */
 export const KNOWN_SOURCES: ReadonlySet<string> = new Set<string>(['github']);
 

@@ -590,6 +590,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   space_external_events — source-level dedup + state machine.
 	//   space_external_event_deliveries — per-subscription delivery lifecycle.
 	runMigration123(db);
+
+	// Migration 124: Simplify external-event schema.
+	//   - Remove pr_number, repo_owner, repo_name, branch, routed_task_id columns
+	//     from space_external_events (source-specific metadata now lives in payload_json).
+	//   - Simplify state machine: published → delivered | failed | ignored.
+	//     Remove 'routed', 'delivery_failed', 'ambiguous' states.
+	runMigration124(db);
 }
 
 /**
@@ -8420,4 +8427,202 @@ export function runMigration123(db: BunDatabase): void {
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_external_event_deliveries_key
 		ON space_external_event_deliveries(delivery_key)
 	`);
+}
+
+/**
+ * Migration 124: Simplify external-event schema.
+ *
+ * The event pipeline is now intentionally agnostic to task-system concerns.
+ * Source-specific metadata (PR number, repo owner, branch) lives in the opaque
+ * payload_json column. The state machine is simplified from 7 states to 4.
+ *
+ * Changes to space_external_events:
+ *   - DROP pr_number, repo_owner, repo_name, branch, routed_task_id columns.
+ *   - Backfill legacy columns (pr_number, repo_owner, repo_name, branch,
+ *     routed_task_id) into payload_json so subscribers retain source-specific
+ *     metadata and historical routing data is preserved for forensic purposes.
+ *   - Migrate existing rows: 'routed' → 'published', 'delivery_failed' → 'published',
+ *     'ambiguous' → 'ignored'.
+ *   - Update CHECK constraint to ('published', 'delivered', 'failed', 'ignored').
+ *
+ * Note: SQLite does not support DROP COLUMN directly. We recreate the table.
+ * The rewrite is wrapped in a transaction with foreign keys disabled to prevent
+ * the child table (space_external_event_deliveries) from being cascade-deleted.
+ */
+export function runMigration124(db: BunDatabase): void {
+	// Crash-recovery: if a prior interrupted rewrite left the temp table
+	// behind, recover the data before proceeding. Two cases:
+	//   1. Old table missing, _new exists → rename _new to canonical.
+	//   2. Both exist (e.g. runMigration123 recreated an empty old table)
+	//      → drop the empty old table, rename _new to canonical.
+	const hasOldTable = db
+		.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='space_external_events'`)
+		.get();
+	const hasNewTable = db
+		.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='space_external_events_new'`)
+		.get();
+	if (hasNewTable) {
+		if (!hasOldTable) {
+			db.exec(`ALTER TABLE space_external_events_new RENAME TO space_external_events`);
+		} else {
+			// Both exist: the old table may be empty (recreated by M123).
+			// Check row counts to decide which has the real data.
+			const oldCount = db.prepare(`SELECT COUNT(*) AS n FROM space_external_events`).get() as {
+				n: number;
+			};
+			const newCount = db.prepare(`SELECT COUNT(*) AS n FROM space_external_events_new`).get() as {
+				n: number;
+			};
+			if (newCount.n > 0 && oldCount.n === 0) {
+				db.exec(`DROP TABLE space_external_events`);
+				db.exec(`ALTER TABLE space_external_events_new RENAME TO space_external_events`);
+			} else if (oldCount.n > 0 && newCount.n > 0) {
+				// Both have data — this should not happen, but preserve the
+				// canonical table and drop the temp table to avoid confusion.
+				db.exec(`DROP TABLE space_external_events_new`);
+			}
+		}
+	}
+
+	// Check if the old schema still exists (has pr_number column).
+	const hasOldSchema = db
+		.prepare(`SELECT 1 FROM pragma_table_info('space_external_events') WHERE name = 'pr_number'`)
+		.get();
+	if (!hasOldSchema) {
+		// Already migrated or fresh database with new schema.
+		return;
+	}
+
+	// Clean up any leftover temp table from a previous interrupted migration.
+	db.exec(`DROP TABLE IF EXISTS space_external_events_new`);
+
+	// Capture the original foreign_keys setting so we can restore it after
+	// the migration. This avoids side effects on callers that intentionally
+	// disabled FK checks on the same connection.
+	const originalFk = db.prepare(`PRAGMA foreign_keys`).get() as
+		| { foreign_keys: number }
+		| undefined;
+	const fkWasOn = originalFk ? originalFk.foreign_keys === 1 : true;
+
+	// Disable foreign keys before dropping the parent table so the child
+	// table (space_external_event_deliveries) is not cascade-deleted.
+	db.exec(`PRAGMA foreign_keys = OFF`);
+
+	try {
+		db.transaction(() => {
+			// 1. Backfill legacy columns into payload_json so subscribers retain
+			//    source-specific metadata after the columns are dropped.
+			//    Guard against malformed JSON: coerce invalid payloads to '{}' first.
+			//    Also coerce valid non-object roots (arrays, strings, numbers) to '{}'
+			//    so json_set can write object keys. json_type returns 'object' for '{}'.
+			//    Prefer existing payload values over legacy columns (payload was
+			//    already normalized by the ingestion pipeline; legacy columns may
+			//    contain padded/case-variant strings).
+			db.exec(`
+				UPDATE space_external_events
+				SET payload_json = '{}'
+				WHERE json_valid(payload_json) = 0
+				   OR json_type(payload_json) != 'object'
+			`);
+			db.exec(`
+				UPDATE space_external_events
+				SET payload_json = json_set(
+					payload_json,
+					'$.prNumber', COALESCE(json_extract(payload_json, '$.prNumber'), pr_number),
+					'$.repoOwner', COALESCE(json_extract(payload_json, '$.repoOwner'), NULLIF(repo_owner, '')),
+					'$.repoName', COALESCE(json_extract(payload_json, '$.repoName'), NULLIF(repo_name, '')),
+					'$.branch', COALESCE(json_extract(payload_json, '$.branch'), NULLIF(branch, ''))
+				)
+				WHERE json_valid(payload_json) = 1
+				  AND json_type(payload_json) = 'object'
+				  AND (pr_number IS NOT NULL
+				   OR NULLIF(repo_owner, '') IS NOT NULL
+				   OR NULLIF(repo_name, '') IS NOT NULL
+				   OR NULLIF(branch, '') IS NOT NULL)
+			`);
+
+			// 2. Preserve routed_task_id in payload for forensic/audit purposes.
+			//    The event pipeline is task-agnostic, but retaining the value aids
+			//    historical debugging and prevents data loss during upgrade.
+			db.exec(`
+				UPDATE space_external_events
+				SET payload_json = json_set(
+					payload_json,
+					'$.routedTaskId', COALESCE(json_extract(payload_json, '$.routedTaskId'), routed_task_id)
+				)
+				WHERE json_valid(payload_json) = 1
+				  AND json_type(payload_json) = 'object'
+				  AND routed_task_id IS NOT NULL
+			`);
+
+			// 3. Migrate state values.
+			db.exec(`
+				UPDATE space_external_events
+				SET state = CASE state
+					WHEN 'routed' THEN 'published'
+					WHEN 'delivery_failed' THEN 'published'
+					WHEN 'ambiguous' THEN 'ignored'
+					ELSE state
+				END
+				WHERE state IN ('routed', 'delivery_failed', 'ambiguous')
+			`);
+
+			// 3. Recreate table without task-specific columns.
+			db.exec(`
+				CREATE TABLE space_external_events_new (
+					id TEXT PRIMARY KEY,
+					space_id TEXT NOT NULL,
+					source TEXT NOT NULL,
+					topic TEXT NOT NULL,
+					dedupe_key TEXT NOT NULL,
+					occurred_at INTEGER NOT NULL,
+					ingested_at INTEGER NOT NULL,
+					source_event_id TEXT,
+					summary TEXT NOT NULL,
+					external_url TEXT,
+					payload_json TEXT NOT NULL,
+					state TEXT NOT NULL DEFAULT 'published'
+						CHECK(state IN ('published', 'delivered', 'failed', 'ignored')),
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL,
+					UNIQUE(space_id, source, dedupe_key),
+					FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+				)
+			`);
+
+			// 4. Copy data from old table to new table.
+			db.exec(`
+				INSERT INTO space_external_events_new (
+					id, space_id, source, topic, dedupe_key,
+					occurred_at, ingested_at, source_event_id,
+					summary, external_url, payload_json,
+					state, created_at, updated_at
+				)
+				SELECT
+					id, space_id, source, topic, dedupe_key,
+					occurred_at, ingested_at, source_event_id,
+					summary, external_url, payload_json,
+					state, created_at, updated_at
+				FROM space_external_events
+			`);
+
+			// 5. Drop old table and rename new one.
+			db.exec(`DROP TABLE space_external_events`);
+			db.exec(`ALTER TABLE space_external_events_new RENAME TO space_external_events`);
+
+			// 6. Recreate indexes.
+			db.exec(`
+				CREATE INDEX IF NOT EXISTS idx_space_external_events_lookup
+				ON space_external_events(space_id, source, dedupe_key)
+			`);
+			db.exec(`
+				CREATE INDEX IF NOT EXISTS idx_space_external_events_state
+				ON space_external_events(state, updated_at)
+			`);
+		})();
+	} finally {
+		// Restore the original foreign_keys setting instead of unconditionally
+		// enabling it, to avoid side effects on callers that managed FK state.
+		db.exec(`PRAGMA foreign_keys = ${fkWasOn ? 'ON' : 'OFF'}`);
+	}
 }

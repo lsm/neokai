@@ -5,9 +5,9 @@
  * Owns two tables introduced by the External Event Bus design:
  *
  *   • `space_external_events` — one row per `(spaceId, source, dedupeKey)` with
- *     a state machine (`published` → `routed` → `delivered`/`failed` etc.).
+ *     a state machine (`published` → `delivered` | `failed` | `ignored`).
  *   • `space_external_event_deliveries` — per-subscription delivery rows, keyed
- *     by `(eventId, deliveryKey)`, used by the router to advance source events
+ *     by `(eventId, deliveryKey)`, used by the workflow runtime to advance source events
  *     to terminal `delivered` only when every expected delivery succeeds.
  *
  * Source-agnostic: nothing in this file is GitHub-specific. Topic format is
@@ -40,14 +40,9 @@ interface ExternalEventRow {
 	occurred_at: number;
 	ingested_at: number;
 	source_event_id: string | null;
-	pr_number: number | null;
-	repo_owner: string | null;
-	repo_name: string | null;
-	branch: string | null;
 	summary: string;
 	external_url: string | null;
 	payload_json: string;
-	routed_task_id: string | null;
 	state: ExternalEventState;
 	created_at: number;
 	updated_at: number;
@@ -88,13 +83,12 @@ export class ExternalEventStore {
 	 * - Duplicate of a *terminal* prior observation: returns
 	 *   `{ duplicate: true, terminal: true, event }` carrying the original id.
 	 *   The caller is expected to short-circuit publication.
-	 * - Duplicate of a *retryable* prior observation (`published`, `routed`,
-	 *   `delivery_failed`): returns `{ duplicate: true, terminal: false, event }`
-	 *   carrying the original id so delivery can retry.
+	 * - Duplicate of a *retryable* prior observation (`published`): returns
+	 *   `{ duplicate: true, terminal: false, event }` carrying the original id
+	 *   so delivery can retry.
 	 *
-	 * Validation: topic must satisfy `validateGlobPattern` (literal — no `*`
-	 * needed but allowed by the same shape), source must be a known extension
-	 * identifier, and `(spaceId, dedupeKey)` must be present.
+	 * Validation: topic must satisfy `validateLiteralTopic`, source must be a
+	 * known extension identifier, and `(spaceId, dedupeKey)` must be present.
 	 */
 	store(event: ExternalEvent): StoreResult {
 		this.validate(event);
@@ -104,14 +98,12 @@ export class ExternalEventStore {
 			`INSERT INTO space_external_events (
 				id, space_id, source, topic, dedupe_key,
 				occurred_at, ingested_at, source_event_id,
-				pr_number, repo_owner, repo_name, branch,
-				summary, external_url, payload_json, routed_task_id,
+				summary, external_url, payload_json,
 				state, created_at, updated_at
 			) VALUES (
 				?, ?, ?, ?, ?,
 				?, ?, ?,
-				?, ?, ?, ?,
-				?, ?, ?, ?,
+				?, ?, ?,
 				'published', ?, ?
 			)
 			ON CONFLICT(space_id, source, dedupe_key) DO NOTHING`
@@ -126,14 +118,9 @@ export class ExternalEventStore {
 			event.occurredAt,
 			event.ingestedAt,
 			event.sourceEventId ?? null,
-			event.prNumber ?? null,
-			event.repoOwner ?? null,
-			event.repoName ?? null,
-			event.branch ?? null,
 			event.summary,
 			event.externalUrl ?? null,
 			JSON.stringify(event.payload ?? {}),
-			event.routedTaskId ?? null,
 			now,
 			now
 		);
@@ -196,7 +183,7 @@ export class ExternalEventStore {
 			.all(eventId) as Pick<ExternalEventDeliveryRow, 'state'>[];
 
 		// Defensive: if no expected deliveries were ever registered, this is not
-		// "all delivered" — the router should call `markEventIgnored` instead.
+		// "all delivered" — the workflow runtime should call `markEventIgnored` instead.
 		if (rows.length === 0) return;
 
 		for (const row of rows) {
@@ -256,8 +243,8 @@ export class ExternalEventStore {
 	}
 
 	/**
-	 * Force the source event to terminal `failed`. Used by the router when it
-	 * cannot enrich/dispatch the event at all (e.g. enrichment hard error).
+	 * Force the source event to terminal `failed`. Used by the workflow runtime when it
+	 * cannot dispatch the event at all (e.g. enrichment hard error).
 	 *
 	 * `failure.terminal=false` is rejected — calling `markEventFailed` is a
 	 * terminal action by definition. Routes that want to retry should not call
@@ -276,12 +263,9 @@ export class ExternalEventStore {
 
 	/**
 	 * Mark the source event terminal `ignored`. Called when no subscriptions
-	 * matched, or when scope checks rejected every matching subscription.
+	 * matched, or when all matched subscriptions are already terminal.
 	 */
-	markEventIgnored(
-		eventId: string,
-		_reason: 'no_matching_subscriptions' | 'no_scope_eligible_subscriptions'
-	): void {
+	markEventIgnored(eventId: string, _reason: 'no_matching_subscriptions'): void {
 		const event = this.getById(eventId);
 		if (!event || TERMINAL_EVENT_STATES.has(event.state)) return;
 		this.setEventState(eventId, 'ignored');
@@ -297,43 +281,6 @@ export class ExternalEventStore {
 			.run(state, Date.now(), eventId);
 	}
 
-	/**
-	 * Move the event to a non-terminal state (`routed`, `delivery_failed`).
-	 * Used by the router to track progress between `published` and the
-	 * eventual terminal transition. No-op if already terminal.
-	 *
-	 * Rejects terminal states — callers must use the dedicated
-	 * `markEventDeliveredIfAllDeliveriesDelivered`, `markEventFailedIf*`,
-	 * `markEventFailed`, or `markEventIgnored` methods to reach terminal
-	 * states so delivery invariants are always enforced.
-	 */
-	updateEventState(eventId: string, state: ExternalEventState): void {
-		if (TERMINAL_EVENT_STATES.has(state)) {
-			throw new Error(
-				`updateEventState: cannot set terminal state "${state}" directly. ` +
-					`Use markEventDeliveredIfAllDeliveriesDelivered, markEventFailedIf*, ` +
-					`markEventFailed, or markEventIgnored instead.`
-			);
-		}
-		const event = this.getById(eventId);
-		if (!event) return;
-		if (TERMINAL_EVENT_STATES.has(event.state)) {
-			// Never overwrite a terminal state with a non-terminal state.
-			return;
-		}
-		// Forward-only progression: published -> routed -> delivery_failed.
-		// Reject backward transitions (e.g. routed -> published).
-		const forwardOrder: ExternalEventState[] = ['published', 'routed', 'delivery_failed'];
-		const currentIndex = forwardOrder.indexOf(event.state);
-		const targetIndex = forwardOrder.indexOf(state);
-		if (targetIndex < currentIndex) {
-			throw new Error(`updateEventState: cannot regress state from "${event.state}" to "${state}"`);
-		}
-		this.db
-			.prepare(`UPDATE space_external_events SET state = ?, updated_at = ? WHERE id = ?`)
-			.run(state, Date.now(), eventId);
-	}
-
 	// ---------------------------------------------------------------------------
 	// Per-subscription delivery lifecycle
 	// ---------------------------------------------------------------------------
@@ -342,7 +289,7 @@ export class ExternalEventStore {
 	 * Idempotently register the delivery row expected for an event/subscription.
 	 *
 	 * Implemented as `INSERT OR IGNORE` because retryable source duplicates and
-	 * router retries can prepare the same `(eventId, deliveryKey)` more than
+	 * workflow runtime retries can prepare the same `(eventId, deliveryKey)` more than
 	 * once. Existing terminal rows are preserved.
 	 */
 	registerExpectedDelivery(eventId: string, deliveryKey: string, target: DeliveryTarget): void {
@@ -472,7 +419,7 @@ export class ExternalEventStore {
 	 *
 	 * `failure.terminal=true` advances to terminal `failed`. `failure.terminal=false`
 	 * keeps the row in `pending` (retryable) but updates `failure_reason` for
-	 * diagnostics — the row remains eligible for the router's next retry pass.
+	 * diagnostics — the row remains eligible for the workflow runtime's next retry pass.
 	 *
 	 * No-op if the row is already terminal.
 	 */
@@ -581,7 +528,7 @@ function rowToRecord(row: ExternalEventRow): ExternalEventRecord {
 		payload = JSON.parse(row.payload_json) as Record<string, unknown>;
 	} catch {
 		// Corrupted payload — return an empty object so the rest of the
-		// metadata (state, dedupe key, etc.) remains usable. The router can
+		// metadata (state, dedupe key, etc.) remains usable. The workflow runtime can
 		// decide whether to terminalize the event or skip delivery.
 		payload = {};
 	}
@@ -598,12 +545,7 @@ function rowToRecord(row: ExternalEventRow): ExternalEventRecord {
 		payload,
 	};
 	if (row.source_event_id !== null) event.sourceEventId = row.source_event_id;
-	if (row.pr_number !== null) event.prNumber = row.pr_number;
-	if (row.repo_owner !== null) event.repoOwner = row.repo_owner;
-	if (row.repo_name !== null) event.repoName = row.repo_name;
-	if (row.branch !== null) event.branch = row.branch;
 	if (row.external_url !== null) event.externalUrl = row.external_url;
-	if (row.routed_task_id !== null) event.routedTaskId = row.routed_task_id;
 
 	return {
 		event,
