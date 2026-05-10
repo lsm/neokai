@@ -270,7 +270,7 @@ export class SessionLifecycle {
 		const agentSession = this.createAgentSession(session);
 		this.sessionCache.set(sessionId, agentSession);
 
-		// Emit event via EventBus (StateManager will handle publishing to MessageHub)
+		// Emit event via DaemonHub (StateManager will handle publishing to MessageHub)
 		await this.daemonHub.emit('session.created', { sessionId, session });
 
 		return sessionId;
@@ -536,7 +536,7 @@ export class SessionLifecycle {
 			agentSession.updateMetadata(updates);
 		}
 
-		// FIX: Emit event via EventBus - include data for decoupled state management
+		// FIX: Emit event via DaemonHub - include data for decoupled state management
 		await this.daemonHub.emit('session.updated', {
 			sessionId,
 			source: 'update',

@@ -581,7 +581,7 @@ export class SessionManager {
 		this.cleanupState = CleanupState.CLEANING;
 
 		try {
-			// PHASE 1: Unsubscribe from EventBus FIRST
+			// PHASE 1: Unsubscribe from DaemonHub FIRST
 			// This prevents new events from being processed during cleanup
 			for (const unsubscribe of this.daemonHubUnsubscribers) {
 				try {
