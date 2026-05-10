@@ -198,16 +198,26 @@ function stableStringify(value: unknown): string {
  *
  * - Read: resolve `file_path` against `cwd` so `./foo` and `foo` collide;
  *   keep `offset`/`limit` as identity (different ranges should not collide).
+ * - Bash: strip the non-semantic `description` field before fingerprinting.
+ *   Claude's Bash tool schema uses `description` purely as a human-readable
+ *   label that the model frequently rewords between retries ("Check git
+ *   hooks" → "List hook files" → …); including it would make every retry
+ *   look like a fresh command and defeat the dead-loop detector outright.
+ *   `command`, `timeout`, `run_in_background`, `sandbox` are all semantic
+ *   and stay in the key.
  * - Grep / Glob: pass through, sorted via stableStringify.
- *
- * The `description` field (Bash/etc) is irrelevant to identity but Bash is
- * not tracked anyway so we don't bother stripping it generically.
  */
 function buildArgKey(toolName: string, input: Record<string, unknown>, cwd?: string): string {
 	if (toolName === 'Read' && typeof input.file_path === 'string') {
 		const normalisedPath = cwd ? resolvePath(cwd, input.file_path) : input.file_path;
 		const normalised = { ...input, file_path: normalisedPath };
 		return stableStringify(normalised);
+	}
+	if (toolName === 'Bash') {
+		// Drop the non-semantic label so retries with reworded descriptions
+		// still fingerprint to the same key.
+		const { description: _description, ...rest } = input;
+		return stableStringify(rest);
 	}
 	return stableStringify(input);
 }
@@ -261,16 +271,29 @@ function buildBashRecoveryMessage(count: number, argSummary: string, failures: n
  *   - a content-block array `[{ type: 'text', text: '...' }, ...]` with
  *     `is_error: true` set at the top level when the tool errored
  *
- * We treat the following as failures:
- *   - response has `is_error: true`
- *   - response has `interrupted: true`
- *   - response contains an exit-code marker indicating non-zero exit
- *     (`Exit code: <n>` with n != 0, or `<bash-stderr>` blocks containing
- *     "command not found", "Permission denied", etc.)
+ * Failure signals we trust:
+ *   - response object has `is_error: true`
+ *   - response object has `interrupted: true`
+ *   - response object has a non-zero exit code field
+ *     (`exitCode` / `exit_code` / `returnCode`)
+ *   - content block has `is_error: true`
+ *   - text contains a `<bash-stderr>` block (delimited by the SDK's Bash
+ *     formatter when the underlying shell wrote to stderr) that is
+ *     non-empty — those tags come from the SDK and only appear for stderr
+ *     output, so a non-empty block reliably indicates a problem
+ *
+ * We deliberately do NOT scan free-form `stdout`/`text`/string responses
+ * for substring markers like "no such file or directory" or "permission
+ * denied". Commands legitimately emit those phrases in their output (e.g.
+ * `grep "permission denied" /var/log/auth.log`, `cat <<< "no such file"`,
+ * tutorials, etc.). Using stdout text as a failure signal would
+ * misclassify successes, accumulate phantom failures in the ring, and
+ * eventually block legitimate retries — exactly the false-positive we
+ * built this detector to avoid.
  *
  * False negatives are acceptable (we just don't fire on that specific
- * outcome); false positives are NOT (we'd block legitimate retries), so the
- * classifier is intentionally conservative — when in doubt, treat as success.
+ * outcome); false positives are NOT, so the classifier is conservative:
+ * when in doubt, treat as success.
  */
 export function isBashFailureResponse(response: unknown): boolean {
 	if (response == null) return false;
@@ -280,51 +303,48 @@ export function isBashFailureResponse(response: unknown): boolean {
 		const obj = response as Record<string, unknown>;
 		if (obj.is_error === true) return true;
 		if (obj.interrupted === true) return true;
-		// Some SDK shapes surface the exit code in a `metadata` or direct field.
+		// Some SDK shapes surface the exit code in a direct field.
 		const exitCode = (obj.exitCode ?? obj.exit_code ?? obj.returnCode) as unknown;
 		if (typeof exitCode === 'number' && exitCode !== 0) return true;
-
-		// Recurse into common text-bearing fields.
-		if (typeof obj.stderr === 'string' && containsBashErrorMarker(obj.stderr)) return true;
-		if (typeof obj.stdout === 'string' && containsBashErrorMarker(obj.stdout)) return true;
-		if (typeof obj.text === 'string' && containsBashErrorMarker(obj.text)) return true;
 		return false;
 	}
 
-	// Content-block array shape: any text block matching error markers.
+	// Content-block array shape: any block with is_error=true is a failure.
+	// Text inside blocks is treated as command output (stdout) — see comment
+	// above for why we don't substring-scan it.
 	if (Array.isArray(response)) {
 		for (const block of response) {
 			if (block && typeof block === 'object') {
 				const b = block as Record<string, unknown>;
 				if (b.is_error === true) return true;
-				if (typeof b.text === 'string' && containsBashErrorMarker(b.text)) return true;
+				if (typeof b.text === 'string' && hasNonEmptyBashStderrBlock(b.text)) return true;
 			}
 		}
 		return false;
 	}
 
+	// Plain string responses are the SDK's "successful execution, here's
+	// the combined output" shape. The only failure signal we'll honour in
+	// a string is the `<bash-stderr>` block emitted by the SDK's Bash
+	// formatter, since those tags are delimiters the SDK controls and not
+	// content the underlying command can fabricate.
 	if (typeof response === 'string') {
-		return containsBashErrorMarker(response);
+		return hasNonEmptyBashStderrBlock(response);
 	}
 
 	return false;
 }
 
 /**
- * Detect strong textual signals of a failed shell command. Conservative:
- * we'd rather miss a failure than misclassify a success.
+ * Detect a non-empty `<bash-stderr>…</bash-stderr>` block. The SDK's Bash
+ * formatter wraps captured stderr in these tags; an empty block (no
+ * content) is just a successful command with empty stderr and must not
+ * count as a failure.
  */
-function containsBashErrorMarker(text: string): boolean {
-	// Normalise to a single-line lowercased haystack for substring checks.
-	const lower = text.toLowerCase();
-	if (/exit code:\s*(?!0\b)\d+/i.test(text)) return true;
-	if (/<bash-stderr>/.test(text) && !/<bash-stderr>\s*<\/bash-stderr>/.test(text)) return true;
-	if (lower.includes('command not found')) return true;
-	if (lower.includes('no such file or directory')) return true;
-	if (lower.includes('permission denied')) return true;
-	if (lower.includes('command timed out')) return true;
-	if (lower.includes('error: ') && lower.includes('failed')) return true;
-	return false;
+function hasNonEmptyBashStderrBlock(text: string): boolean {
+	const match = text.match(/<bash-stderr>([\s\S]*?)<\/bash-stderr>/);
+	if (!match) return false;
+	return match[1].trim().length > 0;
 }
 
 /**
@@ -343,10 +363,19 @@ interface LoopDetectorState {
 	/**
 	 * Bash failure ring buffers, keyed by `${scope}::${bashFingerprint}`.
 	 * Each entry holds the most recent N outcomes (true = failure, false =
-	 * success), most recent last. We trim to `bash.failuresRequired` entries
-	 * on each append.
+	 * success), most recent last, plus the timestamp of the most recent
+	 * append. We trim the ring to `bash.failuresRequired` entries on each
+	 * append and opportunistically evict whole ring buffers whose
+	 * `lastSeenMs` is older than the sliding window — without that pass,
+	 * long-lived daemons that execute many distinct one-off Bash commands
+	 * across many sessions would accumulate map entries indefinitely.
 	 */
-	bashFailures: Map<string, boolean[]>;
+	bashFailures: Map<string, BashFailureRing>;
+}
+
+interface BashFailureRing {
+	outcomes: boolean[];
+	lastSeenMs: number;
 }
 
 function createState(): LoopDetectorState {
@@ -369,14 +398,28 @@ function recordBashOutcome(
 	scope: string,
 	fingerprint: string,
 	failed: boolean,
-	failuresRequired: number
+	failuresRequired: number,
+	now: number,
+	windowMs: number
 ): void {
 	const key = bashFingerprintKey(scope, fingerprint);
-	const ring = state.bashFailures.get(key) ?? [];
-	ring.push(failed);
+	const existing = state.bashFailures.get(key);
+	const outcomes = existing?.outcomes ?? [];
+	outcomes.push(failed);
 	// Keep at most `failuresRequired` outcomes so the deny check is O(1).
-	while (ring.length > failuresRequired) ring.shift();
-	state.bashFailures.set(key, ring);
+	while (outcomes.length > failuresRequired) outcomes.shift();
+	state.bashFailures.set(key, { outcomes, lastSeenMs: now });
+
+	// Opportunistic eviction: drop any ring whose last activity is past the
+	// sliding window. Triggered only when the map exceeds a soft cap so we
+	// don't iterate on every call. The same threshold (256) we use for the
+	// streak ledger keeps memory bounded without measurably impacting
+	// per-call latency for typical workloads.
+	if (state.bashFailures.size > 256) {
+		for (const [k, v] of state.bashFailures) {
+			if (now - v.lastSeenMs > windowMs) state.bashFailures.delete(k);
+		}
+	}
 }
 
 function lastNAllFailures(
@@ -387,7 +430,7 @@ function lastNAllFailures(
 	allFailures: boolean;
 	length: number;
 } {
-	const ring = state.bashFailures.get(bashFingerprintKey(scope, fingerprint)) ?? [];
+	const ring = state.bashFailures.get(bashFingerprintKey(scope, fingerprint))?.outcomes ?? [];
 	if (ring.length === 0) return { allFailures: false, length: 0 };
 	for (const failed of ring) {
 		if (!failed) return { allFailures: false, length: ring.length };
@@ -556,15 +599,29 @@ function buildPostToolUseCallback(
 		const fingerprint = buildArgKey('Bash', args, postInput.cwd);
 		const scope = scopeKey(postInput);
 		const failed = isBashFailureResponse(postInput.tool_response);
-		recordBashOutcome(state, scope, fingerprint, failed, finalConfig.bash.failuresRequired);
+		recordBashOutcome(
+			state,
+			scope,
+			fingerprint,
+			failed,
+			finalConfig.bash.failuresRequired,
+			Date.now(),
+			finalConfig.windowMs
+		);
 		return {};
 	};
 }
 
 /**
  * Build the PostToolUseFailure callback. A true SDK error (hook crash,
- * sandbox kill, timeout) is always recorded as a failure for the Bash
- * fingerprint.
+ * sandbox kill, timeout) is recorded as a failure for the Bash fingerprint.
+ *
+ * User/system interrupts are NOT counted: `is_interrupt: true` on the
+ * SDK's `PostToolUseFailure` payload means the user (or another
+ * concurrent action) cancelled the tool call before it completed. The
+ * command itself didn't fail — counting interrupts would let a user who
+ * repeatedly cancels the same command accidentally poison the failure
+ * ring and block their own legitimate retries afterwards.
  */
 function buildPostToolUseFailureCallback(
 	state: LoopDetectorState,
@@ -577,11 +634,21 @@ function buildPostToolUseFailureCallback(
 
 		const postInput = input as PostToolUseFailureHookInput;
 		if (postInput.tool_name !== 'Bash') return {};
+		// Skip user/system interrupts — they're not command failures.
+		if (postInput.is_interrupt === true) return {};
 
 		const args = (postInput.tool_input ?? {}) as Record<string, unknown>;
 		const fingerprint = buildArgKey('Bash', args, postInput.cwd);
 		const scope = scopeKey(postInput);
-		recordBashOutcome(state, scope, fingerprint, true, finalConfig.bash.failuresRequired);
+		recordBashOutcome(
+			state,
+			scope,
+			fingerprint,
+			true,
+			finalConfig.bash.failuresRequired,
+			Date.now(),
+			finalConfig.windowMs
+		);
 		return {};
 	};
 }

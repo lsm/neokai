@@ -854,6 +854,113 @@ describe('LoopDetectorHook', () => {
 				);
 			}
 		});
+
+		it('strips `description` from the Bash fingerprint (reworded labels still loop-detect)', async () => {
+			// Regression test for review feedback: the model frequently
+			// rewords the non-semantic `description` field between retries
+			// ("Check git hooks" → "List hook files"). Including description
+			// in the fingerprint would defeat the detector — every retry
+			// would look like a fresh command. We strip it.
+			const { preToolUse, postToolUse } = createLoopDetectorHooks();
+			const command = 'ls -la .git/hooks 2>&1';
+			const descriptions = [
+				'Check git hooks',
+				'List hook files',
+				'Inspect hook dir',
+				'Show hooks',
+				'View hooks dir',
+				'Look at hooks',
+			];
+
+			// Six failing calls, each with a different description but the
+			// same command. Despite the differing descriptions, all six must
+			// fingerprint to the same key, build a streak, accumulate
+			// failures, and deny on the 6th attempt (5 failures recorded
+			// from the first 5 attempts).
+			for (let i = 0; i < 5; i++) {
+				const pre = makePreToolUse('Bash', { command, description: descriptions[i] });
+				expect(await call(preToolUse, pre)).toEqual({});
+				await callPost(
+					postToolUse,
+					makePostToolUse(
+						'Bash',
+						pre.tool_input as Record<string, unknown>,
+						makeBashFailureResponse()
+					)
+				);
+			}
+			const finalPre = makePreToolUse('Bash', { command, description: descriptions[5] });
+			expect(await call(preToolUse, finalPre)).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+		});
+
+		it('does NOT count user/system interrupts as failures', async () => {
+			// PostToolUseFailure with is_interrupt=true means a human (or
+			// concurrent action) cancelled the call before it completed. The
+			// command itself didn't fail — counting interrupts would let a
+			// user who repeatedly hits stop poison the ring and block their
+			// own legitimate retries.
+			const { preToolUse, postToolUseFailure } = createLoopDetectorHooks();
+			const cmd = makePreToolUse('Bash', { command: 'sleep 100' });
+			const args = cmd.tool_input as Record<string, unknown>;
+
+			// Fire 6 PreToolUse → interrupted-PostToolUseFailure pairs. Even
+			// though the streak builds to 6, the failure ring should remain
+			// empty (interrupts are not failures), so no deny fires.
+			for (let i = 0; i < 6; i++) {
+				expect(await call(preToolUse, cmd)).toEqual({});
+				await callPost(
+					postToolUseFailure,
+					makePostToolUseFailure('Bash', args, { is_interrupt: true })
+				);
+			}
+		});
+
+		it('counts non-interrupt PostToolUseFailure as a real failure', async () => {
+			// Sanity check: the interrupt skip is conditional, not blanket.
+			// A non-interrupt failure (hook crash, sandbox kill) still gets
+			// recorded and contributes to the failure ring.
+			const { preToolUse, postToolUseFailure } = createLoopDetectorHooks();
+			const args = FAILING_BASH.tool_input as Record<string, unknown>;
+
+			for (let i = 0; i < 5; i++) {
+				expect(await call(preToolUse, FAILING_BASH)).toEqual({});
+				await callPost(
+					postToolUseFailure,
+					makePostToolUseFailure('Bash', args /* no is_interrupt */)
+				);
+			}
+			expect(await call(preToolUse, FAILING_BASH)).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+		});
+
+		it('does NOT block legitimate retries after a long quiet period (stale rings expire)', async () => {
+			// The bashFailures map is opportunistically pruned of entries
+			// older than the sliding window. Behaviourally, a fingerprint
+			// whose recorded failures all predate the streak's first call
+			// must not be honoured: the streak itself resets when the
+			// window expires (see Pre callback), so the deny path cannot
+			// reach the ring. This test guards that lifecycle: 5 failures
+			// followed by a long quiet period followed by a fresh attempt
+			// MUST pass through, not deny.
+			const { preToolUse, postToolUse } = createLoopDetectorHooks({ windowMs: 50 });
+			const cmd = makePreToolUse('Bash', { command: 'ls /nope' });
+			const args = cmd.tool_input as Record<string, unknown>;
+
+			// Record 5 failures.
+			for (let i = 0; i < 5; i++) {
+				await call(preToolUse, cmd);
+				await callPost(postToolUse, makePostToolUse('Bash', args, makeBashFailureResponse()));
+			}
+
+			// Wait past the sliding window. The next PreToolUse call sees a
+			// stale streak (firstSeenMs older than windowMs) and resets the
+			// streak counter to 1. nextCount < threshold ⇒ no deny.
+			await new Promise((r) => setTimeout(r, 80));
+			expect(await call(preToolUse, cmd)).toEqual({});
+		});
 	});
 
 	describe('isBashFailureResponse classifier', () => {
@@ -869,9 +976,13 @@ describe('LoopDetectorHook', () => {
 			);
 		});
 
-		it('classifies strings with exit-code error markers as failures', () => {
-			expect(isBashFailureResponse('Exit code: 1')).toBe(true);
-			expect(isBashFailureResponse('Some output\nExit code: 127')).toBe(true);
+		it('does NOT classify free-form strings with "Exit code:" text as failures', () => {
+			// We deliberately do not substring-scan stdout. Commands frequently
+			// emit phrases like "Exit code: 1" in their normal output (test
+			// runner summaries, status reports), and counting those as
+			// failures would poison the failure ring with false positives.
+			expect(isBashFailureResponse('Exit code: 1')).toBe(false);
+			expect(isBashFailureResponse('Some output\nExit code: 127')).toBe(false);
 			expect(isBashFailureResponse('Exit code: 0')).toBe(false);
 		});
 
@@ -883,13 +994,20 @@ describe('LoopDetectorHook', () => {
 			).toBe(true);
 			// Empty stderr block is not a failure.
 			expect(isBashFailureResponse('<bash-stderr></bash-stderr>')).toBe(false);
+			// Whitespace-only stderr block is not a failure either.
+			expect(isBashFailureResponse('<bash-stderr>   \n\t</bash-stderr>')).toBe(false);
 		});
 
-		it('classifies textual error markers as failures', () => {
-			expect(isBashFailureResponse('bash: foo: command not found')).toBe(true);
-			expect(isBashFailureResponse('ls: /nope: No such file or directory')).toBe(true);
-			expect(isBashFailureResponse('Permission denied')).toBe(true);
-			expect(isBashFailureResponse('command timed out after 120s')).toBe(true);
+		it('does NOT classify free-form strings with textual error markers as failures', () => {
+			// Stdout legitimately contains these phrases in many real
+			// workflows: greping log files for "permission denied", tutorials,
+			// docs commands, error messages quoted in test output, etc. The
+			// classifier must not treat them as command failures — the
+			// trustworthy stderr signal is the <bash-stderr> block.
+			expect(isBashFailureResponse('bash: foo: command not found')).toBe(false);
+			expect(isBashFailureResponse('ls: /nope: No such file or directory')).toBe(false);
+			expect(isBashFailureResponse('Permission denied')).toBe(false);
+			expect(isBashFailureResponse('command timed out after 120s')).toBe(false);
 		});
 
 		it('classifies object responses with is_error=true as failures', () => {
@@ -916,10 +1034,22 @@ describe('LoopDetectorHook', () => {
 			).toBe(true);
 		});
 
-		it('classifies content-block arrays with error markers in text as failures', () => {
+		it('classifies content-block arrays with non-empty bash-stderr text as failures', () => {
+			expect(
+				isBashFailureResponse([
+					{ type: 'text', text: '<bash-stderr>ls: foo: No such file or directory</bash-stderr>' },
+				])
+			).toBe(true);
+		});
+
+		it('does NOT classify content-block arrays whose text merely mentions errors as failures', () => {
+			// Same conservative rule as for plain strings: stdout text is not
+			// a failure signal, even if it contains phrases like "No such
+			// file". Only <bash-stderr> delimiters or top-level is_error
+			// count.
 			expect(
 				isBashFailureResponse([{ type: 'text', text: 'ls: foo: No such file or directory' }])
-			).toBe(true);
+			).toBe(false);
 		});
 
 		it('does NOT classify plain success object responses as failures', () => {
