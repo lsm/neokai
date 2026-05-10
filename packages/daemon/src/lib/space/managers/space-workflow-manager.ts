@@ -383,19 +383,27 @@ export class SpaceWorkflowManager {
 			: existingHandles;
 		const handle = slugify(name, filteredHandles);
 		// Collision suffixing can push the handle over the max length; validate
-		// and truncate with a fallback if necessary.
-		const slugError = validateSlug(handle);
-		if (slugError) {
-			// Hard-truncate to max length minus room for a minimal suffix
-			const maxLen = 60;
-			const truncated = handle.slice(0, maxLen);
-			// Ensure we don't end with a hyphen
+		// and truncate with a fallback if necessary, then loop until valid.
+		return this.ensureValidHandle(handle, filteredHandles);
+	}
+
+	/**
+	 * Ensure a handle (or its fallback) passes validateSlug. If the initial
+	 * handle is invalid (e.g. over-length after collision suffixing), truncate
+	 * and re-run collision resolution, looping until the result is valid.
+	 */
+	private ensureValidHandle(handle: string, existingHandles: string[]): string {
+		const maxLen = 60;
+		let candidate = handle;
+		let attempts = 0;
+		while (validateSlug(candidate) !== null && attempts < 10) {
+			attempts++;
+			const truncated = candidate.slice(0, maxLen);
 			const cleaned = truncated.replace(/-+$/, '');
 			const fallback = cleaned || 'workflow';
-			// Re-run collision resolution on the fallback
-			return slugify(fallback, filteredHandles);
+			candidate = slugify(fallback, existingHandles);
 		}
-		return handle;
+		return candidate;
 	}
 
 	private validateNodes(spaceId: string, nodes: WorkflowNodeInput[]): void {

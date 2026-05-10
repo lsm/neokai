@@ -12,7 +12,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
-import { slugify } from '../../lib/space/slug';
+import { slugify, validateSlug } from '../../lib/space/slug';
 
 /**
  * Run all database migrations
@@ -8777,7 +8777,18 @@ export function runMigration127(db: BunDatabase): void {
 	const updateStmt = db.prepare(`UPDATE space_workflows SET handle = ? WHERE id = ?`);
 	for (const row of rows) {
 		const handles = spaceHandles.get(row.space_id) ?? [];
-		const handle = slugify(row.name, handles);
+		let handle = slugify(row.name, handles);
+		// Collision suffixing can push the handle over the max length; validate
+		// and truncate with a fallback if necessary, then loop until valid.
+		const maxLen = 60;
+		let attempts = 0;
+		while (validateSlug(handle) !== null && attempts < 10) {
+			attempts++;
+			const truncated = handle.slice(0, maxLen);
+			const cleaned = truncated.replace(/-+$/, '');
+			const fallback = cleaned || 'workflow';
+			handle = slugify(fallback, handles);
+		}
 		updateStmt.run(handle, row.id);
 		handles.push(handle);
 		spaceHandles.set(row.space_id, handles);
