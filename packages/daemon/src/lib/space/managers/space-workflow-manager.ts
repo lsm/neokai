@@ -389,21 +389,29 @@ export class SpaceWorkflowManager {
 
 	/**
 	 * Ensure a handle (or its fallback) passes validateSlug. If the initial
-	 * handle is invalid (e.g. over-length after collision suffixing), truncate
-	 * and re-run collision resolution, looping until the result is valid.
+	 * handle is invalid (e.g. over-length after collision suffixing),
+	 * progressively shorten the base and re-run collision resolution until
+	 * the result is valid.
 	 */
 	private ensureValidHandle(handle: string, existingHandles: string[]): string {
 		const maxLen = 60;
-		let candidate = handle;
-		let attempts = 0;
-		while (validateSlug(candidate) !== null && attempts < 10) {
-			attempts++;
-			const truncated = candidate.slice(0, maxLen);
+		// If the initial slugify result is already valid, we're done.
+		if (validateSlug(handle) === null) return handle;
+
+		// Collision suffixing pushed the handle over the max length.
+		// Progressively shorten the base and re-run collision resolution
+		// until a valid handle is produced.
+		for (let len = maxLen; len > 0; len--) {
+			const truncated = handle.slice(0, len);
 			const cleaned = truncated.replace(/-+$/, '');
 			const fallback = cleaned || 'workflow';
-			candidate = slugify(fallback, existingHandles);
+			const candidate = slugify(fallback, existingHandles);
+			if (validateSlug(candidate) === null) {
+				return candidate;
+			}
 		}
-		return candidate;
+		// Absolute fallback — should never reach here in practice
+		return 'workflow';
 	}
 
 	private validateNodes(spaceId: string, nodes: WorkflowNodeInput[]): void {

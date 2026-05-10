@@ -1882,6 +1882,11 @@ export interface ExportedSpaceWorkflow {
 	completionAutonomyLevel?: SpaceAutonomyLevel;
 	/** When true, the workflow is disabled and cannot be selected for new tasks. */
 	disabled?: boolean;
+	/**
+	 * Human-readable handle for workflow identification (alternative to UUID).
+	 * Optional for backward compatibility with pre-handle exports.
+	 */
+	handle?: string;
 }
 
 /**

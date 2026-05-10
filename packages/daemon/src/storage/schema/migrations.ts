@@ -8735,7 +8735,8 @@ export function runMigration127(db: BunDatabase): void {
 	if (!tableExists(db, 'space_workflows')) return;
 
 	const columns = tableColumnNames(db, 'space_workflows');
-	if (!columns.includes('handle')) {
+	const columnJustAdded = !columns.includes('handle');
+	if (columnJustAdded) {
 		db.exec(`ALTER TABLE space_workflows ADD COLUMN handle TEXT DEFAULT NULL`);
 	}
 
@@ -8777,21 +8778,36 @@ export function runMigration127(db: BunDatabase): void {
 	const updateStmt = db.prepare(`UPDATE space_workflows SET handle = ? WHERE id = ?`);
 	for (const row of rows) {
 		const handles = spaceHandles.get(row.space_id) ?? [];
-		let handle = slugify(row.name, handles);
-		// Collision suffixing can push the handle over the max length; validate
-		// and truncate with a fallback if necessary, then loop until valid.
-		const maxLen = 60;
-		let attempts = 0;
-		while (validateSlug(handle) !== null && attempts < 10) {
-			attempts++;
-			const truncated = handle.slice(0, maxLen);
-			const cleaned = truncated.replace(/-+$/, '');
-			const fallback = cleaned || 'workflow';
-			handle = slugify(fallback, handles);
-		}
+		const handle = generateValidHandle(row.name, handles);
 		updateStmt.run(handle, row.id);
 		handles.push(handle);
 		spaceHandles.set(row.space_id, handles);
 	}
 }
 
+/**
+ * Generate a handle that is guaranteed to pass validateSlug.
+ * Progressively shortens the base on each iteration so collision
+ * suffixes never push the result over the max length.
+ */
+function generateValidHandle(name: string, existingHandles: string[]): string {
+	const maxLen = 60;
+	let base = slugify(name, existingHandles);
+	// If the initial slugify result is already valid, we're done.
+	if (validateSlug(base) === null) return base;
+
+	// Collision suffixing pushed the handle over the max length.
+	// Progressively shorten the base and re-run collision resolution
+	// until a valid handle is produced.
+	for (let len = maxLen; len > 0; len--) {
+		const truncated = base.slice(0, len);
+		const cleaned = truncated.replace(/-+$/, '');
+		const fallback = cleaned || 'workflow';
+		const candidate = slugify(fallback, existingHandles);
+		if (validateSlug(candidate) === null) {
+			return candidate;
+		}
+	}
+	// Absolute fallback — should never reach here in practice
+	return 'workflow';
+}

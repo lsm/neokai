@@ -253,6 +253,7 @@ export function buildWorkflowCreateParams(
 	if (exported.description !== undefined) params.description = exported.description;
 	if (exported.channels && exported.channels.length > 0) params.channels = exported.channels;
 	if (exported.disabled !== undefined) params.disabled = exported.disabled;
+	if (exported.handle !== undefined) params.handle = exported.handle;
 
 	return { params, nodeNameToId, warnings };
 }
