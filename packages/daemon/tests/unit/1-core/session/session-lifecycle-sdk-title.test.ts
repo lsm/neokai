@@ -142,7 +142,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 	let mockDb: Database;
 	let mockWorktreeManager: WorktreeManager;
 	let mockSessionCache: SessionCache;
-	let mockEventBus: DaemonHub;
+	let mockDaemonHub: DaemonHub;
 	let mockMessageHub: MessageHub;
 	let mockToolsConfigManager: ToolsConfigManager;
 	let mockAgentSessionFactory: AgentSessionFactory;
@@ -215,7 +215,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 		mockSessionCache = sessionCache;
 		mockAgentSessionFactory = mock(() => mockAgentSession) as unknown as AgentSessionFactory;
 
-		mockEventBus = {
+		mockDaemonHub = {
 			on: mock(() => () => {}),
 			emit: mock(async () => {}),
 		} as unknown as DaemonHub;
@@ -243,7 +243,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
-			mockEventBus,
+			mockDaemonHub,
 			mockMessageHub,
 			config,
 			mockToolsConfigManager,

@@ -27,7 +27,6 @@
 		"packages/daemon/src/lib/lobby/index.ts",
 		"packages/daemon/src/lib/space/index.ts",
 		"packages/daemon/src/lib/prompts/index.ts",
-		"packages/shared/src/event-bus.ts",
 		"packages/daemon/src/lib/job-queue-constants.ts",
 		"packages/daemon/dump-context.ts",
 		"packages/daemon/src/lib/external-events/index.ts",

@@ -70,7 +70,7 @@ export interface DaemonAppContext {
 	settingsManager: SettingsManager;
 	stateManager: StateManager;
 	transport: WebSocketServerTransport;
-	eventBus: Awaited<ReturnType<typeof createDaemonHub>>;
+	daemonHub: Awaited<ReturnType<typeof createDaemonHub>>;
 	/**
 	 * Semantic internal event bus for migrated daemon domain events.
 	 * New publishers/subscribers should use this instead of DaemonHub.
@@ -238,8 +238,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	messageHub.registerTransport(transport);
 
 	// Initialize DaemonHub (TypedHub-based event coordination)
-	const eventBus = createDaemonHub('daemon');
-	await eventBus.initialize();
+	const daemonHub = createDaemonHub('daemon');
+	await daemonHub.initialize();
 
 	// Initialize InternalEventBus for migrated daemon domain events.
 	// Subscribers/publishers register here as they migrate off DaemonHub.
@@ -290,7 +290,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		logError('[Daemon] Failed to ensure builtin skill plugin wrappers (non-fatal):', err);
 	}
 
-	// Initialize session manager (with EventBus, SettingsManager, no StateManager dependency!)
+	// Initialize session manager (with DaemonHub, SettingsManager, no StateManager dependency!)
 	// Use reactiveDb.db so sdk_messages writes emitted by AgentSession pipelines
 	// trigger LiveQuery invalidation immediately.
 	const sessionManager = new SessionManager(
@@ -298,7 +298,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		messageHub,
 		authManager,
 		settingsManager,
-		eventBus,
+		daemonHub,
 		{
 			defaultModel: config.defaultModel,
 			maxTokens: config.maxTokens,
@@ -317,14 +317,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// Instantiated after sessionManager so it can be passed as the NeoSessionManager.
 	const neoAgentManager = new NeoAgentManager(sessionManager, settingsManager);
 
-	// Initialize State Manager (listens to EventBus, clean dependency graph!)
+	// Initialize State Manager (listens to DaemonHub, clean dependency graph!)
 	const stateManager = new StateManager(
 		messageHub,
 		sessionManager,
 		authManager,
 		settingsManager,
 		config,
-		eventBus, // FIX: Listens to events instead of being called directly
+		daemonHub, // FIX: Listens to events instead of being called directly
 		db,
 		internalEventBus
 	);
@@ -333,7 +333,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// WebSocket clients via ClientEventGateway.  This extracts the repetitive
 	// room/space forwarding out of StateManager.
 	const clientEventGateway = stateManager.getClientEventGateway();
-	const clientEventBridge = createClientEventBridge(eventBus, clientEventGateway);
+	const clientEventBridge = createClientEventBridge(daemonHub, clientEventGateway);
 	clientEventBridge.start();
 
 	// Initialize GitHub service if configured
@@ -350,7 +350,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		if (apiKey) {
 			gitHubService = createGitHubService({
 				db,
-				daemonHub: eventBus,
+				daemonHub,
 				config,
 				apiKey,
 				githubToken: process.env.GITHUB_TOKEN, // Optional GitHub token for polling
@@ -376,7 +376,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	let taskAgentManagerForGithub: TaskAgentManager | null = null;
 	const spaceGitHubService = new SpaceGitHubService(
 		db.getDatabase(),
-		eventBus,
+		daemonHub,
 		(taskId, message) => {
 			if (!taskAgentManagerForGithub) {
 				throw new Error('TaskAgentManager is not ready for Space GitHub notification delivery');
@@ -399,7 +399,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		authManager,
 		settingsManager,
 		config,
-		daemonHub: eventBus,
+		daemonHub,
 		internalEventBus,
 		db,
 		gitHubService: gitHubService ?? undefined,
@@ -565,7 +565,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			jobQueue,
 			spaceRepo: taskScheduleSpaceRepo,
 			taskRepo: taskScheduleTaskRepo,
-			eventHub: eventBus,
+			eventHub: daemonHub,
 		});
 	});
 
@@ -832,7 +832,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		settingsManager,
 		stateManager,
 		transport,
-		eventBus,
+		daemonHub,
 		internalEventBus,
 		queryBus,
 		gitHubService,

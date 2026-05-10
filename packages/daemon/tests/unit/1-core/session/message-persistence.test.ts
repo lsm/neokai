@@ -17,7 +17,7 @@ describe('MessagePersistence', () => {
 	let mockSessionCache: SessionCache;
 	let mockDb: Database;
 	let mockMessageHub: MessageHub;
-	let mockEventBus: DaemonHub;
+	let mockDaemonHub: DaemonHub;
 	let persistence: MessagePersistence;
 	let mockSession: Session;
 	let mockAgentSession: {
@@ -28,7 +28,7 @@ describe('MessagePersistence', () => {
 
 	let saveUserMessageSpy: ReturnType<typeof mock>;
 	let messageHubEventSpy: ReturnType<typeof mock>;
-	let eventBusEmitSpy: ReturnType<typeof mock>;
+	let daemonHubEmitSpy: ReturnType<typeof mock>;
 	let processingStateSpy: ReturnType<typeof mock>;
 
 	beforeEach(() => {
@@ -80,12 +80,12 @@ describe('MessagePersistence', () => {
 			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
-		eventBusEmitSpy = mock(async () => {});
-		mockEventBus = {
-			emit: eventBusEmitSpy,
+		daemonHubEmitSpy = mock(async () => {});
+		mockDaemonHub = {
+			emit: daemonHubEmitSpy,
 		} as unknown as DaemonHub;
 
-		persistence = new MessagePersistence(mockSessionCache, mockDb, mockMessageHub, mockEventBus);
+		persistence = new MessagePersistence(mockSessionCache, mockDb, mockMessageHub, mockDaemonHub);
 	});
 
 	it('persists idle immediate as enqueued and waits for queue insertion', async () => {
@@ -103,12 +103,12 @@ describe('MessagePersistence', () => {
 		);
 		expect(messageHubEventSpy).not.toHaveBeenCalled();
 		expect(mockAgentSession.startQueryAndEnqueue).toHaveBeenCalledWith('msg-1', 'hello idle');
-		expect(eventBusEmitSpy).toHaveBeenCalledWith('messages.statusChanged', {
+		expect(daemonHubEmitSpy).toHaveBeenCalledWith('messages.statusChanged', {
 			sessionId: 'test-session-id',
 			messageIds: ['db-msg-1'],
 			status: 'enqueued',
 		});
-		expect(eventBusEmitSpy).toHaveBeenCalledWith(
+		expect(daemonHubEmitSpy).toHaveBeenCalledWith(
 			'message.persisted',
 			expect.objectContaining({
 				sessionId: 'test-session-id',
@@ -137,7 +137,7 @@ describe('MessagePersistence', () => {
 		);
 		expect(messageHubEventSpy).not.toHaveBeenCalled();
 		expect(mockAgentSession.startQueryAndEnqueue).toHaveBeenCalledWith('msg-2', 'hello busy');
-		expect(eventBusEmitSpy).toHaveBeenCalledWith(
+		expect(daemonHubEmitSpy).toHaveBeenCalledWith(
 			'message.persisted',
 			expect.objectContaining({
 				messageId: 'msg-2',
@@ -164,7 +164,7 @@ describe('MessagePersistence', () => {
 			'deferred',
 			undefined
 		);
-		expect(eventBusEmitSpy).not.toHaveBeenCalledWith(
+		expect(daemonHubEmitSpy).not.toHaveBeenCalledWith(
 			'message.persisted',
 			expect.objectContaining({ messageId: 'msg-3' })
 		);
@@ -191,7 +191,7 @@ describe('MessagePersistence', () => {
 			'msg-4',
 			'next turn while idle'
 		);
-		expect(eventBusEmitSpy).toHaveBeenCalledWith(
+		expect(daemonHubEmitSpy).toHaveBeenCalledWith(
 			'message.persisted',
 			expect.objectContaining({
 				messageId: 'msg-4',
