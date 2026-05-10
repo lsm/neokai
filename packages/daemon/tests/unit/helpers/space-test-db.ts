@@ -229,6 +229,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			post_approval_blocked_reason TEXT DEFAULT NULL,
 			created_by TEXT DEFAULT NULL,
 			created_by_session TEXT DEFAULT NULL,
+			created_by_task_schedule_id TEXT DEFAULT NULL,
 			archived_at INTEGER,
 			created_at INTEGER NOT NULL,
 			started_at INTEGER,
@@ -453,4 +454,42 @@ export function createSpaceTables(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_session ON mcp_audit_log (session_id, timestamp)`
 	);
+
+	// Task schedules (migration 124)
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS task_schedules (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			priority TEXT NOT NULL DEFAULT 'normal'
+				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+			preferred_workflow_id TEXT DEFAULT NULL,
+			labels TEXT NOT NULL DEFAULT '[]',
+			trigger_type TEXT NOT NULL CHECK(trigger_type IN ('cron', 'at')),
+			cron_expression TEXT DEFAULT NULL,
+			run_at INTEGER DEFAULT NULL,
+			timezone TEXT NOT NULL DEFAULT 'UTC',
+			next_run_at INTEGER DEFAULT NULL,
+			last_run_at INTEGER DEFAULT NULL,
+			last_created_task_id TEXT DEFAULT NULL,
+			pending_job_id TEXT DEFAULT NULL,
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'paused', 'completed')),
+			created_by_agent TEXT DEFAULT NULL,
+			created_by_session TEXT DEFAULT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_task_schedules_space
+		ON task_schedules(space_id, status)
+	`);
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_task_schedules_active_due
+		ON task_schedules(status, next_run_at)
+		WHERE status = 'active'
+	`);
 }

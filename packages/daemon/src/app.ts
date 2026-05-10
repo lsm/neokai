@@ -34,7 +34,10 @@ import { JobQueueRepository } from './storage/repositories/job-queue-repository'
 import { JobQueueProcessor } from './storage/job-queue-processor';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
 import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler';
-import { JOB_QUEUE_CLEANUP, SKILL_VALIDATE } from './lib/job-queue-constants';
+import { JOB_QUEUE_CLEANUP, SKILL_VALIDATE, TASK_SCHEDULE_FIRE } from './lib/job-queue-constants';
+import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
+import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository';
+import { SpaceTaskManager } from './lib/space/managers/space-task-manager';
 import { AppMcpLifecycleManager, McpImportService, seedDefaultMcpEntries } from './lib/mcp';
 import { FileIndex } from './lib/file-index';
 import { SkillsManager } from './lib/skills-manager';
@@ -541,6 +544,48 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		createSkillValidateHandler(skillsManager, db.appMcpServers)
 	);
 	jobProcessor.register(JOB_QUEUE_CLEANUP, createCleanupHandler(jobQueue));
+
+	// Register task-schedule.fire handler.
+	const taskScheduleRepo = new TaskScheduleRepository(db.getDatabase());
+	jobProcessor.register(TASK_SCHEDULE_FIRE, async (payload) => {
+		return handleTaskScheduleFire(payload as unknown as { scheduleId: string }, {
+			scheduleRepo: taskScheduleRepo,
+			jobQueue,
+			taskManagerFactory: (spaceId: string) =>
+				new SpaceTaskManager(db.getDatabase(), spaceId, reactiveDb),
+		});
+	});
+
+	// Startup resilience: re-seed active schedules whose pending jobs are missing.
+	// This handles crash recovery — if the daemon restarted while a job was in flight
+	// or was lost, we re-enqueue it so the schedule can continue.
+	if (process.env.NODE_ENV !== 'test') {
+		const now = Date.now();
+		try {
+			const activeSchedules = taskScheduleRepo.listActiveWithPendingJob();
+			for (const schedule of activeSchedules) {
+				if (!schedule.pendingJobId) continue;
+				const job = jobQueue.getJob(schedule.pendingJobId);
+				if (!job || job.status === 'dead' || job.status === 'failed') {
+					// Job is gone — re-enqueue.
+					const runAt =
+						schedule.nextRunAt !== null && schedule.nextRunAt > now ? schedule.nextRunAt : now;
+					const newJob = jobQueue.enqueue({
+						queue: TASK_SCHEDULE_FIRE,
+						payload: { scheduleId: schedule.id },
+						runAt,
+					});
+					taskScheduleRepo.updatePendingJobId(schedule.id, newJob.id);
+					logInfo('[Daemon] Re-seeded lost job for schedule', {
+						scheduleId: schedule.id,
+						newJobId: newJob.id,
+					});
+				}
+			}
+		} catch (err) {
+			logError('[Daemon] Task schedule startup re-seed failed (non-fatal):', err);
+		}
+	}
 
 	// Enqueue the initial cleanup job if none is already pending.
 	const pendingCleanup = jobQueue.listJobs({

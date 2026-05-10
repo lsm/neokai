@@ -98,6 +98,16 @@ export interface SpaceRuntimeServiceConfig {
 	 * calls the Claude Agent SDK. Tests should supply a deterministic stub.
 	 */
 	selectWorkflowWithLlm?: SelectWorkflowWithLlm;
+	/**
+	 * Task schedule repository — passed to space-agent-tools so Space Agent
+	 * and member sessions can manage scheduled tasks. Optional.
+	 */
+	taskScheduleRepo?: import('../../../storage/repositories/task-schedule-repository').TaskScheduleRepository;
+	/**
+	 * Job queue repository — paired with taskScheduleRepo for enqueuing fire jobs.
+	 * Optional.
+	 */
+	jobQueue?: import('../../../storage/repositories/job-queue-repository').JobQueueRepository;
 }
 
 export class SpaceRuntimeService {
@@ -671,6 +681,8 @@ export class SpaceRuntimeService {
 			// correct gating behavior for non-space-agent callers.
 			mySessionId: session.id,
 			auditLogRepo: this.auditLogRepo,
+			scheduleRepo: this.config.taskScheduleRepo,
+			jobQueue: this.config.jobQueue,
 		});
 
 		const additional: Record<string, McpServerConfig> = {
@@ -764,6 +776,8 @@ export class SpaceRuntimeService {
 			myAgentName: 'space-agent',
 			mySessionId: spaceChatSessionId,
 			auditLogRepo: this.auditLogRepo,
+			scheduleRepo: this.config.taskScheduleRepo,
+			jobQueue: this.config.jobQueue,
 		});
 
 		// Create a space-scoped db-query server if dbPath is configured.

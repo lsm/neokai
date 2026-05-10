@@ -39,6 +39,10 @@ import type {
 	SpaceWorkflow,
 	SpaceWorkflowSummary,
 	SpaceWorkflowRun,
+	TaskSchedule,
+	TaskScheduleStatus,
+	TaskScheduleTriggerType,
+	SpaceTaskPriority,
 	UpdateSpaceAgentParams,
 	UpdateSpaceParams,
 	UpdateSpaceTaskParams,
@@ -132,6 +136,9 @@ class SpaceStore {
 
 	/** Runtime state for this space */
 	readonly runtimeState = signal<RuntimeState | null>(null);
+
+	/** Task schedules for this space */
+	readonly schedules = signal<TaskSchedule[]>([]);
 
 	/** Live task-agent activity rows keyed by task ID */
 	readonly taskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());
@@ -2089,6 +2096,95 @@ class SpaceStore {
 			{ id: workflowId, spaceId }
 		);
 		return workflow;
+	}
+
+	// ========================================
+	// Task Schedule Methods
+	// ========================================
+
+	/**
+	 * Create a recurring (cron) or one-shot (at) task schedule.
+	 */
+	async createSchedule(params: {
+		title: string;
+		description?: string;
+		priority?: SpaceTaskPriority;
+		preferredWorkflowId?: string | null;
+		labels?: string[];
+		triggerType: TaskScheduleTriggerType;
+		cronExpression?: string | null;
+		runAt?: number | null;
+		timezone?: string;
+	}): Promise<TaskSchedule> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { schedule } = await hub.request<{ schedule: TaskSchedule }>('taskSchedule.create', {
+			...params,
+			spaceId,
+		});
+		this.schedules.value = [...this.schedules.value, schedule];
+		return schedule;
+	}
+
+	/**
+	 * List schedules for the current space, optionally filtered by status.
+	 */
+	async listSchedules(status?: TaskScheduleStatus): Promise<TaskSchedule[]> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { schedules } = await hub.request<{ schedules: TaskSchedule[] }>('taskSchedule.list', {
+			spaceId,
+			status,
+		});
+		this.schedules.value = schedules;
+		return schedules;
+	}
+
+	/**
+	 * Pause a schedule.
+	 */
+	async pauseSchedule(scheduleId: string): Promise<TaskSchedule> {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { schedule } = await hub.request<{ schedule: TaskSchedule }>('taskSchedule.pause', {
+			scheduleId,
+		});
+		this.schedules.value = this.schedules.value.map((s) => (s.id === scheduleId ? schedule : s));
+		return schedule;
+	}
+
+	/**
+	 * Resume a paused schedule.
+	 */
+	async resumeSchedule(scheduleId: string): Promise<TaskSchedule> {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { schedule } = await hub.request<{ schedule: TaskSchedule }>('taskSchedule.resume', {
+			scheduleId,
+		});
+		this.schedules.value = this.schedules.value.map((s) => (s.id === scheduleId ? schedule : s));
+		return schedule;
+	}
+
+	/**
+	 * Delete a schedule.
+	 */
+	async deleteSchedule(scheduleId: string): Promise<void> {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		await hub.request('taskSchedule.delete', { scheduleId });
+		this.schedules.value = this.schedules.value.filter((s) => s.id !== scheduleId);
 	}
 }
 

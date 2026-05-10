@@ -10,15 +10,15 @@
  * matching the RoomTasks component style.
  */
 
-import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus } from '@neokai/shared';
-import { useMemo } from 'preact/hooks';
+import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus, TaskSchedule } from '@neokai/shared';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import { navigateToSpaceTasks } from '../../lib/router';
 import { currentSpaceIdSignal, currentSpaceTasksFilterTabSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
 import { getRelativeTime } from '../../lib/utils';
 
-type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'archived';
+type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'archived' | 'scheduled';
 
 /** Block reasons that indicate a task needs human attention */
 const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested', 'gate_rejected'];
@@ -36,7 +36,11 @@ const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested', 'g
  * a regression guard: if someone later re-inlines the predicate here,
  * the parity test in `task-filters.test.ts` will fail.
  */
-export const TAB_PREDICATES: Record<TaskFilterTab, (task: SpaceTask) => boolean> = {
+// Note: 'scheduled' tab is handled separately in the component (schedules, not tasks)
+export const TAB_PREDICATES: Record<
+	Exclude<TaskFilterTab, 'scheduled'>,
+	(task: SpaceTask) => boolean
+> = {
 	action: isActionRequired,
 	active: isActiveTask,
 	draft: isDraftTask,
@@ -124,7 +128,7 @@ const ARCHIVED_GROUPS: StatusGroupDef[] = [
 
 const DRAFT_GROUPS: StatusGroupDef[] = [{ status: 'draft', title: 'Drafts', variant: 'default' }];
 
-const TAB_GROUPS_DEF: Record<TaskFilterTab, StatusGroupDef[]> = {
+const TAB_GROUPS_DEF: Record<Exclude<TaskFilterTab, 'scheduled'>, StatusGroupDef[]> = {
 	action: ACTION_GROUPS,
 	active: ACTIVE_GROUPS,
 	draft: DRAFT_GROUPS,
@@ -205,6 +209,10 @@ function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
 		draft: { title: 'No draft tasks', description: 'Tasks created as drafts will appear here' },
 		completed: { title: 'No completed tasks', description: 'Completed tasks will appear here' },
 		archived: { title: 'No archived tasks', description: 'Archived tasks will appear here' },
+		scheduled: {
+			title: 'No scheduled tasks',
+			description: 'Recurring and one-shot scheduled tasks will appear here',
+		},
 	};
 
 	const { title, description } = messages[tab];
@@ -420,8 +428,16 @@ interface SpaceTasksProps {
 
 export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps) {
 	const tasks = spaceStore.tasks.value;
-	const activeTab: TaskFilterTab = currentSpaceTasksFilterTabSignal.value;
+	const schedules = spaceStore.schedules.value;
+	const activeTab: TaskFilterTab = currentSpaceTasksFilterTabSignal.value as TaskFilterTab;
 	const spaceId = currentSpaceIdSignal.value ?? '';
+
+	// Load schedules when the tab is switched to 'scheduled'
+	useEffect(() => {
+		if (activeTab === 'scheduled') {
+			spaceStore.listSchedules().catch(() => {});
+		}
+	}, [activeTab]);
 
 	const counts = useMemo(() => {
 		const c: Record<TaskFilterTab, number> = {
@@ -430,10 +446,11 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 			draft: 0,
 			completed: 0,
 			archived: 0,
+			scheduled: schedules.filter((s) => s.status !== 'completed').length,
 		};
 		for (const task of tasks) {
 			for (const [tab, predicate] of Object.entries(TAB_PREDICATES) as [
-				TaskFilterTab,
+				Exclude<TaskFilterTab, 'scheduled'>,
 				(t: SpaceTask) => boolean,
 			][]) {
 				if (predicate(task)) {
@@ -443,10 +460,12 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 			}
 		}
 		return c;
-	}, [tasks]);
+	}, [tasks, schedules]);
 
 	const filteredTasks = useMemo(() => {
-		const predicate = TAB_PREDICATES[activeTab];
+		if (activeTab === 'scheduled') return [];
+		const predicate = TAB_PREDICATES[activeTab as Exclude<TaskFilterTab, 'scheduled'>];
+		if (!predicate) return [];
 		return [...tasks].filter(predicate).sort((a, b) => b.updatedAt - a.updatedAt);
 	}, [tasks, activeTab]);
 
@@ -519,19 +538,128 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 						onClick={() => navigateToSpaceTasks(spaceId, 'archived')}
 						variant="gray"
 					/>
+					<TabButton
+						label="Scheduled"
+						count={counts.scheduled}
+						isActive={activeTab === 'scheduled'}
+						onClick={() => navigateToSpaceTasks(spaceId, 'scheduled')}
+						variant="default"
+					/>
 				</div>
 
-				{filteredTasks.length === 0 ? (
+				{activeTab === 'scheduled' ? (
+					schedules.length === 0 ? (
+						<EmptyTabState tab="scheduled" />
+					) : (
+						<ScheduleList
+							schedules={schedules}
+							onPause={(id) => spaceStore.pauseSchedule(id).catch(() => {})}
+							onResume={(id) => spaceStore.resumeSchedule(id).catch(() => {})}
+							onDelete={(id) => spaceStore.deleteSchedule(id).catch(() => {})}
+						/>
+					)
+				) : filteredTasks.length === 0 ? (
 					<EmptyTabState tab={activeTab} />
 				) : (
 					<TaskGroupList
 						tasks={filteredTasks}
 						taskById={taskById}
-						tab={activeTab}
+						tab={activeTab as Exclude<TaskFilterTab, 'scheduled'>}
 						onTaskClick={onSelectTask}
 					/>
 				)}
 			</div>
+		</div>
+	);
+}
+
+/** Schedule list for the Scheduled tab */
+function ScheduleList({
+	schedules,
+	onPause,
+	onResume,
+	onDelete,
+}: {
+	schedules: TaskSchedule[];
+	onPause: (id: string) => void;
+	onResume: (id: string) => void;
+	onDelete: (id: string) => void;
+}) {
+	const [deletingId, setDeletingId] = useState<string | null>(null);
+
+	const handleDelete = (id: string) => {
+		setDeletingId(id);
+		onDelete(id);
+	};
+
+	const formatNextRun = (nextRunAt: number | null) => {
+		if (!nextRunAt) return 'N/A';
+		return getRelativeTime(nextRunAt);
+	};
+
+	const formatTrigger = (s: TaskSchedule) => {
+		if (s.triggerType === 'cron') return s.cronExpression ?? 'cron';
+		if (s.runAt) return `once at ${new Date(s.runAt).toLocaleString()}`;
+		return 'one-shot';
+	};
+
+	return (
+		<div class="space-y-2">
+			{schedules.map((s) => (
+				<div
+					key={s.id}
+					class="flex items-start gap-3 rounded-lg border border-dark-700 bg-dark-800 p-3"
+				>
+					<div class="flex-1 min-w-0">
+						<div class="flex items-center gap-2">
+							<span class="text-sm font-medium text-gray-200 truncate">{s.title}</span>
+							<span
+								class={`text-xs px-1.5 py-0.5 rounded ${
+									s.status === 'active'
+										? 'bg-green-900/40 text-green-400'
+										: s.status === 'paused'
+											? 'bg-amber-900/40 text-amber-400'
+											: 'bg-gray-800 text-gray-500'
+								}`}
+							>
+								{s.status}
+							</span>
+						</div>
+						<div class="mt-1 flex items-center gap-3 text-xs text-gray-500">
+							<span title="Trigger">{formatTrigger(s)}</span>
+							{s.nextRunAt && s.status === 'active' && (
+								<span>next: {formatNextRun(s.nextRunAt)}</span>
+							)}
+							{s.lastRunAt && <span>last: {getRelativeTime(s.lastRunAt)}</span>}
+						</div>
+					</div>
+					<div class="flex items-center gap-1 shrink-0">
+						{s.status === 'active' && (
+							<button
+								class="px-2 py-1 text-xs rounded text-amber-400 hover:bg-amber-900/20"
+								onClick={() => onPause(s.id)}
+							>
+								Pause
+							</button>
+						)}
+						{s.status === 'paused' && (
+							<button
+								class="px-2 py-1 text-xs rounded text-green-400 hover:bg-green-900/20"
+								onClick={() => onResume(s.id)}
+							>
+								Resume
+							</button>
+						)}
+						<button
+							class="px-2 py-1 text-xs rounded text-red-400 hover:bg-red-900/20"
+							onClick={() => handleDelete(s.id)}
+							disabled={deletingId === s.id}
+						>
+							Delete
+						</button>
+					</div>
+				</div>
+			))}
 		</div>
 	);
 }
@@ -545,7 +673,7 @@ function TaskGroupList({
 }: {
 	tasks: SpaceTask[];
 	taskById: ReadonlyMap<string, SpaceTask>;
-	tab: TaskFilterTab;
+	tab: Exclude<TaskFilterTab, 'scheduled'>;
 	onTaskClick?: (taskId: string) => void;
 }) {
 	const groups = TAB_GROUPS_DEF[tab];

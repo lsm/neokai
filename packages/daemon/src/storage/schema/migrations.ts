@@ -590,6 +590,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   space_external_events — source-level dedup + state machine.
 	//   space_external_event_deliveries — per-subscription delivery lifecycle.
 	runMigration123(db);
+
+	// Migration 124: Add task_schedules table for recurring/one-shot scheduled tasks.
+	//   task_schedules — stores template + trigger config + scheduling state.
+	//   Also adds created_by_task_schedule_id column to space_tasks.
+	runMigration124(db);
 }
 
 /**
@@ -8420,4 +8425,63 @@ export function runMigration123(db: BunDatabase): void {
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_external_event_deliveries_key
 		ON space_external_event_deliveries(delivery_key)
 	`);
+}
+
+/**
+ * Migration 124: Add `task_schedules` table for recurring/one-shot scheduled tasks.
+ *
+ * task_schedules
+ *   - Stores template fields (title, description, priority, etc.) + trigger config.
+ *   - triggerType: 'cron' for recurring (cronExpression), 'at' for one-shot (runAt).
+ *   - pendingJobId: O(1) lookup of the pending job in job_queue for cancel/pause.
+ *   - Status machine: active → paused → active (or completed for one-shot).
+ *
+ * Also adds created_by_task_schedule_id column to space_tasks so spawned tasks
+ * can be linked back to their schedule.
+ */
+export function runMigration124(db: BunDatabase): void {
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS task_schedules (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			priority TEXT NOT NULL DEFAULT 'normal'
+				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+			preferred_workflow_id TEXT DEFAULT NULL,
+			labels TEXT NOT NULL DEFAULT '[]',
+			trigger_type TEXT NOT NULL CHECK(trigger_type IN ('cron', 'at')),
+			cron_expression TEXT DEFAULT NULL,
+			run_at INTEGER DEFAULT NULL,
+			timezone TEXT NOT NULL DEFAULT 'UTC',
+			next_run_at INTEGER DEFAULT NULL,
+			last_run_at INTEGER DEFAULT NULL,
+			last_created_task_id TEXT DEFAULT NULL,
+			pending_job_id TEXT DEFAULT NULL,
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'paused', 'completed')),
+			created_by_agent TEXT DEFAULT NULL,
+			created_by_session TEXT DEFAULT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_task_schedules_space
+		ON task_schedules(space_id, status)
+	`);
+
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_task_schedules_active_due
+		ON task_schedules(status, next_run_at)
+		WHERE status = 'active'
+	`);
+
+	// Add created_by_task_schedule_id column to space_tasks (nullable, no FK).
+	const columns = db.prepare(`PRAGMA table_info(space_tasks)`).all() as { name: string }[];
+	if (columns.length > 0 && !columns.some((c) => c.name === 'created_by_task_schedule_id')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN created_by_task_schedule_id TEXT DEFAULT NULL`);
+	}
 }

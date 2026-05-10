@@ -23,7 +23,14 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { NodeExecution, SpaceTask, SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
+import type {
+	NodeExecution,
+	SpaceTask,
+	SpaceTaskStatus,
+	SpaceTaskPriority,
+	TaskScheduleTriggerType,
+	TaskScheduleStatus,
+} from '@neokai/shared';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
@@ -39,6 +46,11 @@ import type { DaemonHub } from '../../daemon-hub';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
+import type { TaskScheduleRepository } from '../../../storage/repositories/task-schedule-repository';
+import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
+import { isValidCronExpression, getNextRunAt } from '../schedule/cron-utils';
+import { TASK_SCHEDULE_FIRE } from '../../job-queue-constants';
+import type { TaskScheduleFirePayload } from '../../job-handlers/task-schedule-fire.handler';
 import { formatAgentMessage } from '../agent-message-envelope';
 import { canTransition } from '../runtime/workflow-run-status-machine';
 function normalizeAgentNameToken(value: string): string {
@@ -163,6 +175,17 @@ export interface SpaceAgentToolsConfig {
 	 * Optional — when absent, no audit entries are written.
 	 */
 	auditLogRepo?: McpAuditLogRepository;
+	/**
+	 * Task schedule repository — required for the schedule management tools
+	 * (create_scheduled_task, list_scheduled_tasks, etc.).
+	 * Optional — when absent, schedule tools are not registered.
+	 */
+	scheduleRepo?: TaskScheduleRepository;
+	/**
+	 * Job queue repository — required for the schedule management tools.
+	 * Optional — when absent, schedule tools are not registered.
+	 */
+	jobQueue?: JobQueueRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -1072,6 +1095,236 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				return jsonResult({ success: false, error: message });
 			}
 		},
+
+		/**
+		 * Create a recurring (cron) or one-shot (at) scheduled task.
+		 */
+		async create_scheduled_task(args: {
+			title: string;
+			description: string;
+			priority?: SpaceTaskPriority;
+			workflow_id?: string;
+			labels?: string[];
+			trigger_type: TaskScheduleTriggerType;
+			cron_expression?: string;
+			run_at?: number;
+			timezone?: string;
+		}): Promise<ToolResult> {
+			if (!config.scheduleRepo || !config.jobQueue) {
+				return jsonResult({ success: false, error: 'Schedule management not available' });
+			}
+			try {
+				if (!args.title?.trim()) return jsonResult({ success: false, error: 'title is required' });
+				if (!args.trigger_type)
+					return jsonResult({ success: false, error: 'trigger_type is required' });
+
+				if (args.trigger_type === 'cron') {
+					if (!args.cron_expression) {
+						return jsonResult({
+							success: false,
+							error: 'cron_expression is required for cron triggers',
+						});
+					}
+					if (!isValidCronExpression(args.cron_expression)) {
+						return jsonResult({
+							success: false,
+							error: `Invalid cron expression: ${args.cron_expression}`,
+						});
+					}
+				} else {
+					if (!args.run_at)
+						return jsonResult({ success: false, error: 'run_at is required for at triggers' });
+					if (args.run_at < Date.now())
+						return jsonResult({ success: false, error: 'run_at must be in the future' });
+				}
+
+				const tz = args.timezone ?? 'UTC';
+				const nextRunAt =
+					args.trigger_type === 'cron' ? getNextRunAt(args.cron_expression!, tz) : args.run_at!;
+
+				if (nextRunAt === null) {
+					return jsonResult({ success: false, error: 'Could not compute next run time' });
+				}
+
+				const schedule = config.scheduleRepo.create({
+					spaceId,
+					title: args.title,
+					description: args.description ?? '',
+					priority: args.priority,
+					preferredWorkflowId: args.workflow_id ?? null,
+					labels: args.labels,
+					triggerType: args.trigger_type,
+					cronExpression: args.cron_expression ?? null,
+					runAt: args.run_at ?? null,
+					timezone: tz,
+					nextRunAt,
+					createdByAgent: myAgentName ?? null,
+					createdBySession: mySessionId ?? null,
+				});
+
+				const job = config.jobQueue.enqueue({
+					queue: TASK_SCHEDULE_FIRE,
+					payload: { scheduleId: schedule.id } satisfies TaskScheduleFirePayload,
+					runAt: nextRunAt,
+				});
+				config.scheduleRepo.updatePendingJobId(schedule.id, job.id);
+				const updated = config.scheduleRepo.getById(schedule.id);
+
+				logAudit('create_scheduled_task', {
+					title: args.title,
+					trigger_type: args.trigger_type,
+					cron_expression: args.cron_expression,
+					run_at: args.run_at,
+					timezone: tz,
+				});
+				return jsonResult({ success: true, schedule: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * List all scheduled tasks for this space.
+		 */
+		async list_scheduled_tasks(args: { status?: TaskScheduleStatus }): Promise<ToolResult> {
+			if (!config.scheduleRepo) {
+				return jsonResult({ success: false, error: 'Schedule management not available' });
+			}
+			try {
+				const schedules = config.scheduleRepo.listBySpace(spaceId, args.status);
+				return jsonResult({ success: true, schedules });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Get schedule details including last spawned task.
+		 */
+		async get_scheduled_task(args: { schedule_id: string }): Promise<ToolResult> {
+			if (!config.scheduleRepo) {
+				return jsonResult({ success: false, error: 'Schedule management not available' });
+			}
+			try {
+				const schedule = config.scheduleRepo.getById(args.schedule_id);
+				if (!schedule || schedule.spaceId !== spaceId) {
+					return jsonResult({ success: false, error: `Schedule not found: ${args.schedule_id}` });
+				}
+				return jsonResult({ success: true, schedule });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Pause a schedule — stops creating new tasks.
+		 */
+		async pause_scheduled_task(args: { schedule_id: string }): Promise<ToolResult> {
+			if (!config.scheduleRepo || !config.jobQueue) {
+				return jsonResult({ success: false, error: 'Schedule management not available' });
+			}
+			try {
+				const schedule = config.scheduleRepo.getById(args.schedule_id);
+				if (!schedule || schedule.spaceId !== spaceId) {
+					return jsonResult({ success: false, error: `Schedule not found: ${args.schedule_id}` });
+				}
+				if (schedule.status !== 'active') {
+					return jsonResult({
+						success: false,
+						error: `Schedule is not active (current: ${schedule.status})`,
+					});
+				}
+				if (schedule.pendingJobId) {
+					config.jobQueue.deleteJob(schedule.pendingJobId);
+				}
+				config.scheduleRepo.updatePendingJobId(args.schedule_id, null);
+				config.scheduleRepo.updateStatus(args.schedule_id, 'paused');
+				const updated = config.scheduleRepo.getById(args.schedule_id);
+				logAudit('pause_scheduled_task', { schedule_id: args.schedule_id });
+				return jsonResult({ success: true, schedule: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Resume a paused schedule.
+		 */
+		async resume_scheduled_task(args: { schedule_id: string }): Promise<ToolResult> {
+			if (!config.scheduleRepo || !config.jobQueue) {
+				return jsonResult({ success: false, error: 'Schedule management not available' });
+			}
+			try {
+				const schedule = config.scheduleRepo.getById(args.schedule_id);
+				if (!schedule || schedule.spaceId !== spaceId) {
+					return jsonResult({ success: false, error: `Schedule not found: ${args.schedule_id}` });
+				}
+				if (schedule.status !== 'paused') {
+					return jsonResult({
+						success: false,
+						error: `Schedule is not paused (current: ${schedule.status})`,
+					});
+				}
+				const tz = schedule.timezone;
+				let nextRunAt: number | null;
+				if (schedule.triggerType === 'cron' && schedule.cronExpression) {
+					nextRunAt = getNextRunAt(schedule.cronExpression, tz);
+				} else if (schedule.triggerType === 'at' && schedule.runAt) {
+					nextRunAt = schedule.runAt < Date.now() ? null : schedule.runAt;
+				} else {
+					nextRunAt = null;
+				}
+				let pendingJobId: string | null = null;
+				if (nextRunAt !== null) {
+					const job = config.jobQueue.enqueue({
+						queue: TASK_SCHEDULE_FIRE,
+						payload: { scheduleId: args.schedule_id } satisfies TaskScheduleFirePayload,
+						runAt: nextRunAt,
+					});
+					pendingJobId = job.id;
+				}
+				config.scheduleRepo.update(args.schedule_id, { nextRunAt: nextRunAt ?? undefined });
+				config.scheduleRepo.updatePendingJobId(args.schedule_id, pendingJobId);
+				config.scheduleRepo.updateStatus(
+					args.schedule_id,
+					nextRunAt !== null ? 'active' : 'completed'
+				);
+				const updated = config.scheduleRepo.getById(args.schedule_id);
+				logAudit('resume_scheduled_task', { schedule_id: args.schedule_id });
+				return jsonResult({ success: true, schedule: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Delete a schedule permanently.
+		 */
+		async delete_scheduled_task(args: { schedule_id: string }): Promise<ToolResult> {
+			if (!config.scheduleRepo || !config.jobQueue) {
+				return jsonResult({ success: false, error: 'Schedule management not available' });
+			}
+			try {
+				const schedule = config.scheduleRepo.getById(args.schedule_id);
+				if (!schedule || schedule.spaceId !== spaceId) {
+					return jsonResult({ success: false, error: `Schedule not found: ${args.schedule_id}` });
+				}
+				if (schedule.pendingJobId) {
+					config.jobQueue.deleteJob(schedule.pendingJobId);
+				}
+				config.scheduleRepo.delete(args.schedule_id);
+				logAudit('delete_scheduled_task', { schedule_id: args.schedule_id });
+				return jsonResult({ success: true });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
 	};
 }
 
@@ -1333,6 +1586,92 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 			(args) => handlers.approve_task(args)
 		),
 	];
+
+	// Schedule management tools — only registered when scheduleRepo + jobQueue are provided.
+	if (config.scheduleRepo && config.jobQueue) {
+		tools.push(
+			tool(
+				'create_scheduled_task',
+				'Create a recurring (cron) or one-shot (at) scheduled task. When it fires, a real SpaceTask is created automatically.',
+				{
+					title: z.string().describe('Short title for the task template'),
+					description: z.string().describe('Detailed description for the task template'),
+					priority: z
+						.enum(['low', 'normal', 'high', 'urgent'])
+						.optional()
+						.describe('Task priority (default: normal)'),
+					workflow_id: z
+						.string()
+						.optional()
+						.describe('Preferred workflow ID to attach to created tasks'),
+					labels: z.array(z.string()).optional().describe('Labels to apply to created tasks'),
+					trigger_type: z
+						.enum(['cron', 'at'])
+						.describe('Trigger type: "cron" for recurring, "at" for one-shot'),
+					cron_expression: z
+						.string()
+						.optional()
+						.describe(
+							'Cron expression (e.g. "0 9 * * 1" for every Monday at 9am, "@daily", "@hourly"). Required when trigger_type is "cron".'
+						),
+					run_at: z
+						.number()
+						.optional()
+						.describe(
+							'Unix timestamp in ms when the task should fire. Required when trigger_type is "at".'
+						),
+					timezone: z
+						.string()
+						.optional()
+						.describe('IANA timezone string (default: "UTC"). Example: "America/New_York"'),
+				},
+				(args) => handlers.create_scheduled_task(args)
+			),
+			tool(
+				'list_scheduled_tasks',
+				'List all scheduled tasks for this space.',
+				{
+					status: z
+						.enum(['active', 'paused', 'completed'])
+						.optional()
+						.describe('Filter by schedule status (default: all)'),
+				},
+				(args) => handlers.list_scheduled_tasks(args)
+			),
+			tool(
+				'get_scheduled_task',
+				'Get details of a specific scheduled task including last spawned task ID and next run time.',
+				{
+					schedule_id: z.string().describe('ID of the scheduled task to retrieve'),
+				},
+				(args) => handlers.get_scheduled_task(args)
+			),
+			tool(
+				'pause_scheduled_task',
+				'Pause a schedule — stops creating new tasks until resumed.',
+				{
+					schedule_id: z.string().describe('ID of the scheduled task to pause'),
+				},
+				(args) => handlers.pause_scheduled_task(args)
+			),
+			tool(
+				'resume_scheduled_task',
+				'Resume a paused schedule, computing the next run time and re-enqueueing the job.',
+				{
+					schedule_id: z.string().describe('ID of the scheduled task to resume'),
+				},
+				(args) => handlers.resume_scheduled_task(args)
+			),
+			tool(
+				'delete_scheduled_task',
+				'Permanently delete a scheduled task. Any pending job is cancelled.',
+				{
+					schedule_id: z.string().describe('ID of the scheduled task to delete'),
+				},
+				(args) => handlers.delete_scheduled_task(args)
+			)
+		);
+	}
 
 	// Optional legacy restore mirror. Workflow node sessions should use the
 	// node-agent namespace directly; space-agent-tools is no longer attached there.
