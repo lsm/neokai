@@ -2292,3 +2292,177 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(parsed.error).toContain('does not belong to this space');
 	});
 });
+
+// ---------------------------------------------------------------------------
+// update_task
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — update_task', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('updates title only', async () => {
+		const created = await ctx.taskManager.createTask({
+			title: 'Original title',
+			description: 'Original desc',
+		});
+		const result = await makeHandlers(ctx).update_task({
+			task_id: created.id,
+			title: 'Updated title',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.title).toBe('Updated title');
+		expect(parsed.task.description).toBe('Original desc');
+	});
+
+	test('updates description only', async () => {
+		const created = await ctx.taskManager.createTask({
+			title: 'Task',
+			description: 'Original desc',
+		});
+		const result = await makeHandlers(ctx).update_task({
+			task_id: created.id,
+			description: 'Updated desc',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.description).toBe('Updated desc');
+		expect(parsed.task.title).toBe('Task');
+	});
+
+	test('updates priority', async () => {
+		const created = await ctx.taskManager.createTask({
+			title: 'Task',
+			description: 'Desc',
+			priority: 'normal',
+		});
+		const result = await makeHandlers(ctx).update_task({
+			task_id: created.id,
+			priority: 'high',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.priority).toBe('high');
+	});
+
+	test('updates dependencies', async () => {
+		const dep = await ctx.taskManager.createTask({ title: 'Dep', description: '' });
+		const created = await ctx.taskManager.createTask({
+			title: 'Task',
+			description: 'Desc',
+		});
+		const result = await makeHandlers(ctx).update_task({
+			task_id: created.id,
+			depends_on: [dep.id],
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.dependsOn).toEqual([dep.id]);
+	});
+
+	test('updates multiple fields at once', async () => {
+		const created = await ctx.taskManager.createTask({
+			title: 'Task',
+			description: 'Desc',
+			priority: 'normal',
+		});
+		const result = await makeHandlers(ctx).update_task({
+			task_id: created.id,
+			title: 'New title',
+			description: 'New desc',
+			priority: 'urgent',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.title).toBe('New title');
+		expect(parsed.task.description).toBe('New desc');
+		expect(parsed.task.priority).toBe('urgent');
+	});
+
+	test('returns error when task not found', async () => {
+		const result = await makeHandlers(ctx).update_task({
+			task_id: 'task-missing',
+			title: 'New title',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('task-missing');
+	});
+
+	test('returns error when task belongs to a different space', async () => {
+		const otherSpaceId = 'space-other';
+		seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-workspace');
+		const otherTaskManager = new SpaceTaskManager(ctx.db, otherSpaceId);
+		const otherTask = await otherTaskManager.createTask({
+			title: 'Foreign task',
+			description: 'Belongs to a different space',
+		});
+
+		const result = await makeHandlers(ctx).update_task({
+			task_id: otherTask.id,
+			title: 'New title',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('does not belong to this space');
+	});
+
+	test('emits space.task.updated event via daemonHub', async () => {
+		const emitted: Array<Record<string, unknown>> = [];
+		const mockHub = {
+			async emit(event: string, payload: Record<string, unknown>) {
+				if (event === 'space.task.updated') {
+					emitted.push(payload);
+				}
+			},
+		};
+
+		const created = await ctx.taskManager.createTask({
+			title: 'Task',
+			description: 'Desc',
+		});
+		const handlers = createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			daemonHub: mockHub as unknown as import('../../../../src/lib/daemon-hub').DaemonHub,
+		});
+
+		await handlers.update_task({
+			task_id: created.id,
+			title: 'Updated title',
+		});
+
+		expect(emitted).toHaveLength(1);
+		expect(emitted[0].spaceId).toBe(ctx.spaceId);
+		expect(emitted[0].taskId).toBe(created.id);
+		expect((emitted[0].task as { title: string }).title).toBe('Updated title');
+	});
+
+	test('registers update_task in createSpaceAgentMcpServer', () => {
+		const server = createSpaceAgentMcpServer({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+		});
+
+		const names = getRegisteredToolNames(server);
+		expect(names).toContain('update_task');
+	});
+});

@@ -295,6 +295,26 @@ export const CreateStandaloneTaskSchema = z.object({
 export type CreateStandaloneTaskInput = z.infer<typeof CreateStandaloneTaskSchema>;
 
 // ---------------------------------------------------------------------------
+// update_task
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `update_task` input.
+ *
+ * Edit an existing task's title, description, priority, or dependencies.
+ * The task must belong to the same space as the calling agent.
+ */
+export const UpdateTaskSchema = z.object({
+	task_id: z.string().describe('UUID of the task to update'),
+	title: z.string().min(1).describe('New title for the task').optional(),
+	description: z.string().describe('New description for the task').optional(),
+	priority: z.enum(['low', 'normal', 'high', 'urgent']).describe('New priority').optional(),
+	depends_on: z.array(z.string()).describe('New dependency list (replaces existing)').optional(),
+});
+
+export type UpdateTaskInput = z.infer<typeof UpdateTaskSchema>;
+
+// ---------------------------------------------------------------------------
 // list_reachable_agents
 // ---------------------------------------------------------------------------
 
@@ -413,6 +433,7 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
 	send_message: SendMessageSchema,
 	save_artifact: SaveArtifactSchema,
 	create_standalone_task: CreateStandaloneTaskSchema,
+	update_task: UpdateTaskSchema,
 	list_artifacts: ListArtifactsSchema,
 	list_reachable_agents: ListReachableAgentsSchema,
 	list_channels: ListChannelsSchema,

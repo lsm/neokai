@@ -1716,6 +1716,64 @@ describe('TaskAgentManager.buildNodeAgentMcpServerForSession — onRestoreNodeAg
 		expect(parsed.task.title).toBe('Follow-up');
 	});
 
+	test('passes an onUpdateTask callback into createNodeAgentMcpServer', async () => {
+		const { manager, fromInitSpy, space, taskManager } = buildManager({});
+		spies.push(fromInitSpy);
+
+		let capturedConfig: Record<string, unknown> | null = null;
+		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
+			(config) => {
+				capturedConfig = config as unknown as Record<string, unknown>;
+				return { name: 'node-agent', _stub: true } as unknown as ReturnType<
+					typeof nodeAgentToolsModule.createNodeAgentMcpServer
+				>;
+			}
+		);
+		spies.push(mcpServerSpy);
+
+		const mgr = manager as unknown as {
+			buildNodeAgentMcpServerForSession(
+				taskId: string,
+				subSessionId: string,
+				agentName: string,
+				spaceId: string,
+				workflowRunId: string,
+				workspacePath: string,
+				workflowNodeIdHint?: string
+			): unknown;
+		};
+
+		// Seed a task that we can update via the callback
+		const task = await taskManager.createTask({
+			title: 'Task to update',
+			description: 'Original desc',
+			status: 'open',
+		});
+
+		mgr.buildNodeAgentMcpServerForSession(
+			task.id,
+			'sub-session-update-task',
+			'coder',
+			space.id,
+			'',
+			space.workspacePath,
+			'node-1'
+		);
+
+		expect(capturedConfig).not.toBeNull();
+		expect(typeof capturedConfig!['onUpdateTask']).toBe('function');
+
+		const callback = capturedConfig!['onUpdateTask'] as (args: {
+			task_id: string;
+			title?: string;
+			description?: string;
+		}) => Promise<{ content: Array<{ text: string }> }>;
+		const result = await callback({ task_id: task.id, title: 'Updated title' });
+		const parsed = JSON.parse(result.content[0]!.text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.title).toBe('Updated title');
+	});
+
 	test('onRestoreNodeAgent callback re-injects node-agent on a live sub-session', async () => {
 		const { manager, fromInitSpy, space } = buildManager({});
 		spies.push(fromInitSpy);
