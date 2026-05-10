@@ -116,6 +116,37 @@ export class SpaceTaskManager {
 	}
 
 	/**
+	 * List tasks by status, paginated, with the total count for the matching set.
+	 *
+	 * Used by the UI Tasks view to render a single TaskGroup card with Prev/Next
+	 * pagination. `blockReason` is an optional secondary filter so the Action
+	 * tab can split blocked tasks into "Needs Input" / "Gate Pending" / generic
+	 * "Blocked" groups without round-tripping the whole status set.
+	 *
+	 * Pass `blockReason: null` to filter for blocked rows with no reason set;
+	 * omit the param to ignore the column entirely. `blockReasonNotIn` is the
+	 * inverse — used by the generic "Blocked" bucket to include every blocked
+	 * row whose reason is NOT one of the attention-required values. The two
+	 * filters are mutually exclusive.
+	 */
+	async listTasksByStatusPaginated(
+		status: SpaceTaskStatus,
+		blockReason: SpaceBlockReason | null | undefined,
+		limit: number,
+		offset = 0,
+		blockReasonNotIn?: SpaceBlockReason[]
+	): Promise<{ tasks: SpaceTask[]; total: number }> {
+		return this.taskRepo.listBySpaceAndStatus(
+			this.spaceId,
+			status,
+			blockReason,
+			limit,
+			offset,
+			blockReasonNotIn
+		);
+	}
+
+	/**
 	 * List tasks belonging to a specific workflow run
 	 */
 	async listTasksByWorkflowRun(workflowRunId: string): Promise<SpaceTask[]> {
