@@ -656,6 +656,12 @@ export class SDKMessageRepository {
 	 *
 	 * Used by rewind to look up a specific checkpoint/message.
 	 *
+	 * Filters on `json_extract(sdk_message, '$.uuid')` directly so SQLite can
+	 * use `idx_sdk_messages_uuid_status` (covering: session_id, send_status,
+	 * uuid-expr) instead of materialising every user message and scanning in
+	 * JS. On busy sessions with tens of thousands of user rows the JS-scan
+	 * shape was ~400 ms; the indexed lookup is sub-millisecond.
+	 *
 	 * @param sessionId - The session ID
 	 * @param uuid - The message UUID
 	 * @returns The message data or undefined
@@ -666,40 +672,38 @@ export class SDKMessageRepository {
 	): { uuid: string; timestamp: number; content: string } | undefined {
 		const stmt = this.db.prepare(
 			`SELECT sdk_message, timestamp FROM sdk_messages
-       WHERE session_id = ? AND message_type = 'user'
-       ORDER BY timestamp ASC`
+       WHERE session_id = ?
+         AND message_type = 'user'
+         AND json_extract(sdk_message, '$.uuid') = ?
+       LIMIT 1`
 		);
-		const rows = stmt.all(sessionId) as Array<{ sdk_message: string; timestamp: string }>;
+		const row = stmt.get(sessionId, uuid) as { sdk_message: string; timestamp: string } | undefined;
 
-		for (const row of rows) {
-			const message = JSON.parse(row.sdk_message) as SDKMessage;
-			if (message.uuid === uuid) {
-				const timestamp = new Date(row.timestamp).getTime();
+		if (!row) return undefined;
 
-				// Extract text content from message
-				// User messages have a specific structure with nested message.content
-				let content = '';
-				const userMessage = message as {
-					message?: { content?: string | Array<{ type: string; text?: string }> };
-					uuid?: string;
-				};
-				if (userMessage.message?.content) {
-					if (typeof userMessage.message.content === 'string') {
-						content = userMessage.message.content;
-					} else if (Array.isArray(userMessage.message.content)) {
-						// Find first text block
-						const textBlock = userMessage.message.content.find(
-							(block): block is { type: 'text'; text: string } => block.type === 'text'
-						);
-						content = textBlock?.text || '';
-					}
-				}
+		const message = JSON.parse(row.sdk_message) as SDKMessage;
+		const timestamp = new Date(row.timestamp).getTime();
 
-				return { uuid, timestamp, content };
+		// Extract text content from message
+		// User messages have a specific structure with nested message.content
+		let content = '';
+		const userMessage = message as {
+			message?: { content?: string | Array<{ type: string; text?: string }> };
+			uuid?: string;
+		};
+		if (userMessage.message?.content) {
+			if (typeof userMessage.message.content === 'string') {
+				content = userMessage.message.content;
+			} else if (Array.isArray(userMessage.message.content)) {
+				// Find first text block
+				const textBlock = userMessage.message.content.find(
+					(block): block is { type: 'text'; text: string } => block.type === 'text'
+				);
+				content = textBlock?.text || '';
 			}
 		}
 
-		return undefined;
+		return { uuid, timestamp, content };
 	}
 
 	/**

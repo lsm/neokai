@@ -676,6 +676,24 @@ describe('SDKMessageRepository', () => {
 
 			expect(message).toBeUndefined();
 		});
+
+		// Regression: the original implementation loaded every user row for the
+		// session and scanned in JS — O(N) per lookup. The current impl filters
+		// on json_extract(sdk_message, '$.uuid') so SQLite can serve the lookup
+		// from idx_sdk_messages_uuid_status. This test exercises a busy session
+		// and asserts we still return only the matching row.
+		it('should find the right message among many user rows in the same session', () => {
+			const sessionId = 'session-busy';
+			for (let i = 0; i < 50; i++) {
+				repository.saveSDKMessage(sessionId, createUserMessage(`Message ${i}`, `uuid-${i}`));
+			}
+
+			const message = repository.getUserMessageByUuid(sessionId, 'uuid-37');
+
+			expect(message).toBeDefined();
+			expect(message?.uuid).toBe('uuid-37');
+			expect(message?.content).toBe('Message 37');
+		});
 	});
 
 	describe('origin field persistence and retrieval', () => {
