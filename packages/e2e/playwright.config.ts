@@ -68,7 +68,6 @@ const coverageOptions: CoverageReportOptions = {
 		if (
 			sourcePath.includes('message-hub') ||
 			sourcePath.includes('transport') ||
-			sourcePath.includes('event-bus') ||
 			sourcePath.includes('typed-hub') ||
 			sourcePath.includes('router.ts')
 		)

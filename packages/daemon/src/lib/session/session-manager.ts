@@ -8,7 +8,7 @@
  * - MessagePersistence: User message handling
  *
  * Also manages:
- * - EventBus subscriptions for async message processing
+ * - DaemonHub subscriptions for async message processing
  */
 
 import type {
@@ -66,7 +66,7 @@ export enum CleanupState {
 export class SessionManager {
 	private logger: Logger;
 	private worktreeManager: WorktreeManager;
-	private eventBusUnsubscribers: Array<() => void> = [];
+	private daemonHubUnsubscribers: Array<() => void> = [];
 	private sessionResetSubscribers: Array<
 		(event: { sessionId: string; session: Session; restartQuery: boolean }) => Promise<void> | void
 	> = [];
@@ -87,7 +87,7 @@ export class SessionManager {
 		private messageHub: MessageHub,
 		private authManager: AuthManager,
 		private settingsManager: SettingsManager,
-		private eventBus: DaemonHub,
+		private daemonHub: DaemonHub,
 		private config: SessionLifecycleConfig,
 		private jobQueue: JobQueueRepository,
 		private jobProcessor: JobQueueProcessor,
@@ -114,7 +114,7 @@ export class SessionManager {
 			db,
 			this.worktreeManager,
 			this.sessionCache,
-			eventBus,
+			daemonHub,
 			messageHub,
 			config,
 			this.toolsConfigManager,
@@ -130,7 +130,7 @@ export class SessionManager {
 			this.sessionCache,
 			db,
 			messageHub,
-			eventBus,
+			daemonHub,
 			referenceResolver
 		);
 
@@ -152,7 +152,7 @@ export class SessionManager {
 			session,
 			this.db,
 			this.messageHub,
-			this.eventBus,
+			this.daemonHub,
 			() => this.authManager.getCurrentApiKey(),
 			this.skillsManager,
 			this.appMcpServerRepo,
@@ -226,7 +226,7 @@ export class SessionManager {
 		session: Session;
 		restartQuery: boolean;
 	}): Promise<void> {
-		await this.eventBus.emit('session.reset', event);
+		await this.daemonHub.emit('session.reset', event);
 		for (const subscriber of this.sessionResetSubscribers) {
 			await subscriber(event);
 		}
@@ -247,7 +247,7 @@ export class SessionManager {
 				persistedSession
 			);
 
-			await this.eventBus.emit('session.errorClear', { sessionId });
+			await this.daemonHub.emit('session.errorClear', { sessionId });
 
 			const freshSession = this.createAgentSessionFromSession(sessionForFreshInstance, {
 				autoReplayPendingMessages: false,
@@ -308,7 +308,7 @@ export class SessionManager {
 	private setupEventSubscriptions(): void {
 		// Subscribe to message persisted events (for title generation + draft clearing)
 		// AgentSession also subscribes to this event for query feeding
-		const unsubMessagePersisted = this.eventBus.on('message.persisted', async (data) => {
+		const unsubMessagePersisted = this.daemonHub.on('message.persisted', async (data) => {
 			const { sessionId, userMessageText, needsWorkspaceInit, hasDraftToClear } = data;
 
 			try {
@@ -336,7 +336,7 @@ export class SessionManager {
 				// Errors are non-fatal - the user message is already persisted and visible
 			}
 		});
-		this.eventBusUnsubscribers.push(unsubMessagePersisted);
+		this.daemonHubUnsubscribers.push(unsubMessagePersisted);
 	}
 
 	// ==================== Session CRUD Operations ====================
@@ -583,14 +583,14 @@ export class SessionManager {
 		try {
 			// PHASE 1: Unsubscribe from EventBus FIRST
 			// This prevents new events from being processed during cleanup
-			for (const unsubscribe of this.eventBusUnsubscribers) {
+			for (const unsubscribe of this.daemonHubUnsubscribers) {
 				try {
 					unsubscribe();
 				} catch (error) {
-					this.logger.error(`[SessionManager] Error during EventBus unsubscribe:`, error);
+					this.logger.error(`[SessionManager] Error during DaemonHub unsubscribe:`, error);
 				}
 			}
-			this.eventBusUnsubscribers = [];
+			this.daemonHubUnsubscribers = [];
 			this.sessionResetSubscribers = [];
 
 			// PHASE 2: Cleanup all in-memory sessions in parallel
