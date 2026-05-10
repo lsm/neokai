@@ -1602,6 +1602,17 @@ describe('seedBuiltInWorkflows()', () => {
 		}
 	});
 
+	test('all seeded workflows get their canonical handle pinned', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const workflows = manager.listWorkflows(SPACE_ID);
+		const byName = new Map(workflows.map((w) => [w.name, w]));
+		expect(byName.get('Coding Workflow')?.handle).toBe('coding-workflow');
+		expect(byName.get('Research Workflow')?.handle).toBe('research-workflow');
+		expect(byName.get('Review-Only Workflow')?.handle).toBe('review-only-workflow');
+		expect(byName.get('Plan & Decompose Workflow')?.handle).toBe('plan-decompose-workflow');
+		expect(byName.get('Coding with QA Workflow')?.handle).toBe('coding-with-qa-workflow');
+	});
+
 	test('all seeded workflows have endNodeId pointing to a valid node', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		for (const wf of manager.listWorkflows(SPACE_ID)) {
@@ -1702,6 +1713,46 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(after.postApproval).toBeDefined();
 		expect(after.postApproval!.targetAgent).toBe('reviewer');
 		expect(after.templateHash).not.toBe('stale-hash-from-a-prior-pr');
+	});
+
+	test('re-stamp backfills handle when existing seeded row has no handle', () => {
+		// Seed fresh — rows carry the canonical handles.
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+
+		// Simulate a pre-feature row: clear handle and set stale hash to force re-stamp.
+		db.prepare(`UPDATE space_workflows SET handle = NULL, template_hash = ? WHERE id = ?`).run(
+			'stale-hash-pre-handle',
+			coding.id
+		);
+
+		const before = manager.getWorkflow(coding.id)!;
+		expect(before.handle).toBeUndefined();
+
+		// Re-run the seeder — re-stamp branch fires and backfills the handle.
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+		const after = manager.getWorkflow(coding.id)!;
+		expect(after.handle).toBe(CODING_WORKFLOW.handle);
+	});
+
+	test('re-stamp does NOT overwrite a custom user handle', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+
+		// User sets a custom handle and we simulate drift so re-stamp fires.
+		manager.updateWorkflow(coding.id, { handle: 'my-custom-handle' });
+		db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+			'stale-hash',
+			coding.id
+		);
+
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+		const after = manager.getWorkflow(coding.id)!;
+		// Custom handle must be preserved — re-stamp only fills NULL.
+		expect(after.handle).toBe('my-custom-handle');
 	});
 
 	test('re-stamp does NOT touch rows without a templateName (user-created)', () => {
