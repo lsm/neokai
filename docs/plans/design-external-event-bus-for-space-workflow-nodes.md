@@ -142,12 +142,10 @@ export interface EventInterest {
 
   /**
    * Scoping mode — determines how the router filters events for this node.
-   * - 'task'    — Only events related to THIS TASK (e.g. same PR number, same branch).
-   *               The router uses the task's associated PR/branch to filter.
    * - 'repo'    — All events for the space's configured repository.
    * - 'global'  — All events matching the topic pattern, no additional filtering.
    */
-  scope: 'task' | 'repo' | 'global';
+  scope: 'repo' | 'global';
 
   /**
    * Optional label for diagnostics. Not used in routing logic.
@@ -684,7 +682,6 @@ The index is **per-SpaceRuntime instance** and updated via two distinct operatio
 ```typescript
 interface Subscription {
   workflowRunId: string;
-  /** The specific SpaceTask this node execution belongs to. Used for `task` scope. */
   taskId: string;
   nodeId: string;
   agentName: string;
@@ -877,7 +874,7 @@ class ExternalEventRouter {
   ): void {
     // Build the desired set of subscriptions from current node execution states.
     // Use a structured tuple key encoded with JSON.stringify rather than a
-    // delimiter-joined string: task ids, node ids, agent names, topics, and scopes
+    // delimiter-joined string: node ids, agent names, topics, and scopes
     // are free-form enough that ':' or other delimiters can appear in valid input.
     const makeSubscriptionKey = (sub: Pick<Subscription, 'taskId' | 'nodeId' | 'agentName' | 'interest'>) =>
       JSON.stringify([sub.taskId, sub.nodeId, sub.agentName, sub.interest.topic, sub.interest.scope]);
@@ -896,7 +893,7 @@ class ExternalEventRouter {
         for (const interest of agent.eventInterests) {
           // Include taskId, topic, and scope in key — the same run can contain
           // multiple tasks, and the same agent can subscribe to the same topic
-          // with different scopes (e.g., both 'task' and 'repo' scope).
+          // with different scopes (e.g., both 'repo' and 'global' scope).
           const sub: Subscription = {
             workflowRunId,
             taskId,
@@ -2072,7 +2069,7 @@ V1 needs core event lifecycle tables, extension configuration storage, and workf
 3. Add `ExternalEvent`, `ExternalEventExtension`, `HttpExternalEventExtension`, `RpcExternalEventExtension`, `ExternalEventPublisher`, and `ExternalEventStore` types under `packages/daemon/src/lib/external-events/`.
 4. Add validation in the workflow create/update path (Zod schema or manual validation):
    - `topic` must pass `validateGlobPattern()` (non-empty, exactly 4 segments, no `..` segments, no double slashes, valid characters including segment-local `*`).
-   - `scope` must be one of `'task' | 'repo' | 'global'`.
+   - `scope` must be one of `'repo' | 'global'`.
    - Max 10 interests per agent slot (prevent abuse).
    - `validateGlobPattern()` is the single source of truth — called at workflow create/update and again at trie insertion time as a safety net.
 
@@ -2264,7 +2261,7 @@ Repo-scoped matching cache invalidation is explicit: watched-resource changes an
 - Implement `ExternalEventExtension` interfaces and a minimal extension manager/config store.
 - Extract `GitHubEventExtension` as the primary GitHub event source (webhook + polling + normalization).
 - Add global GitHub enablement and per-space GitHub enablement/watched-repo configuration.
-- Route GitHub PR events through `ExternalEventService` → `InternalEventBus` → `ExternalEventRouter` → `InternalCommandBus` with `task` scope.
+- Route GitHub PR events through `ExternalEventService` → `InternalEventBus` → `ExternalEventRouter` → `InternalCommandBus` with `repo` scope.
 - Keep `SpaceGitHubService` only as a compatibility path while parity is verified.
 - No UI changes needed for node subscriptions — event interests are authored in workflow JSON. Basic config can be exposed through existing/admin RPCs first.
 
@@ -2352,7 +2349,7 @@ This is exactly the behavior we want for external events.
 The original design embedded `ExternalEventTaskResolver` inside `ExternalEventService`, which:
 1. Coupled the event pipeline to the task system, violating the extension boundary.
 2. Required source-specific metadata (prNumber, repoOwner, repoName) to be first-class fields on `ExternalEvent` rather than opaque payload data.
-3. Created a hardcoded pipeline where events were always resolved to tasks before publication, even when no task-scoped subscriptions existed.
+3. Created a hardcoded pipeline where events were always resolved to tasks before publication, even when no task-related subscriptions existed.
 
 The simplified design:
 1. Keeps `ExternalEvent` as a pure normalization layer with opaque payload.
@@ -2373,7 +2370,7 @@ The simplified design:
 
 ### Integration tests
 
-1. **End-to-end webhook flow**: POST a GitHub webhook payload to the extension route with a `review_submitted` action for PR #42 on repo `lsm/neokai`. Verify the extension publishes `github/lsm/neokai/pull_request.review_submitted`, and the coder node's `task`-scoped subscription receives an injected message.
+1. **End-to-end webhook flow**: POST a GitHub webhook payload to the extension route with a `review_submitted` action for PR #42 on repo `lsm/neokai`. Verify the extension publishes `github/lsm/neokai/pull_request.review_submitted`, and the coder node's `repo`-scoped subscription receives an injected message.
 
 2. **Dedup across two events with same dedupeKey**: Publish the same GitHub PR review through webhook and polling (identical `dedupeKey`). Verify source-level bus dedup does not create two independent events, and per-subscription delivery dedup calls `injectMessage` exactly once for each interested node. Also verify retryable duplicate states re-emit after a simulated injection failure.
 
