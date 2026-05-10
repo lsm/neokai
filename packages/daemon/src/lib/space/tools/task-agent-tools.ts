@@ -535,6 +535,19 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
+			const hasChanges =
+				args.title !== undefined ||
+				args.description !== undefined ||
+				args.priority !== undefined ||
+				args.depends_on !== undefined;
+			if (!hasChanges) {
+				return jsonResult({
+					success: false,
+					error:
+						'No fields to update. Provide at least one of: title, description, priority, depends_on.',
+				});
+			}
+
 			const task = taskRepo.getTask(taskId);
 			if (!task) return jsonResult({ success: false, error: `Task not found: ` });
 

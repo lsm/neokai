@@ -1913,6 +1913,23 @@ describe('createTaskAgentToolHandlers — update_task', () => {
 		expect((event!.payload as { taskId: string }).taskId).toBe(mainTask.id);
 	});
 
+	test('rejects update when no fields are provided', async () => {
+		const mainTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Original',
+			status: 'open',
+		});
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, 'run-1'));
+
+		const result = await handlers.update_task({
+			task_id: mainTask.id,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('No fields to update');
+	});
+
 	test('createTaskAgentMcpServer registers update_task', () => {
 		const mainTask = ctx.taskRepo.createTask({
 			spaceId: ctx.spaceId,
