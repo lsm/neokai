@@ -1755,6 +1755,38 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(after.handle).toBe('my-custom-handle');
 	});
 
+	test('re-stamp main fields succeed even when canonical handle is already taken', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+
+		// Clear handle so backfill will try to set it, and set stale hash so re-stamp fires.
+		db.prepare(`UPDATE space_workflows SET handle = NULL, template_hash = ? WHERE id = ?`).run(
+			'stale-hash',
+			coding.id
+		);
+
+		// Create a user workflow that already owns the canonical handle — backfill should fail silently.
+		manager.createWorkflow({
+			spaceId: SPACE_ID,
+			name: 'Other Workflow',
+			nodes: [{ name: 'Review', agentId: REVIEWER_ID }],
+			completionAutonomyLevel: 2,
+			handle: CODING_WORKFLOW.handle!,
+		});
+
+		// Re-stamp must succeed (not throw) even though handle backfill fails.
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		expect(result.restamped).toContain(CODING_WORKFLOW.name);
+		expect(result.errors).toHaveLength(0);
+
+		// postApproval and completionAutonomyLevel must be re-stamped correctly.
+		const after = manager.getWorkflow(coding.id)!;
+		expect(after.postApproval).toBeDefined();
+		expect(after.completionAutonomyLevel).toBe(CODING_WORKFLOW.completionAutonomyLevel);
+		// Handle stays NULL since the canonical handle was taken.
+		expect(after.handle).toBeUndefined();
+	});
+
 	test('re-stamp does NOT touch rows without a templateName (user-created)', () => {
 		// Seed the 5 built-ins.
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);

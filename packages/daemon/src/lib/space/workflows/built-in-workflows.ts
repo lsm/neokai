@@ -1603,10 +1603,6 @@ export function seedBuiltInWorkflows(
 					// old one in place.
 					postApproval: template.postApproval ?? null,
 					templateHash: expectedHash,
-					// Backfill the canonical handle on existing seeded workflows that
-					// predate the handle feature. Only set when the row has no handle yet
-					// so user customisations are never overwritten.
-					...(!row.handle && template.handle ? { handle: template.handle } : {}),
 				});
 				workflowManager.updateWorkflowNodeToolGuards(row.id, mergedNodes);
 				restamped.push(template.name);
@@ -1619,6 +1615,20 @@ export function seedBuiltInWorkflows(
 					name: template.name,
 					error: err instanceof Error ? err.message : String(err),
 				});
+			}
+
+			// Best-effort handle backfill — isolated so a handle conflict (e.g. a
+			// user-created workflow already using the canonical handle) never blocks
+			// the main re-stamp fields (postApproval, completionAutonomyLevel, etc.).
+			if (!row.handle && template.handle) {
+				try {
+					workflowManager.updateWorkflow(row.id, { handle: template.handle });
+				} catch {
+					builtInSeederLog.warn(
+						`could not backfill handle '${template.handle}' on '${template.name}' ` +
+							`(id=${row.id}) in space ${spaceId}: handle already taken`
+					);
+				}
 			}
 		}
 

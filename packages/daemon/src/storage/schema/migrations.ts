@@ -8735,8 +8735,7 @@ export function runMigration127(db: BunDatabase): void {
 	if (!tableExists(db, 'space_workflows')) return;
 
 	const columns = tableColumnNames(db, 'space_workflows');
-	const columnJustAdded = !columns.includes('handle');
-	if (columnJustAdded) {
+	if (!columns.includes('handle')) {
 		db.exec(`ALTER TABLE space_workflows ADD COLUMN handle TEXT DEFAULT NULL`);
 	}
 

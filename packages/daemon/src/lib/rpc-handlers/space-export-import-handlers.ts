@@ -518,18 +518,6 @@ export function setupSpaceExportImportHandlers(
 					existingWorkflows.map((w) => w.handle).filter((h): h is string => !!h)
 				);
 
-				// Pre-compute handles freed by replace operations so handle preservation
-				// is independent of iteration order within the bundle.
-				for (const exportedWorkflow of bundle.workflows) {
-					const existing = existingWorkflowByName.get(exportedWorkflow.name);
-					if (!existing) continue;
-					const strategy: ConflictResolutionStrategy =
-						res.workflows?.[exportedWorkflow.name] ?? 'skip';
-					if (strategy === 'replace' && existing.handle) {
-						usedWorkflowHandles.delete(existing.handle);
-					}
-				}
-
 				// ── Phase 1: import agents ──────────────────────────────────────
 				// Maps original bundle agent name → assigned UUID (used for workflow cross-refs)
 				const importedAgentNameToId = new Map<string, string>();
@@ -588,6 +576,24 @@ export function setupSpaceExportImportHandlers(
 					}
 				}
 
+				// ── Phase 2 pre-step: delete all replace-strategy workflows ────────
+				// Deleting upfront frees both name slots and handle slots in the DB
+				// before any new workflow tries to claim them, making handle preservation
+				// independent of iteration order within the bundle.
+				const replacedIdByName = new Map<string, string>();
+				for (const exportedWorkflow of bundle.workflows) {
+					const existing = existingWorkflowByName.get(exportedWorkflow.name);
+					if (!existing) continue;
+					const strategy: ConflictResolutionStrategy =
+						res.workflows?.[exportedWorkflow.name] ?? 'skip';
+					if (strategy === 'replace') {
+						workflowRepo.deleteWorkflow(existing.id);
+						replacedIdByName.set(exportedWorkflow.name, existing.id);
+						usedWorkflowNames.delete(exportedWorkflow.name);
+						if (existing.handle) usedWorkflowHandles.delete(existing.handle);
+					}
+				}
+
 				// ── Phase 2: import workflows ────────────────────────────────────
 				const workflowResults: ImportedItem[] = [];
 				const allWarnings: string[] = [];
@@ -615,11 +621,8 @@ export function setupSpaceExportImportHandlers(
 						}
 
 						if (strategy === 'replace') {
-							// Delete the existing workflow so the name becomes available again.
-							// This happens inside the transaction, so it rolls back on any later error.
-							replacedOldId = existing.id;
-							workflowRepo.deleteWorkflow(existing.id);
-							usedWorkflowNames.delete(exportedWorkflow.name);
+							// Already deleted in the pre-step above.
+							replacedOldId = replacedIdByName.get(exportedWorkflow.name);
 							action = 'replaced';
 						} else {
 							// rename
