@@ -95,6 +95,7 @@ import type { NeoToolsConfig } from '../neo/tools/neo-query-tools';
 import type { NeoActionToolsConfig, NeoWorkflowRun } from '../neo/tools/neo-action-tools';
 import { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository';
 import { setupTaskScheduleHandlers } from './task-schedule-handlers';
+import { ScheduleService } from '../space/schedule/schedule-service';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -309,6 +310,16 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const pendingMessageRepo = new PendingAgentMessageRepository(deps.db.getDatabase());
 	const taskScheduleRepo = new TaskScheduleRepository(deps.db.getDatabase());
 
+	// Centralised TaskSchedule lifecycle service — used by both the RPC
+	// handlers (`taskSchedule.*`) and the agent-facing MCP tools so validation,
+	// the atomic create+enqueue transaction, and pendingJobId bookkeeping live
+	// in exactly one place.
+	const scheduleService = new ScheduleService({
+		db: deps.db.getDatabase(),
+		scheduleRepo: taskScheduleRepo,
+		jobQueue: deps.jobQueue,
+	});
+
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
 	const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
@@ -420,8 +431,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		daemonHub: deps.daemonHub,
 		artifactRepo,
 		pendingMessageRepo,
-		taskScheduleRepo,
-		jobQueue: deps.jobQueue,
+		scheduleService,
 	});
 
 	// Session handlers — registered here (after spaceRuntimeService is built) so
@@ -449,8 +459,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Task schedule handlers — create/list/get/update/pause/resume/delete schedules.
 	setupTaskScheduleHandlers(deps.messageHub, {
-		scheduleRepo: taskScheduleRepo,
-		jobQueue: deps.jobQueue,
+		scheduleService,
 		spaceManager: deps.spaceManager,
 	});
 
@@ -528,8 +537,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		artifactRepo,
 		pendingMessageRepo,
 		spaceAgentInjector,
-		jobQueue: deps.jobQueue,
-		taskScheduleRepo,
+		scheduleService,
 	});
 
 	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn

@@ -37,7 +37,8 @@ import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.ha
 import { JOB_QUEUE_CLEANUP, SKILL_VALIDATE, TASK_SCHEDULE_FIRE } from './lib/job-queue-constants';
 import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
 import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository';
-import { SpaceTaskManager } from './lib/space/managers/space-task-manager';
+import { SpaceRepository } from './storage/repositories/space-repository';
+import { SpaceTaskRepository } from './storage/repositories/space-task-repository';
 import { AppMcpLifecycleManager, McpImportService, seedDefaultMcpEntries } from './lib/mcp';
 import { FileIndex } from './lib/file-index';
 import { SkillsManager } from './lib/skills-manager';
@@ -547,40 +548,71 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Register task-schedule.fire handler.
 	const taskScheduleRepo = new TaskScheduleRepository(db.getDatabase());
-	jobProcessor.register(TASK_SCHEDULE_FIRE, async (payload) => {
-		return handleTaskScheduleFire(payload as unknown as { scheduleId: string }, {
+	const taskScheduleSpaceRepo = new SpaceRepository(db.getDatabase());
+	const taskScheduleTaskRepo = new SpaceTaskRepository(db.getDatabase(), reactiveDb);
+	jobProcessor.register(TASK_SCHEDULE_FIRE, async (job) => {
+		return handleTaskScheduleFire(job, {
+			db: db.getDatabase(),
 			scheduleRepo: taskScheduleRepo,
 			jobQueue,
-			taskManagerFactory: (spaceId: string) =>
-				new SpaceTaskManager(db.getDatabase(), spaceId, reactiveDb),
+			spaceRepo: taskScheduleSpaceRepo,
+			taskRepo: taskScheduleTaskRepo,
 		});
 	});
 
 	// Startup resilience: re-seed active schedules whose pending jobs are missing.
-	// This handles crash recovery — if the daemon restarted while a job was in flight
-	// or was lost, we re-enqueue it so the schedule can continue.
+	// This handles crash recovery in two cases:
+	//   1) Schedule has a pendingJobId, but the underlying job is gone OR has reached
+	//      a terminal state (completed/failed/dead) without `updateAfterFire` advancing
+	//      the schedule. This can happen if the daemon crashed between job completion
+	//      and the schedule update.
+	//   2) Schedule has pendingJobId = null and is due — this happens when the daemon
+	//      crashed between scheduleRepo.create() and jobQueue.enqueue(), leaving an
+	//      orphaned schedule that listActiveWithPendingJob() would never see.
 	if (process.env.NODE_ENV !== 'test') {
 		const now = Date.now();
+
+		// A job is considered "lost" for recovery purposes if it's missing OR in any
+		// terminal state. `pending` and `processing` are still in flight and should
+		// not be re-enqueued.
+		const isJobLost = (status: string | undefined): boolean =>
+			status === undefined ||
+			status === 'completed' ||
+			status === 'failed' ||
+			status === 'dead' ||
+			status === 'cancelled';
+
+		const reseedSchedule = (scheduleId: string, scheduleNextRunAt: number | null): void => {
+			const runAt = scheduleNextRunAt !== null && scheduleNextRunAt > now ? scheduleNextRunAt : now;
+			const newJob = jobQueue.enqueue({
+				queue: TASK_SCHEDULE_FIRE,
+				payload: { scheduleId },
+				runAt,
+			});
+			taskScheduleRepo.updatePendingJobId(scheduleId, newJob.id);
+			logInfo('[Daemon] Re-seeded lost job for schedule', {
+				scheduleId,
+				newJobId: newJob.id,
+			});
+		};
+
 		try {
+			// Pass 1: schedules with a pendingJobId pointing to a missing/terminal job.
 			const activeSchedules = taskScheduleRepo.listActiveWithPendingJob();
 			for (const schedule of activeSchedules) {
 				if (!schedule.pendingJobId) continue;
 				const job = jobQueue.getJob(schedule.pendingJobId);
-				if (!job || job.status === 'dead' || job.status === 'failed') {
-					// Job is gone — re-enqueue.
-					const runAt =
-						schedule.nextRunAt !== null && schedule.nextRunAt > now ? schedule.nextRunAt : now;
-					const newJob = jobQueue.enqueue({
-						queue: TASK_SCHEDULE_FIRE,
-						payload: { scheduleId: schedule.id },
-						runAt,
-					});
-					taskScheduleRepo.updatePendingJobId(schedule.id, newJob.id);
-					logInfo('[Daemon] Re-seeded lost job for schedule', {
-						scheduleId: schedule.id,
-						newJobId: newJob.id,
-					});
+				if (isJobLost(job?.status)) {
+					reseedSchedule(schedule.id, schedule.nextRunAt);
 				}
+			}
+
+			// Pass 2: due schedules with no pendingJobId at all (e.g. crashed mid-create).
+			// `listActiveDue(now)` returns schedules whose nextRunAt <= now.
+			const dueSchedules = taskScheduleRepo.listActiveDue(now);
+			for (const schedule of dueSchedules) {
+				if (schedule.pendingJobId) continue; // handled by pass 1
+				reseedSchedule(schedule.id, schedule.nextRunAt);
 			}
 		} catch (err) {
 			logError('[Daemon] Task schedule startup re-seed failed (non-fatal):', err);

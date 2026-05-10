@@ -432,12 +432,14 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 	const activeTab: TaskFilterTab = currentSpaceTasksFilterTabSignal.value as TaskFilterTab;
 	const spaceId = currentSpaceIdSignal.value ?? '';
 
-	// Load schedules when the tab is switched to 'scheduled'
+	// Load schedules when the tab is switched to 'scheduled' or the active space changes.
+	// Including spaceId in deps prevents stale schedules from a previous space lingering
+	// when the user navigates between spaces while staying on the scheduled tab.
 	useEffect(() => {
-		if (activeTab === 'scheduled') {
+		if (activeTab === 'scheduled' && spaceId) {
 			spaceStore.listSchedules().catch(() => {});
 		}
-	}, [activeTab]);
+	}, [activeTab, spaceId]);
 
 	const counts = useMemo(() => {
 		const c: Record<TaskFilterTab, number> = {

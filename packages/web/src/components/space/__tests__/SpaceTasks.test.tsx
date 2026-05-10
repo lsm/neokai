@@ -9,6 +9,8 @@ import { signal } from '@preact/signals';
 import type { SpaceTask } from '@neokai/shared';
 
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
+const mockSchedules = signal<unknown[]>([]);
+const mockListSchedules = vi.fn(async () => {});
 
 // Bridge pattern: hoisted bridge objects allow mockNavigateToSpaceTasks to update
 // the real Preact signals (which are created after import).
@@ -57,7 +59,11 @@ vi.mock('../../../lib/router', () => ({
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
-		return { tasks: mockTasks };
+		return {
+			tasks: mockTasks,
+			schedules: mockSchedules,
+			listSchedules: mockListSchedules,
+		};
 	},
 }));
 

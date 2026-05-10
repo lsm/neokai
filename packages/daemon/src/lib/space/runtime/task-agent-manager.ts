@@ -75,8 +75,6 @@ import type { ChannelCycleRepository } from '../../../storage/repositories/chann
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
-import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
-import type { TaskScheduleRepository } from '../../../storage/repositories/task-schedule-repository';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import type { SubSessionMemberInfo } from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
@@ -234,16 +232,13 @@ export interface TaskAgentManagerConfig {
 	 */
 	spaceAgentInjector?: (spaceId: string, message: string) => Promise<void>;
 	/**
-	 * Job queue repository — injected into `space-agent-tools` so space agent sessions
-	 * can create scheduled tasks via `create_scheduled_task`.
-	 * Optional — when absent, schedule management tools are not registered.
+	 * Schedule service — shared business logic for managing task schedules.
+	 * Injected into `space-agent-tools` so task agent sessions can create /
+	 * pause / resume / delete schedules via the same code path as the RPC
+	 * handlers. Optional — when absent, schedule management tools are not
+	 * registered.
 	 */
-	jobQueue?: JobQueueRepository;
-	/**
-	 * Task schedule repository — injected into `space-agent-tools` for schedule management.
-	 * Optional — when absent, schedule management tools are not registered.
-	 */
-	taskScheduleRepo?: TaskScheduleRepository;
+	scheduleService?: import('../schedule/schedule-service').ScheduleService;
 }
 
 // ---------------------------------------------------------------------------
@@ -4247,8 +4242,7 @@ export class TaskAgentManager {
 			myAgentName: ctx.agentName,
 			mySessionId: ctx.subSessionId,
 			auditLogRepo: this.auditLogRepo,
-			scheduleRepo: this.config.taskScheduleRepo,
-			jobQueue: this.config.jobQueue,
+			scheduleService: this.config.scheduleService,
 			// Wire restore_node_agent so it is callable even when node-agent is
 			// missing. The closure captures the rebuild-time values of taskId,
 			// subSessionId, agentName, etc. which are stable for this session.

@@ -99,15 +99,11 @@ export interface SpaceRuntimeServiceConfig {
 	 */
 	selectWorkflowWithLlm?: SelectWorkflowWithLlm;
 	/**
-	 * Task schedule repository — passed to space-agent-tools so Space Agent
-	 * and member sessions can manage scheduled tasks. Optional.
+	 * Schedule service — shared business logic for task schedule lifecycle.
+	 * Passed to space-agent-tools so Space Agent and member sessions can manage
+	 * scheduled tasks via the same code path as the RPC handlers. Optional.
 	 */
-	taskScheduleRepo?: import('../../../storage/repositories/task-schedule-repository').TaskScheduleRepository;
-	/**
-	 * Job queue repository — paired with taskScheduleRepo for enqueuing fire jobs.
-	 * Optional.
-	 */
-	jobQueue?: import('../../../storage/repositories/job-queue-repository').JobQueueRepository;
+	scheduleService?: import('../schedule/schedule-service').ScheduleService;
 }
 
 export class SpaceRuntimeService {
@@ -681,8 +677,7 @@ export class SpaceRuntimeService {
 			// correct gating behavior for non-space-agent callers.
 			mySessionId: session.id,
 			auditLogRepo: this.auditLogRepo,
-			scheduleRepo: this.config.taskScheduleRepo,
-			jobQueue: this.config.jobQueue,
+			scheduleService: this.config.scheduleService,
 		});
 
 		const additional: Record<string, McpServerConfig> = {
@@ -776,8 +771,7 @@ export class SpaceRuntimeService {
 			myAgentName: 'space-agent',
 			mySessionId: spaceChatSessionId,
 			auditLogRepo: this.auditLogRepo,
-			scheduleRepo: this.config.taskScheduleRepo,
-			jobQueue: this.config.jobQueue,
+			scheduleService: this.config.scheduleService,
 		});
 
 		// Create a space-scoped db-query server if dbPath is configured.

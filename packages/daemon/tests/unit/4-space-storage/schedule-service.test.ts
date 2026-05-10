@@ -1,0 +1,230 @@
+/**
+ * ScheduleService unit tests
+ *
+ * Exercises the centralized schedule lifecycle behavior shared by both the
+ * RPC handlers and the agent-facing MCP tools: validation, atomic
+ * create+enqueue, edit-time consistency, pause/resume, and delete.
+ */
+
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
+import { TaskScheduleRepository } from '../../../src/storage/repositories/task-schedule-repository';
+import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
+import { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
+import { createSpaceTables } from '../helpers/space-test-db';
+
+describe('ScheduleService', () => {
+	let db: Database;
+	let scheduleRepo: TaskScheduleRepository;
+	let jobQueue: JobQueueRepository;
+	let spaceRepo: SpaceRepository;
+	let service: ScheduleService;
+	let spaceId: string;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		createSpaceTables(db);
+		db.exec(`
+			CREATE TABLE IF NOT EXISTS job_queue (
+				id TEXT PRIMARY KEY,
+				queue TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'dead')),
+				payload TEXT NOT NULL DEFAULT '{}',
+				result TEXT,
+				error TEXT,
+				priority INTEGER NOT NULL DEFAULT 0,
+				max_retries INTEGER NOT NULL DEFAULT 3,
+				retry_count INTEGER NOT NULL DEFAULT 0,
+				run_at INTEGER NOT NULL,
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER
+			);
+			CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC);
+		`);
+
+		spaceRepo = new SpaceRepository(db as never);
+		scheduleRepo = new TaskScheduleRepository(db as never);
+		jobQueue = new JobQueueRepository(db as never);
+		service = new ScheduleService({ db: db as never, scheduleRepo, jobQueue });
+
+		const space = spaceRepo.createSpace({
+			slug: 'test',
+			workspacePath: '/workspace/test',
+			name: 'Test',
+			description: 'Test space',
+		});
+		spaceId = space.id;
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	describe('createSchedule', () => {
+		it('atomically creates the schedule, enqueues the first fire job, and links pendingJobId', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Daily Standup',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * 1-5',
+				timezone: 'UTC',
+			});
+
+			expect(schedule.status).toBe('active');
+			expect(schedule.nextRunAt).not.toBeNull();
+			expect(schedule.pendingJobId).not.toBeNull();
+
+			// The job actually exists and points back at the schedule.
+			const job = jobQueue.getJob(schedule.pendingJobId as string);
+			expect(job).not.toBeNull();
+			expect(job?.queue).toBe('taskSchedule.fire');
+			expect((job?.payload as { scheduleId: string }).scheduleId).toBe(schedule.id);
+		});
+
+		it('rejects an invalid cron expression', () => {
+			expect(() =>
+				service.createSchedule({
+					spaceId,
+					title: 'Bad cron',
+					triggerType: 'cron',
+					cronExpression: 'not-a-cron',
+				})
+			).toThrow(/Invalid cron expression/);
+		});
+
+		it('rejects an `at` schedule without a runAt', () => {
+			expect(() =>
+				service.createSchedule({ spaceId, title: 'No runAt', triggerType: 'at' })
+			).toThrow(/runAt is required/);
+		});
+
+		it('rejects an `at` schedule whose runAt is in the past', () => {
+			expect(() =>
+				service.createSchedule({
+					spaceId,
+					title: 'Past',
+					triggerType: 'at',
+					runAt: Date.now() - 60_000,
+				})
+			).toThrow(/runAt must be in the future/);
+		});
+	});
+
+	describe('updateSchedule', () => {
+		it('rejects setting cronExpression to null on a cron schedule', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Cron',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+			});
+
+			expect(() => service.updateSchedule(schedule.id, { cronExpression: null })).toThrow(
+				/Cannot clear cronExpression/
+			);
+		});
+
+		it('cancels the previous pending job and enqueues a new one when timing changes', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Cron',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+			});
+			const oldJobId = schedule.pendingJobId as string;
+
+			const updated = service.updateSchedule(schedule.id, { cronExpression: '0 10 * * *' });
+
+			expect(updated.pendingJobId).not.toBeNull();
+			expect(updated.pendingJobId).not.toBe(oldJobId);
+			expect(jobQueue.getJob(oldJobId)).toBeNull();
+		});
+
+		it('does not touch the pending job when only descriptive fields change', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Cron',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+			});
+			const oldJobId = schedule.pendingJobId;
+
+			const updated = service.updateSchedule(schedule.id, { title: 'Renamed' });
+
+			expect(updated.title).toBe('Renamed');
+			expect(updated.pendingJobId).toBe(oldJobId);
+		});
+	});
+
+	describe('pause/resume/delete', () => {
+		it('pause cancels the pending job and clears pendingJobId', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Cron',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+			});
+			const jobId = schedule.pendingJobId as string;
+
+			const paused = service.pauseSchedule(schedule.id);
+
+			expect(paused.status).toBe('paused');
+			expect(paused.pendingJobId).toBeNull();
+			expect(jobQueue.getJob(jobId)).toBeNull();
+		});
+
+		it('resume re-enqueues a fresh fire job', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Cron',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+			});
+			service.pauseSchedule(schedule.id);
+
+			const resumed = service.resumeSchedule(schedule.id);
+
+			expect(resumed.status).toBe('active');
+			expect(resumed.pendingJobId).not.toBeNull();
+			expect(jobQueue.getJob(resumed.pendingJobId as string)).not.toBeNull();
+		});
+
+		it('resume of an already-passed `at` schedule transitions to completed (no job)', () => {
+			// Create with a future runAt to satisfy validation.
+			const future = Date.now() + 60_000;
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'One Shot',
+				triggerType: 'at',
+				runAt: future,
+			});
+			service.pauseSchedule(schedule.id);
+
+			// Move runAt into the past directly via the repo (bypassing validation).
+			scheduleRepo.update(schedule.id, { runAt: Date.now() - 60_000 });
+
+			const resumed = service.resumeSchedule(schedule.id);
+			expect(resumed.status).toBe('completed');
+			expect(resumed.pendingJobId).toBeNull();
+		});
+
+		it('delete cancels the pending job and removes the schedule row', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Cron',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+			});
+			const jobId = schedule.pendingJobId as string;
+
+			const ok = service.deleteSchedule(schedule.id);
+
+			expect(ok).toBe(true);
+			expect(scheduleRepo.getById(schedule.id)).toBeNull();
+			expect(jobQueue.getJob(jobId)).toBeNull();
+		});
+	});
+});

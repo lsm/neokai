@@ -153,6 +153,8 @@ vi.mock('../../lib/space-store', () => ({
 			agents: mockAgents,
 			sessions: { value: [] },
 			tasks: { value: [] },
+			schedules: { value: [] },
+			listSchedules: vi.fn().mockResolvedValue(undefined),
 			configDataLoaded: { value: true },
 			ensureConfigData: vi.fn().mockResolvedValue(undefined),
 			ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
