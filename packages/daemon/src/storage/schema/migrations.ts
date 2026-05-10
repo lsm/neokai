@@ -8436,10 +8436,9 @@ export function runMigration123(db: BunDatabase): void {
  *
  * Changes to space_external_events:
  *   - DROP pr_number, repo_owner, repo_name, branch, routed_task_id columns.
- *   - Backfill legacy columns (pr_number, repo_owner, repo_name, branch) into
- *     payload_json so subscribers retain source-specific metadata.
- *   - routed_task_id is dropped without backfill. The event pipeline is fully
- *     task-agnostic; task association is a workflow-node concern.
+ *   - Backfill legacy columns (pr_number, repo_owner, repo_name, branch,
+ *     routed_task_id) into payload_json so subscribers retain source-specific
+ *     metadata and historical routing data is preserved for forensic purposes.
  *   - Migrate existing rows: 'routed' → 'published', 'delivery_failed' → 'published',
  *     'ambiguous' → 'ignored'.
  *   - Update CHECK constraint to ('published', 'delivered', 'failed', 'ignored').
@@ -8449,17 +8448,38 @@ export function runMigration123(db: BunDatabase): void {
  * the child table (space_external_event_deliveries) from being cascade-deleted.
  */
 export function runMigration124(db: BunDatabase): void {
-	// Crash-recovery: if a prior interrupted rewrite dropped the old table but
-	// left the temp table behind, restore the canonical table name so the
-	// migration can proceed normally.
+	// Crash-recovery: if a prior interrupted rewrite left the temp table
+	// behind, recover the data before proceeding. Two cases:
+	//   1. Old table missing, _new exists → rename _new to canonical.
+	//   2. Both exist (e.g. runMigration123 recreated an empty old table)
+	//      → drop the empty old table, rename _new to canonical.
 	const hasOldTable = db
 		.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='space_external_events'`)
 		.get();
 	const hasNewTable = db
 		.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='space_external_events_new'`)
 		.get();
-	if (!hasOldTable && hasNewTable) {
-		db.exec(`ALTER TABLE space_external_events_new RENAME TO space_external_events`);
+	if (hasNewTable) {
+		if (!hasOldTable) {
+			db.exec(`ALTER TABLE space_external_events_new RENAME TO space_external_events`);
+		} else {
+			// Both exist: the old table may be empty (recreated by M123).
+			// Check row counts to decide which has the real data.
+			const oldCount = db.prepare(`SELECT COUNT(*) AS n FROM space_external_events`).get() as {
+				n: number;
+			};
+			const newCount = db.prepare(`SELECT COUNT(*) AS n FROM space_external_events_new`).get() as {
+				n: number;
+			};
+			if (newCount.n > 0 && oldCount.n === 0) {
+				db.exec(`DROP TABLE space_external_events`);
+				db.exec(`ALTER TABLE space_external_events_new RENAME TO space_external_events`);
+			} else if (oldCount.n > 0 && newCount.n > 0) {
+				// Both have data — this should not happen, but preserve the
+				// canonical table and drop the temp table to avoid confusion.
+				db.exec(`DROP TABLE space_external_events_new`);
+			}
+		}
 	}
 
 	// Check if the old schema still exists (has pr_number column).
@@ -8519,7 +8539,21 @@ export function runMigration124(db: BunDatabase): void {
 				   OR NULLIF(branch, '') IS NOT NULL)
 			`);
 
-			// 2. Migrate state values.
+			// 2. Preserve routed_task_id in payload for forensic/audit purposes.
+			//    The event pipeline is task-agnostic, but retaining the value aids
+			//    historical debugging and prevents data loss during upgrade.
+			db.exec(`
+				UPDATE space_external_events
+				SET payload_json = json_set(
+					payload_json,
+					'$.routedTaskId', COALESCE(json_extract(payload_json, '$.routedTaskId'), routed_task_id)
+				)
+				WHERE json_valid(payload_json) = 1
+				  AND json_type(payload_json) = 'object'
+				  AND routed_task_id IS NOT NULL
+			`);
+
+			// 3. Migrate state values.
 			db.exec(`
 				UPDATE space_external_events
 				SET state = CASE state

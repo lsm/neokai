@@ -340,6 +340,37 @@ describe('Migration 124: simplify external-event schema', () => {
 				1_700_000_000_000
 			);
 
+			// Event with routed_task_id — should be preserved in payload.
+			db.prepare(`
+				INSERT INTO space_external_events (
+					id, space_id, source, topic, dedupe_key,
+					occurred_at, ingested_at, source_event_id,
+					pr_number, repo_owner, repo_name, branch,
+					summary, external_url, payload_json, routed_task_id,
+					state, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				'evt-routed-task',
+				'sp-1',
+				'github',
+				'github/lsm/neokai/pull_request.opened',
+				'dk-routed-task',
+				1_700_000_000_000,
+				1_700_000_001_000,
+				null,
+				1,
+				'lsm',
+				'neokai',
+				'main',
+				'PR #1 opened',
+				null,
+				JSON.stringify({ action: 'opened' }),
+				'task-routed-1',
+				'routed',
+				1_700_000_000_000,
+				1_700_000_000_000
+			);
+
 			// Event with malformed payload_json — should not abort migration.
 			db.prepare(`
 				INSERT INTO space_external_events (
@@ -460,6 +491,20 @@ describe('Migration 124: simplify external-event schema', () => {
 			expect(payload.branch).toBe('hotfix-55');
 		});
 
+		test('routed_task_id is preserved in payload for historical events', () => {
+			runMigration124(db);
+			const row = db
+				.prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
+				.get('evt-routed-task') as { payload_json: string };
+			const payload = JSON.parse(row.payload_json);
+			expect(payload.routedTaskId).toBe('task-routed-1');
+			// State migrated to published so the event remains retryable.
+			const stateRow = db
+				.prepare(`SELECT state FROM space_external_events WHERE id = ?`)
+				.get('evt-routed-task') as { state: string };
+			expect(stateRow.state).toBe('published');
+		});
+
 		test('state values are migrated correctly', () => {
 			runMigration124(db);
 			const legacy = db
@@ -568,6 +613,85 @@ describe('Migration 124: simplify external-event schema', () => {
 			expect(() => runMigration124(db)).not.toThrow();
 			expect(tableExists(db, 'space_external_events')).toBe(true);
 			expect(tableExists(db, 'space_external_events_new')).toBe(false);
+		});
+
+		test('recovers when empty old table was recreated and new table still has data', () => {
+			// First, insert a row into the old-schema table so _new will have data.
+			db.prepare(`
+				INSERT INTO space_external_events (
+					id, space_id, source, topic, dedupe_key,
+					occurred_at, ingested_at, source_event_id,
+					pr_number, repo_owner, repo_name, branch,
+					summary, external_url, payload_json, routed_task_id,
+					state, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				'evt-recovery',
+				'sp-1',
+				'github',
+				'github/lsm/neokai/pull_request.opened',
+				'dk-recovery',
+				1_700_000_000_000,
+				1_700_000_001_000,
+				null,
+				1,
+				'lsm',
+				'neokai',
+				'main',
+				'PR #1 opened',
+				null,
+				JSON.stringify({ action: 'opened' }),
+				null,
+				'published',
+				1_700_000_000_000,
+				1_700_000_000_000
+			);
+
+			// Simulate: M123 recreated an empty old table, but _new still has data
+			// from an interrupted migration.
+			db.exec(`ALTER TABLE space_external_events RENAME TO space_external_events_new`);
+			// Now recreate an empty old table (as M123 would do) — use IF NOT EXISTS
+			// since spaces already exists from beforeEach.
+			db.exec(`
+				CREATE TABLE IF NOT EXISTS space_external_events (
+					id TEXT PRIMARY KEY,
+					space_id TEXT NOT NULL,
+					source TEXT NOT NULL,
+					topic TEXT NOT NULL,
+					dedupe_key TEXT NOT NULL,
+					occurred_at INTEGER NOT NULL,
+					ingested_at INTEGER NOT NULL,
+					source_event_id TEXT,
+					pr_number INTEGER,
+					repo_owner TEXT,
+					repo_name TEXT,
+					branch TEXT,
+					summary TEXT NOT NULL,
+					external_url TEXT,
+					payload_json TEXT NOT NULL,
+					routed_task_id TEXT,
+					state TEXT NOT NULL DEFAULT 'published'
+						CHECK(state IN ('published', 'routed', 'delivered', 'delivery_failed', 'failed', 'ignored', 'ambiguous')),
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL,
+					UNIQUE(space_id, source, dedupe_key),
+					FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+				)
+			`);
+			expect(tableExists(db, 'space_external_events')).toBe(true);
+			expect(tableExists(db, 'space_external_events_new')).toBe(true);
+
+			// The migration should detect _new has data while old is empty,
+			// drop the empty old table, and rename _new back.
+			expect(() => runMigration124(db)).not.toThrow();
+			expect(tableExists(db, 'space_external_events')).toBe(true);
+			expect(tableExists(db, 'space_external_events_new')).toBe(false);
+
+			// Verify the data from _new was preserved.
+			const count = db.prepare(`SELECT COUNT(*) AS n FROM space_external_events`).get() as {
+				n: number;
+			};
+			expect(count.n).toBeGreaterThan(0);
 		});
 	});
 
