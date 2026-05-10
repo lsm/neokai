@@ -245,7 +245,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 	let mockSessionCache: SessionCache;
 	let mockDb: Database;
 	let mockMessageHub: MessageHub;
-	let mockEventBus: DaemonHub;
+	let mockDaemonHub: DaemonHub;
 	let mockSession: Session;
 	let mockAgentSession: {
 		getSessionData: ReturnType<typeof mock>;
@@ -253,7 +253,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 		startQueryAndEnqueue: ReturnType<typeof mock>;
 	};
 	let saveUserMessageSpy: ReturnType<typeof mock>;
-	let eventBusEmitSpy: ReturnType<typeof mock>;
+	let daemonHubEmitSpy: ReturnType<typeof mock>;
 
 	beforeEach(() => {
 		mockSession = makeSession({
@@ -282,9 +282,9 @@ describe('MessagePersistence with ReferenceResolver', () => {
 			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
-		eventBusEmitSpy = mock(async () => {});
-		mockEventBus = {
-			emit: eventBusEmitSpy,
+		daemonHubEmitSpy = mock(async () => {});
+		mockDaemonHub = {
+			emit: daemonHubEmitSpy,
 		} as unknown as DaemonHub;
 	});
 
@@ -293,7 +293,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 			mockSessionCache,
 			mockDb,
 			mockMessageHub,
-			mockEventBus
+			mockDaemonHub
 		);
 
 		await persistence.persist({
@@ -326,7 +326,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 			mockSessionCache,
 			mockDb,
 			mockMessageHub,
-			mockEventBus,
+			mockDaemonHub,
 			resolver
 		);
 
@@ -374,7 +374,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 			mockSessionCache,
 			mockDb,
 			mockMessageHub,
-			mockEventBus,
+			mockDaemonHub,
 			resolver
 		);
 
@@ -413,7 +413,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 			mockSessionCache,
 			mockDb,
 			mockMessageHub,
-			mockEventBus,
+			mockDaemonHub,
 			resolver
 		);
 
@@ -460,7 +460,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 			mockSessionCache,
 			mockDb,
 			mockMessageHub,
-			mockEventBus,
+			mockDaemonHub,
 			badResolver
 		);
 
@@ -510,7 +510,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 			mockSessionCache,
 			mockDb,
 			mockMessageHub,
-			mockEventBus,
+			mockDaemonHub,
 			resolver
 		);
 

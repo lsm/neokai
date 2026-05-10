@@ -13,7 +13,7 @@ import { createDaemonHub, type DaemonHub } from '../../../../src/lib/daemon-hub'
 describe('ErrorManager - Error Throttling', () => {
 	let errorManager: ErrorManager;
 	let messageHub: MessageHub;
-	let eventBus: DaemonHub;
+	let daemonHub: DaemonHub;
 	let broadcastedErrors: unknown[] = [];
 
 	beforeEach(async () => {
@@ -28,13 +28,13 @@ describe('ErrorManager - Error Throttling', () => {
 		} as unknown as MessageHub;
 
 		// Create DaemonHub and track emitted errors
-		eventBus = createDaemonHub('test-hub');
-		await eventBus.initialize();
-		eventBus.on('session.error', (data: unknown) => {
+		daemonHub = createDaemonHub('test-hub');
+		await daemonHub.initialize();
+		daemonHub.on('session.error', (data: unknown) => {
 			broadcastedErrors.push(data);
 		});
 
-		errorManager = new ErrorManager(messageHub, eventBus);
+		errorManager = new ErrorManager(messageHub, daemonHub);
 	});
 
 	it('should allow first 3 identical errors through', async () => {

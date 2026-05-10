@@ -5,9 +5,9 @@
  * via fine-grained state channels.
  *
  * ARCHITECTURE: Event-sourced state management
- * - StateManager maintains its own state from EventBus events
+ * - StateManager maintains its own state from DaemonHub events
  * - Publishers include their data in events (no fetching from sources)
- * - This ensures full decoupling between components via EventBus
+ * - This ensures full decoupling between components via DaemonHub
  * - Broadcasts immediately on event (no debouncing needed - LLM is slow)
  */
 
@@ -64,7 +64,7 @@ export class StateManager {
 		timestamp: Date.now(),
 	};
 
-	// Event-sourced state caches (updated from EventBus events)
+	// Event-sourced state caches (updated from DaemonHub events)
 	// This enables full decoupling - StateManager doesn't fetch from AgentSession
 	private sessionCache = new Map<string, Session>();
 	private processingStateCache = new Map<string, AgentProcessingState>();
@@ -80,7 +80,7 @@ export class StateManager {
 		private authManager: AuthManager,
 		private settingsManager: SettingsManager,
 		private config: Config,
-		private eventBus: DaemonHub,
+		private daemonHub: DaemonHub,
 		private db?: Database,
 		private internalEventBus?: InternalEventBus<DaemonInternalEventMap>,
 		clientEvents?: IClientEventGateway
@@ -102,16 +102,19 @@ export class StateManager {
 	}
 
 	/**
-	 * Setup EventBus listeners for internal events
+	 * Setup DaemonHub listeners for internal events.
 	 *
 	 * ARCHITECTURE: Event-sourced state management
 	 * - Publishers include their data in events
 	 * - StateManager caches this data (no fetching from sources)
 	 * - Broadcasts immediately to clients (no debouncing)
+	 *
+	 * TODO(M2): Migrate subscriptions to InternalEventBus as events move to the
+	 * new dot/camelCase naming convention.
 	 */
 	private setupEventListeners(): void {
 		// API connection state updates from ErrorManager
-		this.eventBus.on('api.connection', (data) => {
+		this.daemonHub.on('api.connection', (data) => {
 			this.apiConnectionState = data as import('@neokai/shared').ApiConnectionState;
 			this.broadcastSystemChange().catch((err: unknown) => {
 				this.logger.error('Failed to broadcast system state after API connection change:', err);
@@ -119,7 +122,7 @@ export class StateManager {
 		});
 
 		// Session created - cache and broadcast
-		this.eventBus.on('session.created', async (data) => {
+		this.daemonHub.on('session.created', async (data) => {
 			const { session } = data;
 
 			// Cache session and initial processing state
@@ -133,7 +136,7 @@ export class StateManager {
 		});
 
 		// Session updated - update cache from event data and broadcast immediately
-		this.eventBus.on('session.updated', async (data) => {
+		this.daemonHub.on('session.updated', async (data) => {
 			const { sessionId, session, processingState } = data;
 
 			// Update caches from event data (decoupled - no fetching)
@@ -157,7 +160,7 @@ export class StateManager {
 		});
 
 		// Session deleted - clear cache and broadcast
-		this.eventBus.on('session.deleted', async (data) => {
+		this.daemonHub.on('session.deleted', async (data) => {
 			const { sessionId } = data;
 
 			// Clear caches
@@ -172,13 +175,13 @@ export class StateManager {
 		});
 
 		// Auth events
-		this.eventBus.on('auth.changed', async () => {
+		this.daemonHub.on('auth.changed', async () => {
 			await this.broadcastSystemChange();
 		});
 
 		// Settings events — migrated to InternalEventBus.
 		// If internalEventBus is provided, subscribe there; otherwise fall back
-		// to DaemonHub (compatibility for tests that pass only eventBus).
+		// to DaemonHub (compatibility for tests that pass only daemonHub).
 		if (this.internalEventBus) {
 			this.internalEventBus.subscribe(
 				'settings.updated',
@@ -188,13 +191,13 @@ export class StateManager {
 				{ subscriberName: 'StateManager.settingsUpdated' }
 			);
 		} else {
-			this.eventBus.on('settings.updated', async () => {
+			this.daemonHub.on('settings.updated', async () => {
 				await this.broadcastSettingsChange();
 			});
 		}
 
 		// Commands updated - cache and broadcast
-		this.eventBus.on(
+		this.daemonHub.on(
 			'commands.updated',
 			async (data: { sessionId: string; commands: string[] }) => {
 				this.commandsCache.set(data.sessionId, data.commands);
@@ -206,7 +209,7 @@ export class StateManager {
 		// Context data is persisted in session.metadata.lastContextInfo (by ContextTracker),
 		// so no separate cache needed here. The dedicated event provides a fast path
 		// for the frontend to update the context bar immediately.
-		this.eventBus.on(
+		this.daemonHub.on(
 			'context.updated',
 			async (data: { sessionId: string; contextInfo: ContextInfo }) => {
 				// Publish dedicated context.updated event (fast path for UI)
@@ -224,7 +227,7 @@ export class StateManager {
 
 		// Session error events - update error cache and broadcast via state.session
 		// This folds the separate session.error event into the unified session state
-		this.eventBus.on(
+		this.daemonHub.on(
 			'session.error',
 			async (data: { sessionId: string; error: string; details?: unknown }) => {
 				// Update error cache
@@ -240,7 +243,7 @@ export class StateManager {
 		);
 
 		// Clear error when session becomes idle or processing continues successfully
-		this.eventBus.on('session.errorClear', async (data: { sessionId: string }) => {
+		this.daemonHub.on('session.errorClear', async (data: { sessionId: string }) => {
 			this.errorCache.set(data.sessionId, null);
 			await this.broadcastSessionStateChange(data.sessionId);
 		});
@@ -260,9 +263,9 @@ export class StateManager {
 	 * Broadcast session update from cached state (event-sourced)
 	 *
 	 * ARCHITECTURE: No debouncing, no fetching from AgentSession
-	 * - Uses cached state from EventBus events
+	 * - Uses cached state from DaemonHub events
 	 * - Broadcasts immediately (LLM processing is slow enough)
-	 * - Full decoupling via EventBus
+	 * - Full decoupling via DaemonHub
 	 */
 	private async broadcastSessionUpdateFromCache(sessionId: string): Promise<void> {
 		try {

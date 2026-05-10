@@ -57,7 +57,7 @@ describe('Sandbox Default Configuration', () => {
 	let mockDb: Database;
 	let mockWorktreeManager: WorktreeManager;
 	let mockSessionCache: SessionCache;
-	let mockEventBus: DaemonHub;
+	let mockDaemonHub: DaemonHub;
 	let mockMessageHub: MessageHub;
 	let mockToolsConfigManager: ToolsConfigManager;
 	let mockAgentSessionFactory: AgentSessionFactory;
@@ -117,7 +117,7 @@ describe('Sandbox Default Configuration', () => {
 
 		// Event bus mocks
 		const emitSpy = mock(async () => {});
-		mockEventBus = {
+		mockDaemonHub = {
 			on: mock(() => () => {}),
 			emit: emitSpy,
 		} as unknown as DaemonHub;
@@ -150,7 +150,7 @@ describe('Sandbox Default Configuration', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
-			mockEventBus,
+			mockDaemonHub,
 			mockMessageHub,
 			config,
 			mockToolsConfigManager,
