@@ -2,7 +2,7 @@
  * External Event Bus — public exports.
  *
  * Source-agnostic primitives consumed by extension publishers, the
- * `ExternalEventService`, the `ExternalEventRouter`, and tests. GitHub-specific
+ * `ExternalEventService`, the workflow runtime, and tests. GitHub-specific
  * code lives under `./github` (added in a later task).
  */
 
@@ -24,4 +24,14 @@ export {
 	KNOWN_SOURCES,
 	type ValidationResult,
 } from './topic-validator';
-export { ExternalEventStore, ExternalEventValidationError } from './external-event-store';
+export {
+	ExternalEventStore,
+	ExternalEventValidationError,
+} from './external-event-store';
+export {
+	ExternalEventService,
+	type ExternalEventPublisher,
+	type PublishResult,
+	type PublishOutcome,
+	type ExternalEventPublishedPayload,
+} from './external-event-service';

@@ -366,7 +366,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			`WHERE idempotency_key IS NOT NULL`
 	);
 
-	// External Event Bus tables (migration 123)
+	// External Event Bus tables (migration 124 — simplified schema)
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_external_events (
 			id TEXT PRIMARY KEY,
@@ -377,16 +377,11 @@ export function createSpaceTables(db: BunDatabase): void {
 			occurred_at INTEGER NOT NULL,
 			ingested_at INTEGER NOT NULL,
 			source_event_id TEXT,
-			pr_number INTEGER,
-			repo_owner TEXT,
-			repo_name TEXT,
-			branch TEXT,
 			summary TEXT NOT NULL,
 			external_url TEXT,
 			payload_json TEXT NOT NULL,
-			routed_task_id TEXT,
 			state TEXT NOT NULL DEFAULT 'published'
-				CHECK(state IN ('published', 'routed', 'delivered', 'delivery_failed', 'failed', 'ignored', 'ambiguous')),
+				CHECK(state IN ('published', 'delivered', 'failed', 'ignored')),
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			UNIQUE(space_id, source, dedupe_key),
