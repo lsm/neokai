@@ -165,12 +165,42 @@ export type ListGroupMembersInput = z.infer<typeof ListGroupMembersSchema>;
  * All Task Agent tool schemas keyed by tool name.
  * The MCP server factory can iterate this map to register tools.
  */
+// ---------------------------------------------------------------------------
+// update_task
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `update_task` input.
+ *
+ * Edit an existing task's title, description, priority, or dependencies.
+ * The task must be the current task managed by this Task Agent session.
+ * Other tasks in the space cannot be modified through this tool.
+ */
+export const UpdateTaskSchema = z.object({
+	task_id: z.string().describe('UUID of the task to update'),
+	title: z.string().min(1).describe('New title for the task').optional(),
+	description: z.string().describe('New description for the task').optional(),
+	priority: z.enum(['low', 'normal', 'high', 'urgent']).describe('New priority').optional(),
+	depends_on: z.array(z.string()).describe('New dependency list (replaces existing)').optional(),
+});
+
+export type UpdateTaskInput = z.infer<typeof UpdateTaskSchema>;
+
+// ---------------------------------------------------------------------------
+// Aggregate export for MCP server factory
+// ---------------------------------------------------------------------------
+
+/**
+ * All Task Agent tool schemas keyed by tool name.
+ * The MCP server factory can iterate this map to register tools.
+ */
 export const TASK_AGENT_TOOL_SCHEMAS = {
 	approve_task: ApproveTaskSchema,
 	submit_for_approval: SubmitForApprovalSchema,
 	mark_complete: MarkCompleteSchema,
 	request_human_input: RequestHumanInputSchema,
 	list_group_members: ListGroupMembersSchema,
+	update_task: UpdateTaskSchema,
 } as const;
 
 export type TaskAgentToolName = keyof typeof TASK_AGENT_TOOL_SCHEMAS;

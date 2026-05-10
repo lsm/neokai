@@ -59,7 +59,6 @@ import {
 	SendMessageSchema,
 	SaveArtifactSchema,
 	CreateStandaloneTaskSchema,
-	UpdateTaskSchema,
 	ListArtifactsSchema,
 	ListReachableAgentsSchema,
 	ListChannelsSchema,
@@ -75,7 +74,6 @@ import type {
 	SendMessageInput,
 	SaveArtifactInput,
 	CreateStandaloneTaskInput,
-	UpdateTaskInput,
 	ListArtifactsInput,
 	ListReachableAgentsInput,
 	ListChannelsInput,
@@ -224,13 +222,6 @@ export interface NodeAgentToolsConfig {
 	 * namespace.
 	 */
 	onCreateStandaloneTask?: (args: CreateStandaloneTaskInput) => Promise<ToolResult>;
-	/**
-	 * Optional callback for `update_task`. When provided, node agents can edit
-	 * tasks they manage (title, description, priority, dependencies).
-	 * Intended for the Task Agent session; regular node agents (coder, reviewer,
-	 * etc.) do NOT receive this tool.
-	 */
-	onUpdateTask?: (args: UpdateTaskInput) => Promise<ToolResult>;
 	/**
 	 * Resolves the space's current autonomy level.
 	 * When provided, agent gate writes via send_message are blocked when
@@ -1195,16 +1186,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			return result;
 		},
 
-		async update_task(args: UpdateTaskInput): Promise<ToolResult> {
-			if (!config.onUpdateTask) {
-				return jsonResult({
-					success: false,
-					error: 'update_task is not available in this node-agent session.',
-				});
-			}
-			return config.onUpdateTask(args);
-		},
-
 		async approve_task(args: ApproveTaskInput): Promise<ToolResult> {
 			if (!config.onApproveTask) {
 				return jsonResult({
@@ -1496,16 +1477,6 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 						'Create a task request in this Space. Runtime may attach and execute a workflow for this task during orchestration. Supports structured task dependencies via depends_on — the task will be blocked until every listed dependency reaches status=done, and cascade-cancelled if a dependency is cancelled.',
 						CreateStandaloneTaskSchema.shape,
 						(args) => handlers.create_standalone_task(args)
-					),
-				]
-			: []),
-		...(config.onUpdateTask
-			? [
-					tool(
-						'update_task',
-						"Edit an existing task's title, description, priority, or dependencies. The task must belong to this space. Only the fields you provide are updated.",
-						UpdateTaskSchema.shape,
-						(args) => handlers.update_task(args)
 					),
 				]
 			: []),
