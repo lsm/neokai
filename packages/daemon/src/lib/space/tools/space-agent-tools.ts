@@ -538,6 +538,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					}
 					const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
 					if (byHandle) {
+						if (byHandle.disabled) {
+							return jsonResult({
+								success: false,
+								error: `Workflow is disabled: ${trimmedHandle}`,
+							});
+						}
 						preferredWorkflowId = byHandle.id;
 					} else {
 						// Both identifiers were supplied but neither resolved — fail fast

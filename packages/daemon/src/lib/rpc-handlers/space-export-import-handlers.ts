@@ -644,6 +644,16 @@ export function setupSpaceExportImportHandlers(
 						usedWorkflowHandles
 					);
 
+					// Surface handle conflicts with existing space workflows as warnings so
+					// callers know the imported handle was rewritten rather than preserved.
+					const exportedHandle =
+						typeof exportedWorkflow.handle === 'string' ? exportedWorkflow.handle.trim() : '';
+					if (exportedHandle && usedWorkflowHandles.has(exportedHandle)) {
+						allWarnings.push(
+							`Workflow "${finalName}": exported handle "${exportedHandle}" already exists in the target space; a new handle was auto-generated`
+						);
+					}
+
 					// Fail fast on unresolved agent refs — they would produce invalid DB rows.
 					// The transaction ensures the delete (replace strategy) is also rolled back.
 					if (warnings.length > 0) {

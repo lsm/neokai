@@ -1243,6 +1243,27 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
 		expect(parsed.success).toBe(false);
 		expect(parsed.error).toMatch(/not found/i);
 	});
+
+	test('errors when workflow_id is unusable and workflow_handle resolves to a disabled workflow (mixed selector)', async () => {
+		const disabled = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Disabled Fallback WF'
+		);
+		expect(disabled.handle).toBeDefined();
+		ctx.db.prepare(`UPDATE space_workflows SET disabled = 1 WHERE id = ?`).run(disabled.id);
+
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task',
+			description: 'Stale ID + disabled handle',
+			workflow_id: 'stale-uuid-mixed',
+			workflow_handle: disabled.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('disabled');
+	});
 });
 
 // ---------------------------------------------------------------------------

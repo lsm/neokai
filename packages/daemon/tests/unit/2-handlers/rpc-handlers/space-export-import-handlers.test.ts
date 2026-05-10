@@ -2448,4 +2448,64 @@ describe('full export→import round-trip', () => {
 	// This test was removed because validateChannels no longer does agent-name-to-agent lookup.
 
 	// This test was removed because validateChannels no longer does agent-name-to-agent lookup.
+
+	it('surfaces a warning when imported workflow handle conflicts with an existing space handle', async () => {
+		// Create a workflow that already exists in the target space with a known handle.
+		const existingAgent = agentRepo.create({
+			spaceId: SPACE_ID,
+			name: 'Existing Coder',
+			customPrompt: null,
+			tools: null,
+			settingSources: null,
+		});
+		const existing = workflowManager.createWorkflow({
+			spaceId: SPACE_ID,
+			name: 'Old Workflow',
+			nodes: [{ id: 'n1', name: 'Work', agentId: existingAgent.id }],
+			startNodeId: 'n1',
+			completionAutonomyLevel: 3,
+		});
+		// Manually set the existing workflow's handle so we know the exact value.
+		db.prepare(`UPDATE space_workflows SET handle = 'taken-handle' WHERE id = ?`).run(existing.id);
+
+		// Build an import bundle whose workflow uses the same handle.
+		const bundleAgent: SpaceAgent = {
+			id: 'bundle-agent',
+			spaceId: 'src-space',
+			name: 'Existing Coder',
+			customPrompt: null,
+			tools: [],
+			createdAt: 0,
+			updatedAt: 0,
+		};
+		const bundleWorkflow: SpaceWorkflow = {
+			id: 'bundle-wf',
+			spaceId: 'src-space',
+			name: 'New Workflow',
+			handle: 'taken-handle',
+			nodes: [{ id: 'n2', name: 'Work', agents: [{ agentId: 'bundle-agent', name: 'coder' }] }],
+			startNodeId: 'n2',
+			tags: [],
+			completionAutonomyLevel: 3,
+			createdAt: 0,
+			updatedAt: 0,
+		};
+		const bundle = exportBundle([bundleAgent], [bundleWorkflow], 'Conflict Bundle');
+
+		const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+			spaceId: SPACE_ID,
+			bundle,
+		});
+
+		// Import should succeed (handle is auto-generated), but a warning must be present.
+		expect(result.workflows).toHaveLength(1);
+		expect(result.workflows[0].name).toBe('New Workflow');
+		expect(result.warnings.length).toBeGreaterThan(0);
+		expect(result.warnings.some((w) => w.includes('taken-handle'))).toBe(true);
+		expect(result.warnings.some((w) => /already exists/i.test(w))).toBe(true);
+
+		// The imported workflow should have a different (auto-generated) handle.
+		const imported = workflowRepo.getWorkflow(result.workflows[0].id);
+		expect(imported?.handle).not.toBe('taken-handle');
+	});
 });
