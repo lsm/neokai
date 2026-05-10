@@ -29,8 +29,8 @@ import type {
 	SDKMessagesState,
 	SDKMessagesUpdate,
 } from '@neokai/shared';
-import type { Session, ContextInfo } from '@neokai/shared';
-import { Channels, ClientEventGateway, STATE_CHANNELS } from '@neokai/shared';
+import type { Session } from '@neokai/shared';
+import { ClientEventGateway, STATE_CHANNELS } from '@neokai/shared';
 import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository';
 import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
 
@@ -109,30 +109,25 @@ export class StateManager {
 	 * - StateManager caches this data (no fetching from sources)
 	 * - Broadcasts immediately to clients (no debouncing)
 	 *
+	 * NOTE: Client forwarding has been extracted to ClientEventBridge.
+	 * StateManager now only updates its internal caches; the bridge handles
+	 * all client-facing event delivery.
+	 *
 	 * TODO(M2): Migrate subscriptions to InternalEventBus as events move to the
 	 * new dot/camelCase naming convention.
 	 */
 	private setupEventListeners(): void {
 		// API connection state updates from ErrorManager
+		// (forwarding extracted to ClientEventBridge; cache stays here)
 		this.daemonHub.on('api.connection', (data) => {
 			this.apiConnectionState = data as import('@neokai/shared').ApiConnectionState;
-			this.broadcastSystemChange().catch((err: unknown) => {
-				this.logger.error('Failed to broadcast system state after API connection change:', err);
-			});
 		});
 
-		// Session created - cache and broadcast
-		this.daemonHub.on('session.created', async (data) => {
+		// Session created - cache only (forwarding extracted to ClientEventBridge)
+		this.daemonHub.on('session.created', (data) => {
 			const { session } = data;
-
-			// Cache session and initial processing state
 			this.sessionCache.set(session.id, session);
 			this.processingStateCache.set(session.id, { status: 'idle' });
-
-			// Publish session.created event (via ClientEventGateway — proof of pattern)
-			this.clientEvents.publish('session.created', { sessionId: session.id }, Channels.global());
-
-			// Note: Global sessions list updates are now handled by LiveQuery (sessions.list)
 		});
 
 		// Session updated - update cache from event data and broadcast immediately
@@ -159,25 +154,24 @@ export class StateManager {
 			await this.broadcastSessionUpdateFromCache(sessionId);
 		});
 
-		// Session deleted - clear cache and broadcast
-		this.daemonHub.on('session.deleted', async (data) => {
+		// Session deleted - clear caches and channelVersions
+		// (forwarding extracted to ClientEventBridge)
+		this.daemonHub.on('session.deleted', (data) => {
 			const { sessionId } = data;
 
 			// Clear caches
 			this.sessionCache.delete(sessionId);
 			this.processingStateCache.delete(sessionId);
 			this.commandsCache.delete(sessionId);
+			this.errorCache.delete(sessionId);
 
-			// Publish session.deleted event (via ClientEventGateway — proof of pattern)
-			this.clientEvents.publish('session.deleted', { sessionId }, Channels.global());
-
-			// Note: Global sessions list updates are now handled by LiveQuery (sessions.list)
+			// FIX: Clean up channelVersions for deleted session
+			this.channelVersions.delete(`${STATE_CHANNELS.SESSION}:${sessionId}`);
+			this.channelVersions.delete(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}:${sessionId}`);
+			this.channelVersions.delete(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta:${sessionId}`);
 		});
 
-		// Auth events
-		this.daemonHub.on('auth.changed', async () => {
-			await this.broadcastSystemChange();
-		});
+		// Auth events - no cache (forwarding extracted to ClientEventBridge)
 
 		// Settings events — migrated to InternalEventBus.
 		// If internalEventBus is provided, subscribe there; otherwise fall back
@@ -196,64 +190,33 @@ export class StateManager {
 			});
 		}
 
-		// Commands updated - cache and broadcast
-		this.daemonHub.on(
-			'commands.updated',
-			async (data: { sessionId: string; commands: string[] }) => {
-				this.commandsCache.set(data.sessionId, data.commands);
-				await this.broadcastSessionStateChange(data.sessionId);
-			}
-		);
+		// Commands updated - cache only (broadcast extracted to ClientEventBridge)
+		this.daemonHub.on('commands.updated', (data: { sessionId: string; commands: string[] }) => {
+			this.commandsCache.set(data.sessionId, data.commands);
+		});
 
-		// Context updated - broadcast dedicated event and full session state
-		// Context data is persisted in session.metadata.lastContextInfo (by ContextTracker),
-		// so no separate cache needed here. The dedicated event provides a fast path
-		// for the frontend to update the context bar immediately.
-		this.daemonHub.on(
-			'context.updated',
-			async (data: { sessionId: string; contextInfo: ContextInfo }) => {
-				// Publish dedicated context.updated event (fast path for UI)
-				// Routed via ClientEventGateway — proof of pattern.
-				this.clientEvents.publish(
-					'context.updated',
-					data.contextInfo,
-					Channels.session(data.sessionId)
-				);
+		// Context updated - no cache (forwarding extracted to ClientEventBridge)
+		// Context data is persisted in session.metadata.lastContextInfo (by ContextTracker).
 
-				// Also update unified session state (includes metadata.lastContextInfo)
-				await this.broadcastSessionStateChange(data.sessionId);
-			}
-		);
-
-		// Session error events - update error cache and broadcast via state.session
-		// This folds the separate session.error event into the unified session state
+		// Session error events - cache only (broadcast extracted to ClientEventBridge)
 		this.daemonHub.on(
 			'session.error',
-			async (data: { sessionId: string; error: string; details?: unknown }) => {
-				// Update error cache
+			(data: { sessionId: string; error: string; details?: unknown }) => {
 				this.errorCache.set(data.sessionId, {
 					message: data.error,
 					details: data.details,
 					occurredAt: Date.now(),
 				});
-
-				// Broadcast updated session state (includes error)
-				await this.broadcastSessionStateChange(data.sessionId);
 			}
 		);
 
 		// Clear error when session becomes idle or processing continues successfully
-		this.daemonHub.on('session.errorClear', async (data: { sessionId: string }) => {
+		this.daemonHub.on('session.errorClear', (data: { sessionId: string }) => {
 			this.errorCache.set(data.sessionId, null);
-			await this.broadcastSessionStateChange(data.sessionId);
 		});
 
 		// =====================================================================
-		// Space event bridge — migrated to ClientEventBridge
-		//
-		// Pure forwarding handlers for space.*, spaceAgent.*, and
-		// spaceWorkflow.* events have been extracted into ClientEventBridge
-		// so StateManager no longer owns repetitive daemon-to-client forwarding.
+		// All pure forwarding handlers have been extracted to ClientEventBridge
 		//
 		// See: packages/daemon/src/lib/client-event-bridge.ts
 		// =====================================================================

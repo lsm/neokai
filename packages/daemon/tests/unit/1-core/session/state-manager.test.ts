@@ -110,7 +110,8 @@ describe('StateManager', () => {
 			expect(eventHandlers.has('session.created')).toBe(true);
 			expect(eventHandlers.has('session.updated')).toBe(true);
 			expect(eventHandlers.has('session.deleted')).toBe(true);
-			expect(eventHandlers.has('auth.changed')).toBe(true);
+			// auth.changed forwarding extracted to ClientEventBridge
+			expect(eventHandlers.has('auth.changed')).toBe(false);
 			expect(eventHandlers.has('settings.updated')).toBe(true);
 		});
 
@@ -362,7 +363,7 @@ describe('StateManager', () => {
 
 	describe('event handlers', () => {
 		describe('session.created', () => {
-			it('should cache session and publish event', async () => {
+			it('should cache session and initial processing state', async () => {
 				const handler = eventHandlers.get('session.created');
 				const mockSession: Session = {
 					id: 'new-session-id',
@@ -373,11 +374,11 @@ describe('StateManager', () => {
 
 				await handler!({ session: mockSession });
 
-				// Note: Global sessions list updates are now handled by LiveQuery (sessions.list)
-				expect(mockMessageHub.event).toHaveBeenCalledWith(
+				// Forwarding extracted to ClientEventBridge; StateManager only caches
+				expect(mockMessageHub.event).not.toHaveBeenCalledWith(
 					'session.created',
-					{ sessionId: 'new-session-id' },
-					{ channel: 'global' }
+					expect.anything(),
+					expect.anything()
 				);
 			});
 		});
@@ -422,7 +423,7 @@ describe('StateManager', () => {
 		});
 
 		describe('session.deleted', () => {
-			it('should clear caches and publish event', async () => {
+			it('should clear caches including error cache', async () => {
 				// First create a session to cache
 				const createHandler = eventHandlers.get('session.created');
 				await createHandler!({
@@ -433,27 +434,64 @@ describe('StateManager', () => {
 				const deleteHandler = eventHandlers.get('session.deleted');
 				await deleteHandler!({ sessionId: 'test-id' });
 
-				// Note: Global sessions list updates are now handled by LiveQuery (sessions.list)
-				expect(mockMessageHub.event).toHaveBeenCalledWith(
+				// Forwarding extracted to ClientEventBridge; StateManager only clears caches
+				expect(mockMessageHub.event).not.toHaveBeenCalledWith(
 					'session.deleted',
-					{ sessionId: 'test-id' },
-					{ channel: 'global' }
+					expect.anything(),
+					expect.anything()
 				);
+			});
+
+			it('should clean up channelVersions for deleted session', async () => {
+				// Seed channel versions by broadcasting
+				const mockAgentSession = {
+					getSessionData: mock(() => ({ id: 'test-id', title: 'Test' })),
+					getProcessingState: mock(() => ({ status: 'idle' })),
+					getSlashCommands: mock(async () => []),
+					getContextInfo: mock(() => null),
+					getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
+				};
+				(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+					mockAgentSession
+				);
+
+				// Trigger broadcasts to populate channelVersions
+				await stateManager.broadcastSessionStateChange('test-id');
+				await stateManager.broadcastSDKMessagesChange('test-id');
+				await stateManager.broadcastSDKMessagesDelta('test-id', {
+					added: [{ id: 'msg1' }],
+					timestamp: Date.now(),
+				});
+
+				// Verify versions exist before deletion by checking messageHub was called
+				// (which means versions were incremented and used)
+				const callsBefore = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls.length;
+				expect(callsBefore).toBeGreaterThan(0);
+
+				// Delete the session
+				const deleteHandler = eventHandlers.get('session.deleted');
+				await deleteHandler!({ sessionId: 'test-id' });
+
+				// After deletion, versions for that session should be gone.
+				// Verify by broadcasting again for the same sessionId — if cleanup
+				// worked, the version counter restarts from 1.
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				await stateManager.broadcastSessionStateChange('test-id');
+
+				const sessionCall = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls.find(
+					(c: unknown[]) => c[0] === STATE_CHANNELS.SESSION
+				);
+				expect(sessionCall).toBeDefined();
+				expect((sessionCall![1] as { version: number }).version).toBe(1);
 			});
 		});
 
 		describe('auth.changed', () => {
-			it('should broadcast system state change', async () => {
-				const handler = eventHandlers.get('auth.changed');
-				await handler!();
-
-				expect(mockMessageHub.event).toHaveBeenCalledWith(
-					STATE_CHANNELS.GLOBAL_SYSTEM,
-					expect.objectContaining({
-						auth: expect.any(Object),
-					}),
-					{ channel: 'global' }
-				);
+			it('handler removed — forwarding fully extracted to ClientEventBridge', () => {
+				// StateManager no longer registers an auth.changed handler;
+				// ClientEventBridge subscribes to auth.changed and triggers
+				// broadcastSystemChange via the StateBroadcasts interface.
+				expect(eventHandlers.has('auth.changed')).toBe(false);
 			});
 		});
 
@@ -508,61 +546,31 @@ describe('StateManager', () => {
 		});
 
 		describe('commands.updated', () => {
-			it('should cache commands and broadcast', async () => {
-				const mockAgentSession = {
-					getSessionData: mock(() => ({ id: 'test-id', title: 'Test' })),
-					getProcessingState: mock(() => ({ status: 'idle' })),
-					getSlashCommands: mock(async () => ['cmd1', 'cmd2']),
-					getContextInfo: mock(() => null),
-				};
-				(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
-					mockAgentSession
-				);
+			it('should cache commands only (broadcast extracted to ClientEventBridge)', async () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
 
 				const handler = eventHandlers.get('commands.updated');
 				await handler!({ sessionId: 'test-id', commands: ['cmd1', 'cmd2'] });
 
-				expect(mockMessageHub.event).toHaveBeenCalledWith(
-					STATE_CHANNELS.SESSION,
-					expect.any(Object),
-					{ channel: 'session:test-id' }
-				);
+				// Forwarding extracted to ClientEventBridge; StateManager only caches
+				const calls = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls;
+				const sessionCall = calls.find((call: unknown[]) => call[0] === STATE_CHANNELS.SESSION);
+				expect(sessionCall).toBeUndefined();
 			});
 		});
 
 		describe('context.updated', () => {
-			it('should cache context and broadcast', async () => {
-				const mockAgentSession = {
-					getSessionData: mock(() => ({ id: 'test-id', title: 'Test' })),
-					getProcessingState: mock(() => ({ status: 'idle' })),
-					getSlashCommands: mock(async () => []),
-					getContextInfo: mock(() => null),
-				};
-				(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
-					mockAgentSession
-				);
-
-				const handler = eventHandlers.get('context.updated');
-				const contextInfo = { files: 5, tokens: 1000 };
-				await handler!({ sessionId: 'test-id', contextInfo });
-
-				expect(mockMessageHub.event).toHaveBeenCalledWith('context.updated', contextInfo, {
-					channel: 'session:test-id',
-				});
+			it('handler removed — forwarding fully extracted to ClientEventBridge', () => {
+				// StateManager no longer registers a context.updated handler;
+				// ClientEventBridge subscribes to context.updated and forwards
+				// through ClientEventGateway directly.
+				expect(eventHandlers.has('context.updated')).toBe(false);
 			});
 		});
 
 		describe('session.error', () => {
-			it('should cache error and broadcast', async () => {
-				const mockAgentSession = {
-					getSessionData: mock(() => ({ id: 'test-id', title: 'Test' })),
-					getProcessingState: mock(() => ({ status: 'idle' })),
-					getSlashCommands: mock(async () => []),
-					getContextInfo: mock(() => null),
-				};
-				(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
-					mockAgentSession
-				);
+			it('should cache error only (broadcast extracted to ClientEventBridge)', async () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
 
 				const handler = eventHandlers.get('session.error');
 				await handler!({
@@ -571,50 +579,29 @@ describe('StateManager', () => {
 					details: { code: 'ERR_001' },
 				});
 
-				expect(mockMessageHub.event).toHaveBeenCalledWith(
-					STATE_CHANNELS.SESSION,
-					expect.objectContaining({
-						error: expect.objectContaining({
-							message: 'Something went wrong',
-							details: { code: 'ERR_001' },
-						}),
-					}),
-					{ channel: 'session:test-id' }
-				);
+				// Forwarding extracted to ClientEventBridge; StateManager only caches
+				const calls = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls;
+				const sessionCall = calls.find((call: unknown[]) => call[0] === STATE_CHANNELS.SESSION);
+				expect(sessionCall).toBeUndefined();
 			});
 		});
 
 		describe('session.errorClear', () => {
-			it('should clear error and broadcast', async () => {
-				const mockAgentSession = {
-					getSessionData: mock(() => ({ id: 'test-id', title: 'Test' })),
-					getProcessingState: mock(() => ({ status: 'idle' })),
-					getSlashCommands: mock(async () => []),
-					getContextInfo: mock(() => null),
-				};
-				(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
-					mockAgentSession
-				);
+			it('should clear error only (broadcast extracted to ClientEventBridge)', async () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
 
-				// First set an error
-				const errorHandler = eventHandlers.get('session.error');
-				await errorHandler!({
-					sessionId: 'test-id',
-					error: 'Error',
-				});
-
-				// Now clear it
 				const clearHandler = eventHandlers.get('session.errorClear');
 				await clearHandler!({ sessionId: 'test-id' });
 
-				// Should have been called multiple times (set error + clear error)
-				expect(mockMessageHub.event).toHaveBeenCalled();
+				// Forwarding extracted to ClientEventBridge; StateManager only clears cache
+				const calls = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls;
+				const sessionCall = calls.find((call: unknown[]) => call[0] === STATE_CHANNELS.SESSION);
+				expect(sessionCall).toBeUndefined();
 			});
 		});
 
 		describe('api.connection', () => {
-			it('should update API connection state and broadcast', async () => {
-				// Reset mock to track new calls
+			it('should update API connection state only (broadcast extracted to ClientEventBridge)', async () => {
 				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
 
 				const handler = eventHandlers.get('api.connection');
@@ -624,21 +611,17 @@ describe('StateManager', () => {
 					timestamp: Date.now(),
 				};
 
-				// The api.connection handler calls broadcastSystemChange with .catch(),
-				// so we need to call it and wait for the async broadcast to complete
 				handler!(connectionData);
 
-				// Wait for the async broadcast to complete
+				// Give any async work time to complete
 				await new Promise((resolve) => setTimeout(resolve, 10));
 
-				// Check that the broadcast was made with the updated API connection state
+				// Forwarding extracted to ClientEventBridge; StateManager only updates cache
 				const calls = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls;
 				const systemCall = calls.find(
 					(call: unknown[]) => call[0] === STATE_CHANNELS.GLOBAL_SYSTEM
 				);
-
-				expect(systemCall).toBeDefined();
-				expect(systemCall[1].apiConnection).toEqual(connectionData);
+				expect(systemCall).toBeUndefined();
 			});
 		});
 	});
@@ -779,41 +762,30 @@ describe('StateManager', () => {
 describe('ClientEventGateway DI seam', () => {
 	// ====================================================================
 	// ClientEventGateway DI seam — verifies that callers can inject a custom
-	// gateway and that the migrated forwarding slice (session.created /
-	// session.deleted / context.updated) actually flows through it.
+	// gateway into StateManager and that the gateway is exposed via
+	// getClientEventGateway() for sharing with ClientEventBridge.
 	//
-	// This is the core architectural pattern this PR introduces; the tests
-	// guard the seam against silent regressions if a future refactor swaps
-	// the gateway for a direct messageHub call again.
+	// Forwarding of session.created / session.deleted / context.updated now
+	// lives in ClientEventBridge (see client-event-bridge.test.ts).  These
+	// tests guard the injection seam itself against silent regressions.
 	// ====================================================================
-	// Build a fresh StateManager wired with a spied IClientEventGateway so we
-	// can assert on the typed `EventChannel` argument without going through
-	// the registry's wire serialization.
-	function buildWithSpiedGateway() {
-		const localEventHandlers = new Map<string, Function>();
-		const localRequestHandlers = new Map<string, Function>();
 
+	it('exposes the injected gateway via getClientEventGateway', () => {
 		const localMessageHub = {
 			event: mock(async () => {}),
-			onRequest: mock((method: string, handler: Function) => {
-				localRequestHandlers.set(method, handler);
-				return () => {};
-			}),
+			onRequest: mock(() => () => {}),
 			query: mock(async () => ({})),
 			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
 		const localEventBus = {
-			on: mock((event: string, handler: Function) => {
-				localEventHandlers.set(event, handler);
-				return () => {};
-			}),
+			on: mock(() => () => {}),
 			emit: mock(async () => {}),
 		} as unknown as DaemonHub;
 
 		const publish = mock(() => {});
 		const publishGlobal = mock(() => {});
-		const clientEvents = { publish, publishGlobal };
+		const injectedGateway = { publish, publishGlobal };
 
 		const localSessionManager = {
 			getActiveSessions: mock(() => 2),
@@ -830,10 +802,7 @@ describe('ClientEventGateway DI seam', () => {
 		} as unknown as AuthManager;
 
 		const localSettingsManager = {
-			getGlobalSettings: mock(() => ({
-				...DEFAULT_GLOBAL_SETTINGS,
-				settingSources: ['user', 'project', 'local'],
-			})),
+			getGlobalSettings: mock(() => DEFAULT_GLOBAL_SETTINGS),
 		} as unknown as SettingsManager;
 
 		const localConfig = {
@@ -851,79 +820,14 @@ describe('ClientEventGateway DI seam', () => {
 			localEventBus,
 			undefined,
 			undefined,
-			clientEvents
+			injectedGateway
 		);
 
-		return { localMessageHub, localEventHandlers, publish, publishGlobal, sm };
-	}
-
-	it('routes session.created through the injected gateway with a typed global channel', async () => {
-		const { localMessageHub, localEventHandlers, publish } = buildWithSpiedGateway();
-
-		const handler = localEventHandlers.get('session.created');
-		expect(handler).toBeDefined();
-
-		await handler!({
-			session: { id: 'inj-1', title: 'X', status: 'active', metadata: {} } as Session,
-		});
-
-		expect(publish).toHaveBeenCalledWith(
-			'session.created',
-			{ sessionId: 'inj-1' },
-			{ kind: 'global' }
-		);
-		// And the gateway is the only path: no direct messageHub.event call
-		// for this method on the injected hub.
-		const directCalls = (localMessageHub.event as ReturnType<typeof mock>).mock.calls.filter(
-			(args) => args[0] === 'session.created'
-		);
-		expect(directCalls).toHaveLength(0);
-	});
-
-	it('routes session.deleted through the injected gateway with a typed global channel', async () => {
-		const { localMessageHub, localEventHandlers, publish } = buildWithSpiedGateway();
-
-		// Seed cache so the deleted handler runs cleanly.
-		await localEventHandlers.get('session.created')!({
-			session: { id: 'inj-2', title: 'X', status: 'active', metadata: {} } as Session,
-		});
-		(publish as ReturnType<typeof mock>).mockClear();
-
-		await localEventHandlers.get('session.deleted')!({ sessionId: 'inj-2' });
-
-		expect(publish).toHaveBeenCalledWith(
-			'session.deleted',
-			{ sessionId: 'inj-2' },
-			{ kind: 'global' }
-		);
-		const directCalls = (localMessageHub.event as ReturnType<typeof mock>).mock.calls.filter(
-			(args) => args[0] === 'session.deleted'
-		);
-		expect(directCalls).toHaveLength(0);
-	});
-
-	it('routes context.updated through the injected gateway with a typed session channel', async () => {
-		const { localEventHandlers, publish } = buildWithSpiedGateway();
-
-		const contextInfo = {
-			usedTokens: 1000,
-			maxTokens: 200000,
-			autoCompactThreshold: 0.85,
-		};
-
-		await localEventHandlers.get('context.updated')!({
-			sessionId: 'inj-3',
-			contextInfo,
-		});
-
-		expect(publish).toHaveBeenCalledWith('context.updated', contextInfo, {
-			kind: 'session',
-			sessionId: 'inj-3',
-		});
+		const gateway = sm.getClientEventGateway();
+		expect(gateway).toBe(injectedGateway);
 	});
 
 	it('falls back to a default ClientEventGateway when none is injected', async () => {
-		// Build a StateManager WITHOUT injecting a custom gateway.
 		const localMessageHub = {
 			event: mock(async () => {}),
 			onRequest: mock(() => () => {}),
