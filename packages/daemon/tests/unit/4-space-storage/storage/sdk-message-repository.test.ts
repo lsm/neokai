@@ -678,10 +678,11 @@ describe('SDKMessageRepository', () => {
 		});
 
 		// Regression: the original implementation loaded every user row for the
-		// session and scanned in JS — O(N) per lookup. The current impl filters
-		// on json_extract(sdk_message, '$.uuid') so SQLite can serve the lookup
-		// from idx_sdk_messages_uuid_status. This test exercises a busy session
-		// and asserts we still return only the matching row.
+		// session and scanned in JS — O(N) per lookup. The current impl pushes
+		// the uuid match into SQL with LIMIT 1, so SQLite stops at the first
+		// matching row (and in production can use idx_sdk_messages_uuid_status
+		// for an indexed prefix scan). The test schema mirrors the core
+		// migrations but omits that index; correctness is still validated here.
 		it('should find the right message among many user rows in the same session', () => {
 			const sessionId = 'session-busy';
 			for (let i = 0; i < 50; i++) {

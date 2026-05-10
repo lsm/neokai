@@ -925,21 +925,24 @@ sdk_rows_raw AS (
   LEFT JOIN space_agents sa ON sa.id = sne.agent_id
   WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
-sdk_rows_with_pos AS (
+sdk_rows_numbered AS (
   SELECT
     r.*,
     ROW_NUMBER() OVER (
       PARTITION BY r.sessionId
       ORDER BY r.createdAt ASC, r.id ASC
-    ) AS rowPos,
-    -- Mark this row's own rowPos as the carry-forward sentinel when it's a
-    -- user row; otherwise NULL. Combined with the MAX() window below this
-    -- lets us forward-fill the latest user-row position per session without
-    -- a per-row correlated subquery.
-    CASE WHEN r.messageType = 'user' THEN
-      ROW_NUMBER() OVER (PARTITION BY r.sessionId ORDER BY r.createdAt ASC, r.id ASC)
-      ELSE NULL END AS thisUserRowPos
+    ) AS rowPos
   FROM sdk_rows_raw r
+),
+sdk_rows_with_pos AS (
+  -- Mark this row's own rowPos as the carry-forward sentinel when it's a
+  -- user row; otherwise NULL. Combined with the MAX() window below this
+  -- lets us forward-fill the latest user-row position per session without
+  -- a per-row correlated subquery or a second ROW_NUMBER() pass.
+  SELECT
+    n.*,
+    CASE WHEN n.messageType = 'user' THEN n.rowPos ELSE NULL END AS thisUserRowPos
+  FROM sdk_rows_numbered n
 ),
 -- Forward-fill the latest user-row position seen in each session up to and
 -- including the current row. SQLite ignores NULLs in MAX(), so this carries
