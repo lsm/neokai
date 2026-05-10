@@ -483,27 +483,9 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 	// when `tasks` is empty (a freshly-created schedule that hasn't fired yet).
 	// Falling through to the global "No tasks yet" placeholder would hide the
 	// schedule list, leaving users with no way to view/manage their schedules.
-	if (tasks.length === 0 && activeTab !== 'scheduled') {
-		return (
-			<div class="w-full px-8 flex flex-col items-center justify-center py-16 text-center">
-				<svg
-					class="w-10 h-10 text-gray-700 mb-3"
-					fill="none"
-					viewBox="0 0 24 24"
-					stroke="currentColor"
-				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width={1.5}
-						d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-					/>
-				</svg>
-				<p class="text-sm text-gray-400 font-medium">No tasks yet</p>
-				<p class="text-xs text-gray-600 mt-1">Create a task to get started</p>
-			</div>
-		);
-	}
+	// We always render the tab strip so users can navigate to the Scheduled tab
+	// even when no tasks have been spawned yet.
+	const showGlobalEmpty = tasks.length === 0 && activeTab !== 'scheduled';
 
 	return (
 		<div class="flex-1 min-h-0 w-full px-4 py-4 sm:px-8 sm:py-6 overflow-y-auto">
@@ -553,7 +535,25 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 					/>
 				</div>
 
-				{activeTab === 'scheduled' ? (
+				{showGlobalEmpty ? (
+					<div class="flex flex-col items-center justify-center py-16 text-center">
+						<svg
+							class="w-10 h-10 text-gray-700 mb-3"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={1.5}
+								d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+							/>
+						</svg>
+						<p class="text-sm text-gray-400 font-medium">No tasks yet</p>
+						<p class="text-xs text-gray-600 mt-1">Create a task to get started</p>
+					</div>
+				) : activeTab === 'scheduled' ? (
 					schedules.length === 0 ? (
 						<EmptyTabState tab="scheduled" />
 					) : (
@@ -600,9 +600,13 @@ function ScheduleList({
 		// Delete button for the rest of the session. The store throws on failure;
 		// we swallow it here because the user-visible feedback is the row staying
 		// in place — a follow-up retry just clicks Delete again.
-		onDelete(id).finally(() => {
-			setDeletingId((curr) => (curr === id ? null : curr));
-		});
+		onDelete(id)
+			.catch(() => {
+				/* silently ignore — UI state stays as-is, user can retry */
+			})
+			.finally(() => {
+				setDeletingId((curr) => (curr === id ? null : curr));
+			});
 	};
 
 	const formatNextRun = (nextRunAt: number | null) => {

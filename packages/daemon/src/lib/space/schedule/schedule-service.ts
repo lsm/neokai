@@ -247,16 +247,24 @@ export class ScheduleService {
 		// the rollback restores the prior pending job linkage so the schedule
 		// continues to fire on its original cadence.
 		db.transaction(() => {
-			scheduleRepo.update(scheduleId, {
-				title: input.title,
-				description: input.description,
-				priority: input.priority,
-				preferredWorkflowId: input.preferredWorkflowId,
-				labels: input.labels,
-				cronExpression: input.cronExpression,
-				runAt: input.runAt,
-				timezone: input.timezone,
-			});
+			// Only forward fields the caller actually provided. The repository's
+			// update method uses `'key' in params` to decide whether to write a
+			// column, so spreading `key: undefined` would coerce to NULL and
+			// silently clear cron expression / runAt / workflow linkage on a
+			// metadata-only edit (e.g. `{ title: 'New' }`). Build the params
+			// object key-by-key so untouched columns are left alone.
+			const updateParams: Parameters<typeof scheduleRepo.update>[1] = {};
+			if (input.title !== undefined) updateParams.title = input.title;
+			if (input.description !== undefined) updateParams.description = input.description;
+			if (input.priority !== undefined) updateParams.priority = input.priority;
+			if ('preferredWorkflowId' in input) {
+				updateParams.preferredWorkflowId = input.preferredWorkflowId;
+			}
+			if (input.labels !== undefined) updateParams.labels = input.labels;
+			if ('cronExpression' in input) updateParams.cronExpression = input.cronExpression;
+			if ('runAt' in input) updateParams.runAt = input.runAt;
+			if (input.timezone !== undefined) updateParams.timezone = input.timezone;
+			scheduleRepo.update(scheduleId, updateParams);
 
 			if (existing.status === 'active' && timingChanged) {
 				if (existing.pendingJobId) jobQueue.deleteJob(existing.pendingJobId);
@@ -396,10 +404,21 @@ export class ScheduleService {
 		const schedules = scheduleRepo.listActiveBySpace(spaceId);
 		let recovered = 0;
 
-		for (const schedule of schedules) {
-			if (schedule.pendingJobId) continue; // already linked
+		for (const candidate of schedules) {
+			if (candidate.pendingJobId) continue; // already linked at snapshot time
 
 			db.transaction(() => {
+				// Re-read fresh inside the transaction to defend against concurrent
+				// pause/delete/edit between snapshot and reseed. The recovery loop
+				// is fired from SpaceManager hooks, but agents and operators can
+				// still mutate schedules during the scan. If the schedule was
+				// paused, deleted, or already re-seeded by another path, leave
+				// it alone — pausing should not be silently overridden.
+				const schedule = scheduleRepo.getById(candidate.id);
+				if (!schedule) return;
+				if (schedule.status !== 'active') return;
+				if (schedule.pendingJobId) return;
+
 				if (schedule.triggerType === 'cron' && schedule.cronExpression) {
 					const next = getNextRunAt(schedule.cronExpression, schedule.timezone);
 					if (next === null) {

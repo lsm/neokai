@@ -190,6 +190,22 @@ describe('ScheduleService', () => {
 			expect(updated.pendingJobId).toBe(oldJobId);
 		});
 
+		it('does not clear trigger fields when updating unrelated metadata', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Cron',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+				preferredWorkflowId: 'wf-1',
+			});
+
+			const updated = service.updateSchedule(schedule.id, { title: 'Renamed' });
+
+			expect(updated.title).toBe('Renamed');
+			expect(updated.cronExpression).toBe('0 9 * * *');
+			expect(updated.preferredWorkflowId).toBe('wf-1');
+		});
+
 		it('rejects timing edits whose merged trigger config produces no nextRunAt', () => {
 			const schedule = service.createSchedule({
 				spaceId,
@@ -431,6 +447,28 @@ describe('ScheduleService', () => {
 
 			const after = scheduleRepo.getById(schedule.id);
 			expect(after?.status).toBe('active'); // not terminally completed
+			expect(after?.pendingJobId).toBeNull();
+		});
+
+		it('skips schedules that were paused between snapshot and reseed', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Cron',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+			});
+			scheduleRepo.updatePendingJobId(schedule.id, null);
+
+			// Simulate a concurrent pause: the snapshot says active+no-pending,
+			// but by the time the recovery loop reaches this schedule it has been
+			// paused. The reseed must not override the operator's pause.
+			scheduleRepo.updateStatus(schedule.id, 'paused');
+
+			const recovered = service.recoverSchedulesForSpace(spaceId);
+			expect(recovered).toBe(0);
+
+			const after = scheduleRepo.getById(schedule.id);
+			expect(after?.status).toBe('paused');
 			expect(after?.pendingJobId).toBeNull();
 		});
 	});
