@@ -194,18 +194,26 @@ describe('LoopDetectorHook', () => {
 			}
 		});
 
-		it('does not track tools with no configured threshold', async () => {
-			const trimmed = createLoopDetectorHook({
+		it('merges partial threshold overrides with defaults (Grep stays tracked at the default)', async () => {
+			const merged = createLoopDetectorHook({
 				thresholds: { Read: 3 },
 			});
-			// Grep would normally trigger at 5; with our config it should pass through forever.
-			// (Note: createLoopDetectorHook merges with DEFAULT, so we need a way to drop Grep.
-			//  Verify intended behaviour: defaults are inherited unless overridden.)
-			// Here we just confirm that an explicit override of Read sticks at 3.
-			const input = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
-			expect(await call(trimmed, input)).toEqual({});
-			expect(await call(trimmed, input)).toEqual({});
-			expect(await call(trimmed, input)).toMatchObject({
+			// Read override sticks at 3.
+			const readInput = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
+			expect(await call(merged, readInput)).toEqual({});
+			expect(await call(merged, readInput)).toEqual({});
+			expect(await call(merged, readInput)).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+
+			// Grep was NOT overridden, so the default threshold of 5 is preserved.
+			// (This is the merge-with-defaults behaviour documented on
+			// `createLoopDetectorHook`.)
+			const grepInput = makePreToolUse('Grep', { pattern: 'TODO', path: 'src' });
+			for (let i = 0; i < 4; i++) {
+				expect(await call(merged, grepInput)).toEqual({});
+			}
+			expect(await call(merged, grepInput)).toMatchObject({
 				hookSpecificOutput: { permissionDecision: 'deny' },
 			});
 		});

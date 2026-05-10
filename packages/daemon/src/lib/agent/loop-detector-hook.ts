@@ -10,12 +10,14 @@
  * user intervened. The file content was unchanged across every read; the
  * agent had entered a degenerate planning state.
  *
- * Strategy: a `PreToolUse` hook keeps a per-session ledger of consecutive
- * identical tool invocations. Once the count crosses a per-tool threshold
- * within a sliding window, the hook denies the call with a
- * `permissionDecisionReason` that the SDK delivers back to the model as the
- * tool result. The reason text instructs the model to stop re-running the
- * tool and proceed to the next step (e.g. its TodoWrite list).
+ * Strategy: a `PreToolUse` hook keeps a per-session ledger of accumulated
+ * identical tool invocations within a sliding window. The counter is NOT
+ * strictly consecutive — unrelated tool calls in between do not reset it,
+ * only window expiry (or a deny) does. Once the count crosses a per-tool
+ * threshold, the hook denies the call with a `permissionDecisionReason`
+ * that the SDK delivers back to the model as the tool result. The reason
+ * text instructs the model to stop re-running the tool and proceed to the
+ * next step (e.g. its TodoWrite list).
  *
  * Bash is intentionally NOT tracked — bash output can legitimately change
  * across calls (e.g. polling `git status`, tailing logs) and false positives
@@ -31,14 +33,18 @@ import { Logger } from '../logger';
 /**
  * Per-tool detection thresholds and overall hook configuration.
  *
- * `thresholds[toolName]` is the consecutive count at which we trigger.
- * A tool absent from `thresholds` is never tracked (passes through).
+ * `thresholds[toolName]` is the count of accumulated identical invocations
+ * (within the sliding window) at which we trigger. A tool absent from
+ * `thresholds` is never tracked (passes through).
  */
 export interface LoopDetectorConfig {
 	enabled: boolean;
 	/** Sliding window in milliseconds; entries older than this are forgotten. */
 	windowMs: number;
-	/** Per-tool consecutive-call threshold. Tools omitted here are not tracked. */
+	/**
+	 * Per-tool accumulated-call threshold within the sliding window. Tools
+	 * omitted here are not tracked.
+	 */
 	thresholds: Record<string, number>;
 }
 
@@ -47,7 +53,8 @@ export const DEFAULT_LOOP_DETECTOR_CONFIG: LoopDetectorConfig = {
 	windowMs: 60_000,
 	thresholds: {
 		// Read identity is strong: the SDK already surfaces "File unchanged
-		// since last read", so 3 consecutive identical reads is unambiguous.
+		// since last read", so 3 accumulated identical reads in 60s is
+		// unambiguous.
 		Read: 3,
 		// Grep / Glob are slightly noisier (developers genuinely re-run them
 		// while exploring), so we set a more permissive threshold.
@@ -114,7 +121,7 @@ function summariseArgs(toolName: string, input: Record<string, unknown>): string
 
 function buildRecoveryMessage(toolName: string, count: number, argSummary: string): string {
 	return [
-		`Loop detected: ${toolName} was called ${count} times in a row with identical arguments (${argSummary}).`,
+		`Loop detected: ${toolName} was called ${count} times with identical arguments (${argSummary}) in a short window.`,
 		'The result has not changed since the previous call. STOP re-running this tool — move on to the next step in your task.',
 		'If you have a TodoWrite list, mark progress and proceed to the next item.',
 		'If you genuinely need fresh data, perform a *different* action (edit a file, run a command, ask a question) before retrying.',
@@ -123,6 +130,13 @@ function buildRecoveryMessage(toolName: string, count: number, argSummary: strin
 
 /**
  * Create a PreToolUse hook that detects dead loops and short-circuits them.
+ *
+ * The `config` parameter is reserved for testing and override use. Production
+ * callers (see `QueryOptionsBuilder.buildHooks`) instantiate the hook with no
+ * arguments so the defaults in `DEFAULT_LOOP_DETECTOR_CONFIG` apply. Partial
+ * configs are merged with the defaults: any threshold left unspecified keeps
+ * its default (e.g. passing `{ thresholds: { Read: 2 } }` overrides Read but
+ * preserves Grep=5 and Glob=5).
  *
  * @example
  * ```ts
@@ -179,7 +193,7 @@ export function createLoopDetectorHook(config: Partial<LoopDetectorConfig> = {})
 			const argSummary = summariseArgs(tool_name, args);
 			const reason = buildRecoveryMessage(tool_name, nextCount, argSummary);
 			logger.warn(
-				`Dead-loop detected: ${tool_name} called ${nextCount}x in a row with identical args (${argSummary}); denying.`
+				`Dead-loop detected: ${tool_name} called ${nextCount}x with identical args (${argSummary}) in a short window; denying.`
 			);
 			// Reset the counter so the agent isn't permanently denied — if it
 			// later legitimately retries (e.g. after editing the file), the

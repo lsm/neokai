@@ -1033,7 +1033,9 @@ CRITICAL RULES:
 
 		// Loop detector: matcher is a regex of the tracked tool names so the
 		// SDK only invokes the hook for those tools. The hook itself is also
-		// defensive (it no-ops for untracked tools).
+		// defensive (it no-ops for untracked tools). Production wires this
+		// with no arguments — the hook's `config` parameter exists only so
+		// unit tests can exercise alternative thresholds and disabled mode.
 		const trackedTools = Object.keys(DEFAULT_LOOP_DETECTOR_CONFIG.thresholds);
 		if (trackedTools.length > 0) {
 			preToolUse.push({
