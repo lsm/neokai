@@ -227,7 +227,7 @@ export class SDKMessageRepository {
 		// Show user messages that were consumed to SDK, plus any that failed to deliver.
 		let query = `SELECT sdk_message, timestamp, send_status, origin FROM sdk_messages
       WHERE session_id = ?
-        AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
+        AND parent_tool_use_id IS NULL
         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))`;
 		const params: SQLiteValue[] = [sessionId];
 
@@ -298,7 +298,7 @@ export class SDKMessageRepository {
 				.join(',');
 			const subagentQuery = `SELECT sdk_message, timestamp FROM sdk_messages
        WHERE session_id = ?
-         AND json_extract(sdk_message, '$.parent_tool_use_id') IN (${placeholders})
+         AND parent_tool_use_id IN (${placeholders})
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
         ORDER BY timestamp ASC`;
 			const subagentParams: SQLiteValue[] = [sessionId, ...Array.from(toolUseIds)];
@@ -372,7 +372,7 @@ export class SDKMessageRepository {
 		const stmt = this.db.prepare(
 			`SELECT id, sdk_message, timestamp FROM sdk_messages
 	       WHERE session_id = ?
-		       AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
+		       AND parent_tool_use_id IS NULL
 		       AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
 	       ORDER BY timestamp DESC, rowid DESC
 	       LIMIT 1`
@@ -395,7 +395,7 @@ export class SDKMessageRepository {
 		const stmt = this.db.prepare(
 			`SELECT COUNT(*) as count FROM sdk_messages
        WHERE session_id = ?
-         AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
+         AND parent_tool_use_id IS NULL
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') = 'consumed')`
 		);
 		const result = stmt.get(sessionId) as { count: number };
