@@ -914,4 +914,69 @@ describe('InputTextarea', () => {
 			}).not.toThrow();
 		});
 	});
+
+	describe('Auto-resize timing (autoscroll race regression)', () => {
+		/**
+		 * Regression test for: messages appearing behind the chat composer
+		 * when sending multiline messages with autoscroll enabled.
+		 *
+		 * Root cause: the textarea height was previously updated inside a
+		 * requestAnimationFrame callback (one frame later). When a new message
+		 * caused the parent to recompute scroll/footer padding, the footer height
+		 * still reflected the OLD textarea size, so the scroller stopped short
+		 * and the new message was hidden behind the composer.
+		 *
+		 * Fix: switched to useLayoutEffect with a synchronous height update so
+		 * onHeightChange fires before the browser paints — the parent's
+		 * syncMessagesContainerPadding always sees the up-to-date footer height.
+		 *
+		 * What this test guarantees:
+		 * - onHeightChange is invoked synchronously during render commit
+		 *   (no rAF, no setTimeout). If anyone reverts to a deferred resize,
+		 *   this test fails.
+		 */
+		it('invokes onHeightChange synchronously when content changes', () => {
+			const onHeightChange = vi.fn();
+			const { rerender } = render(
+				<InputTextarea
+					content="line one"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					onHeightChange={onHeightChange}
+				/>
+			);
+
+			// Cleared after initial mount so we can observe the next pass cleanly
+			onHeightChange.mockClear();
+
+			rerender(
+				<InputTextarea
+					content={'line one\nline two\nline three'}
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					onHeightChange={onHeightChange}
+				/>
+			);
+
+			// Must be called synchronously — no awaiting frames or timers.
+			expect(onHeightChange).toHaveBeenCalled();
+		});
+
+		it('invokes onHeightChange on initial mount (sync, before paint)', () => {
+			const onHeightChange = vi.fn();
+			render(
+				<InputTextarea
+					content="hello"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					onHeightChange={onHeightChange}
+				/>
+			);
+
+			expect(onHeightChange).toHaveBeenCalled();
+		});
+	});
 });
