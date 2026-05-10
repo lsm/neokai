@@ -518,6 +518,18 @@ export function setupSpaceExportImportHandlers(
 					existingWorkflows.map((w) => w.handle).filter((h): h is string => !!h)
 				);
 
+				// Pre-compute handles freed by replace operations so handle preservation
+				// is independent of iteration order within the bundle.
+				for (const exportedWorkflow of bundle.workflows) {
+					const existing = existingWorkflowByName.get(exportedWorkflow.name);
+					if (!existing) continue;
+					const strategy: ConflictResolutionStrategy =
+						res.workflows?.[exportedWorkflow.name] ?? 'skip';
+					if (strategy === 'replace' && existing.handle) {
+						usedWorkflowHandles.delete(existing.handle);
+					}
+				}
+
 				// ── Phase 1: import agents ──────────────────────────────────────
 				// Maps original bundle agent name → assigned UUID (used for workflow cross-refs)
 				const importedAgentNameToId = new Map<string, string>();
@@ -608,9 +620,6 @@ export function setupSpaceExportImportHandlers(
 							replacedOldId = existing.id;
 							workflowRepo.deleteWorkflow(existing.id);
 							usedWorkflowNames.delete(exportedWorkflow.name);
-							// Free up the old handle so the imported handle can be preserved
-							// when it matches the deleted workflow's handle.
-							if (existing.handle) usedWorkflowHandles.delete(existing.handle);
 							action = 'replaced';
 						} else {
 							// rename
