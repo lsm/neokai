@@ -21,6 +21,7 @@ import type {
 } from '@neokai/shared';
 import type { TaskScheduleRepository } from '../../../storage/repositories/task-schedule-repository';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
+import type { SpaceRepository } from '../../../storage/repositories/space-repository';
 import { getNextRunAt, isValidCronExpression } from './cron-utils';
 import { TASK_SCHEDULE_FIRE } from '../../job-queue-constants';
 import type { TaskScheduleFirePayload } from '../../job-handlers/task-schedule-fire.handler';
@@ -55,6 +56,7 @@ export interface ScheduleServiceDeps {
 	db: BunDatabase;
 	scheduleRepo: TaskScheduleRepository;
 	jobQueue: JobQueueRepository;
+	spaceRepo: SpaceRepository;
 }
 
 export class ScheduleService {
@@ -121,10 +123,15 @@ export class ScheduleService {
 	createSchedule(input: CreateScheduleInput): TaskSchedule {
 		this.validateCreateTrigger(input);
 
+		const { spaceRepo, db, scheduleRepo, jobQueue } = this.deps;
+		const space = spaceRepo.getSpace(input.spaceId);
+		if (!space) throw new Error(`Space not found: ${input.spaceId}`);
+		if (space.status !== 'active') {
+			throw new Error(`Cannot create schedule in a non-active space (current: ${space.status})`);
+		}
+
 		const tz = input.timezone ?? 'UTC';
 		const nextRunAt = this.computeInitialNextRun(input, tz);
-
-		const { db, scheduleRepo, jobQueue } = this.deps;
 
 		// Wrap create + enqueue + updatePendingJobId in a single SQLite
 		// transaction so a failure in any step rolls back the schedule row.
@@ -225,7 +232,11 @@ export class ScheduleService {
 		};
 
 		let plannedNextRunAt: number | null = null;
-		if (timingChanged && existing.status === 'active') {
+		// Validate timing edits for both active and paused schedules. A paused
+		// cron schedule with an invalid timezone would fail at resume time,
+		// leaving the operator stuck. Reject bad config at write time so the
+		// caller gets immediate feedback.
+		if (timingChanged) {
 			if (merged.triggerType === 'cron' && merged.cronExpression) {
 				plannedNextRunAt = getNextRunAt(merged.cronExpression, merged.timezone);
 				if (plannedNextRunAt === null) {
@@ -290,6 +301,10 @@ export class ScheduleService {
 	/**
 	 * Pause an active schedule — cancels the pending job, sets status=paused,
 	 * clears pendingJobId.
+	 *
+	 * Uses a compare-and-swap update so a concurrent fire/reschedule that
+	 * advanced the pending job between our read and write wins safely instead
+	 * of being overwritten.
 	 */
 	pauseSchedule(scheduleId: string): TaskSchedule {
 		const { scheduleRepo, jobQueue } = this.deps;
@@ -299,9 +314,17 @@ export class ScheduleService {
 			throw new Error(`Schedule is not active (current: ${schedule.status})`);
 		}
 
-		if (schedule.pendingJobId) jobQueue.deleteJob(schedule.pendingJobId);
-		scheduleRepo.updatePendingJobId(scheduleId, null);
-		scheduleRepo.updateStatus(scheduleId, 'paused');
+		const observedPendingJobId = schedule.pendingJobId;
+		if (observedPendingJobId) jobQueue.deleteJob(observedPendingJobId);
+
+		const ok = scheduleRepo.pauseIfPending(scheduleId, 'active', observedPendingJobId);
+		if (!ok) {
+			// Concurrent fire/reschedule won — re-read and return current state
+			// so the caller sees the truth rather than stale data.
+			const fresh = scheduleRepo.getById(scheduleId);
+			if (!fresh) throw new Error(`Schedule not found: ${scheduleId}`);
+			return fresh;
+		}
 		return scheduleRepo.getById(scheduleId) as TaskSchedule;
 	}
 
@@ -317,6 +340,10 @@ export class ScheduleService {
 	 *     throw, leaving the schedule paused so the operator can fix the
 	 *     config. We do NOT silently complete a recurring schedule, because that
 	 *     would terminally end its lifecycle on a recoverable error.
+	 *
+	 * Uses a compare-and-swap update so a concurrent resume/delete that changed
+	 * the schedule between our read and write wins safely instead of leaving an
+	 * orphan queued job behind.
 	 */
 	resumeSchedule(scheduleId: string): TaskSchedule {
 		const { scheduleRepo, jobQueue } = this.deps;
@@ -343,7 +370,18 @@ export class ScheduleService {
 
 		// One-shot whose target time already passed → mark completed.
 		if (nextRunAt === null && schedule.triggerType === 'at') {
-			scheduleRepo.updateStatus(scheduleId, 'completed');
+			// CAS: only complete if still paused (concurrent resume would have
+			// already enqueued a job; we must not overwrite that).
+			const ok = scheduleRepo.resumeIfPaused(scheduleId, {
+				nextRunAt: null,
+				pendingJobId: null,
+				status: 'completed',
+			});
+			if (!ok) {
+				const fresh = scheduleRepo.getById(scheduleId);
+				if (!fresh) throw new Error(`Schedule not found: ${scheduleId}`);
+				return fresh;
+			}
 			return scheduleRepo.getById(scheduleId) as TaskSchedule;
 		}
 
@@ -354,21 +392,42 @@ export class ScheduleService {
 			runAt: nextRunAt as number,
 		});
 
-		scheduleRepo.update(scheduleId, { nextRunAt: nextRunAt ?? undefined });
-		scheduleRepo.updatePendingJobId(scheduleId, job.id);
-		scheduleRepo.updateStatus(scheduleId, 'active');
+		const ok = scheduleRepo.resumeIfPaused(scheduleId, {
+			nextRunAt,
+			pendingJobId: job.id,
+			status: 'active',
+		});
+		if (!ok) {
+			// Another caller won the race — delete the orphan job we just enqueued.
+			jobQueue.deleteJob(job.id);
+			const fresh = scheduleRepo.getById(scheduleId);
+			if (!fresh) throw new Error(`Schedule not found: ${scheduleId}`);
+			return fresh;
+		}
 		return scheduleRepo.getById(scheduleId) as TaskSchedule;
 	}
 
 	/**
 	 * Delete a schedule permanently — also cancels its pending fire job if any.
+	 *
+	 * Uses a compare-and-swap delete keyed on the observed pending_job_id so
+	 * a concurrent fire that advanced the schedule between our read and delete
+	 * wins safely instead of leaving an orphan queued job behind.
 	 */
 	deleteSchedule(scheduleId: string): boolean {
 		const { scheduleRepo, jobQueue } = this.deps;
 		const schedule = scheduleRepo.getById(scheduleId);
 		if (!schedule) return false;
-		if (schedule.pendingJobId) jobQueue.deleteJob(schedule.pendingJobId);
-		return scheduleRepo.delete(scheduleId);
+		const observedPendingJobId = schedule.pendingJobId;
+		if (observedPendingJobId) jobQueue.deleteJob(observedPendingJobId);
+		const ok = scheduleRepo.deleteIfPending(scheduleId, observedPendingJobId);
+		if (!ok) {
+			// Concurrent fire/reschedule won — the schedule still exists with a
+			// new pending job. Don't leave it in a broken state; let the caller
+			// know so they can retry or investigate.
+			return false;
+		}
+		return true;
 	}
 
 	getSchedule(scheduleId: string): TaskSchedule | null {

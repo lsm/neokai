@@ -300,10 +300,66 @@ export class TaskScheduleRepository {
 		return result.changes > 0;
 	}
 
+	/**
+	 * Compare-and-swap pause: only transitions to paused and clears the pending
+	 * job when the row's `pending_job_id` still equals `expectedPendingJobId` and
+	 * the status is still `expectedStatus`. Returns true on success, false when
+	 * the precondition failed (concurrent fire/reschedule/delete won).
+	 */
+	pauseIfPending(
+		id: string,
+		expectedStatus: TaskScheduleStatus,
+		expectedPendingJobId: string | null
+	): boolean {
+		const result = this.db
+			.prepare(
+				`UPDATE task_schedules
+				 SET status = 'paused', pending_job_id = NULL, updated_at = ?
+				 WHERE id = ? AND status = ? AND pending_job_id IS ?`
+			)
+			.run(Date.now(), id, expectedStatus, expectedPendingJobId);
+		return result.changes > 0;
+	}
+
+	/**
+	 * Compare-and-swap resume: only transitions to active and sets the pending
+	 * job when the row's `status` is still `paused`. Returns true on success,
+	 * false when the schedule is no longer paused (concurrent resume/delete won).
+	 */
+	resumeIfPaused(
+		id: string,
+		opts: {
+			nextRunAt: number | null;
+			pendingJobId: string | null;
+			status: TaskScheduleStatus;
+		}
+	): boolean {
+		const result = this.db
+			.prepare(
+				`UPDATE task_schedules
+				 SET next_run_at = ?, pending_job_id = ?, status = ?, updated_at = ?
+				 WHERE id = ? AND status = 'paused'`
+			)
+			.run(opts.nextRunAt, opts.pendingJobId, opts.status, Date.now(), id);
+		return result.changes > 0;
+	}
+
 	// ─── Delete ───────────────────────────────────────────────────────────────────
 
 	delete(id: string): boolean {
 		const result = this.db.prepare(`DELETE FROM task_schedules WHERE id = ?`).run(id);
+		return result.changes > 0;
+	}
+
+	/**
+	 * Compare-and-swap delete: only removes the row when its `pending_job_id`
+	 * still equals `expectedPendingJobId`. Returns true on success, false when
+	 * the precondition failed (concurrent fire/reschedule already advanced it).
+	 */
+	deleteIfPending(id: string, expectedPendingJobId: string | null): boolean {
+		const result = this.db
+			.prepare(`DELETE FROM task_schedules WHERE id = ? AND pending_job_id IS ?`)
+			.run(id, expectedPendingJobId);
 		return result.changes > 0;
 	}
 

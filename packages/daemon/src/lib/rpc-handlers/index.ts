@@ -94,6 +94,7 @@ import { PendingActionStore } from '../neo/security-tier';
 import type { NeoToolsConfig } from '../neo/tools/neo-query-tools';
 import type { NeoActionToolsConfig, NeoWorkflowRun } from '../neo/tools/neo-action-tools';
 import { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository';
+import { SpaceRepository } from '../../storage/repositories/space-repository';
 import { setupTaskScheduleHandlers } from './task-schedule-handlers';
 import { ScheduleService } from '../space/schedule/schedule-service';
 
@@ -309,6 +310,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
 	const pendingMessageRepo = new PendingAgentMessageRepository(deps.db.getDatabase());
 	const taskScheduleRepo = new TaskScheduleRepository(deps.db.getDatabase());
+	const spaceRepo = new SpaceRepository(deps.db.getDatabase());
 
 	// Centralised TaskSchedule lifecycle service — used by both the RPC
 	// handlers (`taskSchedule.*`) and the agent-facing MCP tools so validation,
@@ -318,6 +320,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		db: deps.db.getDatabase(),
 		scheduleRepo: taskScheduleRepo,
 		jobQueue: deps.jobQueue,
+		spaceRepo,
 	});
 
 	// When a space is resumed/started, re-seed any of its active schedules
