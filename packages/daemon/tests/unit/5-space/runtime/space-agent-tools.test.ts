@@ -520,6 +520,35 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 		const originalRun = ctx.workflowRunRepo.getRun(runId);
 		expect(originalRun?.status).toBe('in_progress');
 	});
+
+	test('falls back to workflow_handle when workflow_id is stale', async () => {
+		const wf1 = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Switch Source WF'
+		);
+		const wf2 = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Switch Target WF'
+		);
+		const startResult = await startWorkflowRun(ctx, {
+			workflow_id: wf1.id,
+			title: 'stale-id run',
+		});
+		const runId = JSON.parse(startResult.content[0].text).run.id;
+
+		const result = await makeHandlers(ctx).change_plan({
+			run_id: runId,
+			workflow_id: 'stale-uuid-for-wf2',
+			workflow_handle: wf2.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.run.workflowId).toBe(wf2.id);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -682,6 +711,24 @@ describe('createSpaceAgentToolHandlers — get_workflow_detail', () => {
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(false);
 		expect(parsed.error).toMatch(/workflow_id or workflow_handle/);
+	});
+
+	test('falls back to workflow_handle when workflow_id is stale', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Stale ID Fallback WF'
+		);
+		expect(wf.handle).toBeDefined();
+
+		const result = await makeHandlers(ctx).get_workflow_detail({
+			workflow_id: 'stale-uuid-for-get-detail',
+			workflow_handle: wf.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflow.id).toBe(wf.id);
 	});
 });
 
@@ -1066,6 +1113,46 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
 		expect(parsed.success).toBe(true);
 		const stored = ctx.taskRepo.getTask(parsed.task.id);
 		expect(stored?.preferredWorkflowId).toBe('stale-uuid-no-handle');
+	});
+
+	test('falls back to handle when workflow_id resolves to a disabled workflow', async () => {
+		const disabled = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Disabled WF'
+		);
+		const active = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Active WF'
+		);
+		// Disable the first workflow via DB update.
+		ctx.db.prepare(`UPDATE space_workflows SET disabled = 1 WHERE id = ?`).run(disabled.id);
+
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task',
+			description: 'Disabled id, valid handle',
+			workflow_id: disabled.id,
+			workflow_handle: active.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		const stored = ctx.taskRepo.getTask(parsed.task.id);
+		expect(stored?.preferredWorkflowId).toBe(active.id);
+	});
+
+	test('errors when both workflow_id (unusable) and workflow_handle are provided but handle not found', async () => {
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task',
+			description: 'Both identifiers fail',
+			workflow_id: 'stale-uuid',
+			workflow_handle: 'also-nonexistent-handle',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toMatch(/not found/i);
 	});
 });
 

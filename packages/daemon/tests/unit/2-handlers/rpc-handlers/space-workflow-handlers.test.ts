@@ -401,6 +401,24 @@ describe('space-workflow-handlers', () => {
 				call('spaceWorkflow.get', { handle: 'ghost', spaceId: 'space-1' })
 			).rejects.toThrow('Workflow not found: ghost');
 		});
+
+		it('falls back to handle when id lookup misses and both id and handle+spaceId are provided', async () => {
+			// getWorkflow returns null (stale id); getWorkflowByHandle returns the workflow.
+			setup(mockSpace, null);
+			(workflowManager.getWorkflowByHandle as ReturnType<typeof mock>).mockReturnValue(
+				mockWorkflow
+			);
+
+			const result = (await call('spaceWorkflow.get', {
+				id: 'stale-id',
+				handle: 'test-workflow',
+				spaceId: 'space-1',
+			})) as { workflow: SpaceWorkflow };
+
+			expect(result.workflow).toEqual(mockWorkflow);
+			expect(workflowManager.getWorkflow).toHaveBeenCalledWith('stale-id');
+			expect(workflowManager.getWorkflowByHandle).toHaveBeenCalledWith('space-1', 'test-workflow');
+		});
 	});
 
 	// ─── spaceWorkflow.update ──────────────────────────────────────────────────

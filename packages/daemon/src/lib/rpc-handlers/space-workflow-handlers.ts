@@ -370,6 +370,14 @@ export function setupSpaceWorkflowHandlers(
 		let workflow: SpaceWorkflow | null = null;
 		if (params.id) {
 			workflow = workflowManager.getWorkflow(params.id);
+			// If ID lookup misses and a handle + spaceId are also present, try the
+			// handle — clients that cache both fields still work when the UUID changes.
+			if (!workflow && typeof params.handle === 'string' && params.spaceId) {
+				const trimmedHandle = params.handle.trim();
+				if (trimmedHandle) {
+					workflow = workflowManager.getWorkflowByHandle(params.spaceId, trimmedHandle);
+				}
+			}
 		} else if (typeof params.handle === 'string') {
 			if (!params.spaceId) {
 				throw new Error('spaceId is required when looking up by handle');

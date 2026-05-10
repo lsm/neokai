@@ -294,9 +294,28 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				});
 			}
 
-			// Resolve workflow identifier to UUID
+			// Resolve workflow identifier to UUID.
+			// If workflow_id is provided but not found, attempt handle resolution as
+			// a fallback so clients that cache both identifiers still work after a
+			// workflow is re-created (new UUID, same handle).
 			let targetWorkflowId = args.workflow_id;
-			if (!targetWorkflowId && typeof args.workflow_handle === 'string') {
+			if (targetWorkflowId && !workflowManager.getWorkflow(targetWorkflowId)) {
+				if (typeof args.workflow_handle === 'string') {
+					const trimmedHandle = args.workflow_handle.trim();
+					if (trimmedHandle === '') {
+						return jsonResult({
+							success: false,
+							error: 'workflow_handle must be a non-empty string.',
+						});
+					}
+					const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
+					if (byHandle) {
+						targetWorkflowId = byHandle.id;
+					}
+					// If handle also doesn't resolve, keep the stale ID so the validation
+					// block below returns a clear "Workflow not found" error.
+				}
+			} else if (!targetWorkflowId && typeof args.workflow_handle === 'string') {
 				const trimmedHandle = args.workflow_handle.trim();
 				if (trimmedHandle === '') {
 					return jsonResult({
@@ -378,6 +397,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			let workflow = null;
 			if (args.workflow_id) {
 				workflow = workflowManager.getWorkflow(args.workflow_id);
+				// If ID lookup fails and a handle was also provided, try that next.
+				if (!workflow && typeof args.workflow_handle === 'string') {
+					const trimmedHandle = args.workflow_handle.trim();
+					if (trimmedHandle) {
+						workflow = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
+					}
+				}
 			} else if (typeof args.workflow_handle === 'string') {
 				const trimmedHandle = args.workflow_handle.trim();
 				if (trimmedHandle === '') {
@@ -492,9 +518,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			draft?: boolean;
 		}): Promise<ToolResult> {
 			let preferredWorkflowId = args.workflow_id ?? null;
-			if (preferredWorkflowId && !workflowManager.getWorkflow(preferredWorkflowId)) {
-				// workflow_id is stale/invalid — fall back to workflow_handle if provided.
-				if (typeof args.workflow_handle === 'string') {
+			if (preferredWorkflowId) {
+				const wf = workflowManager.getWorkflow(preferredWorkflowId);
+				// Consider the ID "unusable" when the workflow is missing, belongs to a
+				// different space, or is disabled. In any of those cases, a valid handle
+				// in the same request should take precedence.
+				const isUnusable = !wf || wf.spaceId !== spaceId || !!wf.disabled;
+				if (isUnusable && typeof args.workflow_handle === 'string') {
 					const trimmedHandle = args.workflow_handle.trim();
 					if (trimmedHandle === '') {
 						return jsonResult({
@@ -505,11 +535,18 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
 					if (byHandle) {
 						preferredWorkflowId = byHandle.id;
+					} else {
+						// Both identifiers were supplied but neither resolved — fail fast
+						// rather than silently routing to an auto-selected workflow.
+						return jsonResult({
+							success: false,
+							error: `Workflow not found by id or handle: ${trimmedHandle}`,
+						});
 					}
-					// If handle also doesn't resolve, leave preferredWorkflowId as the
-					// stale ID — the task runtime will fall back to automatic selection.
 				}
-			} else if (!preferredWorkflowId && typeof args.workflow_handle === 'string') {
+				// If unusable and no handle provided, keep the stale ID;
+				// the task runtime will fall back to automatic workflow selection.
+			} else if (typeof args.workflow_handle === 'string') {
 				const trimmedHandle = args.workflow_handle.trim();
 				if (trimmedHandle === '') {
 					return jsonResult({
