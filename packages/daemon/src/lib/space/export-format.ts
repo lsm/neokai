@@ -28,6 +28,7 @@ import type {
 	ExportedWorkflowNodeAgent,
 	SpaceExportBundle,
 } from '@neokai/shared';
+import { validateSlug } from './slug';
 
 // ============================================================================
 // Zod schemas
@@ -162,7 +163,13 @@ const exportedWorkflowBaseSchema = z.object({
 	disabled: z.boolean().optional(),
 	// Optional for backward compatibility with v1 exports that predate the
 	// handle field. When absent, import regenerates the handle from the name.
-	handle: z.string().optional(),
+	handle: z
+		.string()
+		.optional()
+		.refine((v) => v === undefined || validateSlug(v) === null, {
+			message:
+				'handle must contain only lowercase letters, numbers, and hyphens, and must start and end with a letter or number',
+		}),
 });
 
 const exportBundleBaseSchema = z.object({
