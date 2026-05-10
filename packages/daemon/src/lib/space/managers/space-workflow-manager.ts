@@ -110,7 +110,10 @@ export class SpaceWorkflowManager {
 		// Auto-generate handle from name if not provided, with collision resolution.
 		// Validate explicit handles for format and uniqueness.
 		let handle: string;
-		if (params.handle !== undefined) {
+		if (params.handle !== undefined && params.handle !== null) {
+			if (typeof params.handle !== 'string') {
+				throw new WorkflowValidationError('Workflow handle must be a string');
+			}
 			const trimmedHandle = params.handle.trim();
 			this.validateHandle(params.spaceId, trimmedHandle, null);
 			handle = trimmedHandle;
@@ -203,6 +206,9 @@ export class SpaceWorkflowManager {
 			}
 		}
 		if (params.handle !== undefined && params.handle !== null) {
+			if (typeof params.handle !== 'string') {
+				throw new WorkflowValidationError('Workflow handle must be a string');
+			}
 			const trimmedHandle = params.handle.trim();
 			this.validateHandle(existing.spaceId, trimmedHandle, id);
 			params = { ...params, handle: trimmedHandle };
@@ -375,7 +381,21 @@ export class SpaceWorkflowManager {
 					return wf?.id !== excludeId;
 				})
 			: existingHandles;
-		return slugify(name, filteredHandles);
+		const handle = slugify(name, filteredHandles);
+		// Collision suffixing can push the handle over the max length; validate
+		// and truncate with a fallback if necessary.
+		const slugError = validateSlug(handle);
+		if (slugError) {
+			// Hard-truncate to max length minus room for a minimal suffix
+			const maxLen = 60;
+			const truncated = handle.slice(0, maxLen);
+			// Ensure we don't end with a hyphen
+			const cleaned = truncated.replace(/-+$/, '');
+			const fallback = cleaned || 'workflow';
+			// Re-run collision resolution on the fallback
+			return slugify(fallback, filteredHandles);
+		}
+		return handle;
 	}
 
 	private validateNodes(spaceId: string, nodes: WorkflowNodeInput[]): void {

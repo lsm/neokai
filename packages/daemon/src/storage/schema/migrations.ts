@@ -12,6 +12,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
+import { slugify } from '../../lib/space/slug';
 
 /**
  * Run all database migrations
@@ -8726,6 +8727,9 @@ export function runMigration126(db: BunDatabase): void {
  * The handle is auto-generated from the workflow name at creation time
  * (slugify: lowercase, hyphens, truncate). Collision handling appends
  * -2, -3, etc. for duplicate names in the same space.
+ *
+ * Also backfills handles for existing workflows so the feature is usable
+ * immediately after upgrade.
  */
 export function runMigration127(db: BunDatabase): void {
 	if (!tableExists(db, 'space_workflows')) return;
@@ -8760,24 +8764,20 @@ export function runMigration127(db: BunDatabase): void {
 	// Without this, a partial-upgrade state where one row already has handle='foo'
 	// would cause a collision when the backfill tries to assign the same slug to
 	// another row, aborting via the unique-index constraint.
-	interface ExistingHandleRow {
-		space_id: string;
-		handle: string;
-	}
-	const existingHandleRows = db
-		.prepare(`SELECT space_id, handle FROM space_workflows WHERE handle IS NOT NULL`)
-		.all() as ExistingHandleRow[];
 	const spaceHandles = new Map<string, string[]>();
-	for (const row of existingHandleRows) {
-		const handles = spaceHandles.get(row.space_id) ?? [];
-		handles.push(row.handle);
-		spaceHandles.set(row.space_id, handles);
+	const existingHandles = db
+		.prepare(`SELECT space_id, handle FROM space_workflows WHERE handle IS NOT NULL`)
+		.all() as Array<{ space_id: string; handle: string }>;
+	for (const { space_id, handle } of existingHandles) {
+		const list = spaceHandles.get(space_id) ?? [];
+		list.push(handle);
+		spaceHandles.set(space_id, list);
 	}
 
 	const updateStmt = db.prepare(`UPDATE space_workflows SET handle = ? WHERE id = ?`);
 	for (const row of rows) {
 		const handles = spaceHandles.get(row.space_id) ?? [];
-		const handle = generateValidHandle(row.name, handles);
+		const handle = slugify(row.name, handles);
 		updateStmt.run(handle, row.id);
 		handles.push(handle);
 		spaceHandles.set(row.space_id, handles);

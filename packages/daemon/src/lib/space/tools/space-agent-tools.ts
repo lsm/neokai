@@ -296,12 +296,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
 			// Resolve workflow identifier to UUID
 			let targetWorkflowId = args.workflow_id;
-			if (!targetWorkflowId && args.workflow_handle) {
-				const byHandle = workflowManager.getWorkflowByHandle(spaceId, args.workflow_handle);
+			if (!targetWorkflowId && typeof args.workflow_handle === 'string') {
+				const trimmedHandle = args.workflow_handle.trim();
+				if (trimmedHandle === '') {
+					return jsonResult({
+						success: false,
+						error: 'workflow_handle must be a non-empty string.',
+					});
+				}
+				const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
 				if (!byHandle) {
 					return jsonResult({
 						success: false,
-						error: `Workflow not found by handle: ${args.workflow_handle}`,
+						error: `Workflow not found by handle: ${trimmedHandle}`,
 					});
 				}
 				targetWorkflowId = byHandle.id;
@@ -371,8 +378,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			let workflow = null;
 			if (args.workflow_id) {
 				workflow = workflowManager.getWorkflow(args.workflow_id);
-			} else if (args.workflow_handle) {
-				workflow = workflowManager.getWorkflowByHandle(spaceId, args.workflow_handle);
+			} else if (typeof args.workflow_handle === 'string') {
+				const trimmedHandle = args.workflow_handle.trim();
+				if (trimmedHandle === '') {
+					return jsonResult({
+						success: false,
+						error: 'workflow_handle must be a non-empty string.',
+					});
+				}
+				workflow = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
 			} else {
 				return jsonResult({
 					success: false,
@@ -478,12 +492,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			draft?: boolean;
 		}): Promise<ToolResult> {
 			let preferredWorkflowId = args.workflow_id ?? null;
-			if (!preferredWorkflowId && args.workflow_handle) {
-				const byHandle = workflowManager.getWorkflowByHandle(spaceId, args.workflow_handle);
+			if (!preferredWorkflowId && typeof args.workflow_handle === 'string') {
+				const trimmedHandle = args.workflow_handle.trim();
+				if (trimmedHandle === '') {
+					return jsonResult({
+						success: false,
+						error: 'workflow_handle must be a non-empty string.',
+					});
+				}
+				const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
 				if (!byHandle) {
 					return jsonResult({
 						success: false,
-						error: `Workflow not found by handle: ${args.workflow_handle}`,
+						error: `Workflow not found by handle: ${trimmedHandle}`,
 					});
 				}
 				preferredWorkflowId = byHandle.id;
