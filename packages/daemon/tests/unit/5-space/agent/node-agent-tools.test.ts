@@ -1636,6 +1636,62 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 		expect(gateEvent).toBeDefined();
 		expect(gateEvent!.payload.gateId).toBe('gate-event');
 	});
+
+	test('gate-write resolves agent-name target to node-name channel (Coding -> Review)', async () => {
+		// Regression test for GitHub issue #1842 / Task #321:
+		// When channels use node names (e.g. 'Coding' -> 'Review') but the agent
+		// sends to an agent name (e.g. 'reviewer'), the gate data write must still
+		// find the correct channel and write pr_url to gate data. Previously the
+		// channel match failed because it compared 'reviewer' against the channel
+		// 'to' value 'Review', causing pr_url to never reach gate data and the
+		// PR_READY_BASH_SCRIPT to fall back to current-branch lookup (creating
+		// duplicate PRs in stacked-branch workflows).
+		const gate: Gate = {
+			id: 'review-posted-gate',
+			fields: [{ name: 'pr_url', type: 'string', writers: ['coder'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [
+				{
+					id: ctx.nodeId,
+					name: 'Coding',
+					agents: [{ agentId: 'agent-coder', name: 'coder' }],
+				},
+				{
+					id: 'node-review',
+					name: 'Review',
+					agents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
+				},
+			],
+			startNodeId: ctx.nodeId,
+			rules: [],
+			tags: [],
+			// Channel uses node names, not agent names
+			channels: [{ id: 'ch-coding-review', from: 'Coding', to: 'Review', gateId: gate.id }],
+			gates: [gate],
+		};
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		const config = makeConfig(ctx, { workflow, gateDataRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		// Agent targets 'reviewer' (agent name) not 'Review' (node name)
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'PR ready',
+			data: { pr_url: 'https://github.com/test/repo/pull/42' },
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.gateWrite).toEqual({ gateId: 'review-posted-gate', gateOpen: true });
+		expect(gateDataRepo.get(ctx.workflowRunId, 'review-posted-gate')?.data.pr_url).toBe(
+			'https://github.com/test/repo/pull/42'
+		);
+	});
 });
 
 describe('node-agent-tools: list_reachable_agents', () => {
