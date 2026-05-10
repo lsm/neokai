@@ -488,6 +488,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			priority?: SpaceTaskPriority;
 			depends_on?: string[];
 		}): Promise<ToolResult> {
+			const hasChanges =
+				args.title !== undefined ||
+				args.description !== undefined ||
+				args.priority !== undefined ||
+				args.depends_on !== undefined;
+			if (!hasChanges) {
+				return jsonResult({
+					success: false,
+					error:
+						'No fields to update. Provide at least one of: title, description, priority, depends_on.',
+				});
+			}
+
 			const task = taskRepo.getTask(args.task_id);
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });

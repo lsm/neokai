@@ -2413,6 +2413,20 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
 		expect(parsed.error).toContain('does not belong to this space');
 	});
 
+	test('rejects update when no fields are provided', async () => {
+		const created = await ctx.taskManager.createTask({
+			title: 'Task',
+			description: 'Desc',
+		});
+		const result = await makeHandlers(ctx).update_task({
+			task_id: created.id,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('No fields to update');
+	});
+
 	test('emits space.task.updated event via daemonHub', async () => {
 		const emitted: Array<Record<string, unknown>> = [];
 		const mockHub = {

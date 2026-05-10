@@ -13,6 +13,7 @@ import {
 	MarkCompleteSchema,
 	RequestHumanInputSchema,
 	SubmitForApprovalSchema,
+	UpdateTaskSchema,
 	TASK_AGENT_TOOL_SCHEMAS,
 } from '../../../../src/lib/space/tools/task-agent-tool-schemas.ts';
 
@@ -144,14 +145,15 @@ describe('RequestHumanInputSchema', () => {
 // ---------------------------------------------------------------------------
 
 describe('TASK_AGENT_TOOL_SCHEMAS', () => {
-	test('contains all 5 tool schemas', () => {
+	test('contains all 6 tool schemas', () => {
 		const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
 		expect(keys).toContain('approve_task');
 		expect(keys).toContain('submit_for_approval');
 		expect(keys).toContain('request_human_input');
 		expect(keys).toContain('list_group_members');
 		expect(keys).toContain('mark_complete');
-		expect(keys).toHaveLength(5);
+		expect(keys).toContain('update_task');
+		expect(keys).toHaveLength(6);
 	});
 
 	test('each schema value is a valid Zod schema with safeParse', () => {
