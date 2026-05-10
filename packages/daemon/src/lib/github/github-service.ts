@@ -534,7 +534,12 @@ export class GitHubService {
 		event: K,
 		data: import('../daemon-hub').DaemonEventMap[K]
 	): void {
-		this.daemonHub.publishAsync(event, data);
+		try {
+			this.daemonHub.publishAsync(event, data);
+		} catch {
+			// Best-effort telemetry: never let a hub emission failure
+			// abort event routing or inbox fallback.
+		}
 	}
 
 	// ============================================================================

@@ -432,6 +432,8 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 					handlers.delete(typedHandler);
 					if (handlers.size === 0) {
 						eventHandlers.delete(subscriptionKey);
+						// Prune counter when the last handler for this key is gone
+						this.handlerNameCounters.delete(`${event}:${subscriptionKey}`);
 					}
 				}
 				if (eventHandlers.size === 0) {
@@ -537,6 +539,9 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 
 		// Clear handler names
 		this.handlerNames.clear();
+
+		// Clear handler name counters
+		this.handlerNameCounters.clear();
 
 		// Close transport
 		await this.transport.close();
