@@ -590,6 +590,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   space_external_events — source-level dedup + state machine.
 	//   space_external_event_deliveries — per-subscription delivery lifecycle.
 	runMigration123(db);
+
+	// Migration 124: Simplify external-event schema.
+	//   - Remove pr_number, repo_owner, repo_name, branch, routed_task_id columns
+	//     from space_external_events (source-specific metadata now lives in payload_json).
+	//   - Simplify state machine: published → delivered | failed | ignored.
+	//     Remove 'routed', 'delivery_failed', 'ambiguous' states.
+	runMigration124(db);
 }
 
 /**
@@ -7640,9 +7647,7 @@ export function runMigration108(db: BunDatabase): void {
 					}
 				}
 				if (mutated) update.run(JSON.stringify(config), row.id);
-			} catch {
-				continue;
-			}
+			} catch {}
 		}
 	}
 }
@@ -8419,5 +8424,96 @@ export function runMigration123(db: BunDatabase): void {
 	db.exec(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_external_event_deliveries_key
 		ON space_external_event_deliveries(delivery_key)
+	`);
+}
+
+/**
+ * Migration 124: Simplify external-event schema.
+ *
+ * The event pipeline is now intentionally agnostic to task-system concerns.
+ * Source-specific metadata (PR number, repo owner, branch) lives in the opaque
+ * payload_json column. The state machine is simplified from 7 states to 4.
+ *
+ * Changes to space_external_events:
+ *   - DROP pr_number, repo_owner, repo_name, branch, routed_task_id columns.
+ *   - Migrate existing rows: 'routed' → 'published', 'delivery_failed' → 'published',
+ *     'ambiguous' → 'ignored'.
+ *   - Update CHECK constraint to ('published', 'delivered', 'failed', 'ignored').
+ *
+ * Note: SQLite does not support DROP COLUMN directly. We recreate the table.
+ */
+export function runMigration124(db: BunDatabase): void {
+	// Check if the old schema still exists (has pr_number column).
+	const hasOldSchema = db
+		.prepare(`SELECT 1 FROM pragma_table_info('space_external_events') WHERE name = 'pr_number'`)
+		.get();
+	if (!hasOldSchema) {
+		// Already migrated or fresh database with new schema.
+		return;
+	}
+
+	// Migrate state values before recreating the table.
+	db.exec(`
+		UPDATE space_external_events
+		SET state = CASE state
+			WHEN 'routed' THEN 'published'
+			WHEN 'delivery_failed' THEN 'published'
+			WHEN 'ambiguous' THEN 'ignored'
+			ELSE state
+		END
+		WHERE state IN ('routed', 'delivery_failed', 'ambiguous')
+	`);
+
+	// Recreate table without task-specific columns.
+	db.exec(`
+		CREATE TABLE space_external_events_new (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			source TEXT NOT NULL,
+			topic TEXT NOT NULL,
+			dedupe_key TEXT NOT NULL,
+			occurred_at INTEGER NOT NULL,
+			ingested_at INTEGER NOT NULL,
+			source_event_id TEXT,
+			summary TEXT NOT NULL,
+			external_url TEXT,
+			payload_json TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT 'published'
+				CHECK(state IN ('published', 'delivered', 'failed', 'ignored')),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(space_id, source, dedupe_key),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+
+	// Copy data from old table to new table.
+	db.exec(`
+		INSERT INTO space_external_events_new (
+			id, space_id, source, topic, dedupe_key,
+			occurred_at, ingested_at, source_event_id,
+			summary, external_url, payload_json,
+			state, created_at, updated_at
+		)
+		SELECT
+			id, space_id, source, topic, dedupe_key,
+			occurred_at, ingested_at, source_event_id,
+			summary, external_url, payload_json,
+			state, created_at, updated_at
+		FROM space_external_events
+	`);
+
+	// Drop old table and rename new one.
+	db.exec(`DROP TABLE space_external_events`);
+	db.exec(`ALTER TABLE space_external_events_new RENAME TO space_external_events`);
+
+	// Recreate indexes.
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_events_lookup
+		ON space_external_events(space_id, source, dedupe_key)
+	`);
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_events_state
+		ON space_external_events(state, updated_at)
 	`);
 }

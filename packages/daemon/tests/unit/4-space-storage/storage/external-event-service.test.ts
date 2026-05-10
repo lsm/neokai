@@ -2,14 +2,11 @@
  * ExternalEventService Unit Tests
  *
  * Covers:
- *   - publish: new event → stored, enriched, bus published
+ *   - publish: new event → stored, bus published
  *   - publish: terminal duplicate → short-circuits
  *   - publish: retryable duplicate → returns retryable_duplicate, re-emits bus
- *   - publish: enriched routedTaskId returned and persisted
- *   - publish: ambiguous/unknown task resolution → ignored
- *   - publish: ignored resolution (no PR number) → non-terminal
  *   - bus payload carries space-scoped sessionId
- *   - no session injection in service or resolver
+ *   - no session injection in service
  */
 
 import { Database } from 'bun:sqlite';
@@ -19,23 +16,15 @@ import {
 	ExternalEventService,
 } from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
-import {
-	type ExternalEventTaskResolver,
-	GitHubExternalEventTaskResolver,
-	type TaskResolution,
-} from '../../../../src/lib/external-events/external-event-task-resolver';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
 import {
 	createInternalEventBus,
 	type InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
-import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 let db: Database;
 let store: ExternalEventStore;
-let taskRepo: SpaceTaskRepository;
-let resolver: ExternalEventTaskResolver;
 let bus: InternalEventBus<{
 	'externalEvent.published': ExternalEventPublishedPayload;
 }>;
@@ -63,10 +52,7 @@ function makeEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
 		ingestedAt: 1_700_000_001_000,
 		dedupeKey: `dk-${Math.random().toString(36).slice(2, 8)}`,
 		summary: 'PR review submitted',
-		payload: { action: 'review_submitted' },
-		prNumber: 42,
-		repoOwner: 'lsm',
-		repoName: 'neokai',
+		payload: { action: 'review_submitted', prNumber: 42, repoOwner: 'lsm', repoName: 'neokai' },
 		...overrides,
 	};
 }
@@ -74,12 +60,10 @@ function makeEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
 beforeEach(() => {
 	db = freshDb();
 	store = new ExternalEventStore(db);
-	taskRepo = new SpaceTaskRepository(db);
-	resolver = new GitHubExternalEventTaskResolver({ taskRepo });
 	bus = createInternalEventBus<{
 		'externalEvent.published': ExternalEventPublishedPayload;
 	}>();
-	service = new ExternalEventService(store, resolver, bus);
+	service = new ExternalEventService(store, bus);
 });
 
 // ---------------------------------------------------------------------------
@@ -87,7 +71,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('publish — new event', () => {
-	test('stores event, enriches, publishes bus event, returns published', async () => {
+	test('stores event, publishes bus event, returns published', async () => {
 		const busReceived: ExternalEventPublishedPayload[] = [];
 		bus.subscribe(
 			'externalEvent.published',
@@ -96,54 +80,39 @@ describe('publish — new event', () => {
 			},
 			{ subscriberName: 'test-sub' }
 		);
-
-		// Seed a matching open task
-		taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Fix bug #42',
-			description: 'lsm/neokai',
-			status: 'open',
-		});
 
 		const event = makeEvent();
 		const result = await service.publish(event);
 
 		expect(result.outcome).toBe('published');
 		expect(result.eventId).toBe(event.id);
-		expect(result.routedTaskId).toBeDefined();
 
 		// Bus fired
 		expect(busReceived).toHaveLength(1);
 		expect(busReceived[0]!.spaceId).toBe(SPACE_ID);
 		expect(busReceived[0]!.sessionId).toBe(SPACE_ID);
 		expect(busReceived[0]!.eventId).toBe(event.id);
-		expect(busReceived[0]!.routedTaskId).toBe(result.routedTaskId);
+		expect(busReceived[0]!.source).toBe('github');
+		expect(busReceived[0]!.topic).toBe(event.topic);
+		expect(busReceived[0]!.dedupeKey).toBe(event.dedupeKey);
 
-		// Stored state advanced to routed and routedTaskId persisted
+		// Stored state is published
 		const rec = store.getById(event.id);
-		expect(rec!.state).toBe('routed');
-		expect(rec!.event.routedTaskId).toBe(result.routedTaskId);
+		expect(rec!.state).toBe('published');
 	});
 
-	test('returns published with routedTaskId when event carries trusted metadata', async () => {
-		const busReceived: ExternalEventPublishedPayload[] = [];
-		bus.subscribe(
-			'externalEvent.published',
-			(data) => {
-				busReceived.push(data);
-			},
-			{ subscriberName: 'test-sub' }
-		);
-
-		const event = makeEvent({ routedTaskId: 'task-trusted-1' });
+	test('source-specific metadata lives in payload', async () => {
+		const event = makeEvent({
+			payload: { prNumber: 99, repoOwner: 'acme', repoName: 'widget', branch: 'feature-99' },
+		});
 		const result = await service.publish(event);
 
 		expect(result.outcome).toBe('published');
-		expect(result.routedTaskId).toBe('task-trusted-1');
-		expect(busReceived[0]!.routedTaskId).toBe('task-trusted-1');
-
 		const rec = store.getById(event.id);
-		expect(rec!.event.routedTaskId).toBe('task-trusted-1');
+		expect(rec!.event.payload.prNumber).toBe(99);
+		expect(rec!.event.payload.repoOwner).toBe('acme');
+		expect(rec!.event.payload.repoName).toBe('widget');
+		expect(rec!.event.payload.branch).toBe('feature-99');
 	});
 });
 
@@ -164,7 +133,7 @@ describe('publish — duplicates', () => {
 		expect(result.eventId).toBe(event.id);
 	});
 
-	test('retryable duplicate that gets enriched returns published', async () => {
+	test('retryable duplicate returns retryable_duplicate and re-emits bus', async () => {
 		const busReceived: ExternalEventPublishedPayload[] = [];
 		bus.subscribe(
 			'externalEvent.published',
@@ -174,329 +143,17 @@ describe('publish — duplicates', () => {
 			{ subscriberName: 'sub' }
 		);
 
-		// First observation: missing PR number means 'ignored' resolution.
-		// Event stays in 'published' state (non-terminal) so it can be retried.
-		const event = makeEvent({ prNumber: undefined });
+		const event = makeEvent();
 		const firstResult = await service.publish(event);
-		expect(firstResult.outcome).toBe('ignored');
-		expect(store.getById(event.id)!.state).toBe('published');
+		expect(firstResult.outcome).toBe('published');
 		expect(busReceived).toHaveLength(1);
 
-		// A task is created later. Retryable duplicate with PR number now enriches.
-		taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Fix bug #42',
-			description: 'lsm/neokai',
-			status: 'open',
-		});
 		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
-		const result = await service.publish(dup);
-
-		expect(result.outcome).toBe('published');
-		expect(result.eventId).toBe(event.id);
-		expect(result.routedTaskId).toBeDefined();
-		expect(busReceived).toHaveLength(2);
-	});
-
-	test('retryable duplicate still unresolvable returns retryable_duplicate and re-emits bus', async () => {
-		const busReceived: ExternalEventPublishedPayload[] = [];
-		bus.subscribe(
-			'externalEvent.published',
-			(data) => {
-				busReceived.push(data);
-			},
-			{ subscriberName: 'sub' }
-		);
-
-		// First observation: missing PR number means 'ignored' resolution.
-		// Event stays in 'published' state (non-terminal) so it can be retried.
-		const event = makeEvent({ prNumber: undefined });
-		await service.publish(event);
-		expect(busReceived).toHaveLength(1);
-
-		// Retryable duplicate with still no PR number re-emits canonical payload
-		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey, prNumber: undefined });
 		const result = await service.publish(dup);
 
 		expect(result.outcome).toBe('retryable_duplicate');
 		expect(result.eventId).toBe(event.id);
 		expect(busReceived).toHaveLength(2);
-	});
-
-	test('retryable duplicate after routed state preserves canonical route', async () => {
-		const event = makeEvent();
-		store.store(event);
-		store.setRoutedTaskId(event.id, 'task-canonical');
-		store.updateEventState(event.id, 'routed');
-
-		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
-		const result = await service.publish(dup);
-
-		// Canonical route is preserved — resolver is NOT re-run.
-		expect(result.outcome).toBe('retryable_duplicate');
-		expect(result.routedTaskId).toBe('task-canonical');
-	});
-
-	test('retryable duplicate after delivery_failed preserves canonical route', async () => {
-		const event = makeEvent();
-		store.store(event);
-		store.setRoutedTaskId(event.id, 'task-canonical');
-		store.updateEventState(event.id, 'routed');
-		store.updateEventState(event.id, 'delivery_failed');
-
-		// Duplicate preserves canonical route — resolver is NOT re-run.
-		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
-		const result = await service.publish(dup);
-
-		expect(result.outcome).toBe('retryable_duplicate');
-		expect(result.routedTaskId).toBe('task-canonical');
-	});
-
-	test('retryable duplicate promotes stale published state to routed when canonical has routedTaskId', async () => {
-		const busReceived: ExternalEventPublishedPayload[] = [];
-		bus.subscribe(
-			'externalEvent.published',
-			(data) => {
-				busReceived.push(data);
-			},
-			{ subscriberName: 'sub' }
-		);
-
-		const event = makeEvent();
-		store.store(event);
-		// Simulate a source extension that set routedTaskId directly without
-		// advancing state — canonical is still in `published`.
-		store.setRoutedTaskId(event.id, 'task-canonical');
-		expect(store.getById(event.id)!.state).toBe('published');
-
-		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
-		const result = await service.publish(dup);
-
-		expect(result.outcome).toBe('retryable_duplicate');
-		expect(result.routedTaskId).toBe('task-canonical');
-		// State was promoted from published → routed
-		expect(store.getById(event.id)!.state).toBe('routed');
-		// Bus was re-emitted with the canonical routedTaskId
-		expect(busReceived).toHaveLength(1);
-		expect(busReceived[0]!.routedTaskId).toBe('task-canonical');
-	});
-
-	test('retryable duplicate skips fast-path for whitespace-only canonical routedTaskId', async () => {
-		const event = makeEvent();
-		store.store(event);
-		store.setRoutedTaskId(event.id, '   ');
-
-		// Seed a matching task so the resolver can enrich
-		taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Fix bug #42',
-			description: 'lsm/neokai',
-			status: 'open',
-		});
-
-		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
-		const result = await service.publish(dup);
-
-		// Whitespace-only canonical routedTaskId is ignored; resolver re-runs
-		expect(result.outcome).toBe('published');
-		expect(result.routedTaskId).toBeDefined();
-	});
-
-	test('retryable duplicate skips enrichment if canonical became terminal during resolve', async () => {
-		const busReceived: ExternalEventPublishedPayload[] = [];
-		bus.subscribe(
-			'externalEvent.published',
-			(data) => {
-				busReceived.push(data);
-			},
-			{ subscriberName: 'sub' }
-		);
-
-		// First observation: no matching task, stays published.
-		const event = makeEvent();
-		await service.publish(event);
-		expect(store.getById(event.id)!.state).toBe('published');
-		expect(busReceived).toHaveLength(1);
-
-		// Inject a custom resolver that simulates a slow resolve and
-		// terminalizes the canonical event mid-flight.
-		const slowResolver: ExternalEventTaskResolver = {
-			async resolve(): Promise<TaskResolution> {
-				// Simulate another actor terminalizing the event while we await.
-				store.markEventAmbiguous(event.id);
-				return { type: 'enriched', routedTaskId: 'task-slow' };
-			},
-		};
-
-		const customService = new ExternalEventService(store, slowResolver, bus);
-		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
-		const result = await customService.publish(dup);
-
-		// Canonical became terminal (ambiguous) during resolve.
-		// Should NOT overwrite state or persist the new routedTaskId.
-		expect(result.outcome).toBe('retryable_duplicate');
-		expect(store.getById(event.id)!.state).toBe('ambiguous');
-		// The canonical routedTaskId should remain undefined
-		expect(store.getById(event.id)!.event.routedTaskId).toBeUndefined();
-		// Bus was re-emitted with canonical payload (no routedTaskId)
-		expect(busReceived).toHaveLength(2);
-		expect(busReceived[1]!.routedTaskId).toBeUndefined();
-	});
-
-	test('retryable duplicate enriches without regressing delivery_failed state', async () => {
-		const busReceived: ExternalEventPublishedPayload[] = [];
-		bus.subscribe(
-			'externalEvent.published',
-			(data) => {
-				busReceived.push(data);
-			},
-			{ subscriberName: 'sub' }
-		);
-
-		// First observation: unknown (no matching task yet). State stays published.
-		const event = makeEvent();
-		await service.publish(event);
-		expect(store.getById(event.id)!.state).toBe('published');
-
-		// Router advances to routed, then delivery fails — but NO routedTaskId set
-		// (simulating a case where the router set state but enrichment happened later)
-		store.updateEventState(event.id, 'routed');
-		store.updateEventState(event.id, 'delivery_failed');
-
-		// Task created later. Retryable duplicate enriches.
-		taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Fix bug #42',
-			description: 'lsm/neokai',
-			status: 'open',
-		});
-		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
-		const result = await service.publish(dup);
-
-		expect(result.outcome).toBe('published');
-		expect(result.routedTaskId).toBeDefined();
-		// State must NOT regress from delivery_failed to routed
-		expect(store.getById(event.id)!.state).toBe('delivery_failed');
-		// But routedTaskId IS persisted
-		expect(store.getById(event.id)!.event.routedTaskId).toBe(result.routedTaskId);
-		expect(busReceived).toHaveLength(2);
-	});
-
-	test('retryable duplicate with ambiguous resolution terminalizes', async () => {
-		const event = makeEvent({ prNumber: undefined });
-		await service.publish(event);
-		expect(store.getById(event.id)!.state).toBe('published');
-
-		// Two tasks now exist — duplicate resolves to ambiguous
-		taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Work on #42',
-			description: 'lsm/neokai',
-			status: 'open',
-		});
-		taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Also #42',
-			description: 'neokai',
-			status: 'open',
-		});
-		const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
-		const result = await service.publish(dup);
-
-		expect(result.outcome).toBe('retryable_duplicate');
-		expect(store.getById(event.id)!.state).toBe('ambiguous');
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Task resolution outcomes
-// ---------------------------------------------------------------------------
-
-describe('publish — task resolution', () => {
-	test('ambiguous resolution returns ignored and sets ambiguous state', async () => {
-		// Seed two open tasks both matching PR #42
-		taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Work on #42',
-			description: 'lsm/neokai',
-			status: 'open',
-		});
-		taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Also #42',
-			description: 'neokai',
-			status: 'open',
-		});
-
-		const event = makeEvent();
-		const result = await service.publish(event);
-
-		expect(result.outcome).toBe('ignored');
-		expect(store.getById(event.id)!.state).toBe('ambiguous');
-	});
-
-	test('unknown resolution returns ignored and leaves event retryable', async () => {
-		// No tasks at all
-		const event = makeEvent();
-		const result = await service.publish(event);
-
-		expect(result.outcome).toBe('ignored');
-		// Do NOT terminalize — a matching task may be created later.
-		expect(store.getById(event.id)!.state).toBe('published');
-	});
-
-	test('ignored resolution (no PR number) leaves event non-terminal', async () => {
-		const event = makeEvent({ prNumber: undefined });
-		const result = await service.publish(event);
-
-		expect(result.outcome).toBe('ignored');
-		// Event stays in published so a later re-observation with complete
-		// metadata can still be enriched.
-		expect(store.getById(event.id)!.state).toBe('published');
-	});
-
-	test('ignored resolution still publishes bus event', async () => {
-		const busReceived: ExternalEventPublishedPayload[] = [];
-		bus.subscribe(
-			'externalEvent.published',
-			(data) => {
-				busReceived.push(data);
-			},
-			{ subscriberName: 'sub' }
-		);
-
-		const event = makeEvent({ prNumber: undefined });
-		const result = await service.publish(event);
-
-		expect(result.outcome).toBe('ignored');
-		expect(busReceived).toHaveLength(1);
-		expect(busReceived[0]!.eventId).toBe(event.id);
-		expect(busReceived[0]!.routedTaskId).toBeUndefined();
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Custom resolver injection
-// ---------------------------------------------------------------------------
-
-describe('publish — custom resolver', () => {
-	test('uses injected resolver for enrichment', async () => {
-		const customResolver: ExternalEventTaskResolver = {
-			async resolve(): Promise<TaskResolution> {
-				return { type: 'enriched', routedTaskId: 'custom-task-1' };
-			},
-		};
-
-		const customService = new ExternalEventService(store, customResolver, bus);
-		const event = makeEvent();
-		const result = await customService.publish(event);
-
-		expect(result.outcome).toBe('published');
-		expect(result.routedTaskId).toBe('custom-task-1');
-
-		const rec = store.getById(event.id);
-		expect(rec!.event.routedTaskId).toBe('custom-task-1');
-		expect(rec!.state).toBe('routed');
 	});
 });
 
@@ -515,14 +172,6 @@ describe('publish — bus semantics', () => {
 			{ subscriberName: 'scoped-sub', sessionId: SPACE_ID }
 		);
 
-		// Seed matching task
-		taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Fix bug #42',
-			description: 'lsm/neokai',
-			status: 'open',
-		});
-
 		const event = makeEvent();
 		await service.publish(event);
 
@@ -540,14 +189,6 @@ describe('publish — bus semantics', () => {
 			{ subscriberName: 'global-sub' }
 		);
 
-		// Seed matching task
-		taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Fix bug #42',
-			description: 'lsm/neokai',
-			status: 'open',
-		});
-
 		const event = makeEvent();
 		await service.publish(event);
 
@@ -563,14 +204,6 @@ describe('publish — bus semantics', () => {
 			},
 			{ subscriberName: 'sub' }
 		);
-
-		// Seed a matching task so the first publish succeeds and fires the bus
-		taskRepo.createTask({
-			spaceId: SPACE_ID,
-			title: 'Fix bug #42',
-			description: 'lsm/neokai',
-			status: 'open',
-		});
 
 		const event = makeEvent();
 		await service.publish(event);

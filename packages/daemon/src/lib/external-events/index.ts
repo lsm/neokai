@@ -35,13 +35,3 @@ export {
 	type PublishOutcome,
 	type ExternalEventPublishedPayload,
 } from './external-event-service';
-export {
-	GitHubExternalEventTaskResolver,
-	type ExternalEventTaskResolver,
-	type TaskResolution,
-	type EnrichedResolution,
-	type AmbiguousResolution,
-	type UnknownResolution,
-	type IgnoredResolution,
-	type GitHubTaskResolverConfig,
-} from './external-event-task-resolver';

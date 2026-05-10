@@ -9,7 +9,6 @@
  *   - markEventFailedIfAnyDeliveryTerminalFailed: any terminal failure → source failed
  *   - markEventFailedIfAllDeliveriesTerminal: only when all terminal AND at least one failed
  *   - markEventFailed / markEventIgnored: terminalization
- *   - updateEventState: non-terminal progression
  *   - getEventIdForDeliveryKey / isDeliveryTerminal
  *   - Validation: missing fields, source mismatch, topic mismatch, unknown source
  *
@@ -17,14 +16,14 @@
  * match production.
  */
 
-import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { createSpaceTables } from '../../helpers/space-test-db';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import {
 	ExternalEventStore,
 	ExternalEventValidationError,
 } from '../../../../src/lib/external-events/external-event-store';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 let db: Database;
 let store: ExternalEventStore;
@@ -39,7 +38,13 @@ const EVENT_A: ExternalEvent = {
 	ingestedAt: 1_700_000_001_000,
 	dedupeKey: 'github:pr:42:review_submitted:12345',
 	summary: 'PR #42 review submitted',
-	payload: { action: 'review_submitted', review_id: 12345 },
+	payload: {
+		action: 'review_submitted',
+		review_id: 12345,
+		prNumber: 42,
+		repoOwner: 'lsm',
+		repoName: 'neokai',
+	},
 };
 
 const EVENT_B: ExternalEvent = {
@@ -93,22 +98,16 @@ describe('store — first observation', () => {
 		const event: ExternalEvent = {
 			...EVENT_A,
 			sourceEventId: 'del-123',
-			prNumber: 42,
-			repoOwner: 'lsm',
-			repoName: 'neokai',
-			branch: 'feature-42',
 			externalUrl: 'https://github.com/lsm/neokai/pull/42',
-			routedTaskId: 'task-42',
 		};
 		store.store(event);
 		const rec = store.getById('evt-a');
 		expect(rec!.event.sourceEventId).toBe('del-123');
-		expect(rec!.event.prNumber).toBe(42);
-		expect(rec!.event.repoOwner).toBe('lsm');
-		expect(rec!.event.repoName).toBe('neokai');
-		expect(rec!.event.branch).toBe('feature-42');
 		expect(rec!.event.externalUrl).toBe('https://github.com/lsm/neokai/pull/42');
-		expect(rec!.event.routedTaskId).toBe('task-42');
+		// Source-specific metadata lives in payload
+		expect(rec!.event.payload.prNumber).toBe(42);
+		expect(rec!.event.payload.repoOwner).toBe('lsm');
+		expect(rec!.event.payload.repoName).toBe('neokai');
 	});
 
 	test('getByDedupe returns the canonical row', () => {
@@ -150,24 +149,6 @@ describe('store — duplicate handling', () => {
 		expect(dup.duplicate).toBe(true);
 		expect(dup.terminal).toBe(false);
 		expect(dup.event.id).toBe('evt-a');
-	});
-
-	test('retryable duplicate re-emits after routed state', () => {
-		store.store(EVENT_A);
-		store.updateEventState('evt-a', 'routed');
-
-		const dup = store.store({ ...EVENT_A, id: 'evt-a-dup' });
-		expect(dup.duplicate).toBe(true);
-		expect(dup.terminal).toBe(false);
-	});
-
-	test('retryable duplicate re-emits after delivery_failed state', () => {
-		store.store(EVENT_A);
-		store.updateEventState('evt-a', 'delivery_failed');
-
-		const dup = store.store({ ...EVENT_A, id: 'evt-a-dup' });
-		expect(dup.duplicate).toBe(true);
-		expect(dup.terminal).toBe(false);
 	});
 });
 
@@ -839,103 +820,6 @@ describe('markEventIgnored', () => {
 		store.markEventFailed('evt-a', { terminal: true, reason: 'boom' });
 		store.markEventIgnored('evt-a', 'no_matching_subscriptions');
 		expect(store.getById('evt-a')!.state).toBe('failed');
-	});
-});
-
-// ---------------------------------------------------------------------------
-// markEventAmbiguous
-// ---------------------------------------------------------------------------
-
-describe('markEventAmbiguous', () => {
-	test('advances published → ambiguous', () => {
-		store.store(EVENT_A);
-		store.markEventAmbiguous('evt-a');
-		expect(store.getById('evt-a')!.state).toBe('ambiguous');
-	});
-
-	test('no-op when already terminal', () => {
-		store.store(EVENT_A);
-		store.markEventIgnored('evt-a', 'no_matching_subscriptions');
-		store.markEventAmbiguous('evt-a');
-		expect(store.getById('evt-a')!.state).toBe('ignored');
-	});
-
-	test('terminal prevents re-transition', () => {
-		store.store(EVENT_A);
-		store.markEventAmbiguous('evt-a');
-		expect(store.getById('evt-a')!.state).toBe('ambiguous');
-		store.markEventFailed('evt-a', { terminal: true, reason: 'boom' });
-		// ambiguous is terminal, so failed should not overwrite
-		expect(store.getById('evt-a')!.state).toBe('ambiguous');
-	});
-});
-
-// ---------------------------------------------------------------------------
-// setRoutedTaskId
-// ---------------------------------------------------------------------------
-
-describe('setRoutedTaskId', () => {
-	test('updates routed_task_id on existing event', () => {
-		store.store(EVENT_A);
-		store.setRoutedTaskId('evt-a', 'task-123');
-		const rec = store.getById('evt-a');
-		expect(rec!.event.routedTaskId).toBe('task-123');
-	});
-
-	test('no-op for unknown event id', () => {
-		// Should not throw
-		store.setRoutedTaskId('no-such-event', 'task-123');
-		expect(store.getById('no-such-event')).toBeNull();
-	});
-});
-
-// ---------------------------------------------------------------------------
-// updateEventState
-// ---------------------------------------------------------------------------
-
-describe('updateEventState', () => {
-	test('advances published → routed', () => {
-		store.store(EVENT_A);
-		store.updateEventState('evt-a', 'routed');
-		expect(store.getById('evt-a')!.state).toBe('routed');
-	});
-
-	test('advances routed → delivery_failed', () => {
-		store.store(EVENT_A);
-		store.updateEventState('evt-a', 'routed');
-		store.updateEventState('evt-a', 'delivery_failed');
-		expect(store.getById('evt-a')!.state).toBe('delivery_failed');
-	});
-
-	test('does not overwrite terminal state with a non-terminal state', () => {
-		store.store(EVENT_A);
-		store.markEventIgnored('evt-a', 'no_matching_subscriptions');
-		store.updateEventState('evt-a', 'published');
-		expect(store.getById('evt-a')!.state).toBe('ignored');
-	});
-
-	test('rejects terminal state directly', () => {
-		store.store(EVENT_A);
-		expect(() => store.updateEventState('evt-a', 'delivered')).toThrow('cannot set terminal state');
-		expect(() => store.updateEventState('evt-a', 'failed')).toThrow('cannot set terminal state');
-		expect(() => store.updateEventState('evt-a', 'ignored')).toThrow('cannot set terminal state');
-	});
-
-	test('rejects backward transition from routed to published', () => {
-		store.store(EVENT_A);
-		store.updateEventState('evt-a', 'routed');
-		expect(() => store.updateEventState('evt-a', 'published')).toThrow(
-			'cannot regress state from "routed" to "published"'
-		);
-	});
-
-	test('rejects backward transition from delivery_failed to routed', () => {
-		store.store(EVENT_A);
-		store.updateEventState('evt-a', 'routed');
-		store.updateEventState('evt-a', 'delivery_failed');
-		expect(() => store.updateEventState('evt-a', 'routed')).toThrow(
-			'cannot regress state from "delivery_failed" to "routed"'
-		);
 	});
 });
 
