@@ -71,17 +71,17 @@ function isValidCronExpression(expr: string): boolean {
 	// Field validators indexed by position (0 = seconds when present, else minute)
 	const fieldPatterns = [
 		// seconds (optional)
-		/^([0-5]?\d|[*](?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:-[0-5]?\d)?(?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:,(?:[0-5]?\d|-[0-5]?\d|\*))+)$/,
+		/^([0-5]?\d|[*](?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:-[0-5]?\d)?(?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:,(?:[0-5]?\d|-[0-5]?\d|\*))+|\?)$/,
 		// minute
-		/^([0-5]?\d|[*](?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:-[0-5]?\d)?(?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:,(?:[0-5]?\d|-[0-5]?\d|\*))+)$/,
+		/^([0-5]?\d|[*](?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:-[0-5]?\d)?(?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:,(?:[0-5]?\d|-[0-5]?\d|\*))+|\?)$/,
 		// hour
-		/^([01]?\d|2[0-3]|[*](?:\/[1-9]\d?)?|(?:[01]?\d|2[0-3])(?:-[01]?\d|2[0-3])?(?:\/[1-9]\d?)?|(?:[01]?\d|2[0-3])(?:,(?:[01]?\d|2[0-3]|-[01]?\d|2[0-3]|\*))+)$/,
+		/^([01]?\d|2[0-3]|[*](?:\/[1-9]\d?)?|(?:[01]?\d|2[0-3])(?:-[01]?\d|2[0-3])?(?:\/[1-9]\d?)?|(?:[01]?\d|2[0-3])(?:,(?:[01]?\d|2[0-3]|-[01]?\d|2[0-3]|\*))+|\?)$/,
 		// day of month
-		/^([1-9]|[12]\d|3[01]|[*](?:\/[1-9]\d?)?|(?:[1-9]|[12]\d|3[01])(?:-[1-9]|[12]\d|3[01])?(?:\/[1-9]\d?)?|(?:[1-9]|[12]\d|3[01])(?:,(?:[1-9]|[12]\d|3[01]|-[1-9]|[12]\d|3[01]|\*))+|L|L-[1-9]|[12]\d|3[01]|LW)$/,
+		/^([1-9]|[12]\d|3[01]|[*](?:\/[1-9]\d?)?|(?:[1-9]|[12]\d|3[01])(?:-[1-9]|[12]\d|3[01])?(?:\/[1-9]\d?)?|(?:[1-9]|[12]\d|3[01])(?:,(?:[1-9]|[12]\d|3[01]|-[1-9]|[12]\d|3[01]|\*))+|L|L-[1-9]|L-[12]\d|L-3[01]|LW|\?|(?:[1-9]|[12]\d|3[01])W)$/,
 		// month
-		/^([1-9]|1[0-2]|[*](?:\/[1-9]\d?)?|(?:[1-9]|1[0-2])(?:-[1-9]|1[0-2])?(?:\/[1-9]\d?)?|(?:[1-9]|1[0-2])(?:,(?:[1-9]|1[0-2]|-[1-9]|1[0-2]|\*))+|JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)$/,
+		/^([1-9]|1[0-2]|[*](?:\/[1-9]\d?)?|(?:[1-9]|1[0-2])(?:-[1-9]|1[0-2])?(?:\/[1-9]\d?)?|(?:[1-9]|1[0-2])(?:,(?:[1-9]|1[0-2]|-[1-9]|1[0-2]|\*))+|JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|\?)$/i,
 		// weekday
-		/^([0-7]|[*](?:\/[1-9]\d?)?|(?:[0-7])(?:-[0-7])?(?:\/[1-9]\d?)?|(?:[0-7])(?:,(?:[0-7]|-[0-7]|\*))+|MON|TUE|WED|THU|FRI|SAT|SUN|L)$/,
+		/^([0-7]|[*](?:\/[1-9]\d?)?|(?:[0-7])(?:-[0-7])?(?:\/[1-9]\d?)?|(?:[0-7])(?:,(?:[0-7]|-[0-7]|\*))+|MON|TUE|WED|THU|FRI|SAT|SUN|L|\?|(?:MON|TUE|WED|THU|FRI|SAT|SUN)#(?:[1-5]))$/i,
 	];
 
 	for (let i = 0; i < parts.length; i++) {
@@ -161,7 +161,6 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
 		}
 		if (triggerType === 'at') {
 			if (!runAt) return 'Run date/time is required';
-			if (runAt <= Date.now()) return 'Run time must be in the future';
 		}
 		return null;
 	}, [scheduleEnabled, triggerType, cronExpression, runAt]);
@@ -181,6 +180,11 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
 
 		if (scheduleEnabled && validationError) {
 			setError(validationError);
+			return;
+		}
+
+		if (scheduleEnabled && triggerType === 'at' && runAt && runAt <= Date.now()) {
+			setError('Run time must be in the future');
 			return;
 		}
 
