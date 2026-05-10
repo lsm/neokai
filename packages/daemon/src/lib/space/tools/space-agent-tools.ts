@@ -295,12 +295,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			}
 
 			// Resolve workflow identifier to UUID.
-			// If workflow_id is provided but not found, attempt handle resolution as
-			// a fallback so clients that cache both identifiers still work after a
-			// workflow is re-created (new UUID, same handle).
+			// If workflow_id is provided but unusable (missing or belongs to another
+			// space), attempt handle resolution so clients that cache both identifiers
+			// still work after a workflow is re-created (new UUID, same handle).
 			let targetWorkflowId = args.workflow_id;
-			if (targetWorkflowId && !workflowManager.getWorkflow(targetWorkflowId)) {
-				if (typeof args.workflow_handle === 'string') {
+			if (targetWorkflowId) {
+				const wf = workflowManager.getWorkflow(targetWorkflowId);
+				const idUnusable = !wf || wf.spaceId !== spaceId;
+				if (idUnusable && typeof args.workflow_handle === 'string') {
 					const trimmedHandle = args.workflow_handle.trim();
 					if (trimmedHandle === '') {
 						return jsonResult({
@@ -315,7 +317,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					// If handle also doesn't resolve, keep the stale ID so the validation
 					// block below returns a clear "Workflow not found" error.
 				}
-			} else if (!targetWorkflowId && typeof args.workflow_handle === 'string') {
+			} else if (typeof args.workflow_handle === 'string') {
 				const trimmedHandle = args.workflow_handle.trim();
 				if (trimmedHandle === '') {
 					return jsonResult({
@@ -397,8 +399,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			let workflow = null;
 			if (args.workflow_id) {
 				workflow = workflowManager.getWorkflow(args.workflow_id);
-				// If ID lookup fails and a handle was also provided, try that next.
-				if (!workflow && typeof args.workflow_handle === 'string') {
+				// Fall back to handle when the ID is unusable: either it returned null
+				// or it resolved to a workflow in a different space.
+				const idUnusable = !workflow || workflow.spaceId !== spaceId;
+				if (idUnusable && typeof args.workflow_handle === 'string') {
 					const trimmedHandle = args.workflow_handle.trim();
 					if (trimmedHandle) {
 						workflow = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);

@@ -549,6 +549,47 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.run.workflowId).toBe(wf2.id);
 	});
+
+	test('falls back to workflow_handle when workflow_id belongs to a different space', async () => {
+		// wf-source is used to start the run; wf-other is in a different space;
+		// wf-target is the intended switch target, referenced by handle.
+		const wfSource = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Source WF'
+		);
+		// Seed the other space so FK constraints pass, then create a workflow there.
+		const otherSpaceId = 'other-space-for-change-plan';
+		seedSpaceRow(ctx.db, otherSpaceId);
+		const wfOther = buildSingleStepWorkflow(
+			otherSpaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Other Space WF'
+		);
+		const wfTarget = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Target WF'
+		);
+		const startResult = await startWorkflowRun(ctx, {
+			workflow_id: wfSource.id,
+			title: 'cross-space switch run',
+		});
+		const runId = JSON.parse(startResult.content[0].text).run.id;
+
+		// Pass the cross-space ID but also provide the target's handle
+		const result = await makeHandlers(ctx).change_plan({
+			run_id: runId,
+			workflow_id: wfOther.id,
+			workflow_handle: wfTarget.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.run.workflowId).toBe(wfTarget.id);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -729,6 +770,34 @@ describe('createSpaceAgentToolHandlers — get_workflow_detail', () => {
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 		expect(parsed.workflow.id).toBe(wf.id);
+	});
+
+	test('falls back to workflow_handle when workflow_id belongs to a different space', async () => {
+		// wf-other exists in the DB but belongs to a different space.
+		// wf-target is the workflow we actually want, identified by handle.
+		const otherSpaceId = 'other-space-for-detail';
+		seedSpaceRow(ctx.db, otherSpaceId);
+		const wfOther = buildSingleStepWorkflow(
+			otherSpaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Other Space Detail WF'
+		);
+		const wfTarget = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Target Detail WF'
+		);
+		expect(wfTarget.handle).toBeDefined();
+
+		const result = await makeHandlers(ctx).get_workflow_detail({
+			workflow_id: wfOther.id,
+			workflow_handle: wfTarget.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflow.id).toBe(wfTarget.id);
 	});
 });
 

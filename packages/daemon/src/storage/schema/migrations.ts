@@ -8767,7 +8767,20 @@ export function runMigration127(db: BunDatabase): void {
 	// Without this, a partial-upgrade state where one row already has handle='foo'
 	// would cause a collision when the backfill tries to assign the same slug to
 	// another row, aborting via the unique-index constraint.
+	interface ExistingHandleRow {
+		space_id: string;
+		handle: string;
+	}
+	const existingHandleRows = db
+		.prepare(`SELECT space_id, handle FROM space_workflows WHERE handle IS NOT NULL`)
+		.all() as ExistingHandleRow[];
 	const spaceHandles = new Map<string, string[]>();
+	for (const row of existingHandleRows) {
+		const handles = spaceHandles.get(row.space_id) ?? [];
+		handles.push(row.handle);
+		spaceHandles.set(row.space_id, handles);
+	}
+
 	const updateStmt = db.prepare(`UPDATE space_workflows SET handle = ? WHERE id = ?`);
 	for (const row of rows) {
 		const handles = spaceHandles.get(row.space_id) ?? [];
