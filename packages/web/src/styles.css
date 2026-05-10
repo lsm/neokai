@@ -678,6 +678,22 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
    on the main content wrapper. The chat footer does not need its own safe area
    padding — the wrapper already accounts for both the tab bar and home indicator. */
 
+/* ── Mobile Safari keyboard: keep chat composer above the keyboard ───────────
+   When the virtual keyboard opens, the composer (position:absolute;bottom:0)
+   would normally sit behind the keyboard. We offset it by the keyboard height
+   so it stays visible and tappable. The transition gives a smooth slide as the
+   keyboard animates in/out. Scoped to coarse-pointer devices so desktop
+   browsers are not affected. */
+@media (pointer: coarse) {
+	.chat-footer {
+		transition: bottom 0.25s ease;
+	}
+
+	html.keyboard-open .chat-footer {
+		bottom: var(--keyboard-height, 0px);
+	}
+}
+
 /* ── Space task thread — compact running-block indicator ─────────────────────
    The animated border-light for running (non-terminal) event messages is now
    rendered by the <RunningBorder> Preact component in

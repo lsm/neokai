@@ -26,7 +26,7 @@
 
 import type { ComponentChildren } from 'preact';
 import type { MutableRef } from 'preact/hooks';
-import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
@@ -177,9 +177,50 @@ export function InputTextarea({
 		return () => cancelAnimationFrame(rafId);
 	}, [content, onHeightChange]);
 
+	// Ref to track the delayed scroll-into-view timer so we can cancel it on
+	// blur or unmount. Preact DOM event handlers ignore return values, so a
+	// ref + explicit cleanup is required.
+	const focusScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(() => {
+		return () => {
+			if (focusScrollTimerRef.current) {
+				clearTimeout(focusScrollTimerRef.current);
+				focusScrollTimerRef.current = null;
+			}
+		};
+	}, []);
+
 	// Focus on mount
 	useEffect(() => {
 		textareaRef.current?.focus();
+	}, []);
+
+	// Mobile Safari: when the textarea is focused and the virtual keyboard opens,
+	// the page may scroll the focused element behind the address bar or the
+	// composer may jump off-screen. We wait for the keyboard animation (~300 ms)
+	// then scroll the textarea into view so the user can see what they are typing.
+	const handleFocus = useCallback(() => {
+		if (!isMobileDevice.current) return;
+		const textarea = textareaRef.current;
+		if (!textarea) return;
+		// Cancel any pending scroll from a previous focus
+		if (focusScrollTimerRef.current) {
+			clearTimeout(focusScrollTimerRef.current);
+		}
+		// Delay to let the keyboard finish its animation; on iOS this is roughly
+		// 250-300 ms. Using 350 ms gives a safe margin.
+		focusScrollTimerRef.current = setTimeout(() => {
+			focusScrollTimerRef.current = null;
+			textarea.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+		}, 350);
+	}, []);
+
+	const handleBlur = useCallback(() => {
+		if (focusScrollTimerRef.current) {
+			clearTimeout(focusScrollTimerRef.current);
+			focusScrollTimerRef.current = null;
+		}
 	}, []);
 
 	const charCount = content.length;
@@ -252,6 +293,8 @@ export function InputTextarea({
 					ref={textareaRef}
 					onInput={(e) => onContentChange((e.target as HTMLTextAreaElement).value)}
 					onKeyDown={onKeyDown}
+					onFocus={handleFocus}
+					onBlur={handleBlur}
 					onPaste={onPaste}
 					disabled={disabled}
 					placeholder={placeholder}
