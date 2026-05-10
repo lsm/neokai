@@ -30,6 +30,7 @@ const TRIGGER_OPTIONS: { value: TaskScheduleTriggerType; label: string }[] = [
 const CRON_PRESETS: { label: string; value: string }[] = [
 	{ label: '@hourly', value: '@hourly' },
 	{ label: '@daily', value: '@daily' },
+	{ label: '@midnight', value: '@midnight' },
 	{ label: '@weekly', value: '@weekly' },
 	{ label: '@monthly', value: '@monthly' },
 ];
@@ -51,42 +52,110 @@ const COMMON_TIMEZONES = [
 
 /**
  * Lightweight frontend cron validation.
- * Supports 5-field cron and named shortcuts (@hourly, @daily, @weekly, @monthly, @yearly).
- * Does not validate every edge case — the daemon validates with croner and returns errors.
+ * Supports 5-field and 6-field cron, named shortcuts, L/W/Q tokens, and
+ * weekday/month names. Does not validate every edge case — the daemon
+ * validates with croner and returns errors.
  */
 function isValidCronExpression(expr: string): boolean {
 	const trimmed = expr.trim();
 	if (!trimmed) return false;
 
 	// Named shortcuts
-	if (/^@(hourly|daily|weekly|monthly|yearly|annually)$/.test(trimmed)) return true;
+	if (/^@(hourly|daily|midnight|weekly|monthly|yearly|annually)$/.test(trimmed)) return true;
 
-	// 5-field cron: minute hour day month weekday
 	const parts = trimmed.split(/\s+/);
-	if (parts.length !== 5) return false;
+	if (parts.length !== 5 && parts.length !== 6) return false;
 
+	const hasSeconds = parts.length === 6;
+
+	// Field validators indexed by position (0 = seconds when present, else minute)
 	const fieldPatterns = [
-		/^([0-5]?\d|[*](?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:-[0-5]?\d)?(?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:,(?:[0-5]?\d|-[0-5]?\d|\*))+)$/, // minute
-		/^([01]?\d|2[0-3]|[*](?:\/[1-9]\d?)?|(?:[01]?\d|2[0-3])(?:-[01]?\d|2[0-3])?(?:\/[1-9]\d?)?|(?:[01]?\d|2[0-3])(?:,(?:[01]?\d|2[0-3]|-[01]?\d|2[0-3]|\*))+)$/, // hour
-		/^([1-9]|[12]\d|3[01]|[*?](?:\/[1-9]\d?)?|(?:[1-9]|[12]\d|3[01])(?:-[1-9]|[12]\d|3[01])?(?:\/[1-9]\d?)?|(?:[1-9]|[12]\d|3[01])(?:,(?:[1-9]|[12]\d|3[01]|-[1-9]|[12]\d|3[01]|\*))+)$/, // day
-		/^([1-9]|1[0-2]|[*](?:\/[1-9]\d?)?|(?:[1-9]|1[0-2])(?:-[1-9]|1[0-2])?(?:\/[1-9]\d?)?|(?:[1-9]|1[0-2])(?:,(?:[1-9]|1[0-2]|-[1-9]|1[0-2]|\*))+)$/, // month
-		/^([0-6]|[*](?:\/[1-9]\d?)?|(?:[0-6])(?:-[0-6])?(?:\/[1-9]\d?)?|(?:[0-6])(?:,(?:[0-6]|-[0-6]|\*))+|MON|TUE|WED|THU|FRI|SAT|SUN)$/, // weekday
+		// seconds (optional)
+		/^([0-5]?\d|[*](?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:-[0-5]?\d)?(?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:,(?:[0-5]?\d|-[0-5]?\d|\*))+)$/,
+		// minute
+		/^([0-5]?\d|[*](?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:-[0-5]?\d)?(?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:,(?:[0-5]?\d|-[0-5]?\d|\*))+)$/,
+		// hour
+		/^([01]?\d|2[0-3]|[*](?:\/[1-9]\d?)?|(?:[01]?\d|2[0-3])(?:-[01]?\d|2[0-3])?(?:\/[1-9]\d?)?|(?:[01]?\d|2[0-3])(?:,(?:[01]?\d|2[0-3]|-[01]?\d|2[0-3]|\*))+)$/,
+		// day of month
+		/^([1-9]|[12]\d|3[01]|[*](?:\/[1-9]\d?)?|(?:[1-9]|[12]\d|3[01])(?:-[1-9]|[12]\d|3[01])?(?:\/[1-9]\d?)?|(?:[1-9]|[12]\d|3[01])(?:,(?:[1-9]|[12]\d|3[01]|-[1-9]|[12]\d|3[01]|\*))+|L|L-[1-9]|[12]\d|3[01]|LW)$/,
+		// month
+		/^([1-9]|1[0-2]|[*](?:\/[1-9]\d?)?|(?:[1-9]|1[0-2])(?:-[1-9]|1[0-2])?(?:\/[1-9]\d?)?|(?:[1-9]|1[0-2])(?:,(?:[1-9]|1[0-2]|-[1-9]|1[0-2]|\*))+|JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)$/,
+		// weekday
+		/^([0-7]|[*](?:\/[1-9]\d?)?|(?:[0-7])(?:-[0-7])?(?:\/[1-9]\d?)?|(?:[0-7])(?:,(?:[0-7]|-[0-7]|\*))+|MON|TUE|WED|THU|FRI|SAT|SUN|L)$/,
 	];
 
-	for (let i = 0; i < 5; i++) {
-		if (!fieldPatterns[i].test(parts[i])) return false;
+	for (let i = 0; i < parts.length; i++) {
+		const patternIdx = hasSeconds ? i : i + 1;
+		if (!fieldPatterns[patternIdx].test(parts[i])) return false;
 	}
 	return true;
 }
 
-function toLocalDatetimeInputValue(ts: number): string {
+/**
+ * Parse a datetime-local string as an epoch timestamp in the given IANA timezone.
+ *
+ * datetime-local values have no timezone offset, so `new Date(value)` interprets
+ * them in the browser's local timezone. This helper treats the value as if it
+ * were in `timezone`, then returns the corresponding UTC instant.
+ */
+function parseDatetimeInTimezone(value: string, timezone: string): number {
+	// Use Intl.DateTimeFormat to parse the wall-clock time in the target timezone
+	const [datePart, timePart] = value.split('T');
+	const [year, month, day] = datePart.split('-').map(Number);
+	const [hour, minute] = timePart.split(':').map(Number);
+
+	// Construct a date string that the target timezone would interpret as the given wall-clock time
+	// We use the 'en-US' locale with the target timezone to format, then parse back
+	const candidate = new Date(Date.UTC(year, month - 1, day, hour, minute));
+
+	// Get the timezone offset for the candidate date in the target timezone
+	const formatter = new Intl.DateTimeFormat('en-US', {
+		timeZone: timezone,
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+		hour12: false,
+	});
+
+	const parts = formatter.formatToParts(candidate);
+	const getPart = (type: string) => {
+		const p = parts.find((part) => part.type === type);
+		return p ? parseInt(p.value, 10) : 0;
+	};
+
+	const tzYear = getPart('year');
+	const tzMonth = getPart('month');
+	const tzDay = getPart('day');
+	const tzHour = getPart('hour');
+	const tzMinute = getPart('minute');
+
+	// Calculate offset: how much does candidate UTC need to shift so that
+	// the target timezone reads the desired wall-clock time?
+	const offsetMs =
+		Date.UTC(year, month - 1, day, hour, minute) -
+		Date.UTC(tzYear, tzMonth - 1, tzDay, tzHour, tzMinute);
+
+	return candidate.getTime() + offsetMs;
+}
+
+function toDatetimeLocalValue(ts: number): string {
 	const d = new Date(ts);
 	const pad = (n: number) => String(n).padStart(2, '0');
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function fromLocalDatetimeInputValue(value: string): number {
-	return new Date(value).getTime();
+function formatPreviewDate(ts: number, timezone: string): string {
+	return new Date(ts).toLocaleString('en-US', {
+		timeZone: timezone,
+		year: 'numeric',
+		month: 'short',
+		day: 'numeric',
+		hour: '2-digit',
+		minute: '2-digit',
+		hour12: true,
+	});
 }
 
 function getSchedulePreview(
@@ -96,7 +165,7 @@ function getSchedulePreview(
 	timezone: string
 ): string | null {
 	if (triggerType === 'at' && runAt) {
-		return `One-time run at ${new Date(runAt).toLocaleString()} (${timezone})`;
+		return `One-time run at ${formatPreviewDate(runAt, timezone)} (${timezone})`;
 	}
 	if (triggerType === 'cron' && cronExpression) {
 		const preset = CRON_PRESETS.find((p) => p.value === cronExpression);
@@ -309,10 +378,10 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
 								</label>
 								<input
 									type="datetime-local"
-									value={runAt ? toLocalDatetimeInputValue(runAt) : ''}
+									value={runAt ? toDatetimeLocalValue(runAt) : ''}
 									onInput={(e) => {
 										const val = (e.target as HTMLInputElement).value;
-										setRunAt(val ? fromLocalDatetimeInputValue(val) : null);
+										setRunAt(val ? parseDatetimeInTimezone(val, timezone) : null);
 									}}
 									class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
 										focus:outline-none focus:border-blue-500 text-sm"
@@ -363,22 +432,24 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
 							</div>
 						)}
 
-						{/* Timezone */}
-						<div>
-							<label class="block text-sm font-medium text-gray-300 mb-1.5">Timezone</label>
-							<select
-								value={timezone}
-								onChange={(e) => setTimezone((e.target as HTMLSelectElement).value)}
-								class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-gray-100
-									focus:outline-none focus:border-blue-500 text-sm"
-							>
-								{COMMON_TIMEZONES.map((tz) => (
-									<option key={tz} value={tz}>
-										{tz}
-									</option>
-								))}
-							</select>
-						</div>
+						{/* Timezone — only meaningful for cron triggers */}
+						{triggerType === 'cron' && (
+							<div>
+								<label class="block text-sm font-medium text-gray-300 mb-1.5">Timezone</label>
+								<select
+									value={timezone}
+									onChange={(e) => setTimezone((e.target as HTMLSelectElement).value)}
+									class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-gray-100
+										focus:outline-none focus:border-blue-500 text-sm"
+								>
+									{COMMON_TIMEZONES.map((tz) => (
+										<option key={tz} value={tz}>
+											{tz}
+										</option>
+									))}
+								</select>
+							</div>
+						)}
 
 						{/* Preview */}
 						{preview && (

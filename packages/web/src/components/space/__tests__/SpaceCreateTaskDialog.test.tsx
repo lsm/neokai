@@ -311,10 +311,10 @@ describe('SpaceCreateTaskDialog', () => {
 		fireEvent.click(getByText('One-time'));
 
 		const dtInput = container.querySelector('input[type="datetime-local"]');
-		// Set to a past date
-		const past = new Date(Date.now() - 86400000);
+		// Use a date 2 days ago in UTC (default timezone) so it's definitely past
+		const past = new Date(Date.now() - 172800000);
 		const pad = (n) => String(n).padStart(2, '0');
-		const pastValue = `${past.getFullYear()}-${pad(past.getMonth() + 1)}-${pad(past.getDate())}T${pad(past.getHours())}:${pad(past.getMinutes())}`;
+		const pastValue = `${past.getUTCFullYear()}-${pad(past.getUTCMonth() + 1)}-${pad(past.getUTCDate())}T${pad(past.getUTCHours())}:${pad(past.getUTCMinutes())}`;
 		fireEvent.input(dtInput, { target: { value: pastValue } });
 
 		fireEvent.submit(getByRole('dialog').querySelector('form'));
@@ -394,9 +394,10 @@ describe('SpaceCreateTaskDialog', () => {
 		fireEvent.click(getByText('One-time'));
 
 		const dtInput = container.querySelector('input[type="datetime-local"]');
-		const future = new Date(Date.now() + 3600000);
+		// Use a UTC datetime 24h in the future so it's valid regardless of browser TZ offset
+		const future = new Date(Date.now() + 86400000);
 		const pad = (n) => String(n).padStart(2, '0');
-		const futureValue = `${future.getFullYear()}-${pad(future.getMonth() + 1)}-${pad(future.getDate())}T${pad(future.getHours())}:${pad(future.getMinutes())}`;
+		const futureValue = `${future.getUTCFullYear()}-${pad(future.getUTCMonth() + 1)}-${pad(future.getUTCDate())}T${pad(future.getUTCHours())}:${pad(future.getUTCMinutes())}`;
 		fireEvent.input(dtInput, { target: { value: futureValue } });
 
 		fireEvent.submit(getByRole('dialog').querySelector('form'));
@@ -459,5 +460,29 @@ describe('SpaceCreateTaskDialog', () => {
 		expect(getByText('Create Task')).toBeTruthy();
 		fireEvent.click(getByLabelText('Schedule this task'));
 		expect(getByText('Create Schedule')).toBeTruthy();
+	});
+
+	it('resets schedule state when dialog is closed and reopened', () => {
+		const { getByLabelText, getByText, queryByText, rerender } = render(
+			<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+		);
+		// Enable schedule, select recurring, pick a preset
+		fireEvent.click(getByLabelText('Schedule this task'));
+		fireEvent.click(getByText('Recurring'));
+		fireEvent.click(getByText('@daily'));
+		expect(getByText('Create Schedule')).toBeTruthy();
+		expect(queryByText('Cron expression')).toBeTruthy();
+
+		// Close the dialog
+		fireEvent.click(getByText('Cancel'));
+		expect(onClose).toHaveBeenCalled();
+
+		// Reopen the dialog
+		rerender(<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />);
+
+		// Schedule state should be reset
+		expect(getByText('Create Task')).toBeTruthy();
+		expect(queryByText('Cron expression')).toBeNull();
+		expect(queryByText('Schedule this task')).toBeTruthy();
 	});
 });
