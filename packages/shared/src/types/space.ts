@@ -1422,6 +1422,11 @@ export interface SpaceWorkflowSummary {
 	templateName?: string;
 	/** When true, the workflow is disabled and cannot be selected for new tasks */
 	disabled?: boolean;
+	/**
+	 * Short human-readable handle (e.g. 'coding-with-qa') used as an alternative
+	 * identifier for workflows within a space. Unique per space.
+	 */
+	handle?: string;
 	/** Number of nodes in the workflow graph */
 	nodeCount: number;
 	/**

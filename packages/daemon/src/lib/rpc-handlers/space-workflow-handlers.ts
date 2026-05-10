@@ -370,7 +370,10 @@ export function setupSpaceWorkflowHandlers(
 		let workflow: SpaceWorkflow | null = null;
 		if (params.id) {
 			workflow = workflowManager.getWorkflow(params.id);
-		} else if (params.handle && params.spaceId) {
+		} else if (params.handle) {
+			if (!params.spaceId) {
+				throw new Error('spaceId is required when looking up by handle');
+			}
 			workflow = workflowManager.getWorkflowByHandle(params.spaceId, params.handle);
 		}
 

@@ -562,6 +562,45 @@ describe('SpaceWorkflowManager', () => {
 			expect(updated?.handle).toBe('old-name');
 		});
 
+		it('does not regenerate handle when name is unchanged on update', () => {
+			const created = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Stable Name',
+				nodes: [{ id: 'node-1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+				handle: 'custom-handle',
+			});
+			expect(created.handle).toBe('custom-handle');
+
+			const updated = manager.updateWorkflow(created.id, { name: 'Stable Name' });
+			expect(updated?.handle).toBe('custom-handle');
+		});
+
+		it('rejects invalid slug format on create', () => {
+			expect(() =>
+				manager.createWorkflow({
+					spaceId: 'space-1',
+					name: 'WF',
+					nodes: [{ id: 'node-1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+					completionAutonomyLevel: 3,
+					handle: 'My Workflow',
+				})
+			).toThrow(/Invalid workflow handle/);
+		});
+
+		it('rejects invalid slug format on update', () => {
+			const created = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'WF',
+				nodes: [{ id: 'node-1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+			});
+
+			expect(() => manager.updateWorkflow(created.id, { handle: 'foo@bar' })).toThrow(
+				/Invalid workflow handle/
+			);
+		});
+
 		it('rejects empty handle on update', () => {
 			const created = manager.createWorkflow({
 				spaceId: 'space-1',

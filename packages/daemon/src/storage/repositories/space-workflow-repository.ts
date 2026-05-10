@@ -288,7 +288,7 @@ export class SpaceWorkflowRepository {
 	listWorkflowSummaries(spaceId: string): SpaceWorkflowSummary[] {
 		const rows = this.db
 			.prepare(
-				`SELECT id, space_id, name, description, tags, template_name, template_hash, disabled, completion_autonomy_level, created_at, updated_at
+				`SELECT id, space_id, name, description, tags, template_name, template_hash, disabled, handle, completion_autonomy_level, created_at, updated_at
 				 FROM space_workflows
 				 WHERE space_id = ?
 				 ORDER BY created_at ASC, rowid ASC`
@@ -304,6 +304,7 @@ export class SpaceWorkflowRepository {
 				| 'template_name'
 				| 'template_hash'
 				| 'disabled'
+				| 'handle'
 				| 'completion_autonomy_level'
 				| 'created_at'
 				| 'updated_at'
@@ -332,6 +333,7 @@ export class SpaceWorkflowRepository {
 			templateName: r.template_name ?? undefined,
 			templateHash: r.template_hash ?? null,
 			disabled: !!r.disabled,
+			handle: r.handle ?? undefined,
 			nodeCount: countByWorkflowId.get(r.id) ?? 0,
 			completionAutonomyLevel:
 				(r.completion_autonomy_level as SpaceAutonomyLevel) ?? (3 as SpaceAutonomyLevel),

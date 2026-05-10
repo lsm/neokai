@@ -391,7 +391,7 @@ describe('space-workflow-handlers', () => {
 
 		it('throws when handle is provided but spaceId is missing', async () => {
 			await expect(call('spaceWorkflow.get', { handle: 'test-workflow' })).rejects.toThrow(
-				'Workflow not found: test-workflow'
+				'spaceId is required when looking up by handle'
 			);
 		});
 

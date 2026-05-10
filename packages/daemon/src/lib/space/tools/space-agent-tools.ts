@@ -1492,7 +1492,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.string()
 					.optional()
 					.describe(
-						'ID of the workflow to use for this task. When provided, the runtime uses this workflow instead of auto-selecting one. Call list_workflows to discover available workflow IDs.'
+						'ID of the workflow to use for this task. When provided, the runtime uses this workflow instead of auto-selecting one. Call list_workflows to discover available workflows (returns both IDs and handles).'
 					),
 				workflow_handle: z
 					.string()
