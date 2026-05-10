@@ -38,6 +38,7 @@
 import type { IClientEventGateway, EventChannel } from '@neokai/shared';
 import { Channels } from '@neokai/shared';
 import type { DaemonHub, DaemonEventMap } from './daemon-hub';
+import { Logger } from './logger';
 
 type DaemonEventName = keyof DaemonEventMap & string;
 
@@ -196,6 +197,7 @@ const SESSION_BRIDGE_MAPPINGS: BridgeMapping[] = [
  */
 export class ClientEventBridge {
 	private unsubscribers: (() => void)[] = [];
+	private logger = new Logger('ClientEventBridge');
 
 	constructor(
 		private daemonHub: DaemonHub,
@@ -272,7 +274,7 @@ export class ClientEventBridge {
 					// Return the promise so TypedHub awaits it, preserving emit
 					// completion semantics. Log here so failures are visible even
 					// when StateManager's own logging is insufficient.
-					console.warn(`[ClientEventBridge] Broadcast failed for ${event}:`, err);
+					this.logger.warn(`Broadcast failed for ${event}:`, err);
 				});
 			}
 		});
