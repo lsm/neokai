@@ -8449,6 +8449,19 @@ export function runMigration123(db: BunDatabase): void {
  * the child table (space_external_event_deliveries) from being cascade-deleted.
  */
 export function runMigration124(db: BunDatabase): void {
+	// Crash-recovery: if a prior interrupted rewrite dropped the old table but
+	// left the temp table behind, restore the canonical table name so the
+	// migration can proceed normally.
+	const hasOldTable = db
+		.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='space_external_events'`)
+		.get();
+	const hasNewTable = db
+		.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='space_external_events_new'`)
+		.get();
+	if (!hasOldTable && hasNewTable) {
+		db.exec(`ALTER TABLE space_external_events_new RENAME TO space_external_events`);
+	}
+
 	// Check if the old schema still exists (has pr_number column).
 	const hasOldSchema = db
 		.prepare(`SELECT 1 FROM pragma_table_info('space_external_events') WHERE name = 'pr_number'`)
@@ -8477,8 +8490,9 @@ export function runMigration124(db: BunDatabase): void {
 		db.transaction(() => {
 			// 1. Backfill legacy columns into payload_json so subscribers retain
 			//    source-specific metadata after the columns are dropped.
-			//    Guard against malformed JSON: coerce invalid payloads to '{}' first,
-			//    then apply json_set only on valid rows.
+			//    Guard against malformed JSON: coerce invalid payloads to '{}' first.
+			//    Also coerce valid non-object roots (arrays, strings, numbers) to '{}'
+			//    so json_set can write object keys. json_type returns 'object' for '{}'.
 			//    Prefer existing payload values over legacy columns (payload was
 			//    already normalized by the ingestion pipeline; legacy columns may
 			//    contain padded/case-variant strings).
@@ -8486,6 +8500,7 @@ export function runMigration124(db: BunDatabase): void {
 				UPDATE space_external_events
 				SET payload_json = '{}'
 				WHERE json_valid(payload_json) = 0
+				   OR json_type(payload_json) != 'object'
 			`);
 			db.exec(`
 				UPDATE space_external_events
@@ -8497,6 +8512,7 @@ export function runMigration124(db: BunDatabase): void {
 					'$.branch', COALESCE(json_extract(payload_json, '$.branch'), NULLIF(branch, ''))
 				)
 				WHERE json_valid(payload_json) = 1
+				  AND json_type(payload_json) = 'object'
 				  AND (pr_number IS NOT NULL
 				   OR NULLIF(repo_owner, '') IS NOT NULL
 				   OR NULLIF(repo_name, '') IS NOT NULL

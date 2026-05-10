@@ -309,6 +309,37 @@ describe('Migration 124: simplify external-event schema', () => {
 				1_700_000_000_000
 			);
 
+			// Event with valid non-object JSON root (array) — should be coerced to {}.
+			db.prepare(`
+				INSERT INTO space_external_events (
+					id, space_id, source, topic, dedupe_key,
+					occurred_at, ingested_at, source_event_id,
+					pr_number, repo_owner, repo_name, branch,
+					summary, external_url, payload_json, routed_task_id,
+					state, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				'evt-array-root',
+				'sp-1',
+				'github',
+				'github/lsm/neokai/pull_request.closed',
+				'dk-array-root',
+				1_700_000_000_000,
+				1_700_000_001_000,
+				null,
+				55,
+				'acme',
+				'widget',
+				'hotfix-55',
+				'PR #55 closed',
+				null,
+				JSON.stringify([1, 2, 3]),
+				null,
+				'published',
+				1_700_000_000_000,
+				1_700_000_000_000
+			);
+
 			// Event with malformed payload_json — should not abort migration.
 			db.prepare(`
 				INSERT INTO space_external_events (
@@ -415,6 +446,20 @@ describe('Migration 124: simplify external-event schema', () => {
 			expect(payload.branch).toBe('hotfix-99');
 		});
 
+		test('valid non-object JSON root is coerced to object before backfill', () => {
+			runMigration124(db);
+			const row = db
+				.prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
+				.get('evt-array-root') as { payload_json: string };
+			const payload = JSON.parse(row.payload_json);
+			// Array root [1,2,3] should be coerced to {}, then backfilled.
+			expect(Array.isArray(payload)).toBe(false);
+			expect(payload.prNumber).toBe(55);
+			expect(payload.repoOwner).toBe('acme');
+			expect(payload.repoName).toBe('widget');
+			expect(payload.branch).toBe('hotfix-55');
+		});
+
 		test('state values are migrated correctly', () => {
 			runMigration124(db);
 			const legacy = db
@@ -510,6 +555,18 @@ describe('Migration 124: simplify external-event schema', () => {
 
 			// The migration should drop the leftover table before starting.
 			expect(() => runMigration124(db)).not.toThrow();
+			expect(tableExists(db, 'space_external_events_new')).toBe(false);
+		});
+
+		test('recovers when old table was dropped but new table remains', () => {
+			// Simulate a crash after DROP space_external_events but before RENAME.
+			db.exec(`ALTER TABLE space_external_events RENAME TO space_external_events_new`);
+			expect(tableExists(db, 'space_external_events')).toBe(false);
+			expect(tableExists(db, 'space_external_events_new')).toBe(true);
+
+			// The migration should detect this state and rename _new back.
+			expect(() => runMigration124(db)).not.toThrow();
+			expect(tableExists(db, 'space_external_events')).toBe(true);
 			expect(tableExists(db, 'space_external_events_new')).toBe(false);
 		});
 	});
