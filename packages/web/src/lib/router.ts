@@ -115,14 +115,15 @@ export function getSpaceTasksFromPath(path: string): string | null {
 	return match ? match[1] : null;
 }
 
-export function getSpaceTasksTabFromPath(
-	path: string
-): { spaceId: string; tab: 'action' | 'active' | 'draft' | 'completed' | 'archived' } | null {
+export function getSpaceTasksTabFromPath(path: string): {
+	spaceId: string;
+	tab: 'action' | 'active' | 'draft' | 'completed' | 'archived' | 'scheduled';
+} | null {
 	const match = path.match(SPACE_TASKS_TAB_ROUTE_PATTERN);
 	if (!match) return null;
 	return {
 		spaceId: match[1],
-		tab: match[2] as 'action' | 'active' | 'draft' | 'completed' | 'archived',
+		tab: match[2] as 'action' | 'active' | 'draft' | 'completed' | 'archived' | 'scheduled',
 	};
 }
 
