@@ -438,7 +438,7 @@ export class ErrorManager {
 			// Emit via DaemonHub for internal server-side listeners (StateManager)
 			// API connection is a global event (not session-specific)
 			if (this.daemonHub) {
-				this.daemonHub.emit('api.connection', {
+				this.daemonHub.publishAsync('api.connection', {
 					sessionId: 'global',
 					status: newStatus,
 					errorCount: this.apiConnectionErrors,
@@ -470,7 +470,7 @@ export class ErrorManager {
 			// Emit via DaemonHub for internal server-side listeners (StateManager)
 			// API connection is a global event (not session-specific)
 			if (this.daemonHub) {
-				this.daemonHub.emit('api.connection', {
+				this.daemonHub.publishAsync('api.connection', {
 					sessionId: 'global',
 					status: 'connected',
 					errorCount: 0,
@@ -512,7 +512,7 @@ export class ErrorManager {
 
 		// Emit via DaemonHub for StateManager to fold into state.session
 		if (this.daemonHub) {
-			this.daemonHub.emit('session.error', {
+			this.daemonHub.publishAsync('session.error', {
 				sessionId,
 				error: error.userMessage,
 				details: error,

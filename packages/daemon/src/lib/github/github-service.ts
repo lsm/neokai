@@ -535,12 +535,10 @@ export class GitHubService {
 		data: import('../daemon-hub').DaemonEventMap[K]
 	): void {
 		try {
-			this.daemonHub.emit(event, data);
-		} catch (error) {
-			log.error('Failed to emit event', {
-				event,
-				error: error instanceof Error ? error.message : error,
-			});
+			this.daemonHub.publishAsync(event, data);
+		} catch {
+			// Best-effort telemetry: never let a hub emission failure
+			// abort event routing or inbox fallback.
 		}
 	}
 

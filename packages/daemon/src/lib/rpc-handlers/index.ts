@@ -454,8 +454,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Session handlers — registered here (after spaceRuntimeService is built) so
 	// session.create can synchronously call attachSpaceToolsToMemberSession for
 	// ad-hoc Space sessions. Doing this via the daemonHub 'session.created' event
-	// is racy: TypedHub.dispatchLocally does not await async subscribers, so the
-	// query can start (and freeze its MCP config) before the attachment lands.
+	// would be racy: the query can start (and freeze its MCP config) before the
+	// event handler completes.
 	setupSessionHandlers(
 		deps.messageHub,
 		deps.sessionManager,
