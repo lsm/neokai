@@ -608,6 +608,9 @@ export function setupSpaceExportImportHandlers(
 							replacedOldId = existing.id;
 							workflowRepo.deleteWorkflow(existing.id);
 							usedWorkflowNames.delete(exportedWorkflow.name);
+							// Free up the old handle so the imported handle can be preserved
+							// when it matches the deleted workflow's handle.
+							if (existing.handle) usedWorkflowHandles.delete(existing.handle);
 							action = 'replaced';
 						} else {
 							// rename
