@@ -602,6 +602,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   task_schedules — stores template + trigger config + scheduling state.
 	//   Also adds created_by_task_schedule_id column to space_tasks.
 	runMigration125(db);
+
+	// Migration 126: Drop the legacy json_extract function index
+	//   idx_sdk_messages_parent_tool. The column-based equivalent
+	//   idx_sdk_messages_parent_tool_use_id (added by migration 122) covers all
+	//   call sites — keeping both costs write throughput without buying lookup
+	//   speed.
+	runMigration126(db);
 }
 
 /**
@@ -8689,4 +8696,20 @@ export function runMigration125(db: BunDatabase): void {
 	if (columns.length > 0 && !columns.some((c) => c.name === 'created_by_task_schedule_id')) {
 		db.exec(`ALTER TABLE space_tasks ADD COLUMN created_by_task_schedule_id TEXT DEFAULT NULL`);
 	}
+}
+
+/**
+ * Migration 126: Drop the legacy `idx_sdk_messages_parent_tool` function index.
+ *
+ * That index — `(session_id, json_extract(sdk_message, '$.parent_tool_use_id'))` —
+ * was created before `parent_tool_use_id` was materialised as a column. All
+ * call sites now use the column directly and the planner picks
+ * `idx_sdk_messages_parent_tool_use_id (session_id, parent_tool_use_id)`,
+ * making the JSON-extract index dead weight on every INSERT/UPDATE.
+ *
+ * Idempotent via `DROP INDEX IF EXISTS` — databases that never created it
+ * (older dev branches, fresh installs after this migration) are unaffected.
+ */
+export function runMigration126(db: BunDatabase): void {
+	db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_parent_tool`);
 }

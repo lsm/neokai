@@ -1819,7 +1819,7 @@ WITH top_level AS (
     origin
   FROM sdk_messages
   WHERE session_id = ?1
-    AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
+    AND parent_tool_use_id IS NULL
     AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
   ORDER BY timestamp DESC, id DESC
   LIMIT ?2
@@ -1841,11 +1841,7 @@ subagent AS (
     sm.origin AS origin
   FROM sdk_messages sm
   WHERE sm.session_id = ?1
-    AND EXISTS (
-      SELECT 1
-      FROM tool_use_ids tui
-      WHERE tui.id = json_extract(sm.sdk_message, '$.parent_tool_use_id')
-    )
+    AND sm.parent_tool_use_id IN (SELECT id FROM tool_use_ids)
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 )
 SELECT
