@@ -2136,7 +2136,7 @@ class SpaceStore {
 		triggerType: TaskScheduleTriggerType;
 		cronExpression?: string | null;
 		runAt?: number | null;
-		timezone?: string;
+		timezone?: string | null;
 	}): Promise<TaskSchedule> {
 		const spaceId = this.spaceId.value;
 		if (!spaceId) throw new Error('No space selected');

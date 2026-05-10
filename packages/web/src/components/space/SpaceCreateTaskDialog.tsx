@@ -69,19 +69,21 @@ function isValidCronExpression(expr: string): boolean {
 	const hasSeconds = parts.length === 6;
 
 	// Field validators indexed by position (0 = seconds when present, else minute)
+	// Each field accepts: single value, *, */step, range, range/step, list (values/ranges/*),
+	// and field-specific tokens (L, W, ?, month names, weekday names, nth-weekday, etc.)
 	const fieldPatterns = [
 		// seconds (optional)
-		/^([0-5]?\d|[*](?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:-[0-5]?\d)?(?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:,(?:[0-5]?\d|-[0-5]?\d|\*))+|\?)$/,
+		/^([0-5]?\d|[*](?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:-[0-5]?\d)?(?:\/[1-9]\d?)?|(?:[0-5]?\d|[*])(?:,(?:[0-5]?\d|[*]|[0-5]?\d-[0-5]?\d))+|\?)$/,
 		// minute
-		/^([0-5]?\d|[*](?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:-[0-5]?\d)?(?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:,(?:[0-5]?\d|-[0-5]?\d|\*))+|\?)$/,
+		/^([0-5]?\d|[*](?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:-[0-5]?\d)?(?:\/[1-9]\d?)?|(?:[0-5]?\d|[*])(?:,(?:[0-5]?\d|[*]|[0-5]?\d-[0-5]?\d))+|\?)$/,
 		// hour
-		/^([01]?\d|2[0-3]|[*](?:\/[1-9]\d?)?|(?:[01]?\d|2[0-3])(?:-[01]?\d|2[0-3])?(?:\/[1-9]\d?)?|(?:[01]?\d|2[0-3])(?:,(?:[01]?\d|2[0-3]|-[01]?\d|2[0-3]|\*))+|\?)$/,
+		/^([01]?\d|2[0-3]|[*](?:\/[1-9]\d?)?|(?:[01]?\d|2[0-3])(?:-[01]?\d|2[0-3])?(?:\/[1-9]\d?)?|(?:[01]?\d|2[0-3]|[*])(?:,(?:[01]?\d|2[0-3]|[*]|[01]?\d-2[0-3]|[01]?\d-[01]?\d|2[0-3]-2[0-3]))+|\?)$/,
 		// day of month
-		/^([1-9]|[12]\d|3[01]|[*](?:\/[1-9]\d?)?|(?:[1-9]|[12]\d|3[01])(?:-[1-9]|[12]\d|3[01])?(?:\/[1-9]\d?)?|(?:[1-9]|[12]\d|3[01])(?:,(?:[1-9]|[12]\d|3[01]|-[1-9]|[12]\d|3[01]|\*))+|L|L-[1-9]|L-[12]\d|L-3[01]|LW|\?|(?:[1-9]|[12]\d|3[01])W)$/,
+		/^([1-9]|[12]\d|3[01]|[*](?:\/[1-9]\d?)?|(?:[1-9]|[12]\d|3[01])(?:-[1-9]|[12]\d|3[01])?(?:\/[1-9]\d?)?|(?:[1-9]|[12]\d|3[01]|[*])(?:,(?:[1-9]|[12]\d|3[01]|[*]|[1-9]-[1-9]|[1-9]-[12]\d|[1-9]-3[01]|[12]\d-[12]\d|[12]\d-3[01]|3[01]-3[01]))+|L|L-[1-9]|L-[12]\d|L-3[01]|LW|\?|(?:[1-9]|[12]\d|3[01])W)$/,
 		// month
-		/^([1-9]|1[0-2]|[*](?:\/[1-9]\d?)?|(?:[1-9]|1[0-2])(?:-[1-9]|1[0-2])?(?:\/[1-9]\d?)?|(?:[1-9]|1[0-2])(?:,(?:[1-9]|1[0-2]|-[1-9]|1[0-2]|\*))+|JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|\?)$/i,
+		/^([1-9]|1[0-2]|[*](?:\/[1-9]\d?)?|(?:[1-9]|1[0-2])(?:-[1-9]|1[0-2])?(?:\/[1-9]\d?)?|(?:[1-9]|1[0-2]|[*])(?:,(?:[1-9]|1[0-2]|[*]|[1-9]-[1-9]|[1-9]-1[0-2]|1[0-2]-1[0-2]))+|JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|\?)$/i,
 		// weekday
-		/^([0-7]|[*](?:\/[1-9]\d?)?|(?:[0-7])(?:-[0-7])?(?:\/[1-9]\d?)?|(?:[0-7])(?:,(?:[0-7]|-[0-7]|\*))+|MON|TUE|WED|THU|FRI|SAT|SUN|L|\?|(?:MON|TUE|WED|THU|FRI|SAT|SUN)#(?:[1-5]))$/i,
+		/^([0-7]|[*](?:\/[1-9]\d?)?|(?:[0-7])(?:-[0-7])?(?:\/[1-9]\d?)?|(?:[0-7]|[*])(?:,(?:[0-7]|[*]|[0-7]-[0-7]))+|\+|\+[0-7]|\+[MON|TUE|WED|THU|FRI|SAT|SUN]|MON|TUE|WED|THU|FRI|SAT|SUN|L|\?|(?:MON|TUE|WED|THU|FRI|SAT|SUN)#(?:[1-5]|L))$/i,
 	];
 
 	for (let i = 0; i < parts.length; i++) {
@@ -109,6 +111,10 @@ function formatPreviewDate(ts: number, timezone: string): string {
 	});
 }
 
+function getBrowserTimezone(): string {
+	return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
 function getSchedulePreview(
 	triggerType: TaskScheduleTriggerType,
 	cronExpression: string,
@@ -116,7 +122,8 @@ function getSchedulePreview(
 	timezone: string
 ): string | null {
 	if (triggerType === 'at' && runAt) {
-		return `One-time run at ${formatPreviewDate(runAt, timezone)} (${timezone})`;
+		const localTz = getBrowserTimezone();
+		return `One-time run at ${formatPreviewDate(runAt, localTz)} (${localTz})`;
 	}
 	if (triggerType === 'cron' && cronExpression) {
 		const preset = CRON_PRESETS.find((p) => p.value === cronExpression);
@@ -200,7 +207,7 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
 					triggerType,
 					cronExpression: triggerType === 'cron' ? cronExpression.trim() : null,
 					runAt: triggerType === 'at' ? runAt : null,
-					timezone,
+					timezone: triggerType === 'cron' ? timezone : null,
 				});
 				toast.success(`Scheduled task "${schedule.title}" created`);
 			} else {
@@ -315,7 +322,12 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
 											name="triggerType"
 											value={opt.value}
 											checked={triggerType === opt.value}
-											onChange={() => setTriggerType(opt.value)}
+											onChange={() => {
+												setTriggerType(opt.value);
+												if (opt.value === 'at') {
+													setTimezone('UTC');
+												}
+											}}
 											class="sr-only"
 										/>
 										<span>{opt.label}</span>
