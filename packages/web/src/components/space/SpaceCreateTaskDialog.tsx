@@ -91,55 +91,6 @@ function isValidCronExpression(expr: string): boolean {
 	return true;
 }
 
-/**
- * Parse a datetime-local string as an epoch timestamp in the given IANA timezone.
- *
- * datetime-local values have no timezone offset, so `new Date(value)` interprets
- * them in the browser's local timezone. This helper treats the value as if it
- * were in `timezone`, then returns the corresponding UTC instant.
- */
-function parseDatetimeInTimezone(value: string, timezone: string): number {
-	// Use Intl.DateTimeFormat to parse the wall-clock time in the target timezone
-	const [datePart, timePart] = value.split('T');
-	const [year, month, day] = datePart.split('-').map(Number);
-	const [hour, minute] = timePart.split(':').map(Number);
-
-	// Construct a date string that the target timezone would interpret as the given wall-clock time
-	// We use the 'en-US' locale with the target timezone to format, then parse back
-	const candidate = new Date(Date.UTC(year, month - 1, day, hour, minute));
-
-	// Get the timezone offset for the candidate date in the target timezone
-	const formatter = new Intl.DateTimeFormat('en-US', {
-		timeZone: timezone,
-		year: 'numeric',
-		month: '2-digit',
-		day: '2-digit',
-		hour: '2-digit',
-		minute: '2-digit',
-		hour12: false,
-	});
-
-	const parts = formatter.formatToParts(candidate);
-	const getPart = (type: string) => {
-		const p = parts.find((part) => part.type === type);
-		return p ? parseInt(p.value, 10) : 0;
-	};
-
-	const tzYear = getPart('year');
-	const tzMonth = getPart('month');
-	const tzDay = getPart('day');
-	const tzHour = getPart('hour');
-	const tzMinute = getPart('minute');
-
-	// Calculate offset: how much does candidate UTC need to shift so that
-	// the target timezone reads the desired wall-clock time?
-	const offsetMs =
-		Date.UTC(year, month - 1, day, hour, minute) -
-		Date.UTC(tzYear, tzMonth - 1, tzDay, tzHour, tzMinute);
-
-	return candidate.getTime() + offsetMs;
-}
-
 function toDatetimeLocalValue(ts: number): string {
 	const d = new Date(ts);
 	const pad = (n: number) => String(n).padStart(2, '0');
@@ -381,7 +332,7 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
 									value={runAt ? toDatetimeLocalValue(runAt) : ''}
 									onInput={(e) => {
 										const val = (e.target as HTMLInputElement).value;
-										setRunAt(val ? parseDatetimeInTimezone(val, timezone) : null);
+										setRunAt(val ? new Date(val).getTime() : null);
 									}}
 									class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
 										focus:outline-none focus:border-blue-500 text-sm"
