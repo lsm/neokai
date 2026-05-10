@@ -530,7 +530,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				return jsonResult({
 					success: false,
 					error:
-						`Task ID mismatch: you can only update the task bound to this session (). ` +
+						`Task ID mismatch: you can only update the task bound to this session (${taskId}). ` +
 						`To update other tasks, use the space_agent update_task tool.`,
 				});
 			}
@@ -549,7 +549,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			}
 
 			const task = taskRepo.getTask(taskId);
-			if (!task) return jsonResult({ success: false, error: `Task not found: ` });
+			if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
 
 			try {
 				const updated = await taskManager.updateTask(taskId, {
