@@ -91,6 +91,17 @@ export class StateManager {
 	}
 
 	/**
+	 * Expose the client event gateway so ClientEventBridge can share it.
+	 *
+	 * This is a temporary seam while forwarding migrates out of StateManager.
+	 * Once all forwarding lives in the bridge, the gateway can be constructed
+	 * in DaemonApp and injected into both StateManager and ClientEventBridge.
+	 */
+	getClientEventGateway(): IClientEventGateway {
+		return this.clientEvents;
+	}
+
+	/**
 	 * Setup EventBus listeners for internal events
 	 *
 	 * ARCHITECTURE: Event-sourced state management
@@ -235,196 +246,14 @@ export class StateManager {
 		});
 
 		// =====================================================================
-		// Room event bridge: forward DaemonHub room events → WebSocket clients
+		// Space event bridge — migrated to ClientEventBridge
 		//
-		// DaemonHub (TypedHub/InProcessTransportBus) is internal-only and never
-		// reaches frontend WebSocket clients directly. Each event below must be
-		// forwarded to messageHub so the router delivers it to the room channel
-		// (clients that called hub.joinChannel(`room:${roomId}`)).
-		// =====================================================================
-
-		// Task status changes — main real-time sync event
-		this.eventBus.on('room.task.update', (data) => {
-			this.messageHub.event('room.task.update', data, {
-				channel: data.sessionId, // 'room:${roomId}'
-			});
-		});
-
-		// Full room overview (sessions + tasks) — sent on join and after broad changes
-		this.eventBus.on('room.overview', (data) => {
-			this.messageHub.event('room.overview', data, {
-				channel: data.sessionId, // 'room:${roomId}'
-			});
-		});
-
-		// Runtime state changes (running/paused/stopped)
-		this.eventBus.on('room.runtime.stateChanged', (data) => {
-			this.messageHub.event('room.runtime.stateChanged', data, {
-				channel: data.sessionId, // 'room:${roomId}'
-			});
-		});
-
-		// Goal lifecycle events
-		this.eventBus.on('goal.created', (data) => {
-			this.messageHub.event('goal.created', data, {
-				channel: data.sessionId, // 'room:${roomId}'
-			});
-		});
-
-		this.eventBus.on('goal.completed', (data) => {
-			this.messageHub.event('goal.completed', data, {
-				channel: data.sessionId, // 'room:${roomId}'
-			});
-		});
-
-		this.eventBus.on('goal.progressUpdated', (data) => {
-			this.messageHub.event('goal.progressUpdated', data, {
-				channel: data.sessionId, // 'room:${roomId}'
-			});
-		});
-
-		// =====================================================================
-		// Space event bridge: forward DaemonHub space events → WebSocket clients
+		// Pure forwarding handlers for space.*, spaceAgent.*, and
+		// spaceWorkflow.* events have been extracted into ClientEventBridge
+		// so StateManager no longer owns repetitive daemon-to-client forwarding.
 		//
-		// Mirrors the room event bridge above. Space events emitted by RPC
-		// handlers travel through DaemonHub (InProcessTransportBus, internal
-		// only) and must be forwarded to messageHub so the router delivers
-		// them to WebSocket clients.
-		//
-		// Channel conventions:
-		//   - Broad space events (space.*, space.task.*, space.workflowRun.*,
-		//     spaceWorkflow.*): sessionId is 'global' — delivered to all
-		//     subscribers via the global channel.
-		//   - spaceAgent.* events: sessionId is 'space:${spaceId}' — delivered
-		//     only to clients that called joinChannel('space:${spaceId}').
+		// See: packages/daemon/src/lib/client-event-bridge.ts
 		// =====================================================================
-
-		// Space lifecycle events (global channel)
-		this.eventBus.on('space.created', (data) => {
-			this.messageHub.event('space.created', data, {
-				channel: data.sessionId, // 'global'
-			});
-		});
-
-		this.eventBus.on('space.updated', (data) => {
-			this.messageHub.event('space.updated', data, {
-				channel: data.sessionId, // 'global'
-			});
-		});
-
-		this.eventBus.on('space.archived', (data) => {
-			this.messageHub.event('space.archived', data, {
-				channel: data.sessionId, // 'global'
-			});
-		});
-
-		this.eventBus.on('space.deleted', (data) => {
-			this.messageHub.event('space.deleted', data, {
-				channel: data.sessionId, // 'global'
-			});
-		});
-
-		// Space task events (global channel)
-		this.eventBus.on('space.task.created', (data) => {
-			this.messageHub.event('space.task.created', data, {
-				channel: data.sessionId, // 'global'
-			});
-		});
-
-		this.eventBus.on('space.task.updated', (data) => {
-			this.messageHub.event('space.task.updated', data, {
-				channel: data.sessionId, // 'global'
-			});
-		});
-
-		// Space schedule events (global channel)
-		this.eventBus.on('space.schedule.updated', (data) => {
-			this.messageHub.event('space.schedule.updated', data, {
-				channel: data.sessionId, // 'global'
-			});
-		});
-
-		// Space workflow run events (global channel)
-		this.eventBus.on('space.workflowRun.created', (data) => {
-			this.messageHub.event('space.workflowRun.created', data, {
-				channel: data.sessionId, // 'global'
-			});
-		});
-
-		this.eventBus.on('space.workflowRun.updated', (data) => {
-			this.messageHub.event('space.workflowRun.updated', data, {
-				channel: data.sessionId, // 'global'
-			});
-		});
-
-		this.eventBus.on('space.gateData.updated', (data) => {
-			this.messageHub.event('space.gateData.updated', data, {
-				channel: data.sessionId, // 'global'
-			});
-		});
-
-		// Space agent events (space-scoped channel: 'space:${spaceId}')
-		this.eventBus.on('spaceAgent.created', (data) => {
-			this.messageHub.event('spaceAgent.created', data, {
-				channel: data.sessionId, // 'space:${spaceId}'
-			});
-		});
-
-		this.eventBus.on('spaceAgent.updated', (data) => {
-			this.messageHub.event('spaceAgent.updated', data, {
-				channel: data.sessionId, // 'space:${spaceId}'
-			});
-		});
-
-		this.eventBus.on('spaceAgent.deleted', (data) => {
-			this.messageHub.event('spaceAgent.deleted', data, {
-				channel: data.sessionId, // 'space:${spaceId}'
-			});
-		});
-
-		// Space session group events (space-scoped channel: 'space:${spaceId}')
-		this.eventBus.on('spaceSessionGroup.created', (data) => {
-			this.messageHub.event('spaceSessionGroup.created', data, {
-				channel: data.sessionId, // 'space:${spaceId}'
-			});
-		});
-
-		this.eventBus.on('spaceSessionGroup.memberAdded', (data) => {
-			this.messageHub.event('spaceSessionGroup.memberAdded', data, {
-				channel: data.sessionId, // 'space:${spaceId}'
-			});
-		});
-
-		this.eventBus.on('spaceSessionGroup.memberUpdated', (data) => {
-			this.messageHub.event('spaceSessionGroup.memberUpdated', data, {
-				channel: data.sessionId, // 'space:${spaceId}'
-			});
-		});
-
-		this.eventBus.on('spaceSessionGroup.deleted', (data) => {
-			this.messageHub.event('spaceSessionGroup.deleted', data, {
-				channel: data.sessionId, // 'space:${spaceId}'
-			});
-		});
-
-		// Space workflow definition events (global channel)
-		this.eventBus.on('spaceWorkflow.created', (data) => {
-			this.messageHub.event('spaceWorkflow.created', data, {
-				channel: data.sessionId, // 'global'
-			});
-		});
-
-		this.eventBus.on('spaceWorkflow.updated', (data) => {
-			this.messageHub.event('spaceWorkflow.updated', data, {
-				channel: data.sessionId, // 'global'
-			});
-		});
-
-		this.eventBus.on('spaceWorkflow.deleted', (data) => {
-			this.messageHub.event('spaceWorkflow.deleted', data, {
-				channel: data.sessionId, // 'global'
-			});
-		});
 	}
 
 	/**

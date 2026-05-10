@@ -7,6 +7,7 @@ import { SessionManager } from './lib/session-manager';
 import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
 import { StateManager } from './lib/state-manager';
+import { createClientEventBridge } from './lib/client-event-bridge';
 import { MessageHub, MessageHubRouter } from '@neokai/shared';
 import { createDaemonHub } from './lib/daemon-hub';
 import {
@@ -327,6 +328,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		db,
 		internalEventBus
 	);
+
+	// Initialize ClientEventBridge — forwards selected DaemonHub events to
+	// WebSocket clients via ClientEventGateway.  This extracts the repetitive
+	// room/space forwarding out of StateManager.
+	const clientEventGateway = stateManager.getClientEventGateway();
+	const clientEventBridge = createClientEventBridge(eventBus, clientEventGateway);
+	clientEventBridge.start();
 
 	// Initialize GitHub service if configured
 	let gitHubService: GitHubService | null = null;

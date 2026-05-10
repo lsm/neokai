@@ -16,7 +16,7 @@ Neokai currently has several overlapping messaging/event mechanisms:
 - direct service-to-session delivery paths such as `SpaceGitHubService.injectTaskAgent(...)`;
 - storage-local eventing via `ReactiveDatabase`.
 
-This makes the event-driven architecture hard to reason about. Developers need to know which bus/hub/sink to use, whether a message is internal or client-visible, whether a handler is awaited, and whether `sessionId` is an actual session or a channel string such as `room:${roomId}` or `space:${spaceId}`.
+This makes the event-driven architecture hard to reason about. Developers need to know which bus/hub/sink to use, whether a message is internal or client-visible, whether a handler is awaited, and whether `sessionId` is an actual session or a channel string such as `space:${spaceId}`.
 
 The target model should be semantic and boring:
 
@@ -47,7 +47,7 @@ Supporting services:
 
 1. **Events are facts**. Event names should be past tense or state-change facts, for example `space.task.blocked`, `session.created`, `externalEvent.published`.
 2. **Commands request actions**. Command names should be imperative/action-oriented, for example `agent.message.inject`, `space.workflow.resume`, `github.repo.watch`.
-3. **Queries read state**. Query names should return data and avoid side effects, for example `space.workflowRun.get`, `room.tasks.list`.
+3. **Queries read state**. Query names should return data and avoid side effects, for example `space.workflowRun.get`, `space.tasks.list`.
 4. **No silent failures**. Handler errors must be logged, returned, or surfaced through a failure result/event.
 5. **Publish semantics are explicit and safe by default**. `publish(...)` waits for local internal handlers to settle; fire-and-forget must use the explicitly named `publishAsync(...)` API.
 6. **Channels are first-class**. Do not overload `sessionId` as a generic channel field in new APIs.
@@ -136,7 +136,6 @@ New code should construct channels through helpers rather than inline strings.
 export type EventChannel =
   | { kind: 'global' }
   | { kind: 'session'; sessionId: string }
-  | { kind: 'room'; roomId: string }
   | { kind: 'space'; spaceId: string }
   | { kind: 'workflowRun'; spaceId: string; workflowRunId: string }
   | { kind: 'task'; spaceId: string; taskId: string };
@@ -144,7 +143,6 @@ export type EventChannel =
 export const Channels = {
   global: (): EventChannel => ({ kind: 'global' }),
   session: (sessionId: string): EventChannel => ({ kind: 'session', sessionId }),
-  room: (roomId: string): EventChannel => ({ kind: 'room', roomId }),
   space: (spaceId: string): EventChannel => ({ kind: 'space', spaceId }),
   workflowRun: (spaceId: string, workflowRunId: string): EventChannel => ({
     kind: 'workflowRun',
@@ -160,7 +158,6 @@ During migration, channels can serialize to the existing route strings:
 ```text
 global
 session:${sessionId} or the legacy bare session id
-room:${roomId}
 space:${spaceId}
 workflowRun:${spaceId}:${workflowRunId}
 task:${spaceId}:${taskId}
@@ -261,7 +258,6 @@ Recommended patterns:
 ```text
 session.created
 session.updated
-room.task.updated
 space.task.blocked
 space.workflowRun.completed
 externalEvent.published
@@ -283,14 +279,12 @@ Avoid one giant event map file. Compose the internal map from domain-owned maps.
 
 ```ts
 export interface SessionEvents { /* session.* */ }
-export interface RoomEvents { /* room.* */ }
 export interface SpaceEvents { /* space.* */ }
 export interface ExternalEvents { /* externalEvent.* */ }
 export interface GitHubEvents { /* github.* */ }
 export interface StorageEvents { /* storage.* */ }
 
 export type InternalEventMap = SessionEvents
-  & RoomEvents
   & SpaceEvents
   & ExternalEvents
   & GitHubEvents
@@ -313,12 +307,6 @@ const CLIENT_EVENT_BRIDGE = defineClientEventBridge<InternalEventMap, ClientEven
       workflowRunId: event.payload.workflowRunId,
       status: event.payload.status,
     }),
-  },
-
-  'room.task.updated': {
-    clientEvent: 'room.task.updated',
-    channel: (event) => Channels.room(event.payload.roomId),
-    transform: (event) => event.payload,
   },
 });
 ```
@@ -447,7 +435,7 @@ Tasks:
 2. Route state-cache updates through `InternalEventBus` subscriptions.
 3. Ensure side effects such as agent notification, audit logging, and client delivery are separate subscribers.
 4. Keep Live Query as the reactive read-model/query update mechanism and wire it to repository/projection changes rather than treating it as an event bus.
-5. Add projection-focused tests for session, room, space, and workflow state.
+5. Add projection-focused tests for session, space, and workflow state.
 
 Exit criteria:
 
@@ -480,7 +468,7 @@ Goal: prepare for multi-source external events without copying GitHub-specific p
 
 Tasks:
 
-1. Split shared GitHub ingress concerns from room/space routing: webhook verification, polling, raw normalization.
+1. Split shared GitHub ingress concerns from space routing: webhook verification, polling, raw normalization.
 2. Rename the proposed external event design from generic `EventBus` to `ExternalEventService`.
 3. Add `ExternalEventStore` for source dedupe and delivery lifecycle.
 4. Add `ExternalEventTaskResolver` for task enrichment.
