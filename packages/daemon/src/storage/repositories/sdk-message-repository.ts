@@ -656,11 +656,18 @@ export class SDKMessageRepository {
 	 *
 	 * Used by rewind to look up a specific checkpoint/message.
 	 *
-	 * Filters on `json_extract(sdk_message, '$.uuid')` directly so SQLite can
-	 * use `idx_sdk_messages_uuid_status` (covering: session_id, send_status,
-	 * uuid-expr) instead of materialising every user message and scanning in
-	 * JS. On busy sessions with tens of thousands of user rows the JS-scan
-	 * shape was ~400 ms; the indexed lookup is sub-millisecond.
+	 * The previous implementation loaded every user row for the session and
+	 * scanned in JS — O(N) per lookup. The current form pushes the UUID
+	 * predicate into SQL with `LIMIT 1` so SQLite stops at the first match.
+	 *
+	 * Index use: with the predicate set we have here (no `send_status`),
+	 * SQLite can only use the `session_id` prefix of
+	 * `idx_sdk_messages_uuid_status` — not a full 3-column seek. The win
+	 * comes from partition-pruning to one session plus early termination
+	 * via `LIMIT 1`, not from a UUID-column index lookup. We deliberately
+	 * don't add a `send_status` predicate because rewind callers don't
+	 * care about send_status (a pending user message is still a valid
+	 * rewind target). Benchmark: ~400ms → sub-ms on busy sessions.
 	 *
 	 * `ORDER BY timestamp ASC LIMIT 1` matches the previous implementation's
 	 * behavior of returning the earliest matching row when (unexpectedly)
