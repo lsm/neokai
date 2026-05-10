@@ -2132,6 +2132,11 @@ class SpaceStore {
 
 	/**
 	 * List schedules for the current space, optionally filtered by status.
+	 *
+	 * Captures the spaceId before the await and re-checks it after; if the user
+	 * has navigated away to another space while the request was in flight, the
+	 * stale response is dropped so the new space's schedule state isn't
+	 * overwritten.
 	 */
 	async listSchedules(status?: TaskScheduleStatus): Promise<TaskSchedule[]> {
 		const spaceId = this.spaceId.value;
@@ -2144,6 +2149,8 @@ class SpaceStore {
 			spaceId,
 			status,
 		});
+		// Drop the response if the active space changed while we were awaiting.
+		if (this.spaceId.value !== spaceId) return schedules;
 		this.schedules.value = schedules;
 		return schedules;
 	}
@@ -2152,11 +2159,14 @@ class SpaceStore {
 	 * Pause a schedule.
 	 */
 	async pauseSchedule(scheduleId: string): Promise<TaskSchedule> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
 
 		const { schedule } = await hub.request<{ schedule: TaskSchedule }>('taskSchedule.pause', {
 			scheduleId,
+			spaceId,
 		});
 		this.schedules.value = this.schedules.value.map((s) => (s.id === scheduleId ? schedule : s));
 		return schedule;
@@ -2166,11 +2176,14 @@ class SpaceStore {
 	 * Resume a paused schedule.
 	 */
 	async resumeSchedule(scheduleId: string): Promise<TaskSchedule> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
 
 		const { schedule } = await hub.request<{ schedule: TaskSchedule }>('taskSchedule.resume', {
 			scheduleId,
+			spaceId,
 		});
 		this.schedules.value = this.schedules.value.map((s) => (s.id === scheduleId ? schedule : s));
 		return schedule;
@@ -2180,10 +2193,12 @@ class SpaceStore {
 	 * Delete a schedule.
 	 */
 	async deleteSchedule(scheduleId: string): Promise<void> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
 
-		await hub.request('taskSchedule.delete', { scheduleId });
+		await hub.request('taskSchedule.delete', { scheduleId, spaceId });
 		this.schedules.value = this.schedules.value.filter((s) => s.id !== scheduleId);
 	}
 }

@@ -234,6 +234,47 @@ export class TaskScheduleRepository {
 			);
 	}
 
+	/**
+	 * Compare-and-swap variant of `updateAfterFire`: only applies the update
+	 * when the row's `pending_job_id` still equals `expectedPendingJobId`. This
+	 * lets the fire handler detect concurrent pause/delete/reschedule that
+	 * happened between the initial read and the post-task commit, and roll back
+	 * the in-flight transaction so we don't overwrite the new state.
+	 *
+	 * Returns true when the row was updated, false when the precondition failed
+	 * (status changed, schedule deleted, pending_job_id moved).
+	 */
+	updateAfterFireIfPending(
+		id: string,
+		expectedPendingJobId: string,
+		opts: {
+			lastCreatedTaskId: string;
+			lastRunAt: number;
+			nextRunAt: number | null;
+			status: TaskScheduleStatus;
+			pendingJobId: string | null;
+		}
+	): boolean {
+		const result = this.db
+			.prepare(
+				`UPDATE task_schedules
+				 SET last_created_task_id = ?, last_run_at = ?, next_run_at = ?,
+				     status = ?, pending_job_id = ?, updated_at = ?
+				 WHERE id = ? AND pending_job_id = ?`
+			)
+			.run(
+				opts.lastCreatedTaskId,
+				opts.lastRunAt,
+				opts.nextRunAt,
+				opts.status,
+				opts.pendingJobId,
+				Date.now(),
+				id,
+				expectedPendingJobId
+			);
+		return result.changes > 0;
+	}
+
 	// ─── Delete ───────────────────────────────────────────────────────────────────
 
 	delete(id: string): boolean {

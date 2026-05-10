@@ -479,7 +479,11 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 		return map;
 	}, [tasks]);
 
-	if (tasks.length === 0) {
+	// Empty-state guard is tab-aware: the Scheduled tab can have content even
+	// when `tasks` is empty (a freshly-created schedule that hasn't fired yet).
+	// Falling through to the global "No tasks yet" placeholder would hide the
+	// schedule list, leaving users with no way to view/manage their schedules.
+	if (tasks.length === 0 && activeTab !== 'scheduled') {
 		return (
 			<div class="w-full px-8 flex flex-col items-center justify-center py-16 text-center">
 				<svg

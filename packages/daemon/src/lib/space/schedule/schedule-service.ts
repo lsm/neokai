@@ -156,12 +156,15 @@ export class ScheduleService {
 	 * Update a schedule's template and/or trigger config.
 	 *
 	 * Rejects edits that would leave the schedule in an unfireable state — in
-	 * particular, setting `cronExpression: null` on a `cron` schedule. If the
-	 * timing fields change and the schedule is `active`, the existing pending
-	 * job is cancelled and a fresh one enqueued.
+	 * particular, setting `cronExpression: null` on a `cron` schedule, or
+	 * applying timing fields whose combined result yields no next run (e.g. an
+	 * invalid timezone). If the timing fields change and the schedule is
+	 * `active`, the existing pending job is cancelled and a fresh one is
+	 * enqueued **inside a single SQLite transaction**, so an enqueue failure
+	 * cannot orphan the schedule with no pending job.
 	 */
 	updateSchedule(scheduleId: string, input: UpdateScheduleInput): TaskSchedule {
-		const { scheduleRepo, jobQueue } = this.deps;
+		const { db, scheduleRepo, jobQueue } = this.deps;
 
 		const existing = scheduleRepo.getById(scheduleId);
 		if (!existing) throw new Error(`Schedule not found: ${scheduleId}`);
@@ -188,52 +191,74 @@ export class ScheduleService {
 			if (input.runAt < Date.now()) throw new Error('runAt must be in the future');
 		}
 
-		// Apply field updates (does not touch pendingJobId / nextRunAt unless requested).
-		scheduleRepo.update(scheduleId, {
-			title: input.title,
-			description: input.description,
-			priority: input.priority,
-			preferredWorkflowId: input.preferredWorkflowId,
-			labels: input.labels,
-			cronExpression: input.cronExpression,
-			runAt: input.runAt,
-			timezone: input.timezone,
-		});
-
-		const updated = scheduleRepo.getById(scheduleId) as TaskSchedule;
-
-		// If timing changed and the schedule is active, reschedule.
 		const timingChanged =
 			input.cronExpression !== undefined ||
 			input.runAt !== undefined ||
 			input.timezone !== undefined;
 
-		if (updated.status === 'active' && timingChanged) {
-			if (updated.pendingJobId) jobQueue.deleteJob(updated.pendingJobId);
+		// Pre-compute the post-update view so we can validate next-run *before*
+		// committing anything. If timing changed, derive the merged trigger
+		// fields and confirm we can compute a next run; if not, fail fast and
+		// leave the schedule untouched so the caller can correct the input.
+		const merged = {
+			triggerType: existing.triggerType,
+			cronExpression:
+				input.cronExpression !== undefined ? input.cronExpression : existing.cronExpression,
+			runAt: input.runAt !== undefined ? input.runAt : existing.runAt,
+			timezone: input.timezone ?? existing.timezone,
+		};
 
-			const tz = updated.timezone;
-			let nextRunAt: number | null;
-			if (updated.triggerType === 'cron' && updated.cronExpression) {
-				nextRunAt = getNextRunAt(updated.cronExpression, tz);
-			} else if (updated.triggerType === 'at' && updated.runAt) {
-				nextRunAt = updated.runAt;
+		let plannedNextRunAt: number | null = null;
+		if (timingChanged && existing.status === 'active') {
+			if (merged.triggerType === 'cron' && merged.cronExpression) {
+				plannedNextRunAt = getNextRunAt(merged.cronExpression, merged.timezone);
+				if (plannedNextRunAt === null) {
+					throw new Error(
+						`Could not compute next run from cronExpression "${merged.cronExpression}" with timezone "${merged.timezone}"`
+					);
+				}
+			} else if (merged.triggerType === 'at' && merged.runAt) {
+				plannedNextRunAt = merged.runAt;
 			} else {
-				nextRunAt = null;
+				throw new Error(
+					'Cannot apply update: resulting trigger configuration has no next run time.'
+				);
 			}
-
-			let pendingJobId: string | null = null;
-			if (nextRunAt !== null) {
-				const job = jobQueue.enqueue({
-					queue: TASK_SCHEDULE_FIRE,
-					payload: { scheduleId } satisfies TaskScheduleFirePayload,
-					runAt: nextRunAt,
-				});
-				pendingJobId = job.id;
-			}
-
-			scheduleRepo.update(scheduleId, { nextRunAt: nextRunAt ?? undefined });
-			scheduleRepo.updatePendingJobId(scheduleId, pendingJobId);
 		}
+
+		// Wrap field-update + cancel-old + enqueue-new + link-new in a single
+		// transaction. If `jobQueue.enqueue` throws (e.g. a transient DB error),
+		// the rollback restores the prior pending job linkage so the schedule
+		// continues to fire on its original cadence.
+		db.transaction(() => {
+			scheduleRepo.update(scheduleId, {
+				title: input.title,
+				description: input.description,
+				priority: input.priority,
+				preferredWorkflowId: input.preferredWorkflowId,
+				labels: input.labels,
+				cronExpression: input.cronExpression,
+				runAt: input.runAt,
+				timezone: input.timezone,
+			});
+
+			if (existing.status === 'active' && timingChanged) {
+				if (existing.pendingJobId) jobQueue.deleteJob(existing.pendingJobId);
+
+				let pendingJobId: string | null = null;
+				if (plannedNextRunAt !== null) {
+					const job = jobQueue.enqueue({
+						queue: TASK_SCHEDULE_FIRE,
+						payload: { scheduleId } satisfies TaskScheduleFirePayload,
+						runAt: plannedNextRunAt,
+					});
+					pendingJobId = job.id;
+				}
+
+				scheduleRepo.update(scheduleId, { nextRunAt: plannedNextRunAt ?? undefined });
+				scheduleRepo.updatePendingJobId(scheduleId, pendingJobId);
+			}
+		})();
 
 		return scheduleRepo.getById(scheduleId) as TaskSchedule;
 	}
@@ -258,8 +283,16 @@ export class ScheduleService {
 
 	/**
 	 * Resume a paused schedule — recomputes nextRunAt, enqueues a fresh fire job.
-	 * For an `at` trigger whose `runAt` already passed, the schedule transitions
-	 * to `completed` instead.
+	 *
+	 * Behavior depends on triggerType:
+	 *   - `at` whose runAt already passed → transition to `completed` (one-shot
+	 *     schedules are intentionally terminal once their target time is in the
+	 *     past).
+	 *   - `cron` that cannot produce a next run (e.g. invalid timezone or
+	 *     malformed expression persisted via a path that didn't validate) →
+	 *     throw, leaving the schedule paused so the operator can fix the
+	 *     config. We do NOT silently complete a recurring schedule, because that
+	 *     would terminally end its lifecycle on a recoverable error.
 	 */
 	resumeSchedule(scheduleId: string): TaskSchedule {
 		const { scheduleRepo, jobQueue } = this.deps;
@@ -273,6 +306,11 @@ export class ScheduleService {
 		let nextRunAt: number | null;
 		if (schedule.triggerType === 'cron' && schedule.cronExpression) {
 			nextRunAt = getNextRunAt(schedule.cronExpression, tz);
+			if (nextRunAt === null) {
+				throw new Error(
+					`Cannot resume cron schedule: no next run computable from "${schedule.cronExpression}" with timezone "${tz}". Fix the trigger config and try again.`
+				);
+			}
 		} else if (schedule.triggerType === 'at' && schedule.runAt) {
 			nextRunAt = schedule.runAt < Date.now() ? null : schedule.runAt;
 		} else {
@@ -285,19 +323,16 @@ export class ScheduleService {
 			return scheduleRepo.getById(scheduleId) as TaskSchedule;
 		}
 
-		let pendingJobId: string | null = null;
-		if (nextRunAt !== null) {
-			const job = jobQueue.enqueue({
-				queue: TASK_SCHEDULE_FIRE,
-				payload: { scheduleId } satisfies TaskScheduleFirePayload,
-				runAt: nextRunAt,
-			});
-			pendingJobId = job.id;
-		}
+		// At this point, nextRunAt is non-null for both cron and at paths.
+		const job = jobQueue.enqueue({
+			queue: TASK_SCHEDULE_FIRE,
+			payload: { scheduleId } satisfies TaskScheduleFirePayload,
+			runAt: nextRunAt as number,
+		});
 
 		scheduleRepo.update(scheduleId, { nextRunAt: nextRunAt ?? undefined });
-		scheduleRepo.updatePendingJobId(scheduleId, pendingJobId);
-		scheduleRepo.updateStatus(scheduleId, nextRunAt !== null ? 'active' : 'completed');
+		scheduleRepo.updatePendingJobId(scheduleId, job.id);
+		scheduleRepo.updateStatus(scheduleId, 'active');
 		return scheduleRepo.getById(scheduleId) as TaskSchedule;
 	}
 

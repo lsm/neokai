@@ -608,11 +608,30 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			}
 
 			// Pass 2: due schedules with no pendingJobId at all (e.g. crashed mid-create).
-			// `listActiveDue(now)` returns schedules whose nextRunAt <= now.
-			const dueSchedules = taskScheduleRepo.listActiveDue(now);
-			for (const schedule of dueSchedules) {
-				if (schedule.pendingJobId) continue; // handled by pass 1
-				reseedSchedule(schedule.id, schedule.nextRunAt);
+			// `listActiveDue(now)` returns schedules whose nextRunAt <= now. The repo
+			// applies a default page size, so loop until a page comes back smaller
+			// than the limit — otherwise a backlog of >100 due schedules would only
+			// be partially recovered until the next restart.
+			const RECOVERY_PAGE_SIZE = 200;
+			let totalReseeded = 0;
+			while (true) {
+				const dueSchedules = taskScheduleRepo.listActiveDue(now, RECOVERY_PAGE_SIZE);
+				let pageReseeded = 0;
+				for (const schedule of dueSchedules) {
+					if (schedule.pendingJobId) continue; // handled by pass 1
+					reseedSchedule(schedule.id, schedule.nextRunAt);
+					pageReseeded++;
+				}
+				totalReseeded += pageReseeded;
+				// Drained the queue when either the page is short or none of the
+				// returned rows actually needed re-seeding (all already had a
+				// pending job linked, e.g. set by pass 1).
+				if (dueSchedules.length < RECOVERY_PAGE_SIZE || pageReseeded === 0) break;
+			}
+			if (totalReseeded > 0) {
+				logInfo('[Daemon] Re-seeded due schedules with no pending job', {
+					count: totalReseeded,
+				});
 			}
 		} catch (err) {
 			logError('[Daemon] Task schedule startup re-seed failed (non-fatal):', err);

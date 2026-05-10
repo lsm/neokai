@@ -197,6 +197,69 @@ describe('handleTaskScheduleFire', () => {
 		expect(after?.lastCreatedTaskId).toBeNull();
 	});
 
+	it('skips when host space is paused (no task created)', async () => {
+		const scheduleId = createCronSchedule();
+		scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
+		spaceRepo.pauseSpace(spaceId);
+
+		const job = makeJob({ payload: { scheduleId } });
+		const result = await handleTaskScheduleFire(job, makeDeps());
+
+		expect(result.skipped).toBe(true);
+		expect(result.skipReason).toBe('space_not_active');
+		expect(taskRepo.listBySpace(spaceId)).toHaveLength(0);
+	});
+
+	it('skips when host space is stopped (no task created)', async () => {
+		const scheduleId = createCronSchedule();
+		scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
+		spaceRepo.stopSpace(spaceId);
+
+		const job = makeJob({ payload: { scheduleId } });
+		const result = await handleTaskScheduleFire(job, makeDeps());
+
+		expect(result.skipped).toBe(true);
+		expect(result.skipReason).toBe('space_not_active');
+		expect(taskRepo.listBySpace(spaceId)).toHaveLength(0);
+	});
+
+	it('rolls back when a concurrent pause invalidates pendingJobId mid-fire', async () => {
+		const scheduleId = createCronSchedule();
+		scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
+
+		// Simulate the compare-and-swap path by injecting a scheduleRepo wrapper
+		// that returns false from `updateAfterFireIfPending` — the handler must
+		// then throw ScheduleSupersededError, the surrounding transaction
+		// rolls back, and we surface a `job_superseded` skip.
+		//
+		// (We can't simulate a true concurrent pause from another connection
+		// because bun:sqlite uses a single in-process handle; mutations inside
+		// the open transaction would just be rolled back too. Returning false
+		// from the CAS exercises the same control flow.)
+		const wrappedScheduleRepo = new Proxy(scheduleRepo, {
+			get(target, prop, recv) {
+				if (prop === 'updateAfterFireIfPending') {
+					return () => false;
+				}
+				return Reflect.get(target, prop, recv);
+			},
+		}) as typeof scheduleRepo;
+
+		const result = await handleTaskScheduleFire(makeJob({ payload: { scheduleId } }), {
+			...makeDeps(),
+			scheduleRepo: wrappedScheduleRepo,
+		});
+
+		expect(result.skipped).toBe(true);
+		expect(result.skipReason).toBe('job_superseded');
+		// Transaction was rolled back — the inserted task is gone.
+		expect(taskRepo.listBySpace(spaceId)).toHaveLength(0);
+		// Schedule's bookkeeping fields were not advanced.
+		const after = scheduleRepo.getById(scheduleId);
+		expect(after?.lastCreatedTaskId).toBeNull();
+		expect(after?.lastRunAt).toBeNull();
+	});
+
 	it('skips on retry once pendingJobId has been advanced past this job (idempotency fence)', async () => {
 		const scheduleId = createCronSchedule();
 		scheduleRepo.updatePendingJobId(scheduleId, 'job-1');

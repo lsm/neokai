@@ -27,6 +27,20 @@ import type { SpaceTaskRepository } from '../../storage/repositories/space-task-
 
 const log = new Logger('task-schedule-fire-handler');
 
+/**
+ * Internal sentinel thrown inside the fire transaction when the
+ * compare-and-swap on `pending_job_id` fails — i.e. a concurrent
+ * pause/delete/reschedule invalidated our claim on this fire. The handler
+ * catches this and converts it to a normal `job_superseded` skip; the queue
+ * does not retry it.
+ */
+class ScheduleSupersededError extends Error {
+	constructor(scheduleId: string, jobId: string) {
+		super(`Schedule ${scheduleId} superseded; job ${jobId} no longer the pending fire`);
+		this.name = 'ScheduleSupersededError';
+	}
+}
+
 export interface TaskScheduleFirePayload extends Record<string, unknown> {
 	scheduleId: string;
 }
@@ -68,14 +82,18 @@ export async function handleTaskScheduleFire(
 		};
 	}
 
-	// Guard: skip if the host space is archived or missing. Without this an
-	// archived space would still spawn fresh tasks every cron tick.
+	// Guard: skip if the host space is archived, missing, paused, or stopped.
+	// Without this, a non-active space would still spawn fresh tasks every cron
+	// tick, violating the space lifecycle contract (paused/stopped must prevent
+	// new scheduled work).
 	const space = spaceRepo.getSpace(schedule.spaceId);
-	if (!space || space.status !== 'active') {
+	if (!space || space.status !== 'active' || space.paused || space.stopped) {
 		log.debug('task-schedule-fire: skipping schedule for non-active space', {
 			scheduleId,
 			spaceId: schedule.spaceId,
 			spaceStatus: space?.status,
+			paused: space?.paused,
+			stopped: space?.stopped,
 		});
 		return {
 			scheduleId,
@@ -147,13 +165,21 @@ export async function handleTaskScheduleFire(
 				}
 			}
 
-			scheduleRepo.updateAfterFire(scheduleId, {
+			// Compare-and-swap: only commit if the schedule's pending_job_id is
+			// still our job id. If a concurrent pause/delete/reschedule happened
+			// between the initial read and now, the precondition fails and we
+			// throw — the surrounding transaction rolls back, including the
+			// just-created task and the just-enqueued next job.
+			const applied = scheduleRepo.updateAfterFireIfPending(scheduleId, job.id, {
 				lastCreatedTaskId: task.id,
 				lastRunAt: now,
 				nextRunAt: computedNextRunAt,
 				status: nextStatus,
 				pendingJobId,
 			});
+			if (!applied) {
+				throw new ScheduleSupersededError(scheduleId, job.id);
+			}
 
 			return { taskId: task.id, nextRunAt: computedNextRunAt };
 		})();
@@ -162,6 +188,23 @@ export async function handleTaskScheduleFire(
 		nextRunAt = result.nextRunAt;
 		log.debug('task-schedule-fire: created task', { scheduleId, taskId, nextRunAt });
 	} catch (err) {
+		// A concurrent pause/delete invalidated our pending_job_id mid-flight;
+		// the transaction rolled back the task and any next-job enqueue, so
+		// nothing was persisted. Surface this as a normal skip — the job queue
+		// should not retry it (the schedule is no longer wanting this fire).
+		if (err instanceof ScheduleSupersededError) {
+			log.debug('task-schedule-fire: skipping — superseded mid-flight', {
+				scheduleId,
+				jobId: job.id,
+			});
+			return {
+				scheduleId,
+				taskId: null,
+				skipped: true,
+				skipReason: 'job_superseded',
+				nextRunAt: null,
+			};
+		}
 		log.error('task-schedule-fire: transaction failed', {
 			scheduleId,
 			error: err instanceof Error ? err.message : err,

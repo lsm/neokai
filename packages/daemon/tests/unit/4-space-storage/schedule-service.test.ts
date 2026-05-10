@@ -157,6 +157,64 @@ describe('ScheduleService', () => {
 			expect(updated.title).toBe('Renamed');
 			expect(updated.pendingJobId).toBe(oldJobId);
 		});
+
+		it('rejects timing edits whose merged trigger config produces no nextRunAt', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Cron',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+				timezone: 'UTC',
+			});
+			const oldJobId = schedule.pendingJobId as string;
+
+			// Bogus IANA timezone. croner should refuse and getNextRunAt returns null.
+			expect(() => service.updateSchedule(schedule.id, { timezone: 'Not/A_Real_Zone' })).toThrow(
+				/Could not compute next run/
+			);
+
+			// Schedule and original job must be untouched on failure.
+			const after = scheduleRepo.getById(schedule.id);
+			expect(after?.pendingJobId).toBe(oldJobId);
+			expect(after?.timezone).toBe('UTC');
+			expect(jobQueue.getJob(oldJobId)).not.toBeNull();
+		});
+
+		it('rolls back the old pending job linkage if enqueue throws mid-update', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Cron',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+			});
+			const oldJobId = schedule.pendingJobId as string;
+
+			// Wrap jobQueue.enqueue to throw on the first reschedule call.
+			const breakingService = new ScheduleService({
+				db: db as never,
+				scheduleRepo,
+				jobQueue: {
+					...jobQueue,
+					enqueue: () => {
+						throw new Error('synthetic enqueue failure');
+					},
+					deleteJob: jobQueue.deleteJob.bind(jobQueue),
+					getJob: jobQueue.getJob.bind(jobQueue),
+				} as unknown as typeof jobQueue,
+			});
+
+			expect(() =>
+				breakingService.updateSchedule(schedule.id, { cronExpression: '0 10 * * *' })
+			).toThrow('synthetic enqueue failure');
+
+			// Schedule must still be active with the original pending job intact.
+			const after = scheduleRepo.getById(schedule.id);
+			expect(after?.status).toBe('active');
+			expect(after?.pendingJobId).toBe(oldJobId);
+			expect(jobQueue.getJob(oldJobId)).not.toBeNull();
+			// And the cronExpression update was also rolled back.
+			expect(after?.cronExpression).toBe('0 9 * * *');
+		});
 	});
 
 	describe('pause/resume/delete', () => {
@@ -209,6 +267,25 @@ describe('ScheduleService', () => {
 			const resumed = service.resumeSchedule(schedule.id);
 			expect(resumed.status).toBe('completed');
 			expect(resumed.pendingJobId).toBeNull();
+		});
+
+		it('resume of a cron schedule with an unrecoverable timezone throws (preserves paused)', () => {
+			const schedule = service.createSchedule({
+				spaceId,
+				title: 'Cron',
+				triggerType: 'cron',
+				cronExpression: '0 9 * * *',
+			});
+			service.pauseSchedule(schedule.id);
+
+			// Corrupt the timezone directly via the repo so getNextRunAt can't compute.
+			scheduleRepo.update(schedule.id, { timezone: 'Not/A_Real_Zone' });
+
+			expect(() => service.resumeSchedule(schedule.id)).toThrow(/Cannot resume cron schedule/);
+			// Schedule remains paused — operator can fix and retry.
+			const after = scheduleRepo.getById(schedule.id);
+			expect(after?.status).toBe('paused');
+			expect(after?.pendingJobId).toBeNull();
 		});
 
 		it('delete cancels the pending job and removes the schedule row', () => {
