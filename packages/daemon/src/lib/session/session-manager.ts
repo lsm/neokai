@@ -134,7 +134,7 @@ export class SessionManager {
 			referenceResolver
 		);
 
-		// Setup EventBus subscribers for async message processing
+		// Setup DaemonHub subscribers for async message processing
 		this.setupEventSubscriptions();
 	}
 
@@ -303,7 +303,7 @@ export class SessionManager {
 	}
 
 	/**
-	 * Setup EventBus subscriptions for async message processing
+	 * Setup DaemonHub subscriptions for async message processing
 	 */
 	private setupEventSubscriptions(): void {
 		// Subscribe to message persisted events (for title generation + draft clearing)

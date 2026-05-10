@@ -143,7 +143,7 @@ export class MessagePersistence {
 	/**
 	 * Handle message persistence
 	 *
-	 * ARCHITECTURE: EventBus-centric - SessionManager owns message persistence logic
+	 * ARCHITECTURE: DaemonHub-centric - SessionManager owns message persistence logic
 	 *
 	 * Responsibilities:
 	 * 1. Validate image sizes
