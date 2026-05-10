@@ -391,7 +391,7 @@ export interface ExternalEventStore {
   markEventFailedIfAnyDeliveryTerminalFailed(eventId: string): void;
   markEventFailedIfAllDeliveriesTerminal(eventId: string): void;
   markEventFailed(eventId: string, failure: { terminal: boolean; reason: string }): void;
-  markEventIgnored(eventId: string, reason: 'no_matching_subscriptions' | 'no_scope_eligible_subscriptions'): void;
+  markEventIgnored(eventId: string, reason: 'no_matching_subscriptions'): void;
 }
 ```
 

@@ -263,12 +263,9 @@ export class ExternalEventStore {
 
 	/**
 	 * Mark the source event terminal `ignored`. Called when no subscriptions
-	 * matched, or when scope checks rejected every matching subscription.
+	 * matched, or when all matched subscriptions are already terminal.
 	 */
-	markEventIgnored(
-		eventId: string,
-		_reason: 'no_matching_subscriptions' | 'no_scope_eligible_subscriptions'
-	): void {
+	markEventIgnored(eventId: string, _reason: 'no_matching_subscriptions'): void {
 		const event = this.getById(eventId);
 		if (!event || TERMINAL_EVENT_STATES.has(event.state)) return;
 		this.setEventState(eventId, 'ignored');
