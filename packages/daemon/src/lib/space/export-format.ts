@@ -498,10 +498,24 @@ export function validateExportBundle(data: unknown): ValidationResult<SpaceExpor
 		}
 	}
 	const rawWorkflows = Array.isArray(raw.workflows) ? raw.workflows : [];
+	const bundleHandles = new Set<string>();
 	for (let i = 0; i < rawWorkflows.length; i++) {
 		const wfResult = validateExportedWorkflow(rawWorkflows[i]);
 		if (!wfResult.ok) {
 			return { ok: false, error: `workflows[${i}]: ${wfResult.error}` };
+		}
+		// Reject duplicate handles within the same bundle — silently rewriting the second
+		// handle would make round-trip identity order-dependent.
+		const wf = rawWorkflows[i] as Record<string, unknown>;
+		if (typeof wf.handle === 'string' && wf.handle.trim()) {
+			const h = wf.handle.trim();
+			if (bundleHandles.has(h)) {
+				return {
+					ok: false,
+					error: `workflows[${i}]: duplicate handle "${h}" in bundle`,
+				};
+			}
+			bundleHandles.add(h);
 		}
 	}
 

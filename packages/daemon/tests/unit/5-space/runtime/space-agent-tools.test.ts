@@ -1130,6 +1130,26 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
 		expect(parsed.error).toContain('nonexistent-handle');
 	});
 
+	test('returns error when workflow_handle resolves to a disabled workflow (handle-only path)', async () => {
+		const disabled = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Disabled Handle WF'
+		);
+		expect(disabled.handle).toBeDefined();
+		ctx.db.prepare(`UPDATE space_workflows SET disabled = 1 WHERE id = ?`).run(disabled.id);
+
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task',
+			description: 'Handle-only disabled',
+			workflow_handle: disabled.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('disabled');
+	});
+
 	test('workflow_id takes precedence over workflow_handle when both provided and both valid', async () => {
 		const wf1 = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF One');
 		const wf2 = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Two');

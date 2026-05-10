@@ -565,6 +565,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 						error: `Workflow not found by handle: ${trimmedHandle}`,
 					});
 				}
+				if (byHandle.disabled) {
+					return jsonResult({
+						success: false,
+						error: `Workflow is disabled: ${trimmedHandle}`,
+					});
+				}
 				preferredWorkflowId = byHandle.id;
 			}
 			try {
