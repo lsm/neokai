@@ -31,11 +31,14 @@ import type {
 	LiveQuerySnapshotEvent,
 	MessageImage,
 	NodeExecution,
+	PaginatedSpaceTaskResult,
 	RuntimeState,
 	Space,
 	SpaceAgent,
+	SpaceBlockReason,
 	SpaceTask,
 	SpaceTaskActivityMember,
+	SpaceTaskStatus,
 	SpaceWorkflow,
 	SpaceWorkflowSummary,
 	SpaceWorkflowRun,
@@ -1706,6 +1709,62 @@ class SpaceStore {
 
 		const task = await hub.request<SpaceTask>('spaceTask.create', { ...params, spaceId });
 		return task;
+	}
+
+	/**
+	 * Fetch a single page of tasks for a status group, used by the per-group
+	 * Prev/Next pagination in `SpaceTasks`. Returns the page of tasks plus the
+	 * total count for the matching status (and optional `blockReason`) so the
+	 * UI can render "Showing X–Y of Z" and disable Next at the end.
+	 *
+	 * Local-state only: this does NOT update `spaceStore.tasks`. Tab badge
+	 * counts and the sidebar continue to read from the real-time `tasks`
+	 * signal so a paginated group view never causes badges to drift.
+	 *
+	 * If the active space changes while the request is in flight, the result
+	 * is still returned to the caller (it's local state, not a stored signal),
+	 * but the caller's effect should ignore stale responses.
+	 */
+	async fetchTaskGroup(
+		status: SpaceTaskStatus,
+		options?: {
+			blockReason?: SpaceBlockReason | null;
+			blockReasonNotIn?: SpaceBlockReason[];
+			limit?: number;
+			offset?: number;
+		}
+	): Promise<PaginatedSpaceTaskResult> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const limit = options?.limit ?? 10;
+		const offset = options?.offset ?? 0;
+
+		// `blockReason` is tri-state: `undefined` = ignore the column, `null` =
+		// match rows with no reason set, value = match exactly. Only forward
+		// the field when the caller passes something so the daemon's
+		// `in (params)` check distinguishes omitted from null. The same goes
+		// for `blockReasonNotIn`, which is the inverse filter for the generic
+		// "Blocked" bucket.
+		const payload: {
+			spaceId: string;
+			status: SpaceTaskStatus;
+			limit: number;
+			offset: number;
+			blockReason?: SpaceBlockReason | null;
+			blockReasonNotIn?: SpaceBlockReason[];
+		} = { spaceId, status, limit, offset };
+		if (options && 'blockReason' in options) payload.blockReason = options.blockReason;
+		if (options?.blockReasonNotIn) payload.blockReasonNotIn = options.blockReasonNotIn;
+
+		const result = await hub.request<PaginatedSpaceTaskResult>('spaceTask.list', payload);
+		return {
+			tasks: result?.tasks ?? [],
+			total: result?.total ?? 0,
+		};
 	}
 
 	/**

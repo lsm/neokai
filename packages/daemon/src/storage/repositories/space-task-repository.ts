@@ -8,6 +8,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type {
 	SpaceTask,
+	SpaceBlockReason,
 	SpaceTaskStatus,
 	CreateSpaceTaskParams,
 	UpdateSpaceTaskParams,
@@ -165,6 +166,78 @@ export class SpaceTaskRepository {
 		const stmt = this.db.prepare(query);
 		const rows = stmt.all(spaceId, status) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
+	}
+
+	/**
+	 * List tasks by status within a space, optionally filtered by block reason,
+	 * paginated, returning both the page of tasks and the total count.
+	 *
+	 * Used by the UI Tasks view to render a single status group (e.g.
+	 * "In Progress") with Prev/Next pagination buttons. The total is computed
+	 * with a separate `COUNT(*)` so the caller can render "Showing X–Y of Z" and
+	 * disable Next when the offset reaches the end of the page list.
+	 *
+	 * @param spaceId         Space scope.
+	 * @param status          Status to filter on (required — pagination is per-group).
+	 * @param blockReason     Optional block_reason filter — used by the Action tab to
+	 *                        match the "Needs Input" / "Gate Pending" buckets.
+	 *                        Tri-state: `undefined` ignores the column, `null`
+	 *                        matches rows with no reason set, a value matches
+	 *                        exactly. Mutually exclusive with `blockReasonNotIn`.
+	 * @param blockReasonNotIn Optional negative block_reason filter — used by the
+	 *                        Action tab's generic "Blocked" bucket to include
+	 *                        every blocked row whose reason is NOT one of the
+	 *                        attention-required values, mirroring the original
+	 *                        client-side filter.
+	 * @param limit           Page size (defaults to all matching when 0/undefined).
+	 * @param offset          Page offset.
+	 */
+	listBySpaceAndStatus(
+		spaceId: string,
+		status: SpaceTaskStatus,
+		blockReason: SpaceBlockReason | null | undefined,
+		limit?: number,
+		offset = 0,
+		blockReasonNotIn?: SpaceBlockReason[]
+	): { tasks: SpaceTask[]; total: number } {
+		if (blockReason !== undefined && blockReasonNotIn && blockReasonNotIn.length > 0) {
+			throw new Error('blockReason and blockReasonNotIn are mutually exclusive');
+		}
+
+		const filterParams: SQLiteValue[] = [spaceId, status];
+		let where = `WHERE space_id = ? AND status = ?`;
+		if (blockReason !== undefined) {
+			if (blockReason === null) {
+				// Explicit null filter: no block reason. Used to render the generic
+				// "Blocked" bucket distinctly from the attention-required ones.
+				where += ` AND block_reason IS NULL`;
+			} else {
+				where += ` AND block_reason = ?`;
+				filterParams.push(blockReason);
+			}
+		} else if (blockReasonNotIn && blockReasonNotIn.length > 0) {
+			// IS NULL union with NOT IN — without it SQLite would discard rows
+			// where block_reason is NULL because `NULL NOT IN (...)` yields NULL,
+			// and we want unset-reason blocked rows to land in the generic bucket.
+			const placeholders = blockReasonNotIn.map(() => '?').join(', ');
+			where += ` AND (block_reason IS NULL OR block_reason NOT IN (${placeholders}))`;
+			for (const reason of blockReasonNotIn) filterParams.push(reason);
+		}
+
+		const countRow = this.db
+			.prepare(`SELECT COUNT(*) AS total FROM space_tasks ${where}`)
+			.get(...filterParams) as { total: number } | undefined;
+		const total = countRow?.total ?? 0;
+
+		let pageQuery = `SELECT * FROM space_tasks ${where} ORDER BY updated_at DESC, id DESC`;
+		const pageParams: SQLiteValue[] = [...filterParams];
+		if (limit && limit > 0) {
+			pageQuery += ` LIMIT ? OFFSET ?`;
+			pageParams.push(limit, offset);
+		}
+
+		const rows = this.db.prepare(pageQuery).all(...pageParams) as Record<string, unknown>[];
+		return { tasks: rows.map((r) => this.rowToSpaceTask(r)), total };
 	}
 
 	/**
