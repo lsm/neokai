@@ -8728,12 +8728,10 @@ export function runMigration126(db: BunDatabase): void {
  * (slugify: lowercase, hyphens, truncate). Collision handling appends
  * -2, -3, etc. for duplicate names in the same space.
  *
- * Backfills handles for pre-existing rows ONLY when the column is first added
- * (i.e., on the initial upgrade). Subsequent calls are no-ops that only ensure
- * the index exists. This is intentional: `handle = null` is a supported user
- * action (clear-handle via updateWorkflow) and must remain stable across
- * daemon restarts. Rows that miss the backfill due to a mid-upgrade crash will
- * receive a handle the first time they are next edited.
+ * Backfills `handle` for any row that still has `handle = NULL` — including
+ * rows that were missed by a mid-upgrade crash. The backfill is safe to run
+ * repeatedly: rows with a non-null handle are untouched (the SELECT filters
+ * them out), so existing handles are always preserved across restarts.
  */
 export function runMigration127(db: BunDatabase): void {
 	if (!tableExists(db, 'space_workflows')) return;
