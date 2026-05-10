@@ -55,6 +55,7 @@ describe('ClientEventBridge', () => {
 			expect(eventHandlers.has('space.deleted')).toBe(true);
 			expect(eventHandlers.has('space.task.created')).toBe(true);
 			expect(eventHandlers.has('space.task.updated')).toBe(true);
+			expect(eventHandlers.has('space.schedule.updated')).toBe(true);
 			expect(eventHandlers.has('space.workflowRun.created')).toBe(true);
 			expect(eventHandlers.has('space.workflowRun.updated')).toBe(true);
 			expect(eventHandlers.has('space.gateData.updated')).toBe(true);
@@ -73,7 +74,7 @@ describe('ClientEventBridge', () => {
 			bridge.start();
 
 			// Only one handler per event should be registered
-			expect(eventHandlers.size).toBe(15);
+			expect(eventHandlers.size).toBe(16);
 		});
 	});
 
@@ -84,7 +85,7 @@ describe('ClientEventBridge', () => {
 			bridge.start();
 			bridge.stop();
 
-			expect(unsubscribers.length).toBe(15);
+			expect(unsubscribers.length).toBe(16);
 		});
 	});
 
@@ -160,6 +161,21 @@ describe('ClientEventBridge', () => {
 				task: { id: 't-1', status: 'in_progress' },
 			};
 			eventHandlers.get('space.task.updated')!(data);
+
+			expect(published[0].channel).toEqual({ kind: 'global' });
+		});
+
+		it('forwards space.schedule.updated to global channel', () => {
+			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(daemonHub, gateway).start();
+
+			const data = {
+				sessionId: 'global',
+				spaceId: 's-1',
+				scheduleId: 'sch-1',
+				schedule: { id: 'sch-1', cron: '0 9 * * *' },
+			};
+			eventHandlers.get('space.schedule.updated')!(data);
 
 			expect(published[0].channel).toEqual({ kind: 'global' });
 		});

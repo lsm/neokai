@@ -121,6 +121,7 @@ describe('StateManager', () => {
 			expect(eventHandlers.has('space.deleted')).toBe(false);
 			expect(eventHandlers.has('space.task.created')).toBe(false);
 			expect(eventHandlers.has('space.task.updated')).toBe(false);
+			expect(eventHandlers.has('space.schedule.updated')).toBe(false);
 			expect(eventHandlers.has('space.workflowRun.created')).toBe(false);
 			expect(eventHandlers.has('space.workflowRun.updated')).toBe(false);
 			expect(eventHandlers.has('space.gateData.updated')).toBe(false);

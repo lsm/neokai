@@ -91,6 +91,17 @@ export class StateManager {
 	}
 
 	/**
+	 * Expose the client event gateway so ClientEventBridge can share it.
+	 *
+	 * This is a temporary seam while forwarding migrates out of StateManager.
+	 * Once all forwarding lives in the bridge, the gateway can be constructed
+	 * in DaemonApp and injected into both StateManager and ClientEventBridge.
+	 */
+	getClientEventGateway(): IClientEventGateway {
+		return this.clientEvents;
+	}
+
+	/**
 	 * Setup EventBus listeners for internal events
 	 *
 	 * ARCHITECTURE: Event-sourced state management
