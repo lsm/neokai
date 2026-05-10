@@ -95,10 +95,10 @@ export function setupSessionHandlers(
 		const session = agentSession?.getSessionData();
 
 		// Attach space-agent-tools synchronously for ad-hoc Space sessions.
-		// The daemonHub event path (below) is racy — TypedHub.dispatchLocally does
-		// not await async subscribers, so the query can start (and freeze its MCP
-		// config) before attachSpaceToolsToMemberSession completes. Mirrors the
-		// pattern space-handlers.ts uses for setupSpaceAgentSession on space.create.
+		// Doing this via the daemonHub 'session.created' event would be racy:
+		// the query can start (and freeze its MCP config) before the event
+		// handler completes. Mirrors the pattern space-handlers.ts uses for
+		// setupSpaceAgentSession on space.create.
 		if (session && session.context?.spaceId && spaceRuntimeService) {
 			try {
 				await spaceRuntimeService.attachSpaceToolsToMemberSession(session);

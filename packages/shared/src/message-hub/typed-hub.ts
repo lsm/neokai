@@ -161,6 +161,9 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 		Map<string, WeakMap<(data: unknown) => void | Promise<void>, string>>
 	> = new Map();
 
+	// Per-subscription-key counter for unique handler names
+	private handlerNameCounters: Map<string, number> = new Map();
+
 	// Track MessageHub subscriptions for cleanup
 	private hubSubscriptions: Map<string, (() => void)[]> = new Map();
 
@@ -229,13 +232,15 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 
 		this.log(`Publishing: ${event}`, data);
 
+		// Send event via MessageHub for cross-transport delivery FIRST.
+		// Local handlers are awaited afterwards so a slow local subscriber
+		// cannot stall inter-participant delivery.
+		// Note: Bus excludes sender, so this only reaches other participants.
+		this.hub.event(event, data, { channel: data.sessionId });
+
 		// Dispatch to local handlers (EventBus-like behavior)
 		// This ensures publisher receives own events, even with single hub
 		const result = await this.dispatchLocally(event, data);
-
-		// Also send event via MessageHub for cross-transport delivery
-		// Note: Bus excludes sender, so this only reaches other participants
-		await this.hub.event(event, data, { channel: data.sessionId });
 
 		if (result.failures.length > 0) {
 			throw new TypedHubPublishError(event, result);
@@ -247,9 +252,13 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 	/**
 	 * Fire-and-forget publish.
 	 *
-	 * Schedules handlers asynchronously but returns immediately.
-	 * Handler failures are silently swallowed; they are never thrown
-	 * and the caller cannot await them.
+	 * Sends the event to the bus and schedules local handlers asynchronously,
+	 * returning immediately.  Handler failures are silently swallowed; they
+	 * are never thrown and the caller cannot await them.
+	 *
+	 * Unlike {@link publish}, this does **not** wait for local handlers or
+	 * the bus send before returning, so cross-transport delivery and local
+	 * dispatch proceed concurrently with the caller.
 	 *
 	 * @param event - Event name (e.g., 'session.created')
 	 * @param data - Event data (must include sessionId)
@@ -261,11 +270,13 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 
 		this.log(`Publishing (async): ${event}`, data);
 
-		// Defer to the next microtask so that synchronous handlers do not
-		// run on the caller's stack and `publishAsync` truly returns
-		// immediately.
+		// Send bus event immediately (fire-and-forget)
+		this.hub.event(event, data, { channel: data.sessionId });
+
+		// Dispatch local handlers in a microtask so the caller returns
+		// immediately.  Errors are swallowed by design.
 		queueMicrotask(() => {
-			this.publish(event, data).catch(() => {
+			this.dispatchLocally(event, data).catch(() => {
 				// Swallow — publishAsync is explicit fire-and-forget.
 			});
 		});
@@ -376,8 +387,13 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 		}
 		eventHandlers.get(subscriptionKey)!.add(typedHandler);
 
-		// Track handler name for diagnostics
-		const handlerName = options?.sessionId ? `session:${options.sessionId}` : 'global';
+		// Track handler name for diagnostics (unique per subscription)
+		const counterKey = `${event}:${subscriptionKey}`;
+		const counter = (this.handlerNameCounters.get(counterKey) ?? 0) + 1;
+		this.handlerNameCounters.set(counterKey, counter);
+		const handlerName = options?.sessionId
+			? `session:${options.sessionId}#${counter}`
+			: `global#${counter}`;
 		if (!this.handlerNames.has(event)) {
 			this.handlerNames.set(event, new Map());
 		}
@@ -426,12 +442,9 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 			// Remove from handler names
 			const nameMap = this.handlerNames.get(event);
 			if (nameMap) {
-				const sessionNameMap = nameMap.get(subscriptionKey);
-				if (sessionNameMap) {
-					// WeakMap entries are GC'd automatically; no need to delete
-					if (nameMap.size === 0) {
-						this.handlerNames.delete(event);
-					}
+				nameMap.delete(subscriptionKey);
+				if (nameMap.size === 0) {
+					this.handlerNames.delete(event);
 				}
 			}
 
