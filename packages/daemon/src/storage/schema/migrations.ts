@@ -7904,8 +7904,9 @@ export function runMigration113(db: BunDatabase): void {
 	if (!tableExists(db, 'sdk_messages')) return;
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
 		ON sdk_messages(session_id, timestamp DESC, id DESC)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool
-		ON sdk_messages(session_id, json_extract(sdk_message, '$.parent_tool_use_id'))`);
+	// NOTE: idx_sdk_messages_parent_tool (json_extract function index) was
+	// removed from here in migration 126. The column-based
+	// idx_sdk_messages_parent_tool_use_id added by migration 122 replaces it.
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_uuid_status
 		ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`);
 }
