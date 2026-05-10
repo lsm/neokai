@@ -750,7 +750,7 @@ message_stats AS (
       WHERE sm.session_id = usi.session_id
     ) AS messageCount,
     (
-      SELECT CAST((julianday(MAX(sm.timestamp)) - 2440587.5) * 86400000 AS INTEGER)
+      SELECT MAX(CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER))
       FROM sdk_messages sm
       WHERE sm.session_id = usi.session_id
     ) AS lastMessageAt

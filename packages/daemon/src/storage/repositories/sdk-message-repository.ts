@@ -662,6 +662,12 @@ export class SDKMessageRepository {
 	 * JS. On busy sessions with tens of thousands of user rows the JS-scan
 	 * shape was ~400 ms; the indexed lookup is sub-millisecond.
 	 *
+	 * `ORDER BY timestamp ASC LIMIT 1` matches the previous implementation's
+	 * behavior of returning the earliest matching row when (unexpectedly)
+	 * multiple user messages share the same uuid — there is no DB-level
+	 * uniqueness constraint on the json_extract'd uuid, so callers like
+	 * `getRewindPoint` rely on the earliest-wins tiebreak.
+	 *
 	 * @param sessionId - The session ID
 	 * @param uuid - The message UUID
 	 * @returns The message data or undefined
@@ -675,6 +681,7 @@ export class SDKMessageRepository {
        WHERE session_id = ?
          AND message_type = 'user'
          AND json_extract(sdk_message, '$.uuid') = ?
+       ORDER BY timestamp ASC
        LIMIT 1`
 		);
 		const row = stmt.get(sessionId, uuid) as { sdk_message: string; timestamp: string } | undefined;
