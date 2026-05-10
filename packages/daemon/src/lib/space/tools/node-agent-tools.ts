@@ -289,6 +289,24 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		? (workflow.nodes.find((node) => node.id === workflowNodeId)?.name ?? myAgentName)
 		: myAgentName;
 
+	// Build a slot-to-node map so we can resolve agent names to node names when
+	// matching channels for gate data writes. Channels use node names as addresses,
+	// but agents often send to other agents by their slot/agent name.
+	const slotToNode = new Map<string, string>();
+	if (workflow) {
+		for (const node of workflow.nodes) {
+			try {
+				for (const agent of resolveNodeAgents(node)) {
+					slotToNode.set(agent.name, node.name);
+				}
+			} catch {
+				// If resolveNodeAgents throws (e.g. empty agents array with no legacy
+				// agentId), skip this node — there are no agent slots to map anyway.
+			}
+		}
+	}
+	const resolveNodeName = (slotOrNode: string) => slotToNode.get(slotOrNode) ?? slotOrNode;
+
 	const agentNameAliases = new Set(
 		[myAgentName, myNodeName, ...(myAgentNameAliases ?? [])]
 			.map((value) => normalizeAgentNameToken(value))
@@ -580,7 +598,14 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 						if (!ch.gateId) return false;
 						if (ch.from !== '*' && !fromRefs.has(ch.from)) return false;
 						const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
-						return tos.some((to) => to === targetName || to === myNodeName || to === myAgentName);
+						const resolvedTarget = resolveNodeName(targetName);
+						return tos.some(
+							(to) =>
+								to === resolvedTarget ||
+								to === targetName ||
+								to === myNodeName ||
+								to === myAgentName
+						);
 					});
 
 					if (gatedChannel?.gateId) {
