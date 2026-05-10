@@ -183,18 +183,18 @@ export interface WorkflowNodeAgent {
         "eventInterests": [
           {
             "topic": "github/*/*/pull_request.review_submitted",
-            "scope": "task",
-            "label": "PR reviews on my task's PR"
+            "scope": "repo",
+            "label": "PR reviews in watched repos"
           },
           {
             "topic": "github/*/*/pull_request.comment_created",
-            "scope": "task",
-            "label": "PR comments on my task's PR"
+            "scope": "repo",
+            "label": "PR comments in watched repos"
           },
           {
             "topic": "github/*/*/pull_request.review_comment_created",
-            "scope": "task",
-            "label": "Inline review comments"
+            "scope": "repo",
+            "label": "Inline review comments in watched repos"
           }
         ]
       }]
@@ -220,13 +220,6 @@ export interface WorkflowNodeAgent {
 
 ### Scoping details
 
-**`task` scope** is resolved at delivery time by the `ExternalEventRouter`:
-
-1. The router receives the event with its full payload (including `prNumber`, `repoOwner`, `repoName`, `branch`).
-2. For each `task`-scoped subscription, the router queries whether the event's metadata matches the subscription's task.
-3. Task-to-PR mapping is owned by the task/workflow system (not the event pipeline). The router uses a `TaskEventMatcher` interface that the task system implements.
-4. The node author never specifies a PR number — it's implicit from the task context.
-
 **`repo` scope** filters to events from any of the space's watched repositories (`space_github_watched_repos`). The node author doesn't need to know repo names.
 
 **`global` scope** passes through all events in the same space matching the topic pattern. It is never cross-space: the router requires `event.spaceId === subscription.spaceId` before any scope-specific logic runs. Use sparingly (e.g. a space-local "global monitor" node).
@@ -239,7 +232,6 @@ When an event arrives, the router:
 2. For each active node execution with `eventInterests`:
    a. Compiles the interest's `topic` glob against the event's topic.
    b. If matched, checks scope:
-      - `task`: delegates to `TaskEventMatcher.isEventForTask(event, taskId)`.
       - `repo`: does event's repo match any watched repo in the node's space?
       - `global`: pass.
    c. If scope check passes, the event is queued for delivery to this node's agent session.
@@ -439,8 +431,8 @@ class ExternalEventService implements ExternalEventPublisher {
     }
 
     // 3. Publish the normalized event to the internal bus.
-    // The event pipeline does NOT resolve tasks — task matching is the
-    // responsibility of subscribers (e.g. ExternalEventRouter with TaskEventMatcher).
+    // The event pipeline does NOT resolve tasks — task matching is a
+    // workflow-node concern, not an event-pipeline concern.
     await this.internalEventBus.publish('externalEvent.published', {
       channel: Channels.space(event.spaceId),
       payload: { event },
@@ -732,14 +724,6 @@ interface WatchedRepoLookup {
   listWatchedRepos(spaceId: string): { owner: string; repo: string; enabled: boolean }[];
 }
 
-/**
- * Interface for matching external events to tasks.
- * Implemented by the task/workflow system, NOT the event pipeline.
- */
-interface TaskEventMatcher {
-  /** Returns true if the given event is associated with the given task. */
-  isEventForTask(event: ExternalEvent, taskId: string): Promise<boolean>;
-}
 ```
 
 ### ExternalEventRouter implementation sketch
@@ -787,7 +771,6 @@ class ExternalEventRouter {
       spaceTaskManager: SpaceTaskManager;
       eventStore: ExternalEventStore;
       watchedRepoLookup: WatchedRepoLookup;
-      taskEventMatcher: TaskEventMatcher;
     },
   ) {
     // Subscribe to the semantic internal fact. External topic matching happens
@@ -1475,11 +1458,6 @@ class ExternalEventRouter {
         return this.isWatchedRepo(sub.spaceId, repoOwner, repoName);
       }
 
-      case 'task': {
-        // Delegate to the task system to determine if this event belongs to the
-        // subscription's task. The event pipeline does not interpret task metadata.
-        return this.config.taskEventMatcher.isEventForTask(event, sub.taskId);
-      }
     }
   }
 
@@ -2011,17 +1989,6 @@ function toExternalEvent(spaceId: string, event: NormalizedGitHubEvent): Externa
 }
 ```
 
-### Task-scoped resolution
-
-For `task` scope, the event pipeline does NOT resolve tasks. Instead, the `ExternalEventRouter` delegates to `TaskEventMatcher.isEventForTask(event, taskId)` at delivery time:
-
-1. The router receives the event with its full payload (including `prNumber`, `repoOwner`, `repoName`, `branch` in the opaque payload).
-2. For each `task`-scoped subscription, the router asks `TaskEventMatcher` whether the event belongs to that task.
-3. `TaskEventMatcher` is implemented by the task/workflow system and can use PR→task lookup tables, task metadata, or any other task-system-specific data.
-4. The event pipeline remains decoupled from task resolution logic.
-
-This removes task resolution from the event ingestion hot path and keeps the event service source-agnostic.
-
 ## 8. Migration Path
 
 ### DB schema changes
@@ -2102,7 +2069,7 @@ V1 needs core event lifecycle tables, extension configuration storage, and workf
 
 1. Add `EventInterest` interface to `packages/shared/src/types/space.ts`.
 2. Add `eventInterests?: EventInterest[]` to `WorkflowNodeAgent`.
-3. Add `ExternalEvent`, `ExternalEventExtension`, `HttpExternalEventExtension`, `RpcExternalEventExtension`, `ExternalEventPublisher`, `ExternalEventStore`, and `TaskEventMatcher` types under `packages/daemon/src/lib/external-events/`.
+3. Add `ExternalEvent`, `ExternalEventExtension`, `HttpExternalEventExtension`, `RpcExternalEventExtension`, `ExternalEventPublisher`, and `ExternalEventStore` types under `packages/daemon/src/lib/external-events/`.
 4. Add validation in the workflow create/update path (Zod schema or manual validation):
    - `topic` must pass `validateGlobPattern()` (non-empty, exactly 4 segments, no `..` segments, no double slashes, valid characters including segment-local `*`).
    - `scope` must be one of `'task' | 'repo' | 'global'`.
@@ -2258,7 +2225,6 @@ const externalEventRouter = new ExternalEventRouter({
   spaceTaskManager,
   eventStore: externalEventStore,
   watchedRepoLookup,
-  taskEventMatcher: new SpaceTaskEventMatcher(taskRepo), // implemented by task system
 });
 
 const extensionContext: ExternalEventExtensionContext = {
@@ -2326,7 +2292,6 @@ Repo-scoped matching cache invalidation is explicit: watched-resource changes an
 | **SpaceGitHubService** (legacy Space pipeline) | Deprecated compatibility path. Its source-specific normalization/polling logic is extracted into `GitHubEventExtension`; delivery moves to `ExternalEventService`/`ExternalEventRouter`. The new path must not depend on `space.githubEvent.routed`. |
 | **GitHubEventExtension** | Source extension that owns GitHub webhook verification, polling, normalization, global/per-space enablement, watched-repo configuration, and direct publication to `ExternalEventService`. It does not query Space tasks or inject sessions. |
 | **ExternalEventStore** | Core persistence and retry-aware source-level dedup across extensions. Replaces GitHub-specific unconditional duplicate short-circuiting for new delivery. |
-| **TaskEventMatcher** | Interface implemented by the task/workflow system for matching external events to tasks at delivery time. Decouples task resolution from the event pipeline. |
 | **SessionNotificationSink** | Compatibility notification path for existing Space Agent notifications. External event delivery should move to `InternalCommandBus.dispatch('agent.message.inject', ...)`. |
 | **AgentMessageRouter** | Not used for event delivery. Events are system-injected context, not agent-originated messages. |
 | **ChannelRouter** | Not involved. Event delivery is not a workflow channel transition. It is delivery into an existing/queued agent session, not a graph activation trigger. |
@@ -2369,7 +2334,6 @@ The target design uses `InternalCommandBus.dispatch('agent.message.inject', ...)
 The target architecture splits those responsibilities:
 - `GitHubEventExtension` owns only GitHub-specific webhook/polling/normalization/configuration.
 - `ExternalEventStore` owns cross-source event lifecycle and retry-aware dedup.
-- `TaskEventMatcher` (implemented by task system) owns task-event matching at delivery time.
 - `ExternalEventRouter` owns node subscription matching and command-based delivery.
 
 This makes GitHub one extension among many instead of a special core daemon path. Future extensions (Slack, Jira, CI, etc.) publish the same `ExternalEvent` shape and reuse the same dedup and delivery machinery.
@@ -2393,7 +2357,7 @@ The original design embedded `ExternalEventTaskResolver` inside `ExternalEventSe
 The simplified design:
 1. Keeps `ExternalEvent` as a pure normalization layer with opaque payload.
 2. Removes `routed_task_id` from the event store schema.
-3. Delegates task matching to `TaskEventMatcher` at delivery time in `ExternalEventRouter`.
+3. Keeps the event pipeline fully task-agnostic — task association is a workflow-node concern, not an event-pipeline concern.
 4. Allows the task system to evolve its matching logic independently of the event pipeline.
 
 ## 11. Testing Strategy
@@ -2405,7 +2369,7 @@ The simplified design:
 3. **ExternalEventStore**: Verify terminal duplicates are short-circuited, retryable duplicates are re-emitted, expected deliveries are registered before injection, successful per-subscription delivery advances the source event to terminal `delivered` only after all expected deliveries are `delivered`, any terminal per-subscription failure prevents/reverts a delivered outcome and marks the source event `failed`, and retry exhaustion advances to terminal `failed`.
 4. **ExternalEventService**: Verify validation, dedup, and publication without task resolution.
 5. **GitHubEventExtension**: Given webhook and polling payloads, verify enablement checks, signature handling, topic construction, dedupe keys, and `ExternalEvent` construction without querying Space tasks.
-6. **Scope resolution**: Test `task` scope with `TaskEventMatcher` and various task/PR associations.
+6. **Scope resolution**: Test `repo` and `global` scope filtering.
 
 ### Integration tests
 

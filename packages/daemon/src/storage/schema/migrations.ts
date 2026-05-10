@@ -8436,7 +8436,10 @@ export function runMigration123(db: BunDatabase): void {
  *
  * Changes to space_external_events:
  *   - DROP pr_number, repo_owner, repo_name, branch, routed_task_id columns.
- *   - Backfill legacy columns into payload_json so subscribers retain metadata.
+ *   - Backfill legacy columns (pr_number, repo_owner, repo_name, branch) into
+ *     payload_json so subscribers retain source-specific metadata.
+ *   - routed_task_id is dropped without backfill. The event pipeline is fully
+ *     task-agnostic; task association is a workflow-node concern.
  *   - Migrate existing rows: 'routed' → 'published', 'delivery_failed' → 'published',
  *     'ambiguous' → 'ignored'.
  *   - Update CHECK constraint to ('published', 'delivered', 'failed', 'ignored').
@@ -8500,19 +8503,7 @@ export function runMigration124(db: BunDatabase): void {
 				   OR NULLIF(branch, '') IS NOT NULL)
 			`);
 
-			// 2. Preserve routed_task_id for historical retryable events so
-			//    post-migration retries do not lose their task association.
-			db.exec(`
-				UPDATE space_external_events
-				SET payload_json = json_set(
-					payload_json,
-					'$.routedTaskId', COALESCE(json_extract(payload_json, '$.routedTaskId'), routed_task_id)
-				)
-				WHERE json_valid(payload_json) = 1
-				  AND routed_task_id IS NOT NULL
-			`);
-
-			// 3. Migrate state values.
+			// 2. Migrate state values.
 			db.exec(`
 				UPDATE space_external_events
 				SET state = CASE state
