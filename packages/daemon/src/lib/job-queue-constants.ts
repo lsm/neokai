@@ -9,6 +9,9 @@ export const ROOM_TICK = 'room.tick';
 export const JOB_QUEUE_CLEANUP = 'job_queue.cleanup';
 export const SKILL_VALIDATE = 'skill.validate';
 
+// ─── Task schedule ────────────────────────────────────────────────────────────
+export const TASK_SCHEDULE_FIRE = 'taskSchedule.fire';
+
 // ─── Space workflow run artifact sync queues ──────────────────────────────────
 // Background jobs that populate the workflow_run_artifact_cache table with
 // git-derived data (gate artifacts, commit log, per-file diffs). Running these

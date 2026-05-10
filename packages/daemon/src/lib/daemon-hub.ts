@@ -494,6 +494,14 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		archiveSource?: 'user' | 'system_reconcile';
 	};
 
+	// Space schedule events (global events - use 'global' as sessionId)
+	'space.schedule.updated': {
+		sessionId: string;
+		spaceId: string;
+		scheduleId: string;
+		schedule: import('@neokai/shared').TaskSchedule;
+	};
+
 	// Space Task Agent completion events (use 'global' as sessionId)
 	/** Emitted when a Task Agent marks a task as done via `task.reportedStatus`. */
 	'space.task.done': {

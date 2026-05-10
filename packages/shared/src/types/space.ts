@@ -252,6 +252,63 @@ export type SpaceBlockReason =
  */
 export type SpaceTaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
+// ============================================================================
+// TaskSchedule Types
+// ============================================================================
+
+/** Trigger type for a task schedule */
+export type TaskScheduleTriggerType = 'cron' | 'at';
+
+/** Status of a task schedule */
+export type TaskScheduleStatus = 'active' | 'paused' | 'completed';
+
+/**
+ * A scheduled task template — defines a recurring (cron) or one-shot (at)
+ * schedule that creates real SpaceTasks when it fires.
+ */
+export interface TaskSchedule {
+	/** Unique identifier */
+	id: string;
+	/** Space this schedule belongs to */
+	spaceId: string;
+	/** Task title template */
+	title: string;
+	/** Task description template */
+	description: string;
+	/** Task priority to use when creating the task */
+	priority: SpaceTaskPriority;
+	/** Preferred workflow ID to attach to created tasks */
+	preferredWorkflowId: string | null;
+	/** Labels to apply to created tasks */
+	labels: string[];
+	/** Trigger type — 'cron' for recurring, 'at' for one-shot */
+	triggerType: TaskScheduleTriggerType;
+	/** Cron expression (e.g. '0 9 * * 1') — used when triggerType is 'cron' */
+	cronExpression: string | null;
+	/** Unix ms timestamp for one-shot triggers — used when triggerType is 'at' */
+	runAt: number | null;
+	/** IANA timezone string (default: 'UTC') */
+	timezone: string;
+	/** Computed timestamp of next scheduled fire (ms since epoch) */
+	nextRunAt: number | null;
+	/** Timestamp of last successful fire (ms since epoch) */
+	lastRunAt: number | null;
+	/** ID of the most recently spawned SpaceTask */
+	lastCreatedTaskId: string | null;
+	/** Job ID of the pending job in the queue (for O(1) cancel/pause) */
+	pendingJobId: string | null;
+	/** Current schedule status */
+	status: TaskScheduleStatus;
+	/** Agent name that created this schedule */
+	createdByAgent: string | null;
+	/** Session ID of the agent that created this schedule */
+	createdBySession: string | null;
+	/** Creation timestamp (ms since epoch) */
+	createdAt: number;
+	/** Last update timestamp (ms since epoch) */
+	updatedAt: number;
+}
+
 /**
  * Runtime activity state for a live task-agent member.
  * This is more user-facing than raw session processing states.
@@ -311,6 +368,12 @@ export interface SpaceTask {
 	 * Set when a task is created via `create_standalone_task` tool.
 	 */
 	createdBySession?: string | null;
+	/**
+	 * ID of the TaskSchedule that spawned this task.
+	 * Set when a task is created by the task-schedule.fire job handler.
+	 * Null for manually created tasks.
+	 */
+	createdByTaskScheduleId?: string | null;
 	/**
 	 * Which agent session is currently active (generating output).
 	 * Cleared when the session reaches a terminal state.
@@ -490,6 +553,11 @@ export interface CreateSpaceTaskParams {
 	 * Set when the task transitions from 'open' to 'in_progress'.
 	 */
 	taskAgentSessionId?: string | null;
+	/**
+	 * ID of the TaskSchedule that spawned this task.
+	 * Set by the task-schedule.fire job handler.
+	 */
+	createdByTaskScheduleId?: string | null;
 }
 
 /**

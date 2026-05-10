@@ -10,15 +10,15 @@
  * matching the RoomTasks component style.
  */
 
-import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus } from '@neokai/shared';
-import { useMemo } from 'preact/hooks';
+import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus, TaskSchedule } from '@neokai/shared';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import { navigateToSpaceTasks } from '../../lib/router';
 import { currentSpaceIdSignal, currentSpaceTasksFilterTabSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
-import { getRelativeTime } from '../../lib/utils';
+import { getRelativeTime, formatRelativeFuture } from '../../lib/utils';
 
-type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'archived';
+type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'archived' | 'scheduled';
 
 /** Block reasons that indicate a task needs human attention */
 const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested', 'gate_rejected'];
@@ -36,7 +36,11 @@ const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested', 'g
  * a regression guard: if someone later re-inlines the predicate here,
  * the parity test in `task-filters.test.ts` will fail.
  */
-export const TAB_PREDICATES: Record<TaskFilterTab, (task: SpaceTask) => boolean> = {
+// Note: 'scheduled' tab is handled separately in the component (schedules, not tasks)
+export const TAB_PREDICATES: Record<
+	Exclude<TaskFilterTab, 'scheduled'>,
+	(task: SpaceTask) => boolean
+> = {
 	action: isActionRequired,
 	active: isActiveTask,
 	draft: isDraftTask,
@@ -124,7 +128,7 @@ const ARCHIVED_GROUPS: StatusGroupDef[] = [
 
 const DRAFT_GROUPS: StatusGroupDef[] = [{ status: 'draft', title: 'Drafts', variant: 'default' }];
 
-const TAB_GROUPS_DEF: Record<TaskFilterTab, StatusGroupDef[]> = {
+const TAB_GROUPS_DEF: Record<Exclude<TaskFilterTab, 'scheduled'>, StatusGroupDef[]> = {
 	action: ACTION_GROUPS,
 	active: ACTIVE_GROUPS,
 	draft: DRAFT_GROUPS,
@@ -205,6 +209,10 @@ function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
 		draft: { title: 'No draft tasks', description: 'Tasks created as drafts will appear here' },
 		completed: { title: 'No completed tasks', description: 'Completed tasks will appear here' },
 		archived: { title: 'No archived tasks', description: 'Archived tasks will appear here' },
+		scheduled: {
+			title: 'No scheduled tasks',
+			description: 'Recurring and one-shot scheduled tasks will appear here',
+		},
 	};
 
 	const { title, description } = messages[tab];
@@ -420,8 +428,18 @@ interface SpaceTasksProps {
 
 export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps) {
 	const tasks = spaceStore.tasks.value;
-	const activeTab: TaskFilterTab = currentSpaceTasksFilterTabSignal.value;
+	const schedules = spaceStore.schedules.value;
+	const activeTab: TaskFilterTab = currentSpaceTasksFilterTabSignal.value as TaskFilterTab;
 	const spaceId = currentSpaceIdSignal.value ?? '';
+
+	// Load schedules when the tab is switched to 'scheduled' or the active space changes.
+	// Including spaceId in deps prevents stale schedules from a previous space lingering
+	// when the user navigates between spaces while staying on the scheduled tab.
+	useEffect(() => {
+		if (activeTab === 'scheduled' && spaceId) {
+			spaceStore.listSchedules().catch(() => {});
+		}
+	}, [activeTab, spaceId]);
 
 	const counts = useMemo(() => {
 		const c: Record<TaskFilterTab, number> = {
@@ -430,10 +448,11 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 			draft: 0,
 			completed: 0,
 			archived: 0,
+			scheduled: schedules.filter((s) => s.status !== 'completed').length,
 		};
 		for (const task of tasks) {
 			for (const [tab, predicate] of Object.entries(TAB_PREDICATES) as [
-				TaskFilterTab,
+				Exclude<TaskFilterTab, 'scheduled'>,
 				(t: SpaceTask) => boolean,
 			][]) {
 				if (predicate(task)) {
@@ -443,10 +462,12 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 			}
 		}
 		return c;
-	}, [tasks]);
+	}, [tasks, schedules]);
 
 	const filteredTasks = useMemo(() => {
-		const predicate = TAB_PREDICATES[activeTab];
+		if (activeTab === 'scheduled') return [];
+		const predicate = TAB_PREDICATES[activeTab as Exclude<TaskFilterTab, 'scheduled'>];
+		if (!predicate) return [];
 		return [...tasks].filter(predicate).sort((a, b) => b.updatedAt - a.updatedAt);
 	}, [tasks, activeTab]);
 
@@ -458,27 +479,13 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 		return map;
 	}, [tasks]);
 
-	if (tasks.length === 0) {
-		return (
-			<div class="w-full px-8 flex flex-col items-center justify-center py-16 text-center">
-				<svg
-					class="w-10 h-10 text-gray-700 mb-3"
-					fill="none"
-					viewBox="0 0 24 24"
-					stroke="currentColor"
-				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width={1.5}
-						d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-					/>
-				</svg>
-				<p class="text-sm text-gray-400 font-medium">No tasks yet</p>
-				<p class="text-xs text-gray-600 mt-1">Create a task to get started</p>
-			</div>
-		);
-	}
+	// Empty-state guard is tab-aware: the Scheduled tab can have content even
+	// when `tasks` is empty (a freshly-created schedule that hasn't fired yet).
+	// Falling through to the global "No tasks yet" placeholder would hide the
+	// schedule list, leaving users with no way to view/manage their schedules.
+	// We always render the tab strip so users can navigate to the Scheduled tab
+	// even when no tasks have been spawned yet.
+	const showGlobalEmpty = tasks.length === 0 && activeTab !== 'scheduled';
 
 	return (
 		<div class="flex-1 min-h-0 w-full px-4 py-4 sm:px-8 sm:py-6 overflow-y-auto">
@@ -519,19 +526,157 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 						onClick={() => navigateToSpaceTasks(spaceId, 'archived')}
 						variant="gray"
 					/>
+					<TabButton
+						label="Scheduled"
+						count={counts.scheduled}
+						isActive={activeTab === 'scheduled'}
+						onClick={() => navigateToSpaceTasks(spaceId, 'scheduled')}
+						variant="default"
+					/>
 				</div>
 
-				{filteredTasks.length === 0 ? (
+				{showGlobalEmpty ? (
+					<div class="flex flex-col items-center justify-center py-16 text-center">
+						<svg
+							class="w-10 h-10 text-gray-700 mb-3"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={1.5}
+								d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+							/>
+						</svg>
+						<p class="text-sm text-gray-400 font-medium">No tasks yet</p>
+						<p class="text-xs text-gray-600 mt-1">Create a task to get started</p>
+					</div>
+				) : activeTab === 'scheduled' ? (
+					schedules.length === 0 ? (
+						<EmptyTabState tab="scheduled" />
+					) : (
+						<ScheduleList
+							schedules={schedules}
+							onPause={(id) => spaceStore.pauseSchedule(id).catch(() => {})}
+							onResume={(id) => spaceStore.resumeSchedule(id).catch(() => {})}
+							onDelete={(id) => spaceStore.deleteSchedule(id)}
+						/>
+					)
+				) : filteredTasks.length === 0 ? (
 					<EmptyTabState tab={activeTab} />
 				) : (
 					<TaskGroupList
 						tasks={filteredTasks}
 						taskById={taskById}
-						tab={activeTab}
+						tab={activeTab as Exclude<TaskFilterTab, 'scheduled'>}
 						onTaskClick={onSelectTask}
 					/>
 				)}
 			</div>
+		</div>
+	);
+}
+
+/** Schedule list for the Scheduled tab */
+function ScheduleList({
+	schedules,
+	onPause,
+	onResume,
+	onDelete,
+}: {
+	schedules: TaskSchedule[];
+	onPause: (id: string) => void;
+	onResume: (id: string) => void;
+	onDelete: (id: string) => Promise<unknown>;
+}) {
+	const [deletingId, setDeletingId] = useState<string | null>(null);
+
+	const handleDelete = (id: string) => {
+		setDeletingId(id);
+		// Always clear `deletingId` once the RPC settles so a transient failure
+		// (network blip, daemon restart) doesn't permanently disable the row's
+		// Delete button for the rest of the session. The store throws on failure;
+		// we swallow it here because the user-visible feedback is the row staying
+		// in place — a follow-up retry just clicks Delete again.
+		onDelete(id)
+			.catch(() => {
+				/* silently ignore — UI state stays as-is, user can retry */
+			})
+			.finally(() => {
+				setDeletingId((curr) => (curr === id ? null : curr));
+			});
+	};
+
+	const formatNextRun = (nextRunAt: number | null) => {
+		if (!nextRunAt) return 'N/A';
+		return formatRelativeFuture(nextRunAt);
+	};
+
+	const formatTrigger = (s: TaskSchedule) => {
+		if (s.triggerType === 'cron') return s.cronExpression ?? 'cron';
+		if (s.runAt) return `once at ${new Date(s.runAt).toLocaleString()}`;
+		return 'one-shot';
+	};
+
+	return (
+		<div class="space-y-2">
+			{schedules.map((s) => (
+				<div
+					key={s.id}
+					class="flex items-start gap-3 rounded-lg border border-dark-700 bg-dark-800 p-3"
+				>
+					<div class="flex-1 min-w-0">
+						<div class="flex items-center gap-2">
+							<span class="text-sm font-medium text-gray-200 truncate">{s.title}</span>
+							<span
+								class={`text-xs px-1.5 py-0.5 rounded ${
+									s.status === 'active'
+										? 'bg-green-900/40 text-green-400'
+										: s.status === 'paused'
+											? 'bg-amber-900/40 text-amber-400'
+											: 'bg-gray-800 text-gray-500'
+								}`}
+							>
+								{s.status}
+							</span>
+						</div>
+						<div class="mt-1 flex items-center gap-3 text-xs text-gray-500">
+							<span title="Trigger">{formatTrigger(s)}</span>
+							{s.nextRunAt && s.status === 'active' && (
+								<span>next: {formatNextRun(s.nextRunAt)}</span>
+							)}
+							{s.lastRunAt && <span>last: {getRelativeTime(s.lastRunAt)}</span>}
+						</div>
+					</div>
+					<div class="flex items-center gap-1 shrink-0">
+						{s.status === 'active' && (
+							<button
+								class="px-2 py-1 text-xs rounded text-amber-400 hover:bg-amber-900/20"
+								onClick={() => onPause(s.id)}
+							>
+								Pause
+							</button>
+						)}
+						{s.status === 'paused' && (
+							<button
+								class="px-2 py-1 text-xs rounded text-green-400 hover:bg-green-900/20"
+								onClick={() => onResume(s.id)}
+							>
+								Resume
+							</button>
+						)}
+						<button
+							class="px-2 py-1 text-xs rounded text-red-400 hover:bg-red-900/20"
+							onClick={() => handleDelete(s.id)}
+							disabled={deletingId === s.id}
+						>
+							Delete
+						</button>
+					</div>
+				</div>
+			))}
 		</div>
 	);
 }
@@ -545,7 +690,7 @@ function TaskGroupList({
 }: {
 	tasks: SpaceTask[];
 	taskById: ReadonlyMap<string, SpaceTask>;
-	tab: TaskFilterTab;
+	tab: Exclude<TaskFilterTab, 'scheduled'>;
 	onTaskClick?: (taskId: string) => void;
 }) {
 	const groups = TAB_GROUPS_DEF[tab];

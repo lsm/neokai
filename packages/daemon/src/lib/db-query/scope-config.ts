@@ -320,6 +320,13 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 		description:
 			'Audit trail of MCP write operations (create_task, approve_task, send_message, save_artifact) with agent name, session ID, tool name, and parameters.',
 	},
+	{
+		tableName: 'task_schedules',
+		scopeColumn: 'space_id',
+		blacklistedColumns: [],
+		description:
+			'Recurring (cron) and one-shot (at) task schedule templates with trigger config, status, and last-run tracking.',
+	},
 	// ── Main-DB tables exposed with space-scoped filtering via session ID prefix ──
 	{
 		tableName: 'sessions',

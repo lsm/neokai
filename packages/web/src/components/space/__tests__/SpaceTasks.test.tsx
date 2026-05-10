@@ -9,6 +9,8 @@ import { signal } from '@preact/signals';
 import type { SpaceTask } from '@neokai/shared';
 
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
+const mockSchedules = signal<unknown[]>([]);
+const mockListSchedules = vi.fn(async () => {});
 
 // Bridge pattern: hoisted bridge objects allow mockNavigateToSpaceTasks to update
 // the real Preact signals (which are created after import).
@@ -57,7 +59,11 @@ vi.mock('../../../lib/router', () => ({
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
-		return { tasks: mockTasks };
+		return {
+			tasks: mockTasks,
+			schedules: mockSchedules,
+			listSchedules: mockListSchedules,
+		};
 	},
 }));
 
@@ -246,10 +252,13 @@ describe('SpaceTasks', () => {
 	it('does not show count badge when count is 0', () => {
 		mockTasks.value = [];
 		const { container } = render(<SpaceTasks spaceId="space-1" />);
-		// The active tab button should not have a count badge
+		// The tab strip is always visible (so users can reach the Scheduled tab
+		// even when no tasks exist yet), but the Active tab should not have a
+		// count badge when its count is zero.
 		const activeButtons = Array.from(container.querySelectorAll('button'));
 		const activeTab = activeButtons.find((b) => b.textContent?.includes('Active'));
-		expect(activeTab).toBeFalsy();
+		expect(activeTab).toBeTruthy();
+		expect(activeTab!.textContent).toBe('Active'); // no "(0)" suffix
 	});
 
 	it('switches tabs and shows filtered tasks', () => {

@@ -231,6 +231,14 @@ export interface TaskAgentManagerConfig {
 	 * Used for Task Agent → Space Agent escalation via `send_message`.
 	 */
 	spaceAgentInjector?: (spaceId: string, message: string) => Promise<void>;
+	/**
+	 * Schedule service — shared business logic for managing task schedules.
+	 * Injected into `space-agent-tools` so task agent sessions can create /
+	 * pause / resume / delete schedules via the same code path as the RPC
+	 * handlers. Optional — when absent, schedule management tools are not
+	 * registered.
+	 */
+	scheduleService?: import('../schedule/schedule-service').ScheduleService;
 }
 
 // ---------------------------------------------------------------------------
@@ -4234,6 +4242,7 @@ export class TaskAgentManager {
 			myAgentName: ctx.agentName,
 			mySessionId: ctx.subSessionId,
 			auditLogRepo: this.auditLogRepo,
+			scheduleService: this.config.scheduleService,
 			// Wire restore_node_agent so it is callable even when node-agent is
 			// missing. The closure captures the rebuild-time values of taskId,
 			// subSessionId, agentName, etc. which are stable for this session.

@@ -93,6 +93,10 @@ import { NeoActivityLogger } from '../neo/activity-logger';
 import { PendingActionStore } from '../neo/security-tier';
 import type { NeoToolsConfig } from '../neo/tools/neo-query-tools';
 import type { NeoActionToolsConfig, NeoWorkflowRun } from '../neo/tools/neo-action-tools';
+import { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository';
+import { SpaceRepository } from '../../storage/repositories/space-repository';
+import { setupTaskScheduleHandlers } from './task-schedule-handlers';
+import { ScheduleService } from '../space/schedule/schedule-service';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -305,6 +309,33 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const artifactCacheRepo = new WorkflowRunArtifactCacheRepository(deps.db.getDatabase());
 	const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
 	const pendingMessageRepo = new PendingAgentMessageRepository(deps.db.getDatabase());
+	const taskScheduleRepo = new TaskScheduleRepository(deps.db.getDatabase());
+	const spaceRepo = new SpaceRepository(deps.db.getDatabase());
+
+	// Centralised TaskSchedule lifecycle service — used by both the RPC
+	// handlers (`taskSchedule.*`) and the agent-facing MCP tools so validation,
+	// the atomic create+enqueue transaction, and pendingJobId bookkeeping live
+	// in exactly one place.
+	const scheduleService = new ScheduleService({
+		db: deps.db.getDatabase(),
+		scheduleRepo: taskScheduleRepo,
+		jobQueue: deps.jobQueue,
+		spaceRepo,
+	});
+
+	// When a space is resumed/started, re-seed any of its active schedules
+	// whose fire jobs were skipped during the inactive window so cron/at
+	// schedules pick up forward progress without waiting for daemon restart.
+	deps.spaceManager.onSpaceResumedRegister((spaceId) => {
+		try {
+			const recovered = scheduleService.recoverSchedulesForSpace(spaceId);
+			if (recovered > 0) {
+				log.info('recovered schedules after space resume', { spaceId, recovered });
+			}
+		} catch (err) {
+			log.error('schedule recovery after space resume failed (non-fatal)', err);
+		}
+	});
 
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
@@ -417,6 +448,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		daemonHub: deps.daemonHub,
 		artifactRepo,
 		pendingMessageRepo,
+		scheduleService,
 	});
 
 	// Session handlers — registered here (after spaceRuntimeService is built) so
@@ -441,6 +473,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.daemonHub,
 		spaceRuntimeService
 	);
+
+	// Task schedule handlers — create/list/get/update/pause/resume/delete schedules.
+	setupTaskScheduleHandlers(deps.messageHub, {
+		scheduleService,
+		spaceManager: deps.spaceManager,
+	});
 
 	// Register Space RPC handlers now that spaceRuntimeService exists.
 	// spaceRuntimeService is passed so space.create can call setupSpaceAgentSession()
@@ -516,6 +554,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		artifactRepo,
 		pendingMessageRepo,
 		spaceAgentInjector,
+		scheduleService,
 	});
 
 	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn

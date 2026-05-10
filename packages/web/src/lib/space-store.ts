@@ -39,6 +39,10 @@ import type {
 	SpaceWorkflow,
 	SpaceWorkflowSummary,
 	SpaceWorkflowRun,
+	TaskSchedule,
+	TaskScheduleStatus,
+	TaskScheduleTriggerType,
+	SpaceTaskPriority,
 	UpdateSpaceAgentParams,
 	UpdateSpaceParams,
 	UpdateSpaceTaskParams,
@@ -132,6 +136,9 @@ class SpaceStore {
 
 	/** Runtime state for this space */
 	readonly runtimeState = signal<RuntimeState | null>(null);
+
+	/** Task schedules for this space */
+	readonly schedules = signal<TaskSchedule[]>([]);
 
 	/** Live task-agent activity rows keyed by task ID */
 	readonly taskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());
@@ -571,6 +578,7 @@ class SpaceStore {
 		this.nodeExecLoaded.value = false;
 		this.nodeExecPromise = null;
 		this.sessions.value = [];
+		this.schedules.value = [];
 		this.clearWorkflowDetailCache();
 		this.workflowVersions.value = new Map();
 		this.disposeSpaceSessionsSubscription();
@@ -704,6 +712,21 @@ class SpaceStore {
 			}
 		});
 		this.cleanupFunctions.push(unsubTaskUpdated);
+
+		// --- space.schedule.updated ---
+		const unsubScheduleUpdated = hub.onEvent<{
+			sessionId: string;
+			spaceId: string;
+			scheduleId: string;
+			schedule: TaskSchedule;
+		}>('space.schedule.updated', (event) => {
+			if (event.spaceId === spaceId) {
+				this.schedules.value = this.schedules.value.map((s) =>
+					s.id === event.scheduleId ? event.schedule : s
+				);
+			}
+		});
+		this.cleanupFunctions.push(unsubScheduleUpdated);
 
 		// --- space.workflowRun.created ---
 		const unsubRunCreated = hub.onEvent<{
@@ -2089,6 +2112,118 @@ class SpaceStore {
 			{ id: workflowId, spaceId }
 		);
 		return workflow;
+	}
+
+	// ========================================
+	// Task Schedule Methods
+	// ========================================
+
+	/**
+	 * Create a recurring (cron) or one-shot (at) task schedule.
+	 *
+	 * If the user switches spaces while the request is in flight, the late
+	 * response is dropped from the local signal so a schedule belonging to
+	 * space A can't surface in space B's Scheduled tab. The schedule itself
+	 * was still created on the daemon — the next list refresh will pick it
+	 * up when the user returns to space A.
+	 */
+	async createSchedule(params: {
+		title: string;
+		description?: string;
+		priority?: SpaceTaskPriority;
+		preferredWorkflowId?: string | null;
+		labels?: string[];
+		triggerType: TaskScheduleTriggerType;
+		cronExpression?: string | null;
+		runAt?: number | null;
+		timezone?: string;
+	}): Promise<TaskSchedule> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { schedule } = await hub.request<{ schedule: TaskSchedule }>('taskSchedule.create', {
+			...params,
+			spaceId,
+		});
+		// Drop the response if the active space changed while we were awaiting.
+		if (this.spaceId.value !== spaceId) return schedule;
+		this.schedules.value = [...this.schedules.value, schedule];
+		return schedule;
+	}
+
+	/**
+	 * List schedules for the current space, optionally filtered by status.
+	 *
+	 * Captures the spaceId before the await and re-checks it after; if the user
+	 * has navigated away to another space while the request was in flight, the
+	 * stale response is dropped so the new space's schedule state isn't
+	 * overwritten.
+	 */
+	async listSchedules(status?: TaskScheduleStatus): Promise<TaskSchedule[]> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { schedules } = await hub.request<{ schedules: TaskSchedule[] }>('taskSchedule.list', {
+			spaceId,
+			status,
+		});
+		// Drop the response if the active space changed while we were awaiting.
+		if (this.spaceId.value !== spaceId) return schedules;
+		this.schedules.value = schedules;
+		return schedules;
+	}
+
+	/**
+	 * Pause a schedule.
+	 */
+	async pauseSchedule(scheduleId: string): Promise<TaskSchedule> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { schedule } = await hub.request<{ schedule: TaskSchedule }>('taskSchedule.pause', {
+			scheduleId,
+			spaceId,
+		});
+		this.schedules.value = this.schedules.value.map((s) => (s.id === scheduleId ? schedule : s));
+		return schedule;
+	}
+
+	/**
+	 * Resume a paused schedule.
+	 */
+	async resumeSchedule(scheduleId: string): Promise<TaskSchedule> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { schedule } = await hub.request<{ schedule: TaskSchedule }>('taskSchedule.resume', {
+			scheduleId,
+			spaceId,
+		});
+		this.schedules.value = this.schedules.value.map((s) => (s.id === scheduleId ? schedule : s));
+		return schedule;
+	}
+
+	/**
+	 * Delete a schedule.
+	 */
+	async deleteSchedule(scheduleId: string): Promise<void> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		await hub.request('taskSchedule.delete', { scheduleId, spaceId });
+		this.schedules.value = this.schedules.value.filter((s) => s.id !== scheduleId);
 	}
 }
 

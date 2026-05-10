@@ -23,7 +23,14 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { NodeExecution, SpaceTask, SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
+import type {
+	NodeExecution,
+	SpaceTask,
+	SpaceTaskStatus,
+	SpaceTaskPriority,
+	TaskScheduleTriggerType,
+	TaskScheduleStatus,
+} from '@neokai/shared';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
@@ -163,6 +170,14 @@ export interface SpaceAgentToolsConfig {
 	 * Optional — when absent, no audit entries are written.
 	 */
 	auditLogRepo?: McpAuditLogRepository;
+	/**
+	 * Schedule management service — required for the schedule management tools
+	 * (create_scheduled_task, list_scheduled_tasks, etc.). Encapsulates the
+	 * atomic create+enqueue, validation, and reschedule logic shared with the
+	 * RPC handlers.
+	 * Optional — when absent, schedule tools are not registered.
+	 */
+	scheduleService?: import('../schedule/schedule-service').ScheduleService;
 }
 
 // ---------------------------------------------------------------------------
@@ -1072,6 +1087,158 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				return jsonResult({ success: false, error: message });
 			}
 		},
+
+		/**
+		 * Create a recurring (cron) or one-shot (at) scheduled task.
+		 */
+		async create_scheduled_task(args: {
+			title: string;
+			description: string;
+			priority?: SpaceTaskPriority;
+			workflow_id?: string;
+			labels?: string[];
+			trigger_type: TaskScheduleTriggerType;
+			cron_expression?: string;
+			run_at?: number;
+			timezone?: string;
+		}): Promise<ToolResult> {
+			if (!config.scheduleService) {
+				return jsonResult({ success: false, error: 'Schedule management not available' });
+			}
+			try {
+				const schedule = config.scheduleService.createSchedule({
+					spaceId,
+					title: args.title,
+					description: args.description ?? '',
+					priority: args.priority,
+					preferredWorkflowId: args.workflow_id ?? null,
+					labels: args.labels,
+					triggerType: args.trigger_type,
+					cronExpression: args.cron_expression ?? null,
+					runAt: args.run_at ?? null,
+					timezone: args.timezone,
+					createdByAgent: myAgentName ?? null,
+					createdBySession: mySessionId ?? null,
+				});
+				logAudit('create_scheduled_task', {
+					title: args.title,
+					trigger_type: args.trigger_type,
+					cron_expression: args.cron_expression,
+					run_at: args.run_at,
+					timezone: args.timezone,
+				});
+				return jsonResult({ success: true, schedule });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * List all scheduled tasks for this space.
+		 */
+		async list_scheduled_tasks(args: { status?: TaskScheduleStatus }): Promise<ToolResult> {
+			if (!config.scheduleService) {
+				return jsonResult({ success: false, error: 'Schedule management not available' });
+			}
+			try {
+				const schedules = config.scheduleService.listSchedules(spaceId, args.status);
+				return jsonResult({ success: true, schedules });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Get schedule details including last spawned task.
+		 */
+		async get_scheduled_task(args: { schedule_id: string }): Promise<ToolResult> {
+			if (!config.scheduleService) {
+				return jsonResult({ success: false, error: 'Schedule management not available' });
+			}
+			try {
+				const schedule = config.scheduleService.getSchedule(args.schedule_id);
+				if (!schedule || schedule.spaceId !== spaceId) {
+					return jsonResult({ success: false, error: `Schedule not found: ${args.schedule_id}` });
+				}
+				return jsonResult({ success: true, schedule });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Pause a schedule — stops creating new tasks.
+		 */
+		async pause_scheduled_task(args: { schedule_id: string }): Promise<ToolResult> {
+			if (!config.scheduleService) {
+				return jsonResult({ success: false, error: 'Schedule management not available' });
+			}
+			try {
+				// Space-scope guard: callers can only pause schedules in their own space.
+				const existing = config.scheduleService.getSchedule(args.schedule_id);
+				if (!existing || existing.spaceId !== spaceId) {
+					return jsonResult({ success: false, error: `Schedule not found: ${args.schedule_id}` });
+				}
+				const schedule = config.scheduleService.pauseSchedule(args.schedule_id);
+				logAudit('pause_scheduled_task', { schedule_id: args.schedule_id });
+				return jsonResult({ success: true, schedule });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Resume a paused schedule.
+		 */
+		async resume_scheduled_task(args: { schedule_id: string }): Promise<ToolResult> {
+			if (!config.scheduleService) {
+				return jsonResult({ success: false, error: 'Schedule management not available' });
+			}
+			try {
+				const existing = config.scheduleService.getSchedule(args.schedule_id);
+				if (!existing || existing.spaceId !== spaceId) {
+					return jsonResult({ success: false, error: `Schedule not found: ${args.schedule_id}` });
+				}
+				const schedule = config.scheduleService.resumeSchedule(args.schedule_id);
+				logAudit('resume_scheduled_task', { schedule_id: args.schedule_id });
+				return jsonResult({ success: true, schedule });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Delete a schedule permanently.
+		 */
+		async delete_scheduled_task(args: { schedule_id: string }): Promise<ToolResult> {
+			if (!config.scheduleService) {
+				return jsonResult({ success: false, error: 'Schedule management not available' });
+			}
+			try {
+				const existing = config.scheduleService.getSchedule(args.schedule_id);
+				if (!existing || existing.spaceId !== spaceId) {
+					return jsonResult({ success: false, error: `Schedule not found: ${args.schedule_id}` });
+				}
+				const ok = config.scheduleService.deleteSchedule(args.schedule_id);
+				if (!ok) {
+					return jsonResult({
+						success: false,
+						error:
+							'Schedule was modified concurrently (e.g. a fire job advanced it). Please retry.',
+					});
+				}
+				logAudit('delete_scheduled_task', { schedule_id: args.schedule_id });
+				return jsonResult({ success: true });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
 	};
 }
 
@@ -1333,6 +1500,92 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 			(args) => handlers.approve_task(args)
 		),
 	];
+
+	// Schedule management tools — only registered when scheduleService is provided.
+	if (config.scheduleService) {
+		tools.push(
+			tool(
+				'create_scheduled_task',
+				'Create a recurring (cron) or one-shot (at) scheduled task. When it fires, a real SpaceTask is created automatically.',
+				{
+					title: z.string().describe('Short title for the task template'),
+					description: z.string().describe('Detailed description for the task template'),
+					priority: z
+						.enum(['low', 'normal', 'high', 'urgent'])
+						.optional()
+						.describe('Task priority (default: normal)'),
+					workflow_id: z
+						.string()
+						.optional()
+						.describe('Preferred workflow ID to attach to created tasks'),
+					labels: z.array(z.string()).optional().describe('Labels to apply to created tasks'),
+					trigger_type: z
+						.enum(['cron', 'at'])
+						.describe('Trigger type: "cron" for recurring, "at" for one-shot'),
+					cron_expression: z
+						.string()
+						.optional()
+						.describe(
+							'Cron expression (e.g. "0 9 * * 1" for every Monday at 9am, "@daily", "@hourly"). Required when trigger_type is "cron".'
+						),
+					run_at: z
+						.number()
+						.optional()
+						.describe(
+							'Unix timestamp in ms when the task should fire. Required when trigger_type is "at".'
+						),
+					timezone: z
+						.string()
+						.optional()
+						.describe('IANA timezone string (default: "UTC"). Example: "America/New_York"'),
+				},
+				(args) => handlers.create_scheduled_task(args)
+			),
+			tool(
+				'list_scheduled_tasks',
+				'List all scheduled tasks for this space.',
+				{
+					status: z
+						.enum(['active', 'paused', 'completed'])
+						.optional()
+						.describe('Filter by schedule status (default: all)'),
+				},
+				(args) => handlers.list_scheduled_tasks(args)
+			),
+			tool(
+				'get_scheduled_task',
+				'Get details of a specific scheduled task including last spawned task ID and next run time.',
+				{
+					schedule_id: z.string().describe('ID of the scheduled task to retrieve'),
+				},
+				(args) => handlers.get_scheduled_task(args)
+			),
+			tool(
+				'pause_scheduled_task',
+				'Pause a schedule — stops creating new tasks until resumed.',
+				{
+					schedule_id: z.string().describe('ID of the scheduled task to pause'),
+				},
+				(args) => handlers.pause_scheduled_task(args)
+			),
+			tool(
+				'resume_scheduled_task',
+				'Resume a paused schedule, computing the next run time and re-enqueueing the job.',
+				{
+					schedule_id: z.string().describe('ID of the scheduled task to resume'),
+				},
+				(args) => handlers.resume_scheduled_task(args)
+			),
+			tool(
+				'delete_scheduled_task',
+				'Permanently delete a scheduled task. Any pending job is cancelled.',
+				{
+					schedule_id: z.string().describe('ID of the scheduled task to delete'),
+				},
+				(args) => handlers.delete_scheduled_task(args)
+			)
+		);
+	}
 
 	// Optional legacy restore mirror. Workflow node sessions should use the
 	// node-agent namespace directly; space-agent-tools is no longer attached there.

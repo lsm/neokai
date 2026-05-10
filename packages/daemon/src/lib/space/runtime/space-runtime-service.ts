@@ -98,6 +98,12 @@ export interface SpaceRuntimeServiceConfig {
 	 * calls the Claude Agent SDK. Tests should supply a deterministic stub.
 	 */
 	selectWorkflowWithLlm?: SelectWorkflowWithLlm;
+	/**
+	 * Schedule service — shared business logic for task schedule lifecycle.
+	 * Passed to space-agent-tools so Space Agent and member sessions can manage
+	 * scheduled tasks via the same code path as the RPC handlers. Optional.
+	 */
+	scheduleService?: import('../schedule/schedule-service').ScheduleService;
 }
 
 export class SpaceRuntimeService {
@@ -671,6 +677,7 @@ export class SpaceRuntimeService {
 			// correct gating behavior for non-space-agent callers.
 			mySessionId: session.id,
 			auditLogRepo: this.auditLogRepo,
+			scheduleService: this.config.scheduleService,
 		});
 
 		const additional: Record<string, McpServerConfig> = {
@@ -764,6 +771,7 @@ export class SpaceRuntimeService {
 			myAgentName: 'space-agent',
 			mySessionId: spaceChatSessionId,
 			auditLogRepo: this.auditLogRepo,
+			scheduleService: this.config.scheduleService,
 		});
 
 		// Create a space-scoped db-query server if dbPath is configured.

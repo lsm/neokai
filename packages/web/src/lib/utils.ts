@@ -93,6 +93,27 @@ export function getRelativeTime(ts: number): string {
 }
 
 /**
+ * Format a relative time that may be in the past OR the future.
+ *
+ * Used by the Scheduled tab's `nextRunAt` column where timestamps are normally
+ * future-dated but may briefly land in the past (clock drift, schedule fired
+ * but not yet advanced, etc.). `getRelativeTime` is past-only and would render
+ * future timestamps as "just now", which is misleading.
+ */
+export function formatRelativeFuture(ts: number): string {
+	const diff = ts - Date.now();
+	const future = diff >= 0;
+	const abs = Math.abs(diff);
+	const minutes = Math.floor(abs / 60_000);
+	if (minutes < 1) return future ? 'in <1m' : 'just now';
+	if (minutes < 60) return future ? `in ${minutes}m` : `${minutes}m ago`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return future ? `in ${hours}h` : `${hours}h ago`;
+	const days = Math.floor(hours / 24);
+	return future ? `in ${days}d` : `${days}d ago`;
+}
+
+/**
  * Format token count in k format (e.g., 16500 -> "16.5k")
  */
 export function formatTokens(tokens: number): string {
