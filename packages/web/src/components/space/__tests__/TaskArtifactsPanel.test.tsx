@@ -451,6 +451,7 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 					sendTaskMessage: vi.fn().mockResolvedValue(undefined),
 					ensureConfigData: vi.fn().mockResolvedValue(undefined),
 					ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
+					workflowVersions: signal(new Map()),
 				};
 			},
 		}));
@@ -528,6 +529,7 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 					sendTaskMessage: vi.fn().mockResolvedValue(undefined),
 					ensureConfigData: vi.fn().mockResolvedValue(undefined),
 					ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
+					workflowVersions: signal(new Map()),
 				};
 			},
 		}));
@@ -606,6 +608,7 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 					sendTaskMessage: vi.fn().mockResolvedValue(undefined),
 					ensureConfigData: vi.fn().mockResolvedValue(undefined),
 					ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
+					workflowVersions: signal(new Map()),
 				};
 			},
 		}));
