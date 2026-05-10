@@ -370,9 +370,11 @@ export function setupSpaceWorkflowHandlers(
 		let workflow: SpaceWorkflow | null = null;
 		if (params.id) {
 			workflow = workflowManager.getWorkflow(params.id);
-			// If ID lookup misses and a handle + spaceId are also present, try the
-			// handle — clients that cache both fields still work when the UUID changes.
-			if (!workflow && typeof params.handle === 'string' && params.spaceId) {
+			// Fall back to handle when the ID is unusable: either it returned null, or
+			// it resolved to a workflow in a different space (stale/cross-space ref).
+			// Clients that cache both fields still resolve correctly when UUIDs change.
+			const idUnusable = !workflow || (!!params.spaceId && workflow.spaceId !== params.spaceId);
+			if (idUnusable && typeof params.handle === 'string' && params.spaceId) {
 				const trimmedHandle = params.handle.trim();
 				if (trimmedHandle) {
 					workflow = workflowManager.getWorkflowByHandle(params.spaceId, trimmedHandle);
