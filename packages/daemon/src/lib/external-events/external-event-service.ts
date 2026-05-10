@@ -9,10 +9,10 @@
  *
  * No task resolution happens in this service — the event pipeline is intentionally
  * agnostic to task-system concerns. Task matching is the responsibility of
- * subscribers (e.g. the router, workflow nodes).
+ * subscribers (e.g. the workflow runtime, agent tools).
  *
- * No session injection happens in this service — routing/delivery is the router's
- * responsibility (a later task).
+ * No session injection happens in this service — delivery is a workflow-runtime
+ * and agent concern, not an event-pipeline concern.
  */
 
 import type { InternalEventBus } from '../internal-event-bus';
@@ -107,8 +107,8 @@ export class ExternalEventService implements ExternalEventPublisher {
 	 * Handle a retryable duplicate.
 	 *
 	 * Re-emits the canonical bus payload so failed subscribers recover.
-	 * The event stays in `published` state — terminalization is the router's
-	 * responsibility after delivery completes or fails.
+	 * The event stays in `published` state — terminalization is the workflow
+	 * runtime's responsibility after delivery completes or fails.
 	 */
 	private async _handleRetryableDuplicate(canonicalEvent: ExternalEvent): Promise<PublishResult> {
 		await this._publishBusEvent(canonicalEvent);

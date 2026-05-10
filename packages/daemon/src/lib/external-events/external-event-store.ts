@@ -7,7 +7,7 @@
  *   • `space_external_events` — one row per `(spaceId, source, dedupeKey)` with
  *     a state machine (`published` → `delivered` | `failed` | `ignored`).
  *   • `space_external_event_deliveries` — per-subscription delivery rows, keyed
- *     by `(eventId, deliveryKey)`, used by the router to advance source events
+ *     by `(eventId, deliveryKey)`, used by the workflow runtime to advance source events
  *     to terminal `delivered` only when every expected delivery succeeds.
  *
  * Source-agnostic: nothing in this file is GitHub-specific. Topic format is
@@ -183,7 +183,7 @@ export class ExternalEventStore {
 			.all(eventId) as Pick<ExternalEventDeliveryRow, 'state'>[];
 
 		// Defensive: if no expected deliveries were ever registered, this is not
-		// "all delivered" — the router should call `markEventIgnored` instead.
+		// "all delivered" — the workflow runtime should call `markEventIgnored` instead.
 		if (rows.length === 0) return;
 
 		for (const row of rows) {
@@ -243,7 +243,7 @@ export class ExternalEventStore {
 	}
 
 	/**
-	 * Force the source event to terminal `failed`. Used by the router when it
+	 * Force the source event to terminal `failed`. Used by the workflow runtime when it
 	 * cannot dispatch the event at all (e.g. enrichment hard error).
 	 *
 	 * `failure.terminal=false` is rejected — calling `markEventFailed` is a
@@ -292,7 +292,7 @@ export class ExternalEventStore {
 	 * Idempotently register the delivery row expected for an event/subscription.
 	 *
 	 * Implemented as `INSERT OR IGNORE` because retryable source duplicates and
-	 * router retries can prepare the same `(eventId, deliveryKey)` more than
+	 * workflow runtime retries can prepare the same `(eventId, deliveryKey)` more than
 	 * once. Existing terminal rows are preserved.
 	 */
 	registerExpectedDelivery(eventId: string, deliveryKey: string, target: DeliveryTarget): void {
@@ -422,7 +422,7 @@ export class ExternalEventStore {
 	 *
 	 * `failure.terminal=true` advances to terminal `failed`. `failure.terminal=false`
 	 * keeps the row in `pending` (retryable) but updates `failure_reason` for
-	 * diagnostics — the row remains eligible for the router's next retry pass.
+	 * diagnostics — the row remains eligible for the workflow runtime's next retry pass.
 	 *
 	 * No-op if the row is already terminal.
 	 */
@@ -531,7 +531,7 @@ function rowToRecord(row: ExternalEventRow): ExternalEventRecord {
 		payload = JSON.parse(row.payload_json) as Record<string, unknown>;
 	} catch {
 		// Corrupted payload — return an empty object so the rest of the
-		// metadata (state, dedupe key, etc.) remains usable. The router can
+		// metadata (state, dedupe key, etc.) remains usable. The workflow runtime can
 		// decide whether to terminalize the event or skip delivery.
 		payload = {};
 	}
