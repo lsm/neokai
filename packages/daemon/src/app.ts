@@ -728,6 +728,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		}
 
 		try {
+			// Stop event bridge first so no new client events are forwarded
+			// while we're tearing down sessions and transport.
+			clientEventBridge.stop();
+
 			try {
 				server.stop();
 			} catch {

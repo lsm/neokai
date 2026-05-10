@@ -35,7 +35,7 @@
  *   emitting events.
  */
 
-import type { IClientEventGateway, EventChannel, SDKMessagesUpdate } from '@neokai/shared';
+import type { IClientEventGateway, EventChannel } from '@neokai/shared';
 import { Channels } from '@neokai/shared';
 import type { DaemonHub, DaemonEventMap } from './daemon-hub';
 
@@ -55,10 +55,7 @@ interface BridgeMapping {
  */
 export interface StateBroadcasts {
 	broadcastSystemChange(): Promise<void>;
-	broadcastSettingsChange(): Promise<void>;
 	broadcastSessionStateChange(sessionId: string): Promise<void>;
-	broadcastSDKMessagesChange(sessionId: string): Promise<void>;
-	broadcastSDKMessagesDelta(sessionId: string, update: SDKMessagesUpdate): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,10 +217,13 @@ export class ClientEventBridge {
 			this.subscribeMapping(mapping);
 		}
 
-		// Session events (pure forwarding)
+		// Session events (pure forwarding + broadcast triggers)
 		for (const mapping of SESSION_BRIDGE_MAPPINGS) {
 			this.subscribeMapping(mapping);
 		}
+		this.subscribeBroadcast('context.updated', (data) =>
+			this.broadcasts?.broadcastSessionStateChange(data.sessionId)
+		);
 
 		// Connection/auth events (trigger broadcasts via StateManager)
 		this.subscribeBroadcast('api.connection', () => this.broadcasts?.broadcastSystemChange());
@@ -268,9 +268,11 @@ export class ClientEventBridge {
 		const unsub = this.daemonHub.on(event, (data: DaemonEventMap[K]) => {
 			const promise = broadcast(data);
 			if (promise) {
-				promise.catch(() => {
-					// Broadcast failures are logged by StateManager; bridge swallows
-					// to avoid unhandled rejections.
+				return promise.catch((err) => {
+					// Return the promise so TypedHub awaits it, preserving emit
+					// completion semantics. Log here so failures are visible even
+					// when StateManager's own logging is insufficient.
+					console.warn(`[ClientEventBridge] Broadcast failed for ${event}:`, err);
 				});
 			}
 		});

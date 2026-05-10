@@ -16,15 +16,22 @@ import type { IClientEventGateway, EventChannel } from '@neokai/shared';
 
 describe('ClientEventBridge', () => {
 	function buildFixture() {
-		const eventHandlers = new Map<string, Function>();
+		const eventHandlers = new Map<string, Function[]>();
 		const unsubscribers: string[] = [];
 
 		const daemonHub = {
 			on: mock((event: string, handler: Function) => {
-				eventHandlers.set(event, handler);
+				const existing = eventHandlers.get(event) || [];
+				existing.push(handler);
+				eventHandlers.set(event, existing);
 				return () => {
 					unsubscribers.push(event);
-					eventHandlers.delete(event);
+					const handlers = eventHandlers.get(event);
+					if (handlers) {
+						const idx = handlers.indexOf(handler);
+						if (idx !== -1) handlers.splice(idx, 1);
+						if (handlers.length === 0) eventHandlers.delete(event);
+					}
 				};
 			}),
 			emit: mock(async () => {}),
@@ -46,17 +53,8 @@ describe('ClientEventBridge', () => {
 			broadcastSystemChange: mock(async () => {
 				broadcastCalls.push({ method: 'broadcastSystemChange', args: [] });
 			}),
-			broadcastSettingsChange: mock(async () => {
-				broadcastCalls.push({ method: 'broadcastSettingsChange', args: [] });
-			}),
 			broadcastSessionStateChange: mock(async (sessionId: string) => {
 				broadcastCalls.push({ method: 'broadcastSessionStateChange', args: [sessionId] });
-			}),
-			broadcastSDKMessagesChange: mock(async (sessionId: string) => {
-				broadcastCalls.push({ method: 'broadcastSDKMessagesChange', args: [sessionId] });
-			}),
-			broadcastSDKMessagesDelta: mock(async (sessionId: string, update: unknown) => {
-				broadcastCalls.push({ method: 'broadcastSDKMessagesDelta', args: [sessionId, update] });
 			}),
 		};
 
@@ -137,7 +135,8 @@ describe('ClientEventBridge', () => {
 			bridge.start();
 			bridge.start();
 
-			// 16 space + 3 session + 2 conn/auth + 1 config + 2 error = 24
+			// 16 space + 3 session + 2 conn/auth + 1 config + 2 error = 24 unique events
+			// (context.updated has 2 handlers but is 1 unique event key)
 			expect(eventHandlers.size).toBe(24);
 		});
 	});
@@ -149,7 +148,8 @@ describe('ClientEventBridge', () => {
 			bridge.start();
 			bridge.stop();
 
-			expect(unsubscribers.length).toBe(24);
+			// 24 daemonHub.on calls total (context.updated has 2 handlers)
+			expect(unsubscribers.length).toBe(25);
 		});
 	});
 
@@ -159,7 +159,7 @@ describe('ClientEventBridge', () => {
 			createClientEventBridge(daemonHub, gateway).start();
 
 			const data = { sessionId: 'global', spaceId: 's-1', space: { id: 's-1' } };
-			eventHandlers.get('space.created')!(data);
+			eventHandlers.get('space.created')![0](data);
 
 			expect(published[0].method).toBe('space.created');
 			expect(published[0].channel).toEqual({ kind: 'global' });
@@ -170,7 +170,7 @@ describe('ClientEventBridge', () => {
 			createClientEventBridge(daemonHub, gateway).start();
 
 			const data = { sessionId: 'global', spaceId: 's-1', space: { name: 'Updated' } };
-			eventHandlers.get('space.updated')!(data);
+			eventHandlers.get('space.updated')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'global' });
 		});
@@ -184,7 +184,7 @@ describe('ClientEventBridge', () => {
 				spaceId: 's-1',
 				space: { id: 's-1', status: 'archived' },
 			};
-			eventHandlers.get('space.archived')!(data);
+			eventHandlers.get('space.archived')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'global' });
 		});
@@ -194,7 +194,7 @@ describe('ClientEventBridge', () => {
 			createClientEventBridge(daemonHub, gateway).start();
 
 			const data = { sessionId: 'global', spaceId: 's-1' };
-			eventHandlers.get('space.deleted')!(data);
+			eventHandlers.get('space.deleted')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'global' });
 		});
@@ -209,7 +209,7 @@ describe('ClientEventBridge', () => {
 				taskId: 't-1',
 				task: { id: 't-1', title: 'Task 1' },
 			};
-			eventHandlers.get('space.task.created')!(data);
+			eventHandlers.get('space.task.created')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'global' });
 		});
@@ -224,7 +224,7 @@ describe('ClientEventBridge', () => {
 				taskId: 't-1',
 				task: { id: 't-1', status: 'in_progress' },
 			};
-			eventHandlers.get('space.task.updated')!(data);
+			eventHandlers.get('space.task.updated')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'global' });
 		});
@@ -239,7 +239,7 @@ describe('ClientEventBridge', () => {
 				scheduleId: 'sch-1',
 				schedule: { id: 'sch-1', cron: '0 9 * * *' },
 			};
-			eventHandlers.get('space.schedule.updated')!(data);
+			eventHandlers.get('space.schedule.updated')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'global' });
 		});
@@ -254,7 +254,7 @@ describe('ClientEventBridge', () => {
 				runId: 'run-1',
 				run: { id: 'run-1', status: 'pending' },
 			};
-			eventHandlers.get('space.workflowRun.created')!(data);
+			eventHandlers.get('space.workflowRun.created')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'global' });
 		});
@@ -269,7 +269,7 @@ describe('ClientEventBridge', () => {
 				runId: 'run-1',
 				run: { status: 'running' },
 			};
-			eventHandlers.get('space.workflowRun.updated')!(data);
+			eventHandlers.get('space.workflowRun.updated')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'global' });
 		});
@@ -285,7 +285,7 @@ describe('ClientEventBridge', () => {
 				gateId: 'g-1',
 				data: { votes: 3 },
 			};
-			eventHandlers.get('space.gateData.updated')!(data);
+			eventHandlers.get('space.gateData.updated')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'global' });
 		});
@@ -299,7 +299,7 @@ describe('ClientEventBridge', () => {
 				spaceId: 's-1',
 				agent: { id: 'a-1', name: 'Agent 1' },
 			};
-			eventHandlers.get('spaceAgent.created')!(data);
+			eventHandlers.get('spaceAgent.created')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'space', spaceId: 's-1' });
 		});
@@ -313,7 +313,7 @@ describe('ClientEventBridge', () => {
 				spaceId: 's-1',
 				agent: { id: 'a-1', name: 'Updated Agent' },
 			};
-			eventHandlers.get('spaceAgent.updated')!(data);
+			eventHandlers.get('spaceAgent.updated')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'space', spaceId: 's-1' });
 		});
@@ -323,7 +323,7 @@ describe('ClientEventBridge', () => {
 			createClientEventBridge(daemonHub, gateway).start();
 
 			const data = { sessionId: 'space:s-1', spaceId: 's-1', agentId: 'a-1' };
-			eventHandlers.get('spaceAgent.deleted')!(data);
+			eventHandlers.get('spaceAgent.deleted')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'space', spaceId: 's-1' });
 		});
@@ -337,7 +337,7 @@ describe('ClientEventBridge', () => {
 				spaceId: 's-1',
 				workflow: { id: 'wf-1', name: 'Workflow 1' },
 			};
-			eventHandlers.get('spaceWorkflow.created')!(data);
+			eventHandlers.get('spaceWorkflow.created')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'global' });
 		});
@@ -351,7 +351,7 @@ describe('ClientEventBridge', () => {
 				spaceId: 's-1',
 				workflow: { id: 'wf-1', name: 'Updated Workflow' },
 			};
-			eventHandlers.get('spaceWorkflow.updated')!(data);
+			eventHandlers.get('spaceWorkflow.updated')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'global' });
 		});
@@ -361,7 +361,7 @@ describe('ClientEventBridge', () => {
 			createClientEventBridge(daemonHub, gateway).start();
 
 			const data = { sessionId: 'global', spaceId: 's-1', workflowId: 'wf-1' };
-			eventHandlers.get('spaceWorkflow.deleted')!(data);
+			eventHandlers.get('spaceWorkflow.deleted')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'global' });
 		});
@@ -376,7 +376,7 @@ describe('ClientEventBridge', () => {
 				sessionId: 'sess-1',
 				session: { id: 'sess-1', title: 'Test', status: 'active', metadata: {} },
 			};
-			eventHandlers.get('session.created')!(data);
+			eventHandlers.get('session.created')![0](data);
 
 			expect(published[0].method).toBe('session.created');
 			expect(published[0].data).toEqual({ sessionId: 'sess-1' });
@@ -388,7 +388,7 @@ describe('ClientEventBridge', () => {
 			createClientEventBridge(daemonHub, gateway).start();
 
 			const data = { sessionId: 'sess-1' };
-			eventHandlers.get('session.deleted')!(data);
+			eventHandlers.get('session.deleted')![0](data);
 
 			expect(published[0].method).toBe('session.deleted');
 			expect(published[0].data).toEqual({ sessionId: 'sess-1' });
@@ -401,7 +401,7 @@ describe('ClientEventBridge', () => {
 
 			const contextInfo = { files: 5, tokens: 1000 };
 			const data = { sessionId: 'sess-1', contextInfo };
-			eventHandlers.get('context.updated')!(data);
+			eventHandlers.get('context.updated')![0](data);
 
 			expect(published[0].method).toBe('context.updated');
 			expect(published[0].data).toEqual(contextInfo);
@@ -415,7 +415,7 @@ describe('ClientEventBridge', () => {
 			createClientEventBridge(daemonHub, {} as IClientEventGateway, broadcasts).start();
 
 			const data = { sessionId: 'global', status: 'disconnected', timestamp: Date.now() };
-			await eventHandlers.get('api.connection')!(data);
+			await eventHandlers.get('api.connection')![0](data);
 
 			expect(broadcastCalls).toHaveLength(1);
 			expect(broadcastCalls[0].method).toBe('broadcastSystemChange');
@@ -426,7 +426,7 @@ describe('ClientEventBridge', () => {
 			createClientEventBridge(daemonHub, {} as IClientEventGateway, broadcasts).start();
 
 			const data = { sessionId: 'global', method: 'api_key', isAuthenticated: true };
-			await eventHandlers.get('auth.changed')!(data);
+			await eventHandlers.get('auth.changed')![0](data);
 
 			expect(broadcastCalls).toHaveLength(1);
 			expect(broadcastCalls[0].method).toBe('broadcastSystemChange');
@@ -439,7 +439,22 @@ describe('ClientEventBridge', () => {
 			createClientEventBridge(daemonHub, {} as IClientEventGateway, broadcasts).start();
 
 			const data = { sessionId: 'sess-1', commands: ['cmd1', 'cmd2'] };
-			await eventHandlers.get('commands.updated')!(data);
+			await eventHandlers.get('commands.updated')![0](data);
+
+			expect(broadcastCalls).toHaveLength(1);
+			expect(broadcastCalls[0].method).toBe('broadcastSessionStateChange');
+			expect(broadcastCalls[0].args).toEqual(['sess-1']);
+		});
+	});
+
+	describe('context.updated broadcast trigger', () => {
+		it('triggers broadcastSessionStateChange on context.updated', async () => {
+			const { daemonHub, eventHandlers, broadcasts, broadcastCalls } = buildFixture();
+			createClientEventBridge(daemonHub, {} as IClientEventGateway, broadcasts).start();
+
+			const data = { sessionId: 'sess-1', contextInfo: { files: 5, tokens: 1000 } };
+			// The broadcast trigger is the second handler (index 1) for context.updated
+			await eventHandlers.get('context.updated')![1](data);
 
 			expect(broadcastCalls).toHaveLength(1);
 			expect(broadcastCalls[0].method).toBe('broadcastSessionStateChange');
@@ -453,7 +468,7 @@ describe('ClientEventBridge', () => {
 			createClientEventBridge(daemonHub, {} as IClientEventGateway, broadcasts).start();
 
 			const data = { sessionId: 'sess-1', error: 'Something went wrong' };
-			await eventHandlers.get('session.error')!(data);
+			await eventHandlers.get('session.error')![0](data);
 
 			expect(broadcastCalls).toHaveLength(1);
 			expect(broadcastCalls[0].method).toBe('broadcastSessionStateChange');
@@ -465,7 +480,7 @@ describe('ClientEventBridge', () => {
 			createClientEventBridge(daemonHub, {} as IClientEventGateway, broadcasts).start();
 
 			const data = { sessionId: 'sess-1' };
-			await eventHandlers.get('session.errorClear')!(data);
+			await eventHandlers.get('session.errorClear')![0](data);
 
 			expect(broadcastCalls).toHaveLength(1);
 			expect(broadcastCalls[0].method).toBe('broadcastSessionStateChange');
@@ -479,7 +494,7 @@ describe('ClientEventBridge', () => {
 			createClientEventBridge(daemonHub, gateway).start();
 
 			const data = { sessionId: 'global', spaceId: 's-1', space: { id: 's-1', name: 'Test' } };
-			eventHandlers.get('space.created')!(data);
+			eventHandlers.get('space.created')![0](data);
 
 			expect(published[0].data).toEqual(data);
 		});
