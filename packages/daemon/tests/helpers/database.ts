@@ -32,9 +32,9 @@ export function createMockDb(): Database {
  * Create and initialize a test DaemonHub
  */
 export async function createTestDaemonHub(name: string): Promise<DaemonHub> {
-	const eventBus = createDaemonHub(name);
-	await eventBus.initialize();
-	return eventBus;
+	const daemonHub = createDaemonHub(name);
+	await daemonHub.initialize();
+	return daemonHub;
 }
 
 /**

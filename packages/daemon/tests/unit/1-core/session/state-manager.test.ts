@@ -27,7 +27,7 @@ describe('StateManager', () => {
 	let mockAuthManager: AuthManager;
 	let mockSettingsManager: SettingsManager;
 	let mockConfig: Config;
-	let mockEventBus: DaemonHub;
+	let mockDaemonHub: DaemonHub;
 	let eventHandlers: Map<string, Function>;
 	let requestHandlers: Map<string, Function>;
 
@@ -77,8 +77,8 @@ describe('StateManager', () => {
 			dbPath: '/test/db.sqlite',
 		} as unknown as Config;
 
-		// EventBus mock
-		mockEventBus = {
+		// DaemonHub mock
+		mockDaemonHub = {
 			on: mock((event: string, handler: Function) => {
 				eventHandlers.set(event, handler);
 				return () => {};
@@ -92,7 +92,7 @@ describe('StateManager', () => {
 			mockAuthManager,
 			mockSettingsManager,
 			mockConfig,
-			mockEventBus
+			mockDaemonHub
 		);
 	});
 
@@ -486,7 +486,7 @@ describe('StateManager', () => {
 					mockAuthManager,
 					mockSettingsManager,
 					mockConfig,
-					mockEventBus,
+					mockDaemonHub,
 					undefined,
 					mockInternalEventBus
 				);

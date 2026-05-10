@@ -145,8 +145,8 @@ export function useViewportSafety(): void {
 				// Shrink the app container to the visible viewport height
 				document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
 
-				// Record keyboard height so fixed/absolute positioned elements
-				// (e.g. chat composer) can offset themselves above the keyboard
+				// Record keyboard height as a CSS custom property for potential future use.
+				// Currently no built-in element reads this, but it is available for extensions.
 				updateKeyboardHeight(vv);
 
 				// Remove bottom bar padding — the BottomTabBar is fixed at bottom:0

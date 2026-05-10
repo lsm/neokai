@@ -13,7 +13,7 @@ import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 describe('ErrorManager', () => {
 	let errorManager: ErrorManager;
 	let mockMessageHub: MessageHub;
-	let mockEventBus: DaemonHub;
+	let mockDaemonHub: DaemonHub;
 	let publishSpy: ReturnType<typeof mock>;
 	let emitSpy: ReturnType<typeof mock>;
 	let publishAsyncSpy: ReturnType<typeof mock>;
@@ -31,14 +31,14 @@ describe('ErrorManager', () => {
 		// Create mock DaemonHub (errors now emit via DaemonHub, not direct publish)
 		emitSpy = mock(async () => {});
 		publishAsyncSpy = mock(() => {});
-		mockEventBus = {
+		mockDaemonHub = {
 			emit: emitSpy,
 			publishAsync: publishAsyncSpy,
 			on: mock(() => {}),
 			off: mock(() => {}),
 		} as unknown as DaemonHub;
 
-		errorManager = new ErrorManager(mockMessageHub, mockEventBus);
+		errorManager = new ErrorManager(mockMessageHub, mockDaemonHub);
 	});
 
 	describe('createError', () => {
@@ -634,7 +634,7 @@ describe('ErrorManager', () => {
 			expect(result.metadata).toEqual(metadata);
 		});
 
-		it('should emit error via EventBus', async () => {
+		it('should emit error via DaemonHub', async () => {
 			const sessionId = 'test-session-def';
 			const processingState = {
 				status: 'processing',

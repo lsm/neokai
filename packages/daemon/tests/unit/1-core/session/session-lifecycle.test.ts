@@ -81,7 +81,7 @@ describe('SessionLifecycle', () => {
 	let mockDb: Database;
 	let mockWorktreeManager: WorktreeManager;
 	let mockSessionCache: SessionCache;
-	let mockEventBus: DaemonHub;
+	let mockDaemonHub: DaemonHub;
 	let mockMessageHub: MessageHub;
 	let mockToolsConfigManager: ToolsConfigManager;
 	let mockAgentSessionFactory: AgentSessionFactory;
@@ -139,7 +139,7 @@ describe('SessionLifecycle', () => {
 		} as unknown as SessionCache;
 
 		// Event bus mocks
-		mockEventBus = {
+		mockDaemonHub = {
 			on: mock(() => () => {}),
 			emit: mock(async () => {}),
 		} as unknown as DaemonHub;
@@ -172,7 +172,7 @@ describe('SessionLifecycle', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
-			mockEventBus,
+			mockDaemonHub,
 			mockMessageHub,
 			config,
 			mockToolsConfigManager,
@@ -308,7 +308,7 @@ describe('SessionLifecycle', () => {
 				mockDb,
 				mockWorktreeManager,
 				mockSessionCache,
-				mockEventBus,
+				mockDaemonHub,
 				mockMessageHub,
 				worktreeEnabledConfig,
 				mockToolsConfigManager,
@@ -385,7 +385,7 @@ describe('SessionLifecycle', () => {
 		it('should emit session.created event', async () => {
 			await lifecycle.create({});
 
-			expect(mockEventBus.emit).toHaveBeenCalledWith(
+			expect(mockDaemonHub.emit).toHaveBeenCalledWith(
 				'session.created',
 				expect.objectContaining({
 					sessionId: expect.any(String),
@@ -483,7 +483,7 @@ describe('SessionLifecycle', () => {
 		it('should emit session.updated event', async () => {
 			await lifecycle.update('test-id', { title: 'New Title' });
 
-			expect(mockEventBus.emit).toHaveBeenCalledWith(
+			expect(mockDaemonHub.emit).toHaveBeenCalledWith(
 				'session.updated',
 				expect.objectContaining({
 					sessionId: 'test-id',
@@ -567,7 +567,7 @@ describe('SessionLifecycle', () => {
 				expect.objectContaining({ sessionId: 'test-id' }),
 				{ channel: 'global' }
 			);
-			expect(mockEventBus.emit).toHaveBeenCalledWith(
+			expect(mockDaemonHub.emit).toHaveBeenCalledWith(
 				'session.deleted',
 				expect.objectContaining({ sessionId: 'test-id' })
 			);
@@ -787,7 +787,7 @@ describe('SessionLifecycle', () => {
 		it('should emit session.updated event', async () => {
 			await lifecycle.completeWorktreeChoice('test-id', 'direct');
 
-			expect(mockEventBus.emit).toHaveBeenCalledWith(
+			expect(mockDaemonHub.emit).toHaveBeenCalledWith(
 				'session.updated',
 				expect.objectContaining({
 					sessionId: 'test-id',
@@ -927,7 +927,7 @@ describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
 	let mockDb: Database;
 	let mockWorktreeManager: WorktreeManager;
 	let mockSessionCache: SessionCache;
-	let mockEventBus: DaemonHub;
+	let mockDaemonHub: DaemonHub;
 	let mockMessageHub: MessageHub;
 	let mockToolsConfigManager: ToolsConfigManager;
 	let mockAgentSessionFactory: AgentSessionFactory;
@@ -980,7 +980,7 @@ describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
 		} as unknown as SessionCache;
 
 		// Event bus mocks
-		mockEventBus = {
+		mockDaemonHub = {
 			on: mock(() => () => {}),
 			emit: mock(async () => {}),
 		} as unknown as DaemonHub;
@@ -1013,7 +1013,7 @@ describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
-			mockEventBus,
+			mockDaemonHub,
 			mockMessageHub,
 			config,
 			mockToolsConfigManager,
@@ -1084,7 +1084,7 @@ describe('SessionLifecycle - completeWorktreeChoice edge cases', () => {
 	let mockDb: Database;
 	let mockWorktreeManager: WorktreeManager;
 	let mockSessionCache: SessionCache;
-	let mockEventBus: DaemonHub;
+	let mockDaemonHub: DaemonHub;
 	let mockMessageHub: MessageHub;
 	let mockToolsConfigManager: ToolsConfigManager;
 	let mockAgentSessionFactory: AgentSessionFactory;
@@ -1133,7 +1133,7 @@ describe('SessionLifecycle - completeWorktreeChoice edge cases', () => {
 			remove: mock(() => {}),
 		} as unknown as SessionCache;
 
-		mockEventBus = {
+		mockDaemonHub = {
 			on: mock(() => () => {}),
 			emit: mock(async () => {}),
 		} as unknown as DaemonHub;
@@ -1157,7 +1157,7 @@ describe('SessionLifecycle - completeWorktreeChoice edge cases', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
-			mockEventBus,
+			mockDaemonHub,
 			mockMessageHub,
 			config,
 			mockToolsConfigManager,
@@ -1195,7 +1195,7 @@ describe('SessionLifecycle - session creation with worktree', () => {
 	let mockDb: Database;
 	let mockWorktreeManager: WorktreeManager;
 	let mockSessionCache: SessionCache;
-	let mockEventBus: DaemonHub;
+	let mockDaemonHub: DaemonHub;
 	let mockMessageHub: MessageHub;
 	let mockToolsConfigManager: ToolsConfigManager;
 	let mockAgentSessionFactory: AgentSessionFactory;
@@ -1241,7 +1241,7 @@ describe('SessionLifecycle - session creation with worktree', () => {
 			remove: mock(() => {}),
 		} as unknown as SessionCache;
 
-		mockEventBus = {
+		mockDaemonHub = {
 			on: mock(() => () => {}),
 			emit: mock(async () => {}),
 		} as unknown as DaemonHub;
@@ -1266,7 +1266,7 @@ describe('SessionLifecycle - session creation with worktree', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
-			mockEventBus,
+			mockDaemonHub,
 			mockMessageHub,
 			config,
 			mockToolsConfigManager,
@@ -1325,7 +1325,7 @@ describe('SessionLifecycle - setWorkspace', () => {
 	let mockDb: Database;
 	let mockWorktreeManager: WorktreeManager;
 	let mockSessionCache: SessionCache;
-	let mockEventBus: DaemonHub;
+	let mockDaemonHub: DaemonHub;
 	let mockMessageHub: MessageHub;
 	let mockToolsConfigManager: ToolsConfigManager;
 	let mockAgentSessionFactory: AgentSessionFactory;
@@ -1356,7 +1356,7 @@ describe('SessionLifecycle - setWorkspace', () => {
 			getAsync: mock(async () => undefined),
 		} as unknown as SessionCache;
 
-		mockEventBus = {
+		mockDaemonHub = {
 			on: mock(() => () => {}),
 			emit: mock(async () => {}),
 		} as unknown as DaemonHub;
@@ -1381,7 +1381,7 @@ describe('SessionLifecycle - setWorkspace', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
-			mockEventBus,
+			mockDaemonHub,
 			mockMessageHub,
 			config,
 			mockToolsConfigManager,
@@ -1443,7 +1443,7 @@ describe('SessionLifecycle - setWorkspace', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
-			mockEventBus,
+			mockDaemonHub,
 			mockMessageHub,
 			{ ...config, disableWorktrees: false },
 			mockToolsConfigManager,
@@ -1513,7 +1513,7 @@ describe('SessionLifecycle - setWorkspace', () => {
 
 		await lifecycle.setWorkspace(SESSION_ID, '/some/workspace', 'direct');
 
-		expect(mockEventBus.emit).toHaveBeenCalledWith(
+		expect(mockDaemonHub.emit).toHaveBeenCalledWith(
 			'session.updated',
 			expect.objectContaining({
 				sessionId: SESSION_ID,
