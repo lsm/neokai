@@ -1616,20 +1616,6 @@ export function seedBuiltInWorkflows(
 					error: err instanceof Error ? err.message : String(err),
 				});
 			}
-
-			// Best-effort handle backfill — isolated so a handle conflict (e.g. a
-			// user-created workflow already using the canonical handle) never blocks
-			// the main re-stamp fields (postApproval, completionAutonomyLevel, etc.).
-			if (!row.handle && template.handle) {
-				try {
-					workflowManager.updateWorkflow(row.id, { handle: template.handle });
-				} catch {
-					builtInSeederLog.warn(
-						`could not backfill handle '${template.handle}' on '${template.name}' ` +
-							`(id=${row.id}) in space ${spaceId}: handle already taken`
-					);
-				}
-			}
 		}
 
 		return {
