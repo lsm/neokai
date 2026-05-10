@@ -85,9 +85,21 @@ export class ExternalEventService implements ExternalEventPublisher {
 	 *
 	 * Always publishes `externalEvent.published` so subscribers see every newly
 	 * stored event.
+	 *
+	 * Uses the canonical event read back from storage so the payload is
+	 * JSON-normalized (same as retryable duplicates), preventing subscriber
+	 * idempotency issues caused by non-JSON values (e.g. `undefined`) that are
+	 * dropped during `JSON.stringify`/`JSON.parse` round-tripping.
 	 */
 	private async _handleFirstObservation(event: ExternalEvent): Promise<PublishResult> {
-		await this._publishBusEvent(event);
+		const canonical = this.store.getById(event.id);
+		if (!canonical) {
+			// Theoretically impossible — we just inserted this row. Fall back to
+			// the caller-provided event so the bus still fires.
+			await this._publishBusEvent(event);
+			return { outcome: 'published', eventId: event.id };
+		}
+		await this._publishBusEvent(canonical.event);
 		return { outcome: 'published', eventId: event.id };
 	}
 

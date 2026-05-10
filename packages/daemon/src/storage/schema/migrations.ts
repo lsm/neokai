@@ -8458,6 +8458,14 @@ export function runMigration124(db: BunDatabase): void {
 	// Clean up any leftover temp table from a previous interrupted migration.
 	db.exec(`DROP TABLE IF EXISTS space_external_events_new`);
 
+	// Capture the original foreign_keys setting so we can restore it after
+	// the migration. This avoids side effects on callers that intentionally
+	// disabled FK checks on the same connection.
+	const originalFk = db.prepare(`PRAGMA foreign_keys`).get() as
+		| { foreign_keys: number }
+		| undefined;
+	const fkWasOn = originalFk ? originalFk.foreign_keys === 1 : true;
+
 	// Disable foreign keys before dropping the parent table so the child
 	// table (space_external_event_deliveries) is not cascade-deleted.
 	db.exec(`PRAGMA foreign_keys = OFF`);
@@ -8468,6 +8476,9 @@ export function runMigration124(db: BunDatabase): void {
 			//    source-specific metadata after the columns are dropped.
 			//    Guard against malformed JSON: coerce invalid payloads to '{}' first,
 			//    then apply json_set only on valid rows.
+			//    Prefer existing payload values over legacy columns (payload was
+			//    already normalized by the ingestion pipeline; legacy columns may
+			//    contain padded/case-variant strings).
 			db.exec(`
 				UPDATE space_external_events
 				SET payload_json = '{}'
@@ -8477,10 +8488,10 @@ export function runMigration124(db: BunDatabase): void {
 				UPDATE space_external_events
 				SET payload_json = json_set(
 					payload_json,
-					'$.prNumber', COALESCE(pr_number, json_extract(payload_json, '$.prNumber')),
-					'$.repoOwner', COALESCE(NULLIF(repo_owner, ''), json_extract(payload_json, '$.repoOwner')),
-					'$.repoName', COALESCE(NULLIF(repo_name, ''), json_extract(payload_json, '$.repoName')),
-					'$.branch', COALESCE(NULLIF(branch, ''), json_extract(payload_json, '$.branch'))
+					'$.prNumber', COALESCE(json_extract(payload_json, '$.prNumber'), pr_number),
+					'$.repoOwner', COALESCE(json_extract(payload_json, '$.repoOwner'), NULLIF(repo_owner, '')),
+					'$.repoName', COALESCE(json_extract(payload_json, '$.repoName'), NULLIF(repo_name, '')),
+					'$.branch', COALESCE(json_extract(payload_json, '$.branch'), NULLIF(branch, ''))
 				)
 				WHERE json_valid(payload_json) = 1
 				  AND (pr_number IS NOT NULL
@@ -8489,7 +8500,19 @@ export function runMigration124(db: BunDatabase): void {
 				   OR NULLIF(branch, '') IS NOT NULL)
 			`);
 
-			// 2. Migrate state values.
+			// 2. Preserve routed_task_id for historical retryable events so
+			//    post-migration retries do not lose their task association.
+			db.exec(`
+				UPDATE space_external_events
+				SET payload_json = json_set(
+					payload_json,
+					'$.routedTaskId', COALESCE(json_extract(payload_json, '$.routedTaskId'), routed_task_id)
+				)
+				WHERE json_valid(payload_json) = 1
+				  AND routed_task_id IS NOT NULL
+			`);
+
+			// 3. Migrate state values.
 			db.exec(`
 				UPDATE space_external_events
 				SET state = CASE state
@@ -8555,6 +8578,8 @@ export function runMigration124(db: BunDatabase): void {
 			`);
 		})();
 	} finally {
-		db.exec(`PRAGMA foreign_keys = ON`);
+		// Restore the original foreign_keys setting instead of unconditionally
+		// enabling it, to avoid side effects on callers that managed FK state.
+		db.exec(`PRAGMA foreign_keys = ${fkWasOn ? 'ON' : 'OFF'}`);
 	}
 }

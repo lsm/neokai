@@ -119,6 +119,30 @@ describe('publish — new event', () => {
 		expect(rec!.event.payload.repoName).toBe('widget');
 		expect(rec!.event.payload.branch).toBe('feature-99');
 	});
+
+	test('first observation publishes canonical JSON-normalized payload', async () => {
+		const busReceived: ExternalEventPublishedPayload[] = [];
+		bus.subscribe(
+			'externalEvent.published',
+			(data) => {
+				busReceived.push(data);
+			},
+			{ subscriberName: 'test-sub' }
+		);
+
+		// Event with non-JSON-normalized values (undefined field) that would be
+		// dropped during JSON.stringify/parse round-tripping.
+		const event = makeEvent({
+			payload: { action: 'opened', prNumber: 42, extra: undefined },
+		});
+		const result = await service.publish(event);
+
+		expect(result.outcome).toBe('published');
+		expect(busReceived).toHaveLength(1);
+		// The bus payload should be the canonical stored version (no `extra` key).
+		expect(busReceived[0]!.payload).toEqual({ action: 'opened', prNumber: 42 });
+		expect('extra' in busReceived[0]!.payload).toBe(false);
+	});
 });
 
 // ---------------------------------------------------------------------------

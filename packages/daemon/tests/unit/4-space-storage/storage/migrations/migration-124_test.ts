@@ -273,6 +273,73 @@ describe('Migration 124: simplify external-event schema', () => {
 				1_700_000_000_000
 			);
 
+			// Event with legacy columns that differ from payload — payload should win.
+			db.prepare(`
+				INSERT INTO space_external_events (
+					id, space_id, source, topic, dedupe_key,
+					occurred_at, ingested_at, source_event_id,
+					pr_number, repo_owner, repo_name, branch,
+					summary, external_url, payload_json, routed_task_id,
+					state, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				'evt-payload-wins',
+				'sp-1',
+				'github',
+				'github/lsm/neokai/pull_request.closed',
+				'dk-payload-wins',
+				1_700_000_000_000,
+				1_700_000_001_000,
+				null,
+				999,
+				'LEGACY_OWNER',
+				'LEGACY_NAME',
+				'legacy-branch',
+				'PR #99 closed',
+				null,
+				JSON.stringify({
+					prNumber: 99,
+					repoOwner: 'acme',
+					repoName: 'widget',
+					branch: 'hotfix-99',
+				}),
+				null,
+				'published',
+				1_700_000_000_000,
+				1_700_000_000_000
+			);
+
+			// Event with routed_task_id — should be preserved in payload.
+			db.prepare(`
+				INSERT INTO space_external_events (
+					id, space_id, source, topic, dedupe_key,
+					occurred_at, ingested_at, source_event_id,
+					pr_number, repo_owner, repo_name, branch,
+					summary, external_url, payload_json, routed_task_id,
+					state, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				'evt-routed-task',
+				'sp-1',
+				'github',
+				'github/lsm/neokai/pull_request.opened',
+				'dk-routed-task',
+				1_700_000_000_000,
+				1_700_000_001_000,
+				null,
+				1,
+				'lsm',
+				'neokai',
+				'main',
+				'PR #1 opened',
+				null,
+				JSON.stringify({ action: 'opened' }),
+				'task-routed-1',
+				'routed',
+				1_700_000_000_000,
+				1_700_000_000_000
+			);
+
 			// Event with malformed payload_json — should not abort migration.
 			db.prepare(`
 				INSERT INTO space_external_events (
@@ -365,6 +432,34 @@ describe('Migration 124: simplify external-event schema', () => {
 			expect(payload.branch).toBe('bugfix-77');
 		});
 
+		test('payload values win over malformed legacy columns', () => {
+			runMigration124(db);
+			const row = db
+				.prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
+				.get('evt-payload-wins') as { payload_json: string };
+			const payload = JSON.parse(row.payload_json);
+			// Payload had normalized values; legacy columns had padded/case-variant
+			// strings. Payload should be preserved.
+			expect(payload.prNumber).toBe(99);
+			expect(payload.repoOwner).toBe('acme');
+			expect(payload.repoName).toBe('widget');
+			expect(payload.branch).toBe('hotfix-99');
+		});
+
+		test('routed_task_id is preserved in payload for legacy retryable events', () => {
+			runMigration124(db);
+			const row = db
+				.prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
+				.get('evt-routed-task') as { payload_json: string };
+			const payload = JSON.parse(row.payload_json);
+			expect(payload.routedTaskId).toBe('task-routed-1');
+			// State migrated to published so the event remains retryable.
+			const stateRow = db
+				.prepare(`SELECT state FROM space_external_events WHERE id = ?`)
+				.get('evt-routed-task') as { state: string };
+			expect(stateRow.state).toBe('published');
+		});
+
 		test('state values are migrated correctly', () => {
 			runMigration124(db);
 			const legacy = db
@@ -426,6 +521,18 @@ describe('Migration 124: simplify external-event schema', () => {
 				.get() as { n: number };
 			expect(after.n).toBe(before.n);
 			expect(deliveriesAfter.n).toBe(deliveriesBefore.n);
+		});
+
+		test('restores original foreign_keys pragma after migration', () => {
+			// Start with FKs explicitly disabled.
+			db.exec('PRAGMA foreign_keys = OFF');
+			const before = db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number };
+			expect(before.foreign_keys).toBe(0);
+
+			runMigration124(db);
+
+			const after = db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number };
+			expect(after.foreign_keys).toBe(0); // restored to OFF, not forced ON
 		});
 	});
 
