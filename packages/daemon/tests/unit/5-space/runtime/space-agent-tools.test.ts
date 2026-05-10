@@ -1014,7 +1014,7 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
 		expect(parsed.error).toContain('nonexistent-handle');
 	});
 
-	test('workflow_id takes precedence over workflow_handle when both provided', async () => {
+	test('workflow_id takes precedence over workflow_handle when both provided and both valid', async () => {
 		const wf1 = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF One');
 		const wf2 = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Two');
 		expect(wf1.handle).toBeDefined();
@@ -1030,6 +1030,42 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
 		expect(parsed.success).toBe(true);
 		const stored = ctx.taskRepo.getTask(parsed.task.id);
 		expect(stored?.preferredWorkflowId).toBe(wf1.id);
+	});
+
+	test('falls back to workflow_handle when workflow_id is stale/invalid', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Fallback WF'
+		);
+		expect(wf.handle).toBeDefined();
+
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task with stale id',
+			description: 'Should resolve via handle',
+			workflow_id: 'stale-uuid-that-does-not-exist',
+			workflow_handle: wf.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		const stored = ctx.taskRepo.getTask(parsed.task.id);
+		// Stale workflow_id was replaced with the id resolved from the handle.
+		expect(stored?.preferredWorkflowId).toBe(wf.id);
+	});
+
+	test('stale workflow_id with no handle falls through to automatic selection', async () => {
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task with only stale id',
+			description: 'No handle fallback available',
+			workflow_id: 'stale-uuid-no-handle',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		// Task is created successfully — the stale id is kept as preferredWorkflowId
+		// and the runtime will fall back to automatic workflow selection.
+		expect(parsed.success).toBe(true);
+		const stored = ctx.taskRepo.getTask(parsed.task.id);
+		expect(stored?.preferredWorkflowId).toBe('stale-uuid-no-handle');
 	});
 });
 

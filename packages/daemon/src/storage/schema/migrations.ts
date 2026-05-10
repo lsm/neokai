@@ -8728,14 +8728,19 @@ export function runMigration126(db: BunDatabase): void {
  * (slugify: lowercase, hyphens, truncate). Collision handling appends
  * -2, -3, etc. for duplicate names in the same space.
  *
- * Also backfills handles for existing workflows so the feature is usable
- * immediately after upgrade.
+ * Backfills handles for pre-existing rows ONLY when the column is first added
+ * (i.e., on the initial upgrade). Subsequent calls are no-ops that only ensure
+ * the index exists. This is intentional: `handle = null` is a supported user
+ * action (clear-handle via updateWorkflow) and must remain stable across
+ * daemon restarts. Rows that miss the backfill due to a mid-upgrade crash will
+ * receive a handle the first time they are next edited.
  */
 export function runMigration127(db: BunDatabase): void {
 	if (!tableExists(db, 'space_workflows')) return;
 
 	const columns = tableColumnNames(db, 'space_workflows');
-	if (!columns.includes('handle')) {
+	const columnJustAdded = !columns.includes('handle');
+	if (columnJustAdded) {
 		db.exec(`ALTER TABLE space_workflows ADD COLUMN handle TEXT DEFAULT NULL`);
 	}
 
@@ -8765,15 +8770,6 @@ export function runMigration127(db: BunDatabase): void {
 	// would cause a collision when the backfill tries to assign the same slug to
 	// another row, aborting via the unique-index constraint.
 	const spaceHandles = new Map<string, string[]>();
-	const existingHandles = db
-		.prepare(`SELECT space_id, handle FROM space_workflows WHERE handle IS NOT NULL`)
-		.all() as Array<{ space_id: string; handle: string }>;
-	for (const { space_id, handle } of existingHandles) {
-		const list = spaceHandles.get(space_id) ?? [];
-		list.push(handle);
-		spaceHandles.set(space_id, list);
-	}
-
 	const updateStmt = db.prepare(`UPDATE space_workflows SET handle = ? WHERE id = ?`);
 	for (const row of rows) {
 		const handles = spaceHandles.get(row.space_id) ?? [];

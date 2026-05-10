@@ -492,7 +492,24 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			draft?: boolean;
 		}): Promise<ToolResult> {
 			let preferredWorkflowId = args.workflow_id ?? null;
-			if (!preferredWorkflowId && typeof args.workflow_handle === 'string') {
+			if (preferredWorkflowId && !workflowManager.getWorkflow(preferredWorkflowId)) {
+				// workflow_id is stale/invalid — fall back to workflow_handle if provided.
+				if (typeof args.workflow_handle === 'string') {
+					const trimmedHandle = args.workflow_handle.trim();
+					if (trimmedHandle === '') {
+						return jsonResult({
+							success: false,
+							error: 'workflow_handle must be a non-empty string.',
+						});
+					}
+					const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
+					if (byHandle) {
+						preferredWorkflowId = byHandle.id;
+					}
+					// If handle also doesn't resolve, leave preferredWorkflowId as the
+					// stale ID — the task runtime will fall back to automatic selection.
+				}
+			} else if (!preferredWorkflowId && typeof args.workflow_handle === 'string') {
 				const trimmedHandle = args.workflow_handle.trim();
 				if (trimmedHandle === '') {
 					return jsonResult({

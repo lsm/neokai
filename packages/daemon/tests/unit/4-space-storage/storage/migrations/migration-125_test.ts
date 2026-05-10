@@ -4,9 +4,8 @@
  * Covers:
  *   - Fresh, fully-migrated DB: column + partial unique index exist.
  *   - Pre-125 schema: backfills handles for all NULL rows.
- *   - Backfill is idempotent: re-running does not change existing handles.
- *   - Backfill resumes after partial run: only NULL rows are touched on the
- *     second run (simulates a crash mid-backfill).
+ *   - Backfill is upgrade-only: column already present → NULL rows untouched.
+ *   - User-cleared handle is preserved: re-running does not regenerate null handles.
  *   - Collision resolution: duplicate names in the same space get suffix (-2 etc.).
  *   - Cross-space isolation: collision suffixing is per-space.
  *   - Missing table: no-op guard.
@@ -185,13 +184,13 @@ describe('Migration 125: handle column on space_workflows', () => {
 			expect(after).toEqual(before);
 		});
 
-		test('resumes partial backfill — only NULL rows are touched on second run', () => {
-			// Simulate a crash after writing the first handle: manually add the
-			// column and set one handle, leaving the others NULL.
+		test('backfill is upgrade-only: column already present → NULL rows are not touched', () => {
+			// Simulate a post-upgrade state: the column exists but a row has handle = NULL
+			// (either from a crash mid-backfill or from a user who cleared their handle).
 			db.exec(`ALTER TABLE space_workflows ADD COLUMN handle TEXT DEFAULT NULL`);
 			db.prepare(`UPDATE space_workflows SET handle = 'coding-workflow' WHERE id = 'wf-1'`).run();
+			// wf-2 and wf-3 have NULL handles (column already present)
 
-			// wf-2 and wf-3 still have NULL handles — migration should backfill them.
 			runMigration125(db);
 
 			const rows = db.prepare(`SELECT id, handle FROM space_workflows ORDER BY id`).all() as Array<{
@@ -200,11 +199,29 @@ describe('Migration 125: handle column on space_workflows', () => {
 			}>;
 			const map = new Map(rows.map((r) => [r.id, r.handle]));
 
-			// wf-1's handle must be preserved as-is
+			// wf-1's existing handle is preserved
 			expect(map.get('wf-1')).toBe('coding-workflow');
-			// wf-2 and wf-3 must now have handles too
-			expect(map.get('wf-2')).not.toBeNull();
-			expect(map.get('wf-3')).not.toBeNull();
+			// wf-2 and wf-3 remain NULL — the migration does NOT backfill when column pre-exists
+			expect(map.get('wf-2')).toBeNull();
+			expect(map.get('wf-3')).toBeNull();
+		});
+
+		test('user-cleared handle is preserved — re-running migration does not regenerate it', () => {
+			// First run: column is added and backfilled.
+			runMigration125(db);
+
+			// Simulate user clearing wf-2's handle (updateWorkflow with handle: null).
+			db.prepare(`UPDATE space_workflows SET handle = NULL WHERE id = 'wf-2'`).run();
+
+			// Second run: column already exists — backfill must not fire.
+			runMigration125(db);
+
+			const handle = (
+				db.prepare(`SELECT handle FROM space_workflows WHERE id = 'wf-2'`).get() as {
+					handle: string | null;
+				}
+			).handle;
+			expect(handle).toBeNull();
 		});
 	});
 
