@@ -83,7 +83,7 @@ function isValidCronExpression(expr: string): boolean {
 		// month
 		/^([1-9]|1[0-2]|[*](?:\/[1-9]\d?)?|(?:[1-9]|1[0-2])(?:-[1-9]|1[0-2])?(?:\/[1-9]\d?)?|(?:[1-9]|1[0-2]|[*])(?:,(?:[1-9]|1[0-2]|[*]|[1-9]-[1-9]|[1-9]-1[0-2]|1[0-2]-1[0-2]))+|JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|\?)$/i,
 		// weekday
-		/^([0-7]|[*](?:\/[1-9]\d?)?|(?:[0-7])(?:-[0-7])?(?:\/[1-9]\d?)?|(?:[0-7]|[*])(?:,(?:[0-7]|[*]|[0-7]-[0-7]))+|\+|\+[0-7]|\+[MON|TUE|WED|THU|FRI|SAT|SUN]|MON|TUE|WED|THU|FRI|SAT|SUN|L|\?|(?:MON|TUE|WED|THU|FRI|SAT|SUN)#(?:[1-5]|L))$/i,
+		/^([0-7]|[*](?:\/[1-9]\d?)?|(?:[0-7])(?:-[0-7])?(?:\/[1-9]\d?)?|(?:[0-7]|[*])(?:,(?:[0-7]|[*]|[0-7]-[0-7]))+|\+|\+[0-7]|\+(?:MON|TUE|WED|THU|FRI|SAT|SUN)|MON|TUE|WED|THU|FRI|SAT|SUN|L|\?|(?:MON|TUE|WED|THU|FRI|SAT|SUN)#(?:[1-5]|L))$/i,
 	];
 
 	for (let i = 0; i < parts.length; i++) {
