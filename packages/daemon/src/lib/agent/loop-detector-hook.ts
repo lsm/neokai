@@ -12,19 +12,24 @@
  *
  * Strategy: a `PreToolUse` hook keeps a per-agent ledger of the *current
  * consecutive streak* — i.e. successive invocations of the same
- * `(tool_name, args)` key with no intervening call to a different
- * tracked-tool key. As soon as the agent invokes any other tracked call,
- * the streak resets. Once the streak crosses a per-tool threshold within a
- * sliding window, the hook denies the call with a `permissionDecisionReason`
+ * `(tool_name, args)` key with no intervening different tool call. The hook
+ * is registered for ALL tools (not just tracked ones) so that any other
+ * action — running a Bash command, editing a file, even calling a
+ * non-tracked inspection tool — counts as a "different action" and resets
+ * the streak. Once the streak crosses a per-tool threshold within a sliding
+ * window (computed over the *full* streak duration, not just the gap to the
+ * previous call), the hook denies the call with a `permissionDecisionReason`
  * that the SDK delivers back to the model as the tool result. The reason
  * text instructs the model to stop re-running the tool and proceed to the
  * next step (e.g. its TodoWrite list).
  *
- * Bash is intentionally NOT tracked — bash output can legitimately change
- * across calls (e.g. polling `git status`, tailing logs) and false positives
- * here would be far worse than the rare degenerate loop. Read / Grep / Glob
- * are pure functions of the file system at a point in time, so two identical
- * invocations seconds apart almost never produce different output.
+ * Bash is intentionally NOT tracked for *deny* decisions — bash output can
+ * legitimately change across calls (e.g. polling `git status`, tailing logs)
+ * and false positives here would be far worse than the rare degenerate loop.
+ * The hook still observes Bash so it can use it as a streak-reset signal.
+ * Read / Grep / Glob are pure functions of the file system at a point in
+ * time, so two identical invocations seconds apart almost never produce
+ * different output.
  *
  * Scoping: streaks are tracked per `(session_id, agent_id)` pair, so parallel
  * subagents under the same parent session cannot contribute to each other's
@@ -33,9 +38,9 @@
  * Repeat denies: when a stuck agent keeps hammering the same call after a
  * deny, the streak does NOT reset on a deny — every retry without an
  * intervening different action continues to deny. This is intentional: the
- * goal is to break the loop, not just throttle it. The streak only resets
- * when the agent performs a *different* tracked tool call (or the sliding
- * window expires).
+ * goal is to break the loop, not just throttle it. The streak resets when
+ * the agent performs a *different* tool call (tracked OR untracked) or the
+ * sliding window elapses over the streak's lifetime.
  */
 
 import type { HookCallback, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
@@ -80,7 +85,13 @@ export const DEFAULT_LOOP_DETECTOR_CONFIG: Required<LoopDetectorConfig> = {
 interface LedgerEntry {
 	/** Current consecutive-streak count for this key. */
 	count: number;
-	/** Last time this key was invoked (ms). Used for window expiry. */
+	/** When this streak started (ms). Used to enforce the sliding window
+	 * over the full streak duration: if `now - firstSeenMs > windowMs`,
+	 * the streak is treated as expired and the next identical call
+	 * starts a new streak from 1. */
+	firstSeenMs: number;
+	/** Most recent invocation time for this key (ms). Used for ledger
+	 * eviction, not for streak-window enforcement. */
 	lastSeenMs: number;
 }
 
@@ -194,30 +205,43 @@ export function createLoopDetectorHook(config: Partial<LoopDetectorConfig> = {})
 		const preInput = input as PreToolUseHookInput;
 		const { tool_name, tool_input, cwd, session_id, agent_id } = preInput;
 
+		const scope = `${session_id}::${agent_id ?? 'main'}`;
 		const threshold = finalConfig.thresholds[tool_name];
+		const now = Date.now();
+
+		// Untracked tool (Bash, Edit, Write, …) is treated as a *different
+		// action*: it resets any in-flight streak for this scope so that a
+		// genuine corrective step (e.g. `Edit foo.ts` after a denied
+		// `Read foo.ts`) lets the next identical Read pass through. We
+		// then short-circuit — there is nothing to deny on an untracked
+		// tool.
 		if (typeof threshold !== 'number') {
-			// Tool not tracked — pass through without disturbing any
-			// existing streak (an untracked call should not reset a streak
-			// for a tracked tool).
+			ledger.delete(scope);
 			return {};
 		}
 
 		const args = (tool_input ?? {}) as Record<string, unknown>;
 		const key = `${tool_name}:${buildArgKey(tool_name, args, cwd)}`;
-		const scope = `${session_id}::${agent_id ?? 'main'}`;
-		const now = Date.now();
 
 		const state = ledger.get(scope);
 		const sameKey = state?.lastKey === key;
-		const withinWindow = state && now - state.entry.lastSeenMs <= finalConfig.windowMs;
+		// Sliding window is enforced over the *full streak duration*, not
+		// just the gap between successive calls. A sequence at t=0,59s,118s
+		// with a 60s window has duration 118s > 60s on the third call, so
+		// the streak resets to 1 — matching "N repeats within window"
+		// semantics rather than "max inter-call gap".
+		const withinWindow = state && now - state.entry.firstSeenMs <= finalConfig.windowMs;
 
 		// Strict consecutive semantics: streak only continues when the same
-		// key is invoked AND we are still within the sliding window. A
-		// different tracked-tool key, or window expiry, resets the count.
-		const nextCount = sameKey && withinWindow ? state.entry.count + 1 : 1;
+		// key is invoked AND the *whole* streak still fits in the sliding
+		// window. A different tracked-tool key, untracked tool call, or
+		// window expiry resets the count.
+		const continueStreak = sameKey && withinWindow;
+		const nextCount = continueStreak ? state!.entry.count + 1 : 1;
+		const firstSeenMs = continueStreak ? state!.entry.firstSeenMs : now;
 		ledger.set(scope, {
 			lastKey: key,
-			entry: { count: nextCount, lastSeenMs: now },
+			entry: { count: nextCount, firstSeenMs, lastSeenMs: now },
 		});
 
 		// Opportunistically drop scopes whose last activity is past the
@@ -239,8 +263,9 @@ export function createLoopDetectorHook(config: Partial<LoopDetectorConfig> = {})
 			// retries the same key without doing anything different, the
 			// streak continues to grow and every retry continues to deny.
 			// The streak only resets when the agent performs a *different*
-			// tracked call (or the window expires). This is what actually
-			// breaks the loop rather than just throttling it.
+			// tool call (tracked OR untracked) or the window expires. This
+			// is what actually breaks the loop rather than just throttling
+			// it.
 			return {
 				hookSpecificOutput: {
 					hookEventName: 'PreToolUse' as const,

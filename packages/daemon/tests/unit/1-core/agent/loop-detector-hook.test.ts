@@ -162,29 +162,59 @@ describe('LoopDetectorHook', () => {
 	});
 
 	describe('untracked tools', () => {
-		it('does not track Bash even when called many times with identical args', async () => {
+		it('does not deny on Bash even when called many times with identical args', async () => {
 			const input = makePreToolUse('Bash', { command: 'git status', description: 'status' });
 			for (let i = 0; i < 20; i++) {
 				expect(await call(hook, input)).toEqual({});
 			}
 		});
 
-		it('passes through unknown tools', async () => {
+		it('passes through unknown tools without denying', async () => {
 			const input = makePreToolUse('SomeRandomTool', { foo: 'bar' });
 			for (let i = 0; i < 10; i++) {
 				expect(await call(hook, input)).toEqual({});
 			}
 		});
 
-		it('untracked tools do not reset a tracked streak', async () => {
+		it('an untracked tool call DOES reset a tracked streak (Bash counts as a different action)', async () => {
 			const read = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
 			const bash = makePreToolUse('Bash', { command: 'echo hi' });
-			// Read, Bash (untracked, should NOT reset), Read, Read => the 3rd Read denies.
+			// Read, Bash (untracked, counts as a different action), Read, Read
+			// — must NOT deny. Bash reset the streak so we are only on the
+			// 2nd consecutive Read here.
 			expect(await call(hook, read)).toEqual({});
 			expect(await call(hook, bash)).toEqual({});
 			expect(await call(hook, read)).toEqual({});
-			const result = await call(hook, read);
-			expect(result).toMatchObject({
+			expect(await call(hook, read)).toEqual({});
+			// One more identical Read makes it three in a row — denies.
+			expect(await call(hook, read)).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+		});
+
+		it('an untracked tool call breaks a denied streak (edit-then-read flow)', async () => {
+			// Real-world recovery flow: agent reads X three times and gets
+			// denied; agent edits X (untracked tool); next read of X must
+			// pass because the edit IS the "different action" the recovery
+			// message asked for.
+			const read = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
+			const edit = makePreToolUse('Edit', {
+				file_path: '/abs/foo.ts',
+				old_string: 'a',
+				new_string: 'b',
+			});
+			await call(hook, read);
+			await call(hook, read);
+			expect(await call(hook, read)).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+			// Corrective action via an untracked tool.
+			expect(await call(hook, edit)).toEqual({});
+			// Streak reset — next two Reads pass.
+			expect(await call(hook, read)).toEqual({});
+			expect(await call(hook, read)).toEqual({});
+			// Third in a row again denies, as expected.
+			expect(await call(hook, read)).toMatchObject({
 				hookSpecificOutput: { permissionDecision: 'deny' },
 			});
 		});
@@ -334,6 +364,48 @@ describe('LoopDetectorHook', () => {
 			await new Promise((r) => setTimeout(r, 5));
 			// Third call is treated as the first in a new window — no deny.
 			expect(await call(shortWindowHook, input)).toEqual({});
+		});
+
+		it('enforces the window over the FULL streak duration (slow periodic retries are not penalised)', async () => {
+			// Fake `Date.now` so we can simulate calls spaced 4ms apart with a
+			// 5ms window. Streak duration grows past 5ms on the 3rd call, so
+			// it must reset to 1 — matching "N within window" semantics, not
+			// "no gap > windowMs".
+			const original = Date.now;
+			let now = 1_000_000;
+			Date.now = () => now;
+			try {
+				const slowHook = createLoopDetectorHook({ windowMs: 5 });
+				const input = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
+
+				// t = 0: streak count = 1
+				expect(await call(slowHook, input)).toEqual({});
+				// t = 4: gap is 4 (<= 5), streak duration is 4 (<= 5) → count = 2
+				now += 4;
+				expect(await call(slowHook, input)).toEqual({});
+				// t = 8: gap is 4 (<= 5) BUT streak duration is 8 (> 5).
+				// Old "max-gap" logic would advance to count = 3 and deny.
+				// Correct "window over full duration" logic resets to 1.
+				now += 4;
+				expect(await call(slowHook, input)).toEqual({});
+				// t = 12: gap 4, duration 4 since reset → count = 2, no deny.
+				now += 4;
+				expect(await call(slowHook, input)).toEqual({});
+			} finally {
+				Date.now = original;
+			}
+		});
+
+		it('still denies bursty repeats well within the window', async () => {
+			// Sanity check that a tight burst (much less than windowMs apart)
+			// continues to deny — the previous test must not have over-corrected.
+			const tightHook = createLoopDetectorHook({ windowMs: 60_000 });
+			const input = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
+			await call(tightHook, input);
+			await call(tightHook, input);
+			expect(await call(tightHook, input)).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
 		});
 	});
 });

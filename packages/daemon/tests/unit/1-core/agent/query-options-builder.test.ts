@@ -855,8 +855,12 @@ describe('QueryOptionsBuilder', () => {
 
 			expect(options.hooks?.PreToolUse).toBeDefined();
 			expect(options.hooks?.PreToolUse).toHaveLength(1);
-			// Matcher targets the read-only inspection tools.
-			expect(options.hooks?.PreToolUse?.[0]?.matcher).toBe('Read|Grep|Glob');
+			// No matcher: the loop detector observes every PreToolUse so that
+			// untracked tools (Edit, Write, Bash, …) can serve as the
+			// "different action" that breaks a denied streak. Decision logic
+			// (which tools to deny, which to merely use as reset signals)
+			// lives inside the hook itself.
+			expect(options.hooks?.PreToolUse?.[0]?.matcher).toBeUndefined();
 			expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
 		});
 

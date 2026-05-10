@@ -58,7 +58,7 @@ import {
 	defaultBuiltinSkillPluginRoot,
 } from './builtin-skill-plugin-wrapper';
 import { getCoordinatorAgents } from './coordinator-agents';
-import { createLoopDetectorHook, DEFAULT_LOOP_DETECTOR_CONFIG } from './loop-detector-hook';
+import { createLoopDetectorHook } from './loop-detector-hook';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 
 export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
@@ -1023,26 +1023,30 @@ CRITICAL RULES:
 	/**
 	 * Build hooks configuration
 	 *
-	 * Always installs the loop-detector hook (one shared matcher across the
-	 * tracked tools — see DEFAULT_LOOP_DETECTOR_CONFIG.thresholds). Tool guards
-	 * from the workflow definition are appended on top.
+	 * Always installs the loop-detector hook with NO matcher so it observes
+	 * every PreToolUse event. This is intentional: the hook needs to see
+	 * untracked tool calls (Bash, Edit, Write, …) so they can reset the
+	 * streak after a deny — otherwise an agent that takes a real corrective
+	 * step (e.g. `Edit foo.ts` then re-Read it) would stay permanently
+	 * blocked. The hook itself filters internally on
+	 * `DEFAULT_LOOP_DETECTOR_CONFIG.thresholds`. Tool guards from the
+	 * workflow definition are appended on top.
 	 */
 	private buildHooks(): Options['hooks'] {
 		const hooks: NonNullable<Options['hooks']> = {};
 		const preToolUse: NonNullable<Options['hooks']>['PreToolUse'] = [];
 
-		// Loop detector: matcher is a regex of the tracked tool names so the
-		// SDK only invokes the hook for those tools. The hook itself is also
-		// defensive (it no-ops for untracked tools). Production wires this
-		// with no arguments — the hook's `config` parameter exists only so
-		// unit tests can exercise alternative thresholds and disabled mode.
-		const trackedTools = Object.keys(DEFAULT_LOOP_DETECTOR_CONFIG.thresholds);
-		if (trackedTools.length > 0) {
-			preToolUse.push({
-				matcher: trackedTools.join('|'),
-				hooks: [createLoopDetectorHook()],
-			});
-		}
+		// Loop detector: NO matcher — the hook must observe every tool call
+		// so that untracked tools (Edit, Write, Bash, …) can serve as the
+		// "different action" that breaks a denied streak. The hook decides
+		// internally whether to track a tool (DEFAULT_LOOP_DETECTOR_CONFIG.
+		// thresholds) or merely use the call as a streak-reset signal.
+		// Production wires this with no arguments — the hook's `config`
+		// parameter exists only so unit tests can exercise alternative
+		// thresholds and disabled mode.
+		preToolUse.push({
+			hooks: [createLoopDetectorHook()],
+		});
 
 		// Workflow tool guards (declarative deny/allow rules) layered on top.
 		const guards = this.ctx.toolGuards;
