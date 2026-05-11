@@ -333,7 +333,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// WebSocket clients via ClientEventGateway.  This extracts the repetitive
 	// room/space forwarding out of StateManager.
 	const clientEventGateway = stateManager.getClientEventGateway();
-	const clientEventBridge = createClientEventBridge(daemonHub, clientEventGateway);
+	const clientEventBridge = createClientEventBridge(daemonHub, clientEventGateway, stateManager);
 	clientEventBridge.start();
 
 	// Initialize GitHub service if configured
@@ -728,6 +728,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		}
 
 		try {
+			// Stop event bridge first so no new client events are forwarded
+			// while we're tearing down sessions and transport.
+			clientEventBridge.stop();
+
 			try {
 				server.stop();
 			} catch {

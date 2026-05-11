@@ -478,6 +478,78 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		},
 
 		/**
+		 * Update an existing task's title, description, priority, or dependencies.
+		 * The task must exist and belong to this space.
+		 */
+		async update_task(args: {
+			task_id: string;
+			title?: string;
+			description?: string;
+			priority?: SpaceTaskPriority;
+			depends_on?: string[];
+		}): Promise<ToolResult> {
+			const hasChanges =
+				args.title !== undefined ||
+				args.description !== undefined ||
+				args.priority !== undefined ||
+				args.depends_on !== undefined;
+			if (!hasChanges) {
+				return jsonResult({
+					success: false,
+					error:
+						'No fields to update. Provide at least one of: title, description, priority, depends_on.',
+				});
+			}
+
+			const task = taskRepo.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			if (task.spaceId !== spaceId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} does not belong to this space.`,
+				});
+			}
+
+			try {
+				const updated = await taskManager.updateTask(args.task_id, {
+					title: args.title,
+					description: args.description,
+					priority: args.priority,
+					dependsOn: args.depends_on,
+				});
+
+				logAudit(
+					'update_task',
+					{
+						title: args.title,
+						description: args.description,
+						priority: args.priority,
+						depends_on: args.depends_on,
+					},
+					args.task_id
+				);
+
+				if (daemonHub) {
+					void daemonHub
+						.emit('space.task.updated', {
+							sessionId: 'global',
+							spaceId,
+							taskId: args.task_id,
+							task: updated,
+						})
+						.catch(() => {});
+				}
+
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
 		 * Get the full detail of a task by UUID or by numeric task number (e.g. #5).
 		 */
 		async get_task_detail(args: { task_id?: string; task_number?: number }): Promise<ToolResult> {
@@ -1397,6 +1469,23 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.describe('Numeric task ID (e.g. 5 for task #5) — preferred over task_id'),
 			},
 			(args) => handlers.get_task_detail(args)
+		),
+		tool(
+			'update_task',
+			"Edit an existing task's title, description, priority, or dependencies. The task must belong to this space. Only the fields you provide are updated.",
+			{
+				task_id: z.string().describe('UUID of the task to update'),
+				title: z.string().min(1).optional().describe('New title for the task'),
+				description: z.string().optional().describe('New description for the task'),
+				priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('New priority'),
+				depends_on: z
+					.array(z.string())
+					.optional()
+					.describe(
+						'New dependency list (replaces existing). All must be in the same space. Cycles and non-existent IDs are rejected.'
+					),
+			},
+			(args) => handlers.update_task(args)
 		),
 		tool(
 			'retry_task',
