@@ -134,6 +134,9 @@ export function createMarkCompleteHandler(
 			// `postApprovalBlockedReason` in the same UPDATE.
 			const updated = await taskManager.setTaskStatus(taskId, 'done', {
 				approvalSource: task.approvalSource ?? 'agent',
+				onCascadedTasks: async (cascaded) => {
+					for (const t of cascaded) emitTaskUpdated(t);
+				},
 			});
 			emitTaskUpdated(updated);
 			log.info(

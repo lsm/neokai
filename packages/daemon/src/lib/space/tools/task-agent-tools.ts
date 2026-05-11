@@ -464,6 +464,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				// `postApprovalBlockedReason` in the same UPDATE.
 				const updated = await taskManager.setTaskStatus(taskId, 'done', {
 					approvalSource: task.approvalSource ?? 'agent',
+					onCascadedTasks: async (cascaded) => {
+						for (const t of cascaded) emitTaskUpdated(t);
+					},
 				});
 				emitTaskUpdated(updated);
 				log.info(
@@ -549,12 +552,20 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
 
 			try {
-				const updated = await taskManager.updateTask(taskId, {
-					title: args.title,
-					description: args.description,
-					priority: args.priority,
-					dependsOn: args.depends_on,
-				});
+				const updated = await taskManager.updateTask(
+					taskId,
+					{
+						title: args.title,
+						description: args.description,
+						priority: args.priority,
+						dependsOn: args.depends_on,
+					},
+					{
+						onCascadedTasks: async (cascaded) => {
+							for (const t of cascaded) emitTaskUpdated(t);
+						},
+					}
+				);
 				emitTaskUpdated(updated);
 				return jsonResult({ success: true, task: updated });
 			} catch (err) {

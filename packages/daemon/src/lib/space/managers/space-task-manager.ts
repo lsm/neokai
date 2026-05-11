@@ -167,6 +167,8 @@ export class SpaceTaskManager {
 			// existing approvalReason untouched on transitions that carry the
 			// stamp forward (see the approved → done mirror below).
 			approvalReason?: string | null;
+			/** Optional callback invoked with tasks cascaded by this transition. */
+			onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
 		}
 	): Promise<SpaceTask> {
 		const task = await this.getTask(taskId);
@@ -280,7 +282,10 @@ export class SpaceTaskManager {
 		// `setTaskStatus` (not just `updateTaskAndEmit`) so that all done
 		// paths — direct tool/handler calls included — trigger the cascade.
 		if (newStatus === 'done') {
-			await this.unblockDependentTasks(taskId);
+			const unblocked = await this.unblockDependentTasks(taskId);
+			if (unblocked.length > 0 && options?.onCascadedTasks) {
+				await options.onCascadedTasks(unblocked);
+			}
 		}
 
 		return updated;
@@ -489,7 +494,14 @@ export class SpaceTaskManager {
 	 * Update task fields directly (non-status fields).
 	 * For status transitions use setTaskStatus instead.
 	 */
-	async updateTask(taskId: string, params: UpdateSpaceTaskParams): Promise<SpaceTask> {
+	async updateTask(
+		taskId: string,
+		params: UpdateSpaceTaskParams,
+		options?: {
+			/** Optional callback invoked with tasks cascaded by dependency changes. */
+			onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
+		}
+	): Promise<SpaceTask> {
 		const task = await this.getTask(taskId);
 		if (!task) {
 			throw new Error(`Task not found: ${taskId}`);
@@ -529,7 +541,10 @@ export class SpaceTaskManager {
 				});
 				// Cascade: block any in_progress tasks that depend on this
 				// newly-blocked task (mirrors updateTaskAndEmit cascade).
-				await this.blockDependentTasks(taskId);
+				const cascaded = await this.blockDependentTasks(taskId);
+				if (cascaded.length > 0 && options?.onCascadedTasks) {
+					await options.onCascadedTasks(cascaded);
+				}
 				return blocked;
 			} else if (
 				depsMet &&
