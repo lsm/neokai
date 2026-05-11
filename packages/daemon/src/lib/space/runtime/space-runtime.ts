@@ -923,7 +923,7 @@ export class SpaceRuntime {
 	 *
 	 * Maps the legacy `kind`-tagged event shape (retained at call sites for
 	 * readability) onto the corresponding typed `space.*` event on
-	 * `InternalEventBus`. The `sessionId` field is set to `'global'` because
+	 * `InternalEventBus`. The `namespaceId` field is set to `'global'` because
 	 * these events are space-scoped, not session-scoped — subscribers that need
 	 * space-scoped filtering should inspect `payload.spaceId`.
 	 *

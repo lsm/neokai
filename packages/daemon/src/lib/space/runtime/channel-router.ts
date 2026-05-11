@@ -257,7 +257,7 @@ export interface ChannelRouterConfig {
 	 * `space.workflowRun.reopened`. When omitted, the router silently skips
 	 * event emission — appropriate for tests and other standalone uses.
 	 *
-	 * Failures from `publishAsync()` are caught and logged; bus errors never
+	 * Failures from `publish()` are caught and logged; bus errors never
 	 * propagate into message delivery / activation paths.
 	 */
 	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
