@@ -11,8 +11,16 @@
  * - Versioned state broadcasts (system, settings, session state, SDK messages)
  * - RPC handlers for state snapshots (7 onRequest registrations)
  *
- * StateProjectionService is now a pure projection — it only maintains caches
- * and exposes read methods. This bridge owns all messageHub interactions.
+ * Event source split:
+ * - DaemonHub: space events, session.created/deleted, context.updated, api.connection,
+ *   auth.changed, commands.updated, session.error/errorClear
+ * - InternalEventBus: settings.updated, session.updated
+ *
+ * The bridge subscribes to InternalEventBus for settings.updated and session.updated
+ * because those events are published there (settings handlers use publishAsync,
+ * session.updated needs projection caches to be written first). DaemonHub events
+ * are forwarded to InternalEventBus in app.ts via fire-and-forget, so subscribing
+ * on InternalEventBus guarantees cache consistency for broadcasts.
  *
  * Design notes
  * ------------
@@ -32,6 +40,7 @@ import type {
 import { Channels, STATE_CHANNELS } from '@neokai/shared';
 import type { DaemonHub, DaemonEventMap } from './daemon-hub';
 import type { StateProjectionService, ChannelVersionSource } from './state-projection-service';
+import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
 import { Logger } from './logger';
 
 type DaemonEventName = keyof DaemonEventMap & string;
@@ -180,13 +189,15 @@ const SESSION_BRIDGE_MAPPINGS: BridgeMapping[] = [
  */
 export class ClientEventBridge {
 	private unsubscribers: (() => void)[] = [];
+	private rpcUnsubscribers: (() => void)[] = [];
 	private logger = new Logger('ClientEventBridge');
 
 	constructor(
 		private daemonHub: DaemonHub,
 		private messageHub: MessageHub,
 		private gateway: IClientEventGateway,
-		private stateProjection: StateProjectionService & ChannelVersionSource
+		private stateProjection: StateProjectionService & ChannelVersionSource,
+		private internalEventBus: InternalEventBus<DaemonInternalEventMap>
 	) {}
 
 	/**
@@ -201,54 +212,64 @@ export class ClientEventBridge {
 		// Register RPC handlers for state snapshots
 		this.setupRPCHandlers();
 
-		// Space events
+		// Space events (DaemonHub)
 		for (const mapping of SPACE_BRIDGE_MAPPINGS) {
 			this.subscribeMapping(mapping);
 		}
 
-		// Session events (pure forwarding + broadcast triggers)
+		// Session events (DaemonHub — pure forwarding + broadcast triggers)
 		for (const mapping of SESSION_BRIDGE_MAPPINGS) {
 			this.subscribeMapping(mapping);
 		}
-		this.subscribeBroadcast('context.updated', (data) =>
+		this.subscribeDaemonBroadcast('context.updated', (data) =>
 			this.broadcastSessionStateChange(data.sessionId)
 		);
 
-		// Connection/auth events (trigger broadcasts)
-		this.subscribeBroadcast('api.connection', () => this.broadcastSystemChange());
-		this.subscribeBroadcast('auth.changed', () => this.broadcastSystemChange());
+		// Connection/auth events (DaemonHub — trigger broadcasts)
+		this.subscribeDaemonBroadcast('api.connection', () => this.broadcastSystemChange());
+		this.subscribeDaemonBroadcast('auth.changed', () => this.broadcastSystemChange());
 
-		// Config events (trigger broadcast)
-		this.subscribeBroadcast('commands.updated', (data) =>
+		// Config events (DaemonHub — trigger broadcast)
+		this.subscribeDaemonBroadcast('commands.updated', (data) =>
 			this.broadcastSessionStateChange(data.sessionId)
 		);
 
-		// Error events (trigger broadcast)
-		this.subscribeBroadcast('session.error', (data) =>
+		// Error events (DaemonHub — trigger broadcast)
+		this.subscribeDaemonBroadcast('session.error', (data) =>
 			this.broadcastSessionStateChange(data.sessionId)
 		);
-		this.subscribeBroadcast('session.errorClear', (data) =>
+		this.subscribeDaemonBroadcast('session.errorClear', (data) =>
 			this.broadcastSessionStateChange(data.sessionId)
 		);
 
-		// Settings events (trigger broadcast)
-		this.subscribeBroadcast('settings.updated', () => this.broadcastSettingsChange());
+		// Settings events — subscribe on InternalEventBus because settings handlers
+		// publish via internalEventBus.publishAsync(), not daemonHub.emit().
+		this.subscribeEventBusBroadcast('settings.updated', () => this.broadcastSettingsChange());
 
-		// Session updated — trigger session state broadcast
-		this.subscribeBroadcast('session.updated', (data) => {
-			const { sessionId } = data as unknown as { sessionId: string };
-			return this.broadcastSessionUpdateFromCache(sessionId);
+		// Session updated — subscribe on InternalEventBus to guarantee projection
+		// caches are updated before the broadcast reads them. DaemonHub →
+		// InternalEventBus forwarding in app.ts settles the cache write before
+		// this subscriber fires.
+		this.subscribeEventBusBroadcast('session.updated', (data) => {
+			const { namespaceId } = data as unknown as { namespaceId: string };
+			return this.broadcastSessionUpdateFromCache(namespaceId);
 		});
 	}
 
 	/**
-	 * Unsubscribe from all events. After stop(), start() may be called again.
+	 * Unsubscribe from all events and RPC handlers. After stop(), start() may be
+	 * called again.
 	 */
 	stop(): void {
 		for (const unsub of this.unsubscribers) {
 			unsub();
 		}
 		this.unsubscribers = [];
+
+		for (const unsub of this.rpcUnsubscribers) {
+			unsub();
+		}
+		this.rpcUnsubscribers = [];
 	}
 
 	// ========================================
@@ -257,43 +278,50 @@ export class ClientEventBridge {
 
 	private setupRPCHandlers(): void {
 		// Global state snapshot
-		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SNAPSHOT, async () => {
+		const unsub1 = this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SNAPSHOT, async () => {
 			return await this.stateProjection.getGlobalSnapshot();
 		});
+		this.rpcUnsubscribers.push(unsub1);
 
 		// Session state snapshot
-		this.messageHub.onRequest(STATE_CHANNELS.SESSION_SNAPSHOT, async (data) => {
+		const unsub2 = this.messageHub.onRequest(STATE_CHANNELS.SESSION_SNAPSHOT, async (data) => {
 			const { sessionId } = data as { sessionId: string };
 			return await this.stateProjection.getSessionSnapshot(sessionId);
 		});
+		this.rpcUnsubscribers.push(unsub2);
 
 		// Unified system state handler
-		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SYSTEM, async () => {
+		const unsub3 = this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SYSTEM, async () => {
 			return await this.stateProjection.getSystemState();
 		});
+		this.rpcUnsubscribers.push(unsub3);
 
 		// Individual channel requests (for on-demand refresh)
-		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SESSIONS, async () => {
+		const unsub4 = this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SESSIONS, async () => {
 			return await this.stateProjection.getSessionsState();
 		});
+		this.rpcUnsubscribers.push(unsub4);
 
-		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SETTINGS, async () => {
+		const unsub5 = this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SETTINGS, async () => {
 			return await this.stateProjection.getSettingsState();
 		});
+		this.rpcUnsubscribers.push(unsub5);
 
 		// Session-specific channel requests
-		this.messageHub.onRequest(STATE_CHANNELS.SESSION, async (data) => {
+		const unsub6 = this.messageHub.onRequest(STATE_CHANNELS.SESSION, async (data) => {
 			const { sessionId } = data as { sessionId: string };
 			return await this.stateProjection.getSessionState(sessionId);
 		});
+		this.rpcUnsubscribers.push(unsub6);
 
-		this.messageHub.onRequest(STATE_CHANNELS.SESSION_SDK_MESSAGES, async (data) => {
+		const unsub7 = this.messageHub.onRequest(STATE_CHANNELS.SESSION_SDK_MESSAGES, async (data) => {
 			const { sessionId, since } = data as {
 				sessionId: string;
 				since?: number;
 			};
 			return await this.stateProjection.getSDKMessagesState(sessionId, since);
 		});
+		this.rpcUnsubscribers.push(unsub7);
 	}
 
 	// ========================================
@@ -360,9 +388,26 @@ export class ClientEventBridge {
 				error instanceof Error ? error.message : error
 			);
 
-			// If we have cached processing state, try to broadcast a minimal state update
-			// Need to read from StateProjectionService's caches — use getSessionState again
-			// with a try-catch for fallback is handled internally
+			// Fallback: if we have cached processing state, broadcast a minimal
+			// state update. This ensures UI state (like stop/send button) stays in
+			// sync even if full state fetch fails (e.g., teardown races).
+			const fallback = this.stateProjection.getCachedSessionState(sessionId);
+			if (fallback) {
+				try {
+					this.messageHub.event(
+						STATE_CHANNELS.SESSION,
+						{ ...fallback, version },
+						{
+							channel: `session:${sessionId}`,
+						}
+					);
+				} catch (fallbackError) {
+					this.logger.error(
+						`[ClientEventBridge] Fallback broadcast also failed for ${sessionId}:`,
+						fallbackError instanceof Error ? fallbackError.message : fallbackError
+					);
+				}
+			}
 		}
 	}
 
@@ -406,7 +451,7 @@ export class ClientEventBridge {
 		this.unsubscribers.push(unsub);
 	}
 
-	private subscribeBroadcast<K extends DaemonEventName>(
+	private subscribeDaemonBroadcast<K extends DaemonEventName>(
 		event: K,
 		broadcast: (data: DaemonEventMap[K]) => Promise<void> | undefined
 	): void {
@@ -420,6 +465,30 @@ export class ClientEventBridge {
 		});
 		this.unsubscribers.push(unsub);
 	}
+
+	/**
+	 * Subscribe to an InternalEventBus event and trigger a broadcast.
+	 * Used for events that are published to InternalEventBus (not DaemonHub),
+	 * such as settings.updated and session.updated (after cache projection).
+	 */
+	private subscribeEventBusBroadcast<K extends string & keyof DaemonInternalEventMap>(
+		event: K,
+		broadcast: (data: DaemonInternalEventMap[K]) => Promise<void> | undefined
+	): void {
+		const unsub = this.internalEventBus.subscribe(
+			event,
+			(data: DaemonInternalEventMap[K]) => {
+				const promise = broadcast(data);
+				if (promise) {
+					return promise.catch((err) => {
+						this.logger.warn(`EventBus broadcast failed for ${event}:`, err);
+					});
+				}
+			},
+			{ subscriberName: `ClientEventBridge.${event}` }
+		);
+		this.unsubscribers.push(unsub);
+	}
 }
 
 /**
@@ -429,7 +498,8 @@ export function createClientEventBridge(
 	daemonHub: DaemonHub,
 	messageHub: MessageHub,
 	gateway: IClientEventGateway,
-	stateProjection: StateProjectionService & ChannelVersionSource
+	stateProjection: StateProjectionService & ChannelVersionSource,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>
 ): ClientEventBridge {
-	return new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
+	return new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection, internalEventBus);
 }

@@ -391,7 +391,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		daemonHub,
 		messageHub,
 		clientEventGateway,
-		stateManager
+		stateManager,
+		internalEventBus
 	);
 	clientEventBridge.start();
 

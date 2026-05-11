@@ -248,6 +248,27 @@ export class StateProjectionService implements ChannelVersionSource {
 		);
 	}
 
+	/**
+	 * Get a minimal session state from caches only, without fetching from AgentSession.
+	 * Used as a fallback by ClientEventBridge when the full getSessionState() fails
+	 * (e.g., during teardown races or deleted sessions).
+	 * Returns null if no cached data is available.
+	 */
+	getCachedSessionState(sessionId: string): import('@neokai/shared').SessionState | null {
+		const cachedProcessingState = this.processingStateCache.get(sessionId);
+		const cachedSession = this.sessionCache.get(sessionId);
+		if (cachedProcessingState && cachedSession) {
+			return {
+				sessionInfo: cachedSession,
+				agentState: cachedProcessingState,
+				commandsData: { availableCommands: this.commandsCache.get(sessionId) || [] },
+				error: this.errorCache.get(sessionId) || null,
+				timestamp: Date.now(),
+			};
+		}
+		return null;
+	}
+
 	// ========================================
 	// Global State Getters
 	// ========================================

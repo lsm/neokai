@@ -5,9 +5,10 @@
  * 1. Declaratively maps DaemonHub events to ClientEventGateway deliveries
  * 2. Registers RPC handlers for state snapshots
  * 3. Manages versioned state broadcasts (system, settings, session, SDK messages)
+ * 4. Subscribes to InternalEventBus for settings.updated and session.updated
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
 import {
 	ClientEventBridge,
 	createClientEventBridge,
@@ -24,6 +25,10 @@ import type {
 	StateProjectionService,
 	ChannelVersionSource,
 } from '../../../../src/lib/state-projection-service';
+import type {
+	DaemonInternalEventMap,
+	InternalEventBus,
+} from '../../../../src/lib/internal-event-bus';
 
 /**
  * Minimal mock of StateProjectionService + ChannelVersionSource for bridge tests.
@@ -75,31 +80,45 @@ function createMockStateProjection() {
 			hasMore: false,
 			timestamp: Date.now(),
 		})),
+		getCachedSessionState: mock(() => null),
 	} as unknown as StateProjectionService & ChannelVersionSource;
 }
 
 describe('ClientEventBridge', () => {
 	function buildFixture() {
-		const eventHandlers = new Map<string, Function[]>();
-		const unsubscribers: string[] = [];
+		const daemonEventHandlers = new Map<string, Function[]>();
+		const daemonUnsubscribers: string[] = [];
 
 		const daemonHub = {
 			on: mock((event: string, handler: Function) => {
-				const existing = eventHandlers.get(event) || [];
+				const existing = daemonEventHandlers.get(event) || [];
 				existing.push(handler);
-				eventHandlers.set(event, existing);
+				daemonEventHandlers.set(event, existing);
 				return () => {
-					unsubscribers.push(event);
-					const handlers = eventHandlers.get(event);
+					daemonUnsubscribers.push(event);
+					const handlers = daemonEventHandlers.get(event);
 					if (handlers) {
 						const idx = handlers.indexOf(handler);
 						if (idx !== -1) handlers.splice(idx, 1);
-						if (handlers.length === 0) eventHandlers.delete(event);
+						if (handlers.length === 0) daemonEventHandlers.delete(event);
 					}
 				};
 			}),
 			emit: mock(async () => {}),
 		} as unknown as DaemonHub;
+
+		const eventBusSubscribers = new Map<string, Function[]>();
+
+		const internalEventBus = {
+			subscribe: mock((event: string, handler: Function) => {
+				const existing = eventBusSubscribers.get(event) || [];
+				existing.push(handler);
+				eventBusSubscribers.set(event, existing);
+				return () => {};
+			}),
+			publish: mock(async () => ({ delivered: 0, failures: [] })),
+			publishAsync: mock(() => {}),
+		} as unknown as InternalEventBus<DaemonInternalEventMap>;
 
 		const requestHandlers = new Map<string, Function>();
 		const messageHub = {
@@ -127,678 +146,662 @@ describe('ClientEventBridge', () => {
 			daemonHub,
 			messageHub,
 			gateway,
-			eventHandlers,
+			daemonEventHandlers,
+			eventBusSubscribers,
 			requestHandlers,
 			published,
-			unsubscribers,
+			daemonUnsubscribers,
 			stateProjection,
+			internalEventBus,
 		};
 	}
 
 	describe('start', () => {
-		it('should subscribe to all space bridge events', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, stateProjection } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
+		it('should subscribe to all space bridge events on daemonHub', () => {
+			const f = buildFixture();
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			);
 			bridge.start();
 
-			expect(eventHandlers.has('space.created')).toBe(true);
-			expect(eventHandlers.has('space.updated')).toBe(true);
-			expect(eventHandlers.has('space.archived')).toBe(true);
-			expect(eventHandlers.has('space.deleted')).toBe(true);
-			expect(eventHandlers.has('space.task.created')).toBe(true);
-			expect(eventHandlers.has('space.task.updated')).toBe(true);
-			expect(eventHandlers.has('space.schedule.updated')).toBe(true);
-			expect(eventHandlers.has('space.workflowRun.created')).toBe(true);
-			expect(eventHandlers.has('space.workflowRun.updated')).toBe(true);
-			expect(eventHandlers.has('space.gateData.updated')).toBe(true);
-			expect(eventHandlers.has('spaceAgent.created')).toBe(true);
-			expect(eventHandlers.has('spaceAgent.updated')).toBe(true);
-			expect(eventHandlers.has('spaceAgent.deleted')).toBe(true);
-			expect(eventHandlers.has('spaceWorkflow.created')).toBe(true);
-			expect(eventHandlers.has('spaceWorkflow.updated')).toBe(true);
-			expect(eventHandlers.has('spaceWorkflow.deleted')).toBe(true);
+			expect(f.daemonEventHandlers.has('space.created')).toBe(true);
+			expect(f.daemonEventHandlers.has('space.updated')).toBe(true);
+			expect(f.daemonEventHandlers.has('space.archived')).toBe(true);
+			expect(f.daemonEventHandlers.has('space.deleted')).toBe(true);
+			expect(f.daemonEventHandlers.has('space.task.created')).toBe(true);
+			expect(f.daemonEventHandlers.has('space.task.updated')).toBe(true);
+			expect(f.daemonEventHandlers.has('space.schedule.updated')).toBe(true);
+			expect(f.daemonEventHandlers.has('space.workflowRun.created')).toBe(true);
+			expect(f.daemonEventHandlers.has('space.workflowRun.updated')).toBe(true);
+			expect(f.daemonEventHandlers.has('space.gateData.updated')).toBe(true);
+			expect(f.daemonEventHandlers.has('spaceAgent.created')).toBe(true);
+			expect(f.daemonEventHandlers.has('spaceAgent.updated')).toBe(true);
+			expect(f.daemonEventHandlers.has('spaceAgent.deleted')).toBe(true);
+			expect(f.daemonEventHandlers.has('spaceWorkflow.created')).toBe(true);
+			expect(f.daemonEventHandlers.has('spaceWorkflow.updated')).toBe(true);
+			expect(f.daemonEventHandlers.has('spaceWorkflow.deleted')).toBe(true);
 		});
 
-		it('should subscribe to session bridge events', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, stateProjection } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
+		it('should subscribe to session bridge events on daemonHub', () => {
+			const f = buildFixture();
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			);
 			bridge.start();
 
-			expect(eventHandlers.has('session.created')).toBe(true);
-			expect(eventHandlers.has('session.deleted')).toBe(true);
-			expect(eventHandlers.has('context.updated')).toBe(true);
+			expect(f.daemonEventHandlers.has('session.created')).toBe(true);
+			expect(f.daemonEventHandlers.has('session.deleted')).toBe(true);
+			expect(f.daemonEventHandlers.has('context.updated')).toBe(true);
 		});
 
-		it('should subscribe to connection/auth bridge events', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, stateProjection } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
+		it('should subscribe to connection/auth bridge events on daemonHub', () => {
+			const f = buildFixture();
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			);
 			bridge.start();
 
-			expect(eventHandlers.has('api.connection')).toBe(true);
-			expect(eventHandlers.has('auth.changed')).toBe(true);
+			expect(f.daemonEventHandlers.has('api.connection')).toBe(true);
+			expect(f.daemonEventHandlers.has('auth.changed')).toBe(true);
 		});
 
-		it('should subscribe to config bridge events', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, stateProjection } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
+		it('should subscribe to config and error events on daemonHub', () => {
+			const f = buildFixture();
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			);
 			bridge.start();
 
-			expect(eventHandlers.has('commands.updated')).toBe(true);
+			expect(f.daemonEventHandlers.has('commands.updated')).toBe(true);
+			expect(f.daemonEventHandlers.has('session.error')).toBe(true);
+			expect(f.daemonEventHandlers.has('session.errorClear')).toBe(true);
 		});
 
-		it('should subscribe to error bridge events', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, stateProjection } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
+		it('should subscribe to settings.updated on InternalEventBus', () => {
+			const f = buildFixture();
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			);
 			bridge.start();
 
-			expect(eventHandlers.has('session.error')).toBe(true);
-			expect(eventHandlers.has('session.errorClear')).toBe(true);
+			expect(f.eventBusSubscribers.has('settings.updated')).toBe(true);
+		});
+
+		it('should subscribe to session.updated on InternalEventBus', () => {
+			const f = buildFixture();
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			);
+			bridge.start();
+
+			expect(f.eventBusSubscribers.has('session.updated')).toBe(true);
 		});
 
 		it('should register RPC handlers', () => {
-			const { daemonHub, messageHub, gateway, requestHandlers, stateProjection } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
+			const f = buildFixture();
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			);
 			bridge.start();
 
-			expect(requestHandlers.has(STATE_CHANNELS.GLOBAL_SNAPSHOT)).toBe(true);
-			expect(requestHandlers.has(STATE_CHANNELS.SESSION_SNAPSHOT)).toBe(true);
-			expect(requestHandlers.has(STATE_CHANNELS.GLOBAL_SYSTEM)).toBe(true);
-			expect(requestHandlers.has(STATE_CHANNELS.GLOBAL_SESSIONS)).toBe(true);
-			expect(requestHandlers.has(STATE_CHANNELS.GLOBAL_SETTINGS)).toBe(true);
-			expect(requestHandlers.has(STATE_CHANNELS.SESSION)).toBe(true);
-			expect(requestHandlers.has(STATE_CHANNELS.SESSION_SDK_MESSAGES)).toBe(true);
+			expect(f.requestHandlers.has(STATE_CHANNELS.GLOBAL_SNAPSHOT)).toBe(true);
+			expect(f.requestHandlers.has(STATE_CHANNELS.SESSION_SNAPSHOT)).toBe(true);
+			expect(f.requestHandlers.has(STATE_CHANNELS.GLOBAL_SYSTEM)).toBe(true);
+			expect(f.requestHandlers.has(STATE_CHANNELS.GLOBAL_SESSIONS)).toBe(true);
+			expect(f.requestHandlers.has(STATE_CHANNELS.GLOBAL_SETTINGS)).toBe(true);
+			expect(f.requestHandlers.has(STATE_CHANNELS.SESSION)).toBe(true);
+			expect(f.requestHandlers.has(STATE_CHANNELS.SESSION_SDK_MESSAGES)).toBe(true);
 		});
 
 		it('should be idempotent', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, stateProjection } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
+			const f = buildFixture();
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			);
 			bridge.start();
 			bridge.start();
 
-			// 16 space + 3 session + 2 conn/auth + 1 config + 2 error + 1 settings + 1 session.updated = 26 unique events
-			// (context.updated has 2 handlers but is 1 unique event key)
-			expect(eventHandlers.size).toBe(26);
+			// DaemonHub: 16 space + 3 session + 2 conn/auth + 1 config + 2 error + 1 context.updated broadcast = 25
+			// InternalEventBus: 1 settings.updated + 1 session.updated = 2
+			// Total daemonHub unique events: 24 (context.updated has 2 handlers)
+			expect(f.daemonEventHandlers.size).toBe(24);
+			expect(f.eventBusSubscribers.size).toBe(2);
 		});
 	});
 
 	describe('stop', () => {
-		it('should unsubscribe from all events', () => {
-			const { daemonHub, messageHub, gateway, unsubscribers, stateProjection } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
+		it('should unsubscribe from all daemonHub events', () => {
+			const f = buildFixture();
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			);
 			bridge.start();
 			bridge.stop();
 
-			// Each daemonHub.on call produces one unsubscriber
-			expect(unsubscribers.length).toBeGreaterThan(0);
+			expect(f.daemonUnsubscribers.length).toBeGreaterThan(0);
+		});
+	});
+
+	describe('settings.updated via InternalEventBus', () => {
+		it('should trigger broadcastSettingsChange when settings.updated fires on InternalEventBus', async () => {
+			const f = buildFixture();
+			createClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			).start();
+
+			const handler = f.eventBusSubscribers.get('settings.updated')![0];
+			await handler({ namespaceId: 'global', settings: {} });
+
+			expect(f.stateProjection.incrementVersion).toHaveBeenCalledWith(
+				STATE_CHANNELS.GLOBAL_SETTINGS
+			);
+			expect(f.messageHub.event).toHaveBeenCalledWith(
+				STATE_CHANNELS.GLOBAL_SETTINGS,
+				expect.objectContaining({ version: expect.any(Number) }),
+				{ channel: 'global' }
+			);
+		});
+	});
+
+	describe('session.updated via InternalEventBus', () => {
+		it('should trigger broadcastSessionStateChange with namespaceId', async () => {
+			const f = buildFixture();
+			createClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			).start();
+
+			const handler = f.eventBusSubscribers.get('session.updated')![0];
+			await handler({
+				namespaceId: 'sess-1',
+				processingState: { status: 'processing' },
+			});
+
+			expect(f.stateProjection.incrementVersion).toHaveBeenCalledWith(
+				`${STATE_CHANNELS.SESSION}:sess-1`
+			);
 		});
 	});
 
 	describe('space event forwarding', () => {
 		it('forwards space.created to global channel', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
+			const f = buildFixture();
+			createClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			).start();
 
 			const data = { sessionId: 'global', spaceId: 's-1', space: { id: 's-1' } };
-			eventHandlers.get('space.created')![0](data);
+			f.daemonEventHandlers.get('space.created')![0](data);
 
-			expect(published[0].method).toBe('space.created');
-			expect(published[0].channel).toEqual({ kind: 'global' });
+			expect(f.published[0].method).toBe('space.created');
+			expect(f.published[0].channel).toEqual({ kind: 'global' });
 		});
 
 		it('forwards space.updated to global channel', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
+			const f = buildFixture();
+			createClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			).start();
 
 			const data = { sessionId: 'global', spaceId: 's-1', space: { name: 'Updated' } };
-			eventHandlers.get('space.updated')![0](data);
+			f.daemonEventHandlers.get('space.updated')![0](data);
 
-			expect(published[0].channel).toEqual({ kind: 'global' });
-		});
-
-		it('forwards space.archived to global channel', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
-
-			const data = {
-				sessionId: 'global',
-				spaceId: 's-1',
-				space: { id: 's-1', status: 'archived' },
-			};
-			eventHandlers.get('space.archived')![0](data);
-
-			expect(published[0].channel).toEqual({ kind: 'global' });
+			expect(f.published[0].channel).toEqual({ kind: 'global' });
 		});
 
 		it('forwards space.deleted to global channel', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
+			const f = buildFixture();
+			createClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			).start();
 
 			const data = { sessionId: 'global', spaceId: 's-1' };
-			eventHandlers.get('space.deleted')![0](data);
+			f.daemonEventHandlers.get('space.deleted')![0](data);
 
-			expect(published[0].channel).toEqual({ kind: 'global' });
-		});
-
-		it('forwards space.task.created to global channel', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
-
-			const data = {
-				sessionId: 'global',
-				spaceId: 's-1',
-				taskId: 't-1',
-				task: { id: 't-1', title: 'Task 1' },
-			};
-			eventHandlers.get('space.task.created')![0](data);
-
-			expect(published[0].channel).toEqual({ kind: 'global' });
-		});
-
-		it('forwards space.task.updated to global channel', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
-
-			const data = {
-				sessionId: 'global',
-				spaceId: 's-1',
-				taskId: 't-1',
-				task: { id: 't-1', status: 'in_progress' },
-			};
-			eventHandlers.get('space.task.updated')![0](data);
-
-			expect(published[0].channel).toEqual({ kind: 'global' });
-		});
-
-		it('forwards space.schedule.updated to global channel', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
-
-			const data = {
-				sessionId: 'global',
-				spaceId: 's-1',
-				scheduleId: 'sch-1',
-				schedule: { id: 'sch-1', cron: '0 9 * * *' },
-			};
-			eventHandlers.get('space.schedule.updated')![0](data);
-
-			expect(published[0].channel).toEqual({ kind: 'global' });
-		});
-
-		it('forwards space.workflowRun.created to global channel', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
-
-			const data = {
-				sessionId: 'global',
-				spaceId: 's-1',
-				runId: 'run-1',
-				run: { id: 'run-1', status: 'pending' },
-			};
-			eventHandlers.get('space.workflowRun.created')![0](data);
-
-			expect(published[0].channel).toEqual({ kind: 'global' });
-		});
-
-		it('forwards space.workflowRun.updated to global channel', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
-
-			const data = {
-				sessionId: 'global',
-				spaceId: 's-1',
-				runId: 'run-1',
-				run: { status: 'running' },
-			};
-			eventHandlers.get('space.workflowRun.updated')![0](data);
-
-			expect(published[0].channel).toEqual({ kind: 'global' });
-		});
-
-		it('forwards space.gateData.updated to global channel', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
-
-			const data = {
-				sessionId: 'global',
-				spaceId: 's-1',
-				runId: 'run-1',
-				gateId: 'g-1',
-				data: { votes: 3 },
-			};
-			eventHandlers.get('space.gateData.updated')![0](data);
-
-			expect(published[0].channel).toEqual({ kind: 'global' });
+			expect(f.published[0].channel).toEqual({ kind: 'global' });
 		});
 
 		it('forwards spaceAgent.created to space-scoped channel', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
+			const f = buildFixture();
+			createClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			).start();
 
 			const data = {
 				sessionId: 'space:s-1',
 				spaceId: 's-1',
 				agent: { id: 'a-1', name: 'Agent 1' },
 			};
-			eventHandlers.get('spaceAgent.created')![0](data);
+			f.daemonEventHandlers.get('spaceAgent.created')![0](data);
 
-			expect(published[0].channel).toEqual({ kind: 'space', spaceId: 's-1' });
-		});
-
-		it('forwards spaceAgent.updated to space-scoped channel', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
-
-			const data = {
-				sessionId: 'space:s-1',
-				spaceId: 's-1',
-				agent: { id: 'a-1', name: 'Updated Agent' },
-			};
-			eventHandlers.get('spaceAgent.updated')![0](data);
-
-			expect(published[0].channel).toEqual({ kind: 'space', spaceId: 's-1' });
-		});
-
-		it('forwards spaceAgent.deleted to space-scoped channel', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
-
-			const data = { sessionId: 'space:s-1', spaceId: 's-1', agentId: 'a-1' };
-			eventHandlers.get('spaceAgent.deleted')![0](data);
-
-			expect(published[0].channel).toEqual({ kind: 'space', spaceId: 's-1' });
-		});
-
-		it('forwards spaceWorkflow.created to global channel', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
-
-			const data = {
-				sessionId: 'global',
-				spaceId: 's-1',
-				workflow: { id: 'wf-1', name: 'Workflow 1' },
-			};
-			eventHandlers.get('spaceWorkflow.created')![0](data);
-
-			expect(published[0].channel).toEqual({ kind: 'global' });
-		});
-
-		it('forwards spaceWorkflow.updated to global channel', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
-
-			const data = {
-				sessionId: 'global',
-				spaceId: 's-1',
-				workflow: { id: 'wf-1', name: 'Updated Workflow' },
-			};
-			eventHandlers.get('spaceWorkflow.updated')![0](data);
-
-			expect(published[0].channel).toEqual({ kind: 'global' });
-		});
-
-		it('forwards spaceWorkflow.deleted to global channel', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
-
-			const data = { sessionId: 'global', spaceId: 's-1', workflowId: 'wf-1' };
-			eventHandlers.get('spaceWorkflow.deleted')![0](data);
-
-			expect(published[0].channel).toEqual({ kind: 'global' });
+			expect(f.published[0].channel).toEqual({ kind: 'space', spaceId: 's-1' });
 		});
 	});
 
 	describe('session event forwarding', () => {
 		it('forwards session.created to global channel with transformed payload', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
+			const f = buildFixture();
+			createClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			).start();
 
 			const data = {
 				sessionId: 'sess-1',
 				session: { id: 'sess-1', title: 'Test', status: 'active', metadata: {} },
 			};
-			eventHandlers.get('session.created')![0](data);
+			f.daemonEventHandlers.get('session.created')![0](data);
 
-			expect(published[0].method).toBe('session.created');
-			expect(published[0].data).toEqual({ sessionId: 'sess-1' });
-			expect(published[0].channel).toEqual({ kind: 'global' });
+			expect(f.published[0].method).toBe('session.created');
+			expect(f.published[0].data).toEqual({ sessionId: 'sess-1' });
+			expect(f.published[0].channel).toEqual({ kind: 'global' });
 		});
 
 		it('forwards session.deleted to global channel with transformed payload', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
+			const f = buildFixture();
+			createClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			).start();
 
 			const data = { sessionId: 'sess-1' };
-			eventHandlers.get('session.deleted')![0](data);
+			f.daemonEventHandlers.get('session.deleted')![0](data);
 
-			expect(published[0].method).toBe('session.deleted');
-			expect(published[0].data).toEqual({ sessionId: 'sess-1' });
-			expect(published[0].channel).toEqual({ kind: 'global' });
+			expect(f.published[0].method).toBe('session.deleted');
+			expect(f.published[0].data).toEqual({ sessionId: 'sess-1' });
+			expect(f.published[0].channel).toEqual({ kind: 'global' });
 		});
 
-		it('forwards context.updated to session-scoped channel with transformed payload', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
+		it('forwards context.updated to session-scoped channel', () => {
+			const f = buildFixture();
+			createClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			).start();
 
 			const contextInfo = { files: 5, tokens: 1000 };
 			const data = { sessionId: 'sess-1', contextInfo };
-			eventHandlers.get('context.updated')![0](data);
+			f.daemonEventHandlers.get('context.updated')![0](data);
 
-			expect(published[0].method).toBe('context.updated');
-			expect(published[0].data).toEqual(contextInfo);
-			expect(published[0].channel).toEqual({ kind: 'session', sessionId: 'sess-1' });
+			expect(f.published[0].method).toBe('context.updated');
+			expect(f.published[0].data).toEqual(contextInfo);
+			expect(f.published[0].channel).toEqual({ kind: 'session', sessionId: 'sess-1' });
 		});
 	});
 
-	describe('connection/auth event broadcasts', () => {
+	describe('connection/auth event broadcasts (daemonHub)', () => {
 		it('triggers broadcastSystemChange on api.connection', async () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, stateProjection } = buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
+			const f = buildFixture();
+			createClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			).start();
 
 			const data = { sessionId: 'global', status: 'disconnected', timestamp: Date.now() };
-			await eventHandlers.get('api.connection')![0](data);
+			await f.daemonEventHandlers.get('api.connection')![0](data);
 
-			expect(stateProjection.incrementVersion).toHaveBeenCalledWith(STATE_CHANNELS.GLOBAL_SYSTEM);
-			expect(messageHub.event).toHaveBeenCalledWith(
+			expect(f.stateProjection.incrementVersion).toHaveBeenCalledWith(STATE_CHANNELS.GLOBAL_SYSTEM);
+		});
+
+		it('triggers broadcastSystemChange on auth.changed', async () => {
+			const f = buildFixture();
+			createClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			).start();
+
+			const data = { sessionId: 'global', method: 'api_key', isAuthenticated: true };
+			await f.daemonEventHandlers.get('auth.changed')![0](data);
+
+			expect(f.stateProjection.incrementVersion).toHaveBeenCalledWith(STATE_CHANNELS.GLOBAL_SYSTEM);
+		});
+	});
+
+	describe('config event broadcasts (daemonHub)', () => {
+		it('triggers broadcastSessionStateChange on commands.updated', async () => {
+			const f = buildFixture();
+			createClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			).start();
+
+			const data = { sessionId: 'sess-1', commands: ['cmd1', 'cmd2'] };
+			await f.daemonEventHandlers.get('commands.updated')![0](data);
+
+			expect(f.stateProjection.incrementVersion).toHaveBeenCalledWith(
+				`${STATE_CHANNELS.SESSION}:sess-1`
+			);
+		});
+	});
+
+	describe('error event broadcasts (daemonHub)', () => {
+		it('triggers broadcastSessionStateChange on session.error', async () => {
+			const f = buildFixture();
+			createClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			).start();
+
+			const data = { sessionId: 'sess-1', error: 'Something went wrong' };
+			await f.daemonEventHandlers.get('session.error')![0](data);
+
+			expect(f.stateProjection.incrementVersion).toHaveBeenCalledWith(
+				`${STATE_CHANNELS.SESSION}:sess-1`
+			);
+		});
+
+		it('triggers broadcastSessionStateChange on session.errorClear', async () => {
+			const f = buildFixture();
+			createClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			).start();
+
+			const data = { sessionId: 'sess-1' };
+			await f.daemonEventHandlers.get('session.errorClear')![0](data);
+
+			expect(f.stateProjection.incrementVersion).toHaveBeenCalledWith(
+				`${STATE_CHANNELS.SESSION}:sess-1`
+			);
+		});
+	});
+
+	describe('broadcast methods', () => {
+		it('broadcastSystemChange publishes system state with version', async () => {
+			const f = buildFixture();
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			);
+
+			await bridge.broadcastSystemChange();
+
+			expect(f.stateProjection.incrementVersion).toHaveBeenCalledWith(STATE_CHANNELS.GLOBAL_SYSTEM);
+			expect(f.messageHub.event).toHaveBeenCalledWith(
 				STATE_CHANNELS.GLOBAL_SYSTEM,
 				expect.objectContaining({ version: expect.any(Number) }),
 				{ channel: 'global' }
 			);
 		});
 
-		it('triggers broadcastSystemChange on auth.changed', async () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, stateProjection } = buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
-
-			const data = { sessionId: 'global', method: 'api_key', isAuthenticated: true };
-			await eventHandlers.get('auth.changed')![0](data);
-
-			expect(stateProjection.incrementVersion).toHaveBeenCalledWith(STATE_CHANNELS.GLOBAL_SYSTEM);
-		});
-	});
-
-	describe('config event broadcasts', () => {
-		it('triggers broadcastSessionStateChange on commands.updated', async () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, stateProjection } = buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
-
-			const data = { sessionId: 'sess-1', commands: ['cmd1', 'cmd2'] };
-			await eventHandlers.get('commands.updated')![0](data);
-
-			expect(stateProjection.incrementVersion).toHaveBeenCalledWith(
-				`${STATE_CHANNELS.SESSION}:sess-1`
+		it('broadcastSettingsChange publishes settings state with version', async () => {
+			const f = buildFixture();
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
 			);
-		});
-	});
 
-	describe('context.updated broadcast trigger', () => {
-		it('triggers broadcastSessionStateChange on context.updated', async () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, stateProjection } = buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
+			await bridge.broadcastSettingsChange();
 
-			const data = { sessionId: 'sess-1', contextInfo: { files: 5, tokens: 1000 } };
-			// The broadcast trigger is the second handler (index 1) for context.updated
-			await eventHandlers.get('context.updated')![1](data);
-
-			expect(stateProjection.incrementVersion).toHaveBeenCalledWith(
-				`${STATE_CHANNELS.SESSION}:sess-1`
+			expect(f.stateProjection.incrementVersion).toHaveBeenCalledWith(
+				STATE_CHANNELS.GLOBAL_SETTINGS
 			);
-		});
-	});
-
-	describe('error event broadcasts', () => {
-		it('triggers broadcastSessionStateChange on session.error', async () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, stateProjection } = buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
-
-			const data = { sessionId: 'sess-1', error: 'Something went wrong' };
-			await eventHandlers.get('session.error')![0](data);
-
-			expect(stateProjection.incrementVersion).toHaveBeenCalledWith(
-				`${STATE_CHANNELS.SESSION}:sess-1`
+			expect(f.messageHub.event).toHaveBeenCalledWith(
+				STATE_CHANNELS.GLOBAL_SETTINGS,
+				expect.objectContaining({ settings: expect.any(Object), version: expect.any(Number) }),
+				{ channel: 'global' }
 			);
 		});
 
-		it('triggers broadcastSessionStateChange on session.errorClear', async () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, stateProjection } = buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
+		it('broadcastSessionStateChange publishes session state with version', async () => {
+			const f = buildFixture();
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			);
 
-			const data = { sessionId: 'sess-1' };
-			await eventHandlers.get('session.errorClear')![0](data);
+			await bridge.broadcastSessionStateChange('test-id');
 
-			expect(stateProjection.incrementVersion).toHaveBeenCalledWith(
-				`${STATE_CHANNELS.SESSION}:sess-1`
+			expect(f.stateProjection.incrementVersion).toHaveBeenCalledWith(
+				`${STATE_CHANNELS.SESSION}:test-id`
+			);
+			expect(f.messageHub.event).toHaveBeenCalledWith(
+				STATE_CHANNELS.SESSION,
+				expect.objectContaining({
+					sessionInfo: expect.any(Object),
+					agentState: expect.any(Object),
+					version: expect.any(Number),
+				}),
+				{ channel: 'session:test-id' }
 			);
 		});
-	});
 
-	describe('payload passthrough', () => {
-		it('passes the original payload through unchanged', () => {
-			const { daemonHub, messageHub, gateway, eventHandlers, published, stateProjection } =
-				buildFixture();
-			createClientEventBridge(daemonHub, messageHub, gateway, stateProjection).start();
+		it('broadcastSessionStateChange skips empty sessionId', async () => {
+			const f = buildFixture();
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			);
 
-			const data = { sessionId: 'global', spaceId: 's-1', space: { id: 's-1', name: 'Test' } };
-			eventHandlers.get('space.created')![0](data);
+			await bridge.broadcastSessionStateChange('');
 
-			expect(published[0].data).toEqual(data);
-		});
-	});
-
-	describe('broadcast methods', () => {
-		describe('broadcastSystemChange', () => {
-			it('should broadcast system state with version', async () => {
-				const { daemonHub, messageHub, gateway, stateProjection } = buildFixture();
-				const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
-
-				await bridge.broadcastSystemChange();
-
-				expect(stateProjection.incrementVersion).toHaveBeenCalledWith(STATE_CHANNELS.GLOBAL_SYSTEM);
-				expect(messageHub.event).toHaveBeenCalledWith(
-					STATE_CHANNELS.GLOBAL_SYSTEM,
-					expect.objectContaining({
-						version: expect.any(Number),
-						auth: expect.any(Object),
-					}),
-					{ channel: 'global' }
-				);
-			});
+			expect(f.stateProjection.incrementVersion).not.toHaveBeenCalled();
+			expect(f.messageHub.event).not.toHaveBeenCalled();
 		});
 
-		describe('broadcastSettingsChange', () => {
-			it('should broadcast settings state with version', async () => {
-				const { daemonHub, messageHub, gateway, stateProjection } = buildFixture();
-				const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
-
-				await bridge.broadcastSettingsChange();
-
-				expect(stateProjection.incrementVersion).toHaveBeenCalledWith(
-					STATE_CHANNELS.GLOBAL_SETTINGS
-				);
-				expect(messageHub.event).toHaveBeenCalledWith(
-					STATE_CHANNELS.GLOBAL_SETTINGS,
-					expect.objectContaining({
-						settings: expect.any(Object),
-						version: expect.any(Number),
-					}),
-					{ channel: 'global' }
-				);
+		it('broadcastSessionStateChange uses fallback when getSessionState throws', async () => {
+			const f = buildFixture();
+			(f.stateProjection.getSessionState as ReturnType<typeof mock>).mockRejectedValue(
+				new Error('Session not found')
+			);
+			(f.stateProjection.getCachedSessionState as ReturnType<typeof mock>).mockReturnValue({
+				sessionInfo: { id: 'test-id' },
+				agentState: { status: 'idle' },
+				commandsData: { availableCommands: [] },
+				error: null,
+				timestamp: Date.now(),
 			});
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			);
+
+			await bridge.broadcastSessionStateChange('test-id');
+
+			expect(f.stateProjection.getCachedSessionState).toHaveBeenCalledWith('test-id');
+			expect(f.messageHub.event).toHaveBeenCalledWith(
+				STATE_CHANNELS.SESSION,
+				expect.objectContaining({
+					sessionInfo: { id: 'test-id' },
+					version: expect.any(Number),
+				}),
+				{ channel: 'session:test-id' }
+			);
 		});
 
-		describe('broadcastSessionStateChange', () => {
-			it('should broadcast session state with version', async () => {
-				const { daemonHub, messageHub, gateway, stateProjection } = buildFixture();
-				const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
+		it('broadcastSDKMessagesChange publishes SDK messages with version', async () => {
+			const f = buildFixture();
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			);
 
-				await bridge.broadcastSessionStateChange('test-id');
+			await bridge.broadcastSDKMessagesChange('test-id');
 
-				expect(stateProjection.incrementVersion).toHaveBeenCalledWith(
-					`${STATE_CHANNELS.SESSION}:test-id`
-				);
-				expect(messageHub.event).toHaveBeenCalledWith(
-					STATE_CHANNELS.SESSION,
-					expect.objectContaining({
-						sessionInfo: expect.any(Object),
-						agentState: expect.any(Object),
-						version: expect.any(Number),
-					}),
-					{ channel: 'session:test-id' }
-				);
-			});
-
-			it('should skip broadcast for empty sessionId', async () => {
-				const { daemonHub, messageHub, gateway, stateProjection } = buildFixture();
-				const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
-
-				await bridge.broadcastSessionStateChange('');
-
-				expect(stateProjection.incrementVersion).not.toHaveBeenCalled();
-				expect(messageHub.event).not.toHaveBeenCalled();
-			});
+			expect(f.stateProjection.incrementVersion).toHaveBeenCalledWith(
+				`${STATE_CHANNELS.SESSION_SDK_MESSAGES}:test-id`
+			);
 		});
 
-		describe('broadcastSDKMessagesChange', () => {
-			it('should broadcast SDK messages state with version', async () => {
-				const { daemonHub, messageHub, gateway, stateProjection } = buildFixture();
-				const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
+		it('broadcastSDKMessagesDelta publishes delta with version', async () => {
+			const f = buildFixture();
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			);
 
-				await bridge.broadcastSDKMessagesChange('test-id');
-
-				expect(stateProjection.incrementVersion).toHaveBeenCalledWith(
-					`${STATE_CHANNELS.SESSION_SDK_MESSAGES}:test-id`
-				);
-				expect(messageHub.event).toHaveBeenCalledWith(
-					STATE_CHANNELS.SESSION_SDK_MESSAGES,
-					expect.objectContaining({
-						sdkMessages: expect.any(Array),
-						hasMore: false,
-						version: expect.any(Number),
-					}),
-					{ channel: 'session:test-id' }
-				);
+			await bridge.broadcastSDKMessagesDelta('test-id', {
+				added: [{ id: 'msg1' }],
+				timestamp: Date.now(),
 			});
-		});
 
-		describe('broadcastSDKMessagesDelta', () => {
-			it('should broadcast SDK messages delta with version', async () => {
-				const { daemonHub, messageHub, gateway, stateProjection } = buildFixture();
-				const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
-
-				await bridge.broadcastSDKMessagesDelta('test-id', {
-					added: [{ id: 'msg1' }],
-					timestamp: Date.now(),
-				});
-
-				expect(stateProjection.incrementVersion).toHaveBeenCalledWith(
-					`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta:test-id`
-				);
-				expect(messageHub.event).toHaveBeenCalledWith(
-					STATE_CHANNELS.SESSION_SDK_MESSAGES + '.delta',
-					expect.objectContaining({
-						added: [{ id: 'msg1' }],
-						version: expect.any(Number),
-					}),
-					{ channel: 'session:test-id' }
-				);
-			});
+			expect(f.stateProjection.incrementVersion).toHaveBeenCalledWith(
+				`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta:test-id`
+			);
 		});
 	});
 
 	describe('RPC handlers', () => {
-		it('should delegate GLOBAL_SNAPSHOT to stateProjection', async () => {
-			const { daemonHub, messageHub, gateway, requestHandlers, stateProjection } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
+		function startBridge() {
+			const f = buildFixture();
+			const bridge = new ClientEventBridge(
+				f.daemonHub,
+				f.messageHub,
+				f.gateway,
+				f.stateProjection,
+				f.internalEventBus
+			);
 			bridge.start();
+			return f;
+		}
 
-			const handler = requestHandlers.get(STATE_CHANNELS.GLOBAL_SNAPSHOT);
-			await handler!({});
-
-			expect(stateProjection.getGlobalSnapshot).toHaveBeenCalled();
+		it('delegates GLOBAL_SNAPSHOT to stateProjection', async () => {
+			const f = startBridge();
+			await f.requestHandlers.get(STATE_CHANNELS.GLOBAL_SNAPSHOT)!({});
+			expect(f.stateProjection.getGlobalSnapshot).toHaveBeenCalled();
 		});
 
-		it('should delegate SESSION_SNAPSHOT to stateProjection', async () => {
-			const { daemonHub, messageHub, gateway, requestHandlers, stateProjection } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
-			bridge.start();
-
-			const handler = requestHandlers.get(STATE_CHANNELS.SESSION_SNAPSHOT);
-			await handler!({ sessionId: 'test-id' });
-
-			expect(stateProjection.getSessionSnapshot).toHaveBeenCalledWith('test-id');
+		it('delegates SESSION_SNAPSHOT to stateProjection', async () => {
+			const f = startBridge();
+			await f.requestHandlers.get(STATE_CHANNELS.SESSION_SNAPSHOT)!({ sessionId: 'test-id' });
+			expect(f.stateProjection.getSessionSnapshot).toHaveBeenCalledWith('test-id');
 		});
 
-		it('should delegate GLOBAL_SYSTEM to stateProjection', async () => {
-			const { daemonHub, messageHub, gateway, requestHandlers, stateProjection } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
-			bridge.start();
-
-			const handler = requestHandlers.get(STATE_CHANNELS.GLOBAL_SYSTEM);
-			await handler!({});
-
-			expect(stateProjection.getSystemState).toHaveBeenCalled();
+		it('delegates GLOBAL_SYSTEM to stateProjection', async () => {
+			const f = startBridge();
+			await f.requestHandlers.get(STATE_CHANNELS.GLOBAL_SYSTEM)!({});
+			expect(f.stateProjection.getSystemState).toHaveBeenCalled();
 		});
 
-		it('should delegate GLOBAL_SESSIONS to stateProjection', async () => {
-			const { daemonHub, messageHub, gateway, requestHandlers, stateProjection } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
-			bridge.start();
-
-			const handler = requestHandlers.get(STATE_CHANNELS.GLOBAL_SESSIONS);
-			await handler!({});
-
-			expect(stateProjection.getSessionsState).toHaveBeenCalled();
+		it('delegates GLOBAL_SESSIONS to stateProjection', async () => {
+			const f = startBridge();
+			await f.requestHandlers.get(STATE_CHANNELS.GLOBAL_SESSIONS)!({});
+			expect(f.stateProjection.getSessionsState).toHaveBeenCalled();
 		});
 
-		it('should delegate GLOBAL_SETTINGS to stateProjection', async () => {
-			const { daemonHub, messageHub, gateway, requestHandlers, stateProjection } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
-			bridge.start();
-
-			const handler = requestHandlers.get(STATE_CHANNELS.GLOBAL_SETTINGS);
-			await handler!({});
-
-			expect(stateProjection.getSettingsState).toHaveBeenCalled();
+		it('delegates GLOBAL_SETTINGS to stateProjection', async () => {
+			const f = startBridge();
+			await f.requestHandlers.get(STATE_CHANNELS.GLOBAL_SETTINGS)!({});
+			expect(f.stateProjection.getSettingsState).toHaveBeenCalled();
 		});
 
-		it('should delegate SESSION to stateProjection', async () => {
-			const { daemonHub, messageHub, gateway, requestHandlers, stateProjection } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
-			bridge.start();
-
-			const handler = requestHandlers.get(STATE_CHANNELS.SESSION);
-			await handler!({ sessionId: 'test-id' });
-
-			expect(stateProjection.getSessionState).toHaveBeenCalledWith('test-id');
+		it('delegates SESSION to stateProjection', async () => {
+			const f = startBridge();
+			await f.requestHandlers.get(STATE_CHANNELS.SESSION)!({ sessionId: 'test-id' });
+			expect(f.stateProjection.getSessionState).toHaveBeenCalledWith('test-id');
 		});
 
-		it('should delegate SESSION_SDK_MESSAGES to stateProjection', async () => {
-			const { daemonHub, messageHub, gateway, requestHandlers, stateProjection } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
-			bridge.start();
-
-			const handler = requestHandlers.get(STATE_CHANNELS.SESSION_SDK_MESSAGES);
-			await handler!({ sessionId: 'test-id', since: 100 });
-
-			expect(stateProjection.getSDKMessagesState).toHaveBeenCalledWith('test-id', 100);
+		it('delegates SESSION_SDK_MESSAGES to stateProjection', async () => {
+			const f = startBridge();
+			await f.requestHandlers.get(STATE_CHANNELS.SESSION_SDK_MESSAGES)!({
+				sessionId: 'test-id',
+				since: 100,
+			});
+			expect(f.stateProjection.getSDKMessagesState).toHaveBeenCalledWith('test-id', 100);
 		});
 	});
 });
