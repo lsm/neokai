@@ -54,6 +54,7 @@ import type {
 	MarkCompleteInput,
 	RequestHumanInputInput,
 	SubmitForApprovalInput,
+	UpdateTaskInput,
 } from './task-agent-tool-schemas';
 import {
 	ApproveTaskSchema,
@@ -61,6 +62,7 @@ import {
 	MarkCompleteSchema,
 	RequestHumanInputSchema,
 	SubmitForApprovalSchema,
+	UpdateTaskSchema,
 } from './task-agent-tool-schemas';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
@@ -508,6 +510,56 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					taskId,
 					message: `Task submitted for human review${args.reason ? ` (reason: ${args.reason})` : ''}. A human must approve or reject via the UI before the workflow continues.`,
 				});
+			} catch (err) {
+				return jsonResult({
+					success: false,
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
+		},
+
+		/**
+		 * Edit the current task's title, description, priority, or dependencies.
+		 *
+		 * Scope-restricted: the provided `task_id` MUST match the taskId bound to
+		 * this Task Agent session. Attempting to update any other task is rejected.
+		 * Only the fields you provide are updated; omitted fields are left unchanged.
+		 */
+		async update_task(args: UpdateTaskInput): Promise<ToolResult> {
+			if (args.task_id !== taskId) {
+				return jsonResult({
+					success: false,
+					error:
+						`Task ID mismatch: you can only update the task bound to this session (${taskId}). ` +
+						`To update other tasks, use the space_agent update_task tool.`,
+				});
+			}
+
+			const hasChanges =
+				args.title !== undefined ||
+				args.description !== undefined ||
+				args.priority !== undefined ||
+				args.depends_on !== undefined;
+			if (!hasChanges) {
+				return jsonResult({
+					success: false,
+					error:
+						'No fields to update. Provide at least one of: title, description, priority, depends_on.',
+				});
+			}
+
+			const task = taskRepo.getTask(taskId);
+			if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
+
+			try {
+				const updated = await taskManager.updateTask(taskId, {
+					title: args.title,
+					description: args.description,
+					priority: args.priority,
+					dependsOn: args.depends_on,
+				});
+				emitTaskUpdated(updated);
+				return jsonResult({ success: true, task: updated });
 			} catch (err) {
 				return jsonResult({
 					success: false,
@@ -1248,6 +1300,14 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 				'(post-approval work finished). Rejected if the task is not currently in `approved`.',
 			MarkCompleteSchema.shape,
 			(args) => handlers.mark_complete(args)
+		),
+		tool(
+			'update_task',
+			"Edit this task's title, description, priority, or dependencies. " +
+				'The `task_id` you provide must match the task bound to this session; ' +
+				'attempting to update any other task is rejected. Only the fields you provide are updated.',
+			UpdateTaskSchema.shape,
+			(args) => handlers.update_task(args)
 		),
 	];
 
