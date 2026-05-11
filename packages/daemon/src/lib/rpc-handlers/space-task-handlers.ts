@@ -282,7 +282,9 @@ export function setupSpaceTaskHandlers(
 						...otherFields
 					} = updateParams;
 					if (Object.keys(otherFields).length > 0) {
-						task = await taskManager.updateTask(taskId, otherFields);
+						task = await taskManager.updateTask(taskId, otherFields, {
+							onCascadedTasks: emitCascadedTasks,
+						});
 						emitTaskUpdated = true;
 					}
 				} else {

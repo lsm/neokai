@@ -281,10 +281,19 @@ export class SpaceTaskManager {
 		// whose dependency constraints are now fully met. This runs in
 		// `setTaskStatus` (not just `updateTaskAndEmit`) so that all done
 		// paths — direct tool/handler calls included — trigger the cascade.
+		// Wrapped in try-catch so a failed unblock (e.g. concurrent status
+		// change making blocked→open invalid) does not abort the parent
+		// `done` transition — the parent write is already committed.
 		if (newStatus === 'done') {
-			const unblocked = await this.unblockDependentTasks(taskId);
-			if (unblocked.length > 0 && options?.onCascadedTasks) {
-				await options.onCascadedTasks(unblocked);
+			try {
+				const unblocked = await this.unblockDependentTasks(taskId);
+				if (unblocked.length > 0 && options?.onCascadedTasks) {
+					await options.onCascadedTasks(unblocked);
+				}
+			} catch {
+				// Best-effort: unblock failures must not roll back the
+				// already-committed done transition. The tick loop will
+				// re-evaluate blocked dependents on the next cycle.
 			}
 		}
 
