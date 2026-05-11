@@ -7,6 +7,12 @@
  * a workflow run completes, or a task times out).
  *
  * Consumers that don't need notifications can use `NullNotificationSink`.
+ *
+ * @deprecated This is a short-lived compatibility adapter for M6 migration.
+ * Use `InternalEventBus` with typed `SpaceEvents` instead. SpaceRuntime now
+ * publishes both to NotificationSink (legacy) and InternalEventBus (new).
+ * Once all subscribers migrate, this interface and its implementations will
+ * be removed. See docs/plans/internal-event-command-query-architecture.md.
  */
 
 // ---------------------------------------------------------------------------
@@ -288,6 +294,8 @@ export type SpaceNotificationEvent =
  * Implementations must be non-blocking from the runtime's perspective —
  * the runtime awaits the returned promise but does not retry on failure.
  * Implementations should handle their own errors internally.
+ *
+ * @deprecated Use `InternalEventBus` subscribers instead. See M6 migration plan.
  */
 export interface NotificationSink {
 	/**
@@ -309,6 +317,8 @@ export interface NotificationSink {
  * Use this as the default when no real consumer is connected (e.g. in unit
  * tests that don't care about notifications, or before the Space Agent session
  * has been provisioned).
+ *
+ * @deprecated Use `InternalEventBus` without a subscriber instead.
  */
 export class NullNotificationSink implements NotificationSink {
 	notify(_event: SpaceNotificationEvent): Promise<void> {

@@ -380,6 +380,193 @@ export interface ApiConnectionEvents {
 	'api.connection': { sessionId: string } & import('@neokai/shared').ApiConnectionState;
 }
 
+// ---------------------------------------------------------------------------
+// Space runtime events — migrated from NotificationSink to InternalEventBus in M6.
+// Naming: dot-separated, lower camelCase per segment, fact/state-change wording.
+// ---------------------------------------------------------------------------
+
+/** A task has transitioned to `blocked` and requires judgment. */
+export interface SpaceTaskBlockedEvent {
+	sessionId: string;
+	spaceId: string;
+	taskId: string;
+	reason: string;
+	timestamp: string;
+}
+
+/** A task has been unblocked and is resuming. */
+export interface SpaceTaskUnblockedEvent {
+	sessionId: string;
+	spaceId: string;
+	taskId: string;
+	reason: string;
+	timestamp: string;
+}
+
+/** A task has reached a terminal state (completed, failed, or cancelled). */
+export interface SpaceTaskCompletedEvent {
+	sessionId: string;
+	spaceId: string;
+	taskId: string;
+	status: 'done' | 'cancelled' | 'blocked';
+	timestamp: string;
+}
+
+/** A task has failed with an unrecoverable error. */
+export interface SpaceTaskFailedEvent {
+	sessionId: string;
+	spaceId: string;
+	taskId: string;
+	reason: string;
+	timestamp: string;
+}
+
+/** A Task Agent session crashed unexpectedly. */
+export interface SpaceAgentCrashedEvent {
+	sessionId: string;
+	spaceId: string;
+	taskId: string;
+	timestamp: string;
+}
+
+/** A crashed agent has been recovered (e.g. after retry). */
+export interface SpaceAgentRecoveredEvent {
+	sessionId: string;
+	spaceId: string;
+	taskId: string;
+	timestamp: string;
+}
+
+/** A stuck agent was auto-completed by the runtime after timeout. */
+export interface SpaceAgentAutoCompletedEvent {
+	sessionId: string;
+	spaceId: string;
+	taskId: string;
+	elapsedMs: number;
+	timestamp: string;
+}
+
+/** A node agent went idle without a terminal SDK message or reported status. */
+export interface SpaceAgentIdleNonTerminalEvent {
+	sessionId: string;
+	spaceId: string;
+	taskId: string;
+	runId: string;
+	executionId: string;
+	nodeId: string;
+	agentName: string;
+	reason: string;
+	timestamp: string;
+}
+
+/** A workflow run has reached a terminal state. */
+export interface SpaceWorkflowRunCompletedEvent {
+	sessionId: string;
+	spaceId: string;
+	runId: string;
+	status: 'done' | 'cancelled' | 'blocked';
+	summary?: string;
+	timestamp: string;
+}
+
+/** A workflow run has failed with an unrecoverable error. */
+export interface SpaceWorkflowRunFailedEvent {
+	sessionId: string;
+	spaceId: string;
+	runId: string;
+	reason: string;
+	timestamp: string;
+}
+
+/** A workflow run has transitioned to `blocked`. */
+export interface SpaceWorkflowRunBlockedEvent {
+	sessionId: string;
+	spaceId: string;
+	runId: string;
+	reason: string;
+	timestamp: string;
+}
+
+/** A previously-terminal workflow run has been reopened back to `in_progress`. */
+export interface SpaceWorkflowRunReopenedEvent {
+	sessionId: string;
+	spaceId: string;
+	runId: string;
+	fromStatus: 'done' | 'cancelled';
+	reason: string;
+	by: string;
+	timestamp: string;
+}
+
+/** A blocked execution is being automatically retried by the runtime. */
+export interface SpaceWorkflowRunRetryEvent {
+	sessionId: string;
+	spaceId: string;
+	taskId: string;
+	runId: string;
+	originalReason: string;
+	attemptNumber: number;
+	maxAttempts: number;
+	timestamp: string;
+}
+
+/** A blocked workflow run has exhausted automatic retries and needs attention. */
+export interface SpaceWorkflowRunNeedsAttentionEvent {
+	sessionId: string;
+	spaceId: string;
+	runId: string;
+	taskId: string;
+	reason: string;
+	retriesExhausted: number;
+	timestamp: string;
+}
+
+/** A task has paused at a completion action that requires approval. */
+export interface SpaceTaskAwaitingApprovalEvent {
+	sessionId: string;
+	spaceId: string;
+	taskId: string;
+	actionId: string;
+	actionName: string;
+	actionDescription?: string;
+	actionType: 'script' | 'instruction' | 'mcp_call';
+	requiredLevel: number;
+	spaceLevel: number;
+	autonomyLevel: number;
+	timestamp: string;
+}
+
+/** A task has been running longer than the configured timeout threshold. */
+export interface SpaceTaskTimeoutEvent {
+	sessionId: string;
+	spaceId: string;
+	taskId: string;
+	elapsedMs: number;
+	timestamp: string;
+}
+
+/**
+ * Space domain events — migrated from NotificationSink to InternalEventBus in M6.
+ */
+export interface SpaceEvents {
+	'space.task.blocked': SpaceTaskBlockedEvent;
+	'space.task.unblocked': SpaceTaskUnblockedEvent;
+	'space.task.completed': SpaceTaskCompletedEvent;
+	'space.task.failed': SpaceTaskFailedEvent;
+	'space.agent.crashed': SpaceAgentCrashedEvent;
+	'space.agent.recovered': SpaceAgentRecoveredEvent;
+	'space.agent.autoCompleted': SpaceAgentAutoCompletedEvent;
+	'space.agent.idleNonTerminal': SpaceAgentIdleNonTerminalEvent;
+	'space.workflowRun.completed': SpaceWorkflowRunCompletedEvent;
+	'space.workflowRun.failed': SpaceWorkflowRunFailedEvent;
+	'space.workflowRun.blocked': SpaceWorkflowRunBlockedEvent;
+	'space.workflowRun.reopened': SpaceWorkflowRunReopenedEvent;
+	'space.workflowRun.retry': SpaceWorkflowRunRetryEvent;
+	'space.workflowRun.needsAttention': SpaceWorkflowRunNeedsAttentionEvent;
+	'space.task.awaitingApproval': SpaceTaskAwaitingApprovalEvent;
+	'space.task.timeout': SpaceTaskTimeoutEvent;
+}
+
 /**
  * Canonical daemon internal event map.
  *
@@ -395,7 +582,8 @@ export interface DaemonInternalEventMap
 	extends SettingsEvents,
 		ExternalEventEvents,
 		SessionEvents,
-		ApiConnectionEvents {}
+		ApiConnectionEvents,
+		SpaceEvents {}
 
 /**
  * Convenience factory typed with the canonical daemon internal event map.
