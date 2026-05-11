@@ -657,28 +657,33 @@ export class SDKMessageRepository {
 	 * Used by rewind to look up a specific checkpoint/message.
 	 *
 	 * The previous implementation loaded every user row for the session and
-	 * scanned in JS — O(N) per lookup. The current form pushes the UUID
-	 * predicate into SQL and uses `idx_sdk_messages_uuid_status`
-	 * `(session_id, send_status, json_extract uuid)` for a full 3-column
-	 * index seek.
+	 * scanned in JS — O(N) per lookup. The current form uses
+	 * `idx_sdk_messages_uuid_status (session_id, send_status,
+	 * json_extract uuid)` for a full 3-column index seek.
 	 *
-	 * Strategy: try `send_status = 'consumed'` first (the >99% case — see
-	 * the established rewind predicate elsewhere in this file:
-	 * `COALESCE(send_status, 'consumed') IN ('consumed', 'failed')`), then
-	 * `'failed'`. Rewindable user messages are always consumed or failed;
-	 * deferred/enqueued user messages haven't been sent yet and are not
-	 * rewind targets. A final fallback scan covers legacy rows with NULL
-	 * `send_status` (none observed in production but kept for safety).
+	 * Coverage must match `getUserMessages` (which returns user rows of
+	 * every `send_status`), otherwise rewind would surface a checkpoint
+	 * it then can't resolve. We probe each known status in turn — the
+	 * planner only picks the full 3-column seek when `send_status` is
+	 * constrained to a single value, so `IN (…)` is not enough — and a
+	 * final fallback covers legacy rows with NULL `send_status` (none
+	 * observed in the current production DB but historically possible).
 	 *
-	 * If duplicate uuids exist within the same session (no DB-level
-	 * uniqueness constraint on the json_extract'd uuid), we preserve the
-	 * previous implementation's earliest-wins tiebreak via
-	 * `ORDER BY timestamp ASC LIMIT 1` on the fallback path. The indexed
-	 * seeks return LIMIT 1 directly — duplicates within the same
-	 * (session_id, send_status, uuid) are not expected.
+	 * Determinism: if duplicate uuids exist within the same session
+	 * (no DB-level uniqueness constraint on the json_extract'd uuid),
+	 * the previous implementation returned the chronologically earliest
+	 * row across the whole session. We preserve that by collecting every
+	 * matching row from each per-status seek (via `.all()` rather than
+	 * `LIMIT 1`) and picking the overall earliest in JS. The NULL
+	 * fallback is only consulted when no indexed-status seek matched,
+	 * so legacy and modern data don't compete on every call — a
+	 * duplicate uuid co-existing across NULL and a known status in the
+	 * same session is not a real-world case.
 	 *
-	 * Benchmark on a 42 061-row session: ~280 ms (before) → ~0.05 ms
-	 * (indexed seek path) — ~3000x speedup.
+	 * Benchmark on a 42 061-row session: ~300 ms (before) → ~0.04 ms
+	 * (4 indexed seeks, no NULL fallback) — ~7500x speedup. NULL
+	 * fallback alone is ~220 ms but only runs when no indexed status
+	 * matched, which the production DB has never been observed to need.
 	 *
 	 * @param sessionId - The session ID
 	 * @param uuid - The message UUID
@@ -688,44 +693,64 @@ export class SDKMessageRepository {
 		sessionId: string,
 		uuid: string
 	): { uuid: string; timestamp: number; content: string } | undefined {
-		// Fast path: indexed seek against idx_sdk_messages_uuid_status, one
-		// send_status at a time so the planner picks the 3-column seek.
+		// Fast path: indexed seek against idx_sdk_messages_uuid_status. We
+		// probe each known send_status separately because the planner only
+		// picks the 3-column index when send_status is constrained to a
+		// single value; `IN (…)` falls back to a session-partition scan.
+		// We deliberately omit `ORDER BY` here — adding one causes the
+		// planner to switch to `idx_sdk_messages_session (session_id,
+		// timestamp)` and lose the indexed seek (~0.01 ms → ~200 ms).
+		// In-bucket determinism is recovered by collecting all matches per
+		// bucket and picking the earliest in JS below.
 		const indexedStmt = this.db.prepare(
 			`SELECT sdk_message, timestamp FROM sdk_messages
        WHERE session_id = ?
          AND send_status = ?
          AND message_type = 'user'
-         AND json_extract(sdk_message, '$.uuid') = ?
-       LIMIT 1`
+         AND json_extract(sdk_message, '$.uuid') = ?`
 		);
 
-		for (const status of ['consumed', 'failed']) {
-			const row = indexedStmt.get(sessionId, status, uuid) as
-				| { sdk_message: string; timestamp: string }
-				| undefined;
-			if (row) {
-				return this.parseUserMessageRow(row, uuid);
-			}
+		const STATUSES_TO_PROBE: SendStatus[] = ['consumed', 'failed', 'enqueued', 'deferred'];
+		const candidates: Array<{ sdk_message: string; timestamp: string }> = [];
+		for (const status of STATUSES_TO_PROBE) {
+			const rows = indexedStmt.all(sessionId, status, uuid) as Array<{
+				sdk_message: string;
+				timestamp: string;
+			}>;
+			for (const r of rows) candidates.push(r);
 		}
 
-		// Fallback: legacy rows with NULL send_status (not observed in
-		// production but kept for safety). This path scans the session
-		// partition; ORDER BY preserves the earliest-match tiebreak the
-		// pre-optimization implementation used.
-		const fallbackStmt = this.db.prepare(
-			`SELECT sdk_message, timestamp FROM sdk_messages
+		// Fallback: legacy rows with NULL send_status. Not observed in the
+		// current production DB but historically possible. This path scans
+		// the session partition rather than seeking the index, so only run
+		// it when no indexed status seek matched — otherwise it would
+		// dominate the cost on every call.
+		if (candidates.length === 0) {
+			const fallbackStmt = this.db.prepare(
+				`SELECT sdk_message, timestamp FROM sdk_messages
        WHERE session_id = ?
          AND send_status IS NULL
          AND message_type = 'user'
          AND json_extract(sdk_message, '$.uuid') = ?
        ORDER BY timestamp ASC
        LIMIT 1`
-		);
-		const row = fallbackStmt.get(sessionId, uuid) as
-			| { sdk_message: string; timestamp: string }
-			| undefined;
-		if (!row) return undefined;
-		return this.parseUserMessageRow(row, uuid);
+			);
+			const nullRow = fallbackStmt.get(sessionId, uuid) as
+				| { sdk_message: string; timestamp: string }
+				| undefined;
+			if (nullRow) candidates.push(nullRow);
+		}
+
+		if (candidates.length === 0) return undefined;
+
+		// Pick the chronologically earliest match — matches the previous
+		// full-session ORDER BY timestamp ASC scan + first-match behavior
+		// that rewind timestamp math depends on.
+		let earliest = candidates[0];
+		for (let i = 1; i < candidates.length; i++) {
+			if (candidates[i].timestamp < earliest.timestamp) earliest = candidates[i];
+		}
+		return this.parseUserMessageRow(earliest, uuid);
 	}
 
 	private parseUserMessageRow(

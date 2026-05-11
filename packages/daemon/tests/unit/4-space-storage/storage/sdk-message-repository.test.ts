@@ -732,6 +732,67 @@ describe('SDKMessageRepository', () => {
 			expect(message?.uuid).toBe('uuid-failed');
 			expect(message?.content).toBe('Failed message');
 		});
+
+		// Coverage must match getUserMessages (which returns user rows of
+		// every send_status), otherwise rewind would surface a checkpoint
+		// from a manual/queued flow that it then can't resolve.
+		it('should find enqueued user messages via the indexed path', () => {
+			const sessionId = 'session-enqueued';
+			repository.saveUserMessage(
+				sessionId,
+				createUserMessage('Enqueued message', 'uuid-enqueued'),
+				'enqueued'
+			);
+
+			const message = repository.getUserMessageByUuid(sessionId, 'uuid-enqueued');
+
+			expect(message).toBeDefined();
+			expect(message?.uuid).toBe('uuid-enqueued');
+		});
+
+		it('should find deferred user messages via the indexed path', () => {
+			const sessionId = 'session-deferred';
+			repository.saveUserMessage(
+				sessionId,
+				createUserMessage('Deferred message', 'uuid-deferred'),
+				'deferred'
+			);
+
+			const message = repository.getUserMessageByUuid(sessionId, 'uuid-deferred');
+
+			expect(message).toBeDefined();
+			expect(message?.uuid).toBe('uuid-deferred');
+		});
+
+		// If duplicate user rows share a uuid across different send_status
+		// buckets within the same session (no DB-level uniqueness on the
+		// json_extract'd uuid), the function must return the
+		// chronologically earliest row — rewind's deletion-bound math
+		// depends on the timestamp being the earliest occurrence.
+		it('should return the earliest match across send_status buckets', async () => {
+			const sessionId = 'session-dup';
+
+			// 'failed' message persisted first (earliest timestamp)
+			repository.saveUserMessage(
+				sessionId,
+				createUserMessage('Earliest failed copy', 'shared-uuid'),
+				'failed'
+			);
+
+			// Force a later timestamp on the second insert
+			await new Promise((r) => setTimeout(r, 5));
+
+			repository.saveUserMessage(
+				sessionId,
+				createUserMessage('Later consumed copy', 'shared-uuid'),
+				'consumed'
+			);
+
+			const message = repository.getUserMessageByUuid(sessionId, 'shared-uuid');
+
+			expect(message).toBeDefined();
+			expect(message?.content).toBe('Earliest failed copy');
+		});
 	});
 
 	describe('origin field persistence and retrieval', () => {
