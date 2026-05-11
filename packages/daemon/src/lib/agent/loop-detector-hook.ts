@@ -109,10 +109,14 @@ export interface LoopDetectorConfig {
  * "agent re-runs the same broken command over and over" pattern without
  * blocking legitimate retries that eventually succeed.
  *
- * Failure detection runs in a companion `PostToolUse` hook that classifies
- * each Bash result as success or failure based on the tool response shape
- * (see `isBashFailureResponse`). `PostToolUseFailure` events (true SDK
- * errors) are always counted as failures.
+ * Failure accounting is split across two post-hooks:
+ *   - `PostToolUse` records **success** — the tool executed and produced a
+ *     result. We never try to classify the payload text; that path is
+ *     inherently fragile (warnings to stderr, literal tag strings, etc.).
+ *   - `PostToolUseFailure` records **failure** — the SDK itself reports that
+ *     the tool call failed (non-zero exit, sandbox kill, timeout, hook
+ *     crash). User/system interrupts (`is_interrupt`) are explicitly skipped
+ *     because the command itself did not fail.
  */
 export interface BashLoopConfig {
 	/** When false, Bash is never denied or tracked by this module. */
@@ -218,9 +222,14 @@ function buildArgKey(toolName: string, input: Record<string, unknown>, cwd?: str
 	}
 	if (toolName === 'Bash') {
 		// Drop the non-semantic label, fold in cwd so the same command in
-		// different repositories does not collide.
+		// different repositories does not collide, and canonicalise optional
+		// default-valued fields so omitted vs explicit `false` collide.
 		const { description: _description, ...rest } = input;
-		const withCwd = cwd ? { ...rest, __cwd: cwd } : rest;
+		const normalised = {
+			...rest,
+			run_in_background: rest.run_in_background ?? false,
+		};
+		const withCwd = cwd ? { ...normalised, __cwd: cwd } : normalised;
 		return stableStringify(withCwd);
 	}
 	return stableStringify(input);
@@ -263,99 +272,6 @@ function buildBashRecoveryMessage(count: number, argSummary: string, failures: n
 		'(3) only retry after you have changed something that could plausibly affect the outcome.',
 		'If you are checking for a file or path, run a different probe (e.g. `ls` on the parent directory) instead of re-running the failing command.',
 	].join(' ');
-}
-
-/**
- * Classify a Bash tool response as a failure or success.
- *
- * The SDK delivers `tool_response` as `unknown`; in practice for Bash it is
- * one of:
- *   - a string (success: command produced stdout/stderr text)
- *   - an object `{ stdout, stderr, interrupted, isImageOutput, ... }`
- *   - a content-block array `[{ type: 'text', text: '...' }, ...]` with
- *     `is_error: true` set at the top level when the tool errored
- *
- * Failure signals we trust:
- *   - response object has `is_error: true`
- *   - response object has `interrupted: true`
- *   - response object has a non-zero exit code field
- *     (`exitCode` / `exit_code` / `returnCode`)
- *   - content block has `is_error: true`
- *   - text contains a `<bash-stderr>` block (delimited by the SDK's Bash
- *     formatter when the underlying shell wrote to stderr) that is
- *     non-empty — those tags come from the SDK and only appear for stderr
- *     output, so a non-empty block reliably indicates a problem
- *
- * We deliberately do NOT scan free-form `stdout`/`text`/string responses
- * for substring markers like "no such file or directory" or "permission
- * denied". Commands legitimately emit those phrases in their output (e.g.
- * `grep "permission denied" /var/log/auth.log`, `cat <<< "no such file"`,
- * tutorials, etc.). Using stdout text as a failure signal would
- * misclassify successes, accumulate phantom failures in the ring, and
- * eventually block legitimate retries — exactly the false-positive we
- * built this detector to avoid.
- *
- * False negatives are acceptable (we just don't fire on that specific
- * outcome); false positives are NOT, so the classifier is conservative:
- * when in doubt, treat as success.
- */
-export function isBashFailureResponse(response: unknown): boolean {
-	if (response == null) return false;
-
-	// Top-level object with explicit error markers.
-	if (typeof response === 'object' && !Array.isArray(response)) {
-		const obj = response as Record<string, unknown>;
-		if (obj.is_error === true) return true;
-		if (obj.interrupted === true) return true;
-		// Some SDK shapes surface the exit code in a direct field.
-		const exitCode = (obj.exitCode ?? obj.exit_code ?? obj.returnCode) as unknown;
-		if (typeof exitCode === 'number' && exitCode !== 0) return true;
-		return false;
-	}
-
-	// Content-block array shape: any block with is_error=true is a failure.
-	// Text inside blocks is treated as command output (stdout) — see comment
-	// above for why we don't substring-scan it.
-	if (Array.isArray(response)) {
-		for (const block of response) {
-			if (block && typeof block === 'object') {
-				const b = block as Record<string, unknown>;
-				if (b.is_error === true) return true;
-				if (typeof b.text === 'string' && hasNonEmptyBashStderrBlock(b.text)) return true;
-			}
-		}
-		return false;
-	}
-
-	// Plain string responses are the SDK's "successful execution, here's
-	// the combined output" shape. The only failure signal we'll honour in
-	// a string is the `<bash-stderr>` block emitted by the SDK's Bash
-	// formatter, since those tags are delimiters the SDK controls and not
-	// content the underlying command can fabricate.
-	if (typeof response === 'string') {
-		return hasNonEmptyBashStderrBlock(response);
-	}
-
-	return false;
-}
-
-/**
- * Detect a non-empty `<bash-stderr>…</bash-stderr>` block emitted by the
- * SDK's Bash formatter. We anchor the match to the *end* of the response
- * (with optional trailing whitespace): the SDK appends the stderr block
- * after stdout, so a real stderr signal always lives at the tail. Commands
- * that happen to echo the literal string mid-stream (e.g. `echo
- * '<bash-stderr>x</bash-stderr> done'`) won't match because the tag isn't
- * the last thing in the response.
- *
- * Empty / whitespace-only blocks do not count — a successful command with
- * empty stderr produces `<bash-stderr></bash-stderr>` and must classify as
- * success.
- */
-function hasNonEmptyBashStderrBlock(text: string): boolean {
-	const match = text.match(/<bash-stderr>([\s\S]*?)<\/bash-stderr>\s*$/);
-	if (!match) return false;
-	return match[1].trim().length > 0;
 }
 
 /**
@@ -619,8 +535,14 @@ function buildPreToolUseCallback(
 }
 
 /**
- * Build the PostToolUse callback. Records Bash outcomes into the shared
- * failure ring buffer; otherwise a no-op.
+ * Build the PostToolUse callback. For Bash, records a **success** outcome
+ * into the shared failure ring buffer. We do NOT try to classify the
+ * `tool_response` payload — `PostToolUse` is the SDK's success path and
+ * the response text is inherently unreliable as a failure signal (commands
+ * can write warnings to stderr, echo literal tags, emit error-like phrases
+ * in normal output, etc.). Actual failures (non-zero exits, sandbox kills,
+ * timeouts, hook crashes) are delivered via `PostToolUseFailure` and
+ * recorded there. Non-Bash tools are ignored.
  */
 function buildPostToolUseCallback(
 	state: LoopDetectorState,
@@ -637,12 +559,14 @@ function buildPostToolUseCallback(
 		const args = (postInput.tool_input ?? {}) as Record<string, unknown>;
 		const fingerprint = buildArgKey('Bash', args, postInput.cwd);
 		const scope = scopeKey(postInput);
-		const failed = isBashFailureResponse(postInput.tool_response);
+		// PostToolUse is the success path — the tool executed and produced a
+		// result. We record success unconditionally; failures are accounted
+		// in the companion PostToolUseFailure hook.
 		recordBashOutcome(
 			state,
 			scope,
 			fingerprint,
-			failed,
+			false,
 			finalConfig.bash.failuresRequired,
 			Date.now(),
 			finalConfig.windowMs
