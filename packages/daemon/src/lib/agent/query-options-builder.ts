@@ -58,7 +58,7 @@ import {
 	defaultBuiltinSkillPluginRoot,
 } from './builtin-skill-plugin-wrapper';
 import { getCoordinatorAgents } from './coordinator-agents';
-import { createLoopDetectorHook } from './loop-detector-hook';
+import { createLoopDetectorHooks } from './loop-detector-hook';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 
 export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
@@ -1023,29 +1023,39 @@ CRITICAL RULES:
 	/**
 	 * Build hooks configuration
 	 *
-	 * Always installs the loop-detector hook with NO matcher so it observes
-	 * every PreToolUse event. This is intentional: the hook needs to see
-	 * untracked tool calls (Bash, Edit, Write, …) so they can reset the
-	 * streak after a deny — otherwise an agent that takes a real corrective
-	 * step (e.g. `Edit foo.ts` then re-Read it) would stay permanently
-	 * blocked. The hook itself filters internally on
-	 * `DEFAULT_LOOP_DETECTOR_CONFIG.thresholds`. Tool guards from the
-	 * workflow definition are appended on top.
+	 * Always installs the loop-detector hooks with NO matcher so they observe
+	 * every tool event. This is intentional: the PreToolUse hook needs to see
+	 * untracked tool calls (Edit, Write, …) so they can reset the streak
+	 * after a deny — otherwise an agent that takes a real corrective step
+	 * (e.g. `Edit foo.ts` then re-Read it) would stay permanently blocked.
+	 * The PostToolUse + PostToolUseFailure hooks observe Bash outcomes for
+	 * the failure-aware Bash dead-loop detector. The PreToolUse hook itself
+	 * filters internally on `DEFAULT_LOOP_DETECTOR_CONFIG.thresholds` and the
+	 * Bash sub-config. Tool guards from the workflow definition are appended
+	 * on top of the PreToolUse chain.
 	 */
 	private buildHooks(): Options['hooks'] {
 		const hooks: NonNullable<Options['hooks']> = {};
 		const preToolUse: NonNullable<Options['hooks']>['PreToolUse'] = [];
 
-		// Loop detector: NO matcher — the hook must observe every tool call
-		// so that untracked tools (Edit, Write, Bash, …) can serve as the
-		// "different action" that breaks a denied streak. The hook decides
-		// internally whether to track a tool (DEFAULT_LOOP_DETECTOR_CONFIG.
-		// thresholds) or merely use the call as a streak-reset signal.
-		// Production wires this with no arguments — the hook's `config`
-		// parameter exists only so unit tests can exercise alternative
-		// thresholds and disabled mode.
+		// Loop detector: NO matcher — the hooks must observe every tool call
+		// so that untracked tools (Edit, Write, …) can serve as the
+		// "different action" that breaks a denied streak, and so that every
+		// Bash result is recorded against the failure ring. The PreToolUse
+		// hook decides internally whether to track a tool
+		// (DEFAULT_LOOP_DETECTOR_CONFIG.thresholds + bash sub-config) or
+		// merely use the call as a streak-reset signal. Production wires
+		// this with no arguments — the hook's `config` parameter exists only
+		// so unit tests can exercise alternative thresholds and disabled mode.
+		//
+		// Single factory call: pre/post hooks SHARE state via the closure
+		// returned by `createLoopDetectorHooks()`. Calling
+		// `createLoopDetectorHook()` separately would produce disjoint
+		// states and the Bash failure ring would never see outcomes from the
+		// pre-hook's streak counter.
+		const loopDetectorHooks = createLoopDetectorHooks();
 		preToolUse.push({
-			hooks: [createLoopDetectorHook()],
+			hooks: [loopDetectorHooks.preToolUse],
 		});
 
 		// Workflow tool guards (declarative deny/allow rules) layered on top.
@@ -1073,6 +1083,11 @@ CRITICAL RULES:
 		if (preToolUse.length > 0) {
 			hooks.PreToolUse = preToolUse;
 		}
+		// PostToolUse + PostToolUseFailure observers feed the Bash detector's
+		// outcome ring. Installed unconditionally — they early-out on
+		// non-Bash tools and when bash.enabled is false.
+		hooks.PostToolUse = [{ hooks: [loopDetectorHooks.postToolUse] }];
+		hooks.PostToolUseFailure = [{ hooks: [loopDetectorHooks.postToolUseFailure] }];
 		return hooks;
 	}
 
