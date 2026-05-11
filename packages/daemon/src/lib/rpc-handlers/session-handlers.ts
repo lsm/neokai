@@ -66,10 +66,19 @@ export function setupSessionHandlers(
 	daemonHub: DaemonHub,
 	spaceManager: SpaceManager,
 	spaceRuntimeService: SpaceRuntimeService | undefined,
-	internalEventBus: InternalEventBus<DaemonInternalEventMap>
+	internalEventBus?: InternalEventBus<DaemonInternalEventMap>
 ): void {
 	const publishSpaceUpdated = (payload: DaemonInternalEventMap['space.updated']): void => {
-		internalEventBus.publishAsync('space.updated', payload);
+		if (internalEventBus) {
+			internalEventBus.publishAsync('space.updated', payload);
+			return;
+		}
+
+		void daemonHub.emit('space.updated', {
+			sessionId: payload.sessionId,
+			spaceId: payload.spaceId,
+			space: payload.space,
+		});
 	};
 	messageHub.onRequest('session.create', async (data) => {
 		const req = data as CreateSessionRequest;

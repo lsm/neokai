@@ -21,7 +21,6 @@ import type {
 	SpaceTask,
 	SpaceWorkflowRun,
 } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
@@ -92,7 +91,6 @@ export function setupSpaceHandlers(
 	spaceManager: SpaceManager,
 	taskRepo: SpaceTaskRepository,
 	workflowRunRepo: SpaceWorkflowRunRepository,
-	daemonHub: DaemonHub,
 	spaceAgentManager: SpaceAgentManager,
 	spaceWorkflowManager: SpaceWorkflowManager,
 	sessionManager?: SessionManager,

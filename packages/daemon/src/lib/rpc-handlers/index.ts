@@ -490,7 +490,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.spaceManager,
 		spaceTaskRepo,
 		spaceWorkflowRunRepo,
-		deps.daemonHub,
 		deps.spaceAgentManager,
 		spaceWorkflowManager,
 		deps.sessionManager,

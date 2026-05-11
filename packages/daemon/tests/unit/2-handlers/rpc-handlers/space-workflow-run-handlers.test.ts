@@ -122,6 +122,7 @@ function createMockMessageHub(): {
 
 function createMockDaemonHub(): DaemonHub {
 	return {
+		publishAsync: mock(() => {}),
 		emit: mock(async () => {}),
 		on: mock(() => () => {}),
 		off: mock(() => {}),
@@ -428,7 +429,9 @@ describe('space-workflow-run-handlers', () => {
 				'My Run',
 				'Some context'
 			);
-			expect(daemonHub.emit).not.toHaveBeenCalled();
+			expect(
+				(daemonHub as unknown as { publishAsync: ReturnType<typeof mock> }).publishAsync
+			).not.toHaveBeenCalled();
 		});
 
 		it('auto-selects first workflow when workflowId not provided', async () => {
@@ -622,7 +625,9 @@ describe('space-workflow-run-handlers', () => {
 			expect(result).toEqual({ success: true });
 
 			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'cancelled');
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.workflowRun.updated', {
+			expect(
+				(daemonHub as unknown as { publishAsync: ReturnType<typeof mock> }).publishAsync
+			).toHaveBeenCalledWith('space.workflowRun.updated', {
 				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',

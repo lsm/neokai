@@ -1249,7 +1249,7 @@ describe('Human approval path — not subject to autonomy checks', () => {
 		const mockWorkflowManager = {
 			getWorkflow: () => null,
 		};
-		const mockDaemonHub = { emit: async () => {} };
+		const mockDaemonHub = { emit: async () => {}, publishAsync: () => {} };
 
 		setupSpaceWorkflowRunHandlers(
 			mockHub as never,

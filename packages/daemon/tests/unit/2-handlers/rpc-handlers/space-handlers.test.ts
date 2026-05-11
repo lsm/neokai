@@ -221,7 +221,6 @@ describe('space-handlers', () => {
 			spaceManager,
 			taskRepo,
 			runRepo,
-			{} as never,
 			agentManager ?? createMockSpaceAgentManager(),
 			workflowManager ?? createMockSpaceWorkflowManager(),
 			sessionManager,

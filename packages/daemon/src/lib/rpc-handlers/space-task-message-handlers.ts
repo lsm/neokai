@@ -171,17 +171,10 @@ export function setupSpaceTaskMessageHandlers(
 		event: K,
 		payload: DaemonInternalEventMap[K]
 	): void => {
-		const publisher = internalEventBus as InternalEventBus<DaemonInternalEventMap> & {
-			emit?: (event: string, payload: unknown) => Promise<unknown>;
-		};
-		if (typeof publisher.publishAsync === 'function') {
-			publisher.publishAsync(
-				event,
-				payload as DaemonInternalEventMap[K] & import('../internal-event-bus').InternalEventPayload
-			);
-			return;
-		}
-		void publisher.emit?.(event, payload);
+		internalEventBus.publishAsync(
+			event,
+			payload as DaemonInternalEventMap[K] & import('../internal-event-bus').InternalEventPayload
+		);
 	};
 
 	/**
