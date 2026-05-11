@@ -2,6 +2,33 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.22.0] - 2026-05-11
+
+A release adding workflow handles, scheduled tasks, dead-loop detection, Channels/ClientEventGateway foundation, and major LiveQuery performance improvements. 24 commits since v0.21.0.
+
+### Added
+
+- **Workflow handles**: Short human-readable identifiers (e.g. `coding-with-qa`) as alternative to UUIDs; auto-generated from names with collision resolution; pinned on built-in templates; accepted by all MCP tools and RPC handlers
+- **Scheduled and recurring tasks**: TaskSchedule support for one-shot and recurring task creation via UI and API
+- **Dead-loop detection**: Bash dead loops detected via PostToolUse failure tracking (threshold=5 consecutive failures); SDK dead-loop detection via identical output fingerprinting
+- **Task observability**: `update_task` MCP tool for space agent and task agent
+- **Create Session and Create Task buttons** on Space pages
+- **SpaceWorkflowSummary**: Lightweight workflow list with reduced payload size
+- **ClientEventGateway and Channels foundation**: Extracted from StateManager for cleaner daemon-to-client event routing
+
+### Changed
+
+- **ClientEventBridge**: Extracted remaining StateManager forwarding (session, connection, config, error events) into dedicated bridge
+- **TypedHub**: `publish` now awaits async handlers; adds `publishAsync`
+- **External events**: Simplified architecture — removed task coupling
+
+### Fixed
+
+- **LiveQuery performance**: Index-targeted lookups for sdk_messages queries (4-400x speedup); materialised `parent_tool_use_id` column; server-side pagination for task list groups
+- **Workflow runtime**: Gate data writes resolve agent-name targets to node-name channels; keep open tasks open when dependency fails; add `pr_url` field to review-posted-gate
+- **Chat UX**: Sync textarea height before auto-scroll; remove double-compensation causing mobile Safari composer jump; keep composer visible above mobile Safari keyboard
+- **Providers**: Set autoCompactWindow for non-native providers with large context windows
+
 ## [0.21.0] - 2026-05-08
 
 A release adding image support across bridges and task threads, external event infrastructure, task observability tools, and significant idle performance improvements. 13 commits since v0.20.0.
