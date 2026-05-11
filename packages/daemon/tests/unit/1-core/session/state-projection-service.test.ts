@@ -81,7 +81,7 @@ describe('StateProjectionService', () => {
 			subscribe: mock((event: string, handler: Function) => {
 				const existing = eventSubscribers.get(event) || [];
 				existing.push(handler);
-				eventSubscribers.set(event, handler);
+				eventSubscribers.set(event, existing);
 				return () => {};
 			}),
 			publish: mock(async () => ({ delivered: 0, failures: [] })),
@@ -307,7 +307,7 @@ describe('StateProjectionService', () => {
 			);
 
 			// Simulate session.updated event populating the cache
-			const updateHandler = eventSubscribers.get('session.updated');
+			const updateHandler = eventSubscribers.get('session.updated')?.[0];
 			await updateHandler!({
 				sessionId: 'leader-session-id',
 				processingState: { status: 'waiting_for_input', pendingQuestion },
@@ -350,7 +350,7 @@ describe('StateProjectionService', () => {
 	describe('InternalEventBus subscribers', () => {
 		describe('session.created', () => {
 			it('should cache session and initial processing state', async () => {
-				const handler = eventSubscribers.get('session.created');
+				const handler = eventSubscribers.get('session.created')?.[0];
 				const mockSession: Session = {
 					id: 'new-session-id',
 					title: 'New Session',
@@ -372,14 +372,14 @@ describe('StateProjectionService', () => {
 		describe('session.updated', () => {
 			it('should update cache and broadcast', async () => {
 				// First create a session to cache
-				const createHandler = eventSubscribers.get('session.created');
+				const createHandler = eventSubscribers.get('session.created')?.[0];
 				await createHandler!({
 					sessionId: 'test-id',
 					session: { id: 'test-id', title: 'Original', status: 'active', metadata: {} },
 				});
 
 				// Now update it
-				const updateHandler = eventSubscribers.get('session.updated');
+				const updateHandler = eventSubscribers.get('session.updated')?.[0];
 				await updateHandler!({
 					sessionId: 'test-id',
 					session: { title: 'Updated' },
@@ -391,7 +391,7 @@ describe('StateProjectionService', () => {
 			});
 
 			it('should handle update for non-cached session gracefully', async () => {
-				const updateHandler = eventSubscribers.get('session.updated');
+				const updateHandler = eventSubscribers.get('session.updated')?.[0];
 
 				// Update without creating first (partial data scenario)
 				// Should complete without throwing - just log and continue
@@ -412,14 +412,14 @@ describe('StateProjectionService', () => {
 		describe('session.deleted', () => {
 			it('should clear caches including error cache', async () => {
 				// First create a session to cache
-				const createHandler = eventSubscribers.get('session.created');
+				const createHandler = eventSubscribers.get('session.created')?.[0];
 				await createHandler!({
 					sessionId: 'test-id',
 					session: { id: 'test-id', title: 'Test', status: 'active', metadata: {} },
 				});
 
 				// Now delete it
-				const deleteHandler = eventSubscribers.get('session.deleted');
+				const deleteHandler = eventSubscribers.get('session.deleted')?.[0];
 				await deleteHandler!({ sessionId: 'test-id' });
 
 				// Forwarding extracted to ClientEventBridge; StateProjectionService only clears caches
@@ -457,7 +457,7 @@ describe('StateProjectionService', () => {
 				expect(callsBefore).toBeGreaterThan(0);
 
 				// Delete the session
-				const deleteHandler = eventSubscribers.get('session.deleted');
+				const deleteHandler = eventSubscribers.get('session.deleted')?.[0];
 				await deleteHandler!({ sessionId: 'test-id' });
 
 				// After deletion, versions for that session should be gone.
@@ -476,7 +476,7 @@ describe('StateProjectionService', () => {
 
 		describe('settings.updated', () => {
 			it('should broadcast settings change via InternalEventBus', async () => {
-				const handler = eventSubscribers.get('settings.updated');
+				const handler = eventSubscribers.get('settings.updated')?.[0];
 				await handler!({ sessionId: 'global', settings: {} as GlobalSettings });
 
 				expect(mockMessageHub.event).toHaveBeenCalledWith(
@@ -493,7 +493,7 @@ describe('StateProjectionService', () => {
 			it('should cache commands only (broadcast extracted to ClientEventBridge)', async () => {
 				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
 
-				const handler = eventSubscribers.get('commands.updated');
+				const handler = eventSubscribers.get('commands.updated')?.[0];
 				await handler!({ sessionId: 'test-id', commands: ['cmd1', 'cmd2'] });
 
 				// Forwarding extracted to ClientEventBridge; StateProjectionService only caches
@@ -507,7 +507,7 @@ describe('StateProjectionService', () => {
 			it('should cache error only (broadcast extracted to ClientEventBridge)', async () => {
 				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
 
-				const handler = eventSubscribers.get('session.error');
+				const handler = eventSubscribers.get('session.error')?.[0];
 				await handler!({
 					sessionId: 'test-id',
 					error: 'Something went wrong',
@@ -525,7 +525,7 @@ describe('StateProjectionService', () => {
 			it('should clear error only (broadcast extracted to ClientEventBridge)', async () => {
 				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
 
-				const clearHandler = eventSubscribers.get('session.errorClear');
+				const clearHandler = eventSubscribers.get('session.errorClear')?.[0];
 				await clearHandler!({ sessionId: 'test-id' });
 
 				// Forwarding extracted to ClientEventBridge; StateProjectionService only clears cache
@@ -539,7 +539,7 @@ describe('StateProjectionService', () => {
 			it('should update API connection state only (broadcast extracted to ClientEventBridge)', async () => {
 				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
 
-				const handler = eventSubscribers.get('api.connection');
+				const handler = eventSubscribers.get('api.connection')?.[0];
 				const connectionData = {
 					sessionId: 'global',
 					status: 'disconnected' as const,
