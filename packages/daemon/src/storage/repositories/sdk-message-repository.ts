@@ -680,10 +680,13 @@ export class SDKMessageRepository {
 	 * duplicate uuid co-existing across NULL and a known status in the
 	 * same session is not a real-world case.
 	 *
-	 * Benchmark on a 42 061-row session: ~300 ms (before) → ~0.04 ms
-	 * (4 indexed seeks, no NULL fallback) — ~7500x speedup. NULL
-	 * fallback alone is ~220 ms but only runs when no indexed status
-	 * matched, which the production DB has never been observed to need.
+	 * Benchmark on the largest production session (3 335 user rows in a
+	 * 42 061-row table): ~294 ms (before, full-function wall-clock) →
+	 * ~0.95 ms (after, full-function wall-clock) — ~310x speedup. The
+	 * raw 4-seek SQLite cost is only ~0.04 ms; the remainder is
+	 * JSON.parse + content extraction on the matched row. NULL fallback
+	 * alone is ~220 ms but only runs when no indexed status matched,
+	 * which the production DB has never been observed to need.
 	 *
 	 * @param sessionId - The session ID
 	 * @param uuid - The message UUID
