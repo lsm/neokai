@@ -232,6 +232,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 	function emitQueued(record: PendingAgentMessageRecord): void {
 		onMessageQueued?.(record);
 		internalEventBus?.publishAsync('space.pendingMessage.queued', {
+			namespaceId: 'global',
 			sessionId: 'global',
 			spaceId: space.id,
 			workflowRunId,
@@ -249,6 +250,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 	/** Emit task updated event to InternalEventBus. */
 	function emitTaskUpdated(task: SpaceTask): void {
 		internalEventBus?.publishAsync('space.task.updated', {
+			namespaceId: 'global',
 			sessionId: 'global',
 			spaceId: space.id,
 			taskId,
@@ -1113,6 +1115,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				}
 
 				internalEventBus?.publishAsync('space.gateData.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: space.id,
 					runId: workflowRunId,
@@ -1158,6 +1161,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				}
 
 				internalEventBus?.publishAsync('space.gateData.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: space.id,
 					runId: workflowRunId,

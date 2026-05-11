@@ -877,6 +877,7 @@ describe('space-workflow-run gate handlers', () => {
 			expect(daemonHub.emit).toHaveBeenCalledWith(
 				'space.gateData.updated',
 				expect.objectContaining({
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: mockRun.spaceId,
 					runId: 'run-1',

@@ -106,6 +106,7 @@ export function createMarkCompleteHandler(
 
 	const emitTaskUpdated = (task: SpaceTask): void => {
 		internalEventBus?.publishAsync('space.task.updated', {
+			namespaceId: 'global',
 			sessionId: 'global',
 			spaceId,
 			taskId,
@@ -171,6 +172,7 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
 
 	const emitTaskUpdated = (task: SpaceTask): void => {
 		internalEventBus?.publishAsync('space.task.updated', {
+			namespaceId: 'global',
 			sessionId: 'global',
 			spaceId,
 			taskId,

@@ -584,6 +584,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		},
 		onWorkflowRunUpdated: (spaceId: string, runId: string, run: NeoWorkflowRun) => {
 			deps.internalEventBus.publishAsync('space.workflowRun.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId,
 				runId,
@@ -598,6 +599,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			data: Record<string, unknown>
 		) => {
 			deps.internalEventBus.publishAsync('space.gateData.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId,
 				runId,

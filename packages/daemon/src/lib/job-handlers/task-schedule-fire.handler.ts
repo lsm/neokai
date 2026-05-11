@@ -240,6 +240,7 @@ export async function handleTaskScheduleFire(
 			const emittedTask = taskRepo.getTask(taskId);
 			if (emittedTask) {
 				internalEventBus.publishAsync('space.task.created', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: schedule.spaceId,
 					taskId,
@@ -249,6 +250,7 @@ export async function handleTaskScheduleFire(
 			const emittedSchedule = scheduleRepo.getById(scheduleId);
 			if (emittedSchedule) {
 				internalEventBus.publishAsync('space.schedule.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: schedule.spaceId,
 					scheduleId,

@@ -172,6 +172,7 @@ describe('space-task-handlers', () => {
 			expect(result).toEqual(mockTask);
 			expect(taskManager.createTask).toHaveBeenCalledTimes(1);
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.created', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				taskId: mockTask.id,
@@ -483,6 +484,7 @@ describe('space-task-handlers', () => {
 				error: undefined,
 			});
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				taskId: 'task-1',
@@ -607,6 +609,7 @@ describe('space-task-handlers', () => {
 				error: undefined,
 			});
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				taskId: 'task-1',
@@ -692,6 +695,7 @@ describe('space-task-handlers', () => {
 				error: undefined,
 			});
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				taskId: 'task-1',
@@ -726,6 +730,7 @@ describe('space-task-handlers', () => {
 			expect((result as SpaceTask).title).toBe('Updated');
 			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', { title: 'Updated' });
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				taskId: 'task-1',
@@ -1035,6 +1040,7 @@ describe('space-task-handlers', () => {
 			});
 
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				taskId: 'task-1',
@@ -1098,6 +1104,7 @@ describe('space-task-handlers', () => {
 				expect(result.status).toBe('open');
 				expect(taskManager.publishTask).toHaveBeenCalledWith('task-1');
 				expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: 'space-1',
 					taskId: 'task-1',

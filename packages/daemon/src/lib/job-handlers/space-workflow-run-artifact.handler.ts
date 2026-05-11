@@ -73,6 +73,7 @@ function emitCacheUpdated(
 	}
 ): void {
 	internalEventBus.publishAsync('space.artifactCache.updated', {
+		namespaceId: 'global',
 		sessionId: 'global',
 		...params,
 	});

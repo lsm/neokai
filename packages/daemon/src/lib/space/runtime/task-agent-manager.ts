@@ -1797,6 +1797,7 @@ export class TaskAgentManager {
 		row: { spaceId: string; workflowRunId: string; targetAgentName: string; targetKind: string }
 	): void {
 		this.config.internalEventBus?.publishAsync('space.pendingMessage.delivered', {
+			namespaceId: 'global',
 			sessionId: 'global',
 			spaceId: row.spaceId,
 			workflowRunId: row.workflowRunId,

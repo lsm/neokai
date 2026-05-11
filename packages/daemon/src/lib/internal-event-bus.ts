@@ -600,12 +600,14 @@ export interface SpaceEvents {
  */
 export interface SpaceClientEvents {
 	'space.task.created': {
+		namespaceId: string;
 		sessionId: string;
 		spaceId: string;
 		taskId: string;
 		task: import('@neokai/shared').SpaceTask;
 	};
 	'space.task.updated': {
+		namespaceId: string;
 		sessionId: string;
 		spaceId: string;
 		taskId: string;
@@ -613,33 +615,48 @@ export interface SpaceClientEvents {
 		archiveSource?: 'user' | 'system_reconcile';
 	};
 	'space.workflowRun.created': {
+		namespaceId: string;
 		sessionId: string;
 		spaceId: string;
 		runId: string;
 		run: import('@neokai/shared').SpaceWorkflowRun;
 	};
 	'space.workflowRun.updated': {
+		namespaceId: string;
 		sessionId: string;
 		spaceId: string;
 		runId: string;
 		run?: Partial<import('@neokai/shared').SpaceWorkflowRun>;
 	};
 	'space.gateData.updated': {
+		namespaceId: string;
 		sessionId: string;
 		spaceId: string;
 		runId: string;
 		gateId: string;
 		data: Record<string, unknown>;
 	};
-	'space.created': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
+	'space.created': {
+		namespaceId: string;
+		sessionId: string;
+		spaceId: string;
+		space: import('@neokai/shared').Space;
+	};
 	'space.updated': {
+		namespaceId: string;
 		sessionId: string;
 		spaceId: string;
 		space?: Partial<import('@neokai/shared').Space>;
 	};
-	'space.archived': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
-	'space.deleted': { sessionId: string; spaceId: string };
+	'space.archived': {
+		namespaceId: string;
+		sessionId: string;
+		spaceId: string;
+		space: import('@neokai/shared').Space;
+	};
+	'space.deleted': { namespaceId: string; sessionId: string; spaceId: string };
 	'space.githubEvent.routed': {
+		namespaceId: string;
 		sessionId: string;
 		taskId: string;
 		event: {
@@ -651,6 +668,7 @@ export interface SpaceClientEvents {
 		};
 	};
 	'space.artifactCache.updated': {
+		namespaceId: string;
 		sessionId: string;
 		spaceId: string;
 		runId: string;
@@ -659,6 +677,7 @@ export interface SpaceClientEvents {
 		status: 'ok' | 'syncing' | 'error';
 	};
 	'space.pendingMessage.queued': {
+		namespaceId: string;
 		sessionId: string;
 		spaceId: string;
 		workflowRunId: string;
@@ -672,6 +691,7 @@ export interface SpaceClientEvents {
 		deduped: boolean;
 	};
 	'space.pendingMessage.delivered': {
+		namespaceId: string;
 		sessionId: string;
 		spaceId: string;
 		workflowRunId: string;
@@ -681,12 +701,14 @@ export interface SpaceClientEvents {
 		deliveredSessionId: string;
 	};
 	'space.schedule.updated': {
+		namespaceId: string;
 		sessionId: string;
 		spaceId: string;
 		scheduleId: string;
 		schedule: import('@neokai/shared').TaskSchedule;
 	};
 	'space.workflowRun.cyclesReset': {
+		namespaceId: string;
 		sessionId: string;
 		runId: string;
 		reason: 'human_touch';

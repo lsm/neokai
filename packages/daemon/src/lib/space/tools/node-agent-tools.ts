@@ -741,6 +741,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 								}
 
 								internalEventBus?.publishAsync('space.gateData.updated', {
+									namespaceId: 'global',
 									sessionId: 'global',
 									spaceId,
 									runId: workflowRunId,

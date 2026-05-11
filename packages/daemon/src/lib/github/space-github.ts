@@ -748,6 +748,7 @@ export class SpaceGitHubService {
 
 	private appendTaskActivity(taskId: string, event: NormalizedSpaceGitHubEvent): void {
 		this.internalEventBus?.publishAsync('space.githubEvent.routed', {
+			namespaceId: 'global',
 			sessionId: 'global',
 			taskId,
 			event: {

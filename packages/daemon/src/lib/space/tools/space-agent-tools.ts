@@ -674,6 +674,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				);
 
 				internalEventBus?.publishAsync('space.task.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId,
 					taskId: args.task_id,
@@ -1131,12 +1132,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				}
 
 				internalEventBus?.publishAsync('space.workflowRun.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: run.spaceId,
 					runId: run.id,
 					run: currentRun,
 				});
 				internalEventBus?.publishAsync('space.gateData.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: run.spaceId,
 					runId: args.run_id,
@@ -1186,12 +1189,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				}
 
 				internalEventBus?.publishAsync('space.workflowRun.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: run.spaceId,
 					runId: run.id,
 					run: updatedRun,
 				});
 				internalEventBus?.publishAsync('space.gateData.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: run.spaceId,
 					runId: args.run_id,
@@ -1269,6 +1274,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				);
 
 				internalEventBus?.publishAsync('space.task.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId,
 					taskId: args.task_id,

@@ -315,6 +315,7 @@ export function setupSpaceWorkflowRunHandlers(
 		const updated = workflowRunRepo.transitionStatus(params.id, 'in_progress');
 
 		publishSpaceEvent('space.workflowRun.updated', {
+			namespaceId: 'global',
 			sessionId: 'global',
 			spaceId: run.spaceId,
 			runId: run.id,
@@ -353,6 +354,7 @@ export function setupSpaceWorkflowRunHandlers(
 				workflowRunRepo.updateRun(params.id, { failureReason: params.failureReason }) ?? run;
 
 			publishSpaceEvent('space.workflowRun.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: run.spaceId,
 				runId: run.id,
@@ -368,6 +370,7 @@ export function setupSpaceWorkflowRunHandlers(
 			workflowRunRepo.updateRun(params.id, { failureReason: params.failureReason }) ?? run;
 
 		publishSpaceEvent('space.workflowRun.updated', {
+			namespaceId: 'global',
 			sessionId: 'global',
 			spaceId: run.spaceId,
 			runId: run.id,
@@ -408,6 +411,7 @@ export function setupSpaceWorkflowRunHandlers(
 		const updated = workflowRunRepo.transitionStatus(params.id, 'cancelled');
 
 		publishSpaceEvent('space.workflowRun.updated', {
+			namespaceId: 'global',
 			sessionId: 'global',
 			spaceId: run.spaceId,
 			runId: run.id,
@@ -470,6 +474,7 @@ export function setupSpaceWorkflowRunHandlers(
 			}
 
 			publishSpaceEvent('space.workflowRun.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: run.spaceId,
 				runId: run.id,
@@ -477,6 +482,7 @@ export function setupSpaceWorkflowRunHandlers(
 			});
 
 			publishSpaceEvent('space.gateData.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: run.spaceId,
 				runId: params.runId,
@@ -526,6 +532,7 @@ export function setupSpaceWorkflowRunHandlers(
 			}
 
 			publishSpaceEvent('space.workflowRun.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: run.spaceId,
 				runId: run.id,
@@ -533,6 +540,7 @@ export function setupSpaceWorkflowRunHandlers(
 			});
 
 			publishSpaceEvent('space.gateData.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: run.spaceId,
 				runId: params.runId,
@@ -590,6 +598,7 @@ export function setupSpaceWorkflowRunHandlers(
 			const gateData = gateDataRepo.merge(params.runId, params.gateId, params.data);
 
 			publishSpaceEvent('space.gateData.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: run.spaceId,
 				runId: params.runId,

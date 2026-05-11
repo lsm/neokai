@@ -175,6 +175,7 @@ export class SpaceRuntimeService {
 			internalEventBus: config.internalEventBus,
 			onTaskUpdated: async ({ spaceId, task, archiveSource }) => {
 				this.config.internalEventBus?.publishAsync('space.task.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId,
 					taskId: task.id,
@@ -184,6 +185,7 @@ export class SpaceRuntimeService {
 			},
 			onWorkflowRunCreated: async ({ spaceId, run }) => {
 				this.config.internalEventBus?.publishAsync('space.workflowRun.created', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId,
 					runId: run.id,
@@ -192,6 +194,7 @@ export class SpaceRuntimeService {
 			},
 			onWorkflowRunUpdated: async ({ spaceId, run }) => {
 				this.config.internalEventBus?.publishAsync('space.workflowRun.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId,
 					runId: run.id,
@@ -423,7 +426,14 @@ export class SpaceRuntimeService {
 			? internalEventBus.subscribe('space.created', handleSpaceCreated, {
 					subscriberName: 'SpaceRuntimeService.spaceCreated',
 				})
-			: daemonHub.on('space.created', handleSpaceCreated, { sessionId: 'global' });
+			: daemonHub.on(
+					'space.created',
+					handleSpaceCreated as (event: {
+						sessionId: string;
+						spaceId: string;
+						space: Space;
+					}) => void
+				);
 		this.unsubscribers.push(unsubCreated);
 
 		// When a workflow definition is updated, refresh gate poll timers for
@@ -451,7 +461,7 @@ export class SpaceRuntimeService {
 		// that live inside a Space and need to send/receive messages via
 		// `send_message_to_agent`, inspect tasks, etc.
 		//
-		// NOTE: no `{ sessionId: 'global' }` filter here — `session.created` is
+		// NOTE: no `{ namespaceId: 'global', sessionId: 'global' }` filter here — `session.created` is
 		// emitted with `data.sessionId = <new session UUID>`, so a `'global'`
 		// filter would never match. We want every session.created event, so we
 		// subscribe globally (TypedHub's default).
@@ -483,7 +493,15 @@ export class SpaceRuntimeService {
 			? internalEventBus.subscribe('space.archived', handleSpaceArchived, {
 					subscriberName: 'SpaceRuntimeService.spaceArchived',
 				})
-			: daemonHub.on('space.archived', handleSpaceArchived, { sessionId: 'global' });
+			: daemonHub.on(
+					'space.archived',
+					handleSpaceArchived as (event: {
+						sessionId: string;
+						spaceId: string;
+						space: Space;
+					}) => void,
+					{ sessionId: 'global' }
+				);
 		this.unsubscribers.push(unsubSpaceArchived);
 
 		const handleSpaceDeleted = (event: DaemonInternalEventMap['space.deleted']): void =>
@@ -492,7 +510,11 @@ export class SpaceRuntimeService {
 			? internalEventBus.subscribe('space.deleted', handleSpaceDeleted, {
 					subscriberName: 'SpaceRuntimeService.spaceDeleted',
 				})
-			: daemonHub.on('space.deleted', handleSpaceDeleted, { sessionId: 'global' });
+			: daemonHub.on(
+					'space.deleted',
+					handleSpaceDeleted as (event: { sessionId: string; spaceId: string }) => void,
+					{ sessionId: 'global' }
+				);
 		this.unsubscribers.push(unsubSpaceDeleted);
 
 		// When a space is updated, refresh the autonomy level in its notification
@@ -516,7 +538,15 @@ export class SpaceRuntimeService {
 			? internalEventBus.subscribe('space.updated', handleSpaceUpdated, {
 					subscriberName: 'SpaceRuntimeService.spaceUpdated',
 				})
-			: daemonHub.on('space.updated', handleSpaceUpdated, { sessionId: 'global' });
+			: daemonHub.on(
+					'space.updated',
+					handleSpaceUpdated as (event: {
+						sessionId: string;
+						spaceId: string;
+						space?: Partial<Space>;
+					}) => void,
+					{ sessionId: 'global' }
+				);
 		this.unsubscribers.push(unsubSpaceUpdated);
 
 		// Hard resets replace the cached AgentSession with a fresh instance built
@@ -1029,6 +1059,7 @@ export class SpaceRuntimeService {
 		if (!updated) return;
 
 		this.config.internalEventBus?.publishAsync('space.task.updated', {
+			namespaceId: 'global',
 			sessionId: 'global',
 			spaceId: run.spaceId,
 			taskId: updated.id,

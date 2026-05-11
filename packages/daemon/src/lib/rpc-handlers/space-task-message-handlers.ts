@@ -202,6 +202,7 @@ export function setupSpaceTaskMessageHandlers(
 			);
 			if (rowsReset > 0) {
 				publishSpaceEvent('space.workflowRun.cyclesReset', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					runId: workflowRunId,
 					reason: 'human_touch',
@@ -372,6 +373,7 @@ export function setupSpaceTaskMessageHandlers(
 		const updatedTask = await taskAgentManager.ensureTaskAgentSession(params.taskId);
 
 		publishSpaceEvent('space.task.updated', {
+			namespaceId: 'global',
 			sessionId: 'global',
 			spaceId: params.spaceId,
 			taskId: params.taskId,
@@ -515,6 +517,7 @@ export function setupSpaceTaskMessageHandlers(
 
 		if (sessionAfter !== sessionBefore) {
 			publishSpaceEvent('space.task.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: params.spaceId,
 				taskId: params.taskId,

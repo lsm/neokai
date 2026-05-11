@@ -87,6 +87,7 @@ export function setupSessionHandlers(
 		if (req.spaceId) {
 			const updatedSpace = await spaceManager.addSession(req.spaceId, sessionId);
 			publishSpaceUpdated({
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: req.spaceId,
 				space: updatedSpace,
@@ -327,6 +328,7 @@ export function setupSessionHandlers(
 			try {
 				const updatedSpace = await spaceManager.removeSession(spaceIdForDelete, targetSessionId);
 				publishSpaceUpdated({
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: spaceIdForDelete,
 					space: updatedSpace,
@@ -360,6 +362,7 @@ export function setupSessionHandlers(
 					targetSessionId
 				);
 				publishSpaceUpdated({
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: session.context.spaceId,
 					space: updatedSpace,

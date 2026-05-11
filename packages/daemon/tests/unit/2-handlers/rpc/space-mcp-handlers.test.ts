@@ -239,7 +239,9 @@ describe('space-mcp-handlers', () => {
 				serverId: srv.id,
 				enabled: false,
 			});
-			expect(emit).toHaveBeenCalledWith('mcp.registry.changed', { sessionId: 'global' });
+			expect(emit).toHaveBeenCalledWith('mcp.registry.changed', {
+				sessionId: 'global',
+			});
 		});
 
 		test('flip — second call replaces the prior override', async () => {
@@ -336,7 +338,9 @@ describe('space-mcp-handlers', () => {
 
 			expect(result.ok).toBe(true);
 			expect(enablementRepo.getOverride('space', 'space-A', srv.id)).toBeNull();
-			expect(emit).toHaveBeenCalledWith('mcp.registry.changed', { sessionId: 'global' });
+			expect(emit).toHaveBeenCalledWith('mcp.registry.changed', {
+				sessionId: 'global',
+			});
 		});
 
 		test('idempotent — no override row still returns ok:true and no emit', async () => {
@@ -403,7 +407,9 @@ describe('space-mcp-handlers', () => {
 			expect(result.imported).toBe(1);
 			expect(result.removed).toBe(0);
 			expect(appMcpRepo.getByName('foo')?.source).toBe('imported');
-			expect(emit).toHaveBeenCalledWith('mcp.registry.changed', { sessionId: 'global' });
+			expect(emit).toHaveBeenCalledWith('mcp.registry.changed', {
+				sessionId: 'global',
+			});
 		});
 
 		test('scans every space when no workspacePath narrow is given', async () => {

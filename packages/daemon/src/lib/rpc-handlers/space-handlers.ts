@@ -201,7 +201,12 @@ export function setupSpaceHandlers(
 			}
 		}
 
-		publishSpaceEvent('space.created', { sessionId: 'global', spaceId: space.id, space });
+		publishSpaceEvent('space.created', {
+			namespaceId: 'global',
+			sessionId: 'global',
+			spaceId: space.id,
+			space,
+		});
 
 		if (seedWarnings.length > 0) {
 			return { ...space, seedWarnings } satisfies SpaceCreateResult;
@@ -251,7 +256,12 @@ export function setupSpaceHandlers(
 
 		const space = await spaceManager.updateSlug(params.id, params.slug);
 
-		publishSpaceEvent('space.updated', { sessionId: 'global', spaceId: params.id, space });
+		publishSpaceEvent('space.updated', {
+			namespaceId: 'global',
+			sessionId: 'global',
+			spaceId: params.id,
+			space,
+		});
 
 		return space;
 	});
@@ -275,7 +285,12 @@ export function setupSpaceHandlers(
 		const { id, ...updateParams } = params;
 		const space = await spaceManager.updateSpace(id, updateParams);
 
-		publishSpaceEvent('space.updated', { sessionId: 'global', spaceId: id, space });
+		publishSpaceEvent('space.updated', {
+			namespaceId: 'global',
+			sessionId: 'global',
+			spaceId: id,
+			space,
+		});
 
 		return space;
 	});
@@ -292,7 +307,12 @@ export function setupSpaceHandlers(
 
 		// Emit a dedicated space.archived event (consistent with room.archived pattern),
 		// carrying the full archived space object so subscribers have complete state.
-		publishSpaceEvent('space.archived', { sessionId: 'global', spaceId: params.id, space });
+		publishSpaceEvent('space.archived', {
+			namespaceId: 'global',
+			sessionId: 'global',
+			spaceId: params.id,
+			space,
+		});
 
 		return space;
 	});
@@ -316,7 +336,12 @@ export function setupSpaceHandlers(
 
 		const space = await spaceManager.stopSpace(params.id);
 
-		publishSpaceEvent('space.updated', { sessionId: 'global', spaceId: params.id, space });
+		publishSpaceEvent('space.updated', {
+			namespaceId: 'global',
+			sessionId: 'global',
+			spaceId: params.id,
+			space,
+		});
 
 		return space;
 	});
@@ -332,7 +357,12 @@ export function setupSpaceHandlers(
 
 		const space = await spaceManager.startSpace(params.id);
 
-		publishSpaceEvent('space.updated', { sessionId: 'global', spaceId: params.id, space });
+		publishSpaceEvent('space.updated', {
+			namespaceId: 'global',
+			sessionId: 'global',
+			spaceId: params.id,
+			space,
+		});
 
 		return space;
 	});
@@ -347,7 +377,12 @@ export function setupSpaceHandlers(
 
 		const space = await spaceManager.pauseSpace(params.id);
 
-		publishSpaceEvent('space.updated', { sessionId: 'global', spaceId: params.id, space });
+		publishSpaceEvent('space.updated', {
+			namespaceId: 'global',
+			sessionId: 'global',
+			spaceId: params.id,
+			space,
+		});
 
 		return space;
 	});
@@ -362,7 +397,12 @@ export function setupSpaceHandlers(
 
 		const space = await spaceManager.resumeSpace(params.id);
 
-		publishSpaceEvent('space.updated', { sessionId: 'global', spaceId: params.id, space });
+		publishSpaceEvent('space.updated', {
+			namespaceId: 'global',
+			sessionId: 'global',
+			spaceId: params.id,
+			space,
+		});
 
 		return space;
 	});
@@ -380,7 +420,11 @@ export function setupSpaceHandlers(
 			throw new Error(`Space not found: ${params.id}`);
 		}
 
-		publishSpaceEvent('space.deleted', { sessionId: 'global', spaceId: params.id });
+		publishSpaceEvent('space.deleted', {
+			namespaceId: 'global',
+			sessionId: 'global',
+			spaceId: params.id,
+		});
 
 		return { success: true };
 	});

@@ -623,6 +623,7 @@ describe('space-workflow-run-handlers', () => {
 
 			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'cancelled');
 			expect(daemonHub.emit).toHaveBeenCalledWith('space.workflowRun.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				runId: 'run-1',

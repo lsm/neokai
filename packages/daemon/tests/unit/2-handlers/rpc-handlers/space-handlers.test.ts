@@ -250,6 +250,7 @@ describe('space-handlers', () => {
 			expect(result).toEqual(mockSpace);
 			expect(spaceManager.createSpace).toHaveBeenCalledTimes(1);
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.created', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: mockSpace.id,
 				space: mockSpace,
@@ -483,6 +484,7 @@ describe('space-handlers', () => {
 			const result = await call('space.create', { workspacePath: '/tmp/x', name: 'X' });
 			expect(result).toEqual(mockSpace);
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.created', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: mockSpace.id,
 				space: mockSpace,
@@ -546,6 +548,7 @@ describe('space-handlers', () => {
 			expect(result).toEqual(updated);
 			expect(spaceManager.updateSpace).toHaveBeenCalledWith('space-1', { name: 'Renamed' });
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				space: updated,
@@ -610,6 +613,7 @@ describe('space-handlers', () => {
 			expect(spaceManager.archiveSpace).toHaveBeenCalledWith('space-1');
 			// Must emit space.archived (not space.updated) with the full space object
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.archived', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				space: archivedSpace,
@@ -663,6 +667,7 @@ describe('space-handlers', () => {
 			// Space is NOT archived — status stays 'active'
 			expect((result as Space).status).toBe('active');
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				space: stoppedSpace,
@@ -679,6 +684,7 @@ describe('space-handlers', () => {
 
 			expect((result as Space).stopped).toBe(true);
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				space: stoppedSpace,
@@ -704,6 +710,7 @@ describe('space-handlers', () => {
 			expect(spaceManager.startSpace).toHaveBeenCalledWith('space-1');
 			expect((result as Space).stopped).toBe(false);
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				space: startedSpace,
@@ -726,6 +733,7 @@ describe('space-handlers', () => {
 			expect(result).toEqual({ success: true });
 			expect(spaceManager.deleteSpace).toHaveBeenCalledWith('space-1');
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.deleted', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 			});
@@ -783,6 +791,7 @@ describe('space-handlers', () => {
 			expect(result.paused).toBe(true);
 			expect(spaceManager.pauseSpace).toHaveBeenCalledWith('space-1');
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				space: result,
@@ -804,6 +813,7 @@ describe('space-handlers', () => {
 			expect(result.paused).toBe(false);
 			expect(spaceManager.resumeSpace).toHaveBeenCalledWith('space-1');
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				space: result,

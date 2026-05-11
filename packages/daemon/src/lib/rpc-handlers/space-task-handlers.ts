@@ -87,6 +87,7 @@ export function setupSpaceTaskHandlers(
 		const task = await taskManager.createTask(rest);
 
 		publishSpaceEvent('space.task.created', {
+			namespaceId: 'global',
 			sessionId: 'global',
 			spaceId,
 			taskId: task.id,
@@ -373,6 +374,7 @@ export function setupSpaceTaskHandlers(
 
 		if (emitTaskUpdated) {
 			publishSpaceEvent('space.task.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId,
 				taskId,
@@ -450,6 +452,7 @@ export function setupSpaceTaskHandlers(
 		});
 
 		publishSpaceEvent('space.task.updated', {
+			namespaceId: 'global',
 			sessionId: 'global',
 			spaceId: params.spaceId,
 			taskId: params.taskId,
@@ -544,6 +547,7 @@ export function setupSpaceTaskHandlers(
 		}
 
 		publishSpaceEvent('space.task.updated', {
+			namespaceId: 'global',
 			sessionId: 'global',
 			spaceId: params.spaceId,
 			taskId: params.taskId,
@@ -584,6 +588,7 @@ export function setupSpaceTaskHandlers(
 		const task = await taskManager.publishTask(params.taskId);
 
 		publishSpaceEvent('space.task.updated', {
+			namespaceId: 'global',
 			sessionId: 'global',
 			spaceId: params.spaceId,
 			taskId: params.taskId,
