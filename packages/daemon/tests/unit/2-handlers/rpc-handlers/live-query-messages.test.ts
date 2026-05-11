@@ -50,10 +50,14 @@ interface InsertSdkMessageArgs {
 }
 
 function insertSdkMessage(db: BunDatabase, args: InsertSdkMessageArgs): void {
+	const parentToolUseId =
+		typeof args.sdkMessage.parent_tool_use_id === 'string'
+			? args.sdkMessage.parent_tool_use_id
+			: null;
 	db.prepare(
 		`INSERT INTO sdk_messages
-		 (id, session_id, message_type, sdk_message, timestamp, send_status, origin)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`
+		 (id, session_id, message_type, sdk_message, timestamp, send_status, origin, parent_tool_use_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	).run(
 		args.id,
 		args.sessionId,
@@ -61,7 +65,8 @@ function insertSdkMessage(db: BunDatabase, args: InsertSdkMessageArgs): void {
 		JSON.stringify(args.sdkMessage),
 		args.timestamp ?? '2024-01-01 00:00:00',
 		args.sendStatus ?? 'consumed',
-		args.origin ?? null
+		args.origin ?? null,
+		parentToolUseId
 	);
 }
 
@@ -234,9 +239,9 @@ describe('messages.bySession — SQL behavior', () => {
 		expect(plan).not.toContain('SCAN sdk_messages USING');
 	});
 
-	test('uses the parent tool expression index for subagent lookups', () => {
+	test('uses the materialised parent_tool_use_id index for subagent lookups', () => {
 		const plan = queryPlan(db, 's1', 200);
-		expect(plan).toContain('idx_sdk_messages_parent_tool');
+		expect(plan).toContain('idx_sdk_messages_parent_tool_use_id');
 	});
 
 	test('includes subagent messages whose parent_tool_use_id matches a top-level tool_use', () => {

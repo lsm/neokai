@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup } from '@testing-library/preact';
+import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { SpaceTask } from '@neokai/shared';
 
@@ -31,6 +31,14 @@ const { mockNavigateToSpaceTasks } = vi.hoisted(() => ({
 // Plain holders for non-reactive signals (only read, not render)
 const { mockCurrentSpaceIdSignal } = vi.hoisted(() => ({
 	mockCurrentSpaceIdSignal: { value: null as string | null },
+}));
+
+// Hoisted spy for `fetchTaskGroup` so individual tests can override behaviour
+// (e.g. simulate a transient RPC failure) and assert call counts. The default
+// implementation mirrors the daemon repository pagination semantics so the
+// component renders the same subset it would in production.
+const { mockFetchTaskGroup } = vi.hoisted(() => ({
+	mockFetchTaskGroup: vi.fn(),
 }));
 
 // Real Preact signal for the filter tab (read during render — needs reactivity)
@@ -63,9 +71,45 @@ vi.mock('../../../lib/space-store', () => ({
 			tasks: mockTasks,
 			schedules: mockSchedules,
 			listSchedules: mockListSchedules,
+			fetchTaskGroup: mockFetchTaskGroup,
 		};
 	},
 }));
+
+// Default implementation: filter `mockTasks` to mirror the daemon repository
+// pagination semantics. Individual tests can override via
+// `mockFetchTaskGroup.mockImplementationOnce(...)` to simulate failures.
+function defaultFetchTaskGroupImpl(
+	status: SpaceTask['status'],
+	options?: {
+		blockReason?: SpaceTask['blockReason'] | null;
+		blockReasonNotIn?: string[];
+		limit?: number;
+		offset?: number;
+	}
+) {
+	const limit = options?.limit ?? 10;
+	const offset = options?.offset ?? 0;
+	const all = (mockTasks.value as SpaceTask[])
+		.filter((t) => {
+			if (t.status !== status) return false;
+			if (options && 'blockReason' in options) {
+				if ((t.blockReason ?? null) !== (options.blockReason ?? null)) {
+					return false;
+				}
+			}
+			if (options?.blockReasonNotIn && options.blockReasonNotIn.length > 0) {
+				if (t.blockReason && options.blockReasonNotIn.includes(t.blockReason)) {
+					return false;
+				}
+			}
+			return true;
+		})
+		// Match the repository's `ORDER BY updated_at DESC` so tests that
+		// rely on sort order see the same view as production.
+		.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+	return Promise.resolve({ tasks: all.slice(offset, offset + limit), total: all.length });
+}
 
 vi.mock('../../../lib/utils', () => ({
 	cn: (...args: string[]) => args.filter(Boolean).join(' '),
@@ -109,6 +153,8 @@ describe('SpaceTasks', () => {
 		mockCurrentSpaceTasksFilterTabSignal.value = 'active';
 		mockCurrentSpaceIdSignal.value = null;
 		mockNavigateToSpaceTasks.mockClear();
+		mockFetchTaskGroup.mockReset();
+		mockFetchTaskGroup.mockImplementation(defaultFetchTaskGroupImpl);
 	});
 
 	afterEach(() => {
@@ -151,47 +197,47 @@ describe('SpaceTasks', () => {
 		expect(getByText('No archived tasks')).toBeTruthy();
 	});
 
-	it('displays tasks in active tab (open + in_progress)', () => {
+	it('displays tasks in active tab (open + in_progress)', async () => {
 		mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'in_progress')];
-		const { getByText, queryByText } = render(<SpaceTasks spaceId="space-1" />);
-		expect(getByText('Task t1')).toBeTruthy();
-		expect(getByText('Task t2')).toBeTruthy();
+		const { findByText, queryByText } = render(<SpaceTasks spaceId="space-1" />);
+		expect(await findByText('Task t1')).toBeTruthy();
+		expect(await findByText('Task t2')).toBeTruthy();
 		expect(queryByText('No active tasks')).toBeNull();
 	});
 
-	it("surfaces 'approved' tasks inside the active tab (post-approval running)", () => {
+	it("surfaces 'approved' tasks inside the active tab (post-approval running)", async () => {
 		// `approved` is a transient state between `approve_task` and
 		// `mark_complete`. When stuck (post-approval dispatch fails and
 		// `postApprovalBlockedReason` is populated), the task must remain
 		// visible — routing it to Active keeps it in sight and the
 		// PendingPostApprovalBanner on the detail pane surfaces the error.
 		mockTasks.value = [makeTask('t1', 'approved')];
-		const { getByText } = render(<SpaceTasks spaceId="space-1" />);
-		expect(getByText('Task t1')).toBeTruthy();
-		expect(getByText(/Post-Approval Running/)).toBeTruthy();
+		const { findByText } = render(<SpaceTasks spaceId="space-1" />);
+		expect(await findByText('Task t1')).toBeTruthy();
+		expect(await findByText(/Post-Approval Running/)).toBeTruthy();
 	});
 
-	it('displays tasks in action tab (blocked + review)', () => {
+	it('displays tasks in action tab (blocked + review)', async () => {
 		mockTasks.value = [makeTask('t1', 'blocked'), makeTask('t2', 'review')];
-		const { getByText } = render(<SpaceTasks spaceId="space-1" />);
+		const { getByText, findByText } = render(<SpaceTasks spaceId="space-1" />);
 		fireEvent.click(getByText('Action'));
-		expect(getByText('Task t1')).toBeTruthy();
-		expect(getByText('Task t2')).toBeTruthy();
+		expect(await findByText('Task t1')).toBeTruthy();
+		expect(await findByText('Task t2')).toBeTruthy();
 	});
 
-	it('displays tasks in completed tab (done + cancelled)', () => {
+	it('displays tasks in completed tab (done + cancelled)', async () => {
 		mockTasks.value = [makeTask('t1', 'done'), makeTask('t2', 'cancelled')];
-		const { getByText } = render(<SpaceTasks spaceId="space-1" />);
+		const { getByText, findByText } = render(<SpaceTasks spaceId="space-1" />);
 		fireEvent.click(getByText('Completed'));
-		expect(getByText('Task t1')).toBeTruthy();
-		expect(getByText('Task t2')).toBeTruthy();
+		expect(await findByText('Task t1')).toBeTruthy();
+		expect(await findByText('Task t2')).toBeTruthy();
 	});
 
-	it('displays tasks in archived tab', () => {
+	it('displays tasks in archived tab', async () => {
 		mockTasks.value = [makeTask('t1', 'archived')];
-		const { getByText } = render(<SpaceTasks spaceId="space-1" />);
+		const { getByText, findByText } = render(<SpaceTasks spaceId="space-1" />);
 		fireEvent.click(getByText('Archived'));
-		expect(getByText('Task t1')).toBeTruthy();
+		expect(await findByText('Task t1')).toBeTruthy();
 	});
 
 	it('shows correct tab counts', () => {
@@ -214,7 +260,7 @@ describe('SpaceTasks', () => {
 		expect(text.some((t) => t?.includes('Archived') && t?.includes('1'))).toBe(true);
 	});
 
-	it('sorts tasks by updatedAt descending', () => {
+	it('sorts tasks by updatedAt descending', async () => {
 		const now = Date.now();
 		mockTasks.value = [
 			makeTask('t1', 'open', { updatedAt: now - 60_000 }),
@@ -223,30 +269,35 @@ describe('SpaceTasks', () => {
 		];
 		const { container } = render(<SpaceTasks spaceId="space-1" />);
 		// Task items are inside TaskGroup cards
+		await waitFor(() => {
+			const taskItems = container.querySelectorAll('.divide-y > div');
+			expect(taskItems.length).toBe(3);
+		});
 		const taskItems = container.querySelectorAll('.divide-y > div');
 		expect(taskItems[0].textContent).toContain('Task t2');
 		expect(taskItems[1].textContent).toContain('Task t1');
 		expect(taskItems[2].textContent).toContain('Task t3');
 	});
 
-	it('calls onSelectTask when a task item is clicked', () => {
+	it('calls onSelectTask when a task item is clicked', async () => {
 		mockTasks.value = [makeTask('t1', 'open')];
 		const onSelectTask = vi.fn();
-		const { getByText } = render(<SpaceTasks spaceId="space-1" onSelectTask={onSelectTask} />);
-		fireEvent.click(getByText('Task t1').closest('.border-l-2')!);
+		const { findByText } = render(<SpaceTasks spaceId="space-1" onSelectTask={onSelectTask} />);
+		const node = await findByText('Task t1');
+		fireEvent.click(node.closest('.border-l-2')!);
 		expect(onSelectTask).toHaveBeenCalledWith('t1');
 	});
 
-	it('renders status label and relative time for each task', () => {
+	it('renders status label and relative time for each task', async () => {
 		mockTasks.value = [makeTask('t1', 'in_progress')];
-		const { getByText } = render(<SpaceTasks spaceId="space-1" />);
-		expect(getByText('In Progress')).toBeTruthy();
+		const { findByText } = render(<SpaceTasks spaceId="space-1" />);
+		expect(await findByText('In Progress')).toBeTruthy();
 	});
 
-	it('renders task number badge', () => {
+	it('renders task number badge', async () => {
 		mockTasks.value = [makeTask('t1', 'open', { taskNumber: 42 })];
-		const { getByText } = render(<SpaceTasks spaceId="space-1" />);
-		expect(getByText('#42')).toBeTruthy();
+		const { findByText } = render(<SpaceTasks spaceId="space-1" />);
+		expect(await findByText('#42')).toBeTruthy();
 	});
 
 	it('does not show count badge when count is 0', () => {
@@ -261,18 +312,18 @@ describe('SpaceTasks', () => {
 		expect(activeTab!.textContent).toBe('Active'); // no "(0)" suffix
 	});
 
-	it('switches tabs and shows filtered tasks', () => {
+	it('switches tabs and shows filtered tasks', async () => {
 		mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'done')];
-		const { getByText, queryByText } = render(<SpaceTasks spaceId="space-1" />);
+		const { getByText, findByText, queryByText } = render(<SpaceTasks spaceId="space-1" />);
 
 		// Active tab shows t1
-		expect(getByText('Task t1')).toBeTruthy();
+		expect(await findByText('Task t1')).toBeTruthy();
 		expect(queryByText('Task t2')).toBeNull();
 
 		// Switch to completed
 		fireEvent.click(getByText('Completed'));
+		expect(await findByText('Task t2')).toBeTruthy();
 		expect(queryByText('Task t1')).toBeNull();
-		expect(getByText('Task t2')).toBeTruthy();
 	});
 
 	it('groups tasks by status within a tab', () => {
@@ -301,13 +352,13 @@ describe('SpaceTasks', () => {
 			expect(queryByTestId('task-dependency-badges')).toBeNull();
 		});
 
-		it('renders a gray badge when the dependency is not done', () => {
+		it('renders a gray badge when the dependency is not done', async () => {
 			mockTasks.value = [
 				makeTask('t1', 'open', { taskNumber: 1 }),
 				makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['t1'] }),
 			];
-			const { getAllByTestId } = render(<SpaceTasks spaceId="space-1" />);
-			const badges = getAllByTestId('task-dependency-badge');
+			const { findAllByTestId } = render(<SpaceTasks spaceId="space-1" />);
+			const badges = await findAllByTestId('task-dependency-badge');
 			expect(badges).toHaveLength(1);
 			expect(badges[0].textContent).toContain('#1');
 			expect(badges[0].getAttribute('data-dep-status')).toBe('open');
@@ -316,22 +367,22 @@ describe('SpaceTasks', () => {
 			expect(badges[0].className).not.toContain('text-green-300');
 		});
 
-		it('renders a green badge when the dependency is done', () => {
+		it('renders a green badge when the dependency is done', async () => {
 			mockTasks.value = [
 				makeTask('t1', 'done', { taskNumber: 1 }),
 				makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['t1'] }),
 			];
-			const { getAllByTestId } = render(<SpaceTasks spaceId="space-1" />);
-			const badges = getAllByTestId('task-dependency-badge');
+			const { findAllByTestId } = render(<SpaceTasks spaceId="space-1" />);
+			const badges = await findAllByTestId('task-dependency-badge');
 			expect(badges).toHaveLength(1);
 			expect(badges[0].getAttribute('data-dep-status')).toBe('done');
 			expect(badges[0].className).toContain('text-green-300');
 		});
 
-		it('renders a missing-dep badge with ⚠ when the dep id is not found', () => {
+		it('renders a missing-dep badge with ⚠ when the dep id is not found', async () => {
 			mockTasks.value = [makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['missing-id'] })];
-			const { getAllByTestId } = render(<SpaceTasks spaceId="space-1" />);
-			const badges = getAllByTestId('task-dependency-badge');
+			const { findAllByTestId } = render(<SpaceTasks spaceId="space-1" />);
+			const badges = await findAllByTestId('task-dependency-badge');
 			expect(badges).toHaveLength(1);
 			expect(badges[0].getAttribute('data-dep-status')).toBe('missing');
 			expect(badges[0].getAttribute('title')).toBe('task not found');
@@ -342,26 +393,26 @@ describe('SpaceTasks', () => {
 			expect(badges[0].className).not.toMatch(/\bhover:/);
 		});
 
-		it('shows the dep task title as the tooltip', () => {
+		it('shows the dep task title as the tooltip', async () => {
 			mockTasks.value = [
 				makeTask('t1', 'open', { taskNumber: 1, title: 'Set up auth' }),
 				makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['t1'] }),
 			];
-			const { getAllByTestId } = render(<SpaceTasks spaceId="space-1" />);
-			const badges = getAllByTestId('task-dependency-badge');
+			const { findAllByTestId } = render(<SpaceTasks spaceId="space-1" />);
+			const badges = await findAllByTestId('task-dependency-badge');
 			expect(badges[0].getAttribute('title')).toBe('Set up auth');
 		});
 
-		it('navigates to the dependency task when a badge is clicked', () => {
+		it('navigates to the dependency task when a badge is clicked', async () => {
 			mockTasks.value = [
 				makeTask('t1', 'open', { taskNumber: 1 }),
 				makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['t1'] }),
 			];
 			const onSelectTask = vi.fn();
-			const { getAllByTestId } = render(
+			const { findAllByTestId } = render(
 				<SpaceTasks spaceId="space-1" onSelectTask={onSelectTask} />
 			);
-			const badges = getAllByTestId('task-dependency-badge');
+			const badges = await findAllByTestId('task-dependency-badge');
 			fireEvent.click(badges[0]);
 			expect(onSelectTask).toHaveBeenCalledWith('t1');
 			// Must not also select the parent row (stopPropagation)
@@ -370,18 +421,18 @@ describe('SpaceTasks', () => {
 			expect(badges[0].className).toMatch(/\bhover:/);
 		});
 
-		it('does not invoke onSelectTask for a missing dependency', () => {
+		it('does not invoke onSelectTask for a missing dependency', async () => {
 			mockTasks.value = [makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['ghost'] })];
 			const onSelectTask = vi.fn();
-			const { getAllByTestId } = render(
+			const { findAllByTestId } = render(
 				<SpaceTasks spaceId="space-1" onSelectTask={onSelectTask} />
 			);
-			const badges = getAllByTestId('task-dependency-badge');
+			const badges = await findAllByTestId('task-dependency-badge');
 			fireEvent.click(badges[0]);
 			expect(onSelectTask).not.toHaveBeenCalled();
 		});
 
-		it('shows overflow chip when there are more than 3 deps (first 3 + "+N")', () => {
+		it('shows overflow chip when there are more than 3 deps (first 3 + "+N")', async () => {
 			mockTasks.value = [
 				makeTask('t1', 'done', { taskNumber: 1 }),
 				makeTask('t2', 'open', { taskNumber: 2 }),
@@ -393,8 +444,8 @@ describe('SpaceTasks', () => {
 					dependsOn: ['t1', 't2', 't3', 't4', 't5'],
 				}),
 			];
-			const { getAllByTestId, getByTestId } = render(<SpaceTasks spaceId="space-1" />);
-			const badges = getAllByTestId('task-dependency-badge');
+			const { findAllByTestId, getByTestId } = render(<SpaceTasks spaceId="space-1" />);
+			const badges = await findAllByTestId('task-dependency-badge');
 			// Only the first 3 deps render as badges
 			expect(badges).toHaveLength(3);
 			expect(badges.map((b) => b.textContent)).toEqual(['#1', '#2', '#3']);
@@ -402,7 +453,7 @@ describe('SpaceTasks', () => {
 			expect(overflow.textContent).toBe('+2');
 		});
 
-		it('does not show an overflow chip when there are exactly 3 deps', () => {
+		it('does not show an overflow chip when there are exactly 3 deps', async () => {
 			mockTasks.value = [
 				makeTask('t1', 'done', { taskNumber: 1 }),
 				makeTask('t2', 'done', { taskNumber: 2 }),
@@ -412,18 +463,20 @@ describe('SpaceTasks', () => {
 					dependsOn: ['t1', 't2', 't3'],
 				}),
 			];
-			const { getAllByTestId, queryByTestId } = render(<SpaceTasks spaceId="space-1" />);
-			expect(getAllByTestId('task-dependency-badge')).toHaveLength(3);
+			const { findAllByTestId, queryByTestId } = render(<SpaceTasks spaceId="space-1" />);
+			expect(await findAllByTestId('task-dependency-badge')).toHaveLength(3);
 			expect(queryByTestId('task-dependency-overflow')).toBeNull();
 		});
 
-		it('reacts when a dependency transitions to done', () => {
+		it('reacts when a dependency transitions to done', async () => {
 			mockTasks.value = [
 				makeTask('t1', 'in_progress', { taskNumber: 1 }),
 				makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['t1'] }),
 			];
-			const { getAllByTestId, rerender } = render(<SpaceTasks spaceId="space-1" />);
-			let badges = getAllByTestId('task-dependency-badge');
+			const { findAllByTestId, getAllByTestId, rerender } = render(
+				<SpaceTasks spaceId="space-1" />
+			);
+			let badges = await findAllByTestId('task-dependency-badge');
 			expect(badges[0].getAttribute('data-dep-status')).toBe('in_progress');
 			expect(badges[0].className).toContain('text-gray-300');
 
@@ -433,8 +486,10 @@ describe('SpaceTasks', () => {
 				makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['t1'] }),
 			];
 			rerender(<SpaceTasks spaceId="space-1" />);
-			badges = getAllByTestId('task-dependency-badge');
-			expect(badges[0].getAttribute('data-dep-status')).toBe('done');
+			await waitFor(() => {
+				badges = getAllByTestId('task-dependency-badge');
+				expect(badges[0].getAttribute('data-dep-status')).toBe('done');
+			});
 			expect(badges[0].className).toContain('text-green-300');
 		});
 	});
@@ -496,6 +551,154 @@ describe('SpaceTasks', () => {
 			expect(sidebarIds).toEqual(
 				['t-approved-1', 't-approved-2', 't-inprog', 't-open-1', 't-open-2'].sort()
 			);
+		});
+	});
+
+	describe('Paginated group refresh & error/loading semantics', () => {
+		it('refetches when a task is edited within the same status (count stable)', async () => {
+			// Two tasks in `in_progress`. The user edits one (title changes
+			// without altering status), bumping `updatedAt`. The fetch effect
+			// should re-run because `contentSig` changed, even though
+			// `localCount` stays at 2.
+			const now = Date.now();
+			mockTasks.value = [
+				makeTask('t1', 'in_progress', { taskNumber: 1, updatedAt: now - 1000 }),
+				makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
+			];
+			const { findByText } = render(<SpaceTasks spaceId="space-1" />);
+			expect(await findByText('Task t1')).toBeTruthy();
+			const callsAfterMount = mockFetchTaskGroup.mock.calls.length;
+			expect(callsAfterMount).toBeGreaterThan(0);
+
+			// Mutate t1 — same status, new updatedAt and title
+			mockTasks.value = [
+				makeTask('t1', 'in_progress', {
+					taskNumber: 1,
+					updatedAt: now,
+					title: 'Task t1 (edited)',
+				}),
+				makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
+			];
+			await waitFor(() => {
+				expect(mockFetchTaskGroup.mock.calls.length).toBeGreaterThan(callsAfterMount);
+			});
+		});
+
+		it('refetches when the active spaceId changes', async () => {
+			// Render under space-1 with two tasks. Switch the signal to
+			// space-2 and assert the fetch effect re-ran. Without `spaceId`
+			// in the group key, a stable (title, status, blockReason,
+			// localCount, offset) tuple across spaces would silently leak
+			// rows from the previous space.
+			mockCurrentSpaceIdSignal.value = 'space-1';
+			mockTasks.value = [
+				makeTask('t1', 'in_progress', { taskNumber: 1 }),
+				makeTask('t2', 'in_progress', { taskNumber: 2 }),
+			];
+			const { findByText, rerender } = render(<SpaceTasks spaceId="space-1" />);
+			expect(await findByText('Task t1')).toBeTruthy();
+			const callsBefore = mockFetchTaskGroup.mock.calls.length;
+
+			mockCurrentSpaceIdSignal.value = 'space-2';
+			rerender(<SpaceTasks spaceId="space-2" />);
+			await waitFor(() => {
+				expect(mockFetchTaskGroup.mock.calls.length).toBeGreaterThan(callsBefore);
+			});
+		});
+
+		it('preserves pagination footer and surfaces a Retry banner on fetch error', async () => {
+			// Seed >10 tasks so pagination would render. First call resolves
+			// (mount succeeds → footer rendered), second call rejects
+			// (simulated transient RPC failure on Next click). The footer
+			// must still be in the DOM and the body must show a Retry button.
+			const tasks: SpaceTask[] = [];
+			for (let i = 0; i < 15; i++) {
+				tasks.push(makeTask(`t${i}`, 'in_progress', { taskNumber: i }));
+			}
+			mockTasks.value = tasks;
+
+			// First call (mount) uses the default impl. Second call rejects.
+			mockFetchTaskGroup.mockImplementationOnce(defaultFetchTaskGroupImpl);
+			mockFetchTaskGroup.mockImplementationOnce(() => Promise.reject(new Error('network')));
+
+			const { findByTestId, getByTestId } = render(<SpaceTasks spaceId="space-1" />);
+			// Pagination footer renders after the initial fetch.
+			await findByTestId('task-group-pagination');
+
+			fireEvent.click(getByTestId('task-group-next'));
+
+			// Error banner appears and the footer survives the failure.
+			await findByTestId('task-group-error');
+			expect(getByTestId('task-group-pagination')).toBeTruthy();
+			expect(getByTestId('task-group-retry')).toBeTruthy();
+		});
+
+		it('Retry re-issues the fetch after an error and restores rows on success', async () => {
+			const tasks: SpaceTask[] = [];
+			for (let i = 0; i < 15; i++) {
+				tasks.push(makeTask(`t${i}`, 'in_progress', { taskNumber: i }));
+			}
+			mockTasks.value = tasks;
+
+			mockFetchTaskGroup.mockImplementationOnce(defaultFetchTaskGroupImpl);
+			mockFetchTaskGroup.mockImplementationOnce(() => Promise.reject(new Error('network')));
+			// Third call (Retry) succeeds.
+			mockFetchTaskGroup.mockImplementationOnce(defaultFetchTaskGroupImpl);
+
+			const { findByTestId, getByTestId, queryByTestId } = render(<SpaceTasks spaceId="space-1" />);
+			await findByTestId('task-group-pagination');
+			fireEvent.click(getByTestId('task-group-next'));
+			await findByTestId('task-group-error');
+
+			fireEvent.click(getByTestId('task-group-retry'));
+			await waitFor(() => {
+				expect(queryByTestId('task-group-error')).toBeNull();
+			});
+		});
+
+		it('clears visible rows and shows a loading placeholder on Prev/Next click', async () => {
+			// 15 in_progress tasks → pagination renders (limit=10, total=15).
+			// Stage the second fetch (Next click) on a deferred promise so we
+			// can observe the in-between state where rows are cleared and the
+			// loading placeholder is visible.
+			const tasks: SpaceTask[] = [];
+			for (let i = 0; i < 15; i++) {
+				tasks.push(
+					makeTask(`t${String(i).padStart(2, '0')}`, 'in_progress', {
+						taskNumber: i,
+						updatedAt: Date.now() - i * 1000,
+					})
+				);
+			}
+			mockTasks.value = tasks;
+
+			let resolveNext: (value: { tasks: SpaceTask[]; total: number }) => void = () => {};
+			mockFetchTaskGroup.mockImplementationOnce(defaultFetchTaskGroupImpl);
+			mockFetchTaskGroup.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						resolveNext = resolve;
+					})
+			);
+
+			const { findByText, getByTestId, findByTestId, queryByText } = render(
+				<SpaceTasks spaceId="space-1" />
+			);
+			// First page rendered.
+			expect(await findByText('Task t00')).toBeTruthy();
+
+			fireEvent.click(getByTestId('task-group-next'));
+
+			// While the Next request is pending, the previous page's rows
+			// must be hidden and a loading placeholder shown — otherwise the
+			// user could click into a row that no longer belongs to the
+			// "Showing 11–20" range now reflected in the footer.
+			await findByTestId('task-group-loading');
+			expect(queryByText('Task t00')).toBeNull();
+
+			// Resolve the deferred fetch with the next page.
+			resolveNext({ tasks: tasks.slice(10, 15), total: 15 });
+			expect(await findByText('Task t10')).toBeTruthy();
 		});
 	});
 });

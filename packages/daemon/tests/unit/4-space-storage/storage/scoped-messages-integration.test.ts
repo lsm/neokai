@@ -60,7 +60,7 @@ describe('Scoped invalidation — sdk_messages integration', () => {
 		SELECT id, sdk_message AS content
 		FROM sdk_messages
 		WHERE session_id = ?1
-			AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
+			AND parent_tool_use_id IS NULL
 			AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
 		ORDER BY timestamp ASC
 	`.trim();

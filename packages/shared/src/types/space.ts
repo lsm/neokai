@@ -464,6 +464,16 @@ export interface SpaceTask {
 }
 
 /**
+ * Paginated result for `spaceTask.list` when called with pagination params
+ * (`status` + `limit`/`offset`). Returned alongside the legacy bare-array shape
+ * so callers can opt into pagination per-call without breaking existing consumers.
+ */
+export interface PaginatedSpaceTaskResult {
+	tasks: SpaceTask[];
+	total: number;
+}
+
+/**
  * One live participant in a task's execution.
  * This can be the orchestration Task Agent or a spawned node agent sub-session.
  */

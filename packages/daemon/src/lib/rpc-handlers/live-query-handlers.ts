@@ -735,14 +735,26 @@ all_sessions AS (
 unique_session_ids AS (
   SELECT DISTINCT session_id FROM all_sessions
 ),
+-- Per-session message count + lastMessageAt. Phrased as two correlated scalar
+-- subqueries over unique_session_ids so SQLite picks the (session_id, ...)
+-- covering indexes per-session-lookup instead of full-scanning
+-- idx_sdk_messages_session_id to satisfy a GROUP BY join. On the live
+-- daemon DB the GROUP BY form was ~280 ms (full index scan of 1.68M rows);
+-- the per-session lookup form is sub-millisecond.
 message_stats AS (
   SELECT
-    sm.session_id,
-    COUNT(*) AS messageCount,
-    MAX(CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER)) AS lastMessageAt
-  FROM sdk_messages sm
-  JOIN unique_session_ids usi ON usi.session_id = sm.session_id
-  GROUP BY sm.session_id
+    usi.session_id AS session_id,
+    (
+      SELECT COUNT(*)
+      FROM sdk_messages sm
+      WHERE sm.session_id = usi.session_id
+    ) AS messageCount,
+    (
+      SELECT MAX(CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER))
+      FROM sdk_messages sm
+      WHERE sm.session_id = usi.session_id
+    ) AS lastMessageAt
+  FROM unique_session_ids usi
 )
 SELECT
   ase.session_id AS id,
@@ -913,7 +925,7 @@ sdk_rows_raw AS (
   LEFT JOIN space_agents sa ON sa.id = sne.agent_id
   WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
-sdk_rows_with_pos AS (
+sdk_rows_numbered AS (
   SELECT
     r.*,
     ROW_NUMBER() OVER (
@@ -922,9 +934,33 @@ sdk_rows_with_pos AS (
     ) AS rowPos
   FROM sdk_rows_raw r
 ),
+sdk_rows_with_pos AS (
+  -- Mark this row's own rowPos as the carry-forward sentinel when it's a
+  -- user row; otherwise NULL. Combined with the MAX() window below this
+  -- lets us forward-fill the latest user-row position per session without
+  -- a per-row correlated subquery or a second ROW_NUMBER() pass.
+  SELECT
+    n.*,
+    CASE WHEN n.messageType = 'user' THEN n.rowPos ELSE NULL END AS thisUserRowPos
+  FROM sdk_rows_numbered n
+),
+-- Forward-fill the latest user-row position seen in each session up to and
+-- including the current row. SQLite ignores NULLs in MAX(), so this carries
+-- the most recent user thisUserRowPos through subsequent rows.
+sdk_rows_with_turn AS (
+  SELECT
+    p.*,
+    MAX(p.thisUserRowPos) OVER (
+      PARTITION BY p.sessionId
+      ORDER BY p.rowPos
+      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS turnUserRowPos
+  FROM sdk_rows_with_pos p
+),
 user_row_starts AS (
-  -- For each user row, capture (sessionId, rowPos) and its own id. Non-user
-  -- rows pick up the most recent user-row id by joining on rowPos <= current.
+  -- For each user row, capture (sessionId, rowPos) and its own id. The
+  -- per-row carry-forward is computed in sdk_rows_with_turn; this lookup
+  -- maps that rowPos back to the user message id with a single join.
   SELECT
     sessionId,
     rowPos AS userRowPos,
@@ -934,30 +970,26 @@ user_row_starts AS (
 ),
 sdk_rows AS (
   SELECT
-    p.id,
-    p.sessionId,
-    p.kind,
-    p.role,
-    p.label,
-    p.nodeExecutionId,
-    p.taskId,
-    p.taskTitle,
-    p.messageType,
-    p.content,
-    p.origin,
-    p.createdAt,
-    p.parentToolUseId,
-    p.isRenderable,
-    p.isTerminal,
-    (
-      SELECT urs.userMessageId
-      FROM user_row_starts urs
-      WHERE urs.sessionId = p.sessionId
-        AND urs.userRowPos <= p.rowPos
-      ORDER BY urs.userRowPos DESC
-      LIMIT 1
-    ) AS turnUserMessageId
-  FROM sdk_rows_with_pos p
+    t.id,
+    t.sessionId,
+    t.kind,
+    t.role,
+    t.label,
+    t.nodeExecutionId,
+    t.taskId,
+    t.taskTitle,
+    t.messageType,
+    t.content,
+    t.origin,
+    t.createdAt,
+    t.parentToolUseId,
+    t.isRenderable,
+    t.isTerminal,
+    urs.userMessageId AS turnUserMessageId
+  FROM sdk_rows_with_turn t
+  LEFT JOIN user_row_starts urs
+    ON urs.sessionId = t.sessionId
+   AND urs.userRowPos = t.turnUserRowPos
 ),
 joined AS (
   SELECT * FROM github_events
@@ -1819,7 +1851,7 @@ WITH top_level AS (
     origin
   FROM sdk_messages
   WHERE session_id = ?1
-    AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
+    AND parent_tool_use_id IS NULL
     AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
   ORDER BY timestamp DESC, id DESC
   LIMIT ?2
@@ -1841,11 +1873,7 @@ subagent AS (
     sm.origin AS origin
   FROM sdk_messages sm
   WHERE sm.session_id = ?1
-    AND EXISTS (
-      SELECT 1
-      FROM tool_use_ids tui
-      WHERE tui.id = json_extract(sm.sdk_message, '$.parent_tool_use_id')
-    )
+    AND sm.parent_tool_use_id IN (SELECT id FROM tool_use_ids)
     AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 )
 SELECT

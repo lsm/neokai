@@ -87,6 +87,8 @@ export { runMigration122 } from './migrations';
 export { runMigration123 } from './migrations';
 // knip-ignore-next-line
 export { runMigration124 } from './migrations';
+// knip-ignore-next-line
+export { runMigration126 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -641,10 +643,9 @@ function createIndexes(db: BunDatabase): void {
       ON sdk_messages(session_id, timestamp)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
       ON sdk_messages(session_id, timestamp DESC, id DESC)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool
-      ON sdk_messages(session_id, json_extract(sdk_message, '$.parent_tool_use_id'))`);
-	// Plain B-tree index over the materialised parent_tool_use_id column —
-	// preferred over idx_sdk_messages_parent_tool for new lookups.
+	// Plain B-tree index over the materialised parent_tool_use_id column.
+	// The earlier json_extract function index (idx_sdk_messages_parent_tool)
+	// was dropped in migration 126 — all callers now use the column directly.
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id
       ON sdk_messages(session_id, parent_tool_use_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal

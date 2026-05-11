@@ -855,7 +855,7 @@ describe('createTaskAgentMcpServer', () => {
 		expect(server.name).toBe('task-agent');
 	});
 
-	test('registers the 9 externally exposed task-agent tools (with artifactRepo)', async () => {
+	test('registers the 10 externally exposed task-agent tools (with artifactRepo)', async () => {
 		const { server } = await makeServerCtx();
 		const registered = Object.keys(server.instance._registeredTools).sort();
 		expect(registered).toEqual([
@@ -868,6 +868,7 @@ describe('createTaskAgentMcpServer', () => {
 			'save_artifact',
 			'send_message',
 			'submit_for_approval',
+			'update_task',
 		]);
 	});
 
@@ -980,9 +981,9 @@ describe('createTaskAgentMcpServer', () => {
 
 		// Each call returns a distinct server instance
 		expect(server1.instance).not.toBe(server2.instance);
-		// Both register the same 9 externally exposed tools (with artifactRepo)
-		expect(Object.keys(server1.instance._registeredTools)).toHaveLength(9);
-		expect(Object.keys(server2.instance._registeredTools)).toHaveLength(9);
+		// Both register the same 10 externally exposed tools (with artifactRepo)
+		expect(Object.keys(server1.instance._registeredTools)).toHaveLength(10);
+		expect(Object.keys(server2.instance._registeredTools)).toHaveLength(10);
 	});
 });
 
@@ -1829,5 +1830,117 @@ describe('createTaskAgentToolHandlers — send_message auto-resume on queue', ()
 		// Still queues successfully; just no auto-resume
 		expect(parsed.success).toBe(true);
 		expect(parsed.queued).toHaveLength(1);
+	});
+});
+
+// ===========================================================================
+// update_task tests
+// ===========================================================================
+
+describe('createTaskAgentToolHandlers — update_task', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('updates title and description of the bound task', async () => {
+		const mainTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Original title',
+			description: 'Original desc',
+			status: 'open',
+		});
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, 'run-1'));
+
+		const result = await handlers.update_task({
+			task_id: mainTask.id,
+			title: 'Updated title',
+			description: 'Updated desc',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.title).toBe('Updated title');
+		expect(parsed.task.description).toBe('Updated desc');
+	});
+
+	test('rejects update when task_id does not match the bound task', async () => {
+		const mainTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Original',
+			status: 'open',
+		});
+		const otherTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Other',
+			status: 'open',
+		});
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, 'run-1'));
+
+		const result = await handlers.update_task({
+			task_id: otherTask.id,
+			title: 'Hacked',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('Task ID mismatch');
+	});
+
+	test('emits space.task.updated event on success', async () => {
+		const { hub, emittedEvents } = makeMockDaemonHub();
+		const mainTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Original',
+			status: 'open',
+		});
+		const config = makeConfig(ctx, mainTask.id, 'run-1');
+		const handlers = createTaskAgentToolHandlers({
+			...config,
+			daemonHub: hub,
+		});
+
+		await handlers.update_task({
+			task_id: mainTask.id,
+			title: 'Updated',
+		});
+
+		const event = emittedEvents.find((e) => e.name === 'space.task.updated');
+		expect(event).toBeDefined();
+		expect((event!.payload as { taskId: string }).taskId).toBe(mainTask.id);
+	});
+
+	test('rejects update when no fields are provided', async () => {
+		const mainTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Original',
+			status: 'open',
+		});
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, 'run-1'));
+
+		const result = await handlers.update_task({
+			task_id: mainTask.id,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('No fields to update');
+	});
+
+	test('createTaskAgentMcpServer registers update_task', () => {
+		const mainTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Test',
+			status: 'open',
+		});
+		const server = createTaskAgentMcpServer(makeConfig(ctx, mainTask.id, 'run-1'));
+		const registered = Object.keys(
+			(server as unknown as { instance: { _registeredTools: Record<string, unknown> } }).instance
+				._registeredTools
+		);
+		expect(registered).toContain('update_task');
 	});
 });
