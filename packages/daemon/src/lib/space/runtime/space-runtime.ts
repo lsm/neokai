@@ -1036,14 +1036,6 @@ export class SpaceRuntime {
 						}
 					}
 				}
-			} else if (params.status === 'done') {
-				// Gap 2 fix: completing a task may unblock dependents that were
-				// previously blocked because this dependency had failed/was blocked.
-				const taskManager = this.getOrCreateTaskManager(spaceId);
-				const unblocked = await taskManager.unblockDependentTasks(taskId);
-				for (const task of unblocked) {
-					await this.safeOnTaskUpdated(spaceId, task);
-				}
 			}
 		}
 		return updated;

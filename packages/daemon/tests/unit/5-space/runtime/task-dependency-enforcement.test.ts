@@ -3,6 +3,11 @@
  *
  * Gap 1: Adding `dependsOn` to an in_progress task blocks it if deps aren't met.
  * Gap 2: Completing a task auto-unblocks dependents blocked by 'dependency_failed'.
+ *
+ * Review fixes:
+ * - Unblock triggers on ALL done transitions (not just updateTaskAndEmit path).
+ * - Blocked dependency_added tasks are re-evaluated when deps are edited.
+ * - Auto-block triggers blockDependentTasks cascade.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -25,6 +30,10 @@ function makeDb(): BunDatabase {
 	return db;
 }
 
+// ---------------------------------------------------------------------------
+// Gap 1: updateTask dependency re-check
+// ---------------------------------------------------------------------------
+
 describe('Gap 1: updateTask dependency re-check', () => {
 	let db: BunDatabase;
 	let taskRepo: SpaceTaskRepository;
@@ -40,7 +49,6 @@ describe('Gap 1: updateTask dependency re-check', () => {
 	});
 
 	test('adding dependsOn to an in_progress task blocks it if deps are not met', async () => {
-		// Create a prerequisite task that is NOT done yet
 		const prereq = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Prerequisite',
@@ -48,7 +56,6 @@ describe('Gap 1: updateTask dependency re-check', () => {
 			status: 'open',
 		});
 
-		// Create a task without deps and start it
 		const task = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Worker',
@@ -56,7 +63,6 @@ describe('Gap 1: updateTask dependency re-check', () => {
 			status: 'in_progress',
 		});
 
-		// Add dependency to the running task
 		const updated = await taskManager.updateTask(task.id, {
 			dependsOn: [prereq.id],
 		});
@@ -66,7 +72,6 @@ describe('Gap 1: updateTask dependency re-check', () => {
 	});
 
 	test('adding dependsOn to an in_progress task does NOT block if deps are already done', async () => {
-		// Create a prerequisite task that IS done
 		const prereq = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Prerequisite',
@@ -74,7 +79,6 @@ describe('Gap 1: updateTask dependency re-check', () => {
 			status: 'done',
 		});
 
-		// Create a task without deps and start it
 		const task = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Worker',
@@ -82,7 +86,6 @@ describe('Gap 1: updateTask dependency re-check', () => {
 			status: 'in_progress',
 		});
 
-		// Add dependency to the running task — should remain in_progress
 		const updated = await taskManager.updateTask(task.id, {
 			dependsOn: [prereq.id],
 		});
@@ -109,7 +112,6 @@ describe('Gap 1: updateTask dependency re-check', () => {
 			dependsOn: [prereq.id],
 		});
 
-		// Open tasks remain open — tick loop skips them via areDependenciesMet
 		expect(updated.status).toBe('open');
 	});
 
@@ -121,7 +123,6 @@ describe('Gap 1: updateTask dependency re-check', () => {
 			status: 'open',
 		});
 
-		// Create task with existing dep
 		const task = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Worker',
@@ -130,12 +131,10 @@ describe('Gap 1: updateTask dependency re-check', () => {
 			dependsOn: [prereq.id],
 		});
 
-		// Re-send the same dependsOn — should be a no-op (no re-check)
 		const updated = await taskManager.updateTask(task.id, {
 			dependsOn: [prereq.id],
 		});
 
-		// Should remain in_progress because the dep array didn't actually change
 		expect(updated.status).toBe('in_progress');
 	});
 
@@ -153,7 +152,6 @@ describe('Gap 1: updateTask dependency re-check', () => {
 			status: 'open',
 		});
 
-		// Create task with met dep
 		const task = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Worker',
@@ -162,7 +160,6 @@ describe('Gap 1: updateTask dependency re-check', () => {
 			dependsOn: [prereq1.id],
 		});
 
-		// Change dep to an unmet one
 		const updated = await taskManager.updateTask(task.id, {
 			dependsOn: [prereq2.id],
 		});
@@ -185,7 +182,6 @@ describe('Gap 1: updateTask dependency re-check', () => {
 			status: 'done',
 		});
 
-		// Create task with unmet dep
 		const task = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Worker',
@@ -194,7 +190,6 @@ describe('Gap 1: updateTask dependency re-check', () => {
 			dependsOn: [prereq1.id],
 		});
 
-		// Change dep to a met one
 		const updated = await taskManager.updateTask(task.id, {
 			dependsOn: [prereq2.id],
 		});
@@ -202,6 +197,193 @@ describe('Gap 1: updateTask dependency re-check', () => {
 		expect(updated.status).toBe('in_progress');
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Gap 1 review fix: re-evaluate blocked dependency_added tasks on dep edits
+// ---------------------------------------------------------------------------
+
+describe('Gap 1 review fix: re-evaluate blocked tasks on dep edits', () => {
+	let db: BunDatabase;
+	let taskRepo: SpaceTaskRepository;
+	let taskManager: SpaceTaskManager;
+
+	beforeEach(() => {
+		db = makeDb();
+		taskRepo = new SpaceTaskRepository(db);
+		taskManager = new SpaceTaskManager(db, SPACE_ID);
+	});
+	afterEach(() => {
+		db.close();
+	});
+
+	test('editing deps of a blocked/dependency_added task to satisfied deps reopens it', async () => {
+		const prereqOld = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Old Prereq',
+			description: '',
+			status: 'open',
+		});
+		const prereqNew = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'New Prereq',
+			description: '',
+			status: 'done',
+		});
+
+		// Create task blocked by dependency_added
+		const task = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Worker',
+			description: '',
+			status: 'blocked',
+			dependsOn: [prereqOld.id],
+		});
+		taskRepo.updateTask(task.id, { blockReason: 'dependency_added' });
+
+		// Change dep to a satisfied one — should reopen
+		const updated = await taskManager.updateTask(task.id, {
+			dependsOn: [prereqNew.id],
+		});
+
+		expect(updated.status).toBe('open');
+	});
+
+	test('clearing deps of a blocked/dependency_added task reopens it', async () => {
+		const prereq = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Prereq',
+			description: '',
+			status: 'open',
+		});
+
+		const task = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Worker',
+			description: '',
+			status: 'blocked',
+			dependsOn: [prereq.id],
+		});
+		taskRepo.updateTask(task.id, { blockReason: 'dependency_added' });
+
+		// Clear deps entirely
+		const updated = await taskManager.updateTask(task.id, {
+			dependsOn: [],
+		});
+
+		expect(updated.status).toBe('open');
+	});
+
+	test('editing deps of a blocked/dependency_failed task to satisfied deps reopens it', async () => {
+		const prereqOld = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Old Prereq',
+			description: '',
+			status: 'blocked',
+		});
+		const prereqNew = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'New Prereq',
+			description: '',
+			status: 'done',
+		});
+
+		const task = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Worker',
+			description: '',
+			status: 'blocked',
+			dependsOn: [prereqOld.id],
+		});
+		taskRepo.updateTask(task.id, { blockReason: 'dependency_failed' });
+
+		const updated = await taskManager.updateTask(task.id, {
+			dependsOn: [prereqNew.id],
+		});
+
+		expect(updated.status).toBe('open');
+	});
+
+	test('editing deps of a blocked/agent_crashed task does NOT change status', async () => {
+		const prereqNew = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'New Prereq',
+			description: '',
+			status: 'done',
+		});
+
+		const task = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Worker',
+			description: '',
+			status: 'blocked',
+		});
+		taskRepo.updateTask(task.id, { blockReason: 'agent_crashed' });
+
+		const updated = await taskManager.updateTask(task.id, {
+			dependsOn: [prereqNew.id],
+		});
+
+		expect(updated.status).toBe('blocked');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Gap 1 review fix: auto-block cascade
+// ---------------------------------------------------------------------------
+
+describe('Gap 1 review fix: auto-block triggers cascade to dependents', () => {
+	let db: BunDatabase;
+	let taskRepo: SpaceTaskRepository;
+	let taskManager: SpaceTaskManager;
+
+	beforeEach(() => {
+		db = makeDb();
+		taskRepo = new SpaceTaskRepository(db);
+		taskManager = new SpaceTaskManager(db, SPACE_ID);
+	});
+	afterEach(() => {
+		db.close();
+	});
+
+	test('auto-blocking an in_progress task also blocks its in_progress dependents', async () => {
+		// A has no deps, B depends on A
+		const taskA = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'A',
+			description: '',
+			status: 'in_progress',
+		});
+		const taskB = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'B',
+			description: '',
+			status: 'in_progress',
+			dependsOn: [taskA.id],
+		});
+
+		// Add an unmet dep to A → A gets blocked → B should also be blocked
+		const unmet = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Unmet',
+			description: '',
+			status: 'open',
+		});
+
+		const updatedA = await taskManager.updateTask(taskA.id, {
+			dependsOn: [unmet.id],
+		});
+		expect(updatedA.status).toBe('blocked');
+
+		// B should have been cascade-blocked
+		const updatedB = await taskManager.getTask(taskB.id);
+		expect(updatedB!.status).toBe('blocked');
+		expect(updatedB!.blockReason).toBe('dependency_failed');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Gap 2: done -> unblock dependents cascade
+// ---------------------------------------------------------------------------
 
 describe('Gap 2: done -> unblock dependents cascade', () => {
 	let db: BunDatabase;
@@ -218,7 +400,6 @@ describe('Gap 2: done -> unblock dependents cascade', () => {
 	});
 
 	test('completing a task unblocks dependents blocked with dependency_failed', async () => {
-		// Create the prerequisite (in_progress so it can transition to done)
 		const prereq = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Prerequisite',
@@ -226,7 +407,6 @@ describe('Gap 2: done -> unblock dependents cascade', () => {
 			status: 'in_progress',
 		});
 
-		// Create a dependent task that was blocked because its dep failed
 		const dependent = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Dependent',
@@ -234,23 +414,16 @@ describe('Gap 2: done -> unblock dependents cascade', () => {
 			status: 'blocked',
 			dependsOn: [prereq.id],
 		});
-		taskRepo.updateTask(dependent.id, {
-			blockReason: 'dependency_failed',
-		});
+		taskRepo.updateTask(dependent.id, { blockReason: 'dependency_failed' });
 
-		// Complete the prerequisite
+		// Completing the prereq via setTaskStatus should auto-unblock
 		await taskManager.setTaskStatus(prereq.id, 'done');
 
-		// Run the unblock cascade
-		const unblocked = await taskManager.unblockDependentTasks(prereq.id);
-
-		expect(unblocked).toHaveLength(1);
-		expect(unblocked[0].id).toBe(dependent.id);
-		expect(unblocked[0].status).toBe('open');
+		const updatedDep = await taskManager.getTask(dependent.id);
+		expect(updatedDep!.status).toBe('open');
 	});
 
 	test('dependent with multiple deps stays blocked if not all are done', async () => {
-		// Create two prerequisites
 		const prereq1 = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Prereq 1',
@@ -264,7 +437,6 @@ describe('Gap 2: done -> unblock dependents cascade', () => {
 			status: 'open',
 		});
 
-		// Create a dependent task blocked because deps failed
 		const dependent = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Dependent',
@@ -272,19 +444,12 @@ describe('Gap 2: done -> unblock dependents cascade', () => {
 			status: 'blocked',
 			dependsOn: [prereq1.id, prereq2.id],
 		});
-		taskRepo.updateTask(dependent.id, {
-			blockReason: 'dependency_failed',
-		});
+		taskRepo.updateTask(dependent.id, { blockReason: 'dependency_failed' });
 
-		// Complete only prereq1 — prereq2 is still open
 		await taskManager.setTaskStatus(prereq1.id, 'done');
 
-		const unblocked = await taskManager.unblockDependentTasks(prereq1.id);
-		expect(unblocked).toHaveLength(0);
-
-		// Dependent should still be blocked
-		const stillDependent = await taskManager.getTask(dependent.id);
-		expect(stillDependent!.status).toBe('blocked');
+		const stillDep = await taskManager.getTask(dependent.id);
+		expect(stillDep!.status).toBe('blocked');
 	});
 
 	test('dependent with all deps done gets unblocked', async () => {
@@ -308,16 +473,12 @@ describe('Gap 2: done -> unblock dependents cascade', () => {
 			status: 'blocked',
 			dependsOn: [prereq1.id, prereq2.id],
 		});
-		taskRepo.updateTask(dependent.id, {
-			blockReason: 'dependency_failed',
-		});
+		taskRepo.updateTask(dependent.id, { blockReason: 'dependency_failed' });
 
-		// Complete prereq2 — now both deps are done
 		await taskManager.setTaskStatus(prereq2.id, 'done');
 
-		const unblocked = await taskManager.unblockDependentTasks(prereq2.id);
-		expect(unblocked).toHaveLength(1);
-		expect(unblocked[0].status).toBe('open');
+		const updatedDep = await taskManager.getTask(dependent.id);
+		expect(updatedDep!.status).toBe('open');
 	});
 
 	test('non-dependency blocked tasks are NOT affected', async () => {
@@ -335,14 +496,12 @@ describe('Gap 2: done -> unblock dependents cascade', () => {
 			status: 'blocked',
 			dependsOn: [prereq.id],
 		});
-		taskRepo.updateTask(blockedForOtherReason.id, {
-			blockReason: 'agent_crashed',
-		});
+		taskRepo.updateTask(blockedForOtherReason.id, { blockReason: 'agent_crashed' });
 
 		await taskManager.setTaskStatus(prereq.id, 'done');
 
-		const unblocked = await taskManager.unblockDependentTasks(prereq.id);
-		expect(unblocked).toHaveLength(0);
+		const stillBlocked = await taskManager.getTask(blockedForOtherReason.id);
+		expect(stillBlocked!.status).toBe('blocked');
 	});
 
 	test('dependency_added blocked tasks are also unblocked', async () => {
@@ -350,10 +509,9 @@ describe('Gap 2: done -> unblock dependents cascade', () => {
 			spaceId: SPACE_ID,
 			title: 'Prerequisite',
 			description: '',
-			status: 'open',
+			status: 'in_progress',
 		});
 
-		// Simulate a task that was blocked via the Gap 1 fix (dependency_added)
 		const dependent = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Dependent',
@@ -361,16 +519,12 @@ describe('Gap 2: done -> unblock dependents cascade', () => {
 			status: 'blocked',
 			dependsOn: [prereq.id],
 		});
-		taskRepo.updateTask(dependent.id, {
-			blockReason: 'dependency_added',
-		});
+		taskRepo.updateTask(dependent.id, { blockReason: 'dependency_added' });
 
-		// Complete the prerequisite
 		await taskManager.setTaskStatus(prereq.id, 'done');
 
-		const unblocked = await taskManager.unblockDependentTasks(prereq.id);
-		expect(unblocked).toHaveLength(1);
-		expect(unblocked[0].status).toBe('open');
+		const updatedDep = await taskManager.getTask(dependent.id);
+		expect(updatedDep!.status).toBe('open');
 	});
 
 	test('no dependents returns empty array', async () => {
@@ -385,6 +539,77 @@ describe('Gap 2: done -> unblock dependents cascade', () => {
 		expect(unblocked).toHaveLength(0);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Gap 2 review fix: unblock works via setTaskStatus (not just updateTaskAndEmit)
+// ---------------------------------------------------------------------------
+
+describe('Gap 2 review fix: unblock triggers on all done paths', () => {
+	let db: BunDatabase;
+	let taskRepo: SpaceTaskRepository;
+	let taskManager: SpaceTaskManager;
+
+	beforeEach(() => {
+		db = makeDb();
+		taskRepo = new SpaceTaskRepository(db);
+		taskManager = new SpaceTaskManager(db, SPACE_ID);
+	});
+	afterEach(() => {
+		db.close();
+	});
+
+	test('setTaskStatus(done) auto-unblocks dependents (direct path)', async () => {
+		const prereq = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Prerequisite',
+			description: '',
+			status: 'in_progress',
+		});
+
+		const dependent = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Dependent',
+			description: '',
+			status: 'blocked',
+			dependsOn: [prereq.id],
+		});
+		taskRepo.updateTask(dependent.id, { blockReason: 'dependency_failed' });
+
+		// Direct setTaskStatus call — no updateTaskAndEmit involved
+		await taskManager.setTaskStatus(prereq.id, 'done');
+
+		const updatedDep = await taskManager.getTask(dependent.id);
+		expect(updatedDep!.status).toBe('open');
+	});
+
+	test('completeTask() auto-unblocks dependents', async () => {
+		const prereq = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Prerequisite',
+			description: '',
+			status: 'in_progress',
+		});
+
+		const dependent = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Dependent',
+			description: '',
+			status: 'blocked',
+			dependsOn: [prereq.id],
+		});
+		taskRepo.updateTask(dependent.id, { blockReason: 'dependency_failed' });
+
+		// completeTask calls setTaskStatus internally
+		await taskManager.completeTask(prereq.id, 'All done');
+
+		const updatedDep = await taskManager.getTask(dependent.id);
+		expect(updatedDep!.status).toBe('open');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// End-to-end: full lifecycle
+// ---------------------------------------------------------------------------
 
 describe('End-to-end: dependency_added -> dep done -> unblock -> tick-loop eligible', () => {
 	let db: BunDatabase;
@@ -401,7 +626,6 @@ describe('End-to-end: dependency_added -> dep done -> unblock -> tick-loop eligi
 	});
 
 	test('full lifecycle: add dep to running task -> block -> complete dep -> unblock', async () => {
-		// Step 1: Create a running task without deps
 		const prereq = taskRepo.createTask({
 			spaceId: SPACE_ID,
 			title: 'Prerequisite',
@@ -416,30 +640,73 @@ describe('End-to-end: dependency_added -> dep done -> unblock -> tick-loop eligi
 			status: 'in_progress',
 		});
 
-		// Step 2: Add dependency — worker gets blocked
+		// Add dependency — worker gets blocked
 		const afterAdd = await taskManager.updateTask(worker.id, {
 			dependsOn: [prereq.id],
 		});
 		expect(afterAdd.status).toBe('blocked');
 		expect(afterAdd.blockReason).toBe('dependency_added');
 
-		// Step 3: Verify the tick loop would skip this blocked task
+		// Tick loop would skip this blocked task
 		const depsMet = await taskManager.areDependenciesMet(afterAdd);
 		expect(depsMet).toBe(false);
 
-		// Step 4: Complete the prerequisite
+		// Complete the prerequisite (direct setTaskStatus, no runtime)
 		await taskManager.setTaskStatus(prereq.id, 'done');
 
-		// Step 5: Unblock dependents
-		const unblocked = await taskManager.unblockDependentTasks(prereq.id);
-		expect(unblocked).toHaveLength(1);
-		expect(unblocked[0].id).toBe(worker.id);
-		expect(unblocked[0].status).toBe('open');
-
-		// Step 6: Verify the task is now eligible for the tick loop
+		// Verify the worker is now unblocked and tick-loop eligible
 		const reopened = await taskManager.getTask(worker.id);
 		expect(reopened!.status).toBe('open');
 		const nowDepsMet = await taskManager.areDependenciesMet(reopened!);
 		expect(nowDepsMet).toBe(true);
+	});
+
+	test('full lifecycle with cascade: block propagates to transitive dependents', async () => {
+		// A (in_progress) -> B (in_progress, depends on A)
+		// Adding unmet dep to A blocks A, cascade blocks B
+		// Completing the new dep unblocks A, then completing A unblocks B
+		const newDep = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'New Dependency',
+			description: '',
+			status: 'in_progress',
+		});
+		const taskA = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'A',
+			description: '',
+			status: 'in_progress',
+		});
+		const taskB = taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'B',
+			description: '',
+			status: 'in_progress',
+			dependsOn: [taskA.id],
+		});
+
+		// Add unmet dep to A → A blocked, cascade blocks B
+		const updatedA = await taskManager.updateTask(taskA.id, {
+			dependsOn: [newDep.id],
+		});
+		expect(updatedA.status).toBe('blocked');
+
+		const updatedB = await taskManager.getTask(taskB.id);
+		expect(updatedB!.status).toBe('blocked');
+		expect(updatedB!.blockReason).toBe('dependency_failed');
+
+		// Complete the new dep → A should auto-unblock
+		await taskManager.setTaskStatus(newDep.id, 'done');
+		const recheckedA = await taskManager.getTask(taskA.id);
+		expect(recheckedA!.status).toBe('open');
+
+		// B is still blocked because A is not done yet
+		const recheckedB = await taskManager.getTask(taskB.id);
+		expect(recheckedB!.status).toBe('blocked');
+
+		// Complete A → B should auto-unblock
+		await taskManager.setTaskStatus(taskA.id, 'done');
+		const finalB = await taskManager.getTask(taskB.id);
+		expect(finalB!.status).toBe('open');
 	});
 });

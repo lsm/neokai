@@ -275,6 +275,14 @@ export class SpaceTaskManager {
 			throw new Error(`Failed to update task: ${taskId}`);
 		}
 
+		// Gap 2 fix: when a task reaches `done`, auto-unblock any dependents
+		// whose dependency constraints are now fully met. This runs in
+		// `setTaskStatus` (not just `updateTaskAndEmit`) so that all done
+		// paths — direct tool/handler calls included — trigger the cascade.
+		if (newStatus === 'done') {
+			await this.unblockDependentTasks(taskId);
+		}
+
 		return updated;
 	}
 
@@ -508,18 +516,27 @@ export class SpaceTaskManager {
 			throw new Error(`Failed to update task: ${taskId}`);
 		}
 
-		// Gap 1 fix: if dependsOn was changed and the task is already active,
-		// re-check dependencies. If unmet and task is in_progress, block it.
-		if (depsChanged && (updated.status === 'in_progress' || updated.status === 'open')) {
+		// Gap 1 fix: if dependsOn was changed, re-check dependency constraints.
+		// - in_progress + unmet deps: block the task
+		// - blocked (dependency_added/dependency_failed) + now met: reopen
+		// - open + unmet deps: tick loop handles it
+		if (depsChanged) {
 			const depsMet = await this.areDependenciesMet(updated);
-			if (!depsMet) {
-				if (updated.status === 'in_progress') {
-					return this.setTaskStatus(taskId, 'blocked', {
-						blockReason: 'dependency_added',
-						result: 'Dependency added while task was in progress',
-					});
-				}
-				// open tasks with unmet deps are naturally skipped by the tick loop
+			if (!depsMet && updated.status === 'in_progress') {
+				const blocked = await this.setTaskStatus(taskId, 'blocked', {
+					blockReason: 'dependency_added',
+					result: 'Dependency added while task was in progress',
+				});
+				// Cascade: block any in_progress tasks that depend on this
+				// newly-blocked task (mirrors updateTaskAndEmit cascade).
+				await this.blockDependentTasks(taskId);
+				return blocked;
+			} else if (
+				depsMet &&
+				updated.status === 'blocked' &&
+				(updated.blockReason === 'dependency_added' || updated.blockReason === 'dependency_failed')
+			) {
+				return this.setTaskStatus(taskId, 'open');
 			}
 		}
 
