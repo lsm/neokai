@@ -157,6 +157,7 @@ describe('WebSocket Protocol', () => {
 				JSON.stringify({
 					id: 'ping-1',
 					type: 'ping',
+					namespaceId: 'global',
 					sessionId: 'global',
 					method: 'heartbeat',
 					timestamp: new Date().toISOString(),
@@ -184,6 +185,7 @@ describe('WebSocket Protocol', () => {
 				JSON.stringify({
 					id: 'ping-2',
 					type: 'PING',
+					namespaceId: 'global',
 					sessionId: 'global',
 					method: 'heartbeat',
 					timestamp: new Date().toISOString(),
@@ -345,6 +347,7 @@ describe('WebSocket Protocol', () => {
 					type: 'REQ',
 					method: 'session.list',
 					data: {},
+					namespaceId: 'global',
 					sessionId: 'global',
 					timestamp: new Date().toISOString(),
 					version: '1.0.0',
@@ -372,6 +375,7 @@ describe('WebSocket Protocol', () => {
 					type: 'REQ',
 					method: 'session.list',
 					data: {},
+					namespaceId: 'global',
 					sessionId: 'global',
 					timestamp: new Date().toISOString(),
 					version: '1.0.0',

@@ -124,6 +124,7 @@ describe('createWebSocketHandlers', () => {
 				const pingMessage = JSON.stringify({
 					id: 'ping-1',
 					type: 'ping',
+					namespaceId: 'global',
 					sessionId: 'global',
 				});
 
@@ -149,6 +150,7 @@ describe('createWebSocketHandlers', () => {
 				const pingMessage = JSON.stringify({
 					id: 'ping-2',
 					type: 'PING',
+					namespaceId: 'global',
 					sessionId: 'global',
 				});
 
@@ -257,6 +259,7 @@ describe('createWebSocketHandlers', () => {
 						id: 'req-1',
 						type: 'REQ',
 						method: 'test.method',
+						namespaceId: 'global',
 						sessionId: 'global',
 					})
 				);
@@ -301,6 +304,7 @@ describe('createWebSocketHandlers', () => {
 					JSON.stringify({
 						type: 'REQ',
 						method: 'channel.join',
+						namespaceId: 'global',
 						sessionId: 'global',
 						data: { channel: 'session-new' },
 					})
@@ -322,6 +326,7 @@ describe('createWebSocketHandlers', () => {
 					JSON.stringify({
 						type: 'REQ',
 						method: 'channel.join',
+						namespaceId: 'global',
 						sessionId: 'global',
 						data: { channel: 'session-1' },
 					})
@@ -332,6 +337,7 @@ describe('createWebSocketHandlers', () => {
 					JSON.stringify({
 						type: 'REQ',
 						method: 'channel.join',
+						namespaceId: 'global',
 						sessionId: 'global',
 						data: { channel: 'session-2' },
 					})
@@ -358,6 +364,7 @@ describe('createWebSocketHandlers', () => {
 					JSON.stringify({
 						type: 'REQ',
 						method: 'channel.leave',
+						namespaceId: 'global',
 						sessionId: 'global',
 						data: { channel: 'session-1' },
 					})
@@ -382,6 +389,7 @@ describe('createWebSocketHandlers', () => {
 				const largeMessage = JSON.stringify({
 					type: 'REQ',
 					method: 'test.method',
+					namespaceId: 'global',
 					sessionId: 'global',
 					data: { content: largeContent },
 				});
@@ -410,6 +418,7 @@ describe('createWebSocketHandlers', () => {
 					JSON.stringify({
 						type: 'REQ',
 						method: 'test.method',
+						namespaceId: 'global',
 						sessionId: 'global',
 						data: { content: 'small content' },
 					})
@@ -449,6 +458,7 @@ describe('createWebSocketHandlers', () => {
 					JSON.stringify({
 						type: 'REQ',
 						method: 'test.method',
+						namespaceId: 'global',
 						sessionId: 'global',
 					})
 				);
@@ -473,6 +483,7 @@ describe('createWebSocketHandlers', () => {
 					JSON.stringify({
 						type: 'REQ',
 						method: 'test.method',
+						namespaceId: 'global',
 						sessionId: 'global',
 					})
 				);
@@ -494,6 +505,7 @@ describe('createWebSocketHandlers', () => {
 					id: 'req-1',
 					type: 'REQ',
 					method: 'test.method',
+					namespaceId: 'global',
 					sessionId: 'global',
 					data: { key: 'value' },
 				};
@@ -511,6 +523,7 @@ describe('createWebSocketHandlers', () => {
 						id: 'req-1',
 						type: 'REQ',
 						method: 'test.method',
+						namespaceId: 'global',
 						sessionId: 'global',
 					}),
 					'client-123'

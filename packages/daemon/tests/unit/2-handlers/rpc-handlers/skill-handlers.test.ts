@@ -179,7 +179,9 @@ describe('Skill RPC Handlers', () => {
 			expect(result.skill.name).toBe('new-skill');
 			expect(result.skill.id).toBe('skill-new');
 			expect(skillsManager.addSkill).toHaveBeenCalledWith(createSkillParams);
-			expect(daemonHub.emit).toHaveBeenCalledWith('skills.changed', { sessionId: 'global' });
+			expect(daemonHub.emit).toHaveBeenCalledWith('skills.changed', {
+				sessionId: 'global',
+			});
 		});
 
 		it('throws if params is missing', async () => {
@@ -221,7 +223,9 @@ describe('Skill RPC Handlers', () => {
 			expect(result.skill).toBeDefined();
 			expect(result.skill.displayName).toBe('Updated Skill');
 			expect(skillsManager.updateSkill).toHaveBeenCalledWith('skill-1', updateSkillParams);
-			expect(daemonHub.emit).toHaveBeenCalledWith('skills.changed', { sessionId: 'global' });
+			expect(daemonHub.emit).toHaveBeenCalledWith('skills.changed', {
+				sessionId: 'global',
+			});
 		});
 
 		it('throws if id is missing', async () => {
@@ -254,7 +258,9 @@ describe('Skill RPC Handlers', () => {
 			const result = (await handler!({ id: 'skill-1' }, {})) as { success: boolean };
 			expect(result.success).toBe(true);
 			expect(skillsManager.removeSkill).toHaveBeenCalledWith('skill-1');
-			expect(daemonHub.emit).toHaveBeenCalledWith('skills.changed', { sessionId: 'global' });
+			expect(daemonHub.emit).toHaveBeenCalledWith('skills.changed', {
+				sessionId: 'global',
+			});
 		});
 
 		it('throws if id is missing', async () => {
@@ -283,7 +289,9 @@ describe('Skill RPC Handlers', () => {
 			expect(result.skill).toBeDefined();
 			expect(result.skill.enabled).toBe(false);
 			expect(skillsManager.setSkillEnabled).toHaveBeenCalledWith('skill-1', false);
-			expect(daemonHub.emit).toHaveBeenCalledWith('skills.changed', { sessionId: 'global' });
+			expect(daemonHub.emit).toHaveBeenCalledWith('skills.changed', {
+				sessionId: 'global',
+			});
 		});
 
 		it('throws if id is missing', async () => {

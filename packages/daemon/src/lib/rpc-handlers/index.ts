@@ -462,7 +462,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.sessionManager,
 		deps.daemonHub,
 		deps.spaceManager,
-		spaceRuntimeService
+		spaceRuntimeService,
+		deps.internalEventBus
 	);
 
 	// Space task handlers — registered after spaceRuntimeService so the resume
@@ -471,7 +472,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.messageHub,
 		deps.spaceManager,
 		spaceTaskManagerFactory,
-		deps.daemonHub,
+		deps.internalEventBus,
 		spaceRuntimeService
 	);
 
@@ -489,9 +490,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.spaceManager,
 		spaceTaskRepo,
 		spaceWorkflowRunRepo,
-		deps.daemonHub,
 		deps.spaceAgentManager,
 		spaceWorkflowManager,
+		deps.internalEventBus,
 		deps.sessionManager,
 		spaceRuntimeService
 	);
@@ -581,17 +582,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			await spaceRuntimeService.notifyGateDataChanged(runId, gateId);
 		},
 		onWorkflowRunUpdated: (spaceId: string, runId: string, run: NeoWorkflowRun) => {
-			deps.daemonHub
-				.emit('space.workflowRun.updated', {
-					sessionId: 'global',
-					spaceId,
-					runId,
-					// NeoWorkflowRun is a subset of SpaceWorkflowRun — cast for hub emission
-					run: run as unknown as Record<string, unknown>,
-				})
-				.catch((err) => {
-					log.warn('Neo: failed to emit space.workflowRun.updated:', err);
-				});
+			deps.internalEventBus.publishAsync('space.workflowRun.updated', {
+				namespaceId: 'global',
+				sessionId: 'global',
+				spaceId,
+				runId,
+				// NeoWorkflowRun is a subset of SpaceWorkflowRun — cast for event emission
+				run: run as unknown as DaemonInternalEventMap['space.workflowRun.updated']['run'],
+			});
 		},
 		onGateDataUpdated: (
 			spaceId: string,
@@ -599,17 +597,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			gateId: string,
 			data: Record<string, unknown>
 		) => {
-			deps.daemonHub
-				.emit('space.gateData.updated', {
-					sessionId: 'global',
-					spaceId,
-					runId,
-					gateId,
-					data,
-				})
-				.catch((err) => {
-					log.warn('Neo: failed to emit space.gateData.updated:', err);
-				});
+			deps.internalEventBus.publishAsync('space.gateData.updated', {
+				namespaceId: 'global',
+				sessionId: 'global',
+				spaceId,
+				runId,
+				gateId,
+				data,
+			});
 		},
 		mcpManager: {
 			createMcpServer: (params) => deps.db.appMcpServers.create(params),
@@ -645,7 +640,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.messageHub,
 		taskAgentManager,
 		deps.db,
-		deps.daemonHub,
+		deps.internalEventBus,
 		nodeExecutionRepo,
 		channelCycleRepo,
 		async (runId, nodeId) => {
@@ -677,7 +672,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		gateDataRepo,
 		spaceRuntimeService,
 		spaceWorkflowRunTaskManagerFactory,
-		deps.daemonHub,
+		deps.internalEventBus,
 		spaceTaskRepo,
 		spaceWorktreeManager,
 		artifactRepo,
@@ -695,7 +690,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceTaskRepo,
 		spaceManager: deps.spaceManager,
 		spaceWorktreeManager,
-		daemonHub: deps.daemonHub,
+		internalEventBus: deps.internalEventBus,
 	});
 	deps.jobProcessor.register(
 		SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS,

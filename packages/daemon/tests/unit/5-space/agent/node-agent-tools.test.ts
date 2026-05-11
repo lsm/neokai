@@ -31,6 +31,10 @@ import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resol
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import type { SpaceWorkflow, Gate, WorkflowChannel } from '@neokai/shared';
+import type {
+	DaemonInternalEventMap,
+	InternalEventBus,
+} from '../../../../src/lib/internal-event-bus.ts';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -1610,7 +1614,7 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 		expect(calls[0].gateId).toBe('gate-callback');
 	});
 
-	test('daemonHub emits space.gateData.updated after gate-write via send_message', async () => {
+	test('internalEventBus publishes space.gateData.updated after gate-write via send_message', async () => {
 		const gate: Gate = {
 			id: 'gate-event',
 			fields: [{ name: 'ready', type: 'string', writers: ['*'], check: { op: 'exists' } }],
@@ -1618,14 +1622,14 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 		};
 		const workflow = makeWorkflowWithGatedChannel(gate);
 		const emitted: Array<{ name: string; payload: Record<string, unknown> }> = [];
-		const fakeDaemonHub = {
-			emit: async (name: string, payload: unknown) => {
+		const fakeInternalEventBus = {
+			publishAsync: (name: string, payload: unknown) => {
 				emitted.push({ name, payload: payload as Record<string, unknown> });
 			},
 		};
 		const config = makeConfig(ctx, {
 			workflow,
-			daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
+			internalEventBus: fakeInternalEventBus as unknown as InternalEventBus<DaemonInternalEventMap>,
 		});
 		const handlers = createNodeAgentToolHandlers(config);
 
@@ -2240,8 +2244,8 @@ describe('node-agent-tools: async gate evaluation', () => {
 		});
 
 		const emitted: Array<{ name: string; payload: Record<string, unknown> }> = [];
-		const fakeDaemonHub = {
-			emit: async (name: string, payload: unknown) => {
+		const fakeInternalEventBus = {
+			publishAsync: (name: string, payload: unknown) => {
 				emitted.push({ name, payload: payload as Record<string, unknown> });
 			},
 		};
@@ -2250,7 +2254,7 @@ describe('node-agent-tools: async gate evaluation', () => {
 			workflow,
 			scriptExecutor: mockExecutor,
 			scriptContext: { workspacePath: '/tmp', runId: ctx.workflowRunId, gateId: 'gate-event' },
-			daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
+			internalEventBus: fakeInternalEventBus as unknown as InternalEventBus<DaemonInternalEventMap>,
 		});
 		const handlers = createNodeAgentToolHandlers(config);
 		await handlers.send_message({ target: 'reviewer', message: 'hi', data: { x: true } });

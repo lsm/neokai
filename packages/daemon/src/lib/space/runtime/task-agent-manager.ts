@@ -377,7 +377,11 @@ export class TaskAgentManager {
 	 */
 	private subscribeToTaskArchiveEvents(): void {
 		if (this.taskArchiveListenerUnsub) return;
-		this.taskArchiveListenerUnsub = this.config.daemonHub.on('space.task.updated', (event) => {
+		const onTaskUpdated = (event: {
+			task?: SpaceTask;
+			taskId: string;
+			archiveSource?: string;
+		}): void => {
 			if (event.task?.status !== 'archived') return;
 			// Task #85: skip the cleanup cascade for automated duplicate-run
 			// reconciliation archives. Only user-initiated archives (missing or
@@ -390,7 +394,18 @@ export class TaskAgentManager {
 			void this.archiveOnTaskArchived(taskId).catch((err) => {
 				log.warn(`TaskAgentManager: failed to archive resources for archived task ${taskId}:`, err);
 			});
-		});
+		};
+
+		if (this.config.internalEventBus) {
+			this.taskArchiveListenerUnsub = this.config.internalEventBus.subscribe(
+				'space.task.updated',
+				onTaskUpdated,
+				{ subscriberName: 'TaskAgentManager.archiveListener' }
+			);
+			return;
+		}
+
+		this.taskArchiveListenerUnsub = this.config.daemonHub.on('space.task.updated', onTaskUpdated);
 	}
 
 	/**
@@ -713,7 +728,7 @@ export class TaskAgentManager {
 				taskManager,
 				messageInjector: (subSessionId, message) =>
 					this.injectSubSessionMessage(subSessionId, message, true),
-				daemonHub: this.config.daemonHub,
+				internalEventBus: this.config.internalEventBus,
 				gateDataRepo: this.config.gateDataRepo,
 				workflowRunRepo: this.config.workflowRunRepo,
 				workflowManager: this.config.spaceWorkflowManager,
@@ -792,7 +807,7 @@ export class TaskAgentManager {
 				spaceAgentManager: this.config.spaceAgentManager,
 				taskAgentManager: this,
 				gateDataRepo: this.config.gateDataRepo,
-				daemonHub: this.config.daemonHub,
+				internalEventBus: this.config.internalEventBus,
 				onGateChanged: (runId, gateId) => {
 					void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 				},
@@ -1781,7 +1796,20 @@ export class TaskAgentManager {
 		sessionId: string,
 		row: { spaceId: string; workflowRunId: string; targetAgentName: string; targetKind: string }
 	): void {
-		if (!this.config.daemonHub) return;
+		if (this.config.internalEventBus) {
+			this.config.internalEventBus.publishAsync('space.pendingMessage.delivered', {
+				namespaceId: 'global',
+				sessionId: 'global',
+				spaceId: row.spaceId,
+				workflowRunId: row.workflowRunId,
+				targetAgentName: row.targetAgentName,
+				targetKind: row.targetKind,
+				messageId,
+				deliveredSessionId: sessionId,
+			});
+			return;
+		}
+
 		void this.config.daemonHub
 			.emit('space.pendingMessage.delivered', {
 				sessionId: 'global',
@@ -3119,7 +3147,7 @@ export class TaskAgentManager {
 			taskManager,
 			messageInjector: (subSessionId, message) =>
 				this.injectSubSessionMessage(subSessionId, message, true),
-			daemonHub: this.config.daemonHub,
+			internalEventBus: this.config.internalEventBus,
 			gateDataRepo: this.config.gateDataRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
 			workflowManager: this.config.spaceWorkflowManager,
@@ -3199,7 +3227,7 @@ export class TaskAgentManager {
 			spaceAgentManager: this.config.spaceAgentManager,
 			taskAgentManager: this,
 			gateDataRepo: this.config.gateDataRepo,
-			daemonHub: this.config.daemonHub,
+			internalEventBus: this.config.internalEventBus,
 			onGateChanged: (runId, gateId) => {
 				void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 			},
@@ -4239,7 +4267,7 @@ export class TaskAgentManager {
 			spaceAgentManager: this.config.spaceAgentManager,
 			taskAgentManager: this,
 			gateDataRepo: this.config.gateDataRepo,
-			daemonHub: this.config.daemonHub,
+			internalEventBus: this.config.internalEventBus,
 			onGateChanged: (runId, gateId) => {
 				void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 			},
@@ -4436,7 +4464,7 @@ export class TaskAgentManager {
 					taskRepo: this.config.taskRepo,
 					taskManager: boundTaskManager,
 					spaceManager: this.config.spaceManager,
-					daemonHub: this.config.daemonHub,
+					internalEventBus: this.config.internalEventBus,
 				})
 			: undefined;
 		const onApproveTask = endNodeHandlers?.onApproveTask;
@@ -4452,7 +4480,7 @@ export class TaskAgentManager {
 			spaceId,
 			taskRepo: this.config.taskRepo,
 			taskManager: boundTaskManager,
-			daemonHub: this.config.daemonHub,
+			internalEventBus: this.config.internalEventBus,
 		});
 
 		// Self-heal callback for the agent-callable `restore_node_agent` tool.
@@ -4531,7 +4559,7 @@ export class TaskAgentManager {
 			workflowNodeId,
 			nodeExecutionRepo: this.config.nodeExecutionRepo,
 			agentMessageRouter,
-			daemonHub: this.config.daemonHub,
+			internalEventBus: this.config.internalEventBus,
 			workflow,
 			gateDataRepo: this.config.gateDataRepo,
 			onGateDataChanged: (runId, gateId) => nodeAgentChannelRouter.onGateDataChanged(runId, gateId),

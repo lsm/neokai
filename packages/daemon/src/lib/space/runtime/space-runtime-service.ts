@@ -174,8 +174,8 @@ export class SpaceRuntimeService {
 			selectWorkflowWithLlm: config.selectWorkflowWithLlm ?? selectWorkflowWithLlmDefault,
 			internalEventBus: config.internalEventBus,
 			onTaskUpdated: async ({ spaceId, task, archiveSource }) => {
-				if (!this.config.daemonHub) return;
-				await this.config.daemonHub.emit('space.task.updated', {
+				this.config.internalEventBus?.publishAsync('space.task.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId,
 					taskId: task.id,
@@ -184,8 +184,8 @@ export class SpaceRuntimeService {
 				});
 			},
 			onWorkflowRunCreated: async ({ spaceId, run }) => {
-				if (!this.config.daemonHub) return;
-				await this.config.daemonHub.emit('space.workflowRun.created', {
+				this.config.internalEventBus?.publishAsync('space.workflowRun.created', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId,
 					runId: run.id,
@@ -193,8 +193,8 @@ export class SpaceRuntimeService {
 				});
 			},
 			onWorkflowRunUpdated: async ({ spaceId, run }) => {
-				if (!this.config.daemonHub) return;
-				await this.config.daemonHub.emit('space.workflowRun.updated', {
+				this.config.internalEventBus?.publishAsync('space.workflowRun.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId,
 					runId: run.id,
@@ -411,109 +411,146 @@ export class SpaceRuntimeService {
 	 * `space-agent-tools` (and `db-query`) attached so it can coordinate with
 	 * the rest of the Space.
 	 *
-	 * Called once during start(). No-op when sessionManager or daemonHub are absent.
+	 * Called once during start(). No-op when sessionManager is absent.
+	 * DaemonHub is still used for unmigrated session/workflow events, but migrated
+	 * space lifecycle subscriptions can run with InternalEventBus alone.
 	 */
 	private subscribeToSpaceEvents(): void {
-		const { sessionManager, daemonHub } = this.config;
-		if (!sessionManager || !daemonHub) return;
+		const { sessionManager, daemonHub, internalEventBus } = this.config;
+		if (!sessionManager || (!daemonHub && !internalEventBus)) return;
 
-		const unsubCreated = daemonHub.on(
-			'space.created',
-			(event) => {
-				void this.setupSpaceAgentSession(event.space).catch((err) => {
-					log.error(`Failed to provision space chat session for space ${event.spaceId}:`, err);
-				});
-			},
-			{ sessionId: 'global' }
-		);
+		const handleSpaceCreated = (event: DaemonInternalEventMap['space.created']): void => {
+			void this.setupSpaceAgentSession(event.space).catch((err) => {
+				log.error(`Failed to provision space chat session for space ${event.spaceId}:`, err);
+			});
+		};
+		const unsubCreated = internalEventBus
+			? internalEventBus.subscribe('space.created', handleSpaceCreated, {
+					subscriberName: 'SpaceRuntimeService.spaceCreated',
+				})
+			: daemonHub!.on(
+					'space.created',
+					handleSpaceCreated as (event: {
+						sessionId: string;
+						spaceId: string;
+						space: Space;
+					}) => void
+				);
 		this.unsubscribers.push(unsubCreated);
 
-		// When a workflow definition is updated, refresh gate poll timers for
-		// all active runs using that workflow so mid-run config changes are
-		// picked up without requiring a task restart.
-		const unsubWorkflowUpdated = daemonHub.on(
-			'spaceWorkflow.updated',
-			(event) => {
-				try {
-					this.runtime.onWorkflowDefChanged(event.workflow.id);
-				} catch (err) {
-					log.error(`Failed to refresh gate polls for workflow ${event.workflow.id}:`, err);
-				}
-			},
-			{ sessionId: 'global' }
-		);
-		this.unsubscribers.push(unsubWorkflowUpdated);
+		if (daemonHub) {
+			// When a workflow definition is updated, refresh gate poll timers for
+			// all active runs using that workflow so mid-run config changes are
+			// picked up without requiring a task restart.
+			const unsubWorkflowUpdated = daemonHub.on(
+				'spaceWorkflow.updated',
+				(event) => {
+					try {
+						this.runtime.onWorkflowDefChanged(event.workflow.id);
+					} catch (err) {
+						log.error(`Failed to refresh gate polls for workflow ${event.workflow.id}:`, err);
+					}
+				},
+				{ sessionId: 'global' }
+			);
+			this.unsubscribers.push(unsubWorkflowUpdated);
 
-		// When any new session is created with `context.spaceId`, attach the
-		// shared Space coordination tools. The space-chat session itself is
-		// handled by `setupSpaceAgentSession` (it also sets the system prompt);
-		// the space_task_agent sessions are handled by `TaskAgentManager`
-		// (which merges `space-agent-tools` into its MCP set). This subscription
-		// covers the remaining cases: worker sessions
-		// that live inside a Space and need to send/receive messages via
-		// `send_message_to_agent`, inspect tasks, etc.
-		//
-		// NOTE: no `{ sessionId: 'global' }` filter here — `session.created` is
-		// emitted with `data.sessionId = <new session UUID>`, so a `'global'`
-		// filter would never match. We want every session.created event, so we
-		// subscribe globally (TypedHub's default).
-		const unsubSessionCreated = daemonHub.on('session.created', (event) => {
-			void this.attachSpaceToolsToMemberSession(event.session).catch((err) => {
-				log.error(
-					`Failed to attach space tools to session ${event.sessionId} (space ${event.session.context?.spaceId ?? '?'}):`,
-					err
-				);
+			// When any new session is created with `context.spaceId`, attach the
+			// shared Space coordination tools. The space-chat session itself is
+			// handled by `setupSpaceAgentSession` (it also sets the system prompt);
+			// the space_task_agent sessions are handled by `TaskAgentManager`
+			// (which merges `space-agent-tools` into its MCP set). This subscription
+			// covers the remaining cases: worker sessions
+			// that live inside a Space and need to send/receive messages via
+			// `send_message_to_agent`, inspect tasks, etc.
+			//
+			// NOTE: no `{ namespaceId: 'global', sessionId: 'global' }` filter here — `session.created` is
+			// emitted with `data.sessionId = <new session UUID>`, so a `'global'`
+			// filter would never match. We want every session.created event, so we
+			// subscribe globally (TypedHub's default).
+			const unsubSessionCreated = daemonHub.on('session.created', (event) => {
+				void this.attachSpaceToolsToMemberSession(event.session).catch((err) => {
+					log.error(
+						`Failed to attach space tools to session ${event.sessionId} (space ${event.session.context?.spaceId ?? '?'}):`,
+						err
+					);
+				});
 			});
-		});
-		this.unsubscribers.push(unsubSessionCreated);
+			this.unsubscribers.push(unsubSessionCreated);
 
-		// When a session is deleted, release any per-session db-query server we
-		// spun up for it so read-only SQLite handles don't accumulate on a
-		// long-lived daemon serving many short-lived worker sessions.
-		// (Same reasoning as above: `session.deleted` is emitted with the
-		// deleted session's UUID as `sessionId`, not `'global'`.)
-		const unsubSessionDeleted = daemonHub.on('session.deleted', (event) => {
-			this.releaseMemberSessionDbQuery(event.sessionId);
-		});
-		this.unsubscribers.push(unsubSessionDeleted);
+			// When a session is deleted, release any per-session db-query server we
+			// spun up for it so read-only SQLite handles don't accumulate on a
+			// long-lived daemon serving many short-lived worker sessions.
+			// (Same reasoning as above: `session.deleted` is emitted with the
+			// deleted session's UUID as `sessionId`, not `'global'`.)
+			const unsubSessionDeleted = daemonHub.on('session.deleted', (event) => {
+				this.releaseMemberSessionDbQuery(event.sessionId);
+			});
+			this.unsubscribers.push(unsubSessionDeleted);
+		}
 
 		// When a space is archived or deleted, tear down its notification service
 		// so stale subscribers don't accumulate and fan-out to non-existent sessions.
-		const unsubSpaceArchived = daemonHub.on(
-			'space.archived',
-			(event) => this.tearDownSpaceNotificationService(event.spaceId, 'archived'),
-			{ sessionId: 'global' }
-		);
+		const handleSpaceArchived = (event: DaemonInternalEventMap['space.archived']): void =>
+			this.tearDownSpaceNotificationService(event.spaceId, 'archived');
+		const unsubSpaceArchived = internalEventBus
+			? internalEventBus.subscribe('space.archived', handleSpaceArchived, {
+					subscriberName: 'SpaceRuntimeService.spaceArchived',
+				})
+			: daemonHub!.on(
+					'space.archived',
+					handleSpaceArchived as (event: {
+						sessionId: string;
+						spaceId: string;
+						space: Space;
+					}) => void,
+					{ sessionId: 'global' }
+				);
 		this.unsubscribers.push(unsubSpaceArchived);
 
-		const unsubSpaceDeleted = daemonHub.on(
-			'space.deleted',
-			(event) => this.tearDownSpaceNotificationService(event.spaceId, 'deleted'),
-			{ sessionId: 'global' }
-		);
+		const handleSpaceDeleted = (event: DaemonInternalEventMap['space.deleted']): void =>
+			this.tearDownSpaceNotificationService(event.spaceId, 'deleted');
+		const unsubSpaceDeleted = internalEventBus
+			? internalEventBus.subscribe('space.deleted', handleSpaceDeleted, {
+					subscriberName: 'SpaceRuntimeService.spaceDeleted',
+				})
+			: daemonHub!.on(
+					'space.deleted',
+					handleSpaceDeleted as (event: { sessionId: string; spaceId: string }) => void,
+					{ sessionId: 'global' }
+				);
 		this.unsubscribers.push(unsubSpaceDeleted);
 
 		// When a space is updated, refresh the autonomy level in its notification
 		// service so [TASK_EVENT] messages report the current level.
-		const unsubSpaceUpdated = daemonHub.on(
-			'space.updated',
-			(event) => {
-				const existingUnsub = this.spaceAgentNotificationUnsubs.get(event.spaceId);
-				if (!existingUnsub) return;
+		const handleSpaceUpdated = (event: DaemonInternalEventMap['space.updated']): void => {
+			const existingUnsub = this.spaceAgentNotificationUnsubs.get(event.spaceId);
+			if (!existingUnsub) return;
 
-				// Re-provision the space chat session, which re-creates the
-				// SpaceAgentNotificationService with the updated autonomy level.
-				if (event.space) {
-					void this.setupSpaceAgentSession(event.space as Space).catch((err) => {
-						log.error(
-							`Failed to re-provision space chat session after autonomy update for space ${event.spaceId}:`,
-							err
-						);
-					});
-				}
-			},
-			{ sessionId: 'global' }
-		);
+			// Re-provision the space chat session, which re-creates the
+			// SpaceAgentNotificationService with the updated autonomy level.
+			if (event.space) {
+				void this.setupSpaceAgentSession(event.space as Space).catch((err) => {
+					log.error(
+						`Failed to re-provision space chat session after autonomy update for space ${event.spaceId}:`,
+						err
+					);
+				});
+			}
+		};
+		const unsubSpaceUpdated = internalEventBus
+			? internalEventBus.subscribe('space.updated', handleSpaceUpdated, {
+					subscriberName: 'SpaceRuntimeService.spaceUpdated',
+				})
+			: daemonHub!.on(
+					'space.updated',
+					handleSpaceUpdated as (event: {
+						sessionId: string;
+						spaceId: string;
+						space?: Partial<Space>;
+					}) => void,
+					{ sessionId: 'global' }
+				);
 		this.unsubscribers.push(unsubSpaceUpdated);
 
 		// Hard resets replace the cached AgentSession with a fresh instance built
@@ -746,7 +783,7 @@ export class SpaceRuntimeService {
 			spaceAgentManager: this.config.spaceAgentManager,
 			taskAgentManager: this.taskAgentManager ?? undefined,
 			gateDataRepo: this.config.gateDataRepo,
-			daemonHub: this.config.daemonHub,
+			internalEventBus: this.config.internalEventBus,
 			onGateChanged: (runId, gateId) => {
 				void this.notifyGateDataChanged(runId, gateId).catch(() => {});
 			},
@@ -841,7 +878,7 @@ export class SpaceRuntimeService {
 			spaceAgentManager,
 			taskAgentManager: this.taskAgentManager ?? undefined,
 			gateDataRepo: this.config.gateDataRepo,
-			daemonHub: this.config.daemonHub,
+			internalEventBus: this.config.internalEventBus,
 			onGateChanged: (runId, gateId) => {
 				void this.notifyGateDataChanged(runId, gateId).catch(() => {});
 			},
@@ -1025,14 +1062,13 @@ export class SpaceRuntimeService {
 		});
 		if (!updated) return;
 
-		if (this.config.daemonHub) {
-			await this.config.daemonHub.emit('space.task.updated', {
-				sessionId: 'global',
-				spaceId: run.spaceId,
-				taskId: updated.id,
-				task: updated,
-			});
-		}
+		this.config.internalEventBus?.publishAsync('space.task.updated', {
+			namespaceId: 'global',
+			sessionId: 'global',
+			spaceId: run.spaceId,
+			taskId: updated.id,
+			task: updated,
+		});
 	}
 
 	/**

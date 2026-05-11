@@ -148,6 +148,7 @@ function createMockMessageHub(): {
 
 function createMockDaemonHub(): DaemonHub {
 	return {
+		publishAsync: mock(() => {}),
 		emit: mock(async () => {}),
 		on: mock(() => () => {}),
 		off: mock(() => {}),
@@ -364,7 +365,9 @@ describe('space-workflow-run gate handlers', () => {
 				approvalSource: 'human',
 			});
 			expect(result.gateData.data.approved).toBe(true);
-			expect(daemonHub.emit).toHaveBeenCalledWith(
+			expect(
+				(daemonHub as unknown as { publishAsync: ReturnType<typeof mock> }).publishAsync
+			).toHaveBeenCalledWith(
 				'space.workflowRun.updated',
 				expect.objectContaining({ runId: 'run-1', spaceId: 'space-1' })
 			);
@@ -403,7 +406,9 @@ describe('space-workflow-run gate handlers', () => {
 			expect(runRepo.updateRun).toHaveBeenCalledWith('run-1', { failureReason: 'humanRejected' });
 			expect(result.run.status).toBe('blocked');
 			expect(result.run.failureReason).toBe('humanRejected');
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.workflowRun.updated', expect.any(Object));
+			expect(
+				(daemonHub as unknown as { publishAsync: ReturnType<typeof mock> }).publishAsync
+			).toHaveBeenCalledWith('space.workflowRun.updated', expect.any(Object));
 		});
 
 		it('rejection with no reason stores null reason', async () => {
@@ -470,7 +475,9 @@ describe('space-workflow-run gate handlers', () => {
 			expect(result.run.status).toBe('in_progress');
 			// null from updateRun({ failureReason: null }) — effectively cleared
 			expect(result.run.failureReason).toBeFalsy();
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.workflowRun.updated', expect.any(Object));
+			expect(
+				(daemonHub as unknown as { publishAsync: ReturnType<typeof mock> }).publishAsync
+			).toHaveBeenCalledWith('space.workflowRun.updated', expect.any(Object));
 		});
 
 		it('rejection when run is already blocked (non-humanRejected): skips transitionStatus, sets failureReason', async () => {
@@ -514,7 +521,9 @@ describe('space-workflow-run gate handlers', () => {
 				gateId: 'gate-approval',
 				approved: true,
 			});
-			expect(daemonHub.emit).toHaveBeenCalledWith(
+			expect(
+				(daemonHub as unknown as { publishAsync: ReturnType<typeof mock> }).publishAsync
+			).toHaveBeenCalledWith(
 				'space.gateData.updated',
 				expect.objectContaining({
 					spaceId: 'space-1',
@@ -532,7 +541,9 @@ describe('space-workflow-run gate handlers', () => {
 				approved: false,
 				reason: 'Not ready',
 			});
-			expect(daemonHub.emit).toHaveBeenCalledWith(
+			expect(
+				(daemonHub as unknown as { publishAsync: ReturnType<typeof mock> }).publishAsync
+			).toHaveBeenCalledWith(
 				'space.gateData.updated',
 				expect.objectContaining({
 					spaceId: 'space-1',
@@ -874,9 +885,12 @@ describe('space-workflow-run gate handlers', () => {
 				data: { votes: { 'Reviewer 2': 'rejected' } },
 			});
 
-			expect(daemonHub.emit).toHaveBeenCalledWith(
+			expect(
+				(daemonHub as unknown as { publishAsync: ReturnType<typeof mock> }).publishAsync
+			).toHaveBeenCalledWith(
 				'space.gateData.updated',
 				expect.objectContaining({
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: mockRun.spaceId,
 					runId: 'run-1',

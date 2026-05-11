@@ -18,7 +18,10 @@ import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-
 import { createEndNodeHandlers } from '../../../../src/lib/space/tools/end-node-handlers.ts';
 import type { EndNodeHandlerDeps } from '../../../../src/lib/space/tools/end-node-handlers.ts';
 import type { Space, SpaceWorkflow } from '@neokai/shared';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub.ts';
+import type {
+	DaemonInternalEventMap,
+	InternalEventBus,
+} from '../../../../src/lib/internal-event-bus.ts';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -75,20 +78,19 @@ function makeWorkflow(completionAutonomyLevel: number, endNodeId = 'end-node'): 
 	} as unknown as SpaceWorkflow;
 }
 
-interface MockHubCtx {
-	hub: Pick<DaemonHub, 'emit'>;
+interface MockBusCtx {
+	bus: InternalEventBus<DaemonInternalEventMap>;
 	emitted: Array<{ name: string; payload: Record<string, unknown> }>;
 }
 
-function makeMockHub(): MockHubCtx {
+function makeMockBus(): MockBusCtx {
 	const emitted: Array<{ name: string; payload: Record<string, unknown> }> = [];
-	const hub = {
-		emit: mock((name: string, payload: Record<string, unknown>) => {
+	const bus = {
+		publishAsync: mock((name: string, payload: Record<string, unknown>) => {
 			emitted.push({ name, payload });
-			return Promise.resolve();
 		}),
-	} as unknown as Pick<DaemonHub, 'emit'>;
-	return { hub, emitted };
+	} as unknown as InternalEventBus<DaemonInternalEventMap>;
+	return { bus, emitted };
 }
 
 interface TestCtx {
@@ -279,12 +281,12 @@ describe('createEndNodeHandlers — approve_task', () => {
 			description: '',
 			status: 'in_progress',
 		});
-		const { hub, emitted } = makeMockHub();
+		const { bus, emitted } = makeMockBus();
 		const { onApproveTask } = createEndNodeHandlers(
 			makeDeps(ctx, task.id, {
 				workflow: makeWorkflow(3),
 				spaceManager: { getSpace: async () => makeSpace(ctx.spaceId, 3) },
-				daemonHub: hub,
+				internalEventBus: bus,
 			})
 		);
 
@@ -306,12 +308,12 @@ describe('createEndNodeHandlers — approve_task', () => {
 			description: '',
 			status: 'in_progress',
 		});
-		const { hub, emitted } = makeMockHub();
+		const { bus, emitted } = makeMockBus();
 		const { onApproveTask } = createEndNodeHandlers(
 			makeDeps(ctx, task.id, {
 				workflow: makeWorkflow(5),
 				spaceManager: { getSpace: async () => makeSpace(ctx.spaceId, 1) },
-				daemonHub: hub,
+				internalEventBus: bus,
 			})
 		);
 
@@ -426,9 +428,9 @@ describe('createEndNodeHandlers — submit_for_approval', () => {
 			description: '',
 			status: 'in_progress',
 		});
-		const { hub, emitted } = makeMockHub();
+		const { bus, emitted } = makeMockBus();
 		const { onSubmitForApproval } = createEndNodeHandlers(
-			makeDeps(ctx, task.id, { daemonHub: hub })
+			makeDeps(ctx, task.id, { internalEventBus: bus })
 		);
 
 		await onSubmitForApproval({ reason: 'escalate' });
@@ -515,7 +517,7 @@ describe('createEndNodeHandlers — daemonHub is optional', () => {
 			makeDeps(ctx, task.id, {
 				workflow: makeWorkflow(1),
 				spaceManager: { getSpace: async () => makeSpace(ctx.spaceId, 5) },
-				daemonHub: undefined,
+				internalEventBus: undefined,
 			})
 		);
 
@@ -532,7 +534,7 @@ describe('createEndNodeHandlers — daemonHub is optional', () => {
 			status: 'in_progress',
 		});
 		const { onSubmitForApproval } = createEndNodeHandlers(
-			makeDeps(ctx, task.id, { daemonHub: undefined })
+			makeDeps(ctx, task.id, { internalEventBus: undefined })
 		);
 
 		const out = await onSubmitForApproval({});

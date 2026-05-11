@@ -20,6 +20,7 @@ import type {
 } from '@neokai/shared';
 import { normalizeThinkingLevel } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { generateUUID } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@neokai/shared';
@@ -64,8 +65,23 @@ export function setupSessionHandlers(
 	sessionManager: SessionManager,
 	daemonHub: DaemonHub,
 	spaceManager: SpaceManager,
-	spaceRuntimeService?: SpaceRuntimeService
+	spaceRuntimeService: SpaceRuntimeService | undefined,
+	internalEventBus?: InternalEventBus<DaemonInternalEventMap>
 ): void {
+	const publishSpaceUpdated = (payload: DaemonInternalEventMap['space.updated']): void => {
+		if (internalEventBus) {
+			internalEventBus.publishAsync('space.updated', payload);
+			return;
+		}
+
+		void daemonHub
+			.emit('space.updated', {
+				sessionId: payload.sessionId,
+				spaceId: payload.spaceId,
+				space: payload.space,
+			})
+			.catch(() => {});
+	};
 	messageHub.onRequest('session.create', async (data) => {
 		const req = data as CreateSessionRequest;
 		const sessionId = await sessionManager.createSession({
@@ -81,13 +97,12 @@ export function setupSessionHandlers(
 		// Add session to space if spaceId is provided
 		if (req.spaceId) {
 			const updatedSpace = await spaceManager.addSession(req.spaceId, sessionId);
-			daemonHub
-				.emit('space.updated', {
-					sessionId: 'global',
-					spaceId: req.spaceId,
-					space: updatedSpace,
-				})
-				.catch(() => {});
+			publishSpaceUpdated({
+				namespaceId: 'global',
+				sessionId: 'global',
+				spaceId: req.spaceId,
+				space: updatedSpace,
+			});
 		}
 
 		// Return the full session object so client can optimistically update
@@ -323,13 +338,12 @@ export function setupSessionHandlers(
 		if (spaceIdForDelete) {
 			try {
 				const updatedSpace = await spaceManager.removeSession(spaceIdForDelete, targetSessionId);
-				daemonHub
-					.emit('space.updated', {
-						sessionId: 'global',
-						spaceId: spaceIdForDelete,
-						space: updatedSpace,
-					})
-					.catch(() => {});
+				publishSpaceUpdated({
+					namespaceId: 'global',
+					sessionId: 'global',
+					spaceId: spaceIdForDelete,
+					space: updatedSpace,
+				});
 			} catch {
 				// Space may already be deleted — ignore
 			}
@@ -358,13 +372,12 @@ export function setupSessionHandlers(
 					session.context.spaceId,
 					targetSessionId
 				);
-				daemonHub
-					.emit('space.updated', {
-						sessionId: 'global',
-						spaceId: session.context.spaceId,
-						space: updatedSpace,
-					})
-					.catch(() => {});
+				publishSpaceUpdated({
+					namespaceId: 'global',
+					sessionId: 'global',
+					spaceId: session.context.spaceId,
+					space: updatedSpace,
+				});
 			} catch {
 				// Space may already be deleted — ignore
 			}

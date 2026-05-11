@@ -22,7 +22,7 @@ import type { SpaceWorkflowRunRepository } from '../../storage/repositories/spac
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import {
 	execGit,
 	isGitRepo,
@@ -48,7 +48,7 @@ export interface SyncArtifactHandlerDeps {
 	spaceTaskRepo: SpaceTaskRepository;
 	spaceManager: SpaceManager;
 	spaceWorktreeManager: SpaceWorktreeManager;
-	daemonHub: DaemonHub;
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 }
 
 interface SyncPayload {
@@ -63,7 +63,7 @@ interface SyncPayload {
  * know a cache row changed. Best-effort — emit failures do not fail the job.
  */
 function emitCacheUpdated(
-	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	params: {
 		spaceId: string;
 		runId: string;
@@ -72,14 +72,11 @@ function emitCacheUpdated(
 		status: 'ok' | 'syncing' | 'error';
 	}
 ): void {
-	daemonHub
-		.emit('space.artifactCache.updated', {
-			sessionId: 'global',
-			...params,
-		})
-		.catch((err) => {
-			log.warn('space.artifactCache.updated emit failed:', err);
-		});
+	internalEventBus.publishAsync('space.artifactCache.updated', {
+		namespaceId: 'global',
+		sessionId: 'global',
+		...params,
+	});
 }
 
 async function resolveWorktreeForJob(
@@ -127,7 +124,7 @@ async function handleSyncGateArtifacts(
 			data,
 			error: 'Worktree path unresolved',
 		});
-		emitCacheUpdated(deps.daemonHub, {
+		emitCacheUpdated(deps.internalEventBus, {
 			spaceId: spaceId ?? '',
 			runId,
 			taskId: taskId ?? '',
@@ -152,7 +149,7 @@ async function handleSyncGateArtifacts(
 			status: 'ok',
 			data,
 		});
-		emitCacheUpdated(deps.daemonHub, {
+		emitCacheUpdated(deps.internalEventBus, {
 			spaceId,
 			runId,
 			taskId: taskId ?? '',
@@ -175,7 +172,7 @@ async function handleSyncGateArtifacts(
 			data: { files: [], totalAdditions: 0, totalDeletions: 0, worktreePath, isGitRepo: true },
 			error: err instanceof Error ? err.message : String(err),
 		});
-		emitCacheUpdated(deps.daemonHub, {
+		emitCacheUpdated(deps.internalEventBus, {
 			spaceId,
 			runId,
 			taskId: taskId ?? '',
@@ -194,7 +191,7 @@ async function handleSyncGateArtifacts(
 		status: 'ok',
 		data,
 	});
-	emitCacheUpdated(deps.daemonHub, {
+	emitCacheUpdated(deps.internalEventBus, {
 		spaceId,
 		runId,
 		taskId: taskId ?? '',
@@ -219,7 +216,7 @@ async function handleSyncCommits(
 			data: { commits: [], baseRef: null, isGitRepo: false },
 			error: 'Worktree path unresolved',
 		});
-		emitCacheUpdated(deps.daemonHub, {
+		emitCacheUpdated(deps.internalEventBus, {
 			spaceId: spaceId ?? '',
 			runId,
 			taskId: taskId ?? '',
@@ -237,7 +234,7 @@ async function handleSyncCommits(
 			status: 'ok',
 			data: { commits: [], baseRef: null, isGitRepo: false, repoUrl: null },
 		});
-		emitCacheUpdated(deps.daemonHub, {
+		emitCacheUpdated(deps.internalEventBus, {
 			spaceId,
 			runId,
 			taskId: taskId ?? '',
@@ -269,7 +266,7 @@ async function handleSyncCommits(
 			data: { commits: [], baseRef: baseRef || null, isGitRepo: true, repoUrl },
 			error: err instanceof Error ? err.message : String(err),
 		});
-		emitCacheUpdated(deps.daemonHub, {
+		emitCacheUpdated(deps.internalEventBus, {
 			spaceId,
 			runId,
 			taskId: taskId ?? '',
@@ -287,7 +284,7 @@ async function handleSyncCommits(
 		status: 'ok',
 		data: { commits, baseRef: baseRef || null, isGitRepo: true, repoUrl },
 	});
-	emitCacheUpdated(deps.daemonHub, {
+	emitCacheUpdated(deps.internalEventBus, {
 		spaceId,
 		runId,
 		taskId: taskId ?? '',
@@ -313,7 +310,7 @@ async function handleSyncFileDiff(
 			data: { diff: '', additions: 0, deletions: 0, filePath, truncated: false },
 			error: 'Worktree path unresolved',
 		});
-		emitCacheUpdated(deps.daemonHub, {
+		emitCacheUpdated(deps.internalEventBus, {
 			spaceId: spaceId ?? '',
 			runId,
 			taskId: taskId ?? '',
@@ -331,7 +328,7 @@ async function handleSyncFileDiff(
 			status: 'ok',
 			data: { diff: '', additions: 0, deletions: 0, filePath, truncated: false },
 		});
-		emitCacheUpdated(deps.daemonHub, {
+		emitCacheUpdated(deps.internalEventBus, {
 			spaceId,
 			runId,
 			taskId: taskId ?? '',
@@ -354,7 +351,7 @@ async function handleSyncFileDiff(
 			data: { diff: '', additions: 0, deletions: 0, filePath, truncated: false },
 			error: err instanceof Error ? err.message : String(err),
 		});
-		emitCacheUpdated(deps.daemonHub, {
+		emitCacheUpdated(deps.internalEventBus, {
 			spaceId,
 			runId,
 			taskId: taskId ?? '',
@@ -382,7 +379,7 @@ async function handleSyncFileDiff(
 		status: 'ok',
 		data,
 	});
-	emitCacheUpdated(deps.daemonHub, {
+	emitCacheUpdated(deps.internalEventBus, {
 		spaceId,
 		runId,
 		taskId: taskId ?? '',

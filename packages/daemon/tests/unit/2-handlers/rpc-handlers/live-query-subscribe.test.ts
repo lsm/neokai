@@ -76,6 +76,7 @@ function createMockSetup() {
 		if (!handler) throw new Error(`No handler registered for method: ${method}`);
 		const fullCtx: CallCtx = {
 			clientId: 'client-1',
+			namespaceId: 'global',
 			sessionId: 'global',
 			messageId: 'msg-1',
 			method,

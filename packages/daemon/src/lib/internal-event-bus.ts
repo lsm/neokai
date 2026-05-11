@@ -591,6 +591,133 @@ export interface SpaceEvents {
 }
 
 /**
+ * Client-visible Space events — migrated from DaemonHub to InternalEventBus in M2.
+ *
+ * These are broadcast events consumed by ClientEventBridge and the web UI. They
+ * intentionally keep the historical event names so existing client subscriptions
+ * remain unchanged. Runtime/domain-only events (for example `space.task.blocked`)
+ * stay in `SpaceEvents` above.
+ */
+export interface SpaceClientEvents {
+	'space.task.created': {
+		namespaceId: string;
+		sessionId: string;
+		spaceId: string;
+		taskId: string;
+		task: import('@neokai/shared').SpaceTask;
+	};
+	'space.task.updated': {
+		namespaceId: string;
+		sessionId: string;
+		spaceId: string;
+		taskId: string;
+		task: import('@neokai/shared').SpaceTask;
+		archiveSource?: 'user' | 'system_reconcile';
+	};
+	'space.workflowRun.created': {
+		namespaceId: string;
+		sessionId: string;
+		spaceId: string;
+		runId: string;
+		run: import('@neokai/shared').SpaceWorkflowRun;
+	};
+	'space.workflowRun.updated': {
+		namespaceId: string;
+		sessionId: string;
+		spaceId: string;
+		runId: string;
+		run?: Partial<import('@neokai/shared').SpaceWorkflowRun>;
+	};
+	'space.gateData.updated': {
+		namespaceId: string;
+		sessionId: string;
+		spaceId: string;
+		runId: string;
+		gateId: string;
+		data: Record<string, unknown>;
+	};
+	'space.created': {
+		namespaceId: string;
+		sessionId: string;
+		spaceId: string;
+		space: import('@neokai/shared').Space;
+	};
+	'space.updated': {
+		namespaceId: string;
+		sessionId: string;
+		spaceId: string;
+		space?: Partial<import('@neokai/shared').Space>;
+	};
+	'space.archived': {
+		namespaceId: string;
+		sessionId: string;
+		spaceId: string;
+		space: import('@neokai/shared').Space;
+	};
+	'space.deleted': { namespaceId: string; sessionId: string; spaceId: string };
+	'space.githubEvent.routed': {
+		namespaceId: string;
+		sessionId: string;
+		taskId: string;
+		event: {
+			repo: string;
+			prNumber: number;
+			eventType: string;
+			summary: string;
+			externalUrl: string;
+		};
+	};
+	'space.artifactCache.updated': {
+		namespaceId: string;
+		sessionId: string;
+		spaceId: string;
+		runId: string;
+		taskId: string;
+		cacheKey: string;
+		status: 'ok' | 'syncing' | 'error';
+	};
+	'space.pendingMessage.queued': {
+		namespaceId: string;
+		sessionId: string;
+		spaceId: string;
+		workflowRunId: string;
+		taskId: string | null;
+		targetAgentName: string;
+		targetKind: 'node_agent' | 'space_agent';
+		messageId: string;
+		attempts: number;
+		maxAttempts: number;
+		expiresAt: number;
+		deduped: boolean;
+	};
+	'space.pendingMessage.delivered': {
+		namespaceId: string;
+		sessionId: string;
+		spaceId: string;
+		workflowRunId: string;
+		targetAgentName: string;
+		targetKind: string;
+		messageId: string;
+		deliveredSessionId: string;
+	};
+	'space.schedule.updated': {
+		namespaceId: string;
+		sessionId: string;
+		spaceId: string;
+		scheduleId: string;
+		schedule: import('@neokai/shared').TaskSchedule;
+	};
+	'space.workflowRun.cyclesReset': {
+		namespaceId: string;
+		sessionId: string;
+		runId: string;
+		reason: 'human_touch';
+		taskId?: string;
+		rowsReset: number;
+	};
+}
+
+/**
  * Canonical daemon internal event map.
  *
  * Each domain should own its slice; this type is the intersection of all
@@ -606,7 +733,8 @@ export interface DaemonInternalEventMap
 		ExternalEventEvents,
 		SessionEvents,
 		ApiConnectionEvents,
-		SpaceEvents {}
+		SpaceEvents,
+		SpaceClientEvents {}
 
 /**
  * Convenience factory typed with the canonical daemon internal event map.

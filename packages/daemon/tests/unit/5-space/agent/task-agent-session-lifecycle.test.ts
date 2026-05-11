@@ -1169,6 +1169,7 @@ describe('Task Agent Session Lifecycle', () => {
 
 			// Fire `space.task.updated` with status='archived'.
 			await ctx.daemonHub.emit('space.task.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: ctx.spaceId,
 				taskId: task.id,
@@ -1200,6 +1201,7 @@ describe('Task Agent Session Lifecycle', () => {
 			// Fire a series of non-archived status events.
 			for (const status of ['in_progress', 'review', 'done', 'cancelled'] as const) {
 				await ctx.daemonHub.emit('space.task.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: ctx.spaceId,
 					taskId: task.id,
@@ -1233,6 +1235,7 @@ describe('Task Agent Session Lifecycle', () => {
 			// Fire `space.task.updated` with status='archived' AND the
 			// system_reconcile marker — the listener must skip cleanup.
 			await ctx.daemonHub.emit('space.task.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: ctx.spaceId,
 				taskId: task.id,
@@ -1262,6 +1265,7 @@ describe('Task Agent Session Lifecycle', () => {
 			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
 
 			await ctx.daemonHub.emit('space.task.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: ctx.spaceId,
 				taskId: task.id,

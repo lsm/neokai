@@ -2910,10 +2910,10 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
 		expect(parsed.error).toContain('No fields to update');
 	});
 
-	test('emits space.task.updated event via daemonHub', async () => {
+	test('publishes space.task.updated event via InternalEventBus', async () => {
 		const emitted: Array<Record<string, unknown>> = [];
-		const mockHub = {
-			async emit(event: string, payload: Record<string, unknown>) {
+		const mockBus = {
+			publishAsync(event: string, payload: Record<string, unknown>) {
 				if (event === 'space.task.updated') {
 					emitted.push(payload);
 				}
@@ -2933,7 +2933,10 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
 			taskManager: ctx.taskManager,
 			spaceAgentManager: ctx.agentManager,
 			nodeExecutionRepo: ctx.nodeExecutionRepo,
-			daemonHub: mockHub as unknown as import('../../../../src/lib/daemon-hub').DaemonHub,
+			internalEventBus:
+				mockBus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
+					import('../../../../src/lib/internal-event-bus').DaemonInternalEventMap
+				>,
 		});
 
 		await handlers.update_task({
