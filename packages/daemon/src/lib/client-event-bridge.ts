@@ -9,18 +9,21 @@
  *   2. Forwards the payload verbatim (or via a lightweight transform) through
  *      ClientEventGateway using typed Channels.
  *
- * Scope (first slice)
- * -------------------
- * This PR migrates the **space event bridge** slice from StateManager.
- * These are pure forwarding paths with no state caching, no version
- * increments, and no side effects — the safest first extraction.
+ * Scope
+ * -----
+ * This module now contains ALL pure forwarding paths from StateManager:
+ * - Space events (16 mappings) — first slice
+ * - Session events (session.created, session.deleted, context.updated)
+ * - Connection/auth events (api.connection, auth.changed)
+ * - Config events (commands.updated)
+ * - Error events (session.error, session.errorClear)
  *
- * Remaining in StateManager (for follow-up PRs)
- * ---------------------------------------------
- * - session.created / session.deleted / context.updated (already gateway-ised)
- * - api.connection, auth.changed, commands.updated, session.error, session.errorClear
- * - broadcastSystemChange, broadcastSettingsChange, broadcastSessionStateChange,
- *   broadcastSDKMessagesChange, broadcastSDKMessagesDelta
+ * StateManager retains:
+ * - State cache updates (sessionCache, processingStateCache, commandsCache, errorCache)
+ * - Versioned broadcast methods (broadcastSystemChange, broadcastSettingsChange,
+ *   broadcastSessionStateChange, broadcastSDKMessagesChange, broadcastSDKMessagesDelta)
+ * - RPC handlers for state snapshots
+ * - channelVersions lifecycle management
  *
  * Design notes
  * ------------
@@ -35,6 +38,7 @@
 import type { IClientEventGateway, EventChannel } from '@neokai/shared';
 import { Channels } from '@neokai/shared';
 import type { DaemonHub, DaemonEventMap } from './daemon-hub';
+import { Logger } from './logger';
 
 type DaemonEventName = keyof DaemonEventMap & string;
 
@@ -43,6 +47,16 @@ interface BridgeMapping {
 	clientEvent: string;
 	channel: (payload: DaemonEventMap[keyof DaemonEventMap]) => EventChannel;
 	transform?: (payload: DaemonEventMap[keyof DaemonEventMap]) => unknown;
+}
+
+/**
+ * Narrow interface for the broadcast methods StateManager exposes to the bridge.
+ * Keeping this minimal prevents the bridge from depending on the full StateManager
+ * surface and makes testing straightforward.
+ */
+export interface StateBroadcasts {
+	broadcastSystemChange(): Promise<void>;
+	broadcastSessionStateChange(sessionId: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +153,43 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
 	},
 ];
 
+// ---------------------------------------------------------------------------
+// Session bridge mappings (pure gateway forwarding)
+// ---------------------------------------------------------------------------
+
+const SESSION_BRIDGE_MAPPINGS: BridgeMapping[] = [
+	{
+		event: 'session.created',
+		clientEvent: 'session.created',
+		channel: () => Channels.global(),
+		transform: (payload) => {
+			const p = payload as DaemonEventMap['session.created'];
+			return { sessionId: p.session.id };
+		},
+	},
+	{
+		event: 'session.deleted',
+		clientEvent: 'session.deleted',
+		channel: () => Channels.global(),
+		transform: (payload) => {
+			const p = payload as DaemonEventMap['session.deleted'];
+			return { sessionId: p.sessionId };
+		},
+	},
+	{
+		event: 'context.updated',
+		clientEvent: 'context.updated',
+		channel: (payload) => {
+			const p = payload as DaemonEventMap['context.updated'];
+			return Channels.session(p.sessionId);
+		},
+		transform: (payload) => {
+			const p = payload as DaemonEventMap['context.updated'];
+			return p.contextInfo;
+		},
+	},
+];
+
 /**
  * ClientEventBridge wires DaemonHub event subscriptions to ClientEventGateway
  * deliveries.  Each mapping in the registry becomes one `daemonHub.on(...)`
@@ -146,10 +197,12 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
  */
 export class ClientEventBridge {
 	private unsubscribers: (() => void)[] = [];
+	private logger = new Logger('ClientEventBridge');
 
 	constructor(
 		private daemonHub: DaemonHub,
-		private gateway: IClientEventGateway
+		private gateway: IClientEventGateway,
+		private broadcasts?: StateBroadcasts
 	) {}
 
 	/**
@@ -161,9 +214,35 @@ export class ClientEventBridge {
 			return;
 		}
 
+		// Space events
 		for (const mapping of SPACE_BRIDGE_MAPPINGS) {
 			this.subscribeMapping(mapping);
 		}
+
+		// Session events (pure forwarding + broadcast triggers)
+		for (const mapping of SESSION_BRIDGE_MAPPINGS) {
+			this.subscribeMapping(mapping);
+		}
+		this.subscribeBroadcast('context.updated', (data) =>
+			this.broadcasts?.broadcastSessionStateChange(data.sessionId)
+		);
+
+		// Connection/auth events (trigger broadcasts via StateManager)
+		this.subscribeBroadcast('api.connection', () => this.broadcasts?.broadcastSystemChange());
+		this.subscribeBroadcast('auth.changed', () => this.broadcasts?.broadcastSystemChange());
+
+		// Config events (trigger broadcast via StateManager)
+		this.subscribeBroadcast('commands.updated', (data) =>
+			this.broadcasts?.broadcastSessionStateChange(data.sessionId)
+		);
+
+		// Error events (trigger broadcast via StateManager)
+		this.subscribeBroadcast('session.error', (data) =>
+			this.broadcasts?.broadcastSessionStateChange(data.sessionId)
+		);
+		this.subscribeBroadcast('session.errorClear', (data) =>
+			this.broadcasts?.broadcastSessionStateChange(data.sessionId)
+		);
 	}
 
 	/**
@@ -183,6 +262,24 @@ export class ClientEventBridge {
 		});
 		this.unsubscribers.push(unsub);
 	}
+
+	private subscribeBroadcast<K extends DaemonEventName>(
+		event: K,
+		broadcast: (data: DaemonEventMap[K]) => Promise<void> | undefined
+	): void {
+		const unsub = this.daemonHub.on(event, (data: DaemonEventMap[K]) => {
+			const promise = broadcast(data);
+			if (promise) {
+				return promise.catch((err) => {
+					// Return the promise so TypedHub awaits it, preserving emit
+					// completion semantics. Log here so failures are visible even
+					// when StateManager's own logging is insufficient.
+					this.logger.warn(`Broadcast failed for ${event}:`, err);
+				});
+			}
+		});
+		this.unsubscribers.push(unsub);
+	}
 }
 
 /**
@@ -190,7 +287,8 @@ export class ClientEventBridge {
  */
 export function createClientEventBridge(
 	daemonHub: DaemonHub,
-	gateway: IClientEventGateway
+	gateway: IClientEventGateway,
+	broadcasts?: StateBroadcasts
 ): ClientEventBridge {
-	return new ClientEventBridge(daemonHub, gateway);
+	return new ClientEventBridge(daemonHub, gateway, broadcasts);
 }
