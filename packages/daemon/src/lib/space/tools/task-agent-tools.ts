@@ -253,7 +253,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			namespaceId: 'global',
 			sessionId: 'global',
 			spaceId: space.id,
-			taskId,
+			taskId: task.id,
 			task,
 		});
 	}

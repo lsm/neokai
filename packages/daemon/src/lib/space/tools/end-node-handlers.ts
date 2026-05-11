@@ -109,7 +109,7 @@ export function createMarkCompleteHandler(
 			namespaceId: 'global',
 			sessionId: 'global',
 			spaceId,
-			taskId,
+			taskId: task.id,
 			task,
 		});
 	};
@@ -174,6 +174,7 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
 	} = deps;
 
 	const emitTaskUpdated = (task: SpaceTask): void => {
+<<<<<<< HEAD
 		internalEventBus?.publishAsync('space.task.updated', {
 			namespaceId: 'global',
 			sessionId: 'global',
@@ -181,16 +182,20 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
 			taskId,
 			task,
 		});
-	};
-
-	return {
-		// -------------------------------------------------------------------
-		// approve_task — self-close. Re-checks autonomy at call time.
-		// -------------------------------------------------------------------
-		onApproveTask: async (_args: ApproveTaskInput) => {
-			const space = await spaceManager.getSpace(spaceId);
-			const currentLevel = space?.autonomyLevel ?? 1;
-			const required = workflow?.completionAutonomyLevel ?? 5;
+=======
+		if (!daemonHub) return;
+		void daemonHub
+			.emit('space.task.updated', { sessionId: 'global', spaceId, taskId: task.id, task })
+			.catch((err: unknown) => {
+				log.warn(
+					`Failed to emit space.task.updated for task ${task.id}: ${err		internalEventBus?.publishAsync('space.task.updated', {
+			namespaceId: 'global',
+			sessionId: 'global',
+			spaceId,
+			taskId: task.id,
+			task,
+		});
+orkflow?.completionAutonomyLevel ?? 5;
 			if (currentLevel < required) {
 				return jsonResult({
 					success: false,

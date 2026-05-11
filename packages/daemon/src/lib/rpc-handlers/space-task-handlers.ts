@@ -225,6 +225,24 @@ export function setupSpaceTaskHandlers(
 
 		const taskManager = taskManagerFactory(spaceId);
 
+		/** Emit space.task.updated for cascaded tasks (dependency blocks/unblocks). */
+		const emitCascadedTasks = async (cascaded: SpaceTask[]): Promise<void> => {
+			for (const t of cascaded) {
+				daemonHub
+					.emit('space.task.updated', {
+						sessionId: 'global',
+						spaceId,
+						taskId: t.id,
+						task: t,
+					})
+					.catch((err: unknown) => {
+						log.warn(
+							`Failed to emit space.task.updated for cascaded task ${t.id}: ${err instanceof Error ? err.message : String(err)}`
+						);
+					});
+			}
+		};
+
 		let task: SpaceTask;
 		let emitTaskUpdated = true;
 
@@ -323,6 +341,7 @@ export function setupSpaceTaskHandlers(
 								? 'human'
 								: undefined,
 						approvalReason: mappedReason,
+						onCascadedTasks: emitCascadedTasks,
 					});
 
 					// When the transition alone cannot carry the rejection reason (e.g.
@@ -358,11 +377,15 @@ export function setupSpaceTaskHandlers(
 				// updateParams still contains the unchanged status field; SpaceTaskManager.updateTask
 				// strips it internally (guard: params.status !== task.status is false) so no
 				// transition check fires and the status column is left untouched in the DB.
-				task = await taskManager.updateTask(taskId, updateParams);
+				task = await taskManager.updateTask(taskId, updateParams, {
+					onCascadedTasks: emitCascadedTasks,
+				});
 			}
 		} else {
 			// No status field — general field update
-			task = await taskManager.updateTask(taskId, updateParams);
+			task = await taskManager.updateTask(taskId, updateParams, {
+				onCascadedTasks: emitCascadedTasks,
+			});
 		}
 
 		if (emitTaskUpdated) {
