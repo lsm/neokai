@@ -33,6 +33,8 @@ import type {
 import type { SpaceWorkflow, SpaceTask, SpaceWorkflowRun, Space } from '@neokai/shared';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
+import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 
 // ---------------------------------------------------------------------------
 // MockNotificationSink
@@ -1989,6 +1991,122 @@ describe('SpaceRuntime — notification events', () => {
 				// Only Done is terminal → its summary is returned
 				expect(completedEvents[0].summary).toBe(doneSummary);
 			}
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// InternalEventBus dual publishing (M6 migration)
+	// -------------------------------------------------------------------------
+
+	describe('InternalEventBus dual publishing', () => {
+		test('publishes space.task.blocked to InternalEventBus alongside NotificationSink', async () => {
+			const bus = new InternalEventBus<DaemonInternalEventMap>();
+			const busEvents: { event: string; payload: unknown }[] = [];
+			bus.subscribe(
+				'space.task.blocked',
+				(payload) => {
+					busEvents.push({ event: 'space.task.blocked', payload });
+				},
+				{ subscriberName: 'test-subscriber' }
+			);
+
+			const rt = makeRuntime({ internalEventBus: bus });
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'blocked');
+
+			await rt.executeTick();
+
+			// Legacy path
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
+			// New path
+			expect(busEvents).toHaveLength(1);
+			const busEvent = busEvents[0].payload as { spaceId: string; taskId: string; reason: string };
+			expect(busEvent.spaceId).toBe(SPACE_ID);
+			expect(busEvent.taskId).toBe(tasks[0].id);
+			expect(busEvent.reason).toBe('One or more workflow agents are blocked');
+		});
+
+		test('publishes space.workflowRun.blocked to InternalEventBus', async () => {
+			const bus = new InternalEventBus<DaemonInternalEventMap>();
+			const busEvents: { event: string; payload: unknown }[] = [];
+			bus.subscribe(
+				'space.workflowRun.blocked',
+				(payload) => {
+					busEvents.push({ event: 'space.workflowRun.blocked', payload });
+				},
+				{ subscriberName: 'test-subscriber' }
+			);
+
+			const rt = makeRuntime({ internalEventBus: bus });
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
+			]);
+
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'blocked');
+
+			await rt.executeTick();
+
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_blocked')).toHaveLength(1);
+			expect(busEvents).toHaveLength(1);
+			const busEvent = busEvents[0].payload as { spaceId: string; runId: string };
+			expect(busEvent.spaceId).toBe(SPACE_ID);
+			expect(busEvent.runId).toBe(run.id);
+		});
+
+		test('publishes space.task.timeout to InternalEventBus', async () => {
+			setSpaceTaskTimeoutMs(db, SPACE_ID, 1000);
+			const bus = new InternalEventBus<DaemonInternalEventMap>();
+			const busEvents: { event: string; payload: unknown }[] = [];
+			bus.subscribe(
+				'space.task.timeout',
+				(payload) => {
+					busEvents.push({ event: 'space.task.timeout', payload });
+				},
+				{ subscriberName: 'test-subscriber' }
+			);
+
+			const rt = makeRuntime({ internalEventBus: bus });
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'in_progress', { startedAt: Date.now() - 2000 });
+
+			await rt.executeTick();
+
+			expect(sink.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
+			expect(busEvents).toHaveLength(1);
+			const busEvent = busEvents[0].payload as {
+				spaceId: string;
+				taskId: string;
+				elapsedMs: number;
+			};
+			expect(busEvent.spaceId).toBe(SPACE_ID);
+			expect(busEvent.taskId).toBe(tasks[0].id);
+			expect(busEvent.elapsedMs).toBeGreaterThan(1000);
+		});
+
+		test('works without InternalEventBus (backward compatibility)', async () => {
+			// No internalEventBus configured — only legacy path should work
+			const rt = makeRuntime();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
+			]);
+
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'blocked');
+
+			await rt.executeTick();
+
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
+			// No crash, no error — backward compatible
 		});
 	});
 });

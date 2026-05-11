@@ -43,6 +43,9 @@ export { SessionNotificationSink, formatEventMessage } from './runtime/session-n
 export type { SessionNotificationSinkConfig } from './runtime/session-notification-sink';
 export { SpaceRuntimeService } from './runtime/space-runtime-service';
 export type { SpaceRuntimeServiceConfig } from './runtime/space-runtime-service';
+export { SpaceAgentNotificationService } from './runtime/space-agent-notification-service';
+export type { SpaceAgentNotificationServiceConfig } from './runtime/space-agent-notification-service';
+export type { SessionFactory } from './runtime/types';
 export { TaskAgentManager } from './runtime/task-agent-manager';
 export type { TaskAgentManagerConfig } from './runtime/task-agent-manager';
 

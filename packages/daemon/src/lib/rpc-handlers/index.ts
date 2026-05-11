@@ -449,6 +449,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		artifactRepo,
 		pendingMessageRepo,
 		scheduleService,
+		internalEventBus: deps.internalEventBus,
 	});
 
 	// Session handlers — registered here (after spaceRuntimeService is built) so
@@ -555,6 +556,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		pendingMessageRepo,
 		spaceAgentInjector,
 		scheduleService,
+		internalEventBus: deps.internalEventBus,
 	});
 
 	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn

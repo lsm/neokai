@@ -30,19 +30,8 @@ import type {
 } from '../../../../src/lib/space/runtime/notification-sink.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SessionNotificationSink } from '../../../../src/lib/space/runtime/session-notification-sink.ts';
+import type { SessionFactory } from '../../../../src/lib/space/runtime/types';
 import type { MessageDeliveryMode } from '@neokai/shared';
-
-/**
- * Minimal SessionFactory interface for testing.
- * Matches the interface defined in session-notification-sink.ts.
- */
-interface SessionFactory {
-	injectMessage(
-		sessionId: string,
-		message: string,
-		opts?: { deliveryMode?: string }
-	): Promise<void>;
-}
 
 // ---------------------------------------------------------------------------
 // Mock sinks
