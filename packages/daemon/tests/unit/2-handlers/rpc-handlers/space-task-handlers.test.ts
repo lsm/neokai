@@ -741,10 +741,11 @@ describe('space-task-handlers', () => {
 			expect(taskManager.updateTask).toHaveBeenCalledWith(
 				'task-1',
 				{ title: 'Updated' },
-				{ onCascadedTasks: expect.any(Function) },
+				{ onCascadedTasks: expect.any(Function) }
 			);
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
-				namespaceId: 'global',				sessionId: 'global',
+				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: 'space-1',
 				taskId: 'task-1',
 				task: expect.objectContaining({ title: 'Updated' }),

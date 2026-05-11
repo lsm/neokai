@@ -228,18 +228,13 @@ export function setupSpaceTaskHandlers(
 		/** Emit space.task.updated for cascaded tasks (dependency blocks/unblocks). */
 		const emitCascadedTasks = async (cascaded: SpaceTask[]): Promise<void> => {
 			for (const t of cascaded) {
-				daemonHub
-					.emit('space.task.updated', {
-						sessionId: 'global',
-						spaceId,
-						taskId: t.id,
-						task: t,
-					})
-					.catch((err: unknown) => {
-						log.warn(
-							`Failed to emit space.task.updated for cascaded task ${t.id}: ${err instanceof Error ? err.message : String(err)}`
-						);
-					});
+				publishSpaceEvent('space.task.updated', {
+					namespaceId: 'global',
+					sessionId: 'global',
+					spaceId,
+					taskId: t.id,
+					task: t,
+				});
 			}
 		};
 

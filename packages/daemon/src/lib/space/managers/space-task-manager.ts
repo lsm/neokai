@@ -759,8 +759,14 @@ export class SpaceTaskManager {
 			// Re-check ALL deps for this task
 			const depsMet = await this.areDependenciesMet(t);
 			if (depsMet) {
-				const reopened = await this.setTaskStatus(t.id, 'open');
-				unblocked.push(reopened);
+				try {
+					const reopened = await this.setTaskStatus(t.id, 'open');
+					unblocked.push(reopened);
+				} catch {
+					// Per-dependent: a concurrent status change (e.g. archive)
+					// can make blocked→open invalid. Skip this dependent and
+					// continue with the rest rather than aborting the cascade.
+				}
 			}
 		}
 		return unblocked;

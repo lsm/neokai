@@ -666,16 +666,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					{
 						onCascadedTasks: async (cascaded) => {
 							for (const t of cascaded) {
-								if (daemonHub) {
-									void daemonHub
-										.emit('space.task.updated', {
-											sessionId: 'global',
-											spaceId,
-											taskId: t.id,
-											task: t,
-										})
-										.catch(() => {});
-								}
+								internalEventBus?.publishAsync('space.task.updated', {
+									namespaceId: 'global',
+									sessionId: 'global',
+									spaceId,
+									taskId: t.id,
+									task: t,
+								});
 							}
 						},
 					}
@@ -1283,16 +1280,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					approvalReason: args.reason,
 					onCascadedTasks: async (cascaded) => {
 						for (const t of cascaded) {
-							if (daemonHub) {
-								void daemonHub
-									.emit('space.task.updated', {
-										sessionId: 'global',
-										spaceId,
-										taskId: t.id,
-										task: t,
-									})
-									.catch(() => {});
-							}
+							internalEventBus?.publishAsync('space.task.updated', {
+								namespaceId: 'global',
+								sessionId: 'global',
+								spaceId,
+								taskId: t.id,
+								task: t,
+							});
 						}
 					},
 				});

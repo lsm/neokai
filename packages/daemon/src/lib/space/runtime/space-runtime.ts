@@ -919,11 +919,19 @@ export class SpaceRuntime {
 			// bypassing setTaskStatus — so the dependency-unblock cascade
 			// doesn't fire there. Trigger it here and emit for each
 			// unblocked dependent so the UI sees the state change.
-			if (routeResult.mode === 'no-route') {
-				const taskManager = this.getOrCreateTaskManager(spaceId);
-				const unblocked = await taskManager.unblockDependentTasks(taskId);
-				for (const dep of unblocked) {
-					await this.safeOnTaskUpdated(spaceId, dep);
+			// Guard on `final?.status === 'done'` to confirm the write
+			// landed, and wrap in try-catch so unblock failures don't
+			// abort the already-committed post-approval flow.
+			if (routeResult.mode === 'no-route' && final?.status === 'done') {
+				try {
+					const taskManager = this.getOrCreateTaskManager(spaceId);
+					const unblocked = await taskManager.unblockDependentTasks(taskId);
+					for (const dep of unblocked) {
+						await this.safeOnTaskUpdated(spaceId, dep);
+					}
+				} catch {
+					// Best-effort: unblock failures must not abort
+					// the post-approval flow.
 				}
 			}
 		}
