@@ -461,7 +461,7 @@ describe('InternalEventBus keyed interface compatibility', () => {
 describe('DaemonInternalEventMap — settings.updated end-to-end', () => {
 	it('should flow through createDaemonInternalEventBus with typed payload', async () => {
 		const bus = createDaemonInternalEventBus();
-		const received: Array<{ sessionId: string; settings: Record<string, unknown> }> = [];
+		const received: Array<{ namespaceId: string; settings: Record<string, unknown> }> = [];
 
 		bus.subscribe(
 			'settings.updated',
