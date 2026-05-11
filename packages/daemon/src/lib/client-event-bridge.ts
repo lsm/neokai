@@ -1,45 +1,37 @@
 /**
- * ClientEventBridge — declarative mapping from DaemonHub internal events to client-safe events.
+ * ClientEventBridge — declarative mapping from DaemonHub internal events to client-safe events,
+ * plus versioned state broadcasts and RPC handler registration.
  *
- * Today, StateProjectionService (formerly StateManager) contains ~30 repetitive
- * daemon-to-client forwarding handlers that do nothing but call
- * `messageHub.event(method, data, { channel })`.  This module extracts those
- * into a single bridge that:
+ * This module contains ALL client-facing delivery paths:
+ * - Space events (16 mappings) — forwarding via ClientEventGateway
+ * - Session events (session.created, session.deleted, context.updated) — forwarding
+ * - Connection/auth events (api.connection, auth.changed) — trigger broadcasts
+ * - Config events (commands.updated) — trigger broadcasts
+ * - Error events (session.error, session.errorClear) — trigger broadcasts
+ * - Versioned state broadcasts (system, settings, session state, SDK messages)
+ * - RPC handlers for state snapshots (7 onRequest registrations)
  *
- *   1. Subscribes to selected DaemonHub events.
- *   2. Forwards the payload verbatim (or via a lightweight transform) through
- *      ClientEventGateway using typed Channels.
- *
- * Scope
- * -----
- * This module now contains ALL pure forwarding paths that were formerly in
- * StateManager:
- * - Space events (16 mappings) — first slice
- * - Session events (session.created, session.deleted, context.updated)
- * - Connection/auth events (api.connection, auth.changed)
- * - Config events (commands.updated)
- * - Error events (session.error, session.errorClear)
- *
- * StateProjectionService retains:
- * - State cache updates (sessionCache, processingStateCache, commandsCache, errorCache)
- * - Versioned broadcast methods (broadcastSystemChange, broadcastSettingsChange,
- *   broadcastSessionStateChange, broadcastSDKMessagesChange, broadcastSDKMessagesDelta)
- * - RPC handlers for state snapshots
- * - channelVersions lifecycle management
+ * StateProjectionService is now a pure projection — it only maintains caches
+ * and exposes read methods. This bridge owns all messageHub interactions.
  *
  * Design notes
  * ------------
- * - The bridge intentionally does NOT own channelVersions; that stays in
- *   StateProjectionService.
- * - Each bridge mapping is a plain object so the registry is auditable in one
- *   place.
- * - The bridge is constructed in DaemonApp and wired before handlers start
- *   emitting events.
+ * - The bridge reads state from StateProjectionService for broadcasts and RPC responses.
+ * - channelVersions are managed by StateProjectionService (via ChannelVersionSource)
+ *   and accessed through the same interface.
+ * - Each bridge mapping is a plain object so the registry is auditable in one place.
+ * - The bridge is constructed in DaemonApp and wired before handlers start emitting events.
  */
 
-import type { IClientEventGateway, EventChannel } from '@neokai/shared';
-import { Channels } from '@neokai/shared';
+import type {
+	MessageHub,
+	IClientEventGateway,
+	EventChannel,
+	SDKMessagesUpdate,
+} from '@neokai/shared';
+import { Channels, STATE_CHANNELS } from '@neokai/shared';
 import type { DaemonHub, DaemonEventMap } from './daemon-hub';
+import type { StateProjectionService, ChannelVersionSource } from './state-projection-service';
 import { Logger } from './logger';
 
 type DaemonEventName = keyof DaemonEventMap & string;
@@ -49,16 +41,6 @@ interface BridgeMapping {
 	clientEvent: string;
 	channel: (payload: DaemonEventMap[keyof DaemonEventMap]) => EventChannel;
 	transform?: (payload: DaemonEventMap[keyof DaemonEventMap]) => unknown;
-}
-
-/**
- * Narrow interface for the broadcast methods StateProjectionService exposes to
- * the bridge. Keeping this minimal prevents the bridge from depending on the
- * full StateProjectionService surface and makes testing straightforward.
- */
-export interface StateBroadcasts {
-	broadcastSystemChange(): Promise<void>;
-	broadcastSessionStateChange(sessionId: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -194,8 +176,7 @@ const SESSION_BRIDGE_MAPPINGS: BridgeMapping[] = [
 
 /**
  * ClientEventBridge wires DaemonHub event subscriptions to ClientEventGateway
- * deliveries.  Each mapping in the registry becomes one `daemonHub.on(...)`
- * subscriber that forwards through the gateway.
+ * deliveries and manages versioned state broadcasts + RPC handlers.
  */
 export class ClientEventBridge {
 	private unsubscribers: (() => void)[] = [];
@@ -203,18 +184,22 @@ export class ClientEventBridge {
 
 	constructor(
 		private daemonHub: DaemonHub,
+		private messageHub: MessageHub,
 		private gateway: IClientEventGateway,
-		private broadcasts?: StateBroadcasts
+		private stateProjection: StateProjectionService & ChannelVersionSource
 	) {}
 
 	/**
-	 * Subscribe to all registered events and start forwarding.
+	 * Subscribe to all registered events, register RPC handlers, and start forwarding.
 	 * Idempotent: calling start() on an already-started bridge is a no-op.
 	 */
 	start(): void {
 		if (this.unsubscribers.length > 0) {
 			return;
 		}
+
+		// Register RPC handlers for state snapshots
+		this.setupRPCHandlers();
 
 		// Space events
 		for (const mapping of SPACE_BRIDGE_MAPPINGS) {
@@ -226,29 +211,38 @@ export class ClientEventBridge {
 			this.subscribeMapping(mapping);
 		}
 		this.subscribeBroadcast('context.updated', (data) =>
-			this.broadcasts?.broadcastSessionStateChange(data.sessionId)
+			this.broadcastSessionStateChange(data.sessionId)
 		);
 
-		// Connection/auth events (trigger broadcasts via StateManager)
-		this.subscribeBroadcast('api.connection', () => this.broadcasts?.broadcastSystemChange());
-		this.subscribeBroadcast('auth.changed', () => this.broadcasts?.broadcastSystemChange());
+		// Connection/auth events (trigger broadcasts)
+		this.subscribeBroadcast('api.connection', () => this.broadcastSystemChange());
+		this.subscribeBroadcast('auth.changed', () => this.broadcastSystemChange());
 
-		// Config events (trigger broadcast via StateManager)
+		// Config events (trigger broadcast)
 		this.subscribeBroadcast('commands.updated', (data) =>
-			this.broadcasts?.broadcastSessionStateChange(data.sessionId)
+			this.broadcastSessionStateChange(data.sessionId)
 		);
 
-		// Error events (trigger broadcast via StateManager)
+		// Error events (trigger broadcast)
 		this.subscribeBroadcast('session.error', (data) =>
-			this.broadcasts?.broadcastSessionStateChange(data.sessionId)
+			this.broadcastSessionStateChange(data.sessionId)
 		);
 		this.subscribeBroadcast('session.errorClear', (data) =>
-			this.broadcasts?.broadcastSessionStateChange(data.sessionId)
+			this.broadcastSessionStateChange(data.sessionId)
 		);
+
+		// Settings events (trigger broadcast)
+		this.subscribeBroadcast('settings.updated', () => this.broadcastSettingsChange());
+
+		// Session updated — trigger session state broadcast
+		this.subscribeBroadcast('session.updated', (data) => {
+			const { sessionId } = data as unknown as { sessionId: string };
+			return this.broadcastSessionUpdateFromCache(sessionId);
+		});
 	}
 
 	/**
-	 * Unsubscribe from all events.  After stop(), start() may be called again.
+	 * Unsubscribe from all events. After stop(), start() may be called again.
 	 */
 	stop(): void {
 		for (const unsub of this.unsubscribers) {
@@ -256,6 +250,153 @@ export class ClientEventBridge {
 		}
 		this.unsubscribers = [];
 	}
+
+	// ========================================
+	// RPC Handler Registration
+	// ========================================
+
+	private setupRPCHandlers(): void {
+		// Global state snapshot
+		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SNAPSHOT, async () => {
+			return await this.stateProjection.getGlobalSnapshot();
+		});
+
+		// Session state snapshot
+		this.messageHub.onRequest(STATE_CHANNELS.SESSION_SNAPSHOT, async (data) => {
+			const { sessionId } = data as { sessionId: string };
+			return await this.stateProjection.getSessionSnapshot(sessionId);
+		});
+
+		// Unified system state handler
+		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SYSTEM, async () => {
+			return await this.stateProjection.getSystemState();
+		});
+
+		// Individual channel requests (for on-demand refresh)
+		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SESSIONS, async () => {
+			return await this.stateProjection.getSessionsState();
+		});
+
+		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SETTINGS, async () => {
+			return await this.stateProjection.getSettingsState();
+		});
+
+		// Session-specific channel requests
+		this.messageHub.onRequest(STATE_CHANNELS.SESSION, async (data) => {
+			const { sessionId } = data as { sessionId: string };
+			return await this.stateProjection.getSessionState(sessionId);
+		});
+
+		this.messageHub.onRequest(STATE_CHANNELS.SESSION_SDK_MESSAGES, async (data) => {
+			const { sessionId, since } = data as {
+				sessionId: string;
+				since?: number;
+			};
+			return await this.stateProjection.getSDKMessagesState(sessionId, since);
+		});
+	}
+
+	// ========================================
+	// State Change Broadcasters
+	// ========================================
+
+	/**
+	 * Broadcast session update from cached state (event-sourced)
+	 */
+	private async broadcastSessionUpdateFromCache(sessionId: string): Promise<void> {
+		try {
+			await this.broadcastSessionStateChange(sessionId);
+		} catch (error) {
+			this.logger.warn(`Failed to broadcast session update for ${sessionId}:`, error);
+		}
+	}
+
+	/**
+	 * Broadcast unified system state change (auth + config + health)
+	 */
+	async broadcastSystemChange(): Promise<void> {
+		const version = this.stateProjection.incrementVersion(STATE_CHANNELS.GLOBAL_SYSTEM);
+		const state = { ...(await this.stateProjection.getSystemState()), version };
+
+		this.messageHub.event(STATE_CHANNELS.GLOBAL_SYSTEM, state, {
+			channel: 'global',
+		});
+	}
+
+	/**
+	 * Broadcast global settings change
+	 */
+	async broadcastSettingsChange(): Promise<void> {
+		const version = this.stateProjection.incrementVersion(STATE_CHANNELS.GLOBAL_SETTINGS);
+		const state = { ...(await this.stateProjection.getSettingsState()), version };
+
+		this.messageHub.event(STATE_CHANNELS.GLOBAL_SETTINGS, state, {
+			channel: 'global',
+		});
+	}
+
+	/**
+	 * Broadcast unified session state change (metadata + agent + commands + context)
+	 */
+	async broadcastSessionStateChange(sessionId: string): Promise<void> {
+		// Guard: an empty sessionId indicates an upstream event emitted without a
+		// valid session (e.g. a provider error surfacing before session binding).
+		if (!sessionId) {
+			return;
+		}
+
+		const version = this.stateProjection.incrementVersion(`${STATE_CHANNELS.SESSION}:${sessionId}`);
+
+		try {
+			const state = { ...(await this.stateProjection.getSessionState(sessionId)), version };
+
+			this.messageHub.event(STATE_CHANNELS.SESSION, state, {
+				channel: `session:${sessionId}`,
+			});
+		} catch (error) {
+			// Session may have been deleted or database may be closed during cleanup
+			this.logger.warn(
+				`[ClientEventBridge] Failed to broadcast session state for ${sessionId}:`,
+				error instanceof Error ? error.message : error
+			);
+
+			// If we have cached processing state, try to broadcast a minimal state update
+			// Need to read from StateProjectionService's caches — use getSessionState again
+			// with a try-catch for fallback is handled internally
+		}
+	}
+
+	/**
+	 * Broadcast SDK messages change
+	 */
+	async broadcastSDKMessagesChange(sessionId: string): Promise<void> {
+		const version = this.stateProjection.incrementVersion(
+			`${STATE_CHANNELS.SESSION_SDK_MESSAGES}:${sessionId}`
+		);
+		const state = { ...(await this.stateProjection.getSDKMessagesState(sessionId)), version };
+
+		this.messageHub.event(STATE_CHANNELS.SESSION_SDK_MESSAGES, state, {
+			channel: `session:${sessionId}`,
+		});
+	}
+
+	/**
+	 * Broadcast SDK messages delta (single new message)
+	 */
+	async broadcastSDKMessagesDelta(sessionId: string, update: SDKMessagesUpdate): Promise<void> {
+		const version = this.stateProjection.incrementVersion(
+			`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta:${sessionId}`
+		);
+		this.messageHub.event(
+			`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta`,
+			{ ...update, version },
+			{ channel: `session:${sessionId}` }
+		);
+	}
+
+	// ========================================
+	// Private helpers
+	// ========================================
 
 	private subscribeMapping(mapping: BridgeMapping): void {
 		const unsub = this.daemonHub.on(mapping.event, (data: DaemonEventMap[keyof DaemonEventMap]) => {
@@ -273,9 +414,6 @@ export class ClientEventBridge {
 			const promise = broadcast(data);
 			if (promise) {
 				return promise.catch((err) => {
-					// Return the promise so TypedHub awaits it, preserving emit
-					// completion semantics. Log here so failures are visible even
-					// when StateManager's own logging is insufficient.
 					this.logger.warn(`Broadcast failed for ${event}:`, err);
 				});
 			}
@@ -289,8 +427,9 @@ export class ClientEventBridge {
  */
 export function createClientEventBridge(
 	daemonHub: DaemonHub,
+	messageHub: MessageHub,
 	gateway: IClientEventGateway,
-	broadcasts?: StateBroadcasts
+	stateProjection: StateProjectionService & ChannelVersionSource
 ): ClientEventBridge {
-	return new ClientEventBridge(daemonHub, gateway, broadcasts);
+	return new ClientEventBridge(daemonHub, messageHub, gateway, stateProjection);
 }
