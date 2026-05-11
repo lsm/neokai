@@ -485,38 +485,14 @@ export class SpaceRuntimeService {
 		// so stale subscribers don't accumulate and fan-out to non-existent sessions.
 		const unsubSpaceArchived = daemonHub.on(
 			'space.archived',
-			(event) => {
-				const unsub = this.spaceAgentNotificationUnsubs.get(event.spaceId);
-				if (unsub) {
-					try {
-						unsub();
-					} catch {
-						log.warn(
-							`Failed to unsubscribe SpaceAgentNotificationService for archived space ${event.spaceId}:`
-						);
-					}
-					this.spaceAgentNotificationUnsubs.delete(event.spaceId);
-				}
-			},
+			(event) => this.tearDownSpaceNotificationService(event.spaceId, 'archived'),
 			{ sessionId: 'global' }
 		);
 		this.unsubscribers.push(unsubSpaceArchived);
 
 		const unsubSpaceDeleted = daemonHub.on(
 			'space.deleted',
-			(event) => {
-				const unsub = this.spaceAgentNotificationUnsubs.get(event.spaceId);
-				if (unsub) {
-					try {
-						unsub();
-					} catch {
-						log.warn(
-							`Failed to unsubscribe SpaceAgentNotificationService for deleted space ${event.spaceId}:`
-						);
-					}
-					this.spaceAgentNotificationUnsubs.delete(event.spaceId);
-				}
-			},
+			(event) => this.tearDownSpaceNotificationService(event.spaceId, 'deleted'),
 			{ sessionId: 'global' }
 		);
 		this.unsubscribers.push(unsubSpaceDeleted);
@@ -532,9 +508,10 @@ export class SpaceRuntimeService {
 				// Re-provision the space chat session, which re-creates the
 				// SpaceAgentNotificationService with the updated autonomy level.
 				if (event.space) {
-					void this.setupSpaceAgentSession(event.space as Space).catch(() => {
+					void this.setupSpaceAgentSession(event.space as Space).catch((err) => {
 						log.error(
-							`Failed to re-provision space chat session after autonomy update for space ${event.spaceId}:`
+							`Failed to re-provision space chat session after autonomy update for space ${event.spaceId}:`,
+							err
 						);
 					});
 				}
@@ -597,6 +574,23 @@ export class SpaceRuntimeService {
 			log.warn(`Failed to close db-query server for member session ${sessionId}:`, err);
 		}
 		this.memberSessionDbQueryServers.delete(sessionId);
+	}
+
+	/**
+	 * Tear down the SpaceAgentNotificationService subscription for a given space.
+	 * Called when a space is archived or deleted to prevent stale subscribers.
+	 */
+	private tearDownSpaceNotificationService(spaceId: string, reason: 'archived' | 'deleted'): void {
+		const unsub = this.spaceAgentNotificationUnsubs.get(spaceId);
+		if (!unsub) return;
+		try {
+			unsub();
+		} catch {
+			log.warn(
+				`Failed to unsubscribe SpaceAgentNotificationService for ${reason} space ${spaceId}:`
+			);
+		}
+		this.spaceAgentNotificationUnsubs.delete(spaceId);
 	}
 
 	/**
