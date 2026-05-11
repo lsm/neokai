@@ -68,12 +68,12 @@ export class InternalEventBusPublishError extends Error {
 
 /**
  * Generic constraint for event-map entries.
- * All events must be plain objects so we can safely read `sessionId` for
+ * All events must be plain objects so we can safely read `namespaceId` for
  * scoped routing.
  */
 export interface InternalEventPayload {
-	/** Session-scoped routing key.  Use `'global'` for app-wide events. */
-	sessionId: string;
+	/** Namespace routing key.  Use `'global'` for app-wide events. */
+	namespaceId: string;
 
 	[key: string]: unknown;
 }
@@ -90,9 +90,9 @@ export interface SubscribeOptions {
 
 	/**
 	 * When provided, the handler only receives events whose payload carries
-	 * the matching `sessionId`.  Omit for a global subscription.
+	 * the matching `namespaceId`.  Omit for a global subscription.
 	 */
-	sessionId?: string;
+	namespaceId?: string;
 }
 
 export type InternalEventHandler<TPayload> = (data: TPayload) => void | Promise<void>;
@@ -102,7 +102,7 @@ interface RegisteredHandler {
 	handler: (data: unknown) => void | Promise<void>;
 }
 
-const GLOBAL_SESSION_KEY = '__global__';
+const GLOBAL_NAMESPACE_KEY = '__global__';
 
 /**
  * InternalEventBus
@@ -110,7 +110,7 @@ const GLOBAL_SESSION_KEY = '__global__';
  * @template TEventMap — map of dot-separated event names to payload shapes.
  */
 export class InternalEventBus<TEventMap extends object = Record<string, InternalEventPayload>> {
-	// event → sessionId → handlers
+	// event → namespaceId → handlers
 	private handlers = new Map<string, Map<string, Set<RegisteredHandler>>>();
 
 	/**
@@ -118,7 +118,7 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 	 *
 	 * @param event     — typed event name
 	 * @param handler   — callback invoked when the event is published
-	 * @param options   — must include `subscriberName`; optional `sessionId` filter
+	 * @param options   — must include `subscriberName`; optional `namespaceId` filter
 	 * @returns unsubscribe function
 	 */
 	subscribe<K extends keyof TEventMap & string>(
@@ -127,11 +127,11 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 		options: SubscribeOptions
 	): () => void {
 		const eventKey = event;
-		const sessionKey = options.sessionId ?? GLOBAL_SESSION_KEY;
+		const namespaceKey = options.namespaceId ?? GLOBAL_NAMESPACE_KEY;
 
-		if (options.sessionId === GLOBAL_SESSION_KEY) {
+		if (options.namespaceId === GLOBAL_NAMESPACE_KEY) {
 			throw new Error(
-				`'${GLOBAL_SESSION_KEY}' is a reserved session key and cannot be used as an explicit sessionId`
+				`'${GLOBAL_NAMESPACE_KEY}' is a reserved namespace key and cannot be used as an explicit namespaceId`
 			);
 		}
 
@@ -139,16 +139,16 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 			throw new Error('InternalEventBus.subscribe requires a non-empty subscriberName');
 		}
 
-		let sessionMap = this.handlers.get(eventKey);
-		if (!sessionMap) {
-			sessionMap = new Map();
-			this.handlers.set(eventKey, sessionMap);
+		let namespaceMap = this.handlers.get(eventKey);
+		if (!namespaceMap) {
+			namespaceMap = new Map();
+			this.handlers.set(eventKey, namespaceMap);
 		}
 
-		let handlerSet = sessionMap.get(sessionKey);
+		let handlerSet = namespaceMap.get(namespaceKey);
 		if (!handlerSet) {
 			handlerSet = new Set();
-			sessionMap.set(sessionKey, handlerSet);
+			namespaceMap.set(namespaceKey, handlerSet);
 		}
 
 		const registered: RegisteredHandler = {
@@ -161,10 +161,10 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 		return () => {
 			const map = this.handlers.get(eventKey);
 			if (!map) return;
-			const set = map.get(sessionKey);
+			const set = map.get(namespaceKey);
 			if (!set) return;
 			set.delete(registered);
-			if (set.size === 0) map.delete(sessionKey);
+			if (set.size === 0) map.delete(namespaceKey);
 			if (map.size === 0) this.handlers.delete(eventKey);
 		};
 	}
@@ -185,28 +185,28 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 		data: TEventMap[K] & InternalEventPayload
 	): Promise<PublishResult> {
 		const eventKey = event;
-		const sessionMap = this.handlers.get(eventKey);
+		const namespaceMap = this.handlers.get(eventKey);
 
-		if (!sessionMap || sessionMap.size === 0) {
+		if (!namespaceMap || namespaceMap.size === 0) {
 			return { delivered: 0, failures: [] };
 		}
 
-		const sessionId = data.sessionId;
+		const namespaceId = data.namespaceId;
 		const failures: HandlerFailure[] = [];
 		let delivered = 0;
 
 		const targets: RegisteredHandler[] = [];
 
-		// Session-scoped handlers
-		const scoped = sessionMap.get(sessionId);
+		// Namespace-scoped handlers
+		const scoped = namespaceMap.get(namespaceId);
 		if (scoped) {
 			for (const h of scoped) targets.push(h);
 		}
 
-		// Global handlers — only add when sessionId is not the global sentinel
+		// Global handlers — only add when namespaceId is not the global sentinel
 		// to prevent double-delivery of the same handler set.
-		if (sessionId !== GLOBAL_SESSION_KEY) {
-			const global = sessionMap.get(GLOBAL_SESSION_KEY);
+		if (namespaceId !== GLOBAL_NAMESPACE_KEY) {
+			const global = namespaceMap.get(GLOBAL_NAMESPACE_KEY);
 			if (global) {
 				for (const h of global) targets.push(h);
 			}
@@ -264,7 +264,7 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 	}
 
 	/**
-	 * Remove every handler for the given event (all sessions).
+	 * Remove every handler for the given event (all namespaces).
 	 */
 	off<K extends keyof TEventMap & string>(event: K): void {
 		this.handlers.delete(event);
@@ -279,28 +279,28 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 
 	/**
 	 * Return the total number of registered handlers for an event
-	 * across all session scopes.
+	 * across all namespace scopes.
 	 */
 	getHandlerCount<K extends keyof TEventMap & string>(event: K): number {
-		const sessionMap = this.handlers.get(event);
-		if (!sessionMap) return 0;
+		const namespaceMap = this.handlers.get(event);
+		if (!namespaceMap) return 0;
 		let total = 0;
-		for (const set of sessionMap.values()) {
+		for (const set of namespaceMap.values()) {
 			total += set.size;
 		}
 		return total;
 	}
 
 	/**
-	 * Return the number of registered handlers for a specific session scope.
+	 * Return the number of registered handlers for a specific namespace scope.
 	 */
-	getHandlerCountForSession<K extends keyof TEventMap & string>(
+	getHandlerCountForNamespace<K extends keyof TEventMap & string>(
 		event: K,
-		sessionId: string
+		namespaceId: string
 	): number {
-		const sessionMap = this.handlers.get(event);
-		if (!sessionMap) return 0;
-		return sessionMap.get(sessionId)?.size ?? 0;
+		const namespaceMap = this.handlers.get(event);
+		if (!namespaceMap) return 0;
+		return namespaceMap.get(namespaceId)?.size ?? 0;
 	}
 }
 
@@ -334,10 +334,10 @@ export function createInternalEventBus<
  * `.mcp.json` import refresh. Subscribers (e.g. StateProjectionService) re-broadcast
  * the latest settings to clients on the global settings channel.
  *
- * Always carries `sessionId: 'global'` — settings are application-wide.
+ * Always carries `namespaceId: 'global'` — settings are application-wide.
  */
 export interface SettingsUpdatedEvent {
-	sessionId: string;
+	namespaceId: string;
 	settings: GlobalSettings;
 }
 
@@ -360,24 +360,24 @@ export interface ExternalEventEvents {
  * These events drive StateProjectionService cache updates.
  */
 export interface SessionEvents {
-	'session.created': { sessionId: string; session: import('@neokai/shared').Session };
+	'session.created': { namespaceId: string; session: import('@neokai/shared').Session };
 	'session.updated': {
-		sessionId: string;
+		namespaceId: string;
 		source?: string;
 		session?: Partial<import('@neokai/shared').Session>;
 		processingState?: import('@neokai/shared').AgentProcessingState;
 	};
-	'session.deleted': { sessionId: string };
-	'commands.updated': { sessionId: string; commands: string[] };
-	'session.error': { sessionId: string; error: string; details?: unknown };
-	'session.errorClear': { sessionId: string };
+	'session.deleted': { namespaceId: string };
+	'commands.updated': { namespaceId: string; commands: string[] };
+	'session.error': { namespaceId: string; error: string; details?: unknown };
+	'session.errorClear': { namespaceId: string };
 }
 
 /**
  * API connection events — migrated from DaemonHub to InternalEventBus in M5.
  */
 export interface ApiConnectionEvents {
-	'api.connection': { sessionId: string } & import('@neokai/shared').ApiConnectionState;
+	'api.connection': { namespaceId: string } & import('@neokai/shared').ApiConnectionState;
 }
 
 // ---------------------------------------------------------------------------
@@ -387,7 +387,7 @@ export interface ApiConnectionEvents {
 
 /** A task has transitioned to `blocked` and requires judgment. */
 export interface SpaceTaskBlockedEvent {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	taskId: string;
 	reason: string;
@@ -401,7 +401,7 @@ export interface SpaceTaskBlockedEvent {
  * emitted by any publisher. Will be wired when the runtime adds an unblock path.
  */
 export interface SpaceTaskUnblockedEvent {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	taskId: string;
 	reason: string;
@@ -416,7 +416,7 @@ export interface SpaceTaskUnblockedEvent {
  * for terminal runs rather than per-task completion events.
  */
 export interface SpaceTaskCompletedEvent {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	taskId: string;
 	status: 'done' | 'cancelled' | 'blocked';
@@ -431,7 +431,7 @@ export interface SpaceTaskCompletedEvent {
  * `space.task.blocked` with the failure reason.
  */
 export interface SpaceTaskFailedEvent {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	taskId: string;
 	reason: string;
@@ -440,7 +440,7 @@ export interface SpaceTaskFailedEvent {
 
 /** A Task Agent session crashed unexpectedly. */
 export interface SpaceAgentCrashedEvent {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	taskId: string;
 	timestamp: string;
@@ -454,7 +454,7 @@ export interface SpaceAgentCrashedEvent {
  * without emitting a dedicated recovery event.
  */
 export interface SpaceAgentRecoveredEvent {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	taskId: string;
 	timestamp: string;
@@ -462,7 +462,7 @@ export interface SpaceAgentRecoveredEvent {
 
 /** A stuck agent was auto-completed by the runtime after timeout. */
 export interface SpaceAgentAutoCompletedEvent {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	taskId: string;
 	elapsedMs: number;
@@ -471,7 +471,7 @@ export interface SpaceAgentAutoCompletedEvent {
 
 /** A node agent went idle without a terminal SDK message or reported status. */
 export interface SpaceAgentIdleNonTerminalEvent {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	taskId: string;
 	runId: string;
@@ -484,7 +484,7 @@ export interface SpaceAgentIdleNonTerminalEvent {
 
 /** A workflow run has reached a terminal state. */
 export interface SpaceWorkflowRunCompletedEvent {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	runId: string;
 	status: 'done' | 'cancelled' | 'blocked';
@@ -494,7 +494,7 @@ export interface SpaceWorkflowRunCompletedEvent {
 
 /** A workflow run has failed with an unrecoverable error. */
 export interface SpaceWorkflowRunFailedEvent {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	runId: string;
 	reason: string;
@@ -503,7 +503,7 @@ export interface SpaceWorkflowRunFailedEvent {
 
 /** A workflow run has transitioned to `blocked`. */
 export interface SpaceWorkflowRunBlockedEvent {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	runId: string;
 	reason: string;
@@ -512,7 +512,7 @@ export interface SpaceWorkflowRunBlockedEvent {
 
 /** A previously-terminal workflow run has been reopened back to `in_progress`. */
 export interface SpaceWorkflowRunReopenedEvent {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	runId: string;
 	fromStatus: 'done' | 'cancelled';
@@ -523,7 +523,7 @@ export interface SpaceWorkflowRunReopenedEvent {
 
 /** A blocked execution is being automatically retried by the runtime. */
 export interface SpaceWorkflowRunRetryEvent {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	taskId: string;
 	runId: string;
@@ -535,7 +535,7 @@ export interface SpaceWorkflowRunRetryEvent {
 
 /** A blocked workflow run has exhausted automatic retries and needs attention. */
 export interface SpaceWorkflowRunNeedsAttentionEvent {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	runId: string;
 	taskId: string;
@@ -546,7 +546,7 @@ export interface SpaceWorkflowRunNeedsAttentionEvent {
 
 /** A task has paused at a completion action that requires approval. */
 export interface SpaceTaskAwaitingApprovalEvent {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	taskId: string;
 	actionId: string;
@@ -561,7 +561,7 @@ export interface SpaceTaskAwaitingApprovalEvent {
 
 /** A task has been running longer than the configured timeout threshold. */
 export interface SpaceTaskTimeoutEvent {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	taskId: string;
 	elapsedMs: number;

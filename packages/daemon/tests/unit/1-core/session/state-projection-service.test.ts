@@ -309,7 +309,7 @@ describe('StateProjectionService', () => {
 			// Simulate session.updated event populating the cache
 			const updateHandler = eventSubscribers.get('session.updated')?.[0];
 			await updateHandler!({
-				sessionId: 'leader-session-id',
+				namespaceId: 'leader-session-id',
 				processingState: { status: 'waiting_for_input', pendingQuestion },
 			});
 
@@ -374,14 +374,14 @@ describe('StateProjectionService', () => {
 				// First create a session to cache
 				const createHandler = eventSubscribers.get('session.created')?.[0];
 				await createHandler!({
-					sessionId: 'test-id',
+					namespaceId: 'test-id',
 					session: { id: 'test-id', title: 'Original', status: 'active', metadata: {} },
 				});
 
 				// Now update it
 				const updateHandler = eventSubscribers.get('session.updated')?.[0];
 				await updateHandler!({
-					sessionId: 'test-id',
+					namespaceId: 'test-id',
 					session: { title: 'Updated' },
 					processingState: { status: 'processing' },
 				});
@@ -414,13 +414,13 @@ describe('StateProjectionService', () => {
 				// First create a session to cache
 				const createHandler = eventSubscribers.get('session.created')?.[0];
 				await createHandler!({
-					sessionId: 'test-id',
+					namespaceId: 'test-id',
 					session: { id: 'test-id', title: 'Test', status: 'active', metadata: {} },
 				});
 
 				// Now delete it
 				const deleteHandler = eventSubscribers.get('session.deleted')?.[0];
-				await deleteHandler!({ sessionId: 'test-id' });
+				await deleteHandler!({ namespaceId: 'test-id' });
 
 				// Forwarding extracted to ClientEventBridge; StateProjectionService only clears caches
 				expect(mockMessageHub.event).not.toHaveBeenCalledWith(
@@ -458,7 +458,7 @@ describe('StateProjectionService', () => {
 
 				// Delete the session
 				const deleteHandler = eventSubscribers.get('session.deleted')?.[0];
-				await deleteHandler!({ sessionId: 'test-id' });
+				await deleteHandler!({ namespaceId: 'test-id' });
 
 				// After deletion, versions for that session should be gone.
 				// Verify by broadcasting again for the same sessionId — if cleanup
@@ -477,7 +477,7 @@ describe('StateProjectionService', () => {
 		describe('settings.updated', () => {
 			it('should broadcast settings change via InternalEventBus', async () => {
 				const handler = eventSubscribers.get('settings.updated')?.[0];
-				await handler!({ sessionId: 'global', settings: {} as GlobalSettings });
+				await handler!({ namespaceId: 'global', settings: {} as GlobalSettings });
 
 				expect(mockMessageHub.event).toHaveBeenCalledWith(
 					STATE_CHANNELS.GLOBAL_SETTINGS,
@@ -494,7 +494,7 @@ describe('StateProjectionService', () => {
 				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
 
 				const handler = eventSubscribers.get('commands.updated')?.[0];
-				await handler!({ sessionId: 'test-id', commands: ['cmd1', 'cmd2'] });
+				await handler!({ namespaceId: 'test-id', commands: ['cmd1', 'cmd2'] });
 
 				// Forwarding extracted to ClientEventBridge; StateProjectionService only caches
 				const calls = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls;
@@ -509,7 +509,7 @@ describe('StateProjectionService', () => {
 
 				const handler = eventSubscribers.get('session.error')?.[0];
 				await handler!({
-					sessionId: 'test-id',
+					namespaceId: 'test-id',
 					error: 'Something went wrong',
 					details: { code: 'ERR_001' },
 				});
@@ -526,7 +526,7 @@ describe('StateProjectionService', () => {
 				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
 
 				const clearHandler = eventSubscribers.get('session.errorClear')?.[0];
-				await clearHandler!({ sessionId: 'test-id' });
+				await clearHandler!({ namespaceId: 'test-id' });
 
 				// Forwarding extracted to ClientEventBridge; StateProjectionService only clears cache
 				const calls = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls;
@@ -541,7 +541,7 @@ describe('StateProjectionService', () => {
 
 				const handler = eventSubscribers.get('api.connection')?.[0];
 				const connectionData = {
-					sessionId: 'global',
+					namespaceId: 'global',
 					status: 'disconnected' as const,
 					timestamp: Date.now(),
 				};

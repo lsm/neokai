@@ -180,8 +180,8 @@ export class StateProjectionService {
 		this.internalEventBus.subscribe(
 			'session.updated',
 			async (data) => {
-				const { sessionId, session, processingState } = data as unknown as {
-					sessionId: string;
+				const { namespaceId, session, processingState } = data as unknown as {
+					namespaceId: string;
 					session?: Partial<Session>;
 					processingState?: AgentProcessingState;
 				};
@@ -191,19 +191,19 @@ export class StateProjectionService {
 				// This prevents sidebar cost display from resetting to $0.00 when clicking sessions.
 				// Initial full session data comes from getSessionsState() which reads from DB.
 				if (session) {
-					const existing = this.sessionCache.get(sessionId);
+					const existing = this.sessionCache.get(namespaceId);
 					if (existing) {
-						this.sessionCache.set(sessionId, { ...existing, ...session });
+						this.sessionCache.set(namespaceId, { ...existing, ...session });
 					}
 					// Skip storing partial session data if no existing entry - broadcastSessionUpdateFromCache
 					// will handle this case by skipping the broadcast
 				}
 				if (processingState) {
-					this.processingStateCache.set(sessionId, processingState);
+					this.processingStateCache.set(namespaceId, processingState);
 				}
 
 				// Trigger broadcast via separate subscriber path
-				await this.broadcastSessionUpdateFromCache(sessionId);
+				await this.broadcastSessionUpdateFromCache(namespaceId);
 			},
 			{ subscriberName: 'StateProjectionService.sessionUpdated' }
 		);
@@ -212,18 +212,18 @@ export class StateProjectionService {
 		this.internalEventBus.subscribe(
 			'session.deleted',
 			(data) => {
-				const { sessionId } = data as unknown as { sessionId: string };
+				const { namespaceId } = data as unknown as { namespaceId: string };
 
 				// Clear caches
-				this.sessionCache.delete(sessionId);
-				this.processingStateCache.delete(sessionId);
-				this.commandsCache.delete(sessionId);
-				this.errorCache.delete(sessionId);
+				this.sessionCache.delete(namespaceId);
+				this.processingStateCache.delete(namespaceId);
+				this.commandsCache.delete(namespaceId);
+				this.errorCache.delete(namespaceId);
 
 				// FIX: Clean up channelVersions for deleted session
-				this.channelVersions.delete(`${STATE_CHANNELS.SESSION}:${sessionId}`);
-				this.channelVersions.delete(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}:${sessionId}`);
-				this.channelVersions.delete(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta:${sessionId}`);
+				this.channelVersions.delete(`${STATE_CHANNELS.SESSION}:${namespaceId}`);
+				this.channelVersions.delete(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}:${namespaceId}`);
+				this.channelVersions.delete(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta:${namespaceId}`);
 			},
 			{ subscriberName: 'StateProjectionService.sessionDeleted' }
 		);
@@ -241,11 +241,11 @@ export class StateProjectionService {
 		this.internalEventBus.subscribe(
 			'commands.updated',
 			(data) => {
-				const { sessionId, commands } = data as unknown as {
-					sessionId: string;
+				const { namespaceId, commands } = data as unknown as {
+					namespaceId: string;
 					commands: string[];
 				};
-				this.commandsCache.set(sessionId, commands);
+				this.commandsCache.set(namespaceId, commands);
 			},
 			{ subscriberName: 'StateProjectionService.commandsUpdated' }
 		);
@@ -254,12 +254,12 @@ export class StateProjectionService {
 		this.internalEventBus.subscribe(
 			'session.error',
 			(data) => {
-				const { sessionId, error, details } = data as unknown as {
-					sessionId: string;
+				const { namespaceId, error, details } = data as unknown as {
+					namespaceId: string;
 					error: string;
 					details?: unknown;
 				};
-				this.errorCache.set(sessionId, {
+				this.errorCache.set(namespaceId, {
 					message: error,
 					details,
 					occurredAt: Date.now(),
@@ -272,8 +272,8 @@ export class StateProjectionService {
 		this.internalEventBus.subscribe(
 			'session.errorClear',
 			(data) => {
-				const { sessionId } = data as unknown as { sessionId: string };
-				this.errorCache.set(sessionId, null);
+				const { namespaceId } = data as unknown as { namespaceId: string };
+				this.errorCache.set(namespaceId, null);
 			},
 			{ subscriberName: 'StateProjectionService.sessionErrorClear' }
 		);
