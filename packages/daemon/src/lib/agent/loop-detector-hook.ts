@@ -223,11 +223,15 @@ function buildArgKey(toolName: string, input: Record<string, unknown>, cwd?: str
 	if (toolName === 'Bash') {
 		// Drop the non-semantic label, fold in cwd so the same command in
 		// different repositories does not collide, and canonicalise optional
-		// default-valued fields so omitted vs explicit `false` collide.
+		// default-valued fields so omitted vs explicit defaults collide.
+		// Claude Code's Bash tool defaults: timeout=120_000ms,
+		// run_in_background=false, dangerouslyDisableSandbox=false.
 		const { description: _description, ...rest } = input;
 		const normalised = {
 			...rest,
+			timeout: rest.timeout ?? 120_000,
 			run_in_background: rest.run_in_background ?? false,
+			dangerouslyDisableSandbox: rest.dangerouslyDisableSandbox ?? false,
 		};
 		const withCwd = cwd ? { ...normalised, __cwd: cwd } : normalised;
 		return stableStringify(withCwd);
@@ -298,6 +302,16 @@ interface LoopDetectorState {
 	 * across many sessions would accumulate map entries indefinitely.
 	 */
 	bashFailures: Map<string, BashFailureRing>;
+	/**
+	 * Per-`tool_use_id` fingerprint cache. When a PreToolUse hook rewrites
+	 * Bash input via `updatedInput` (e.g. the output-limiter wraps the
+	 * command with head/tail), the `tool_input` seen by our Pre hook and
+	 * the `tool_input` seen by our Post hook can diverge. We store the
+	 * fingerprint computed in the Pre hook keyed by `tool_use_id` so the
+	 * post hooks use the EXACT same fingerprint, ensuring the streak
+	 * ledger and failure ring stay in sync.
+	 */
+	bashFingerprints: Map<string, string>;
 }
 
 interface BashFailureRing {
@@ -309,6 +323,7 @@ function createState(): LoopDetectorState {
 	return {
 		ledger: new Map(),
 		bashFailures: new Map(),
+		bashFingerprints: new Map(),
 	};
 }
 
@@ -481,9 +496,16 @@ function buildPreToolUseCallback(
 
 		// Bash deny path: streak + persistent-failure required.
 		if (isBash) {
+			const fingerprint = buildArgKey('Bash', args, cwd);
+			// Cache the fingerprint by tool_use_id so post hooks use the SAME
+			// fingerprint even when another PreToolUse hook (e.g. output-
+			// limiter) rewrites the command via updatedInput. Without this,
+			// the streak key (computed in pre) and the failure-ring key
+			// (computed in post) would diverge and the detector would never
+			// accumulate enough failures to deny.
+			state.bashFingerprints.set(preInput.tool_use_id, fingerprint);
 			const bashThreshold = finalConfig.bash.threshold;
 			if (nextCount >= bashThreshold) {
-				const fingerprint = buildArgKey('Bash', args, cwd);
 				const { allFailures, length } = lastNAllFailures(
 					state,
 					scope,
@@ -548,7 +570,7 @@ function buildPostToolUseCallback(
 	state: LoopDetectorState,
 	finalConfig: Required<LoopDetectorConfig>
 ): HookCallback {
-	return async (input, _toolUseID, { signal: _signal }) => {
+	return async (input, toolUseID, { signal: _signal }) => {
 		if (!finalConfig.enabled) return {};
 		if (!finalConfig.bash.enabled) return {};
 		if (input.hook_event_name !== 'PostToolUse') return {};
@@ -557,7 +579,15 @@ function buildPostToolUseCallback(
 		if (postInput.tool_name !== 'Bash') return {};
 
 		const args = (postInput.tool_input ?? {}) as Record<string, unknown>;
-		const fingerprint = buildArgKey('Bash', args, postInput.cwd);
+		// Use the fingerprint cached by the Pre hook (keyed by tool_use_id)
+		// so the post hook agrees with the pre hook even when another
+		// PreToolUse hook rewrote the input via updatedInput. Fall back to
+		// computing from the post hook's own input if the cache entry is
+		// missing (should not happen in normal operation).
+		const fingerprint =
+			(toolUseID ? state.bashFingerprints.get(toolUseID) : undefined) ??
+			buildArgKey('Bash', args, postInput.cwd);
+		if (toolUseID) state.bashFingerprints.delete(toolUseID);
 		const scope = scopeKey(postInput);
 		// PostToolUse is the success path — the tool executed and produced a
 		// result. We record success unconditionally; failures are accounted
@@ -590,7 +620,7 @@ function buildPostToolUseFailureCallback(
 	state: LoopDetectorState,
 	finalConfig: Required<LoopDetectorConfig>
 ): HookCallback {
-	return async (input, _toolUseID, { signal: _signal }) => {
+	return async (input, toolUseID, { signal: _signal }) => {
 		if (!finalConfig.enabled) return {};
 		if (!finalConfig.bash.enabled) return {};
 		if (input.hook_event_name !== 'PostToolUseFailure') return {};
@@ -601,7 +631,13 @@ function buildPostToolUseFailureCallback(
 		if (postInput.is_interrupt === true) return {};
 
 		const args = (postInput.tool_input ?? {}) as Record<string, unknown>;
-		const fingerprint = buildArgKey('Bash', args, postInput.cwd);
+		// Use the fingerprint cached by the Pre hook (keyed by tool_use_id)
+		// so the post hook agrees with the pre hook even when another
+		// PreToolUse hook rewrote the input via updatedInput.
+		const fingerprint =
+			(toolUseID ? state.bashFingerprints.get(toolUseID) : undefined) ??
+			buildArgKey('Bash', args, postInput.cwd);
+		if (toolUseID) state.bashFingerprints.delete(toolUseID);
 		const scope = scopeKey(postInput);
 		recordBashOutcome(
 			state,

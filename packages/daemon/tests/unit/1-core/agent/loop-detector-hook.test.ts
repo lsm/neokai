@@ -961,5 +961,33 @@ describe('LoopDetectorHook', () => {
 				hookSpecificOutput: { permissionDecision: 'deny' },
 			});
 		});
+
+		it('uses the same fingerprint for streak and failure ring even when another hook rewrites the input', async () => {
+			// Regression test for review feedback: if another PreToolUse hook
+			// (e.g. output-limiter) rewrites the command via updatedInput, the
+			// post hooks see a different tool_input than the pre hook. Without
+			// tool_use_id correlation, the streak key and failure ring key
+			// diverge and the detector never accumulates enough failures to
+			// deny. We cache the fingerprint by tool_use_id in the pre hook
+			// and look it up in the post hooks.
+			const { preToolUse, postToolUseFailure } = createLoopDetectorHooks();
+			const command = 'git status';
+
+			for (let i = 0; i < 5; i++) {
+				const pre = makePreToolUse('Bash', { command });
+				expect(await call(preToolUse, pre)).toEqual({});
+				// Simulate another hook rewriting the command: the post hook
+				// receives a DIFFERENT tool_input than the pre hook saw.
+				const rewrittenInput = { command: 'wrapped-git-status', description: 'wrapped' };
+				await callPost(postToolUseFailure, makePostToolUseFailure('Bash', rewrittenInput));
+			}
+
+			// The 6th call should deny because the pre and post hooks agreed
+			// on the fingerprint (via tool_use_id cache), even though the
+			// post hooks saw rewritten inputs.
+			expect(await call(preToolUse, makePreToolUse('Bash', { command }))).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+		});
 	});
 });
