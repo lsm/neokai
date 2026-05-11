@@ -313,9 +313,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
 					if (byHandle) {
 						targetWorkflowId = byHandle.id;
+					} else {
+						// Both selectors failed — ID is unusable and handle is stale.
+						// Reject immediately rather than falling through; the validation
+						// block below does not check space membership, so a cross-space
+						// ID would pass existence/disabled checks incorrectly.
+						return jsonResult({
+							success: false,
+							error: `Workflow not found (id=${targetWorkflowId}, handle=${trimmedHandle})`,
+						});
 					}
-					// If handle also doesn't resolve, keep the stale ID so the validation
-					// block below returns a clear "Workflow not found" error.
 				}
 			} else if (typeof args.workflow_handle === 'string') {
 				const trimmedHandle = args.workflow_handle.trim();
@@ -405,7 +412,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				if (idUnusable && typeof args.workflow_handle === 'string') {
 					const trimmedHandle = args.workflow_handle.trim();
 					if (trimmedHandle) {
-						workflow = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
+						const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
+						if (byHandle) {
+							workflow = byHandle;
+						}
 					}
 				}
 			} else if (typeof args.workflow_handle === 'string') {

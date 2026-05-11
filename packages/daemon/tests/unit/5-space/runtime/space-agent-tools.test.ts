@@ -629,6 +629,39 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.run.workflowId).toBe(wfTarget.id);
 	});
+
+	test('rejects cross-space workflow_id when handle fallback also fails', async () => {
+		const wfSource = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Source WF'
+		);
+		// Create a workflow in another space
+		const otherSpaceId = 'other-space-stale-handle';
+		seedSpaceRow(ctx.db, otherSpaceId);
+		const wfOther = buildSingleStepWorkflow(
+			otherSpaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Other Space WF'
+		);
+		const startResult = await startWorkflowRun(ctx, {
+			workflow_id: wfSource.id,
+			title: 'stale-handle run',
+		});
+		const runId = JSON.parse(startResult.content[0].text).run.id;
+
+		// Pass cross-space ID + a handle that doesn't resolve to anything
+		const result = await makeHandlers(ctx).change_plan({
+			run_id: runId,
+			workflow_id: wfOther.id,
+			workflow_handle: 'nonexistent-handle',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('Workflow not found');
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -864,6 +897,28 @@ describe('createSpaceAgentToolHandlers — get_workflow_detail', () => {
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 		expect(parsed.workflow.id).toBe(targetWf.id);
+	});
+
+	test('preserves disabled workflow when handle is stale', async () => {
+		const disabledWf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Disabled WF stale handle',
+			[],
+			'',
+			true
+		);
+
+		// Pass the disabled ID + a stale handle that doesn't resolve
+		const result = await makeHandlers(ctx).get_workflow_detail({
+			workflow_id: disabledWf.id,
+			workflow_handle: 'nonexistent-stale-handle',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		// Should return the disabled workflow, NOT "not found"
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflow.id).toBe(disabledWf.id);
 	});
 });
 
