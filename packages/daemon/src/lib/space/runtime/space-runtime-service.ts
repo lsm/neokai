@@ -36,6 +36,11 @@ import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
 import { Logger } from '../../logger';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
+import {
+	SpaceAgentNotificationService,
+	type SpaceAgentNotificationServiceConfig,
+} from './space-agent-notification-service';
+import type { InternalEventBus, DaemonInternalEventMap } from '../../internal-event-bus';
 
 const log = new Logger('space-runtime-service');
 
@@ -104,6 +109,15 @@ export interface SpaceRuntimeServiceConfig {
 	 * scheduled tasks via the same code path as the RPC handlers. Optional.
 	 */
 	scheduleService?: import('../schedule/schedule-service').ScheduleService;
+	/**
+	 * Optional InternalEventBus for publishing Space runtime domain events.
+	 * When provided, SpaceRuntime publishes typed events alongside the legacy
+	 * NotificationSink path, and SpaceAgentNotificationService is wired per-space
+	 * to inject agent-facing messages into space:chat:${spaceId} sessions.
+	 *
+	 * This is the preferred integration point for M6+.
+	 */
+	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 }
 
 export class SpaceRuntimeService {
@@ -126,6 +140,11 @@ export class SpaceRuntimeService {
 	 * stops, mirroring `spaceDbQueryServers` for the space-chat session.
 	 */
 	private readonly memberSessionDbQueryServers = new Map<string, DbQueryMcpServer>();
+	/**
+	 * Per-space SpaceAgentNotificationService unsubscribe handles.
+	 * Created when a space's chat session is provisioned; cleaned up on stop.
+	 */
+	private readonly spaceAgentNotificationUnsubs = new Map<string, () => void>();
 	/**
 	 * Resolves when startup-time session provisioning has completed:
 	 *   - every existing space's space:chat session has had MCP tools +
@@ -155,6 +174,7 @@ export class SpaceRuntimeService {
 			...config,
 			nodeExecutionRepo: this.nodeExecutionRepo,
 			selectWorkflowWithLlm: config.selectWorkflowWithLlm ?? selectWorkflowWithLlmDefault,
+			internalEventBus: config.internalEventBus,
 			onTaskUpdated: async ({ spaceId, task, archiveSource }) => {
 				if (!this.config.daemonHub) return;
 				await this.config.daemonHub.emit('space.task.updated', {
@@ -371,6 +391,19 @@ export class SpaceRuntimeService {
 			}
 		}
 		this.memberSessionDbQueryServers.clear();
+
+		// Tear down per-space SpaceAgentNotificationService subscriptions.
+		for (const [spaceId, unsub] of this.spaceAgentNotificationUnsubs) {
+			try {
+				unsub();
+			} catch (error) {
+				log.warn(
+					`Failed to unsubscribe SpaceAgentNotificationService for space ${spaceId}:`,
+					error
+				);
+			}
+		}
+		this.spaceAgentNotificationUnsubs.clear();
 
 		log.info('SpaceRuntimeService stopped');
 	}
@@ -847,6 +880,26 @@ export class SpaceRuntimeService {
 					.catch(() => {});
 			}
 		}
+
+		// Wire SpaceAgentNotificationService for this space when InternalEventBus is available.
+		// This replaces the legacy SessionNotificationSink / setNotificationSink path.
+		if (this.config.internalEventBus && sessionManager) {
+			// Tear down any existing notification service for this space (re-provision safety).
+			const existingUnsub = this.spaceAgentNotificationUnsubs.get(space.id);
+			if (existingUnsub) {
+				existingUnsub();
+			}
+
+			const notificationService = new SpaceAgentNotificationService({
+				internalEventBus: this.config.internalEventBus,
+				sessionFactory: sessionManager,
+				sessionId: spaceChatSessionId,
+				autonomyLevel: space.autonomyLevel ?? 1,
+			} as SpaceAgentNotificationServiceConfig);
+			const unsub = notificationService.subscribe();
+			this.spaceAgentNotificationUnsubs.set(space.id, unsub);
+			log.info(`SpaceAgentNotificationService wired for space ${space.id} (${spaceChatSessionId})`);
+		}
 	}
 
 	/**
@@ -983,6 +1036,9 @@ export class SpaceRuntimeService {
 			// Forward the runtime's current sink so a gate-driven reopen still
 			// surfaces `workflow_run_reopened` to the Space Agent session.
 			notificationSink: this.runtime.getNotificationSink(),
+			// Forward the InternalEventBus so gate-driven reopens also publish
+			// typed `space.workflowRun.reopened` events for bus subscribers.
+			internalEventBus: this.config.internalEventBus,
 			onGatePendingApproval: (runId, gateId) => this.handleGatePendingApproval(runId, gateId),
 		});
 		return router.onGateDataChanged(runId, gateId);
@@ -1043,6 +1099,9 @@ export class SpaceRuntimeService {
 			// terminal runs still surface `workflow_run_reopened` to the Space
 			// Agent session (mirrors `notifyGateDataChanged` above).
 			notificationSink: this.runtime.getNotificationSink(),
+			// Forward the InternalEventBus so activation-driven reopens also publish
+			// typed `space.workflowRun.reopened` events for bus subscribers.
+			internalEventBus: this.config.internalEventBus,
 		});
 		return router.activateNode(runId, nodeId);
 	}

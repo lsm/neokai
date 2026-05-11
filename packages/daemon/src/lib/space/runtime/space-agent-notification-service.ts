@@ -22,21 +22,9 @@
  */
 
 import type { SpaceAutonomyLevel } from '@neokai/shared/types/space';
-import type { MessageDeliveryMode, MessageOrigin } from '@neokai/shared';
 import type { InternalEventBus, DaemonInternalEventMap } from '../../internal-event-bus';
 import { Logger } from '../../logger';
-
-/**
- * Minimal interface for injecting messages into a session.
- * Used by SpaceAgentNotificationService to forward notification events to the Space Agent session.
- */
-interface SessionFactory {
-	injectMessage(
-		sessionId: string,
-		message: string,
-		opts?: { deliveryMode?: MessageDeliveryMode; origin?: MessageOrigin }
-	): Promise<void>;
-}
+import type { SessionFactory } from './types';
 
 const log = new Logger('space-agent-notification-service');
 
@@ -85,8 +73,15 @@ export class SpaceAgentNotificationService {
 	 *
 	 * Call this once after construction. The returned unsubscribe function
 	 * tears down all subscriptions.
+	 *
+	 * Safe to call multiple times — any existing subscriptions are torn down
+	 * before the new set is registered.
 	 */
 	subscribe(): () => void {
+		// Tear down any existing subscriptions to prevent leaks on re-init.
+		for (const unsub of this.unsubscribers) {
+			unsub();
+		}
 		this.unsubscribers = [
 			this.internalEventBus.subscribe(
 				'space.task.blocked',
@@ -443,7 +438,7 @@ function formatTaskAwaitingApproval(
 		autonomyLevel: number;
 		timestamp: string;
 	},
-	_spaceAutonomyLevel: SpaceAutonomyLevel
+	autonomyLevel: SpaceAutonomyLevel
 ): string {
 	const descPart = event.actionDescription ? ` — ${event.actionDescription}` : '';
 	const humanReadable =
@@ -461,7 +456,7 @@ function formatTaskAwaitingApproval(
 		requiredLevel: event.requiredLevel,
 		spaceLevel: event.spaceLevel,
 		timestamp: event.timestamp,
-		autonomyLevel: event.autonomyLevel,
+		autonomyLevel,
 	};
 	if (event.actionDescription !== undefined) {
 		payload['actionDescription'] = event.actionDescription;

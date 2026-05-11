@@ -394,7 +394,12 @@ export interface SpaceTaskBlockedEvent {
 	timestamp: string;
 }
 
-/** A task has been unblocked and is resuming. */
+/**
+ * A task has been unblocked and is resuming.
+ *
+ * Reserved: defined in the event map for forward compatibility, but not yet
+ * emitted by any publisher. Will be wired when the runtime adds an unblock path.
+ */
 export interface SpaceTaskUnblockedEvent {
 	sessionId: string;
 	spaceId: string;
@@ -403,7 +408,13 @@ export interface SpaceTaskUnblockedEvent {
 	timestamp: string;
 }
 
-/** A task has reached a terminal state (completed, failed, or cancelled). */
+/**
+ * A task has reached a terminal state (completed, failed, or cancelled).
+ *
+ * Reserved: defined in the event map for forward compatibility, but not yet
+ * emitted by any publisher. The runtime currently emits `workflowRun.completed`
+ * for terminal runs rather than per-task completion events.
+ */
 export interface SpaceTaskCompletedEvent {
 	sessionId: string;
 	spaceId: string;
@@ -412,7 +423,13 @@ export interface SpaceTaskCompletedEvent {
 	timestamp: string;
 }
 
-/** A task has failed with an unrecoverable error. */
+/**
+ * A task has failed with an unrecoverable error.
+ *
+ * Reserved: defined in the event map for forward compatibility, but not yet
+ * emitted by any publisher. Task failures are currently surfaced via
+ * `space.task.blocked` with the failure reason.
+ */
 export interface SpaceTaskFailedEvent {
 	sessionId: string;
 	spaceId: string;
@@ -429,7 +446,13 @@ export interface SpaceAgentCrashedEvent {
 	timestamp: string;
 }
 
-/** A crashed agent has been recovered (e.g. after retry). */
+/**
+ * A crashed agent has been recovered (e.g. after retry).
+ *
+ * Reserved: defined in the event map for forward compatibility, but not yet
+ * emitted by any publisher. Recovery is currently silent; agents are retried
+ * without emitting a dedicated recovery event.
+ */
 export interface SpaceAgentRecoveredEvent {
 	sessionId: string;
 	spaceId: string;

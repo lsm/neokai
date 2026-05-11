@@ -63,7 +63,11 @@ import { executeGateScript } from './gate-script-executor';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
-import type { InternalEventBus, DaemonInternalEventMap } from '../../internal-event-bus';
+import type {
+	InternalEventBus,
+	DaemonInternalEventMap,
+	InternalEventPayload,
+} from '../../internal-event-bus';
 import {
 	type PostApprovalRouteContext,
 	type PostApprovalRouteResult,
@@ -706,6 +710,15 @@ export class SpaceRuntime {
 	 * Errors are logged at warn level and the tick continues normally.
 	 */
 	private async safeNotify(event: Parameters<NotificationSink['notify']>[0]): Promise<void> {
+		// New path — publish typed event to InternalEventBus FIRST so bus subscribers
+		// are never delayed by a slow or failing legacy sink.
+		if (this.internalEventBus) {
+			const mapped = this.mapNotificationEventToInternalEvent(event);
+			if (mapped) {
+				this.publishToInternalEventBus(mapped.event, mapped.payload);
+			}
+		}
+
 		// Legacy path — keep until all subscribers migrate off NotificationSink.
 		try {
 			await this.notificationSink.notify(event);
@@ -714,25 +727,29 @@ export class SpaceRuntime {
 				`[SpaceRuntime] NotificationSink.notify() threw for event "${event.kind}": ${err instanceof Error ? err.message : String(err)}`
 			);
 		}
+	}
 
-		// New path — publish typed event to InternalEventBus.
-		if (this.internalEventBus) {
-			const mapped = this.mapNotificationEventToInternalEvent(event);
-			if (mapped) {
-				try {
-					// Type assertion: the mapper returns the correct payload shape for each event.
-					(
-						this.internalEventBus.publishAsync as (
-							event: string,
-							payload: DaemonInternalEventMap[keyof DaemonInternalEventMap]
-						) => void
-					)(mapped.event, mapped.payload);
-				} catch (err) {
-					log.warn(
-						`[SpaceRuntime] internalEventBus.publishAsync() threw for event "${mapped.event}": ${err instanceof Error ? err.message : String(err)}`
-					);
-				}
-			}
+	/**
+	 * Type-safe helper that publishes a mapped event to InternalEventBus.
+	 *
+	 * Uses a generic helper to preserve the correlated event→payload type
+	 * relationship without an unsafe cast.
+	 */
+	private publishToInternalEventBus<K extends keyof DaemonInternalEventMap & string>(
+		event: K,
+		payload: DaemonInternalEventMap[K]
+	): void {
+		if (!this.internalEventBus) return;
+		try {
+			// All mapped events carry sessionId and satisfy InternalEventPayload.
+			this.internalEventBus.publishAsync(
+				event,
+				payload as DaemonInternalEventMap[K] & InternalEventPayload
+			);
+		} catch (err) {
+			log.warn(
+				`[SpaceRuntime] internalEventBus.publishAsync() threw for event "${event}": ${err instanceof Error ? err.message : String(err)}`
+			);
 		}
 	}
 

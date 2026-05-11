@@ -4,6 +4,7 @@ import type { SpaceAgentNotificationServiceConfig } from '../../../../src/lib/sp
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus';
 import type { MessageDeliveryMode } from '@neokai/shared';
+import type { SessionFactory } from '../../../../src/lib/space/runtime/types';
 
 // ---------------------------------------------------------------------------
 // Mock SessionFactory
@@ -30,14 +31,6 @@ function makeMockSessionFactory(opts?: {
 	};
 
 	return factory;
-}
-
-interface SessionFactory {
-	injectMessage(
-		sessionId: string,
-		message: string,
-		opts?: { deliveryMode?: MessageDeliveryMode }
-	): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -484,7 +477,8 @@ describe('SpaceAgentNotificationService', () => {
 			expect(json.actionType).toBe('script');
 			expect(json.requiredLevel).toBe(4);
 			expect(json.spaceLevel).toBe(2);
-			expect(json.autonomyLevel).toBe(2);
+			// Service-level autonomy (default 1) is used, not event.autonomyLevel
+			expect(json.autonomyLevel).toBe(1);
 		});
 	});
 
