@@ -239,6 +239,15 @@ export interface TaskAgentManagerConfig {
 	 * registered.
 	 */
 	scheduleService?: import('../schedule/schedule-service').ScheduleService;
+	/**
+	 * Optional InternalEventBus for publishing Space runtime domain events.
+	 * When provided, ChannelRouter instances created by TaskAgentManager will
+	 * dual-publish workflow_run_reopened (and future events) to the bus alongside
+	 * the legacy NotificationSink path.
+	 */
+	internalEventBus?: import('../../internal-event-bus').InternalEventBus<
+		import('../../internal-event-bus').DaemonInternalEventMap
+	>;
 }
 
 // ---------------------------------------------------------------------------
@@ -2103,6 +2112,7 @@ export class TaskAgentManager {
 				isSessionAlive: (sid) => this.isSessionAlive(sid),
 				cancelSessionById: (sid) => this.cancelBySessionId(sid),
 				notificationSink: this.config.spaceRuntimeService.getSharedRuntime().getNotificationSink(),
+				internalEventBus: this.config.internalEventBus,
 				onGatePendingApproval: (runId, gateId) =>
 					this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
 			});
@@ -4332,6 +4342,7 @@ export class TaskAgentManager {
 			// that auto-reopens a terminal run still emits `workflow_run_reopened`
 			// into the Space Agent session.
 			notificationSink: this.config.spaceRuntimeService.getSharedRuntime().getNotificationSink(),
+			internalEventBus: this.config.internalEventBus,
 			onGatePendingApproval: (runId, gateId) =>
 				this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
 		});

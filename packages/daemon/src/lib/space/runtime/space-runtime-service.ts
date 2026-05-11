@@ -481,6 +481,68 @@ export class SpaceRuntimeService {
 		});
 		this.unsubscribers.push(unsubSessionDeleted);
 
+		// When a space is archived or deleted, tear down its notification service
+		// so stale subscribers don't accumulate and fan-out to non-existent sessions.
+		const unsubSpaceArchived = daemonHub.on(
+			'space.archived',
+			(event) => {
+				const unsub = this.spaceAgentNotificationUnsubs.get(event.spaceId);
+				if (unsub) {
+					try {
+						unsub();
+					} catch {
+						log.warn(
+							`Failed to unsubscribe SpaceAgentNotificationService for archived space ${event.spaceId}:`
+						);
+					}
+					this.spaceAgentNotificationUnsubs.delete(event.spaceId);
+				}
+			},
+			{ sessionId: 'global' }
+		);
+		this.unsubscribers.push(unsubSpaceArchived);
+
+		const unsubSpaceDeleted = daemonHub.on(
+			'space.deleted',
+			(event) => {
+				const unsub = this.spaceAgentNotificationUnsubs.get(event.spaceId);
+				if (unsub) {
+					try {
+						unsub();
+					} catch {
+						log.warn(
+							`Failed to unsubscribe SpaceAgentNotificationService for deleted space ${event.spaceId}:`
+						);
+					}
+					this.spaceAgentNotificationUnsubs.delete(event.spaceId);
+				}
+			},
+			{ sessionId: 'global' }
+		);
+		this.unsubscribers.push(unsubSpaceDeleted);
+
+		// When a space is updated, refresh the autonomy level in its notification
+		// service so [TASK_EVENT] messages report the current level.
+		const unsubSpaceUpdated = daemonHub.on(
+			'space.updated',
+			(event) => {
+				const existingUnsub = this.spaceAgentNotificationUnsubs.get(event.spaceId);
+				if (!existingUnsub) return;
+
+				// Re-provision the space chat session, which re-creates the
+				// SpaceAgentNotificationService with the updated autonomy level.
+				if (event.space) {
+					void this.setupSpaceAgentSession(event.space as Space).catch(() => {
+						log.error(
+							`Failed to re-provision space chat session after autonomy update for space ${event.spaceId}:`
+						);
+					});
+				}
+			},
+			{ sessionId: 'global' }
+		);
+		this.unsubscribers.push(unsubSpaceUpdated);
+
 		// Hard resets replace the cached AgentSession with a fresh instance built
 		// only from persisted DB state, so runtime-only MCP servers, Space prompts,
 		// and self-heal callbacks must be re-attached before replay restarts a query.
@@ -894,6 +956,7 @@ export class SpaceRuntimeService {
 				internalEventBus: this.config.internalEventBus,
 				sessionFactory: sessionManager,
 				sessionId: spaceChatSessionId,
+				spaceId: space.id,
 				autonomyLevel: space.autonomyLevel ?? 1,
 			} as SpaceAgentNotificationServiceConfig);
 			const unsub = notificationService.subscribe();

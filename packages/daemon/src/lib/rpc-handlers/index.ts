@@ -556,6 +556,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		pendingMessageRepo,
 		spaceAgentInjector,
 		scheduleService,
+		internalEventBus: deps.internalEventBus,
 	});
 
 	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn

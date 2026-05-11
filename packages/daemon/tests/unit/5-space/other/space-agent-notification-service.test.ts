@@ -63,6 +63,7 @@ function makeService(
 		internalEventBus: bus,
 		sessionFactory: factory,
 		sessionId: SESSION_ID,
+		spaceId: SPACE_ID,
 		...extra,
 	});
 	const unsubscribe = service.subscribe();
@@ -323,7 +324,7 @@ describe('SpaceAgentNotificationService', () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.agent.crashed', {
 				sessionId: 'global',
-				spaceId: 'space-crash',
+				spaceId: SPACE_ID,
 				taskId: 'task-crashed',
 				timestamp: TIMESTAMP,
 			});
@@ -331,14 +332,14 @@ describe('SpaceAgentNotificationService', () => {
 			const { message } = factory.calls[0];
 			expect(message).toContain('[TASK_EVENT] agent_crash');
 			expect(message).toContain('task-crashed');
-			expect(message).toContain('space-crash');
+			expect(message).toContain(SPACE_ID);
 			expect(message).toContain('blocked');
 
 			const json = extractJson(message);
 			expect(json.kind).toBe('agent_crash');
 			expect(json.failureReason).toBe('agentCrash');
 			expect(json.taskId).toBe('task-crashed');
-			expect(json.spaceId).toBe('space-crash');
+			expect(json.spaceId).toBe(SPACE_ID);
 			expect(json.autonomyLevel).toBe(1);
 		});
 	});
@@ -448,7 +449,7 @@ describe('SpaceAgentNotificationService', () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.task.awaitingApproval', {
 				sessionId: 'global',
-				spaceId: 'space-a',
+				spaceId: SPACE_ID,
 				taskId: 'task-1',
 				actionId: 'merge-pr',
 				actionName: 'Merge PR',
@@ -525,6 +526,33 @@ describe('SpaceAgentNotificationService', () => {
 				timestamp: TIMESTAMP,
 			});
 			expect(factory.calls).toHaveLength(1);
+		});
+	});
+
+	describe('per-space filtering', () => {
+		it('ignores events for other spaces', async () => {
+			const { factory, bus } = makeService();
+
+			// Event for the correct space
+			await bus.publish('space.task.blocked', {
+				sessionId: 'global',
+				spaceId: SPACE_ID,
+				taskId: 'task-1',
+				reason: 'Error',
+				timestamp: TIMESTAMP,
+			});
+
+			// Event for a different space
+			await bus.publish('space.task.blocked', {
+				sessionId: 'global',
+				spaceId: 'other-space',
+				taskId: 'task-2',
+				reason: 'Other error',
+				timestamp: TIMESTAMP,
+			});
+
+			expect(factory.calls).toHaveLength(1);
+			expect(factory.calls[0].message).toContain('task-1');
 		});
 	});
 

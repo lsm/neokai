@@ -39,6 +39,12 @@ export interface SpaceAgentNotificationServiceConfig {
 	 */
 	sessionId: string;
 	/**
+	 * The space ID this service is scoped to. Only events whose `spaceId` matches
+	 * this value are processed; events for other spaces are silently ignored.
+	 * This prevents cross-space notification leakage when multiple spaces are active.
+	 */
+	spaceId: string;
+	/**
 	 * The autonomy level for this space. Included in every notification message
 	 * so the agent has context for how much it can act without human approval.
 	 *
@@ -58,6 +64,7 @@ export class SpaceAgentNotificationService {
 	private readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	private readonly sessionFactory: SessionFactory;
 	private readonly sessionId: string;
+	private readonly spaceId: string;
 	private readonly autonomyLevel: SpaceAutonomyLevel;
 	private unsubscribers: Array<() => void> = [];
 
@@ -65,6 +72,7 @@ export class SpaceAgentNotificationService {
 		this.internalEventBus = config.internalEventBus;
 		this.sessionFactory = config.sessionFactory;
 		this.sessionId = config.sessionId;
+		this.spaceId = config.spaceId;
 		this.autonomyLevel = config.autonomyLevel ?? 1;
 	}
 
@@ -85,58 +93,105 @@ export class SpaceAgentNotificationService {
 		this.unsubscribers = [
 			this.internalEventBus.subscribe(
 				'space.task.blocked',
-				(event) => this.notify(formatTaskBlocked(event, this.autonomyLevel)),
-				{ subscriberName: 'SpaceAgentNotificationService:space.task.blocked' }
+				(event) => {
+					if (event.spaceId !== this.spaceId) return;
+					void this.notify(formatTaskBlocked(event, this.autonomyLevel));
+				},
+				{ subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.task.blocked` }
 			),
 			this.internalEventBus.subscribe(
 				'space.workflowRun.blocked',
-				(event) => this.notify(formatWorkflowRunBlocked(event, this.autonomyLevel)),
-				{ subscriberName: 'SpaceAgentNotificationService:space.workflowRun.blocked' }
+				(event) => {
+					if (event.spaceId !== this.spaceId) return;
+					void this.notify(formatWorkflowRunBlocked(event, this.autonomyLevel));
+				},
+				{
+					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.workflowRun.blocked`,
+				}
 			),
 			this.internalEventBus.subscribe(
 				'space.task.timeout',
-				(event) => this.notify(formatTaskTimeout(event, this.autonomyLevel)),
-				{ subscriberName: 'SpaceAgentNotificationService:space.task.timeout' }
+				(event) => {
+					if (event.spaceId !== this.spaceId) return;
+					void this.notify(formatTaskTimeout(event, this.autonomyLevel));
+				},
+				{ subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.task.timeout` }
 			),
 			this.internalEventBus.subscribe(
 				'space.workflowRun.completed',
-				(event) => this.notify(formatWorkflowRunCompleted(event, this.autonomyLevel)),
-				{ subscriberName: 'SpaceAgentNotificationService:space.workflowRun.completed' }
+				(event) => {
+					if (event.spaceId !== this.spaceId) return;
+					void this.notify(formatWorkflowRunCompleted(event, this.autonomyLevel));
+				},
+				{
+					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.workflowRun.completed`,
+				}
 			),
 			this.internalEventBus.subscribe(
 				'space.workflowRun.reopened',
-				(event) => this.notify(formatWorkflowRunReopened(event, this.autonomyLevel)),
-				{ subscriberName: 'SpaceAgentNotificationService:space.workflowRun.reopened' }
+				(event) => {
+					if (event.spaceId !== this.spaceId) return;
+					void this.notify(formatWorkflowRunReopened(event, this.autonomyLevel));
+				},
+				{
+					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.workflowRun.reopened`,
+				}
 			),
 			this.internalEventBus.subscribe(
 				'space.agent.autoCompleted',
-				(event) => this.notify(formatAgentAutoCompleted(event, this.autonomyLevel)),
-				{ subscriberName: 'SpaceAgentNotificationService:space.agent.autoCompleted' }
+				(event) => {
+					if (event.spaceId !== this.spaceId) return;
+					void this.notify(formatAgentAutoCompleted(event, this.autonomyLevel));
+				},
+				{
+					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.agent.autoCompleted`,
+				}
 			),
 			this.internalEventBus.subscribe(
 				'space.agent.crashed',
-				(event) => this.notify(formatAgentCrash(event, this.autonomyLevel)),
-				{ subscriberName: 'SpaceAgentNotificationService:space.agent.crashed' }
+				(event) => {
+					if (event.spaceId !== this.spaceId) return;
+					void this.notify(formatAgentCrash(event, this.autonomyLevel));
+				},
+				{ subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.agent.crashed` }
 			),
 			this.internalEventBus.subscribe(
 				'space.agent.idleNonTerminal',
-				(event) => this.notify(formatAgentIdleNonTerminal(event, this.autonomyLevel)),
-				{ subscriberName: 'SpaceAgentNotificationService:space.agent.idleNonTerminal' }
+				(event) => {
+					if (event.spaceId !== this.spaceId) return;
+					void this.notify(formatAgentIdleNonTerminal(event, this.autonomyLevel));
+				},
+				{
+					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.agent.idleNonTerminal`,
+				}
 			),
 			this.internalEventBus.subscribe(
 				'space.workflowRun.retry',
-				(event) => this.notify(formatTaskRetry(event, this.autonomyLevel)),
-				{ subscriberName: 'SpaceAgentNotificationService:space.workflowRun.retry' }
+				(event) => {
+					if (event.spaceId !== this.spaceId) return;
+					void this.notify(formatTaskRetry(event, this.autonomyLevel));
+				},
+				{ subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.workflowRun.retry` }
 			),
 			this.internalEventBus.subscribe(
 				'space.workflowRun.needsAttention',
-				(event) => this.notify(formatWorkflowRunNeedsAttention(event, this.autonomyLevel)),
-				{ subscriberName: 'SpaceAgentNotificationService:space.workflowRun.needsAttention' }
+				(event) => {
+					if (event.spaceId !== this.spaceId) return;
+					void this.notify(formatWorkflowRunNeedsAttention(event, this.autonomyLevel));
+				},
+				{
+					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.workflowRun.needsAttention`,
+				}
 			),
 			this.internalEventBus.subscribe(
 				'space.task.awaitingApproval',
-				(event) => this.notify(formatTaskAwaitingApproval(event, this.autonomyLevel)),
-				{ subscriberName: 'SpaceAgentNotificationService:space.task.awaitingApproval' }
+				(event) => {
+					if (event.spaceId !== this.spaceId) return;
+					void this.notify(formatTaskAwaitingApproval(event, this.autonomyLevel));
+				},
+				{
+					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.task.awaitingApproval`,
+				}
 			),
 		];
 
