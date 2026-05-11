@@ -23,7 +23,6 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
-import type { NotificationSink } from './notification-sink';
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SessionManager } from '../../session-manager';
 import type { DaemonHub } from '../../daemon-hub';
@@ -111,11 +110,10 @@ export interface SpaceRuntimeServiceConfig {
 	scheduleService?: import('../schedule/schedule-service').ScheduleService;
 	/**
 	 * Optional InternalEventBus for publishing Space runtime domain events.
-	 * When provided, SpaceRuntime publishes typed events alongside the legacy
-	 * NotificationSink path, and SpaceAgentNotificationService is wired per-space
-	 * to inject agent-facing messages into space:chat:${spaceId} sessions.
-	 *
-	 * This is the preferred integration point for M6+.
+	 * When provided, SpaceRuntime publishes typed events such as
+	 * `space.task.blocked` / `space.workflowRun.completed`, and a
+	 * `SpaceAgentNotificationService` is wired per-space to inject agent-facing
+	 * messages into `space:chat:${spaceId}` sessions.
 	 */
 	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 }
@@ -212,8 +210,6 @@ export class SpaceRuntimeService {
 	 * Resolves the circular dependency: SpaceRuntimeService must exist before
 	 * TaskAgentManager (which takes it as a constructor argument), so the manager
 	 * is injected back here once both are created.
-	 *
-	 * Mirrors the setNotificationSink() pattern.
 	 */
 	setTaskAgentManager(manager: TaskAgentManager): void {
 		this.taskAgentManager = manager;
@@ -938,7 +934,8 @@ export class SpaceRuntimeService {
 		}
 
 		// Wire SpaceAgentNotificationService for this space when InternalEventBus is available.
-		// This replaces the legacy SessionNotificationSink / setNotificationSink path.
+		// This delivers agent-facing notifications for runtime events (`space.task.blocked`,
+		// `space.workflowRun.completed`, etc.) into the space chat session.
 		if (this.config.internalEventBus && sessionManager) {
 			// Tear down any existing notification service for this space (re-provision safety).
 			const existingUnsub = this.spaceAgentNotificationUnsubs.get(space.id);
@@ -988,17 +985,6 @@ export class SpaceRuntimeService {
 			this.start();
 		}
 		return this.runtime;
-	}
-
-	/**
-	 * Wire a notification sink into the underlying SpaceRuntime.
-	 *
-	 * Called after construction once the Space Agent session has been provisioned,
-	 * since SpaceRuntimeService is instantiated before the global agent session exists.
-	 * Delegates directly to the shared SpaceRuntime instance.
-	 */
-	setNotificationSink(sink: NotificationSink): void {
-		this.runtime.setNotificationSink(sink);
 	}
 
 	/**
@@ -1090,10 +1076,7 @@ export class SpaceRuntimeService {
 			cancelSessionById: taskAgentManager
 				? (sid) => taskAgentManager.cancelBySessionId(sid)
 				: undefined,
-			// Forward the runtime's current sink so a gate-driven reopen still
-			// surfaces `workflow_run_reopened` to the Space Agent session.
-			notificationSink: this.runtime.getNotificationSink(),
-			// Forward the InternalEventBus so gate-driven reopens also publish
+			// Forward the InternalEventBus so gate-driven reopens publish
 			// typed `space.workflowRun.reopened` events for bus subscribers.
 			internalEventBus: this.config.internalEventBus,
 			onGatePendingApproval: (runId, gateId) => this.handleGatePendingApproval(runId, gateId),
@@ -1152,11 +1135,7 @@ export class SpaceRuntimeService {
 			cancelSessionById: taskAgentManager
 				? (sid) => taskAgentManager.cancelBySessionId(sid)
 				: undefined,
-			// Forward the runtime's current sink so activation-driven reopens of
-			// terminal runs still surface `workflow_run_reopened` to the Space
-			// Agent session (mirrors `notifyGateDataChanged` above).
-			notificationSink: this.runtime.getNotificationSink(),
-			// Forward the InternalEventBus so activation-driven reopens also publish
+			// Forward the InternalEventBus so activation-driven reopens publish
 			// typed `space.workflowRun.reopened` events for bus subscribers.
 			internalEventBus: this.config.internalEventBus,
 		});

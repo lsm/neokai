@@ -30,17 +30,6 @@ export type {
 } from './runtime/workflow-executor';
 export { SpaceRuntime } from './runtime/space-runtime';
 export type { SpaceRuntimeConfig } from './runtime/space-runtime';
-export { NullNotificationSink } from './runtime/notification-sink';
-export type {
-	NotificationSink,
-	SpaceNotificationEvent,
-	TaskBlockedEvent,
-	WorkflowRunBlockedEvent,
-	TaskTimeoutEvent,
-	WorkflowRunCompletedEvent,
-} from './runtime/notification-sink';
-export { SessionNotificationSink, formatEventMessage } from './runtime/session-notification-sink';
-export type { SessionNotificationSinkConfig } from './runtime/session-notification-sink';
 export { SpaceRuntimeService } from './runtime/space-runtime-service';
 export type { SpaceRuntimeServiceConfig } from './runtime/space-runtime-service';
 export { SpaceAgentNotificationService } from './runtime/space-agent-notification-service';

@@ -22,10 +22,6 @@ import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/sp
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import type {
-	NotificationSink,
-	SpaceNotificationEvent,
-} from '../../../../src/lib/space/runtime/notification-sink.ts';
 import type { SessionManager } from '../../../../src/lib/session-manager.ts';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub.ts';
@@ -255,15 +251,6 @@ describe('SpaceRuntimeService', () => {
 			// Must not throw — Promise.allSettled swallows per-task failures.
 			await expect(svc.stopActiveWork('space-1')).resolves.toBeUndefined();
 			expect(cleanupCalls.sort()).toEqual(['broken', 'ok-1', 'ok-2']);
-		});
-	});
-
-	// ─── setNotificationSink ─────────────────────────────────────────────────
-
-	describe('setNotificationSink()', () => {
-		test('method exists and is callable', () => {
-			// Verify the delegation method is present on SpaceRuntimeService
-			expect(typeof service.setNotificationSink).toBe('function');
 		});
 	});
 
@@ -1300,37 +1287,24 @@ describe('SpaceRuntimeService', () => {
 	});
 });
 
-// ─── setNotificationSink() integration tests ─────────────────────────────────
-//
-// Requires a real DB to trigger actual events via executeTick().
-
-class MockSink implements NotificationSink {
-	readonly events: SpaceNotificationEvent[] = [];
-	notify(event: SpaceNotificationEvent): Promise<void> {
-		this.events.push(event);
-		return Promise.resolve();
-	}
-}
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function makeTestDb(): BunDatabase {
-	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
-	// I/O contention that caused beforeEach hook timeouts in CI.
 	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
 	return db;
 }
 
-// ─── activateWorkflowNode — notification sink forwarding ─────────────────────
+// ─── activateWorkflowNode — InternalEventBus forwarding ─────────────────────
 //
 // Regression guard: SpaceRuntimeService.activateWorkflowNode must forward the
-// runtime's current NotificationSink into the scoped ChannelRouter so that
-// ChannelRouter.activateNode()'s `workflow_run_reopened` events propagate to
-// the Space Agent session. Without the sink wiring, reopens of terminal runs
-// would be silently dropped.
+// InternalEventBus into the scoped ChannelRouter so that ChannelRouter.activateNode()'s
+// `workflow_run_reopened` events propagate to subscribers. Without the bus wiring,
+// reopens of terminal runs would be silently dropped.
 
-describe('activateWorkflowNode() — notification forwarding', () => {
-	test('forwards workflow_run_reopened to the current NotificationSink when reopening a done run', async () => {
+describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
+	test('publishes space.workflowRun.reopened to InternalEventBus when reopening a done run', async () => {
 		const db = makeTestDb();
 		try {
 			const SPACE_ID = 'space-act-sink-1';
@@ -1365,6 +1339,20 @@ describe('activateWorkflowNode() — notification forwarding', () => {
 			const workflowRepo = new SpaceWorkflowRepository(db);
 			const workflowManager = new WorkflowMgr(workflowRepo);
 			const spaceManager = new SpaceMgr(db);
+
+			const { InternalEventBus } = await import('../../../../src/lib/internal-event-bus.ts');
+			type DaemonInternalEventMap =
+				import('../../../../src/lib/internal-event-bus.ts').DaemonInternalEventMap;
+
+			const bus = new InternalEventBus<DaemonInternalEventMap>();
+			const busEvents: Array<{ event: string; payload: unknown }> = [];
+			bus.subscribe(
+				'space.workflowRun.reopened',
+				(payload) => {
+					busEvents.push({ event: 'space.workflowRun.reopened', payload });
+				},
+				{ subscriberName: 'test-activate-subscriber' }
+			);
 
 			// Minimal two-node workflow
 			const workflow = workflowManager.createWorkflow({
@@ -1411,24 +1399,17 @@ describe('activateWorkflowNode() — notification forwarding', () => {
 				tickIntervalMs: 60_000,
 				gateDataRepo,
 				channelCycleRepo,
+				internalEventBus: bus,
 			});
 
-			// Install a recording sink AFTER construction — mirrors the real wiring
-			// order (service is built before the Space Agent session exists).
-			const sink = new MockSink();
-			service.setNotificationSink(sink);
-
-			// Activating a node on a `done` run must reopen it and notify.
+			// Activating a node on a `done` run must reopen it and publish to bus.
 			await service.activateWorkflowNode(run.id, NODE_B);
 
-			const reopens = sink.events.filter((e) => e.kind === 'workflow_run_reopened');
-			expect(reopens).toHaveLength(1);
-			expect(reopens[0].kind).toBe('workflow_run_reopened');
-			if (reopens[0].kind === 'workflow_run_reopened') {
-				expect(reopens[0].runId).toBe(run.id);
-				expect(reopens[0].spaceId).toBe(SPACE_ID);
-				expect(reopens[0].fromStatus).toBe('done');
-			}
+			expect(busEvents).toHaveLength(1);
+			const payload = busEvents[0].payload as Record<string, unknown>;
+			expect(payload['runId']).toBe(run.id);
+			expect(payload['spaceId']).toBe(SPACE_ID);
+			expect(payload['fromStatus']).toBe('done');
 		} finally {
 			try {
 				db.close();

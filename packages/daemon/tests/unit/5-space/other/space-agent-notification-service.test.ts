@@ -79,7 +79,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('injects a message with [TASK_EVENT] prefix when space.task.blocked is published', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.task.blocked', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-1',
 				reason: 'Agent reported an error',
@@ -94,7 +94,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('injects into the correct session ID', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.task.blocked', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-1',
 				reason: 'Error',
@@ -107,7 +107,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('uses defer delivery mode', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.task.blocked', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-1',
 				reason: 'Error',
@@ -120,7 +120,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('message includes human-readable text with taskId, spaceId, and reason', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.task.blocked', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-99',
 				reason: 'Unrecoverable build failure',
@@ -136,7 +136,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('message includes JSON payload with all event fields', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.task.blocked', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-42',
 				reason: 'Timed out',
@@ -155,7 +155,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('message includes autonomy level (default supervised)', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.task.blocked', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-1',
 				reason: 'Error',
@@ -171,7 +171,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('message includes semi_autonomous level when configured', async () => {
 			const { factory, bus } = makeService(undefined, { autonomyLevel: 3 });
 			await bus.publish('space.task.blocked', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-1',
 				reason: 'Error',
@@ -189,7 +189,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('formats message correctly', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.workflowRun.blocked', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				runId: 'run-55',
 				reason: 'Transition condition failed: tests did not pass',
@@ -212,7 +212,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('formats elapsed time in minutes', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.task.timeout', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-slow',
 				elapsedMs: 3600000, // 60 minutes
@@ -235,7 +235,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('formats a completed run', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.workflowRun.completed', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				runId: 'run-1',
 				status: 'done',
@@ -257,7 +257,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('formats a cancelled run', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.workflowRun.completed', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				runId: 'run-2',
 				status: 'cancelled',
@@ -275,7 +275,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('formats a blocked run', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.workflowRun.completed', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				runId: 'run-3',
 				status: 'blocked',
@@ -294,7 +294,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('formats a reopen from done with attribution', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.workflowRun.reopened', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				runId: 'run-rx',
 				fromStatus: 'done',
@@ -323,7 +323,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('formats agent crash with [TASK_EVENT] prefix', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.agent.crashed', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-crashed',
 				timestamp: TIMESTAMP,
@@ -348,7 +348,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('formats auto-completed message', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.agent.autoCompleted', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-auto',
 				elapsedMs: 300000,
@@ -370,7 +370,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('formats idle non-terminal message', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.agent.idleNonTerminal', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-idle',
 				runId: 'run-idle',
@@ -398,7 +398,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('formats retry message', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.workflowRun.retry', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-retry',
 				runId: 'run-retry',
@@ -424,7 +424,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('formats needs attention message', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.workflowRun.needsAttention', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				runId: 'run-na',
 				taskId: 'task-na',
@@ -448,7 +448,7 @@ describe('SpaceAgentNotificationService', () => {
 		it('formats awaiting approval message', async () => {
 			const { factory, bus } = makeService();
 			await bus.publish('space.task.awaitingApproval', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-1',
 				actionId: 'merge-pr',
@@ -490,7 +490,7 @@ describe('SpaceAgentNotificationService', () => {
 			// Should not throw despite injectMessage failing
 			await expect(
 				bus.publish('space.task.blocked', {
-					namespaceId: 'global',
+					sessionId: 'global',
 					spaceId: SPACE_ID,
 					taskId: 'task-1',
 					reason: 'Error',
@@ -506,7 +506,7 @@ describe('SpaceAgentNotificationService', () => {
 
 			// First event should be received
 			await bus.publish('space.task.blocked', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-1',
 				reason: 'Error',
@@ -519,7 +519,7 @@ describe('SpaceAgentNotificationService', () => {
 
 			// Second event should NOT be received
 			await bus.publish('space.task.blocked', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-2',
 				reason: 'Error 2',
@@ -535,7 +535,7 @@ describe('SpaceAgentNotificationService', () => {
 
 			// Event for the correct space
 			await bus.publish('space.task.blocked', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: SPACE_ID,
 				taskId: 'task-1',
 				reason: 'Error',
@@ -544,7 +544,7 @@ describe('SpaceAgentNotificationService', () => {
 
 			// Event for a different space
 			await bus.publish('space.task.blocked', {
-				namespaceId: 'global',
+				sessionId: 'global',
 				spaceId: 'other-space',
 				taskId: 'task-2',
 				reason: 'Other error',
@@ -556,65 +556,9 @@ describe('SpaceAgentNotificationService', () => {
 		});
 	});
 
-	describe('compatibility with SessionNotificationSink output', () => {
-		it('produces identical output for task_blocked events', async () => {
-			const { formatEventMessage } = await import(
-				'../../../../src/lib/space/runtime/session-notification-sink'
-			);
-			const { factory, bus } = makeService();
-
-			await bus.publish('space.task.blocked', {
-				namespaceId: 'global',
-				spaceId: SPACE_ID,
-				taskId: 'task-1',
-				reason: 'Agent error',
-				timestamp: TIMESTAMP,
-			});
-
-			const internalMessage = factory.calls[0].message;
-
-			const legacyEvent = {
-				kind: 'task_blocked' as const,
-				spaceId: SPACE_ID,
-				taskId: 'task-1',
-				reason: 'Agent error',
-				timestamp: TIMESTAMP,
-			};
-			const legacyMessage = formatEventMessage(legacyEvent, 1);
-
-			expect(internalMessage).toBe(legacyMessage);
-		});
-
-		it('produces identical output for workflow_run_completed events', async () => {
-			const { formatEventMessage } = await import(
-				'../../../../src/lib/space/runtime/session-notification-sink'
-			);
-			const { factory, bus } = makeService();
-
-			await bus.publish('space.workflowRun.completed', {
-				namespaceId: 'global',
-				spaceId: SPACE_ID,
-				runId: 'run-1',
-				status: 'done',
-				summary: 'All done',
-				timestamp: TIMESTAMP,
-			});
-
-			const internalMessage = factory.calls[0].message;
-
-			const legacyEvent = {
-				kind: 'workflow_run_completed' as const,
-				spaceId: SPACE_ID,
-				runId: 'run-1',
-				status: 'done' as const,
-				summary: 'All done',
-				timestamp: TIMESTAMP,
-			};
-			const legacyMessage = formatEventMessage(legacyEvent, 1);
-
-			expect(internalMessage).toBe(legacyMessage);
-		});
-	});
+	// Compatibility tests with SessionNotificationSink output removed — the
+	// session-notification-sink module has been deleted. The notification service
+	// is the sole publisher and its output format is verified by the tests above.
 });
 
 // ---------------------------------------------------------------------------

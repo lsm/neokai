@@ -1,15 +1,14 @@
 /**
- * SpaceRuntime — Edge Case and Resilience Tests (Task 6.3)
+ * SpaceRuntime — Edge Case and Resilience Tests
  *
- * Tests adversarial and failure-mode scenarios to ensure the notification
- * system is robust under adverse conditions:
+ * Tests adversarial and failure-mode scenarios to ensure the runtime
+ * is robust under adverse conditions:
  *
- *   1. ThrowingNotificationSink — tick loop survives, other runs still processed
- *   2. Rapid status changes between ticks — only final state generates notification
- *   3. Runtime rehydration with workflow tasks in needs_attention → re-notified on first tick
- *   4. Deduplication for standalone tasks across many ticks
- *   5. Workflow run cancelled externally while notification is in flight → no stale event
- *   6. Session not available when notification fires → graceful degradation, no crash
+ *   1. Rapid status changes between ticks — only final state generates notification
+ *   2. Runtime rehydration with workflow tasks in blocked → dedup still works
+ *   3. Deduplication for standalone tasks across many ticks
+ *   4. Workflow run cancelled externally → no stale event
+ *   5. InternalEventBus errors do not crash the tick loop
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -24,57 +23,70 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import type {
-	NotificationSink,
-	SpaceNotificationEvent,
-} from '../../../../src/lib/space/runtime/notification-sink.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { SessionNotificationSink } from '../../../../src/lib/space/runtime/session-notification-sink.ts';
-import type { SessionFactory } from '../../../../src/lib/space/runtime/types';
-import type { MessageDeliveryMode } from '@neokai/shared';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
+import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 
 // ---------------------------------------------------------------------------
-// Mock sinks
+// BusEventCollector — captures InternalEventBus events for test assertions
 // ---------------------------------------------------------------------------
 
-/** Standard recording sink for assertions */
-class MockNotificationSink implements NotificationSink {
-	readonly events: SpaceNotificationEvent[] = [];
+type BusEventKind =
+	| 'task_blocked'
+	| 'workflow_run_blocked'
+	| 'task_timeout'
+	| 'workflow_run_completed'
+	| 'workflow_run_reopened'
+	| 'agent_auto_completed'
+	| 'agent_crash'
+	| 'agent_idle_non_terminal'
+	| 'task_retry'
+	| 'workflow_run_needs_attention'
+	| 'task_awaiting_approval';
 
-	notify(event: SpaceNotificationEvent): Promise<void> {
-		this.events.push(event);
-		return Promise.resolve();
+interface CapturedEvent {
+	kind: BusEventKind;
+	payload: Record<string, unknown>;
+}
+
+const EVENT_MAP: Record<string, BusEventKind> = {
+	'space.task.blocked': 'task_blocked',
+	'space.workflowRun.blocked': 'workflow_run_blocked',
+	'space.task.timeout': 'task_timeout',
+	'space.workflowRun.completed': 'workflow_run_completed',
+	'space.workflowRun.reopened': 'workflow_run_reopened',
+	'space.agent.autoCompleted': 'agent_auto_completed',
+	'space.agent.crashed': 'agent_crash',
+	'space.agent.idleNonTerminal': 'agent_idle_non_terminal',
+	'space.workflowRun.retry': 'task_retry',
+	'space.workflowRun.needsAttention': 'workflow_run_needs_attention',
+	'space.task.awaitingApproval': 'task_awaiting_approval',
+};
+
+class BusEventCollector {
+	readonly events: CapturedEvent[] = [];
+	private unsubscribers: Array<() => void> = [];
+
+	constructor(bus: InternalEventBus<DaemonInternalEventMap>) {
+		for (const [eventName, kind] of Object.entries(EVENT_MAP)) {
+			const unsub = bus.subscribe(
+				eventName as keyof DaemonInternalEventMap,
+				(payload) => {
+					this.events.push({ kind, payload: payload as Record<string, unknown> });
+				},
+				{ subscriberName: `test-collector:${eventName}` }
+			);
+			this.unsubscribers.push(unsub);
+		}
 	}
 
 	clear(): void {
 		this.events.length = 0;
 	}
-}
 
-/** Sink that always throws — used to verify tick resilience */
-class ThrowingNotificationSink implements NotificationSink {
-	readonly thrownEvents: SpaceNotificationEvent[] = [];
-
-	notify(event: SpaceNotificationEvent): Promise<void> {
-		this.thrownEvents.push(event);
-		return Promise.reject(new Error(`ThrowingNotificationSink: ${event.kind}`));
-	}
-}
-
-/** Sink that throws on the first N calls, then records normally */
-class FlakyNotificationSink implements NotificationSink {
-	readonly events: SpaceNotificationEvent[] = [];
-	private callCount = 0;
-
-	constructor(private readonly throwOnFirstN: number) {}
-
-	notify(event: SpaceNotificationEvent): Promise<void> {
-		this.callCount++;
-		if (this.callCount <= this.throwOnFirstN) {
-			return Promise.reject(new Error(`FlakyNotificationSink: call ${this.callCount} threw`));
-		}
-		this.events.push(event);
-		return Promise.resolve();
+	destroy(): void {
+		for (const unsub of this.unsubscribers) unsub();
+		this.unsubscribers.length = 0;
 	}
 }
 
@@ -140,41 +152,6 @@ function buildLinearWorkflow(
 }
 
 // ---------------------------------------------------------------------------
-// Mock SessionFactory for SessionNotificationSink tests
-// ---------------------------------------------------------------------------
-
-interface InjectedCall {
-	sessionId: string;
-	message: string;
-	opts?: { deliveryMode?: MessageDeliveryMode };
-}
-
-function makeMockSessionFactory(opts?: {
-	injectError?: Error;
-}): SessionFactory & { calls: InjectedCall[] } {
-	const calls: InjectedCall[] = [];
-	const injectError = opts?.injectError;
-
-	const factory: SessionFactory & { calls: InjectedCall[] } = {
-		calls,
-		createAndStartSession: async () => {},
-		injectMessage: async (sessionId, message, injectOpts) => {
-			if (injectError) throw injectError;
-			calls.push({ sessionId, message, opts: injectOpts });
-		},
-		hasSession: () => true,
-		answerQuestion: async () => false,
-		createWorktree: async () => null,
-		restoreSession: async () => false,
-		startSession: async () => false,
-		setSessionMcpServers: () => false,
-		removeWorktree: async () => false,
-	};
-
-	return factory;
-}
-
-// ---------------------------------------------------------------------------
 // Suite setup
 // ---------------------------------------------------------------------------
 
@@ -187,7 +164,8 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 	let agentManager: SpaceAgentManager;
 	let workflowManager: SpaceWorkflowManager;
 	let spaceManager: SpaceManager;
-	let sink: MockNotificationSink;
+	let bus: InternalEventBus<DaemonInternalEventMap>;
+	let collector: BusEventCollector;
 	let runtime: SpaceRuntime;
 
 	const SPACE_ID = 'space-edge-1';
@@ -202,8 +180,8 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			spaceWorkflowManager: workflowManager,
 			workflowRunRepo,
 			taskRepo,
-			notificationSink: sink,
 			nodeExecutionRepo,
+			internalEventBus: bus,
 			...extraConfig,
 		});
 	}
@@ -236,11 +214,13 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 		workflowManager = new SpaceWorkflowManager(workflowRepo);
 
 		spaceManager = new SpaceManager(db);
-		sink = new MockNotificationSink();
+		bus = new InternalEventBus<DaemonInternalEventMap>();
+		collector = new BusEventCollector(bus);
 		runtime = makeRuntime();
 	});
 
 	afterEach(() => {
+		collector.destroy();
 		try {
 			db.close();
 		} catch {
@@ -253,13 +233,24 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// 1. ThrowingNotificationSink resilience
+	// 1. InternalEventBus errors — tick resilience
 	// -------------------------------------------------------------------------
 
-	describe('throwing NotificationSink — tick loop resilience', () => {
-		test('tick does not crash when sink.notify() throws', async () => {
-			const throwingSink = new ThrowingNotificationSink();
-			const rt = makeRuntime({ notificationSink: throwingSink });
+	describe('InternalEventBus — tick loop resilience', () => {
+		test('tick does not crash when InternalEventBus publishAsync throws', async () => {
+			// Create a bus that throws on publishAsync
+			const throwingBus = new InternalEventBus<DaemonInternalEventMap>();
+			// Subscribe a handler that throws — the bus itself handles this,
+			// but safeNotify also catches errors from publishAsync
+			throwingBus.subscribe(
+				'space.task.blocked',
+				() => {
+					throw new Error('Subscriber error');
+				},
+				{ subscriberName: 'throwing-subscriber' }
+			);
+
+			const rt = makeRuntime({ internalEventBus: throwingBus });
 
 			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-throw-1', name: 'Only Step', agentId: AGENT },
@@ -267,49 +258,21 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			const { run } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
 			updateFirstNodeExecution(run.id, { status: 'blocked', result: 'Build failed' });
 
-			// Tick must complete without throwing even though the sink throws
+			// Tick must complete without throwing even though a subscriber throws
 			await expect(rt.executeTick()).resolves.toBeUndefined();
-
-			// Sink attempted both task and run blocked notifications.
-			expect(throwingSink.thrownEvents).toHaveLength(2);
-			expect(throwingSink.thrownEvents.map((e) => e.kind).sort()).toEqual(
-				['task_blocked', 'workflow_run_blocked'].sort()
-			);
 		});
 
-		test("all runs processed even if one run's notification throws", async () => {
-			// Use a flaky sink: first call throws, subsequent calls succeed
-			const flakySink = new FlakyNotificationSink(1);
-			const rt = makeRuntime({ notificationSink: flakySink });
-
-			// Run A — needs_attention (first notify call → throws)
-			const wfA = buildLinearWorkflow(SPACE_ID, workflowManager, [
-				{ id: 'step-flaky-a', name: 'Step A', agentId: AGENT },
-			]);
-			const { run: runA, tasks: tasksA } = await rt.startWorkflowRun(SPACE_ID, wfA.id, 'Run A');
-			updateFirstNodeExecution(runA.id, { status: 'blocked', result: 'Error A' });
-
-			// Run B — needs_attention (second notify call → succeeds)
-			const wfB = buildLinearWorkflow(SPACE_ID, workflowManager, [
-				{ id: 'step-flaky-b', name: 'Step B', agentId: AGENT },
-			]);
-			const { run: runB, tasks: tasksB } = await rt.startWorkflowRun(SPACE_ID, wfB.id, 'Run B');
-			updateFirstNodeExecution(runB.id, { status: 'blocked', result: 'Error B' });
-
-			// Tick must complete without crashing; run B's notification should succeed
-			await expect(rt.executeTick()).resolves.toBeUndefined();
-
-			// Later notifications should still succeed even after the first throw.
-			expect(flakySink.events.length).toBeGreaterThanOrEqual(2);
-			const runBTaskBlocked = flakySink.events.find(
-				(e) => e.kind === 'task_blocked' && e.taskId === tasksB[0].id
+		test('tick does not crash for standalone task when subscriber throws', async () => {
+			const throwingBus = new InternalEventBus<DaemonInternalEventMap>();
+			throwingBus.subscribe(
+				'space.task.blocked',
+				() => {
+					throw new Error('Subscriber error');
+				},
+				{ subscriberName: 'throwing-subscriber' }
 			);
-			expect(runBTaskBlocked).toBeDefined();
-		});
 
-		test('tick does not crash when sink.notify() throws for standalone task', async () => {
-			const throwingSink = new ThrowingNotificationSink();
-			const rt = makeRuntime({ notificationSink: throwingSink });
+			const rt = makeRuntime({ internalEventBus: throwingBus });
 
 			taskRepo.createTask({
 				spaceId: SPACE_ID,
@@ -319,15 +282,20 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			});
 
 			await expect(rt.executeTick()).resolves.toBeUndefined();
-
-			expect(throwingSink.thrownEvents).toHaveLength(1);
-			expect(throwingSink.thrownEvents[0].kind).toBe('task_blocked');
 		});
 
-		test('tick does not crash when sink.notify() throws for task_timeout', async () => {
+		test('tick does not crash for task_timeout when subscriber throws', async () => {
 			setSpaceTaskTimeoutMs(db, SPACE_ID, 1000);
-			const throwingSink = new ThrowingNotificationSink();
-			const rt = makeRuntime({ notificationSink: throwingSink });
+			const throwingBus = new InternalEventBus<DaemonInternalEventMap>();
+			throwingBus.subscribe(
+				'space.task.timeout',
+				() => {
+					throw new Error('Subscriber error');
+				},
+				{ subscriberName: 'throwing-subscriber' }
+			);
+
+			const rt = makeRuntime({ internalEventBus: throwingBus });
 
 			const task = taskRepo.createTask({
 				spaceId: SPACE_ID,
@@ -341,9 +309,6 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			);
 
 			await expect(rt.executeTick()).resolves.toBeUndefined();
-
-			expect(throwingSink.thrownEvents).toHaveLength(1);
-			expect(throwingSink.thrownEvents[0].kind).toBe('task_timeout');
 		});
 	});
 
@@ -360,7 +325,7 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 
 			// Tick 1: initial pending execution — no notification
 			await runtime.executeTick();
-			expect(sink.events).toHaveLength(0);
+			expect(collector.events).toHaveLength(0);
 
 			// Simulate rapid execution-state transitions between ticks.
 			updateFirstNodeExecution(run.id, { status: 'blocked', result: 'First failure' });
@@ -376,18 +341,13 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			// Tick 2: final state is blocked — exactly one notification
 			await runtime.executeTick();
 
-			const blockedEvents = sink.events.filter((e) => e.kind === 'task_blocked');
+			const blockedEvents = collector.events.filter((e) => e.kind === 'task_blocked');
 			expect(blockedEvents).toHaveLength(1);
-			expect(blockedEvents[0].kind).toBe('task_blocked');
-			const blockedEvt = blockedEvents[0] as Extract<
-				SpaceNotificationEvent,
-				{ kind: 'task_blocked' }
-			>;
-			expect(blockedEvt.reason).toBe('Final failure');
-			expect(blockedEvt.taskId).toBe(tasks[0].id);
+			expect(blockedEvents[0].payload['reason']).toBe('Final failure');
+			expect(blockedEvents[0].payload['taskId']).toBe(tasks[0].id);
 		});
 
-		test('standalone task rapid changes — only final needs_attention state generates notification', async () => {
+		test('standalone task rapid changes — only final blocked state generates notification', async () => {
 			const task = taskRepo.createTask({
 				spaceId: SPACE_ID,
 				title: 'Rapid Standalone',
@@ -397,7 +357,7 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 
 			// Tick 1: pending — no notification
 			await runtime.executeTick();
-			expect(sink.events).toHaveLength(0);
+			expect(collector.events).toHaveLength(0);
 
 			// Simulate rapid status cycling (between ticks)
 			taskRepo.updateTask(task.id, { status: 'blocked', error: 'Transient error' });
@@ -405,53 +365,52 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			taskRepo.updateTask(task.id, { status: 'in_progress' });
 			taskRepo.updateTask(task.id, { status: 'blocked', error: 'Persistent error' });
 
-			// Tick 2: final state is needs_attention — exactly 1 notification
+			// Tick 2: final state is blocked — exactly 1 notification
 			await runtime.executeTick();
 
-			const naEvents = sink.events.filter((e) => e.kind === 'task_blocked');
+			const naEvents = collector.events.filter((e) => e.kind === 'task_blocked');
 			expect(naEvents).toHaveLength(1);
-			expect(naEvents[0].kind).toBe('task_blocked');
-			const naEvt = naEvents[0] as Extract<SpaceNotificationEvent, { kind: 'task_blocked' }>;
-			expect(naEvt.reason).toBe('Task requires attention');
+			expect(naEvents[0].payload['reason']).toBe('Task requires attention');
 		});
 	});
 
 	// -------------------------------------------------------------------------
-	// 3. SpaceRuntime rehydration with workflow tasks in needs_attention
+	// 3. SpaceRuntime rehydration with workflow tasks in blocked
 	// -------------------------------------------------------------------------
 
-	describe('rehydration — workflow tasks in needs_attention on restart', () => {
-		test('workflow task in needs_attention is re-notified on first tick after restart', async () => {
-			// Tick 1 on original runtime: task enters needs_attention
+	describe('rehydration — workflow tasks in blocked on restart', () => {
+		test('workflow task in blocked is not re-notified on first tick after restart', async () => {
+			// Tick 1 on original runtime: task enters blocked
 			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-rehydrate', name: 'Only Step', agentId: AGENT },
 			]);
-			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
 			updateFirstNodeExecution(run.id, { status: 'blocked', result: 'Pre-restart error' });
 
 			await runtime.executeTick();
 
-			const originalEvents = sink.events.filter((e) => e.kind === 'task_blocked');
+			const originalEvents = collector.events.filter((e) => e.kind === 'task_blocked');
 			expect(originalEvents).toHaveLength(1);
 
 			// Simulate daemon restart: create a fresh SpaceRuntime with empty dedup set
-			// (in production, the daemon restarts from scratch and rehydrates from DB)
-			const freshSink = new MockNotificationSink();
-			const freshRuntime = makeRuntime({ notificationSink: freshSink });
+			const freshBus = new InternalEventBus<DaemonInternalEventMap>();
+			const freshCollector = new BusEventCollector(freshBus);
+			const freshRuntime = makeRuntime({ internalEventBus: freshBus });
 
 			// First tick on fresh runtime: run is already blocked, so processRunTick skips it.
 			await freshRuntime.executeTick();
 
-			const reNotified = freshSink.events.filter((e) => e.kind === 'task_blocked');
+			const reNotified = freshCollector.events.filter((e) => e.kind === 'task_blocked');
 			expect(reNotified).toHaveLength(0);
 
 			// Subsequent ticks remain quiet for already-blocked runs.
 			await freshRuntime.executeTick();
-			expect(freshSink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(0);
+			expect(freshCollector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(0);
+			freshCollector.destroy();
 		});
 
-		test('multiple workflow runs with needs_attention tasks — all re-notified after restart', async () => {
-			// Set up two workflow runs, each with a task in needs_attention
+		test('multiple workflow runs with blocked tasks — none re-notified after restart', async () => {
+			// Set up two workflow runs, each with a task in blocked
 			const wfA = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-rehy-a', name: 'Step A', agentId: AGENT },
 			]);
@@ -459,31 +418,25 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 				{ id: 'step-rehy-b', name: 'Step B', agentId: AGENT },
 			]);
 
-			const { run: runA, tasks: tasksA } = await runtime.startWorkflowRun(
-				SPACE_ID,
-				wfA.id,
-				'Run A'
-			);
-			const { run: runB, tasks: tasksB } = await runtime.startWorkflowRun(
-				SPACE_ID,
-				wfB.id,
-				'Run B'
-			);
+			const { run: runA } = await runtime.startWorkflowRun(SPACE_ID, wfA.id, 'Run A');
+			const { run: runB } = await runtime.startWorkflowRun(SPACE_ID, wfB.id, 'Run B');
 
 			updateFirstNodeExecution(runA.id, { status: 'blocked', result: 'Error A' });
 			updateFirstNodeExecution(runB.id, { status: 'blocked', result: 'Error B' });
 
 			await runtime.executeTick();
-			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(2);
+			expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(2);
 
 			// Simulate restart
-			const freshSink = new MockNotificationSink();
-			const freshRuntime = makeRuntime({ notificationSink: freshSink });
+			const freshBus = new InternalEventBus<DaemonInternalEventMap>();
+			const freshCollector = new BusEventCollector(freshBus);
+			const freshRuntime = makeRuntime({ internalEventBus: freshBus });
 
 			await freshRuntime.executeTick();
 
-			const reNotified = freshSink.events.filter((e) => e.kind === 'task_blocked');
+			const reNotified = freshCollector.events.filter((e) => e.kind === 'task_blocked');
 			expect(reNotified).toHaveLength(0);
+			freshCollector.destroy();
 		});
 	});
 
@@ -492,25 +445,22 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 	// -------------------------------------------------------------------------
 
 	describe('deduplication — standalone tasks across many ticks', () => {
-		test('same standalone task in needs_attention for 5+ ticks emits only 1 notification', async () => {
+		test('same standalone task in blocked for 5+ ticks emits only 1 notification', async () => {
 			const task = taskRepo.createTask({
 				spaceId: SPACE_ID,
 				title: 'Persistent Issue',
 				description: '',
 				status: 'blocked',
 			});
-			taskRepo.updateTask(task.id, { error: 'Persistent error' });
 
 			// Run many ticks — should emit only 1 notification total
 			for (let i = 0; i < 5; i++) {
 				await runtime.executeTick();
 			}
 
-			const naEvents = sink.events.filter((e) => e.kind === 'task_blocked');
+			const naEvents = collector.events.filter((e) => e.kind === 'task_blocked');
 			expect(naEvents).toHaveLength(1);
-			if (naEvents[0].kind === 'task_blocked') {
-				expect(naEvents[0].taskId).toBe(task.id);
-			}
+			expect(naEvents[0].payload['taskId']).toBe(task.id);
 		});
 
 		test('standalone task in timeout for 5+ ticks emits only 1 notification', async () => {
@@ -531,45 +481,44 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 				await runtime.executeTick();
 			}
 
-			const timeoutEvents = sink.events.filter((e) => e.kind === 'task_timeout');
+			const timeoutEvents = collector.events.filter((e) => e.kind === 'task_timeout');
 			expect(timeoutEvents).toHaveLength(1);
 		});
 
-		test('dedup key refreshed after task resolves and re-enters needs_attention', async () => {
+		test('dedup key refreshed after task resolves and re-enters blocked', async () => {
 			const task = taskRepo.createTask({
 				spaceId: SPACE_ID,
 				title: 'Flapping Task',
 				description: '',
 				status: 'blocked',
 			});
-			taskRepo.updateTask(task.id, { error: 'First error' });
 
 			// Tick 1 → 1 notification
 			await runtime.executeTick();
-			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
+			expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
 			// Tick 2 → deduped, still 1
 			await runtime.executeTick();
-			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
+			expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-			// Task resolves (leaves needs_attention)
+			// Task resolves (leaves blocked)
 			taskRepo.updateTask(task.id, { status: 'in_progress', error: null });
 
 			// Tick 3 → in_progress, no new notification
 			await runtime.executeTick();
-			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
+			expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-			// Task hits needs_attention again
+			// Task hits blocked again
 			taskRepo.updateTask(task.id, { status: 'blocked', error: 'Second error' });
 
-			// Tick 4 → dedup key cleared when task left needs_attention, so re-notifies
+			// Tick 4 → dedup key cleared when task left blocked, so re-notifies
 			await runtime.executeTick();
-			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(2);
+			expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(2);
 		});
 	});
 
 	// -------------------------------------------------------------------------
-	// 5. External run cancellation while notification is in flight
+	// 5. External run cancellation — no stale notifications
 	// -------------------------------------------------------------------------
 
 	describe('external run cancellation — no stale notifications', () => {
@@ -582,21 +531,20 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			// Tick 1: task in_progress, no notification
 			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
 			await runtime.executeTick();
-			expect(sink.events).toHaveLength(0);
+			expect(collector.events).toHaveLength(0);
 
 			// External cancellation: update run status directly in DB (simulating external API call)
 			workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
 			// Tick 2: run is now cancelled, SpaceRuntime skips it in processRunTick
-			// and cleanupTerminalExecutors removes it without emitting workflow_run_completed
 			await runtime.executeTick();
 
 			// No notifications for a cancelled run
-			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
-			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(0);
+			expect(collector.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
+			expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(0);
 		});
 
-		test('run cancelled externally while task is in needs_attention — no stale task notification on next tick', async () => {
+		test('run cancelled externally while task is in blocked — no stale task notification on next tick', async () => {
 			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-cancel-na', name: 'Only Step', agentId: AGENT },
 			]);
@@ -605,19 +553,18 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 
 			// Tick 1: task_blocked emitted
 			await runtime.executeTick();
-			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
+			expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
 			// External cancellation between ticks
 			workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
 			// Tick 2: run is cancelled, executor removed by cleanupTerminalExecutors.
-			// No new notification should be emitted.
 			await runtime.executeTick();
 
 			// Still only 1 task_blocked (from tick 1)
-			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
+			expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 			// No workflow_run_completed for cancelled runs
-			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
+			expect(collector.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
 		});
 
 		test('run cancelled between rehydration and first tick — no notification emitted', async () => {
@@ -632,137 +579,15 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 
 			// Fresh runtime (simulating restart): first executeTick() rehydrates,
 			// then processes — cancelled run should emit nothing
-			const freshSink = new MockNotificationSink();
-			const freshRuntime = makeRuntime({ notificationSink: freshSink });
+			const freshBus = new InternalEventBus<DaemonInternalEventMap>();
+			const freshCollector = new BusEventCollector(freshBus);
+			const freshRuntime = makeRuntime({ internalEventBus: freshBus });
 
 			await freshRuntime.executeTick();
 
 			// No notifications for a run that was already cancelled before first tick
-			expect(freshSink.events).toHaveLength(0);
-		});
-	});
-
-	// -------------------------------------------------------------------------
-	// 6. Session not available when notification fires — graceful degradation
-	// -------------------------------------------------------------------------
-
-	describe('SessionNotificationSink — session not available', () => {
-		test('does not throw when session.injectMessage throws "session not found"', async () => {
-			const factory = makeMockSessionFactory({
-				injectError: new Error('Session not found: spaces:global:missing'),
-			});
-			const sessionSink = new SessionNotificationSink({
-				sessionFactory: factory,
-				sessionId: 'spaces:global:missing',
-				autonomyLevel: 'supervised',
-			});
-
-			const event: SpaceNotificationEvent = {
-				kind: 'task_blocked',
-				spaceId: SPACE_ID,
-				taskId: 'task-gone',
-				reason: 'Task requires attention',
-				timestamp: new Date().toISOString(),
-			};
-
-			// notify() must not throw — it should catch the error internally
-			await expect(sessionSink.notify(event)).resolves.toBeUndefined();
-		});
-
-		test('does not throw when session.injectMessage throws a generic error', async () => {
-			const factory = makeMockSessionFactory({
-				injectError: new Error('Connection reset'),
-			});
-			const sessionSink = new SessionNotificationSink({
-				sessionFactory: factory,
-				sessionId: 'spaces:global:session-1',
-				autonomyLevel: 'semi_autonomous',
-			});
-
-			const event: SpaceNotificationEvent = {
-				kind: 'workflow_run_completed',
-				spaceId: SPACE_ID,
-				runId: 'run-1',
-				status: 'done',
-				timestamp: new Date().toISOString(),
-			};
-
-			await expect(sessionSink.notify(event)).resolves.toBeUndefined();
-		});
-
-		test('SpaceRuntime tick survives when SessionNotificationSink session is deleted', async () => {
-			// Wire SpaceRuntime with a SessionNotificationSink that throws on every call
-			const factory = makeMockSessionFactory({
-				injectError: new Error('Session deleted'),
-			});
-			const sessionSink = new SessionNotificationSink({
-				sessionFactory: factory,
-				sessionId: 'spaces:global:deleted',
-				autonomyLevel: 'supervised',
-			});
-			const rt = makeRuntime({ notificationSink: sessionSink });
-
-			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
-				{ id: 'step-deleted-sess', name: 'Only Step', agentId: AGENT },
-			]);
-			const { run } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
-			updateFirstNodeExecution(run.id, { status: 'blocked', result: 'Error' });
-
-			// Tick must survive even though session is deleted
-			await expect(rt.executeTick()).resolves.toBeUndefined();
-
-			// The factory never received a successful call (all threw)
-			expect(factory.calls).toHaveLength(0);
-		});
-
-		test('SpaceRuntime continues processing all runs when SessionNotificationSink fails for one', async () => {
-			let callCount = 0;
-			const flakyFactory: SessionFactory & { successCalls: InjectedCall[] } = {
-				successCalls: [],
-				createAndStartSession: async () => {},
-				injectMessage: async (sessionId, message, opts) => {
-					callCount++;
-					if (callCount === 1) {
-						// First call fails (simulates session briefly unavailable)
-						throw new Error('Session temporarily unavailable');
-					}
-					(flakyFactory.successCalls as InjectedCall[]).push({ sessionId, message, opts });
-				},
-				hasSession: () => true,
-				answerQuestion: async () => false,
-				createWorktree: async () => null,
-				restoreSession: async () => false,
-				startSession: async () => false,
-				setSessionMcpServers: () => false,
-				removeWorktree: async () => false,
-			};
-
-			const sessionSink = new SessionNotificationSink({
-				sessionFactory: flakyFactory,
-				sessionId: 'spaces:global:flaky',
-				autonomyLevel: 'supervised',
-			});
-			const rt = makeRuntime({ notificationSink: sessionSink });
-
-			// Run A: needs_attention (first notify call → session error)
-			const wfA = buildLinearWorkflow(SPACE_ID, workflowManager, [
-				{ id: 'step-flaky-sess-a', name: 'Step A', agentId: AGENT },
-			]);
-			const { run: runA } = await rt.startWorkflowRun(SPACE_ID, wfA.id, 'Run A');
-			updateFirstNodeExecution(runA.id, { status: 'blocked', result: 'Error A' });
-
-			// Run B: needs_attention (second notify call → succeeds)
-			const wfB = buildLinearWorkflow(SPACE_ID, workflowManager, [
-				{ id: 'step-flaky-sess-b', name: 'Step B', agentId: AGENT },
-			]);
-			const { run: runB } = await rt.startWorkflowRun(SPACE_ID, wfB.id, 'Run B');
-			updateFirstNodeExecution(runB.id, { status: 'blocked', result: 'Error B' });
-
-			// Tick must complete without crashing
-			await expect(rt.executeTick()).resolves.toBeUndefined();
-
-			// Notifications for later events should still be delivered.
-			expect(flakyFactory.successCalls.length).toBeGreaterThanOrEqual(1);
+			expect(freshCollector.events).toHaveLength(0);
+			freshCollector.destroy();
 		});
 	});
 });

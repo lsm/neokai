@@ -62,7 +62,6 @@ import { extractPrContext, GatePollManager, type PollScriptContext } from './gat
 import { executeGateScript } from './gate-script-executor';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
-import { type NotificationSink, NullNotificationSink } from './notification-sink';
 import type {
 	InternalEventBus,
 	DaemonInternalEventMap,
@@ -125,20 +124,12 @@ export interface SpaceRuntimeConfig {
 	 */
 	tickIntervalMs?: number;
 	/**
-	 * Sink for structured notification events emitted after mechanical processing.
-	 * Defaults to NullNotificationSink (no-op). Use setNotificationSink() to wire
-	 * in a real sink after construction (e.g. once the Space Agent session exists).
+	 * InternalEventBus for publishing typed Space domain events.
 	 *
-	 * @deprecated Use `internalEventBus` instead. NotificationSink is a short-lived
-	 * compatibility adapter. See M6 migration in internal-event-command-query-architecture.md.
-	 */
-	notificationSink?: NotificationSink;
-	/**
-	 * Optional InternalEventBus for publishing domain events. When provided,
-	 * SpaceRuntime publishes typed events alongside the legacy NotificationSink path.
-	 *
-	 * This is the preferred integration point for M6+; NotificationSink will be
-	 * removed once all subscribers migrate to InternalEventBus.
+	 * When provided, SpaceRuntime publishes events such as `space.task.blocked`,
+	 * `space.workflowRun.completed`, etc. for `SpaceAgentNotificationService` and
+	 * other subscribers to consume. When omitted, events are dropped silently —
+	 * appropriate for unit tests that don't need to assert against the bus.
 	 */
 	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 	/**
@@ -226,6 +217,272 @@ interface ExecutorMeta {
 	workspacePath: string;
 }
 
+// ---------------------------------------------------------------------------
+// Internal notification event shape
+// ---------------------------------------------------------------------------
+
+/**
+ * Discriminated union of structured runtime events emitted by `SpaceRuntime`.
+ *
+ * Used as the input shape for {@link SpaceRuntime['safeNotify']} so call sites
+ * stay readable (`kind: 'task_blocked', ...`) while the publisher maps them
+ * onto the typed `space.*` events on `InternalEventBus`. Kept private to this
+ * module — external consumers should subscribe to `InternalEventBus` events
+ * directly via `DaemonInternalEventMap`.
+ */
+type SpaceNotificationEvent =
+	| {
+			kind: 'task_blocked';
+			spaceId: string;
+			taskId: string;
+			reason: string;
+			timestamp: string;
+	  }
+	| {
+			kind: 'workflow_run_blocked';
+			spaceId: string;
+			runId: string;
+			reason: string;
+			timestamp: string;
+	  }
+	| {
+			kind: 'task_timeout';
+			spaceId: string;
+			taskId: string;
+			elapsedMs: number;
+			timestamp: string;
+	  }
+	| {
+			kind: 'workflow_run_completed';
+			spaceId: string;
+			runId: string;
+			status: 'done' | 'cancelled' | 'blocked';
+			summary?: string;
+			timestamp: string;
+	  }
+	| {
+			kind: 'workflow_run_reopened';
+			spaceId: string;
+			runId: string;
+			fromStatus: 'done' | 'cancelled';
+			reason: string;
+			by: string;
+			timestamp: string;
+	  }
+	| {
+			kind: 'agent_auto_completed';
+			spaceId: string;
+			taskId: string;
+			elapsedMs: number;
+			timestamp: string;
+	  }
+	| {
+			kind: 'agent_crash';
+			spaceId: string;
+			taskId: string;
+			timestamp: string;
+	  }
+	| {
+			kind: 'agent_idle_non_terminal';
+			spaceId: string;
+			taskId: string;
+			runId: string;
+			executionId: string;
+			nodeId: string;
+			agentName: string;
+			reason: string;
+			timestamp: string;
+	  }
+	| {
+			kind: 'task_retry';
+			spaceId: string;
+			taskId: string;
+			runId: string;
+			originalReason: string;
+			attemptNumber: number;
+			maxAttempts: number;
+			timestamp: string;
+	  }
+	| {
+			kind: 'workflow_run_needs_attention';
+			spaceId: string;
+			runId: string;
+			taskId: string;
+			reason: string;
+			retriesExhausted: number;
+			timestamp: string;
+	  }
+	| {
+			kind: 'task_awaiting_approval';
+			spaceId: string;
+			taskId: string;
+			actionId: string;
+			actionName: string;
+			actionDescription?: string;
+			actionType: 'script' | 'instruction' | 'mcp_call';
+			requiredLevel: number;
+			spaceLevel: number;
+			autonomyLevel: number;
+			timestamp: string;
+	  };
+
+/**
+ * Map a notification event onto the corresponding typed `InternalEventBus` event.
+ *
+ * Returns `null` for unrecognised events (defensive — all current `kind`s map).
+ * The `namespaceId` field is set to `'global'` because these events are
+ * space-scoped, not session-scoped. Subscribers that need space-scoped
+ * filtering should inspect `payload.spaceId`.
+ */
+function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
+	event: keyof DaemonInternalEventMap;
+	payload: DaemonInternalEventMap[keyof DaemonInternalEventMap];
+} | null {
+	const namespaceId = 'global';
+	switch (event.kind) {
+		case 'task_blocked':
+			return {
+				event: 'space.task.blocked',
+				payload: {
+					namespaceId,
+					spaceId: event.spaceId,
+					taskId: event.taskId,
+					reason: event.reason,
+					timestamp: event.timestamp,
+				},
+			};
+		case 'workflow_run_blocked':
+			return {
+				event: 'space.workflowRun.blocked',
+				payload: {
+					namespaceId,
+					spaceId: event.spaceId,
+					runId: event.runId,
+					reason: event.reason,
+					timestamp: event.timestamp,
+				},
+			};
+		case 'task_timeout':
+			return {
+				event: 'space.task.timeout',
+				payload: {
+					namespaceId,
+					spaceId: event.spaceId,
+					taskId: event.taskId,
+					elapsedMs: event.elapsedMs,
+					timestamp: event.timestamp,
+				},
+			};
+		case 'workflow_run_completed':
+			return {
+				event: 'space.workflowRun.completed',
+				payload: {
+					namespaceId,
+					spaceId: event.spaceId,
+					runId: event.runId,
+					status: event.status,
+					summary: event.summary,
+					timestamp: event.timestamp,
+				},
+			};
+		case 'workflow_run_reopened':
+			return {
+				event: 'space.workflowRun.reopened',
+				payload: {
+					namespaceId,
+					spaceId: event.spaceId,
+					runId: event.runId,
+					fromStatus: event.fromStatus,
+					reason: event.reason,
+					by: event.by,
+					timestamp: event.timestamp,
+				},
+			};
+		case 'agent_auto_completed':
+			return {
+				event: 'space.agent.autoCompleted',
+				payload: {
+					namespaceId,
+					spaceId: event.spaceId,
+					taskId: event.taskId,
+					elapsedMs: event.elapsedMs,
+					timestamp: event.timestamp,
+				},
+			};
+		case 'agent_crash':
+			return {
+				event: 'space.agent.crashed',
+				payload: {
+					namespaceId,
+					spaceId: event.spaceId,
+					taskId: event.taskId,
+					timestamp: event.timestamp,
+				},
+			};
+		case 'agent_idle_non_terminal':
+			return {
+				event: 'space.agent.idleNonTerminal',
+				payload: {
+					namespaceId,
+					spaceId: event.spaceId,
+					taskId: event.taskId,
+					runId: event.runId,
+					executionId: event.executionId,
+					nodeId: event.nodeId,
+					agentName: event.agentName,
+					reason: event.reason,
+					timestamp: event.timestamp,
+				},
+			};
+		case 'task_retry':
+			return {
+				event: 'space.workflowRun.retry',
+				payload: {
+					namespaceId,
+					spaceId: event.spaceId,
+					taskId: event.taskId,
+					runId: event.runId,
+					originalReason: event.originalReason,
+					attemptNumber: event.attemptNumber,
+					maxAttempts: event.maxAttempts,
+					timestamp: event.timestamp,
+				},
+			};
+		case 'workflow_run_needs_attention':
+			return {
+				event: 'space.workflowRun.needsAttention',
+				payload: {
+					namespaceId,
+					spaceId: event.spaceId,
+					runId: event.runId,
+					taskId: event.taskId,
+					reason: event.reason,
+					retriesExhausted: event.retriesExhausted,
+					timestamp: event.timestamp,
+				},
+			};
+		case 'task_awaiting_approval':
+			return {
+				event: 'space.task.awaitingApproval',
+				payload: {
+					namespaceId,
+					spaceId: event.spaceId,
+					taskId: event.taskId,
+					actionId: event.actionId,
+					actionName: event.actionName,
+					actionDescription: event.actionDescription,
+					actionType: event.actionType,
+					requiredLevel: event.requiredLevel,
+					spaceLevel: event.spaceLevel,
+					autonomyLevel: event.autonomyLevel,
+					timestamp: event.timestamp,
+				},
+			};
+		default:
+			return null;
+	}
+}
+
 export class SpaceRuntime {
 	/** Map from workflowRunId → WorkflowExecutor for all active runs */
 	private executors = new Map<string, WorkflowExecutor>();
@@ -254,13 +511,12 @@ export class SpaceRuntime {
 	/** Single-flight guard to prevent overlapping executeTick() runs. */
 	private tickInFlight = false;
 
-	/** Active notification sink — replaced at runtime via setNotificationSink() */
-	private notificationSink: NotificationSink;
-
 	/**
-	 * Optional InternalEventBus for publishing domain events.
-	 * When provided, SpaceRuntime publishes typed events alongside the legacy
-	 * NotificationSink path. This is the preferred integration point for M6+.
+	 * InternalEventBus for publishing typed Space domain events.
+	 *
+	 * Subscribers like `SpaceAgentNotificationService` listen here to translate
+	 * runtime events into agent-facing messages. May be undefined when the
+	 * runtime is constructed in tests that don't need to assert on the bus.
 	 */
 	private internalEventBus: InternalEventBus<DaemonInternalEventMap> | undefined;
 
@@ -332,7 +588,6 @@ export class SpaceRuntime {
 	private pollManager: GatePollManager | null = null;
 
 	constructor(private config: SpaceRuntimeConfig) {
-		this.notificationSink = config.notificationSink ?? new NullNotificationSink();
 		this.internalEventBus = config.internalEventBus;
 		this.completionDetector = config.completionDetector ?? new CompletionDetector(config.taskRepo);
 		this.sdkMessageRepo = config.sdkMessageRepo ?? null;
@@ -402,38 +657,6 @@ export class SpaceRuntime {
 	 */
 	getNotifiedTaskSet(): ReadonlySet<string> {
 		return new Set(this.notifiedTaskSet);
-	}
-
-	/**
-	 * Replace the notification sink at runtime.
-	 *
-	 * Called after construction once the Space Agent session has been provisioned,
-	 * since SpaceRuntimeService is instantiated before the global agent session exists.
-	 *
-	 * @deprecated Use `internalEventBus` with a subscriber instead. This method exists
-	 * only as a short-lived compatibility adapter for M6 migration.
-	 */
-	setNotificationSink(sink: NotificationSink): void {
-		this.notificationSink = sink;
-		// Clear the dedup set so tasks that fired on NullNotificationSink before the real
-		// sink was wired (e.g. ticks that ran before provisioning completed at daemon startup)
-		// get a chance to re-notify on the next tick.
-		this.notifiedTaskSet.clear();
-	}
-
-	/**
-	 * Returns the currently-configured NotificationSink.
-	 *
-	 * Exposed so collaborators that construct their own `ChannelRouter` instances
-	 * (e.g. `SpaceRuntimeService.notifyGateDataChanged` or the per-run router
-	 * created inside `TaskAgentManager`) can plumb the same sink through,
-	 * ensuring `workflow_run_reopened` events reach the Space Agent session
-	 * regardless of which code path triggered the reopen.
-	 *
-	 * @deprecated Use `internalEventBus` subscribers instead.
-	 */
-	getNotificationSink(): NotificationSink {
-		return this.notificationSink;
 	}
 
 	/**
@@ -696,219 +919,31 @@ export class SpaceRuntime {
 	}
 
 	/**
-	 * Safely calls notificationSink.notify(), catching and logging any errors.
+	 * Publish a Space runtime notification event to the configured InternalEventBus.
 	 *
-	 * Also publishes the corresponding typed event to `internalEventBus` when
-	 * configured. This dual-path approach lets existing NotificationSink
-	 * subscribers keep working while new InternalEventBus subscribers migrate.
+	 * Maps the legacy `kind`-tagged event shape (retained at call sites for
+	 * readability) onto the corresponding typed `space.*` event on
+	 * `InternalEventBus`. The `namespaceId` field is set to `'global'` because
+	 * these events are space-scoped, not session-scoped — subscribers that need
+	 * space-scoped filtering should inspect `payload.spaceId`.
 	 *
-	 * By interface contract, NotificationSink implementations should handle their
-	 * own errors internally (see SessionNotificationSink). However, to prevent a
-	 * poorly-written or custom sink from crashing the tick loop, SpaceRuntime
-	 * wraps all notify() calls in this guard.
-	 *
-	 * Errors are logged at warn level and the tick continues normally.
+	 * No-op when no bus is configured (e.g. unit tests). Errors from
+	 * `publish()` are caught and logged so a faulty subscriber cannot break
+	 * the runtime tick loop.
 	 */
-	private async safeNotify(event: Parameters<NotificationSink['notify']>[0]): Promise<void> {
-		// New path — publish typed event to InternalEventBus FIRST so bus subscribers
-		// are never delayed by a slow or failing legacy sink.
-		if (this.internalEventBus) {
-			const mapped = this.mapNotificationEventToInternalEvent(event);
-			if (mapped) {
-				this.publishToInternalEventBus(mapped.event, mapped.payload);
-			}
-		}
-
-		// Legacy path — keep until all subscribers migrate off NotificationSink.
-		try {
-			await this.notificationSink.notify(event);
-		} catch (err) {
-			log.warn(
-				`[SpaceRuntime] NotificationSink.notify() threw for event "${event.kind}": ${err instanceof Error ? err.message : String(err)}`
-			);
-		}
-	}
-
-	/**
-	 * Type-safe helper that publishes a mapped event to InternalEventBus.
-	 *
-	 * Uses a generic helper to preserve the correlated event→payload type
-	 * relationship without an unsafe cast.
-	 */
-	private publishToInternalEventBus<K extends keyof DaemonInternalEventMap & string>(
-		event: K,
-		payload: DaemonInternalEventMap[K]
-	): void {
+	private async safeNotify(event: SpaceNotificationEvent): Promise<void> {
 		if (!this.internalEventBus) return;
+		const mapped = mapNotificationEventToInternalEvent(event);
+		if (!mapped) return;
 		try {
-			// All mapped events carry namespaceId and satisfy InternalEventPayload.
-			this.internalEventBus.publishAsync(
-				event,
-				payload as DaemonInternalEventMap[K] & InternalEventPayload
+			await this.internalEventBus.publish(
+				mapped.event,
+				mapped.payload as DaemonInternalEventMap[typeof mapped.event] & InternalEventPayload
 			);
 		} catch (err) {
 			log.warn(
-				`[SpaceRuntime] internalEventBus.publishAsync() threw for event "${event}": ${err instanceof Error ? err.message : String(err)}`
+				`[SpaceRuntime] internalEventBus.publish() threw for event "${mapped.event}": ${err instanceof Error ? err.message : String(err)}`
 			);
-		}
-	}
-
-	/**
-	 * Map a legacy NotificationSink event to a typed InternalEventBus event.
-	 *
-	 * Returns `null` for events that don't have a corresponding internal event
-	 * (shouldn't happen for current SpaceRuntime events).
-	 *
-	 * The `namespaceId` field is set to `'global'` because these events are
-	 * space-scoped, not session-scoped. Subscribers that need space-scoped
-	 * filtering should inspect `payload.spaceId`.
-	 */
-	private mapNotificationEventToInternalEvent(event: Parameters<NotificationSink['notify']>[0]): {
-		event: keyof DaemonInternalEventMap;
-		payload: DaemonInternalEventMap[keyof DaemonInternalEventMap];
-	} | null {
-		const namespaceId = 'global';
-		switch (event.kind) {
-			case 'task_blocked':
-				return {
-					event: 'space.task.blocked',
-					payload: {
-						namespaceId,
-						spaceId: event.spaceId,
-						taskId: event.taskId,
-						reason: event.reason,
-						timestamp: event.timestamp,
-					},
-				};
-			case 'workflow_run_blocked':
-				return {
-					event: 'space.workflowRun.blocked',
-					payload: {
-						namespaceId,
-						spaceId: event.spaceId,
-						runId: event.runId,
-						reason: event.reason,
-						timestamp: event.timestamp,
-					},
-				};
-			case 'task_timeout':
-				return {
-					event: 'space.task.timeout',
-					payload: {
-						namespaceId,
-						spaceId: event.spaceId,
-						taskId: event.taskId,
-						elapsedMs: event.elapsedMs,
-						timestamp: event.timestamp,
-					},
-				};
-			case 'workflow_run_completed':
-				return {
-					event: 'space.workflowRun.completed',
-					payload: {
-						namespaceId,
-						spaceId: event.spaceId,
-						runId: event.runId,
-						status: event.status,
-						summary: event.summary,
-						timestamp: event.timestamp,
-					},
-				};
-			case 'workflow_run_reopened':
-				return {
-					event: 'space.workflowRun.reopened',
-					payload: {
-						namespaceId,
-						spaceId: event.spaceId,
-						runId: event.runId,
-						fromStatus: event.fromStatus,
-						reason: event.reason,
-						by: event.by,
-						timestamp: event.timestamp,
-					},
-				};
-			case 'agent_auto_completed':
-				return {
-					event: 'space.agent.autoCompleted',
-					payload: {
-						namespaceId,
-						spaceId: event.spaceId,
-						taskId: event.taskId,
-						elapsedMs: event.elapsedMs,
-						timestamp: event.timestamp,
-					},
-				};
-			case 'agent_crash':
-				return {
-					event: 'space.agent.crashed',
-					payload: {
-						namespaceId,
-						spaceId: event.spaceId,
-						taskId: event.taskId,
-						timestamp: event.timestamp,
-					},
-				};
-			case 'agent_idle_non_terminal':
-				return {
-					event: 'space.agent.idleNonTerminal',
-					payload: {
-						namespaceId,
-						spaceId: event.spaceId,
-						taskId: event.taskId,
-						runId: event.runId,
-						executionId: event.executionId,
-						nodeId: event.nodeId,
-						agentName: event.agentName,
-						reason: event.reason,
-						timestamp: event.timestamp,
-					},
-				};
-			case 'task_retry':
-				return {
-					event: 'space.workflowRun.retry',
-					payload: {
-						namespaceId,
-						spaceId: event.spaceId,
-						taskId: event.taskId,
-						runId: event.runId,
-						originalReason: event.originalReason,
-						attemptNumber: event.attemptNumber,
-						maxAttempts: event.maxAttempts,
-						timestamp: event.timestamp,
-					},
-				};
-			case 'workflow_run_needs_attention':
-				return {
-					event: 'space.workflowRun.needsAttention',
-					payload: {
-						namespaceId,
-						spaceId: event.spaceId,
-						runId: event.runId,
-						taskId: event.taskId,
-						reason: event.reason,
-						retriesExhausted: event.retriesExhausted,
-						timestamp: event.timestamp,
-					},
-				};
-			case 'task_awaiting_approval':
-				return {
-					event: 'space.task.awaitingApproval',
-					payload: {
-						namespaceId,
-						spaceId: event.spaceId,
-						taskId: event.taskId,
-						actionId: event.actionId,
-						actionName: event.actionName,
-						actionDescription: event.actionDescription,
-						actionType: event.actionType,
-						requiredLevel: event.requiredLevel,
-						spaceLevel: event.spaceLevel,
-						autonomyLevel: event.autonomyLevel,
-						timestamp: event.timestamp,
-					},
-				};
-			default:
-				return null;
 		}
 	}
 

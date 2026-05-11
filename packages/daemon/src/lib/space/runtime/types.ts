@@ -10,9 +10,9 @@ import type { MessageDeliveryMode, MessageOrigin } from '@neokai/shared';
 /**
  * Minimal interface for injecting messages into a session.
  *
- * Used by notification services (SessionNotificationSink, SpaceAgentNotificationService)
- * to forward structured events into the Space Agent session without depending on the
- * full SessionManager surface.
+ * Used by `SpaceAgentNotificationService` to forward structured events into
+ * the Space Agent session without depending on the full SessionManager
+ * surface.
  */
 export interface SessionFactory {
 	injectMessage(
