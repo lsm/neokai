@@ -74,11 +74,13 @@ export function setupSessionHandlers(
 			return;
 		}
 
-		void daemonHub.emit('space.updated', {
-			sessionId: payload.sessionId,
-			spaceId: payload.spaceId,
-			space: payload.space,
-		});
+		void daemonHub
+			.emit('space.updated', {
+				sessionId: payload.sessionId,
+				spaceId: payload.spaceId,
+				space: payload.space,
+			})
+			.catch(() => {});
 	};
 	messageHub.onRequest('session.create', async (data) => {
 		const req = data as CreateSessionRequest;

@@ -492,9 +492,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceWorkflowRunRepo,
 		deps.spaceAgentManager,
 		spaceWorkflowManager,
+		deps.internalEventBus,
 		deps.sessionManager,
-		spaceRuntimeService,
-		deps.internalEventBus
+		spaceRuntimeService
 	);
 
 	// Space Worktree Manager — one worktree per task, shared by all node agents.

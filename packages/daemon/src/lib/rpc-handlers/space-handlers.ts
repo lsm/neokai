@@ -93,15 +93,15 @@ export function setupSpaceHandlers(
 	workflowRunRepo: SpaceWorkflowRunRepository,
 	spaceAgentManager: SpaceAgentManager,
 	spaceWorkflowManager: SpaceWorkflowManager,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	sessionManager?: SessionManager,
-	spaceRuntimeService?: SpaceRuntimeService,
-	internalEventBus?: InternalEventBus<DaemonInternalEventMap>
+	spaceRuntimeService?: SpaceRuntimeService
 ): void {
 	const publishSpaceEvent = <K extends keyof DaemonInternalEventMap & string>(
 		event: K,
 		payload: DaemonInternalEventMap[K]
 	): void => {
-		internalEventBus?.publishAsync(
+		internalEventBus.publishAsync(
 			event,
 			payload as DaemonInternalEventMap[K] & import('../internal-event-bus').InternalEventPayload
 		);

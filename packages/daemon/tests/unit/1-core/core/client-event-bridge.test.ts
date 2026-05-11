@@ -297,10 +297,10 @@ describe('ClientEventBridge', () => {
 			bridge.start();
 			bridge.start();
 
-			// DaemonHub: 6 unmigrated space + 3 session + 2 conn/auth + 1 config + 2 error + 1 context.updated broadcast = 15
+			// DaemonHub: 6 unmigrated space + 3 session + 5 broadcast (context.updated overlap with session = 14 unique)
 			// InternalEventBus: 15 migrated space + 1 settings.updated + 1 session.updated = 17
-			// Total daemonHub unique events: 15 (context.updated has 2 handlers)
-			expect(f.daemonEventHandlers.size).toBe(15);
+			// context.updated has 2 handlers (1 mapping + 1 broadcast) but is 1 unique key
+			expect(f.daemonEventHandlers.size).toBe(14);
 			expect(f.eventBusSubscribers.size).toBe(17);
 		});
 	});

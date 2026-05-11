@@ -223,9 +223,9 @@ describe('space-handlers', () => {
 			runRepo,
 			agentManager ?? createMockSpaceAgentManager(),
 			workflowManager ?? createMockSpaceWorkflowManager(),
+			internalEventBus,
 			sessionManager,
-			spaceRuntimeService,
-			internalEventBus
+			spaceRuntimeService
 		);
 	}
 

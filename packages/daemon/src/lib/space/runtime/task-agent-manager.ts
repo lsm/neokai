@@ -1796,16 +1796,31 @@ export class TaskAgentManager {
 		sessionId: string,
 		row: { spaceId: string; workflowRunId: string; targetAgentName: string; targetKind: string }
 	): void {
-		this.config.internalEventBus?.publishAsync('space.pendingMessage.delivered', {
-			namespaceId: 'global',
-			sessionId: 'global',
-			spaceId: row.spaceId,
-			workflowRunId: row.workflowRunId,
-			targetAgentName: row.targetAgentName,
-			targetKind: row.targetKind,
-			messageId,
-			deliveredSessionId: sessionId,
-		});
+		if (this.config.internalEventBus) {
+			this.config.internalEventBus.publishAsync('space.pendingMessage.delivered', {
+				namespaceId: 'global',
+				sessionId: 'global',
+				spaceId: row.spaceId,
+				workflowRunId: row.workflowRunId,
+				targetAgentName: row.targetAgentName,
+				targetKind: row.targetKind,
+				messageId,
+				deliveredSessionId: sessionId,
+			});
+			return;
+		}
+
+		void this.config.daemonHub
+			.emit('space.pendingMessage.delivered', {
+				sessionId: 'global',
+				spaceId: row.spaceId,
+				workflowRunId: row.workflowRunId,
+				targetAgentName: row.targetAgentName,
+				targetKind: row.targetKind,
+				messageId,
+				deliveredSessionId: sessionId,
+			})
+			.catch(() => {});
 	}
 
 	// -------------------------------------------------------------------------

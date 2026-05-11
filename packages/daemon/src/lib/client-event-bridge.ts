@@ -498,10 +498,7 @@ export class ClientEventBridge {
 	// Private helpers
 	// ========================================
 
-	private subscribeMapping(
-		mapping: BridgeMapping,
-		source: 'daemon' | 'internal' = 'daemon'
-	): void {
+	private subscribeMapping(mapping: BridgeMapping, source: 'daemon' | 'internal' = 'daemon'): void {
 		const handler = (data: BridgeEventMap[keyof BridgeEventMap]) => {
 			const payload = mapping.transform ? mapping.transform(data) : data;
 			this.gateway.publish(mapping.clientEvent, payload, mapping.channel(data));
