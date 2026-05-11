@@ -497,11 +497,30 @@ export class SpaceTaskManager {
 			await this.validateDependencyIds(params.dependsOn, taskId);
 		}
 
+		// Detect whether dependsOn is being changed (and to what)
+		const depsChanged =
+			params.dependsOn !== undefined && !arraysEqual(task.dependsOn ?? [], params.dependsOn);
+
 		// Strip status from the update params so the repo call is clean
 		const { status: _status, ...repoParams } = params;
 		const updated = this.taskRepo.updateTask(taskId, repoParams);
 		if (!updated) {
 			throw new Error(`Failed to update task: ${taskId}`);
+		}
+
+		// Gap 1 fix: if dependsOn was changed and the task is already active,
+		// re-check dependencies. If unmet and task is in_progress, block it.
+		if (depsChanged && (updated.status === 'in_progress' || updated.status === 'open')) {
+			const depsMet = await this.areDependenciesMet(updated);
+			if (!depsMet) {
+				if (updated.status === 'in_progress') {
+					return this.setTaskStatus(taskId, 'blocked', {
+						blockReason: 'dependency_added',
+						result: 'Dependency added while task was in progress',
+					});
+				}
+				// open tasks with unmet deps are naturally skipped by the tick loop
+			}
 		}
 
 		return updated;
@@ -681,6 +700,32 @@ export class SpaceTaskManager {
 	}
 
 	/**
+	 * Unblock dependent tasks whose `dependency_failed` / `dependency_added`
+	 * block reason is now fully resolved because all their deps reached `done`.
+	 *
+	 * Called after a task transitions to `done` - finds every task in the
+	 * same space that depends on the completed task, re-evaluates their full
+	 * dependency set, and transitions eligible blocked tasks back to `open`
+	 * so the tick loop can pick them up.
+	 */
+	async unblockDependentTasks(taskId: string): Promise<SpaceTask[]> {
+		const unblocked: SpaceTask[] = [];
+		const allTasks = await this.listTasks(false /* includeArchived */);
+		for (const t of allTasks) {
+			if (t.status !== 'blocked') continue;
+			if (t.blockReason !== 'dependency_failed' && t.blockReason !== 'dependency_added') continue;
+			if (!t.dependsOn?.includes(taskId)) continue;
+			// Re-check ALL deps for this task
+			const depsMet = await this.areDependenciesMet(t);
+			if (depsMet) {
+				const reopened = await this.setTaskStatus(t.id, 'open');
+				unblocked.push(reopened);
+			}
+		}
+		return unblocked;
+	}
+
+	/**
 	 * Validate that dependency IDs exist in this space and don't create cycles.
 	 * @param depIds - dependency task IDs to validate
 	 * @param taskId - the task being created/updated (omit for new tasks)
@@ -742,4 +787,14 @@ export class SpaceTaskManager {
 		}
 		return false;
 	}
+}
+
+/**
+ * Order-independent comparison for two string arrays.
+ */
+function arraysEqual(a: string[], b: string[]): boolean {
+	if (a.length !== b.length) return false;
+	const sortedA = [...a].sort();
+	const sortedB = [...b].sort();
+	return sortedA.every((v, i) => v === sortedB[i]);
 }

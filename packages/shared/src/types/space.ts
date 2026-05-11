@@ -243,7 +243,8 @@ export type SpaceBlockReason =
 	| 'execution_failed'
 	| 'human_input_requested'
 	| 'gate_rejected'
-	| 'dependency_failed';
+	| 'dependency_failed'
+	| 'dependency_added';
 
 /**
  * Space task priority
