@@ -8,7 +8,7 @@ import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
 import { StateProjectionService } from './lib/state-projection-service';
 import { createClientEventBridge } from './lib/client-event-bridge';
-import { MessageHub, MessageHubRouter } from '@neokai/shared';
+import { ClientEventGateway, MessageHub, MessageHubRouter } from '@neokai/shared';
 import { createDaemonHub } from './lib/daemon-hub';
 import {
 	createDaemonInternalEventBus,
@@ -317,9 +317,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// Instantiated after sessionManager so it can be passed as the NeoSessionManager.
 	const neoAgentManager = new NeoAgentManager(sessionManager, settingsManager);
 
-	// Initialize StateProjectionService (read-model caches from InternalEventBus)
+	// Initialize StateProjectionService (pure read-model caches from InternalEventBus)
 	const stateManager = new StateProjectionService(
-		messageHub,
 		sessionManager,
 		authManager,
 		settingsManager,
@@ -383,11 +382,18 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		});
 	});
 
-	// Initialize ClientEventBridge — forwards selected DaemonHub events to
-	// WebSocket clients via ClientEventGateway.  This extracts the repetitive
-	// room/space forwarding out of StateProjectionService.
-	const clientEventGateway = stateManager.getClientEventGateway();
-	const clientEventBridge = createClientEventBridge(daemonHub, clientEventGateway, stateManager);
+	// Initialize ClientEventBridge — owns ALL client-facing delivery:
+	// - Event forwarding (space, session, connection, config, error events)
+	// - Versioned state broadcasts (system, settings, session state, SDK messages)
+	// - RPC handler registration (state snapshot queries)
+	const clientEventGateway = new ClientEventGateway({ hub: messageHub });
+	const clientEventBridge = createClientEventBridge(
+		daemonHub,
+		messageHub,
+		clientEventGateway,
+		stateManager,
+		internalEventBus
+	);
 	clientEventBridge.start();
 
 	// Initialize GitHub service if configured
