@@ -1232,8 +1232,8 @@ export class ChannelRouter {
 	private async safeNotify(event: WorkflowRunReopenedEvent): Promise<void> {
 		if (!this.config.internalEventBus) return;
 		try {
-			this.config.internalEventBus.publishAsync('space.workflowRun.reopened', {
-				sessionId: 'global',
+			await this.config.internalEventBus.publish('space.workflowRun.reopened', {
+				namespaceId: 'global',
 				spaceId: event.spaceId,
 				runId: event.runId,
 				fromStatus: event.fromStatus,

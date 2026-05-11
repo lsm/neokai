@@ -35,7 +35,7 @@ export interface PublishResult {
  * matching/routing without an extra store lookup.
  */
 export interface ExternalEventPublishedPayload {
-	sessionId: string;
+	namespaceId: string;
 	spaceId: string;
 	eventId: string;
 	source: string;
@@ -123,7 +123,7 @@ export class ExternalEventService implements ExternalEventPublisher {
 	 */
 	private async _publishBusEvent(event: ExternalEvent): Promise<void> {
 		await this.bus.publish('externalEvent.published', {
-			sessionId: event.spaceId,
+			namespaceId: event.spaceId,
 			spaceId: event.spaceId,
 			eventId: event.id,
 			source: event.source,

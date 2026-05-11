@@ -330,7 +330,7 @@ type SpaceNotificationEvent =
  * Map a notification event onto the corresponding typed `InternalEventBus` event.
  *
  * Returns `null` for unrecognised events (defensive — all current `kind`s map).
- * The `sessionId` field is set to `'global'` because these events are
+ * The `namespaceId` field is set to `'global'` because these events are
  * space-scoped, not session-scoped. Subscribers that need space-scoped
  * filtering should inspect `payload.spaceId`.
  */
@@ -338,13 +338,13 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 	event: keyof DaemonInternalEventMap;
 	payload: DaemonInternalEventMap[keyof DaemonInternalEventMap];
 } | null {
-	const sessionId = 'global';
+	const namespaceId = 'global';
 	switch (event.kind) {
 		case 'task_blocked':
 			return {
 				event: 'space.task.blocked',
 				payload: {
-					sessionId,
+					namespaceId,
 					spaceId: event.spaceId,
 					taskId: event.taskId,
 					reason: event.reason,
@@ -355,7 +355,7 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 			return {
 				event: 'space.workflowRun.blocked',
 				payload: {
-					sessionId,
+					namespaceId,
 					spaceId: event.spaceId,
 					runId: event.runId,
 					reason: event.reason,
@@ -366,7 +366,7 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 			return {
 				event: 'space.task.timeout',
 				payload: {
-					sessionId,
+					namespaceId,
 					spaceId: event.spaceId,
 					taskId: event.taskId,
 					elapsedMs: event.elapsedMs,
@@ -377,7 +377,7 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 			return {
 				event: 'space.workflowRun.completed',
 				payload: {
-					sessionId,
+					namespaceId,
 					spaceId: event.spaceId,
 					runId: event.runId,
 					status: event.status,
@@ -389,7 +389,7 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 			return {
 				event: 'space.workflowRun.reopened',
 				payload: {
-					sessionId,
+					namespaceId,
 					spaceId: event.spaceId,
 					runId: event.runId,
 					fromStatus: event.fromStatus,
@@ -402,7 +402,7 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 			return {
 				event: 'space.agent.autoCompleted',
 				payload: {
-					sessionId,
+					namespaceId,
 					spaceId: event.spaceId,
 					taskId: event.taskId,
 					elapsedMs: event.elapsedMs,
@@ -413,7 +413,7 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 			return {
 				event: 'space.agent.crashed',
 				payload: {
-					sessionId,
+					namespaceId,
 					spaceId: event.spaceId,
 					taskId: event.taskId,
 					timestamp: event.timestamp,
@@ -423,7 +423,7 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 			return {
 				event: 'space.agent.idleNonTerminal',
 				payload: {
-					sessionId,
+					namespaceId,
 					spaceId: event.spaceId,
 					taskId: event.taskId,
 					runId: event.runId,
@@ -438,7 +438,7 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 			return {
 				event: 'space.workflowRun.retry',
 				payload: {
-					sessionId,
+					namespaceId,
 					spaceId: event.spaceId,
 					taskId: event.taskId,
 					runId: event.runId,
@@ -452,7 +452,7 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 			return {
 				event: 'space.workflowRun.needsAttention',
 				payload: {
-					sessionId,
+					namespaceId,
 					spaceId: event.spaceId,
 					runId: event.runId,
 					taskId: event.taskId,
@@ -465,7 +465,7 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 			return {
 				event: 'space.task.awaitingApproval',
 				payload: {
-					sessionId,
+					namespaceId,
 					spaceId: event.spaceId,
 					taskId: event.taskId,
 					actionId: event.actionId,

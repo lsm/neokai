@@ -8,7 +8,7 @@ import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
 import { StateProjectionService } from './lib/state-projection-service';
 import { createClientEventBridge } from './lib/client-event-bridge';
-import { MessageHub, MessageHubRouter } from '@neokai/shared';
+import { ClientEventGateway, MessageHub, MessageHubRouter } from '@neokai/shared';
 import { createDaemonHub } from './lib/daemon-hub';
 import {
 	createDaemonInternalEventBus,
@@ -317,9 +317,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// Instantiated after sessionManager so it can be passed as the NeoSessionManager.
 	const neoAgentManager = new NeoAgentManager(sessionManager, settingsManager);
 
-	// Initialize StateProjectionService (read-model caches from InternalEventBus)
+	// Initialize StateProjectionService (pure read-model caches from InternalEventBus)
 	const stateManager = new StateProjectionService(
-		messageHub,
 		sessionManager,
 		authManager,
 		settingsManager,
@@ -339,13 +338,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// and broadcast read.
 	const unsubSessionCreated = daemonHub.on('session.created', (data) => {
 		void internalEventBus.publish('session.created', {
-			sessionId: data.sessionId,
+			namespaceId: data.sessionId,
 			session: data.session,
 		});
 	});
 	const unsubSessionUpdated = daemonHub.on('session.updated', (data) => {
 		void internalEventBus.publish('session.updated', {
-			sessionId: data.sessionId,
+			namespaceId: data.sessionId,
 			source: data.source,
 			session: data.session,
 			processingState: data.processingState,
@@ -353,40 +352,48 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	});
 	const unsubSessionDeleted = daemonHub.on('session.deleted', (data) => {
 		void internalEventBus.publish('session.deleted', {
-			sessionId: data.sessionId,
+			namespaceId: data.sessionId,
 		});
 	});
 	const unsubCommandsUpdated = daemonHub.on('commands.updated', (data) => {
 		void internalEventBus.publish('commands.updated', {
-			sessionId: data.sessionId,
+			namespaceId: data.sessionId,
 			commands: data.commands,
 		});
 	});
 	const unsubSessionError = daemonHub.on('session.error', (data) => {
 		void internalEventBus.publish('session.error', {
-			sessionId: data.sessionId,
+			namespaceId: data.sessionId,
 			error: data.error,
 			details: data.details,
 		});
 	});
 	const unsubSessionErrorClear = daemonHub.on('session.errorClear', (data) => {
 		void internalEventBus.publish('session.errorClear', {
-			sessionId: data.sessionId,
+			namespaceId: data.sessionId,
 		});
 	});
 	const unsubApiConnection = daemonHub.on('api.connection', (data) => {
 		// Forward the complete payload so diagnostic fields (errorCount,
 		// lastError, lastSuccessfulCall) are preserved in projections.
 		void internalEventBus.publish('api.connection', {
+			namespaceId: data.sessionId,
 			...data,
 		});
 	});
 
-	// Initialize ClientEventBridge — forwards selected DaemonHub events to
-	// WebSocket clients via ClientEventGateway.  This extracts the repetitive
-	// room/space forwarding out of StateProjectionService.
-	const clientEventGateway = stateManager.getClientEventGateway();
-	const clientEventBridge = createClientEventBridge(daemonHub, clientEventGateway, stateManager);
+	// Initialize ClientEventBridge — owns ALL client-facing delivery:
+	// - Event forwarding (space, session, connection, config, error events)
+	// - Versioned state broadcasts (system, settings, session state, SDK messages)
+	// - RPC handler registration (state snapshot queries)
+	const clientEventGateway = new ClientEventGateway({ hub: messageHub });
+	const clientEventBridge = createClientEventBridge(
+		daemonHub,
+		messageHub,
+		clientEventGateway,
+		stateManager,
+		internalEventBus
+	);
 	clientEventBridge.start();
 
 	// Initialize GitHub service if configured
