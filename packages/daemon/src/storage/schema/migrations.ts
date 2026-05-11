@@ -12,6 +12,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
+import { slugify, validateSlug } from '../../lib/space/slug';
 
 /**
  * Run all database migrations
@@ -609,6 +610,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   call sites — keeping both costs write throughput without buying lookup
 	//   speed.
 	runMigration126(db);
+
+	// Migration 127: Add `handle` column to `space_workflows` for human-readable
+	// workflow identifiers (alternative to UUID). Unique per space.
+	runMigration127(db);
 }
 
 /**
@@ -8713,4 +8718,102 @@ export function runMigration125(db: BunDatabase): void {
  */
 export function runMigration126(db: BunDatabase): void {
 	db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_parent_tool`);
+}
+
+/**
+ * Migration 127: Add `handle` column to `space_workflows` for human-readable
+ * workflow identifiers (alternative to UUID). Unique per space.
+ *
+ * The handle is auto-generated from the workflow name at creation time
+ * (slugify: lowercase, hyphens, truncate). Collision handling appends
+ * -2, -3, etc. for duplicate names in the same space.
+ *
+ * Backfills `handle` for any row that still has `handle = NULL` — including
+ * rows that were missed by a mid-upgrade crash. The backfill is safe to run
+ * repeatedly: rows with a non-null handle are untouched (the SELECT filters
+ * them out), so existing handles are always preserved across restarts.
+ */
+export function runMigration127(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflows')) return;
+
+	const columns = tableColumnNames(db, 'space_workflows');
+	const columnJustAdded = !columns.includes('handle');
+	if (columnJustAdded) {
+		db.exec(`ALTER TABLE space_workflows ADD COLUMN handle TEXT DEFAULT NULL`);
+	}
+
+	db.exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_workflows_handle
+		ON space_workflows(space_id, handle)
+		WHERE handle IS NOT NULL
+	`);
+
+	// Always backfill any remaining NULL-handle rows. This makes the migration
+	// resumable: if a previous boot crashed between the ALTER TABLE and the
+	// backfill loop, subsequent boots pick up where it left off. A NULL handle
+	// is treated as "not yet generated" rather than an explicit user choice.
+	// Group by space_id so collision resolution is scoped per space.
+	interface WorkflowRow {
+		id: string;
+		space_id: string;
+		name: string;
+	}
+	const rows = db
+		.prepare(`SELECT id, space_id, name FROM space_workflows WHERE handle IS NULL`)
+		.all() as WorkflowRow[];
+	if (rows.length === 0) return;
+
+	// Seed the dedup set with every handle that is already non-NULL in the DB.
+	// Without this, a partial-upgrade state where one row already has handle='foo'
+	// would cause a collision when the backfill tries to assign the same slug to
+	// another row, aborting via the unique-index constraint.
+	interface ExistingHandleRow {
+		space_id: string;
+		handle: string;
+	}
+	const existingHandleRows = db
+		.prepare(`SELECT space_id, handle FROM space_workflows WHERE handle IS NOT NULL`)
+		.all() as ExistingHandleRow[];
+	const spaceHandles = new Map<string, string[]>();
+	for (const row of existingHandleRows) {
+		const handles = spaceHandles.get(row.space_id) ?? [];
+		handles.push(row.handle);
+		spaceHandles.set(row.space_id, handles);
+	}
+
+	const updateStmt = db.prepare(`UPDATE space_workflows SET handle = ? WHERE id = ?`);
+	for (const row of rows) {
+		const handles = spaceHandles.get(row.space_id) ?? [];
+		const handle = generateValidHandle(row.name, handles);
+		updateStmt.run(handle, row.id);
+		handles.push(handle);
+		spaceHandles.set(row.space_id, handles);
+	}
+}
+
+/**
+ * Generate a handle that is guaranteed to pass validateSlug.
+ * Progressively shortens the base on each iteration so collision
+ * suffixes never push the result over the max length.
+ */
+function generateValidHandle(name: string, existingHandles: string[]): string {
+	const maxLen = 60;
+	let base = slugify(name, existingHandles);
+	// If the initial slugify result is already valid, we're done.
+	if (validateSlug(base) === null) return base;
+
+	// Collision suffixing pushed the handle over the max length.
+	// Progressively shorten the base and re-run collision resolution
+	// until a valid handle is produced.
+	for (let len = maxLen; len > 0; len--) {
+		const truncated = base.slice(0, len);
+		const cleaned = truncated.replace(/-+$/, '');
+		const fallback = cleaned || 'workflow';
+		const candidate = slugify(fallback, existingHandles);
+		if (validateSlug(candidate) === null) {
+			return candidate;
+		}
+	}
+	// Absolute fallback — should never reach here in practice
+	return 'workflow';
 }

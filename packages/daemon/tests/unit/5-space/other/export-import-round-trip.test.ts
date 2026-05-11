@@ -811,3 +811,59 @@ describe('full round-trip: export → import → DB read-back', () => {
 		expect(reviewer!.customPrompt).toBeUndefined();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// validateExportBundle — duplicate handle detection
+// ---------------------------------------------------------------------------
+
+describe('validateExportBundle — duplicate handle within bundle', () => {
+	/** Minimal valid exported workflow fixture with an optional handle. */
+	function makeExportedWf(name: string, handle?: string): ExportedSpaceWorkflow {
+		return {
+			version: 1,
+			type: 'workflow',
+			name,
+			nodes: [{ name: 'Work', agents: [{ agentRef: 'Coder', name: 'coder' }] }],
+			startNode: 'Work',
+			tags: [],
+			completionAutonomyLevel: 3,
+			...(handle !== undefined ? { handle } : {}),
+		} as ExportedSpaceWorkflow;
+	}
+
+	test('rejects two workflows in the same bundle that share a handle', () => {
+		const bundle = exportBundle([], [], 'Collision Bundle');
+		// Manually inject two workflows with the same handle
+		(bundle as Record<string, unknown>).workflows = [
+			makeExportedWf('Workflow A', 'shared-handle'),
+			makeExportedWf('Workflow B', 'shared-handle'),
+		];
+		const result = validateExportBundle(bundle);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error).toContain('duplicate handle');
+			expect(result.error).toContain('shared-handle');
+		}
+	});
+
+	test('accepts a bundle where all workflow handles are unique', () => {
+		const bundle = exportBundle([], [], 'Clean Bundle');
+		(bundle as Record<string, unknown>).workflows = [
+			makeExportedWf('Workflow A', 'handle-a'),
+			makeExportedWf('Workflow B', 'handle-b'),
+		];
+		const result = validateExportBundle(bundle);
+		expect(result.ok).toBe(true);
+	});
+
+	test('accepts a bundle where some workflows have no handle', () => {
+		const bundle = exportBundle([], [], 'Partial Handles Bundle');
+		(bundle as Record<string, unknown>).workflows = [
+			makeExportedWf('Workflow A', 'handle-a'),
+			makeExportedWf('Workflow B'), // no handle
+			makeExportedWf('Workflow C'), // no handle — no conflict since null is not unique-checked
+		];
+		const result = validateExportBundle(bundle);
+		expect(result.ok).toBe(true);
+	});
+});

@@ -166,7 +166,8 @@ export function buildWorkflowCreateParams(
 	name: string,
 	exported: ExportedSpaceWorkflow,
 	importedAgentNameToId: Map<string, string>,
-	existingAgentNameToId: Map<string, string>
+	existingAgentNameToId: Map<string, string>,
+	usedWorkflowHandles?: Set<string>
 ): { params: CreateSpaceWorkflowParams; nodeNameToId: Map<string, string>; warnings: string[] } {
 	const warnings: string[] = [];
 
@@ -253,6 +254,16 @@ export function buildWorkflowCreateParams(
 	if (exported.description !== undefined) params.description = exported.description;
 	if (exported.channels && exported.channels.length > 0) params.channels = exported.channels;
 	if (exported.disabled !== undefined) params.disabled = exported.disabled;
+	// Only preserve the exported handle when it is unique in the target space
+	// and not already used by another workflow in the same import batch.
+	// Otherwise let createWorkflow auto-generate a handle from the name.
+	if (
+		exported.handle !== undefined &&
+		exported.handle.trim() !== '' &&
+		(!usedWorkflowHandles || !usedWorkflowHandles.has(exported.handle))
+	) {
+		params.handle = exported.handle;
+	}
 
 	return { params, nodeNameToId, warnings };
 }
@@ -503,6 +514,9 @@ export function setupSpaceExportImportHandlers(
 				// Mutable sets for uniqueness tracking across the import batch
 				const usedAgentNames = new Set(existingAgents.map((a) => a.name));
 				const usedWorkflowNames = new Set(existingWorkflows.map((w) => w.name));
+				const usedWorkflowHandles = new Set(
+					existingWorkflows.map((w) => w.handle).filter((h): h is string => !!h)
+				);
 
 				// ── Phase 1: import agents ──────────────────────────────────────
 				// Maps original bundle agent name → assigned UUID (used for workflow cross-refs)
@@ -562,6 +576,24 @@ export function setupSpaceExportImportHandlers(
 					}
 				}
 
+				// ── Phase 2 pre-step: delete all replace-strategy workflows ────────
+				// Deleting upfront frees both name slots and handle slots in the DB
+				// before any new workflow tries to claim them, making handle preservation
+				// independent of iteration order within the bundle.
+				const replacedIdByName = new Map<string, string>();
+				for (const exportedWorkflow of bundle.workflows) {
+					const existing = existingWorkflowByName.get(exportedWorkflow.name);
+					if (!existing) continue;
+					const strategy: ConflictResolutionStrategy =
+						res.workflows?.[exportedWorkflow.name] ?? 'skip';
+					if (strategy === 'replace') {
+						workflowRepo.deleteWorkflow(existing.id);
+						replacedIdByName.set(exportedWorkflow.name, existing.id);
+						usedWorkflowNames.delete(exportedWorkflow.name);
+						if (existing.handle) usedWorkflowHandles.delete(existing.handle);
+					}
+				}
+
 				// ── Phase 2: import workflows ────────────────────────────────────
 				const workflowResults: ImportedItem[] = [];
 				const allWarnings: string[] = [];
@@ -589,11 +621,8 @@ export function setupSpaceExportImportHandlers(
 						}
 
 						if (strategy === 'replace') {
-							// Delete the existing workflow so the name becomes available again.
-							// This happens inside the transaction, so it rolls back on any later error.
-							replacedOldId = existing.id;
-							workflowRepo.deleteWorkflow(existing.id);
-							usedWorkflowNames.delete(exportedWorkflow.name);
+							// Already deleted in the pre-step above.
+							replacedOldId = replacedIdByName.get(exportedWorkflow.name);
 							action = 'replaced';
 						} else {
 							// rename
@@ -611,8 +640,19 @@ export function setupSpaceExportImportHandlers(
 						finalName,
 						exportedWorkflow,
 						importedAgentNameToId,
-						existingAgentNameToId
+						existingAgentNameToId,
+						usedWorkflowHandles
 					);
+
+					// Surface handle conflicts with existing space workflows as warnings so
+					// callers know the imported handle was rewritten rather than preserved.
+					const exportedHandle =
+						typeof exportedWorkflow.handle === 'string' ? exportedWorkflow.handle.trim() : '';
+					if (exportedHandle && usedWorkflowHandles.has(exportedHandle)) {
+						allWarnings.push(
+							`Workflow "${finalName}": exported handle "${exportedHandle}" already exists in the target space; a new handle was auto-generated`
+						);
+					}
 
 					// Fail fast on unresolved agent refs — they would produce invalid DB rows.
 					// The transaction ensures the delete (replace strategy) is also rolled back.
@@ -627,6 +667,9 @@ export function setupSpaceExportImportHandlers(
 
 					// workflowManager.createWorkflow validates nodes/transitions/conditions and writes to DB
 					const created = workflowManager.createWorkflow(createParams);
+					// Track the handle assigned to this workflow so later imports in
+					// the same batch don't collide with it.
+					if (created.handle) usedWorkflowHandles.add(created.handle);
 					const wfItem: ImportedItem = { name: finalName, id: created.id, action };
 					if (action === 'replaced' && typeof replacedOldId !== 'undefined') {
 						wfItem.previousId = replacedOldId;

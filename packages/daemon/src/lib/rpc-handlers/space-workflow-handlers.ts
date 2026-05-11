@@ -351,10 +351,10 @@ export function setupSpaceWorkflowHandlers(
 
 	// ─── spaceWorkflow.get ───────────────────────────────────────────────────
 	messageHub.onRequest('spaceWorkflow.get', async (data) => {
-		const params = data as { id: string; spaceId?: string };
+		const params = data as { id?: string; handle?: string; spaceId?: string };
 
-		if (!params.id) {
-			throw new Error('id is required');
+		if (!params.id && !params.handle) {
+			throw new Error('id or handle is required');
 		}
 
 		// When spaceId is provided: verify the space exists before fetching the workflow.
@@ -367,14 +367,35 @@ export function setupSpaceWorkflowHandlers(
 			}
 		}
 
-		const workflow = workflowManager.getWorkflow(params.id);
+		let workflow: SpaceWorkflow | null = null;
+		if (params.id) {
+			workflow = workflowManager.getWorkflow(params.id);
+			// Fall back to handle when the ID is unusable: either it returned null, or
+			// it resolved to a workflow in a different space (stale/cross-space ref).
+			// Clients that cache both fields still resolve correctly when UUIDs change.
+			const idUnusable = !workflow || (!!params.spaceId && workflow.spaceId !== params.spaceId);
+			if (idUnusable && typeof params.handle === 'string' && params.spaceId) {
+				const trimmedHandle = params.handle.trim();
+				if (trimmedHandle) {
+					workflow = workflowManager.getWorkflowByHandle(params.spaceId, trimmedHandle);
+				}
+			}
+		} else if (typeof params.handle === 'string') {
+			if (!params.spaceId) {
+				throw new Error('spaceId is required when looking up by handle');
+			}
+			workflow = workflowManager.getWorkflowByHandle(params.spaceId, params.handle);
+		} else if (params.handle !== undefined) {
+			throw new Error('handle must be a string');
+		}
+
 		if (!workflow) {
-			throw new Error(`Workflow not found: ${params.id}`);
+			throw new Error(`Workflow not found: ${params.id ?? params.handle}`);
 		}
 
 		// Ownership check — reject if caller's spaceId doesn't match the workflow's owner
 		if (params.spaceId && workflow.spaceId !== params.spaceId) {
-			throw new Error(`Workflow not found: ${params.id}`);
+			throw new Error(`Workflow not found: ${params.id ?? params.handle}`);
 		}
 
 		return { workflow };

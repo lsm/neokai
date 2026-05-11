@@ -75,10 +75,16 @@ export function createSpaceAgentSchema(db: Database): void {
 			completion_autonomy_level INTEGER NOT NULL DEFAULT 3,
 			post_approval TEXT DEFAULT NULL,
 			disabled INTEGER NOT NULL DEFAULT 0,
+			handle TEXT DEFAULT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
+	`);
+	db.exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_workflows_handle
+		ON space_workflows(space_id, handle)
+		WHERE handle IS NOT NULL
 	`);
 
 	db.exec(`

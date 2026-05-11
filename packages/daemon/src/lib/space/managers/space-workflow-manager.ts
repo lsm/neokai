@@ -24,6 +24,7 @@ import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 import { Logger } from '../../logger';
 import { validatePostApproval } from '../workflows/post-approval-validator';
+import { slugify, validateSlug } from '../slug';
 
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
@@ -106,12 +107,27 @@ export class SpaceWorkflowManager {
 			}
 		}
 
+		// Auto-generate handle from name if not provided, with collision resolution.
+		// Validate explicit handles for format and uniqueness.
+		let handle: string;
+		if (params.handle !== undefined && params.handle !== null) {
+			if (typeof params.handle !== 'string') {
+				throw new WorkflowValidationError('Workflow handle must be a string');
+			}
+			const trimmedHandle = params.handle.trim();
+			this.validateHandle(params.spaceId, trimmedHandle, null);
+			handle = trimmedHandle;
+		} else {
+			handle = this.generateUniqueHandle(params.spaceId, trimmedName);
+		}
+
 		return this.repo.createWorkflow({
 			...params,
 			name: trimmedName,
 			nodes,
 			startNodeId,
 			endNodeId,
+			handle,
 		});
 	}
 
@@ -121,6 +137,15 @@ export class SpaceWorkflowManager {
 
 	getWorkflow(id: string): SpaceWorkflow | null {
 		const wf = this.repo.getWorkflow(id);
+		if (!wf) return null;
+		return this.sanitizePostApprovalForLoad(wf);
+	}
+
+	/**
+	 * Get a workflow by its handle within a specific space.
+	 */
+	getWorkflowByHandle(spaceId: string, handle: string): SpaceWorkflow | null {
+		const wf = this.repo.getWorkflowByHandle(spaceId, handle);
 		if (!wf) return null;
 		return this.sanitizePostApprovalForLoad(wf);
 	}
@@ -170,6 +195,29 @@ export class SpaceWorkflowManager {
 			const trimmedName = params.name.trim();
 			this.validateName(existing.spaceId, trimmedName, id);
 			params = { ...params, name: trimmedName };
+			// Auto-regenerate handle only when the name actually changes, the
+			// caller did not supply an explicit handle, AND the existing handle
+			// is a non-empty string. A missing/null handle means the user
+			// deliberately cleared it (via updateWorkflow({ handle: null }));
+			// regenerating on a rename would silently undo that intentional clearing.
+			if (
+				trimmedName !== existing.name &&
+				params.handle === undefined &&
+				typeof existing.handle === 'string'
+			) {
+				params = {
+					...params,
+					handle: this.generateUniqueHandle(existing.spaceId, trimmedName, id),
+				};
+			}
+		}
+		if (params.handle !== undefined && params.handle !== null) {
+			if (typeof params.handle !== 'string') {
+				throw new WorkflowValidationError('Workflow handle must be a string');
+			}
+			const trimmedHandle = params.handle.trim();
+			this.validateHandle(existing.spaceId, trimmedHandle, id);
+			params = { ...params, handle: trimmedHandle };
 		}
 		if (params.nodes !== undefined) {
 			this.validateStableNodeIds(id, existing.nodes, params.nodes ?? [], {
@@ -307,6 +355,69 @@ export class SpaceWorkflowManager {
 				);
 			}
 		}
+	}
+
+	private validateHandle(spaceId: string, handle: string, excludeId: string | null): void {
+		if (!handle) {
+			throw new WorkflowValidationError('Workflow handle must not be empty');
+		}
+		const slugError = validateSlug(handle);
+		if (slugError) {
+			throw new WorkflowValidationError(`Invalid workflow handle: ${slugError}`);
+		}
+		const existingHandles = this.repo.getHandlesForSpace(spaceId);
+		for (const existing of existingHandles) {
+			if (existing === handle) {
+				// Exclude the workflow being updated (if any)
+				const wf = this.repo.getWorkflowByHandle(spaceId, handle);
+				if (wf && wf.id !== excludeId) {
+					throw new WorkflowValidationError(
+						`A workflow with handle "${handle}" already exists in this space`
+					);
+				}
+			}
+		}
+	}
+
+	private generateUniqueHandle(spaceId: string, name: string, excludeId?: string): string {
+		const existingHandles = this.repo.getHandlesForSpace(spaceId);
+		const filteredHandles = excludeId
+			? existingHandles.filter((h) => {
+					const wf = this.repo.getWorkflowByHandle(spaceId, h);
+					return wf?.id !== excludeId;
+				})
+			: existingHandles;
+		const handle = slugify(name, filteredHandles);
+		// Collision suffixing can push the handle over the max length; validate
+		// and truncate with a fallback if necessary, then loop until valid.
+		return this.ensureValidHandle(handle, filteredHandles);
+	}
+
+	/**
+	 * Ensure a handle (or its fallback) passes validateSlug. If the initial
+	 * handle is invalid (e.g. over-length after collision suffixing),
+	 * progressively shorten the base and re-run collision resolution until
+	 * the result is valid.
+	 */
+	private ensureValidHandle(handle: string, existingHandles: string[]): string {
+		const maxLen = 60;
+		// If the initial slugify result is already valid, we're done.
+		if (validateSlug(handle) === null) return handle;
+
+		// Collision suffixing pushed the handle over the max length.
+		// Progressively shorten the base and re-run collision resolution
+		// until a valid handle is produced.
+		for (let len = maxLen; len > 0; len--) {
+			const truncated = handle.slice(0, len);
+			const cleaned = truncated.replace(/-+$/, '');
+			const fallback = cleaned || 'workflow';
+			const candidate = slugify(fallback, existingHandles);
+			if (validateSlug(candidate) === null) {
+				return candidate;
+			}
+		}
+		// Absolute fallback — should never reach here in practice
+		return 'workflow';
 	}
 
 	private validateNodes(spaceId: string, nodes: WorkflowNodeInput[]): void {

@@ -474,6 +474,194 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 		const originalRun = ctx.workflowRunRepo.getRun(runId);
 		expect(originalRun?.status).toBe('in_progress');
 	});
+
+	test('switches workflow by handle instead of id', async () => {
+		const wf1 = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF One');
+		const wf2 = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Two');
+		expect(wf2.handle).toBeDefined();
+
+		const startResult = await startWorkflowRun(ctx, {
+			workflow_id: wf1.id,
+			title: 'switch test',
+		});
+		const runId = JSON.parse(startResult.content[0].text).run.id;
+
+		const result = await makeHandlers(ctx).change_plan({
+			run_id: runId,
+			workflow_handle: wf2.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.previousRunId).toBe(runId);
+		expect(parsed.run.workflowId).toBe(wf2.id);
+
+		// Old run should be cancelled
+		const oldRun = ctx.workflowRunRepo.getRun(runId);
+		expect(oldRun?.status).toBe('cancelled');
+	});
+
+	test('returns error when workflow_handle does not exist', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
+		const startResult = await startWorkflowRun(ctx, {
+			workflow_id: wf.id,
+			title: 'run',
+		});
+		const runId = JSON.parse(startResult.content[0].text).run.id;
+
+		const result = await makeHandlers(ctx).change_plan({
+			run_id: runId,
+			workflow_handle: 'nonexistent-handle',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('nonexistent-handle');
+
+		// Original run must still be in_progress
+		const originalRun = ctx.workflowRunRepo.getRun(runId);
+		expect(originalRun?.status).toBe('in_progress');
+	});
+
+	test('falls back to workflow_handle when workflow_id is stale', async () => {
+		const wf1 = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Switch Source WF'
+		);
+		const wf2 = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Switch Target WF'
+		);
+		const startResult = await startWorkflowRun(ctx, {
+			workflow_id: wf1.id,
+			title: 'stale-id run',
+		});
+		const runId = JSON.parse(startResult.content[0].text).run.id;
+
+		const result = await makeHandlers(ctx).change_plan({
+			run_id: runId,
+			workflow_id: 'stale-uuid-for-wf2',
+			workflow_handle: wf2.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.run.workflowId).toBe(wf2.id);
+	});
+
+	test('falls back to workflow_handle when workflow_id is disabled', async () => {
+		const wfSource = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Source WF disabled fallback'
+		);
+		const disabledWf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Disabled WF for fallback',
+			[],
+			'',
+			true
+		);
+		const wfTarget = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Target WF via handle'
+		);
+		const startResult = await startWorkflowRun(ctx, {
+			workflow_id: wfSource.id,
+			title: 'disabled-id run',
+		});
+		const runId = JSON.parse(startResult.content[0].text).run.id;
+
+		// Pass the disabled ID but also provide the target's handle
+		const result = await makeHandlers(ctx).change_plan({
+			run_id: runId,
+			workflow_id: disabledWf.id,
+			workflow_handle: wfTarget.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.run.workflowId).toBe(wfTarget.id);
+	});
+
+	test('falls back to workflow_handle when workflow_id belongs to a different space', async () => {
+		// wf-source is used to start the run; wf-other is in a different space;
+		// wf-target is the intended switch target, referenced by handle.
+		const wfSource = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Source WF'
+		);
+		// Seed the other space so FK constraints pass, then create a workflow there.
+		const otherSpaceId = 'other-space-for-change-plan';
+		seedSpaceRow(ctx.db, otherSpaceId);
+		const wfOther = buildSingleStepWorkflow(
+			otherSpaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Other Space WF'
+		);
+		const wfTarget = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Target WF'
+		);
+		const startResult = await startWorkflowRun(ctx, {
+			workflow_id: wfSource.id,
+			title: 'cross-space switch run',
+		});
+		const runId = JSON.parse(startResult.content[0].text).run.id;
+
+		// Pass the cross-space ID but also provide the target's handle
+		const result = await makeHandlers(ctx).change_plan({
+			run_id: runId,
+			workflow_id: wfOther.id,
+			workflow_handle: wfTarget.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.run.workflowId).toBe(wfTarget.id);
+	});
+
+	test('rejects cross-space workflow_id when handle fallback also fails', async () => {
+		const wfSource = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Source WF'
+		);
+		// Create a workflow in another space
+		const otherSpaceId = 'other-space-stale-handle';
+		seedSpaceRow(ctx.db, otherSpaceId);
+		const wfOther = buildSingleStepWorkflow(
+			otherSpaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Other Space WF'
+		);
+		const startResult = await startWorkflowRun(ctx, {
+			workflow_id: wfSource.id,
+			title: 'stale-handle run',
+		});
+		const runId = JSON.parse(startResult.content[0].text).run.id;
+
+		// Pass cross-space ID + a handle that doesn't resolve to anything
+		const result = await makeHandlers(ctx).change_plan({
+			run_id: runId,
+			workflow_id: wfOther.id,
+			workflow_handle: 'nonexistent-handle',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('Workflow not found');
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -598,6 +786,139 @@ describe('createSpaceAgentToolHandlers — get_workflow_detail', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.workflow.tags).toContain('alpha');
 		expect(parsed.workflow.tags).toContain('beta');
+	});
+
+	test('resolves workflow by handle when workflow_handle is provided', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Handle Lookup WF',
+			[],
+			'Look me up by handle'
+		);
+		// The workflow was auto-generated with a handle from its name
+		expect(wf.handle).toBeDefined();
+
+		const result = await makeHandlers(ctx).get_workflow_detail({
+			workflow_handle: wf.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflow.id).toBe(wf.id);
+		expect(parsed.workflow.name).toBe('Handle Lookup WF');
+	});
+
+	test('returns error when workflow_handle does not exist', async () => {
+		const result = await makeHandlers(ctx).get_workflow_detail({
+			workflow_handle: 'nonexistent-handle',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('nonexistent-handle');
+	});
+
+	test('returns error when neither workflow_id nor workflow_handle is provided', async () => {
+		const result = await makeHandlers(ctx).get_workflow_detail({});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toMatch(/workflow_id or workflow_handle/);
+	});
+
+	test('falls back to workflow_handle when workflow_id is stale', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Stale ID Fallback WF'
+		);
+		expect(wf.handle).toBeDefined();
+
+		const result = await makeHandlers(ctx).get_workflow_detail({
+			workflow_id: 'stale-uuid-for-get-detail',
+			workflow_handle: wf.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflow.id).toBe(wf.id);
+	});
+
+	test('falls back to workflow_handle when workflow_id belongs to a different space', async () => {
+		// wf-other exists in the DB but belongs to a different space.
+		// wf-target is the workflow we actually want, identified by handle.
+		const otherSpaceId = 'other-space-for-detail';
+		seedSpaceRow(ctx.db, otherSpaceId);
+		const wfOther = buildSingleStepWorkflow(
+			otherSpaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Other Space Detail WF'
+		);
+		const wfTarget = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Target Detail WF'
+		);
+		expect(wfTarget.handle).toBeDefined();
+
+		const result = await makeHandlers(ctx).get_workflow_detail({
+			workflow_id: wfOther.id,
+			workflow_handle: wfTarget.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflow.id).toBe(wfTarget.id);
+	});
+
+	test('falls back to workflow_handle when workflow_id is disabled', async () => {
+		const disabledWf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Disabled WF get-detail',
+			[],
+			'',
+			true
+		);
+		const targetWf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Target WF get-detail'
+		);
+		expect(targetWf.handle).toBeDefined();
+
+		const result = await makeHandlers(ctx).get_workflow_detail({
+			workflow_id: disabledWf.id,
+			workflow_handle: targetWf.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflow.id).toBe(targetWf.id);
+	});
+
+	test('preserves disabled workflow when handle is stale', async () => {
+		const disabledWf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Disabled WF stale handle',
+			[],
+			'',
+			true
+		);
+
+		// Pass the disabled ID + a stale handle that doesn't resolve
+		const result = await makeHandlers(ctx).get_workflow_detail({
+			workflow_id: disabledWf.id,
+			workflow_handle: 'nonexistent-stale-handle',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		// Should return the disabled workflow, NOT "not found"
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflow.id).toBe(disabledWf.id);
 	});
 });
 
@@ -901,6 +1222,168 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
 		await expect(ctx.taskManager.updateTask(aId, { dependsOn: [cId] })).rejects.toThrow(
 			/circular|cycle/i
 		);
+	});
+
+	test('persists preferredWorkflowId when workflow_handle is provided', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Coding QA');
+		expect(wf.handle).toBeDefined();
+
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Fix auth bug',
+			description: 'Authentication fails for international users',
+			workflow_handle: wf.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		const stored = ctx.taskRepo.getTask(parsed.task.id);
+		expect(stored).not.toBeNull();
+		expect(stored?.preferredWorkflowId).toBe(wf.id);
+	});
+
+	test('returns error when workflow_handle does not exist', async () => {
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task',
+			description: 'Desc',
+			workflow_handle: 'nonexistent-handle',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('nonexistent-handle');
+	});
+
+	test('returns error when workflow_handle resolves to a disabled workflow (handle-only path)', async () => {
+		const disabled = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Disabled Handle WF'
+		);
+		expect(disabled.handle).toBeDefined();
+		ctx.db.prepare(`UPDATE space_workflows SET disabled = 1 WHERE id = ?`).run(disabled.id);
+
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task',
+			description: 'Handle-only disabled',
+			workflow_handle: disabled.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('disabled');
+	});
+
+	test('workflow_id takes precedence over workflow_handle when both provided and both valid', async () => {
+		const wf1 = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF One');
+		const wf2 = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Two');
+		expect(wf1.handle).toBeDefined();
+		expect(wf2.handle).toBeDefined();
+
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task',
+			description: 'Desc',
+			workflow_id: wf1.id,
+			workflow_handle: wf2.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		const stored = ctx.taskRepo.getTask(parsed.task.id);
+		expect(stored?.preferredWorkflowId).toBe(wf1.id);
+	});
+
+	test('falls back to workflow_handle when workflow_id is stale/invalid', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Fallback WF'
+		);
+		expect(wf.handle).toBeDefined();
+
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task with stale id',
+			description: 'Should resolve via handle',
+			workflow_id: 'stale-uuid-that-does-not-exist',
+			workflow_handle: wf.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		const stored = ctx.taskRepo.getTask(parsed.task.id);
+		// Stale workflow_id was replaced with the id resolved from the handle.
+		expect(stored?.preferredWorkflowId).toBe(wf.id);
+	});
+
+	test('stale workflow_id with no handle falls through to automatic selection', async () => {
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task with only stale id',
+			description: 'No handle fallback available',
+			workflow_id: 'stale-uuid-no-handle',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		// Task is created successfully — the stale id is kept as preferredWorkflowId
+		// and the runtime will fall back to automatic workflow selection.
+		expect(parsed.success).toBe(true);
+		const stored = ctx.taskRepo.getTask(parsed.task.id);
+		expect(stored?.preferredWorkflowId).toBe('stale-uuid-no-handle');
+	});
+
+	test('falls back to handle when workflow_id resolves to a disabled workflow', async () => {
+		const disabled = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Disabled WF'
+		);
+		const active = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Active WF'
+		);
+		// Disable the first workflow via DB update.
+		ctx.db.prepare(`UPDATE space_workflows SET disabled = 1 WHERE id = ?`).run(disabled.id);
+
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task',
+			description: 'Disabled id, valid handle',
+			workflow_id: disabled.id,
+			workflow_handle: active.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		const stored = ctx.taskRepo.getTask(parsed.task.id);
+		expect(stored?.preferredWorkflowId).toBe(active.id);
+	});
+
+	test('errors when both workflow_id (unusable) and workflow_handle are provided but handle not found', async () => {
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task',
+			description: 'Both identifiers fail',
+			workflow_id: 'stale-uuid',
+			workflow_handle: 'also-nonexistent-handle',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toMatch(/not found/i);
+	});
+
+	test('errors when workflow_id is unusable and workflow_handle resolves to a disabled workflow (mixed selector)', async () => {
+		const disabled = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Disabled Fallback WF'
+		);
+		expect(disabled.handle).toBeDefined();
+		ctx.db.prepare(`UPDATE space_workflows SET disabled = 1 WHERE id = ?`).run(disabled.id);
+
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task',
+			description: 'Stale ID + disabled handle',
+			workflow_id: 'stale-uuid-mixed',
+			workflow_handle: disabled.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('disabled');
 	});
 });
 

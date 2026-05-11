@@ -1602,6 +1602,17 @@ describe('seedBuiltInWorkflows()', () => {
 		}
 	});
 
+	test('all seeded workflows get their canonical handle pinned', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const workflows = manager.listWorkflows(SPACE_ID);
+		const byName = new Map(workflows.map((w) => [w.name, w]));
+		expect(byName.get('Coding Workflow')?.handle).toBe('coding-workflow');
+		expect(byName.get('Research Workflow')?.handle).toBe('research-workflow');
+		expect(byName.get('Review-Only Workflow')?.handle).toBe('review-only-workflow');
+		expect(byName.get('Plan & Decompose Workflow')?.handle).toBe('plan-decompose-workflow');
+		expect(byName.get('Coding with QA Workflow')?.handle).toBe('coding-with-qa-workflow');
+	});
+
 	test('all seeded workflows have endNodeId pointing to a valid node', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		for (const wf of manager.listWorkflows(SPACE_ID)) {
@@ -1702,6 +1713,48 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(after.postApproval).toBeDefined();
 		expect(after.postApproval!.targetAgent).toBe('reviewer');
 		expect(after.templateHash).not.toBe('stale-hash-from-a-prior-pr');
+	});
+
+	test('re-stamp does NOT touch handles — custom user handle is preserved', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+
+		// User sets a custom handle and we simulate drift so re-stamp fires.
+		manager.updateWorkflow(coding.id, { handle: 'my-custom-handle' });
+		db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+			'stale-hash',
+			coding.id
+		);
+
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+		const after = manager.getWorkflow(coding.id)!;
+		// Re-stamp never writes the handle field — custom handle is left untouched.
+		expect(after.handle).toBe('my-custom-handle');
+	});
+
+	test('re-stamp succeeds and leaves handle field untouched (no handle write during restamp)', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+
+		// Simulate a pre-feature row: clear handle and force re-stamp.
+		db.prepare(`UPDATE space_workflows SET handle = NULL, template_hash = ? WHERE id = ?`).run(
+			'stale-hash',
+			coding.id
+		);
+
+		// Re-stamp must succeed and NOT touch the handle field.
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		expect(result.restamped).toContain(CODING_WORKFLOW.name);
+		expect(result.errors).toHaveLength(0);
+
+		// postApproval and completionAutonomyLevel are correctly re-stamped.
+		const after = manager.getWorkflow(coding.id)!;
+		expect(after.postApproval).toBeDefined();
+		expect(after.completionAutonomyLevel).toBe(CODING_WORKFLOW.completionAutonomyLevel);
+		// Handle is NOT written by re-stamp — NULL rows are backfilled by migration 124, not the seeder.
+		expect(after.handle).toBeUndefined();
 	});
 
 	test('re-stamp does NOT touch rows without a templateName (user-created)', () => {

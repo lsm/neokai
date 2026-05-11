@@ -90,6 +90,7 @@ function workflowToSummary(wf: SpaceWorkflow): SpaceWorkflowSummary {
 		templateName: wf.templateName,
 		templateHash: wf.templateHash ?? null,
 		disabled: wf.disabled,
+		handle: wf.handle,
 		nodeCount: wf.nodes?.length ?? 0,
 		completionAutonomyLevel: wf.completionAutonomyLevel,
 		createdAt: wf.createdAt,

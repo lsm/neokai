@@ -6,7 +6,7 @@
  *   validation error propagation, event emission (spaceWorkflow.created)
  * - spaceWorkflow.list: happy path, missing spaceId, space not found
  * - spaceWorkflow.get: happy path, missing id, workflow not found, optional spaceId space-existence
- *   check, optional spaceId ownership check
+ *   check, optional spaceId ownership check, handle fallback on null ID, handle fallback on cross-space ID
  * - spaceWorkflow.update: happy path, missing id, workflow not found, optional spaceId
  *   space-existence check, ownership check, validation error, event emission (spaceWorkflow.updated)
  * - spaceWorkflow.delete: happy path, missing id, workflow not found, optional spaceId
@@ -126,6 +126,7 @@ function createMockWorkflowManager(
 	return {
 		createWorkflow: mock(() => workflow!),
 		getWorkflow: mock(() => workflow),
+		getWorkflowByHandle: mock(() => workflow),
 		listWorkflows: mock(() => (workflow ? [workflow] : [])),
 		listWorkflowSummaries: mock(() =>
 			workflow
@@ -369,14 +370,93 @@ describe('space-workflow-handlers', () => {
 		});
 
 		it('throws when id is missing', async () => {
-			await expect(call('spaceWorkflow.get', {})).rejects.toThrow('id is required');
+			await expect(call('spaceWorkflow.get', {})).rejects.toThrow('id or handle is required');
 		});
 
-		it('throws when workflow not found', async () => {
+		it('throws when workflow not found by id', async () => {
 			setup(mockSpace, null);
 			await expect(call('spaceWorkflow.get', { id: 'ghost' })).rejects.toThrow(
 				'Workflow not found: ghost'
 			);
+		});
+
+		it('returns workflow by handle when handle and spaceId are provided', async () => {
+			const result = (await call('spaceWorkflow.get', {
+				handle: 'test-workflow',
+				spaceId: 'space-1',
+			})) as { workflow: SpaceWorkflow };
+			expect(result.workflow).toEqual(mockWorkflow);
+			expect(workflowManager.getWorkflowByHandle).toHaveBeenCalledWith('space-1', 'test-workflow');
+		});
+
+		it('throws when handle is provided but spaceId is missing', async () => {
+			await expect(call('spaceWorkflow.get', { handle: 'test-workflow' })).rejects.toThrow(
+				'spaceId is required when looking up by handle'
+			);
+		});
+
+		it('throws when workflow not found by handle', async () => {
+			setup(mockSpace, null);
+			await expect(
+				call('spaceWorkflow.get', { handle: 'ghost', spaceId: 'space-1' })
+			).rejects.toThrow('Workflow not found: ghost');
+		});
+
+		it('falls back to handle when id lookup misses and both id and handle+spaceId are provided', async () => {
+			// getWorkflow returns null (stale id); getWorkflowByHandle returns the workflow.
+			setup(mockSpace, null);
+			(workflowManager.getWorkflowByHandle as ReturnType<typeof mock>).mockReturnValue(
+				mockWorkflow
+			);
+
+			const result = (await call('spaceWorkflow.get', {
+				id: 'stale-id',
+				handle: 'test-workflow',
+				spaceId: 'space-1',
+			})) as { workflow: SpaceWorkflow };
+
+			expect(result.workflow).toEqual(mockWorkflow);
+			expect(workflowManager.getWorkflow).toHaveBeenCalledWith('stale-id');
+			expect(workflowManager.getWorkflowByHandle).toHaveBeenCalledWith('space-1', 'test-workflow');
+		});
+
+		it('falls back to handle when id resolves to a workflow in a different space', async () => {
+			// getWorkflow returns a workflow owned by space-other; spaceId is space-1.
+			// The ID is "unusable" so the handler should try the handle for space-1.
+			const crossSpaceWorkflow: SpaceWorkflow = {
+				...mockWorkflow,
+				id: 'wf-other',
+				spaceId: 'space-other',
+			};
+			setup(mockSpace, crossSpaceWorkflow);
+			// Override getWorkflowByHandle to return the correct workflow for space-1
+			(workflowManager.getWorkflowByHandle as ReturnType<typeof mock>).mockReturnValue(
+				mockWorkflow
+			);
+
+			const result = (await call('spaceWorkflow.get', {
+				id: 'wf-other',
+				handle: 'test-workflow',
+				spaceId: 'space-1',
+			})) as { workflow: SpaceWorkflow };
+
+			expect(result.workflow).toEqual(mockWorkflow);
+			expect(workflowManager.getWorkflow).toHaveBeenCalledWith('wf-other');
+			expect(workflowManager.getWorkflowByHandle).toHaveBeenCalledWith('space-1', 'test-workflow');
+		});
+
+		it('throws when id is cross-space and no handle is provided', async () => {
+			// Without a handle fallback, cross-space ID should surface as "Workflow not found".
+			const crossSpaceWorkflow: SpaceWorkflow = {
+				...mockWorkflow,
+				id: 'wf-other',
+				spaceId: 'space-other',
+			};
+			setup(mockSpace, crossSpaceWorkflow);
+
+			await expect(
+				call('spaceWorkflow.get', { id: 'wf-other', spaceId: 'space-1' })
+			).rejects.toThrow('Workflow not found: wf-other');
 		});
 	});
 

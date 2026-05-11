@@ -817,6 +817,7 @@ export class SpaceRuntimeService {
 				autonomyLevel: space.autonomyLevel,
 				workflows: workflows.map((w) => ({
 					id: w.id,
+					handle: w.handle ?? undefined,
 					name: w.name,
 					description: w.description,
 					tags: w.tags ?? [],

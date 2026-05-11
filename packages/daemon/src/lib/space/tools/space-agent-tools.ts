@@ -273,13 +273,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		 * different workflow mid-run (cancels the current run and starts a new one).
 		 *
 		 * - Provide `description` to update the run description in place.
-		 * - Provide `workflow_id` to switch workflows: the current run is cancelled
+		 * - Provide `workflow_id` or `workflow_handle` to switch workflows: the current run is cancelled
 		 *   and a new run is started with the same title and updated description.
 		 */
 		async change_plan(args: {
 			run_id: string;
 			description?: string;
 			workflow_id?: string;
+			workflow_handle?: string;
 		}): Promise<ToolResult> {
 			const run = workflowRunRepo.getRun(args.run_id);
 			if (!run) {
@@ -293,20 +294,68 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				});
 			}
 
+			// Resolve workflow identifier to UUID.
+			// If workflow_id is provided but unusable (missing or belongs to another
+			// space), attempt handle resolution so clients that cache both identifiers
+			// still work after a workflow is re-created (new UUID, same handle).
+			let targetWorkflowId = args.workflow_id;
+			if (targetWorkflowId) {
+				const wf = workflowManager.getWorkflow(targetWorkflowId);
+				const idUnusable = !wf || wf.spaceId !== spaceId || !!wf.disabled;
+				if (idUnusable && typeof args.workflow_handle === 'string') {
+					const trimmedHandle = args.workflow_handle.trim();
+					if (trimmedHandle === '') {
+						return jsonResult({
+							success: false,
+							error: 'workflow_handle must be a non-empty string.',
+						});
+					}
+					const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
+					if (byHandle) {
+						targetWorkflowId = byHandle.id;
+					} else {
+						// Both selectors failed — ID is unusable and handle is stale.
+						// Reject immediately rather than falling through; the validation
+						// block below does not check space membership, so a cross-space
+						// ID would pass existence/disabled checks incorrectly.
+						return jsonResult({
+							success: false,
+							error: `Workflow not found (id=${targetWorkflowId}, handle=${trimmedHandle})`,
+						});
+					}
+				}
+			} else if (typeof args.workflow_handle === 'string') {
+				const trimmedHandle = args.workflow_handle.trim();
+				if (trimmedHandle === '') {
+					return jsonResult({
+						success: false,
+						error: 'workflow_handle must be a non-empty string.',
+					});
+				}
+				const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
+				if (!byHandle) {
+					return jsonResult({
+						success: false,
+						error: `Workflow not found by handle: ${trimmedHandle}`,
+					});
+				}
+				targetWorkflowId = byHandle.id;
+			}
+
 			// Switching workflow: validate the target workflow exists BEFORE cancelling
 			// the old run, so a bad workflow_id never leaves the user with no active run.
-			if (args.workflow_id) {
-				const targetWorkflow = workflowManager.getWorkflow(args.workflow_id);
+			if (targetWorkflowId) {
+				const targetWorkflow = workflowManager.getWorkflow(targetWorkflowId);
 				if (!targetWorkflow) {
 					return jsonResult({
 						success: false,
-						error: `Workflow not found: ${args.workflow_id}`,
+						error: `Workflow not found: ${targetWorkflowId}`,
 					});
 				}
 				if (targetWorkflow.disabled) {
 					return jsonResult({
 						success: false,
-						error: `Workflow is disabled: ${args.workflow_id}`,
+						error: `Workflow is disabled: ${targetWorkflowId}`,
 					});
 				}
 
@@ -316,7 +365,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					const newDescription = args.description ?? run.description;
 					const { run: newRun, tasks } = await runtime.startWorkflowRun(
 						spaceId,
-						args.workflow_id,
+						targetWorkflowId,
 						run.title,
 						newDescription
 					);
@@ -325,7 +374,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 						previousRunId: run.id,
 						run: newRun,
 						tasks,
-						message: `Switched from workflow "${run.workflowId}" to "${args.workflow_id}". Previous run cancelled.`,
+						message: `Switched from workflow "${run.workflowId}" to "${targetWorkflowId}". Previous run cancelled.`,
 					});
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
@@ -341,7 +390,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
 			return jsonResult({
 				success: false,
-				error: 'Provide at least one of: description, workflow_id.',
+				error: 'Provide at least one of: description, workflow_id, workflow_handle.',
 			});
 		},
 
@@ -350,10 +399,43 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		 * Use this when list_workflows gives enough name/description to narrow down to one
 		 * candidate and you want to inspect its complete structure before starting a run.
 		 */
-		async get_workflow_detail(args: { workflow_id: string }): Promise<ToolResult> {
-			const workflow = workflowManager.getWorkflow(args.workflow_id);
+		async get_workflow_detail(args: {
+			workflow_id?: string;
+			workflow_handle?: string;
+		}): Promise<ToolResult> {
+			let workflow = null;
+			if (args.workflow_id) {
+				workflow = workflowManager.getWorkflow(args.workflow_id);
+				// Fall back to handle when the ID is unusable: either it returned null,
+				// it resolved to a workflow in a different space, or it is disabled.
+				const idUnusable = !workflow || workflow.spaceId !== spaceId || !!workflow.disabled;
+				if (idUnusable && typeof args.workflow_handle === 'string') {
+					const trimmedHandle = args.workflow_handle.trim();
+					if (trimmedHandle) {
+						const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
+						if (byHandle) {
+							workflow = byHandle;
+						}
+					}
+				}
+			} else if (typeof args.workflow_handle === 'string') {
+				const trimmedHandle = args.workflow_handle.trim();
+				if (trimmedHandle === '') {
+					return jsonResult({
+						success: false,
+						error: 'workflow_handle must be a non-empty string.',
+					});
+				}
+				workflow = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
+			} else {
+				return jsonResult({
+					success: false,
+					error: 'Provide either workflow_id or workflow_handle.',
+				});
+			}
 			if (!workflow) {
-				return jsonResult({ success: false, error: `Workflow not found: ${args.workflow_id}` });
+				const ref = args.workflow_id ?? args.workflow_handle;
+				return jsonResult({ success: false, error: `Workflow not found: ${ref}` });
 			}
 			return jsonResult({ success: true, workflow });
 		},
@@ -445,15 +527,74 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			description: string;
 			priority?: SpaceTaskPriority;
 			workflow_id?: string;
+			workflow_handle?: string;
 			depends_on?: string[];
 			draft?: boolean;
 		}): Promise<ToolResult> {
+			let preferredWorkflowId = args.workflow_id ?? null;
+			if (preferredWorkflowId) {
+				const wf = workflowManager.getWorkflow(preferredWorkflowId);
+				// Consider the ID "unusable" when the workflow is missing, belongs to a
+				// different space, or is disabled. In any of those cases, a valid handle
+				// in the same request should take precedence.
+				const isUnusable = !wf || wf.spaceId !== spaceId || !!wf.disabled;
+				if (isUnusable && typeof args.workflow_handle === 'string') {
+					const trimmedHandle = args.workflow_handle.trim();
+					if (trimmedHandle === '') {
+						return jsonResult({
+							success: false,
+							error: 'workflow_handle must be a non-empty string.',
+						});
+					}
+					const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
+					if (byHandle) {
+						if (byHandle.disabled) {
+							return jsonResult({
+								success: false,
+								error: `Workflow is disabled: ${trimmedHandle}`,
+							});
+						}
+						preferredWorkflowId = byHandle.id;
+					} else {
+						// Both identifiers were supplied but neither resolved — fail fast
+						// rather than silently routing to an auto-selected workflow.
+						return jsonResult({
+							success: false,
+							error: `Workflow not found by id or handle: ${trimmedHandle}`,
+						});
+					}
+				}
+				// If unusable and no handle provided, keep the stale ID;
+				// the task runtime will fall back to automatic workflow selection.
+			} else if (typeof args.workflow_handle === 'string') {
+				const trimmedHandle = args.workflow_handle.trim();
+				if (trimmedHandle === '') {
+					return jsonResult({
+						success: false,
+						error: 'workflow_handle must be a non-empty string.',
+					});
+				}
+				const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
+				if (!byHandle) {
+					return jsonResult({
+						success: false,
+						error: `Workflow not found by handle: ${trimmedHandle}`,
+					});
+				}
+				if (byHandle.disabled) {
+					return jsonResult({
+						success: false,
+						error: `Workflow is disabled: ${trimmedHandle}`,
+					});
+				}
+				preferredWorkflowId = byHandle.id;
+			}
 			try {
 				const task = await taskManager.createTask({
 					title: args.title,
 					description: args.description,
 					priority: args.priority,
-					preferredWorkflowId: args.workflow_id ?? null,
+					preferredWorkflowId,
 					dependsOn: args.depends_on,
 					status: args.draft ? 'draft' : undefined,
 					createdBy: myAgentName ?? null,
@@ -464,7 +605,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					{
 						title: args.title,
 						priority: args.priority,
-						workflow_id: args.workflow_id,
+						workflow_id: preferredWorkflowId ?? undefined,
+						workflow_handle: args.workflow_handle,
 						depends_on: args.depends_on,
 						draft: args.draft,
 					},
@@ -1353,6 +1495,12 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.describe(
 						'New workflow ID to switch to. The current run will be cancelled and a new run started with the same title.'
 					),
+				workflow_handle: z
+					.string()
+					.optional()
+					.describe(
+						'New workflow handle to switch to (alternative to workflow_id). The current run will be cancelled and a new run started with the same title.'
+					),
 			},
 			(args) => handlers.change_plan(args)
 		),
@@ -1360,13 +1508,17 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 			'get_workflow_detail',
 			'Get the full definition of a specific workflow, including all steps, transitions, and rules. Use this to inspect a candidate workflow before creating a task.',
 			{
-				workflow_id: z.string().describe('ID of the workflow to retrieve'),
+				workflow_id: z.string().optional().describe('ID of the workflow to retrieve'),
+				workflow_handle: z
+					.string()
+					.optional()
+					.describe('Handle of the workflow to retrieve (alternative to workflow_id)'),
 			},
 			(args) => handlers.get_workflow_detail(args)
 		),
 		tool(
 			'suggest_workflow',
-			'List all workflows available in this space so you can pick the best one for a described piece of work. Returns every workflow in creation order with its name, description, tags, and nodes — no pre-ranking, so your own reasoning is not biased by keyword overlap.',
+			'List all workflows available in this space so you can pick the best one for a described piece of work. Returns every workflow in creation order with its id, handle (human-readable slug usable as workflow_handle in create_standalone_task), name, description, tags, and nodes — no pre-ranking, so your own reasoning is not biased by keyword overlap.',
 			{
 				description: z
 					.string()
@@ -1441,7 +1593,13 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.string()
 					.optional()
 					.describe(
-						'ID of the workflow to use for this task. When provided, the runtime uses this workflow instead of auto-selecting one. Call list_workflows to discover available workflow IDs.'
+						'ID of the workflow to use for this task. When provided, the runtime uses this workflow instead of auto-selecting one. Call list_workflows to discover available workflows (returns both IDs and handles).'
+					),
+				workflow_handle: z
+					.string()
+					.optional()
+					.describe(
+						'Handle of the workflow to use for this task (alternative to workflow_id). Example: "coding-with-qa".'
 					),
 				depends_on: z
 					.array(z.string())

@@ -551,6 +551,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Coding Workflow',
+	handle: 'coding-workflow',
 	description:
 		'Iterative coding workflow with Coding ↔ Review loop. Engineer implements and opens a PR; Reviewer reviews and either requests changes or signals completion.',
 	nodes: [
@@ -775,6 +776,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Research Workflow',
+	handle: 'research-workflow',
 	description:
 		'Iterative research workflow with gated PR verification. Research agent investigates and opens a PR; Reviewer evaluates findings and requests revisions if needed.',
 	nodes: [
@@ -920,6 +922,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Review-Only Workflow',
+	handle: 'review-only-workflow',
 	description:
 		'Single-node review workflow with no planning phase. Reviewer evaluates directly; the run completes when done.',
 	nodes: [
@@ -1013,6 +1016,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Plan & Decompose Workflow',
+	handle: 'plan-decompose-workflow',
 	description:
 		'Planning-only workflow that ends by creating follow-up tasks rather than writing code. ' +
 		'A Planner drafts a plan PR, four Reviewers review it through different lenses ' +
@@ -1235,6 +1239,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Coding with QA Workflow',
+	handle: 'coding-with-qa-workflow',
 	description:
 		'Coder ↔ Reviewer loop with explicit QA validation before completion. ' +
 		'Designed for backend+frontend changes that require thorough test coverage, including browser tests.',
@@ -1704,6 +1709,8 @@ export function seedBuiltInWorkflows(
 				// Without this, PR 3/5 would silently strip the field and no post-
 				// approval routing would fire for freshly seeded spaces.
 				...(template.postApproval ? { postApproval: template.postApproval } : {}),
+				// Pin the canonical handle so it is stable even if the name is later reworded.
+				...(template.handle ? { handle: template.handle } : {}),
 				templateName: template.name,
 				templateHash: computeWorkflowHash(template),
 			});

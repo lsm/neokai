@@ -350,7 +350,10 @@ function buildRoleSection(
 		: undefined;
 	if (!currentNode) return [];
 
-	const lines: string[] = [`- Node: ${currentNode.name}`];
+	const lines: string[] = [
+		`- Workflow: ${workflow.name}${workflow.handle ? ` (handle: ${workflow.handle})` : ''}`,
+	];
+	lines.push(`- Node: ${currentNode.name}`);
 
 	const peers = workflow.nodes.filter((n) => n.id !== currentNode.id).map((n) => n.name);
 	if (peers.length > 0) {
