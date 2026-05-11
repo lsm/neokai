@@ -961,6 +961,87 @@ describe('LoopDetectorHook', () => {
 			await new Promise((r) => setTimeout(r, 80));
 			expect(await call(preToolUse, cmd)).toEqual({});
 		});
+
+		it('expires stale failure rings in lastNAllFailures even when the map stays small', async () => {
+			// Regression test for review feedback: opportunistic size-gated
+			// eviction (size > 256) means small workloads keep their rings
+			// forever. Without time-based gating in lastNAllFailures, stale
+			// failures from outside the window could still leak into a
+			// deny decision. We now check ring age at lookup time and drop
+			// stale rings unconditionally — verify the ring is empty after
+			// the window elapses, even with a single fingerprint in the
+			// map.
+			const { preToolUse, postToolUse } = createLoopDetectorHooks({
+				windowMs: 30,
+				// Tight thresholds so the streak path is short and the ring
+				// reach is exercised quickly.
+				bash: { enabled: true, threshold: 2, failuresRequired: 2 },
+			});
+			const cmd = makePreToolUse('Bash', { command: 'flaky' });
+			const args = cmd.tool_input as Record<string, unknown>;
+
+			// 2 failures fill the ring AND build the streak to 2.
+			await call(preToolUse, cmd);
+			await callPost(postToolUse, makePostToolUse('Bash', args, makeBashFailureResponse()));
+			await call(preToolUse, cmd);
+			await callPost(postToolUse, makePostToolUse('Bash', args, makeBashFailureResponse()));
+
+			// Confirm the deny path would fire right now.
+			expect(await call(preToolUse, cmd)).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+
+			// Wait past the window. Streak resets in Pre callback (firstSeenMs
+			// stale), AND the ring is stale. A SINGLE fresh failure must not
+			// be enough to deny: streak count = 1 (< threshold=2). On the
+			// second fresh failure, the streak hits threshold but the ring
+			// must already have been time-evicted so we don't carry yesterday's
+			// failures forward.
+			await new Promise((r) => setTimeout(r, 50));
+
+			// First post-cooldown call: passes (streak just reset to 1).
+			expect(await call(preToolUse, cmd)).toEqual({});
+			await callPost(postToolUse, makePostToolUse('Bash', args, makeBashFailureResponse()));
+
+			// Second post-cooldown call: streak reaches 2. Ring now has 1
+			// fresh failure (the stale ring was evicted at lookup time and
+			// the post hook wrote a single fresh entry). length=1 < required=2,
+			// so the deny does NOT fire — exactly the behaviour the
+			// sliding-window contract promises.
+			expect(await call(preToolUse, cmd)).toEqual({});
+		});
+
+		it('treats identical commands in different cwds as separate fingerprints', async () => {
+			// Regression test for review feedback: `git status` in repo-A and
+			// `git status` in repo-B are semantically different runs. Failure
+			// streaks must not carry between them. Otherwise switching
+			// between worktrees would inherit prior failure state and
+			// trigger false denies for commands that are only textually
+			// identical.
+			const { preToolUse, postToolUse } = createLoopDetectorHooks();
+			const argsA = { command: 'git status' };
+			const argsB = { command: 'git status' };
+
+			// 6 failures in repo-A — would normally deny.
+			for (let i = 0; i < 5; i++) {
+				const pre = makePreToolUse('Bash', argsA, { cwd: '/repo-a' });
+				await call(preToolUse, pre);
+				await callPost(
+					postToolUse,
+					makePostToolUse('Bash', argsA, makeBashFailureResponse(), { cwd: '/repo-a' })
+				);
+			}
+			// Sanity: 6th call in repo-A denies.
+			expect(
+				await call(preToolUse, makePreToolUse('Bash', argsA, { cwd: '/repo-a' }))
+			).toMatchObject({
+				hookSpecificOutput: { permissionDecision: 'deny' },
+			});
+
+			// First call in repo-B with the same command text must pass —
+			// fresh fingerprint, no streak, no failures.
+			expect(await call(preToolUse, makePreToolUse('Bash', argsB, { cwd: '/repo-b' }))).toEqual({});
+		});
 	});
 
 	describe('isBashFailureResponse classifier', () => {
@@ -996,6 +1077,32 @@ describe('LoopDetectorHook', () => {
 			expect(isBashFailureResponse('<bash-stderr></bash-stderr>')).toBe(false);
 			// Whitespace-only stderr block is not a failure either.
 			expect(isBashFailureResponse('<bash-stderr>   \n\t</bash-stderr>')).toBe(false);
+			// Real-world shape: stdout followed by a stderr block at the end.
+			expect(
+				isBashFailureResponse(
+					'pre-commit\npre-push\n<bash-stderr>warning: deprecated</bash-stderr>'
+				)
+			).toBe(true);
+			// Trailing whitespace after the closing tag is tolerated.
+			expect(isBashFailureResponse('<bash-stderr>oops</bash-stderr>\n  ')).toBe(true);
+		});
+
+		it('does NOT classify literal <bash-stderr> text echoed mid-output as failures', () => {
+			// Regression test for review feedback: a command can legitimately
+			// print the literal `<bash-stderr>…</bash-stderr>` string (e.g.
+			// `echo '<bash-stderr>x</bash-stderr>'` or grepping logs for
+			// the tag). The SDK only ever appends a real stderr block at
+			// the very end of the response, so we anchor the regex to
+			// end-of-output. A tag that appears mid-stream is content, not
+			// a stderr signal.
+			expect(
+				isBashFailureResponse('<bash-stderr>echoed-by-command</bash-stderr> more stdout after')
+			).toBe(false);
+			expect(
+				isBashFailureResponse(
+					'first line\n<bash-stderr>fake</bash-stderr>\nsecond line\nthird line'
+				)
+			).toBe(false);
 		});
 
 		it('does NOT classify free-form strings with textual error markers as failures', () => {

@@ -198,13 +198,16 @@ function stableStringify(value: unknown): string {
  *
  * - Read: resolve `file_path` against `cwd` so `./foo` and `foo` collide;
  *   keep `offset`/`limit` as identity (different ranges should not collide).
- * - Bash: strip the non-semantic `description` field before fingerprinting.
- *   Claude's Bash tool schema uses `description` purely as a human-readable
- *   label that the model frequently rewords between retries ("Check git
- *   hooks" → "List hook files" → …); including it would make every retry
- *   look like a fresh command and defeat the dead-loop detector outright.
- *   `command`, `timeout`, `run_in_background`, `sandbox` are all semantic
- *   and stay in the key.
+ * - Bash: strip the non-semantic `description` field before fingerprinting
+ *   and incorporate the resolved `cwd`. Claude's Bash tool schema uses
+ *   `description` purely as a human-readable label that the model frequently
+ *   rewords between retries ("Check git hooks" → "List hook files" → …);
+ *   including it would make every retry look like a fresh command and defeat
+ *   the dead-loop detector outright. `cwd` IS semantic — the same command
+ *   text (`git status`, `bun test`) means very different things in different
+ *   repositories, and conflating them across worktrees would let prior
+ *   failures in repo-A poison the detector for repo-B. `command`, `timeout`,
+ *   `run_in_background`, `sandbox` are all semantic and stay in the key.
  * - Grep / Glob: pass through, sorted via stableStringify.
  */
 function buildArgKey(toolName: string, input: Record<string, unknown>, cwd?: string): string {
@@ -214,10 +217,11 @@ function buildArgKey(toolName: string, input: Record<string, unknown>, cwd?: str
 		return stableStringify(normalised);
 	}
 	if (toolName === 'Bash') {
-		// Drop the non-semantic label so retries with reworded descriptions
-		// still fingerprint to the same key.
+		// Drop the non-semantic label, fold in cwd so the same command in
+		// different repositories does not collide.
 		const { description: _description, ...rest } = input;
-		return stableStringify(rest);
+		const withCwd = cwd ? { ...rest, __cwd: cwd } : rest;
+		return stableStringify(withCwd);
 	}
 	return stableStringify(input);
 }
@@ -336,13 +340,20 @@ export function isBashFailureResponse(response: unknown): boolean {
 }
 
 /**
- * Detect a non-empty `<bash-stderr>…</bash-stderr>` block. The SDK's Bash
- * formatter wraps captured stderr in these tags; an empty block (no
- * content) is just a successful command with empty stderr and must not
- * count as a failure.
+ * Detect a non-empty `<bash-stderr>…</bash-stderr>` block emitted by the
+ * SDK's Bash formatter. We anchor the match to the *end* of the response
+ * (with optional trailing whitespace): the SDK appends the stderr block
+ * after stdout, so a real stderr signal always lives at the tail. Commands
+ * that happen to echo the literal string mid-stream (e.g. `echo
+ * '<bash-stderr>x</bash-stderr> done'`) won't match because the tag isn't
+ * the last thing in the response.
+ *
+ * Empty / whitespace-only blocks do not count — a successful command with
+ * empty stderr produces `<bash-stderr></bash-stderr>` and must classify as
+ * success.
  */
 function hasNonEmptyBashStderrBlock(text: string): boolean {
-	const match = text.match(/<bash-stderr>([\s\S]*?)<\/bash-stderr>/);
+	const match = text.match(/<bash-stderr>([\s\S]*?)<\/bash-stderr>\s*$/);
 	if (!match) return false;
 	return match[1].trim().length > 0;
 }
@@ -404,7 +415,14 @@ function recordBashOutcome(
 ): void {
 	const key = bashFingerprintKey(scope, fingerprint);
 	const existing = state.bashFailures.get(key);
-	const outcomes = existing?.outcomes ?? [];
+	// If the previous ring is older than the sliding window, treat this
+	// write as starting a fresh ring. Otherwise yesterday's failures would
+	// shift forward one slot at a time as new outcomes arrive, polluting
+	// today's deny decisions. The Pre callback resets the streak counter on
+	// window expiry; the failure ring must follow the same lifecycle so the
+	// two views agree.
+	const isStale = existing != null && now - existing.lastSeenMs > windowMs;
+	const outcomes = !existing || isStale ? [] : existing.outcomes;
 	outcomes.push(failed);
 	// Keep at most `failuresRequired` outcomes so the deny check is O(1).
 	while (outcomes.length > failuresRequired) outcomes.shift();
@@ -414,7 +432,9 @@ function recordBashOutcome(
 	// sliding window. Triggered only when the map exceeds a soft cap so we
 	// don't iterate on every call. The same threshold (256) we use for the
 	// streak ledger keeps memory bounded without measurably impacting
-	// per-call latency for typical workloads.
+	// per-call latency for typical workloads. Note: `lastNAllFailures` also
+	// drops stale rings at lookup time, so this size-gated sweep is a
+	// memory backstop rather than the primary correctness mechanism.
 	if (state.bashFailures.size > 256) {
 		for (const [k, v] of state.bashFailures) {
 			if (now - v.lastSeenMs > windowMs) state.bashFailures.delete(k);
@@ -425,17 +445,30 @@ function recordBashOutcome(
 function lastNAllFailures(
 	state: LoopDetectorState,
 	scope: string,
-	fingerprint: string
+	fingerprint: string,
+	now: number,
+	windowMs: number
 ): {
 	allFailures: boolean;
 	length: number;
 } {
-	const ring = state.bashFailures.get(bashFingerprintKey(scope, fingerprint))?.outcomes ?? [];
-	if (ring.length === 0) return { allFailures: false, length: 0 };
-	for (const failed of ring) {
-		if (!failed) return { allFailures: false, length: ring.length };
+	const key = bashFingerprintKey(scope, fingerprint);
+	const ring = state.bashFailures.get(key);
+	// Sliding-window enforcement: a ring whose most recent activity is past
+	// the window is stale and must not contribute to a deny decision. Drop
+	// it eagerly so the next call starts with a clean slate. Without this,
+	// 5 failures from yesterday could combine with a small number of fresh
+	// failures today to trip the deny path even though the streak counter
+	// (which enforces the window in the Pre callback) has reset.
+	if (!ring || ring.outcomes.length === 0) return { allFailures: false, length: 0 };
+	if (now - ring.lastSeenMs > windowMs) {
+		state.bashFailures.delete(key);
+		return { allFailures: false, length: 0 };
 	}
-	return { allFailures: true, length: ring.length };
+	for (const failed of ring.outcomes) {
+		if (!failed) return { allFailures: false, length: ring.outcomes.length };
+	}
+	return { allFailures: true, length: ring.outcomes.length };
 }
 
 /**
@@ -535,7 +568,13 @@ function buildPreToolUseCallback(
 			const bashThreshold = finalConfig.bash.threshold;
 			if (nextCount >= bashThreshold) {
 				const fingerprint = buildArgKey('Bash', args, cwd);
-				const { allFailures, length } = lastNAllFailures(state, scope, fingerprint);
+				const { allFailures, length } = lastNAllFailures(
+					state,
+					scope,
+					fingerprint,
+					now,
+					finalConfig.windowMs
+				);
 				if (allFailures && length >= finalConfig.bash.failuresRequired) {
 					const argSummary = summariseArgs('Bash', args);
 					const reason = buildBashRecoveryMessage(nextCount, argSummary, length);
