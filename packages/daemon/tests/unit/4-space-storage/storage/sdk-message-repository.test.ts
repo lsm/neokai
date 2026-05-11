@@ -678,11 +678,12 @@ describe('SDKMessageRepository', () => {
 		});
 
 		// Regression: the original implementation loaded every user row for the
-		// session and scanned in JS — O(N) per lookup. The current impl pushes
-		// the uuid match into SQL with LIMIT 1, so SQLite stops at the first
-		// matching row (and in production can use idx_sdk_messages_uuid_status
-		// for an indexed prefix scan). The test schema mirrors the core
-		// migrations but omits that index; correctness is still validated here.
+		// session and scanned in JS — O(N) per lookup. The current impl uses
+		// indexed seeks against (session_id, send_status, json_extract uuid)
+		// for messages saved via saveUserMessage (the production path), with a
+		// fallback scan for legacy NULL-send_status rows. The test schema
+		// mirrors the core migrations but omits idx_sdk_messages_uuid_status;
+		// correctness is still validated here.
 		it('should find the right message among many user rows in the same session', () => {
 			const sessionId = 'session-busy';
 			for (let i = 0; i < 50; i++) {
@@ -694,6 +695,42 @@ describe('SDKMessageRepository', () => {
 			expect(message).toBeDefined();
 			expect(message?.uuid).toBe('uuid-37');
 			expect(message?.content).toBe('Message 37');
+		});
+
+		// Exercises the fast indexed-seek path: messages persisted via
+		// saveUserMessage have send_status set ('consumed' by default), which
+		// is what production rewind targets always look like.
+		it('should find consumed user messages via the indexed path', () => {
+			const sessionId = 'session-consumed';
+			repository.saveUserMessage(
+				sessionId,
+				createUserMessage('Consumed message', 'uuid-consumed'),
+				'consumed'
+			);
+
+			const message = repository.getUserMessageByUuid(sessionId, 'uuid-consumed');
+
+			expect(message).toBeDefined();
+			expect(message?.uuid).toBe('uuid-consumed');
+			expect(message?.content).toBe('Consumed message');
+		});
+
+		// Exercises the fast path for the failed-send_status branch — also a
+		// valid rewind target (see the `(send_status, 'consumed') IN
+		// ('consumed', 'failed')` predicate used elsewhere).
+		it('should find failed user messages via the indexed path', () => {
+			const sessionId = 'session-failed';
+			repository.saveUserMessage(
+				sessionId,
+				createUserMessage('Failed message', 'uuid-failed'),
+				'failed'
+			);
+
+			const message = repository.getUserMessageByUuid(sessionId, 'uuid-failed');
+
+			expect(message).toBeDefined();
+			expect(message?.uuid).toBe('uuid-failed');
+			expect(message?.content).toBe('Failed message');
 		});
 	});
 
