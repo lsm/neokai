@@ -576,6 +576,26 @@ describe('SpaceWorkflowManager', () => {
 			expect(updated?.handle).toBe('custom-handle');
 		});
 
+		it('does not regenerate handle on rename when existing handle was cleared', () => {
+			// Create, then clear the handle (handle: null). A subsequent rename
+			// must NOT auto-generate a new handle — the null state must persist.
+			const created = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Original Name',
+				nodes: [{ id: 'node-1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+				completionAutonomyLevel: 3,
+			});
+			expect(created.handle).toBeDefined();
+
+			// Clear the handle explicitly.
+			const cleared = manager.updateWorkflow(created.id, { handle: null });
+			expect(cleared?.handle).toBeUndefined();
+
+			// Rename without providing handle — must stay null, not regenerate.
+			const renamed = manager.updateWorkflow(created.id, { name: 'New Name After Clear' });
+			expect(renamed?.handle).toBeUndefined();
+		});
+
 		it('rejects invalid slug format on create', () => {
 			expect(() =>
 				manager.createWorkflow({

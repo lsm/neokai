@@ -195,10 +195,16 @@ export class SpaceWorkflowManager {
 			const trimmedName = params.name.trim();
 			this.validateName(existing.spaceId, trimmedName, id);
 			params = { ...params, name: trimmedName };
-			// Auto-regenerate handle only when the name actually changes and the
-			// caller did not supply an explicit handle. This prevents unrelated
-			// edits from silently replacing a custom handle.
-			if (trimmedName !== existing.name && params.handle === undefined) {
+			// Auto-regenerate handle only when the name actually changes, the
+			// caller did not supply an explicit handle, AND the existing handle
+			// is a non-empty string. A missing/null handle means the user
+			// deliberately cleared it (via updateWorkflow({ handle: null }));
+			// regenerating on a rename would silently undo that intentional clearing.
+			if (
+				trimmedName !== existing.name &&
+				params.handle === undefined &&
+				typeof existing.handle === 'string'
+			) {
 				params = {
 					...params,
 					handle: this.generateUniqueHandle(existing.spaceId, trimmedName, id),

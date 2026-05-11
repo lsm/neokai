@@ -301,7 +301,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			let targetWorkflowId = args.workflow_id;
 			if (targetWorkflowId) {
 				const wf = workflowManager.getWorkflow(targetWorkflowId);
-				const idUnusable = !wf || wf.spaceId !== spaceId;
+				const idUnusable = !wf || wf.spaceId !== spaceId || !!wf.disabled;
 				if (idUnusable && typeof args.workflow_handle === 'string') {
 					const trimmedHandle = args.workflow_handle.trim();
 					if (trimmedHandle === '') {

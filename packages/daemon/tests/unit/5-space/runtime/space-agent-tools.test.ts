@@ -550,6 +550,45 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 		expect(parsed.run.workflowId).toBe(wf2.id);
 	});
 
+	test('falls back to workflow_handle when workflow_id is disabled', async () => {
+		const wfSource = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Source WF disabled fallback'
+		);
+		const disabledWf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Disabled WF for fallback',
+			[],
+			'',
+			true
+		);
+		const wfTarget = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Target WF via handle'
+		);
+		const startResult = await startWorkflowRun(ctx, {
+			workflow_id: wfSource.id,
+			title: 'disabled-id run',
+		});
+		const runId = JSON.parse(startResult.content[0].text).run.id;
+
+		// Pass the disabled ID but also provide the target's handle
+		const result = await makeHandlers(ctx).change_plan({
+			run_id: runId,
+			workflow_id: disabledWf.id,
+			workflow_handle: wfTarget.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.run.workflowId).toBe(wfTarget.id);
+	});
+
 	test('falls back to workflow_handle when workflow_id belongs to a different space', async () => {
 		// wf-source is used to start the run; wf-other is in a different space;
 		// wf-target is the intended switch target, referenced by handle.
