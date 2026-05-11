@@ -90,7 +90,7 @@ describe('publish — new event', () => {
 		// Bus fired with full event payload
 		expect(busReceived).toHaveLength(1);
 		expect(busReceived[0]!.spaceId).toBe(SPACE_ID);
-		expect(busReceived[0]!.sessionId).toBe(SPACE_ID);
+		expect(busReceived[0]!.namespaceId).toBe(SPACE_ID);
 		expect(busReceived[0]!.eventId).toBe(event.id);
 		expect(busReceived[0]!.source).toBe('github');
 		expect(busReceived[0]!.topic).toBe(event.topic);
@@ -191,21 +191,21 @@ describe('publish — duplicates', () => {
 // ---------------------------------------------------------------------------
 
 describe('publish — bus semantics', () => {
-	test('bus event is space-scoped (sessionId === spaceId)', async () => {
+	test('bus event is space-scoped (namespaceId === spaceId)', async () => {
 		const received: ExternalEventPublishedPayload[] = [];
 		bus.subscribe(
 			'externalEvent.published',
 			(data) => {
 				received.push(data);
 			},
-			{ subscriberName: 'scoped-sub', sessionId: SPACE_ID }
+			{ subscriberName: 'scoped-sub', namespaceId: SPACE_ID }
 		);
 
 		const event = makeEvent();
 		await service.publish(event);
 
 		expect(received).toHaveLength(1);
-		expect(received[0]!.sessionId).toBe(SPACE_ID);
+		expect(received[0]!.namespaceId).toBe(SPACE_ID);
 	});
 
 	test('global subscriber also receives space-scoped event', async () => {

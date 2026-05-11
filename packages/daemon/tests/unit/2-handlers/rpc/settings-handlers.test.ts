@@ -98,7 +98,7 @@ function createMockInternalEventBus(): {
 		publish: mock(async () => ({ delivered: 0, failures: [] })),
 		subscribe: mock(() => () => {}),
 		getHandlerCount: mock(() => 0),
-		getHandlerCountForSession: mock(() => 0),
+		getHandlerCountForNamespace: mock(() => 0),
 		clear: mock(() => {}),
 		off: mock(() => {}),
 	} as unknown as InternalEventBus<DaemonInternalEventMap>;
@@ -293,7 +293,7 @@ describe('Settings RPC Handlers', () => {
 			expect(internalEventBusData.publishAsyncMock).toHaveBeenCalledWith(
 				'settings.updated',
 				expect.objectContaining({
-					sessionId: 'global',
+					namespaceId: 'global',
 				})
 			);
 		});
@@ -308,7 +308,7 @@ describe('Settings RPC Handlers', () => {
 			expect(internalEventBusData.publishAsyncMock).toHaveBeenCalledWith(
 				'settings.updated',
 				expect.objectContaining({
-					sessionId: 'global',
+					namespaceId: 'global',
 				})
 			);
 		});
@@ -354,7 +354,7 @@ describe('Settings RPC Handlers', () => {
 			expect(internalEventBusData.publishAsyncMock).toHaveBeenCalledWith(
 				'settings.updated',
 				expect.objectContaining({
-					sessionId: 'global',
+					namespaceId: 'global',
 				})
 			);
 		});
@@ -438,7 +438,7 @@ describe('Settings RPC Handlers', () => {
 			expect(internalEventBusData.publishAsyncMock).toHaveBeenCalledWith(
 				'settings.updated',
 				expect.objectContaining({
-					sessionId: 'global',
+					namespaceId: 'global',
 				})
 			);
 			expect(result.results).toEqual([]);

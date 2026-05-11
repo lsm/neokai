@@ -741,7 +741,7 @@ export class SpaceRuntime {
 	): void {
 		if (!this.internalEventBus) return;
 		try {
-			// All mapped events carry sessionId and satisfy InternalEventPayload.
+			// All mapped events carry namespaceId and satisfy InternalEventPayload.
 			this.internalEventBus.publishAsync(
 				event,
 				payload as DaemonInternalEventMap[K] & InternalEventPayload
@@ -759,7 +759,7 @@ export class SpaceRuntime {
 	 * Returns `null` for events that don't have a corresponding internal event
 	 * (shouldn't happen for current SpaceRuntime events).
 	 *
-	 * The `sessionId` field is set to `'global'` because these events are
+	 * The `namespaceId` field is set to `'global'` because these events are
 	 * space-scoped, not session-scoped. Subscribers that need space-scoped
 	 * filtering should inspect `payload.spaceId`.
 	 */
@@ -767,13 +767,13 @@ export class SpaceRuntime {
 		event: keyof DaemonInternalEventMap;
 		payload: DaemonInternalEventMap[keyof DaemonInternalEventMap];
 	} | null {
-		const sessionId = 'global';
+		const namespaceId = 'global';
 		switch (event.kind) {
 			case 'task_blocked':
 				return {
 					event: 'space.task.blocked',
 					payload: {
-						sessionId,
+						namespaceId,
 						spaceId: event.spaceId,
 						taskId: event.taskId,
 						reason: event.reason,
@@ -784,7 +784,7 @@ export class SpaceRuntime {
 				return {
 					event: 'space.workflowRun.blocked',
 					payload: {
-						sessionId,
+						namespaceId,
 						spaceId: event.spaceId,
 						runId: event.runId,
 						reason: event.reason,
@@ -795,7 +795,7 @@ export class SpaceRuntime {
 				return {
 					event: 'space.task.timeout',
 					payload: {
-						sessionId,
+						namespaceId,
 						spaceId: event.spaceId,
 						taskId: event.taskId,
 						elapsedMs: event.elapsedMs,
@@ -806,7 +806,7 @@ export class SpaceRuntime {
 				return {
 					event: 'space.workflowRun.completed',
 					payload: {
-						sessionId,
+						namespaceId,
 						spaceId: event.spaceId,
 						runId: event.runId,
 						status: event.status,
@@ -818,7 +818,7 @@ export class SpaceRuntime {
 				return {
 					event: 'space.workflowRun.reopened',
 					payload: {
-						sessionId,
+						namespaceId,
 						spaceId: event.spaceId,
 						runId: event.runId,
 						fromStatus: event.fromStatus,
@@ -831,7 +831,7 @@ export class SpaceRuntime {
 				return {
 					event: 'space.agent.autoCompleted',
 					payload: {
-						sessionId,
+						namespaceId,
 						spaceId: event.spaceId,
 						taskId: event.taskId,
 						elapsedMs: event.elapsedMs,
@@ -842,7 +842,7 @@ export class SpaceRuntime {
 				return {
 					event: 'space.agent.crashed',
 					payload: {
-						sessionId,
+						namespaceId,
 						spaceId: event.spaceId,
 						taskId: event.taskId,
 						timestamp: event.timestamp,
@@ -852,7 +852,7 @@ export class SpaceRuntime {
 				return {
 					event: 'space.agent.idleNonTerminal',
 					payload: {
-						sessionId,
+						namespaceId,
 						spaceId: event.spaceId,
 						taskId: event.taskId,
 						runId: event.runId,
@@ -867,7 +867,7 @@ export class SpaceRuntime {
 				return {
 					event: 'space.workflowRun.retry',
 					payload: {
-						sessionId,
+						namespaceId,
 						spaceId: event.spaceId,
 						taskId: event.taskId,
 						runId: event.runId,
@@ -881,7 +881,7 @@ export class SpaceRuntime {
 				return {
 					event: 'space.workflowRun.needsAttention',
 					payload: {
-						sessionId,
+						namespaceId,
 						spaceId: event.spaceId,
 						runId: event.runId,
 						taskId: event.taskId,
@@ -894,7 +894,7 @@ export class SpaceRuntime {
 				return {
 					event: 'space.task.awaitingApproval',
 					payload: {
-						sessionId,
+						namespaceId,
 						spaceId: event.spaceId,
 						taskId: event.taskId,
 						actionId: event.actionId,

@@ -1257,7 +1257,7 @@ export class ChannelRouter {
 	): void {
 		if (!this.config.internalEventBus) return;
 		try {
-			// All mapped events carry sessionId and satisfy InternalEventPayload.
+			// All mapped events carry namespaceId and satisfy InternalEventPayload.
 			this.config.internalEventBus.publishAsync(
 				event,
 				payload as DaemonInternalEventMap[K] & InternalEventPayload
@@ -1276,13 +1276,13 @@ export class ChannelRouter {
 		event: keyof DaemonInternalEventMap;
 		payload: DaemonInternalEventMap[keyof DaemonInternalEventMap];
 	} | null {
-		const sessionId = 'global';
+		const namespaceId = 'global';
 		switch (event.kind) {
 			case 'workflow_run_reopened':
 				return {
 					event: 'space.workflowRun.reopened',
 					payload: {
-						sessionId,
+						namespaceId,
 						spaceId: event.spaceId,
 						runId: event.runId,
 						fromStatus: event.fromStatus,
