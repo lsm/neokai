@@ -226,7 +226,8 @@ const PR_READY_BASH_SCRIPT = [
  * evidence is accepted only when the authenticated GitHub user is the PR author.
  *
  * Environment variables:
- *   NEOKAI_GATE_DATA_JSON       — current gate data; may contain `pr_url` or `review_url`
+ *   NEOKAI_GATE_DATA_JSON       — current gate data; contains `pr_url` (PR URL, preferred)
+ *                                 and `review_url` (review permalink, fallback)
  *   NEOKAI_WORKFLOW_START_ISO   — ISO8601 timestamp of workflowRun.createdAt,
  *                                 injected by the gate script runner
  */
@@ -721,6 +722,12 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 				'PR conversation comments for same-account setups where GitHub blocks self-reviews. ' +
 				'Blocks the Review → Coding feedback channel until review evidence is visible on the PR.',
 			fields: [
+				{
+					name: 'pr_url',
+					type: 'string',
+					writers: ['Review'],
+					check: { op: 'exists' },
+				},
 				{
 					name: 'review_url',
 					type: 'string',

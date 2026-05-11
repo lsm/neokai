@@ -162,17 +162,26 @@ describe('CODING_WORKFLOW template', () => {
 		expect(CODING_WORKFLOW.gates).toHaveLength(2);
 		const gateIds = CODING_WORKFLOW.gates!.map((g) => g.id).sort();
 		expect(gateIds).toEqual(['code-ready-gate', 'review-posted-gate']);
-		for (const gate of CODING_WORKFLOW.gates!) {
-			expect(gate.fields).toHaveLength(1);
-		}
+		// code-ready-gate has 1 field (pr_url); review-posted-gate has 2 fields (pr_url + review_url)
+		const codeReadyGate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
+		expect(codeReadyGate.fields).toHaveLength(1);
+		const reviewPostedGate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
+		expect(reviewPostedGate.fields).toHaveLength(2);
 	});
 
-	test('review-posted-gate has review_url field writable only by Review node', () => {
+	test('review-posted-gate has pr_url and review_url fields writable only by Review node', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-		const field = gate.fields.find((f) => f.name === 'review_url')!;
-		expect(field.type).toBe('string');
-		expect(field.writers).toEqual(['Review']);
-		expect(field.check.op).toBe('exists');
+		expect(gate.fields).toHaveLength(2);
+
+		const prField = gate.fields.find((f) => f.name === 'pr_url')!;
+		expect(prField.type).toBe('string');
+		expect(prField.writers).toEqual(['Review']);
+		expect(prField.check.op).toBe('exists');
+
+		const reviewField = gate.fields.find((f) => f.name === 'review_url')!;
+		expect(reviewField.type).toBe('string');
+		expect(reviewField.writers).toEqual(['Review']);
+		expect(reviewField.check.op).toBe('exists');
 	});
 
 	test('review-posted-gate has bash script verifying a review submitted after workflow start', () => {
@@ -357,6 +366,58 @@ describe('CODING_WORKFLOW template', () => {
 			});
 			expect(readFileSync(logPath, 'utf8').trim()).toBe(
 				`pr view ${reviewUrl} --json reviews,comments,author`
+			);
+		} finally {
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
+	test('review-posted-gate prefers pr_url over review_url when both are in gate data', async () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
+		const workspace = mkdtempSync(join(tmpdir(), 'neokai-review-posted-gate-prefers-pr-url-'));
+		const binDir = join(workspace, 'bin');
+		const ghPath = join(binDir, 'gh');
+		const logPath = join(workspace, 'gh-args.log');
+		const prUrl = 'https://github.com/test/repo/pull/42';
+		const reviewUrl = 'https://github.com/test/repo/pull/42#pullrequestreview-123';
+
+		try {
+			mkdirSync(binDir);
+			writeFileSync(
+				ghPath,
+				[
+					'#!/usr/bin/env bash',
+					`printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
+					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ] && [ "$4" = "--json" ] && [ "$5" = "reviews,comments,author" ]; then`,
+					`  printf '%s\\n' '{"reviews":[{"submittedAt":"2026-05-01T12:00:00Z","state":"CHANGES_REQUESTED"}],"comments":[],"author":{"login":"other"}}'`,
+					'  exit 0',
+					'fi',
+					'printf "unexpected gh args: %s\\n" "$*" >&2',
+					'exit 2',
+				].join('\n')
+			);
+			chmodSync(ghPath, 0o755);
+
+			const result = await executeGateScript(
+				gate.script!,
+				{
+					workspacePath: workspace,
+					gateId: 'review-posted-gate',
+					runId: 'run-1',
+					gateData: { pr_url: prUrl, review_url: reviewUrl },
+					workflowStartIso: '2026-05-01T00:00:00Z',
+				},
+				{ PATH: `${binDir}:${process.env.PATH ?? ''}` }
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual({
+				pr_url: prUrl,
+				review_count: 1,
+				review_evidence: 'formal_review',
+			});
+			expect(readFileSync(logPath, 'utf8').trim()).toBe(
+				`pr view ${prUrl} --json reviews,comments,author`
 			);
 		} finally {
 			rmSync(workspace, { recursive: true, force: true });
