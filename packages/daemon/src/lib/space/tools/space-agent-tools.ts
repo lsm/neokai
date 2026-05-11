@@ -1508,7 +1508,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'suggest_workflow',
-			'List all workflows available in this space so you can pick the best one for a described piece of work. Returns every workflow in creation order with its name, description, tags, and nodes — no pre-ranking, so your own reasoning is not biased by keyword overlap.',
+			'List all workflows available in this space so you can pick the best one for a described piece of work. Returns every workflow in creation order with its id, handle (human-readable slug usable as workflow_handle in create_standalone_task), name, description, tags, and nodes — no pre-ranking, so your own reasoning is not biased by keyword overlap.',
 			{
 				description: z
 					.string()

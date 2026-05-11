@@ -42,6 +42,8 @@ import type { SpaceAutonomyLevel } from '@neokai/shared/types/space';
 /** Minimal workflow summary for prompt embedding (avoids exposing full node graph). */
 export interface WorkflowSummary {
 	id: string;
+	/** Human-readable slug usable as an alternative identifier in tool calls. */
+	handle?: string;
 	name: string;
 	description?: string;
 	tags: string[];
