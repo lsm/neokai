@@ -12,6 +12,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
+import { runMigration127 as runMigration127External } from './m127-backfill-review-posted-gate-pr-url';
 
 /**
  * Run all database migrations
@@ -609,6 +610,14 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   call sites — keeping both costs write throughput without buying lookup
 	//   speed.
 	runMigration126(db);
+
+	// Migration 127: Backfill `pr_url` field onto existing `review-posted-gate`
+	//   definitions in `space_workflows.gates`. The built-in Coding Workflow's
+	//   `review-posted-gate` previously declared only `review_url`; the gate script
+	//   needs a clean PR URL to verify reviews. `seedBuiltInWorkflows` does NOT
+	//   re-stamp `gates` on existing rows, so this migration is required for
+	//   existing spaces to receive the fix.
+	runMigration127(db);
 }
 
 /**
@@ -1593,6 +1602,15 @@ function quoteSqlIdent(identifier: string): string {
 
 function quoteSqlString(value: string): string {
 	return `'${value.replaceAll("'", "''")}'`;
+}
+
+/**
+ * Migration 127 — delegated to m127-backfill-review-posted-gate-pr-url.ts so the
+ * backfill block doesn't bloat this file. The behaviour is documented in that
+ * module. Exported for direct invocation from tests.
+ */
+export function runMigration127(db: BunDatabase): void {
+	runMigration127External(db);
 }
 
 function tableColumnNames(db: BunDatabase, tableName: string): string[] {
