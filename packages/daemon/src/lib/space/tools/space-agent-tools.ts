@@ -399,9 +399,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			let workflow = null;
 			if (args.workflow_id) {
 				workflow = workflowManager.getWorkflow(args.workflow_id);
-				// Fall back to handle when the ID is unusable: either it returned null
-				// or it resolved to a workflow in a different space.
-				const idUnusable = !workflow || workflow.spaceId !== spaceId;
+				// Fall back to handle when the ID is unusable: either it returned null,
+				// it resolved to a workflow in a different space, or it is disabled.
+				const idUnusable = !workflow || workflow.spaceId !== spaceId || !!workflow.disabled;
 				if (idUnusable && typeof args.workflow_handle === 'string') {
 					const trimmedHandle = args.workflow_handle.trim();
 					if (trimmedHandle) {

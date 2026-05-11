@@ -838,6 +838,33 @@ describe('createSpaceAgentToolHandlers — get_workflow_detail', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.workflow.id).toBe(wfTarget.id);
 	});
+
+	test('falls back to workflow_handle when workflow_id is disabled', async () => {
+		const disabledWf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Disabled WF get-detail',
+			[],
+			'',
+			true
+		);
+		const targetWf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Target WF get-detail'
+		);
+		expect(targetWf.handle).toBeDefined();
+
+		const result = await makeHandlers(ctx).get_workflow_detail({
+			workflow_id: disabledWf.id,
+			workflow_handle: targetWf.handle,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflow.id).toBe(targetWf.id);
+	});
 });
 
 // ---------------------------------------------------------------------------
