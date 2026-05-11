@@ -7,7 +7,7 @@
  */
 
 import type { MessageHub, MessageImage } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { AgentSession } from '../agent/agent-session';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
@@ -160,13 +160,29 @@ export function setupSpaceTaskMessageHandlers(
 	messageHub: MessageHub,
 	taskAgentManager: TaskAgentManagerInterface,
 	db: Database,
-	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	nodeExecutionRepo?: NodeExecutionLookup,
 	channelCycleResetter?: ChannelCycleResetter,
 	activateNode?: (runId: string, nodeId: string) => Promise<void>,
 	pendingMessageQueue?: PendingAgentMessageQueue
 ): void {
 	const taskRepo = new SpaceTaskRepository(db.getDatabase());
+	const publishSpaceEvent = <K extends keyof DaemonInternalEventMap & string>(
+		event: K,
+		payload: DaemonInternalEventMap[K]
+	): void => {
+		const publisher = internalEventBus as InternalEventBus<DaemonInternalEventMap> & {
+			emit?: (event: string, payload: unknown) => Promise<unknown>;
+		};
+		if (typeof publisher.publishAsync === 'function') {
+			publisher.publishAsync(
+				event,
+				payload as DaemonInternalEventMap[K] & import('../internal-event-bus').InternalEventPayload
+			);
+			return;
+		}
+		void publisher.emit?.(event, payload);
+	};
 
 	/**
 	 * Best-effort: failure to reset must not fail the RPC, since the reset is an
@@ -185,7 +201,7 @@ export function setupSpaceTaskMessageHandlers(
 				`workflow.cycles.reset: runId=${workflowRunId} reason=human_touch taskId=${taskId} rowsReset=${rowsReset}`
 			);
 			if (rowsReset > 0) {
-				await daemonHub.emit('space.workflowRun.cyclesReset', {
+				publishSpaceEvent('space.workflowRun.cyclesReset', {
 					sessionId: 'global',
 					runId: workflowRunId,
 					reason: 'human_touch',
@@ -355,7 +371,7 @@ export function setupSpaceTaskMessageHandlers(
 
 		const updatedTask = await taskAgentManager.ensureTaskAgentSession(params.taskId);
 
-		await daemonHub.emit('space.task.updated', {
+		publishSpaceEvent('space.task.updated', {
 			sessionId: 'global',
 			spaceId: params.spaceId,
 			taskId: params.taskId,
@@ -498,7 +514,7 @@ export function setupSpaceTaskMessageHandlers(
 		const sessionAfter = ensuredTask.taskAgentSessionId ?? null;
 
 		if (sessionAfter !== sessionBefore) {
-			await daemonHub.emit('space.task.updated', {
+			publishSpaceEvent('space.task.updated', {
 				sessionId: 'global',
 				spaceId: params.spaceId,
 				taskId: params.taskId,

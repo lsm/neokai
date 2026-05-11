@@ -6,12 +6,12 @@
  * - space.list: happy path, includeArchived flag
  * - space.get: happy path, missing id, not found
  * - space.update: happy path, missing id, not found
- * - space.archive: happy path (emits space.archived with full space), missing id
- * - space.stop: stops active work via runtime service, marks stopped, emits space.updated; missing id; graceful degradation without runtime service
- * - space.start: clears stopped flag, emits space.updated; missing id
+ * - space.archive: happy path (publishes space.archived with full space), missing id
+ * - space.stop: stops active work via runtime service, marks stopped, publishes space.updated; missing id; graceful degradation without runtime service
+ * - space.start: clears stopped flag, publishes space.updated; missing id
  * - space.delete: happy path, missing id, not found
  * - space.overview: happy path, missing id, not found
- * - DaemonHub events emitted on mutations
+ * - InternalEventBus events published on mutations
  */
 
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
@@ -23,7 +23,10 @@ import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type {
+	DaemonInternalEventMap,
+	InternalEventBus,
+} from '../../../../src/lib/internal-event-bus';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
 
@@ -103,13 +106,10 @@ function createMockMessageHub(): {
 	return { hub, handlers };
 }
 
-function createMockDaemonHub(): DaemonHub {
+function createMockInternalEventBus(): InternalEventBus<DaemonInternalEventMap> {
 	return {
-		emit: mock(async () => {}),
-		on: mock(() => () => {}),
-		off: mock(() => {}),
-		once: mock(async () => {}),
-	} as unknown as DaemonHub;
+		publishAsync: mock(() => {}),
+	} as unknown as InternalEventBus<DaemonInternalEventMap>;
 }
 
 function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
@@ -197,7 +197,7 @@ function createMockSpaceRuntimeService(): SpaceRuntimeService {
 describe('space-handlers', () => {
 	let hub: MessageHub;
 	let handlers: Map<string, RequestHandler>;
-	let daemonHub: DaemonHub;
+	let internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	let spaceManager: SpaceManager;
 	let taskRepo: SpaceTaskRepository;
 	let runRepo: SpaceWorkflowRunRepository;
@@ -212,7 +212,7 @@ describe('space-handlers', () => {
 		const mh = createMockMessageHub();
 		hub = mh.hub;
 		handlers = mh.handlers;
-		daemonHub = createMockDaemonHub();
+		internalEventBus = createMockInternalEventBus();
 		spaceManager = createMockSpaceManager(space);
 		taskRepo = createMockTaskRepo();
 		runRepo = createMockRunRepo();
@@ -221,11 +221,12 @@ describe('space-handlers', () => {
 			spaceManager,
 			taskRepo,
 			runRepo,
-			daemonHub,
+			{} as never,
 			agentManager ?? createMockSpaceAgentManager(),
 			workflowManager ?? createMockSpaceWorkflowManager(),
 			sessionManager,
-			spaceRuntimeService
+			spaceRuntimeService,
+			internalEventBus
 		);
 	}
 
@@ -240,7 +241,7 @@ describe('space-handlers', () => {
 	describe('space.create', () => {
 		beforeEach(() => setup());
 
-		it('creates a space and emits space.created', async () => {
+		it('creates a space and publishes space.created', async () => {
 			const result = await call('space.create', {
 				workspacePath: '/tmp/test',
 				name: 'My Space',
@@ -248,7 +249,7 @@ describe('space-handlers', () => {
 
 			expect(result).toEqual(mockSpace);
 			expect(spaceManager.createSpace).toHaveBeenCalledTimes(1);
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.created', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.created', {
 				sessionId: 'global',
 				spaceId: mockSpace.id,
 				space: mockSpace,
@@ -464,14 +465,14 @@ describe('space-handlers', () => {
 			// Both agent and workflow warnings present
 			expect(result.seedWarnings).toBeDefined();
 			expect(result.seedWarnings!.length).toBe(2);
-			// Event still emitted
-			expect(daemonHub.emit).toHaveBeenCalledWith(
+			// Event still published
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith(
 				'space.created',
 				expect.objectContaining({ spaceId: mockSpace.id })
 			);
 		});
 
-		it('still creates space and emits event even if session creation fails', async () => {
+		it('still creates space and publishes event even if session creation fails', async () => {
 			const sessionManager = createMockSessionManager();
 			(sessionManager.createSession as ReturnType<typeof mock>).mockImplementation(async () => {
 				throw new Error('Session creation failed');
@@ -481,7 +482,7 @@ describe('space-handlers', () => {
 			// Should not throw — session creation failure is non-fatal
 			const result = await call('space.create', { workspacePath: '/tmp/x', name: 'X' });
 			expect(result).toEqual(mockSpace);
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.created', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.created', {
 				sessionId: 'global',
 				spaceId: mockSpace.id,
 				space: mockSpace,
@@ -536,7 +537,7 @@ describe('space-handlers', () => {
 	describe('space.update', () => {
 		beforeEach(() => setup());
 
-		it('updates the space and emits space.updated', async () => {
+		it('updates the space and publishes space.updated', async () => {
 			const updated = { ...mockSpace, name: 'Renamed' };
 			(spaceManager.updateSpace as ReturnType<typeof mock>).mockResolvedValue(updated);
 
@@ -544,7 +545,7 @@ describe('space-handlers', () => {
 
 			expect(result).toEqual(updated);
 			expect(spaceManager.updateSpace).toHaveBeenCalledWith('space-1', { name: 'Renamed' });
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.updated', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.updated', {
 				sessionId: 'global',
 				spaceId: 'space-1',
 				space: updated,
@@ -608,7 +609,7 @@ describe('space-handlers', () => {
 			expect((result as Space).status).toBe('archived');
 			expect(spaceManager.archiveSpace).toHaveBeenCalledWith('space-1');
 			// Must emit space.archived (not space.updated) with the full space object
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.archived', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.archived', {
 				sessionId: 'global',
 				spaceId: 'space-1',
 				space: archivedSpace,
@@ -618,7 +619,7 @@ describe('space-handlers', () => {
 		it('does NOT emit space.updated on archive', async () => {
 			await call('space.archive', { id: 'space-1' });
 
-			const calls = (daemonHub.emit as ReturnType<typeof mock>).mock.calls;
+			const calls = (internalEventBus.publishAsync as ReturnType<typeof mock>).mock.calls;
 			const updatedCall = calls.find((c: unknown[]) => c[0] === 'space.updated');
 			expect(updatedCall).toBeUndefined();
 		});
@@ -649,7 +650,7 @@ describe('space-handlers', () => {
 			setup(mockSpace, undefined, mockRuntimeService);
 		});
 
-		it('stops active work via runtime service, marks space stopped, and emits space.updated', async () => {
+		it('stops active work via runtime service, marks space stopped, and publishes space.updated', async () => {
 			const stoppedSpace = { ...mockSpace, stopped: true };
 			(spaceManager.stopSpace as ReturnType<typeof mock>).mockResolvedValue(stoppedSpace);
 
@@ -661,7 +662,7 @@ describe('space-handlers', () => {
 			expect((result as Space).stopped).toBe(true);
 			// Space is NOT archived — status stays 'active'
 			expect((result as Space).status).toBe('active');
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.updated', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.updated', {
 				sessionId: 'global',
 				spaceId: 'space-1',
 				space: stoppedSpace,
@@ -677,7 +678,7 @@ describe('space-handlers', () => {
 			const result = await call('space.stop', { id: 'space-1' });
 
 			expect((result as Space).stopped).toBe(true);
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.updated', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.updated', {
 				sessionId: 'global',
 				spaceId: 'space-1',
 				space: stoppedSpace,
@@ -694,7 +695,7 @@ describe('space-handlers', () => {
 	describe('space.start', () => {
 		beforeEach(() => setup());
 
-		it('clears stopped flag and emits space.updated', async () => {
+		it('clears stopped flag and publishes space.updated', async () => {
 			const startedSpace = { ...mockSpace, stopped: false, paused: false };
 			(spaceManager.startSpace as ReturnType<typeof mock>).mockResolvedValue(startedSpace);
 
@@ -702,7 +703,7 @@ describe('space-handlers', () => {
 
 			expect(spaceManager.startSpace).toHaveBeenCalledWith('space-1');
 			expect((result as Space).stopped).toBe(false);
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.updated', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.updated', {
 				sessionId: 'global',
 				spaceId: 'space-1',
 				space: startedSpace,
@@ -719,12 +720,12 @@ describe('space-handlers', () => {
 	describe('space.delete', () => {
 		beforeEach(() => setup());
 
-		it('deletes the space and emits space.deleted', async () => {
+		it('deletes the space and publishes space.deleted', async () => {
 			const result = await call('space.delete', { id: 'space-1' });
 
 			expect(result).toEqual({ success: true });
 			expect(spaceManager.deleteSpace).toHaveBeenCalledWith('space-1');
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.deleted', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.deleted', {
 				sessionId: 'global',
 				spaceId: 'space-1',
 			});
@@ -776,12 +777,12 @@ describe('space-handlers', () => {
 	describe('space.pause', () => {
 		beforeEach(() => setup());
 
-		it('pauses a space and emits space.updated', async () => {
+		it('pauses a space and publishes space.updated', async () => {
 			const result = (await call('space.pause', { id: 'space-1' })) as Space;
 
 			expect(result.paused).toBe(true);
 			expect(spaceManager.pauseSpace).toHaveBeenCalledWith('space-1');
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.updated', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.updated', {
 				sessionId: 'global',
 				spaceId: 'space-1',
 				space: result,
@@ -797,12 +798,12 @@ describe('space-handlers', () => {
 	describe('space.resume', () => {
 		beforeEach(() => setup());
 
-		it('resumes a space and emits space.updated', async () => {
+		it('resumes a space and publishes space.updated', async () => {
 			const result = (await call('space.resume', { id: 'space-1' })) as Space;
 
 			expect(result.paused).toBe(false);
 			expect(spaceManager.resumeSpace).toHaveBeenCalledWith('space-1');
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.updated', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.updated', {
 				sessionId: 'global',
 				spaceId: 'space-1',
 				space: result,

@@ -29,7 +29,7 @@
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import type { DaemonHub } from '../../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import {
 	ApproveTaskSchema,
 	SubmitForApprovalSchema,
@@ -151,10 +151,10 @@ export interface NodeAgentToolsConfig {
 	 */
 	nodeExecutionRepo: NodeExecutionRepository;
 	/**
-	 * DaemonHub instance for emitting task update events.
+	 * InternalEventBus instance for emitting client-visible space events.
 	 * Optional — if omitted, no events are emitted (e.g. in unit tests that don't need them).
 	 */
-	daemonHub?: DaemonHub;
+	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 	/**
 	 * Optional AgentMessageRouter for unified message delivery.
 	 * send_message delegates all routing to AgentMessageRouter.
@@ -275,7 +275,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		workflowRunId,
 		workflowNodeId,
 		nodeExecutionRepo,
-		daemonHub,
+		internalEventBus,
 		agentMessageRouter,
 		workflow,
 		gateDataRepo,
@@ -740,19 +740,13 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 									});
 								}
 
-								if (daemonHub) {
-									void daemonHub
-										.emit('space.gateData.updated', {
-											sessionId: 'global',
-											spaceId,
-											runId: workflowRunId,
-											gateId,
-											data: updated.data,
-										})
-										.catch((err) => {
-											log.warn(`Failed to emit space.gateData.updated for gate "${gateId}":`, err);
-										});
-								}
+								internalEventBus?.publishAsync('space.gateData.updated', {
+									sessionId: 'global',
+									spaceId,
+									runId: workflowRunId,
+									gateId,
+									data: updated.data,
+								});
 							}
 						}
 					}

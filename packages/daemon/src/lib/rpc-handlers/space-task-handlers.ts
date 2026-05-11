@@ -18,13 +18,10 @@ import {
 	type SpaceTaskStatus,
 	type UpdateSpaceTaskParams,
 } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
-import { Logger } from '../logger';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
-
-const log = new Logger('space-task-handlers');
 
 /**
  * Factory that creates a SpaceTaskManager bound to a specific spaceId.
@@ -36,9 +33,25 @@ export function setupSpaceTaskHandlers(
 	messageHub: MessageHub,
 	spaceManager: SpaceManager,
 	taskManagerFactory: SpaceTaskManagerFactory,
-	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	spaceRuntimeService?: SpaceRuntimeService
 ): void {
+	const publishSpaceEvent = <K extends keyof DaemonInternalEventMap & string>(
+		event: K,
+		payload: DaemonInternalEventMap[K]
+	): void => {
+		const publisher = internalEventBus as InternalEventBus<DaemonInternalEventMap> & {
+			emit?: (event: string, payload: unknown) => Promise<unknown>;
+		};
+		if (typeof publisher.publishAsync === 'function') {
+			publisher.publishAsync(
+				event,
+				payload as DaemonInternalEventMap[K] & import('../internal-event-bus').InternalEventPayload
+			);
+			return;
+		}
+		void publisher.emit?.(event, payload);
+	};
 	// ─── spaceTask.create ───────────────────────────────────────────────────────
 	messageHub.onRequest('spaceTask.create', async (data) => {
 		const params = data as CreateSpaceTaskParams & { draft?: boolean };
@@ -73,16 +86,12 @@ export function setupSpaceTaskHandlers(
 		}
 		const task = await taskManager.createTask(rest);
 
-		daemonHub
-			.emit('space.task.created', {
-				sessionId: 'global',
-				spaceId,
-				taskId: task.id,
-				task,
-			})
-			.catch((err) => {
-				log.warn('Failed to emit space.task.created:', err);
-			});
+		publishSpaceEvent('space.task.created', {
+			sessionId: 'global',
+			spaceId,
+			taskId: task.id,
+			task,
+		});
 
 		return task;
 	});
@@ -363,16 +372,12 @@ export function setupSpaceTaskHandlers(
 		}
 
 		if (emitTaskUpdated) {
-			daemonHub
-				.emit('space.task.updated', {
-					sessionId: 'global',
-					spaceId,
-					taskId,
-					task,
-				})
-				.catch((err) => {
-					log.warn('Failed to emit space.task.updated:', err);
-				});
+			publishSpaceEvent('space.task.updated', {
+				sessionId: 'global',
+				spaceId,
+				taskId,
+				task,
+			});
 		}
 
 		return task;
@@ -444,16 +449,12 @@ export function setupSpaceTaskHandlers(
 			reason: params.reason ?? null,
 		});
 
-		daemonHub
-			.emit('space.task.updated', {
-				sessionId: 'global',
-				spaceId: params.spaceId,
-				taskId: params.taskId,
-				task,
-			})
-			.catch((err) => {
-				log.warn('Failed to emit space.task.updated:', err);
-			});
+		publishSpaceEvent('space.task.updated', {
+			sessionId: 'global',
+			spaceId: params.spaceId,
+			taskId: params.taskId,
+			task,
+		});
 
 		return task;
 	});
@@ -542,16 +543,12 @@ export function setupSpaceTaskHandlers(
 			});
 		}
 
-		daemonHub
-			.emit('space.task.updated', {
-				sessionId: 'global',
-				spaceId: params.spaceId,
-				taskId: params.taskId,
-				task,
-			})
-			.catch((err) => {
-				log.warn('Failed to emit space.task.updated:', err);
-			});
+		publishSpaceEvent('space.task.updated', {
+			sessionId: 'global',
+			spaceId: params.spaceId,
+			taskId: params.taskId,
+			task,
+		});
 
 		return task;
 	});
@@ -586,16 +583,12 @@ export function setupSpaceTaskHandlers(
 
 		const task = await taskManager.publishTask(params.taskId);
 
-		daemonHub
-			.emit('space.task.updated', {
-				sessionId: 'global',
-				spaceId: params.spaceId,
-				taskId: params.taskId,
-				task,
-			})
-			.catch((err) => {
-				log.warn('Failed to emit space.task.updated:', err);
-			});
+		publishSpaceEvent('space.task.updated', {
+			sessionId: 'global',
+			spaceId: params.spaceId,
+			taskId: params.taskId,
+			task,
+		});
 
 		return task;
 	});

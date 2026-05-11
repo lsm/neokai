@@ -32,7 +32,7 @@ import type {
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
-import type { DaemonHub } from '../../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { Logger } from '../../logger';
 import { formatAgentMessage } from '../agent-message-envelope';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
@@ -120,10 +120,10 @@ export interface TaskAgentToolsConfig {
 		isSyntheticMessage?: boolean
 	) => Promise<void>;
 	/**
-	 * DaemonHub instance for emitting task completion/failure events.
+	 * InternalEventBus instance for emitting client-visible space events.
 	 * Optional — if omitted, no events are emitted (e.g. in unit tests that don't need them).
 	 */
-	daemonHub?: DaemonHub;
+	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 	/** Gate data repository for approve_gate tool. Optional — gate tools disabled when absent. */
 	gateDataRepo?: GateDataRepository;
 	/** Workflow run repository for approve_gate tool. Optional — gate tools disabled when absent. */
@@ -203,7 +203,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		nodeExecutionRepo,
 		taskManager,
 		messageInjector,
-		daemonHub,
+		internalEventBus,
 		gateDataRepo,
 		workflowRunRepo,
 		onGateChanged,
@@ -228,37 +228,32 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 	/** Reserved agent name used by Task Agent to escalate directly to the Space Agent. */
 	const SPACE_AGENT_TARGET = 'space-agent';
 
-	/** Emit DaemonHub event + invoke observability hook when a message is queued. */
+	/** Emit InternalEventBus event + invoke observability hook when a message is queued. */
 	function emitQueued(record: PendingAgentMessageRecord): void {
 		onMessageQueued?.(record);
-		if (!daemonHub) return;
-		void daemonHub
-			.emit('space.pendingMessage.queued', {
-				sessionId: 'global',
-				spaceId: space.id,
-				workflowRunId,
-				taskId: record.taskId,
-				targetAgentName: record.targetAgentName,
-				targetKind: record.targetKind,
-				messageId: record.id,
-				attempts: record.attempts,
-				maxAttempts: record.maxAttempts,
-				expiresAt: record.expiresAt,
-				deduped: false,
-			})
-			.catch(() => {});
+		internalEventBus?.publishAsync('space.pendingMessage.queued', {
+			sessionId: 'global',
+			spaceId: space.id,
+			workflowRunId,
+			taskId: record.taskId,
+			targetAgentName: record.targetAgentName,
+			targetKind: record.targetKind,
+			messageId: record.id,
+			attempts: record.attempts,
+			maxAttempts: record.maxAttempts,
+			expiresAt: record.expiresAt,
+			deduped: false,
+		});
 	}
 
-	/** Emit task updated event to DaemonHub. */
+	/** Emit task updated event to InternalEventBus. */
 	function emitTaskUpdated(task: SpaceTask): void {
-		if (!daemonHub) return;
-		void daemonHub
-			.emit('space.task.updated', { sessionId: 'global', spaceId: space.id, taskId, task })
-			.catch((err: unknown) => {
-				log.warn(
-					`Failed to emit space.task.updated for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
-				);
-			});
+		internalEventBus?.publishAsync('space.task.updated', {
+			sessionId: 'global',
+			spaceId: space.id,
+			taskId,
+			task,
+		});
 	}
 
 	return {
@@ -1117,17 +1112,13 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					workflowRunRepo.updateRun(workflowRunId, { failureReason: null });
 				}
 
-				if (daemonHub) {
-					void daemonHub
-						.emit('space.gateData.updated', {
-							sessionId: 'global',
-							spaceId: space.id,
-							runId: workflowRunId,
-							gateId: args.gate_id,
-							data: gateData.data,
-						})
-						.catch(() => {});
-				}
+				internalEventBus?.publishAsync('space.gateData.updated', {
+					sessionId: 'global',
+					spaceId: space.id,
+					runId: workflowRunId,
+					gateId: args.gate_id,
+					data: gateData.data,
+				});
 				onGateChanged?.(workflowRunId, args.gate_id);
 
 				return jsonResult({
@@ -1166,17 +1157,13 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					});
 				}
 
-				if (daemonHub) {
-					void daemonHub
-						.emit('space.gateData.updated', {
-							sessionId: 'global',
-							spaceId: space.id,
-							runId: workflowRunId,
-							gateId: args.gate_id,
-							data: gateData.data,
-						})
-						.catch(() => {});
-				}
+				internalEventBus?.publishAsync('space.gateData.updated', {
+					sessionId: 'global',
+					spaceId: space.id,
+					runId: workflowRunId,
+					gateId: args.gate_id,
+					data: gateData.data,
+				});
 
 				return jsonResult({
 					success: true,

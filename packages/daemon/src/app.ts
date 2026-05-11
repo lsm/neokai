@@ -386,6 +386,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// - Event forwarding (space, session, connection, config, error events)
 	// - Versioned state broadcasts (system, settings, session state, SDK messages)
 	// - RPC handler registration (state snapshot queries)
+	// Migrated space events route through InternalEventBus; unmigrated spaceAgent/spaceWorkflow
+	// events remain on DaemonHub.
 	const clientEventGateway = new ClientEventGateway({ hub: messageHub });
 	const clientEventBridge = createClientEventBridge(
 		daemonHub,
@@ -436,7 +438,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	let taskAgentManagerForGithub: TaskAgentManager | null = null;
 	const spaceGitHubService = new SpaceGitHubService(
 		db.getDatabase(),
-		daemonHub,
+		internalEventBus,
 		(taskId, message) => {
 			if (!taskAgentManagerForGithub) {
 				throw new Error('TaskAgentManager is not ready for Space GitHub notification delivery');
@@ -625,7 +627,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			jobQueue,
 			spaceRepo: taskScheduleSpaceRepo,
 			taskRepo: taskScheduleTaskRepo,
-			eventHub: daemonHub,
+			internalEventBus,
 		});
 	});
 

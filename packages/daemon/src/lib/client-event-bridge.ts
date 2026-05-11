@@ -3,7 +3,7 @@
  * plus versioned state broadcasts and RPC handler registration.
  *
  * This module contains ALL client-facing delivery paths:
- * - Space events (16 mappings) — forwarding via ClientEventGateway
+ * - Space events (21 mappings) — forwarding via ClientEventGateway
  * - Session events (session.created, session.deleted, context.updated) — forwarding
  * - Connection/auth events (api.connection, auth.changed) — trigger broadcasts
  * - Config events (commands.updated) — trigger broadcasts
@@ -12,9 +12,11 @@
  * - RPC handlers for state snapshots (7 onRequest registrations)
  *
  * Event source split:
- * - DaemonHub: space events, session.created/deleted, context.updated, api.connection,
+ * - InternalEventBus: migrated space events (see INTERNAL_SPACE_BRIDGE_EVENTS),
+ *   settings.updated, session.updated
+ * - DaemonHub: unmigrated space events (spaceAgent.*, spaceWorkflow.*),
+ *   session.created/deleted, context.updated, api.connection,
  *   auth.changed, commands.updated, session.error/errorClear
- * - InternalEventBus: settings.updated, session.updated
  *
  * The bridge subscribes to InternalEventBus for settings.updated and session.updated
  * because those events are published there (settings handlers use publishAsync,
@@ -44,13 +46,37 @@ import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-
 import { Logger } from './logger';
 
 type DaemonEventName = keyof DaemonEventMap & string;
+type InternalEventName = keyof DaemonInternalEventMap & string;
+type BridgeEventMap = DaemonEventMap & DaemonInternalEventMap;
 
 interface BridgeMapping {
-	event: DaemonEventName;
+	event: keyof BridgeEventMap & string;
 	clientEvent: string;
-	channel: (payload: DaemonEventMap[keyof DaemonEventMap]) => EventChannel;
-	transform?: (payload: DaemonEventMap[keyof DaemonEventMap]) => unknown;
+	channel: (payload: BridgeEventMap[keyof BridgeEventMap]) => EventChannel;
+	transform?: (payload: BridgeEventMap[keyof BridgeEventMap]) => unknown;
 }
+
+// ---------------------------------------------------------------------------
+// Migrated Space events — subscribed on InternalEventBus
+// ---------------------------------------------------------------------------
+
+const INTERNAL_SPACE_BRIDGE_EVENTS = new Set<string>([
+	'space.created',
+	'space.updated',
+	'space.archived',
+	'space.deleted',
+	'space.task.created',
+	'space.task.updated',
+	'space.schedule.updated',
+	'space.workflowRun.created',
+	'space.workflowRun.updated',
+	'space.gateData.updated',
+	'space.githubEvent.routed',
+	'space.artifactCache.updated',
+	'space.pendingMessage.queued',
+	'space.pendingMessage.delivered',
+	'space.workflowRun.cyclesReset',
+]);
 
 // ---------------------------------------------------------------------------
 // Space bridge mappings
@@ -106,10 +132,35 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
 		clientEvent: 'space.workflowRun.updated',
 		channel: () => Channels.global(),
 	},
-	// Gate data updates → global
+	// Gate data and misc client-visible space events → global
 	{
 		event: 'space.gateData.updated',
 		clientEvent: 'space.gateData.updated',
+		channel: () => Channels.global(),
+	},
+	{
+		event: 'space.githubEvent.routed',
+		clientEvent: 'space.githubEvent.routed',
+		channel: () => Channels.global(),
+	},
+	{
+		event: 'space.artifactCache.updated',
+		clientEvent: 'space.artifactCache.updated',
+		channel: () => Channels.global(),
+	},
+	{
+		event: 'space.pendingMessage.queued',
+		clientEvent: 'space.pendingMessage.queued',
+		channel: () => Channels.global(),
+	},
+	{
+		event: 'space.pendingMessage.delivered',
+		clientEvent: 'space.pendingMessage.delivered',
+		channel: () => Channels.global(),
+	},
+	{
+		event: 'space.workflowRun.cyclesReset',
+		clientEvent: 'space.workflowRun.cyclesReset',
 		channel: () => Channels.global(),
 	},
 	// Space agent events → space-scoped
@@ -212,9 +263,13 @@ export class ClientEventBridge {
 		// Register RPC handlers for state snapshots
 		this.setupRPCHandlers();
 
-		// Space events (DaemonHub)
+		// Space events — migrated events use InternalEventBus, unmigrated stay on DaemonHub
 		for (const mapping of SPACE_BRIDGE_MAPPINGS) {
-			this.subscribeMapping(mapping);
+			const source =
+				this.internalEventBus && INTERNAL_SPACE_BRIDGE_EVENTS.has(mapping.event)
+					? 'internal'
+					: 'daemon';
+			this.subscribeMapping(mapping, source);
 		}
 
 		// Session events (DaemonHub — pure forwarding + broadcast triggers)
@@ -443,11 +498,29 @@ export class ClientEventBridge {
 	// Private helpers
 	// ========================================
 
-	private subscribeMapping(mapping: BridgeMapping): void {
-		const unsub = this.daemonHub.on(mapping.event, (data: DaemonEventMap[keyof DaemonEventMap]) => {
+	private subscribeMapping(
+		mapping: BridgeMapping,
+		source: 'daemon' | 'internal' = 'daemon'
+	): void {
+		const handler = (data: BridgeEventMap[keyof BridgeEventMap]) => {
 			const payload = mapping.transform ? mapping.transform(data) : data;
 			this.gateway.publish(mapping.clientEvent, payload, mapping.channel(data));
-		});
+		};
+
+		if (source === 'internal') {
+			const unsub = this.internalEventBus.subscribe(
+				mapping.event as InternalEventName,
+				handler as (data: DaemonInternalEventMap[InternalEventName]) => void,
+				{ subscriberName: 'ClientEventBridge' }
+			);
+			this.unsubscribers.push(unsub);
+			return;
+		}
+
+		const unsub = this.daemonHub.on(
+			mapping.event as DaemonEventName,
+			handler as (data: DaemonEventMap[DaemonEventName]) => void
+		);
 		this.unsubscribers.push(unsub);
 	}
 

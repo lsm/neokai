@@ -6,6 +6,7 @@
  * 2. Registers RPC handlers for state snapshots
  * 3. Manages versioned state broadcasts (system, settings, session, SDK messages)
  * 4. Subscribes to InternalEventBus for settings.updated and session.updated
+ * 5. Routes migrated space events through InternalEventBus, unmigrated through DaemonHub
  */
 
 import { describe, expect, it, mock } from 'bun:test';
@@ -157,7 +158,7 @@ describe('ClientEventBridge', () => {
 	}
 
 	describe('start', () => {
-		it('should subscribe to all space bridge events on daemonHub', () => {
+		it('should subscribe migrated space events on InternalEventBus and unmigrated on DaemonHub', () => {
 			const f = buildFixture();
 			const bridge = new ClientEventBridge(
 				f.daemonHub,
@@ -168,16 +169,19 @@ describe('ClientEventBridge', () => {
 			);
 			bridge.start();
 
-			expect(f.daemonEventHandlers.has('space.created')).toBe(true);
-			expect(f.daemonEventHandlers.has('space.updated')).toBe(true);
-			expect(f.daemonEventHandlers.has('space.archived')).toBe(true);
-			expect(f.daemonEventHandlers.has('space.deleted')).toBe(true);
-			expect(f.daemonEventHandlers.has('space.task.created')).toBe(true);
-			expect(f.daemonEventHandlers.has('space.task.updated')).toBe(true);
-			expect(f.daemonEventHandlers.has('space.schedule.updated')).toBe(true);
-			expect(f.daemonEventHandlers.has('space.workflowRun.created')).toBe(true);
-			expect(f.daemonEventHandlers.has('space.workflowRun.updated')).toBe(true);
-			expect(f.daemonEventHandlers.has('space.gateData.updated')).toBe(true);
+			// Migrated events should be on InternalEventBus (not DaemonHub)
+			expect(f.eventBusSubscribers.has('space.created')).toBe(true);
+			expect(f.eventBusSubscribers.has('space.updated')).toBe(true);
+			expect(f.eventBusSubscribers.has('space.archived')).toBe(true);
+			expect(f.eventBusSubscribers.has('space.deleted')).toBe(true);
+			expect(f.eventBusSubscribers.has('space.task.created')).toBe(true);
+			expect(f.eventBusSubscribers.has('space.task.updated')).toBe(true);
+			expect(f.eventBusSubscribers.has('space.schedule.updated')).toBe(true);
+			expect(f.eventBusSubscribers.has('space.workflowRun.created')).toBe(true);
+			expect(f.eventBusSubscribers.has('space.workflowRun.updated')).toBe(true);
+			expect(f.eventBusSubscribers.has('space.gateData.updated')).toBe(true);
+
+			// Unmigrated events should remain on DaemonHub
 			expect(f.daemonEventHandlers.has('spaceAgent.created')).toBe(true);
 			expect(f.daemonEventHandlers.has('spaceAgent.updated')).toBe(true);
 			expect(f.daemonEventHandlers.has('spaceAgent.deleted')).toBe(true);
@@ -293,11 +297,11 @@ describe('ClientEventBridge', () => {
 			bridge.start();
 			bridge.start();
 
-			// DaemonHub: 16 space + 3 session + 2 conn/auth + 1 config + 2 error + 1 context.updated broadcast = 25
-			// InternalEventBus: 1 settings.updated + 1 session.updated = 2
-			// Total daemonHub unique events: 24 (context.updated has 2 handlers)
-			expect(f.daemonEventHandlers.size).toBe(24);
-			expect(f.eventBusSubscribers.size).toBe(2);
+			// DaemonHub: 6 unmigrated space + 3 session + 2 conn/auth + 1 config + 2 error + 1 context.updated broadcast = 15
+			// InternalEventBus: 15 migrated space + 1 settings.updated + 1 session.updated = 17
+			// Total daemonHub unique events: 15 (context.updated has 2 handlers)
+			expect(f.daemonEventHandlers.size).toBe(15);
+			expect(f.eventBusSubscribers.size).toBe(17);
 		});
 	});
 
@@ -366,8 +370,8 @@ describe('ClientEventBridge', () => {
 		});
 	});
 
-	describe('space event forwarding', () => {
-		it('forwards space.created to global channel', () => {
+	describe('space event forwarding via InternalEventBus', () => {
+		it('forwards space.task.updated from InternalEventBus to global channel', async () => {
 			const f = buildFixture();
 			createClientEventBridge(
 				f.daemonHub,
@@ -377,45 +381,24 @@ describe('ClientEventBridge', () => {
 				f.internalEventBus
 			).start();
 
-			const data = { sessionId: 'global', spaceId: 's-1', space: { id: 's-1' } };
-			f.daemonEventHandlers.get('space.created')![0](data);
+			const handler = f.eventBusSubscribers.get('space.task.updated')![0];
+			handler({
+				namespaceId: 'global',
+				sessionId: 'global',
+				spaceId: 's-1',
+				taskId: 't-1',
+				task: {
+					id: 't-1',
+					status: 'in_progress',
+				} as DaemonInternalEventMap['space.task.updated']['task'],
+			});
 
-			expect(f.published[0].method).toBe('space.created');
+			expect(f.published[0].method).toBe('space.task.updated');
 			expect(f.published[0].channel).toEqual({ kind: 'global' });
 		});
+	});
 
-		it('forwards space.updated to global channel', () => {
-			const f = buildFixture();
-			createClientEventBridge(
-				f.daemonHub,
-				f.messageHub,
-				f.gateway,
-				f.stateProjection,
-				f.internalEventBus
-			).start();
-
-			const data = { sessionId: 'global', spaceId: 's-1', space: { name: 'Updated' } };
-			f.daemonEventHandlers.get('space.updated')![0](data);
-
-			expect(f.published[0].channel).toEqual({ kind: 'global' });
-		});
-
-		it('forwards space.deleted to global channel', () => {
-			const f = buildFixture();
-			createClientEventBridge(
-				f.daemonHub,
-				f.messageHub,
-				f.gateway,
-				f.stateProjection,
-				f.internalEventBus
-			).start();
-
-			const data = { sessionId: 'global', spaceId: 's-1' };
-			f.daemonEventHandlers.get('space.deleted')![0](data);
-
-			expect(f.published[0].channel).toEqual({ kind: 'global' });
-		});
-
+	describe('unmigrated space event forwarding via DaemonHub', () => {
 		it('forwards spaceAgent.created to space-scoped channel', () => {
 			const f = buildFixture();
 			createClientEventBridge(
