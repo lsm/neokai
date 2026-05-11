@@ -14,7 +14,6 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 
 import { buildSpaceChatSystemPrompt } from '../../../../src/lib/space/agents/space-chat-agent';
-import { formatEventMessage } from '../../../../src/lib/space/runtime/session-notification-sink';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -27,7 +26,6 @@ import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { createSpaceAgentToolHandlers } from '../../../../src/lib/space/tools/space-agent-tools.ts';
-import type { SpaceNotificationEvent } from '../../../../src/lib/space/runtime/notification-sink';
 import type { SpaceAutonomyLevel } from '@neokai/shared/types/space';
 
 // ---------------------------------------------------------------------------
@@ -247,123 +245,8 @@ describe('buildSpaceChatSystemPrompt — default autonomy level (level 1 fallbac
 });
 
 // ---------------------------------------------------------------------------
-// 4. Notification messages include autonomy level
+// 4. (Removed — formatEventMessage tests migrated to space-agent-notification-service.test.ts)
 // ---------------------------------------------------------------------------
-
-describe('formatEventMessage — autonomy level in message', () => {
-	const spaceId = 'space-notify-test';
-	const TIMESTAMP = '2026-03-20T10:00:00.000Z';
-
-	test('task_blocked message includes level 1 autonomy level', () => {
-		const event: SpaceNotificationEvent = {
-			kind: 'task_blocked',
-			spaceId,
-			taskId: 'task-1',
-			reason: 'Build failed',
-			timestamp: TIMESTAMP,
-		};
-		const message = formatEventMessage(event, 1);
-		expect(message).toContain('Autonomy level: 1');
-		expect(message).toContain('[TASK_EVENT]');
-		expect(message).toContain('task_blocked');
-	});
-
-	test('task_blocked message includes level 3 autonomy level', () => {
-		const event: SpaceNotificationEvent = {
-			kind: 'task_blocked',
-			spaceId,
-			taskId: 'task-2',
-			reason: 'Tests failing',
-			timestamp: TIMESTAMP,
-		};
-		const message = formatEventMessage(event, 3);
-		expect(message).toContain('Autonomy level: 3');
-		expect(message).toContain('[TASK_EVENT]');
-	});
-
-	test('autonomy level appears both as plain text and in JSON payload', () => {
-		const event: SpaceNotificationEvent = {
-			kind: 'task_blocked',
-			spaceId,
-			taskId: 'task-3',
-			reason: 'Timeout',
-			timestamp: TIMESTAMP,
-		};
-		const message = formatEventMessage(event, 1);
-
-		// Plain text line
-		expect(message).toContain('Autonomy level: 1');
-
-		// JSON payload
-		const jsonMatch = message.match(/```json\n([\s\S]*?)```/);
-		expect(jsonMatch).not.toBeNull();
-		const payload = JSON.parse(jsonMatch![1]);
-		expect(payload.autonomyLevel).toBe(1);
-	});
-
-	test('workflow_run_blocked message includes autonomy level in JSON payload', () => {
-		const event: SpaceNotificationEvent = {
-			kind: 'workflow_run_blocked',
-			spaceId,
-			runId: 'run-1',
-			reason: 'Transition condition failed',
-			timestamp: TIMESTAMP,
-		};
-		const message = formatEventMessage(event, 3);
-		const jsonMatch = message.match(/```json\n([\s\S]*?)```/);
-		expect(jsonMatch).not.toBeNull();
-		const payload = JSON.parse(jsonMatch![1]);
-		expect(payload.autonomyLevel).toBe(3);
-	});
-
-	test('task_timeout message includes autonomy level in JSON payload', () => {
-		const event: SpaceNotificationEvent = {
-			kind: 'task_timeout',
-			spaceId,
-			taskId: 'task-4',
-			elapsedMs: 120000,
-			timestamp: TIMESTAMP,
-		};
-		const message = formatEventMessage(event, 1);
-		const jsonMatch = message.match(/```json\n([\s\S]*?)```/);
-		expect(jsonMatch).not.toBeNull();
-		const payload = JSON.parse(jsonMatch![1]);
-		expect(payload.autonomyLevel).toBe(1);
-	});
-
-	test('workflow_run_completed message includes autonomy level in JSON payload', () => {
-		const event: SpaceNotificationEvent = {
-			kind: 'workflow_run_completed',
-			spaceId,
-			runId: 'run-2',
-			status: 'done',
-			summary: 'All steps completed successfully',
-			timestamp: TIMESTAMP,
-		};
-		const message = formatEventMessage(event, 3);
-		const jsonMatch = message.match(/```json\n([\s\S]*?)```/);
-		expect(jsonMatch).not.toBeNull();
-		const payload = JSON.parse(jsonMatch![1]);
-		expect(payload.autonomyLevel).toBe(3);
-	});
-
-	test('autonomy level in message changes when level changes — same event, different level', () => {
-		const event: SpaceNotificationEvent = {
-			kind: 'task_blocked',
-			spaceId,
-			taskId: 'task-5',
-			reason: 'Error',
-			timestamp: TIMESTAMP,
-		};
-		const level1Msg = formatEventMessage(event, 1);
-		const level3Msg = formatEventMessage(event, 3);
-		expect(level1Msg).toContain('Autonomy level: 1');
-		expect(level3Msg).toContain('Autonomy level: 3');
-		// Level 1 message should not contain "Autonomy level: 3" and vice versa
-		expect(level1Msg).not.toContain('Autonomy level: 3');
-		expect(level3Msg).not.toContain('Autonomy level: 1');
-	});
-});
 
 // ---------------------------------------------------------------------------
 // 5. retry_task tool — callable at both autonomy levels (gate is in the prompt)

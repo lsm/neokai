@@ -21,37 +21,72 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import type {
-	NotificationSink,
-	SpaceNotificationEvent,
-} from '../../../../src/lib/space/runtime/notification-sink.ts';
 import type { SpaceWorkflow, SpaceTask, SpaceWorkflowRun, Space } from '@neokai/shared';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
+import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 
 // ---------------------------------------------------------------------------
-// MockNotificationSink
+// BusEventCollector — captures InternalEventBus events for test assertions
 // ---------------------------------------------------------------------------
 
-class MockNotificationSink implements NotificationSink {
-	readonly events: SpaceNotificationEvent[] = [];
+type BusEventKind =
+	| 'task_blocked'
+	| 'workflow_run_blocked'
+	| 'task_timeout'
+	| 'workflow_run_completed'
+	| 'workflow_run_reopened'
+	| 'agent_auto_completed'
+	| 'agent_crash'
+	| 'agent_idle_non_terminal'
+	| 'task_retry'
+	| 'workflow_run_needs_attention'
+	| 'task_awaiting_approval';
 
-	notify(event: SpaceNotificationEvent): Promise<void> {
-		this.events.push(event);
-		return Promise.resolve();
-	}
+interface CapturedEvent {
+	kind: BusEventKind;
+	payload: Record<string, unknown>;
+}
 
-	get byKind(): Record<string, SpaceNotificationEvent[]> {
-		const map: Record<string, SpaceNotificationEvent[]> = {};
-		for (const e of this.events) {
-			if (!map[e.kind]) map[e.kind] = [];
-			map[e.kind].push(e);
+const EVENT_MAP: Record<string, BusEventKind> = {
+	'space.task.blocked': 'task_blocked',
+	'space.workflowRun.blocked': 'workflow_run_blocked',
+	'space.task.timeout': 'task_timeout',
+	'space.workflowRun.completed': 'workflow_run_completed',
+	'space.workflowRun.reopened': 'workflow_run_reopened',
+	'space.agent.autoCompleted': 'agent_auto_completed',
+	'space.agent.crashed': 'agent_crash',
+	'space.agent.idleNonTerminal': 'agent_idle_non_terminal',
+	'space.workflowRun.retry': 'task_retry',
+	'space.workflowRun.needsAttention': 'workflow_run_needs_attention',
+	'space.task.awaitingApproval': 'task_awaiting_approval',
+};
+
+class BusEventCollector {
+	readonly events: CapturedEvent[] = [];
+	private unsubscribers: Array<() => void> = [];
+
+	constructor(bus: InternalEventBus<DaemonInternalEventMap>) {
+		for (const [eventName, kind] of Object.entries(EVENT_MAP)) {
+			const unsub = bus.subscribe(
+				eventName as keyof DaemonInternalEventMap,
+				(payload) => {
+					this.events.push({ kind, payload: payload as Record<string, unknown> });
+				},
+				{ subscriberName: `test-collector:${eventName}` }
+			);
+			this.unsubscribers.push(unsub);
 		}
-		return map;
 	}
 
 	clear(): void {
 		this.events.length = 0;
+	}
+
+	destroy(): void {
+		for (const unsub of this.unsubscribers) unsub();
+		this.unsubscribers.length = 0;
 	}
 }
 
@@ -262,7 +297,8 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 	let agentManager: SpaceAgentManager;
 	let workflowManager: SpaceWorkflowManager;
 	let spaceManager: SpaceManager;
-	let sink: MockNotificationSink;
+	let bus: InternalEventBus<DaemonInternalEventMap>;
+	let collector: BusEventCollector;
 
 	let nodeExecutionRepo: NodeExecutionRepository;
 
@@ -282,7 +318,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			workflowRunRepo,
 			taskRepo,
 			nodeExecutionRepo,
-			notificationSink: sink,
+			internalEventBus: bus,
 			taskAgentManager: new MockTaskAgentManager(nodeExecutionRepo) as unknown as TaskAgentManager,
 			...extraConfig,
 		};
@@ -307,11 +343,13 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 		workflowManager = new SpaceWorkflowManager(workflowRepo);
 
 		spaceManager = new SpaceManager(db);
-		sink = new MockNotificationSink();
+		bus = new InternalEventBus<DaemonInternalEventMap>();
+		collector = new BusEventCollector(bus);
 		nodeExecutionRepo = new NodeExecutionRepository(db);
 	});
 
 	afterEach(() => {
+		collector.destroy();
 		try {
 			db.close();
 		} catch {
@@ -400,11 +438,11 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(completedRun?.status).toBe('done');
 			expect(completedRun?.completedAt).toBeDefined();
 
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			const completedEvents = collector.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
 			if (completedEvents[0].kind === 'workflow_run_completed') {
-				expect(completedEvents[0].runId).toBe(run.id);
-				expect(completedEvents[0].status).toBe('done');
+				expect(completedEvents[0].payload['runId']).toBe(run.id);
+				expect(completedEvents[0].payload['status']).toBe('done');
 			}
 		});
 
@@ -441,7 +479,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const completedRun = workflowRunRepo.getRun(run.id);
 			expect(completedRun?.status).toBe('done');
 
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			const completedEvents = collector.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
 		});
 
@@ -465,7 +503,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const runAfter = workflowRunRepo.getRun(run.id);
 			expect(runAfter?.status).toBe('in_progress');
 
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			const completedEvents = collector.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(0);
 		});
 	});
@@ -495,7 +533,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const runAfter = workflowRunRepo.getRun(run.id);
 			expect(runAfter?.status).toBe('blocked');
 
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			const completedEvents = collector.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(0);
 		});
 
@@ -516,11 +554,11 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(rt.executorCount).toBe(0);
 
 			// Reset the sink to track events after first tick
-			sink.clear();
+			collector.clear();
 
 			// Second tick — no events, no errors
 			await rt.executeTick();
-			expect(sink.events).toHaveLength(0);
+			expect(collector.events).toHaveLength(0);
 		});
 
 		test('processRunTick skips run in cancelled state', async () => {
@@ -534,12 +572,12 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			// Cancel via status transition
 			workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
-			sink.clear();
+			collector.clear();
 			await rt.executeTick();
 
 			// No notifications for cancelled runs (cleanupTerminalExecutors
 			// does NOT emit for cancelled, only for done)
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			const completedEvents = collector.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(0);
 
 			// Executor cleaned up
@@ -582,7 +620,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			await rt.executeTick();
 
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
-			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+			expect(collector.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
 
 			// Multiple additional ticks
 			await rt.executeTick();
@@ -590,7 +628,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			await rt.executeTick();
 
 			// Still exactly one done event
-			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+			expect(collector.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
 		});
 
 		test('blocked run does not auto-complete even when all tasks become terminal', async () => {
@@ -692,7 +730,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(finalRun?.status).toBe('done');
 			expect(finalRun?.completedAt).toBeDefined();
 
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			const completedEvents = collector.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
 		});
 
@@ -790,7 +828,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const runAfter = workflowRunRepo.getRun(run.id);
 			expect(runAfter?.status).toBe('done');
 
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			const completedEvents = collector.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
 		});
 
@@ -838,7 +876,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const completedRun = workflowRunRepo.getRun(run.id);
 			expect(completedRun?.status).toBe('done');
 
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			const completedEvents = collector.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
 		});
 
@@ -862,7 +900,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const completedRun = workflowRunRepo.getRun(run.id);
 			expect(completedRun?.status).toBe('done');
 
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			const completedEvents = collector.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
 		});
 
@@ -891,7 +929,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const completedRun = workflowRunRepo.getRun(run.id);
 			expect(completedRun?.status).toBe('done');
 
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			const completedEvents = collector.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
 		});
 	});
@@ -942,7 +980,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(completedRun?.status).toBe('done');
 			expect(completedRun?.completedAt).toBeDefined();
 
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			const completedEvents = collector.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
 		});
 
@@ -982,7 +1020,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			const runAfter = workflowRunRepo.getRun(run.id);
 			expect(runAfter?.status).toBe('in_progress');
 
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			const completedEvents = collector.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(0);
 		});
 
@@ -1019,18 +1057,18 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			// Tick 1: canonical task in_progress; no completion.
 			await rt.executeTick();
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
+			expect(collector.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
 
 			// Tick 2: canonical task flips to done; completion fires.
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 			await rt.executeTick();
 
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
-			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+			expect(collector.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
 
 			// Tick 3: no duplicate
 			await rt.executeTick();
-			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+			expect(collector.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
 		});
 
 		test('mixed-status multi-agent start node: tick loop syncs per-agent node_executions', async () => {
@@ -1086,7 +1124,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			// Run stays in_progress while canonical task is in_progress.
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
+			expect(collector.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
 
 			// Flip canonical task to done; reviewer execution becomes idle as the
 			// agent finishes.
@@ -1099,7 +1137,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				.filter((e) => e.workflowNodeId === 'mix-start');
 			expect(startExecsFinal.every((e) => e.status === 'idle')).toBe(true);
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
-			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+			expect(collector.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
 		});
 	});
 
@@ -1141,7 +1179,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			await rt.executeTick();
 
 			// Run should be done
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			const completedEvents = collector.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
 			// Dedup entry was removed when executor was cleaned up
 			expect(rt.getNotifiedTaskSet().has(dedupKey)).toBe(false);
@@ -1186,10 +1224,10 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(completedRun?.status).toBe('done');
 			expect(completedRun?.completedAt).toBeDefined();
 
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			const completedEvents = collector.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
 			if (completedEvents[0].kind === 'workflow_run_completed') {
-				expect(completedEvents[0].status).toBe('done');
+				expect(completedEvents[0].payload['status']).toBe('done');
 			}
 		});
 
@@ -1250,7 +1288,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(mockTam.interruptedSessions).toContain(siblingSessionId);
 			expect(mockTam.cancelledSessions).not.toContain(siblingSessionId);
 
-			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			const completedEvents = collector.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
 		});
 
@@ -1447,7 +1485,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			const runAfter = workflowRunRepo.getRun(run.id);
 			expect(runAfter?.status).toBe('done');
-			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+			expect(collector.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
 		});
 
 		test('end node execution cancelled (terminal) also triggers run completion', async () => {
@@ -1479,7 +1517,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			// 'cancelled' is a terminal status for end-node short-circuit
 			const completedRun = workflowRunRepo.getRun(run.id);
 			expect(completedRun?.status).toBe('done');
-			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+			expect(collector.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
 		});
 	});
 

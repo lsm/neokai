@@ -49,7 +49,9 @@ import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.t
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
-import type { SpaceWorkflow, SpaceRuntimeNotification, NodeExecutionStatus } from '@neokai/shared';
+import type { SpaceWorkflow, NodeExecutionStatus } from '@neokai/shared';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
+import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 
 // ---------------------------------------------------------------------------
 // DB / seed helpers (mirror the rehydration test fixtures)
@@ -146,7 +148,23 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 	let spaceManager: SpaceManager;
 	let nodeExecutionRepo: NodeExecutionRepository;
 	let sdkMessageRepo: SDKMessageRepository;
-	let notifications: SpaceRuntimeNotification[];
+	let bus: InternalEventBus<DaemonInternalEventMap>;
+	let busUnsubs: Array<() => void>;
+	let notifications: Array<{ kind: string; payload: Record<string, unknown> }>;
+
+	const SPACE_EVENT_MAP: Record<string, string> = {
+		'space.task.blocked': 'task_blocked',
+		'space.workflowRun.blocked': 'workflow_run_blocked',
+		'space.task.timeout': 'task_timeout',
+		'space.workflowRun.completed': 'workflow_run_completed',
+		'space.workflowRun.reopened': 'workflow_run_reopened',
+		'space.agent.autoCompleted': 'agent_auto_completed',
+		'space.agent.crashed': 'agent_crash',
+		'space.agent.idleNonTerminal': 'agent_idle_non_terminal',
+		'space.workflowRun.retry': 'task_retry',
+		'space.workflowRun.needsAttention': 'workflow_run_needs_attention',
+		'space.task.awaitingApproval': 'task_awaiting_approval',
+	};
 
 	const SPACE_ID = 'space-recovery-1';
 	const AGENT = 'agent-recovery-1';
@@ -154,7 +172,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 	const STEP_B = 'step-b';
 
 	function makeRuntime(overrides?: Partial<SpaceRuntimeConfig>): SpaceRuntime {
-		const rt = new SpaceRuntime({
+		return new SpaceRuntime({
 			db,
 			spaceManager,
 			spaceAgentManager: agentManager,
@@ -163,14 +181,9 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			taskRepo,
 			nodeExecutionRepo,
 			sdkMessageRepo,
+			internalEventBus: bus,
 			...overrides,
 		});
-		rt.setNotificationSink({
-			notify: async (event: SpaceRuntimeNotification) => {
-				notifications.push(event);
-			},
-		});
-		return rt;
 	}
 
 	function findExec(runId: string, nodeId: string) {
@@ -222,10 +235,24 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 		spaceManager = new SpaceManager(db);
 		nodeExecutionRepo = new NodeExecutionRepository(db);
 		sdkMessageRepo = new SDKMessageRepository(db);
+		bus = new InternalEventBus<DaemonInternalEventMap>();
+		busUnsubs = [];
+		for (const [eventName, kind] of Object.entries(SPACE_EVENT_MAP)) {
+			const unsub = bus.subscribe(
+				eventName as keyof DaemonInternalEventMap,
+				(payload) => {
+					notifications.push({ kind, payload: payload as Record<string, unknown> });
+				},
+				{ subscriberName: `test-stalled:${eventName}` }
+			);
+			busUnsubs.push(unsub);
+		}
 		notifications = [];
 	});
 
 	afterEach(() => {
+		for (const unsub of busUnsubs) unsub();
+		busUnsubs = [];
 		try {
 			db.close();
 		} catch {
@@ -563,9 +590,11 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(runBlockedEvents).toHaveLength(1);
 			expect(runBlockedEvents[0]).toMatchObject({
 				kind: 'workflow_run_blocked',
-				spaceId: SPACE_ID,
-				runId: run.id,
-				reason,
+				payload: {
+					spaceId: SPACE_ID,
+					runId: run.id,
+					reason,
+				},
 			});
 		});
 
@@ -1504,13 +1533,17 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(runBlockedEvents.length).toBe(1);
 			expect(taskBlockedEvents[0]).toMatchObject({
 				kind: 'task_blocked',
-				spaceId: SPACE_ID,
-				taskId: task.id,
+				payload: {
+					spaceId: SPACE_ID,
+					taskId: task.id,
+				},
 			});
 			expect(runBlockedEvents[0]).toMatchObject({
 				kind: 'workflow_run_blocked',
-				spaceId: SPACE_ID,
-				runId: run.id,
+				payload: {
+					spaceId: SPACE_ID,
+					runId: run.id,
+				},
 			});
 		});
 
