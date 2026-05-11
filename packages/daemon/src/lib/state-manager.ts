@@ -13,4 +13,7 @@
  * TODO(M8): Remove this re-export once all call sites have migrated.
  */
 
-export { StateProjectionService as StateManager } from './state-projection-service';
+export {
+	StateProjectionService,
+	StateProjectionService as StateManager,
+} from './state-projection-service';

@@ -332,14 +332,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// StateProjectionService (and future subscribers) receive them without
 	// touching every publisher call site. This is the M5 compatibility path;
 	// publishers will migrate to InternalEventBus directly in later milestones.
+	//
+	// We use publish() (awaited) instead of publishAsync() so cache updates
+	// settle before ClientEventBridge triggers broadcastSystemChange() from
+	// the same DaemonHub event — preserving the ordering between cache write
+	// and broadcast read.
 	const unsubSessionCreated = daemonHub.on('session.created', (data) => {
-		internalEventBus.publishAsync('session.created', {
+		void internalEventBus.publish('session.created', {
 			sessionId: data.sessionId,
 			session: data.session,
 		});
 	});
 	const unsubSessionUpdated = daemonHub.on('session.updated', (data) => {
-		internalEventBus.publishAsync('session.updated', {
+		void internalEventBus.publish('session.updated', {
 			sessionId: data.sessionId,
 			source: data.source,
 			session: data.session,
@@ -347,33 +352,33 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		});
 	});
 	const unsubSessionDeleted = daemonHub.on('session.deleted', (data) => {
-		internalEventBus.publishAsync('session.deleted', {
+		void internalEventBus.publish('session.deleted', {
 			sessionId: data.sessionId,
 		});
 	});
 	const unsubCommandsUpdated = daemonHub.on('commands.updated', (data) => {
-		internalEventBus.publishAsync('commands.updated', {
+		void internalEventBus.publish('commands.updated', {
 			sessionId: data.sessionId,
 			commands: data.commands,
 		});
 	});
 	const unsubSessionError = daemonHub.on('session.error', (data) => {
-		internalEventBus.publishAsync('session.error', {
+		void internalEventBus.publish('session.error', {
 			sessionId: data.sessionId,
 			error: data.error,
 			details: data.details,
 		});
 	});
 	const unsubSessionErrorClear = daemonHub.on('session.errorClear', (data) => {
-		internalEventBus.publishAsync('session.errorClear', {
+		void internalEventBus.publish('session.errorClear', {
 			sessionId: data.sessionId,
 		});
 	});
 	const unsubApiConnection = daemonHub.on('api.connection', (data) => {
-		internalEventBus.publishAsync('api.connection', {
-			sessionId: data.sessionId,
-			status: data.status,
-			timestamp: data.timestamp,
+		// Forward the complete payload so diagnostic fields (errorCount,
+		// lastError, lastSuccessfulCall) are preserved in projections.
+		void internalEventBus.publish('api.connection', {
+			...data,
 		});
 	});
 
