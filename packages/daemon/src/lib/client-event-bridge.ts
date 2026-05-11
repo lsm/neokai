@@ -1,9 +1,10 @@
 /**
  * ClientEventBridge — declarative mapping from DaemonHub internal events to client-safe events.
  *
- * Today, StateManager contains ~30 repetitive daemon-to-client forwarding handlers
- * that do nothing but call `messageHub.event(method, data, { channel })`.  This
- * module extracts those into a single bridge that:
+ * Today, StateProjectionService (formerly StateManager) contains ~30 repetitive
+ * daemon-to-client forwarding handlers that do nothing but call
+ * `messageHub.event(method, data, { channel })`.  This module extracts those
+ * into a single bridge that:
  *
  *   1. Subscribes to selected DaemonHub events.
  *   2. Forwards the payload verbatim (or via a lightweight transform) through
@@ -11,14 +12,15 @@
  *
  * Scope
  * -----
- * This module now contains ALL pure forwarding paths from StateManager:
+ * This module now contains ALL pure forwarding paths that were formerly in
+ * StateManager:
  * - Space events (16 mappings) — first slice
  * - Session events (session.created, session.deleted, context.updated)
  * - Connection/auth events (api.connection, auth.changed)
  * - Config events (commands.updated)
  * - Error events (session.error, session.errorClear)
  *
- * StateManager retains:
+ * StateProjectionService retains:
  * - State cache updates (sessionCache, processingStateCache, commandsCache, errorCache)
  * - Versioned broadcast methods (broadcastSystemChange, broadcastSettingsChange,
  *   broadcastSessionStateChange, broadcastSDKMessagesChange, broadcastSDKMessagesDelta)
@@ -28,7 +30,7 @@
  * Design notes
  * ------------
  * - The bridge intentionally does NOT own channelVersions; that stays in
- *   StateManager until StateProjectionService is introduced.
+ *   StateProjectionService.
  * - Each bridge mapping is a plain object so the registry is auditable in one
  *   place.
  * - The bridge is constructed in DaemonApp and wired before handlers start
@@ -50,9 +52,9 @@ interface BridgeMapping {
 }
 
 /**
- * Narrow interface for the broadcast methods StateManager exposes to the bridge.
- * Keeping this minimal prevents the bridge from depending on the full StateManager
- * surface and makes testing straightforward.
+ * Narrow interface for the broadcast methods StateProjectionService exposes to
+ * the bridge. Keeping this minimal prevents the bridge from depending on the
+ * full StateProjectionService surface and makes testing straightforward.
  */
 export interface StateBroadcasts {
 	broadcastSystemChange(): Promise<void>;

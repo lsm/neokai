@@ -331,7 +331,7 @@ export function createInternalEventBus<
 /**
  * Payload for `settings.updated` — emitted when global settings are updated
  * via `settings.global.update`, `settings.global.save`, or after a successful
- * `.mcp.json` import refresh. Subscribers (e.g. StateManager) re-broadcast
+ * `.mcp.json` import refresh. Subscribers (e.g. StateProjectionService) re-broadcast
  * the latest settings to clients on the global settings channel.
  *
  * Always carries `sessionId: 'global'` — settings are application-wide.
@@ -356,6 +356,31 @@ export interface ExternalEventEvents {
 }
 
 /**
+ * Session domain events — migrated from DaemonHub to InternalEventBus in M5.
+ * These events drive StateProjectionService cache updates.
+ */
+export interface SessionEvents {
+	'session.created': { sessionId: string; session: import('@neokai/shared').Session };
+	'session.updated': {
+		sessionId: string;
+		source?: string;
+		session?: Partial<import('@neokai/shared').Session>;
+		processingState?: import('@neokai/shared').AgentProcessingState;
+	};
+	'session.deleted': { sessionId: string };
+	'commands.updated': { sessionId: string; commands: string[] };
+	'session.error': { sessionId: string; error: string; details?: unknown };
+	'session.errorClear': { sessionId: string };
+}
+
+/**
+ * API connection events — migrated from DaemonHub to InternalEventBus in M5.
+ */
+export interface ApiConnectionEvents {
+	'api.connection': { sessionId: string } & import('@neokai/shared').ApiConnectionState;
+}
+
+/**
  * Canonical daemon internal event map.
  *
  * Each domain should own its slice; this type is the intersection of all
@@ -366,7 +391,11 @@ export interface ExternalEventEvents {
  * migrated continue to flow through DaemonHub (`createDaemonHub`) and the
  * compatibility `DaemonEventMap`.
  */
-export interface DaemonInternalEventMap extends SettingsEvents, ExternalEventEvents {}
+export interface DaemonInternalEventMap
+	extends SettingsEvents,
+		ExternalEventEvents,
+		SessionEvents,
+		ApiConnectionEvents {}
 
 /**
  * Convenience factory typed with the canonical daemon internal event map.
