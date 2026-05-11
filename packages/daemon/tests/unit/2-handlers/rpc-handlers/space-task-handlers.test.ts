@@ -482,6 +482,7 @@ describe('space-task-handlers', () => {
 			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'archived', {
 				result: undefined,
 				error: undefined,
+				onCascadedTasks: expect.any(Function),
 			});
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
 				namespaceId: 'global',
@@ -510,6 +511,7 @@ describe('space-task-handlers', () => {
 			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'archived', {
 				result: undefined,
 				error: undefined,
+				onCascadedTasks: expect.any(Function),
 			});
 		});
 
@@ -607,6 +609,7 @@ describe('space-task-handlers', () => {
 			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress', {
 				result: undefined,
 				error: undefined,
+				onCascadedTasks: expect.any(Function),
 			});
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
 				namespaceId: 'global',
@@ -636,6 +639,7 @@ describe('space-task-handlers', () => {
 			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress', {
 				result: undefined,
 				error: undefined,
+				onCascadedTasks: expect.any(Function),
 			});
 		});
 
@@ -657,6 +661,7 @@ describe('space-task-handlers', () => {
 			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'open', {
 				result: undefined,
 				error: undefined,
+				onCascadedTasks: expect.any(Function),
 			});
 		});
 
@@ -693,6 +698,7 @@ describe('space-task-handlers', () => {
 			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress', {
 				result: undefined,
 				error: undefined,
+				onCascadedTasks: expect.any(Function),
 			});
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
 				namespaceId: 'global',
@@ -713,10 +719,14 @@ describe('space-task-handlers', () => {
 			});
 
 			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
-			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
-				status: 'open',
-				title: 'New title',
-			});
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{
+					status: 'open',
+					title: 'New title',
+				},
+				{ onCascadedTasks: expect.any(Function) }
+			);
 			expect(result).toBeDefined();
 		});
 
@@ -728,10 +738,13 @@ describe('space-task-handlers', () => {
 			});
 
 			expect((result as SpaceTask).title).toBe('Updated');
-			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', { title: 'Updated' });
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{ title: 'Updated' },
+				{ onCascadedTasks: expect.any(Function) },
+			);
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
-				namespaceId: 'global',
-				sessionId: 'global',
+				namespaceId: 'global',				sessionId: 'global',
 				spaceId: 'space-1',
 				taskId: 'task-1',
 				task: expect.objectContaining({ title: 'Updated' }),
@@ -748,6 +761,7 @@ describe('space-task-handlers', () => {
 
 			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'blocked', {
 				result: 'Build failed',
+				onCascadedTasks: expect.any(Function),
 			});
 		});
 
@@ -777,11 +791,16 @@ describe('space-task-handlers', () => {
 			// setTaskStatus was called for the transition
 			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress', {
 				result: undefined,
+				onCascadedTasks: expect.any(Function),
 			});
 			// updateTask was called with the non-status fields (no status, no result)
-			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
-				taskAgentSessionId: 'session-abc',
-			});
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{
+					taskAgentSessionId: 'session-abc',
+				},
+				{ onCascadedTasks: expect.any(Function) }
+			);
 			// Final result has both fields
 			expect((result as SpaceTask).status).toBe('in_progress');
 			expect((result as SpaceTask).taskAgentSessionId).toBe('session-abc');
@@ -839,12 +858,17 @@ describe('space-task-handlers', () => {
 				result: undefined,
 				approvalSource: undefined,
 				approvalReason: 'not worth shipping',
+				onCascadedTasks: expect.any(Function),
 			});
 			// A follow-up updateTask ensures approvalReason lands even though
 			// setTaskStatus only stamps it on review→done.
-			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
-				approvalReason: 'not worth shipping',
-			});
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{
+					approvalReason: 'not worth shipping',
+				},
+				{ onCascadedTasks: expect.any(Function) }
+			);
 		});
 
 		it('falls back to approvalReason when cancelReason is omitted on cancel transitions', async () => {
@@ -866,10 +890,15 @@ describe('space-task-handlers', () => {
 				result: undefined,
 				approvalSource: undefined,
 				approvalReason: 'rejected via legacy field',
+				onCascadedTasks: expect.any(Function),
 			});
-			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
-				approvalReason: 'rejected via legacy field',
-			});
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{
+					approvalReason: 'rejected via legacy field',
+				},
+				{ onCascadedTasks: expect.any(Function) }
+			);
 		});
 
 		it('propagates errors from setTaskStatus (invalid transitions)', async () => {

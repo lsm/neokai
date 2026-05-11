@@ -352,9 +352,13 @@ export function setupSpaceTaskHandlers(
 						updateParams.status === 'cancelled' &&
 						(updateParams.cancelReason ?? updateParams.approvalReason)
 					) {
-						task = await taskManager.updateTask(taskId, {
-							approvalReason: updateParams.cancelReason ?? updateParams.approvalReason ?? null,
-						});
+						task = await taskManager.updateTask(
+							taskId,
+							{
+								approvalReason: updateParams.cancelReason ?? updateParams.approvalReason ?? null,
+							},
+							{ onCascadedTasks: emitCascadedTasks }
+						);
 					}
 
 					// When a status transition is combined with other field updates
@@ -369,7 +373,9 @@ export function setupSpaceTaskHandlers(
 						...otherFields
 					} = updateParams;
 					if (Object.keys(otherFields).length > 0) {
-						task = await taskManager.updateTask(taskId, otherFields);
+						task = await taskManager.updateTask(taskId, otherFields, {
+							onCascadedTasks: emitCascadedTasks,
+						});
 					}
 				}
 			} else {
