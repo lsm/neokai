@@ -1,15 +1,14 @@
 /**
- * StateManager Tests
+ * StateProjectionService Tests
  *
- * Unit tests for server-side state coordination and broadcasting.
+ * Unit tests for server-side state projection and broadcasting.
  */
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
-import { StateManager } from '../../../../src/lib/state-manager';
+import { StateProjectionService } from '../../../../src/lib/state-projection-service';
 import type { MessageHub, Session, GlobalSettings, AgentProcessingState } from '@neokai/shared';
 import { STATE_CHANNELS, DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
 import type { Database } from '../../../../src/storage/database';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type {
 	DaemonInternalEventMap,
 	InternalEventBus,
@@ -20,19 +19,19 @@ import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { Config } from '../../../../src/config';
 
-describe('StateManager', () => {
-	let stateManager: StateManager;
+describe('StateProjectionService', () => {
+	let service: StateProjectionService;
 	let mockMessageHub: MessageHub;
 	let mockSessionManager: SessionManager;
 	let mockAuthManager: AuthManager;
 	let mockSettingsManager: SettingsManager;
 	let mockConfig: Config;
-	let mockDaemonHub: DaemonHub;
-	let eventHandlers: Map<string, Function>;
 	let requestHandlers: Map<string, Function>;
+	let mockInternalEventBus: InternalEventBus<DaemonInternalEventMap>;
+	let eventSubscribers: Map<string, Function[]>;
 
 	beforeEach(() => {
-		eventHandlers = new Map();
+		eventSubscribers = new Map();
 		requestHandlers = new Map();
 
 		// MessageHub mock
@@ -77,22 +76,26 @@ describe('StateManager', () => {
 			dbPath: '/test/db.sqlite',
 		} as unknown as Config;
 
-		// DaemonHub mock
-		mockDaemonHub = {
-			on: mock((event: string, handler: Function) => {
-				eventHandlers.set(event, handler);
+		// InternalEventBus mock — collects subscribers so we can fire events manually
+		mockInternalEventBus = {
+			subscribe: mock((event: string, handler: Function) => {
+				const existing = eventSubscribers.get(event) || [];
+				existing.push(handler);
+				eventSubscribers.set(event, handler);
 				return () => {};
 			}),
-			emit: mock(async () => {}),
-		} as unknown as DaemonHub;
+			publish: mock(async () => ({ delivered: 0, failures: [] })),
+			publishAsync: mock(() => {}),
+		} as unknown as InternalEventBus<DaemonInternalEventMap>;
 
-		stateManager = new StateManager(
+		service = new StateProjectionService(
 			mockMessageHub,
 			mockSessionManager,
 			mockAuthManager,
 			mockSettingsManager,
 			mockConfig,
-			mockDaemonHub
+			undefined,
+			mockInternalEventBus
 		);
 	});
 
@@ -106,32 +109,15 @@ describe('StateManager', () => {
 			expect(requestHandlers.has(STATE_CHANNELS.SESSION)).toBe(true);
 		});
 
-		it('should register event listeners on initialization', () => {
-			expect(eventHandlers.has('session.created')).toBe(true);
-			expect(eventHandlers.has('session.updated')).toBe(true);
-			expect(eventHandlers.has('session.deleted')).toBe(true);
-			// auth.changed forwarding extracted to ClientEventBridge
-			expect(eventHandlers.has('auth.changed')).toBe(false);
-			expect(eventHandlers.has('settings.updated')).toBe(true);
-		});
-
-		it('should NOT register space forwarding handlers (migrated to ClientEventBridge)', () => {
-			expect(eventHandlers.has('space.created')).toBe(false);
-			expect(eventHandlers.has('space.updated')).toBe(false);
-			expect(eventHandlers.has('space.archived')).toBe(false);
-			expect(eventHandlers.has('space.deleted')).toBe(false);
-			expect(eventHandlers.has('space.task.created')).toBe(false);
-			expect(eventHandlers.has('space.task.updated')).toBe(false);
-			expect(eventHandlers.has('space.schedule.updated')).toBe(false);
-			expect(eventHandlers.has('space.workflowRun.created')).toBe(false);
-			expect(eventHandlers.has('space.workflowRun.updated')).toBe(false);
-			expect(eventHandlers.has('space.gateData.updated')).toBe(false);
-			expect(eventHandlers.has('spaceAgent.created')).toBe(false);
-			expect(eventHandlers.has('spaceAgent.updated')).toBe(false);
-			expect(eventHandlers.has('spaceAgent.deleted')).toBe(false);
-			expect(eventHandlers.has('spaceWorkflow.created')).toBe(false);
-			expect(eventHandlers.has('spaceWorkflow.updated')).toBe(false);
-			expect(eventHandlers.has('spaceWorkflow.deleted')).toBe(false);
+		it('should subscribe to InternalEventBus events on initialization', () => {
+			expect(eventSubscribers.has('session.created')).toBe(true);
+			expect(eventSubscribers.has('session.updated')).toBe(true);
+			expect(eventSubscribers.has('session.deleted')).toBe(true);
+			expect(eventSubscribers.has('settings.updated')).toBe(true);
+			expect(eventSubscribers.has('commands.updated')).toBe(true);
+			expect(eventSubscribers.has('session.error')).toBe(true);
+			expect(eventSubscribers.has('session.errorClear')).toBe(true);
+			expect(eventSubscribers.has('api.connection')).toBe(true);
 		});
 	});
 
@@ -320,8 +306,8 @@ describe('StateManager', () => {
 				ghostAgentSession
 			);
 
-			// Simulate session.updated event from ProcessingStateManager populating the cache
-			const updateHandler = eventHandlers.get('session.updated');
+			// Simulate session.updated event populating the cache
+			const updateHandler = eventSubscribers.get('session.updated');
 			await updateHandler!({
 				sessionId: 'leader-session-id',
 				processingState: { status: 'waiting_for_input', pendingQuestion },
@@ -361,10 +347,10 @@ describe('StateManager', () => {
 		});
 	});
 
-	describe('event handlers', () => {
+	describe('InternalEventBus subscribers', () => {
 		describe('session.created', () => {
 			it('should cache session and initial processing state', async () => {
-				const handler = eventHandlers.get('session.created');
+				const handler = eventSubscribers.get('session.created');
 				const mockSession: Session = {
 					id: 'new-session-id',
 					title: 'New Session',
@@ -372,9 +358,9 @@ describe('StateManager', () => {
 					metadata: {},
 				} as Session;
 
-				await handler!({ session: mockSession });
+				await handler!({ sessionId: 'new-session-id', session: mockSession });
 
-				// Forwarding extracted to ClientEventBridge; StateManager only caches
+				// Forwarding extracted to ClientEventBridge; StateProjectionService only caches
 				expect(mockMessageHub.event).not.toHaveBeenCalledWith(
 					'session.created',
 					expect.anything(),
@@ -386,13 +372,14 @@ describe('StateManager', () => {
 		describe('session.updated', () => {
 			it('should update cache and broadcast', async () => {
 				// First create a session to cache
-				const createHandler = eventHandlers.get('session.created');
+				const createHandler = eventSubscribers.get('session.created');
 				await createHandler!({
+					sessionId: 'test-id',
 					session: { id: 'test-id', title: 'Original', status: 'active', metadata: {} },
 				});
 
 				// Now update it
-				const updateHandler = eventHandlers.get('session.updated');
+				const updateHandler = eventSubscribers.get('session.updated');
 				await updateHandler!({
 					sessionId: 'test-id',
 					session: { title: 'Updated' },
@@ -404,7 +391,7 @@ describe('StateManager', () => {
 			});
 
 			it('should handle update for non-cached session gracefully', async () => {
-				const updateHandler = eventHandlers.get('session.updated');
+				const updateHandler = eventSubscribers.get('session.updated');
 
 				// Update without creating first (partial data scenario)
 				// Should complete without throwing - just log and continue
@@ -425,16 +412,17 @@ describe('StateManager', () => {
 		describe('session.deleted', () => {
 			it('should clear caches including error cache', async () => {
 				// First create a session to cache
-				const createHandler = eventHandlers.get('session.created');
+				const createHandler = eventSubscribers.get('session.created');
 				await createHandler!({
+					sessionId: 'test-id',
 					session: { id: 'test-id', title: 'Test', status: 'active', metadata: {} },
 				});
 
 				// Now delete it
-				const deleteHandler = eventHandlers.get('session.deleted');
+				const deleteHandler = eventSubscribers.get('session.deleted');
 				await deleteHandler!({ sessionId: 'test-id' });
 
-				// Forwarding extracted to ClientEventBridge; StateManager only clears caches
+				// Forwarding extracted to ClientEventBridge; StateProjectionService only clears caches
 				expect(mockMessageHub.event).not.toHaveBeenCalledWith(
 					'session.deleted',
 					expect.anything(),
@@ -456,9 +444,9 @@ describe('StateManager', () => {
 				);
 
 				// Trigger broadcasts to populate channelVersions
-				await stateManager.broadcastSessionStateChange('test-id');
-				await stateManager.broadcastSDKMessagesChange('test-id');
-				await stateManager.broadcastSDKMessagesDelta('test-id', {
+				await service.broadcastSessionStateChange('test-id');
+				await service.broadcastSDKMessagesChange('test-id');
+				await service.broadcastSDKMessagesDelta('test-id', {
 					added: [{ id: 'msg1' }],
 					timestamp: Date.now(),
 				});
@@ -469,14 +457,14 @@ describe('StateManager', () => {
 				expect(callsBefore).toBeGreaterThan(0);
 
 				// Delete the session
-				const deleteHandler = eventHandlers.get('session.deleted');
+				const deleteHandler = eventSubscribers.get('session.deleted');
 				await deleteHandler!({ sessionId: 'test-id' });
 
 				// After deletion, versions for that session should be gone.
 				// Verify by broadcasting again for the same sessionId — if cleanup
 				// worked, the version counter restarts from 1.
 				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
-				await stateManager.broadcastSessionStateChange('test-id');
+				await service.broadcastSessionStateChange('test-id');
 
 				const sessionCall = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls.find(
 					(c: unknown[]) => c[0] === STATE_CHANNELS.SESSION
@@ -486,54 +474,10 @@ describe('StateManager', () => {
 			});
 		});
 
-		describe('auth.changed', () => {
-			it('handler removed — forwarding fully extracted to ClientEventBridge', () => {
-				// StateManager no longer registers an auth.changed handler;
-				// ClientEventBridge subscribes to auth.changed and triggers
-				// broadcastSystemChange via the StateBroadcasts interface.
-				expect(eventHandlers.has('auth.changed')).toBe(false);
-			});
-		});
-
 		describe('settings.updated', () => {
-			it('should broadcast settings change via DaemonHub fallback', async () => {
-				const handler = eventHandlers.get('settings.updated');
-				await handler!();
-
-				expect(mockMessageHub.event).toHaveBeenCalledWith(
-					STATE_CHANNELS.GLOBAL_SETTINGS,
-					expect.objectContaining({
-						settings: expect.any(Object),
-					}),
-					{ channel: 'global' }
-				);
-			});
-
 			it('should broadcast settings change via InternalEventBus', async () => {
-				const internalSubscribers = new Map<string, Function>();
-				const mockInternalEventBus = {
-					subscribe: mock((event: string, handler: Function) => {
-						internalSubscribers.set(event, handler);
-						return () => {};
-					}),
-				} as unknown as InternalEventBus<DaemonInternalEventMap>;
-
-				const sm = new StateManager(
-					mockMessageHub,
-					mockSessionManager,
-					mockAuthManager,
-					mockSettingsManager,
-					mockConfig,
-					mockDaemonHub,
-					undefined,
-					mockInternalEventBus
-				);
-
-				// Verify internalEventBus.subscribe was called for settings.updated
-				expect(internalSubscribers.has('settings.updated')).toBe(true);
-
-				const handler = internalSubscribers.get('settings.updated');
-				await handler!();
+				const handler = eventSubscribers.get('settings.updated');
+				await handler!({ sessionId: 'global', settings: {} as GlobalSettings });
 
 				expect(mockMessageHub.event).toHaveBeenCalledWith(
 					STATE_CHANNELS.GLOBAL_SETTINGS,
@@ -549,22 +493,13 @@ describe('StateManager', () => {
 			it('should cache commands only (broadcast extracted to ClientEventBridge)', async () => {
 				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
 
-				const handler = eventHandlers.get('commands.updated');
+				const handler = eventSubscribers.get('commands.updated');
 				await handler!({ sessionId: 'test-id', commands: ['cmd1', 'cmd2'] });
 
-				// Forwarding extracted to ClientEventBridge; StateManager only caches
+				// Forwarding extracted to ClientEventBridge; StateProjectionService only caches
 				const calls = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls;
 				const sessionCall = calls.find((call: unknown[]) => call[0] === STATE_CHANNELS.SESSION);
 				expect(sessionCall).toBeUndefined();
-			});
-		});
-
-		describe('context.updated', () => {
-			it('handler removed — forwarding fully extracted to ClientEventBridge', () => {
-				// StateManager no longer registers a context.updated handler;
-				// ClientEventBridge subscribes to context.updated and forwards
-				// through ClientEventGateway directly.
-				expect(eventHandlers.has('context.updated')).toBe(false);
 			});
 		});
 
@@ -572,14 +507,14 @@ describe('StateManager', () => {
 			it('should cache error only (broadcast extracted to ClientEventBridge)', async () => {
 				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
 
-				const handler = eventHandlers.get('session.error');
+				const handler = eventSubscribers.get('session.error');
 				await handler!({
 					sessionId: 'test-id',
 					error: 'Something went wrong',
 					details: { code: 'ERR_001' },
 				});
 
-				// Forwarding extracted to ClientEventBridge; StateManager only caches
+				// Forwarding extracted to ClientEventBridge; StateProjectionService only caches
 				const calls = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls;
 				const sessionCall = calls.find((call: unknown[]) => call[0] === STATE_CHANNELS.SESSION);
 				expect(sessionCall).toBeUndefined();
@@ -590,10 +525,10 @@ describe('StateManager', () => {
 			it('should clear error only (broadcast extracted to ClientEventBridge)', async () => {
 				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
 
-				const clearHandler = eventHandlers.get('session.errorClear');
+				const clearHandler = eventSubscribers.get('session.errorClear');
 				await clearHandler!({ sessionId: 'test-id' });
 
-				// Forwarding extracted to ClientEventBridge; StateManager only clears cache
+				// Forwarding extracted to ClientEventBridge; StateProjectionService only clears cache
 				const calls = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls;
 				const sessionCall = calls.find((call: unknown[]) => call[0] === STATE_CHANNELS.SESSION);
 				expect(sessionCall).toBeUndefined();
@@ -604,19 +539,16 @@ describe('StateManager', () => {
 			it('should update API connection state only (broadcast extracted to ClientEventBridge)', async () => {
 				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
 
-				const handler = eventHandlers.get('api.connection');
+				const handler = eventSubscribers.get('api.connection');
 				const connectionData = {
+					sessionId: 'global',
 					status: 'disconnected' as const,
-					retryCount: 3,
 					timestamp: Date.now(),
 				};
 
-				handler!(connectionData);
+				await handler!(connectionData);
 
-				// Give any async work time to complete
-				await new Promise((resolve) => setTimeout(resolve, 10));
-
-				// Forwarding extracted to ClientEventBridge; StateManager only updates cache
+				// Forwarding extracted to ClientEventBridge; StateProjectionService only updates cache
 				const calls = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls;
 				const systemCall = calls.find(
 					(call: unknown[]) => call[0] === STATE_CHANNELS.GLOBAL_SYSTEM
@@ -628,7 +560,7 @@ describe('StateManager', () => {
 
 	describe('broadcastSystemChange', () => {
 		it('should broadcast system state', async () => {
-			await stateManager.broadcastSystemChange();
+			await service.broadcastSystemChange();
 
 			// Check that event was called with the right channel and structure
 			const calls = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls;
@@ -645,7 +577,7 @@ describe('StateManager', () => {
 
 	describe('broadcastSettingsChange', () => {
 		it('should broadcast settings state', async () => {
-			await stateManager.broadcastSettingsChange();
+			await service.broadcastSettingsChange();
 
 			expect(mockMessageHub.event).toHaveBeenCalledWith(
 				STATE_CHANNELS.GLOBAL_SETTINGS,
@@ -669,7 +601,7 @@ describe('StateManager', () => {
 				mockAgentSession
 			);
 
-			await stateManager.broadcastSessionStateChange('test-id');
+			await service.broadcastSessionStateChange('test-id');
 
 			expect(mockMessageHub.event).toHaveBeenCalledWith(
 				STATE_CHANNELS.SESSION,
@@ -685,7 +617,7 @@ describe('StateManager', () => {
 			(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(null);
 
 			// Should complete without throwing
-			await stateManager.broadcastSessionStateChange('nonexistent');
+			await service.broadcastSessionStateChange('nonexistent');
 			// If we get here, the test passes
 			expect(true).toBe(true);
 		});
@@ -700,7 +632,7 @@ describe('StateManager', () => {
 				mockAgentSession
 			);
 
-			await stateManager.broadcastSDKMessagesChange('test-id');
+			await service.broadcastSDKMessagesChange('test-id');
 
 			expect(mockMessageHub.event).toHaveBeenCalledWith(
 				STATE_CHANNELS.SESSION_SDK_MESSAGES,
@@ -715,7 +647,7 @@ describe('StateManager', () => {
 
 	describe('broadcastSDKMessagesDelta', () => {
 		it('should broadcast SDK messages delta', async () => {
-			await stateManager.broadcastSDKMessagesDelta('test-id', {
+			await service.broadcastSDKMessagesDelta('test-id', {
 				added: [{ id: 'msg1' }],
 				timestamp: Date.now(),
 			});
@@ -734,12 +666,12 @@ describe('StateManager', () => {
 	describe('version tracking', () => {
 		it('should increment version on each broadcast', async () => {
 			// First broadcast
-			await stateManager.broadcastSystemChange();
+			await service.broadcastSystemChange();
 			const firstCall = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls[0];
 			const firstVersion = firstCall[1].version;
 
 			// Second broadcast
-			await stateManager.broadcastSystemChange();
+			await service.broadcastSystemChange();
 			const secondCall = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls[1];
 			const secondVersion = secondCall[1].version;
 
@@ -747,8 +679,8 @@ describe('StateManager', () => {
 		});
 
 		it('should track versions per channel independently', async () => {
-			await stateManager.broadcastSystemChange();
-			await stateManager.broadcastSettingsChange();
+			await service.broadcastSystemChange();
+			await service.broadcastSettingsChange();
 
 			const calls = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls;
 
@@ -762,7 +694,7 @@ describe('StateManager', () => {
 describe('ClientEventGateway DI seam', () => {
 	// ====================================================================
 	// ClientEventGateway DI seam — verifies that callers can inject a custom
-	// gateway into StateManager and that the gateway is exposed via
+	// gateway into StateProjectionService and that the gateway is exposed via
 	// getClientEventGateway() for sharing with ClientEventBridge.
 	//
 	// Forwarding of session.created / session.deleted / context.updated now
@@ -779,9 +711,10 @@ describe('ClientEventGateway DI seam', () => {
 		} as unknown as MessageHub;
 
 		const localEventBus = {
-			on: mock(() => () => {}),
-			emit: mock(async () => {}),
-		} as unknown as DaemonHub;
+			subscribe: mock(() => () => {}),
+			publish: mock(async () => ({ delivered: 0, failures: [] })),
+			publishAsync: mock(() => {}),
+		} as unknown as InternalEventBus<DaemonInternalEventMap>;
 
 		const publish = mock(() => {});
 		const publishGlobal = mock(() => {});
@@ -811,15 +744,14 @@ describe('ClientEventGateway DI seam', () => {
 			dbPath: '/test/db.sqlite',
 		} as unknown as Config;
 
-		const sm = new StateManager(
+		const sm = new StateProjectionService(
 			localMessageHub,
 			localSessionManager,
 			localAuthManager,
 			localSettingsManager,
 			localConfig,
+			undefined,
 			localEventBus,
-			undefined,
-			undefined,
 			injectedGateway
 		);
 
@@ -836,11 +768,10 @@ describe('ClientEventGateway DI seam', () => {
 		} as unknown as MessageHub;
 
 		const localEventBus = {
-			on: mock((event: string, handler: Function) => {
-				return () => {};
-			}),
-			emit: mock(async () => {}),
-		} as unknown as DaemonHub;
+			subscribe: mock(() => () => {}),
+			publish: mock(async () => ({ delivered: 0, failures: [] })),
+			publishAsync: mock(() => {}),
+		} as unknown as InternalEventBus<DaemonInternalEventMap>;
 
 		const localSessionManager = {
 			getActiveSessions: mock(() => 2),
@@ -866,12 +797,13 @@ describe('ClientEventGateway DI seam', () => {
 			dbPath: '/test/db.sqlite',
 		} as unknown as Config;
 
-		const sm = new StateManager(
+		const sm = new StateProjectionService(
 			localMessageHub,
 			localSessionManager,
 			localAuthManager,
 			localSettingsManager,
 			localConfig,
+			undefined,
 			localEventBus
 		);
 

@@ -6,7 +6,7 @@ import { Database } from './storage/database';
 import { SessionManager } from './lib/session-manager';
 import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
-import { StateManager } from './lib/state-manager';
+import { StateProjectionService } from './lib/state-projection-service';
 import { createClientEventBridge } from './lib/client-event-bridge';
 import { MessageHub, MessageHubRouter } from '@neokai/shared';
 import { createDaemonHub } from './lib/daemon-hub';
@@ -68,7 +68,7 @@ export interface DaemonAppContext {
 	sessionManager: SessionManager;
 	authManager: AuthManager;
 	settingsManager: SettingsManager;
-	stateManager: StateManager;
+	stateManager: StateProjectionService;
 	transport: WebSocketServerTransport;
 	daemonHub: Awaited<ReturnType<typeof createDaemonHub>>;
 	/**
@@ -317,21 +317,69 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// Instantiated after sessionManager so it can be passed as the NeoSessionManager.
 	const neoAgentManager = new NeoAgentManager(sessionManager, settingsManager);
 
-	// Initialize State Manager (listens to DaemonHub, clean dependency graph!)
-	const stateManager = new StateManager(
+	// Initialize StateProjectionService (read-model caches from InternalEventBus)
+	const stateManager = new StateProjectionService(
 		messageHub,
 		sessionManager,
 		authManager,
 		settingsManager,
 		config,
-		daemonHub, // FIX: Listens to events instead of being called directly
 		db,
 		internalEventBus
 	);
 
+	// Bridge migrated DaemonHub events to InternalEventBus so
+	// StateProjectionService (and future subscribers) receive them without
+	// touching every publisher call site. This is the M5 compatibility path;
+	// publishers will migrate to InternalEventBus directly in later milestones.
+	const unsubSessionCreated = daemonHub.on('session.created', (data) => {
+		internalEventBus.publishAsync('session.created', {
+			sessionId: data.sessionId,
+			session: data.session,
+		});
+	});
+	const unsubSessionUpdated = daemonHub.on('session.updated', (data) => {
+		internalEventBus.publishAsync('session.updated', {
+			sessionId: data.sessionId,
+			source: data.source,
+			session: data.session,
+			processingState: data.processingState,
+		});
+	});
+	const unsubSessionDeleted = daemonHub.on('session.deleted', (data) => {
+		internalEventBus.publishAsync('session.deleted', {
+			sessionId: data.sessionId,
+		});
+	});
+	const unsubCommandsUpdated = daemonHub.on('commands.updated', (data) => {
+		internalEventBus.publishAsync('commands.updated', {
+			sessionId: data.sessionId,
+			commands: data.commands,
+		});
+	});
+	const unsubSessionError = daemonHub.on('session.error', (data) => {
+		internalEventBus.publishAsync('session.error', {
+			sessionId: data.sessionId,
+			error: data.error,
+			details: data.details,
+		});
+	});
+	const unsubSessionErrorClear = daemonHub.on('session.errorClear', (data) => {
+		internalEventBus.publishAsync('session.errorClear', {
+			sessionId: data.sessionId,
+		});
+	});
+	const unsubApiConnection = daemonHub.on('api.connection', (data) => {
+		internalEventBus.publishAsync('api.connection', {
+			sessionId: data.sessionId,
+			status: data.status,
+			timestamp: data.timestamp,
+		});
+	});
+
 	// Initialize ClientEventBridge — forwards selected DaemonHub events to
 	// WebSocket clients via ClientEventGateway.  This extracts the repetitive
-	// room/space forwarding out of StateManager.
+	// room/space forwarding out of StateProjectionService.
 	const clientEventGateway = stateManager.getClientEventGateway();
 	const clientEventBridge = createClientEventBridge(daemonHub, clientEventGateway, stateManager);
 	clientEventBridge.start();
@@ -731,6 +779,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			// Stop event bridge first so no new client events are forwarded
 			// while we're tearing down sessions and transport.
 			clientEventBridge.stop();
+
+			// Unsubscribe DaemonHub → InternalEventBus bridge listeners
+			unsubSessionCreated();
+			unsubSessionUpdated();
+			unsubSessionDeleted();
+			unsubCommandsUpdated();
+			unsubSessionError();
+			unsubSessionErrorClear();
+			unsubApiConnection();
 
 			try {
 				server.stop();
