@@ -12,6 +12,7 @@ import {
 import type { Session } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { Logger } from '../../../../src/lib/logger';
@@ -21,6 +22,11 @@ describe('QueryModeHandler', () => {
 	let mockSession: Session;
 	let mockDb: Database;
 	let mockDaemonHub: DaemonHub;
+	const mockInternalEventBus = {
+		publish: emitSpy,
+		publishAsync: emitSpy,
+		subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+	} as unknown as InternalEventBus<any>;
 	let mockMessageQueue: MessageQueue;
 	let mockLogger: Logger;
 
@@ -86,6 +92,7 @@ describe('QueryModeHandler', () => {
 			session: mockSession,
 			db: mockDb,
 			daemonHub: mockDaemonHub,
+			internalEventBus: mockInternalEventBus,
 			messageQueue: mockMessageQueue,
 			logger: mockLogger,
 			ensureQueryStarted: ensureQueryStartedSpy,

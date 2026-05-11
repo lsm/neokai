@@ -14,6 +14,7 @@ import {
 import type { Session, ModelInfo } from '@neokai/shared';
 import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
@@ -113,6 +114,11 @@ describe('ModelSwitchHandler', () => {
 	let mockDb: Database;
 	let mockMessageHub: MessageHub;
 	let mockDaemonHub: DaemonHub;
+	const mockInternalEventBus = {
+		publish: emitSpy,
+		publishAsync: emitSpy,
+		subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+	} as unknown as InternalEventBus<any>;
 	let mockContextTracker: ContextTracker;
 	let mockStateManager: ProcessingStateManager;
 	let mockErrorManager: ErrorManager;
@@ -221,6 +227,7 @@ describe('ModelSwitchHandler', () => {
 			db: mockDb,
 			messageHub: mockMessageHub,
 			daemonHub: mockDaemonHub,
+			internalEventBus: mockInternalEventBus,
 			contextTracker: mockContextTracker,
 			stateManager: mockStateManager,
 			errorManager: mockErrorManager,

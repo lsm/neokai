@@ -47,6 +47,7 @@ import {
 } from '../../../../src/lib/session/session-lifecycle';
 import type { Database } from '../../../../src/storage/database';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { WorktreeManager } from '../../../../src/lib/worktree-manager';
 import type { SessionCache, AgentSessionFactory } from '../../../../src/lib/session/session-cache';
 import type { ToolsConfigManager } from '../../../../src/lib/session/tools-config';
@@ -122,6 +123,12 @@ describe('Sandbox Default Configuration', () => {
 			emit: emitSpy,
 		} as unknown as DaemonHub;
 
+		const mockInternalEventBus = {
+			publish: mock(async () => {}),
+			publishAsync: mock(() => {}),
+			subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+		} as unknown as InternalEventBus<any>;
+
 		// Message hub mocks
 		mockMessageHub = {
 			event: mock(async () => {}),
@@ -150,11 +157,11 @@ describe('Sandbox Default Configuration', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
-			mockDaemonHub,
 			mockMessageHub,
 			config,
 			mockToolsConfigManager,
-			mockAgentSessionFactory
+			mockAgentSessionFactory,
+			mockInternalEventBus
 		);
 	});
 

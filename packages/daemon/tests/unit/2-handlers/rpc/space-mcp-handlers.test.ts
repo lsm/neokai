@@ -29,6 +29,7 @@ import { McpEnablementRepository } from '../../../../src/storage/repositories/mc
 import { setupSpaceMcpHandlers } from '../../../../src/lib/rpc-handlers/space-mcp-handlers';
 import type { Database } from '../../../../src/storage/database';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 
@@ -69,6 +70,14 @@ function createMockDaemonHub(): { daemonHub: DaemonHub; emit: ReturnType<typeof 
 		once: mock(async () => {}),
 	} as unknown as DaemonHub;
 	return { daemonHub, emit };
+}
+
+function createMockInternalEventBus(): InternalEventBus<any> {
+	return {
+		publish: mock(async () => {}),
+		publishAsync: mock(() => {}),
+		subscribe: mock(() => () => {}),
+	} as unknown as InternalEventBus<any>;
 }
 
 function fakeSpace(id: string, workspacePath?: string): Space {
@@ -147,7 +156,7 @@ describe('space-mcp-handlers', () => {
 			const { hub, handlers } = createMockHub();
 			const { daemonHub } = createMockDaemonHub();
 			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, daemonHub, db, spaceManager);
+			setupSpaceMcpHandlers(hub, daemonHub, createMockInternalEventBus(), db, spaceManager);
 
 			const handler = handlers.get('space.mcp.list')!;
 			const result = (await handler({ spaceId: 'space-A' })) as SpaceMcpListResponse;
@@ -177,7 +186,7 @@ describe('space-mcp-handlers', () => {
 			const { hub, handlers } = createMockHub();
 			const { daemonHub } = createMockDaemonHub();
 			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, daemonHub, db, spaceManager);
+			setupSpaceMcpHandlers(hub, daemonHub, createMockInternalEventBus(), db, spaceManager);
 
 			const handler = handlers.get('space.mcp.list')!;
 			const result = (await handler({ spaceId: 'space-A' })) as SpaceMcpListResponse;
@@ -190,7 +199,7 @@ describe('space-mcp-handlers', () => {
 			const { hub, handlers } = createMockHub();
 			const { daemonHub } = createMockDaemonHub();
 			const spaceManager = createSpaceManagerMock([]);
-			setupSpaceMcpHandlers(hub, daemonHub, db, spaceManager);
+			setupSpaceMcpHandlers(hub, daemonHub, createMockInternalEventBus(), db, spaceManager);
 
 			const handler = handlers.get('space.mcp.list')!;
 			await expect(handler({})).rejects.toThrow('spaceId is required');
@@ -200,7 +209,7 @@ describe('space-mcp-handlers', () => {
 			const { hub, handlers } = createMockHub();
 			const { daemonHub } = createMockDaemonHub();
 			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, daemonHub, db, spaceManager);
+			setupSpaceMcpHandlers(hub, daemonHub, createMockInternalEventBus(), db, spaceManager);
 
 			const handler = handlers.get('space.mcp.list')!;
 			await expect(handler({ spaceId: 'nope' })).rejects.toThrow('Space not found');
@@ -221,9 +230,11 @@ describe('space-mcp-handlers', () => {
 			});
 
 			const { hub, handlers } = createMockHub();
-			const { daemonHub, emit } = createMockDaemonHub();
+			const { daemonHub } = createMockDaemonHub();
 			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, daemonHub, db, spaceManager);
+			const internalEventBus = createMockInternalEventBus();
+			const publishAsync = internalEventBus.publishAsync as ReturnType<typeof mock>;
+			setupSpaceMcpHandlers(hub, daemonHub, internalEventBus, db, spaceManager);
 
 			const handler = handlers.get('space.mcp.setEnabled')!;
 			const result = (await handler({
@@ -239,9 +250,7 @@ describe('space-mcp-handlers', () => {
 				serverId: srv.id,
 				enabled: false,
 			});
-			expect(emit).toHaveBeenCalledWith('mcp.registry.changed', {
-				sessionId: 'global',
-			});
+			expect(publishAsync).toHaveBeenCalledWith('mcp.registry.changed', { sessionId: 'global' }); (refactor(daemon): migrate session, agent, query, and config events from DaemonHub to InternalEventBus)
 		});
 
 		test('flip — second call replaces the prior override', async () => {
@@ -255,7 +264,7 @@ describe('space-mcp-handlers', () => {
 			const { hub, handlers } = createMockHub();
 			const { daemonHub } = createMockDaemonHub();
 			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, daemonHub, db, spaceManager);
+			setupSpaceMcpHandlers(hub, daemonHub, createMockInternalEventBus(), db, spaceManager);
 
 			const handler = handlers.get('space.mcp.setEnabled')!;
 			await handler({ spaceId: 'space-A', serverId: srv.id, enabled: false });
@@ -273,7 +282,7 @@ describe('space-mcp-handlers', () => {
 			const { hub, handlers } = createMockHub();
 			const { daemonHub } = createMockDaemonHub();
 			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, daemonHub, db, spaceManager);
+			setupSpaceMcpHandlers(hub, daemonHub, createMockInternalEventBus(), db, spaceManager);
 
 			const handler = handlers.get('space.mcp.setEnabled')!;
 			await expect(
@@ -285,7 +294,7 @@ describe('space-mcp-handlers', () => {
 			const { hub, handlers } = createMockHub();
 			const { daemonHub } = createMockDaemonHub();
 			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, daemonHub, db, spaceManager);
+			setupSpaceMcpHandlers(hub, daemonHub, createMockInternalEventBus(), db, spaceManager);
 
 			const handler = handlers.get('space.mcp.setEnabled')!;
 			await expect(handler({ serverId: 'x', enabled: true })).rejects.toThrow(
@@ -303,7 +312,7 @@ describe('space-mcp-handlers', () => {
 			const { hub, handlers } = createMockHub();
 			const { daemonHub } = createMockDaemonHub();
 			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, daemonHub, db, spaceManager);
+			setupSpaceMcpHandlers(hub, daemonHub, createMockInternalEventBus(), db, spaceManager);
 
 			const handler = handlers.get('space.mcp.setEnabled')!;
 			await expect(handler({ spaceId: 'missing', serverId: 'x', enabled: true })).rejects.toThrow(
@@ -327,9 +336,11 @@ describe('space-mcp-handlers', () => {
 			enablementRepo.setOverride('space', 'space-A', srv.id, false);
 
 			const { hub, handlers } = createMockHub();
-			const { daemonHub, emit } = createMockDaemonHub();
+			const { daemonHub } = createMockDaemonHub();
 			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, daemonHub, db, spaceManager);
+			const internalEventBus = createMockInternalEventBus();
+			const publishAsync = internalEventBus.publishAsync as ReturnType<typeof mock>;
+			setupSpaceMcpHandlers(hub, daemonHub, internalEventBus, db, spaceManager);
 
 			const handler = handlers.get('space.mcp.clearOverride')!;
 			const result = (await handler({ spaceId: 'space-A', serverId: srv.id })) as {
@@ -338,9 +349,7 @@ describe('space-mcp-handlers', () => {
 
 			expect(result.ok).toBe(true);
 			expect(enablementRepo.getOverride('space', 'space-A', srv.id)).toBeNull();
-			expect(emit).toHaveBeenCalledWith('mcp.registry.changed', {
-				sessionId: 'global',
-			});
+			expect(publishAsync).toHaveBeenCalledWith('mcp.registry.changed', { sessionId: 'global' }); (refactor(daemon): migrate session, agent, query, and config events from DaemonHub to InternalEventBus)
 		});
 
 		test('idempotent — no override row still returns ok:true and no emit', async () => {
@@ -354,7 +363,7 @@ describe('space-mcp-handlers', () => {
 			const { hub, handlers } = createMockHub();
 			const { daemonHub, emit } = createMockDaemonHub();
 			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, daemonHub, db, spaceManager);
+			setupSpaceMcpHandlers(hub, daemonHub, createMockInternalEventBus(), db, spaceManager);
 
 			const handler = handlers.get('space.mcp.clearOverride')!;
 			const result = (await handler({ spaceId: 'space-A', serverId: srv.id })) as {
@@ -368,7 +377,7 @@ describe('space-mcp-handlers', () => {
 			const { hub, handlers } = createMockHub();
 			const { daemonHub } = createMockDaemonHub();
 			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, daemonHub, db, spaceManager);
+			setupSpaceMcpHandlers(hub, daemonHub, createMockInternalEventBus(), db, spaceManager);
 
 			const handler = handlers.get('space.mcp.clearOverride')!;
 			await expect(handler({ serverId: 'x' })).rejects.toThrow('spaceId is required');
@@ -398,7 +407,9 @@ describe('space-mcp-handlers', () => {
 			const { hub, handlers } = createMockHub();
 			const { daemonHub, emit } = createMockDaemonHub();
 			const spaceManager = createSpaceManagerMock([fakeSpace('space-A', wsPath)]);
-			setupSpaceMcpHandlers(hub, daemonHub, db, spaceManager);
+			const internalEventBus = createMockInternalEventBus();
+			const publishAsync = internalEventBus.publishAsync as ReturnType<typeof mock>;
+			setupSpaceMcpHandlers(hub, daemonHub, internalEventBus, db, spaceManager);
 
 			const handler = handlers.get('mcp.imports.refresh')!;
 			const result = (await handler({ workspacePath: wsPath })) as McpImportsRefreshResponse;
@@ -407,9 +418,7 @@ describe('space-mcp-handlers', () => {
 			expect(result.imported).toBe(1);
 			expect(result.removed).toBe(0);
 			expect(appMcpRepo.getByName('foo')?.source).toBe('imported');
-			expect(emit).toHaveBeenCalledWith('mcp.registry.changed', {
-				sessionId: 'global',
-			});
+			expect(publishAsync).toHaveBeenCalledWith('mcp.registry.changed', { sessionId: 'global' }); (refactor(daemon): migrate session, agent, query, and config events from DaemonHub to InternalEventBus)
 		});
 
 		test('scans every space when no workspacePath narrow is given', async () => {
@@ -430,7 +439,7 @@ describe('space-mcp-handlers', () => {
 			const { hub, handlers } = createMockHub();
 			const { daemonHub } = createMockDaemonHub();
 			const spaceManager = createSpaceManagerMock([fakeSpace('sA', ws1), fakeSpace('sB', ws2)]);
-			setupSpaceMcpHandlers(hub, daemonHub, db, spaceManager);
+			setupSpaceMcpHandlers(hub, daemonHub, createMockInternalEventBus(), db, spaceManager);
 
 			const handler = handlers.get('mcp.imports.refresh')!;
 			const result = (await handler({})) as McpImportsRefreshResponse;
@@ -449,7 +458,7 @@ describe('space-mcp-handlers', () => {
 			const { hub, handlers } = createMockHub();
 			const { daemonHub, emit } = createMockDaemonHub();
 			const spaceManager = createSpaceManagerMock([fakeSpace('space-A', wsPath)]);
-			setupSpaceMcpHandlers(hub, daemonHub, db, spaceManager);
+			setupSpaceMcpHandlers(hub, daemonHub, createMockInternalEventBus(), db, spaceManager);
 
 			const handler = handlers.get('mcp.imports.refresh')!;
 			const result = (await handler({ workspacePath: wsPath })) as McpImportsRefreshResponse;
@@ -468,7 +477,7 @@ describe('space-mcp-handlers', () => {
 			const { hub, handlers } = createMockHub();
 			const { daemonHub } = createMockDaemonHub();
 			const spaceManager = createSpaceManagerMock([fakeSpace('space-A', wsPath)]);
-			setupSpaceMcpHandlers(hub, daemonHub, db, spaceManager);
+			setupSpaceMcpHandlers(hub, daemonHub, createMockInternalEventBus(), db, spaceManager);
 
 			const handler = handlers.get('mcp.imports.refresh')!;
 			const result = (await handler({ workspacePath: wsPath })) as McpImportsRefreshResponse;

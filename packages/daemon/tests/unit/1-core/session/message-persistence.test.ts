@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, Session } from '@neokai/shared';
 import type { Database } from '../../../../src/storage/database';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import {
 	MAX_IMAGE_BASE64_SIZE,
 	MessagePersistence,
@@ -17,7 +18,7 @@ describe('MessagePersistence', () => {
 	let mockSessionCache: SessionCache;
 	let mockDb: Database;
 	let mockMessageHub: MessageHub;
-	let mockDaemonHub: DaemonHub;
+	let mockInternalEventBus: InternalEventBus<any>;
 	let persistence: MessagePersistence;
 	let mockSession: Session;
 	let mockAgentSession: {
@@ -81,11 +82,18 @@ describe('MessagePersistence', () => {
 		} as unknown as MessageHub;
 
 		daemonHubEmitSpy = mock(async () => {});
-		mockDaemonHub = {
-			emit: daemonHubEmitSpy,
-		} as unknown as DaemonHub;
+		mockInternalEventBus = {
+			publish: daemonHubEmitSpy,
+			publishAsync: mock(() => {}),
+			subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+		} as unknown as InternalEventBus<any>;
 
-		persistence = new MessagePersistence(mockSessionCache, mockDb, mockMessageHub, mockDaemonHub);
+		persistence = new MessagePersistence(
+			mockSessionCache,
+			mockDb,
+			mockMessageHub,
+			mockInternalEventBus
+		);
 	});
 
 	it('persists idle immediate as enqueued and waits for queue insertion', async () => {

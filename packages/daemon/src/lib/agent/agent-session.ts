@@ -92,6 +92,7 @@ import type {
 	DeclarativeToolGuard,
 } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Database } from '../../storage/database';
 import { ErrorManager } from '../error-manager';
 import { Logger } from '../logger';
@@ -338,6 +339,7 @@ export class AgentSession
 		readonly db: Database,
 		readonly messageHub: MessageHub,
 		readonly daemonHub: DaemonHub,
+		readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 		private getApiKey: () => Promise<string | null>,
 		readonly skillsManager?: import('../skills-manager').SkillsManager,
 		readonly appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
@@ -345,7 +347,7 @@ export class AgentSession
 		readonly toolGuards?: DeclarativeToolGuard[],
 		private readonly runtimeOptions: AgentSessionRuntimeOptions = {}
 	) {
-		this.errorManager = new ErrorManager(this.messageHub, this.daemonHub);
+		this.errorManager = new ErrorManager(this.messageHub, this.daemonHub, this.internalEventBus);
 		this.logger = new Logger(`AgentSession ${session.id}`);
 		this.settingsManager = new SettingsManager(
 			this.db,
@@ -354,7 +356,7 @@ export class AgentSession
 
 		// Initialize core components (order matters - some handlers depend on earlier ones)
 		this.messageQueue = new MessageQueue();
-		this.stateManager = new ProcessingStateManager(session.id, daemonHub, db);
+		this.stateManager = new ProcessingStateManager(session.id, internalEventBus, db);
 		this.contextTracker = new ContextTracker(session.id, (contextInfo: ContextInfo) => {
 			this.session.metadata.lastContextInfo = contextInfo;
 			this.db.updateSession(this.session.id, { metadata: this.session.metadata });
@@ -447,6 +449,7 @@ export class AgentSession
 		db: Database,
 		messageHub: MessageHub,
 		daemonHub: DaemonHub,
+		internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 		getApiKey: () => Promise<string | null>,
 		defaultModel: string,
 		skillsManager?: import('../skills-manager').SkillsManager,
@@ -541,6 +544,7 @@ export class AgentSession
 			db,
 			messageHub,
 			daemonHub,
+			internalEventBus,
 			getApiKey,
 			skillsManager,
 			appMcpServerRepo,
@@ -563,6 +567,7 @@ export class AgentSession
 		db: Database,
 		messageHub: MessageHub,
 		daemonHub: DaemonHub,
+		internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 		getApiKey: () => Promise<string | null>,
 		skillsManager?: import('../skills-manager').SkillsManager,
 		appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
@@ -576,6 +581,7 @@ export class AgentSession
 			db,
 			messageHub,
 			daemonHub,
+			internalEventBus,
 			getApiKey,
 			skillsManager,
 			appMcpServerRepo,

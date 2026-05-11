@@ -12,7 +12,7 @@
 import type { Provider, Session, WorktreeMetadata, MessageHub } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { Database } from '../../storage/database';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { WorktreeManager } from '../worktree-manager';
 import { Logger } from '../logger';
 import type { SessionCache, AgentSessionFactory } from './session-cache';
@@ -72,11 +72,11 @@ export class SessionLifecycle {
 		private db: Database,
 		private worktreeManager: WorktreeManager,
 		private sessionCache: SessionCache,
-		private daemonHub: DaemonHub,
 		private messageHub: MessageHub,
 		private config: SessionLifecycleConfig,
 		private toolsConfigManager: ToolsConfigManager,
-		private createAgentSession: AgentSessionFactory
+		private createAgentSession: AgentSessionFactory,
+		private internalEventBus: InternalEventBus<DaemonInternalEventMap>
 	) {
 		this.logger = new Logger('SessionLifecycle');
 	}
@@ -270,8 +270,8 @@ export class SessionLifecycle {
 		const agentSession = this.createAgentSession(session);
 		this.sessionCache.set(sessionId, agentSession);
 
-		// Emit event via DaemonHub (StateManager will handle publishing to MessageHub)
-		await this.daemonHub.emit('session.created', { sessionId, session });
+		// Emit event via InternalEventBus (StateProjectionService handles state updates)
+		await this.internalEventBus.publish('session.created', { sessionId, session });
 
 		return sessionId;
 	}
@@ -412,7 +412,7 @@ export class SessionLifecycle {
 		agentSession.updateMetadata(updatedSession);
 
 		// Emit event for state synchronization
-		await this.daemonHub.emit('session.updated', {
+		await this.internalEventBus.publish('session.updated', {
 			sessionId,
 			session: updatedSession,
 		});
@@ -516,7 +516,7 @@ export class SessionLifecycle {
 		agentSession.updateMetadata(updatedSession);
 
 		// Emit event for state synchronization
-		await this.daemonHub.emit('session.updated', {
+		await this.internalEventBus.publish('session.updated', {
 			sessionId,
 			session: updatedSession,
 		});
@@ -536,8 +536,8 @@ export class SessionLifecycle {
 			agentSession.updateMetadata(updates);
 		}
 
-		// FIX: Emit event via DaemonHub - include data for decoupled state management
-		await this.daemonHub.emit('session.updated', {
+		// FIX: Emit event via InternalEventBus - include data for decoupled state management
+		await this.internalEventBus.publish('session.updated', {
 			sessionId,
 			source: 'update',
 			session: updates,
@@ -770,7 +770,7 @@ export class SessionLifecycle {
 					{ sessionId, reason: 'deleted' },
 					{ channel: 'global' }
 				);
-				await this.daemonHub.emit('session.deleted', { sessionId });
+				await this.internalEventBus.publish('session.deleted', { sessionId });
 				completedPhases.push('broadcast');
 			} catch (error) {
 				this.logger.error(`[SessionLifecycle] deleteResources: Failed to broadcast:`, error);
@@ -920,7 +920,7 @@ export class SessionLifecycle {
 			agentSession.updateMetadata(updatedSession);
 
 			// Broadcast updates - include session data for decoupled state management
-			await this.daemonHub.emit('session.updated', {
+			await this.internalEventBus.publish('session.updated', {
 				sessionId,
 				source: 'title-generated',
 				session: updatedSession,
@@ -946,7 +946,7 @@ export class SessionLifecycle {
 			agentSession.updateMetadata(fallbackSession);
 
 			// Include session data for decoupled state management
-			await this.daemonHub.emit('session.updated', {
+			await this.internalEventBus.publish('session.updated', {
 				sessionId,
 				source: 'title-generated',
 				session: fallbackSession,

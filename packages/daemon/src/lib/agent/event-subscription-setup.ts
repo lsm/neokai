@@ -1,5 +1,5 @@
 /**
- * EventSubscriptionSetup - Sets up DaemonHub event subscriptions
+ * EventSubscriptionSetup - Sets up event subscriptions for AgentSession
  *
  * Extracted from AgentSession to reduce complexity.
  * Takes AgentSession instance directly - handlers are internal parts of AgentSession.
@@ -15,6 +15,7 @@
 
 import type { Session, MessageContent } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Logger } from '../logger';
 import { Logger as LoggerClass } from '../logger';
 import type { ModelSwitchHandler } from './model-switch-handler';
@@ -28,6 +29,7 @@ import type { QueryModeHandler } from './query-mode-handler';
 export interface EventSubscriptionSetupContext {
 	readonly session: Session;
 	readonly daemonHub: DaemonHub;
+	readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 
 	// Handler references for event delegation
 	readonly modelSwitchHandler: ModelSwitchHandler;
@@ -43,7 +45,10 @@ export interface EventSubscriptionSetupContext {
 }
 
 /**
- * Sets up DaemonHub event subscriptions for AgentSession
+ * Sets up event subscriptions for AgentSession.
+ *
+ * Subscriptions are split between DaemonHub (for events whose publishers have
+ * not yet been migrated) and InternalEventBus (for migrated events).
  */
 export class EventSubscriptionSetup {
 	private logger: Logger;
@@ -58,10 +63,17 @@ export class EventSubscriptionSetup {
 	 * Internally calls context methods for event handling
 	 */
 	setup(): void {
-		const { session, daemonHub, modelSwitchHandler, interruptHandler, queryModeHandler } = this.ctx;
+		const {
+			session,
+			daemonHub,
+			internalEventBus,
+			modelSwitchHandler,
+			interruptHandler,
+			queryModeHandler,
+		} = this.ctx;
 		const sessionId = session.id;
 
-		// Model switch request handler
+		// Model switch request handler — publisher not yet migrated, stays on DaemonHub
 		const unsubModelSwitch = daemonHub.on(
 			'model.switchRequest',
 			async ({ sessionId: sid, model, provider }) => {
@@ -70,8 +82,8 @@ export class EventSubscriptionSetup {
 				}
 				const result = await modelSwitchHandler.switchModel(model, provider);
 
-				// Emit result
-				await daemonHub.emit('model.switched', {
+				// Emit result via InternalEventBus
+				await internalEventBus.publish('model.switched', {
 					sessionId: sid,
 					success: result.success,
 					model: result.model,
@@ -82,18 +94,18 @@ export class EventSubscriptionSetup {
 		);
 		this.unsubscribers.push(unsubModelSwitch);
 
-		// Interrupt request handler
+		// Interrupt request handler — publisher not yet migrated, stays on DaemonHub
 		const unsubInterrupt = daemonHub.on(
 			'agent.interruptRequest',
 			async ({ sessionId: sid }) => {
 				await interruptHandler.handleInterrupt();
-				await daemonHub.emit('agent.interrupted', { sessionId: sid });
+				await internalEventBus.publish('agent.interrupted', { sessionId: sid });
 			},
 			{ sessionId }
 		);
 		this.unsubscribers.push(unsubInterrupt);
 
-		// Reset query request handler
+		// Reset query request handler — publisher not yet migrated, stays on DaemonHub
 		const unsubReset = daemonHub.on(
 			'agent.resetRequest',
 			async ({ sessionId: sid, restartQuery }) => {
@@ -102,7 +114,7 @@ export class EventSubscriptionSetup {
 					hardReset: true,
 				});
 
-				await daemonHub.emit('agent.reset', {
+				await internalEventBus.publish('agent.reset', {
 					sessionId: sid,
 					success: result.success,
 					error: result.error,
@@ -112,8 +124,8 @@ export class EventSubscriptionSetup {
 		);
 		this.unsubscribers.push(unsubReset);
 
-		// Message persisted handler
-		const unsubMessagePersisted = daemonHub.on(
+		// Message persisted handler — published via InternalEventBus
+		const unsubMessagePersisted = internalEventBus.subscribe(
 			'message.persisted',
 			async (data) => {
 				if (data.skipQueryStart) return;
@@ -124,21 +136,21 @@ export class EventSubscriptionSetup {
 					data.messageContent as string | MessageContent[]
 				);
 			},
-			{ sessionId }
+			{ subscriberName: `EventSubscriptionSetup.messagePersisted.${sessionId}`, sessionId }
 		);
 		this.unsubscribers.push(unsubMessagePersisted);
 
-		// Query trigger handler (Manual mode)
-		const unsubQueryTrigger = daemonHub.on(
+		// Query trigger handler (Manual mode) — published via InternalEventBus
+		const unsubQueryTrigger = internalEventBus.subscribe(
 			'query.trigger',
 			async () => {
 				await queryModeHandler.handleQueryTrigger();
 			},
-			{ sessionId }
+			{ subscriberName: `EventSubscriptionSetup.queryTrigger.${sessionId}`, sessionId }
 		);
 		this.unsubscribers.push(unsubQueryTrigger);
 
-		// Send enqueued messages on turn end (auto-defer mode)
+		// Send enqueued messages on turn end (auto-defer mode) — publisher not yet migrated
 		const unsubSendEnqueuedOnTurnEnd = daemonHub.on(
 			'query.sendEnqueuedOnTurnEnd',
 			async () => {

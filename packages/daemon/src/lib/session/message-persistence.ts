@@ -23,7 +23,7 @@ import type {
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { buildReferenceContext, prependContextToMessage } from '../agent/reference-context-builder';
 import { expandBuiltInCommand } from '../built-in-commands';
 import { Logger } from '../logger';
@@ -79,7 +79,7 @@ export class MessagePersistence {
 		private sessionCache: SessionCache,
 		private db: Database,
 		private messageHub: MessageHub,
-		private daemonHub: DaemonHub,
+		private internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 		private referenceResolver?: ReferenceResolver
 	) {
 		this.logger = new Logger('MessagePersistence');
@@ -252,7 +252,7 @@ export class MessagePersistence {
 			}
 
 			// Broadcast status update for queue-aware UI
-			await this.daemonHub.emit('messages.statusChanged', {
+			await this.internalEventBus.publish('messages.statusChanged', {
 				sessionId,
 				messageIds: [dbMessageId],
 				status: sendStatus,
@@ -269,7 +269,7 @@ export class MessagePersistence {
 			// Query start is handled above synchronously; the event remains for title
 			// generation, draft clearing, and legacy subscribers.
 			if (shouldDispatchToQuery) {
-				await this.daemonHub.emit('message.persisted', {
+				await this.internalEventBus.publish('message.persisted', {
 					sessionId,
 					messageId,
 					messageContent,

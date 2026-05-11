@@ -64,6 +64,7 @@ export function setupSessionHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
 	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	spaceManager: SpaceManager,
 	spaceRuntimeService: SpaceRuntimeService | undefined,
 	internalEventBus?: InternalEventBus<DaemonInternalEventMap>
@@ -128,7 +129,7 @@ export function setupSessionHandlers(
 		// Broadcast to daemonHub so other subscribers (StateManager, etc.) can react.
 		// Kept for non-critical side effects; critical attachment above is synchronous.
 		if (session) {
-			daemonHub.emit('session.created', { sessionId, session }).catch(() => {});
+			internalEventBus.publishAsync('session.created', { sessionId, session });
 		}
 
 		return { sessionId, session };
@@ -488,9 +489,7 @@ export function setupSessionHandlers(
 		}
 
 		// Fire-and-forget: emit event, AgentSession handles it
-		daemonHub.emit('agent.interruptRequest', { sessionId: targetSessionId }).catch((error) => {
-			log.warn(`Failed to emit agent.interruptRequest for session ${targetSessionId}:`, error);
-		});
+		internalEventBus.publishAsync('agent.interruptRequest', { sessionId: targetSessionId });
 
 		return { accepted: true };
 	});
@@ -883,7 +882,7 @@ export function setupSessionHandlers(
 		const result = await agentSession.resetQuery({ restartQuery, hardReset: true });
 
 		// Also emit event for StateManager to update clients
-		await daemonHub.emit('agent.reset', {
+		await internalEventBus.publish('agent.reset', {
 			sessionId: targetSessionId,
 			success: result.success,
 			error: result.error,
@@ -911,12 +910,15 @@ export function setupSessionHandlers(
 			await agentSession.restart();
 
 			// Emit event so StateManager and UI can react to the restart
-			await daemonHub.emit('agent.restart', { sessionId: targetSessionId, success: true });
+			await internalEventBus.publish('agent.restart', {
+				sessionId: targetSessionId,
+				success: true,
+			});
 
 			return { success: true };
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-			await daemonHub.emit('agent.restart', {
+			await internalEventBus.publish('agent.restart', {
 				sessionId: targetSessionId,
 				success: false,
 				error: errorMessage,

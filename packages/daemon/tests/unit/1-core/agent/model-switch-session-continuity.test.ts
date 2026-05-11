@@ -24,6 +24,7 @@ import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { Session, ModelInfo } from '@neokai/shared';
 import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
@@ -102,6 +103,7 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
 	let mockDb: Database;
 	let mockMessageHub: MessageHub;
 	let mockDaemonHub: DaemonHub;
+	let mockInternalEventBus: InternalEventBus<any>;
 	let mockContextTracker: ContextTracker;
 	let mockStateManager: ProcessingStateManager;
 	let mockErrorManager: ErrorManager;
@@ -197,6 +199,11 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
 		mockLifecycleManager = {
 			restart: restartSpy,
 		} as unknown as QLMType;
+		mockInternalEventBus = {
+			publish: mock(async () => {}),
+			publishAsync: mock(async () => {}),
+			subscribe: mock(() => () => {}),
+		} as unknown as InternalEventBus<any>;
 	});
 
 	function createContext(
@@ -207,6 +214,7 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
 			db: mockDb,
 			messageHub: mockMessageHub,
 			daemonHub: mockDaemonHub,
+			internalEventBus: mockInternalEventBus,
 			contextTracker: mockContextTracker,
 			stateManager: mockStateManager,
 			errorManager: mockErrorManager,
@@ -368,6 +376,11 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 			daemonHub: {
 				emit: emitSpy,
 			} as unknown as DaemonHub,
+			internalEventBus: {
+				publish: mock(async () => {}),
+				publishAsync: mock(async () => {}),
+				subscribe: mock(() => () => {}),
+			} as unknown as InternalEventBus<any>,
 			stateManager: {
 				setIdle: setIdleSpy,
 				setQueued: setQueuedSpy,

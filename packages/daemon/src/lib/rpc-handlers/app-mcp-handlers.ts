@@ -33,6 +33,7 @@ import type {
 	UpdateAppMcpServerRequest,
 } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { Database } from '../../storage/database';
 import type {
@@ -57,16 +58,18 @@ const log = new Logger('app-mcp-handlers');
 export interface AppMcpHandlerContext {
 	db: { appMcpServers: AppMcpServerRepository };
 	daemonHub: DaemonHub;
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function emitChanged(daemonHub: DaemonHub): void {
-	daemonHub.emit('mcp.registry.changed', { sessionId: 'global' }).catch((err) => {
-		log.warn('Failed to emit mcp.registry.changed:', err);
-	});
+function emitChanged(
+	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>
+): void {
+	internalEventBus.publishAsync('mcp.registry.changed', { sessionId: 'global' });
 }
 
 // ---------------------------------------------------------------------------
@@ -74,7 +77,7 @@ function emitChanged(daemonHub: DaemonHub): void {
 // ---------------------------------------------------------------------------
 
 export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandlerContext): void {
-	const { db, daemonHub } = ctx;
+	const { db, daemonHub, internalEventBus } = ctx;
 
 	// mcp.registry.list — returns AppMcpServer[]
 	messageHub.onRequest('mcp.registry.list', async () => {
@@ -110,7 +113,7 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
 		}
 
 		const server = db.appMcpServers.create(params);
-		emitChanged(daemonHub);
+		emitChanged(daemonHub, internalEventBus);
 		log.info(`mcp.registry.create: created entry "${server.name}" (${server.id})`);
 		return { server } satisfies { server: AppMcpServer };
 	});
@@ -132,7 +135,7 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
 		// Only emit if there were actual fields to update — the repo short-circuits
 		// and skips the write when updates is empty, so avoid a spurious event.
 		if (Object.keys(updates).length > 0) {
-			emitChanged(daemonHub);
+			emitChanged(daemonHub, internalEventBus);
 		}
 		log.info(`mcp.registry.update: updated entry "${server.name}" (${id})`);
 		return { server } satisfies { server: AppMcpServer };
@@ -151,7 +154,7 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
 			throw new Error(`MCP server not found: ${id}`);
 		}
 
-		emitChanged(daemonHub);
+		emitChanged(daemonHub, internalEventBus);
 		log.info(`mcp.registry.delete: deleted entry ${id}`);
 		return { success: true } satisfies { success: boolean };
 	});
@@ -172,7 +175,7 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
 			throw new Error(`MCP server not found: ${id}`);
 		}
 
-		emitChanged(daemonHub);
+		emitChanged(daemonHub, internalEventBus);
 		log.info(`mcp.registry.setEnabled: set entry ${id} enabled=${enabled}`);
 		return { server } satisfies { server: AppMcpServer };
 	});
@@ -185,6 +188,7 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
 export function setupAppMcpHandlers(
 	messageHub: MessageHub,
 	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	db: Database
 ): void {
 	// -------------------------------------------------------------------------
@@ -221,9 +225,7 @@ export function setupAppMcpHandlers(
 
 		const override = db.mcpEnablement.setOverride(scopeType, scopeId, serverId, enabled);
 
-		daemonHub
-			.emit('mcp.registry.changed', { sessionId: 'global' })
-			.catch((err) => log.warn('Failed to emit mcp.registry.changed:', err));
+		internalEventBus.publishAsync('mcp.registry.changed', { sessionId: 'global' });
 
 		return { override } satisfies McpEnablementSetOverrideResponse;
 	});
@@ -237,9 +239,7 @@ export function setupAppMcpHandlers(
 
 		const deleted = db.mcpEnablement.clearOverride(scopeType, scopeId, serverId);
 		if (deleted) {
-			daemonHub
-				.emit('mcp.registry.changed', { sessionId: 'global' })
-				.catch((err) => log.warn('Failed to emit mcp.registry.changed:', err));
+			internalEventBus.publishAsync('mcp.registry.changed', { sessionId: 'global' });
 		}
 		return { deleted } satisfies McpEnablementClearOverrideResponse;
 	});
@@ -252,9 +252,7 @@ export function setupAppMcpHandlers(
 
 		const deleted = db.mcpEnablement.clearScope(scopeType, scopeId);
 		if (deleted > 0) {
-			daemonHub
-				.emit('mcp.registry.changed', { sessionId: 'global' })
-				.catch((err) => log.warn('Failed to emit mcp.registry.changed:', err));
+			internalEventBus.publishAsync('mcp.registry.changed', { sessionId: 'global' });
 		}
 		return { deleted } satisfies McpEnablementClearScopeResponse;
 	});

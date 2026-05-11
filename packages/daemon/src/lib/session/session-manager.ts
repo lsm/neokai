@@ -21,6 +21,7 @@ import type {
 } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import { AgentSession, type AgentSessionRuntimeOptions } from '../agent/agent-session';
 import type { AuthManager } from '../auth-manager';
@@ -92,7 +93,8 @@ export class SessionManager {
 		private jobQueue: JobQueueRepository,
 		private jobProcessor: JobQueueProcessor,
 		private skillsManager?: SkillsManager,
-		private appMcpServerRepo?: AppMcpServerRepository
+		private appMcpServerRepo?: AppMcpServerRepository,
+		private internalEventBus?: InternalEventBus<DaemonInternalEventMap>
 	) {
 		this.logger = new Logger('SessionManager');
 		this.worktreeManager = new WorktreeManager();
@@ -114,11 +116,11 @@ export class SessionManager {
 			db,
 			this.worktreeManager,
 			this.sessionCache,
-			daemonHub,
 			messageHub,
 			config,
 			this.toolsConfigManager,
-			createAgentSession
+			createAgentSession,
+			this.internalEventBus!
 		);
 
 		// Initialize message persistence with @ reference resolver
@@ -130,7 +132,7 @@ export class SessionManager {
 			this.sessionCache,
 			db,
 			messageHub,
-			daemonHub,
+			this.internalEventBus!,
 			referenceResolver
 		);
 
@@ -153,6 +155,7 @@ export class SessionManager {
 			this.db,
 			this.messageHub,
 			this.daemonHub,
+			this.internalEventBus!,
 			() => this.authManager.getCurrentApiKey(),
 			this.skillsManager,
 			this.appMcpServerRepo,
@@ -161,7 +164,8 @@ export class SessionManager {
 			{
 				autoReplayPendingMessages: !this.needsSpaceRuntimeProvisioning(session),
 				...runtimeOptions,
-				hardReset: (agentSession, options) => this.hardResetAgentSession(agentSession, options),
+				hardReset: (agentSession: AgentSession, options: { restartQuery: boolean }) =>
+					this.hardResetAgentSession(agentSession, options),
 			}
 		);
 	}
@@ -226,7 +230,7 @@ export class SessionManager {
 		session: Session;
 		restartQuery: boolean;
 	}): Promise<void> {
-		await this.daemonHub.emit('session.reset', event);
+		await this.internalEventBus!.publish('session.reset', event);
 		for (const subscriber of this.sessionResetSubscribers) {
 			await subscriber(event);
 		}
@@ -247,7 +251,7 @@ export class SessionManager {
 				persistedSession
 			);
 
-			await this.daemonHub.emit('session.errorClear', { sessionId });
+			await this.internalEventBus!.publish('session.errorClear', { sessionId });
 
 			const freshSession = this.createAgentSessionFromSession(sessionForFreshInstance, {
 				autoReplayPendingMessages: false,
@@ -303,39 +307,43 @@ export class SessionManager {
 	}
 
 	/**
-	 * Setup DaemonHub subscriptions for async message processing
+	 * Setup InternalEventBus subscriptions for async message processing
 	 */
 	private setupEventSubscriptions(): void {
 		// Subscribe to message persisted events (for title generation + draft clearing)
 		// AgentSession also subscribes to this event for query feeding
-		const unsubMessagePersisted = this.daemonHub.on('message.persisted', async (data) => {
-			const { sessionId, userMessageText, needsWorkspaceInit, hasDraftToClear } = data;
+		const unsubMessagePersisted = this.internalEventBus!.subscribe(
+			'message.persisted',
+			async (data) => {
+				const { sessionId, userMessageText, needsWorkspaceInit, hasDraftToClear } = data;
 
-			try {
-				// STEP 1: Enqueue title generation job (if needed)
-				// Only run if workspace initialization is needed (first message)
-				if (needsWorkspaceInit) {
-					this.jobQueue.enqueue({
-						queue: SESSION_TITLE_GENERATION,
-						payload: { sessionId, userMessageText },
-						maxRetries: 2,
-					});
-				}
+				try {
+					// STEP 1: Enqueue title generation job (if needed)
+					// Only run if workspace initialization is needed (first message)
+					if (needsWorkspaceInit) {
+						this.jobQueue.enqueue({
+							queue: SESSION_TITLE_GENERATION,
+							payload: { sessionId, userMessageText },
+							maxRetries: 2,
+						});
+					}
 
-				// STEP 2: Clear draft if it matches the sent message content
-				if (hasDraftToClear) {
-					await this.sessionLifecycle.update(sessionId, {
-						metadata: { inputDraft: null },
-					} as Partial<Session>);
+					// STEP 2: Clear draft if it matches the sent message content
+					if (hasDraftToClear) {
+						await this.sessionLifecycle.update(sessionId, {
+							metadata: { inputDraft: null },
+						} as Partial<Session>);
+					}
+				} catch (error) {
+					this.logger.error(
+						`[SessionManager] Error in post-persistence processing for session ${sessionId}:`,
+						error
+					);
+					// Errors are non-fatal - the user message is already persisted and visible
 				}
-			} catch (error) {
-				this.logger.error(
-					`[SessionManager] Error in post-persistence processing for session ${sessionId}:`,
-					error
-				);
-				// Errors are non-fatal - the user message is already persisted and visible
-			}
-		});
+			},
+			{ subscriberName: 'SessionManager.messagePersisted' }
+		);
 		this.daemonHubUnsubscribers.push(unsubMessagePersisted);
 	}
 

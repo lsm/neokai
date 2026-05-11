@@ -14,14 +14,14 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { AgentProcessingState, PendingUserQuestion } from '@neokai/shared';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import type { SDKMessage } from '@neokai/shared/sdk';
 
 describe('ProcessingStateManager', () => {
 	let manager: ProcessingStateManager;
 	let mockDb: Database;
-	let mockDaemonHub: DaemonHub;
+	let mockInternalEventBus: InternalEventBus<any>;
 	let updateSessionMock: ReturnType<typeof mock>;
 	let emitMock: ReturnType<typeof mock>;
 	const sessionId = 'test-session-id';
@@ -33,18 +33,20 @@ describe('ProcessingStateManager', () => {
 		} as unknown as Database;
 	}
 
-	function createMockDaemonHub(): DaemonHub {
+	function createMockInternalEventBus(): InternalEventBus<any> {
 		return {
-			emit: emitMock,
-		} as unknown as DaemonHub;
+			publish: emitMock,
+			publishAsync: emitMock,
+			subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+		} as unknown as InternalEventBus<any>;
 	}
 
 	beforeEach(() => {
 		updateSessionMock = mock(() => {});
 		emitMock = mock(async () => {});
 		mockDb = createMockDb();
-		mockDaemonHub = createMockDaemonHub();
-		manager = new ProcessingStateManager(sessionId, mockDaemonHub, mockDb);
+		mockInternalEventBus = createMockInternalEventBus();
+		manager = new ProcessingStateManager(sessionId, mockInternalEventBus, mockDb);
 	});
 
 	describe('initialization', () => {
@@ -661,8 +663,8 @@ describe('ProcessingStateManager', () => {
 				throw new Error('DB error');
 			});
 			mockDb = createMockDb();
-			mockDaemonHub = createMockDaemonHub();
-			manager = new ProcessingStateManager(sessionId, mockDaemonHub, mockDb);
+			mockInternalEventBus = createMockInternalEventBus();
+			manager = new ProcessingStateManager(sessionId, mockInternalEventBus, mockDb);
 
 			// Should not throw
 			await manager.setIdle();

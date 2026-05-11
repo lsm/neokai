@@ -35,6 +35,11 @@ import * as nodeAgentToolsModule from '../../../../src/lib/space/tools/node-agen
 import * as spaceAgentToolsModule from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import type { Space, SpaceTask, McpServerConfig, ResolvedChannel } from '@neokai/shared';
 import type { AgentProcessingState } from '@neokai/shared';
+import {
+	createDaemonInternalEventBus,
+	type InternalEventBus,
+	type DaemonInternalEventMap,
+} from '../../../../src/lib/internal-event-bus';
 
 // ---------------------------------------------------------------------------
 // Minimal in-process DaemonHub
@@ -245,6 +250,7 @@ function buildManager(opts: {
 			_db: unknown,
 			_hub: unknown,
 			_dHub: unknown,
+			_internalEventBus: unknown,
 			_key: unknown,
 			_model: unknown,
 			skillsMgr: unknown,
@@ -957,6 +963,7 @@ describe('TaskAgentManager.rehydrate — skills injection (G3)', () => {
 				_db: unknown,
 				_hub: unknown,
 				_dHub: unknown,
+				_internalEventBus: unknown,
 				_key: unknown,
 				skillsMgr: unknown,
 				appMcpRepo: unknown
@@ -1017,6 +1024,7 @@ describe('TaskAgentManager.rehydrate — skills injection (G3)', () => {
 				_db: unknown,
 				_hub: unknown,
 				_dHub: unknown,
+				_internalEventBus: unknown,
 				_key: unknown,
 				skillsMgr: unknown,
 				appMcpRepo: unknown

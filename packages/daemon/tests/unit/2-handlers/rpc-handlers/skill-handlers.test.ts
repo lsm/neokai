@@ -121,13 +121,20 @@ describe('Skill RPC Handlers', () => {
 	let hubData: ReturnType<typeof createMockMessageHub>;
 	let skillsManager: ReturnType<typeof createMockSkillsManager>;
 	let daemonHub: ReturnType<typeof createMockDaemonHub>;
+	let internalEventBus: { publish: any; publishAsync: any; subscribe: any };
 
 	beforeEach(() => {
 		hubData = createMockMessageHub();
 		skillsManager = createMockSkillsManager();
 		daemonHub = createMockDaemonHub();
 
-		registerSkillHandlers(hubData.hub, skillsManager, daemonHub);
+		internalEventBus = {
+			publish: mock(async () => {}),
+			publishAsync: mock(() => {}),
+			subscribe: mock(() => () => {}),
+		} as unknown as InternalEventBus<any>;
+
+		registerSkillHandlers(hubData.hub, skillsManager, daemonHub, internalEventBus);
 	});
 
 	afterEach(() => {
@@ -179,7 +186,7 @@ describe('Skill RPC Handlers', () => {
 			expect(result.skill.name).toBe('new-skill');
 			expect(result.skill.id).toBe('skill-new');
 			expect(skillsManager.addSkill).toHaveBeenCalledWith(createSkillParams);
-			expect(daemonHub.emit).toHaveBeenCalledWith('skills.changed', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('skills.changed', { (refactor(daemon): migrate session, agent, query, and config events from DaemonHub to InternalEventBus)
 				sessionId: 'global',
 			});
 		});
@@ -223,7 +230,7 @@ describe('Skill RPC Handlers', () => {
 			expect(result.skill).toBeDefined();
 			expect(result.skill.displayName).toBe('Updated Skill');
 			expect(skillsManager.updateSkill).toHaveBeenCalledWith('skill-1', updateSkillParams);
-			expect(daemonHub.emit).toHaveBeenCalledWith('skills.changed', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('skills.changed', { (refactor(daemon): migrate session, agent, query, and config events from DaemonHub to InternalEventBus)
 				sessionId: 'global',
 			});
 		});
@@ -258,7 +265,7 @@ describe('Skill RPC Handlers', () => {
 			const result = (await handler!({ id: 'skill-1' }, {})) as { success: boolean };
 			expect(result.success).toBe(true);
 			expect(skillsManager.removeSkill).toHaveBeenCalledWith('skill-1');
-			expect(daemonHub.emit).toHaveBeenCalledWith('skills.changed', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('skills.changed', { (refactor(daemon): migrate session, agent, query, and config events from DaemonHub to InternalEventBus)
 				sessionId: 'global',
 			});
 		});
@@ -289,7 +296,7 @@ describe('Skill RPC Handlers', () => {
 			expect(result.skill).toBeDefined();
 			expect(result.skill.enabled).toBe(false);
 			expect(skillsManager.setSkillEnabled).toHaveBeenCalledWith('skill-1', false);
-			expect(daemonHub.emit).toHaveBeenCalledWith('skills.changed', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('skills.changed', { (refactor(daemon): migrate session, agent, query, and config events from DaemonHub to InternalEventBus)
 				sessionId: 'global',
 			});
 		});

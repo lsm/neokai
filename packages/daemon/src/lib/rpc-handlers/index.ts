@@ -267,16 +267,29 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	registerAppMcpHandlers(deps.messageHub, {
 		db: deps.db,
 		daemonHub: deps.daemonHub,
+		internalEventBus: deps.internalEventBus,
 	});
 
 	// MCP enablement RPC handlers
-	setupAppMcpHandlers(deps.messageHub, deps.daemonHub, deps.db);
+	setupAppMcpHandlers(deps.messageHub, deps.daemonHub, deps.internalEventBus, deps.db);
 
 	// Per-space MCP enablement RPC handlers + `.mcp.json` import refresh.
-	setupSpaceMcpHandlers(deps.messageHub, deps.daemonHub, deps.db, deps.spaceManager);
+	setupSpaceMcpHandlers(
+		deps.messageHub,
+		deps.daemonHub,
+		deps.internalEventBus,
+		deps.db,
+		deps.spaceManager
+	);
 
 	// Skills registry RPC handlers
-	registerSkillHandlers(deps.messageHub, deps.skillsManager, deps.daemonHub, undefined);
+	registerSkillHandlers(
+		deps.messageHub,
+		deps.skillsManager,
+		deps.daemonHub,
+		deps.internalEventBus,
+		undefined
+	);
 
 	// Workspace history RPC handlers.
 	// The import service is passed in so `workspace.add` can trigger a
@@ -461,6 +474,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.messageHub,
 		deps.sessionManager,
 		deps.daemonHub,
+		deps.internalEventBus,
 		deps.spaceManager,
 		spaceRuntimeService,
 		deps.internalEventBus
