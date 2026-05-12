@@ -390,13 +390,17 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	);
 	const externalEventStore = new ExternalEventStore(db.getDatabase());
 	const externalEventService = new ExternalEventService(externalEventStore, internalEventBus);
+	const githubEventPollingEnabled = !!(
+		config.githubPollingInterval && config.githubPollingInterval > 0
+	);
 	const githubEventConfig = new StaticExternalEventExtensionConfigStore({
 		globallyEnabled: true,
 		webhooks: true,
-		polling: true,
+		polling: githubEventPollingEnabled,
 	});
 	const githubEventExtension = new GitHubEventExtension(spaceGitHubService.eventExtensionRepo, {
 		githubToken: process.env.GITHUB_TOKEN,
+		pollIntervalMs: githubEventPollingEnabled ? config.githubPollingInterval! * 1000 : undefined,
 		onWatchedReposChanged: () => reactiveDb.notifyChange('space_github_watched_repos'),
 		legacyIngest: async (spaceId, event) => {
 			await spaceGitHubService.ingest(spaceId, event);
