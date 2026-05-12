@@ -10,7 +10,7 @@
  *     question, the user still sees that input is required.
  *   - gate_rejected: purple — shows gate info + "Review & Approve" expanding to GateArtifactsView
  *   - execution_failed / agent_crashed: red — shows error + Resume button
- *   - dependency_failed: gray — informational
+ *   - dependency_failed / dependency_added: gray — informational
  *   - workflow_invalid: red — informational
  *   - (null / unknown): amber fallback — matches previous behavior
  *
@@ -53,6 +53,7 @@ const REASON_CONFIG: Partial<Record<SpaceBlockReason, ReasonConfig>> = {
 	execution_failed: { label: 'Execution Failed', tone: 'red', icon: '⚠️' },
 	agent_crashed: { label: 'Agent Crashed', tone: 'red', icon: '⚠️' },
 	dependency_failed: { label: 'Blocked by Dependency', tone: 'gray', icon: '⛓️' },
+	dependency_added: { label: 'Blocked by Dependency', tone: 'gray', icon: '⛓️' },
 	workflow_invalid: { label: 'Invalid Workflow', tone: 'red', icon: '⚠️' },
 };
 

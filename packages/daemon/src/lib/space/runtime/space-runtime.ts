@@ -914,6 +914,26 @@ export class SpaceRuntime {
 		if (routeResult.mode !== 'skipped') {
 			const final = this.config.taskRepo.getTask(taskId);
 			if (final) await this.safeOnTaskUpdated(spaceId, final);
+
+			// The no-route branch writes `done` directly via taskRepo,
+			// bypassing setTaskStatus — so the dependency-unblock cascade
+			// doesn't fire there. Trigger it here and emit for each
+			// unblocked dependent so the UI sees the state change.
+			// Guard on `final?.status === 'done'` to confirm the write
+			// landed, and wrap in try-catch so unblock failures don't
+			// abort the already-committed post-approval flow.
+			if (routeResult.mode === 'no-route' && final?.status === 'done') {
+				try {
+					const taskManager = this.getOrCreateTaskManager(spaceId);
+					const unblocked = await taskManager.unblockDependentTasks(taskId);
+					for (const dep of unblocked) {
+						await this.safeOnTaskUpdated(spaceId, dep);
+					}
+				} catch {
+					// Best-effort: unblock failures must not abort
+					// the post-approval flow.
+				}
+			}
 		}
 		return routeResult;
 	}
