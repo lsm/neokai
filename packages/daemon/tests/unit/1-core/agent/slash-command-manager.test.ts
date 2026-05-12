@@ -12,6 +12,7 @@ import {
 import type { Session } from '@neokai/shared';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import type { Logger } from '../../../../src/lib/logger';
 
@@ -20,6 +21,11 @@ describe('SlashCommandManager', () => {
 	let mockSession: Session;
 	let mockDb: Database;
 	let mockDaemonHub: DaemonHub;
+	const mockInternalEventBus = {
+		publish: emitSpy,
+		publishAsync: emitSpy,
+		subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+	} as unknown as InternalEventBus<any>;
 	let mockLogger: Logger;
 	let mockQueryObject: Query | null;
 	let updateSessionSpy: ReturnType<typeof mock>;
@@ -87,6 +93,7 @@ describe('SlashCommandManager', () => {
 			session,
 			db: mockDb,
 			daemonHub: mockDaemonHub,
+			internalEventBus: mockInternalEventBus,
 			logger: mockLogger,
 			queryObject,
 		};

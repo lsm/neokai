@@ -728,12 +728,151 @@ export interface SpaceClientEvents {
  * migrated continue to flow through DaemonHub (`createDaemonHub`) and the
  * compatibility `DaemonEventMap`.
  */
+/**
+ * Context / session-scoped events — migrated from DaemonHub in M2.
+ * These carry sessionId as a field but also need namespaceId for bus routing.
+ */
+export interface ContextEvents {
+	'context.updated': {
+		namespaceId: string;
+		sessionId: string;
+		contextInfo: import('@neokai/shared').ContextInfo;
+	};
+}
+
+/**
+ * Agent domain events — migrated from DaemonHub in M2.
+ */
+export interface AgentEvents {
+	'sdk.message': {
+		namespaceId: string;
+		sessionId: string;
+		message: unknown;
+		deliveryMode?: string;
+	};
+	'question.asked': {
+		namespaceId: string;
+		sessionId: string;
+		[key: string]: unknown;
+	};
+	'question.answered': {
+		namespaceId: string;
+		sessionId: string;
+		answer: unknown;
+	};
+	'question.injected_as_tool_result': {
+		namespaceId: string;
+		sessionId: string;
+		[key: string]: unknown;
+	};
+	'question.orphaned': {
+		namespaceId: string;
+		sessionId: string;
+		[key: string]: unknown;
+	};
+	'model.changed': {
+		namespaceId: string;
+		sessionId: string;
+		model: string;
+		provider: string;
+	};
+	'model.switched': {
+		namespaceId: string;
+		sessionId: string;
+		model: string;
+		provider?: string;
+		success?: boolean;
+		error?: string;
+	};
+	'messages.statusChanged': {
+		namespaceId: string;
+		sessionId: string;
+		messageIds: string[];
+		status: string;
+	};
+	'message.sent': { namespaceId: string; sessionId: string };
+	'message.persisted': {
+		namespaceId: string;
+		sessionId: string;
+		messageId: string;
+		messageContent: unknown;
+		userMessageText?: string;
+		needsWorkspaceInit?: boolean;
+		hasDraftToClear?: boolean;
+		sendStatus: 'deferred' | 'enqueued' | 'consumed';
+		deliveryMode: import('@neokai/shared').MessageDeliveryMode;
+		skipQueryStart?: boolean;
+	};
+	'session.reset': {
+		namespaceId: string;
+		sessionId: string;
+		session: import('@neokai/shared').Session;
+		restartQuery: boolean;
+	};
+	'rewind.started': {
+		namespaceId: string;
+		sessionId: string;
+		mode: string;
+		[key: string]: unknown;
+	};
+	'rewind.completed': {
+		namespaceId: string;
+		sessionId: string;
+		result: unknown;
+		mode: string;
+	};
+	'rewind.failed': { namespaceId: string; sessionId: string; error: string };
+	'rewind.executed': {
+		namespaceId: string;
+		sessionId: string;
+		result: unknown;
+		mode: string;
+	};
+	'sdk.captured': { namespaceId: string; sessionId: string; sdkSessionId: string };
+	'sdk.restart': { namespaceId: string; sessionId: string };
+	'slashCommands.fetched': {
+		namespaceId: string;
+		sessionId: string;
+		commands: string[];
+	};
+	'agent.interrupted': { namespaceId: string; sessionId: string };
+	'agent.reset': {
+		namespaceId: string;
+		sessionId: string;
+		session?: import('@neokai/shared').Session;
+		restartQuery?: boolean;
+		success?: boolean;
+		error?: string;
+	};
+	'agent.restart': {
+		namespaceId: string;
+		sessionId: string;
+		session?: import('@neokai/shared').Session;
+		restartQuery?: boolean;
+		success?: boolean;
+		error?: string;
+	};
+	'agent.interruptRequest': { namespaceId: string; sessionId: string };
+	'query.trigger': { namespaceId: string; sessionId: string };
+}
+
+/**
+ * Config/registry domain events — migrated from DaemonHub in M2.
+ */
+export interface RegistryEvents {
+	'skills.changed': { namespaceId: string; sessionId: string };
+	'mcp.registry.changed': { namespaceId: string; sessionId: string };
+}
+
 export interface DaemonInternalEventMap
 	extends SettingsEvents,
 		ExternalEventEvents,
 		SessionEvents,
 		ApiConnectionEvents,
 		SpaceEvents,
+		ContextEvents,
+		AgentEvents,
+		RegistryEvents,
 		SpaceClientEvents {}
 
 /**

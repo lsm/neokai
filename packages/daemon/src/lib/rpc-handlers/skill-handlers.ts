@@ -19,6 +19,7 @@ import type {
 	InstallSkillFromGitParams,
 } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SkillsManager } from '../skills-manager';
 import { Logger } from '../logger';
 
@@ -28,10 +29,11 @@ const log = new Logger('skill-handlers');
 // Helpers
 // ---------------------------------------------------------------------------
 
-function emitChanged(daemonHub: DaemonHub): void {
-	daemonHub.emit('skills.changed', { sessionId: 'global' }).catch((err) => {
-		log.warn('Failed to emit skills.changed:', err);
-	});
+function emitChanged(
+	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>
+): void {
+	internalEventBus.publishAsync('skills.changed', { namespaceId: 'global', sessionId: 'global' });
 }
 
 // ---------------------------------------------------------------------------
@@ -42,6 +44,7 @@ export function registerSkillHandlers(
 	messageHub: MessageHub,
 	skillsManager: SkillsManager,
 	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	workspaceRoot?: string
 ): void {
 	// skill.list — returns AppSkill[]
@@ -71,7 +74,7 @@ export function registerSkillHandlers(
 		}
 
 		const skill = skillsManager.addSkill(params);
-		emitChanged(daemonHub);
+		emitChanged(daemonHub, internalEventBus);
 		log.info(`skill.create: created "${skill.name}" (${skill.id})`);
 		return { skill } satisfies { skill: AppSkill };
 	});
@@ -88,7 +91,7 @@ export function registerSkillHandlers(
 		}
 
 		const skill = skillsManager.updateSkill(id, params);
-		emitChanged(daemonHub);
+		emitChanged(daemonHub, internalEventBus);
 		log.info(`skill.update: updated "${skill.name}" (${id})`);
 		return { skill } satisfies { skill: AppSkill };
 	});
@@ -106,7 +109,7 @@ export function registerSkillHandlers(
 			throw new Error(`Skill not found or cannot be removed: ${id}`);
 		}
 
-		emitChanged(daemonHub);
+		emitChanged(daemonHub, internalEventBus);
 		log.info(`skill.delete: deleted ${id}`);
 		return { success: true } satisfies { success: boolean };
 	});
@@ -123,7 +126,7 @@ export function registerSkillHandlers(
 		}
 
 		const skill = skillsManager.setSkillEnabled(id, enabled);
-		emitChanged(daemonHub);
+		emitChanged(daemonHub, internalEventBus);
 		log.info(`skill.setEnabled: set ${id} enabled=${enabled}`);
 		return { skill } satisfies { skill: AppSkill };
 	});
@@ -140,7 +143,7 @@ export function registerSkillHandlers(
 		}
 
 		const skill = await skillsManager.installSkillFromGit(repoUrl, commandName, workspaceRoot);
-		emitChanged(daemonHub);
+		emitChanged(daemonHub, internalEventBus);
 		log.info(`skill.installFromGit: installed "${skill.name}" from ${repoUrl}`);
 		return { skill } satisfies { skill: AppSkill };
 	});

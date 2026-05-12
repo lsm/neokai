@@ -10,6 +10,7 @@ import { SessionManager, CleanupState } from '../../../../src/lib/session/sessio
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { Database } from '../../../../src/storage/database';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { MessageHub, Session } from '@neokai/shared';
@@ -24,6 +25,7 @@ describe('SessionManager', () => {
 	let mockAuthManager: AuthManager;
 	let mockSettingsManager: SettingsManager;
 	let mockDaemonHub: DaemonHub;
+	let mockInternalEventBus: InternalEventBus<any>;
 	let mockJobQueue: JobQueueRepository;
 	let mockJobProcessor: JobQueueProcessor;
 	let config: Record<string, unknown>;
@@ -106,6 +108,14 @@ describe('SessionManager', () => {
 			emit: mock(async () => {}),
 			initialize: mock(async () => {}),
 		} as unknown as DaemonHub;
+		mockInternalEventBus = {
+			publish: mock(async () => {}),
+			publishAsync: mock(() => {}),
+			subscribe: mock((event: string, handler: (...args: unknown[]) => unknown, _opts: unknown) => {
+				eventHandlers.set(event, handler);
+				return () => eventHandlers.delete(event);
+			}),
+		} as unknown as InternalEventBus<any>;
 
 		// Job queue mocks
 		mockJobQueue = {
@@ -137,7 +147,10 @@ describe('SessionManager', () => {
 			mockDaemonHub,
 			config as Parameters<typeof SessionManager>[5],
 			mockJobQueue,
-			mockJobProcessor
+			mockJobProcessor,
+			undefined, // skillsManager
+			undefined, // appMcpServerRepo
+			mockInternalEventBus
 		);
 	});
 
@@ -156,7 +169,11 @@ describe('SessionManager', () => {
 		});
 
 		it('should setup event subscriptions', () => {
-			expect(mockDaemonHub.on).toHaveBeenCalledWith('message.persisted', expect.any(Function));
+			expect(mockInternalEventBus.subscribe).toHaveBeenCalledWith(
+				'message.persisted',
+				expect.any(Function),
+				expect.any(Object)
+			);
 		});
 
 		it('should have no active sessions initially', () => {
@@ -643,7 +660,8 @@ describe('SessionManager', () => {
 			expect(mockDaemonHub.emit).toHaveBeenCalledWith('session.errorClear', {
 				sessionId: 'test-id',
 			});
-			expect(mockDaemonHub.emit).toHaveBeenCalledWith('session.reset', {
+			expect(mockInternalEventBus.publish).toHaveBeenCalledWith('session.reset', {
+				namespaceId: 'test-id',
 				sessionId: 'test-id',
 				session: expect.objectContaining({ id: 'test-id' }),
 				restartQuery: false,
@@ -715,7 +733,8 @@ describe('SessionManager', () => {
 
 				expect(result).toEqual({ success: true });
 				expect(freshSession).not.toBe(oldSession);
-				expect(mockDaemonHub.emit).toHaveBeenCalledWith('session.reset', {
+				expect(mockInternalEventBus.publish).toHaveBeenCalledWith('session.reset', {
+					namespaceId: 'test-id',
 					sessionId: 'test-id',
 					session: expect.objectContaining({ id: 'test-id' }),
 					restartQuery: true,
@@ -849,7 +868,7 @@ describe('SessionManager', () => {
 				});
 
 				// Should not call title generation
-				expect(mockDaemonHub.emit).not.toHaveBeenCalledWith(
+				expect(mockInternalEventBus.publish).not.toHaveBeenCalledWith(
 					'session.updated',
 					expect.objectContaining({ source: 'title-generated' })
 				);
