@@ -449,13 +449,14 @@ describe('SpaceOverview', () => {
 			expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'completed');
 		});
 
-		it('Done count excludes archived tasks to match the completed tab', () => {
-			// t4 (done) counts; t5 (archived) does NOT count
+		it('Done count includes archived tasks to match the completed tab', () => {
+			// t4 (done) and t5 (archived) both count because the Completed tab now
+			// includes archived terminal tasks.
 			const { container } = render(<SpaceOverview spaceId="space-1" />);
 			const doneBtn = Array.from(container.querySelectorAll('button')).find((b) =>
 				b.textContent?.includes('Done')
 			)!;
-			expect(doneBtn.textContent).toContain('1');
+			expect(doneBtn.textContent).toContain('2');
 		});
 
 		it('stat cards have cursor-pointer class', () => {
