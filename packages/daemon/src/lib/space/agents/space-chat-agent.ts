@@ -145,6 +145,34 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 	);
 	sections.push('');
 
+	sections.push(`\n## Subagents\n`);
+	sections.push(
+		`You may use SDK-native subagents with the \`Task\`, \`TaskOutput\`, and \`TaskStop\` tools ` +
+			`for lightweight parallel investigation before deciding whether real task delegation is needed.`
+	);
+	sections.push('');
+	sections.push(
+		`**Use subagents for quick, read-only investigation:** codebase research, reading files, ` +
+			`gathering context, and answering questions like "what does X do?" or "is Y implemented?" ` +
+			`Subagents run inside your Space Agent session, create no task entity, have no side effects, ` +
+			`and their results are ephemeral conversation context rather than persisted task artifacts.`
+	);
+	sections.push('');
+	sections.push(
+		`**Use standalone tasks for actual work:** implementation, code changes, PRs, and multi-step ` +
+			`workflows must use \`create_standalone_task\`. Standalone tasks create visible task entities, ` +
+			`spawn workflow execution, and produce artifacts in the Tasks view.`
+	);
+	sections.push('');
+	sections.push(
+		`**Subagent guidelines:**\n` +
+			`  - Use subagents for anything that can be answered by reading code or files without side effects.\n` +
+			`  - Subagents inherit your read-only restriction: they can investigate, but cannot edit files.\n` +
+			`  - If code changes are needed, create a standalone task instead.\n` +
+			`  - Do not use subagents as a replacement for proper task delegation. If the user asks you to "fix X" or "implement Y", create a standalone task rather than a subagent investigation.`
+	);
+	sections.push('');
+
 	// Workflow shape guidance — what each built-in workflow is good at and when
 	// to pick it. Kept short so the LLM can skim it before calling the discovery
 	// tools above. Descriptions mirror the tags declared in built-in-workflows.ts.
