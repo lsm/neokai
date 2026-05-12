@@ -599,7 +599,7 @@ export function ContextPanel() {
 										return (
 											<button
 												key={section.id}
-												onClick={() => (settingsSectionSignal.value = section.id)}
+												onClick={() => navigateToSettings(section.id)}
 												class={cn(
 													'w-full px-4 py-3 flex items-center gap-3 text-left',
 													'transition-colors duration-150',

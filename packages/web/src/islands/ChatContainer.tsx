@@ -68,7 +68,6 @@ import {
 	replaceOverlayHistory,
 } from '../lib/router.ts';
 import { sessionStore } from '../lib/session-store.ts';
-import { settingsSectionSignal } from '../lib/signals.ts';
 import { spaceStore } from '../lib/space-store.ts';
 import { connectionState } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
@@ -946,8 +945,7 @@ export default function ChatContainer({
 				{
 					label: `Re-authenticate ${providerLabel}`,
 					onClick: () => {
-						navigateToSettings();
-						settingsSectionSignal.value = 'providers';
+						navigateToSettings('providers');
 					},
 				},
 			];
