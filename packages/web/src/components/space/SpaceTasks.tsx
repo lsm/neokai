@@ -4,7 +4,7 @@
  * Tabs: Action (review + blocked, grouped by reason),
  *       Active (open + in_progress + approved — see `task-filters.ts` for why
  *       `approved` belongs here),
- *       Completed (done + cancelled), Archived.
+ *       Completed (done + cancelled + archived), Scheduled.
  *
  * Within each tab, tasks are grouped by status/reason in TaskGroup cards,
  * matching the RoomTasks component style.
@@ -16,9 +16,11 @@ import { navigateToSpaceTasks } from '../../lib/router';
 import { currentSpaceIdSignal, currentSpaceTasksFilterTabSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
-import { getRelativeTime, formatRelativeFuture } from '../../lib/utils';
+import { formatRelativeFuture, getRelativeTime } from '../../lib/utils';
+import { Dropdown } from '../ui/Dropdown';
 
-type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'archived' | 'scheduled';
+type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'scheduled';
+type LegacyTaskFilterTab = TaskFilterTab | 'archived';
 
 /** Block reasons that indicate a task needs human attention */
 const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested', 'gate_rejected'];
@@ -44,8 +46,7 @@ export const TAB_PREDICATES: Record<
 	action: isActionRequired,
 	active: isActiveTask,
 	draft: isDraftTask,
-	completed: (t) => t.status === 'done' || t.status === 'cancelled',
-	archived: (t) => t.status === 'archived',
+	completed: (t) => ['done', 'cancelled', 'archived'].includes(t.status),
 };
 
 const STATUS_BORDER: Record<string, string> = {
@@ -148,9 +149,6 @@ const ACTIVE_GROUPS: StatusGroupDef[] = [
 const COMPLETED_GROUPS: StatusGroupDef[] = [
 	{ status: 'done', title: 'Done', variant: 'green' },
 	{ status: 'cancelled', title: 'Cancelled', variant: 'gray' },
-];
-
-const ARCHIVED_GROUPS: StatusGroupDef[] = [
 	{ status: 'archived', title: 'Archived', variant: 'gray' },
 ];
 
@@ -161,8 +159,16 @@ const TAB_GROUPS_DEF: Record<Exclude<TaskFilterTab, 'scheduled'>, StatusGroupDef
 	active: ACTIVE_GROUPS,
 	draft: DRAFT_GROUPS,
 	completed: COMPLETED_GROUPS,
-	archived: ARCHIVED_GROUPS,
 };
+
+type TabVariant = 'default' | 'amber' | 'purple' | 'green' | 'red' | 'gray';
+
+interface TabConfig {
+	key: TaskFilterTab;
+	label: string;
+	count: number;
+	variant?: TabVariant;
+}
 
 function TabButton({
 	label,
@@ -175,7 +181,7 @@ function TabButton({
 	count: number;
 	isActive: boolean;
 	onClick: () => void;
-	variant?: 'default' | 'amber' | 'purple' | 'green' | 'red' | 'gray';
+	variant?: TabVariant;
 }) {
 	const baseClasses =
 		'px-4 py-2 text-sm font-medium transition-colors relative flex items-center gap-1.5';
@@ -227,6 +233,65 @@ function TabButton({
 	);
 }
 
+function MoreTabsDropdown({
+	tabs,
+	activeTab,
+	spaceId,
+}: {
+	tabs: TabConfig[];
+	activeTab: TaskFilterTab;
+	spaceId: string;
+}) {
+	const [isOpen, setIsOpen] = useState(false);
+	const moreIsActive = tabs.some((tab) => tab.key === activeTab);
+
+	return (
+		<Dropdown
+			position="left"
+			items={[]}
+			isOpen={isOpen}
+			onOpenChange={setIsOpen}
+			class="sm:hidden"
+			customContent={
+				<div class="py-1 bg-dark-850 border border-dark-700 rounded-lg min-w-[180px]">
+					{tabs.map((tab) => (
+						<button
+							key={tab.key}
+							type="button"
+							role="menuitem"
+							class="w-full px-4 py-2 text-left text-sm flex items-center justify-between gap-3 text-gray-300 hover:bg-dark-800 hover:text-gray-100 transition-colors"
+							onClick={() => {
+								navigateToSpaceTasks(spaceId, tab.key);
+								setIsOpen(false);
+							}}
+						>
+							<span>{tab.label}</span>
+							{tab.count > 0 && (
+								<span class="text-xs px-1.5 py-0.5 rounded bg-dark-700 text-gray-300">
+									{tab.count}
+								</span>
+							)}
+						</button>
+					))}
+				</div>
+			}
+			trigger={
+				<button
+					type="button"
+					class={`px-4 py-2 text-sm font-medium transition-colors relative flex items-center gap-1.5 ${
+						moreIsActive
+							? 'text-blue-400 border-b-2 border-blue-400'
+							: 'text-gray-400 hover:text-gray-300 border-b-2 border-transparent'
+					}`}
+					aria-label="More task tabs"
+				>
+					⋯
+				</button>
+			}
+		/>
+	);
+}
+
 function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
 	const messages: Record<TaskFilterTab, { title: string; description: string }> = {
 		action: {
@@ -235,8 +300,10 @@ function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
 		},
 		active: { title: 'No active tasks', description: 'Active tasks will appear here' },
 		draft: { title: 'No draft tasks', description: 'Tasks created as drafts will appear here' },
-		completed: { title: 'No completed tasks', description: 'Completed tasks will appear here' },
-		archived: { title: 'No archived tasks', description: 'Archived tasks will appear here' },
+		completed: {
+			title: 'No completed tasks',
+			description: 'Completed, cancelled, and archived tasks will appear here',
+		},
 		scheduled: {
 			title: 'No scheduled tasks',
 			description: 'Recurring and one-shot scheduled tasks will appear here',
@@ -594,7 +661,8 @@ interface SpaceTasksProps {
 export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps) {
 	const tasks = spaceStore.tasks.value;
 	const schedules = spaceStore.schedules.value;
-	const activeTab: TaskFilterTab = currentSpaceTasksFilterTabSignal.value as TaskFilterTab;
+	const rawActiveTab = currentSpaceTasksFilterTabSignal.value as LegacyTaskFilterTab;
+	const activeTab: TaskFilterTab = rawActiveTab === 'archived' ? 'completed' : rawActiveTab;
 	const spaceId = currentSpaceIdSignal.value ?? '';
 
 	// Load schedules when the tab is switched to 'scheduled' or the active space changes.
@@ -612,7 +680,6 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 			active: 0,
 			draft: 0,
 			completed: 0,
-			archived: 0,
 			scheduled: schedules.filter((s) => s.status !== 'completed').length,
 		};
 		for (const task of tasks) {
@@ -653,53 +720,53 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 	// We always render the tab strip so users can navigate to the Scheduled tab
 	// even when no tasks have been spawned yet.
 	const showGlobalEmpty = tasks.length === 0 && activeTab !== 'scheduled';
+	const primaryTabs: TabConfig[] = [
+		{ key: 'action', label: 'Action', count: counts.action, variant: 'amber' },
+		{ key: 'active', label: 'Active', count: counts.active },
+	];
+	const secondaryTabs: TabConfig[] = [
+		...(counts.draft > 0 ? [{ key: 'draft' as const, label: 'Drafts', count: counts.draft }] : []),
+		{ key: 'completed', label: 'Completed', count: counts.completed, variant: 'green' },
+	];
+	const overflowTabs: TabConfig[] = [
+		...secondaryTabs,
+		{ key: 'scheduled', label: 'Scheduled', count: counts.scheduled },
+	];
+	const desktopTabs = [
+		...primaryTabs,
+		...secondaryTabs,
+		{ key: 'scheduled' as const, label: 'Scheduled', count: counts.scheduled },
+	];
 
 	return (
 		<div class="flex-1 min-h-0 w-full px-4 py-4 sm:px-8 sm:py-6 overflow-y-auto">
 			<div class="min-h-[calc(100%+1px)] space-y-6">
 				<div class="flex border-b border-dark-700">
-					<TabButton
-						label="Action"
-						count={counts.action}
-						isActive={activeTab === 'action'}
-						onClick={() => navigateToSpaceTasks(spaceId, 'action')}
-						variant="amber"
-					/>
-					<TabButton
-						label="Active"
-						count={counts.active}
-						isActive={activeTab === 'active'}
-						onClick={() => navigateToSpaceTasks(spaceId, 'active')}
-					/>
-					{counts.draft > 0 && (
-						<TabButton
-							label="Drafts"
-							count={counts.draft}
-							isActive={activeTab === 'draft'}
-							onClick={() => navigateToSpaceTasks(spaceId, 'draft')}
-						/>
-					)}
-					<TabButton
-						label="Completed"
-						count={counts.completed}
-						isActive={activeTab === 'completed'}
-						onClick={() => navigateToSpaceTasks(spaceId, 'completed')}
-						variant="green"
-					/>
-					<TabButton
-						label="Archived"
-						count={counts.archived}
-						isActive={activeTab === 'archived'}
-						onClick={() => navigateToSpaceTasks(spaceId, 'archived')}
-						variant="gray"
-					/>
-					<TabButton
-						label="Scheduled"
-						count={counts.scheduled}
-						isActive={activeTab === 'scheduled'}
-						onClick={() => navigateToSpaceTasks(spaceId, 'scheduled')}
-						variant="default"
-					/>
+					<div class="flex sm:hidden">
+						{primaryTabs.map((tab) => (
+							<TabButton
+								key={tab.key}
+								label={tab.label}
+								count={tab.count}
+								isActive={activeTab === tab.key}
+								onClick={() => navigateToSpaceTasks(spaceId, tab.key)}
+								variant={tab.variant}
+							/>
+						))}
+						<MoreTabsDropdown tabs={overflowTabs} activeTab={activeTab} spaceId={spaceId} />
+					</div>
+					<div class="hidden sm:flex">
+						{desktopTabs.map((tab) => (
+							<TabButton
+								key={tab.key}
+								label={tab.label}
+								count={tab.count}
+								isActive={activeTab === tab.key}
+								onClick={() => navigateToSpaceTasks(spaceId, tab.key)}
+								variant={tab.variant}
+							/>
+						))}
+					</div>
 				</div>
 
 				{showGlobalEmpty ? (

@@ -156,6 +156,20 @@ describe('router', () => {
 		expect(currentSpaceTasksFilterTabSignal.value).toBe('completed');
 	});
 
+	it('redirects legacy archived task tabs to completed', () => {
+		setPath(`/space/${SPACE_ID}/tasks/archived`);
+		initializeRouter();
+
+		expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
+		expect(currentSpaceViewModeSignal.value).toBe('tasks');
+		expect(currentSpaceTasksFilterTabSignal.value).toBe('completed');
+		expect(window.history.replaceState).toHaveBeenLastCalledWith(
+			{ spaceId: SPACE_ID, path: `/space/${SPACE_ID}/tasks/completed` },
+			'',
+			`/space/${SPACE_ID}/tasks/completed`
+		);
+	});
+
 	it('navigates session, settings, inbox, and home routes', () => {
 		navigateToSession(SESSION_ID);
 		expect(window.history.pushState).toHaveBeenLastCalledWith(
