@@ -55,6 +55,21 @@ function getRequestHandler(hub: MessageHub, method: string): RequestHandler | un
 	);
 }
 
+function seedTask(db: BunDatabase): void {
+	db.prepare(
+		`INSERT INTO space_workflows (id, space_id, name, description, channels, gates, created_at, updated_at)
+		 VALUES ('wf-1', 'space-1', 'wf', '', '[]', '[]', 1, 1)`
+	).run();
+	db.prepare(
+		`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, status, created_at, updated_at)
+		 VALUES ('run-1', 'space-1', 'wf-1', 'run', '', 'in_progress', 1, 1)`
+	).run();
+	db.prepare(
+		`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, depends_on, created_at, updated_at)
+		 VALUES ('task-1', 'space-1', 1, 'task', 'https://github.com/acme/widgets/pull/7', 'in_progress', 'normal', '[]', 'run-1', '[]', 1, 1)`
+	).run();
+}
+
 function githubPayload(): unknown {
 	return {
 		action: 'created',
@@ -73,6 +88,19 @@ function githubPayload(): unknown {
 			user: { login: 'bot', type: 'Bot' },
 			created_at: '2026-01-01T00:00:00Z',
 		},
+	};
+}
+
+function pollingRow(): unknown {
+	return {
+		id: 202,
+		body: 'poll comment',
+		html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-202',
+		issue_url: 'https://api.github.com/repos/acme/widgets/issues/7',
+		issue: { number: 7, pull_request: { url: 'api' } },
+		user: { login: 'bot', type: 'Bot' },
+		created_at: '2026-01-01T00:00:00Z',
+		updated_at: '2026-01-01T00:00:00Z',
 	};
 }
 
@@ -117,6 +145,7 @@ describe('external event extension startup primitives', () => {
 			await registered.start(context);
 		}
 
+		seedTask(db);
 		const watchRepo = getRequestHandler(hub, 'space.github.watchRepo');
 		expect(watchRepo).toBeDefined();
 		const watchResult = (await watchRepo!({
@@ -155,7 +184,200 @@ describe('external event extension startup primitives', () => {
 			topic: 'github/acme/widgets/pull_request.comment_created',
 			state: 'published',
 		});
+		expect(db.prepare(`SELECT COUNT(*) AS count FROM space_github_events`).get()).toEqual({
+			count: 0,
+		});
 		await extension.stop();
+	});
+
+	test('pollOnce publishes bus events without legacy task activity records', async () => {
+		seedTask(db);
+		const extension = new GitHubEventExtension(db);
+		const context = {
+			publisher: service,
+			config,
+			onSourceConfigChanged() {},
+		};
+		await extension.start(context);
+		extension.repo.upsertWatchedRepo({
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+			pollingEnabled: true,
+		});
+		const rowsByUrl = new Map<string, unknown[]>([
+			['/issues/comments', [pollingRow()]],
+			['/pulls/comments', []],
+			['/pulls', []],
+		]);
+		const fetchImpl = async (url: string | URL | Request) => {
+			const href = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
+			const path = new URL(href).pathname;
+			const rows = rowsByUrl.get(path.replace('/repos/acme/widgets', '')) ?? [];
+			return new Response(JSON.stringify(rows), { status: 200 });
+		};
+
+		expect(await extension.pollOnce(fetchImpl as typeof fetch)).toBe(1);
+		expect(db.prepare(`SELECT COUNT(*) AS count FROM space_external_events`).get()).toEqual({
+			count: 1,
+		});
+		expect(db.prepare(`SELECT COUNT(*) AS count FROM space_github_events`).get()).toEqual({
+			count: 0,
+		});
+		await extension.stop();
+	});
+
+	test('seeds GitHub globally enabled independent of one-time env state', async () => {
+		expect(await config.getGlobalConfig('github')).toMatchObject({
+			source: 'github',
+			globallyEnabled: true,
+			capabilities: { webhooks: true, polling: true, rpcConfig: true },
+		});
+	});
+
+	test('listConfig returns space GitHub configuration via RPC handler', async () => {
+		const extension = new GitHubEventExtension(db);
+		const hub = new MessageHub({ defaultSessionId: 'global' });
+		const context = {
+			publisher: service,
+			config,
+			onSourceConfigChanged() {},
+		};
+		extension.registerRpcHandlers(hub, context);
+		extension.repo.upsertWatchedRepo({
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+			pollingEnabled: true,
+		});
+
+		const listConfig = getRequestHandler(hub, 'space.github.listConfig');
+		expect(listConfig).toBeDefined();
+		expect(await listConfig!({ spaceId: 'space-1' })).toMatchObject({
+			spaceId: 'space-1',
+			source: 'github',
+			enabled: true,
+			settings: {
+				watchedRepos: [
+					{
+						owner: 'acme',
+						repo: 'widgets',
+						polling_enabled: 1,
+					},
+				],
+			},
+		});
+	});
+
+	test('stop clears the GitHub extension poll timer', async () => {
+		const extension = new GitHubEventExtension(db);
+		const context = {
+			publisher: service,
+			config,
+			onSourceConfigChanged() {},
+		};
+		await extension.start(context);
+		expect((extension as unknown as { pollTimer: unknown }).pollTimer).not.toBeNull();
+
+		await extension.stop();
+
+		expect((extension as unknown as { pollTimer: unknown }).pollTimer).toBeNull();
+	});
+
+	test('scheduled poll cycle skips polling when capability is disabled after start', async () => {
+		const extension = new GitHubEventExtension(db);
+		const context = {
+			publisher: service,
+			config,
+			onSourceConfigChanged() {},
+		};
+		await extension.start(context);
+		extension.repo.upsertWatchedRepo({
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+			pollingEnabled: true,
+		});
+		db.prepare(
+			`UPDATE external_event_extension_configs SET capabilities_json = ? WHERE source = 'github'`
+		).run(JSON.stringify({ webhooks: true, polling: false, rpcConfig: true }));
+
+		await (
+			extension as unknown as {
+				runPollCycle(): Promise<void>;
+			}
+		).runPollCycle();
+
+		expect(db.prepare(`SELECT COUNT(*) AS count FROM space_external_events`).get()).toEqual({
+			count: 0,
+		});
+		expect(
+			db.prepare(`SELECT last_poll_at FROM space_github_watched_repos WHERE owner = 'acme'`).get()
+		).toEqual({ last_poll_at: null });
+		await extension.stop();
+	});
+
+	test('pollOnce RPC rejects when polling capability is disabled', async () => {
+		db.prepare(
+			`UPDATE external_event_extension_configs SET capabilities_json = ? WHERE source = 'github'`
+		).run(JSON.stringify({ webhooks: true, polling: false, rpcConfig: true }));
+		const extension = new GitHubEventExtension(db);
+		const hub = new MessageHub({ defaultSessionId: 'global' });
+		const context = {
+			publisher: service,
+			config,
+			onSourceConfigChanged() {},
+		};
+		extension.registerRpcHandlers(hub, context);
+
+		const pollOnce = getRequestHandler(hub, 'space.github.pollOnce');
+		expect(pollOnce).toBeDefined();
+		await expect(pollOnce!({})).rejects.toThrow('GitHub polling capability is disabled');
+	});
+
+	test('does not register RPC handlers when rpcConfig capability is disabled', async () => {
+		db.prepare(
+			`UPDATE external_event_extension_configs SET capabilities_json = ? WHERE source = 'github'`
+		).run(JSON.stringify({ webhooks: true, polling: true, rpcConfig: false }));
+		const manager = new ExternalEventExtensionManager();
+		manager.register(new GitHubEventExtension(db));
+		const hub = new MessageHub({ defaultSessionId: 'global' });
+		const context = {
+			publisher: service,
+			config,
+			onSourceConfigChanged() {},
+		};
+
+		for (const registered of manager.getAll()) {
+			const globalConfig = await context.config.getGlobalConfig(registered.sourceId);
+			if (!globalConfig.globallyEnabled) continue;
+			if (isRpcExternalEventExtension(registered) && globalConfig.capabilities.rpcConfig) {
+				registered.registerRpcHandlers(hub, context);
+			}
+		}
+
+		expect(getRequestHandler(hub, 'space.github.watchRepo')).toBeUndefined();
+		expect(getRequestHandler(hub, 'space.github.pollOnce')).toBeUndefined();
+	});
+
+	test('registered RPC handlers reject when rpcConfig capability is disabled later', async () => {
+		const extension = new GitHubEventExtension(db);
+		const hub = new MessageHub({ defaultSessionId: 'global' });
+		const context = {
+			publisher: service,
+			config,
+			onSourceConfigChanged() {},
+		};
+		extension.registerRpcHandlers(hub, context);
+		db.prepare(
+			`UPDATE external_event_extension_configs SET capabilities_json = ? WHERE source = 'github'`
+		).run(JSON.stringify({ webhooks: true, polling: true, rpcConfig: false }));
+
+		const listConfig = getRequestHandler(hub, 'space.github.listConfig');
+		expect(listConfig).toBeDefined();
+		await expect(listConfig!({ spaceId: 'space-1' })).rejects.toThrow(
+			'GitHub RPC configuration capability is disabled'
+		);
 	});
 
 	test('does not register disabled extension routes or RPC handlers', async () => {
