@@ -11,6 +11,7 @@ import {
 } from '../../../../src/lib/agent/session-config-handler';
 import type { Session } from '@neokai/shared';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import { SettingsManager } from '../../../../src/lib/settings-manager';
 import { generateUUID } from '@neokai/shared';
@@ -20,6 +21,11 @@ describe('SessionConfigHandler', () => {
 	let mockSession: Session;
 	let mockDb: Database;
 	let mockDaemonHub: DaemonHub;
+	const mockInternalEventBus = {
+		publish: emitSpy,
+		publishAsync: emitSpy,
+		subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+	} as unknown as InternalEventBus<any>;
 	let mockSettingsManager: SettingsManager;
 
 	let updateSessionSpy: ReturnType<typeof mock>;
@@ -65,6 +71,7 @@ describe('SessionConfigHandler', () => {
 			session: mockSession,
 			db: mockDb,
 			daemonHub: mockDaemonHub,
+			internalEventBus: mockInternalEventBus,
 			settingsManager: mockSettingsManager,
 		};
 

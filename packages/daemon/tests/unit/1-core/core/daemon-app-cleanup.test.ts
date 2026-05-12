@@ -118,15 +118,18 @@ describe('Daemon App Cleanup', () => {
 			await daemonContext.cleanup();
 			const cleanupDuration = Date.now() - cleanupStart;
 
-			// Should be very fast (< 1 second) since no pending calls
-			expect(cleanupDuration).toBeLessThan(1000);
+			// Session cleanup includes a 1s drain sleep per active session,
+			// so the total is ~2s (Neo session + session pool drain).
+			expect(cleanupDuration).toBeLessThan(3500);
 
 			// Verify success message
 			const successLog = logs.find((log) => log.includes('Graceful shutdown complete'));
 			expect(successLog).toBeTruthy();
 		});
 
-		test('should timeout and complete cleanup when pending calls never resolve', async () => {
+		test('should timeout and complete cleanup when pending calls never resolve', {
+			timeout: 10_000,
+		}, async () => {
 			// This test specifically verifies the bug fix:
 			// The setInterval must be cleared when the timeout fires first
 			// Otherwise the process will hang on exit
@@ -163,7 +166,7 @@ describe('Daemon App Cleanup', () => {
 			// Cleanup should complete within ~3.5 seconds (3s timeout + overhead)
 			// The bug would cause this to hang forever because the setInterval never clears
 			expect(cleanupDuration).toBeGreaterThan(2500); // At least 2.5s (timeout period)
-			expect(cleanupDuration).toBeLessThan(5000); // Less than 5s (timeout + overhead)
+			expect(cleanupDuration).toBeLessThan(7000); // 3s timeout + 2s session cleanup + overhead
 
 			// Verify the timeout message was logged
 			const timeoutLog = logs.find(
@@ -210,9 +213,9 @@ describe('Daemon App Cleanup', () => {
 			// Restore original method
 			messageHub.getPendingCallCount = originalGetPendingCallCount;
 
-			// Should complete quickly (< 2 seconds) since calls "resolved"
-			// (generous threshold for CI overhead; the actual timeout is 3s)
-			expect(cleanupDuration).toBeLessThan(2000);
+			// Should complete quickly since calls "resolved", but session cleanup
+			// adds ~2s (1s drain sleep per active session in QueryLifecycleManager).
+			expect(cleanupDuration).toBeLessThan(4000);
 
 			// Verify success message (all calls completed)
 			const completeLog = logs.find((log) => log.includes('All pending calls completed'));

@@ -33,8 +33,8 @@
  *
  * ## Running
  *
- *   NEOKAI_USE_DEV_PROXY=1 bun test \
- *     packages/daemon/tests/online/space/space-happy-path-code-review.test.ts
+ *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test \
+ *     ./tests/online/space/space-happy-path-code-review.test.ts
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';

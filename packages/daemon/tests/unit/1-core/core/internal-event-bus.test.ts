@@ -20,10 +20,10 @@ import {
 } from '../../../../src/lib/internal-event-bus';
 
 interface TestEventMap {
-	'session.created': { sessionId: string; title: string };
-	'session.updated': { sessionId: string; title?: string };
-	'session.deleted': { sessionId: string };
-	'app.ping': { sessionId: string; ts: number };
+	'session.created': { namespaceId: string; title: string };
+	'session.updated': { namespaceId: string; title?: string };
+	'session.deleted': { namespaceId: string };
+	'app.ping': { namespaceId: string; ts: number };
 }
 
 /**
@@ -31,8 +31,8 @@ interface TestEventMap {
  * is loose enough to accept normal keyed interfaces (P2).
  */
 interface KeyedInterfaceEventMap {
-	'order.placed': { sessionId: string; orderId: string };
-	'order.shipped': { sessionId: string; orderId: string; tracking: string };
+	'order.placed': { namespaceId: string; orderId: string };
+	'order.shipped': { namespaceId: string; orderId: string; tracking: string };
 }
 
 describe('InternalEventBus', () => {
@@ -53,11 +53,11 @@ describe('InternalEventBus', () => {
 			);
 		});
 
-		it('should reject the reserved global session key as an explicit sessionId', () => {
+		it('should reject the reserved global namespace key as an explicit namespaceId', () => {
 			expect(() =>
 				bus.subscribe('session.created', () => {}, {
 					subscriberName: 'bad',
-					sessionId: '__global__',
+					namespaceId: '__global__',
 				})
 			).toThrow('reserved');
 		});
@@ -74,16 +74,16 @@ describe('InternalEventBus', () => {
 			const unsub = bus.subscribe(
 				'session.created',
 				(data) => {
-					received.push(data.sessionId);
+					received.push(data.namespaceId);
 				},
 				{ subscriberName: 'a' }
 			);
 
-			await bus.publish('session.created', { sessionId: 's1', title: 'T1' });
+			await bus.publish('session.created', { namespaceId: 's1', title: 'T1' });
 			expect(received).toEqual(['s1']);
 
 			unsub();
-			await bus.publish('session.created', { sessionId: 's2', title: 'T2' });
+			await bus.publish('session.created', { namespaceId: 's2', title: 'T2' });
 			expect(received).toEqual(['s1']);
 		});
 	});
@@ -101,7 +101,7 @@ describe('InternalEventBus', () => {
 			);
 
 			const result = await bus.publish('session.created', {
-				sessionId: 's1',
+				namespaceId: 's1',
 				title: 'T1',
 			});
 			expect(received).toBe(true);
@@ -131,7 +131,7 @@ describe('InternalEventBus', () => {
 			);
 
 			const result = await bus.publish('session.created', {
-				sessionId: 's1',
+				namespaceId: 's1',
 				title: 'T1',
 			});
 
@@ -140,7 +140,7 @@ describe('InternalEventBus', () => {
 		});
 
 		it('should return empty result when no handlers are registered', async () => {
-			const result = await bus.publish('session.deleted', { sessionId: 'orphan' });
+			const result = await bus.publish('session.deleted', { namespaceId: 'orphan' });
 			expect(result.delivered).toBe(0);
 			expect(result.failures).toHaveLength(0);
 		});
@@ -151,15 +151,15 @@ describe('InternalEventBus', () => {
 			bus.subscribe('session.created', () => hits.push('global'), { subscriberName: 'global' });
 			bus.subscribe('session.created', () => hits.push('scoped'), {
 				subscriberName: 'scoped',
-				sessionId: 's1',
+				namespaceId: 's1',
 			});
 			bus.subscribe('session.created', () => hits.push('other-scope'), {
 				subscriberName: 'other',
-				sessionId: 's2',
+				namespaceId: 's2',
 			});
 
 			const result = await bus.publish('session.created', {
-				sessionId: 's1',
+				namespaceId: 's1',
 				title: 'T1',
 			});
 
@@ -167,13 +167,13 @@ describe('InternalEventBus', () => {
 			expect(result.delivered).toBe(2);
 		});
 
-		it('should not double-deliver when sessionId equals the global sentinel', async () => {
+		it('should not double-deliver when namespaceId equals the global sentinel', async () => {
 			const hits: string[] = [];
 
 			bus.subscribe('session.created', () => hits.push('global'), { subscriberName: 'global' });
 
 			const result = await bus.publish('session.created', {
-				sessionId: '__global__',
+				namespaceId: '__global__',
 				title: 'T1',
 			});
 
@@ -194,7 +194,7 @@ describe('InternalEventBus', () => {
 			);
 
 			try {
-				await bus.publish('session.created', { sessionId: 's1', title: 'T1' });
+				await bus.publish('session.created', { namespaceId: 's1', title: 'T1' });
 				expect.unreachable('should have thrown');
 			} catch (e) {
 				expect(e).toBeInstanceOf(InternalEventBusPublishError);
@@ -219,7 +219,7 @@ describe('InternalEventBus', () => {
 			);
 
 			await expect(
-				bus.publish('session.created', { sessionId: 's1', title: 'T1' })
+				bus.publish('session.created', { namespaceId: 's1', title: 'T1' })
 			).rejects.toBeInstanceOf(InternalEventBusPublishError);
 		});
 
@@ -252,7 +252,7 @@ describe('InternalEventBus', () => {
 			);
 
 			try {
-				await bus.publish('session.created', { sessionId: 's1', title: 'T1' });
+				await bus.publish('session.created', { namespaceId: 's1', title: 'T1' });
 				expect.unreachable('should have thrown');
 			} catch (e) {
 				const pe = e as InternalEventBusPublishError;
@@ -279,7 +279,7 @@ describe('InternalEventBus', () => {
 			);
 
 			try {
-				await bus.publish('session.created', { sessionId: 's1', title: 'T1' });
+				await bus.publish('session.created', { namespaceId: 's1', title: 'T1' });
 				expect.unreachable('should have thrown');
 			} catch (e) {
 				const pe = e as InternalEventBusPublishError;
@@ -299,7 +299,7 @@ describe('InternalEventBus', () => {
 			);
 
 			try {
-				await bus.publish('session.created', { sessionId: 's1', title: 'T1' });
+				await bus.publish('session.created', { namespaceId: 's1', title: 'T1' });
 				expect.unreachable('should have thrown');
 			} catch (e) {
 				const pe = e as InternalEventBusPublishError;
@@ -322,7 +322,7 @@ describe('InternalEventBus', () => {
 			);
 
 			const start = performance.now();
-			bus.publishAsync('session.created', { sessionId: 's1', title: 'T1' });
+			bus.publishAsync('session.created', { namespaceId: 's1', title: 'T1' });
 			const elapsed = performance.now() - start;
 
 			expect(elapsed).toBeLessThan(10);
@@ -344,7 +344,7 @@ describe('InternalEventBus', () => {
 
 			// Must not throw synchronously or as an unhandled rejection
 			expect(() =>
-				bus.publishAsync('session.created', { sessionId: 's1', title: 'T1' })
+				bus.publishAsync('session.created', { namespaceId: 's1', title: 'T1' })
 			).not.toThrow();
 
 			// Give microtasks a chance to run
@@ -361,7 +361,7 @@ describe('InternalEventBus', () => {
 				{ subscriberName: 'sync' }
 			);
 
-			bus.publishAsync('session.created', { sessionId: 's1', title: 'T1' });
+			bus.publishAsync('session.created', { namespaceId: 's1', title: 'T1' });
 			// Handler should NOT have run yet — it is deferred to the next microtask.
 			expect(handlerRan).toBe(false);
 
@@ -379,13 +379,13 @@ describe('InternalEventBus', () => {
 			factoryBus.subscribe(
 				'session.created',
 				(data) => {
-					hits.push(data.sessionId);
+					hits.push(data.namespaceId);
 				},
 				{ subscriberName: 'factory-sub' }
 			);
 
 			const result = await factoryBus.publish('session.created', {
-				sessionId: 'factory-test',
+				namespaceId: 'factory-test',
 				title: 'Factory Test',
 			});
 
@@ -400,11 +400,11 @@ describe('InternalEventBus', () => {
 
 			bus.subscribe('session.created', () => {}, { subscriberName: 'a' });
 			bus.subscribe('session.created', () => {}, { subscriberName: 'b' });
-			bus.subscribe('session.created', () => {}, { subscriberName: 'c', sessionId: 's1' });
+			bus.subscribe('session.created', () => {}, { subscriberName: 'c', namespaceId: 's1' });
 
 			expect(bus.getHandlerCount('session.created')).toBe(3);
-			expect(bus.getHandlerCountForSession('session.created', 's1')).toBe(1);
-			expect(bus.getHandlerCountForSession('session.created', 's2')).toBe(0);
+			expect(bus.getHandlerCountForNamespace('session.created', 's1')).toBe(1);
+			expect(bus.getHandlerCountForNamespace('session.created', 's2')).toBe(0);
 		});
 
 		it('should clear all handlers', async () => {
@@ -414,8 +414,8 @@ describe('InternalEventBus', () => {
 
 			bus.clear();
 
-			await bus.publish('session.created', { sessionId: 's1', title: 'T1' });
-			await bus.publish('session.updated', { sessionId: 's1' });
+			await bus.publish('session.created', { namespaceId: 's1', title: 'T1' });
+			await bus.publish('session.updated', { namespaceId: 's1' });
 
 			expect(hits).toHaveLength(0);
 		});
@@ -427,8 +427,8 @@ describe('InternalEventBus', () => {
 
 			bus.off('session.created');
 
-			await bus.publish('session.created', { sessionId: 's1', title: 'T1' });
-			await bus.publish('session.deleted', { sessionId: 's1' });
+			await bus.publish('session.created', { namespaceId: 's1', title: 'T1' });
+			await bus.publish('session.deleted', { namespaceId: 's1' });
 
 			expect(hits).toEqual(['deleted']);
 		});
@@ -449,7 +449,7 @@ describe('InternalEventBus keyed interface compatibility', () => {
 		);
 
 		const result = await keyedBus.publish('order.placed', {
-			sessionId: 's1',
+			namespaceId: 's1',
 			orderId: 'ord-123',
 		});
 
@@ -461,7 +461,7 @@ describe('InternalEventBus keyed interface compatibility', () => {
 describe('DaemonInternalEventMap — settings.updated end-to-end', () => {
 	it('should flow through createDaemonInternalEventBus with typed payload', async () => {
 		const bus = createDaemonInternalEventBus();
-		const received: Array<{ sessionId: string; settings: Record<string, unknown> }> = [];
+		const received: Array<{ namespaceId: string; settings: Record<string, unknown> }> = [];
 
 		bus.subscribe(
 			'settings.updated',
@@ -472,14 +472,14 @@ describe('DaemonInternalEventMap — settings.updated end-to-end', () => {
 		);
 
 		const result = await bus.publish('settings.updated', {
-			sessionId: 'global',
+			namespaceId: 'global',
 			settings: { model: 'claude-sonnet-4' } as unknown as import('@neokai/shared').GlobalSettings,
 		});
 
 		expect(result.delivered).toBe(1);
 		expect(result.failures).toHaveLength(0);
 		expect(received).toHaveLength(1);
-		expect(received[0].sessionId).toBe('global');
+		expect(received[0].namespaceId).toBe('global');
 		expect(received[0].settings).toEqual({ model: 'claude-sonnet-4' });
 	});
 
@@ -498,7 +498,7 @@ describe('DaemonInternalEventMap — settings.updated end-to-end', () => {
 
 		const start = performance.now();
 		bus.publishAsync('settings.updated', {
-			sessionId: 'global',
+			namespaceId: 'global',
 			settings: {} as unknown as import('@neokai/shared').GlobalSettings,
 		});
 		const elapsed = performance.now() - start;

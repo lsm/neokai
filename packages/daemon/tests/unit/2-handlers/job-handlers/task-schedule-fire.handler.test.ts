@@ -11,6 +11,10 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import {
+	createInternalEventBus,
+	type DaemonInternalEventMap,
+} from '../../../../src/lib/internal-event-bus';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 function makeJob(overrides: Partial<Job> = {}): Job {
@@ -158,6 +162,41 @@ describe('handleTaskScheduleFire', () => {
 
 		const afterJobs = jobQueue.listJobs({}).length;
 		expect(afterJobs).toBe(beforeJobs);
+	});
+
+	it('emits task and schedule events after a scheduled task fires', async () => {
+		const scheduleId = createCronSchedule();
+		scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
+		const internalEventBus = createInternalEventBus<DaemonInternalEventMap>();
+		const emitted: Array<{ event: string; taskId?: string; scheduleId?: string }> = [];
+
+		internalEventBus.subscribe(
+			'space.task.created',
+			(payload) => {
+				emitted.push({ event: 'space.task.created', taskId: payload.taskId });
+			},
+			{ subscriberName: 'test' }
+		);
+		internalEventBus.subscribe(
+			'space.schedule.updated',
+			(payload) => {
+				emitted.push({ event: 'space.schedule.updated', scheduleId: payload.scheduleId });
+			},
+			{ subscriberName: 'test' }
+		);
+
+		const result = await handleTaskScheduleFire(makeJob({ payload: { scheduleId } }), {
+			...makeDeps(),
+			internalEventBus,
+		});
+
+		await Promise.resolve();
+
+		expect(result.skipped).toBe(false);
+		expect(emitted).toEqual([
+			{ event: 'space.task.created', taskId: result.taskId as string },
+			{ event: 'space.schedule.updated', scheduleId },
+		]);
 	});
 
 	it('skips when schedule is missing', async () => {

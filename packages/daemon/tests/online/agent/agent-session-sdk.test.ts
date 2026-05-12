@@ -14,7 +14,7 @@
  * - Dev Proxy: Set NEOKAI_USE_DEV_PROXY=1 for offline testing with mocked responses
  *
  * Run with Dev Proxy:
- *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/agent/agent-session-sdk.test.ts
+ *   cd packages/daemon && NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/agent/agent-session-sdk.test.ts
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';

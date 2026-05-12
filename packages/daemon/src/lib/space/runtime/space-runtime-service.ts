@@ -23,7 +23,6 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
-import type { NotificationSink } from './notification-sink';
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SessionManager } from '../../session-manager';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
@@ -992,17 +991,6 @@ export class SpaceRuntimeService {
 	}
 
 	/**
-	 * Wire a notification sink into the underlying SpaceRuntime.
-	 *
-	 * Called after construction once the Space Agent session has been provisioned,
-	 * since SpaceRuntimeService is instantiated before the global agent session exists.
-	 * Delegates directly to the shared SpaceRuntime instance.
-	 */
-	setNotificationSink(sink: NotificationSink): void {
-		this.runtime.setNotificationSink(sink);
-	}
-
-	/**
 	 * Release the runtime for a given space.
 	 *
 	 * Currently a no-op — the shared runtime handles all spaces together.
@@ -1093,7 +1081,6 @@ export class SpaceRuntimeService {
 				: undefined,
 			// Forward the runtime's current sink so a gate-driven reopen still
 			// surfaces `workflow_run_reopened` to the Space Agent session.
-			notificationSink: this.runtime.getNotificationSink(),
 			// Forward the InternalEventBus so gate-driven reopens also publish
 			// typed `space.workflowRun.reopened` events for bus subscribers.
 			internalEventBus: this.config.internalEventBus,
@@ -1156,7 +1143,6 @@ export class SpaceRuntimeService {
 			// Forward the runtime's current sink so activation-driven reopens of
 			// terminal runs still surface `workflow_run_reopened` to the Space
 			// Agent session (mirrors `notifyGateDataChanged` above).
-			notificationSink: this.runtime.getNotificationSink(),
 			// Forward the InternalEventBus so activation-driven reopens also publish
 			// typed `space.workflowRun.reopened` events for bus subscribers.
 			internalEventBus: this.config.internalEventBus,

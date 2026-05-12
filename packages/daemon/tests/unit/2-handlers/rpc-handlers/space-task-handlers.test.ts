@@ -8,12 +8,15 @@
  * - spaceTask.get: happy path, space existence check, missing params, task not found
  * - spaceTask.update: status transition (delegates to setTaskStatus), same-status update
  *   (routes to updateTask — not spurious transition error), non-status update, missing params
- * - DaemonHub events emitted on mutations
+ * - InternalEventBus events published on mutations
  */
 
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, Space, SpaceTask } from '@neokai/shared';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type {
+	DaemonInternalEventMap,
+	InternalEventBus,
+} from '../../../../src/lib/internal-event-bus';
 import type { SpaceTaskManagerFactory } from '../../../../src/lib/rpc-handlers/space-task-handlers';
 import { setupSpaceTaskHandlers } from '../../../../src/lib/rpc-handlers/space-task-handlers';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
@@ -83,13 +86,10 @@ function createMockMessageHub(): {
 	return { hub, handlers };
 }
 
-function createMockDaemonHub(): DaemonHub {
+function createMockInternalEventBus(): InternalEventBus<DaemonInternalEventMap> {
 	return {
-		emit: mock(async () => {}),
-		on: mock(() => () => {}),
-		off: mock(() => {}),
-		once: mock(async () => {}),
-	} as unknown as DaemonHub;
+		publishAsync: mock(() => {}),
+	} as unknown as InternalEventBus<DaemonInternalEventMap>;
 }
 
 function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
@@ -131,7 +131,7 @@ function createMockTaskManager(task: SpaceTask | null = mockTask): SpaceTaskMana
 describe('space-task-handlers', () => {
 	let hub: MessageHub;
 	let handlers: Map<string, RequestHandler>;
-	let daemonHub: DaemonHub;
+	let internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	let spaceManager: SpaceManager;
 	let taskManager: SpaceTaskManager;
 	let taskManagerFactory: SpaceTaskManagerFactory;
@@ -144,11 +144,11 @@ describe('space-task-handlers', () => {
 		const mh = createMockMessageHub();
 		hub = mh.hub;
 		handlers = mh.handlers;
-		daemonHub = createMockDaemonHub();
+		internalEventBus = createMockInternalEventBus();
 		spaceManager = createMockSpaceManager(space);
 		taskManager = createMockTaskManager(task);
 		taskManagerFactory = mock((_spaceId: string) => taskManager);
-		setupSpaceTaskHandlers(hub, spaceManager, taskManagerFactory, daemonHub, runtime);
+		setupSpaceTaskHandlers(hub, spaceManager, taskManagerFactory, internalEventBus, runtime);
 	}
 
 	const call = (method: string, data: unknown) => {
@@ -162,7 +162,7 @@ describe('space-task-handlers', () => {
 	describe('spaceTask.create', () => {
 		beforeEach(() => setup());
 
-		it('creates a task and emits space.task.created', async () => {
+		it('creates a task and publishes space.task.created', async () => {
 			const result = await call('spaceTask.create', {
 				spaceId: 'space-1',
 				title: 'Do work',
@@ -171,7 +171,8 @@ describe('space-task-handlers', () => {
 
 			expect(result).toEqual(mockTask);
 			expect(taskManager.createTask).toHaveBeenCalledTimes(1);
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.task.created', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.created', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				taskId: mockTask.id,
@@ -463,7 +464,7 @@ describe('space-task-handlers', () => {
 	// ─── spaceTask.archive (via spaceTask.update status: 'archived') ─────────────
 
 	describe('spaceTask.archive via spaceTask.update', () => {
-		it('archives a completed task via status transition and emits space.task.updated', async () => {
+		it('archives a completed task via status transition and publishes space.task.updated', async () => {
 			const completedTask = { ...mockTask, status: 'completed' as const };
 			setup(mockSpace, completedTask);
 			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
@@ -481,8 +482,10 @@ describe('space-task-handlers', () => {
 			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'archived', {
 				result: undefined,
 				error: undefined,
+				onCascadedTasks: expect.any(Function),
 			});
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.task.updated', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				taskId: 'task-1',
@@ -508,6 +511,7 @@ describe('space-task-handlers', () => {
 			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'archived', {
 				result: undefined,
 				error: undefined,
+				onCascadedTasks: expect.any(Function),
 			});
 		});
 
@@ -585,7 +589,7 @@ describe('space-task-handlers', () => {
 			expect(runtime.recoverWorkflowBackedTask).toHaveBeenCalledWith('space-1', 'task-1', 'open');
 		});
 
-		it('reactivates a completed task to in_progress and emits space.task.updated', async () => {
+		it('reactivates a completed task to in_progress and publishes space.task.updated', async () => {
 			const completedTask = { ...mockTask, status: 'completed' as const };
 			setup(mockSpace, completedTask);
 			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
@@ -605,8 +609,10 @@ describe('space-task-handlers', () => {
 			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress', {
 				result: undefined,
 				error: undefined,
+				onCascadedTasks: expect.any(Function),
 			});
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.task.updated', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				taskId: 'task-1',
@@ -633,6 +639,7 @@ describe('space-task-handlers', () => {
 			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress', {
 				result: undefined,
 				error: undefined,
+				onCascadedTasks: expect.any(Function),
 			});
 		});
 
@@ -654,6 +661,7 @@ describe('space-task-handlers', () => {
 			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'open', {
 				result: undefined,
 				error: undefined,
+				onCascadedTasks: expect.any(Function),
 			});
 		});
 
@@ -679,7 +687,7 @@ describe('space-task-handlers', () => {
 	describe('spaceTask.update', () => {
 		beforeEach(() => setup());
 
-		it('delegates status change to setTaskStatus and emits space.task.updated', async () => {
+		it('delegates status change to setTaskStatus and publishes space.task.updated', async () => {
 			const result = await call('spaceTask.update', {
 				spaceId: 'space-1',
 				taskId: 'task-1',
@@ -690,8 +698,10 @@ describe('space-task-handlers', () => {
 			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress', {
 				result: undefined,
 				error: undefined,
+				onCascadedTasks: expect.any(Function),
 			});
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.task.updated', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				taskId: 'task-1',
@@ -709,10 +719,14 @@ describe('space-task-handlers', () => {
 			});
 
 			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
-			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
-				status: 'open',
-				title: 'New title',
-			});
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{
+					status: 'open',
+					title: 'New title',
+				},
+				{ onCascadedTasks: expect.any(Function) }
+			);
 			expect(result).toBeDefined();
 		});
 
@@ -724,8 +738,13 @@ describe('space-task-handlers', () => {
 			});
 
 			expect((result as SpaceTask).title).toBe('Updated');
-			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', { title: 'Updated' });
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.task.updated', {
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{ title: 'Updated' },
+				{ onCascadedTasks: expect.any(Function) }
+			);
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				taskId: 'task-1',
@@ -743,6 +762,7 @@ describe('space-task-handlers', () => {
 
 			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'blocked', {
 				result: 'Build failed',
+				onCascadedTasks: expect.any(Function),
 			});
 		});
 
@@ -772,11 +792,16 @@ describe('space-task-handlers', () => {
 			// setTaskStatus was called for the transition
 			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress', {
 				result: undefined,
+				onCascadedTasks: expect.any(Function),
 			});
 			// updateTask was called with the non-status fields (no status, no result)
-			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
-				taskAgentSessionId: 'session-abc',
-			});
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{
+					taskAgentSessionId: 'session-abc',
+				},
+				{ onCascadedTasks: expect.any(Function) }
+			);
 			// Final result has both fields
 			expect((result as SpaceTask).status).toBe('in_progress');
 			expect((result as SpaceTask).taskAgentSessionId).toBe('session-abc');
@@ -834,12 +859,17 @@ describe('space-task-handlers', () => {
 				result: undefined,
 				approvalSource: undefined,
 				approvalReason: 'not worth shipping',
+				onCascadedTasks: expect.any(Function),
 			});
 			// A follow-up updateTask ensures approvalReason lands even though
 			// setTaskStatus only stamps it on review→done.
-			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
-				approvalReason: 'not worth shipping',
-			});
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{
+					approvalReason: 'not worth shipping',
+				},
+				{ onCascadedTasks: expect.any(Function) }
+			);
 		});
 
 		it('falls back to approvalReason when cancelReason is omitted on cancel transitions', async () => {
@@ -861,10 +891,15 @@ describe('space-task-handlers', () => {
 				result: undefined,
 				approvalSource: undefined,
 				approvalReason: 'rejected via legacy field',
+				onCascadedTasks: expect.any(Function),
 			});
-			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
-				approvalReason: 'rejected via legacy field',
-			});
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{
+					approvalReason: 'rejected via legacy field',
+				},
+				{ onCascadedTasks: expect.any(Function) }
+			);
 		});
 
 		it('propagates errors from setTaskStatus (invalid transitions)', async () => {
@@ -1027,14 +1062,15 @@ describe('space-task-handlers', () => {
 			});
 		});
 
-		it('emits space.task.updated with the post-submit task', async () => {
+		it('publishes space.task.updated with the post-submit task', async () => {
 			await call('spaceTask.submitForReview', {
 				spaceId: 'space-1',
 				taskId: 'task-1',
 				reason: 'ready',
 			});
 
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.task.updated', {
+			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
+				namespaceId: 'global',
 				sessionId: 'global',
 				spaceId: 'space-1',
 				taskId: 'task-1',
@@ -1082,7 +1118,7 @@ describe('space-task-handlers', () => {
 		describe('spaceTask.publish', () => {
 			beforeEach(() => setup());
 
-			it('publishes a draft task and emits space.task.updated', async () => {
+			it('publishes a draft task and publishes space.task.updated', async () => {
 				const mockDraftTask = { ...mockTask, status: 'draft' };
 				(taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue(mockDraftTask);
 				(taskManager.publishTask as ReturnType<typeof mock>).mockResolvedValue({
@@ -1097,7 +1133,8 @@ describe('space-task-handlers', () => {
 
 				expect(result.status).toBe('open');
 				expect(taskManager.publishTask).toHaveBeenCalledWith('task-1');
-				expect(daemonHub.emit).toHaveBeenCalledWith('space.task.updated', {
+				expect(internalEventBus.publishAsync).toHaveBeenCalledWith('space.task.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId: 'space-1',
 					taskId: 'task-1',

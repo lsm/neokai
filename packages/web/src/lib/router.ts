@@ -17,6 +17,8 @@ import {
 	currentSpaceTasksFilterTabSignal,
 	currentSpaceTaskViewTabSignal,
 	navSectionSignal,
+	settingsSectionSignal,
+	type SettingsSection,
 	spaceOverlaySessionIdSignal,
 	spaceOverlayAgentNameSignal,
 	spaceOverlayHighlightMessageIdSignal,
@@ -36,14 +38,25 @@ const SPACE_CONFIGURE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/configure$/;
 const SPACE_CONFIGURE_TAB_ROUTE_PATTERN =
 	/^\/space\/([a-z0-9-]+)\/configure\/(agents|workflows|settings)$/;
 const SPACE_TASKS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks$/;
+const SPACE_TASKS_ARCHIVED_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks\/archived$/;
 const SPACE_TASKS_TAB_ROUTE_PATTERN =
-	/^\/space\/([a-z0-9-]+)\/tasks\/(action|active|draft|completed|archived|scheduled)$/;
+	/^\/space\/([a-z0-9-]+)\/tasks\/(action|active|draft|completed|scheduled)$/;
 const SPACE_AGENT_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/agent$/;
 const SPACE_SESSION_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/session\/([a-fA-F0-9-]+)$/;
 const SPACE_TASK_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/task\/([a-fA-F0-9-]+|[a-z]-[1-9]\d*)$/;
 const SPACE_TASK_VIEW_ROUTE_PATTERN =
 	/^\/space\/([a-z0-9-]+)\/task\/([a-fA-F0-9-]+|[a-z]-[1-9]\d*)\/(thread|canvas|artifacts)$/;
 const SPACE_SESSIONS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/sessions$/;
+const SETTINGS_SECTIONS = new Set<SettingsSection>([
+	'general',
+	'providers',
+	'app-mcp-servers',
+	'skills',
+	'models',
+	'neo',
+	'usage',
+	'about',
+]);
 
 interface RouterState {
 	isInitialized: boolean;
@@ -66,6 +79,9 @@ export function getSpaceIdFromPath(path: string): string | null {
 
 	const configureMatch = path.match(SPACE_CONFIGURE_ROUTE_PATTERN);
 	if (configureMatch) return configureMatch[1];
+
+	const archivedTasksMatch = path.match(SPACE_TASKS_ARCHIVED_ROUTE_PATTERN);
+	if (archivedTasksMatch) return archivedTasksMatch[1];
 
 	const tasksTabMatch = path.match(SPACE_TASKS_TAB_ROUTE_PATTERN);
 	if (tasksTabMatch) return tasksTabMatch[1];
@@ -117,13 +133,16 @@ export function getSpaceTasksFromPath(path: string): string | null {
 
 export function getSpaceTasksTabFromPath(path: string): {
 	spaceId: string;
-	tab: 'action' | 'active' | 'draft' | 'completed' | 'archived' | 'scheduled';
+	tab: 'action' | 'active' | 'draft' | 'completed' | 'scheduled';
 } | null {
+	const archivedMatch = path.match(SPACE_TASKS_ARCHIVED_ROUTE_PATTERN);
+	if (archivedMatch) return { spaceId: archivedMatch[1], tab: 'completed' };
+
 	const match = path.match(SPACE_TASKS_TAB_ROUTE_PATTERN);
 	if (!match) return null;
 	return {
 		spaceId: match[1],
-		tab: match[2] as 'action' | 'active' | 'draft' | 'completed' | 'archived' | 'scheduled',
+		tab: match[2] as 'action' | 'active' | 'draft' | 'completed' | 'scheduled',
 	};
 }
 
@@ -162,6 +181,17 @@ function getCurrentPath(): string {
 	return window.location.pathname;
 }
 
+function getCurrentPathWithSearch(): string {
+	return `${window.location.pathname}${window.location.search}`;
+}
+
+export function getSettingsSectionFromSearch(search: string): SettingsSection {
+	const section = new URLSearchParams(search).get('tab');
+	return section && SETTINGS_SECTIONS.has(section as SettingsSection)
+		? (section as SettingsSection)
+		: 'general';
+}
+
 export function createSessionPath(sessionId: string): string {
 	return `/session/${sessionId}`;
 }
@@ -194,8 +224,8 @@ export function createSpaceAgentPath(spaceId: string): string {
 	return `/space/${spaceId}/agent`;
 }
 
-export function createSettingsPath(): string {
-	return '/settings';
+export function createSettingsPath(section?: SettingsSection): string {
+	return section ? `/settings?tab=${section}` : '/settings';
 }
 
 function pushPath(path: string, state: Record<string, unknown>, replace: boolean): void {
@@ -290,20 +320,27 @@ export function navigateToInbox(replace = false): void {
 	}
 }
 
-export function navigateToSettings(replace = false): void {
+export function navigateToSettings(
+	sectionOrReplace?: SettingsSection | boolean,
+	replace = false
+): void {
 	if (routerState.isNavigating) return;
 
-	const targetPath = createSettingsPath();
-	if (getCurrentPath() === targetPath) {
+	const section = typeof sectionOrReplace === 'boolean' ? undefined : sectionOrReplace;
+	const shouldReplace = typeof sectionOrReplace === 'boolean' ? sectionOrReplace : replace;
+	const targetPath = createSettingsPath(section);
+	if (getCurrentPathWithSearch() === targetPath) {
 		setSessionRoute(null);
+		settingsSectionSignal.value = section ?? 'general';
 		navSectionSignal.value = 'settings';
 		return;
 	}
 
 	routerState.isNavigating = true;
 	try {
-		pushPath(targetPath, {}, replace);
+		pushPath(targetPath, { section: section ?? 'general' }, shouldReplace);
 		setSessionRoute(null);
+		settingsSectionSignal.value = section ?? 'general';
 		navSectionSignal.value = 'settings';
 	} finally {
 		finishNavigation();
@@ -394,7 +431,7 @@ export function navigateToSpaceConfigure(
 
 export function navigateToSpaceTasks(
 	spaceId: string,
-	tab?: 'action' | 'active' | 'completed' | 'archived' | 'draft' | 'scheduled',
+	tab?: 'action' | 'active' | 'completed' | 'draft' | 'scheduled',
 	replace = false
 ): void {
 	if (routerState.isNavigating) return;
@@ -512,7 +549,18 @@ export function navigateToSpaceAgent(spaceId: string, replace = false): void {
 	navSectionSignal.value = 'spaces';
 }
 
-function applyPathToSignals(path: string): string | null {
+function applyPathToSignals(path: string, search = window.location.search): string | null {
+	const legacyArchivedTasksMatch = path.match(SPACE_TASKS_ARCHIVED_ROUTE_PATTERN);
+	if (legacyArchivedTasksMatch) {
+		pushPath(
+			createSpaceTasksPath(legacyArchivedTasksMatch[1], 'completed'),
+			{
+				spaceId: legacyArchivedTasksMatch[1],
+			},
+			true
+		);
+	}
+
 	const sessionId = getSessionIdFromPath(path);
 	const spaceConfigureTab = getSpaceConfigureTabFromPath(path);
 	const spaceConfigure = spaceConfigureTab
@@ -598,6 +646,7 @@ function applyPathToSignals(path: string): string | null {
 			setSpacesListRoute();
 		} else if (SETTINGS_ROUTE_PATTERN.test(path)) {
 			setSessionRoute(null);
+			settingsSectionSignal.value = getSettingsSectionFromSearch(search);
 			navSectionSignal.value = 'settings';
 		} else {
 			setSessionRoute(sessionId);
@@ -622,7 +671,7 @@ function handlePopState(_event: PopStateEvent): void {
 		return;
 	}
 
-	applyPathToSignals(getCurrentPath());
+	applyPathToSignals(getCurrentPath(), window.location.search);
 }
 
 export function initializeRouter(): string | null {
@@ -630,7 +679,7 @@ export function initializeRouter(): string | null {
 		return getSessionIdFromPath(getCurrentPath());
 	}
 
-	const initialSessionId = applyPathToSignals(getCurrentPath());
+	const initialSessionId = applyPathToSignals(getCurrentPath(), window.location.search);
 	window.addEventListener('popstate', handlePopState);
 	routerState.isInitialized = true;
 	return initialSessionId;

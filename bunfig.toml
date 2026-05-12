@@ -1,4 +1,5 @@
 [test]
+preload = ["./scripts/guard-root-bun-test.ts"]
 # Exclude temp workspace files from test discovery
 exclude = [
   "tmp/**",

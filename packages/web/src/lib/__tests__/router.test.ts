@@ -39,6 +39,7 @@ import {
 	currentSpaceTaskViewTabSignal,
 	currentSpaceViewModeSignal,
 	navSectionSignal,
+	settingsSectionSignal,
 } from '../signals';
 
 const SESSION_ID = '550e8400-e29b-41d4-a716-446655440000';
@@ -55,6 +56,7 @@ function resetSignals() {
 	currentSpaceTasksFilterTabSignal.value = 'active';
 	currentSpaceTaskViewTabSignal.value = 'thread';
 	navSectionSignal.value = 'spaces';
+	settingsSectionSignal.value = 'general';
 }
 
 function finishNavigation() {
@@ -62,8 +64,9 @@ function finishNavigation() {
 }
 
 function setPath(path: string) {
+	const url = new URL(path, 'https://neokai.test');
 	Object.defineProperty(window, 'location', {
-		value: { pathname: path },
+		value: { pathname: url.pathname, search: url.search },
 		configurable: true,
 	});
 }
@@ -154,6 +157,59 @@ describe('router', () => {
 
 		expect(currentSpaceViewModeSignal.value).toBe('tasks');
 		expect(currentSpaceTasksFilterTabSignal.value).toBe('completed');
+	});
+
+	it('redirects legacy archived task tabs to completed', () => {
+		setPath(`/space/${SPACE_ID}/tasks/archived`);
+		initializeRouter();
+
+		expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
+		expect(currentSpaceViewModeSignal.value).toBe('tasks');
+		expect(currentSpaceTasksFilterTabSignal.value).toBe('completed');
+		expect(window.history.replaceState).toHaveBeenLastCalledWith(
+			{ spaceId: SPACE_ID, path: `/space/${SPACE_ID}/tasks/completed` },
+			'',
+			`/space/${SPACE_ID}/tasks/completed`
+		);
+	});
+
+	it('initializes settings routes from tab query parameters', () => {
+		setPath('/settings?tab=providers');
+		initializeRouter();
+
+		expect(navSectionSignal.value).toBe('settings');
+		expect(settingsSectionSignal.value).toBe('providers');
+		expect(currentSessionIdSignal.value).toBeNull();
+
+		cleanupRouter();
+		settingsSectionSignal.value = 'providers';
+		setPath('/settings?tab=unknown');
+		initializeRouter();
+
+		expect(navSectionSignal.value).toBe('settings');
+		expect(settingsSectionSignal.value).toBe('general');
+	});
+
+	it('navigates to settings tabs and updates URL query parameters', () => {
+		navigateToSettings('skills');
+
+		expect(navSectionSignal.value).toBe('settings');
+		expect(settingsSectionSignal.value).toBe('skills');
+		expect(window.history.pushState).toHaveBeenLastCalledWith(
+			{ section: 'skills', path: '/settings?tab=skills' },
+			'',
+			'/settings?tab=skills'
+		);
+		finishNavigation();
+
+		navigateToSettings('providers');
+
+		expect(settingsSectionSignal.value).toBe('providers');
+		expect(window.history.pushState).toHaveBeenLastCalledWith(
+			{ section: 'providers', path: '/settings?tab=providers' },
+			'',
+			'/settings?tab=providers'
+		);
 	});
 
 	it('navigates session, settings, inbox, and home routes', () => {

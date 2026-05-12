@@ -61,8 +61,12 @@ This project uses `dev` as the sole integration and release branch:
 ### Testing
 
 - Write tests for new features and bug fixes
-- Ensure all tests pass before submitting a PR: `bun test`
-- For E2E tests: `cd packages/e2e && bun test`
+- Do not run `bun test` from the repository root; this monorepo blocks it intentionally.
+- Run the full quality suite before submitting a PR: `bun run check`
+- For daemon unit shards: `./scripts/test-daemon.sh`
+- For targeted daemon tests: `cd packages/daemon && bun test ./tests/unit/some-test.test.ts`
+- For web tests: `cd packages/web && bunx vitest run`
+- For E2E tests: `make run-e2e TEST=tests/features/foo.e2e.ts`
 
 ### Commit Messages
 
@@ -141,16 +145,17 @@ bun run build
 ### Running Locally
 
 ```bash
-# Start the development server
-cd packages/cli
-bun run dev
+# Start the development server from the CLI package
+(cd packages/cli && bun run dev)
 
-# Run tests
-bun test
+# From the repository root, run quality checks
+bun run check
 
-# Run specific package tests
-cd packages/daemon
-bun test
+# From the repository root, run daemon unit shards
+./scripts/test-daemon.sh
+
+# Or run targeted daemon tests package-locally
+(cd packages/daemon && bun test ./tests/unit/some-test.test.ts)
 ```
 
 ### Environment Variables

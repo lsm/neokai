@@ -13,7 +13,7 @@
  *   intentional — CI must alert the team when Copilot credentials need attention.
  *
  * HOW TO RUN:
- *   bun test packages/daemon/tests/online/providers/anthropic-to-copilot-bridge-provider.test.ts
+ *   cd packages/daemon && bun test ./tests/online/providers/anthropic-to-copilot-bridge-provider.test.ts
  *
  * WHAT THESE TESTS PROVE:
  *   1. basic-conversation  — embedded server routes requests to the Copilot model and

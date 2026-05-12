@@ -70,6 +70,7 @@ import {
 } from '../../../../src/lib/session/session-lifecycle';
 import type { Database } from '../../../../src/storage/database';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { WorktreeManager } from '../../../../src/lib/worktree-manager';
 import type { SessionCache, AgentSessionFactory } from '../../../../src/lib/session/session-cache';
 import type { ToolsConfigManager } from '../../../../src/lib/session/tools-config';
@@ -81,6 +82,7 @@ describe('SessionLifecycle', () => {
 	let mockDb: Database;
 	let mockWorktreeManager: WorktreeManager;
 	let mockSessionCache: SessionCache;
+	let mockInternalEventBus: InternalEventBus<any>;
 	let mockDaemonHub: DaemonHub;
 	let mockMessageHub: MessageHub;
 	let mockToolsConfigManager: ToolsConfigManager;
@@ -139,9 +141,18 @@ describe('SessionLifecycle', () => {
 		} as unknown as SessionCache;
 
 		// Event bus mocks
-		mockDaemonHub = {
+		mockInternalEventBus = {
 			on: mock(() => () => {}),
+			publish: mock(async () => {}),
+			publishAsync: mock(() => {}),
+			subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+		} as unknown as InternalEventBus<any>;
+
+		// DaemonHub mock (for events that bridge to InternalEventBus via app.ts)
+		mockDaemonHub = {
 			emit: mock(async () => {}),
+			on: mock(() => {}),
+			off: mock(() => {}),
 		} as unknown as DaemonHub;
 
 		// Message hub mocks
@@ -172,11 +183,12 @@ describe('SessionLifecycle', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
-			mockDaemonHub,
 			mockMessageHub,
 			config,
 			mockToolsConfigManager,
-			mockAgentSessionFactory
+			mockAgentSessionFactory,
+			mockInternalEventBus,
+			mockDaemonHub
 		);
 	});
 
@@ -308,11 +320,12 @@ describe('SessionLifecycle', () => {
 				mockDb,
 				mockWorktreeManager,
 				mockSessionCache,
-				mockDaemonHub,
 				mockMessageHub,
 				worktreeEnabledConfig,
 				mockToolsConfigManager,
-				mockAgentSessionFactory
+				mockAgentSessionFactory,
+				mockInternalEventBus,
+				mockDaemonHub
 			);
 
 			await worktreeLifecycle.create({ workspacePath: '/test/repo' });
@@ -927,6 +940,7 @@ describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
 	let mockDb: Database;
 	let mockWorktreeManager: WorktreeManager;
 	let mockSessionCache: SessionCache;
+	let mockInternalEventBus: InternalEventBus<any>;
 	let mockDaemonHub: DaemonHub;
 	let mockMessageHub: MessageHub;
 	let mockToolsConfigManager: ToolsConfigManager;
@@ -980,9 +994,18 @@ describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
 		} as unknown as SessionCache;
 
 		// Event bus mocks
-		mockDaemonHub = {
+		mockInternalEventBus = {
 			on: mock(() => () => {}),
+			publish: mock(async () => {}),
+			publishAsync: mock(() => {}),
+			subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+		} as unknown as InternalEventBus<any>;
+
+		// DaemonHub mock (for events that bridge to InternalEventBus via app.ts)
+		mockDaemonHub = {
 			emit: mock(async () => {}),
+			on: mock(() => {}),
+			off: mock(() => {}),
 		} as unknown as DaemonHub;
 
 		// Message hub mocks
@@ -1013,11 +1036,12 @@ describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
-			mockDaemonHub,
 			mockMessageHub,
 			config,
 			mockToolsConfigManager,
-			mockAgentSessionFactory
+			mockAgentSessionFactory,
+			mockInternalEventBus,
+			mockDaemonHub
 		);
 	});
 
@@ -1084,6 +1108,7 @@ describe('SessionLifecycle - completeWorktreeChoice edge cases', () => {
 	let mockDb: Database;
 	let mockWorktreeManager: WorktreeManager;
 	let mockSessionCache: SessionCache;
+	let mockInternalEventBus: InternalEventBus<any>;
 	let mockDaemonHub: DaemonHub;
 	let mockMessageHub: MessageHub;
 	let mockToolsConfigManager: ToolsConfigManager;
@@ -1133,9 +1158,18 @@ describe('SessionLifecycle - completeWorktreeChoice edge cases', () => {
 			remove: mock(() => {}),
 		} as unknown as SessionCache;
 
-		mockDaemonHub = {
+		mockInternalEventBus = {
 			on: mock(() => () => {}),
+			publish: mock(async () => {}),
+			publishAsync: mock(() => {}),
+			subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+		} as unknown as InternalEventBus<any>;
+
+		// DaemonHub mock
+		mockDaemonHub = {
 			emit: mock(async () => {}),
+			on: mock(() => {}),
+			off: mock(() => {}),
 		} as unknown as DaemonHub;
 
 		mockMessageHub = {
@@ -1157,11 +1191,12 @@ describe('SessionLifecycle - completeWorktreeChoice edge cases', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
-			mockDaemonHub,
 			mockMessageHub,
 			config,
 			mockToolsConfigManager,
-			mockAgentSessionFactory
+			mockAgentSessionFactory,
+			mockInternalEventBus,
+			mockDaemonHub
 		);
 	});
 
@@ -1195,6 +1230,7 @@ describe('SessionLifecycle - session creation with worktree', () => {
 	let mockDb: Database;
 	let mockWorktreeManager: WorktreeManager;
 	let mockSessionCache: SessionCache;
+	let mockInternalEventBus: InternalEventBus<any>;
 	let mockDaemonHub: DaemonHub;
 	let mockMessageHub: MessageHub;
 	let mockToolsConfigManager: ToolsConfigManager;
@@ -1241,9 +1277,18 @@ describe('SessionLifecycle - session creation with worktree', () => {
 			remove: mock(() => {}),
 		} as unknown as SessionCache;
 
-		mockDaemonHub = {
+		mockInternalEventBus = {
 			on: mock(() => () => {}),
+			publish: mock(async () => {}),
+			publishAsync: mock(() => {}),
+			subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+		} as unknown as InternalEventBus<any>;
+
+		// DaemonHub mock
+		mockDaemonHub = {
 			emit: mock(async () => {}),
+			on: mock(() => {}),
+			off: mock(() => {}),
 		} as unknown as DaemonHub;
 
 		mockMessageHub = {
@@ -1266,11 +1311,12 @@ describe('SessionLifecycle - session creation with worktree', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
-			mockDaemonHub,
 			mockMessageHub,
 			config,
 			mockToolsConfigManager,
-			mockAgentSessionFactory
+			mockAgentSessionFactory,
+			mockInternalEventBus,
+			mockDaemonHub
 		);
 	});
 
@@ -1325,6 +1371,7 @@ describe('SessionLifecycle - setWorkspace', () => {
 	let mockDb: Database;
 	let mockWorktreeManager: WorktreeManager;
 	let mockSessionCache: SessionCache;
+	let mockInternalEventBus: InternalEventBus<any>;
 	let mockDaemonHub: DaemonHub;
 	let mockMessageHub: MessageHub;
 	let mockToolsConfigManager: ToolsConfigManager;
@@ -1356,9 +1403,18 @@ describe('SessionLifecycle - setWorkspace', () => {
 			getAsync: mock(async () => undefined),
 		} as unknown as SessionCache;
 
-		mockDaemonHub = {
+		mockInternalEventBus = {
 			on: mock(() => () => {}),
+			publish: mock(async () => {}),
+			publishAsync: mock(() => {}),
+			subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+		} as unknown as InternalEventBus<any>;
+
+		// DaemonHub mock
+		mockDaemonHub = {
 			emit: mock(async () => {}),
+			on: mock(() => {}),
+			off: mock(() => {}),
 		} as unknown as DaemonHub;
 
 		mockMessageHub = {
@@ -1381,11 +1437,12 @@ describe('SessionLifecycle - setWorkspace', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
-			mockDaemonHub,
 			mockMessageHub,
 			config,
 			mockToolsConfigManager,
-			mockAgentSessionFactory
+			mockAgentSessionFactory,
+			mockInternalEventBus,
+			mockDaemonHub
 		);
 	});
 
@@ -1443,11 +1500,12 @@ describe('SessionLifecycle - setWorkspace', () => {
 			mockDb,
 			mockWorktreeManager,
 			mockSessionCache,
-			mockDaemonHub,
 			mockMessageHub,
 			{ ...config, disableWorktrees: false },
 			mockToolsConfigManager,
-			mockAgentSessionFactory
+			mockAgentSessionFactory,
+			mockInternalEventBus,
+			mockDaemonHub
 		);
 
 		const worktreeResult = {

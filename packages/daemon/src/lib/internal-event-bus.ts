@@ -72,8 +72,10 @@ export class InternalEventBusPublishError extends Error {
  * scoped routing.
  */
 export interface InternalEventPayload {
-	/** Session-scoped routing key.  Use `'global'` for app-wide events. */
-	sessionId: string;
+	/** Session-scoped routing key. Use `'global'` for app-wide events. */
+	sessionId?: string;
+	/** Namespace-scoped routing key used by newer space/runtime events. */
+	namespaceId?: string;
 
 	[key: string]: unknown;
 }
@@ -90,9 +92,10 @@ export interface SubscribeOptions {
 
 	/**
 	 * When provided, the handler only receives events whose payload carries
-	 * the matching `sessionId`.  Omit for a global subscription.
+	 * the matching `sessionId`/`namespaceId`.  Omit for a global subscription.
 	 */
 	sessionId?: string;
+	namespaceId?: string;
 }
 
 export type InternalEventHandler<TPayload> = (data: TPayload) => void | Promise<void>;
@@ -127,9 +130,9 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 		options: SubscribeOptions
 	): () => void {
 		const eventKey = event;
-		const sessionKey = options.sessionId ?? GLOBAL_SESSION_KEY;
+		const sessionKey = options.sessionId ?? options.namespaceId ?? GLOBAL_SESSION_KEY;
 
-		if (options.sessionId === GLOBAL_SESSION_KEY) {
+		if ((options.sessionId ?? options.namespaceId) === GLOBAL_SESSION_KEY) {
 			throw new Error(
 				`'${GLOBAL_SESSION_KEY}' is a reserved session key and cannot be used as an explicit sessionId`
 			);
@@ -191,7 +194,7 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 			return { delivered: 0, failures: [] };
 		}
 
-		const sessionId = data.sessionId;
+		const sessionId = data.sessionId ?? data.namespaceId ?? GLOBAL_SESSION_KEY;
 		const failures: HandlerFailure[] = [];
 		let delivered = 0;
 
@@ -337,7 +340,8 @@ export function createInternalEventBus<
  * Always carries `sessionId: 'global'` — settings are application-wide.
  */
 export interface SettingsUpdatedEvent {
-	sessionId: string;
+	sessionId?: string;
+	namespaceId?: string;
 	settings: GlobalSettings;
 }
 
@@ -512,7 +516,8 @@ export interface SpaceWorkflowRunBlockedEvent {
 
 /** A previously-terminal workflow run has been reopened back to `in_progress`. */
 export interface SpaceWorkflowRunReopenedEvent {
-	sessionId: string;
+	sessionId?: string;
+	namespaceId?: string;
 	spaceId: string;
 	runId: string;
 	fromStatus: 'done' | 'cancelled';
@@ -601,7 +606,10 @@ export interface SpaceEvents {
  * migrated continue to flow through DaemonHub (`createDaemonHub`) and the
  * compatibility `DaemonEventMap`.
  */
-type InternalEventBusPayload = { sessionId: string } & Record<string, unknown>;
+type InternalEventBusPayload = { sessionId?: string; namespaceId?: string } & Record<
+	string,
+	unknown
+>;
 
 interface AgentControlEvents {
 	'model.switchRequest': { sessionId: string; model: string; provider: string };

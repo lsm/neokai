@@ -85,7 +85,10 @@ import {
 	type TaskAgentToolsConfig,
 } from '../../../../src/lib/space/tools/task-agent-tools.ts';
 import type { Space, SpaceWorkflow, SpaceTask } from '@neokai/shared';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub.ts';
+import type {
+	DaemonInternalEventMap,
+	InternalEventBus,
+} from '../../../../src/lib/internal-event-bus.ts';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -314,28 +317,22 @@ function makeConfig(
 }
 
 // ---------------------------------------------------------------------------
-// Mock DaemonHub helper
+// Mock InternalEventBus helper
 // ---------------------------------------------------------------------------
 
-interface MockDaemonHub {
-	hub: DaemonHub;
+interface MockInternalEventBus {
+	bus: InternalEventBus<DaemonInternalEventMap>;
 	emittedEvents: Array<{ name: string; payload: Record<string, unknown> }>;
 }
 
-function makeMockDaemonHub(): MockDaemonHub {
+function makeMockInternalEventBus(): MockInternalEventBus {
 	const emittedEvents: Array<{ name: string; payload: Record<string, unknown> }> = [];
-	const hub = {
-		// Synchronous recording so tests don't need setTimeout to flush async microtasks.
-		// Returns Promise.resolve() to satisfy the async signature.
-		emit: mock((name: string, payload: Record<string, unknown>) => {
+	const bus = {
+		publishAsync: mock((name: string, payload: Record<string, unknown>) => {
 			emittedEvents.push({ name, payload });
-			return Promise.resolve();
 		}),
-		on: mock(() => () => {}),
-		off: mock(() => {}),
-		once: mock(async () => {}),
-	} as unknown as DaemonHub;
-	return { hub, emittedEvents };
+	} as unknown as InternalEventBus<DaemonInternalEventMap>;
+	return { bus, emittedEvents };
 }
 
 // ---------------------------------------------------------------------------
@@ -1143,13 +1140,13 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 		);
 		const pendingRepo = new PendingAgentMessageRepository(ctx.db);
 
-		const { hub, emittedEvents } = makeMockDaemonHub();
+		const { bus, emittedEvents } = makeMockInternalEventBus();
 		const queuedRecords: Array<{ id: string; targetAgentName: string }> = [];
 
 		const config: TaskAgentToolsConfig = {
 			...makeConfig(ctx, mainTask.id, run.id),
 			pendingMessageRepo: pendingRepo,
-			daemonHub: hub,
+			internalEventBus: bus,
 			onMessageQueued: (rec) =>
 				queuedRecords.push({ id: rec.id, targetAgentName: rec.targetAgentName }),
 		};
@@ -1172,7 +1169,7 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 		expect(pending).toHaveLength(1);
 		expect(pending[0].message).toContain('ping');
 
-		// Observability: onMessageQueued hook fires + DaemonHub event is emitted.
+		// Observability: onMessageQueued hook fires + InternalEventBus event is emitted.
 		expect(queuedRecords).toHaveLength(1);
 		expect(queuedRecords[0].targetAgentName).toBe('reviewer');
 		const queuedEvent = emittedEvents.find((e) => e.name === 'space.pendingMessage.queued');
@@ -1891,7 +1888,7 @@ describe('createTaskAgentToolHandlers — update_task', () => {
 	});
 
 	test('emits space.task.updated event on success', async () => {
-		const { hub, emittedEvents } = makeMockDaemonHub();
+		const { bus, emittedEvents } = makeMockInternalEventBus();
 		const mainTask = ctx.taskRepo.createTask({
 			spaceId: ctx.spaceId,
 			title: 'Original',
@@ -1900,7 +1897,7 @@ describe('createTaskAgentToolHandlers — update_task', () => {
 		const config = makeConfig(ctx, mainTask.id, 'run-1');
 		const handlers = createTaskAgentToolHandlers({
 			...config,
-			daemonHub: hub,
+			internalEventBus: bus,
 		});
 
 		await handlers.update_task({

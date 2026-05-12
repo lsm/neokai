@@ -4,7 +4,7 @@
  * These handlers run real git subprocesses, so the tests spin up a temporary
  * git repo under /tmp, create commits, stage uncommitted changes, and then
  * invoke the handlers against that repo. They also verify the handlers
- * correctly upsert cache rows and emit DaemonHub events.
+ * correctly upsert cache rows and publish InternalEventBus events.
  */
 
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
@@ -26,7 +26,10 @@ import type { SpaceWorkflowRunRepository } from '../../../../src/storage/reposit
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-worktree-manager';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import {
+	InternalEventBus,
+	type DaemonInternalEventMap,
+} from '../../../../src/lib/internal-event-bus';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
 
 const RUN_ID = 'run-1';
@@ -47,7 +50,7 @@ function makeRepo(root: string): string {
 function makeDeps(overrides: {
 	worktreePath: string | null;
 	db: Database;
-	emit?: ReturnType<typeof mock>;
+	publishAsync?: ReturnType<typeof mock>;
 }) {
 	const cacheRepo = new WorkflowRunArtifactCacheRepository(overrides.db);
 	const workflowRunRepo = {
@@ -95,8 +98,10 @@ function makeDeps(overrides: {
 	const spaceWorktreeManager = {
 		getTaskWorktreePath: mock(async () => overrides.worktreePath),
 	} as unknown as SpaceWorktreeManager;
-	const emit = overrides.emit ?? mock(async () => {});
-	const daemonHub = { emit } as unknown as DaemonHub;
+	const publishAsync = overrides.publishAsync ?? mock(() => {});
+	const internalEventBus = {
+		publishAsync,
+	} as unknown as InternalEventBus<DaemonInternalEventMap>;
 
 	return {
 		deps: {
@@ -105,9 +110,9 @@ function makeDeps(overrides: {
 			spaceTaskRepo,
 			spaceManager,
 			spaceWorktreeManager,
-			daemonHub,
+			internalEventBus,
 		},
-		emit,
+		publishAsync,
 		cacheRepo,
 	};
 }
@@ -147,7 +152,7 @@ describe('space-workflow-run-artifact.handler', () => {
 			// Modify a tracked file so `git diff HEAD --numstat` has content.
 			// (Untracked files do not show up in `git diff HEAD`.)
 			writeFileSync(join(repoPath, 'README.md'), 'hello\nnew line\n');
-			const { deps, emit, cacheRepo } = makeDeps({ worktreePath: repoPath, db });
+			const { deps, publishAsync, cacheRepo } = makeDeps({ worktreePath: repoPath, db });
 
 			const result = await handleSyncGateArtifacts({ runId: RUN_ID, taskId: TASK_ID }, deps);
 
@@ -157,7 +162,7 @@ describe('space-workflow-run-artifact.handler', () => {
 			expect(row?.data).toMatchObject({ isGitRepo: true });
 			const data = row?.data as { files: unknown[] };
 			expect(data.files.length).toBeGreaterThan(0);
-			expect(emit).toHaveBeenCalledWith(
+			expect(publishAsync).toHaveBeenCalledWith(
 				'space.artifactCache.updated',
 				expect.objectContaining({
 					runId: RUN_ID,

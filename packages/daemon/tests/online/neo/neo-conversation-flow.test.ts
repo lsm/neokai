@@ -17,7 +17,7 @@
  * NEOKAI_USE_DEV_PROXY=1 for mocked SDK responses.
  *
  * Run locally:
- *   NEOKAI_ENABLE_NEO_AGENT=1 NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/neo/neo-conversation-flow.test.ts
+ *   cd packages/daemon && NEOKAI_ENABLE_NEO_AGENT=1 NEOKAI_USE_DEV_PROXY=1 bun test ./tests/online/neo/neo-conversation-flow.test.ts
  *
  * Note on activity logging:
  *   The neo_activity_log table is populated by NeoActivityLogger when Neo action

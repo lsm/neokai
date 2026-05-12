@@ -295,7 +295,7 @@ export function setupSpaceWorkflowHandlers(
 
 		const workflow = workflowManager.createWorkflow(params);
 
-		// sessionId: 'global' — spaceWorkflow.* events are global broadcast events,
+		// namespaceId: 'global', sessionId: 'global' — spaceWorkflow.* events are global broadcast events,
 		// not channel-scoped. The SpaceStore (M5) will subscribe globally and filter by spaceId.
 		internalEventBus
 			.publish('spaceWorkflow.created', {

@@ -56,7 +56,6 @@ import { evaluateGate, type GateEvalResult, type GateScriptExecutorFn } from './
 import type { GateScriptContext } from './gate-script-executor';
 import { executeGateScript } from './gate-script-executor';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
-import type { NotificationSink, SpaceNotificationEvent } from './notification-sink';
 import type {
 	InternalEventBus,
 	DaemonInternalEventMap,
@@ -78,6 +77,21 @@ const log = new Logger('channel-router');
 export interface GateResult {
 	allowed: boolean;
 	reason?: string;
+}
+
+/**
+ * Internal event shape published by `ChannelRouter` when a terminal workflow
+ * run is reopened. Kept private to this module — external consumers should
+ * subscribe to `space.workflowRun.reopened` on `InternalEventBus` instead.
+ */
+interface WorkflowRunReopenedEvent {
+	kind: 'workflow_run_reopened';
+	spaceId: string;
+	runId: string;
+	fromStatus: 'done' | 'cancelled';
+	reason: string;
+	by: string;
+	timestamp: string;
 }
 
 /**
@@ -239,22 +253,12 @@ export interface ChannelRouterConfig {
 	 */
 	cancelSessionById?: (sessionId: string) => void;
 	/**
-	 * Optional notification sink for surfacing runtime events (e.g.
-	 * `workflow_run_reopened`). When omitted, the router silently skips
-	 * notification emission — appropriate for tests and other standalone uses.
+	 * Optional InternalEventBus for publishing typed domain events such as
+	 * `space.workflowRun.reopened`. When omitted, the router silently skips
+	 * event emission — appropriate for tests and other standalone uses.
 	 *
-	 * Failures from `notify()` are caught and logged; notification errors never
+	 * Failures from `publish()` are caught and logged; bus errors never
 	 * propagate into message delivery / activation paths.
-	 *
-	 * @deprecated Use `internalEventBus` instead. NotificationSink is a short-lived
-	 * compatibility adapter. See M6 migration in internal-event-command-query-architecture.md.
-	 */
-	notificationSink?: NotificationSink;
-	/**
-	 * Optional InternalEventBus for publishing domain events. When provided,
-	 * ChannelRouter publishes typed events alongside the legacy NotificationSink path.
-	 *
-	 * This is the preferred integration point for M6+.
 	 */
 	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 	/**
@@ -1219,80 +1223,26 @@ export class ChannelRouter {
 	}
 
 	/**
-	 * Invoke the configured notification sink and optionally publish to
-	 * InternalEventBus, swallowing any errors so a faulty consumer cannot
-	 * break message delivery or node activation.
+	 * Publish a `workflow_run_reopened` event to the configured InternalEventBus.
 	 *
-	 * When no sink is configured (e.g. unit tests), this is a no-op.
+	 * Errors are caught and swallowed so a faulty subscriber cannot break
+	 * message delivery or node activation. When no bus is configured (e.g. unit
+	 * tests), this is a no-op.
 	 */
-	private async safeNotify(event: SpaceNotificationEvent): Promise<void> {
-		// New path — publish to InternalEventBus FIRST so bus subscribers
-		// are never delayed by a slow or failing legacy sink.
-		if (this.config.internalEventBus) {
-			const mapped = this.mapNotificationEventToInternalEvent(event);
-			if (mapped) {
-				this.publishToInternalEventBus(mapped.event, mapped.payload);
-			}
-		}
-
-		// Legacy path — keep until all subscribers migrate off NotificationSink.
-		if (!this.config.notificationSink) return;
-		try {
-			await this.config.notificationSink.notify(event);
-		} catch {
-			// Intentionally swallow — the runtime must remain resilient to
-			// consumer failures. A separate telemetry layer can log these.
-		}
-	}
-
-	/**
-	 * Type-safe helper that publishes a mapped event to InternalEventBus.
-	 *
-	 * Uses a generic helper to preserve the correlated event→payload type
-	 * relationship without an unsafe cast.
-	 */
-	private publishToInternalEventBus<K extends keyof DaemonInternalEventMap & string>(
-		event: K,
-		payload: DaemonInternalEventMap[K]
-	): void {
+	private async safeNotify(event: WorkflowRunReopenedEvent): Promise<void> {
 		if (!this.config.internalEventBus) return;
 		try {
-			// All mapped events carry sessionId and satisfy InternalEventPayload.
-			this.config.internalEventBus.publishAsync(
-				event,
-				payload as DaemonInternalEventMap[K] & InternalEventPayload
-			);
+			await this.config.internalEventBus.publish('space.workflowRun.reopened', {
+				namespaceId: 'global',
+				spaceId: event.spaceId,
+				runId: event.runId,
+				fromStatus: event.fromStatus,
+				reason: event.reason,
+				by: event.by,
+				timestamp: event.timestamp,
+			} satisfies DaemonInternalEventMap['space.workflowRun.reopened'] & InternalEventPayload);
 		} catch {
 			// Swallow — bus errors must not break message delivery.
-		}
-	}
-
-	/**
-	 * Map a legacy NotificationSink event to a typed InternalEventBus event.
-	 *
-	 * Returns `null` for events that don't have a corresponding internal event.
-	 */
-	private mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
-		event: keyof DaemonInternalEventMap;
-		payload: DaemonInternalEventMap[keyof DaemonInternalEventMap];
-	} | null {
-		const sessionId = 'global';
-		switch (event.kind) {
-			case 'workflow_run_reopened':
-				return {
-					event: 'space.workflowRun.reopened',
-					payload: {
-						sessionId,
-						spaceId: event.spaceId,
-						runId: event.runId,
-						fromStatus: event.fromStatus,
-						reason: event.reason,
-						by: event.by,
-						timestamp: event.timestamp,
-					},
-				};
-			default:
-				return null;
 		}
 	}
 }

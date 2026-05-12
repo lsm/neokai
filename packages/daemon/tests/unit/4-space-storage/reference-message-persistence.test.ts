@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, Session } from '@neokai/shared';
 import type { Database } from '../../../src/storage/database';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { MessagePersistence } from '../../../src/lib/session/message-persistence';
 import { ReferenceResolver } from '../../../src/lib/session/reference-resolver';
 import type { SessionCache } from '../../../src/lib/session/session-cache';
@@ -246,6 +247,11 @@ describe('MessagePersistence with ReferenceResolver', () => {
 	let mockDb: Database;
 	let mockMessageHub: MessageHub;
 	let mockDaemonHub: DaemonHub;
+	const mockInternalEventBus = {
+		publish: mock(async () => {}),
+		publishAsync: mock(() => {}),
+		subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+	} as unknown as InternalEventBus<any>;
 	let mockSession: Session;
 	let mockAgentSession: {
 		getSessionData: ReturnType<typeof mock>;
@@ -293,7 +299,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 			mockSessionCache,
 			mockDb,
 			mockMessageHub,
-			mockDaemonHub
+			mockInternalEventBus
 		);
 
 		await persistence.persist({
@@ -326,7 +332,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 			mockSessionCache,
 			mockDb,
 			mockMessageHub,
-			mockDaemonHub,
+			mockInternalEventBus,
 			resolver
 		);
 
@@ -374,7 +380,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 			mockSessionCache,
 			mockDb,
 			mockMessageHub,
-			mockDaemonHub,
+			mockInternalEventBus,
 			resolver
 		);
 
@@ -413,7 +419,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 			mockSessionCache,
 			mockDb,
 			mockMessageHub,
-			mockDaemonHub,
+			mockInternalEventBus,
 			resolver
 		);
 
@@ -460,7 +466,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 			mockSessionCache,
 			mockDb,
 			mockMessageHub,
-			mockDaemonHub,
+			mockInternalEventBus,
 			badResolver
 		);
 
@@ -510,7 +516,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
 			mockSessionCache,
 			mockDb,
 			mockMessageHub,
-			mockDaemonHub,
+			mockInternalEventBus,
 			resolver
 		);
 

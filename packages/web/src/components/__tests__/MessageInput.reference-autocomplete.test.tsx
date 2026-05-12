@@ -152,6 +152,15 @@ describe('MessageInput reference autocomplete', () => {
 		mockCommandHandleKeyDown.mockReturnValue(false);
 		mockCommandHandleKeyDown.mockClear();
 		capturedOnSelect = null;
+		document.documentElement.classList.remove('keyboard-open');
+		document.querySelectorAll('[data-messages-container]').forEach((node) => node.remove());
+		document.querySelectorAll('.chat-footer').forEach((node) => node.remove());
+		Object.defineProperty(navigator, 'userAgent', {
+			configurable: true,
+			value:
+				'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36',
+		});
+		Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 0 });
 
 		Object.defineProperty(window, 'matchMedia', {
 			writable: true,
@@ -161,6 +170,9 @@ describe('MessageInput reference autocomplete', () => {
 
 	afterEach(() => {
 		cleanup();
+		document.documentElement.classList.remove('keyboard-open');
+		document.querySelectorAll('[data-messages-container]').forEach((node) => node.remove());
+		document.querySelectorAll('.chat-footer').forEach((node) => node.remove());
 	});
 
 	function renderInput(onSend = vi.fn(async () => {})) {

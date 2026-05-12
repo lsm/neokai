@@ -20,6 +20,7 @@ import {
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-handler';
@@ -46,6 +47,8 @@ describe('QueryLifecycleManager', () => {
 	let getInterruptPromiseSpy: ReturnType<typeof mock>;
 	let handleErrorSpy: ReturnType<typeof mock>;
 	let clearModelsCacheSpy: ReturnType<typeof mock>;
+	let internalPublishAsyncSpy: ReturnType<typeof mock>;
+	let internalPublishSpy: ReturnType<typeof mock>;
 
 	function createMockContext(
 		overrides: Partial<QueryLifecycleManagerContext> = {}
@@ -89,6 +92,8 @@ describe('QueryLifecycleManager', () => {
 		getInterruptPromiseSpy = mock(() => null);
 		handleErrorSpy = mock(async () => {});
 		clearModelsCacheSpy = mock(async () => {});
+		internalPublishAsyncSpy = mock(async () => {});
+		internalPublishSpy = mock(async () => {});
 
 		startStreamingCalled = false;
 		return {
@@ -109,6 +114,11 @@ describe('QueryLifecycleManager', () => {
 			daemonHub: {
 				emit: emitSpy,
 			} as unknown as DaemonHub,
+			internalEventBus: {
+				publish: internalPublishSpy,
+				publishAsync: internalPublishAsyncSpy,
+				subscribe: mock(() => () => {}),
+			} as unknown as InternalEventBus<any>,
 			stateManager: {
 				setIdle: setIdleSpy,
 				setQueued: setQueuedSpy,
@@ -612,7 +622,9 @@ describe('QueryLifecycleManager', () => {
 
 			await manager.reset();
 
-			expect(emitSpy).toHaveBeenCalledWith('session.errorClear', { sessionId: 'test-session' });
+			expect(emitSpy).toHaveBeenCalledWith('session.errorClear', {
+				sessionId: 'test-session',
+			});
 		});
 
 		test('skips restart when option is false', async () => {
@@ -873,7 +885,10 @@ describe('QueryLifecycleManager', () => {
 
 			await manager.startQueryAndEnqueue('msg-123', 'Hello');
 
-			expect(emitSpy).toHaveBeenCalledWith('message.sent', { sessionId: 'test-session' });
+			expect(internalPublishAsyncSpy).toHaveBeenCalledWith('message.sent', {
+				namespaceId: 'global',
+				sessionId: 'test-session',
+			});
 		});
 
 		test('handles message content array', async () => {
@@ -900,7 +915,9 @@ describe('QueryLifecycleManager', () => {
 				expect(saveNeokaiActionMessageSpy).toHaveBeenCalled();
 				expect(setQueuedSpy).toHaveBeenCalledWith('msg-123');
 				expect(enqueueSpy).not.toHaveBeenCalled();
-				expect(emitSpy).not.toHaveBeenCalledWith('message.sent', { sessionId: 'test-session' });
+				expect(internalPublishAsyncSpy).not.toHaveBeenCalledWith('message.sent', {
+					sessionId: 'test-session',
+				});
 			} finally {
 				delete process.env.TEST_SDK_SESSION_DIR;
 				rmSync(tmpTestDir, { recursive: true, force: true });
@@ -1011,11 +1028,15 @@ describe('QueryLifecycleManager', () => {
 
 			expect(resetSpy).toHaveBeenCalledTimes(1);
 			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-123'], 'failed');
-			expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
-				sessionId: 'test-session',
-				messageIds: ['db-msg-123'],
-				status: 'failed',
-			});
+			expect(internalPublishSpy).toHaveBeenCalledWith(
+				'messages.statusChanged',
+				expect.objectContaining({
+					namespaceId: 'test-session',
+					sessionId: 'test-session',
+					messageIds: ['db-msg-123'],
+					status: 'failed',
+				})
+			);
 			expect(setIdleSpy).toHaveBeenCalled();
 		});
 	});

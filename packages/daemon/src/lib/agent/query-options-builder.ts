@@ -61,8 +61,6 @@ import { getCoordinatorAgents } from './coordinator-agents';
 import { createLoopDetectorHooks } from './loop-detector-hook';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 
-export const CODEX_BRIDGE_AUTO_COMPACT_WINDOW = 1_000_000;
-
 /**
  * Compile a single declarative tool guard into a PreToolUse hook callback.
  * The guard specifies a tool matcher, a regex pattern against the tool input,
@@ -193,7 +191,8 @@ const NATIVE_CONTEXT_WINDOW_PROVIDERS = ['anthropic', 'anthropic-copilot'];
 /**
  * Provider-specific SDK settings overrides.
  *
- * For the Codex bridge, returns a hardcoded 1M autoCompactWindow.
+ * For the Codex bridge, looks up the model's actual context window so the
+ * SDK auto-compacts at the right threshold.
  * For other non-native providers, the caller should supply the model's
  * actual contextWindow so the SDK auto-compacts at the right threshold.
  */
@@ -207,16 +206,13 @@ export function buildProviderSettings(
 			throw new Error(`Unknown Codex model auto-compact window: ${modelId ?? 'missing model'}`);
 		}
 		try {
-			requireModelContextWindow(modelId);
+			const actualContextWindow = requireModelContextWindow(modelId);
+			return {
+				autoCompactWindow: actualContextWindow,
+			};
 		} catch {
 			throw new Error(`Unknown Codex model auto-compact window: ${modelId}`);
 		}
-
-		return {
-			// Keep SDK-driven compaction disabled for the Codex bridge. The bridge uses
-			// a single persistent Codex turn per session and rejects overlapping turns.
-			autoCompactWindow: CODEX_BRIDGE_AUTO_COMPACT_WINDOW,
-		};
 	}
 
 	// For non-native providers where the SDK can't discover the actual context
@@ -471,10 +467,10 @@ export class QueryOptionsBuilder {
 		};
 
 		// ============ Space Chat Session Restrictions ============
-		// Space chat sessions are read-only coordinators — they can read files and run
-		// diagnostics but must not create or modify files.  File editing tools
-		// (Write/Edit/NotebookEdit) are excluded; the agent uses its space-agent-tools
-		// MCP server for all coordination operations.
+		// Space chat sessions are read-only coordinators — they can read files, run
+		// diagnostics, and spawn read-only SDK subagents for lightweight investigation.
+		// File editing tools (Write/Edit/NotebookEdit) are excluded; the agent uses its
+		// space-agent-tools MCP server for all coordination operations.
 		if (this.ctx.session.type === 'space_chat') {
 			const spaceAllowedBuiltinTools = [
 				'Read',
@@ -485,15 +481,11 @@ export class QueryOptionsBuilder {
 				'WebSearch',
 				'ToolSearch',
 				'AskUserQuestion',
-			];
-			const spaceRestrictedBuiltinTools = [
 				'Task',
 				'TaskOutput',
 				'TaskStop',
-				'Edit',
-				'Write',
-				'NotebookEdit',
 			];
+			const spaceRestrictedBuiltinTools = ['Edit', 'Write', 'NotebookEdit'];
 
 			// Space chat must not use Claude Code preset prompt.
 			const systemPrompt = queryOptions.systemPrompt;

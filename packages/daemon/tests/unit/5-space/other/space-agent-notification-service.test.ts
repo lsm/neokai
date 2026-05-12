@@ -556,65 +556,9 @@ describe('SpaceAgentNotificationService', () => {
 		});
 	});
 
-	describe('compatibility with SessionNotificationSink output', () => {
-		it('produces identical output for task_blocked events', async () => {
-			const { formatEventMessage } = await import(
-				'../../../../src/lib/space/runtime/session-notification-sink'
-			);
-			const { factory, bus } = makeService();
-
-			await bus.publish('space.task.blocked', {
-				sessionId: 'global',
-				spaceId: SPACE_ID,
-				taskId: 'task-1',
-				reason: 'Agent error',
-				timestamp: TIMESTAMP,
-			});
-
-			const internalMessage = factory.calls[0].message;
-
-			const legacyEvent = {
-				kind: 'task_blocked' as const,
-				spaceId: SPACE_ID,
-				taskId: 'task-1',
-				reason: 'Agent error',
-				timestamp: TIMESTAMP,
-			};
-			const legacyMessage = formatEventMessage(legacyEvent, 1);
-
-			expect(internalMessage).toBe(legacyMessage);
-		});
-
-		it('produces identical output for workflow_run_completed events', async () => {
-			const { formatEventMessage } = await import(
-				'../../../../src/lib/space/runtime/session-notification-sink'
-			);
-			const { factory, bus } = makeService();
-
-			await bus.publish('space.workflowRun.completed', {
-				sessionId: 'global',
-				spaceId: SPACE_ID,
-				runId: 'run-1',
-				status: 'done',
-				summary: 'All done',
-				timestamp: TIMESTAMP,
-			});
-
-			const internalMessage = factory.calls[0].message;
-
-			const legacyEvent = {
-				kind: 'workflow_run_completed' as const,
-				spaceId: SPACE_ID,
-				runId: 'run-1',
-				status: 'done' as const,
-				summary: 'All done',
-				timestamp: TIMESTAMP,
-			};
-			const legacyMessage = formatEventMessage(legacyEvent, 1);
-
-			expect(internalMessage).toBe(legacyMessage);
-		});
-	});
+	// Compatibility tests with SessionNotificationSink output removed — the
+	// session-notification-sink module has been deleted. The notification service
+	// is the sole publisher and its output format is verified by the tests above.
 });
 
 // ---------------------------------------------------------------------------

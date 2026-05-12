@@ -11,6 +11,7 @@ import {
 } from '../../../../src/lib/agent/ask-user-question-handler';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { PendingUserQuestion, AgentProcessingState, Session } from '@neokai/shared';
@@ -20,6 +21,11 @@ describe('AskUserQuestionHandler', () => {
 	let handler: AskUserQuestionHandler;
 	let mockStateManager: ProcessingStateManager;
 	let mockDaemonHub: DaemonHub;
+	const mockInternalEventBus = {
+		publish: emitSpy,
+		publishAsync: emitSpy,
+		subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+	} as unknown as InternalEventBus<any>;
 	let mockDb: Database;
 	let mockMessageQueue: MessageQueue;
 	let mockContext: AskUserQuestionHandlerContext;
@@ -103,6 +109,7 @@ describe('AskUserQuestionHandler', () => {
 			db: mockDb,
 			stateManager: mockStateManager,
 			daemonHub: mockDaemonHub,
+			internalEventBus: mockInternalEventBus,
 			messageQueue: mockMessageQueue,
 			ensureQueryStarted: ensureQueryStartedSpy,
 		};

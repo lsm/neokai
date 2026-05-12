@@ -3,22 +3,13 @@
  *
  * Listens to selected `SpaceEvents` on the `InternalEventBus` and formats them
  * into structured `[TASK_EVENT]` messages for injection into the Space Agent
- * session. This replaces the legacy `SessionNotificationSink` / `NotificationSink`
- * integration path.
- *
- * ## Migration note
- *
- * This service subscribes to `InternalEventBus` events (e.g. `space.task.blocked`,
- * `space.workflowRun.completed`) rather than receiving `SpaceNotificationEvent`
- * objects through `NotificationSink.notify()`. The formatting logic is kept
- * compatible with `SessionNotificationSink` so the Space Agent sees identical
- * messages.
+ * session.
  *
  * ## Subscribed events
  *
- * All events that previously flowed through `NotificationSink` are now handled
- * here. Events that do not require agent notification (e.g. internal bookkeeping)
- * are silently ignored.
+ * All events emitted by `SpaceRuntime` and `ChannelRouter` that require agent
+ * notification flow through here. Events that do not require agent notification
+ * (e.g. internal bookkeeping) are silently ignored.
  */
 
 import type { SpaceAutonomyLevel } from '@neokai/shared/types/space';
@@ -56,9 +47,6 @@ export interface SpaceAgentNotificationServiceConfig {
 /**
  * Production subscriber that turns Space runtime domain events into agent-facing
  * messages and injects them into the Space Agent session.
- *
- * Use this instead of `SessionNotificationSink` when wiring through
- * `InternalEventBus`.
  */
 export class SpaceAgentNotificationService {
 	private readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
@@ -220,7 +208,7 @@ export class SpaceAgentNotificationService {
 }
 
 // ---------------------------------------------------------------------------
-// Message formatters — kept compatible with SessionNotificationSink output.
+// Message formatters
 // ---------------------------------------------------------------------------
 
 function formatTaskBlocked(

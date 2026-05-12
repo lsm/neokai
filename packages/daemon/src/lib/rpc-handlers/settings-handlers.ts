@@ -68,7 +68,7 @@ export function registerSettingsHandlers(
 			}
 			// Emit event for StateManager to broadcast (global event)
 			internalEventBus.publishAsync('settings.updated', {
-				sessionId: 'global',
+				namespaceId: 'global',
 				settings: updated,
 			});
 
@@ -88,7 +88,7 @@ export function registerSettingsHandlers(
 		}
 		// Emit event for StateManager to broadcast (global event)
 		internalEventBus.publishAsync('settings.updated', {
-			sessionId: 'global',
+			namespaceId: 'global',
 			settings: data.settings,
 		});
 		return { success: true };
@@ -158,7 +158,7 @@ export function registerSettingsHandlers(
 		// already calls `reactiveDb.notifyChange('app_mcp_servers')` on every
 		// insert/update/delete; this event is for UI-level toast/status messaging.
 		internalEventBus.publishAsync('settings.updated', {
-			sessionId: 'global',
+			namespaceId: 'global',
 			settings: settingsManager.getGlobalSettings(),
 		});
 		return { results };

@@ -10,6 +10,7 @@ import {
 	type EventSubscriptionSetupContext,
 } from '../../../../src/lib/agent/event-subscription-setup';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Session } from '@neokai/shared';
 import type { ModelSwitchHandler } from '../../../../src/lib/agent/model-switch-handler';
 import type { InterruptHandler } from '../../../../src/lib/agent/interrupt-handler';
@@ -18,6 +19,11 @@ import type { QueryModeHandler } from '../../../../src/lib/agent/query-mode-hand
 describe('EventSubscriptionSetup', () => {
 	let setup: EventSubscriptionSetup;
 	let mockDaemonHub: DaemonHub;
+	const mockInternalEventBus = {
+		publish: emitSpy,
+		publishAsync: emitSpy,
+		subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+	} as unknown as InternalEventBus<any>;
 	let mockContext: EventSubscriptionSetupContext;
 
 	let onSpy: ReturnType<typeof mock>;
@@ -79,6 +85,7 @@ describe('EventSubscriptionSetup', () => {
 		mockContext = {
 			session: mockSession,
 			daemonHub: mockDaemonHub,
+			internalEventBus: mockInternalEventBus,
 			modelSwitchHandler: mockModelSwitchHandler,
 			interruptHandler: mockInterruptHandler,
 			queryModeHandler: mockQueryModeHandler,
