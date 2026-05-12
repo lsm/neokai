@@ -213,6 +213,27 @@ describe('ExternalEventExtensionManager', () => {
 		expect(extension.stops).toBe(1);
 	});
 
+	test('waits for an in-flight stop before starting again', async () => {
+		const { extension, releaseStop } = createBlockedStopExtension('github');
+		manager.register(extension);
+		await config.setGlobalConfig('github', {
+			source: 'github',
+			globallyEnabled: true,
+			capabilities: { webhooks: true },
+		});
+
+		await manager.startExtension('github', context);
+		const stop = manager.stopExtension('github');
+		await releaseStop.waitUntilBlocked();
+		const start = manager.startExtension('github', context);
+
+		releaseStop.resolve();
+		await Promise.all([stop, start]);
+
+		expect(extension.starts).toBe(2);
+		expect(extension.stops).toBe(1);
+	});
+
 	test('removes registered routes for source-owned route arrays on unregister', () => {
 		const routes = [
 			{
@@ -338,6 +359,31 @@ describe('ExternalEventExtensionManager', () => {
 		manager.registerRoutes(routes, context);
 		manager.registerRoutes(routes, context);
 		expect(manager.getRegisteredRoutes()).toHaveLength(1);
+	});
+
+	test('throws when route array identity matches multiple extensions', () => {
+		const routes = [
+			{
+				method: 'POST' as const,
+				path: '/webhooks/events',
+				handle: async () => new Response('ok'),
+			},
+		];
+		manager.register({
+			sourceId: 'github',
+			routes,
+			async start() {},
+			async stop() {},
+		});
+		manager.register({
+			sourceId: 'slack',
+			routes,
+			async start() {},
+			async stop() {},
+		});
+
+		expect(() => manager.registerRoutes(routes, context)).toThrow('shared by multiple sources');
+		expect(manager.getRegisteredRoutes()).toHaveLength(0);
 	});
 
 	test('throws when cloned route signatures match multiple extensions', () => {
@@ -548,18 +594,10 @@ function createExtension(sourceId: string): TestExtension {
 
 function createBlockedStartExtension(sourceId: string): {
 	extension: TestExtension;
-	releaseStart: BlockedStartHandle;
+	releaseStart: BlockedLifecycleHandle;
 } {
 	let resolveStart: (() => void) | undefined;
-	const releaseStart: BlockedStartHandle = {
-		resolve() {
-			if (!resolveStart) throw new Error('Start is not blocked yet');
-			resolveStart();
-		},
-		async waitUntilBlocked() {
-			await waitFor(() => resolveStart !== undefined);
-		},
-	};
+	const releaseStart = createBlockedLifecycleHandle(() => resolveStart);
 	return {
 		extension: {
 			sourceId,
@@ -579,7 +617,47 @@ function createBlockedStartExtension(sourceId: string): {
 	};
 }
 
-interface BlockedStartHandle {
+function createBlockedStopExtension(sourceId: string): {
+	extension: TestExtension;
+	releaseStop: BlockedLifecycleHandle;
+} {
+	let resolveStop: (() => void) | undefined;
+	const releaseStop = createBlockedLifecycleHandle(() => resolveStop);
+	return {
+		extension: {
+			sourceId,
+			starts: 0,
+			stops: 0,
+			async start() {
+				this.starts += 1;
+			},
+			async stop() {
+				this.stops += 1;
+				await new Promise<void>((resolve) => {
+					resolveStop = resolve;
+				});
+			},
+		},
+		releaseStop,
+	};
+}
+
+function createBlockedLifecycleHandle(
+	getResolver: () => (() => void) | undefined
+): BlockedLifecycleHandle {
+	return {
+		resolve() {
+			const resolver = getResolver();
+			if (!resolver) throw new Error('Lifecycle operation is not blocked yet');
+			resolver();
+		},
+		async waitUntilBlocked() {
+			await waitFor(() => getResolver() !== undefined);
+		},
+	};
+}
+
+interface BlockedLifecycleHandle {
 	resolve(): void;
 	waitUntilBlocked(): Promise<void>;
 }

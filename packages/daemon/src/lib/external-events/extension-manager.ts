@@ -11,6 +11,7 @@ export class ExternalEventExtensionManager {
 	private extensions = new Map<string, ExternalEventExtension>();
 	private started = new Map<string, ExternalEventExtensionContext>();
 	private starting = new Map<string, Promise<void>>();
+	private stopping = new Map<string, Promise<void>>();
 	private routeHandlers: RegisteredRoute[] = [];
 	private rpcUnsubscribers = new Map<string, (() => void)[]>();
 	private rpcMethodOwners = new Map<string, string>();
@@ -41,6 +42,10 @@ export class ExternalEventExtensionManager {
 	}
 
 	async startExtension(sourceId: string, context: ExternalEventExtensionContext): Promise<void> {
+		const existingStop = this.stopping.get(sourceId);
+		if (existingStop) {
+			await existingStop;
+		}
 		if (this.started.has(sourceId)) return;
 		const existingStart = this.starting.get(sourceId);
 		if (existingStart) {
@@ -58,23 +63,18 @@ export class ExternalEventExtensionManager {
 	}
 
 	async stopExtension(sourceId: string): Promise<void> {
-		const inFlightStart = this.starting.get(sourceId);
-		if (inFlightStart) {
-			try {
-				await inFlightStart;
-			} catch {
-				// Best-effort stop should not fail just because an overlapping start failed.
-			}
+		const existingStop = this.stopping.get(sourceId);
+		if (existingStop) {
+			await existingStop;
+			return;
 		}
 
-		const extension = this.extensions.get(sourceId);
-		if (!extension || !this.started.has(sourceId)) return;
+		const stopPromise = this.runStopExtension(sourceId);
+		this.stopping.set(sourceId, stopPromise);
 		try {
-			await extension.stop();
+			await stopPromise;
 		} finally {
-			this.started.delete(sourceId);
-			this.unregisterRpcHandlers(sourceId);
-			this.unregisterRoutes(sourceId);
+			this.stopping.delete(sourceId);
 		}
 	}
 
@@ -164,6 +164,27 @@ export class ExternalEventExtensionManager {
 		this.started.set(sourceId, context);
 	}
 
+	private async runStopExtension(sourceId: string): Promise<void> {
+		const inFlightStart = this.starting.get(sourceId);
+		if (inFlightStart) {
+			try {
+				await inFlightStart;
+			} catch {
+				// Best-effort stop should not fail just because an overlapping start failed.
+			}
+		}
+
+		const extension = this.extensions.get(sourceId);
+		if (!extension || !this.started.has(sourceId)) return;
+		try {
+			await extension.stop();
+		} finally {
+			this.started.delete(sourceId);
+			this.unregisterRpcHandlers(sourceId);
+			this.unregisterRoutes(sourceId);
+		}
+	}
+
 	private getRequiredExtension(sourceId: string): ExternalEventExtension {
 		const extension = this.extensions.get(sourceId);
 		if (!extension) {
@@ -190,10 +211,20 @@ export class ExternalEventExtensionManager {
 	}
 
 	private findSourceIdForRoutes(routes: readonly Route[]): string | undefined {
+		const identityMatchingSourceIds: string[] = [];
 		for (const extension of this.extensions.values()) {
 			if (isHttpExtension(extension) && extension.routes === routes) {
-				return extension.sourceId;
+				identityMatchingSourceIds.push(extension.sourceId);
 			}
+		}
+		if (identityMatchingSourceIds.length > 1) {
+			throw new Error(
+				`Cannot infer external event route owner: route array is shared by multiple sources ` +
+					`(${identityMatchingSourceIds.join(', ')}). Each extension must expose a distinct routes array.`
+			);
+		}
+		if (identityMatchingSourceIds.length === 1) {
+			return identityMatchingSourceIds[0];
 		}
 
 		const matchingSourceIds: string[] = [];
