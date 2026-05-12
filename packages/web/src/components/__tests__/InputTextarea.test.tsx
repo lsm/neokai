@@ -22,6 +22,7 @@ import { InputTextarea } from '../InputTextarea';
 describe('InputTextarea', () => {
 	beforeEach(() => {
 		cleanup();
+		document.documentElement.classList.remove('keyboard-open');
 	});
 
 	describe('Basic Rendering', () => {
@@ -49,6 +50,61 @@ describe('InputTextarea', () => {
 			);
 			const textarea = container.querySelector('textarea');
 			expect(textarea?.placeholder).toBe('Ask or make anything...');
+		});
+	});
+
+	describe('Auto-resize viewport safety', () => {
+		it('should scroll textarea into view when it grows while keyboard is open', () => {
+			document.documentElement.classList.add('keyboard-open');
+			const scrollIntoView = vi.fn();
+			const { container, rerender } = render(
+				<InputTextarea
+					content="one line"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+			const textarea = container.querySelector('textarea')!;
+			textarea.scrollIntoView = scrollIntoView;
+
+			Object.defineProperty(textarea, 'scrollHeight', { configurable: true, value: 80 });
+			rerender(
+				<InputTextarea
+					content="one line\ntwo lines"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', behavior: 'instant' });
+		});
+
+		it('should not scroll textarea into view when it grows without keyboard open', () => {
+			const scrollIntoView = vi.fn();
+			const { container, rerender } = render(
+				<InputTextarea
+					content="one line"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+			const textarea = container.querySelector('textarea')!;
+			textarea.scrollIntoView = scrollIntoView;
+
+			Object.defineProperty(textarea, 'scrollHeight', { configurable: true, value: 80 });
+			rerender(
+				<InputTextarea
+					content="one line\ntwo lines"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			expect(scrollIntoView).not.toHaveBeenCalled();
 		});
 	});
 

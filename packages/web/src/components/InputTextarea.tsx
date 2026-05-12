@@ -113,6 +113,7 @@ export function InputTextarea({
 }: InputTextareaProps) {
 	const internalTextareaRef = useRef<HTMLTextAreaElement>(null);
 	const textareaRef = externalTextareaRef ?? internalTextareaRef;
+	const previousTextareaHeightRef = useRef<number | null>(null);
 	const [isMultiline, setIsMultiline] = useState(false);
 
 	// Sync content prop to textarea DOM only when they differ
@@ -155,9 +156,17 @@ export function InputTextarea({
 		textarea.style.height = 'auto';
 		textarea.style.minHeight = '40px';
 		const newHeight = Math.min(Math.max(40, textarea.scrollHeight), 200);
+		const previousHeight = previousTextareaHeightRef.current;
 		textarea.style.height = `${newHeight}px`;
+		previousTextareaHeightRef.current = newHeight;
 		setIsMultiline(newHeight > 45);
 		onHeightChange?.(newHeight);
+
+		if (previousHeight !== null && newHeight > previousHeight) {
+			if (document.documentElement.classList.contains('keyboard-open')) {
+				textarea.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+			}
+		}
 	}, [content, onHeightChange]);
 
 	// Focus on mount
