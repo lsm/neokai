@@ -50,13 +50,12 @@ export class SessionConfigHandler {
 	 * For user-facing MCP configuration changes use `updateUserMcpServers` instead.
 	 */
 	async updateConfig(configUpdates: Partial<Session['config']>): Promise<void> {
-		const { session, db, internalEventBus } = this.ctx;
+		const { session, db } = this.ctx;
 
 		session.config = { ...session.config, ...configUpdates };
 		db.updateSession(session.id, { config: session.config });
 
-		await internalEventBus.publish('session.updated', {
-			namespaceId: session.id,
+		await this.ctx.daemonHub.emit('session.updated', {
 			sessionId: session.id,
 			source: 'config-update',
 			session: { config: session.config },
@@ -75,7 +74,7 @@ export class SessionConfigHandler {
 	 * Persists to DB and emits a `session.updated` event like `updateConfig`.
 	 */
 	async updateUserMcpServers(servers: Record<string, McpServerConfig>): Promise<void> {
-		const { session, db, internalEventBus } = this.ctx;
+		const { session, db } = this.ctx;
 
 		// Collect in-process (SDK-type) servers that must be preserved.
 		const existing = (session.config?.mcpServers ?? {}) as Record<string, McpServerConfig>;
@@ -93,8 +92,7 @@ export class SessionConfigHandler {
 		session.config = { ...session.config, mcpServers: merged };
 		db.updateSession(session.id, { config: session.config });
 
-		await internalEventBus.publish('session.updated', {
-			namespaceId: session.id,
+		await this.ctx.daemonHub.emit('session.updated', {
 			sessionId: session.id,
 			source: 'config-update',
 			session: { config: session.config },

@@ -622,8 +622,7 @@ describe('QueryLifecycleManager', () => {
 
 			await manager.reset();
 
-			expect(internalPublishSpy).toHaveBeenCalledWith('session.errorClear', {
-				namespaceId: 'global',
+			expect(emitSpy).toHaveBeenCalledWith('session.errorClear', {
 				sessionId: 'test-session',
 			});
 		});

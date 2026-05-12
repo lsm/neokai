@@ -10,6 +10,7 @@
 
 import type { AgentProcessingState, PendingUserQuestion } from '@neokai/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import type { DaemonHub } from '../daemon-hub';
 import type { SDKAssistantMessage, SDKMessage } from '@neokai/shared/sdk';
 import { isToolUseBlock } from '@neokai/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
@@ -27,6 +28,7 @@ export class ProcessingStateManager {
 
 	constructor(
 		private sessionId: string,
+		private daemonHub: DaemonHub,
 		private internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 		private db: Database
 	) {
@@ -201,8 +203,7 @@ export class ProcessingStateManager {
 
 		// Persist and broadcast
 		this.persistToDatabase();
-		await this.internalEventBus.publish('session.updated', {
-			namespaceId: this.sessionId,
+		await this.daemonHub.emit('session.updated', {
 			sessionId: this.sessionId,
 			source: 'processing-state',
 			processingState: this.processingState,
@@ -225,8 +226,7 @@ export class ProcessingStateManager {
 
 			// Persist and broadcast
 			this.persistToDatabase();
-			await this.internalEventBus.publish('session.updated', {
-				namespaceId: this.sessionId,
+			await this.daemonHub.emit('session.updated', {
 				sessionId: this.sessionId,
 				source: 'processing-state',
 				processingState: this.processingState,
@@ -270,8 +270,7 @@ export class ProcessingStateManager {
 
 		// Broadcast updated state via unified session.updated event
 		// Include processingState so StateManager can cache it (decoupled)
-		await this.internalEventBus.publish('session.updated', {
-			namespaceId: this.sessionId,
+		await this.daemonHub.emit('session.updated', {
 			sessionId: this.sessionId,
 			source: 'processing-state',
 			processingState: this.processingState,
@@ -338,8 +337,7 @@ export class ProcessingStateManager {
 
 		// Emit event via DaemonHub (StateManager caches processingState)
 		// Include data so StateManager doesn't need to fetch from us (decoupled)
-		await this.internalEventBus.publish('session.updated', {
-			namespaceId: this.sessionId,
+		await this.daemonHub.emit('session.updated', {
 			sessionId: this.sessionId,
 			source: 'processing-state',
 			processingState: newState,

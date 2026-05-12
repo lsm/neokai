@@ -356,7 +356,7 @@ export class AgentSession
 
 		// Initialize core components (order matters - some handlers depend on earlier ones)
 		this.messageQueue = new MessageQueue();
-		this.stateManager = new ProcessingStateManager(session.id, internalEventBus, db);
+		this.stateManager = new ProcessingStateManager(session.id, daemonHub, internalEventBus, db);
 		this.contextTracker = new ContextTracker(session.id, (contextInfo: ContextInfo) => {
 			this.session.metadata.lastContextInfo = contextInfo;
 			this.db.updateSession(this.session.id, { metadata: this.session.metadata });

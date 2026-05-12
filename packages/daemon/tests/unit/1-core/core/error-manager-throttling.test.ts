@@ -36,15 +36,13 @@ describe('ErrorManager - Error Throttling', () => {
 		daemonHub = createDaemonHub('test-hub');
 		await daemonHub.initialize();
 
-		// Create InternalEventBus and track emitted errors (now published here)
+		// Create InternalEventBus
 		internalEventBus = createDaemonInternalEventBus();
-		internalEventBus.subscribe(
-			'session.error',
-			(data: unknown) => {
-				broadcastedErrors.push(data);
-			},
-			{ subscriberName: 'test-throttling' }
-		);
+
+		// Track emitted errors via DaemonHub (session.error is emitted via daemonHub)
+		daemonHub.on('session.error', (_event: string, data: unknown) => {
+			broadcastedErrors.push(data);
+		});
 
 		errorManager = new ErrorManager(messageHub, daemonHub, internalEventBus);
 	});

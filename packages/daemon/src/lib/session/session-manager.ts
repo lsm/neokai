@@ -120,7 +120,8 @@ export class SessionManager {
 			config,
 			this.toolsConfigManager,
 			createAgentSession,
-			this.internalEventBus!
+			this.internalEventBus!,
+			this.daemonHub
 		);
 
 		// Initialize message persistence with @ reference resolver
@@ -254,8 +255,7 @@ export class SessionManager {
 				persistedSession
 			);
 
-			await this.internalEventBus!.publish('session.errorClear', {
-				namespaceId: sessionId,
+			await this.daemonHub.emit('session.errorClear', {
 				sessionId,
 			});
 

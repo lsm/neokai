@@ -72,7 +72,7 @@ export class SDKRuntimeConfig {
 	 * SDK API which is treated as on/off (0 = disabled, any value = adaptive) on Opus 4.6.
 	 */
 	async setMaxThinkingTokens(tokens: number | null): Promise<ConfigUpdateResult> {
-		const { session, db, internalEventBus, logger, queryObject, firstMessageReceived } = this.ctx;
+		const { session, db, logger, queryObject, firstMessageReceived } = this.ctx;
 
 		try {
 			// If query not running or transport not ready, just update config
@@ -94,8 +94,7 @@ export class SDKRuntimeConfig {
 			db.updateSession(session.id, { config: session.config });
 
 			// Emit event for UI update
-			await internalEventBus.publish('session.updated', {
-				namespaceId: session.id,
+			await this.ctx.daemonHub.emit('session.updated', {
 				sessionId: session.id,
 				source: 'thinking-tokens',
 				session: { config: session.config },
@@ -113,7 +112,7 @@ export class SDKRuntimeConfig {
 	 * Set permission mode at runtime
 	 */
 	async setPermissionMode(mode: string): Promise<ConfigUpdateResult> {
-		const { session, db, internalEventBus, logger, queryObject, firstMessageReceived } = this.ctx;
+		const { session, db, logger, queryObject, firstMessageReceived } = this.ctx;
 
 		try {
 			// If query not running or transport not ready, just update config
@@ -135,8 +134,7 @@ export class SDKRuntimeConfig {
 			db.updateSession(session.id, { config: session.config });
 
 			// Emit event for UI update
-			await internalEventBus.publish('session.updated', {
-				namespaceId: session.id,
+			await this.ctx.daemonHub.emit('session.updated', {
 				sessionId: session.id,
 				source: 'permission-mode',
 				session: { config: session.config },
@@ -178,7 +176,7 @@ export class SDKRuntimeConfig {
 	 * Update tools configuration and restart query to apply changes
 	 */
 	async updateToolsConfig(tools: Session['config']['tools']): Promise<ConfigUpdateResult> {
-		const { session, db, internalEventBus, logger } = this.ctx;
+		const { session, db, logger } = this.ctx;
 
 		try {
 			// 1. Update session config in memory and DB
@@ -193,8 +191,7 @@ export class SDKRuntimeConfig {
 			await this.refreshContextUsage();
 
 			// 3. Emit event for StateManager
-			await internalEventBus.publish('session.updated', {
-				namespaceId: session.id,
+			await this.ctx.daemonHub.emit('session.updated', {
 				sessionId: session.id,
 				source: 'config',
 				session: { config: session.config },
@@ -215,7 +212,7 @@ export class SDKRuntimeConfig {
 	 * Silently skips when there is no live query handle (e.g. pre-start).
 	 */
 	private async refreshContextUsage(): Promise<void> {
-		const { session, internalEventBus, contextTracker, queryObject, logger } = this.ctx;
+		const { session, contextTracker, queryObject, logger } = this.ctx;
 		if (!queryObject) return;
 
 		try {
@@ -224,8 +221,7 @@ export class SDKRuntimeConfig {
 			const contextInfo = await fetcher.fetch(queryObject, modelInfo);
 			if (!contextInfo) return;
 			contextTracker.updateWithDetailedBreakdown(contextInfo);
-			await internalEventBus.publish('context.updated', {
-				namespaceId: session.id,
+			await this.ctx.daemonHub.emit('context.updated', {
 				sessionId: session.id,
 				contextInfo,
 			});

@@ -391,10 +391,9 @@ describe('SessionManager', () => {
 		it('should emit session.updated event', async () => {
 			await sessionManager.updateSession('test-id', { title: 'Updated' });
 
-			expect(mockInternalEventBus.publish).toHaveBeenCalledWith(
+			expect(mockDaemonHub.emit).toHaveBeenCalledWith(
 				'session.updated',
 				expect.objectContaining({
-					namespaceId: 'test-id',
 					sessionId: 'test-id',
 				})
 			);
@@ -658,8 +657,7 @@ describe('SessionManager', () => {
 			expect(mockDb.deleteMessagesAfter).not.toHaveBeenCalled();
 			expect(mockDb.deleteMessagesAtAndAfter).not.toHaveBeenCalled();
 			expect(cleanupSpy).toHaveBeenCalled();
-			expect(mockInternalEventBus.publish).toHaveBeenCalledWith('session.errorClear', {
-				namespaceId: 'test-id',
+			expect(mockDaemonHub.emit).toHaveBeenCalledWith('session.errorClear', {
 				sessionId: 'test-id',
 			});
 			expect(mockInternalEventBus.publish).toHaveBeenCalledWith('session.reset', {

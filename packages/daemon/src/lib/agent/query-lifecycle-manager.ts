@@ -327,15 +327,14 @@ export class QueryLifecycleManager {
 	 * starts cleanly without stale error artifacts from the interrupted query.
 	 */
 	async restart(): Promise<void> {
-		const { session, internalEventBus, messageHandler } = this.ctx;
+		const { session, messageHandler } = this.ctx;
 
 		try {
 			// Clear error state and circuit breaker before stopping.
 			// The interrupt during stop() may produce transient errors that should
 			// not persist into the new query's lifecycle.
 			messageHandler.resetCircuitBreaker();
-			await internalEventBus.publish('session.errorClear', {
-				namespaceId: 'global',
+			await this.ctx.daemonHub.emit('session.errorClear', {
 				sessionId: session.id,
 			});
 
@@ -399,15 +398,7 @@ export class QueryLifecycleManager {
 	 */
 	async reset(options?: { restartAfter?: boolean }): Promise<{ success: boolean; error?: string }> {
 		const { restartAfter = true } = options ?? {};
-		const {
-			session,
-			db,
-			messageQueue,
-			messageHub,
-			internalEventBus,
-			stateManager,
-			messageHandler,
-		} = this.ctx;
+		const { session, db, messageQueue, messageHub, stateManager, messageHandler } = this.ctx;
 
 		// Early return if no query is running
 		if (!this.ctx.queryObject && !this.ctx.queryPromise) {
@@ -437,8 +428,7 @@ export class QueryLifecycleManager {
 			messageQueue.clear();
 			this.ctx.pendingRestartReason = null;
 			messageHandler.resetCircuitBreaker();
-			await internalEventBus.publish('session.errorClear', {
-				namespaceId: 'global',
+			await this.ctx.daemonHub.emit('session.errorClear', {
 				sessionId: session.id,
 			});
 

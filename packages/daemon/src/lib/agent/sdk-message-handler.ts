@@ -141,21 +141,13 @@ export class SDKMessageHandler {
 	 * - Publish session.reset notification
 	 */
 	private async handleCircuitBreakerTrip(reason: string, userMessage: string): Promise<void> {
-		const {
-			session,
-			stateManager,
-			messageQueue,
-			internalEventBus,
-			errorManager,
-			lifecycleManager,
-		} = this.ctx;
+		const { session, stateManager, messageQueue, errorManager, lifecycleManager } = this.ctx;
 
 		try {
 			// Clear state before stopping
 			messageQueue.clear();
 			this.resetCircuitBreaker();
-			await internalEventBus.publish('session.errorClear', {
-				namespaceId: session.id,
+			await this.ctx.daemonHub.emit('session.errorClear', {
 				sessionId: session.id,
 			});
 
@@ -585,7 +577,7 @@ export class SDKMessageHandler {
 	 * Handle system message (capture SDK session ID and slash commands)
 	 */
 	private async handleSystemMessage(message: SDKMessage): Promise<void> {
-		const { session, db, internalEventBus } = this.ctx;
+		const { session, db } = this.ctx;
 
 		if (!isSDKSystemMessage(message)) return;
 
@@ -614,8 +606,7 @@ export class SDKMessageHandler {
 
 			// Emit session.updated event so StateManager broadcasts the change
 			// Include data for decoupled state management
-			await internalEventBus.publish('session.updated', {
-				namespaceId: session.id,
+			await this.ctx.daemonHub.emit('session.updated', {
 				sessionId: session.id,
 				source: 'sdk-session',
 				session: { sdkSessionId: message.session_id, sdkOriginPath },
@@ -691,8 +682,7 @@ export class SDKMessageHandler {
 
 		// Emit session.updated event so StateManager broadcasts the change
 		// Include data for decoupled state management
-		await internalEventBus.publish('session.updated', {
-			namespaceId: session.id,
+		await this.ctx.daemonHub.emit('session.updated', {
 			sessionId: session.id,
 			source: 'metadata',
 			session: {
@@ -722,8 +712,7 @@ export class SDKMessageHandler {
 
 		// Clear any session errors since we successfully completed a turn
 		// This resolves persistent error banners that weren't being cleared
-		await internalEventBus.publish('session.errorClear', {
-			namespaceId: session.id,
+		await this.ctx.daemonHub.emit('session.errorClear', {
 			sessionId: session.id,
 		});
 
@@ -735,7 +724,7 @@ export class SDKMessageHandler {
 		if (session.config.queryMode !== 'manual') {
 			try {
 				await internalEventBus.publish('query.trigger', {
-					namespaceId: 'global',
+					namespaceId: session.id,
 					sessionId: session.id,
 				});
 			} catch (error) {
@@ -751,7 +740,7 @@ export class SDKMessageHandler {
 	 * AskUserQuestionHandler, not here. The SDK intercepts it BEFORE execution.
 	 */
 	private async handleAssistantMessage(message: SDKMessage): Promise<void> {
-		const { session, db, internalEventBus } = this.ctx;
+		const { session, db } = this.ctx;
 
 		if (!isSDKAssistantMessage(message)) return;
 
@@ -767,8 +756,7 @@ export class SDKMessageHandler {
 
 			// Emit session.updated event so StateManager broadcasts the change
 			// Include data for decoupled state management
-			await internalEventBus.publish('session.updated', {
-				namespaceId: session.id,
+			await this.ctx.daemonHub.emit('session.updated', {
 				sessionId: session.id,
 				source: 'metadata',
 				session: { metadata: session.metadata },
@@ -840,7 +828,7 @@ export class SDKMessageHandler {
 			return this.pendingContextRefresh;
 		}
 
-		const { session, internalEventBus, contextTracker, queryObject } = this.ctx;
+		const { session, contextTracker, queryObject } = this.ctx;
 		// If there's no live query yet (or anymore), skip silently — context
 		// info is a best-effort side effect.
 		if (!queryObject) return Promise.resolve();
@@ -854,8 +842,7 @@ export class SDKMessageHandler {
 				);
 				if (!contextInfo) return;
 				contextTracker.updateWithDetailedBreakdown(contextInfo);
-				await internalEventBus.publish('context.updated', {
-					namespaceId: session.id,
+				await this.ctx.daemonHub.emit('context.updated', {
 					sessionId: session.id,
 					contextInfo,
 				});

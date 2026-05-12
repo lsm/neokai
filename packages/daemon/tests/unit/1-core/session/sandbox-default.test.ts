@@ -161,7 +161,8 @@ describe('Sandbox Default Configuration', () => {
 			config,
 			mockToolsConfigManager,
 			mockAgentSessionFactory,
-			mockInternalEventBus
+			mockInternalEventBus,
+			mockDaemonHub
 		);
 	});
 

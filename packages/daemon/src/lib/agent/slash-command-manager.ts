@@ -87,7 +87,7 @@ export class SlashCommandManager {
 	async updateFromInit(sdkCommands: string[]): Promise<void> {
 		if (this.commandsFetchedFromSDK) return;
 
-		const { session, db, internalEventBus } = this.ctx;
+		const { session, db } = this.ctx;
 
 		const kaiBuiltInCommands = getBuiltInCommandNames();
 		const allCommands = [...new Set([...sdkCommands, ...kaiBuiltInCommands])];
@@ -98,8 +98,7 @@ export class SlashCommandManager {
 		session.availableCommands = this.slashCommands;
 		db.updateSession(session.id, { availableCommands: this.slashCommands });
 
-		await internalEventBus.publish('commands.updated', {
-			namespaceId: session.id,
+		await this.ctx.daemonHub.emit('commands.updated', {
 			sessionId: session.id,
 			commands: this.slashCommands,
 		});
@@ -109,7 +108,7 @@ export class SlashCommandManager {
 	 * Fetch and cache slash commands from SDK
 	 */
 	async fetchAndCache(): Promise<void> {
-		const { session, db, internalEventBus, logger, queryObject } = this.ctx;
+		const { session, db, logger, queryObject } = this.ctx;
 
 		if (!queryObject || typeof queryObject.supportedCommands !== 'function') {
 			return;
@@ -139,8 +138,7 @@ export class SlashCommandManager {
 			db.updateSession(session.id, { availableCommands: this.slashCommands });
 
 			// Emit event
-			await internalEventBus.publish('commands.updated', {
-				namespaceId: session.id,
+			await this.ctx.daemonHub.emit('commands.updated', {
 				sessionId: session.id,
 				commands: this.slashCommands,
 			});

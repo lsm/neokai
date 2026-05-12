@@ -15,6 +15,7 @@ import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { AgentProcessingState, PendingUserQuestion } from '@neokai/shared';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
+import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { Database } from '../../../../src/storage/database';
 import type { SDKMessage } from '@neokai/shared/sdk';
 
@@ -22,6 +23,7 @@ describe('ProcessingStateManager', () => {
 	let manager: ProcessingStateManager;
 	let mockDb: Database;
 	let mockInternalEventBus: InternalEventBus<any>;
+	let mockDaemonHub: DaemonHub;
 	let updateSessionMock: ReturnType<typeof mock>;
 	let emitMock: ReturnType<typeof mock>;
 	const sessionId = 'test-session-id';
@@ -41,12 +43,21 @@ describe('ProcessingStateManager', () => {
 		} as unknown as InternalEventBus<any>;
 	}
 
+	function createMockDaemonHub(): DaemonHub {
+		return {
+			emit: emitMock,
+			on: mock(() => {}),
+			off: mock(() => {}),
+		} as unknown as DaemonHub;
+	}
+
 	beforeEach(() => {
 		updateSessionMock = mock(() => {});
 		emitMock = mock(async () => {});
 		mockDb = createMockDb();
 		mockInternalEventBus = createMockInternalEventBus();
-		manager = new ProcessingStateManager(sessionId, mockInternalEventBus, mockDb);
+		mockDaemonHub = createMockDaemonHub();
+		manager = new ProcessingStateManager(sessionId, mockDaemonHub, mockInternalEventBus, mockDb);
 	});
 
 	describe('initialization', () => {
@@ -664,7 +675,8 @@ describe('ProcessingStateManager', () => {
 			});
 			mockDb = createMockDb();
 			mockInternalEventBus = createMockInternalEventBus();
-			manager = new ProcessingStateManager(sessionId, mockInternalEventBus, mockDb);
+			mockDaemonHub = createMockDaemonHub();
+			manager = new ProcessingStateManager(sessionId, mockDaemonHub, mockInternalEventBus, mockDb);
 
 			// Should not throw
 			await manager.setIdle();

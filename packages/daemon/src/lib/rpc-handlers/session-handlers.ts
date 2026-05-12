@@ -117,8 +117,7 @@ export function setupSessionHandlers(
 		// Broadcast to daemonHub so other subscribers (StateManager, etc.) can react.
 		// Kept for non-critical side effects; critical attachment above is synchronous.
 		if (session) {
-			internalEventBus.publishAsync('session.created', {
-				namespaceId: sessionId,
+			void daemonHub.emit('session.created', {
 				sessionId,
 				session,
 			});
@@ -481,8 +480,7 @@ export function setupSessionHandlers(
 		}
 
 		// Fire-and-forget: emit event, AgentSession handles it
-		internalEventBus.publishAsync('agent.interruptRequest', {
-			namespaceId: 'global',
+		void daemonHub.emit('agent.interruptRequest', {
 			sessionId: targetSessionId,
 		});
 
