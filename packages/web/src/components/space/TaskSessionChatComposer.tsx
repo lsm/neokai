@@ -73,6 +73,7 @@ export function TaskSessionChatComposer({
 		modelSwitching,
 		modelLoading,
 		thinkingLevel,
+		contextInfo,
 		isProcessing: targetIsProcessing,
 		isStarted,
 		switchModel,
@@ -204,6 +205,7 @@ export function TaskSessionChatComposer({
 				availableModels={availableModels}
 				modelSwitching={modelSwitching}
 				modelLoading={modelLoading}
+				contextUsage={contextInfo ?? undefined}
 				autoScroll={autoScroll}
 				coordinatorMode={false}
 				coordinatorSwitching={false}
