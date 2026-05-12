@@ -716,10 +716,14 @@ describe('space-task-handlers', () => {
 			});
 
 			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
-			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
-				status: 'open',
-				title: 'New title',
-			});
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{
+					status: 'open',
+					title: 'New title',
+				},
+				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+			);
 			expect(result).toBeDefined();
 		});
 
@@ -731,12 +735,54 @@ describe('space-task-handlers', () => {
 			});
 
 			expect((result as SpaceTask).title).toBe('Updated');
-			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', { title: 'Updated' });
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{ title: 'Updated' },
+				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+			);
 			expect(internalEventBus.publish).toHaveBeenCalledWith('space.task.updated', {
 				sessionId: 'global',
 				spaceId: 'space-1',
 				taskId: 'task-1',
 				task: expect.objectContaining({ title: 'Updated' }),
+			});
+		});
+
+		it('publishes space.task.updated for cascaded dependency changes', async () => {
+			const cascadedTask = {
+				...mockTask,
+				id: 'dependent-task',
+				status: 'blocked' as const,
+				dependsOn: ['task-1'],
+			};
+			(taskManager.updateTask as ReturnType<typeof mock>).mockImplementation(
+				async (
+					_taskId: string,
+					params: Record<string, unknown>,
+					options?: { onCascadedTasks?: (tasks: SpaceTask[]) => Promise<void> }
+				) => {
+					await options?.onCascadedTasks?.([cascadedTask]);
+					return { ...mockTask, ...params };
+				}
+			);
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				dependsOn: ['dependency-task'],
+			});
+
+			expect(internalEventBus.publish).toHaveBeenCalledWith('space.task.updated', {
+				sessionId: 'global',
+				spaceId: 'space-1',
+				taskId: 'dependent-task',
+				task: cascadedTask,
+			});
+			expect(internalEventBus.publish).toHaveBeenCalledWith('space.task.updated', {
+				sessionId: 'global',
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				task: expect.objectContaining({ dependsOn: ['dependency-task'] }),
 			});
 		});
 
@@ -785,9 +831,13 @@ describe('space-task-handlers', () => {
 				approvalSource: undefined,
 			});
 			// updateTask was called with the non-status fields (no status, no result)
-			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
-				taskAgentSessionId: 'session-abc',
-			});
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{
+					taskAgentSessionId: 'session-abc',
+				},
+				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+			);
 			// Final result has both fields
 			expect((result as SpaceTask).status).toBe('in_progress');
 			expect((result as SpaceTask).taskAgentSessionId).toBe('session-abc');
@@ -848,9 +898,13 @@ describe('space-task-handlers', () => {
 			});
 			// A follow-up updateTask ensures approvalReason lands even though
 			// setTaskStatus only stamps it on review→done.
-			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
-				approvalReason: 'not worth shipping',
-			});
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{
+					approvalReason: 'not worth shipping',
+				},
+				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+			);
 		});
 
 		it('falls back to approvalReason when cancelReason is omitted on cancel transitions', async () => {
@@ -873,9 +927,13 @@ describe('space-task-handlers', () => {
 				approvalSource: undefined,
 				approvalReason: 'rejected via legacy field',
 			});
-			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
-				approvalReason: 'rejected via legacy field',
-			});
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{
+					approvalReason: 'rejected via legacy field',
+				},
+				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+			);
 		});
 
 		it('propagates errors from setTaskStatus (invalid transitions)', async () => {

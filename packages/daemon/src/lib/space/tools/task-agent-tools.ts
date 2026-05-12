@@ -253,10 +253,15 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 	function emitTaskUpdated(task: SpaceTask): void {
 		if (!internalEventBus) return;
 		void internalEventBus
-			.publish('space.task.updated', { sessionId: 'global', spaceId: space.id, taskId, task })
+			.publish('space.task.updated', {
+				sessionId: 'global',
+				spaceId: space.id,
+				taskId: task.id,
+				task,
+			})
 			.catch((err: unknown) => {
 				log.warn(
-					`Failed to emit space.task.updated for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
+					`Failed to emit space.task.updated for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
 				);
 			});
 	}
@@ -552,12 +557,20 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
 
 			try {
-				const updated = await taskManager.updateTask(taskId, {
-					title: args.title,
-					description: args.description,
-					priority: args.priority,
-					dependsOn: args.depends_on,
-				});
+				const updated = await taskManager.updateTask(
+					taskId,
+					{
+						title: args.title,
+						description: args.description,
+						priority: args.priority,
+						dependsOn: args.depends_on,
+					},
+					{
+						onCascadedTasks: async (cascadedTasks) => {
+							for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
+						},
+					}
+				);
 				emitTaskUpdated(updated);
 				return jsonResult({ success: true, task: updated });
 			} catch (err) {

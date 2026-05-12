@@ -224,6 +224,17 @@ export function setupSpaceTaskHandlers(
 
 		let task: SpaceTask;
 		let emitTaskUpdated = true;
+		const emitCascadedTasks = async (cascadedTasks: SpaceTask[]) => {
+			if (!emitTaskUpdated) return;
+			for (const cascadedTask of cascadedTasks) {
+				await internalEventBus.publish('space.task.updated', {
+					sessionId: 'global',
+					spaceId,
+					taskId: cascadedTask.id,
+					task: cascadedTask,
+				});
+			}
+		};
 
 		// Route to setTaskStatus only when the status is actually changing.
 		// Sending the current status as part of a broader metadata update must not
@@ -261,8 +272,10 @@ export function setupSpaceTaskHandlers(
 						...otherFields
 					} = updateParams;
 					if (Object.keys(otherFields).length > 0) {
-						task = await taskManager.updateTask(taskId, otherFields);
 						emitTaskUpdated = true;
+						task = await taskManager.updateTask(taskId, otherFields, {
+							onCascadedTasks: emitCascadedTasks,
+						});
 					}
 				} else {
 					// Reject bare transitions into `review`. Every task that lands in
@@ -330,9 +343,13 @@ export function setupSpaceTaskHandlers(
 						updateParams.status === 'cancelled' &&
 						(updateParams.cancelReason ?? updateParams.approvalReason)
 					) {
-						task = await taskManager.updateTask(taskId, {
-							approvalReason: updateParams.cancelReason ?? updateParams.approvalReason ?? null,
-						});
+						task = await taskManager.updateTask(
+							taskId,
+							{
+								approvalReason: updateParams.cancelReason ?? updateParams.approvalReason ?? null,
+							},
+							{ onCascadedTasks: emitCascadedTasks }
+						);
 					}
 
 					// When a status transition is combined with other field updates
@@ -347,7 +364,9 @@ export function setupSpaceTaskHandlers(
 						...otherFields
 					} = updateParams;
 					if (Object.keys(otherFields).length > 0) {
-						task = await taskManager.updateTask(taskId, otherFields);
+						task = await taskManager.updateTask(taskId, otherFields, {
+							onCascadedTasks: emitCascadedTasks,
+						});
 					}
 				}
 			} else {
@@ -355,11 +374,15 @@ export function setupSpaceTaskHandlers(
 				// updateParams still contains the unchanged status field; SpaceTaskManager.updateTask
 				// strips it internally (guard: params.status !== task.status is false) so no
 				// transition check fires and the status column is left untouched in the DB.
-				task = await taskManager.updateTask(taskId, updateParams);
+				task = await taskManager.updateTask(taskId, updateParams, {
+					onCascadedTasks: emitCascadedTasks,
+				});
 			}
 		} else {
 			// No status field — general field update
-			task = await taskManager.updateTask(taskId, updateParams);
+			task = await taskManager.updateTask(taskId, updateParams, {
+				onCascadedTasks: emitCascadedTasks,
+			});
 		}
 
 		if (emitTaskUpdated) {
