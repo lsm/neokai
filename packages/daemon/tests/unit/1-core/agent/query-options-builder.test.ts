@@ -626,7 +626,7 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.settingSources).toEqual(['user', 'project', 'local']);
 		});
 
-		it('should enforce space built-in tool allowlist including Bash', async () => {
+		it('should enforce space built-in tool allowlist including Bash and subagents', async () => {
 			mockSession.type = 'space_chat';
 			const options = await builder.build();
 			expect(options.tools).toEqual([
@@ -638,6 +638,9 @@ describe('QueryOptionsBuilder', () => {
 				'WebSearch',
 				'ToolSearch',
 				'AskUserQuestion',
+				'Task',
+				'TaskOutput',
+				'TaskStop',
 			]);
 			expect(options.allowedTools).toEqual(
 				expect.arrayContaining([
@@ -649,8 +652,23 @@ describe('QueryOptionsBuilder', () => {
 					'WebSearch',
 					'ToolSearch',
 					'AskUserQuestion',
+					'Task',
+					'TaskOutput',
+					'TaskStop',
 				])
 			);
+		});
+
+		it('should keep file editing tools disallowed while allowing subagents', async () => {
+			mockSession.type = 'space_chat';
+			const options = await builder.build();
+
+			expect(options.disallowedTools).toEqual(
+				expect.arrayContaining(['Edit', 'Write', 'NotebookEdit'])
+			);
+			expect(options.disallowedTools).not.toContain('Task');
+			expect(options.disallowedTools).not.toContain('TaskOutput');
+			expect(options.disallowedTools).not.toContain('TaskStop');
 		});
 
 		it('should not include Write/Edit/NotebookEdit in space chat tool allowlist', async () => {
