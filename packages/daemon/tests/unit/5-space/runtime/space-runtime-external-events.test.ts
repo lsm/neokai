@@ -94,10 +94,12 @@ describe('SpaceRuntime external event subscriptions', () => {
 	let eventService: ExternalEventService;
 	let injected: Array<{ sessionId: string; message: string; deliveryMode?: string }>;
 	let tam: MockTaskAgentManager;
+	let bus: ReturnType<typeof createDaemonInternalEventBus>;
 
 	function createWorkflow(
 		topic = 'github/*/*/pull_request.review_*',
-		extraTopics: string[] = []
+		extraTopics: string[] = [],
+		nodeId = 'code'
 	): SpaceWorkflow {
 		return workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
@@ -105,7 +107,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 			description: '',
 			nodes: [
 				{
-					id: 'code',
+					id: nodeId,
 					name: 'Code',
 					agents: [
 						{
@@ -119,7 +121,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 				},
 			],
 			transitions: [],
-			startNodeId: 'code',
+			startNodeId: nodeId,
 			rules: [],
 			tags: [],
 		});
@@ -131,7 +133,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 		taskRepo = new SpaceTaskRepository(db);
 		nodeExecutionRepo = new NodeExecutionRepository(db);
 		workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
-		const bus = createDaemonInternalEventBus();
+		bus = createDaemonInternalEventBus();
 		const commandBus = createInternalCommandBus();
 		eventStore = new ExternalEventStore(db);
 		eventService = new ExternalEventService(eventStore, bus);
@@ -402,5 +404,150 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(delivery.state).toBe('failed');
 		expect(delivery.failureReason).toBe('node_execution_not_active');
 		expect(eventStore.getById(event.id)?.state).toBe('failed');
+	});
+
+	test('terminalizes mixed-outcome events after the final delivery succeeds', async () => {
+		const event = makeEvent({ topic: 'github/owner/repo/pull_request.review_submitted' });
+		eventStore.store(event);
+		const failedDeliveryKey = JSON.stringify([
+			'github',
+			event.dedupeKey,
+			'task-failed',
+			'node-failed',
+			'coder',
+			'run-failed',
+		]);
+		eventStore.registerExpectedDelivery(event.id, failedDeliveryKey, {
+			workflowRunId: 'run-failed',
+			taskId: 'task-failed',
+			nodeId: 'node-failed',
+			agentName: 'coder',
+		});
+		eventStore.markDeliveryFailed(event.id, failedDeliveryKey, {
+			terminal: true,
+			reason: 'simulated_prior_failure',
+		});
+		expect(eventStore.getById(event.id)?.state).toBe('published');
+
+		const workflow = createWorkflow(event.topic, [], 'review');
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'review')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-mixed',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-mixed');
+
+		await eventService.publish(makeEvent({ id: 'evt-mixed-retry', dedupeKey: event.dedupeKey }));
+
+		const deliveries = eventStore.listDeliveries(event.id);
+		expect(deliveries).toHaveLength(2);
+		expect(deliveries.some((delivery) => delivery.state === 'delivered')).toBe(true);
+		expect(eventStore.getById(event.id)?.state).toBe('failed');
+	});
+
+	test('marks unmatched events ignored after stop/start on a rehydrated runtime', async () => {
+		const workflow = createWorkflow();
+		await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		await runtime.executeTick();
+		await runtime.stop();
+		runtime.start();
+
+		const event = makeEvent({ topic: 'github/lsm/neokai/pull_request.comment_created' });
+		await eventService.publish(event);
+
+		expect(eventStore.getById(event.id)?.state).toBe('ignored');
+	});
+
+	test('retries transient external event injection failures from the pending queue', async () => {
+		const workflow = createWorkflow();
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-retry',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-retry');
+		await runtime.stop();
+		let failNext = true;
+		const commandBus = createInternalCommandBus();
+		commandBus.register('agent.message.inject', async (command) => {
+			if (failNext) {
+				failNext = false;
+				return { ok: false, error: 'temporary injection failure' };
+			}
+			injected.push({
+				sessionId: command.sessionId,
+				message: command.message,
+				deliveryMode: command.deliveryMode,
+			});
+			return { ok: true };
+		});
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus,
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+		runtime.registerRunInterests(run.id, tasks[0]!.id, workflow.nodes);
+
+		const event = makeEvent();
+		await eventService.publish(event);
+		expect(injected).toHaveLength(0);
+		expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+		expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
+			'temporary injection failure'
+		);
+
+		runtime.flushPendingNodeQueue({
+			workflowRunId: run.id,
+			taskId: tasks[0]!.id,
+			nodeId: 'code',
+			agentName: 'coder',
+			sessionId: 'session-retry',
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(injected).toHaveLength(1);
+		expect(eventStore.getById(event.id)?.state).toBe('delivered');
+	});
+
+	test('queues events for waiting_rebind executions instead of failing them terminally', async () => {
+		const workflow = createWorkflow();
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'waiting_rebind',
+			completedAt: null,
+		});
+
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('pending');
+		expect(delivery.failureReason).toBeNull();
+
+		runtime.flushPendingNodeQueue({
+			workflowRunId: run.id,
+			taskId: tasks[0]!.id,
+			nodeId: 'code',
+			agentName: 'coder',
+			sessionId: 'session-waiting-rebind',
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(injected).toHaveLength(1);
+		expect(injected[0]!.sessionId).toBe('session-waiting-rebind');
+		expect(eventStore.getById(event.id)?.state).toBe('delivered');
 	});
 });

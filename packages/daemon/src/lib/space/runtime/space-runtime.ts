@@ -247,6 +247,7 @@ interface SubscriptionTarget {
 interface PendingExternalEvent {
 	event: ExternalEventPublishedPayload;
 	deliveryKey: string;
+	deliveryMode: 'immediate' | 'defer';
 }
 
 // ---------------------------------------------------------------------------
@@ -748,7 +749,7 @@ export class SpaceRuntime {
 		if (!queued) return;
 		this.pendingExternalEventQueue.delete(key);
 		for (const item of queued) {
-			void this.deliverToSession(target, item.event, item.deliveryKey, 'immediate');
+			void this.deliverToSession(target, item.event, item.deliveryKey, item.deliveryMode);
 		}
 	}
 
@@ -832,18 +833,30 @@ export class SpaceRuntime {
 			}
 			store.markDeliveryDelivered(event.eventId, deliveryKey);
 			store.markEventDeliveredIfAllDeliveriesDelivered(event.eventId);
+			store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
 		} catch (err) {
 			store.markDeliveryFailed(event.eventId, deliveryKey, {
 				terminal: false,
 				reason: err instanceof Error ? err.message : String(err),
 			});
+			this.queueForRetry(target, event, deliveryKey, deliveryMode);
 		}
+	}
+
+	private queueForRetry(
+		target: SubscriptionTarget,
+		event: ExternalEventPublishedPayload,
+		deliveryKey: string,
+		deliveryMode: 'immediate' | 'defer'
+	): void {
+		this.queueForPendingNode(target, event, deliveryKey, deliveryMode);
 	}
 
 	private queueForPendingNode(
 		target: SubscriptionTarget,
 		event: ExternalEventPublishedPayload,
-		deliveryKey: string
+		deliveryKey: string,
+		deliveryMode: 'immediate' | 'defer' = 'immediate'
 	): void {
 		const key = this.buildQueueKey(target);
 		const queue = this.pendingExternalEventQueue.get(key) ?? [];
@@ -867,7 +880,7 @@ export class SpaceRuntime {
 				`SpaceRuntime: pending external event queue overflow for ${key}; dropped oldest event`
 			);
 		}
-		queue.push({ event, deliveryKey });
+		queue.push({ event, deliveryKey, deliveryMode });
 		this.pendingExternalEventQueue.set(key, queue);
 	}
 
@@ -918,7 +931,9 @@ export class SpaceRuntime {
 			target.nodeId
 		);
 		return executions.some(
-			(execution) => execution.agentName === target.agentName && execution.status === 'pending'
+			(execution) =>
+				execution.agentName === target.agentName &&
+				(execution.status === 'pending' || execution.status === 'waiting_rebind')
 		);
 	}
 
@@ -1603,7 +1618,7 @@ export class SpaceRuntime {
 		if (this.tickTimer !== null) return; // already running
 
 		this.subscribeExternalEventPublished();
-		this.acceptingExternalEvents = false;
+		this.acceptingExternalEvents = this.rehydrated;
 		const interval = this.config.tickIntervalMs ?? 5_000;
 
 		// Kick off the first tick immediately, then schedule the loop.
