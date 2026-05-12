@@ -31,6 +31,7 @@ import type {
 	SpaceWorkflowRun,
 	UpdateSpaceTaskParams,
 	WorkflowChannel,
+	WorkflowNode,
 } from '@neokai/shared';
 import {
 	computeGateDefaults,
@@ -40,6 +41,8 @@ import {
 	resolveNodeAgents,
 } from '@neokai/shared';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
+import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
+import type { ExternalEventStore } from '../../external-events/external-event-store';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
@@ -74,6 +77,7 @@ import type {
 	DaemonInternalEventMap,
 	InternalEventPayload,
 } from '../../internal-event-bus';
+import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus';
 import {
 	type PostApprovalRouteContext,
 	type PostApprovalRouteResult,
@@ -81,6 +85,7 @@ import {
 } from './post-approval-router';
 import { resolveTimeoutForExecution } from './resolve-node-timeout';
 import type { TaskAgentManager } from './task-agent-manager';
+import { TopicTrie } from './topic-trie';
 import { WorkflowExecutor } from './workflow-executor';
 import { isPermanentSpawnError } from './workflow-node-execution-validation';
 import { selectWorkflow } from './workflow-selector';
@@ -137,14 +142,14 @@ export interface SpaceRuntimeConfig {
 	 */
 	tickIntervalMs?: number;
 	/**
-	 * InternalEventBus for publishing typed Space domain events.
-	 *
-	 * When provided, SpaceRuntime publishes events such as `space.task.blocked`,
-	 * `space.workflowRun.completed`, etc. for `SpaceAgentNotificationService` and
-	 * other subscribers to consume. When omitted, events are dropped silently —
-	 * appropriate for unit tests that don't need to assert against the bus.
+	 * InternalEventBus for publishing typed Space domain events and subscribing to
+	 * external event publications.
 	 */
 	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
+	/** Command bus used to inject matched external events into node-agent sessions. */
+	commandBus?: InternalCommandBus<DaemonCommandMap>;
+	/** Persistent external-event delivery state store. */
+	externalEventStore?: ExternalEventStore;
 	/**
 	 * Completion detector — inspects the canonical `SpaceTask` to decide whether
 	 * a workflow run is complete or ready for runtime resolution.
@@ -228,6 +233,19 @@ interface ExecutorMeta {
 	workflow: SpaceWorkflow;
 	spaceId: string;
 	workspacePath: string;
+}
+
+interface SubscriptionTarget {
+	workflowRunId: string;
+	taskId: string;
+	nodeId: string;
+	agentName: string;
+	sessionId?: string;
+}
+
+interface PendingExternalEvent {
+	event: ExternalEventPublishedPayload;
+	deliveryKey: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +365,33 @@ type SpaceNotificationEvent =
  * space-scoped, not session-scoped. Subscribers that need space-scoped
  * filtering should inspect `payload.spaceId`.
  */
+function formatCommandError(error: unknown): string {
+	if (error instanceof Error) return error.message;
+	if (typeof error === 'string') return error;
+	return JSON.stringify(error);
+}
+
+function parseSubscriptionQueueKey(
+	key: string
+): Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'> | null {
+	try {
+		const parsed = JSON.parse(key) as unknown;
+		if (!Array.isArray(parsed) || parsed.length !== 4) return null;
+		const [workflowRunId, taskId, nodeId, agentName] = parsed;
+		if (
+			typeof workflowRunId !== 'string' ||
+			typeof taskId !== 'string' ||
+			typeof nodeId !== 'string' ||
+			typeof agentName !== 'string'
+		) {
+			return null;
+		}
+		return { workflowRunId, taskId, nodeId, agentName };
+	} catch {
+		return null;
+	}
+}
+
 function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 	event: keyof DaemonInternalEventMap;
 	payload: DaemonInternalEventMap[keyof DaemonInternalEventMap];
@@ -593,6 +638,9 @@ export class SpaceRuntime {
 	 */
 	private nonTerminalIdleCounts = new Map<string, number>();
 	private readonly toolContinuationRepo: ToolContinuationRecoveryRepository;
+	private readonly topicTrie = new TopicTrie<SubscriptionTarget>();
+	private readonly pendingExternalEventQueue = new Map<string, PendingExternalEvent[]>();
+	private readonly unsubscribeExternalEventPublished?: () => void;
 
 	/**
 	 * Manages gate poll timers for periodic script execution and message injection.
@@ -608,6 +656,11 @@ export class SpaceRuntime {
 		if (hasSqlExec(config.db)) {
 			this.toolContinuationRepo.ensureSchema();
 		}
+		this.unsubscribeExternalEventPublished = config.internalEventBus?.subscribe(
+			'externalEvent.published',
+			(payload) => this.handleExternalEvent(payload),
+			{ subscriberName: 'SpaceRuntime.externalEvents' }
+		);
 	}
 
 	/**
@@ -627,6 +680,262 @@ export class SpaceRuntime {
 			throw new Error(`Agent name "${params.agentName}" is reserved for a built-in agent`);
 		}
 		return this.config.nodeExecutionRepo.createOrIgnore(params);
+	}
+
+	registerRunInterests(workflowRunId: string, taskId: string, nodes: WorkflowNode[]): void {
+		this.topicTrie.remove((target) => target.workflowRunId === workflowRunId);
+		for (const node of nodes) {
+			for (const agent of resolveNodeAgents(node)) {
+				const interests = agent.eventInterests ?? [];
+				for (const interest of interests) {
+					if (!interest.topic || interest.topic.trim().length === 0) continue;
+					this.topicTrie.insert(interest.topic, {
+						workflowRunId,
+						taskId,
+						nodeId: node.id,
+						agentName: agent.name,
+					});
+				}
+			}
+		}
+	}
+
+	unregisterExecution(
+		workflowRunId: string,
+		taskId: string,
+		nodeId: string,
+		agentName: string
+	): void {
+		this.topicTrie.remove(
+			(target) =>
+				target.workflowRunId === workflowRunId &&
+				target.taskId === taskId &&
+				target.nodeId === nodeId &&
+				target.agentName === agentName
+		);
+		this.failQueuedDeliveriesForTarget(
+			{ workflowRunId, taskId, nodeId, agentName },
+			'node_execution_cancelled'
+		);
+	}
+
+	clearRunInterests(workflowRunId: string): void {
+		this.topicTrie.remove((target) => target.workflowRunId === workflowRunId);
+		for (const [queueKey, queued] of this.pendingExternalEventQueue) {
+			const parsed = parseSubscriptionQueueKey(queueKey);
+			if (!parsed || parsed.workflowRunId !== workflowRunId) continue;
+			this.failQueuedDeliveries(queued, 'run_terminal_cleanup');
+			this.pendingExternalEventQueue.delete(queueKey);
+		}
+	}
+
+	flushPendingNodeQueue(target: SubscriptionTarget): void {
+		if (!target.sessionId) return;
+		const key = this.buildQueueKey(target);
+		const queued = this.pendingExternalEventQueue.get(key);
+		if (!queued) return;
+		this.pendingExternalEventQueue.delete(key);
+		for (const item of queued) {
+			void this.deliverToSession(target, item.event, item.deliveryKey, 'immediate');
+		}
+	}
+
+	private registerInterestsForRun(run: SpaceWorkflowRun): void {
+		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+		if (!workflow) return;
+		const task = this.pickCanonicalTaskForRun(run, this.config.taskRepo.listByWorkflowRun(run.id));
+		if (!task) return;
+		this.registerRunInterests(run.id, task.id, workflow.nodes);
+	}
+
+	private async handleExternalEvent(payload: ExternalEventPublishedPayload): Promise<void> {
+		const store = this.config.externalEventStore;
+		if (!store) return;
+		const matches = this.topicTrie.lookup(payload.topic).filter((target) => {
+			const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
+			return run?.spaceId === payload.spaceId;
+		});
+
+		if (matches.length === 0) {
+			store.markEventIgnored(payload.eventId, 'no_matching_subscriptions');
+			return;
+		}
+
+		let prepared = 0;
+		for (const match of matches) {
+			const target = this.resolveSubscriptionTarget(match);
+			const deliveryKey = this.buildDeliveryKey(target, payload);
+			store.registerExpectedDelivery(payload.eventId, deliveryKey, target);
+			if (store.isDeliveryTerminal(payload.eventId, deliveryKey)) continue;
+			prepared++;
+
+			if (target.sessionId && this.isTargetSessionLive(target.sessionId)) {
+				await this.deliverToSession(target, payload, deliveryKey, 'immediate');
+			} else if (target.sessionId) {
+				await this.deliverToSession(target, payload, deliveryKey, 'defer');
+			} else if (this.isPending(target)) {
+				this.queueForPendingNode(target, payload, deliveryKey);
+			} else {
+				store.markDeliveryFailed(payload.eventId, deliveryKey, {
+					terminal: true,
+					reason: 'node_execution_not_active',
+				});
+				store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
+			}
+		}
+
+		if (prepared === 0) {
+			store.markEventIgnored(payload.eventId, 'no_matching_subscriptions');
+		}
+	}
+
+	private async deliverToSession(
+		target: SubscriptionTarget,
+		event: ExternalEventPublishedPayload,
+		deliveryKey: string,
+		deliveryMode: 'immediate' | 'defer'
+	): Promise<void> {
+		const store = this.config.externalEventStore;
+		if (!store || !target.sessionId) return;
+		try {
+			const result = await this.config.commandBus?.dispatch('agent.message.inject', {
+				sessionId: target.sessionId,
+				message: this.formatExternalEventMessage(event),
+				deliveryMode,
+				metadata: {
+					workflowRunId: target.workflowRunId,
+					taskId: target.taskId,
+					nodeId: target.nodeId,
+					agentName: target.agentName,
+					source: 'external_event',
+					eventId: event.eventId,
+					topic: event.topic,
+				},
+			});
+			if (!result?.ok) {
+				throw new Error(formatCommandError(result?.error ?? 'agent.message.inject unavailable'));
+			}
+			store.markDeliveryDelivered(event.eventId, deliveryKey);
+			store.markEventDeliveredIfAllDeliveriesDelivered(event.eventId);
+		} catch (err) {
+			store.markDeliveryFailed(event.eventId, deliveryKey, {
+				terminal: false,
+				reason: err instanceof Error ? err.message : String(err),
+			});
+		}
+	}
+
+	private queueForPendingNode(
+		target: SubscriptionTarget,
+		event: ExternalEventPublishedPayload,
+		deliveryKey: string
+	): void {
+		const key = this.buildQueueKey(target);
+		const queue = this.pendingExternalEventQueue.get(key) ?? [];
+		if (queue.length >= 50) {
+			const dropped = queue.shift();
+			if (dropped && this.config.externalEventStore) {
+				this.config.externalEventStore.markDeliveryFailed(
+					dropped.event.eventId,
+					dropped.deliveryKey,
+					{
+						terminal: true,
+						reason: 'pending_node_queue_overflow',
+					}
+				);
+				this.config.externalEventStore.markEventFailedIfAllDeliveriesTerminal(
+					dropped.event.eventId
+				);
+			}
+			log.warn(
+				`SpaceRuntime: pending external event queue overflow for ${key}; dropped oldest event`
+			);
+		}
+		queue.push({ event, deliveryKey });
+		this.pendingExternalEventQueue.set(key, queue);
+	}
+
+	private failQueuedDeliveriesForTarget(
+		target: Omit<SubscriptionTarget, 'sessionId'>,
+		reason: string
+	): void {
+		const key = this.buildQueueKey(target);
+		const queued = this.pendingExternalEventQueue.get(key);
+		if (!queued) return;
+		this.failQueuedDeliveries(queued, reason);
+		this.pendingExternalEventQueue.delete(key);
+	}
+
+	private failQueuedDeliveries(queued: PendingExternalEvent[], reason: string): void {
+		const store = this.config.externalEventStore;
+		if (!store) return;
+		for (const item of queued) {
+			store.markDeliveryFailed(item.event.eventId, item.deliveryKey, { terminal: true, reason });
+			store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
+		}
+	}
+
+	private resolveSubscriptionTarget(target: SubscriptionTarget): SubscriptionTarget {
+		const executions = this.config.nodeExecutionRepo.listByNode(
+			target.workflowRunId,
+			target.nodeId
+		);
+		const matching = executions
+			.filter((execution) => execution.agentName === target.agentName)
+			.sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt));
+		const current = matching.find((execution) => execution.status !== 'cancelled') ?? matching[0];
+		return current?.agentSessionId ? { ...target, sessionId: current.agentSessionId } : target;
+	}
+
+	private isPending(target: SubscriptionTarget): boolean {
+		const executions = this.config.nodeExecutionRepo.listByNode(
+			target.workflowRunId,
+			target.nodeId
+		);
+		return executions.some(
+			(execution) => execution.agentName === target.agentName && execution.status === 'pending'
+		);
+	}
+
+	private isTargetSessionLive(sessionId: string): boolean {
+		return this.config.taskAgentManager?.isSessionAlive(sessionId) ?? false;
+	}
+
+	private buildQueueKey(
+		target: Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
+	): string {
+		return JSON.stringify([target.workflowRunId, target.taskId, target.nodeId, target.agentName]);
+	}
+
+	private buildDeliveryKey(
+		target: SubscriptionTarget,
+		event: ExternalEventPublishedPayload
+	): string {
+		return JSON.stringify([
+			event.source,
+			event.dedupeKey,
+			target.taskId,
+			target.nodeId,
+			target.agentName,
+			target.workflowRunId,
+		]);
+	}
+
+	private formatExternalEventMessage(event: ExternalEventPublishedPayload): string {
+		return JSON.stringify(
+			{
+				type: 'external_event',
+				summary: event.summary,
+				eventId: event.eventId,
+				topic: event.topic,
+				source: event.source,
+				externalUrl: event.externalUrl,
+				occurredAt: event.occurredAt,
+				payload: event.payload,
+			},
+			null,
+			2
+		);
 	}
 
 	/**
@@ -1294,6 +1603,7 @@ export class SpaceRuntime {
 	async stop(): Promise<void> {
 		// Stop all gate poll timers
 		this.pollManager?.stopAll();
+		this.unsubscribeExternalEventPublished?.();
 		if (this.tickTimer !== null) {
 			clearInterval(this.tickTimer);
 			this.tickTimer = null;
@@ -1484,6 +1794,8 @@ export class SpaceRuntime {
 			await this.transitionRunStatusAndEmit(run.id, 'cancelled');
 			throw err;
 		}
+
+		this.registerRunInterests(run.id, canonicalTask.id, workflow.nodes);
 
 		// Resolve channel topology for the start node and store in run config.
 		// TODO: Milestone 6: pass resolvedChannels to session group creation in
@@ -1863,11 +2175,13 @@ export class SpaceRuntime {
 
 			for (const run of activeRuns) {
 				if (this.executors.has(run.id)) {
+					this.registerInterestsForRun(run);
 					await this.ensurePollsForRun(run, space);
 					continue;
 				}
 				const registered = await this.ensureExecutorRegistered(run, space);
 				if (registered) {
+					this.registerInterestsForRun(run);
 					await this.ensurePollsForRun(run, space);
 				}
 			}
@@ -3052,7 +3366,7 @@ export class SpaceRuntime {
 					for (const execution of pendingExecutions) {
 						if (tam.isExecutionSpawning(execution.id)) continue;
 						try {
-							await tam.spawnWorkflowNodeAgentForExecution(
+							const sessionId = await tam.spawnWorkflowNodeAgentForExecution(
 								canonicalTask,
 								space,
 								meta.workflow,
@@ -3062,6 +3376,13 @@ export class SpaceRuntime {
 									kickoff: true,
 								}
 							);
+							this.flushPendingNodeQueue({
+								workflowRunId: runId,
+								taskId: canonicalTask.id,
+								nodeId: execution.workflowNodeId,
+								agentName: execution.agentName,
+								sessionId,
+							});
 						} catch (err) {
 							if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
 								permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
@@ -3165,6 +3486,15 @@ export class SpaceRuntime {
 
 	private cancelExecutionForPermanentSpawnError(execution: NodeExecution, err: unknown): boolean {
 		if (!isPermanentSpawnError(err)) return false;
+		const task = this.config.taskRepo.listByWorkflowRun(execution.workflowRunId)[0];
+		if (task) {
+			this.unregisterExecution(
+				execution.workflowRunId,
+				task.id,
+				execution.workflowNodeId,
+				execution.agentName
+			);
+		}
 		this.config.nodeExecutionRepo.update(execution.id, {
 			status: 'cancelled',
 			result: err.message,
@@ -3330,6 +3660,13 @@ export class SpaceRuntime {
 					execution,
 					{ kickoff: true }
 				);
+				this.flushPendingNodeQueue({
+					workflowRunId: runId,
+					taskId: canonicalTask.id,
+					nodeId: execution.workflowNodeId,
+					agentName: execution.agentName,
+					sessionId,
+				});
 				await tam.flushPendingMessagesForTarget(runId, execution.agentName, sessionId);
 				recordBlockedFlushFailure(targetAgentName, rowsForTarget);
 			} catch (err) {
@@ -4006,6 +4343,7 @@ export class SpaceRuntime {
 					this.notifiedTaskSet.delete(`${task.id}:blocked`);
 					this.notifiedTaskSet.delete(`${task.id}:timeout`);
 				}
+				this.clearRunInterests(runId);
 				// Stop gate polls for this terminal run
 				this.pollManager?.stopPolls(runId);
 				this.executors.delete(runId);

@@ -1846,14 +1846,15 @@ export class TaskAgentManager {
 		subSessionId: string,
 		message: string,
 		isSyntheticMessage = true,
-		images?: MessageImage[]
+		images?: MessageImage[],
+		deliveryMode: 'immediate' | 'defer' = 'immediate'
 	): Promise<void> {
 		const indexed = this.agentSessionIndex.get(subSessionId);
 		if (indexed) {
 			await this.injectMessageIntoSession(
 				indexed,
 				message,
-				'immediate',
+				deliveryMode,
 				undefined,
 				isSyntheticMessage,
 				images
@@ -1868,7 +1869,7 @@ export class TaskAgentManager {
 				await this.injectMessageIntoSession(
 					session,
 					message,
-					'immediate',
+					deliveryMode,
 					undefined,
 					isSyntheticMessage,
 					images
@@ -1883,7 +1884,7 @@ export class TaskAgentManager {
 			await this.injectMessageIntoSession(
 				rehydrated,
 				message,
-				'immediate',
+				deliveryMode,
 				undefined,
 				isSyntheticMessage,
 				images

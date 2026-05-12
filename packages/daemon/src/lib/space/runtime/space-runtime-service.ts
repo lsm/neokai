@@ -39,6 +39,9 @@ import {
 	SpaceAgentNotificationService,
 	type SpaceAgentNotificationServiceConfig,
 } from './space-agent-notification-service';
+import type { InternalEventBus, DaemonInternalEventMap } from '../../internal-event-bus';
+import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus';
+import type { ExternalEventStore } from '../../external-events/external-event-store';
 
 const log = new Logger('space-runtime-service');
 
@@ -110,6 +113,8 @@ export interface SpaceRuntimeServiceConfig {
 	 * This is the preferred integration point for M6+.
 	 */
 	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
+	commandBus?: InternalCommandBus<DaemonCommandMap>;
+	externalEventStore?: ExternalEventStore;
 }
 
 export class SpaceRuntimeService {

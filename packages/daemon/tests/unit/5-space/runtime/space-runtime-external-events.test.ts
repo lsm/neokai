@@ -1,0 +1,233 @@
+import { beforeEach, describe, expect, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import type { SpaceWorkflow } from '@neokai/shared';
+import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
+import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
+import type { ExternalEvent } from '../../../../src/lib/external-events/types';
+import { createInternalCommandBus } from '../../../../src/lib/internal-command-bus';
+import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
+import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
+import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
+import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
+import { createSpaceTables } from '../../helpers/space-test-db';
+
+const SPACE_ID = 'space-runtime-events';
+const AGENT_ID = 'agent-runtime-events';
+
+function makeDb(): Database {
+	const db = new Database(':memory:');
+	createSpaceTables(db);
+	const now = Date.now();
+	db.prepare(
+		`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`
+	).run(SPACE_ID, SPACE_ID, '/tmp/runtime-events', 'Runtime Events', now, now);
+	db.prepare(
+		`INSERT INTO space_agents (id, space_id, name, description, tools, system_prompt, created_at, updated_at)
+		 VALUES (?, ?, ?, '', '[]', '', ?, ?)`
+	).run(AGENT_ID, SPACE_ID, 'Coder', now, now);
+	return db;
+}
+
+function makeEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
+	return {
+		id: `evt-${Math.random().toString(36).slice(2)}`,
+		spaceId: SPACE_ID,
+		source: 'github',
+		topic: 'github/lsm/neokai/pull_request.review_submitted',
+		occurredAt: 1_700_000_000_000,
+		ingestedAt: 1_700_000_001_000,
+		dedupeKey: `dedupe-${Math.random().toString(36).slice(2)}`,
+		summary: 'PR review submitted',
+		payload: { action: 'review_submitted', prNumber: 42 },
+		...overrides,
+	};
+}
+
+class MockTaskAgentManager {
+	alive = new Set<string>();
+	spawned: string[] = [];
+
+	isSessionAlive(sessionId: string): boolean {
+		return this.alive.has(sessionId);
+	}
+
+	async rehydrate(): Promise<void> {}
+
+	isExecutionSpawning(_executionId: string): boolean {
+		return false;
+	}
+
+	async tryResumeNodeAgentSession(): Promise<void> {}
+
+	async flushPendingMessagesForTarget(): Promise<void> {}
+
+	async spawnWorkflowNodeAgentForExecution(
+		_task: unknown,
+		_space: unknown,
+		_workflow: unknown,
+		_run: unknown,
+		execution: { id: string },
+		_options?: unknown
+	): Promise<string> {
+		const sessionId = `session-${execution.id}`;
+		this.spawned.push(sessionId);
+		this.alive.add(sessionId);
+		return sessionId;
+	}
+}
+
+describe('SpaceRuntime external event subscriptions', () => {
+	let db: Database;
+	let workflowRunRepo: SpaceWorkflowRunRepository;
+	let taskRepo: SpaceTaskRepository;
+	let nodeExecutionRepo: NodeExecutionRepository;
+	let workflowManager: SpaceWorkflowManager;
+	let runtime: SpaceRuntime;
+	let eventStore: ExternalEventStore;
+	let eventService: ExternalEventService;
+	let injected: Array<{ sessionId: string; message: string; deliveryMode?: string }>;
+	let tam: MockTaskAgentManager;
+
+	function createWorkflow(topic = 'github/*/*/pull_request.review_*'): SpaceWorkflow {
+		return workflowManager.createWorkflow({
+			spaceId: SPACE_ID,
+			name: `Workflow ${Math.random()}`,
+			description: '',
+			nodes: [
+				{
+					id: 'code',
+					name: 'Code',
+					agents: [
+						{
+							agentId: AGENT_ID,
+							name: 'coder',
+							eventInterests: [{ topic }],
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'code',
+			rules: [],
+			tags: [],
+		});
+	}
+
+	beforeEach(() => {
+		db = makeDb();
+		workflowRunRepo = new SpaceWorkflowRunRepository(db);
+		taskRepo = new SpaceTaskRepository(db);
+		nodeExecutionRepo = new NodeExecutionRepository(db);
+		workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
+		const bus = createDaemonInternalEventBus();
+		const commandBus = createInternalCommandBus();
+		eventStore = new ExternalEventStore(db);
+		eventService = new ExternalEventService(eventStore, bus);
+		injected = [];
+		commandBus.register('agent.message.inject', async (command) => {
+			injected.push({
+				sessionId: command.sessionId,
+				message: command.message,
+				deliveryMode: command.deliveryMode,
+			});
+			return { ok: true };
+		});
+		tam = new MockTaskAgentManager();
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus,
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+	});
+
+	test('delivers matching events to a live node-agent session and marks delivery complete', async () => {
+		const workflow = createWorkflow();
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-live',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-live');
+
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		expect(injected).toHaveLength(1);
+		expect(injected[0]!.sessionId).toBe('session-live');
+		expect(injected[0]!.deliveryMode).toBe('immediate');
+		expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
+		expect(eventStore.getById(event.id)?.state).toBe('delivered');
+		const deliveries = eventStore.listDeliveries(event.id);
+		expect(deliveries).toHaveLength(1);
+		expect(deliveries[0]!.state).toBe('delivered');
+		expect(deliveries[0]!.taskId).toBe(tasks[0]!.id);
+	});
+
+	test('queues matching events for pending nodes and flushes after session creation', async () => {
+		const workflow = createWorkflow();
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const event = makeEvent();
+
+		await eventService.publish(event);
+
+		expect(injected).toHaveLength(0);
+		expect(eventStore.getById(event.id)?.state).toBe('published');
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('pending');
+
+		runtime.flushPendingNodeQueue({
+			workflowRunId: run.id,
+			taskId: tasks[0]!.id,
+			nodeId: 'code',
+			agentName: 'coder',
+			sessionId: 'session-flush',
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(injected).toHaveLength(1);
+		expect(injected[0]!.sessionId).toBe('session-flush');
+		expect(eventStore.getById(event.id)?.state).toBe('delivered');
+	});
+
+	test('marks unmatched events ignored', async () => {
+		const workflow = createWorkflow('github/*/*/pull_request.review_*');
+		await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+		const event = makeEvent({ topic: 'github/lsm/neokai/pull_request.comment_created' });
+		await eventService.publish(event);
+
+		expect(injected).toHaveLength(0);
+		expect(eventStore.getById(event.id)?.state).toBe('ignored');
+	});
+
+	test('fails queued deliveries when an execution is unregistered', async () => {
+		const workflow = createWorkflow();
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		runtime.unregisterExecution(run.id, tasks[0]!.id, 'code', 'coder');
+
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toBe('node_execution_cancelled');
+		expect(eventStore.getById(event.id)?.state).toBe('failed');
+	});
+});

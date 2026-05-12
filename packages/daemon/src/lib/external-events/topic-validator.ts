@@ -12,8 +12,7 @@
  * belong in the extension.
  *
  * The subscription glob pattern uses the same shape; segments may be the
- * single-segment wildcard `*`, a dotted-segment wildcard such as
- * `5.*` / `5.review_*`, or a literal value.
+ * single-segment wildcard star, dotted-segment wildcard suffixes, or a literal value.
  *
  * `validateGlobPattern()` is the single source of truth for both topic literals
  * (called when an extension publishes) and subscription patterns (called when a
@@ -38,8 +37,9 @@ export interface ValidationResult {
  * - No multi-segment `**` wildcard (not supported).
  * - Each segment uses only `[a-zA-Z0-9_.*-]`.
  *
- * Source-specific constraints (segment count, dotted resource.action format,
- * wildcard position restrictions) are enforced by each extension.
+ * Note: glob star is allowed only as a whole-segment wildcard or as part of a
+ * dotted segment. It is not treated as a regex metacharacter — segment matching
+ * is done by the trie.
  */
 export function validateGlobPattern(pattern: string): ValidationResult {
 	if (typeof pattern !== 'string' || pattern.trim().length === 0) {
