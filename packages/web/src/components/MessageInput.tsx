@@ -62,6 +62,21 @@ function getPlaceholderForSessionType(sessionType?: SessionType): string {
 	}
 }
 
+function isIosSafari(): boolean {
+	if (typeof navigator === 'undefined') {
+		return false;
+	}
+
+	const ua = navigator.userAgent;
+	return (
+		/iPad|iPhone|iPod/.test(ua) &&
+		ua.includes('Safari') &&
+		!ua.includes('CriOS') &&
+		!ua.includes('FxiOS') &&
+		!ua.includes('Chrome')
+	);
+}
+
 interface MessageInputProps {
 	sessionId: string;
 	sessionType?: SessionType;
@@ -114,6 +129,7 @@ export default function MessageInput({
 		window.matchMedia('(pointer: coarse)').matches ||
 			('ontouchstart' in window && window.innerWidth < 768)
 	);
+	const isIosSafariRef = useRef(isIosSafari());
 
 	// Drag and drop state
 	const [isDragging, setIsDragging] = useState(false);
@@ -281,14 +297,36 @@ export default function MessageInput({
 		syncMessagesContainerPadding();
 	}, [syncMessagesContainerPadding, attachments.length, isDragging]);
 
+	useEffect(() => {
+		if (!isIosSafariRef.current) {
+			return;
+		}
+
+		let wasKeyboardOpen = document.documentElement.classList.contains('keyboard-open');
+		const handleViewportResize = () => {
+			const keyboardOpen = document.documentElement.classList.contains('keyboard-open');
+			if (wasKeyboardOpen && !keyboardOpen) {
+				syncMessagesContainerPadding();
+			}
+			wasKeyboardOpen = keyboardOpen;
+		};
+
+		window.visualViewport?.addEventListener('resize', handleViewportResize);
+		window.addEventListener('resize', handleViewportResize);
+
+		return () => {
+			window.visualViewport?.removeEventListener('resize', handleViewportResize);
+			window.removeEventListener('resize', handleViewportResize);
+		};
+	}, [syncMessagesContainerPadding]);
+
 	const handleTextareaHeightChange = useCallback(
 		(_heightPx: number) => {
 			// iOS Safari can re-anchor the page/browser chrome when the keyboard is open,
 			// the messages scroller is pinned to bottom, and textarea growth changes the
-			// footer-driven bottom padding. Keep the scroller layout stable during that
-			// fragile focused-input state; other effects still sync padding on mount,
-			// attachment/drag changes, and after the keyboard closes.
-			if (document.documentElement.classList.contains('keyboard-open')) {
+			// footer-driven bottom padding. Keep the scroller layout stable only on that
+			// affected browser; other mobile browsers continue syncing padding normally.
+			if (isIosSafariRef.current && document.documentElement.classList.contains('keyboard-open')) {
 				return;
 			}
 
