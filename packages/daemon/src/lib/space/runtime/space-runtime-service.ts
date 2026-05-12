@@ -25,14 +25,13 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SessionManager } from '../../session-manager';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
+import type { DaemonHub } from '../../daemon-hub';
 import { SpaceRuntime } from './space-runtime';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
 import { selectWorkflowWithLlmDefault } from './llm-workflow-selector';
 import { ChannelRouter } from './channel-router';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
-import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
 import { Logger } from '../../logger';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
@@ -40,8 +39,9 @@ import {
 	SpaceAgentNotificationService,
 	type SpaceAgentNotificationServiceConfig,
 } from './space-agent-notification-service';
-import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus';
+import type { InternalEventBus, DaemonInternalEventMap } from '../../internal-event-bus';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
+import type { ExternalEventService } from '../../external-events/external-event-service';
 
 const log = new Logger('space-runtime-service');
 
@@ -75,10 +75,6 @@ export interface SpaceRuntimeServiceConfig {
 	 */
 	gateDataRepo?: GateDataRepository;
 	/**
-	 * Optional gate open state repository for persisting gate-open cache across daemon restarts.
-	 */
-	gateOpenStateRepo?: import('../../../storage/repositories/gate-open-state-repository').GateOpenStateRepository;
-	/**
 	 * Optional pending message repository for queueing messages to not-yet-spawned
 	 * workflow node agents.
 	 */
@@ -90,6 +86,12 @@ export interface SpaceRuntimeServiceConfig {
 	 * to space chat sessions on startup and on space.created events.
 	 */
 	sessionManager?: SessionManager;
+	/**
+	 * Optional DaemonHub for subscribing to space.created events.
+	 * When provided together with sessionManager, new spaces get their chat sessions
+	 * provisioned automatically.
+	 */
+	daemonHub?: DaemonHub;
 	/**
 	 * Optional artifact repository for resolving completion action context.
 	 * Passed through to SpaceRuntime so completion actions with `artifactType`
@@ -110,27 +112,22 @@ export interface SpaceRuntimeServiceConfig {
 	scheduleService?: import('../schedule/schedule-service').ScheduleService;
 	/**
 	 * Optional InternalEventBus for publishing Space runtime domain events.
-	 * When provided, SpaceRuntime publishes typed events alongside the legacy
-	 * NotificationSink path, and SpaceAgentNotificationService is wired per-space
-	 * to inject agent-facing messages into space:chat:${spaceId} sessions.
-	 *
-	 * This is the preferred integration point for M6+.
+	 * When provided, SpaceRuntime publishes typed events such as
+	 * `space.task.blocked` / `space.workflowRun.completed`, and a
+	 * `SpaceAgentNotificationService` is wired per-space to inject agent-facing
+	 * messages into `space:chat:${spaceId}` sessions.
 	 */
 	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
-	commandBus?: InternalCommandBus<DaemonCommandMap>;
+	/** External event lifecycle store for workflow-node event delivery tracking. */
 	externalEventStore?: ExternalEventStore;
-	/**
-	 * Reply routing registry for symmetric message routing.
-	 * Passed to space-agent-tools so member sessions can register their
-	 * session ID as the reply target when sending messages to task/node agents.
-	 */
-	replyRoutingRegistry?: ReplyRoutingRegistry;
+	/** External event publisher, available for runtime-owned direct publications if needed. */
+	externalEventService?: ExternalEventService;
 }
 
 export class SpaceRuntimeService {
 	private readonly runtime: SpaceRuntime;
 	private started = false;
-	/** Unsubscribe handles for InternalEventBus<DaemonInternalEventMap> event subscriptions (daemon-lifetime). */
+	/** Unsubscribe handles for DaemonHub event subscriptions (daemon-lifetime). */
 	private readonly unsubscribers: Array<() => void> = [];
 	/** Reference to TaskAgentManager, stored when injected via setTaskAgentManager(). */
 	private taskAgentManager: TaskAgentManager | null = null;
@@ -183,8 +180,8 @@ export class SpaceRuntimeService {
 			selectWorkflowWithLlm: config.selectWorkflowWithLlm ?? selectWorkflowWithLlmDefault,
 			internalEventBus: config.internalEventBus,
 			onTaskUpdated: async ({ spaceId, task, archiveSource }) => {
-				if (!this.config.internalEventBus) return;
-				await this.config.internalEventBus.publish('space.task.updated', {
+				this.config.internalEventBus?.publishAsync('space.task.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId,
 					taskId: task.id,
@@ -193,8 +190,8 @@ export class SpaceRuntimeService {
 				});
 			},
 			onWorkflowRunCreated: async ({ spaceId, run }) => {
-				if (!this.config.internalEventBus) return;
-				await this.config.internalEventBus.publish('space.workflowRun.created', {
+				this.config.internalEventBus?.publishAsync('space.workflowRun.created', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId,
 					runId: run.id,
@@ -202,8 +199,8 @@ export class SpaceRuntimeService {
 				});
 			},
 			onWorkflowRunUpdated: async ({ spaceId, run }) => {
-				if (!this.config.internalEventBus) return;
-				await this.config.internalEventBus.publish('space.workflowRun.updated', {
+				this.config.internalEventBus?.publishAsync('space.workflowRun.updated', {
+					namespaceId: 'global',
 					sessionId: 'global',
 					spaceId,
 					runId: run.id,
@@ -219,8 +216,6 @@ export class SpaceRuntimeService {
 	 * Resolves the circular dependency: SpaceRuntimeService must exist before
 	 * TaskAgentManager (which takes it as a constructor argument), so the manager
 	 * is injected back here once both are created.
-	 *
-	 * Mirrors the setNotificationSink() pattern.
 	 */
 	setTaskAgentManager(manager: TaskAgentManager): void {
 		this.taskAgentManager = manager;
@@ -422,117 +417,146 @@ export class SpaceRuntimeService {
 	 * `space-agent-tools` (and `db-query`) attached so it can coordinate with
 	 * the rest of the Space.
 	 *
-	 * Called once during start(). No-op when sessionManager or internalEventBus are absent.
+	 * Called once during start(). No-op when sessionManager is absent.
+	 * DaemonHub is still used for unmigrated session/workflow events, but migrated
+	 * space lifecycle subscriptions can run with InternalEventBus alone.
 	 */
 	private subscribeToSpaceEvents(): void {
-		const { sessionManager, internalEventBus } = this.config;
-		if (!sessionManager || !internalEventBus) return;
+		const { sessionManager, daemonHub, internalEventBus } = this.config;
+		if (!sessionManager || (!daemonHub && !internalEventBus)) return;
 
-		const unsubCreated = internalEventBus.subscribe(
-			'space.created',
-			(event) => {
-				void this.setupSpaceAgentSession(event.space).catch((err) => {
-					log.error(`Failed to provision space chat session for space ${event.spaceId}:`, err);
-				});
-			},
-			{ sessionId: 'global', subscriberName: 'SpaceRuntimeService.global' }
-		);
+		const handleSpaceCreated = (event: DaemonInternalEventMap['space.created']): void => {
+			void this.setupSpaceAgentSession(event.space).catch((err) => {
+				log.error(`Failed to provision space chat session for space ${event.spaceId}:`, err);
+			});
+		};
+		const unsubCreated = internalEventBus
+			? internalEventBus.subscribe('space.created', handleSpaceCreated, {
+					subscriberName: 'SpaceRuntimeService.spaceCreated',
+				})
+			: daemonHub!.on(
+					'space.created',
+					handleSpaceCreated as (event: {
+						sessionId: string;
+						spaceId: string;
+						space: Space;
+					}) => void
+				);
 		this.unsubscribers.push(unsubCreated);
 
-		// When a workflow definition is updated, refresh gate poll timers for
-		// all active runs using that workflow so mid-run config changes are
-		// picked up without requiring a task restart.
-		const unsubWorkflowUpdated = internalEventBus.subscribe(
-			'spaceWorkflow.updated',
-			(event) => {
-				try {
-					this.runtime.onWorkflowDefChanged(event.workflow.id);
-				} catch (err) {
-					log.error(`Failed to refresh gate polls for workflow ${event.workflow.id}:`, err);
-				}
-			},
-			{ sessionId: 'global', subscriberName: 'SpaceRuntimeService.global' }
-		);
-		this.unsubscribers.push(unsubWorkflowUpdated);
+		if (daemonHub) {
+			// When a workflow definition is updated, refresh gate poll timers for
+			// all active runs using that workflow so mid-run config changes are
+			// picked up without requiring a task restart.
+			const unsubWorkflowUpdated = daemonHub.on(
+				'spaceWorkflow.updated',
+				(event) => {
+					try {
+						this.runtime.onWorkflowDefChanged(event.workflow.id);
+					} catch (err) {
+						log.error(`Failed to refresh gate polls for workflow ${event.workflow.id}:`, err);
+					}
+				},
+				{ sessionId: 'global' }
+			);
+			this.unsubscribers.push(unsubWorkflowUpdated);
 
-		// When any new session is created with `context.spaceId`, attach the
-		// shared Space coordination tools. The space-chat session itself is
-		// handled by `setupSpaceAgentSession` (it also sets the system prompt);
-		// the space_task_agent sessions are handled by `TaskAgentManager`
-		// (which merges `space-agent-tools` into its MCP set). This subscription
-		// covers the remaining cases: worker sessions
-		// that live inside a Space and need to send/receive messages via
-		// `send_message_to_agent`, inspect tasks, etc.
-		//
-		// NOTE: no `{ sessionId: 'global', subscriberName: 'SpaceRuntimeService.global' }` filter here — `session.created` is
-		// emitted with `data.sessionId = <new session UUID>`, so a `'global'`
-		// filter would never match. We want every session.created event, so we
-		// subscribe globally (TypedHub's default).
-		const unsubSessionCreated = internalEventBus.subscribe(
-			'session.created',
-			(event) => {
+			// When any new session is created with `context.spaceId`, attach the
+			// shared Space coordination tools. The space-chat session itself is
+			// handled by `setupSpaceAgentSession` (it also sets the system prompt);
+			// the space_task_agent sessions are handled by `TaskAgentManager`
+			// (which merges `space-agent-tools` into its MCP set). This subscription
+			// covers the remaining cases: worker sessions
+			// that live inside a Space and need to send/receive messages via
+			// `send_message_to_agent`, inspect tasks, etc.
+			//
+			// NOTE: no `{ namespaceId: 'global', sessionId: 'global' }` filter here — `session.created` is
+			// emitted with `data.sessionId = <new session UUID>`, so a `'global'`
+			// filter would never match. We want every session.created event, so we
+			// subscribe globally (TypedHub's default).
+			const unsubSessionCreated = daemonHub.on('session.created', (event) => {
 				void this.attachSpaceToolsToMemberSession(event.session).catch((err) => {
 					log.error(
 						`Failed to attach space tools to session ${event.sessionId} (space ${event.session.context?.spaceId ?? '?'}):`,
 						err
 					);
 				});
-			},
-			{ subscriberName: 'SpaceRuntimeService.sessionCreated' }
-		);
-		this.unsubscribers.push(unsubSessionCreated);
+			});
+			this.unsubscribers.push(unsubSessionCreated);
 
-		// When a session is deleted, release any per-session db-query server we
-		// spun up for it so read-only SQLite handles don't accumulate on a
-		// long-lived daemon serving many short-lived worker sessions.
-		// (Same reasoning as above: `session.deleted` is emitted with the
-		// deleted session's UUID as `sessionId`, not `'global'`.)
-		const unsubSessionDeleted = internalEventBus.subscribe(
-			'session.deleted',
-			(event) => {
+			// When a session is deleted, release any per-session db-query server we
+			// spun up for it so read-only SQLite handles don't accumulate on a
+			// long-lived daemon serving many short-lived worker sessions.
+			// (Same reasoning as above: `session.deleted` is emitted with the
+			// deleted session's UUID as `sessionId`, not `'global'`.)
+			const unsubSessionDeleted = daemonHub.on('session.deleted', (event) => {
 				this.releaseMemberSessionDbQuery(event.sessionId);
-			},
-			{ subscriberName: 'SpaceRuntimeService.sessionDeleted' }
-		);
-		this.unsubscribers.push(unsubSessionDeleted);
+			});
+			this.unsubscribers.push(unsubSessionDeleted);
+		}
 
 		// When a space is archived or deleted, tear down its notification service
 		// so stale subscribers don't accumulate and fan-out to non-existent sessions.
-		const unsubSpaceArchived = internalEventBus.subscribe(
-			'space.archived',
-			(event) => this.tearDownSpaceNotificationService(event.spaceId, 'archived'),
-			{ sessionId: 'global', subscriberName: 'SpaceRuntimeService.global' }
-		);
+		const handleSpaceArchived = (event: DaemonInternalEventMap['space.archived']): void =>
+			this.tearDownSpaceNotificationService(event.spaceId, 'archived');
+		const unsubSpaceArchived = internalEventBus
+			? internalEventBus.subscribe('space.archived', handleSpaceArchived, {
+					subscriberName: 'SpaceRuntimeService.spaceArchived',
+				})
+			: daemonHub!.on(
+					'space.archived',
+					handleSpaceArchived as (event: {
+						sessionId: string;
+						spaceId: string;
+						space: Space;
+					}) => void,
+					{ sessionId: 'global' }
+				);
 		this.unsubscribers.push(unsubSpaceArchived);
 
-		const unsubSpaceDeleted = internalEventBus.subscribe(
-			'space.deleted',
-			(event) => this.tearDownSpaceNotificationService(event.spaceId, 'deleted'),
-			{ sessionId: 'global', subscriberName: 'SpaceRuntimeService.global' }
-		);
+		const handleSpaceDeleted = (event: DaemonInternalEventMap['space.deleted']): void =>
+			this.tearDownSpaceNotificationService(event.spaceId, 'deleted');
+		const unsubSpaceDeleted = internalEventBus
+			? internalEventBus.subscribe('space.deleted', handleSpaceDeleted, {
+					subscriberName: 'SpaceRuntimeService.spaceDeleted',
+				})
+			: daemonHub!.on(
+					'space.deleted',
+					handleSpaceDeleted as (event: { sessionId: string; spaceId: string }) => void,
+					{ sessionId: 'global' }
+				);
 		this.unsubscribers.push(unsubSpaceDeleted);
 
 		// When a space is updated, refresh the autonomy level in its notification
 		// service so [TASK_EVENT] messages report the current level.
-		const unsubSpaceUpdated = internalEventBus.subscribe(
-			'space.updated',
-			(event) => {
-				const existingUnsub = this.spaceAgentNotificationUnsubs.get(event.spaceId);
-				if (!existingUnsub) return;
+		const handleSpaceUpdated = (event: DaemonInternalEventMap['space.updated']): void => {
+			const existingUnsub = this.spaceAgentNotificationUnsubs.get(event.spaceId);
+			if (!existingUnsub) return;
 
-				// Re-provision the space chat session, which re-creates the
-				// SpaceAgentNotificationService with the updated autonomy level.
-				if (event.space) {
-					void this.setupSpaceAgentSession(event.space as Space).catch((err) => {
-						log.error(
-							`Failed to re-provision space chat session after autonomy update for space ${event.spaceId}:`,
-							err
-						);
-					});
-				}
-			},
-			{ sessionId: 'global', subscriberName: 'SpaceRuntimeService.global' }
-		);
+			// Re-provision the space chat session, which re-creates the
+			// SpaceAgentNotificationService with the updated autonomy level.
+			if (event.space) {
+				void this.setupSpaceAgentSession(event.space as Space).catch((err) => {
+					log.error(
+						`Failed to re-provision space chat session after autonomy update for space ${event.spaceId}:`,
+						err
+					);
+				});
+			}
+		};
+		const unsubSpaceUpdated = internalEventBus
+			? internalEventBus.subscribe('space.updated', handleSpaceUpdated, {
+					subscriberName: 'SpaceRuntimeService.spaceUpdated',
+				})
+			: daemonHub!.on(
+					'space.updated',
+					handleSpaceUpdated as (event: {
+						sessionId: string;
+						spaceId: string;
+						space?: Partial<Space>;
+					}) => void,
+					{ sessionId: 'global' }
+				);
 		this.unsubscribers.push(unsubSpaceUpdated);
 
 		// Hard resets replace the cached AgentSession with a fresh instance built
@@ -782,7 +806,6 @@ export class SpaceRuntimeService {
 			mySessionId: session.id,
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,
-			replyRoutingRegistry: this.config.replyRoutingRegistry,
 		});
 
 		const additional: Record<string, McpServerConfig> = {
@@ -877,7 +900,6 @@ export class SpaceRuntimeService {
 			mySessionId: spaceChatSessionId,
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,
-			replyRoutingRegistry: this.config.replyRoutingRegistry,
 		});
 
 		// Create a space-scoped db-query server if dbPath is configured.
@@ -955,7 +977,8 @@ export class SpaceRuntimeService {
 		}
 
 		// Wire SpaceAgentNotificationService for this space when InternalEventBus is available.
-		// This replaces the legacy SessionNotificationSink / setNotificationSink path.
+		// This delivers agent-facing notifications for runtime events (`space.task.blocked`,
+		// `space.workflowRun.completed`, etc.) into the space chat session.
 		if (this.config.internalEventBus && sessionManager) {
 			// Tear down any existing notification service for this space (re-provision safety).
 			const existingUnsub = this.spaceAgentNotificationUnsubs.get(space.id);
@@ -1045,14 +1068,13 @@ export class SpaceRuntimeService {
 		});
 		if (!updated) return;
 
-		if (this.config.internalEventBus) {
-			await this.config.internalEventBus.publish('space.task.updated', {
-				sessionId: 'global',
-				spaceId: run.spaceId,
-				taskId: updated.id,
-				task: updated,
-			});
-		}
+		this.config.internalEventBus?.publishAsync('space.task.updated', {
+			namespaceId: 'global',
+			sessionId: 'global',
+			spaceId: run.spaceId,
+			taskId: updated.id,
+			task: updated,
+		});
 	}
 
 	/**
@@ -1085,7 +1107,6 @@ export class SpaceRuntimeService {
 			agentManager: this.config.spaceAgentManager,
 			nodeExecutionRepo: this.nodeExecutionRepo,
 			gateDataRepo: this.config.gateDataRepo,
-			gateOpenStateRepo: this.config.gateOpenStateRepo,
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db,
 			workspacePath,
@@ -1097,9 +1118,7 @@ export class SpaceRuntimeService {
 			cancelSessionById: taskAgentManager
 				? (sid) => taskAgentManager.cancelBySessionId(sid)
 				: undefined,
-			// Forward the runtime's current sink so a gate-driven reopen still
-			// surfaces `workflow_run_reopened` to the Space Agent session.
-			// Forward the InternalEventBus so gate-driven reopens also publish
+			// Forward the InternalEventBus so gate-driven reopens publish
 			// typed `space.workflowRun.reopened` events for bus subscribers.
 			internalEventBus: this.config.internalEventBus,
 			onGatePendingApproval: (runId, gateId) => this.handleGatePendingApproval(runId, gateId),
@@ -1147,7 +1166,6 @@ export class SpaceRuntimeService {
 			agentManager: this.config.spaceAgentManager,
 			nodeExecutionRepo: this.nodeExecutionRepo,
 			gateDataRepo: this.config.gateDataRepo,
-			gateOpenStateRepo: this.config.gateOpenStateRepo,
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db,
 			workspacePath,
@@ -1159,10 +1177,7 @@ export class SpaceRuntimeService {
 			cancelSessionById: taskAgentManager
 				? (sid) => taskAgentManager.cancelBySessionId(sid)
 				: undefined,
-			// Forward the runtime's current sink so activation-driven reopens of
-			// terminal runs still surface `workflow_run_reopened` to the Space
-			// Agent session (mirrors `notifyGateDataChanged` above).
-			// Forward the InternalEventBus so activation-driven reopens also publish
+			// Forward the InternalEventBus so activation-driven reopens publish
 			// typed `space.workflowRun.reopened` events for bus subscribers.
 			internalEventBus: this.config.internalEventBus,
 		});

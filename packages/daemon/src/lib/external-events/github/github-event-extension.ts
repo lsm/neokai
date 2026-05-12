@@ -24,7 +24,6 @@ const log = new Logger('github-event-extension');
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 
 interface GitHubEventExtensionOptions {
-	githubToken?: string;
 	pollIntervalMs?: number;
 	onWatchedReposChanged?: () => void;
 }
@@ -46,13 +45,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 	private stopped = true;
 
 	constructor(
-		dbOrRepo: BunDatabase | GitHubEventExtensionRepository,
+		db: BunDatabase,
+		private readonly githubToken = process.env.GITHUB_TOKEN,
 		private readonly options: GitHubEventExtensionOptions = {}
 	) {
-		this.repo =
-			dbOrRepo instanceof GitHubEventExtensionRepository
-				? dbOrRepo
-				: new GitHubEventExtensionRepository(dbOrRepo);
+		this.repo = new GitHubEventExtensionRepository(db);
 	}
 
 	async start(context: ExternalEventExtensionContext): Promise<void> {
@@ -71,6 +68,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
 	registerRpcHandlers(hub: MessageHub, context: ExternalEventExtensionContext): void {
 		hub.onRequest('space.github.enable', async (data) => {
+			await assertRpcConfigEnabled(context, this.sourceId);
 			const params = data as { spaceId: string };
 			if (!params.spaceId) throw new Error('spaceId is required');
 			this.repo.setRepoEnabled(params.spaceId, true);
@@ -84,6 +82,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		});
 
 		hub.onRequest('space.github.disable', async (data) => {
+			await assertRpcConfigEnabled(context, this.sourceId);
 			const params = data as { spaceId: string };
 			if (!params.spaceId) throw new Error('spaceId is required');
 			this.repo.setRepoEnabled(params.spaceId, false);
@@ -97,6 +96,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		});
 
 		hub.onRequest('space.github.watchRepo', async (data) => {
+			await assertRpcConfigEnabled(context, this.sourceId);
 			const params = data as {
 				spaceId: string;
 				owner: string;
@@ -128,6 +128,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		});
 
 		hub.onRequest('space.github.listWatchedRepos', async (data) => {
+			await assertRpcConfigEnabled(context, this.sourceId);
 			const params = data as { spaceId?: string };
 			if (!params.spaceId) throw new Error('spaceId is required');
 			return {
@@ -138,7 +139,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 			};
 		});
 
+		hub.onRequest('space.github.listConfig', async (data) => {
+			await assertRpcConfigEnabled(context, this.sourceId);
+			const params = data as { spaceId?: string };
+			if (!params.spaceId) throw new Error('spaceId is required');
+			return await context.config.getSpaceConfig(params.spaceId, this.sourceId);
+		});
+
 		hub.onRequest('space.github.pollOnce', async (data) => {
+			await assertRpcConfigEnabled(context, this.sourceId);
+			const global = await context.config.getGlobalConfig(this.sourceId);
+			if (!global.capabilities.polling) {
+				throw new Error('GitHub polling capability is disabled');
+			}
 			const params = (data ?? {}) as { spaceId?: string };
 			return {
 				count: params.spaceId
@@ -200,7 +213,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		for (const repo of validForRepo) {
 			const spaceConfig = await this.context.config.getSpaceConfig(repo.spaceId, this.sourceId);
 			if (spaceConfig && !spaceConfig.enabled) continue;
-			await this.publishNormalizedEvent(repo.spaceId, normalized);
+			await this.publishEvent(repo.spaceId, normalized, this.context);
 			this.repo.markWebhookReceived(repo.id);
 			published++;
 		}
@@ -262,12 +275,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		}
 	}
 
-	private async publishNormalizedEvent(
+	private async publishEvent(
 		spaceId: string,
-		event: import('./github-normalizer').NormalizedGitHubEvent
+		event: import('./github-normalizer').NormalizedGitHubEvent,
+		context: ExternalEventExtensionContext
 	): Promise<void> {
-		if (!this.context) return;
-		await this.context.publisher.publish(toExternalEvent(spaceId, event));
+		await context.publisher.publish(toExternalEvent(spaceId, event));
 	}
 
 	async pollWatchedRepo(
@@ -309,7 +322,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 				'User-Agent': 'NeoKai-Space-GitHub/1.0',
 				'X-GitHub-Api-Version': '2022-11-28',
 			};
-			if (this.options.githubToken) headers.Authorization = `Bearer ${this.options.githubToken}`;
+			if (this.githubToken) headers.Authorization = `Bearer ${this.githubToken}`;
 			if (page === 1 && etags[endpoint.key]) headers['If-None-Match'] = etags[endpoint.key];
 			const response = await fetchImpl(url, { headers });
 			if (response.status === 304) continue;
@@ -320,7 +333,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 			for (const row of rows) {
 				const event = normalizeGitHubPollingRow(watched, row, endpoint.key);
 				if (event) {
-					await this.publishNormalizedEvent(watched.spaceId, event);
+					await this.publishEvent(watched.spaceId, event, this.context);
 					watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
 					count++;
 				}
@@ -336,6 +349,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		};
 		this.repo.updatePollCursor(watched.id, cursorPayload);
 		return count;
+	}
+}
+
+async function assertRpcConfigEnabled(
+	context: ExternalEventExtensionContext,
+	sourceId: string
+): Promise<void> {
+	const global = await context.config.getGlobalConfig(sourceId);
+	if (!global.globallyEnabled || !global.capabilities.rpcConfig) {
+		throw new Error('GitHub RPC configuration capability is disabled');
 	}
 }
 
