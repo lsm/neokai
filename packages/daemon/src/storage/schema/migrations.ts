@@ -614,6 +614,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 127: Add `handle` column to `space_workflows` for human-readable
 	// workflow identifiers (alternative to UUID). Unique per space.
 	runMigration127(db);
+
+	// Migration 128: Add external-event extension configuration tables.
+	runMigration128(db);
 }
 
 /**
@@ -8733,6 +8736,32 @@ export function runMigration126(db: BunDatabase): void {
  * repeatedly: rows with a non-null handle are untouched (the SELECT filters
  * them out), so existing handles are always preserved across restarts.
  */
+export function runMigration128(db: BunDatabase): void {
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS external_event_source_configs (
+			source TEXT PRIMARY KEY,
+			globally_enabled INTEGER NOT NULL DEFAULT 0,
+			capabilities_json TEXT NOT NULL,
+			secrets_ref TEXT,
+			settings_json TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`);
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_external_event_source_configs (
+			space_id TEXT NOT NULL,
+			source TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 0,
+			settings_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(space_id, source)
+		)
+	`);
+}
+
 export function runMigration127(db: BunDatabase): void {
 	if (!tableExists(db, 'space_workflows')) return;
 

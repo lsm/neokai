@@ -372,6 +372,30 @@ export function createSpaceTables(db: BunDatabase): void {
 			`WHERE idempotency_key IS NOT NULL`
 	);
 
+	// External Event Bus extension configuration tables.
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS external_event_source_configs (
+			source TEXT PRIMARY KEY,
+			globally_enabled INTEGER NOT NULL DEFAULT 0,
+			capabilities_json TEXT NOT NULL,
+			secrets_ref TEXT,
+			settings_json TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_external_event_source_configs (
+			space_id TEXT NOT NULL,
+			source TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 0,
+			settings_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(space_id, source)
+		)
+	`);
+
 	// External Event Bus tables (migration 124 — simplified schema)
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_external_events (

@@ -15,6 +15,14 @@ export {
 	type DeliveryFailure,
 	type DeliveryTarget,
 	type StoreResult,
+	type ExternalEventExtensionConfig,
+	type SpaceExternalEventSourceConfig,
+	type ExternalEventExtensionContext,
+	type ExternalEventExtensionConfigStore as ExternalEventExtensionConfigStoreContract,
+	type ExternalEventExtension,
+	type Route,
+	type HttpExternalEventExtension,
+	type RpcExternalEventExtension,
 	TERMINAL_EVENT_STATES,
 	TERMINAL_DELIVERY_STATES,
 } from './types';
@@ -36,3 +44,11 @@ export {
 	type ExternalEventPublishedPayload,
 } from './external-event-service';
 export { TopicTrie, isReceivingStatus } from './topic-trie';
+export {
+	ExternalEventExtensionConfigStore,
+	ensureExternalEventExtensionConfigTables,
+} from './extension-config-store';
+export {
+	ExternalEventExtensionManager,
+	type RegisteredRoute,
+} from './extension-manager';
