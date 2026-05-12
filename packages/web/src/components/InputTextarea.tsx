@@ -143,18 +143,19 @@ export function InputTextarea({
 		}
 	}, [content]);
 
-	// Auto-resize textarea.
-	// Uses requestAnimationFrame to avoid forcing synchronous layout while the
-	// browser is processing textarea input/caret changes. This is especially
-	// important on iOS Safari, where pre-paint footer height changes can trigger
-	// page/browser-chrome re-anchoring while the keyboard is open.
+	// Auto-resize textarea
+	// Uses requestAnimationFrame to avoid forced synchronous reflow:
+	// the height reset and scrollHeight read happen in separate frames,
+	// allowing the browser to batch layout calculations naturally.
 	useEffect(() => {
 		const textarea = textareaRef.current;
 		if (!textarea) return;
 
+		// Frame 1: Reset height so scrollHeight reflects actual content
 		textarea.style.height = 'auto';
 		textarea.style.minHeight = '40px';
 
+		// Frame 2: Read natural height and apply clamped value
 		const rafId = requestAnimationFrame(() => {
 			const newHeight = Math.min(Math.max(40, textarea.scrollHeight), 200);
 			textarea.style.height = `${newHeight}px`;
