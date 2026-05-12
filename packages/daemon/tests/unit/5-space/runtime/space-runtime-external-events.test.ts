@@ -394,12 +394,36 @@ describe('SpaceRuntime external event subscriptions', () => {
 		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
 		nodeExecutionRepo.update(execution.id, {
 			status: 'cancelled',
+			agentSessionId: 'session-cancelled',
 			completedAt: Date.now(),
 		});
+		tam.alive.add('session-cancelled');
 
 		const event = makeEvent();
 		await eventService.publish(event);
 
+		expect(injected).toHaveLength(0);
+		const delivery = eventStore.listDeliveries(event.id)[0]!;
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toBe('node_execution_not_active');
+		expect(eventStore.getById(event.id)?.state).toBe('failed');
+	});
+
+	test('does not deliver external events to idle executions with retained sessions', async () => {
+		const workflow = createWorkflow();
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'idle',
+			agentSessionId: 'session-idle-stale',
+			completedAt: Date.now(),
+		});
+		tam.alive.add('session-idle-stale');
+
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		expect(injected).toHaveLength(0);
 		const delivery = eventStore.listDeliveries(event.id)[0]!;
 		expect(delivery.state).toBe('failed');
 		expect(delivery.failureReason).toBe('node_execution_not_active');

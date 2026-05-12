@@ -914,27 +914,28 @@ export class SpaceRuntime {
 	}
 
 	private resolveSubscriptionTarget(target: SubscriptionTarget): SubscriptionTarget {
-		const executions = this.config.nodeExecutionRepo.listByNode(
-			target.workflowRunId,
-			target.nodeId
-		);
-		const matching = executions
-			.filter((execution) => execution.agentName === target.agentName)
-			.sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt));
-		const current = matching.find((execution) => execution.status !== 'cancelled') ?? matching[0];
+		const current = this.getCurrentQueueableOrActiveExecution(target);
 		return current?.agentSessionId ? { ...target, sessionId: current.agentSessionId } : target;
 	}
 
 	private isPending(target: SubscriptionTarget): boolean {
-		const executions = this.config.nodeExecutionRepo.listByNode(
-			target.workflowRunId,
-			target.nodeId
-		);
-		return executions.some(
-			(execution) =>
-				execution.agentName === target.agentName &&
-				(execution.status === 'pending' || execution.status === 'waiting_rebind')
-		);
+		const current = this.getCurrentQueueableOrActiveExecution(target);
+		return current?.status === 'pending' || current?.status === 'waiting_rebind';
+	}
+
+	private getCurrentQueueableOrActiveExecution(
+		target: SubscriptionTarget
+	): NodeExecution | undefined {
+		return this.config.nodeExecutionRepo
+			.listByNode(target.workflowRunId, target.nodeId)
+			.filter(
+				(execution) =>
+					execution.agentName === target.agentName &&
+					(execution.status === 'pending' ||
+						execution.status === 'in_progress' ||
+						execution.status === 'waiting_rebind')
+			)
+			.sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))[0];
 	}
 
 	private isTargetSessionLive(sessionId: string): boolean {
