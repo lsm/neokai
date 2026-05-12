@@ -144,7 +144,8 @@ export function ensureExternalEventExtensionConfigTables(db: BunDatabase): void 
 			settings_json TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			PRIMARY KEY(space_id, source)
+			PRIMARY KEY(space_id, source),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
 }
@@ -188,7 +189,7 @@ function validateGlobalConfig(source: string, config: ExternalEventExtensionConf
 			`Global external-event config source "${config.source}" must match "${source}"`
 		);
 	}
-	if (!config.capabilities || typeof config.capabilities !== 'object') {
+	if (!isRecord(config.capabilities)) {
 		throw new Error('Global external-event config capabilities must be an object');
 	}
 	if (config.settings !== undefined && !isRecord(config.settings)) {

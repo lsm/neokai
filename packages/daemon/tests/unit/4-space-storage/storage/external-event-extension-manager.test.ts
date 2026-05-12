@@ -41,6 +41,10 @@ describe('ExternalEventExtensionManager', () => {
 		expect(() => manager.register(createExtension('github'))).toThrow('already registered');
 	});
 
+	test('rejects source IDs with edge whitespace', () => {
+		expect(() => manager.register(createExtension(' github '))).toThrow('edge whitespace');
+	});
+
 	test('does not start globally disabled extensions', async () => {
 		const extension = createExtension('github');
 		manager.register(extension);
@@ -86,6 +90,99 @@ describe('ExternalEventExtensionManager', () => {
 		expect(extension.stops).toBe(1);
 	});
 
+	test('removes registered routes for source-owned route arrays on unregister', () => {
+		const routes = [
+			{
+				method: 'POST' as const,
+				path: '/webhooks/github',
+				handle: async () => new Response('ok'),
+			},
+		];
+		manager.register({
+			sourceId: 'github',
+			routes,
+			async start() {},
+			async stop() {},
+		});
+
+		manager.registerRoutes(routes, context);
+		expect(manager.getRegisteredRoutes()).toHaveLength(1);
+		expect(manager.getRegisteredRoutes()[0]!.sourceId).toBe('github');
+
+		manager.unregister('github');
+		expect(manager.getRegisteredRoutes()).toHaveLength(0);
+	});
+
+	test('assigns source ownership for cloned route arrays by method and path', () => {
+		const routes = [
+			{
+				method: 'POST' as const,
+				path: '/webhooks/github',
+				handle: async () => new Response('ok'),
+			},
+		];
+		manager.register({
+			sourceId: 'github',
+			routes,
+			async start() {},
+			async stop() {},
+		});
+
+		manager.registerRoutes(
+			routes.map((route) => ({ ...route })),
+			context
+		);
+		expect(manager.getRegisteredRoutes()).toHaveLength(1);
+		expect(manager.getRegisteredRoutes()[0]!.sourceId).toBe('github');
+	});
+
+	test('deduplicates route handlers when routes are registered repeatedly', () => {
+		const routes = [
+			{
+				method: 'POST' as const,
+				path: '/webhooks/github',
+				handle: async () => new Response('ok'),
+			},
+		];
+		manager.register({
+			sourceId: 'github',
+			routes,
+			async start() {},
+			async stop() {},
+		});
+
+		manager.registerRoutes(routes, context);
+		manager.registerRoutes(routes, context);
+		expect(manager.getRegisteredRoutes()).toHaveLength(1);
+	});
+
+	test('removes source route handlers on stop', async () => {
+		const routes = [
+			{
+				method: 'POST' as const,
+				path: '/webhooks/github',
+				handle: async () => new Response('ok'),
+			},
+		];
+		manager.register({
+			sourceId: 'github',
+			routes,
+			async start() {},
+			async stop() {},
+		});
+		await config.setGlobalConfig('github', {
+			source: 'github',
+			globallyEnabled: true,
+			capabilities: { webhooks: true },
+		});
+
+		await manager.startExtension('github', context);
+		manager.registerRoutes(routes, context);
+		await manager.stopExtension('github');
+
+		expect(manager.getRegisteredRoutes()).toHaveLength(0);
+	});
+
 	test('registers and unregisters RPC handlers through tracked unsubscribe callbacks', () => {
 		const calls: string[] = [];
 		const hub = new MessageHub();
@@ -127,6 +224,35 @@ describe('ExternalEventExtensionManager', () => {
 			'unregister:space.github.watchRepo',
 			'unregister:space.github.pollOnce',
 		]);
+	});
+
+	test('cleans up partially registered RPC handlers when extension registration throws', () => {
+		const calls: string[] = [];
+		const hub = new MessageHub();
+		const originalOnRequest = hub.onRequest.bind(hub);
+		hub.onRequest = ((method, handler) => {
+			calls.push(`register:${method}`);
+			const unsubscribe = originalOnRequest(method, handler);
+			return () => {
+				calls.push(`unregister:${method}`);
+				unsubscribe();
+			};
+		}) as MessageHub['onRequest'];
+		const extension: RpcExternalEventExtension = {
+			sourceId: 'github',
+			async start() {},
+			async stop() {},
+			registerRpcHandlers(hubLike) {
+				hubLike.onRequest('space.github.watchRepo', () => ({ ok: true }));
+				throw new Error('registration failed');
+			},
+		};
+		manager.register(extension);
+
+		expect(() => manager.registerRpcHandlers('github', hub, context)).toThrow(
+			'registration failed'
+		);
+		expect(calls).toEqual(['register:space.github.watchRepo', 'unregister:space.github.watchRepo']);
 	});
 });
 

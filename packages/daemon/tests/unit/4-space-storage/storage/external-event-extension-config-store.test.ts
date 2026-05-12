@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events/extension-config-store';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 let db: Database;
 let store: ExternalEventExtensionConfigStore;
@@ -148,5 +149,38 @@ describe('ExternalEventExtensionConfigStore', () => {
 				settings: {},
 			})
 		).rejects.toThrow('must match');
+	});
+
+	test('rejects array capabilities to keep writes consistent with reads', async () => {
+		await expect(
+			store.setGlobalConfig('github', {
+				source: 'github',
+				globallyEnabled: true,
+				capabilities: [] as unknown as { webhooks?: boolean },
+			})
+		).rejects.toThrow('capabilities must be an object');
+	});
+
+	test('cascades per-space config rows when spaces are deleted', async () => {
+		db.close();
+		db = new Database(':memory:');
+		createSpaceTables(db);
+		store = new ExternalEventExtensionConfigStore(db);
+		const now = Date.now();
+		db.prepare(
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`
+		).run('space-1', 'space-1', '/tmp/space-1', 'Space 1', now, now);
+
+		await store.setSpaceConfig('space-1', 'github', {
+			spaceId: 'space-1',
+			source: 'github',
+			enabled: true,
+			settings: { repo: 'one' },
+		});
+
+		db.prepare(`DELETE FROM spaces WHERE id = ?`).run('space-1');
+
+		await expect(store.listEnabledSpaces('github')).resolves.toEqual([]);
 	});
 });

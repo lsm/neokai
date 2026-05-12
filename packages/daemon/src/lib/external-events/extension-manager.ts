@@ -14,8 +14,14 @@ export class ExternalEventExtensionManager {
 	private rpcUnsubscribers = new Map<string, (() => void)[]>();
 
 	register(extension: ExternalEventExtension): void {
-		if (!extension.sourceId || extension.sourceId.trim().length === 0) {
-			throw new Error('External event extension sourceId must be non-empty');
+		if (
+			!extension.sourceId ||
+			extension.sourceId.trim().length === 0 ||
+			extension.sourceId !== extension.sourceId.trim()
+		) {
+			throw new Error(
+				'External event extension sourceId must be non-empty and must not include edge whitespace'
+			);
 		}
 		if (this.extensions.has(extension.sourceId)) {
 			throw new Error(`External event extension "${extension.sourceId}" is already registered`);
@@ -49,6 +55,7 @@ export class ExternalEventExtensionManager {
 		} finally {
 			this.started.delete(sourceId);
 			this.unregisterRpcHandlers(sourceId);
+			this.unregisterRoutes(sourceId);
 		}
 	}
 
@@ -57,10 +64,13 @@ export class ExternalEventExtensionManager {
 	}
 
 	registerRoutes(routes: readonly Route[], context: ExternalEventExtensionContext): void {
+		const sourceId = this.findSourceIdForRoutes(routes);
+		if (sourceId) {
+			this.unregisterRoutes(sourceId);
+		}
 		for (const route of routes) {
-			const extension = this.findExtensionForRoute(route);
 			this.routeHandlers.push({
-				sourceId: extension?.sourceId,
+				sourceId,
 				method: route.method,
 				path: route.path,
 				handle: (req) => route.handle(req, context),
@@ -92,7 +102,14 @@ export class ExternalEventExtensionManager {
 				};
 			},
 		});
-		extension.registerRpcHandlers(trackingHub, context);
+		try {
+			extension.registerRpcHandlers(trackingHub, context);
+		} catch (error) {
+			for (const unsubscribe of unsubscribers) {
+				unsubscribe();
+			}
+			throw error;
+		}
 		this.rpcUnsubscribers.set(sourceId, unsubscribers);
 	}
 
@@ -116,10 +133,16 @@ export class ExternalEventExtensionManager {
 		this.rpcUnsubscribers.delete(sourceId);
 	}
 
-	private findExtensionForRoute(route: Route): HttpExternalEventExtension | undefined {
+	private unregisterRoutes(sourceId: string): void {
+		this.routeHandlers = this.routeHandlers.filter((route) => route.sourceId !== sourceId);
+	}
+
+	private findSourceIdForRoutes(routes: readonly Route[]): string | undefined {
 		for (const extension of this.extensions.values()) {
 			if (!isHttpExtension(extension)) continue;
-			if (extension.routes.includes(route)) return extension;
+			if (extension.routes === routes || routesMatch(extension.routes, routes)) {
+				return extension.sourceId;
+			}
 		}
 		return undefined;
 	}
@@ -130,6 +153,14 @@ export interface RegisteredRoute {
 	readonly method: Route['method'];
 	readonly path: string;
 	handle(req: Request): Promise<Response>;
+}
+
+function routesMatch(left: readonly Route[], right: readonly Route[]): boolean {
+	if (left.length !== right.length) return false;
+	return left.every((route, index) => {
+		const other = right[index];
+		return Boolean(other) && route.method === other.method && route.path === other.path;
+	});
 }
 
 function isHttpExtension(

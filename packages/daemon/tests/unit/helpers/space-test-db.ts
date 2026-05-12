@@ -392,7 +392,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			settings_json TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			PRIMARY KEY(space_id, source)
+			PRIMARY KEY(space_id, source),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
 
