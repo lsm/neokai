@@ -136,6 +136,67 @@ describe('ExternalEventExtensionManager', () => {
 		expect(manager.getRegisteredRoutes()[0]!.sourceId).toBe('github');
 	});
 
+	test('assigns source ownership for cloned route arrays regardless of order', () => {
+		const routes = [
+			{
+				method: 'POST' as const,
+				path: '/webhooks/github/issues',
+				handle: async () => new Response('issues'),
+			},
+			{
+				method: 'POST' as const,
+				path: '/webhooks/github/pulls',
+				handle: async () => new Response('pulls'),
+			},
+		];
+		manager.register({
+			sourceId: 'github',
+			routes,
+			async start() {},
+			async stop() {},
+		});
+
+		manager.registerRoutes(
+			routes.toReversed().map((route) => ({ ...route })),
+			context
+		);
+
+		expect(manager.getRegisteredRoutes()).toHaveLength(2);
+		expect(manager.getRegisteredRoutes().map((route) => route.sourceId)).toEqual([
+			'github',
+			'github',
+		]);
+	});
+
+	test('rejects route arrays that do not belong to a registered extension', () => {
+		manager.register({
+			sourceId: 'github',
+			routes: [
+				{
+					method: 'POST' as const,
+					path: '/webhooks/github',
+					handle: async () => new Response('ok'),
+				},
+			],
+			async start() {},
+			async stop() {},
+		});
+
+		expect(() =>
+			manager.registerRoutes(
+				[
+					{
+						method: 'POST' as const,
+						path: '/webhooks/slack',
+						handle: async () => new Response('ok'),
+					},
+				],
+				context
+			)
+		).toThrow('do not match a registered source');
+		expect(manager.getRegisteredRoutes()).toHaveLength(0);
+	});
+
 	test('deduplicates route handlers when routes are registered repeatedly', () => {
 		const routes = [
 			{

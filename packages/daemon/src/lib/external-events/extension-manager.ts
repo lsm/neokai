@@ -65,9 +65,12 @@ export class ExternalEventExtensionManager {
 
 	registerRoutes(routes: readonly Route[], context: ExternalEventExtensionContext): void {
 		const sourceId = this.findSourceIdForRoutes(routes);
-		if (sourceId) {
-			this.unregisterRoutes(sourceId);
+		if (!sourceId) {
+			throw new Error(
+				'Cannot infer external event route owner: route signatures do not match a registered source'
+			);
 		}
+		this.unregisterRoutes(sourceId);
 		for (const route of routes) {
 			this.routeHandlers.push({
 				sourceId,
@@ -163,7 +166,7 @@ export class ExternalEventExtensionManager {
 }
 
 export interface RegisteredRoute {
-	readonly sourceId?: string;
+	readonly sourceId: string;
 	readonly method: Route['method'];
 	readonly path: string;
 	handle(req: Request): Promise<Response>;
@@ -171,10 +174,17 @@ export interface RegisteredRoute {
 
 function routesMatch(left: readonly Route[], right: readonly Route[]): boolean {
 	if (left.length !== right.length) return false;
-	return left.every((route, index) => {
-		const other = right[index];
-		return Boolean(other) && route.method === other.method && route.path === other.path;
-	});
+	const unmatched = right.map(routeSignature);
+	for (const route of left) {
+		const matchIndex = unmatched.indexOf(routeSignature(route));
+		if (matchIndex === -1) return false;
+		unmatched.splice(matchIndex, 1);
+	}
+	return unmatched.length === 0;
+}
+
+function routeSignature(route: Route): string {
+	return `${route.method} ${route.path}`;
 }
 
 function isHttpExtension(
