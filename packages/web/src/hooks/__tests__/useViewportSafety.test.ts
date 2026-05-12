@@ -1,7 +1,7 @@
 /**
  * Tests for useViewportSafety Hook
  *
- * Tests iPad Safari detection logic, --safe-height CSS property management,
+ * Tests touch Safari native handling, --safe-height CSS property management,
  * virtual keyboard detection, and event listener cleanup.
  */
 
@@ -124,75 +124,83 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// iPad Safari detection
+// Touch Safari native keyboard handling
 // ---------------------------------------------------------------------------
 
-describe('useViewportSafety — iPad Safari detection', () => {
-	it('detects iPad Safari: maxTouchPoints > 1 + Safari UA without Chrome/CriOS/FxiOS', () => {
+describe('useViewportSafety — touch Safari native handling', () => {
+	it('does not set --safe-height on iPadOS Safari desktop UA', () => {
 		setNavigator(5, IPAD_SAFARI_UA);
 		setVisualViewport(createMockVisualViewport(WINDOW_INNER_HEIGHT));
 
 		renderHook(() => useViewportSafety());
 
-		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
-			`${WINDOW_INNER_HEIGHT}px`
-		);
+		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
 	});
 
-	it('does NOT detect iPad Safari when maxTouchPoints is 0 (desktop Mac)', () => {
+	it('does not set --safe-height on desktop Safari without touch', () => {
 		setNavigator(0, DESKTOP_SAFARI_UA);
 		setVisualViewport(createMockVisualViewport(WINDOW_INNER_HEIGHT));
 
 		renderHook(() => useViewportSafety());
 
-		// --safe-height should NOT be set on desktop Safari when keyboard is not open
 		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
 	});
 
-	it('does NOT detect iPad Safari for desktop Chrome (UA contains Chrome)', () => {
+	it('still handles keyboard geometry for touch Chrome because it is not Safari native mode', () => {
 		setNavigator(5, DESKTOP_CHROME_UA);
-		setVisualViewport(createMockVisualViewport(WINDOW_INNER_HEIGHT));
+		const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
+		setVisualViewport(mockVV);
 
 		renderHook(() => useViewportSafety());
+		mockVV.height = WINDOW_INNER_HEIGHT - 300;
+		mockVV._trigger('resize');
 
-		// Desktop Chrome: no --safe-height when no keyboard
-		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
+		expect(document.documentElement.classList.contains('keyboard-open')).toBe(true);
+		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
+			`${WINDOW_INNER_HEIGHT - 300}px`
+		);
 	});
 
-	it('does NOT detect iPad Safari for CriOS (Chrome on iOS)', () => {
+	it('still handles keyboard geometry for CriOS because it is not Safari native mode', () => {
 		setNavigator(5, CRIOS_UA);
-		setVisualViewport(createMockVisualViewport(WINDOW_INNER_HEIGHT));
+		const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
+		setVisualViewport(mockVV);
 
 		renderHook(() => useViewportSafety());
+		mockVV.height = WINDOW_INNER_HEIGHT - 300;
+		mockVV._trigger('resize');
 
-		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
+		expect(document.documentElement.classList.contains('keyboard-open')).toBe(true);
 	});
 
-	it('does NOT detect iPad Safari for FxiOS (Firefox on iOS)', () => {
+	it('still handles keyboard geometry for FxiOS because it is not Safari native mode', () => {
 		setNavigator(5, FXIOS_UA);
-		setVisualViewport(createMockVisualViewport(WINDOW_INNER_HEIGHT));
+		const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
+		setVisualViewport(mockVV);
 
 		renderHook(() => useViewportSafety());
+		mockVV.height = WINDOW_INNER_HEIGHT - 300;
+		mockVV._trigger('resize');
 
-		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
+		expect(document.documentElement.classList.contains('keyboard-open')).toBe(true);
 	});
 });
 
 // ---------------------------------------------------------------------------
-// --safe-height property (iPad Safari always-on behavior)
+// --safe-height property
 // ---------------------------------------------------------------------------
 
 describe('useViewportSafety — --safe-height property', () => {
-	it('sets --safe-height to visualViewport.height on iPad Safari', () => {
+	it('does not set --safe-height on touch Safari when no keyboard is open', () => {
 		setNavigator(5, IPAD_SAFARI_UA);
 		setVisualViewport(createMockVisualViewport(768));
 
 		renderHook(() => useViewportSafety());
 
-		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('768px');
+		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
 	});
 
-	it('does NOT set --safe-height on non-iPad-Safari when no keyboard is open', () => {
+	it('does NOT set --safe-height on non-touch-Safari when no keyboard is open', () => {
 		setNavigator(0, DESKTOP_SAFARI_UA);
 		setVisualViewport(createMockVisualViewport(WINDOW_INNER_HEIGHT));
 
@@ -215,21 +223,7 @@ describe('useViewportSafety — --safe-height property', () => {
 // ---------------------------------------------------------------------------
 
 describe('useViewportSafety — event listeners', () => {
-	it('attaches resize listeners on iPad Safari', () => {
-		setNavigator(5, IPAD_SAFARI_UA);
-		const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
-		setVisualViewport(mockVV);
-		const windowAddSpy = vi.spyOn(window, 'addEventListener');
-
-		renderHook(() => useViewportSafety());
-
-		expect(mockVV.addEventListener).toHaveBeenCalledWith('resize', expect.any(Function));
-		expect(windowAddSpy).toHaveBeenCalledWith('resize', expect.any(Function));
-
-		windowAddSpy.mockRestore();
-	});
-
-	it('attaches resize listeners on non-iPad-Safari (for keyboard detection)', () => {
+	it('attaches resize listeners on non-touch-Safari (for keyboard detection)', () => {
 		setNavigator(0, DESKTOP_SAFARI_UA);
 		const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
 		setVisualViewport(mockVV);
@@ -258,7 +252,7 @@ describe('useViewportSafety — event listeners', () => {
 		windowRemoveSpy.mockRestore();
 	});
 
-	it('updates --safe-height when visualViewport resize fires (iPad Safari)', () => {
+	it('does not update --safe-height when touch Safari visualViewport resize fires', () => {
 		setNavigator(5, IPAD_SAFARI_UA);
 		const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
 		setVisualViewport(mockVV);
@@ -268,10 +262,10 @@ describe('useViewportSafety — event listeners', () => {
 		mockVV.height = 700;
 		mockVV._trigger('resize');
 
-		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('700px');
+		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
 	});
 
-	it('updates --safe-height when window resize fires (iPad Safari)', () => {
+	it('does not update --safe-height when touch Safari window resize fires', () => {
 		setNavigator(5, IPAD_SAFARI_UA);
 		const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
 		setVisualViewport(mockVV);
@@ -281,7 +275,7 @@ describe('useViewportSafety — event listeners', () => {
 		mockVV.height = 600;
 		window.dispatchEvent(new Event('resize'));
 
-		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('600px');
+		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
 	});
 });
 
@@ -335,13 +329,13 @@ describe('useViewportSafety — keyboard detection', () => {
 
 		expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
 		expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('56px');
-		// --safe-height should be removed on non-iPad
+		// --safe-height should be removed when the keyboard closes
 		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
 		// --keyboard-height should be removed when keyboard closes
 		expect(document.documentElement.style.getPropertyValue('--keyboard-height')).toBe('');
 	});
 
-	it('keeps keyboard-open sticky during transient resize while textarea remains focused', () => {
+	it('does not apply keyboard-open compensation on touch Safari while textarea remains focused', () => {
 		setNavigator(5, IPAD_SAFARI_UA);
 		const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
 		setVisualViewport(mockVV);
@@ -351,27 +345,14 @@ describe('useViewportSafety — keyboard detection', () => {
 
 		try {
 			renderHook(() => useViewportSafety());
+			textarea.focus();
 
 			mockVV.height = WINDOW_INNER_HEIGHT - 300;
 			mockVV._trigger('resize');
-			textarea.focus();
-
-			// Simulate iOS Safari reporting a non-keyboard viewport delta during
-			// textarea growth/browser chrome re-anchoring while focus is still in the editor.
-			mockVV.height = WINDOW_INNER_HEIGHT - 20;
-			mockVV._trigger('resize');
-
-			expect(document.documentElement.classList.contains('keyboard-open')).toBe(true);
-			expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
-				`${WINDOW_INNER_HEIGHT - 300}px`
-			);
-			expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('0px');
-
-			textarea.blur();
-			mockVV.height = WINDOW_INNER_HEIGHT;
-			mockVV._trigger('resize');
 
 			expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
+			expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
+			expect(document.documentElement.style.getPropertyValue('--keyboard-height')).toBe('');
 			expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('56px');
 		} finally {
 			textarea.remove();
@@ -420,40 +401,20 @@ describe('useViewportSafety — keyboard detection', () => {
 		expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
 	});
 
-	it('works on iPad Safari: keyboard detection plus always-on --safe-height', () => {
+	it('leaves touch Safari keyboard resizing to native browser behavior', () => {
 		setNavigator(5, IPAD_SAFARI_UA);
 		const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
 		setVisualViewport(mockVV);
 
 		renderHook(() => useViewportSafety());
 
-		// iPad Safari: --safe-height is always set
-		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
-			`${WINDOW_INNER_HEIGHT}px`
-		);
-
-		// Open keyboard
 		mockVV.height = WINDOW_INNER_HEIGHT - 300;
 		mockVV._trigger('resize');
 
-		expect(document.documentElement.classList.contains('keyboard-open')).toBe(true);
-		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
-			`${WINDOW_INNER_HEIGHT - 300}px`
-		);
-		expect(document.documentElement.style.getPropertyValue('--keyboard-height')).toBe('300px');
-		expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('0px');
-
-		// Close keyboard
-		mockVV.height = WINDOW_INNER_HEIGHT;
-		mockVV._trigger('resize');
-
 		expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
-		// --safe-height is restored to visualViewport.height (still set because iPad Safari)
-		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
-			`${WINDOW_INNER_HEIGHT}px`
-		);
-		// --keyboard-height is removed when keyboard closes
+		expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
 		expect(document.documentElement.style.getPropertyValue('--keyboard-height')).toBe('');
+		expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('');
 	});
 
 	it('detects initial keyboard state on mount', () => {
