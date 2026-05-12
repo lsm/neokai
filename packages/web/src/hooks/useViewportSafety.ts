@@ -101,6 +101,37 @@ function isKeyboardVisible(vv: VisualViewport): boolean {
 }
 
 /**
+ * Returns true while an element that can summon the virtual keyboard is focused.
+ *
+ * iOS Safari can transiently report a non-keyboard VisualViewport delta while a
+ * focused textarea grows and the bottom browser chrome re-anchors. Treating
+ * that single resize as keyboard-close removes `keyboard-open` and restores the
+ * bottom tab padding, which is exactly when the composer gets pushed behind the
+ * bottom address pill. Keeping the keyboard state sticky while an editable
+ * element remains focused avoids that false close without affecting real closes
+ * (which blur the input).
+ */
+function isEditableElementFocused(): boolean {
+	const active = document.activeElement;
+	if (!active) return false;
+	if (active instanceof HTMLTextAreaElement) return true;
+	if (active instanceof HTMLInputElement) {
+		const nonTextTypes = new Set([
+			'button',
+			'checkbox',
+			'file',
+			'hidden',
+			'radio',
+			'range',
+			'reset',
+			'submit',
+		]);
+		return !nonTextTypes.has(active.type);
+	}
+	return active instanceof HTMLElement && active.isContentEditable;
+}
+
+/**
  * Hook that manages viewport-related CSS custom properties:
  *
  * - On **iPad Safari**: always sets `--safe-height` from `visualViewport.height`
@@ -122,6 +153,7 @@ export function useViewportSafety(): void {
 
 		const ipadSafari = isIpadSafari();
 		let keyboardOpen = false;
+		let keyboardSafeHeight: string | null = null;
 		let savedBottomBarHeight: string | null = null;
 
 		/**
@@ -143,7 +175,8 @@ export function useViewportSafety(): void {
 				document.documentElement.classList.add('keyboard-open');
 
 				// Shrink the app container to the visible viewport height
-				document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
+				keyboardSafeHeight = `${vv.height}px`;
+				document.documentElement.style.setProperty('--safe-height', keyboardSafeHeight);
 
 				// Record keyboard height as a CSS custom property for potential future use.
 				// Currently no built-in element reads this, but it is available for extensions.
@@ -157,11 +190,21 @@ export function useViewportSafety(): void {
 			} else if (kbVisible && keyboardOpen) {
 				// Keep --safe-height and --keyboard-height in sync as keyboard
 				// height may change (e.g. switching between emoji and text keyboards)
-				document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
+				keyboardSafeHeight = `${vv.height}px`;
+				document.documentElement.style.setProperty('--safe-height', keyboardSafeHeight);
+				updateKeyboardHeight(vv);
+			} else if (!kbVisible && keyboardOpen && isEditableElementFocused()) {
+				// iOS Safari can briefly make the keyboard delta look closed while a focused
+				// textarea grows and browser chrome re-anchors. Keep keyboard-open sticky
+				// until focus leaves the editable element so bottom tab padding stays removed.
+				if (keyboardSafeHeight) {
+					document.documentElement.style.setProperty('--safe-height', keyboardSafeHeight);
+				}
 				updateKeyboardHeight(vv);
 			} else if (!kbVisible && keyboardOpen) {
 				// Keyboard just closed
 				keyboardOpen = false;
+				keyboardSafeHeight = null;
 				document.documentElement.classList.remove('keyboard-open');
 
 				// On non-iPad browsers, remove the --safe-height override so the
@@ -204,8 +247,9 @@ export function useViewportSafety(): void {
 		// Check initial keyboard state (e.g. if keyboard was already open)
 		if (isKeyboardVisible(vv)) {
 			keyboardOpen = true;
+			keyboardSafeHeight = `${vv.height}px`;
 			document.documentElement.classList.add('keyboard-open');
-			document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
+			document.documentElement.style.setProperty('--safe-height', keyboardSafeHeight);
 			updateKeyboardHeight(vv);
 			savedBottomBarHeight = document.documentElement.style.getPropertyValue('--bottom-bar-height');
 			document.documentElement.style.setProperty('--bottom-bar-height', '0px');

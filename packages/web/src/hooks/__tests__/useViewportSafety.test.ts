@@ -341,6 +341,43 @@ describe('useViewportSafety — keyboard detection', () => {
 		expect(document.documentElement.style.getPropertyValue('--keyboard-height')).toBe('');
 	});
 
+	it('keeps keyboard-open sticky during transient resize while textarea remains focused', () => {
+		setNavigator(5, IPAD_SAFARI_UA);
+		const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
+		setVisualViewport(mockVV);
+		document.documentElement.style.setProperty('--bottom-bar-height', '56px');
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+
+		try {
+			renderHook(() => useViewportSafety());
+
+			mockVV.height = WINDOW_INNER_HEIGHT - 300;
+			mockVV._trigger('resize');
+			textarea.focus();
+
+			// Simulate iOS Safari reporting a non-keyboard viewport delta during
+			// textarea growth/browser chrome re-anchoring while focus is still in the editor.
+			mockVV.height = WINDOW_INNER_HEIGHT - 20;
+			mockVV._trigger('resize');
+
+			expect(document.documentElement.classList.contains('keyboard-open')).toBe(true);
+			expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
+				`${WINDOW_INNER_HEIGHT - 300}px`
+			);
+			expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('0px');
+
+			textarea.blur();
+			mockVV.height = WINDOW_INNER_HEIGHT;
+			mockVV._trigger('resize');
+
+			expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
+			expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('56px');
+		} finally {
+			textarea.remove();
+		}
+	});
+
 	it('does NOT trigger keyboard detection for small viewport changes (below 50px threshold)', () => {
 		setNavigator(0, DESKTOP_SAFARI_UA);
 		const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);

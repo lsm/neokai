@@ -211,9 +211,8 @@ export function InputTextarea({
 			)}
 
 			<div
-				data-ios-jump-test-marker="2026-05-12"
 				class={cn(
-					'relative rounded-3xl border-2 border-fuchsia-500 transition-all',
+					'relative rounded-3xl border transition-all',
 					transparent ? 'bg-transparent backdrop-blur-sm' : 'bg-dark-800/60 backdrop-blur-sm',
 					disabled
 						? borderColors.ui.disabled

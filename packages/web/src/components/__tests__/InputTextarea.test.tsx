@@ -934,33 +934,35 @@ describe('InputTextarea', () => {
 			});
 			window.cancelAnimationFrame = vi.fn();
 
-			const { rerender } = render(
-				<InputTextarea
-					content="line one"
-					onContentChange={() => {}}
-					onKeyDown={() => {}}
-					onSubmit={() => {}}
-					onHeightChange={onHeightChange}
-				/>
-			);
-			onHeightChange.mockClear();
+			try {
+				const { rerender } = render(
+					<InputTextarea
+						content="line one"
+						onContentChange={() => {}}
+						onKeyDown={() => {}}
+						onSubmit={() => {}}
+						onHeightChange={onHeightChange}
+					/>
+				);
+				onHeightChange.mockClear();
 
-			rerender(
-				<InputTextarea
-					content={'line one\nline two\nline three'}
-					onContentChange={() => {}}
-					onKeyDown={() => {}}
-					onSubmit={() => {}}
-					onHeightChange={onHeightChange}
-				/>
-			);
+				rerender(
+					<InputTextarea
+						content={'line one\nline two\nline three'}
+						onContentChange={() => {}}
+						onKeyDown={() => {}}
+						onSubmit={() => {}}
+						onHeightChange={onHeightChange}
+					/>
+				);
 
-			expect(onHeightChange).not.toHaveBeenCalled();
-			callbacks.at(-1)?.(performance.now());
-			expect(onHeightChange).toHaveBeenCalled();
-
-			window.requestAnimationFrame = originalRequestAnimationFrame;
-			window.cancelAnimationFrame = originalCancelAnimationFrame;
+				expect(onHeightChange).not.toHaveBeenCalled();
+				callbacks.at(-1)?.(performance.now());
+				expect(onHeightChange).toHaveBeenCalled();
+			} finally {
+				window.requestAnimationFrame = originalRequestAnimationFrame;
+				window.cancelAnimationFrame = originalCancelAnimationFrame;
+			}
 		});
 	});
 });
