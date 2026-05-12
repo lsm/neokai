@@ -187,7 +187,7 @@ describe('Skill RPC Handlers', () => {
 			expect(result.skill.id).toBe('skill-new');
 			expect(skillsManager.addSkill).toHaveBeenCalledWith(createSkillParams);
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('skills.changed', {
-				namespaceId: 'global', (fix(daemon): add namespaceId to migrated event payloads, pass internalEventBus to SessionManager)
+				namespaceId: 'global',
 				sessionId: 'global',
 			});
 		});
@@ -232,7 +232,7 @@ describe('Skill RPC Handlers', () => {
 			expect(result.skill.displayName).toBe('Updated Skill');
 			expect(skillsManager.updateSkill).toHaveBeenCalledWith('skill-1', updateSkillParams);
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('skills.changed', {
-				namespaceId: 'global', (fix(daemon): add namespaceId to migrated event payloads, pass internalEventBus to SessionManager)
+				namespaceId: 'global',
 				sessionId: 'global',
 			});
 		});
@@ -268,7 +268,7 @@ describe('Skill RPC Handlers', () => {
 			expect(result.success).toBe(true);
 			expect(skillsManager.removeSkill).toHaveBeenCalledWith('skill-1');
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('skills.changed', {
-				namespaceId: 'global', (fix(daemon): add namespaceId to migrated event payloads, pass internalEventBus to SessionManager)
+				namespaceId: 'global',
 				sessionId: 'global',
 			});
 		});
@@ -300,7 +300,7 @@ describe('Skill RPC Handlers', () => {
 			expect(result.skill.enabled).toBe(false);
 			expect(skillsManager.setSkillEnabled).toHaveBeenCalledWith('skill-1', false);
 			expect(internalEventBus.publishAsync).toHaveBeenCalledWith('skills.changed', {
-				namespaceId: 'global', (fix(daemon): add namespaceId to migrated event payloads, pass internalEventBus to SessionManager)
+				namespaceId: 'global',
 				sessionId: 'global',
 			});
 		});

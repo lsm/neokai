@@ -66,7 +66,7 @@ export function setupSessionHandlers(
 	daemonHub: DaemonHub,
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	spaceManager: SpaceManager,
-	spaceRuntimeService: SpaceRuntimeService | undefined,
+	spaceRuntimeService: SpaceRuntimeService | undefined
 ): void {
 	const publishSpaceUpdated = (payload: DaemonInternalEventMap['space.updated']): void => {
 		internalEventBus.publishAsync('space.updated', payload);

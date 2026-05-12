@@ -253,7 +253,7 @@ describe('space-mcp-handlers', () => {
 			expect(publishAsync).toHaveBeenCalledWith('mcp.registry.changed', {
 				namespaceId: 'global',
 				sessionId: 'global',
-			}); (fix(daemon): add namespaceId to migrated event payloads, pass internalEventBus to SessionManager)
+			});
 		});
 
 		test('flip — second call replaces the prior override', async () => {
@@ -355,7 +355,7 @@ describe('space-mcp-handlers', () => {
 			expect(publishAsync).toHaveBeenCalledWith('mcp.registry.changed', {
 				namespaceId: 'global',
 				sessionId: 'global',
-			}); (fix(daemon): add namespaceId to migrated event payloads, pass internalEventBus to SessionManager)
+			});
 		});
 
 		test('idempotent — no override row still returns ok:true and no emit', async () => {
@@ -427,7 +427,7 @@ describe('space-mcp-handlers', () => {
 			expect(publishAsync).toHaveBeenCalledWith('mcp.registry.changed', {
 				namespaceId: 'global',
 				sessionId: 'global',
-			}); (fix(daemon): add namespaceId to migrated event payloads, pass internalEventBus to SessionManager)
+			});
 		});
 
 		test('scans every space when no workspacePath narrow is given', async () => {
