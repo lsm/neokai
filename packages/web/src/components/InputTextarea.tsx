@@ -218,8 +218,8 @@ export function InputTextarea({
 					disabled
 						? borderColors.ui.disabled
 						: transparent
-							? 'border-cyan-400/90 focus-within:border-cyan-300 focus-within:bg-dark-800/30'
-							: 'border-cyan-400/90 focus-within:border-cyan-300 focus-within:bg-dark-800/80'
+							? 'border-dark-600/80 focus-within:bg-dark-800/30'
+							: `${borderColors.ui.input} focus-within:bg-dark-800/80`
 				)}
 			>
 				{leadingElement && (
