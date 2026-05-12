@@ -2214,6 +2214,33 @@ describe('node-agent-tools: external event subscriptions', () => {
 		expect(data.success).toBe(false);
 		expect(data.error).toContain('not available');
 	});
+
+	test('createNodeAgentMcpServer registers external event tools only when callbacks are wired', () => {
+		const withoutCallback = createNodeAgentMcpServer(makeConfig(ctx));
+		const withoutRegistered = Object.keys(
+			(withoutCallback as unknown as { instance: { _registeredTools: Record<string, unknown> } })
+				.instance._registeredTools
+		);
+		expect(withoutRegistered).not.toContain('subscribe_external_event');
+		expect(withoutRegistered).not.toContain('unsubscribe_external_event');
+
+		const withCallback = createNodeAgentMcpServer(
+			makeConfig(ctx, {
+				onSubscribeExternalEvent: async () => ({
+					content: [{ type: 'text', text: JSON.stringify({ success: true }) }],
+				}),
+				onUnsubscribeExternalEvent: async () => ({
+					content: [{ type: 'text', text: JSON.stringify({ success: true }) }],
+				}),
+			})
+		);
+		const withRegistered = Object.keys(
+			(withCallback as unknown as { instance: { _registeredTools: Record<string, unknown> } })
+				.instance._registeredTools
+		);
+		expect(withRegistered).toContain('subscribe_external_event');
+		expect(withRegistered).toContain('unsubscribe_external_event');
+	});
 });
 
 // ---------------------------------------------------------------------------
