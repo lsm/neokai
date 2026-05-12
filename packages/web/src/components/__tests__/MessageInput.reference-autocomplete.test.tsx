@@ -160,6 +160,7 @@ describe('MessageInput reference autocomplete', () => {
 			value:
 				'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36',
 		});
+		Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 0 });
 
 		Object.defineProperty(window, 'matchMedia', {
 			writable: true,
@@ -361,6 +362,36 @@ describe('MessageInput reference autocomplete', () => {
 				value:
 					'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1',
 			});
+			Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
+			document.documentElement.classList.add('keyboard-open');
+			const scroller = document.createElement('div');
+			scroller.dataset.messagesContainer = '';
+			document.body.appendChild(scroller);
+
+			const footer = document.createElement('div');
+			footer.className = 'chat-footer';
+			document.body.appendChild(footer);
+			Object.defineProperty(footer, 'scrollHeight', { configurable: true, value: 120 });
+			Object.defineProperty(footer, 'getBoundingClientRect', {
+				configurable: true,
+				value: () => ({ height: 120 }),
+			});
+			const { rerender } = renderInput();
+			scroller.style.removeProperty('--messages-bottom-padding');
+
+			mockDraftContent = 'one line\ntwo lines';
+			rerender(<MessageInput sessionId="test-session" onSend={vi.fn(async () => {})} />);
+
+			expect(scroller.style.getPropertyValue('--messages-bottom-padding')).toBe('');
+		});
+
+		it('does not sync messages bottom padding for iPadOS desktop-UA Safari while keyboard is open', () => {
+			Object.defineProperty(navigator, 'userAgent', {
+				configurable: true,
+				value:
+					'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.0 Safari/605.1.15',
+			});
+			Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
 			document.documentElement.classList.add('keyboard-open');
 			const scroller = document.createElement('div');
 			scroller.dataset.messagesContainer = '';
@@ -389,6 +420,7 @@ describe('MessageInput reference autocomplete', () => {
 				value:
 					'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36',
 			});
+			Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
 			document.documentElement.classList.add('keyboard-open');
 			const scroller = document.createElement('div');
 			scroller.dataset.messagesContainer = '';
@@ -417,6 +449,7 @@ describe('MessageInput reference autocomplete', () => {
 				value:
 					'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1',
 			});
+			Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
 			document.documentElement.classList.add('keyboard-open');
 			const scroller = document.createElement('div');
 			scroller.dataset.messagesContainer = '';

@@ -26,6 +26,7 @@ import {
 	useReferenceAutocomplete,
 } from '../hooks';
 
+import { isTouchSafari } from '../lib/browser-detection.ts';
 import { getMessagesBottomPaddingPx } from '../lib/layout-metrics.ts';
 import { isAgentWorking } from '../lib/state.ts';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
@@ -60,21 +61,6 @@ function getPlaceholderForSessionType(sessionType?: SessionType): string {
 		default:
 			return 'Ask or make anything...';
 	}
-}
-
-function isIosSafari(): boolean {
-	if (typeof navigator === 'undefined') {
-		return false;
-	}
-
-	const ua = navigator.userAgent;
-	return (
-		/iPad|iPhone|iPod/.test(ua) &&
-		ua.includes('Safari') &&
-		!ua.includes('CriOS') &&
-		!ua.includes('FxiOS') &&
-		!ua.includes('Chrome')
-	);
 }
 
 interface MessageInputProps {
@@ -129,7 +115,7 @@ export default function MessageInput({
 		window.matchMedia('(pointer: coarse)').matches ||
 			('ontouchstart' in window && window.innerWidth < 768)
 	);
-	const isIosSafariRef = useRef(isIosSafari());
+	const isTouchSafariRef = useRef(isTouchSafari());
 
 	// Drag and drop state
 	const [isDragging, setIsDragging] = useState(false);
@@ -298,7 +284,7 @@ export default function MessageInput({
 	}, [syncMessagesContainerPadding, attachments.length, isDragging]);
 
 	useEffect(() => {
-		if (!isIosSafariRef.current) {
+		if (!isTouchSafariRef.current) {
 			return;
 		}
 
@@ -326,7 +312,10 @@ export default function MessageInput({
 			// the messages scroller is pinned to bottom, and textarea growth changes the
 			// footer-driven bottom padding. Keep the scroller layout stable only on that
 			// affected browser; other mobile browsers continue syncing padding normally.
-			if (isIosSafariRef.current && document.documentElement.classList.contains('keyboard-open')) {
+			if (
+				isTouchSafariRef.current &&
+				document.documentElement.classList.contains('keyboard-open')
+			) {
 				return;
 			}
 

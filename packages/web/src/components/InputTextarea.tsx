@@ -27,6 +27,7 @@
 import type { ComponentChildren } from 'preact';
 import type { MutableRef } from 'preact/hooks';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { isTouchSafari } from '../lib/browser-detection.ts';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
@@ -113,6 +114,7 @@ export function InputTextarea({
 }: InputTextareaProps) {
 	const internalTextareaRef = useRef<HTMLTextAreaElement>(null);
 	const textareaRef = externalTextareaRef ?? internalTextareaRef;
+	const shouldFreezeKeyboardHeightRef = useRef(isTouchSafari());
 	const [isMultiline, setIsMultiline] = useState(false);
 
 	// Sync content prop to textarea DOM only when they differ
@@ -152,9 +154,16 @@ export function InputTextarea({
 		const textarea = textareaRef.current;
 		if (!textarea) return;
 
-		textarea.style.height = 'auto';
+		const shouldFreezeHeight =
+			shouldFreezeKeyboardHeightRef.current &&
+			document.documentElement.classList.contains('keyboard-open');
+		if (!shouldFreezeHeight) {
+			textarea.style.height = 'auto';
+		}
 		textarea.style.minHeight = '40px';
-		const newHeight = Math.min(Math.max(40, textarea.scrollHeight), 200);
+		const newHeight = shouldFreezeHeight
+			? Math.max(40, textarea.getBoundingClientRect().height || 40)
+			: Math.min(Math.max(40, textarea.scrollHeight), 200);
 		textarea.style.height = `${newHeight}px`;
 		setIsMultiline(newHeight > 45);
 		onHeightChange?.(newHeight);

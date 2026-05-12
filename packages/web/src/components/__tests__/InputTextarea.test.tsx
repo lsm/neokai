@@ -23,6 +23,12 @@ describe('InputTextarea', () => {
 	beforeEach(() => {
 		cleanup();
 		document.documentElement.classList.remove('keyboard-open');
+		Object.defineProperty(navigator, 'userAgent', {
+			configurable: true,
+			value:
+				'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36',
+		});
+		Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 0 });
 	});
 
 	describe('Basic Rendering', () => {
@@ -50,6 +56,76 @@ describe('InputTextarea', () => {
 			);
 			const textarea = container.querySelector('textarea');
 			expect(textarea?.placeholder).toBe('Ask or make anything...');
+		});
+	});
+
+	describe('Auto-resize viewport safety', () => {
+		it('freezes textarea height while keyboard is open on touch Safari', () => {
+			Object.defineProperty(navigator, 'userAgent', {
+				configurable: true,
+				value:
+					'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1',
+			});
+			Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
+			document.documentElement.classList.add('keyboard-open');
+
+			const { container, rerender } = render(
+				<InputTextarea
+					content="one line"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+			const textarea = container.querySelector('textarea')!;
+			Object.defineProperty(textarea, 'getBoundingClientRect', {
+				configurable: true,
+				value: () => ({ height: 40 }),
+			});
+			Object.defineProperty(textarea, 'scrollHeight', { configurable: true, value: 120 });
+
+			rerender(
+				<InputTextarea
+					content="one line\ntwo lines\nthree lines"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			expect(textarea.style.height).toBe('40px');
+		});
+
+		it('continues growing textarea while keyboard is open on non-Safari browsers', () => {
+			Object.defineProperty(navigator, 'userAgent', {
+				configurable: true,
+				value:
+					'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36',
+			});
+			Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 });
+			document.documentElement.classList.add('keyboard-open');
+
+			const { container, rerender } = render(
+				<InputTextarea
+					content="one line"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+			const textarea = container.querySelector('textarea')!;
+			Object.defineProperty(textarea, 'scrollHeight', { configurable: true, value: 120 });
+
+			rerender(
+				<InputTextarea
+					content="one line\ntwo lines\nthree lines"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			expect(textarea.style.height).toBe('120px');
 		});
 	});
 
