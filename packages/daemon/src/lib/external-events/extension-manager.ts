@@ -139,12 +139,26 @@ export class ExternalEventExtensionManager {
 
 	private findSourceIdForRoutes(routes: readonly Route[]): string | undefined {
 		for (const extension of this.extensions.values()) {
-			if (!isHttpExtension(extension)) continue;
-			if (extension.routes === routes || routesMatch(extension.routes, routes)) {
+			if (isHttpExtension(extension) && extension.routes === routes) {
 				return extension.sourceId;
 			}
 		}
-		return undefined;
+
+		const matchingSourceIds: string[] = [];
+		for (const extension of this.extensions.values()) {
+			if (!isHttpExtension(extension)) continue;
+			if (routesMatch(extension.routes, routes)) {
+				matchingSourceIds.push(extension.sourceId);
+			}
+		}
+
+		if (matchingSourceIds.length > 1) {
+			throw new Error(
+				`Cannot infer external event route owner: route signatures match multiple sources ` +
+					`(${matchingSourceIds.join(', ')}). Pass the registered extension.routes array directly.`
+			);
+		}
+		return matchingSourceIds[0];
 	}
 }
 

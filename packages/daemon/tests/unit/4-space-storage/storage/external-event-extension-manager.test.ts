@@ -156,6 +156,52 @@ describe('ExternalEventExtensionManager', () => {
 		expect(manager.getRegisteredRoutes()).toHaveLength(1);
 	});
 
+	test('throws when cloned route signatures match multiple extensions', () => {
+		const githubRoutes = [
+			{
+				method: 'POST' as const,
+				path: '/webhooks/events',
+				handle: async () => new Response('github'),
+			},
+		];
+		const slackRoutes = [
+			{
+				method: 'POST' as const,
+				path: '/webhooks/events',
+				handle: async () => new Response('slack'),
+			},
+		];
+		manager.register({
+			sourceId: 'github',
+			routes: githubRoutes,
+			async start() {},
+			async stop() {},
+		});
+		manager.register({
+			sourceId: 'slack',
+			routes: slackRoutes,
+			async start() {},
+			async stop() {},
+		});
+
+		expect(() =>
+			manager.registerRoutes(
+				[
+					{
+						method: 'POST' as const,
+						path: '/webhooks/events',
+						handle: async () => new Response('clone'),
+					},
+				],
+				context
+			)
+		).toThrow('multiple sources');
+
+		manager.registerRoutes(slackRoutes, context);
+		expect(manager.getRegisteredRoutes()).toHaveLength(1);
+		expect(manager.getRegisteredRoutes()[0]!.sourceId).toBe('slack');
+	});
+
 	test('removes source route handlers on stop', async () => {
 		const routes = [
 			{
