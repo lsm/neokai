@@ -36,8 +36,9 @@ const SPACE_CONFIGURE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/configure$/;
 const SPACE_CONFIGURE_TAB_ROUTE_PATTERN =
 	/^\/space\/([a-z0-9-]+)\/configure\/(agents|workflows|settings)$/;
 const SPACE_TASKS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks$/;
+const SPACE_TASKS_ARCHIVED_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks\/archived$/;
 const SPACE_TASKS_TAB_ROUTE_PATTERN =
-	/^\/space\/([a-z0-9-]+)\/tasks\/(action|active|draft|completed|archived|scheduled)$/;
+	/^\/space\/([a-z0-9-]+)\/tasks\/(action|active|draft|completed|scheduled)$/;
 const SPACE_AGENT_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/agent$/;
 const SPACE_SESSION_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/session\/([a-fA-F0-9-]+)$/;
 const SPACE_TASK_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/task\/([a-fA-F0-9-]+|[a-z]-[1-9]\d*)$/;
@@ -66,6 +67,9 @@ export function getSpaceIdFromPath(path: string): string | null {
 
 	const configureMatch = path.match(SPACE_CONFIGURE_ROUTE_PATTERN);
 	if (configureMatch) return configureMatch[1];
+
+	const archivedTasksMatch = path.match(SPACE_TASKS_ARCHIVED_ROUTE_PATTERN);
+	if (archivedTasksMatch) return archivedTasksMatch[1];
 
 	const tasksTabMatch = path.match(SPACE_TASKS_TAB_ROUTE_PATTERN);
 	if (tasksTabMatch) return tasksTabMatch[1];
@@ -117,13 +121,16 @@ export function getSpaceTasksFromPath(path: string): string | null {
 
 export function getSpaceTasksTabFromPath(path: string): {
 	spaceId: string;
-	tab: 'action' | 'active' | 'draft' | 'completed' | 'archived' | 'scheduled';
+	tab: 'action' | 'active' | 'draft' | 'completed' | 'scheduled';
 } | null {
+	const archivedMatch = path.match(SPACE_TASKS_ARCHIVED_ROUTE_PATTERN);
+	if (archivedMatch) return { spaceId: archivedMatch[1], tab: 'completed' };
+
 	const match = path.match(SPACE_TASKS_TAB_ROUTE_PATTERN);
 	if (!match) return null;
 	return {
 		spaceId: match[1],
-		tab: match[2] as 'action' | 'active' | 'draft' | 'completed' | 'archived' | 'scheduled',
+		tab: match[2] as 'action' | 'active' | 'draft' | 'completed' | 'scheduled',
 	};
 }
 
@@ -394,7 +401,7 @@ export function navigateToSpaceConfigure(
 
 export function navigateToSpaceTasks(
 	spaceId: string,
-	tab?: 'action' | 'active' | 'completed' | 'archived' | 'draft' | 'scheduled',
+	tab?: 'action' | 'active' | 'completed' | 'draft' | 'scheduled',
 	replace = false
 ): void {
 	if (routerState.isNavigating) return;
@@ -513,6 +520,17 @@ export function navigateToSpaceAgent(spaceId: string, replace = false): void {
 }
 
 function applyPathToSignals(path: string): string | null {
+	const legacyArchivedTasksMatch = path.match(SPACE_TASKS_ARCHIVED_ROUTE_PATTERN);
+	if (legacyArchivedTasksMatch) {
+		pushPath(
+			createSpaceTasksPath(legacyArchivedTasksMatch[1], 'completed'),
+			{
+				spaceId: legacyArchivedTasksMatch[1],
+			},
+			true
+		);
+	}
+
 	const sessionId = getSessionIdFromPath(path);
 	const spaceConfigureTab = getSpaceConfigureTabFromPath(path);
 	const spaceConfigure = spaceConfigureTab
