@@ -92,6 +92,39 @@ describe('ExternalEventExtensionManager', () => {
 		expect(extension.starts).toBe(1);
 	});
 
+	test('retries start after awaiting an in-flight start that did not start', async () => {
+		const extension = createExtension('github');
+		let configReads = 0;
+		manager.register(extension);
+		await config.setGlobalConfig('github', {
+			source: 'github',
+			globallyEnabled: false,
+			capabilities: { webhooks: true },
+		});
+		const originalGetGlobalConfig = config.getGlobalConfig.bind(config);
+		config.getGlobalConfig = async (source) => {
+			configReads += 1;
+			await Promise.resolve();
+			return originalGetGlobalConfig(source);
+		};
+
+		const firstStart = manager.startExtension('github', context);
+		const secondStart = (async () => {
+			await waitFor(() => configReads > 0);
+			await config.setGlobalConfig('github', {
+				source: 'github',
+				globallyEnabled: true,
+				capabilities: { webhooks: true },
+			});
+			await manager.startExtension('github', context);
+		})();
+
+		await Promise.all([firstStart, secondStart]);
+
+		expect(extension.starts).toBe(1);
+		expect(configReads).toBe(2);
+	});
+
 	test('rejects unregister while start is in flight', async () => {
 		const { extension, releaseStart } = createBlockedStartExtension('github');
 		manager.register(extension);
@@ -131,6 +164,36 @@ describe('ExternalEventExtensionManager', () => {
 
 		expect(extension.starts).toBe(1);
 		expect(extension.stops).toBe(1);
+	});
+
+	test('swallows in-flight start failures while stopping extension', async () => {
+		const extension: TestExtension = {
+			sourceId: 'github',
+			starts: 0,
+			stops: 0,
+			async start() {
+				this.starts += 1;
+				await Promise.resolve();
+				throw new Error('start failed');
+			},
+			async stop() {
+				this.stops += 1;
+			},
+		};
+		manager.register(extension);
+		await config.setGlobalConfig('github', {
+			source: 'github',
+			globallyEnabled: true,
+			capabilities: { webhooks: true },
+		});
+
+		const start = manager.startExtension('github', context);
+		const stop = manager.stopExtension('github');
+
+		await expect(start).rejects.toThrow('start failed');
+		await expect(stop).resolves.toBeUndefined();
+		expect(extension.starts).toBe(1);
+		expect(extension.stops).toBe(0);
 	});
 
 	test('allows restart after stop when still globally enabled', async () => {
@@ -421,11 +484,52 @@ describe('ExternalEventExtensionManager', () => {
 		);
 		expect(calls).toEqual(['register:space.github.watchRepo', 'unregister:space.github.watchRepo']);
 	});
+
+	test('rejects RPC handler methods already owned by another extension', () => {
+		const calls: string[] = [];
+		const hub = new MessageHub();
+		const originalOnRequest = hub.onRequest.bind(hub);
+		hub.onRequest = ((method, handler) => {
+			calls.push(`register:${method}`);
+			const unsubscribe = originalOnRequest(method, handler);
+			return () => {
+				calls.push(`unregister:${method}`);
+				unsubscribe();
+			};
+		}) as MessageHub['onRequest'];
+		manager.register(createRpcExtension('github', 'space.external.sync'));
+		manager.register(createRpcExtension('slack', 'space.external.sync'));
+
+		manager.registerRpcHandlers('github', hub, context);
+		expect(() => manager.registerRpcHandlers('slack', hub, context)).toThrow(
+			'already registered by "github"'
+		);
+		expect(calls).toEqual(['register:space.external.sync']);
+
+		manager.unregister('github');
+		manager.registerRpcHandlers('slack', hub, context);
+		expect(calls).toEqual([
+			'register:space.external.sync',
+			'unregister:space.external.sync',
+			'register:space.external.sync',
+		]);
+	});
 });
 
 interface TestExtension extends ExternalEventExtension {
 	starts: number;
 	stops: number;
+}
+
+function createRpcExtension(sourceId: string, method: string): RpcExternalEventExtension {
+	return {
+		sourceId,
+		async start() {},
+		async stop() {},
+		registerRpcHandlers(hubLike) {
+			hubLike.onRequest(method, () => ({ ok: true }));
+		},
+	};
 }
 
 function createExtension(sourceId: string): TestExtension {

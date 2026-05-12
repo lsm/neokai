@@ -13,6 +13,7 @@ export class ExternalEventExtensionManager {
 	private starting = new Map<string, Promise<void>>();
 	private routeHandlers: RegisteredRoute[] = [];
 	private rpcUnsubscribers = new Map<string, (() => void)[]>();
+	private rpcMethodOwners = new Map<string, string>();
 
 	register(extension: ExternalEventExtension): void {
 		if (
@@ -44,7 +45,7 @@ export class ExternalEventExtensionManager {
 		const existingStart = this.starting.get(sourceId);
 		if (existingStart) {
 			await existingStart;
-			return;
+			if (this.started.has(sourceId)) return;
 		}
 
 		const startPromise = this.runStartExtension(sourceId, context);
@@ -59,7 +60,11 @@ export class ExternalEventExtensionManager {
 	async stopExtension(sourceId: string): Promise<void> {
 		const inFlightStart = this.starting.get(sourceId);
 		if (inFlightStart) {
-			await inFlightStart;
+			try {
+				await inFlightStart;
+			} catch {
+				// Best-effort stop should not fail just because an overlapping start failed.
+			}
 		}
 
 		const extension = this.extensions.get(sourceId);
@@ -107,13 +112,23 @@ export class ExternalEventExtensionManager {
 		}
 
 		const unsubscribers: (() => void)[] = [];
+		const registeredMethods: string[] = [];
 		const trackingHub = new Proxy(hub, {
-			get(target, prop, receiver) {
+			get: (target, prop, receiver) => {
 				if (prop !== 'onRequest') {
 					return Reflect.get(target, prop, receiver);
 				}
 				return (method: string, handler: Parameters<MessageHub['onRequest']>[1]) => {
+					const owner = this.rpcMethodOwners.get(method);
+					if (owner && owner !== sourceId) {
+						throw new Error(
+							`Cannot register external event RPC handler "${method}" for "${sourceId}": ` +
+								`already registered by "${owner}"`
+						);
+					}
 					const unsubscribe = target.onRequest(method, handler);
+					this.rpcMethodOwners.set(method, sourceId);
+					registeredMethods.push(method);
 					unsubscribers.push(unsubscribe);
 					return unsubscribe;
 				};
@@ -124,6 +139,9 @@ export class ExternalEventExtensionManager {
 		} catch (error) {
 			for (const unsubscribe of unsubscribers) {
 				unsubscribe();
+			}
+			for (const method of registeredMethods) {
+				this.rpcMethodOwners.delete(method);
 			}
 			throw error;
 		}
@@ -160,6 +178,11 @@ export class ExternalEventExtensionManager {
 			unsubscribe();
 		}
 		this.rpcUnsubscribers.delete(sourceId);
+		for (const [method, owner] of this.rpcMethodOwners) {
+			if (owner === sourceId) {
+				this.rpcMethodOwners.delete(method);
+			}
+		}
 	}
 
 	private unregisterRoutes(sourceId: string): void {
