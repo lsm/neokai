@@ -74,21 +74,7 @@ describe('ExternalEventExtensionManager', () => {
 	});
 
 	test('serializes concurrent starts for the same extension', async () => {
-		let releaseStart: (() => void) | undefined;
-		const extension: TestExtension = {
-			sourceId: 'github',
-			starts: 0,
-			stops: 0,
-			async start() {
-				this.starts += 1;
-				await new Promise<void>((resolve) => {
-					releaseStart = resolve;
-				});
-			},
-			async stop() {
-				this.stops += 1;
-			},
-		};
+		const { extension, releaseStart } = createBlockedStartExtension('github');
 		manager.register(extension);
 		await config.setGlobalConfig('github', {
 			source: 'github',
@@ -98,12 +84,53 @@ describe('ExternalEventExtensionManager', () => {
 
 		const firstStart = manager.startExtension('github', context);
 		const secondStart = manager.startExtension('github', context);
-		await waitFor(() => releaseStart !== undefined);
+		await releaseStart.waitUntilBlocked();
 
-		releaseStart!();
+		releaseStart.resolve();
 		await Promise.all([firstStart, secondStart]);
 
 		expect(extension.starts).toBe(1);
+	});
+
+	test('rejects unregister while start is in flight', async () => {
+		const { extension, releaseStart } = createBlockedStartExtension('github');
+		manager.register(extension);
+		await config.setGlobalConfig('github', {
+			source: 'github',
+			globallyEnabled: true,
+			capabilities: { webhooks: true },
+		});
+
+		const start = manager.startExtension('github', context);
+		await releaseStart.waitUntilBlocked();
+
+		expect(() => manager.unregister('github')).toThrow('started external event extension');
+
+		releaseStart.resolve();
+		await start;
+		await manager.stopExtension('github');
+		expect(extension.starts).toBe(1);
+		expect(extension.stops).toBe(1);
+	});
+
+	test('waits for in-flight start before stopping extension', async () => {
+		const { extension, releaseStart } = createBlockedStartExtension('github');
+		manager.register(extension);
+		await config.setGlobalConfig('github', {
+			source: 'github',
+			globallyEnabled: true,
+			capabilities: { webhooks: true },
+		});
+
+		const start = manager.startExtension('github', context);
+		await releaseStart.waitUntilBlocked();
+		const stop = manager.stopExtension('github');
+
+		releaseStart.resolve();
+		await Promise.all([start, stop]);
+
+		expect(extension.starts).toBe(1);
+		expect(extension.stops).toBe(1);
 	});
 
 	test('allows restart after stop when still globally enabled', async () => {
@@ -413,6 +440,44 @@ function createExtension(sourceId: string): TestExtension {
 			this.stops += 1;
 		},
 	};
+}
+
+function createBlockedStartExtension(sourceId: string): {
+	extension: TestExtension;
+	releaseStart: BlockedStartHandle;
+} {
+	let resolveStart: (() => void) | undefined;
+	const releaseStart: BlockedStartHandle = {
+		resolve() {
+			if (!resolveStart) throw new Error('Start is not blocked yet');
+			resolveStart();
+		},
+		async waitUntilBlocked() {
+			await waitFor(() => resolveStart !== undefined);
+		},
+	};
+	return {
+		extension: {
+			sourceId,
+			starts: 0,
+			stops: 0,
+			async start() {
+				this.starts += 1;
+				await new Promise<void>((resolve) => {
+					resolveStart = resolve;
+				});
+			},
+			async stop() {
+				this.stops += 1;
+			},
+		},
+		releaseStart,
+	};
+}
+
+interface BlockedStartHandle {
+	resolve(): void;
+	waitUntilBlocked(): Promise<void>;
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {

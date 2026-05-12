@@ -31,7 +31,7 @@ export class ExternalEventExtensionManager {
 	}
 
 	unregister(sourceId: string): void {
-		if (this.started.has(sourceId)) {
+		if (this.started.has(sourceId) || this.starting.has(sourceId)) {
 			throw new Error(`Cannot unregister started external event extension "${sourceId}"`);
 		}
 		this.unregisterRpcHandlers(sourceId);
@@ -57,6 +57,11 @@ export class ExternalEventExtensionManager {
 	}
 
 	async stopExtension(sourceId: string): Promise<void> {
+		const inFlightStart = this.starting.get(sourceId);
+		if (inFlightStart) {
+			await inFlightStart;
+		}
+
 		const extension = this.extensions.get(sourceId);
 		if (!extension || !this.started.has(sourceId)) return;
 		try {
