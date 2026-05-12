@@ -67,7 +67,7 @@ export interface TaskScheduleFireHandlerDeps {
 	 */
 	eventHub?: {
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		emit: (event: string, data: any) => Promise<unknown>;
+		publish: (event: string, data: any) => Promise<unknown>;
 	};
 }
 
@@ -242,7 +242,7 @@ export async function handleTaskScheduleFire(
 			const emittedTask = taskRepo.getTask(taskId);
 			if (emittedTask) {
 				eventHub
-					.emit('space.task.created', {
+					.publish('space.task.created', {
 						sessionId: 'global',
 						spaceId: schedule.spaceId,
 						taskId,
@@ -255,7 +255,7 @@ export async function handleTaskScheduleFire(
 			const emittedSchedule = scheduleRepo.getById(scheduleId);
 			if (emittedSchedule) {
 				eventHub
-					.emit('space.schedule.updated', {
+					.publish('space.schedule.updated', {
 						sessionId: 'global',
 						spaceId: schedule.spaceId,
 						scheduleId,

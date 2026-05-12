@@ -13,7 +13,7 @@
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Session } from '@neokai/shared';
 import type { SlashCommand } from '@neokai/shared/sdk';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';
 import { getBuiltInCommandNames } from '../built-in-commands';
@@ -25,7 +25,7 @@ import { getBuiltInCommandNames } from '../built-in-commands';
 export interface SlashCommandManagerContext {
 	readonly session: Session;
 	readonly db: Database;
-	readonly daemonHub: DaemonHub;
+	readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	readonly logger: Logger;
 
 	// SDK state
@@ -85,7 +85,7 @@ export class SlashCommandManager {
 	async updateFromInit(sdkCommands: string[]): Promise<void> {
 		if (this.commandsFetchedFromSDK) return;
 
-		const { session, db, daemonHub } = this.ctx;
+		const { session, db, internalEventBus } = this.ctx;
 
 		const kaiBuiltInCommands = getBuiltInCommandNames();
 		const allCommands = [...new Set([...sdkCommands, ...kaiBuiltInCommands])];
@@ -96,7 +96,7 @@ export class SlashCommandManager {
 		session.availableCommands = this.slashCommands;
 		db.updateSession(session.id, { availableCommands: this.slashCommands });
 
-		await daemonHub.emit('commands.updated', {
+		await internalEventBus.publish('commands.updated', {
 			sessionId: session.id,
 			commands: this.slashCommands,
 		});
@@ -106,7 +106,7 @@ export class SlashCommandManager {
 	 * Fetch and cache slash commands from SDK
 	 */
 	async fetchAndCache(): Promise<void> {
-		const { session, db, daemonHub, logger, queryObject } = this.ctx;
+		const { session, db, internalEventBus, logger, queryObject } = this.ctx;
 
 		if (!queryObject || typeof queryObject.supportedCommands !== 'function') {
 			return;
@@ -136,7 +136,7 @@ export class SlashCommandManager {
 			db.updateSession(session.id, { availableCommands: this.slashCommands });
 
 			// Emit event
-			await daemonHub.emit('commands.updated', {
+			await internalEventBus.publish('commands.updated', {
 				sessionId: session.id,
 				commands: this.slashCommands,
 			});

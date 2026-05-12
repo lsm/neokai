@@ -32,7 +32,7 @@ import type {
 	McpImportsRefreshResponse,
 } from '@neokai/shared';
 import { homedir } from 'node:os';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { SpaceManager } from '../space/managers/space-manager';
 import { buildMcpJsonPaths, scanMcpImports } from '../mcp/import-scanner';
@@ -40,8 +40,8 @@ import { Logger } from '../logger';
 
 const log = new Logger('space-mcp-handlers');
 
-function emitChanged(daemonHub: DaemonHub): void {
-	daemonHub.emit('mcp.registry.changed', { sessionId: 'global' }).catch((err) => {
+function emitChanged(internalEventBus: InternalEventBus<DaemonInternalEventMap>): void {
+	internalEventBus.publish('mcp.registry.changed', { sessionId: 'global' }).catch((err) => {
 		log.warn('Failed to emit mcp.registry.changed:', err);
 	});
 }
@@ -55,7 +55,7 @@ async function assertSpaceExists(spaceManager: SpaceManager, spaceId: string): P
 
 export function setupSpaceMcpHandlers(
 	messageHub: MessageHub,
-	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	db: Database,
 	spaceManager: SpaceManager
 ): void {
@@ -118,7 +118,7 @@ export function setupSpaceMcpHandlers(
 		}
 
 		db.mcpEnablement.setOverride('space', spaceId, serverId, enabled);
-		emitChanged(daemonHub);
+		emitChanged(internalEventBus);
 		log.info(
 			`space.mcp.setEnabled: space=${spaceId} server=${serverId} (${server.name}) enabled=${enabled}`
 		);
@@ -142,7 +142,7 @@ export function setupSpaceMcpHandlers(
 
 		const cleared = db.mcpEnablement.clearOverride('space', spaceId, serverId);
 		if (cleared) {
-			emitChanged(daemonHub);
+			emitChanged(internalEventBus);
 			log.info(`space.mcp.clearOverride: space=${spaceId} server=${serverId}`);
 		}
 		return { ok: true } satisfies SpaceMcpClearOverrideResponse;
@@ -180,7 +180,7 @@ export function setupSpaceMcpHandlers(
 		const result = await scanMcpImports(db.appMcpServers, { mcpJsonPaths });
 
 		if (result.imported > 0 || result.removed > 0) {
-			emitChanged(daemonHub);
+			emitChanged(internalEventBus);
 		}
 		log.info(
 			`mcp.imports.refresh: imported=${result.imported} removed=${result.removed} notes=${result.notes.length}`

@@ -24,7 +24,7 @@ import type {
 	CurrentModelInfo,
 	MessageHub,
 } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { ErrorManager } from '../error-manager';
 import { ErrorCategory } from '../error-manager';
@@ -45,7 +45,7 @@ export interface ModelSwitchHandlerContext {
 	readonly session: Session;
 	readonly db: Database;
 	readonly messageHub: MessageHub;
-	readonly daemonHub: DaemonHub;
+	readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	readonly contextTracker: ContextTracker;
 	readonly stateManager: ProcessingStateManager;
 	readonly errorManager: ErrorManager;
@@ -142,7 +142,7 @@ export class ModelSwitchHandler {
 			session,
 			db,
 			messageHub,
-			daemonHub,
+			internalEventBus,
 			contextTracker,
 			stateManager,
 			errorManager,
@@ -245,7 +245,7 @@ export class ModelSwitchHandler {
 				contextTracker.setModel(resolvedModel);
 
 				// Emit session.updated event - include data for decoupled state management
-				await daemonHub.emit('session.updated', {
+				await internalEventBus.publish('session.updated', {
 					sessionId: session.id,
 					source: 'model-switch',
 					session: { config: session.config },
@@ -284,7 +284,7 @@ export class ModelSwitchHandler {
 				// Emit session.updated event so state-manager and UI know the model changed
 				// This prevents stale model display during the restart window before
 				// the restarted query emits a fresh system:init with the new model
-				await daemonHub.emit('session.updated', {
+				await internalEventBus.publish('session.updated', {
 					sessionId: session.id,
 					source: 'model-switch',
 					session: { config: session.config },

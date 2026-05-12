@@ -18,7 +18,7 @@ import {
 	type SpaceTaskStatus,
 	type UpdateSpaceTaskParams,
 } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
@@ -36,7 +36,7 @@ export function setupSpaceTaskHandlers(
 	messageHub: MessageHub,
 	spaceManager: SpaceManager,
 	taskManagerFactory: SpaceTaskManagerFactory,
-	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	spaceRuntimeService?: SpaceRuntimeService
 ): void {
 	// ─── spaceTask.create ───────────────────────────────────────────────────────
@@ -73,8 +73,8 @@ export function setupSpaceTaskHandlers(
 		}
 		const task = await taskManager.createTask(rest);
 
-		daemonHub
-			.emit('space.task.created', {
+		internalEventBus
+			.publish('space.task.created', {
 				sessionId: 'global',
 				spaceId,
 				taskId: task.id,
@@ -363,8 +363,8 @@ export function setupSpaceTaskHandlers(
 		}
 
 		if (emitTaskUpdated) {
-			daemonHub
-				.emit('space.task.updated', {
+			internalEventBus
+				.publish('space.task.updated', {
 					sessionId: 'global',
 					spaceId,
 					taskId,
@@ -444,8 +444,8 @@ export function setupSpaceTaskHandlers(
 			reason: params.reason ?? null,
 		});
 
-		daemonHub
-			.emit('space.task.updated', {
+		internalEventBus
+			.publish('space.task.updated', {
 				sessionId: 'global',
 				spaceId: params.spaceId,
 				taskId: params.taskId,
@@ -542,8 +542,8 @@ export function setupSpaceTaskHandlers(
 			});
 		}
 
-		daemonHub
-			.emit('space.task.updated', {
+		internalEventBus
+			.publish('space.task.updated', {
 				sessionId: 'global',
 				spaceId: params.spaceId,
 				taskId: params.taskId,
@@ -586,8 +586,8 @@ export function setupSpaceTaskHandlers(
 
 		const task = await taskManager.publishTask(params.taskId);
 
-		daemonHub
-			.emit('space.task.updated', {
+		internalEventBus
+			.publish('space.task.updated', {
 				sessionId: 'global',
 				spaceId: params.spaceId,
 				taskId: params.taskId,

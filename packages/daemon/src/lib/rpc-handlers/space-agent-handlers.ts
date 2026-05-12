@@ -13,7 +13,7 @@
  */
 
 import type { MessageHub } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import type { SpaceManager } from '../space/managers/space-manager';
 import { getPresetAgentTemplates } from '../space/agents/seed-agents';
@@ -23,7 +23,7 @@ const log = new Logger('space-agent-handlers');
 
 export function setupSpaceAgentHandlers(
 	messageHub: MessageHub,
-	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	spaceAgentManager: SpaceAgentManager,
 	spaceManager: SpaceManager
 ): void {
@@ -70,8 +70,8 @@ export function setupSpaceAgentHandlers(
 
 		if (!result.ok) throw new Error(result.error);
 
-		daemonHub
-			.emit('spaceAgent.created', {
+		internalEventBus
+			.publish('spaceAgent.created', {
 				sessionId: `space:${result.value.spaceId}`,
 				spaceId: result.value.spaceId,
 				agent: result.value,
@@ -133,8 +133,8 @@ export function setupSpaceAgentHandlers(
 
 		if (!result.ok) throw new Error(result.error);
 
-		daemonHub
-			.emit('spaceAgent.updated', {
+		internalEventBus
+			.publish('spaceAgent.updated', {
 				sessionId: `space:${result.value.spaceId}`,
 				spaceId: result.value.spaceId,
 				agent: result.value,
@@ -187,8 +187,8 @@ export function setupSpaceAgentHandlers(
 		const result = await spaceAgentManager.syncFromTemplate(params.agentId);
 		if (!result.ok) throw new Error(result.error);
 
-		daemonHub
-			.emit('spaceAgent.updated', {
+		internalEventBus
+			.publish('spaceAgent.updated', {
 				sessionId: `space:${result.value.spaceId}`,
 				spaceId: result.value.spaceId,
 				agent: result.value,
@@ -220,8 +220,8 @@ export function setupSpaceAgentHandlers(
 
 		// Await the event so subscribers (e.g. StateManager) see it before the
 		// handler returns — consistent with how room.delete emits room.deleted.
-		await daemonHub
-			.emit('spaceAgent.deleted', {
+		await internalEventBus
+			.publish('spaceAgent.deleted', {
 				sessionId: `space:${existing.spaceId}`,
 				spaceId: existing.spaceId,
 				agentId: params.id,

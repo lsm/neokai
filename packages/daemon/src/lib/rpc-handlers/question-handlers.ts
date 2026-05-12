@@ -5,7 +5,7 @@
  */
 
 import type { MessageHub, QuestionDraftResponse } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SessionManager } from '../session-manager';
 import type { AgentSession } from '../agent/agent-session';
 
@@ -37,7 +37,7 @@ interface QuestionCancelPayload {
 export function setupQuestionHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
-	_daemonHub: DaemonHub,
+	_internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	/**
 	 * Optional lookup for room worker/leader sessions.
 	 *

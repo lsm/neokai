@@ -1,6 +1,6 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 import { verifySignature } from './webhook-handler';
 
@@ -540,7 +540,7 @@ export class SpaceGitHubService {
 
 	constructor(
 		private readonly db: BunDatabase,
-		private readonly daemonHub?: DaemonHub,
+		private readonly internalEventBus?: InternalEventBus<DaemonInternalEventMap>,
 		private readonly injectTaskAgent?: (taskId: string, message: string) => Promise<void>,
 		private readonly githubToken?: string,
 		private readonly onEventsChanged?: () => void
@@ -747,8 +747,8 @@ export class SpaceGitHubService {
 	}
 
 	private appendTaskActivity(taskId: string, event: NormalizedSpaceGitHubEvent): void {
-		this.daemonHub
-			?.emit('space.githubEvent.routed', {
+		this.internalEventBus
+			?.publish('space.githubEvent.routed', {
 				sessionId: 'global',
 				taskId,
 				event: {

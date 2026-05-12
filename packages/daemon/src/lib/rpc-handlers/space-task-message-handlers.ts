@@ -7,7 +7,7 @@
  */
 
 import type { MessageHub, MessageImage } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { AgentSession } from '../agent/agent-session';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
@@ -160,7 +160,7 @@ export function setupSpaceTaskMessageHandlers(
 	messageHub: MessageHub,
 	taskAgentManager: TaskAgentManagerInterface,
 	db: Database,
-	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	nodeExecutionRepo?: NodeExecutionLookup,
 	channelCycleResetter?: ChannelCycleResetter,
 	activateNode?: (runId: string, nodeId: string) => Promise<void>,
@@ -185,7 +185,7 @@ export function setupSpaceTaskMessageHandlers(
 				`workflow.cycles.reset: runId=${workflowRunId} reason=human_touch taskId=${taskId} rowsReset=${rowsReset}`
 			);
 			if (rowsReset > 0) {
-				await daemonHub.emit('space.workflowRun.cyclesReset', {
+				await internalEventBus.publish('space.workflowRun.cyclesReset', {
 					sessionId: 'global',
 					runId: workflowRunId,
 					reason: 'human_touch',
@@ -355,7 +355,7 @@ export function setupSpaceTaskMessageHandlers(
 
 		const updatedTask = await taskAgentManager.ensureTaskAgentSession(params.taskId);
 
-		await daemonHub.emit('space.task.updated', {
+		await internalEventBus.publish('space.task.updated', {
 			sessionId: 'global',
 			spaceId: params.spaceId,
 			taskId: params.taskId,
@@ -498,7 +498,7 @@ export function setupSpaceTaskMessageHandlers(
 		const sessionAfter = ensuredTask.taskAgentSessionId ?? null;
 
 		if (sessionAfter !== sessionBefore) {
-			await daemonHub.emit('space.task.updated', {
+			await internalEventBus.publish('space.task.updated', {
 				sessionId: 'global',
 				spaceId: params.spaceId,
 				taskId: params.taskId,

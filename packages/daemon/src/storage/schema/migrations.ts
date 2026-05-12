@@ -6558,7 +6558,7 @@ function runMigration91(db: BunDatabase): void {
  * periodic sweep. Rows carry bounded retry (`attempts <= max_attempts`) and
  * an `expires_at` TTL so stale entries are dropped instead of replayed forever.
  *
- * Observability: queued/delivered events are emitted on DaemonHub
+ * Observability: queued/delivered events are emitted on InternalEventBus<DaemonInternalEventMap>
  * (`space.pendingMessage.queued` / `space.pendingMessage.delivered`) so the UI
  * and tests can observe the queue without polling.
  */
@@ -6655,7 +6655,7 @@ export function runMigration95(db: BunDatabase): void {
  * Writes come from background job handlers in
  * `packages/daemon/src/lib/job-handlers/space-workflow-run-artifact.handler.ts`
  * and from the RPC layer as a warm-cache optimisation. The handler emits a
- * `space.artifactCache.updated` DaemonHub event after each upsert so the
+ * `space.artifactCache.updated` InternalEventBus<DaemonInternalEventMap> event after each upsert so the
  * frontend TaskArtifactsPanel can refetch from the cache without polling.
  *
  * `status` tracks whether the current row is fresh data ('ok'), a best-effort

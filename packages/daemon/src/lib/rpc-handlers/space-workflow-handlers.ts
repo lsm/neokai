@@ -25,7 +25,7 @@ import type {
 	DuplicateDriftReport,
 	SpaceWorkflow,
 } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
@@ -272,7 +272,7 @@ export function setupSpaceWorkflowHandlers(
 	messageHub: MessageHub,
 	spaceManager: SpaceManager,
 	workflowManager: SpaceWorkflowManager,
-	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	spaceAgentManager: SpaceAgentManager,
 	workflowRunRepo: SpaceWorkflowRunRepository
 ): void {
@@ -297,8 +297,8 @@ export function setupSpaceWorkflowHandlers(
 
 		// sessionId: 'global' — spaceWorkflow.* events are global broadcast events,
 		// not channel-scoped. The SpaceStore (M5) will subscribe globally and filter by spaceId.
-		daemonHub
-			.emit('spaceWorkflow.created', {
+		internalEventBus
+			.publish('spaceWorkflow.created', {
 				sessionId: 'global',
 				spaceId: params.spaceId,
 				workflow,
@@ -433,8 +433,8 @@ export function setupSpaceWorkflowHandlers(
 			throw new Error(`Workflow not found: ${id}`);
 		}
 
-		daemonHub
-			.emit('spaceWorkflow.updated', {
+		internalEventBus
+			.publish('spaceWorkflow.updated', {
 				sessionId: 'global',
 				spaceId: workflow.spaceId,
 				workflow,
@@ -480,8 +480,8 @@ export function setupSpaceWorkflowHandlers(
 
 		// Await so subscribers (e.g. SpaceStore in M5) see the deletion before the handler returns,
 		// consistent with how spaceAgent.delete emits spaceAgent.deleted.
-		await daemonHub
-			.emit('spaceWorkflow.deleted', {
+		await internalEventBus
+			.publish('spaceWorkflow.deleted', {
 				sessionId: 'global',
 				spaceId: workflow.spaceId,
 				workflowId: params.id,
@@ -616,8 +616,8 @@ export function setupSpaceWorkflowHandlers(
 			throw new Error(`Workflow not found: ${params.id}`);
 		}
 
-		daemonHub
-			.emit('spaceWorkflow.updated', {
+		internalEventBus
+			.publish('spaceWorkflow.updated', {
 				sessionId: 'global',
 				spaceId: params.spaceId,
 				workflow: updated,
@@ -770,8 +770,8 @@ export function setupSpaceWorkflowHandlers(
 			const ok = workflowManager.deleteWorkflow(wf.id);
 			if (ok) {
 				deletedIds.push(wf.id);
-				await daemonHub
-					.emit('spaceWorkflow.deleted', {
+				await internalEventBus
+					.publish('spaceWorkflow.deleted', {
 						sessionId: 'global',
 						spaceId: params.spaceId,
 						workflowId: wf.id,
@@ -782,8 +782,8 @@ export function setupSpaceWorkflowHandlers(
 			}
 		}
 
-		daemonHub
-			.emit('spaceWorkflow.updated', {
+		internalEventBus
+			.publish('spaceWorkflow.updated', {
 				sessionId: 'global',
 				spaceId: params.spaceId,
 				workflow: updated,

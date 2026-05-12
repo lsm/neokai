@@ -1,7 +1,7 @@
 /**
  * ClientEventBridge Tests
  *
- * Verifies that the bridge declaratively maps DaemonHub events to
+ * Verifies that the bridge declaratively maps InternalEventBus events to
  * ClientEventGateway deliveries with the correct channels.
  */
 
@@ -11,7 +11,10 @@ import {
 	createClientEventBridge,
 	type StateBroadcasts,
 } from '../../../../src/lib/client-event-bridge';
-import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type {
+	DaemonInternalEventMap,
+	InternalEventBus,
+} from '../../../../src/lib/internal-event-bus';
 import type { IClientEventGateway, EventChannel } from '@neokai/shared';
 
 describe('ClientEventBridge', () => {
@@ -19,8 +22,8 @@ describe('ClientEventBridge', () => {
 		const eventHandlers = new Map<string, Function[]>();
 		const unsubscribers: string[] = [];
 
-		const daemonHub = {
-			on: mock((event: string, handler: Function) => {
+		const internalEventBus = {
+			subscribe: mock((event: string, handler: Function) => {
 				const existing = eventHandlers.get(event) || [];
 				existing.push(handler);
 				eventHandlers.set(event, existing);
@@ -34,8 +37,8 @@ describe('ClientEventBridge', () => {
 					}
 				};
 			}),
-			emit: mock(async () => {}),
-		} as unknown as DaemonHub;
+			publish: mock(async () => {}),
+		} as unknown as InternalEventBus<DaemonInternalEventMap>;
 
 		const published: { method: string; data: unknown; channel: EventChannel }[] = [];
 
@@ -59,7 +62,7 @@ describe('ClientEventBridge', () => {
 		};
 
 		return {
-			daemonHub,
+			internalEventBus,
 			gateway,
 			eventHandlers,
 			published,
@@ -71,8 +74,8 @@ describe('ClientEventBridge', () => {
 
 	describe('start', () => {
 		it('should subscribe to all space bridge events', () => {
-			const { daemonHub, gateway, eventHandlers } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, gateway);
+			const { internalEventBus, gateway, eventHandlers } = buildFixture();
+			const bridge = new ClientEventBridge(internalEventBus, gateway);
 			bridge.start();
 
 			expect(eventHandlers.has('space.created')).toBe(true);
@@ -94,8 +97,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('should subscribe to session bridge events', () => {
-			const { daemonHub, gateway, eventHandlers } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, gateway);
+			const { internalEventBus, gateway, eventHandlers } = buildFixture();
+			const bridge = new ClientEventBridge(internalEventBus, gateway);
 			bridge.start();
 
 			expect(eventHandlers.has('session.created')).toBe(true);
@@ -104,8 +107,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('should subscribe to connection/auth bridge events', () => {
-			const { daemonHub, gateway, eventHandlers } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, gateway);
+			const { internalEventBus, gateway, eventHandlers } = buildFixture();
+			const bridge = new ClientEventBridge(internalEventBus, gateway);
 			bridge.start();
 
 			expect(eventHandlers.has('api.connection')).toBe(true);
@@ -113,16 +116,16 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('should subscribe to config bridge events', () => {
-			const { daemonHub, gateway, eventHandlers } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, gateway);
+			const { internalEventBus, gateway, eventHandlers } = buildFixture();
+			const bridge = new ClientEventBridge(internalEventBus, gateway);
 			bridge.start();
 
 			expect(eventHandlers.has('commands.updated')).toBe(true);
 		});
 
 		it('should subscribe to error bridge events', () => {
-			const { daemonHub, gateway, eventHandlers } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, gateway);
+			const { internalEventBus, gateway, eventHandlers } = buildFixture();
+			const bridge = new ClientEventBridge(internalEventBus, gateway);
 			bridge.start();
 
 			expect(eventHandlers.has('session.error')).toBe(true);
@@ -130,8 +133,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('should be idempotent', () => {
-			const { daemonHub, gateway, eventHandlers } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, gateway);
+			const { internalEventBus, gateway, eventHandlers } = buildFixture();
+			const bridge = new ClientEventBridge(internalEventBus, gateway);
 			bridge.start();
 			bridge.start();
 
@@ -143,20 +146,20 @@ describe('ClientEventBridge', () => {
 
 	describe('stop', () => {
 		it('should unsubscribe from all events', () => {
-			const { daemonHub, gateway, unsubscribers } = buildFixture();
-			const bridge = new ClientEventBridge(daemonHub, gateway);
+			const { internalEventBus, gateway, unsubscribers } = buildFixture();
+			const bridge = new ClientEventBridge(internalEventBus, gateway);
 			bridge.start();
 			bridge.stop();
 
-			// 24 daemonHub.on calls total (context.updated has 2 handlers)
+			// 25 internalEventBus.subscribe calls total (context.updated has 2 handlers)
 			expect(unsubscribers.length).toBe(25);
 		});
 	});
 
 	describe('space event forwarding', () => {
 		it('forwards space.created to global channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = { sessionId: 'global', spaceId: 's-1', space: { id: 's-1' } };
 			eventHandlers.get('space.created')![0](data);
@@ -166,8 +169,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards space.updated to global channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = { sessionId: 'global', spaceId: 's-1', space: { name: 'Updated' } };
 			eventHandlers.get('space.updated')![0](data);
@@ -176,8 +179,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards space.archived to global channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = {
 				sessionId: 'global',
@@ -190,8 +193,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards space.deleted to global channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = { sessionId: 'global', spaceId: 's-1' };
 			eventHandlers.get('space.deleted')![0](data);
@@ -200,8 +203,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards space.task.created to global channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = {
 				sessionId: 'global',
@@ -215,8 +218,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards space.task.updated to global channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = {
 				sessionId: 'global',
@@ -230,8 +233,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards space.schedule.updated to global channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = {
 				sessionId: 'global',
@@ -245,8 +248,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards space.workflowRun.created to global channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = {
 				sessionId: 'global',
@@ -260,8 +263,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards space.workflowRun.updated to global channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = {
 				sessionId: 'global',
@@ -275,8 +278,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards space.gateData.updated to global channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = {
 				sessionId: 'global',
@@ -291,8 +294,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards spaceAgent.created to space-scoped channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = {
 				sessionId: 'space:s-1',
@@ -305,8 +308,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards spaceAgent.updated to space-scoped channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = {
 				sessionId: 'space:s-1',
@@ -319,8 +322,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards spaceAgent.deleted to space-scoped channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = { sessionId: 'space:s-1', spaceId: 's-1', agentId: 'a-1' };
 			eventHandlers.get('spaceAgent.deleted')![0](data);
@@ -329,8 +332,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards spaceWorkflow.created to global channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = {
 				sessionId: 'global',
@@ -343,8 +346,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards spaceWorkflow.updated to global channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = {
 				sessionId: 'global',
@@ -357,8 +360,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards spaceWorkflow.deleted to global channel', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = { sessionId: 'global', spaceId: 's-1', workflowId: 'wf-1' };
 			eventHandlers.get('spaceWorkflow.deleted')![0](data);
@@ -369,8 +372,8 @@ describe('ClientEventBridge', () => {
 
 	describe('session event forwarding', () => {
 		it('forwards session.created to global channel with transformed payload', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = {
 				sessionId: 'sess-1',
@@ -384,8 +387,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards session.deleted to global channel with transformed payload', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = { sessionId: 'sess-1' };
 			eventHandlers.get('session.deleted')![0](data);
@@ -396,8 +399,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('forwards context.updated to session-scoped channel with transformed payload', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const contextInfo = { files: 5, tokens: 1000 };
 			const data = { sessionId: 'sess-1', contextInfo };
@@ -411,8 +414,8 @@ describe('ClientEventBridge', () => {
 
 	describe('connection/auth event forwarding', () => {
 		it('triggers broadcastSystemChange on api.connection', async () => {
-			const { daemonHub, eventHandlers, broadcasts, broadcastCalls } = buildFixture();
-			createClientEventBridge(daemonHub, {} as IClientEventGateway, broadcasts).start();
+			const { internalEventBus, eventHandlers, broadcasts, broadcastCalls } = buildFixture();
+			createClientEventBridge(internalEventBus, {} as IClientEventGateway, broadcasts).start();
 
 			const data = { sessionId: 'global', status: 'disconnected', timestamp: Date.now() };
 			await eventHandlers.get('api.connection')![0](data);
@@ -422,8 +425,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('triggers broadcastSystemChange on auth.changed', async () => {
-			const { daemonHub, eventHandlers, broadcasts, broadcastCalls } = buildFixture();
-			createClientEventBridge(daemonHub, {} as IClientEventGateway, broadcasts).start();
+			const { internalEventBus, eventHandlers, broadcasts, broadcastCalls } = buildFixture();
+			createClientEventBridge(internalEventBus, {} as IClientEventGateway, broadcasts).start();
 
 			const data = { sessionId: 'global', method: 'api_key', isAuthenticated: true };
 			await eventHandlers.get('auth.changed')![0](data);
@@ -435,8 +438,8 @@ describe('ClientEventBridge', () => {
 
 	describe('config event forwarding', () => {
 		it('triggers broadcastSessionStateChange on commands.updated', async () => {
-			const { daemonHub, eventHandlers, broadcasts, broadcastCalls } = buildFixture();
-			createClientEventBridge(daemonHub, {} as IClientEventGateway, broadcasts).start();
+			const { internalEventBus, eventHandlers, broadcasts, broadcastCalls } = buildFixture();
+			createClientEventBridge(internalEventBus, {} as IClientEventGateway, broadcasts).start();
 
 			const data = { sessionId: 'sess-1', commands: ['cmd1', 'cmd2'] };
 			await eventHandlers.get('commands.updated')![0](data);
@@ -449,8 +452,8 @@ describe('ClientEventBridge', () => {
 
 	describe('context.updated broadcast trigger', () => {
 		it('triggers broadcastSessionStateChange on context.updated', async () => {
-			const { daemonHub, eventHandlers, broadcasts, broadcastCalls } = buildFixture();
-			createClientEventBridge(daemonHub, {} as IClientEventGateway, broadcasts).start();
+			const { internalEventBus, eventHandlers, broadcasts, broadcastCalls } = buildFixture();
+			createClientEventBridge(internalEventBus, {} as IClientEventGateway, broadcasts).start();
 
 			const data = { sessionId: 'sess-1', contextInfo: { files: 5, tokens: 1000 } };
 			// The broadcast trigger is the second handler (index 1) for context.updated
@@ -464,8 +467,8 @@ describe('ClientEventBridge', () => {
 
 	describe('error event forwarding', () => {
 		it('triggers broadcastSessionStateChange on session.error', async () => {
-			const { daemonHub, eventHandlers, broadcasts, broadcastCalls } = buildFixture();
-			createClientEventBridge(daemonHub, {} as IClientEventGateway, broadcasts).start();
+			const { internalEventBus, eventHandlers, broadcasts, broadcastCalls } = buildFixture();
+			createClientEventBridge(internalEventBus, {} as IClientEventGateway, broadcasts).start();
 
 			const data = { sessionId: 'sess-1', error: 'Something went wrong' };
 			await eventHandlers.get('session.error')![0](data);
@@ -476,8 +479,8 @@ describe('ClientEventBridge', () => {
 		});
 
 		it('triggers broadcastSessionStateChange on session.errorClear', async () => {
-			const { daemonHub, eventHandlers, broadcasts, broadcastCalls } = buildFixture();
-			createClientEventBridge(daemonHub, {} as IClientEventGateway, broadcasts).start();
+			const { internalEventBus, eventHandlers, broadcasts, broadcastCalls } = buildFixture();
+			createClientEventBridge(internalEventBus, {} as IClientEventGateway, broadcasts).start();
 
 			const data = { sessionId: 'sess-1' };
 			await eventHandlers.get('session.errorClear')![0](data);
@@ -490,8 +493,8 @@ describe('ClientEventBridge', () => {
 
 	describe('payload passthrough', () => {
 		it('passes the original payload through unchanged', () => {
-			const { daemonHub, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(daemonHub, gateway).start();
+			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+			createClientEventBridge(internalEventBus, gateway).start();
 
 			const data = { sessionId: 'global', spaceId: 's-1', space: { id: 's-1', name: 'Test' } };
 			eventHandlers.get('space.created')![0](data);

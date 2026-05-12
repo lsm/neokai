@@ -6,7 +6,7 @@
  */
 
 import type { MessageHub } from '@neokai/shared';
-import type { DaemonHub } from './daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
 import { Logger } from './logger';
 
 export enum ErrorCategory {
@@ -65,7 +65,7 @@ export class ErrorManager {
 
 	constructor(
 		private messageHub: MessageHub,
-		private daemonHub?: DaemonHub
+		private internalEventBus?: InternalEventBus<DaemonInternalEventMap>
 	) {}
 
 	/**
@@ -435,10 +435,10 @@ export class ErrorManager {
 		if (newStatus !== this.currentApiStatus) {
 			this.currentApiStatus = newStatus;
 
-			// Emit via DaemonHub for internal server-side listeners (StateManager)
+			// Emit via InternalEventBus<DaemonInternalEventMap> for internal server-side listeners (StateManager)
 			// API connection is a global event (not session-specific)
-			if (this.daemonHub) {
-				this.daemonHub.publishAsync('api.connection', {
+			if (this.internalEventBus) {
+				this.internalEventBus.publishAsync('api.connection', {
 					sessionId: 'global',
 					status: newStatus,
 					errorCount: this.apiConnectionErrors,
@@ -467,10 +467,10 @@ export class ErrorManager {
 		if (hadErrors && this.currentApiStatus !== 'connected') {
 			this.currentApiStatus = 'connected';
 
-			// Emit via DaemonHub for internal server-side listeners (StateManager)
+			// Emit via InternalEventBus<DaemonInternalEventMap> for internal server-side listeners (StateManager)
 			// API connection is a global event (not session-specific)
-			if (this.daemonHub) {
-				this.daemonHub.publishAsync('api.connection', {
+			if (this.internalEventBus) {
+				this.internalEventBus.publishAsync('api.connection', {
 					sessionId: 'global',
 					status: 'connected',
 					errorCount: 0,
@@ -510,9 +510,9 @@ export class ErrorManager {
 			return;
 		}
 
-		// Emit via DaemonHub for StateManager to fold into state.session
-		if (this.daemonHub) {
-			this.daemonHub.publishAsync('session.error', {
+		// Emit via InternalEventBus<DaemonInternalEventMap> for StateManager to fold into state.session
+		if (this.internalEventBus) {
+			this.internalEventBus.publishAsync('session.error', {
 				sessionId,
 				error: error.userMessage,
 				details: error,

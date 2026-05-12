@@ -42,7 +42,7 @@ import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
-import type { DaemonHub } from '../../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
@@ -111,8 +111,8 @@ export interface SpaceAgentToolsConfig {
 	taskAgentManager?: TaskAgentManager;
 	/** Gate data repository for approve_gate tool. */
 	gateDataRepo?: GateDataRepository;
-	/** DaemonHub for emitting gate/task events. */
-	daemonHub?: DaemonHub;
+	/** InternalEventBus<DaemonInternalEventMap> for emitting gate/task events. */
+	internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 	/** Callback to trigger channel re-evaluation after gate data changes. */
 	onGateChanged?: (runId: string, gateId: string) => void;
 	/**
@@ -200,7 +200,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		spaceAgentManager,
 		taskAgentManager,
 		gateDataRepo,
-		daemonHub,
+		internalEventBus,
 		onGateChanged,
 		activateNode,
 		pendingMessageQueue,
@@ -673,9 +673,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					args.task_id
 				);
 
-				if (daemonHub) {
-					void daemonHub
-						.emit('space.task.updated', {
+				if (internalEventBus) {
+					void internalEventBus
+						.publish('space.task.updated', {
 							sessionId: 'global',
 							spaceId,
 							taskId: args.task_id,
@@ -1134,17 +1134,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 						workflowRunRepo.updateRun(args.run_id, { failureReason: null }) ?? currentRun;
 				}
 
-				if (daemonHub) {
-					void daemonHub
-						.emit('space.workflowRun.updated', {
+				if (internalEventBus) {
+					void internalEventBus
+						.publish('space.workflowRun.updated', {
 							sessionId: 'global',
 							spaceId: run.spaceId,
 							runId: run.id,
 							run: currentRun,
 						})
 						.catch(() => {});
-					void daemonHub
-						.emit('space.gateData.updated', {
+					void internalEventBus
+						.publish('space.gateData.updated', {
 							sessionId: 'global',
 							spaceId: run.spaceId,
 							runId: args.run_id,
@@ -1195,17 +1195,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					});
 				}
 
-				if (daemonHub) {
-					void daemonHub
-						.emit('space.workflowRun.updated', {
+				if (internalEventBus) {
+					void internalEventBus
+						.publish('space.workflowRun.updated', {
 							sessionId: 'global',
 							spaceId: run.spaceId,
 							runId: run.id,
 							run: updatedRun,
 						})
 						.catch(() => {});
-					void daemonHub
-						.emit('space.gateData.updated', {
+					void internalEventBus
+						.publish('space.gateData.updated', {
 							sessionId: 'global',
 							spaceId: run.spaceId,
 							runId: args.run_id,
@@ -1284,9 +1284,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					args.task_id
 				);
 
-				if (daemonHub) {
-					void daemonHub
-						.emit('space.task.updated', {
+				if (internalEventBus) {
+					void internalEventBus
+						.publish('space.task.updated', {
 							sessionId: 'global',
 							spaceId,
 							taskId: args.task_id,

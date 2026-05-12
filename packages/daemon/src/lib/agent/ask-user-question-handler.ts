@@ -47,7 +47,7 @@ import type {
 	QuestionDraftResponse,
 	Session,
 } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { ProcessingStateManager } from './processing-state-manager';
@@ -62,7 +62,7 @@ export interface AskUserQuestionHandlerContext {
 	readonly session: Session;
 	readonly db: Database;
 	readonly stateManager: ProcessingStateManager;
-	readonly daemonHub: DaemonHub;
+	readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	readonly messageQueue: MessageQueue;
 	/**
 	 * Ensure the SDK query is running so a queued tool_result can flow through
@@ -140,7 +140,7 @@ export class AskUserQuestionHandler {
 				agentID?: string;
 			}
 		): Promise<PermissionResult> => {
-			const { session, stateManager, daemonHub } = this.ctx;
+			const { session, stateManager, internalEventBus } = this.ctx;
 
 			// Only intercept AskUserQuestion tool
 			if (toolName !== 'AskUserQuestion') {
@@ -167,7 +167,7 @@ export class AskUserQuestionHandler {
 				this.logger.info(
 					`AskUserQuestion ${options.toolUseID}: consuming queued answer (behavior=${queued.behavior})`
 				);
-				await daemonHub.emit('question.injected_as_tool_result', {
+				await internalEventBus.publish('question.injected_as_tool_result', {
 					sessionId: session.id,
 					toolUseId: options.toolUseID,
 					mode: queued.behavior === 'allow' ? 'submitted' : 'cancelled',
@@ -199,7 +199,7 @@ export class AskUserQuestionHandler {
 			await stateManager.setWaitingForInput(pendingQuestion);
 
 			// Emit event for logging/debugging
-			await daemonHub.emit('question.asked', {
+			await internalEventBus.publish('question.asked', {
 				sessionId: session.id,
 				pendingQuestion,
 			});
@@ -344,7 +344,7 @@ export class AskUserQuestionHandler {
 	 * the UI only renders one orphan-cancelled state today) and the
 	 * processing state is reset to `idle` so the UI removes the dead-end card.
 	 *
-	 * @param telemetryReason Annotates the `question.orphaned` daemonHub event
+	 * @param telemetryReason Annotates the `question.orphaned` internalEventBus event
 	 *   only. Does NOT affect the persisted `cancelReason` on the resolved
 	 *   record — that's hardcoded to `agent_session_terminated` because the UI
 	 *   has no separate rendering for `rehydrate_failed`. If a future UX
@@ -355,7 +355,7 @@ export class AskUserQuestionHandler {
 	async markQuestionOrphaned(
 		telemetryReason: 'agent_session_terminated' | 'rehydrate_failed' = 'agent_session_terminated'
 	): Promise<boolean> {
-		const { stateManager, daemonHub, session } = this.ctx;
+		const { stateManager, internalEventBus, session } = this.ctx;
 		const currentState = stateManager.getState();
 		if (currentState.status !== 'waiting_for_input') {
 			return false;
@@ -392,7 +392,7 @@ export class AskUserQuestionHandler {
 		// forward.
 		await stateManager.setIdle();
 
-		await daemonHub.emit('question.orphaned', {
+		await internalEventBus.publish('question.orphaned', {
 			sessionId: session.id,
 			toolUseId: pendingQuestion.toolUseId,
 			reason: telemetryReason,
@@ -447,7 +447,7 @@ export class AskUserQuestionHandler {
 		pendingQuestion: PendingUserQuestion,
 		result: PermissionResult
 	): Promise<void> {
-		const { stateManager, daemonHub, session, messageQueue, ensureQueryStarted } = this.ctx;
+		const { stateManager, internalEventBus, session, messageQueue, ensureQueryStarted } = this.ctx;
 
 		this.queuedAnswers.set(toolUseId, result);
 
@@ -471,7 +471,7 @@ export class AskUserQuestionHandler {
 
 		const mode: 'submitted' | 'cancelled' = result.behavior === 'allow' ? 'submitted' : 'cancelled';
 
-		await daemonHub.emit('question.injected_as_tool_result', {
+		await internalEventBus.publish('question.injected_as_tool_result', {
 			sessionId: session.id,
 			toolUseId,
 			mode,

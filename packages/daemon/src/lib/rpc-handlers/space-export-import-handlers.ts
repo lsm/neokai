@@ -53,7 +53,7 @@ import type {
 	ExportedSpaceAgent,
 	ExportedSpaceWorkflow,
 } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
@@ -334,7 +334,7 @@ export function setupSpaceExportImportHandlers(
 	workflowRepo: SpaceWorkflowRepository,
 	workflowManager: SpaceWorkflowManager,
 	db: BunDatabase,
-	daemonHub: DaemonHub
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>
 ): void {
 	// ─── spaceExport.agents ──────────────────────────────────────────────────
 	messageHub.onRequest('spaceExport.agents', async (data) => {
@@ -697,8 +697,8 @@ export function setupSpaceExportImportHandlers(
 			const agent: SpaceAgent | null = agentRepo.getById(item.id);
 			if (!agent) continue;
 			const eventName = item.action === 'replaced' ? 'spaceAgent.updated' : 'spaceAgent.created';
-			daemonHub
-				.emit(eventName, {
+			internalEventBus
+				.publish(eventName, {
 					sessionId: `space:${spaceId}`,
 					spaceId,
 					agent,
@@ -717,8 +717,8 @@ export function setupSpaceExportImportHandlers(
 			if (item.action === 'replaced' && item.previousId) {
 				// P1: emit deleted for old UUID so SpaceStore removes the stale entry,
 				// then emit created for the new UUID so it is added fresh.
-				daemonHub
-					.emit('spaceWorkflow.deleted', {
+				internalEventBus
+					.publish('spaceWorkflow.deleted', {
 						sessionId: 'global',
 						spaceId,
 						workflowId: item.previousId,
@@ -729,8 +729,8 @@ export function setupSpaceExportImportHandlers(
 							err
 						);
 					});
-				daemonHub
-					.emit('spaceWorkflow.created', {
+				internalEventBus
+					.publish('spaceWorkflow.created', {
 						sessionId: 'global',
 						spaceId,
 						workflow,
@@ -742,8 +742,8 @@ export function setupSpaceExportImportHandlers(
 						);
 					});
 			} else {
-				daemonHub
-					.emit('spaceWorkflow.created', {
+				internalEventBus
+					.publish('spaceWorkflow.created', {
 						sessionId: 'global',
 						spaceId,
 						workflow,

@@ -19,7 +19,7 @@ import type {
 	RuntimeMcpServerEntry,
 } from '@neokai/shared';
 import { normalizeThinkingLevel } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { generateUUID } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@neokai/shared';
@@ -62,7 +62,7 @@ function extractMessageText(content: unknown): string {
 export function setupSessionHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
-	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	spaceManager: SpaceManager,
 	spaceRuntimeService?: SpaceRuntimeService
 ): void {
@@ -81,8 +81,8 @@ export function setupSessionHandlers(
 		// Add session to space if spaceId is provided
 		if (req.spaceId) {
 			const updatedSpace = await spaceManager.addSession(req.spaceId, sessionId);
-			daemonHub
-				.emit('space.updated', {
+			internalEventBus
+				.publish('space.updated', {
 					sessionId: 'global',
 					spaceId: req.spaceId,
 					space: updatedSpace,
@@ -95,7 +95,7 @@ export function setupSessionHandlers(
 		const session = agentSession?.getSessionData();
 
 		// Attach space-agent-tools synchronously for ad-hoc Space sessions.
-		// Doing this via the daemonHub 'session.created' event would be racy:
+		// Doing this via the internalEventBus 'session.created' event would be racy:
 		// the query can start (and freeze its MCP config) before the event
 		// handler completes. Mirrors the pattern space-handlers.ts uses for
 		// setupSpaceAgentSession on space.create.
@@ -110,10 +110,10 @@ export function setupSessionHandlers(
 			}
 		}
 
-		// Broadcast to daemonHub so other subscribers (StateManager, etc.) can react.
+		// Broadcast to internalEventBus so other subscribers (StateManager, etc.) can react.
 		// Kept for non-critical side effects; critical attachment above is synchronous.
 		if (session) {
-			daemonHub.emit('session.created', { sessionId, session }).catch(() => {});
+			internalEventBus.publish('session.created', { sessionId, session }).catch(() => {});
 		}
 
 		return { sessionId, session };
@@ -323,8 +323,8 @@ export function setupSessionHandlers(
 		if (spaceIdForDelete) {
 			try {
 				const updatedSpace = await spaceManager.removeSession(spaceIdForDelete, targetSessionId);
-				daemonHub
-					.emit('space.updated', {
+				internalEventBus
+					.publish('space.updated', {
 						sessionId: 'global',
 						spaceId: spaceIdForDelete,
 						space: updatedSpace,
@@ -358,8 +358,8 @@ export function setupSessionHandlers(
 					session.context.spaceId,
 					targetSessionId
 				);
-				daemonHub
-					.emit('space.updated', {
+				internalEventBus
+					.publish('space.updated', {
 						sessionId: 'global',
 						spaceId: session.context.spaceId,
 						space: updatedSpace,
@@ -475,9 +475,11 @@ export function setupSessionHandlers(
 		}
 
 		// Fire-and-forget: emit event, AgentSession handles it
-		daemonHub.emit('agent.interruptRequest', { sessionId: targetSessionId }).catch((error) => {
-			log.warn(`Failed to emit agent.interruptRequest for session ${targetSessionId}:`, error);
-		});
+		internalEventBus
+			.publish('agent.interruptRequest', { sessionId: targetSessionId })
+			.catch((error) => {
+				log.warn(`Failed to emit agent.interruptRequest for session ${targetSessionId}:`, error);
+			});
 
 		return { accepted: true };
 	});
@@ -870,7 +872,7 @@ export function setupSessionHandlers(
 		const result = await agentSession.resetQuery({ restartQuery, hardReset: true });
 
 		// Also emit event for StateManager to update clients
-		await daemonHub.emit('agent.reset', {
+		await internalEventBus.publish('agent.reset', {
 			sessionId: targetSessionId,
 			success: result.success,
 			error: result.error,
@@ -898,12 +900,15 @@ export function setupSessionHandlers(
 			await agentSession.restart();
 
 			// Emit event so StateManager and UI can react to the restart
-			await daemonHub.emit('agent.restart', { sessionId: targetSessionId, success: true });
+			await internalEventBus.publish('agent.restart', {
+				sessionId: targetSessionId,
+				success: true,
+			});
 
 			return { success: true };
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-			await daemonHub.emit('agent.restart', {
+			await internalEventBus.publish('agent.restart', {
 				sessionId: targetSessionId,
 				success: false,
 				error: errorMessage,

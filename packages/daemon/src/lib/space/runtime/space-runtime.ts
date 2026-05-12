@@ -439,7 +439,7 @@ export class SpaceRuntime {
 	/**
 	 * Notify the runtime that a workflow definition has changed.
 	 *
-	 * Called when a `spaceWorkflow.updated` DaemonHub event fires. Delegates to
+	 * Called when a `spaceWorkflow.updated` InternalEventBus<DaemonInternalEventMap> event fires. Delegates to
 	 * `GatePollManager.refreshPollsForWorkflow`, which re-reads the latest
 	 * workflow definition, diffs poll configs against active timers, and
 	 * starts/stops/updates polls as needed.
@@ -686,7 +686,7 @@ export class SpaceRuntime {
 		//    `postApprovalSessionId` stamped). The router performs its own
 		//    `taskRepo.updateTask` writes without emitting; without this the
 		//    end-node tick path would leave the UI waiting until the next poll.
-		//    The RPC path also emits via `daemonHub` after this returns — the
+		//    The RPC path also emits via `internalEventBus` after this returns — the
 		//    double emit is benign (idempotent UI refresh).
 		if (routeResult.mode !== 'skipped') {
 			const final = this.config.taskRepo.getTask(taskId);
@@ -1231,7 +1231,7 @@ export class SpaceRuntime {
 			this.tickTimer = null;
 		}
 		// Wait for any in-flight executeTick() to finish so that all DB
-		// reads/writes and DaemonHub event emissions complete before the
+		// reads/writes and InternalEventBus<DaemonInternalEventMap> event emissions complete before the
 		// caller proceeds to close the database.
 		if (this.tickInFlight) {
 			const MAX_TICK_DRAIN_MS = 30_000;

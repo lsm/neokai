@@ -8,7 +8,7 @@
  * - MessagePersistence: User message handling
  *
  * Also manages:
- * - DaemonHub subscriptions for async message processing
+ * - InternalEventBus<DaemonInternalEventMap> subscriptions for async message processing
  */
 
 import type {
@@ -20,7 +20,7 @@ import type {
 	MessageImage,
 } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import { AgentSession, type AgentSessionRuntimeOptions } from '../agent/agent-session';
 import type { AuthManager } from '../auth-manager';
@@ -66,7 +66,7 @@ export enum CleanupState {
 export class SessionManager {
 	private logger: Logger;
 	private worktreeManager: WorktreeManager;
-	private daemonHubUnsubscribers: Array<() => void> = [];
+	private internalEventBusUnsubscribers: Array<() => void> = [];
 	private sessionResetSubscribers: Array<
 		(event: { sessionId: string; session: Session; restartQuery: boolean }) => Promise<void> | void
 	> = [];
@@ -87,7 +87,7 @@ export class SessionManager {
 		private messageHub: MessageHub,
 		private authManager: AuthManager,
 		private settingsManager: SettingsManager,
-		private daemonHub: DaemonHub,
+		private internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 		private config: SessionLifecycleConfig,
 		private jobQueue: JobQueueRepository,
 		private jobProcessor: JobQueueProcessor,
@@ -114,7 +114,7 @@ export class SessionManager {
 			db,
 			this.worktreeManager,
 			this.sessionCache,
-			daemonHub,
+			internalEventBus,
 			messageHub,
 			config,
 			this.toolsConfigManager,
@@ -130,11 +130,11 @@ export class SessionManager {
 			this.sessionCache,
 			db,
 			messageHub,
-			daemonHub,
+			internalEventBus,
 			referenceResolver
 		);
 
-		// Setup DaemonHub subscribers for async message processing
+		// Setup InternalEventBus<DaemonInternalEventMap> subscribers for async message processing
 		this.setupEventSubscriptions();
 	}
 
@@ -152,7 +152,7 @@ export class SessionManager {
 			session,
 			this.db,
 			this.messageHub,
-			this.daemonHub,
+			this.internalEventBus,
 			() => this.authManager.getCurrentApiKey(),
 			this.skillsManager,
 			this.appMcpServerRepo,
@@ -226,7 +226,7 @@ export class SessionManager {
 		session: Session;
 		restartQuery: boolean;
 	}): Promise<void> {
-		await this.daemonHub.emit('session.reset', event);
+		await this.internalEventBus.publish('session.reset', event);
 		for (const subscriber of this.sessionResetSubscribers) {
 			await subscriber(event);
 		}
@@ -247,7 +247,7 @@ export class SessionManager {
 				persistedSession
 			);
 
-			await this.daemonHub.emit('session.errorClear', { sessionId });
+			await this.internalEventBus.publish('session.errorClear', { sessionId });
 
 			const freshSession = this.createAgentSessionFromSession(sessionForFreshInstance, {
 				autoReplayPendingMessages: false,
@@ -303,40 +303,44 @@ export class SessionManager {
 	}
 
 	/**
-	 * Setup DaemonHub subscriptions for async message processing
+	 * Setup InternalEventBus<DaemonInternalEventMap> subscriptions for async message processing
 	 */
 	private setupEventSubscriptions(): void {
 		// Subscribe to message persisted events (for title generation + draft clearing)
 		// AgentSession also subscribes to this event for query feeding
-		const unsubMessagePersisted = this.daemonHub.on('message.persisted', async (data) => {
-			const { sessionId, userMessageText, needsWorkspaceInit, hasDraftToClear } = data;
+		const unsubMessagePersisted = this.internalEventBus.subscribe(
+			'message.persisted',
+			async (data) => {
+				const { sessionId, userMessageText, needsWorkspaceInit, hasDraftToClear } = data;
 
-			try {
-				// STEP 1: Enqueue title generation job (if needed)
-				// Only run if workspace initialization is needed (first message)
-				if (needsWorkspaceInit) {
-					this.jobQueue.enqueue({
-						queue: SESSION_TITLE_GENERATION,
-						payload: { sessionId, userMessageText },
-						maxRetries: 2,
-					});
-				}
+				try {
+					// STEP 1: Enqueue title generation job (if needed)
+					// Only run if workspace initialization is needed (first message)
+					if (needsWorkspaceInit) {
+						this.jobQueue.enqueue({
+							queue: SESSION_TITLE_GENERATION,
+							payload: { sessionId, userMessageText },
+							maxRetries: 2,
+						});
+					}
 
-				// STEP 2: Clear draft if it matches the sent message content
-				if (hasDraftToClear) {
-					await this.sessionLifecycle.update(sessionId, {
-						metadata: { inputDraft: null },
-					} as Partial<Session>);
+					// STEP 2: Clear draft if it matches the sent message content
+					if (hasDraftToClear) {
+						await this.sessionLifecycle.update(sessionId, {
+							metadata: { inputDraft: null },
+						} as Partial<Session>);
+					}
+				} catch (error) {
+					this.logger.error(
+						`[SessionManager] Error in post-persistence processing for session ${sessionId}:`,
+						error
+					);
+					// Errors are non-fatal - the user message is already persisted and visible
 				}
-			} catch (error) {
-				this.logger.error(
-					`[SessionManager] Error in post-persistence processing for session ${sessionId}:`,
-					error
-				);
-				// Errors are non-fatal - the user message is already persisted and visible
-			}
-		});
-		this.daemonHubUnsubscribers.push(unsubMessagePersisted);
+			},
+			{ subscriberName: 'SessionManager.messagePersisted' }
+		);
+		this.internalEventBusUnsubscribers.push(unsubMessagePersisted);
 	}
 
 	// ==================== Session CRUD Operations ====================
@@ -581,16 +585,19 @@ export class SessionManager {
 		this.cleanupState = CleanupState.CLEANING;
 
 		try {
-			// PHASE 1: Unsubscribe from DaemonHub FIRST
+			// PHASE 1: Unsubscribe from InternalEventBus<DaemonInternalEventMap> FIRST
 			// This prevents new events from being processed during cleanup
-			for (const unsubscribe of this.daemonHubUnsubscribers) {
+			for (const unsubscribe of this.internalEventBusUnsubscribers) {
 				try {
 					unsubscribe();
 				} catch (error) {
-					this.logger.error(`[SessionManager] Error during DaemonHub unsubscribe:`, error);
+					this.logger.error(
+						`[SessionManager] Error during InternalEventBus<DaemonInternalEventMap> unsubscribe:`,
+						error
+					);
 				}
 			}
-			this.daemonHubUnsubscribers = [];
+			this.internalEventBusUnsubscribers = [];
 			this.sessionResetSubscribers = [];
 
 			// PHASE 2: Cleanup all in-memory sessions in parallel

@@ -16,7 +16,7 @@ export const TASK_SCHEDULE_FIRE = 'taskSchedule.fire';
 // Background jobs that populate the workflow_run_artifact_cache table with
 // git-derived data (gate artifacts, commit log, per-file diffs). Running these
 // in the job queue keeps the TaskArtifactsPanel RPC handlers fast; the handler
-// emits a `space.artifactCache.updated` DaemonHub event when a row is
+// emits a `space.artifactCache.updated` InternalEventBus<DaemonInternalEventMap> event when a row is
 // refreshed so the frontend can refetch without polling.
 export const SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS = 'spaceWorkflowRun.syncGateArtifacts';
 export const SPACE_WORKFLOW_RUN_SYNC_COMMITS = 'spaceWorkflowRun.syncCommits';

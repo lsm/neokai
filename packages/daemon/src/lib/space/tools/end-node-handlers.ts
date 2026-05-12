@@ -23,7 +23,7 @@
 
 import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { DaemonHub } from '../../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { Logger } from '../../logger';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
@@ -39,7 +39,7 @@ const log = new Logger('end-node-handlers');
 
 /**
  * Dependencies for building end-node handlers. All fields are required EXCEPT
- * `daemonHub` — when absent the handlers still succeed, they just do not emit
+ * `internalEventBus` — when absent the handlers still succeed, they just do not emit
  * lifecycle events (used in unit tests).
  */
 export interface EndNodeHandlerDeps {
@@ -65,7 +65,7 @@ export interface EndNodeHandlerDeps {
 	/** Space manager — used to look up current autonomy level for approve_task. */
 	spaceManager: Pick<SpaceManager, 'getSpace'>;
 	/** Optional hub for emitting `space.task.updated` events after state changes. */
-	daemonHub?: Pick<DaemonHub, 'emit'>;
+	internalEventBus?: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>;
 }
 
 export interface EndNodeHandlers {
@@ -81,7 +81,7 @@ export interface EndNodeHandlers {
  *
  * Transitions the task `approved → done` via `SpaceTaskManager.setTaskStatus`
  * (so the centralised transition validator runs), clears the post-approval
- * tracking fields, and emits a `space.task.updated` DaemonHub event.
+ * tracking fields, and emits a `space.task.updated` InternalEventBus<DaemonInternalEventMap> event.
  */
 export interface MarkCompleteHandlerDeps {
 	taskId: string;
@@ -91,7 +91,7 @@ export interface MarkCompleteHandlerDeps {
 	/** Task manager — used to transition and update the task atomically. */
 	taskManager: Pick<SpaceTaskManager, 'setTaskStatus' | 'updateTask'>;
 	/** Optional hub for emitting `space.task.updated` events. */
-	daemonHub?: Pick<DaemonHub, 'emit'>;
+	internalEventBus?: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>;
 }
 
 /**
@@ -102,12 +102,12 @@ export interface MarkCompleteHandlerDeps {
 export function createMarkCompleteHandler(
 	deps: MarkCompleteHandlerDeps
 ): (args: MarkCompleteInput) => Promise<ToolResult> {
-	const { taskId, spaceId, taskRepo, taskManager, daemonHub } = deps;
+	const { taskId, spaceId, taskRepo, taskManager, internalEventBus } = deps;
 
 	const emitTaskUpdated = (task: SpaceTask): void => {
-		if (!daemonHub) return;
-		void daemonHub
-			.emit('space.task.updated', { sessionId: 'global', spaceId, taskId, task })
+		if (!internalEventBus) return;
+		void internalEventBus
+			.publish('space.task.updated', { sessionId: 'global', spaceId, taskId, task })
 			.catch((err: unknown) => {
 				log.warn(
 					`Failed to emit space.task.updated for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
@@ -168,13 +168,13 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
 		taskRepo,
 		taskManager,
 		spaceManager,
-		daemonHub,
+		internalEventBus,
 	} = deps;
 
 	const emitTaskUpdated = (task: SpaceTask): void => {
-		if (!daemonHub) return;
-		void daemonHub
-			.emit('space.task.updated', { sessionId: 'global', spaceId, taskId, task })
+		if (!internalEventBus) return;
+		void internalEventBus
+			.publish('space.task.updated', { sessionId: 'global', spaceId, taskId, task })
 			.catch((err: unknown) => {
 				log.warn(
 					`Failed to emit space.task.updated for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`

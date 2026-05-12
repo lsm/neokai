@@ -9,7 +9,6 @@ import { SettingsManager } from './lib/settings-manager';
 import { StateProjectionService } from './lib/state-projection-service';
 import { createClientEventBridge } from './lib/client-event-bridge';
 import { MessageHub, MessageHubRouter } from '@neokai/shared';
-import { createDaemonHub } from './lib/daemon-hub';
 import {
 	createDaemonInternalEventBus,
 	type DaemonInternalEventMap,
@@ -70,10 +69,8 @@ export interface DaemonAppContext {
 	settingsManager: SettingsManager;
 	stateManager: StateProjectionService;
 	transport: WebSocketServerTransport;
-	daemonHub: Awaited<ReturnType<typeof createDaemonHub>>;
 	/**
-	 * Semantic internal event bus for migrated daemon domain events.
-	 * New publishers/subscribers should use this instead of DaemonHub.
+	 * Semantic internal event bus for daemon domain events.
 	 * See docs/plans/internal-event-command-query-architecture.md.
 	 */
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>;
@@ -237,12 +234,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// 5. Register Transport with MessageHub
 	messageHub.registerTransport(transport);
 
-	// Initialize DaemonHub (TypedHub-based event coordination)
-	const daemonHub = createDaemonHub('daemon');
-	await daemonHub.initialize();
-
-	// Initialize InternalEventBus for migrated daemon domain events.
-	// Subscribers/publishers register here as they migrate off DaemonHub.
+	// Initialize InternalEventBus for daemon domain events.
 	const internalEventBus = createDaemonInternalEventBus();
 
 	// Initialize InternalQueryBus for point-in-time reads.
@@ -290,7 +282,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		logError('[Daemon] Failed to ensure builtin skill plugin wrappers (non-fatal):', err);
 	}
 
-	// Initialize session manager (with DaemonHub, SettingsManager, no StateManager dependency!)
+	// Initialize session manager (with InternalEventBus<DaemonInternalEventMap>, SettingsManager, no StateManager dependency!)
 	// Use reactiveDb.db so sdk_messages writes emitted by AgentSession pipelines
 	// trigger LiveQuery invalidation immediately.
 	const sessionManager = new SessionManager(
@@ -298,7 +290,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		messageHub,
 		authManager,
 		settingsManager,
-		daemonHub,
+		internalEventBus,
 		{
 			defaultModel: config.defaultModel,
 			maxTokens: config.maxTokens,
@@ -328,65 +320,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		internalEventBus
 	);
 
-	// Bridge migrated DaemonHub events to InternalEventBus so
-	// StateProjectionService (and future subscribers) receive them without
-	// touching every publisher call site. This is the M5 compatibility path;
-	// publishers will migrate to InternalEventBus directly in later milestones.
-	//
-	// We use publish() (awaited) instead of publishAsync() so cache updates
-	// settle before ClientEventBridge triggers broadcastSystemChange() from
-	// the same DaemonHub event — preserving the ordering between cache write
-	// and broadcast read.
-	const unsubSessionCreated = daemonHub.on('session.created', (data) => {
-		void internalEventBus.publish('session.created', {
-			sessionId: data.sessionId,
-			session: data.session,
-		});
-	});
-	const unsubSessionUpdated = daemonHub.on('session.updated', (data) => {
-		void internalEventBus.publish('session.updated', {
-			sessionId: data.sessionId,
-			source: data.source,
-			session: data.session,
-			processingState: data.processingState,
-		});
-	});
-	const unsubSessionDeleted = daemonHub.on('session.deleted', (data) => {
-		void internalEventBus.publish('session.deleted', {
-			sessionId: data.sessionId,
-		});
-	});
-	const unsubCommandsUpdated = daemonHub.on('commands.updated', (data) => {
-		void internalEventBus.publish('commands.updated', {
-			sessionId: data.sessionId,
-			commands: data.commands,
-		});
-	});
-	const unsubSessionError = daemonHub.on('session.error', (data) => {
-		void internalEventBus.publish('session.error', {
-			sessionId: data.sessionId,
-			error: data.error,
-			details: data.details,
-		});
-	});
-	const unsubSessionErrorClear = daemonHub.on('session.errorClear', (data) => {
-		void internalEventBus.publish('session.errorClear', {
-			sessionId: data.sessionId,
-		});
-	});
-	const unsubApiConnection = daemonHub.on('api.connection', (data) => {
-		// Forward the complete payload so diagnostic fields (errorCount,
-		// lastError, lastSuccessfulCall) are preserved in projections.
-		void internalEventBus.publish('api.connection', {
-			...data,
-		});
-	});
-
-	// Initialize ClientEventBridge — forwards selected DaemonHub events to
-	// WebSocket clients via ClientEventGateway.  This extracts the repetitive
+	// Initialize ClientEventBridge — forwards selected InternalEventBus events to
+	// WebSocket clients via ClientEventGateway. This extracts the repetitive
 	// room/space forwarding out of StateProjectionService.
 	const clientEventGateway = stateManager.getClientEventGateway();
-	const clientEventBridge = createClientEventBridge(daemonHub, clientEventGateway, stateManager);
+	const clientEventBridge = createClientEventBridge(
+		internalEventBus,
+		clientEventGateway,
+		stateManager
+	);
 	clientEventBridge.start();
 
 	// Initialize GitHub service if configured
@@ -403,7 +345,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		if (apiKey) {
 			gitHubService = createGitHubService({
 				db,
-				daemonHub,
+				internalEventBus,
 				config,
 				apiKey,
 				githubToken: process.env.GITHUB_TOKEN, // Optional GitHub token for polling
@@ -429,7 +371,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	let taskAgentManagerForGithub: TaskAgentManager | null = null;
 	const spaceGitHubService = new SpaceGitHubService(
 		db.getDatabase(),
-		daemonHub,
+		internalEventBus,
 		(taskId, message) => {
 			if (!taskAgentManagerForGithub) {
 				throw new Error('TaskAgentManager is not ready for Space GitHub notification delivery');
@@ -452,7 +394,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		authManager,
 		settingsManager,
 		config,
-		daemonHub,
 		internalEventBus,
 		db,
 		gitHubService: gitHubService ?? undefined,
@@ -618,7 +559,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			jobQueue,
 			spaceRepo: taskScheduleSpaceRepo,
 			taskRepo: taskScheduleTaskRepo,
-			eventHub: daemonHub,
+			eventHub: internalEventBus,
 		});
 	});
 
@@ -785,15 +726,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			// while we're tearing down sessions and transport.
 			clientEventBridge.stop();
 
-			// Unsubscribe DaemonHub → InternalEventBus bridge listeners
-			unsubSessionCreated();
-			unsubSessionUpdated();
-			unsubSessionDeleted();
-			unsubCommandsUpdated();
-			unsubSessionError();
-			unsubSessionErrorClear();
-			unsubApiConnection();
-
 			try {
 				server.stop();
 			} catch {
@@ -898,7 +830,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		settingsManager,
 		stateManager,
 		transport,
-		daemonHub,
 		internalEventBus,
 		queryBus,
 		gitHubService,

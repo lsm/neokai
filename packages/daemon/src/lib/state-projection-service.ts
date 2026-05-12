@@ -95,8 +95,8 @@ export class StateProjectionService {
 	}
 
 	/**
-	 * Compatibility constructor for legacy `StateManager(..., daemonHub, db, internalEventBus, clientEvents?)`
-	 * callers. The `daemonHub` argument is ignored (no longer needed); all other
+	 * Compatibility constructor for legacy `StateManager(..., internalEventBus, db, internalEventBus, clientEvents?)`
+	 * callers. The `internalEventBus` argument is ignored (no longer needed); all other
 	 * arguments are forwarded to the primary constructor.
 	 *
 	 * TODO(M8): Remove once all call sites have migrated to the new constructor.
@@ -107,7 +107,7 @@ export class StateProjectionService {
 		authManager: AuthManager,
 		settingsManager: SettingsManager,
 		config: Config,
-		daemonHub: unknown,
+		_legacyEventHub: unknown,
 		db?: Database,
 		internalEventBus?: InternalEventBus<DaemonInternalEventMap>,
 		clientEvents?: IClientEventGateway
@@ -144,7 +144,7 @@ export class StateProjectionService {
 	 * - StateProjectionService caches this data (no fetching from sources)
 	 * - Broadcasts are triggered by separate subscribers, not this service
 	 *
-	 * All DaemonHub listeners for state-cache concerns have been migrated to
+	 * All InternalEventBus<DaemonInternalEventMap> listeners for state-cache concerns have been migrated to
 	 * InternalEventBus subscriptions. Client delivery is fully handled by
 	 * ClientEventBridge.
 	 */

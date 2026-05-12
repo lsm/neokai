@@ -1,12 +1,12 @@
 /**
- * ClientEventBridge — declarative mapping from DaemonHub internal events to client-safe events.
+ * ClientEventBridge — declarative mapping from InternalEventBus internal events to client-safe events.
  *
  * Today, StateProjectionService (formerly StateManager) contains ~30 repetitive
  * daemon-to-client forwarding handlers that do nothing but call
  * `messageHub.event(method, data, { channel })`.  This module extracts those
  * into a single bridge that:
  *
- *   1. Subscribes to selected DaemonHub events.
+ *   1. Subscribes to selected InternalEventBus events.
  *   2. Forwards the payload verbatim (or via a lightweight transform) through
  *      ClientEventGateway using typed Channels.
  *
@@ -39,16 +39,17 @@
 
 import type { IClientEventGateway, EventChannel } from '@neokai/shared';
 import { Channels } from '@neokai/shared';
-import type { DaemonHub, DaemonEventMap } from './daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
 import { Logger } from './logger';
 
-type DaemonEventName = keyof DaemonEventMap & string;
+type ClientBridgeEventName = keyof DaemonInternalEventMap & string;
+type ClientBridgePayload = DaemonInternalEventMap[keyof DaemonInternalEventMap];
 
 interface BridgeMapping {
-	event: DaemonEventName;
+	event: ClientBridgeEventName;
 	clientEvent: string;
-	channel: (payload: DaemonEventMap[keyof DaemonEventMap]) => EventChannel;
-	transform?: (payload: DaemonEventMap[keyof DaemonEventMap]) => unknown;
+	channel: (payload: ClientBridgePayload) => EventChannel;
+	transform?: (payload: ClientBridgePayload) => unknown;
 }
 
 /**
@@ -125,17 +126,17 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
 	{
 		event: 'spaceAgent.created',
 		clientEvent: 'spaceAgent.created',
-		channel: (p) => Channels.space((p as DaemonEventMap['spaceAgent.created']).spaceId),
+		channel: (p) => Channels.space((p as DaemonInternalEventMap['spaceAgent.created']).spaceId),
 	},
 	{
 		event: 'spaceAgent.updated',
 		clientEvent: 'spaceAgent.updated',
-		channel: (p) => Channels.space((p as DaemonEventMap['spaceAgent.updated']).spaceId),
+		channel: (p) => Channels.space((p as DaemonInternalEventMap['spaceAgent.updated']).spaceId),
 	},
 	{
 		event: 'spaceAgent.deleted',
 		clientEvent: 'spaceAgent.deleted',
-		channel: (p) => Channels.space((p as DaemonEventMap['spaceAgent.deleted']).spaceId),
+		channel: (p) => Channels.space((p as DaemonInternalEventMap['spaceAgent.deleted']).spaceId),
 	},
 	// Space workflow definition events → global
 	{
@@ -165,7 +166,7 @@ const SESSION_BRIDGE_MAPPINGS: BridgeMapping[] = [
 		clientEvent: 'session.created',
 		channel: () => Channels.global(),
 		transform: (payload) => {
-			const p = payload as DaemonEventMap['session.created'];
+			const p = payload as DaemonInternalEventMap['session.created'];
 			return { sessionId: p.session.id };
 		},
 	},
@@ -174,7 +175,7 @@ const SESSION_BRIDGE_MAPPINGS: BridgeMapping[] = [
 		clientEvent: 'session.deleted',
 		channel: () => Channels.global(),
 		transform: (payload) => {
-			const p = payload as DaemonEventMap['session.deleted'];
+			const p = payload as DaemonInternalEventMap['session.deleted'];
 			return { sessionId: p.sessionId };
 		},
 	},
@@ -182,19 +183,19 @@ const SESSION_BRIDGE_MAPPINGS: BridgeMapping[] = [
 		event: 'context.updated',
 		clientEvent: 'context.updated',
 		channel: (payload) => {
-			const p = payload as DaemonEventMap['context.updated'];
+			const p = payload as DaemonInternalEventMap['context.updated'];
 			return Channels.session(p.sessionId);
 		},
 		transform: (payload) => {
-			const p = payload as DaemonEventMap['context.updated'];
+			const p = payload as DaemonInternalEventMap['context.updated'];
 			return p.contextInfo;
 		},
 	},
 ];
 
 /**
- * ClientEventBridge wires DaemonHub event subscriptions to ClientEventGateway
- * deliveries.  Each mapping in the registry becomes one `daemonHub.on(...)`
+ * ClientEventBridge wires InternalEventBus event subscriptions to ClientEventGateway
+ * deliveries. Each mapping in the registry becomes one `internalEventBus.subscribe(...)`
  * subscriber that forwards through the gateway.
  */
 export class ClientEventBridge {
@@ -202,7 +203,7 @@ export class ClientEventBridge {
 	private logger = new Logger('ClientEventBridge');
 
 	constructor(
-		private daemonHub: DaemonHub,
+		private internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 		private gateway: IClientEventGateway,
 		private broadcasts?: StateBroadcasts
 	) {}
@@ -258,28 +259,36 @@ export class ClientEventBridge {
 	}
 
 	private subscribeMapping(mapping: BridgeMapping): void {
-		const unsub = this.daemonHub.on(mapping.event, (data: DaemonEventMap[keyof DaemonEventMap]) => {
-			const payload = mapping.transform ? mapping.transform(data) : data;
-			this.gateway.publish(mapping.clientEvent, payload, mapping.channel(data));
-		});
+		const unsub = this.internalEventBus.subscribe(
+			mapping.event,
+			(data: ClientBridgePayload) => {
+				const payload = mapping.transform ? mapping.transform(data) : data;
+				this.gateway.publish(mapping.clientEvent, payload, mapping.channel(data));
+			},
+			{ subscriberName: `ClientEventBridge.${mapping.event}` }
+		);
 		this.unsubscribers.push(unsub);
 	}
 
-	private subscribeBroadcast<K extends DaemonEventName>(
+	private subscribeBroadcast<K extends ClientBridgeEventName>(
 		event: K,
-		broadcast: (data: DaemonEventMap[K]) => Promise<void> | undefined
+		broadcast: (data: DaemonInternalEventMap[K]) => Promise<void> | undefined
 	): void {
-		const unsub = this.daemonHub.on(event, (data: DaemonEventMap[K]) => {
-			const promise = broadcast(data);
-			if (promise) {
-				return promise.catch((err) => {
-					// Return the promise so TypedHub awaits it, preserving emit
-					// completion semantics. Log here so failures are visible even
-					// when StateManager's own logging is insufficient.
-					this.logger.warn(`Broadcast failed for ${event}:`, err);
-				});
-			}
-		});
+		const unsub = this.internalEventBus.subscribe(
+			event,
+			(data: DaemonInternalEventMap[K]) => {
+				const promise = broadcast(data);
+				if (promise) {
+					return promise.catch((err) => {
+						// Return the promise so InternalEventBus awaits it, preserving publish
+						// completion semantics. Log here so failures are visible even
+						// when StateManager's own logging is insufficient.
+						this.logger.warn(`Broadcast failed for ${event}:`, err);
+					});
+				}
+			},
+			{ subscriberName: `ClientEventBridge.${event}.broadcast` }
+		);
 		this.unsubscribers.push(unsub);
 	}
 }
@@ -288,9 +297,9 @@ export class ClientEventBridge {
  * Convenience factory.
  */
 export function createClientEventBridge(
-	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	gateway: IClientEventGateway,
 	broadcasts?: StateBroadcasts
 ): ClientEventBridge {
-	return new ClientEventBridge(daemonHub, gateway, broadcasts);
+	return new ClientEventBridge(internalEventBus, gateway, broadcasts);
 }

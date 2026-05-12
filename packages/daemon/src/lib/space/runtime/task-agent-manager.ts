@@ -31,7 +31,7 @@
  *
  * ## Completion detection
  *
- * Uses `SessionObserver`-style `session.updated` subscription on DaemonHub.
+ * Uses `SessionObserver`-style `session.updated` subscription on InternalEventBus<DaemonInternalEventMap>.
  * When a sub-session transitions to `idle` status (after processing completes),
  * registered `onComplete` callbacks are fired.
  */
@@ -61,7 +61,7 @@ import { AgentSession } from '../../../lib/agent/agent-session';
 import { validateImageSizes } from '../../session/message-persistence';
 import type { Database } from '../../../storage/database';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
-import type { DaemonHub } from '../../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import type { SessionManager } from '../../session-manager';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
@@ -175,8 +175,8 @@ export interface TaskAgentManagerConfig {
 	gateDataRepo: GateDataRepository;
 	/** Channel cycle repository — for per-channel cycle tracking in cyclic workflows */
 	channelCycleRepo: ChannelCycleRepository;
-	/** DaemonHub — event bus for session state change subscriptions */
-	daemonHub: DaemonHub;
+	/** InternalEventBus<DaemonInternalEventMap> — event bus for session state change subscriptions */
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	/** MessageHub — used to write SDK messages */
 	messageHub: MessageHub;
 	/** Factory function to get the API key at call time */
@@ -239,15 +239,6 @@ export interface TaskAgentManagerConfig {
 	 * registered.
 	 */
 	scheduleService?: import('../schedule/schedule-service').ScheduleService;
-	/**
-	 * Optional InternalEventBus for publishing Space runtime domain events.
-	 * When provided, ChannelRouter instances created by TaskAgentManager will
-	 * dual-publish workflow_run_reopened (and future events) to the bus alongside
-	 * the legacy NotificationSink path.
-	 */
-	internalEventBus?: import('../../internal-event-bus').InternalEventBus<
-		import('../../internal-event-bus').DaemonInternalEventMap
-	>;
 }
 
 // ---------------------------------------------------------------------------
@@ -313,7 +304,7 @@ export class TaskAgentManager {
 	private completionCallbacks: CompletionCallbackMap = new Map();
 
 	/**
-	 * DaemonHub unsubscribe functions for session.updated listeners.
+	 * InternalEventBus<DaemonInternalEventMap> unsubscribe functions for session.updated listeners.
 	 * Key: session ID.
 	 */
 	private sessionListeners = new Map<string, () => void>();
@@ -377,20 +368,27 @@ export class TaskAgentManager {
 	 */
 	private subscribeToTaskArchiveEvents(): void {
 		if (this.taskArchiveListenerUnsub) return;
-		this.taskArchiveListenerUnsub = this.config.daemonHub.on('space.task.updated', (event) => {
-			if (event.task?.status !== 'archived') return;
-			// Task #85: skip the cleanup cascade for automated duplicate-run
-			// reconciliation archives. Only user-initiated archives (missing or
-			// explicit `'user'` marker) may remove the task worktree and archive
-			// the SDK `.jsonl` files.
-			if (event.archiveSource === 'system_reconcile') return;
-			const taskId = event.taskId;
-			// Fire-and-forget — archiveOnTaskArchived is idempotent and safe to
-			// skip on failure (cleanupAll still sweeps leftovers on daemon shutdown).
-			void this.archiveOnTaskArchived(taskId).catch((err) => {
-				log.warn(`TaskAgentManager: failed to archive resources for archived task ${taskId}:`, err);
-			});
-		});
+		this.taskArchiveListenerUnsub = this.config.internalEventBus.subscribe(
+			'space.task.updated',
+			(event) => {
+				if (event.task?.status !== 'archived') return;
+				// Task #85: skip the cleanup cascade for automated duplicate-run
+				// reconciliation archives. Only user-initiated archives (missing or
+				// explicit `'user'` marker) may remove the task worktree and archive
+				// the SDK `.jsonl` files.
+				if (event.archiveSource === 'system_reconcile') return;
+				const taskId = event.taskId;
+				// Fire-and-forget — archiveOnTaskArchived is idempotent and safe to
+				// skip on failure (cleanupAll still sweeps leftovers on daemon shutdown).
+				void this.archiveOnTaskArchived(taskId).catch((err) => {
+					log.warn(
+						`TaskAgentManager: failed to archive resources for archived task ${taskId}:`,
+						err
+					);
+				});
+			},
+			{ subscriberName: 'TaskAgentManager.taskArchive' }
+		);
 	}
 
 	/**
@@ -687,7 +685,7 @@ export class TaskAgentManager {
 				init,
 				this.config.db,
 				this.config.messageHub,
-				this.config.daemonHub,
+				this.config.internalEventBus,
 				this.config.getApiKey,
 				this.config.defaultModel,
 				this.config.skillsManager,
@@ -713,7 +711,7 @@ export class TaskAgentManager {
 				taskManager,
 				messageInjector: (subSessionId, message) =>
 					this.injectSubSessionMessage(subSessionId, message, true),
-				daemonHub: this.config.daemonHub,
+				internalEventBus: this.config.internalEventBus,
 				gateDataRepo: this.config.gateDataRepo,
 				workflowRunRepo: this.config.workflowRunRepo,
 				workflowManager: this.config.spaceWorkflowManager,
@@ -792,7 +790,7 @@ export class TaskAgentManager {
 				spaceAgentManager: this.config.spaceAgentManager,
 				taskAgentManager: this,
 				gateDataRepo: this.config.gateDataRepo,
-				daemonHub: this.config.daemonHub,
+				internalEventBus: this.config.internalEventBus,
 				onGateChanged: (runId, gateId) => {
 					void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 				},
@@ -822,7 +820,7 @@ export class TaskAgentManager {
 			// --- Register in SessionManager cache so getSessionAsync() returns the live
 			// instance with MCP tools attached rather than creating a duplicate from DB.
 			// Without this, RPC handlers (message.send, message.sdkMessages, etc.) would
-			// create a competing AgentSession with duplicate DaemonHub subscriptions.
+			// create a competing AgentSession with duplicate InternalEventBus<DaemonInternalEventMap> subscriptions.
 			this.config.sessionManager.registerSession(agentSession);
 
 			// --- Start streaming query
@@ -1264,7 +1262,7 @@ export class TaskAgentManager {
 					init,
 					this.config.db,
 					this.config.messageHub,
-					this.config.daemonHub,
+					this.config.internalEventBus,
 					this.config.getApiKey,
 					this.config.defaultModel,
 					this.config.skillsManager,
@@ -1512,7 +1510,7 @@ export class TaskAgentManager {
 			init,
 			this.config.db,
 			this.config.messageHub,
-			this.config.daemonHub,
+			this.config.internalEventBus,
 			this.config.getApiKey,
 			this.config.defaultModel,
 			this.config.skillsManager,
@@ -1781,9 +1779,9 @@ export class TaskAgentManager {
 		sessionId: string,
 		row: { spaceId: string; workflowRunId: string; targetAgentName: string; targetKind: string }
 	): void {
-		if (!this.config.daemonHub) return;
-		void this.config.daemonHub
-			.emit('space.pendingMessage.delivered', {
+		if (!this.config.internalEventBus) return;
+		void this.config.internalEventBus
+			.publish('space.pendingMessage.delivered', {
 				sessionId: 'global',
 				spaceId: row.spaceId,
 				workflowRunId: row.workflowRunId,
@@ -2585,7 +2583,7 @@ export class TaskAgentManager {
 
 	/**
 	 * Register a completion callback for a sub-session.
-	 * Subscribes to DaemonHub session.updated events for the session.
+	 * Subscribes to InternalEventBus<DaemonInternalEventMap> session.updated events for the session.
 	 * The callback is called at most once when the session first goes idle.
 	 * Also subscribes to session.error to mark the group member as 'failed'.
 	 */
@@ -2602,7 +2600,7 @@ export class TaskAgentManager {
 		// Track whether we've fired (to make callback fire exactly once)
 		let fired = false;
 
-		const unsubscribeUpdated = this.config.daemonHub.on(
+		const unsubscribeUpdated = this.config.internalEventBus.subscribe(
 			'session.updated',
 			(event) => {
 				if (fired) return;
@@ -2639,13 +2637,13 @@ export class TaskAgentManager {
 					}
 				}
 			},
-			{ sessionId: subSessionId }
+			{ sessionId: subSessionId, subscriberName: 'TaskAgentManager.subSessionCompletion' }
 		);
 
 		// Subscribe to session.error to mark the session as fired so that a subsequent idle
 		// transition does not overwrite the error state.
 		// Also self-unsubscribes both listeners to prevent multiple invocations.
-		const unsubscribeError = this.config.daemonHub.on(
+		const unsubscribeError = this.config.internalEventBus.subscribe(
 			'session.error',
 			(event) => {
 				if (fired) return; // Already handled by completion path
@@ -2667,7 +2665,7 @@ export class TaskAgentManager {
 					this.sessionListeners.delete(subSessionId);
 				}
 			},
-			{ sessionId: subSessionId }
+			{ sessionId: subSessionId, subscriberName: 'TaskAgentManager.subSessionError' }
 		);
 
 		// Store a combined unsubscribe that tears down both listeners at once.
@@ -3066,7 +3064,7 @@ export class TaskAgentManager {
 			sessionId,
 			this.config.db,
 			this.config.messageHub,
-			this.config.daemonHub,
+			this.config.internalEventBus,
 			this.config.getApiKey,
 			this.config.skillsManager,
 			this.config.appMcpServerRepo,
@@ -3120,7 +3118,7 @@ export class TaskAgentManager {
 			taskManager,
 			messageInjector: (subSessionId, message) =>
 				this.injectSubSessionMessage(subSessionId, message, true),
-			daemonHub: this.config.daemonHub,
+			internalEventBus: this.config.internalEventBus,
 			gateDataRepo: this.config.gateDataRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
 			workflowManager: this.config.spaceWorkflowManager,
@@ -3200,7 +3198,7 @@ export class TaskAgentManager {
 			spaceAgentManager: this.config.spaceAgentManager,
 			taskAgentManager: this,
 			gateDataRepo: this.config.gateDataRepo,
-			daemonHub: this.config.daemonHub,
+			internalEventBus: this.config.internalEventBus,
 			onGateChanged: (runId, gateId) => {
 				void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 			},
@@ -3444,7 +3442,7 @@ export class TaskAgentManager {
 			subSessionId,
 			this.config.db,
 			this.config.messageHub,
-			this.config.daemonHub,
+			this.config.internalEventBus,
 			this.config.getApiKey,
 			this.config.skillsManager,
 			this.config.appMcpServerRepo,
@@ -4240,7 +4238,7 @@ export class TaskAgentManager {
 			spaceAgentManager: this.config.spaceAgentManager,
 			taskAgentManager: this,
 			gateDataRepo: this.config.gateDataRepo,
-			daemonHub: this.config.daemonHub,
+			internalEventBus: this.config.internalEventBus,
 			onGateChanged: (runId, gateId) => {
 				void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 			},
@@ -4438,7 +4436,7 @@ export class TaskAgentManager {
 					taskRepo: this.config.taskRepo,
 					taskManager: boundTaskManager,
 					spaceManager: this.config.spaceManager,
-					daemonHub: this.config.daemonHub,
+					internalEventBus: this.config.internalEventBus,
 				})
 			: undefined;
 		const onApproveTask = endNodeHandlers?.onApproveTask;
@@ -4454,7 +4452,7 @@ export class TaskAgentManager {
 			spaceId,
 			taskRepo: this.config.taskRepo,
 			taskManager: boundTaskManager,
-			daemonHub: this.config.daemonHub,
+			internalEventBus: this.config.internalEventBus,
 		});
 
 		// Self-heal callback for the agent-callable `restore_node_agent` tool.
@@ -4533,7 +4531,7 @@ export class TaskAgentManager {
 			workflowNodeId,
 			nodeExecutionRepo: this.config.nodeExecutionRepo,
 			agentMessageRouter,
-			daemonHub: this.config.daemonHub,
+			internalEventBus: this.config.internalEventBus,
 			workflow,
 			gateDataRepo: this.config.gateDataRepo,
 			onGateDataChanged: (runId, gateId) => nodeAgentChannelRouter.onGateDataChanged(runId, gateId),

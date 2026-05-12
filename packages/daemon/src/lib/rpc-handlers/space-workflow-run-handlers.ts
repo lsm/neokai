@@ -24,7 +24,7 @@
 
 import { isAbsolute } from 'node:path';
 import type { MessageHub } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
@@ -174,7 +174,7 @@ export function setupSpaceWorkflowRunHandlers(
 	gateDataRepo: GateDataRepository,
 	spaceRuntimeService: SpaceRuntimeService,
 	taskManagerFactory: SpaceWorkflowRunTaskManagerFactory,
-	daemonHub: DaemonHub,
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	spaceTaskRepo: SpaceTaskRepository,
 	spaceWorktreeManager: SpaceWorktreeManager,
 	artifactRepo: WorkflowRunArtifactRepository,
@@ -297,8 +297,8 @@ export function setupSpaceWorkflowRunHandlers(
 		// blocked → in_progress (human resolved the blocking issue)
 		const updated = workflowRunRepo.transitionStatus(params.id, 'in_progress');
 
-		daemonHub
-			.emit('space.workflowRun.updated', {
+		internalEventBus
+			.publish('space.workflowRun.updated', {
 				sessionId: 'global',
 				spaceId: run.spaceId,
 				runId: run.id,
@@ -339,8 +339,8 @@ export function setupSpaceWorkflowRunHandlers(
 			const updated =
 				workflowRunRepo.updateRun(params.id, { failureReason: params.failureReason }) ?? run;
 
-			daemonHub
-				.emit('space.workflowRun.updated', {
+			internalEventBus
+				.publish('space.workflowRun.updated', {
 					sessionId: 'global',
 					spaceId: run.spaceId,
 					runId: run.id,
@@ -358,8 +358,8 @@ export function setupSpaceWorkflowRunHandlers(
 		const updated =
 			workflowRunRepo.updateRun(params.id, { failureReason: params.failureReason }) ?? run;
 
-		daemonHub
-			.emit('space.workflowRun.updated', {
+		internalEventBus
+			.publish('space.workflowRun.updated', {
 				sessionId: 'global',
 				spaceId: run.spaceId,
 				runId: run.id,
@@ -402,8 +402,8 @@ export function setupSpaceWorkflowRunHandlers(
 		// Cancel the run (pending/in_progress/blocked → cancelled)
 		const updated = workflowRunRepo.transitionStatus(params.id, 'cancelled');
 
-		daemonHub
-			.emit('space.workflowRun.updated', {
+		internalEventBus
+			.publish('space.workflowRun.updated', {
 				sessionId: 'global',
 				spaceId: run.spaceId,
 				runId: run.id,
@@ -468,8 +468,8 @@ export function setupSpaceWorkflowRunHandlers(
 				updatedRun = workflowRunRepo.updateRun(params.runId, { failureReason: null }) ?? run;
 			}
 
-			daemonHub
-				.emit('space.workflowRun.updated', {
+			internalEventBus
+				.publish('space.workflowRun.updated', {
 					sessionId: 'global',
 					spaceId: run.spaceId,
 					runId: run.id,
@@ -479,8 +479,8 @@ export function setupSpaceWorkflowRunHandlers(
 					log.warn('Failed to emit space.workflowRun.updated:', err);
 				});
 
-			daemonHub
-				.emit('space.gateData.updated', {
+			internalEventBus
+				.publish('space.gateData.updated', {
 					sessionId: 'global',
 					spaceId: run.spaceId,
 					runId: params.runId,
@@ -532,8 +532,8 @@ export function setupSpaceWorkflowRunHandlers(
 				});
 			}
 
-			daemonHub
-				.emit('space.workflowRun.updated', {
+			internalEventBus
+				.publish('space.workflowRun.updated', {
 					sessionId: 'global',
 					spaceId: run.spaceId,
 					runId: run.id,
@@ -543,8 +543,8 @@ export function setupSpaceWorkflowRunHandlers(
 					log.warn('Failed to emit space.workflowRun.updated:', err);
 				});
 
-			daemonHub
-				.emit('space.gateData.updated', {
+			internalEventBus
+				.publish('space.gateData.updated', {
 					sessionId: 'global',
 					spaceId: run.spaceId,
 					runId: params.runId,
@@ -604,8 +604,8 @@ export function setupSpaceWorkflowRunHandlers(
 
 			const gateData = gateDataRepo.merge(params.runId, params.gateId, params.data);
 
-			daemonHub
-				.emit('space.gateData.updated', {
+			internalEventBus
+				.publish('space.gateData.updated', {
 					sessionId: 'global',
 					spaceId: run.spaceId,
 					runId: params.runId,

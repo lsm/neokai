@@ -601,12 +601,122 @@ export interface SpaceEvents {
  * migrated continue to flow through DaemonHub (`createDaemonHub`) and the
  * compatibility `DaemonEventMap`.
  */
-export interface DaemonInternalEventMap
-	extends SettingsEvents,
-		ExternalEventEvents,
-		SessionEvents,
-		ApiConnectionEvents,
-		SpaceEvents {}
+type InternalEventBusPayload = { sessionId: string } & Record<string, unknown>;
+
+interface AgentControlEvents {
+	'model.switchRequest': { sessionId: string; model: string; provider: string };
+	'model.switched': { sessionId: string; success: boolean; model: string; error?: string };
+	'agent.interruptRequest': { sessionId: string };
+	'agent.interrupted': { sessionId: string };
+	'agent.resetRequest': { sessionId: string; restartQuery?: boolean };
+	'agent.reset': { sessionId: string; success: boolean; error?: string };
+	'message.persisted': {
+		sessionId: string;
+		messageId: string;
+		messageContent: string | import('@neokai/shared').MessageContent[];
+		userMessageText: string;
+		needsWorkspaceInit: boolean;
+		hasDraftToClear: boolean;
+		sendStatus: 'deferred' | 'enqueued' | 'consumed';
+		deliveryMode: import('@neokai/shared').MessageDeliveryMode;
+		skipQueryStart?: boolean;
+	};
+	'query.trigger': { sessionId: string };
+	'query.sendEnqueuedOnTurnEnd': { sessionId: string };
+	'context.updated': { sessionId: string; contextInfo: import('@neokai/shared').ContextInfo };
+}
+
+interface ClientForwardingEvents {
+	'auth.changed': {
+		sessionId: string;
+		method: import('@neokai/shared').AuthMethod;
+		isAuthenticated: boolean;
+	};
+	'space.created': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
+	'space.updated': {
+		sessionId: string;
+		spaceId: string;
+		space?: Partial<import('@neokai/shared').Space>;
+	};
+	'space.archived': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
+	'space.deleted': { sessionId: string; spaceId: string };
+	'space.task.created': {
+		sessionId: string;
+		spaceId: string;
+		taskId: string;
+		task: import('@neokai/shared').SpaceTask;
+	};
+	'space.task.updated': {
+		sessionId: string;
+		spaceId: string;
+		taskId: string;
+		task: import('@neokai/shared').SpaceTask;
+		archiveSource?: 'user' | 'system_reconcile';
+	};
+	'space.schedule.updated': {
+		sessionId: string;
+		spaceId: string;
+		scheduleId: string;
+		schedule: import('@neokai/shared').TaskSchedule;
+	};
+	'space.workflowRun.created': {
+		sessionId: string;
+		spaceId: string;
+		runId: string;
+		run: import('@neokai/shared').SpaceWorkflowRun;
+	};
+	'space.workflowRun.updated': {
+		sessionId: string;
+		spaceId: string;
+		runId: string;
+		run?: Partial<import('@neokai/shared').SpaceWorkflowRun>;
+	};
+	'space.gateData.updated': {
+		sessionId: string;
+		spaceId: string;
+		runId: string;
+		gateId: string;
+		data: Record<string, unknown>;
+	};
+	'spaceAgent.created': {
+		sessionId: string;
+		spaceId: string;
+		agent: import('@neokai/shared').SpaceAgent;
+	};
+	'spaceAgent.updated': {
+		sessionId: string;
+		spaceId: string;
+		agent: import('@neokai/shared').SpaceAgent;
+	};
+	'spaceAgent.deleted': { sessionId: string; spaceId: string; agentId: string };
+	'spaceWorkflow.created': {
+		sessionId: string;
+		spaceId: string;
+		workflow: import('@neokai/shared').SpaceWorkflow;
+	};
+	'spaceWorkflow.updated': {
+		sessionId: string;
+		spaceId: string;
+		workflow: import('@neokai/shared').SpaceWorkflow;
+	};
+	'spaceWorkflow.deleted': { sessionId: string; spaceId: string; workflowId: string };
+}
+
+/**
+ * Transitional full-surface event map for daemon application code.
+ *
+ * M8 removes DaemonHub from application dependencies. The permissive index
+ * signature keeps long-tail legacy event names routable through InternalEventBus
+ * while narrower domain slices document typed payloads for active subscribers.
+ */
+export type DaemonInternalEventMap = Record<string, InternalEventBusPayload> &
+	AgentControlEvents &
+	ClientForwardingEvents &
+	SettingsEvents &
+	ExternalEventEvents &
+	SessionEvents &
+	ApiConnectionEvents &
+	SpaceEvents;
 
 /**
  * Convenience factory typed with the canonical daemon internal event map.

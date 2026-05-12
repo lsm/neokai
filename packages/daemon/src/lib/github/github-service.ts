@@ -11,7 +11,7 @@
  */
 
 import type { Database } from '../../storage/database';
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Config } from '../../config';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
@@ -46,8 +46,8 @@ const log = new Logger('github-service');
 export interface GitHubServiceOptions {
 	/** Database instance for persistence */
 	db: Database;
-	/** DaemonHub for emitting events */
-	daemonHub: DaemonHub;
+	/** InternalEventBus<DaemonInternalEventMap> for emitting events */
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	/** Application configuration */
 	config: Config;
 	/** API key for AI agents (security + routing) */
@@ -70,11 +70,11 @@ export interface GitHubServiceOptions {
  * 4. Find candidate rooms (database lookup)
  * 5. Route event (rule-based or AI)
  * 6. Deliver to room OR add to inbox
- * 7. Emit DaemonHub events at each step
+ * 7. Emit InternalEventBus<DaemonInternalEventMap> events at each step
  */
 export class GitHubService {
 	private db: Database;
-	private daemonHub: DaemonHub;
+	private internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	private config: Config;
 	private apiKey: string;
 	private githubToken?: string;
@@ -91,7 +91,7 @@ export class GitHubService {
 
 	constructor(options: GitHubServiceOptions) {
 		this.db = options.db;
-		this.daemonHub = options.daemonHub;
+		this.internalEventBus = options.internalEventBus;
 		this.config = options.config;
 		this.apiKey = options.apiKey;
 		this.githubToken = options.githubToken;
@@ -528,14 +528,17 @@ export class GitHubService {
 	}
 
 	/**
-	 * Emit an event to DaemonHub
+	 * Emit an event to InternalEventBus<DaemonInternalEventMap>
 	 */
-	private emitEvent<K extends keyof import('../daemon-hub').DaemonEventMap & string>(
+	private emitEvent<K extends keyof DaemonInternalEventMap & string>(
 		event: K,
-		data: import('../daemon-hub').DaemonEventMap[K]
+		data: DaemonInternalEventMap[K]
 	): void {
 		try {
-			this.daemonHub.publishAsync(event, data);
+			this.internalEventBus.publishAsync(
+				event,
+				data as DaemonInternalEventMap[K] & { sessionId: string } & Record<string, unknown>
+			);
 		} catch {
 			// Best-effort telemetry: never let a hub emission failure
 			// abort event routing or inbox fallback.
